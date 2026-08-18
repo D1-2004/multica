@@ -47,7 +47,7 @@ func (h *Handler) GetFDEOnboarding(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaces := make([]WorkspaceResponse, len(rows))
 	for i, workspace := range rows {
-		workspaces[i] = workspaceToResponse(workspace)
+		workspaces[i] = h.workspaceToResponse(workspace)
 	}
 	writeJSON(w, http.StatusOK, FDEOnboardingStateResponse{
 		Configured: h.fdeOnboardingConfigured(),
@@ -129,7 +129,7 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 	for _, installation := range installations {
 		if installation.AgentID == agent.ID && installation.Status == string(dingtalk.InstallationActive) {
 			writeJSON(w, http.StatusOK, FDEOnboardingProvisionResponse{
-				Workspace: workspaceToResponse(workspace), RuntimeID: uuidToString(runtime.ID),
+				Workspace: h.workspaceToResponse(workspace), RuntimeID: uuidToString(runtime.ID),
 				AgentID: uuidToString(agent.ID), AgentCreated: created, InstallComplete: true,
 			})
 			return
@@ -145,7 +145,7 @@ func (h *Handler) ProvisionFDEOnboarding(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, FDEOnboardingProvisionResponse{
-		Workspace: workspaceToResponse(workspace), RuntimeID: uuidToString(runtime.ID),
+		Workspace: h.workspaceToResponse(workspace), RuntimeID: uuidToString(runtime.ID),
 		AgentID: uuidToString(agent.ID), AgentCreated: created,
 		Install: &BeginDingTalkInstallResponse{
 			SessionID: begin.SessionID, QRCodeURL: begin.QRCodeURL,

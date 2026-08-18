@@ -13,8 +13,15 @@ export type {
   AgentInvocationTarget,
   AgentInvocationTargetInput,
   AgentTask,
+  TaskUsage,
+  TaskAttribution,
+  AttributionUser,
+  TaskEvidence,
   AgentActivityBucket,
   AgentRunCount,
+  WorkspaceWorkingAgent,
+  WorkspaceWorkingAgentType,
+  WorkspaceWorkingAgentMineRelation,
   TaskFailureReason,
   AgentRuntime,
   RuntimeDevice,
@@ -24,13 +31,25 @@ export type {
   CreateRuntimeProfileRequest,
   UpdateRuntimeProfileRequest,
   CreateAgentRequest,
+  AgentBuilderRuntimeSwitch,
   AgentBuilderSession,
+  AgentBuilderSessionSummary,
+  AgentPermissionScope,
+  StoredAgentDraft,
+  AgentTemplate,
+  AgentTemplateSummary,
+  AgentTemplateSkillRef,
+  CreateAgentFromTemplateRequest,
+  CreateAgentFromTemplateResponse,
+  CreateAgentFromTemplateFailure,
   UpdateAgentRequest,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   Skill,
   SkillSummary,
   AgentSkillSummary,
+  DisabledRuntimeSkill,
+  SetAgentRuntimeSkillEnabledRequest,
   SkillFile,
   CreateSkillRequest,
   UpdateSkillRequest,
@@ -43,9 +62,12 @@ export type {
   DashboardUsageByAgent,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
+  DashboardFailureDaily,
+  DashboardFailureByAgent,
   RuntimeUpdate,
   RuntimeUpdateStatus,
   RuntimeModel,
+  RuntimeModelServiceTier,
   RuntimeModelThinking,
   RuntimeModelThinkingLevel,
   RuntimeModelListRequest,
@@ -62,6 +84,7 @@ export type {
   RuntimeLocalSkillsResult,
   RuntimeLocalSkillImportResult,
   IssueUsageSummary,
+  MikaBootstrapResponse,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
 export type {
@@ -81,8 +104,24 @@ export type {
 } from "./workspace";
 export type { InboxItem, InboxSeverity, InboxItemType, InboxWorkspaceUnread } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
-export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, Reaction } from "./comment";
+export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, CommentTriggerOutcome, CommentTriggerStatus, Reaction } from "./comment";
 export type { Label, LabelResourceType, CreateLabelRequest, UpdateLabelRequest, ListLabelsResponse, IssueLabelsResponse, ResourceLabelsResponse } from "./label";
+export type { IssueProperty, IssuePropertyType, IssuePropertyOption, IssuePropertyConfig, IssuePropertyValue, IssuePropertyValues, CreatePropertyRequest, UpdatePropertyRequest, ListPropertiesResponse, IssuePropertiesResponse } from "./property";
+export { ISSUE_PROPERTY_TYPES, isKnownPropertyType } from "./property";
+export type {
+  QuickAction,
+  QuickActionVisibility,
+  QuickActionAssigneeType,
+  QuickActionStatus,
+  CreateQuickActionRequest,
+  UpdateQuickActionRequest,
+  ListQuickActionsResponse,
+} from "./quick-action";
+export {
+  QUICK_ACTION_SIDEBAR_LIMIT,
+  QUICK_ACTION_TEMPLATE_TOKEN_RE,
+  findQuickActionTemplateToken,
+} from "./quick-action";
 export type {
   TimelineEntry,
   AssigneeFrequencyEntry,
@@ -91,21 +130,34 @@ export type { IssueSubscriber } from "./subscriber";
 export type * from "./events";
 export type * from "./api";
 export type { Attachment } from "./attachment";
-export { attachmentDownloadPath, attachmentIdFromDownloadURL, contentReferencesAttachment } from "./attachment-url";
+export {
+  attachmentDownloadPath,
+  attachmentIdFromDownloadURL,
+  contentReferencesAttachment,
+  stripChannelMediaMarkers,
+} from "./attachment-url";
 export type {
   ChatSession,
   ChatLastMessage,
   ChatPinnedAgent,
   ChatMessage,
+  ChatQuickAction,
+  ChatQuickActionsPendingState,
+  ChatQuickActionsFailureState,
   ChatMessagesPage,
   ChatPendingTask,
+  ChatQueuedTask,
+  PrioritizeQueuedChatTaskResponse,
   PendingChatTaskItem,
   PendingChatTasksResponse,
   HasPendingChatTasksResponse,
   SendChatMessageResponse,
   ChatReplyReceivedRequest,
+  StartMikaOnboardingResponse,
   CancelledChatMessage,
   CancelTaskResponse,
+  ChatDraftRestore,
+  ChatDraftRestoresResponse,
 } from "./chat";
 export type { StorageAdapter } from "./storage";
 export type * from "./workspace-access";
@@ -132,8 +184,13 @@ export type {
   GitHubMergeableState,
   GitHubPullRequest,
   GitHubPullRequestChecksConclusion,
+  GitHubPullRequestChecksRollup,
+  GitHubPullRequestMergeable,
+  GitHubPullRequestMergeStateStatus,
   GitHubPullRequestState,
   ListGitHubInstallationsResponse,
+  GitHubRepository,
+  ListGitHubRepositoriesResponse,
   GitHubConnectResponse,
   GitHubAgentRepository,
   ListGitHubAgentRepositoriesResponse,
@@ -145,6 +202,13 @@ export type {
   AgentSource,
   SyncAgentSourceResponse,
 } from "./github";
+export type {
+  VCSProvider,
+  VCSConnection,
+  ListVCSConnectionsResponse,
+  ConnectVCSRequest,
+  ConnectVCSResponse,
+} from "./vcs";
 export type {
   LarkInstallation,
   ListLarkInstallationsResponse,
@@ -197,6 +261,12 @@ export type {
   BeginAgentEnterpriseIdentityBindingResponse,
 } from "./agent-enterprise-identity";
 export type {
+  WecomInstallation,
+  ListWecomInstallationsResponse,
+  RegisterWecomBYORequest,
+  RedeemWecomBindingTokenResponse,
+} from "./wecom";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,
@@ -216,6 +286,7 @@ export type {
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
   ListAutopilotsResponse,
+  CronPreviewResponse,
   GetAutopilotResponse,
   ListAutopilotRunsResponse,
   WebhookDelivery,

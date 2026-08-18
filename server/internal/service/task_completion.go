@@ -439,12 +439,12 @@ func (s *TaskService) EnqueueSynchronousTaskCompletion(
 		return errors.New("synchronous task completion target is invalid")
 	}
 	_, err := s.Queries.EnqueueSynchronousTaskCompletion(ctx, db.EnqueueSynchronousTaskCompletionParams{
-		CallbackUrl:   callbackURL,
+		CallbackUrl:    callbackURL,
 		TargetIdentity: targetIdentity,
-		RequestID:     "multica-terminal:sync:" + dispatchTaskID,
-		AgentID:       agentID,
-		Error:         pgtype.Text{String: redact.Text(errMessage), Valid: errMessage != ""},
-		FailureReason: pgtype.Text{String: failureReason, Valid: failureReason != ""},
+		RequestID:      "multica-terminal:sync:" + dispatchTaskID,
+		AgentID:        agentID,
+		Error:          pgtype.Text{String: redact.Text(errMessage), Valid: errMessage != ""},
+		FailureReason:  pgtype.Text{String: failureReason, Valid: failureReason != ""},
 	})
 	if err != nil {
 		return fmt.Errorf("enqueue synchronous task completion: %w", err)

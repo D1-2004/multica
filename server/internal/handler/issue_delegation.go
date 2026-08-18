@@ -35,7 +35,7 @@ type IssueDelegationRequest struct {
 
 type IssueDelegationResponse struct {
 	IssueID          string `json:"issue_id"`
-	IssueIdentifier string `json:"issue_identifier"`
+	IssueIdentifier  string `json:"issue_identifier"`
 	TargetTaskID     string `json:"target_task_id,omitempty"`
 	TriggerCommentID string `json:"trigger_comment_id,omitempty"`
 	Queued           bool   `json:"queued"`
@@ -53,7 +53,7 @@ type issueDelegationPrivateContext struct {
 
 	IdentityContextToken          string                        `json:"agent_identity_context_token"`
 	IdentityContextTokenExpiresAt int64                         `json:"agent_identity_context_token_expires_at"`
-	ExternalIdentity             AgentDispatchExternalIdentity `json:"external_identity"`
+	ExternalIdentity              AgentDispatchExternalIdentity `json:"external_identity"`
 	DispatchEndpointID            string                        `json:"dispatch_endpoint_id"`
 	IdempotencyKey                string                        `json:"dispatch_idempotency_key"`
 
@@ -155,10 +155,10 @@ func delegatedIssueDispatch(
 			Type:   private.Type,
 			Data:   private.EventData,
 		},
-		Surface:       DispatchSurface{Type: protocol.DispatchSurfaceTypeIssue},
-		Outbound:      private.Outbound,
-		ContextPrompt: private.ContextPrompt,
-		ExternalIdentity: private.ExternalIdentity,
+		Surface:            DispatchSurface{Type: protocol.DispatchSurfaceTypeIssue},
+		Outbound:           private.Outbound,
+		ContextPrompt:      private.ContextPrompt,
+		ExternalIdentity:   private.ExternalIdentity,
 		DispatchEndpointID: private.DispatchEndpointID,
 	}
 	command.ExternalIdentity.ContextToken = private.IdentityContextToken
@@ -579,7 +579,7 @@ func (h *Handler) writeIssueDelegationResponse(
 	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
 	writeJSON(w, status, IssueDelegationResponse{
 		IssueID:          uuidToString(issue.ID),
-		IssueIdentifier: prefix + "-" + formatIssueNumber(issue.Number),
+		IssueIdentifier:  prefix + "-" + formatIssueNumber(issue.Number),
 		TargetTaskID:     uuidToString(task.ID),
 		TriggerCommentID: uuidToString(triggerCommentID),
 		Queued:           true,

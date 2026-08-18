@@ -15,9 +15,16 @@ import {
   Tags,
   Keyboard,
   ShieldCheck,
+  ListTodo,
+  Zap,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@multica/ui/components/ui/tabs";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@multica/ui/components/ui/tabs";
 import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { useCurrentMember } from "@multica/core/permissions";
@@ -27,6 +34,7 @@ import { useNavigation } from "../../navigation";
 import { AccountTab } from "./account-tab";
 import { PreferencesTab } from "./preferences-tab";
 import { ChatTab } from "./chat-tab";
+import { IssueTab } from "./issue-tab";
 import { TokensTab } from "./tokens-tab";
 import { WorkspaceTab } from "./workspace-tab";
 import { MembersTab } from "./members-tab";
@@ -36,15 +44,27 @@ import { IntegrationsTab } from "./integrations-tab";
 import { LabsTab } from "./labs-tab";
 import { NotificationsTab } from "./notifications-tab";
 import { LabelsTab } from "./labels-tab";
+import { PropertiesTab } from "./properties-tab";
+import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { WorkspaceAccessTab } from "./workspace-access-tab";
+import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
 
-const ACCOUNT_TAB_KEYS = ["profile", "preferences", "shortcuts", "chat", "notifications", "tokens"] as const;
+const ACCOUNT_TAB_KEYS = [
+  "profile",
+  "preferences",
+  "shortcuts",
+  "issue",
+  "chat",
+  "notifications",
+  "tokens",
+] as const;
 const ACCOUNT_TAB_ICONS = {
   profile: User,
   preferences: SlidersHorizontal,
   shortcuts: Keyboard,
+  issue: ListTodo,
   chat: MessageCircle,
   notifications: Bell,
   tokens: Key,
@@ -59,6 +79,8 @@ const WORKSPACE_TAB_KEYS = [
   "members",
   "labels",
   "workspace_access",
+  "properties",
+  "quick_actions",
 ] as const;
 const WORKSPACE_TAB_VALUES = {
   general: "workspace",
@@ -69,6 +91,8 @@ const WORKSPACE_TAB_VALUES = {
   members: "members",
   labels: "labels",
   workspace_access: "workspace_access",
+  properties: "properties",
+  quick_actions: "quick-actions",
 } as const;
 const WORKSPACE_TAB_ICONS = {
   general: Settings,
@@ -79,6 +103,8 @@ const WORKSPACE_TAB_ICONS = {
   members: Users,
   labels: Tags,
   workspace_access: ShieldCheck,
+  properties: SlidersHorizontal,
+  quick_actions: Zap,
 } as const;
 
 const DEFAULT_TAB = "profile";
@@ -112,7 +138,10 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
   const workspace = useCurrentWorkspace();
   const workspaceName = workspace?.name;
   const { role } = useCurrentMember(workspace?.id ?? "");
-  const workspaceAccessEnabled = useFeatureEnabled(WORKSPACE_ACCESS_TOKENS_FLAG, false);
+  const workspaceAccessEnabled = useFeatureEnabled(
+    WORKSPACE_ACCESS_TOKENS_FLAG,
+    false,
+  );
   const navigation = useNavigation();
   const isMobile = useIsMobile();
 
@@ -124,7 +153,11 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
       new Set<string>([
         ...ACCOUNT_TAB_KEYS,
         ...Object.entries(WORKSPACE_TAB_VALUES)
-          .filter(([key]) => key !== "workspace_access" || (workspaceAccessEnabled && role === "owner"))
+          .filter(
+            ([key]) =>
+              key !== "workspace_access" ||
+              (workspaceAccessEnabled && role === "owner"),
+          )
           .map(([, value]) => value),
         ...(extraAccountTabs?.map((tab) => tab.value) ?? []),
       ]),
@@ -133,7 +166,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
 
   const tabFromUrl = navigation.searchParams.get(TAB_QUERY_KEY);
   const candidateTab = tabFromUrl
-    ? LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl
+    ? (LEGACY_WORKSPACE_TAB_REDIRECTS[tabFromUrl] ?? tabFromUrl)
     : null;
   const activeTab =
     candidateTab && validTabs.has(candidateTab) ? candidateTab : DEFAULT_TAB;
@@ -158,13 +191,24 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           tab merges into the card top, and a tinted panel under the first tabs
           breaks that seam (MUL-4439). Zoning comes from the divider instead. */}
       <div className="shrink-0 overflow-x-auto border-b border-surface-border p-2 md:w-56 md:overflow-y-auto md:border-b-0 md:border-r md:p-4">
-        <h1 className="sr-only text-sm font-semibold md:not-sr-only md:mb-4 md:px-2">{t(($) => $.page.title)}</h1>
+        {/* This page builds its own chrome instead of a PageHeader, so it has
+            to supply the nav trigger itself — below `xl` the nav is a sheet or
+            auto-collapsed, and settings has no other way back to it. */}
+        {/* The gap below this row belongs to the row, not to the heading: with
+            `items-center`, a bottom margin on the `h1` is part of the box being
+            centred, so it offsets the heading against the trigger beside it. */}
+        <div className="flex items-center md:mb-4">
+          <CollapsedNavTrigger />
+          <h1 className="sr-only text-body font-semibold md:not-sr-only md:px-2">
+            {t(($) => $.page.title)}
+          </h1>
+        </div>
         <TabsList
           variant="line"
           className="flex w-max min-w-full flex-row items-center gap-1 p-0 md:w-full md:flex-col md:items-stretch"
         >
           {/* My Account group */}
-          <span className="hidden px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground md:block">
+          <span className="hidden px-2 pb-1 pt-2 text-caption font-medium text-muted-foreground md:block">
             {t(($) => $.page.my_account)}
           </span>
           {ACCOUNT_TAB_KEYS.map((key) => {
@@ -192,10 +236,14 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           ))}
 
           {/* Workspace group */}
-          <span className="hidden truncate px-2 pb-1 pt-4 text-xs font-medium text-muted-foreground md:block">
+          <span className="hidden truncate px-2 pb-1 pt-4 text-caption font-medium text-muted-foreground md:block">
             {workspaceName ?? t(($) => $.page.workspace_fallback)}
           </span>
-          {WORKSPACE_TAB_KEYS.filter((key) => key !== "workspace_access" || (workspaceAccessEnabled && role === "owner")).map((key) => {
+          {WORKSPACE_TAB_KEYS.filter(
+            (key) =>
+              key !== "workspace_access" ||
+              (workspaceAccessEnabled && role === "owner"),
+          ).map((key) => {
             const Icon = WORKSPACE_TAB_ICONS[key];
             return (
               <TabsTrigger
@@ -213,23 +261,72 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
 
       {/* Right content */}
       <div className="min-w-0 flex-1 md:overflow-y-auto">
-        <div className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${activeTab === "labels" ? "max-w-5xl" : "max-w-3xl"}`}>
-          <TabsContent value="profile"><AccountTab /></TabsContent>
-          <TabsContent value="preferences"><PreferencesTab /></TabsContent>
-          <TabsContent value="shortcuts"><KeyboardShortcutsTab /></TabsContent>
-          <TabsContent value="chat"><ChatTab /></TabsContent>
-          <TabsContent value="notifications"><NotificationsTab /></TabsContent>
-          <TabsContent value="tokens"><TokensTab /></TabsContent>
-          <TabsContent value="workspace"><WorkspaceTab /></TabsContent>
-          <TabsContent value="repositories"><RepositoriesTab /></TabsContent>
-          <TabsContent value="github"><GitHubTab /></TabsContent>
-          <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
-          <TabsContent value="labs"><LabsTab /></TabsContent>
-          <TabsContent value="members"><MembersTab /></TabsContent>
-          <TabsContent value="labels"><LabelsTab /></TabsContent>
-          {workspaceAccessEnabled && role === "owner" ? <TabsContent value="workspace_access"><WorkspaceAccessTab /></TabsContent> : null}
+        <div
+          className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${
+            activeTab === "labels" ||
+            activeTab === "properties" ||
+            activeTab === "quick-actions"
+              ? "max-w-5xl"
+              : "max-w-3xl"
+          }`}
+        >
+          <TabsContent value="profile">
+            <AccountTab />
+          </TabsContent>
+          <TabsContent value="preferences">
+            <PreferencesTab />
+          </TabsContent>
+          <TabsContent value="shortcuts">
+            <KeyboardShortcutsTab />
+          </TabsContent>
+          <TabsContent value="issue">
+            <IssueTab />
+          </TabsContent>
+          <TabsContent value="chat">
+            <ChatTab />
+          </TabsContent>
+          <TabsContent value="notifications">
+            <NotificationsTab />
+          </TabsContent>
+          <TabsContent value="tokens">
+            <TokensTab />
+          </TabsContent>
+          <TabsContent value="workspace">
+            <WorkspaceTab />
+          </TabsContent>
+          <TabsContent value="repositories">
+            <RepositoriesTab />
+          </TabsContent>
+          <TabsContent value="github">
+            <GitHubTab />
+          </TabsContent>
+          <TabsContent value="integrations">
+            <IntegrationsTab />
+          </TabsContent>
+          <TabsContent value="labs">
+            <LabsTab />
+          </TabsContent>
+          <TabsContent value="members">
+            <MembersTab />
+          </TabsContent>
+          <TabsContent value="labels">
+            <LabelsTab />
+          </TabsContent>
+          {workspaceAccessEnabled && role === "owner" ? (
+            <TabsContent value="workspace_access">
+              <WorkspaceAccessTab />
+            </TabsContent>
+          ) : null}
+          <TabsContent value="properties">
+            <PropertiesTab />
+          </TabsContent>
+          <TabsContent value="quick-actions">
+            <QuickActionsTab />
+          </TabsContent>
           {extraAccountTabs?.map((tab) => (
-            <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>
+            <TabsContent key={tab.value} value={tab.value}>
+              {tab.content}
+            </TabsContent>
           ))}
         </div>
       </div>

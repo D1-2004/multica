@@ -111,6 +111,8 @@ type Client struct {
 	workspaceCache                 []WorkspaceInfo
 	workspaceCacheValid            bool
 	legacyWorkspaceEndpointEnabled bool
+	issueGCBatchMu                 sync.Mutex
+	legacyIssueGCBatchEnabled      bool
 }
 
 // NewClient creates a new daemon API client.
@@ -360,6 +362,15 @@ func (c *Client) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID, reas
 	}, nil)
 }
 
+// AckTaskCancelled tells the server this daemon observed the task's
+// cancellation and has finished flushing the transcript (runner.run only
+// returns after executeAndDrain's drain wait), so the server can settle its
+// deferred chat finalization now instead of waiting out the sweeper grace
+// period (#5219). Idempotent server-side.
+func (c *Client) AckTaskCancelled(ctx context.Context, taskID string) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/cancel-ack", taskID), map[string]any{}, nil)
+}
+
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/progress", taskID), map[string]any{
 		"summary": summary,
@@ -384,15 +395,11 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	}, nil)
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, resultMessage, branchName, sessionID, workDir string) error {
-	return c.completeTaskWithSchedule(ctx, taskID, output, resultMessage, branchName, sessionID, workDir, defaultTerminalRetrySchedule)
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, resultMessage, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) error {
+	return c.completeTaskWithSchedule(ctx, taskID, output, resultMessage, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
 }
 
-// completeTaskWithSchedule is CompleteTask with an explicit backoff schedule.
-// The pending-reports drainer passes nil (single attempt) because its ticker
-// is already the retry loop — nesting the full inline schedule inside each
-// drain pass would only multiply the backoff.
-func (c *Client) completeTaskWithSchedule(ctx context.Context, taskID, output, resultMessage, branchName, sessionID, workDir string, schedule []time.Duration) error {
+func (c *Client) completeTaskWithSchedule(ctx context.Context, taskID, output, resultMessage, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, schedule []time.Duration) error {
 	body := map[string]any{"output": output}
 	if resultMessage != "" {
 		body["result_message"] = resultMessage
@@ -406,6 +413,12 @@ func (c *Client) completeTaskWithSchedule(ctx context.Context, taskID, output, r
 	if workDir != "" {
 		body["work_dir"] = workDir
 	}
+	if sessionRolloutMissing {
+		body["session_rollout_missing"] = true
+	}
+	if retiredSessionID != "" {
+		body["retired_session_id"] = retiredSessionID
+	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, schedule)
 }
 
@@ -418,55 +431,19 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 	}, nil)
 }
 
-func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string) error {
-	return c.failTaskWithResultMessageAndSchedule(
-		ctx,
-		taskID,
-		errMsg,
-		"",
-		sessionID,
-		workDir,
-		failureReason,
-		defaultTerminalRetrySchedule,
-	)
+func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string, sessionRolloutMissing bool, retiredSessionID string) error {
+	return c.failTaskWithResultMessageAndSchedule(ctx, taskID, errMsg, "", sessionID, workDir, failureReason, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
 }
 
-func (c *Client) FailTaskWithResultMessage(
-	ctx context.Context,
-	taskID, errMsg, resultMessage, sessionID, workDir, failureReason string,
-) error {
-	return c.failTaskWithResultMessageAndSchedule(
-		ctx,
-		taskID,
-		errMsg,
-		resultMessage,
-		sessionID,
-		workDir,
-		failureReason,
-		defaultTerminalRetrySchedule,
-	)
+func (c *Client) FailTaskWithResultMessage(ctx context.Context, taskID, errMsg, resultMessage, sessionID, workDir, failureReason string, sessionRolloutMissing bool, retiredSessionID string) error {
+	return c.failTaskWithResultMessageAndSchedule(ctx, taskID, errMsg, resultMessage, sessionID, workDir, failureReason, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
 }
 
-// failTaskWithSchedule is FailTask with an explicit backoff schedule. See
-// completeTaskWithSchedule for why the pending-reports drainer passes nil.
-func (c *Client) failTaskWithSchedule(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string, schedule []time.Duration) error {
-	return c.failTaskWithResultMessageAndSchedule(
-		ctx,
-		taskID,
-		errMsg,
-		"",
-		sessionID,
-		workDir,
-		failureReason,
-		schedule,
-	)
+func (c *Client) failTaskWithSchedule(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string, sessionRolloutMissing bool, retiredSessionID string, schedule []time.Duration) error {
+	return c.failTaskWithResultMessageAndSchedule(ctx, taskID, errMsg, "", sessionID, workDir, failureReason, sessionRolloutMissing, retiredSessionID, schedule)
 }
 
-func (c *Client) failTaskWithResultMessageAndSchedule(
-	ctx context.Context,
-	taskID, errMsg, resultMessage, sessionID, workDir, failureReason string,
-	schedule []time.Duration,
-) error {
+func (c *Client) failTaskWithResultMessageAndSchedule(ctx context.Context, taskID, errMsg, resultMessage, sessionID, workDir, failureReason string, sessionRolloutMissing bool, retiredSessionID string, schedule []time.Duration) error {
 	body := map[string]any{"error": errMsg}
 	if resultMessage != "" {
 		body["result_message"] = resultMessage
@@ -479,6 +456,12 @@ func (c *Client) failTaskWithResultMessageAndSchedule(
 	}
 	if failureReason != "" {
 		body["failure_reason"] = failureReason
+	}
+	if sessionRolloutMissing {
+		body["session_rollout_missing"] = true
+	}
+	if retiredSessionID != "" {
+		body["retired_session_id"] = retiredSessionID
 	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil, schedule)
 }
@@ -666,6 +649,88 @@ func (c *Client) usesLegacyWorkspaceEndpoint() bool {
 type IssueGCStatus struct {
 	Status    string    `json:"status"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// IssueGCCheckResult is one explicit issue result from the workspace batch
+// endpoint. Found=false deliberately covers both a deleted issue and an ID
+// outside the requested workspace, preserving the server's anti-enumeration
+// contract. Err is only populated by the legacy per-issue fallback.
+type IssueGCCheckResult struct {
+	ID        string    `json:"id"`
+	Found     bool      `json:"found"`
+	Status    string    `json:"status,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	Err       error     `json:"-"`
+}
+
+type issueGCBatchResponse struct {
+	Issues []IssueGCCheckResult `json:"issues"`
+}
+
+// isIssueGCBatchUnsupported distinguishes chi's unmatched-route response on an
+// older server from the JSON 404 returned by a current server when the caller
+// cannot access the requested workspace. Only the former is a compatibility
+// signal; falling back on an authorization 404 would turn one denied request
+// into hundreds of legacy probes.
+func isIssueGCBatchUnsupported(err error) bool {
+	var reqErr *requestError
+	return errors.As(err, &reqErr) &&
+		reqErr.StatusCode == http.StatusNotFound &&
+		strings.TrimSpace(reqErr.Body) == "404 page not found"
+}
+
+// GetIssueGCChecks reconciles a workspace's issue IDs in one request. When a
+// new daemon reaches an older server that does not have the batch route, the
+// first 404 permanently switches this client process to the legacy per-issue
+// endpoint. Other batch failures are returned without fan-out so a transient
+// server problem cannot amplify request volume.
+func (c *Client) GetIssueGCChecks(ctx context.Context, workspaceID string, issueIDs []string) (map[string]IssueGCCheckResult, error) {
+	c.issueGCBatchMu.Lock()
+	defer c.issueGCBatchMu.Unlock()
+
+	if c.legacyIssueGCBatchEnabled {
+		return c.getLegacyIssueGCChecks(ctx, issueIDs), nil
+	}
+
+	path := fmt.Sprintf("/api/daemon/workspaces/%s/issues/gc-check", workspaceID)
+	var resp issueGCBatchResponse
+	err := c.postJSON(ctx, path, map[string]any{"issue_ids": issueIDs}, &resp)
+	if err != nil {
+		if !isIssueGCBatchUnsupported(err) {
+			return nil, err
+		}
+		c.legacyIssueGCBatchEnabled = true
+		return c.getLegacyIssueGCChecks(ctx, issueIDs), nil
+	}
+
+	results := make(map[string]IssueGCCheckResult, len(resp.Issues))
+	for _, result := range resp.Issues {
+		results[result.ID] = result
+	}
+	return results, nil
+}
+
+func (c *Client) getLegacyIssueGCChecks(ctx context.Context, issueIDs []string) map[string]IssueGCCheckResult {
+	results := make(map[string]IssueGCCheckResult, len(issueIDs))
+	for _, issueID := range issueIDs {
+		status, err := c.GetIssueGCCheck(ctx, issueID)
+		if err != nil {
+			var reqErr *requestError
+			if errors.As(err, &reqErr) && reqErr.StatusCode == http.StatusNotFound {
+				results[issueID] = IssueGCCheckResult{ID: issueID, Found: false}
+			} else {
+				results[issueID] = IssueGCCheckResult{ID: issueID, Err: err}
+			}
+			continue
+		}
+		results[issueID] = IssueGCCheckResult{
+			ID:        issueID,
+			Found:     true,
+			Status:    status.Status,
+			UpdatedAt: status.UpdatedAt,
+		}
+	}
+	return results
 }
 
 // GetIssueGCCheck returns the status and updated_at of an issue for GC decisions.

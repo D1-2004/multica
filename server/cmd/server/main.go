@@ -127,6 +127,41 @@ func envDuration(name string, def time.Duration) time.Duration {
 	return v
 }
 
+func envNonNegativeDuration(name string, def time.Duration) time.Duration {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return def
+	}
+	v, err := time.ParseDuration(raw)
+	if err != nil || v < 0 {
+		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def.String(), "error", err)
+		return def
+	}
+	return v
+}
+
+func holdBeforeShutdown(sig os.Signal, signals <-chan os.Signal, duration time.Duration) {
+	if duration <= 0 {
+		return
+	}
+	slog.Info("termination signal received; holding before shutdown",
+		"signal", sig.String(),
+		"duration", duration.String(),
+	)
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+		slog.Info("shutdown hold complete", "duration", duration.String())
+	case interruptSig := <-signals:
+		slog.Info("shutdown hold interrupted by signal",
+			"signal", interruptSig.String(),
+			"configured_duration", duration.String(),
+		)
+	}
+}
+
 func envBool(name string, def bool) bool {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -138,6 +173,10 @@ func envBool(name string, def bool) bool {
 		return def
 	}
 	return v
+}
+
+func backgroundServices(h *handler.Handler) (*service.TaskService, *service.AutopilotService) {
+	return h.TaskService, h.AutopilotService
 }
 
 func main() {
@@ -162,6 +201,7 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+	shutdownHoldDuration := envNonNegativeDuration("MULTICA_SHUTDOWN_HOLD_DURATION", 0)
 
 	remoteRuntimeConfig, err := runtimeconfig.NewFromEnv(slog.Default())
 	if err != nil {
@@ -175,13 +215,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Feature flags: FF_<KEY> overrides are layered over an optional dynamic
-	// Diamond snapshot and the startup YAML rule set.
-	// See docs/feature-flags.md for the schema and lifecycle rules.
-	//
-	// Booting without either remote or file configuration is intentional.
-	// Diamond failures are fail-open; a malformed configured YAML file remains
-	// a startup error so operators do not silently lose source-controlled rules.
 	flagOptions := []featureflag.Option{featureflag.WithLogger(slog.Default())}
 	if appRuntimeConfig != nil {
 		flagOptions = append(flagOptions, featureflag.WithProvider(runtimeFeatureFlagProvider{config: appRuntimeConfig}))
@@ -349,7 +382,7 @@ func main() {
 	// Order matters: subscriber listeners must register BEFORE notification listeners.
 	// The notification listener queries the subscriber table to determine recipients,
 	// so subscribers must be written first within the same synchronous event dispatch.
-	registerSubscriberListeners(bus, queries)
+	registerSubscriberListeners(bus, pool)
 	registerActivityListeners(bus, queries)
 	registerNotificationListeners(bus, queries)
 
@@ -358,6 +391,8 @@ func main() {
 	var httpMetrics *obsmetrics.HTTPMetrics
 	var businessMetrics *obsmetrics.BusinessMetrics
 	var samplerPool *pgxpool.Pool
+	var channelMediaMetrics *obsmetrics.ChannelMediaReconcilerMetrics
+	var wecomMetrics *obsmetrics.WecomMetrics
 	if metricsConfig.Enabled() {
 		// Build a dedicated tiny pool for the BusinessSamplerCollector
 		// so a stalled scrape can never starve business traffic. If the
@@ -385,6 +420,8 @@ func main() {
 		})
 		httpMetrics = metricsRegistry.HTTP
 		businessMetrics = metricsRegistry.Business
+		channelMediaMetrics = metricsRegistry.ChannelMedia
+		wecomMetrics = metricsRegistry.Wecom
 		// Forward inbound daemon WS frames into the per-kind counter so
 		// dashboards can split heartbeat / unknown / invalid traffic.
 		if daemonHub != nil {
@@ -422,6 +459,7 @@ func main() {
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
 		HTTPMetrics:        httpMetrics,
 		BusinessMetrics:    businessMetrics,
+		WecomMetrics:       wecomMetrics,
 		DaemonHub:          daemonHub,
 		DaemonWakeup:       daemonWakeup,
 		FeatureFlags:       flags,
@@ -440,63 +478,12 @@ func main() {
 	// Start background workers.
 	sweepCtx, sweepCancel := context.WithCancel(context.Background())
 	autopilotCtx, autopilotCancel := context.WithCancel(context.Background())
-	taskSvc := service.NewTaskService(queries, pool, hub, bus, daemonWakeup)
-	taskSvc.Analytics = analyticsClient
-	taskSvc.Metrics = businessMetrics
-	fcConfig := service.FCE2BConfigFromEnv()
-	asbConfig := service.ASBConfigFromEnv()
-	enterpriseConfig := service.EnterpriseIdentityConfigFromEnv()
-	if appRuntimeConfig != nil {
-		fcConfig = appRuntimeConfig.fce2b()
-		asbConfig = appRuntimeConfig.asb()
-		enterpriseConfig = appRuntimeConfig.enterpriseIdentity()
-	}
-	fcLauncher := service.NewFCE2BLauncher(queries, taskSvc, fcConfig, nil)
-	if appRuntimeConfig != nil {
-		fcLauncher.ConfigProvider = appRuntimeConfig.fce2b
-	}
-	fcLauncher.SetSandboxRelaySigner(sandboxRelaySigner)
-	// The pool backs the cross-replica sandbox lock: without it two replicas
-	// can each boot a sandbox for the same chat, and the loser's microVM is
-	// orphaned and billed until it times out.
-	fcLauncher.SetPool(pool)
-	backgroundASBRuntime, asbRuntimeErr := service.NewASBEnterpriseRuntimeFromConfig(
-		queries,
-		taskSvc,
-		fcLauncher,
-		pool,
-		asbConfig,
-		enterpriseConfig,
-	)
-	if asbRuntimeErr != nil {
-		slog.Error(
-			"background ASB enterprise runtime disabled due to invalid configuration",
-			"error", asbRuntimeErr,
-			"fc_e2b_available", true,
-		)
-	}
-	var backgroundASBLauncher service.TaskRuntimeLauncher
-	if backgroundASBRuntime != nil {
-		backgroundASBLauncher = backgroundASBRuntime.Launcher
-		if appRuntimeConfig != nil {
-			if err := backgroundASBRuntime.SetConfigProviders(appRuntimeConfig.asb, appRuntimeConfig.enterpriseIdentity); err != nil {
-				slog.Error("background ASB enterprise runtime dynamic configuration failed", "error", err)
-				closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
-			}
-		}
-	}
-	taskSvc.RuntimeLauncher = service.NewCloudSandboxLauncher(
-		queries,
-		fcLauncher,
-		backgroundASBLauncher,
-	)
-	taskSvc.CompletionNotifier = h.TaskCompletionWorker
-	// NewRouterWithOptions owns the request-path TaskService and wires its
-	// Redis-backed empty-claim cache there. This background TaskService owns the
-	// FC/E2B launcher; share the same cache so a promoted durable channel task
-	// invalidates a daemon's cached empty verdict before sending its wakeup.
-	taskSvc.EmptyClaim = h.TaskService.EmptyClaim
-	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
+	// Reuse the router's services here. In particular, the router wires the
+	// EmptyClaim cache into TaskService; constructing a second TaskService for
+	// scheduled Autopilot dispatch would send the daemon wakeup without bumping
+	// that cache's version, so an idle runtime could keep returning an empty
+	// claim until the cache TTL expires.
+	taskSvc, autopilotSvc := backgroundServices(h)
 	registerAutopilotListeners(bus, autopilotSvc)
 
 	// Construct a LivenessStore that mirrors the one wired into the HTTP
@@ -515,8 +502,8 @@ func main() {
 	if h.FCE2BStable != nil {
 		go h.FCE2BStable.Run(sweepCtx)
 	}
-	if backgroundASBRuntime != nil {
-		go backgroundASBRuntime.Identity.Run(sweepCtx)
+	if h.EnterpriseIdentity != nil {
+		go h.EnterpriseIdentity.Run(sweepCtx)
 	}
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())
 	go runDBStatsLogger(sweepCtx, pool)
@@ -532,6 +519,9 @@ func main() {
 	if h.ManagedAgent != nil && h.ManagedAgent.Enabled() {
 		go h.ManagedAgent.Run(sweepCtx)
 	}
+	// GitHub PR-card API snapshot pipeline (MUL-5265): worker pool + TTL sweeper.
+	// No-op when unconfigured (no App private key).
+	h.PRRefresh.Start(sweepCtx)
 
 	// Channel inbound supervisor (MUL-3620): holds the §4.4 WS lease per
 	// installation and drives each channel.Channel. It is built
@@ -542,6 +532,14 @@ func main() {
 	// drained.
 	if h.ChannelSupervisor != nil {
 		go h.ChannelSupervisor.Run(sweepCtx)
+	}
+
+	// Media intent-ledger reconciler (PR #5580): settles uploaded-but-unbound
+	// channel media objects. An independent worker so object-storage latency
+	// spikes cannot starve any other sweeper's cadence.
+	if h.ChannelMediaReconciler != nil {
+		h.ChannelMediaReconciler.Metrics = channelMediaMetrics
+		go h.ChannelMediaReconciler.Run(sweepCtx)
 	}
 
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the
@@ -594,7 +592,11 @@ func main() {
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	sig := <-quit
+	holdBeforeShutdown(sig, quit, shutdownHoldDuration)
+	// Restore the default behavior so another signal during graceful shutdown
+	// can still terminate the process instead of being left unread in quit.
+	signal.Stop(quit)
 
 	slog.Info("shutting down server")
 	// Start Stream handoff immediately while HTTP and background workers are
@@ -660,7 +662,11 @@ func main() {
 			)
 		}
 		if h.ChannelRouter != nil {
-			h.ChannelRouter.Drain()
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if !h.ChannelRouter.Drain(drainCtx) {
+				slog.Warn("channel router: drain deadline reached; deferred media fallback remains durable")
+			}
+			drainCancel()
 		}
 	}
 

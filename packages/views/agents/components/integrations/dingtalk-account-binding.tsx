@@ -315,7 +315,7 @@ export function DingTalkRunModePicker({
           <PopoverTitle>
             {t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
           </PopoverTitle>
-          <PopoverDescription className="text-xs leading-relaxed">
+          <PopoverDescription className="text-caption leading-relaxed">
             {t(($) => $.tab_body.integrations.dingtalk_account_surface_picker_description)}
           </PopoverDescription>
         </PopoverHeader>
@@ -340,10 +340,10 @@ export function DingTalkRunModePicker({
                   className="mt-0.5"
                 />
                 <span className="min-w-0 space-y-1">
-                  <span className="block text-sm font-medium text-foreground">
+                  <span className="block text-body font-medium text-foreground">
                     {surfaceLabel(surfaceType)}
                   </span>
-                  <span className="block text-xs leading-relaxed text-muted-foreground">
+                  <span className="block text-caption leading-relaxed text-muted-foreground">
                     {surfaceDescription(surfaceType)}
                   </span>
                 </span>
@@ -590,18 +590,18 @@ function DingTalkBindingModeCard({
           {bindingMode === "message" ? <Link2 className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
         </span>
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="text-sm font-medium">{title}</h3>
-          <p className="text-xs leading-relaxed text-muted-foreground">{description}</p>
+          <h3 className="text-body font-medium">{title}</h3>
+          <p className="text-caption leading-relaxed text-muted-foreground">{description}</p>
         </div>
       </div>
 
       <div className="border-t px-4 py-3">
         {listingPending ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(($) => $.tab_body.integrations.dingtalk_account_loading)}
           </p>
         ) : data?.configured !== true ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(($) => $.tab_body.integrations.dingtalk_account_not_configured)}
           </p>
         ) : showBoundAccount && accountOutcome ? (
@@ -619,8 +619,8 @@ function DingTalkBindingModeCard({
                 <AvatarFallback>{displayName(accountOutcome, fallbackName).slice(0, 1)}</AvatarFallback>
               </Avatar>
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium">{displayName(accountOutcome, fallbackName)}</p>
-                <div className="mt-1 text-xs text-muted-foreground">
+                <p className="truncate text-body font-medium">{displayName(accountOutcome, fallbackName)}</p>
+                <div className="mt-1 text-caption text-muted-foreground">
                   {bindingMode === "message" && currentBinding?.messageRoute.status === "active" ? (
                     <DingTalkMessageScopeSummary outcome={currentBinding.messageRoute} />
                   ) : bindingMode === "message" &&
@@ -642,13 +642,13 @@ function DingTalkBindingModeCard({
                   )}
                 </div>
                 {accountOutcome.organizationName?.trim() ? (
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  <p className="mt-1 text-caption text-muted-foreground">
                     {t(($) => $.tab_body.integrations.dingtalk_account_organization)}: {accountOutcome.organizationName}
                   </p>
                 ) : null}
                 {bindingMode === "message" && messageRouteActive && currentBinding?.messageRoute.surfaceType ? (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-caption text-muted-foreground">
                       {t(($) => $.tab_body.integrations.dingtalk_account_run_mode)}
                     </span>
                     <DingTalkRunModePicker
@@ -678,12 +678,12 @@ function DingTalkBindingModeCard({
         ) : (
           <div className="space-y-3">
             {bindingMode === "message" && messageRoutePending ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-caption text-muted-foreground">
                 {t(($) => $.tab_body.integrations.dingtalk_account_pending_restart)}
               </p>
             ) : null}
             {messageBindingFailed && currentBinding ? (
-              <div className="space-y-1 text-xs text-muted-foreground">
+              <div className="space-y-1 text-caption text-muted-foreground">
                 <p>
                   {t(($) => $.tab_body.integrations.dingtalk_account_message_route)}: {" "}
                   {statusLabel(currentBinding.messageRoute.status)}
@@ -710,7 +710,7 @@ function DingTalkBindingModeCard({
           </div>
         )}
 
-        {actionError ? <p className="mt-3 text-xs text-destructive" role="alert">{actionError}</p> : null}
+        {actionError ? <p className="mt-3 text-caption text-destructive" role="alert">{actionError}</p> : null}
       </div>
 
       {attempt ? (
@@ -731,10 +731,10 @@ function DingTalkBindingModeCard({
             <div className="flex flex-col items-center gap-4 py-2">
               {expired ? (
                 <div className="space-y-2 text-center">
-                  <p className="text-sm font-medium">
+                  <p className="text-body font-medium">
                     {t(($) => $.tab_body.integrations.dingtalk_account_expired_title)}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-caption text-muted-foreground">
                     {t(($) => $.tab_body.integrations.dingtalk_account_expired_description)}
                   </p>
                 </div>
@@ -749,7 +749,7 @@ function DingTalkBindingModeCard({
                         : t(($) => $.tab_body.integrations.dingtalk_identity_qr_label)}
                     />
                   </div>
-                  <p className="text-center text-xs text-muted-foreground">
+                  <p className="text-center text-caption text-muted-foreground">
                     {bindingMode === "message"
                       ? t(($) => $.tab_body.integrations.dingtalk_account_scan_hint)
                       : t(($) => $.tab_body.integrations.dingtalk_identity_scan_hint)}

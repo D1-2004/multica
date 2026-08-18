@@ -23,23 +23,23 @@ const (
 )
 
 type AgentDispatchTaskSummaryResponse struct {
-	TaskID              string             `json:"task_id"`
-	Status              string             `json:"status"`
-	CreatedAt           string             `json:"created_at"`
-	DispatchedAt        *string            `json:"dispatched_at"`
-	StartedAt           *string            `json:"started_at"`
-	CompletedAt         *string            `json:"completed_at"`
-	DurationMS          *int64             `json:"duration_ms"`
-	Provider            *string            `json:"provider"`
-	Model               *string            `json:"model"`
-	InputTokens         *int64             `json:"input_tokens"`
-	OutputTokens        *int64             `json:"output_tokens"`
-	CacheReadTokens     *int64             `json:"cache_read_tokens"`
-	CacheWriteTokens    *int64             `json:"cache_write_tokens"`
-	MessageCount        int32              `json:"message_count"`
-	ToolCallCount       int32              `json:"tool_call_count"`
-	UsageDetails        []TaskUsagePayload `json:"usage_details"`
-	TranscriptAvailable bool               `json:"transcript_available"`
+	TaskID              string                            `json:"task_id"`
+	Status              string                            `json:"status"`
+	CreatedAt           string                            `json:"created_at"`
+	DispatchedAt        *string                           `json:"dispatched_at"`
+	StartedAt           *string                           `json:"started_at"`
+	CompletedAt         *string                           `json:"completed_at"`
+	DurationMS          *int64                            `json:"duration_ms"`
+	Provider            *string                           `json:"provider"`
+	Model               *string                           `json:"model"`
+	InputTokens         *int64                            `json:"input_tokens"`
+	OutputTokens        *int64                            `json:"output_tokens"`
+	CacheReadTokens     *int64                            `json:"cache_read_tokens"`
+	CacheWriteTokens    *int64                            `json:"cache_write_tokens"`
+	MessageCount        int32                             `json:"message_count"`
+	ToolCallCount       int32                             `json:"tool_call_count"`
+	UsageDetails        []TaskUsagePayload                `json:"usage_details"`
+	TranscriptAvailable bool                              `json:"transcript_available"`
 	Runtime             *AgentDispatchTaskRuntimeResponse `json:"runtime,omitempty"`
 }
 

@@ -182,12 +182,12 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 		return IssueCommentCreateResult{}, fmt.Errorf("check delegated member comment: %w", commentErr)
 	}
 	comment, err := qtx.CreateComment(ctx, db.CreateCommentParams{
-		IssueID:     params.Issue.ID,
-		WorkspaceID: params.Issue.WorkspaceID,
-		AuthorType:  "member",
-		AuthorID:    params.AuthorID,
-		Content:     params.Content,
-		Type:        "comment",
+		IssueID:      params.Issue.ID,
+		WorkspaceID:  params.Issue.WorkspaceID,
+		AuthorType:   "member",
+		AuthorID:     params.AuthorID,
+		Content:      params.Content,
+		Type:         "comment",
 		SourceTaskID: sourceTask.ID,
 	})
 	if err != nil {

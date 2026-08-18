@@ -19,7 +19,19 @@ import (
 
 var errRuntimeSetChanged = errors.New("runtime set changed")
 
-const taskWakeupMaxBackoff = 30 * time.Second
+const (
+	taskWakeupMaxBackoff = 30 * time.Second
+
+	// The authenticated control connection carries tasks.claim RPC responses,
+	// not only small wakeup hints. One response can contain up to 32 complete
+	// Task payloads, including agent instructions, project/workspace context,
+	// comments, resources, and skill references. The old 64 KiB ceiling was
+	// smaller than a valid single-task response: the server could commit a
+	// claim, then the daemon would reject its response and correctly refuse an
+	// unsafe HTTP re-claim, leaving the task dispatched but never started.
+	// Keep reads bounded while leaving headroom for the current batch contract.
+	taskWakeupReadLimit int64 = 64 << 20
+)
 
 var (
 	taskWakeupPongWait          = 60 * time.Second
@@ -107,7 +119,18 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	// this WS connection gets identical capability gating (MUL-4257).
 	headers.Set("X-Client-Capabilities", daemonClientCapabilities())
 
-	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+	// A hand-built websocket.Dialer has Proxy == nil, which gorilla reads as
+	// "dial direct" — unlike websocket.DefaultDialer, it does not fall back to
+	// the environment. On a machine that only reaches the internet through a
+	// corporate egress proxy the handshake then always fails and the daemon
+	// silently degrades to HTTP polling. gorilla rewrites wss:// to https://
+	// before consulting Proxy, so HTTPS_PROXY applies to this dial. With no
+	// proxy variables set, ProxyFromEnvironment returns nil and the connection
+	// is direct, exactly as before.
+	dialer := websocket.Dialer{
+		HandshakeTimeout: 10 * time.Second,
+		Proxy:            http.ProxyFromEnvironment,
+	}
 	conn, _, err := dialer.DialContext(ctx, wsURL, headers)
 	if err != nil {
 		return 0, err
@@ -154,7 +177,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	// close(writes), and the sender holds sendMu across its non-blocking send.
 	var sendMu sync.Mutex
 	sendClosed := false
-	d.wsRPC.attach(func(frame []byte) (*wsOutbound, error) {
+	wsRPCGeneration := d.wsRPC.attach(func(frame []byte) (*wsOutbound, error) {
 		sendMu.Lock()
 		defer sendMu.Unlock()
 		if sendClosed {
@@ -181,7 +204,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- d.readTaskWakeupMessages(conn, taskWakeups)
+		errCh <- d.readTaskWakeupMessagesForConnection(conn, taskWakeups, wsRPCGeneration)
 	}()
 
 	// Defer cleanup must shut goroutines down in this order:
@@ -322,6 +345,10 @@ func marshalRaw(v any) json.RawMessage {
 // handleRuntimeGone uses the daemon root context for its register call, so
 // this function can safely pass any caller context here.
 func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *HeartbeatResponse) {
+	d.handleWSHeartbeatAckForConnection(ctx, ack, d.wsRPC.currentGeneration())
+}
+
+func (d *Daemon) handleWSHeartbeatAckForConnection(ctx context.Context, ack *HeartbeatResponse, wsRPCGeneration uint64) {
 	if ack == nil || ack.RuntimeID == "" {
 		return
 	}
@@ -329,11 +356,21 @@ func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *HeartbeatRespons
 		go d.handleRuntimeGone(ack.RuntimeID)
 		return
 	}
+	for _, capability := range ack.ServerCapabilities {
+		if capability == protocol.DaemonCapabilityRPCV1 {
+			d.wsRPC.markRPCV1Supported(wsRPCGeneration)
+			break
+		}
+	}
 	d.recordWSHeartbeatAck(ack.RuntimeID)
 	d.handleHeartbeatActions(ctx, ack.RuntimeID, ack)
 }
 
 func (d *Daemon) readTaskWakeupMessages(conn *websocket.Conn, taskWakeups chan<- taskWakeup) error {
+	return d.readTaskWakeupMessagesForConnection(conn, taskWakeups, d.wsRPC.currentGeneration())
+}
+
+func (d *Daemon) readTaskWakeupMessagesForConnection(conn *websocket.Conn, taskWakeups chan<- taskWakeup, wsRPCGeneration uint64) error {
 	d.configureTaskWakeupReadLiveness(conn)
 	for {
 		_, raw, err := conn.ReadMessage()
@@ -376,13 +413,26 @@ func (d *Daemon) readTaskWakeupMessages(conn *websocket.Conn, taskWakeups chan<-
 			if d.workspaceChanges != nil {
 				d.workspaceChanges.broadcast()
 			}
+		case protocol.EventDaemonPendingWork:
+			var payload protocol.PendingWorkPayload
+			if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+				d.logger.Debug("pending work websocket invalid payload", "error", err)
+				continue
+			}
+			if payload.RuntimeID == "" {
+				d.logger.Debug("pending work websocket missing runtime_id")
+				continue
+			}
+			// Own goroutine: the hint triggers an HTTP heartbeat plus the work it
+			// claims, and the read pump must stay free for the next frame.
+			go d.handlePendingWorkHint(payload.RuntimeID, payload.Kind)
 		case protocol.EventDaemonHeartbeatAck:
 			var ack HeartbeatResponse
 			if err := json.Unmarshal(msg.Payload, &ack); err != nil {
 				d.logger.Debug("ws heartbeat ack invalid payload", "error", err)
 				continue
 			}
-			d.handleWSHeartbeatAck(context.Background(), &ack)
+			d.handleWSHeartbeatAckForConnection(context.Background(), &ack, wsRPCGeneration)
 		case protocol.EventDaemonRPCResponse:
 			var resp protocol.RPCResponsePayload
 			if err := json.Unmarshal(msg.Payload, &resp); err != nil {
@@ -395,7 +445,7 @@ func (d *Daemon) readTaskWakeupMessages(conn *websocket.Conn, taskWakeups chan<-
 }
 
 func (d *Daemon) configureTaskWakeupReadLiveness(conn *websocket.Conn) {
-	conn.SetReadLimit(64 * 1024)
+	conn.SetReadLimit(taskWakeupReadLimit)
 	if err := d.extendTaskWakeupReadDeadline(conn); err != nil {
 		d.logger.Debug("task wakeup websocket read deadline failed", "error", err)
 	}

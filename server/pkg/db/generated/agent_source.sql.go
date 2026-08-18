@@ -661,7 +661,7 @@ WHERE target.id = $2
       WHERE agent_source.agent_id = target.id
         AND agent_source.managed_source_key = $4
   )
-RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key
+RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key, target.disabled_runtime_skills, target.service_tier
 `
 
 type UpdateManagedAgentOwnerParams struct {
@@ -706,6 +706,8 @@ func (q *Queries) UpdateManagedAgentOwner(ctx context.Context, arg UpdateManaged
 		&i.PermissionMode,
 		&i.Kind,
 		&i.SystemKey,
+		&i.DisabledRuntimeSkills,
+		&i.ServiceTier,
 	)
 	return i, err
 }

@@ -217,10 +217,10 @@ type dingtalkRawEvent struct {
 	AgentIdentityContextToken          string          `json:"agent_identity_context_token,omitempty"`
 	AgentIdentityContextTokenExpiresAt int64           `json:"agent_identity_context_token_expires_at,omitempty"`
 	DispatchContext                    json.RawMessage `json:"dispatch_context,omitempty"`
-	SenderCorpID              string          `json:"sender_corp_id,omitempty"`
-	SenderNick                string          `json:"sender_nick,omitempty"`
-	ConversationTitle         string          `json:"conversation_title,omitempty"`
-	Msgtype                   string          `json:"msgtype,omitempty"`
+	SenderCorpID                       string          `json:"sender_corp_id,omitempty"`
+	SenderNick                         string          `json:"sender_nick,omitempty"`
+	ConversationTitle                  string          `json:"conversation_title,omitempty"`
+	Msgtype                            string          `json:"msgtype,omitempty"`
 	// MessageAttachments carry short-lived credentials only to the DingTalk
 	// attachment importer. They must never be logged or persisted as URLs.
 	MessageAttachments []dingtalkRawAttachment `json:"message_attachments,omitempty"`
@@ -246,12 +246,12 @@ type AgentDispatchMessage struct {
 	// SenderID is the platform sender identifier used only for chat routing
 	// and per-sender session isolation. SenderUID/SenderOrgID are reserved for
 	// the trusted numeric DWS identity pair.
-	SenderID             string
-	SenderUID            string
-	SenderOrgID          string
-	SenderStaffID        string
-	SenderName           string
-	Text                 string
+	SenderID                      string
+	SenderUID                     string
+	SenderOrgID                   string
+	SenderStaffID                 string
+	SenderName                    string
+	Text                          string
 	IdentityContextToken          string
 	IdentityContextTokenExpiresAt int64
 	DispatchContext               json.RawMessage

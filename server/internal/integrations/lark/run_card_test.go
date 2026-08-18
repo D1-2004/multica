@@ -459,6 +459,9 @@ func (f *fakeCardClient) GetBotInfo(_ context.Context, _ InstallationCredentials
 func (f *fakeCardClient) GetMessage(_ context.Context, _ InstallationCredentials, _ string) ([]LarkMessage, error) {
 	return nil, nil
 }
+func (f *fakeCardClient) DownloadMessageResource(context.Context, InstallationCredentials, DownloadResourceParams) (DownloadedResource, error) {
+	return DownloadedResource{}, nil
+}
 func (f *fakeCardClient) ListChatMessages(_ context.Context, _ InstallationCredentials, _ ListMessagesParams) ([]LarkMessage, error) {
 	return nil, nil
 }

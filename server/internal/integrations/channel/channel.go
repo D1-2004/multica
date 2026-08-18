@@ -3,6 +3,8 @@ package channel
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Type identifies an inbound channel platform — the discriminator the
@@ -84,18 +86,20 @@ type Config struct {
 	Type Type
 	Raw  json.RawMessage
 
-	// InstallationID and connection identity are observability metadata from
-	// the Supervisor. They never contain platform credentials.
+	// Connection identity is non-secret observability metadata supplied by the
+	// supervisor. OnReady gates coordinated connection consumption.
 	InstallationID string
 	ConnectionID   string
 	NodeID         string
+	OnReady        func(context.Context) error
 
-	// OnReady is called by connection-oriented adapters after transport dial
-	// succeeds and before they consume the first inbound frame. Coordinated
-	// connections use it to atomically transition CONNECTING -> READY. A
-	// non-nil error aborts the connection; nil means no readiness barrier is
-	// required (the legacy singleton path).
-	OnReady func(context.Context) error
+	// ID is the channel_installation.id row this Channel is being built
+	// from. Zero when a build path doesn't have an installation (nothing
+	// in-tree does today, but Factory implementations should tolerate it
+	// rather than assume Valid). WeCom uses it to key its per-connection
+	// wsSender into a shared registry the OutboundReplier looks up by;
+	// Feishu and Slack don't currently read it.
+	ID pgtype.UUID
 
 	// Handler is the shared inbound entry point the engine injects so the
 	// built Channel can deliver normalized InboundMessage values into the

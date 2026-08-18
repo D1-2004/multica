@@ -54,17 +54,19 @@ const (
 // and replays it once the server is reachable again; the server treats
 // "already terminal" as idempotent success, so duplicate replays are safe.
 type pendingTerminalReport struct {
-	Kind          string    `json:"kind"`
-	TaskID        string    `json:"task_id"`
-	Output        string    `json:"output,omitempty"`
-	ResultMessage string    `json:"result_message,omitempty"`
-	BranchName    string    `json:"branch_name,omitempty"`
-	Error         string    `json:"error,omitempty"`
-	FailureReason string    `json:"failure_reason,omitempty"`
-	SessionID     string    `json:"session_id,omitempty"`
-	WorkDir       string    `json:"work_dir,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	Attempts      int       `json:"attempts"`
+	Kind                  string    `json:"kind"`
+	TaskID                string    `json:"task_id"`
+	Output                string    `json:"output,omitempty"`
+	ResultMessage         string    `json:"result_message,omitempty"`
+	BranchName            string    `json:"branch_name,omitempty"`
+	Error                 string    `json:"error,omitempty"`
+	FailureReason         string    `json:"failure_reason,omitempty"`
+	SessionID             string    `json:"session_id,omitempty"`
+	WorkDir               string    `json:"work_dir,omitempty"`
+	SessionRolloutMissing bool      `json:"session_rollout_missing,omitempty"`
+	RetiredSessionID      string    `json:"retired_session_id,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+	Attempts              int       `json:"attempts"`
 }
 
 // pendingReportStore is a small disk-backed queue keyed by task ID. All
@@ -246,7 +248,7 @@ func (d *Daemon) drainPendingReports(ctx context.Context) {
 		var err error
 		switch r.Kind {
 		case pendingReportKindComplete:
-			err = d.client.completeTaskWithSchedule(ctx, r.TaskID, r.Output, r.ResultMessage, r.BranchName, r.SessionID, r.WorkDir, nil)
+			err = d.client.completeTaskWithSchedule(ctx, r.TaskID, r.Output, r.ResultMessage, r.BranchName, r.SessionID, r.WorkDir, r.SessionRolloutMissing, r.RetiredSessionID, nil)
 		case pendingReportKindFail:
 			err = d.client.failTaskWithResultMessageAndSchedule(
 				ctx,
@@ -256,6 +258,8 @@ func (d *Daemon) drainPendingReports(ctx context.Context) {
 				r.SessionID,
 				r.WorkDir,
 				r.FailureReason,
+				r.SessionRolloutMissing,
+				r.RetiredSessionID,
 				nil,
 			)
 		default:

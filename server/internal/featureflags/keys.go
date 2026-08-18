@@ -13,18 +13,15 @@ const (
 	// The access model exists to gate Composio sharing, so the two ship on the
 	// same switch.
 	ComposioMCPApps = "composio_mcp_apps"
-	// AgentBuilder controls writes of system builder agents. It stays disabled
-	// through the schema-only rollout so an older server cannot expose them.
+	// AgentBuilder controls writes of system builder agents in the internal
+	// rolling-release path.
 	AgentBuilder = "agents_agent_builder"
 	// ResourceLabels controls the agent- and skill-scoped label namespaces.
-	// Issue labels remain available while this release flag is off.
 	ResourceLabels = "settings_resource_labels"
 	// WorkspaceAccessTokens gates issuance and use of workspace-bound DTA
 	// credentials during the additive-schema / rolling-server rollout.
 	WorkspaceAccessTokens = "workspace_access_tokens"
-	// MulticaMCPChatSend gates discovery and execution on the server-hosted MCP
-	// endpoint that lets one running Chat task continue another existing Chat.
-	// Task claim never installs this MCP into a Runtime or Agent configuration.
+	// MulticaMCPChatSend gates the server-hosted MCP chat continuation endpoint.
 	MulticaMCPChatSend = "multica_mcp_chat_send"
 	// agentSkillTogglesCompat is no longer a release flag. Keep publishing the
 	// key as enabled so installed v0.4.0 desktop clients, which still gate the

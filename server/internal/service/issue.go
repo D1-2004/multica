@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -51,30 +52,33 @@ func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.
 // to IssueService.Create. The handler owns the parsing step that turns its
 // request payload into this struct; the service stays transport-agnostic.
 type IssueCreateParams struct {
-	WorkspaceID               pgtype.UUID
-	Title                     string
-	Description               pgtype.Text
-	Status                    string
-	Priority                  string
-	AssigneeType              pgtype.Text
-	AssigneeID                pgtype.UUID
-	CreatorType               string // "agent" or "member"
-	CreatorID                 pgtype.UUID
-	ParentIssueID             pgtype.UUID
-	ProjectID                 pgtype.UUID
-	StartDate                 pgtype.Date
-	DueDate                   pgtype.Date
-	OriginType                pgtype.Text
-	OriginID                  pgtype.UUID
-	AttachmentIDs             []pgtype.UUID
+	WorkspaceID   pgtype.UUID
+	Title         string
+	Description   pgtype.Text
+	Status        string
+	Priority      string
+	AssigneeType  pgtype.Text
+	AssigneeID    pgtype.UUID
+	CreatorType   string // "agent" or "member"
+	CreatorID     pgtype.UUID
+	ParentIssueID pgtype.UUID
+	ProjectID     pgtype.UUID
+	StartDate     pgtype.Date
+	DueDate       pgtype.Date
+	OriginType    pgtype.Text
+	OriginID      pgtype.UUID
+	AttachmentIDs []pgtype.UUID
+	// LabelIDs are the issue-scoped labels to attach to the new issue. They
+	// are validated and written inside the create transaction (see Create),
+	// so the issue is never committed with a partial or wrong label set. An
+	// unknown or non-issue label id fails the whole create with
+	// ErrIssueLabelNotFound rather than being silently dropped.
+	LabelIDs                  []pgtype.UUID
 	AllowDuplicate            bool
 	AgentIdentityContextToken string
 	DispatchContext           []byte
 	// Metadata and SystemLabel* are server-owned decorations used by
-	// protocol-specific create flows such as Issue Delegation. Public Issue
-	// CRUD does not expose them. They are written in the same transaction as
-	// the Issue row so a daemon can never claim the resulting task before the
-	// routing metadata exists.
+	// protocol-specific create flows such as Issue Delegation.
 	Metadata               []byte
 	SystemLabelName        string
 	SystemLabelDescription string
@@ -105,8 +109,11 @@ type IssueCreateOpts struct {
 	// package to depend on handler-layer types. If nil, the service
 	// emits a minimal `{"issue_id": <uuid>}` payload — enough for cache
 	// invalidation, but front-ends that expect the full response shape
-	// must provide BroadcastPayload.
-	BroadcastPayload func(issue db.Issue, attachments []db.Attachment) map[string]any
+	// must provide BroadcastPayload. The labels argument is the authoritative
+	// snapshot attached in the create transaction, so the emitted payload can
+	// carry the new issue's labels and every online client renders it already
+	// labeled instead of blank until a refetch.
+	BroadcastPayload func(issue db.Issue, attachments []db.Attachment, labels []db.IssueLabel) map[string]any
 
 	// ActorID overrides the actor ID used for broadcast + analytics
 	// when it differs from the creator on the row. Agent-created issues
@@ -125,6 +132,12 @@ type IssueCreateOpts struct {
 	// daemon / lark / autopilot). Derived from middleware's client
 	// metadata at the handler layer.
 	Platform string
+
+	// AssignedAgentRunFireAt creates the automatic assigned-agent task in a
+	// durable deferred state. Channel /issue uses this while detached media is
+	// still resolving, then promotes the returned task after attachment binding.
+	// Zero preserves the ordinary immediate enqueue path.
+	AssignedAgentRunFireAt time.Time
 }
 
 // ErrActiveDuplicate signals that the duplicate guard found an active
@@ -150,6 +163,12 @@ var ErrProjectNotFound = errors.New("project not found in this workspace")
 var ErrDelegationSourceInactive = errors.New("delegation source task is not active")
 var ErrDelegationAlreadyExists = errors.New("delegation source task already has a child")
 
+// ErrIssueLabelNotFound signals that one of the supplied LabelIDs does not
+// exist in the issue's workspace or is not an issue-scoped label. The whole
+// create is rejected so a new issue is never born with a partial or wrong
+// label set. Callers translate this into their transport's 400.
+var ErrIssueLabelNotFound = errors.New("issue label not found in this workspace")
+
 // IssueCreateResult is the typed return from IssueService.Create.
 //
 //   - On the happy path: Issue is the new row, Attachments lists the
@@ -157,8 +176,17 @@ var ErrDelegationAlreadyExists = errors.New("delegation source task already has 
 //   - On ErrActiveDuplicate: DuplicateIssue is the row that blocked the
 //     create; Issue and Attachments are zero.
 type IssueCreateResult struct {
-	Issue          db.Issue
-	Attachments    []db.Attachment
+	Issue       db.Issue
+	Attachments []db.Attachment
+	// AssignedTaskID is populated when Create enqueues the automatic task for
+	// an agent assignee, including a task deferred by AssignedAgentRunFireAt.
+	AssignedTaskID pgtype.UUID
+	// Labels is the authoritative set of labels attached to the new issue in
+	// the create transaction (empty when none were requested). Callers echo it
+	// on the create response + issue:created event so every client renders the
+	// new issue already labeled and a new client can detect that the backend
+	// understood label_ids (see the create handler's compatibility contract).
+	Labels         []db.IssueLabel
 	DuplicateIssue *db.Issue
 	EnqueuedTask   *db.AgentTaskQueue
 }
@@ -170,14 +198,15 @@ type IssueCreateResult struct {
 //  3. Lock & check the duplicate guard.
 //  4. Increment the workspace issue counter.
 //  5. Insert the issue row (with optional origin stamping).
-//  6. For Issue Delegation, atomically insert its label, target task, lineage,
-//     and execution-update outbox while the source Chat task is locked.
-//  7. Commit.
-//  8. Link any pre-uploaded attachments (post-commit, idempotent).
+//  6. Commit.
+//  7. Link any pre-uploaded attachments (post-commit, idempotent).
+//  8. For a media-gated channel issue, persist its deferred assigned-agent
+//     task in the issue transaction so both rows become visible atomically.
+//     Ordinary creates keep their existing event-before-enqueue ordering.
 //  9. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
 //  10. Capture the IssueCreated analytics event.
-//  11. Publish the already-committed delegated task, or enqueue the ordinary
-//      assigned Agent/squad task when the issue is not in `backlog`.
+//  11. Enqueue the ordinary agent task or trigger the squad leader when the
+//     issue is assigned and not in `backlog`.
 //
 // Validation that lives in the service (parent existence, project
 // workspace membership, parent → project back-fill) is enforced here so
@@ -262,6 +291,15 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
+	// Validate labels before we increment the issue counter so a stale or
+	// wrong-scope selection fails the create cheaply. The de-duplicated rows
+	// are attached to the issue below, inside this same transaction, and
+	// echoed back as the authoritative snapshot in the result.
+	labels, err := validateIssueLabels(ctx, qtx, p.WorkspaceID, p.LabelIDs)
+	if err != nil {
+		return IssueCreateResult{}, err
+	}
+
 	duplicate, found, err := issueguard.LockAndFindActiveDuplicate(ctx, qtx, p.WorkspaceID, projectID, p.ParentIssueID, p.Title, p.AllowDuplicate)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("duplicate guard: %w", err)
@@ -291,6 +329,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 
 	var issue db.Issue
+	var assignedTask db.AgentTaskQueue
 	if p.OriginType.Valid {
 		issue, err = qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
 			WorkspaceID:   p.WorkspaceID,
@@ -338,6 +377,22 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		return IssueCreateResult{}, fmt.Errorf("create issue: %w", err)
 	}
 
+	// Attach labels inside the create transaction so the issue and its
+	// labels commit together — the old flow created the issue first and
+	// attached labels in a second, non-atomic round-trip whose partial
+	// failure left the issue mis-categorized. AttachLabelToIssue is
+	// workspace/resource_type-guarded and ON CONFLICT DO NOTHING, and the
+	// ids were already validated above.
+	for _, label := range labels {
+		if err := qtx.AttachLabelToIssue(ctx, db.AttachLabelToIssueParams{
+			IssueID:     issue.ID,
+			LabelID:     label.ID,
+			WorkspaceID: p.WorkspaceID,
+		}); err != nil {
+			return IssueCreateResult{}, fmt.Errorf("attach issue label: %w", err)
+		}
+	}
+
 	if p.SystemLabelName != "" {
 		color := p.SystemLabelColor
 		if color == "" {
@@ -352,11 +407,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		if err != nil {
 			return IssueCreateResult{}, fmt.Errorf("upsert system issue label: %w", err)
 		}
-		if err := qtx.AttachLabelToIssue(ctx, db.AttachLabelToIssueParams{
-			IssueID:     issue.ID,
-			LabelID:     label.ID,
-			WorkspaceID: p.WorkspaceID,
-		}); err != nil {
+		if err := qtx.AttachLabelToIssue(ctx, db.AttachLabelToIssueParams{IssueID: issue.ID, LabelID: label.ID, WorkspaceID: p.WorkspaceID}); err != nil {
 			return IssueCreateResult{}, fmt.Errorf("attach system issue label: %w", err)
 		}
 	}
@@ -373,12 +424,25 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		if !agent.RuntimeID.Valid {
 			return IssueCreateResult{}, errors.New("delegation target agent has no runtime")
 		}
+		originatorUserID := delegationSource.OriginatorUserID
+		if !originatorUserID.Valid {
+			originatorUserID = p.CreatorID
+		}
+		accountableUserID := delegationSource.AccountableUserID
+		if !accountableUserID.Valid && originatorUserID.Valid {
+			accountableUserID = originatorUserID
+		}
 		task, taskErr := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 			AgentID:                   issue.AssigneeID,
 			RuntimeID:                 agent.RuntimeID,
 			IssueID:                   issue.ID,
 			Priority:                  priorityToInt(issue.Priority),
-			OriginatorUserID:          p.CreatorID,
+			OriginatorUserID:          originatorUserID,
+			AccountableUserID:         accountableUserID,
+			OriginatorSource:          pgtype.Text{String: "delegation", Valid: true},
+			DelegatedFromTaskID:       delegationSource.ID,
+			TriggerEvidenceKind:       pgtype.Text{String: "issue_assignment", Valid: true},
+			TriggerEvidenceRefID:      issue.ID,
 			RuntimeMcpOverlay:         delegationOverlay.Overlay,
 			RuntimeConnectedApps:      delegationOverlay.ConnectedApps,
 			ParentTaskID:              delegationSource.ID,
@@ -395,19 +459,30 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 				return IssueCreateResult{}, fmt.Errorf("load delegation workspace: %w", workspaceErr)
 			}
 			if _, updateErr := qtx.EnqueueTaskExecutionUpdate(ctx, db.EnqueueTaskExecutionUpdateParams{
-				RootTaskID:     delegationSource.ID,
-				TargetTaskID:   task.ID,
-				IssueID:        issue.ID,
+				RootTaskID:      delegationSource.ID,
+				TargetTaskID:    task.ID,
+				IssueID:         issue.ID,
 				IssueIdentifier: fmt.Sprintf("%s-%d", workspace.IssuePrefix, issue.Number),
-				CallbackUrl:    p.Delegation.CallbackUpdateURL,
-				TargetIdentity: p.Delegation.CallbackTarget,
-				RequestID:      "multica-handoff:" + util.UUIDToString(delegationSource.ID),
-				AgentID:        delegationSource.AgentID,
-				TargetAgentID:  task.AgentID,
-				UpdateType:     "delegated_to_issue",
+				CallbackUrl:     p.Delegation.CallbackUpdateURL,
+				TargetIdentity:  p.Delegation.CallbackTarget,
+				RequestID:       "multica-handoff:" + util.UUIDToString(delegationSource.ID),
+				AgentID:         delegationSource.AgentID,
+				TargetAgentID:   task.AgentID,
+				UpdateType:      "delegated_to_issue",
 			}); updateErr != nil {
 				return IssueCreateResult{}, fmt.Errorf("enqueue delegation update: %w", updateErr)
 			}
+		}
+	}
+
+	if p.Delegation == nil && !opts.AssignedAgentRunFireAt.IsZero() && s.shouldEnqueueAgentTaskWithQueries(ctx, qtx, issue) {
+		// The issue must never become visible without its media-gated assigned
+		// task. Inserting both rows through qtx makes the unique-index winner
+		// deterministic: any observer that can discover the committed issue also
+		// sees the inert deferred task and must merge into it.
+		assignedTask, err = s.TaskService.createDeferredChannelIssueTaskWithQueries(ctx, qtx, issue, opts.AssignedAgentRunFireAt)
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("create deferred channel issue task: %w", err)
 		}
 	}
 
@@ -422,23 +497,83 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		actorID = util.UUIDToString(issue.CreatorID)
 	}
 
-	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
-	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
+	var assignedTaskID pgtype.UUID
 	if enqueuedTask != nil {
+		assignedTaskID = enqueuedTask.ID
 		s.TaskService.publishIssueTaskEnqueued(ctx, *enqueuedTask)
-	} else {
-		enqueuedTask = s.maybeEnqueueOnAssign(
-			ctx,
-			issue,
-			p.CreatorType,
-			actorID,
-			p.AgentIdentityContextToken,
-			p.DispatchContext,
-			p.ParentTaskID,
-		)
+	} else if !opts.AssignedAgentRunFireAt.IsZero() {
+		assignedTaskID = assignedTask.ID
+		if assignedTaskID.Valid {
+			if err := s.TaskService.hydrateDeferredChannelIssueTaskOverlay(ctx, assignedTask); err != nil {
+				// Runtime overlays are best-effort on every enqueue path. The task is
+				// already durable and safely deferred, so an optional integration
+				// failure must not turn a committed issue into a retry duplicate.
+				slog.Warn("hydrate deferred channel issue task overlay failed",
+					"issue_id", util.UUIDToString(issue.ID),
+					"task_id", util.UUIDToString(assignedTask.ID),
+					"error", err)
+			}
+		} else if s.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
+			// AssignedAgentRunFireAt currently belongs to channel /issue, which
+			// always resolves an agent assignee. Preserve the ordinary squad path
+			// for any future caller that supplies the option with a squad.
+			s.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, p.CreatorType, actorID, p.AgentIdentityContextToken)
+		}
 	}
 
-	return IssueCreateResult{Issue: issue, Attachments: attachments, EnqueuedTask: enqueuedTask}, nil
+	s.publishIssueCreated(issue, attachments, labels, p.CreatorType, actorID, opts)
+	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
+	if enqueuedTask == nil && opts.AssignedAgentRunFireAt.IsZero() {
+		enqueuedTask = s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID, p.AgentIdentityContextToken, p.DispatchContext, p.ParentTaskID)
+		if enqueuedTask != nil {
+			assignedTaskID = enqueuedTask.ID
+		}
+	}
+
+	return IssueCreateResult{Issue: issue, Attachments: attachments, Labels: labels, AssignedTaskID: assignedTaskID, EnqueuedTask: enqueuedTask}, nil
+}
+
+// validateIssueLabels checks that every requested label exists in the
+// workspace and is issue-scoped, returning the de-duplicated label rows to
+// attach. Returning the full rows (not just ids) lets Create echo an
+// authoritative label snapshot on the create response + issue:created event
+// without a second query. It mirrors the workspace + resource_type='issue'
+// guard already enforced by AttachLabelToIssue so an unknown or wrong-scope id
+// surfaces as ErrIssueLabelNotFound instead of a silent no-op insert. Invalid
+// (zero) UUIDs are skipped. The label count per issue is small, so a GetLabel
+// per distinct id is fine and avoids introducing a new batch query.
+func validateIssueLabels(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, labelIDs []pgtype.UUID) ([]db.IssueLabel, error) {
+	if len(labelIDs) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(labelIDs))
+	deduped := make([]db.IssueLabel, 0, len(labelIDs))
+	for _, labelID := range labelIDs {
+		if !labelID.Valid {
+			continue
+		}
+		key := util.UUIDToString(labelID)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+
+		label, err := qtx.GetLabel(ctx, db.GetLabelParams{
+			ID:          labelID,
+			WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrIssueLabelNotFound
+			}
+			return nil, fmt.Errorf("get issue label: %w", err)
+		}
+		if label.ResourceType != "issue" {
+			return nil, ErrIssueLabelNotFound
+		}
+		deduped = append(deduped, label)
+	}
+	return deduped, nil
 }
 
 // linkAttachments links the given attachment IDs to the newly created
@@ -473,13 +608,13 @@ func (s *IssueService) linkAttachments(ctx context.Context, issue db.Issue, ids 
 	return list
 }
 
-func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Attachment, creatorType, actorID string, opts IssueCreateOpts) {
+func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Attachment, labels []db.IssueLabel, creatorType, actorID string, opts IssueCreateOpts) {
 	if s.Bus == nil {
 		return
 	}
 	var payload map[string]any
 	if opts.BroadcastPayload != nil {
-		payload = opts.BroadcastPayload(issue, attachments)
+		payload = opts.BroadcastPayload(issue, attachments, labels)
 	} else {
 		// Minimal fallback so cache invalidations still fire even if the
 		// caller forgot to supply a builder. Front-ends that expect the
@@ -492,6 +627,58 @@ func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Atta
 		ActorType:   creatorType,
 		ActorID:     actorID,
 		Payload:     payload,
+	})
+}
+
+// PublishAttachmentsChanged refreshes attachments and the issue projection
+// after a detached channel media transaction. Issue creation is broadcast
+// before the remote download finishes, so the attachment event closes the
+// cache gap for current clients. The issue:updated event carries the newly
+// materialized description through a pre-existing protocol that installed
+// desktop clients already understand.
+func (s *IssueService) PublishAttachmentsChanged(ctx context.Context, issue db.Issue, actorID pgtype.UUID) {
+	if s.Bus == nil {
+		return
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventIssueAttachmentsChanged,
+		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		ActorType:   "member",
+		ActorID:     util.UUIDToString(actorID),
+		Payload: map[string]any{
+			"issue_id": util.UUIDToString(issue.ID),
+		},
+	})
+	if s.Queries == nil {
+		return
+	}
+
+	current, err := s.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("failed to load issue after channel media bind",
+			"issue_id", util.UUIDToString(issue.ID), "error", err)
+		return
+	}
+	workspace, err := s.Queries.GetWorkspace(ctx, issue.WorkspaceID)
+	if err != nil {
+		slog.Warn("failed to load workspace after channel media bind",
+			"workspace_id", util.UUIDToString(issue.WorkspaceID), "error", err)
+		return
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventIssueUpdated,
+		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		ActorType:   "member",
+		ActorID:     util.UUIDToString(actorID),
+		Payload: map[string]any{
+			"issue":            IssueToMap(current, workspace.IssuePrefix),
+			"assignee_changed": false,
+			"status_changed":   false,
+			"project_changed":  false,
+		},
 	})
 }
 
@@ -551,13 +738,7 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 		var task db.AgentTaskQueue
 		var err error
 		if parentTaskID.Valid {
-			task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContextAndParent(
-				ctx,
-				issue,
-				agentIdentityContextToken,
-				dispatchContext,
-				parentTaskID,
-			)
+			task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContextAndParent(ctx, issue, agentIdentityContextToken, dispatchContext, parentTaskID)
 		} else if len(dispatchContext) > 0 {
 			task, err = s.TaskService.EnqueueTaskForIssueWithDispatchContext(ctx, issue, agentIdentityContextToken, dispatchContext)
 		} else {
@@ -583,17 +764,21 @@ func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue,
 // Mirrors handler.shouldEnqueueAgentTask; kept here to make the service
 // self-contained, since both code paths must move together.
 func (s *IssueService) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bool {
+	return s.shouldEnqueueAgentTaskWithQueries(ctx, s.Queries, issue)
+}
+
+func (s *IssueService) shouldEnqueueAgentTaskWithQueries(ctx context.Context, q *db.Queries, issue db.Issue) bool {
 	if issue.Status == "backlog" {
 		return false
 	}
-	return s.isAgentAssigneeReady(ctx, issue)
+	return isAgentAssigneeReadyWithQueries(ctx, q, issue)
 }
 
-func (s *IssueService) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool {
+func isAgentAssigneeReadyWithQueries(ctx context.Context, q *db.Queries, issue db.Issue) bool {
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
 		return false
 	}
-	agent, err := s.Queries.GetAgent(ctx, issue.AssigneeID)
+	agent, err := q.GetAgent(ctx, issue.AssigneeID)
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return false
 	}

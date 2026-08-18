@@ -5,6 +5,7 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronDown,
+  ExternalLink,
   Filter,
   Loader2,
   MoreHorizontal,
@@ -52,6 +53,7 @@ import {
   DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -81,7 +83,7 @@ import {
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
-import { useRowLink } from "../../navigation";
+import { useIntentNavigate, useRowLink } from "../../navigation";
 import {
   CollectionPageHeader,
   CollectionPageHeaderAction,
@@ -174,11 +176,11 @@ function NameCell({ squad }: { squad: Squad }) {
     <ListGridCell className="gap-3">
       <SquadAvatar squad={squad} />
       <div className="min-w-0 flex-1">
-        <span className="block min-w-0 truncate text-sm font-medium">
+        <span className="block min-w-0 truncate text-body font-medium">
           {squad.name}
         </span>
         {squad.description ? (
-          <span className="block min-w-0 truncate text-xs text-muted-foreground">
+          <span className="block min-w-0 truncate text-caption text-muted-foreground">
             {squad.description}
           </span>
         ) : null}
@@ -197,7 +199,7 @@ function LeaderCell({
   return (
     <ListGridCell className="gap-1.5">
       <ActorAvatar actorType="agent" actorId={leaderId} size="sm" />
-      <span className="min-w-0 truncate text-xs text-muted-foreground">
+      <span className="min-w-0 truncate text-caption text-muted-foreground">
         {leader?.name ?? leaderId.slice(0, 8)}
       </span>
     </ListGridCell>
@@ -213,7 +215,7 @@ function MembersCell({ squad }: { squad: Squad }) {
   if (count === 0) {
     return (
       <ListGridCell className="hidden @2xl:flex">
-        <span className="text-xs text-muted-foreground/40">—</span>
+        <span className="text-caption text-faint-foreground">—</span>
       </ListGridCell>
     );
   }
@@ -236,7 +238,7 @@ function MembersCell({ squad }: { squad: Squad }) {
           </span>
         ))}
         {overflow > 0 && (
-          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground ring-2 ring-background">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-muted text-caption font-medium text-muted-foreground ring-2 ring-background">
             +{overflow}
           </span>
         )}
@@ -316,6 +318,9 @@ function ArchiveSquadDialog({
 
 function SquadRowActions({ squad }: { squad: Squad }) {
   const { t } = useT("squads");
+  const { t: tCommon } = useT("common");
+  const p = useWorkspacePaths();
+  const intentNavigate = useIntentNavigate();
   const [archiveOpen, setArchiveOpen] = useState(false);
   return (
     <span
@@ -335,6 +340,19 @@ function SquadRowActions({ squad }: { squad: Squad }) {
           }
         />
         <DropdownMenuContent align="end" className="w-40">
+          <DropdownMenuItem
+            onClick={() =>
+              intentNavigate(
+                p.squadDetail(squad.id),
+                "foreground-tab",
+                squad.name,
+              )
+            }
+          >
+            <ExternalLink className="size-3.5" />
+            {tCommon(($) => $.navigation.open_in_new_tab)}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem
             variant="destructive"
             onClick={() => setArchiveOpen(true)}
@@ -462,7 +480,7 @@ function SquadListToolbar({
     (filters.creators.length > 0 ? 1 : 0);
   const hasActiveFilters = activeFilterCount > 0;
   const countBadge = (n: number) => (
-    <span className="ml-auto pl-3 text-xs text-muted-foreground">{n}</span>
+    <span className="ml-auto pl-3 text-caption text-muted-foreground">{n}</span>
   );
   const SCOPE_LABELS: Record<SquadsScope, string> = {
     mine: t(($) => $.scope.mine),
@@ -497,7 +515,7 @@ function SquadListToolbar({
               onClick={() => onScopeChange(s)}
             >
               {SCOPE_LABELS[s]}
-              <span className="tabular-nums text-xs text-muted-foreground/70">
+              <span className="tabular-nums text-caption text-muted-foreground">
                 {scopeCounts[s]}
               </span>
             </Button>
@@ -524,7 +542,7 @@ function SquadListToolbar({
               {SQUAD_SCOPES.map((s) => (
                 <DropdownMenuRadioItem key={s} value={s}>
                   {SCOPE_LABELS[s]}
-                  <span className="ml-2 tabular-nums text-xs text-muted-foreground/70">
+                  <span className="ml-2 tabular-nums text-caption text-muted-foreground">
                     {scopeCounts[s]}
                   </span>
                 </DropdownMenuRadioItem>
@@ -536,7 +554,7 @@ function SquadListToolbar({
         {hasActiveFilters && (
           <span
             title={t(($) => $.toolbar.result_count_title)}
-            className="hidden shrink-0 text-xs tabular-nums text-muted-foreground md:inline"
+            className="hidden shrink-0 text-caption tabular-nums text-muted-foreground md:inline"
           >
             {visibleCount} / {totalCount}
           </span>
@@ -592,7 +610,7 @@ function SquadListToolbar({
             <DropdownMenuSubTrigger>
               <span className="flex-1">{t(($) => $.page.table.leader)}</span>
               {filters.leaders.length > 0 && (
-                <span className="text-xs font-medium text-primary">{filters.leaders.length}</span>
+                <span className="text-caption font-medium text-primary">{filters.leaders.length}</span>
               )}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
@@ -615,7 +633,7 @@ function SquadListToolbar({
             <DropdownMenuSubTrigger>
               <span className="flex-1">{t(($) => $.page.table.creator)}</span>
               {filters.creators.length > 0 && (
-                <span className="text-xs font-medium text-primary">{filters.creators.length}</span>
+                <span className="text-caption font-medium text-primary">{filters.creators.length}</span>
               )}
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
@@ -666,7 +684,7 @@ function SquadListToolbar({
         </Tooltip>
         <PopoverContent align="end" className="w-64 p-0">
           <div className="border-b px-3 py-2.5">
-            <span className="text-xs font-medium text-muted-foreground">
+            <span className="text-caption font-medium text-muted-foreground">
               {t(($) => $.toolbar.sort_by)}
             </span>
             <div className="mt-2 flex items-center gap-1.5">
@@ -676,7 +694,7 @@ function SquadListToolbar({
                     <Button
                       variant="outline"
                       size="sm"
-                      className="flex-1 justify-between text-xs"
+                      className="flex-1 justify-between text-caption"
                     >
                       {sortLabel}
                       <ChevronDown className="size-3 text-muted-foreground" />
@@ -721,7 +739,7 @@ function SquadListToolbar({
             </div>
           </div>
           <div className="px-3 py-2.5">
-            <span className="text-xs font-medium text-muted-foreground">
+            <span className="text-caption font-medium text-muted-foreground">
               {t(($) => $.toolbar.section_columns)}
             </span>
             <div className="mt-2 space-y-2">
@@ -730,7 +748,7 @@ function SquadListToolbar({
                   key={key}
                   className="flex cursor-pointer items-center justify-between"
                 >
-                  <span className="text-sm">{COLUMN_LABELS[key]}</span>
+                  <span className="text-body">{COLUMN_LABELS[key]}</span>
                   <Switch
                     size="sm"
                     checked={!hiddenColumns.includes(key)}
@@ -955,7 +973,7 @@ export function SquadsPage() {
                 isColVisible={isColVisible}
               />
               {rows.length === 0 ? (
-                <div className="col-span-full py-16 text-center text-sm text-muted-foreground">
+                <div className="col-span-full py-16 text-center text-body text-muted-foreground">
                   {t(($) => $.page.no_matches)}
                 </div>
               ) : (
@@ -963,7 +981,7 @@ export function SquadsPage() {
                   <ListGridRow
                     key={squad.id}
                     className="cursor-pointer"
-                    {...rowLink(p.squadDetail(squad.id))}
+                    {...rowLink(p.squadDetail(squad.id), squad.name)}
                   >
                     <NameCell squad={squad} />
                     <LeaderCell
@@ -982,7 +1000,7 @@ export function SquadsPage() {
                           actorId={squad.creator_id}
                           size="sm"
                         />
-                        <span className="min-w-0 truncate text-xs text-muted-foreground">
+                        <span className="min-w-0 truncate text-caption text-muted-foreground">
                           {membersById.get(squad.creator_id)?.name ??
                             squad.creator_id.slice(0, 8)}
                         </span>
@@ -991,7 +1009,7 @@ export function SquadsPage() {
                       <ListGridCell className="hidden px-0 @2xl:flex" />
                     )}
                     {isColVisible("created") ? (
-                      <ListGridCell className="hidden whitespace-nowrap text-xs tabular-nums text-muted-foreground @2xl:flex">
+                      <ListGridCell className="hidden whitespace-nowrap text-caption tabular-nums text-muted-foreground @2xl:flex">
                         {new Date(squad.created_at).toLocaleDateString()}
                       </ListGridCell>
                     ) : (

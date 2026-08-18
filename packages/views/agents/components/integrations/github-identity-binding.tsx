@@ -183,10 +183,10 @@ export function GitHubIdentityBindingCard({
           <GitFork className="h-4 w-4" />
         </span>
         <div className="min-w-0 flex-1 space-y-1">
-          <h3 className="text-sm font-medium">
+          <h3 className="text-body font-medium">
             {t(($) => $.tab_body.integrations.github_identity_title)}
           </h3>
-          <p className="text-xs leading-relaxed text-muted-foreground">
+          <p className="text-caption leading-relaxed text-muted-foreground">
             {t(($) => $.tab_body.integrations.github_identity_description)}
           </p>
         </div>
@@ -194,23 +194,23 @@ export function GitHubIdentityBindingCard({
 
       <div className="border-t px-4 py-3">
         {!canManage ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(($) => $.tab_body.integrations.github_identity_members_note)}
           </p>
         ) : isPending ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(($) => $.tab_body.integrations.github_identity_loading)}
           </p>
         ) : data?.configured !== true ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(($) => $.tab_body.integrations.github_identity_not_configured)}
           </p>
         ) : connection ? (
           <div className="space-y-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
-                <p className="truncate text-sm font-medium">@{connection.accountLogin}</p>
-                <div className="space-y-1 text-xs text-muted-foreground">
+                <p className="truncate text-body font-medium">@{connection.accountLogin}</p>
+                <div className="space-y-1 text-caption text-muted-foreground">
                   <p>
                     {t(($) => $.tab_body.integrations.github_identity_status)}:{" "}
                     {statusLabel(
@@ -294,10 +294,10 @@ export function GitHubIdentityBindingCard({
           </Button>
         )}
         {actionMessage ? (
-          <p className="mt-3 text-xs text-emerald-600">{actionMessage}</p>
+          <p className="mt-3 text-caption text-emerald-600">{actionMessage}</p>
         ) : null}
         {actionError ? (
-          <p className="mt-3 text-xs text-destructive">{actionError}</p>
+          <p className="mt-3 text-caption text-destructive">{actionError}</p>
         ) : null}
       </div>
     </section>

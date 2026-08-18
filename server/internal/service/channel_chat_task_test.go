@@ -140,10 +140,14 @@ func preparedUpsertParams(sessionID pgtype.UUID, p PreparedChannelChatTask) db.U
 		ChatSessionID:        sessionID,
 		InitiatorUserID:      p.InitiatorUserID,
 		OriginatorUserID:     p.OriginatorUserID,
+		AccountableUserID:    p.AccountableUserID,
 		ForceFreshSession:    pgtype.Bool{Bool: p.ForceFreshSession, Valid: true},
 		RuntimeMcpOverlay:    p.RuntimeMCPOverlay,
 		RuntimeConnectedApps: p.RuntimeConnectedApps,
 		TaskContext:          p.TaskContext,
+		OriginatorSource:     p.OriginatorSource,
+		TriggerEvidenceKind:  p.TriggerEvidenceKind,
+		TriggerEvidenceRefID: p.TriggerEvidenceRefID,
 		DebounceSeconds:      p.DebounceSeconds,
 	}
 }
@@ -179,6 +183,18 @@ func TestPrepareChannelChatTaskPreservesRuntimeEnvelope(t *testing.T) {
 	}
 	if prepared.InitiatorUserID != f.userID || prepared.OriginatorUserID != f.userID {
 		t.Fatal("prepared task must preserve the triggering user as initiator and originator")
+	}
+	if prepared.AccountableUserID != f.userID {
+		t.Fatal("prepared task must preserve the triggering user as accountable")
+	}
+	if !prepared.OriginatorSource.Valid || prepared.OriginatorSource.String != "direct_human" {
+		t.Fatalf("originator source = %v, want direct_human", prepared.OriginatorSource)
+	}
+	if !prepared.TriggerEvidenceKind.Valid || prepared.TriggerEvidenceKind.String != "chat" {
+		t.Fatalf("trigger evidence kind = %v, want chat", prepared.TriggerEvidenceKind)
+	}
+	if prepared.TriggerEvidenceRefID != f.sessionID {
+		t.Fatalf("trigger evidence ref = %v, want chat session %v", prepared.TriggerEvidenceRefID, f.sessionID)
 	}
 	if !prepared.ForceFreshSession {
 		t.Fatal("force-fresh flag was not preserved")
@@ -229,6 +245,13 @@ func TestPrepareChannelChatTaskSeparatesPrincipalFromInitiator(t *testing.T) {
 	}
 	if prepared.OriginatorUserID != f.userID {
 		t.Fatalf("originator principal = %v, want %v", prepared.OriginatorUserID, f.userID)
+	}
+	if prepared.AccountableUserID != f.userID {
+		t.Fatalf("accountable principal = %v, want %v", prepared.AccountableUserID, f.userID)
+	}
+	if prepared.OriginatorSource.String != "direct_human" || prepared.TriggerEvidenceKind.String != "chat" || prepared.TriggerEvidenceRefID != f.sessionID {
+		t.Fatalf("attribution = source %v evidence %v/%v, want direct_human chat/%v",
+			prepared.OriginatorSource, prepared.TriggerEvidenceKind, prepared.TriggerEvidenceRefID, f.sessionID)
 	}
 	if builder.lastUser != f.userID {
 		t.Fatalf("overlay principal = %v, want %v", builder.lastUser, f.userID)
@@ -310,6 +333,14 @@ func TestUpsertDeferredChannelChatTaskConcurrentCoalesces(t *testing.T) {
 	}
 	if task.ChatInputTaskID != task.ID {
 		t.Fatalf("chat input owner = %s, want task id %s", util.UUIDToString(task.ChatInputTaskID), util.UUIDToString(task.ID))
+	}
+	if task.OriginatorUserID != f.userID || task.AccountableUserID != f.userID {
+		t.Fatalf("task attribution users = originator %v accountable %v, want %v", task.OriginatorUserID, task.AccountableUserID, f.userID)
+	}
+	if !task.OriginatorSource.Valid || task.OriginatorSource.String != "direct_human" ||
+		!task.TriggerEvidenceKind.Valid || task.TriggerEvidenceKind.String != "chat" || task.TriggerEvidenceRefID != f.sessionID {
+		t.Fatalf("task attribution = source %v evidence %v/%v, want direct_human chat/%v",
+			task.OriginatorSource, task.TriggerEvidenceKind, task.TriggerEvidenceRefID, f.sessionID)
 	}
 	if !task.ForceFreshSession {
 		t.Fatal("force-fresh OR was lost during concurrent coalescing")

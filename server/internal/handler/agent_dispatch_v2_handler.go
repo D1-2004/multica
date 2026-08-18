@@ -80,7 +80,7 @@ func buildAgentDispatchIssueCreateParams(
 		SystemLabelName:           overrides.SystemLabelName,
 		SystemLabelDescription:    overrides.SystemLabelDescription,
 		SystemLabelColor:          overrides.SystemLabelColor,
-		ParentTaskID:               overrides.ParentTaskID,
+		ParentTaskID:              overrides.ParentTaskID,
 	}
 }
 
@@ -111,14 +111,14 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	// be duplicated in a JSON snapshot. The stable DWS descriptor is retained so
 	// identity can be resolved immediately before a cloud sandbox starts.
 	payload := map[string]any{
-		"dispatch_schema_version":             c.SchemaVersion,
-		"dispatch_source":                     c.Source,
-		"dispatch_domain":                     c.Event.Domain,
-		"dispatch_type":                       c.Event.Type,
-		"dispatch_event_data":                 c.Event.Data,
-		protocol.DispatchSurfaceJSONKey:        c.Surface,
-		protocol.DispatchOutboundJSONKey:       c.Outbound,
-		"dispatch_idempotency_key":            idempotencyKey,
+		"dispatch_schema_version":        c.SchemaVersion,
+		"dispatch_source":                c.Source,
+		"dispatch_domain":                c.Event.Domain,
+		"dispatch_type":                  c.Event.Type,
+		"dispatch_event_data":            c.Event.Data,
+		protocol.DispatchSurfaceJSONKey:  c.Surface,
+		protocol.DispatchOutboundJSONKey: c.Outbound,
+		"dispatch_idempotency_key":       idempotencyKey,
 	}
 	if strings.TrimSpace(c.ContextPrompt) != "" {
 		payload[protocol.DispatchContextPromptJSONKey] = c.ContextPrompt
@@ -516,18 +516,18 @@ func (h *Handler) createAgentDispatchChatV2(
 	}
 	dispatchText := strings.Join(textParts, "\n\n")
 	dispatchMessage := dingtalk.AgentDispatchMessage{
-		ConversationID:       command.Event.Data.Conversation.OpenConversationID,
-		ConversationType:     command.Event.Data.Conversation.Type,
-		ConversationTitle:    command.Event.Data.Conversation.Title,
-		MessageID:            latest.OpenMsgID,
-		CreatedAt:            latest.OccurredAt,
-		SenderID:             senderID,
-		SenderStaffID:        command.Event.Data.Sender.StaffID,
-		SenderName:           command.Event.Data.Sender.DisplayName,
-		Text:                 dispatchText,
-		IdentityContextToken: command.ExternalIdentity.ContextToken,
+		ConversationID:                command.Event.Data.Conversation.OpenConversationID,
+		ConversationType:              command.Event.Data.Conversation.Type,
+		ConversationTitle:             command.Event.Data.Conversation.Title,
+		MessageID:                     latest.OpenMsgID,
+		CreatedAt:                     latest.OccurredAt,
+		SenderID:                      senderID,
+		SenderStaffID:                 command.Event.Data.Sender.StaffID,
+		SenderName:                    command.Event.Data.Sender.DisplayName,
+		Text:                          dispatchText,
+		IdentityContextToken:          command.ExternalIdentity.ContextToken,
 		IdentityContextTokenExpiresAt: command.ExternalIdentity.ExpiresAt,
-		DispatchContext:      dispatchRuntimeContext(command, dispatchIdempotencyKey(r, command)),
+		DispatchContext:               dispatchRuntimeContext(command, dispatchIdempotencyKey(r, command)),
 	}
 	var message channel.InboundMessage
 	var err error

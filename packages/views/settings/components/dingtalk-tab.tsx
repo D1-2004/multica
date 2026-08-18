@@ -124,7 +124,7 @@ export function DingTalkTab() {
   return (
     <div className="space-y-8">
       <section className="space-y-1">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-body text-muted-foreground">
           {t(($) => $.dingtalk.page_description)}
         </p>
       </section>
@@ -132,10 +132,10 @@ export function DingTalkTab() {
       {!configured ? (
         <Card>
           <CardContent className="space-y-2">
-            <p className="text-sm font-medium">{t(($) => $.dingtalk.not_enabled_title)}</p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-body font-medium">{t(($) => $.dingtalk.not_enabled_title)}</p>
+            <p className="text-caption text-muted-foreground">
               {t(($) => $.dingtalk.not_enabled_description_prefix)}{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
+              <code className="rounded bg-muted px-1 py-0.5 text-micro">
                 MULTICA_DINGTALK_SECRET_KEY
               </code>{" "}
               {t(($) => $.dingtalk.not_enabled_description_suffix)}{" "}
@@ -145,18 +145,18 @@ export function DingTalkTab() {
         </Card>
       ) : (
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold">{t(($) => $.dingtalk.connected_bots)}</h2>
+          <h2 className="text-body font-semibold">{t(($) => $.dingtalk.connected_bots)}</h2>
           {isLoading ? (
             <Card>
               <CardContent>
-                <p className="text-sm text-muted-foreground">{t(($) => $.dingtalk.loading)}</p>
+                <p className="text-body text-muted-foreground">{t(($) => $.dingtalk.loading)}</p>
               </CardContent>
             </Card>
           ) : installations.length === 0 ? (
             <Card>
               <CardContent className="space-y-2">
-                <p className="text-sm font-medium">{t(($) => $.dingtalk.empty_title)}</p>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-body font-medium">{t(($) => $.dingtalk.empty_title)}</p>
+                <p className="text-caption text-muted-foreground">
                   {t(($) => $.dingtalk.empty_description_prefix)}{" "}
                   <strong>{t(($) => $.dingtalk.empty_description_cta)}</strong>{" "}
                   {t(($) => $.dingtalk.empty_description_suffix)}
@@ -245,26 +245,26 @@ function InstallationRow({
           profileLink
         />
         <div className="space-y-1">
-          <p className="text-sm font-medium">
+          <p className="text-body font-medium">
             {agentName}
             {!isActive && (
-              <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-micro text-muted-foreground">
                 {t(($) => $.dingtalk.revoked_badge)}
               </span>
             )}
           </p>
-          <p className="text-[10px] text-muted-foreground">
+          <p className="text-micro text-muted-foreground">
             {t(($) => $.dingtalk.installed_at_label, {
               when: new Date(installation.installed_at).toLocaleString(),
             })}
           </p>
           {isApproving && (
-            <p className="text-[10px] text-amber-700 dark:text-amber-400">
+            <p className="text-micro text-amber-700 dark:text-amber-400">
               {t(($) => $.dingtalk.approving_hint)}
             </p>
           )}
           {installation.transport_mode === "HTTP_CALLBACK" && (
-            <p className="text-[10px] text-muted-foreground">
+            <p className="text-micro text-muted-foreground">
               {installation.router_status === "registered"
                 ? t(($) => $.dingtalk.router_registered)
                 : t(($) => $.dingtalk.router_registration_failed)}
@@ -417,7 +417,7 @@ function DingTalkAgentBotStatusRow({
       type="button"
       onClick={onClick}
       className={cn(
-        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-caption text-muted-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
         className,
       )}
       data-testid="dingtalk-agent-bot-status"
@@ -481,7 +481,7 @@ function DingTalkAgentBotConnectedBadge({
       data-testid="dingtalk-agent-bot-connected"
     >
       <div className="flex items-center justify-between gap-3">
-        <span className="inline-flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <span className="inline-flex min-w-0 items-center gap-2 text-caption text-muted-foreground">
           <span
             className={cn(
               "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
@@ -514,7 +514,7 @@ function DingTalkAgentBotConnectedBadge({
         href={DINGTALK_DEV_CONSOLE}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+        className="inline-flex items-center gap-1 text-caption text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
         title={t(($) => $.dingtalk.agent_bot_manage_tooltip)}
       >
         <ExternalLink className="h-3 w-3" />
@@ -832,10 +832,10 @@ function DingTalkInstallDialog({
                       }}
                     />
                     <label htmlFor="dingtalk-allow-unbound" className="flex-1 cursor-pointer">
-                      <span className="text-sm font-medium">
+                      <span className="text-body font-medium">
                         {t(($) => $.dingtalk.install_allow_unbound_label)}
                       </span>
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                      <span className="mt-0.5 block text-caption text-muted-foreground">
                         {t(($) => $.dingtalk.install_allow_unbound_hint)}
                       </span>
                     </label>
@@ -844,7 +844,7 @@ function DingTalkInstallDialog({
               )}
 
               {beginning && !session && (
-                <p className="text-sm text-muted-foreground">{t(($) => $.dingtalk.install_starting)}</p>
+                <p className="text-body text-muted-foreground">{t(($) => $.dingtalk.install_starting)}</p>
               )}
 
               {session && status === "pending" && (
@@ -852,14 +852,14 @@ function DingTalkInstallDialog({
                   <div className="rounded-md border bg-white p-3">
                     <QRCode value={session.qrCodeURL} size={192} />
                   </div>
-                  <p className="text-center text-xs text-muted-foreground">
+                  <p className="text-center text-caption text-muted-foreground">
                     {t(($) => $.dingtalk.install_scan_hint)}
                   </p>
                   <a
                     href={session.qrCodeURL}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs underline text-muted-foreground"
+                    className="text-caption underline text-muted-foreground"
                   >
                     {t(($) => $.dingtalk.install_open_link_fallback)}
                   </a>
@@ -867,15 +867,15 @@ function DingTalkInstallDialog({
               )}
 
               {status === "success" && (
-                <p className="text-sm font-medium">{t(($) => $.dingtalk.install_success)}</p>
+                <p className="text-body font-medium">{t(($) => $.dingtalk.install_success)}</p>
               )}
 
               {status === "approving" && (
                 <div className="space-y-2 text-center" data-testid="dingtalk-install-approving">
-                  <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                  <p className="text-body font-medium text-amber-700 dark:text-amber-400">
                     {t(($) => $.dingtalk.install_approving)}
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-caption text-muted-foreground">
                     {t(($) => $.dingtalk.install_approving_hint)}
                   </p>
                 </div>
@@ -883,7 +883,7 @@ function DingTalkInstallDialog({
 
               {status === "error" && (
                 <div className="space-y-2 text-center">
-                  <p className="text-sm font-medium text-destructive">
+                  <p className="text-body font-medium text-destructive">
                     {(() => {
                       switch (errorReason) {
                         case "expired":
@@ -908,7 +908,7 @@ function DingTalkInstallDialog({
                     })()}
                   </p>
                   {errorMessage && (
-                    <p className="text-[10px] text-muted-foreground break-all">
+                    <p className="text-micro text-muted-foreground break-all">
                       {errorMessage}
                     </p>
                   )}
@@ -919,7 +919,7 @@ function DingTalkInstallDialog({
                 <button
                   type="button"
                   onClick={switchToManual}
-                  className="text-xs underline text-muted-foreground hover:text-foreground"
+                  className="text-caption underline text-muted-foreground hover:text-foreground"
                   data-testid="dingtalk-install-manual-link"
                 >
                   {t(($) => $.dingtalk.install_manual_link)}
@@ -928,14 +928,14 @@ function DingTalkInstallDialog({
             </>
           ) : (
             <div className="w-full space-y-4" data-testid="dingtalk-install-manual-form">
-              <p className="text-xs text-muted-foreground">
+              <p className="text-caption text-muted-foreground">
                 {t(($) => $.dingtalk.install_manual_description)}
               </p>
               <a
                 href={DINGTALK_DEV_CONSOLE}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+                className="inline-flex items-center gap-1 text-caption text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
               >
                 <ExternalLink className="h-3 w-3" />
                 {t(($) => $.dingtalk.install_manual_console_link)}
@@ -994,16 +994,16 @@ function DingTalkInstallDialog({
                   htmlFor="dingtalk-manual-allow-unbound"
                   className="flex-1 cursor-pointer"
                 >
-                  <span className="text-sm font-medium">
+                  <span className="text-body font-medium">
                     {t(($) => $.dingtalk.install_allow_unbound_label)}
                   </span>
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
+                  <span className="mt-0.5 block text-caption text-muted-foreground">
                     {t(($) => $.dingtalk.install_allow_unbound_hint)}
                   </span>
                 </label>
               </div>
               {manualError && (
-                <p className="text-xs text-destructive" role="alert">
+                <p className="text-caption text-destructive" role="alert">
                   {manualError}
                 </p>
               )}
@@ -1011,7 +1011,7 @@ function DingTalkInstallDialog({
                 <button
                   type="button"
                   onClick={switchToScan}
-                  className="text-xs underline text-muted-foreground hover:text-foreground"
+                  className="text-caption underline text-muted-foreground hover:text-foreground"
                 >
                   {t(($) => $.dingtalk.install_manual_back_to_scan)}
                 </button>

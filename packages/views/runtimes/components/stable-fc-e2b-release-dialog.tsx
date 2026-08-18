@@ -305,13 +305,13 @@ export function StableFCE2BReleaseDialog({
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="flex max-h-[min(92dvh,56rem)] min-w-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
         <DialogHeader className="shrink-0 border-b border-surface-border px-5 py-4 pr-12">
-          <DialogTitle className="flex items-center gap-2 text-base">
+          <DialogTitle className="flex items-center gap-2 text-title-sm">
             <ShieldCheck className="h-4 w-4 text-muted-foreground" />
             {sandboxBackend === "asb"
               ? t(($) => $.fc_e2b_stable.title_asb)
               : t(($) => $.fc_e2b_stable.title)}
           </DialogTitle>
-          <DialogDescription className="text-xs">
+          <DialogDescription className="text-caption">
             {sandboxBackend === "asb"
               ? t(($) => $.fc_e2b_stable.description_asb)
               : t(($) => $.fc_e2b_stable.description)}
@@ -320,7 +320,7 @@ export function StableFCE2BReleaseDialog({
 
         <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden px-5 py-4">
         {current && (
-          <div className="min-w-0 space-y-1.5 rounded-md border border-primary/25 bg-primary/5 p-3 text-xs">
+          <div className="min-w-0 space-y-1.5 rounded-md border border-primary/25 bg-primary/5 p-3 text-caption">
             <div className="flex items-center gap-2">
               <ShieldCheck className="h-3.5 w-3.5 text-primary" />
               <span className="font-medium">
@@ -338,7 +338,7 @@ export function StableFCE2BReleaseDialog({
             </p>
             {current.artifact_digest && (
               <p
-                className="break-all font-mono text-[10px] text-muted-foreground"
+                className="break-all font-mono text-micro text-muted-foreground"
                 title={current.artifact_digest}
               >
                 {current.artifact_digest}
@@ -358,12 +358,12 @@ export function StableFCE2BReleaseDialog({
         {sandboxBackend === "asb" && (
           <section className="min-w-0 space-y-2 rounded-md border bg-muted/15 p-3">
             <div className="flex items-center justify-between gap-3">
-              <h3 className="flex items-center gap-2 text-xs font-medium">
+              <h3 className="flex items-center gap-2 text-caption font-medium">
                 <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
                 {t(($) => $.fc_e2b_stable.history_title)}
               </h3>
               {!releaseHistoryQuery.isLoading && (
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-micro text-muted-foreground">
                   {t(($) => $.fc_e2b_stable.history_count, {
                     count: releaseHistory.length,
                   })}
@@ -371,13 +371,13 @@ export function StableFCE2BReleaseDialog({
               )}
             </div>
             {releaseHistoryQuery.isLoading && (
-              <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
+              <div className="flex items-center gap-2 py-3 text-caption text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 {t(($) => $.fc_e2b_stable.history_loading)}
               </div>
             )}
             {releaseHistoryQuery.isError && (
-              <p className="py-2 text-xs text-destructive">
+              <p className="py-2 text-caption text-destructive">
                 {releaseHistoryQuery.error instanceof Error
                   ? releaseHistoryQuery.error.message
                   : t(($) => $.fc_e2b_stable.history_failed)}
@@ -386,7 +386,7 @@ export function StableFCE2BReleaseDialog({
             {!releaseHistoryQuery.isLoading &&
               !releaseHistoryQuery.isError &&
               releaseHistory.length === 0 && (
-                <p className="py-2 text-xs text-muted-foreground">
+                <p className="py-2 text-caption text-muted-foreground">
                   {t(($) => $.fc_e2b_stable.history_empty)}
                 </p>
               )}
@@ -397,7 +397,7 @@ export function StableFCE2BReleaseDialog({
                   return (
                     <li
                       key={release.id}
-                      className="min-w-0 space-y-1.5 px-3 py-2.5 text-xs"
+                      className="min-w-0 space-y-1.5 px-3 py-2.5 text-caption"
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="break-all font-medium">
@@ -414,10 +414,10 @@ export function StableFCE2BReleaseDialog({
                           </span>
                         </span>
                       </div>
-                      <p className="break-all font-mono text-[10px] leading-4 text-muted-foreground">
+                      <p className="break-all font-mono text-micro leading-4 text-muted-foreground">
                         {release.artifact_ref}
                       </p>
-                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-micro text-muted-foreground">
                         <span>
                           {t(($) => $.fc_e2b_stable.artifact_build_id)}:{" "}
                           {release.artifact_build_id}
@@ -451,7 +451,7 @@ export function StableFCE2BReleaseDialog({
 
         {active ? (
           <div className="space-y-4">
-            <div className="space-y-2 rounded-md border p-3 text-xs">
+            <div className="space-y-2 rounded-md border p-3 text-caption">
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium">{active.artifact_alias}</span>
                 <span className="rounded bg-muted px-2 py-0.5">
@@ -495,11 +495,11 @@ export function StableFCE2BReleaseDialog({
               <section className="space-y-3 rounded-md border bg-muted/20 p-3">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1">
-                    <h3 className="flex items-center gap-2 text-xs font-medium">
+                    <h3 className="flex items-center gap-2 text-caption font-medium">
                       <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
                       {t(($) => $.fc_e2b_stable.rollout_schedule_title)}
                     </h3>
-                    <p className="text-[11px] leading-4 text-muted-foreground">
+                    <p className="text-micro leading-4 text-muted-foreground">
                       {t(($) => $.fc_e2b_stable.rollout_schedule_hint)}
                     </p>
                   </div>
@@ -530,7 +530,7 @@ export function StableFCE2BReleaseDialog({
                         ].join(" ")}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] font-medium text-muted-foreground">
+                          <span className="text-micro font-medium text-muted-foreground">
                             {rolloutOffsetByBatch[milestone.batch]}
                           </span>
                           {reached && (
@@ -540,7 +540,7 @@ export function StableFCE2BReleaseDialog({
                             <span className="h-1.5 w-1.5 rounded-full bg-primary" />
                           )}
                         </div>
-                        <p className="text-xs font-medium">
+                        <p className="text-caption font-medium">
                           {milestone.kind === "complete"
                             ? t(
                                 ($) =>
@@ -554,7 +554,7 @@ export function StableFCE2BReleaseDialog({
                         </p>
                         <time
                           dateTime={milestone.scheduled_at}
-                          className="block text-[10px] leading-4 text-muted-foreground"
+                          className="block text-micro leading-4 text-muted-foreground"
                         >
                           {formatRolloutTime(milestone.scheduled_at)}
                         </time>
@@ -565,12 +565,12 @@ export function StableFCE2BReleaseDialog({
               </section>
             )}
             {active.status === "observing" && (
-              <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+              <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-micro leading-4 text-muted-foreground">
                 {t(($) => $.fc_e2b_stable.complete_observation_notice)}
               </p>
             )}
             {canRollback && (
-              <p className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] leading-4 text-muted-foreground">
+              <p className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-micro leading-4 text-muted-foreground">
                 {t(($) => $.fc_e2b_stable.rollback_notice, {
                   template: active.previous_template_alias,
                 })}
@@ -669,31 +669,31 @@ export function StableFCE2BReleaseDialog({
             className="space-y-4"
           >
             {bootstrap && (
-              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
+              <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-caption">
                 {sandboxBackend === "asb"
                   ? t(($) => $.fc_e2b_stable.bootstrap_notice_asb)
                   : t(($) => $.fc_e2b_stable.bootstrap_notice)}
               </p>
             )}
-            <p className="text-xs text-muted-foreground">
+            <p className="text-caption text-muted-foreground">
               {sandboxBackend === "asb"
                 ? t(($) => $.fc_e2b_stable.validation_notice_asb)
                 : t(($) => $.fc_e2b_stable.validation_notice)}
             </p>
             {sandboxBackend === "aliyun_fc" ? (
               <div className="space-y-1.5">
-                <Label className="text-xs">
+                <Label className="text-caption">
                   {t(($) => $.fc_e2b_stable.template)}
                 </Label>
                 <div className="max-h-44 overflow-y-auto rounded-md border">
                   {templatesQuery.isLoading && (
-                    <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2 p-3 text-caption text-muted-foreground">
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       {t(($) => $.fc_e2b_runtime.templates_loading)}
                     </div>
                   )}
                   {templatesQuery.isError && (
-                    <div className="p-3 text-xs text-destructive">
+                    <div className="p-3 text-caption text-destructive">
                       {templatesQuery.error instanceof Error
                         ? templatesQuery.error.message
                         : t(($) => $.fc_e2b_runtime.templates_failed)}
@@ -702,7 +702,7 @@ export function StableFCE2BReleaseDialog({
                   {!templatesQuery.isLoading &&
                     !templatesQuery.isError &&
                     templates.length === 0 && (
-                      <div className="p-3 text-xs text-muted-foreground">
+                      <div className="p-3 text-caption text-muted-foreground">
                         {t(($) => $.fc_e2b_runtime.templates_empty)}
                       </div>
                     )}
@@ -722,7 +722,7 @@ export function StableFCE2BReleaseDialog({
                         key={`${template.id}:${template.build_id}`}
                         type="button"
                         onClick={() => setSelected(template)}
-                        className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-xs last:border-b-0 hover:bg-muted/50"
+                        className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 hover:bg-muted/50"
                       >
                         <span className="min-w-0 space-y-1">
                           <span className="block truncate font-medium">
@@ -755,7 +755,7 @@ export function StableFCE2BReleaseDialog({
             ) : (
               <div className="space-y-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="stable-release-artifact-ref" className="text-xs">
+                  <Label htmlFor="stable-release-artifact-ref" className="text-caption">
                     {t(($) => $.fc_e2b_stable.artifact_ref)}
                   </Label>
                   <Input
@@ -778,7 +778,7 @@ export function StableFCE2BReleaseDialog({
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="stable-release-artifact-built-at"
-                    className="text-xs"
+                    className="text-caption"
                   >
                     {t(($) => $.fc_e2b_stable.artifact_built_at)}
                   </Label>
@@ -795,7 +795,7 @@ export function StableFCE2BReleaseDialog({
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="stable-release-artifact-build-id"
-                    className="text-xs"
+                    className="text-caption"
                   >
                     {t(($) => $.fc_e2b_stable.artifact_build_id)}
                   </Label>
@@ -812,7 +812,7 @@ export function StableFCE2BReleaseDialog({
                 <div className="space-y-1.5">
                   <Label
                     htmlFor="stable-release-artifact-digest"
-                    className="text-xs"
+                    className="text-caption"
                   >
                     {t(($) => $.fc_e2b_stable.artifact_digest)}
                   </Label>
@@ -826,7 +826,7 @@ export function StableFCE2BReleaseDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="stable-release-git-commit" className="text-xs">
+                  <Label htmlFor="stable-release-git-commit" className="text-caption">
                     {t(($) => $.fc_e2b_stable.git_commit)}
                   </Label>
                   <Input
@@ -838,13 +838,13 @@ export function StableFCE2BReleaseDialog({
                     spellCheck={false}
                   />
                 </div>
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-micro text-muted-foreground">
                   {t(($) => $.fc_e2b_stable.artifact_hint_asb)}
                 </p>
               </div>
             )}
             <div className="space-y-1.5">
-              <Label htmlFor="stable-release-note" className="text-xs">
+              <Label htmlFor="stable-release-note" className="text-caption">
                 {t(($) => $.fc_e2b_stable.note)}
               </Label>
               <Textarea

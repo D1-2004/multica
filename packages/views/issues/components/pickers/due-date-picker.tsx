@@ -18,7 +18,7 @@ export function DueDatePicker({
   dueDate: string | null;
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
   trigger?: React.ReactNode;
-  triggerRender?: React.ReactElement;
+  triggerRender?: React.ReactElement<Record<string, unknown>>;
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
@@ -33,7 +33,7 @@ export function DueDatePicker({
       onChange={(v) => onUpdate({ due_date: v })}
       icon={<CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />}
       placeholder={t(($) => $.pickers.due_date.trigger_label)}
-      clearLabel={t(($) => $.pickers.due_date.clear_action)}
+      emptyLabel={t(($) => $.pickers.due_date.none)}
       highlightOverdue
       trigger={trigger}
       triggerRender={triggerRender}

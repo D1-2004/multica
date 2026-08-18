@@ -261,7 +261,7 @@ func TestAgentDispatchObservabilitySummaryReturnsExistingTaskData(t *testing.T) 
 			Template       any    `json:"template"`
 			CurrentSandbox any    `json:"current_sandbox"`
 		} `json:"runtime"`
-		UsageDetails        []struct {
+		UsageDetails []struct {
 			Provider         string `json:"provider"`
 			Model            string `json:"model"`
 			InputTokens      int64  `json:"input_tokens"`

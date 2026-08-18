@@ -34,6 +34,7 @@ func TestParseUnbindCommand(t *testing.T) {
 
 func TestRouter_UnbindCommand_RemovesBinding(t *testing.T) {
 	h := newHarness(t)
+	h.unbinder.existed = true
 	// Identity resolution would fail — proving the unbind branch runs
 	// BEFORE identity (an auto-binder must never fire on /unbind).
 	h.ident.err = ErrSenderUnbound

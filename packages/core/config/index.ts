@@ -25,7 +25,16 @@ interface ConfigState {
   // screen gates its render on this so a provider-locked deployment doesn't
   // flash the email form before the config applies the lock.
   authConfigLoaded: boolean;
+  // Self-host-only gate for the Git provider integration (Forgejo / Gitea /
+  // GitLab). When false the whole Settings → Integrations "Git providers"
+  // section is hidden. Defaults to false so unknown / older servers and the
+  // managed cloud (which omits the field) keep it hidden.
+  vcsIntegrationAvailable: boolean;
   featureFlags: Record<string, boolean>;
+  // The running API build version, surfaced in the Help popover so
+  // self-hosted operators can confirm what's deployed. Empty for dev builds
+  // or servers older than this feature.
+  serverVersion: string;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
@@ -34,12 +43,14 @@ interface ConfigState {
     loginProviders?: string[];
     larkClientId?: string;
     workspaceCreationDisabled?: boolean;
+    vcsIntegrationAvailable?: boolean;
   }) => void;
   setDaemonConfig: (config: {
     daemonServerUrl?: string;
     daemonAppUrl?: string;
   }) => void;
   setFeatureFlags: (flags?: Record<string, boolean>) => void;
+  setServerVersion: (version?: string) => void;
 }
 
 export const configStore = createStore<ConfigState>((set) => ({
@@ -54,7 +65,9 @@ export const configStore = createStore<ConfigState>((set) => ({
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
   authConfigLoaded: false,
+  vcsIntegrationAvailable: false,
   featureFlags: {},
+  serverVersion: "",
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
   setAuthConfig: ({
     allowSignup,
@@ -63,6 +76,7 @@ export const configStore = createStore<ConfigState>((set) => ({
     loginProviders = [],
     larkClientId = "",
     workspaceCreationDisabled = false,
+    vcsIntegrationAvailable = false,
   }) =>
     set({
       allowSignup,
@@ -71,11 +85,13 @@ export const configStore = createStore<ConfigState>((set) => ({
       loginProviders,
       larkClientId,
       workspaceCreationDisabled,
+      vcsIntegrationAvailable,
       authConfigLoaded: true,
     }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
   setFeatureFlags: (flags = {}) => set({ featureFlags: { ...flags } }),
+  setServerVersion: (version = "") => set({ serverVersion: version }),
 }));
 
 // isLoginProviderAllowed reports whether a sign-in entry point may be
