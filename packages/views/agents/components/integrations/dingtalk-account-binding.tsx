@@ -124,25 +124,31 @@ function DingTalkMessageScopeSummary({
 }) {
   const { t } = useT("agents");
   const [expanded, setExpanded] = useState(false);
+  const [emojiExpanded, setEmojiExpanded] = useState(false);
 
-  const renderExpandableSummary = (summary: string) => (
+  const renderExpandableSummary = (
+    summary: string,
+    conversations: DingTalkMessageRouteOutcome["conversations"],
+    open: boolean,
+    onToggle: () => void,
+  ) => (
     <div>
       <button
         type="button"
         className="flex items-center gap-1 text-left hover:text-foreground"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((open) => !open)}
+        aria-expanded={open}
+        onClick={onToggle}
       >
-        {expanded ? (
+        {open ? (
           <ChevronDown className="size-3 shrink-0" />
         ) : (
           <ChevronRight className="size-3 shrink-0" />
         )}
         <span>{summary}</span>
       </button>
-      {expanded ? (
+      {open ? (
         <ul className="mt-2 space-y-2 pl-4">
-          {outcome.conversations.map((conversation) => (
+          {conversations.map((conversation) => (
             <li key={conversation.cid} className="flex items-center gap-2">
               <DingTalkConversationAvatar conversation={conversation} />
               <span className="leading-relaxed text-foreground">
@@ -204,7 +210,9 @@ function DingTalkMessageScopeSummary({
   const messageScopeSummary = (() => {
     if (subscriptionSummary !== undefined) {
       return outcome.conversations.length > 0 ? (
-        renderExpandableSummary(subscriptionSummary)
+        renderExpandableSummary(subscriptionSummary, outcome.conversations, expanded, () =>
+          setExpanded((open) => !open),
+        )
       ) : (
         <p>{subscriptionSummary}</p>
       );
@@ -217,7 +225,9 @@ function DingTalkMessageScopeSummary({
           ($) => $.tab_body.integrations.dingtalk_account_scope_custom,
           { count: outcome.conversations.length },
         );
-        return renderExpandableSummary(summary);
+        return renderExpandableSummary(summary, outcome.conversations, expanded, () =>
+          setExpanded((open) => !open),
+        );
       }
       case "direct_only":
       default:
@@ -238,9 +248,16 @@ function DingTalkMessageScopeSummary({
       {outcome.enabledDomains.includes("approval") ? (
         <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_approval)}</p>
       ) : null}
-      {outcome.enabledDomains.includes("emotion_reply") ? (
-        <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_emotion_reply)}</p>
-      ) : null}
+      {outcome.emojiConversations.length > 0
+        ? renderExpandableSummary(
+            t(($) => $.tab_body.integrations.dingtalk_account_scope_emoji, {
+              count: outcome.emojiConversations.length,
+            }),
+            outcome.emojiConversations,
+            emojiExpanded,
+            () => setEmojiExpanded((open) => !open),
+          )
+        : null}
     </div>
   );
 }
