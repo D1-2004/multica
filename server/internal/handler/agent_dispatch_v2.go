@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -56,11 +57,23 @@ type DispatchAttachment struct {
 	ExpiresAt   *int64 `json:"expiresAt,omitempty"`
 }
 
+// DispatchMessageReaction 是条目级表情反应（Router emotionReply 窗口聚合契约）：
+// 带该字段的条目表示一次表情操作，条目的 openMsgId/text/attachments 指向被反应的消息，
+// occurredAt 是表情操作时间；data 层 sender 是贴/移除表情的人。
+type DispatchMessageReaction struct {
+	EmotionName    string `json:"emotionName"`
+	EmotionTypeV2  string `json:"emotionTypeV2,omitempty"`
+	EmotionVersion string `json:"emotionVersion,omitempty"`
+	Action         string `json:"action"` // "add" | "remove"
+	OperateTime    int64  `json:"operateTime,omitempty"`
+}
+
 type DispatchMessage struct {
-	OpenMsgID   string               `json:"openMsgId"`
-	OccurredAt  int64                `json:"occurredAt"`
-	Text        string               `json:"text,omitempty"`
-	Attachments []DispatchAttachment `json:"attachments,omitempty"`
+	OpenMsgID   string                   `json:"openMsgId"`
+	OccurredAt  int64                    `json:"occurredAt"`
+	Text        string                   `json:"text,omitempty"`
+	Attachments []DispatchAttachment     `json:"attachments,omitempty"`
+	Reaction    *DispatchMessageReaction `json:"reaction,omitempty"`
 }
 
 type DispatchCalendarAttendee struct {
@@ -164,6 +177,9 @@ func NewDispatchPromptBuilder() *DispatchPromptBuilder {
 	builder := &DispatchPromptBuilder{strategies: make(map[dispatchPromptBuilderKey]dispatchPromptStrategy)}
 	builder.register("channel", "message.created", "robot", buildDingTalkRobotPrompt)
 	builder.register("channel", "message.created", "digital_employee", buildDingTalkDigitalEmployeePrompt)
+	// emotionReply 与 message.created 共用 channel 渲染；条目级 reaction 在
+	// buildDingTalkChannelDisplay 内分流（混合窗口顶层 type 可能是 message.created）。
+	builder.register("channel", "emotionReply", "digital_employee", buildDingTalkDigitalEmployeePrompt)
 	builder.register("calendar", "calendar.started", "digital_employee", buildDingTalkCalendarStartedPrompt)
 	builder.register("approval", "approval.status_changed", "digital_employee", buildApprovalStatusChangedPrompt)
 	return builder
@@ -327,8 +343,13 @@ func (c DispatchCommand) validate() error {
 }
 
 func (c DispatchCommand) validateChannelMessageCreated() error {
-	if c.Event.Domain != "channel" || c.Event.Type != "message.created" {
-		return errors.New("event must be channel/message.created, calendar/calendar.started or approval/approval.status_changed")
+	if c.Event.Domain != "channel" ||
+		(c.Event.Type != "message.created" && c.Event.Type != "emotionReply") {
+		return errors.New("event must be channel/message.created, channel/emotionReply, calendar/calendar.started or approval/approval.status_changed")
+	}
+	// emotionReply 事件只允许数字员工来源；机器人通道没有表情回复订阅。
+	if c.Event.Type == "emotionReply" && c.Source.Type != "digital_employee" {
+		return errors.New("emotionReply source must be digital_employee")
 	}
 	if strings.TrimSpace(c.Event.Data.Conversation.OpenConversationID) == "" || len(c.Event.Data.Messages) == 0 {
 		return errors.New("event.data conversation and messages are required")
@@ -337,7 +358,18 @@ func (c DispatchCommand) validateChannelMessageCreated() error {
 		return errors.New("event.data.sender identity is required")
 	}
 	for _, m := range c.Event.Data.Messages {
-		if strings.TrimSpace(m.OpenMsgID) == "" || strings.TrimSpace(m.Text) == "" && len(m.Attachments) == 0 {
+		if strings.TrimSpace(m.OpenMsgID) == "" {
+			return errors.New("each message needs openMsgId and text or attachment")
+		}
+		if m.Reaction != nil {
+			// 表情条目的 text 是被反应消息的原文：允许为空（纯附件消息），
+			// 由渲染层回退为「一条消息」。
+			if err := validateDispatchMessageReaction(m.Reaction); err != nil {
+				return err
+			}
+			continue
+		}
+		if strings.TrimSpace(m.Text) == "" && len(m.Attachments) == 0 {
 			return errors.New("each message needs openMsgId and text or attachment")
 		}
 	}
@@ -351,6 +383,20 @@ func (c DispatchCommand) validateChannelMessageCreated() error {
 	}
 	if c.Outbound.ReplyTo != protocol.DispatchReplyToLatestMessage {
 		return errors.New("outbound.replyTo must be latest_message")
+	}
+	return nil
+}
+
+// validateDispatchMessageReaction 校验条目级表情反应：action 只接受 add/remove；
+// emotionName 非空、≤64 runes、不含控制字符（钉钉默认表情名与自定义文本表情都满足）。
+func validateDispatchMessageReaction(reaction *DispatchMessageReaction) error {
+	if reaction.Action != "add" && reaction.Action != "remove" {
+		return errors.New("message reaction action is invalid")
+	}
+	name := strings.TrimSpace(reaction.EmotionName)
+	if name == "" || utf8.RuneCountInString(name) > 64 || !utf8.ValidString(name) ||
+		strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return errors.New("message reaction emotion name is invalid")
 	}
 	return nil
 }
@@ -584,8 +630,10 @@ func applyDingTalkDispatchPromptForClaimWithFeatureFlags(
 	if stored.Source.Platform != "dingtalk" {
 		return
 	}
+	// emotionReply 与 message.created 共享同一份 DWS outbound 运行时指令；
+	// 不放行会导致表情事件的 claim 投影丢失回复指令。
 	channelMessage := stored.Domain == "channel" &&
-		stored.Type == "message.created" &&
+		(stored.Type == "message.created" || stored.Type == "emotionReply") &&
 		stored.Outbound.ReplyTo == protocol.DispatchReplyToLatestMessage &&
 		(stored.Surface.Type == protocol.DispatchSurfaceTypeIssue ||
 			stored.Surface.Type == protocol.DispatchSurfaceTypeChat ||
@@ -753,6 +801,10 @@ func buildDingTalkChannelDisplay(c DispatchCommand) string {
 		if i > 0 {
 			b.WriteString("\n\n")
 		}
+		if m.Reaction != nil {
+			b.WriteString(dispatchReactionDisplay(m))
+			continue
+		}
 		text := strings.TrimSpace(m.Text)
 		hasMessageContent := false
 		if text != "" {
@@ -768,6 +820,51 @@ func buildDingTalkChannelDisplay(c DispatchCommand) string {
 		}
 	}
 	return strings.TrimSpace(b.String()) + "\n"
+}
+
+// dispatchReactionDisplay 渲染表情反应条目（语义模板与 Router 对接文档建议一致）：
+// 条目的 text 是被反应消息的原文（可能是数字员工自己发的），只取摘要，不作为用户输入。
+// sender 由 buildDingTalkChannelDisplay 的既有头部携带。
+func dispatchReactionDisplay(m DispatchMessage) string {
+	action := "贴上了表情"
+	if m.Reaction.Action == "remove" {
+		action = "移除了表情"
+	}
+	return "对消息「" + dispatchReactionTargetSummary(m) + "」" + action + " " + strings.TrimSpace(m.Reaction.EmotionName)
+}
+
+// dispatchReactionTargetSummary 取被反应消息的摘要：优先 text（截断 80 runes），
+// 其次首个附件，最后回退「一条消息」。
+func dispatchReactionTargetSummary(m DispatchMessage) string {
+	if text := strings.TrimSpace(m.Text); text != "" {
+		const maxRunes = 80
+		runes := []rune(text)
+		if len(runes) > maxRunes {
+			return string(runes[:maxRunes]) + "…"
+		}
+		return text
+	}
+	if len(m.Attachments) > 0 {
+		return dispatchAttachmentDisplay(m.Attachments[0])
+	}
+	return "一条消息"
+}
+
+// dispatchReactionTitleSummary 生成 issue 标题用的表情反应摘要：
+// 「对消息「…」的表情回复 赞」，避免把被反应消息的原文当成用户输入摘要。
+func dispatchReactionTitleSummary(m DispatchMessage) string {
+	name := normalizeDispatchTitleFragment(m.Reaction.EmotionName)
+	if name == "" {
+		name = "表情"
+	}
+	target := normalizeDispatchTitleFragment(m.Text)
+	if runes := []rune(target); len(runes) > 40 {
+		target = string(runes[:40]) + "…"
+	}
+	if target == "" {
+		target = "一条消息"
+	}
+	return "对消息「" + target + "」的表情回复 " + name
 }
 
 func dispatchAttachmentDisplay(a DispatchAttachment) string {
@@ -824,6 +921,11 @@ func dispatchIssueTitle(c DispatchCommand, idempotencyKey string) string {
 
 	summary := ""
 	for _, message := range c.Event.Data.Messages {
+		if message.Reaction != nil {
+			// 表情条目的 text 是被反应消息原文，不能直接当标题摘要。
+			summary = dispatchReactionTitleSummary(message)
+			break
+		}
 		if text := normalizeDispatchTitleFragment(message.Text); text != "" {
 			summary = text
 			break

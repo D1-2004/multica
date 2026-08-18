@@ -950,6 +950,7 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	config.EnabledDomains, _ = bindingSubscriptionDomains(params.MessageBinding.Subscriptions)
 	config.CalendarStartEnabled = containsBindingDomain(config.EnabledDomains, "calendar")
 	config.Conversations = validated.conversations
+	config.EmojiConversations = validated.emojiConversations
 	config.BoundAt = &boundAt
 	activeConfig, err := config.Marshal()
 	if err != nil {

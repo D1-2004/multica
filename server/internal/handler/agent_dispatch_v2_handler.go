@@ -501,6 +501,13 @@ func (h *Handler) createAgentDispatchChatV2(
 
 	var textParts []string
 	for _, message := range command.Event.Data.Messages {
+		if message.Reaction != nil {
+			// 表情条目的 text 是被反应消息的原文（可能是数字员工自己发的），
+			// 不能当用户输入注入会话；用渲染句表达语义，与 issue/comment surface 一致。
+			// 其 attachments 是被反应消息的快照，不触发 chat 附件拒绝。
+			textParts = append(textParts, dispatchReactionDisplay(message))
+			continue
+		}
 		if len(message.Attachments) > 0 {
 			writeError(w, http.StatusUnprocessableEntity, "chat attachments are not supported yet")
 			return
@@ -697,6 +704,10 @@ func recoverDuplicateAgentChatDispatch(
 func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
 	attachments := make([]AgentDispatchAttachment, 0)
 	for _, m := range c.Event.Data.Messages {
+		if m.Reaction != nil {
+			// 表情条目的附件是被反应消息的快照，不作为新附件导入。
+			continue
+		}
 		for _, a := range m.Attachments {
 			attachments = append(attachments, AgentDispatchAttachment{Type: a.Type, Name: a.Name, ContentType: a.ContentType, SizeBytes: a.SizeBytes, DownloadURL: a.DownloadURL, ExpiresAt: a.ExpiresAt})
 		}
@@ -797,6 +808,10 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	}
 	attachments := make([]AgentDispatchAttachment, 0)
 	for _, m := range c.Event.Data.Messages {
+		if m.Reaction != nil {
+			// 表情条目的附件是被反应消息的快照，不作为新附件导入。
+			continue
+		}
 		for _, a := range m.Attachments {
 			attachments = append(attachments, AgentDispatchAttachment{Type: a.Type, Name: a.Name, ContentType: a.ContentType, SizeBytes: a.SizeBytes, DownloadURL: a.DownloadURL, ExpiresAt: a.ExpiresAt})
 		}

@@ -198,6 +198,7 @@ const DingTalkMessageRouteOutcomeSchema = z
       .object({
         direct_cids: z.array(z.string()),
         group_cids: z.array(z.string()),
+        emoji_reaction_cids: z.array(z.string()).optional(),
       })
       .nullable()
       .optional()
@@ -208,6 +209,7 @@ const DingTalkMessageRouteOutcomeSchema = z
       .array(DingTalkConversationSummarySchema)
       .optional()
       .default([]),
+    emoji_conversations: z.array(DingTalkConversationSummarySchema).optional().default([]),
     error: DingTalkBindingErrorSchema.nullable().optional().catch(undefined),
   })
   .loose()
@@ -241,12 +243,14 @@ const DingTalkMessageRouteOutcomeSchema = z
               : {
                   directCids: outcome.subscription.direct_cids,
                   groupCids: outcome.subscription.group_cids,
+                  emojiReactionCids: outcome.subscription.emoji_reaction_cids ?? [],
                 },
         }
       : {}),
     enabledDomains: outcome.enabled_domains,
     calendarStartEnabled: outcome.calendar_start_enabled ?? false,
     conversations: outcome.conversations,
+    emojiConversations: outcome.emoji_conversations,
   }));
 
 const DingTalkAccountBindingSchema = z

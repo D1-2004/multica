@@ -415,6 +415,7 @@ describe("DingTalk account binding schemas", () => {
                 name: "Project Beta",
               },
             ],
+            emojiConversations: [],
           },
         },
       ],
@@ -462,6 +463,7 @@ describe("DingTalk account binding schemas", () => {
       enabledDomains: [],
       calendarStartEnabled: false,
       conversations: [],
+      emojiConversations: [],
     });
   });
 
@@ -491,7 +493,53 @@ describe("DingTalk account binding schemas", () => {
     expect(parsed.bindings[0]?.messageRoute.subscription).toEqual({
       directCids: [],
       groupCids: ["*"],
+      emojiReactionCids: [],
     });
+  });
+
+  it("parses emoji reaction scope and conversations, defaulting them when omitted", () => {
+    const parseWith = (messageRoute: Record<string, unknown>) =>
+      DingTalkAccountBindingsResponseSchema.parse({
+        bindings: [
+          {
+            id: "installation-1",
+            workspace_id: "workspace-1",
+            agent_id: "agent-1",
+            dws_identity: { status: "unbound" },
+            message_route: { status: "active", ...messageRoute },
+          },
+        ],
+        configured: true,
+      }).bindings[0]?.messageRoute;
+
+    const withEmoji = parseWith({
+      message_scope: "custom",
+      message_scope_version: 2,
+      subscription: {
+        direct_cids: [],
+        group_cids: ["cid-group-1"],
+        emoji_reaction_cids: ["cid-group-1"],
+      },
+      emoji_conversations: [
+        { cid: "cid-group-1", name: "Project Alpha", avatar_url: "https://example.test/alpha.png" },
+      ],
+    });
+    expect(withEmoji?.subscription).toEqual({
+      directCids: [],
+      groupCids: ["cid-group-1"],
+      emojiReactionCids: ["cid-group-1"],
+    });
+    expect(withEmoji?.emojiConversations).toEqual([
+      { cid: "cid-group-1", name: "Project Alpha", avatarUrl: "https://example.test/alpha.png" },
+    ]);
+
+    const legacy = parseWith({
+      message_scope: "custom",
+      message_scope_version: 2,
+      subscription: { direct_cids: [], group_cids: ["cid-group-1"] },
+    });
+    expect(legacy?.subscription?.emojiReactionCids).toEqual([]);
+    expect(legacy?.emojiConversations).toEqual([]);
   });
 
   it("keeps an explicit null subscription and drops malformed bucket payloads", () => {

@@ -607,6 +607,140 @@ func TestCompleteBindingCompletesMessageSubscriptionWithoutExecutionIdentity(t *
 	}
 }
 
+func TestCompleteBindingPersistsEmojiReactionScope(t *testing.T) {
+	now := time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC)
+	store := pendingBindingStore(t, now, canonicalCallbackToken)
+	config, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := &fakeBindingRouter{subscription: Subscription{
+		SourceID:    "source-channel",
+		AgentID:     uuidStringForTest(store.row.AgentID),
+		DispatchURL: config.DispatchURL,
+		Surface:     SubscriptionSurface{Type: DingTalkSurfaceIssue},
+		Outbound:    SubscriptionOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Status:      "active",
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+
+	result, err := service.CompleteBinding(context.Background(), CompleteBindingParams{
+		BindingID:     store.row.ID,
+		BindingMode:   BindingModeMessage,
+		CallbackToken: canonicalCallbackToken,
+		Status:        DingTalkBindingCompletionStatus,
+		Identity:      IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
+		Message: MessageBindingResult{
+			Status:              DingTalkBindingTaskStatusSuccess,
+			Platform:            "dingtalk",
+			TenantID:            "corp-a",
+			AccountID:           "employee-a",
+			AccountDisplayName:  "Digital Worker Zhang",
+			MessageScope:        DingTalkMessageScopeCustom,
+			MessageScopeVersion: DingTalkMessageScopeVersionBuckets,
+			MessageScopeDetail: &DingTalkMessageScopeDetail{
+				DirectCids:        []string{"101:202"},
+				GroupCids:         []string{"grp-1"},
+				EmojiReactionCids: []string{"grp-2"},
+			},
+			Conversations:      []DingTalkConversationSnapshot{{CID: "grp-1", Name: "Project"}},
+			EmojiConversations: []DingTalkConversationSnapshot{{CID: "grp-2", Name: "Emoji Group"}},
+			SourceID:           "source-channel",
+			Subscriptions: []BindingSubscriptionResult{
+				{Domain: "channel", SourceID: "source-channel", Status: "active"},
+				{Domain: "emotion_reply", SourceID: "source-channel", Status: "active"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CompleteBinding() error = %v", err)
+	}
+
+	// 落库：emoji 桶与会话快照随 config 持久化。
+	stored, err := ParseDingTalkAccountConfig(store.row.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.MessageScopeDetail == nil ||
+		len(stored.MessageScopeDetail.EmojiReactionCids) != 1 ||
+		stored.MessageScopeDetail.EmojiReactionCids[0] != "grp-2" {
+		t.Fatalf("stored scope detail = %#v", stored.MessageScopeDetail)
+	}
+	if len(stored.EmojiConversations) != 1 || stored.EmojiConversations[0].CID != "grp-2" {
+		t.Fatalf("stored emoji conversations = %#v", stored.EmojiConversations)
+	}
+	if !containsBindingDomain(stored.EnabledDomains, "emotion_reply") {
+		t.Fatalf("stored enabled domains = %#v", stored.EnabledDomains)
+	}
+
+	// 回显：回调响应的 binding 视图携带 emoji 字段。
+	if result.Binding.MessageRoute.Subscription == nil ||
+		len(result.Binding.MessageRoute.Subscription.EmojiReactionCids) != 1 ||
+		result.Binding.MessageRoute.Subscription.EmojiReactionCids[0] != "grp-2" {
+		t.Fatalf("public subscription = %#v", result.Binding.MessageRoute.Subscription)
+	}
+	if len(result.Binding.MessageRoute.EmojiConversations) != 1 ||
+		result.Binding.MessageRoute.EmojiConversations[0].CID != "grp-2" {
+		t.Fatalf("public emoji conversations = %#v", result.Binding.MessageRoute.EmojiConversations)
+	}
+}
+
+func TestCompleteBindingRejectsInvalidEmojiReactionScope(t *testing.T) {
+	now := time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name    string
+		message MessageBindingResult
+	}{
+		{
+			name: "success with wildcard emoji bucket",
+			message: MessageBindingResult{
+				Status: DingTalkBindingTaskStatusSuccess, Platform: "dingtalk",
+				TenantID: "corp-a", AccountID: "employee-a",
+				MessageScope: DingTalkMessageScopeCustom, MessageScopeVersion: DingTalkMessageScopeVersionBuckets,
+				MessageScopeDetail: &DingTalkMessageScopeDetail{
+					DirectCids: []string{"*"}, GroupCids: []string{}, EmojiReactionCids: []string{"*"},
+				},
+				SourceID: "source-channel",
+				Subscriptions: []BindingSubscriptionResult{
+					{Domain: "channel", SourceID: "source-channel", Status: "active"},
+				},
+			},
+		},
+		{
+			name: "skipped message carries emoji conversations",
+			message: MessageBindingResult{
+				Status:             DingTalkBindingTaskStatusSkipped,
+				EmojiConversations: []DingTalkConversationSnapshot{{CID: "grp-1", Name: "Project"}},
+			},
+		},
+		{
+			name: "failed message without scope carries emoji conversations",
+			message: MessageBindingResult{
+				Status:             DingTalkBindingTaskStatusFailed,
+				Error:              &BindingTaskError{Code: "subscription_failed", Message: "failed"},
+				EmojiConversations: []DingTalkConversationSnapshot{{CID: "grp-1", Name: "Project"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := pendingBindingStore(t, now, canonicalCallbackToken)
+			service := newBindingServiceForTest(t, store, &fakeBindingRouter{}, now)
+			_, err := service.CompleteBinding(context.Background(), CompleteBindingParams{
+				BindingID:     store.row.ID,
+				BindingMode:   BindingModeMessage,
+				CallbackToken: canonicalCallbackToken,
+				Status:        DingTalkBindingCompletionStatus,
+				Identity:      IdentityBindingResult{Status: DingTalkBindingTaskStatusSkipped},
+				Message:       tt.message,
+			})
+			if !errors.Is(err, ErrInvalidResult) {
+				t.Fatalf("CompleteBinding() error = %v, want ErrInvalidResult", err)
+			}
+		})
+	}
+}
+
 func TestCompleteBindingPersistsEverySubscriptionDomainForReconciliation(t *testing.T) {
 	now := time.Date(2026, 8, 3, 18, 0, 0, 0, time.UTC)
 	store := pendingBindingStore(t, now, canonicalCallbackToken)
