@@ -56,7 +56,7 @@ type requestBoundQueueController struct {
 	identity a2aintegration.InvocationIdentity
 }
 
-func (c *requestBoundQueueController) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
+func (c *requestBoundQueueController) NotifyA2ATaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	c.calls++
 	c.task = task
 	c.identity, _ = a2aintegration.InvocationIdentityFromContext(ctx)

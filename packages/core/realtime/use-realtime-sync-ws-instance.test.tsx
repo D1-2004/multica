@@ -6,6 +6,7 @@ import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { WSClient } from "../api/ws-client";
+import { chatKeys } from "../chat/queries";
 import { defaultStorage } from "../platform/storage";
 import { workspaceKeys } from "../workspace/queries";
 import {
@@ -87,6 +88,33 @@ describe("useRealtimeSync — ws instance change", () => {
       queryKey: ["dingtalk-account-bindings", "ws-1", "list"],
     });
     expect(setQueryDataSpy).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("refreshes the chat thread list when an externally-created task is queued", () => {
+    vi.useFakeTimers();
+    const ws = createMockWs();
+    renderHook(() => useRealtimeSync(ws, stores), {
+      wrapper: createWrapper(qc),
+    });
+    invalidateSpy.mockClear();
+
+    const queuedCall = vi
+      .mocked(ws.on)
+      .mock.calls.find(([event]) => event === "task:queued");
+    expect(queuedCall).toBeDefined();
+
+    act(() => {
+      queuedCall?.[1]({
+        task_id: "task-a2a",
+        chat_session_id: "session-a2a",
+      });
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: chatKeys.sessions("ws-1"),
+    });
+    vi.clearAllTimers();
     vi.useRealTimers();
   });
 

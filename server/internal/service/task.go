@@ -49,10 +49,11 @@ type TaskService struct {
 	EmptyClaim *EmptyClaimCache
 	// RuntimeLauncher is optional. When set, it may start server-managed
 	// runtimes for a newly queued task; local runtimes simply no-op there.
-	RuntimeLauncher     TaskRuntimeLauncher
-	CompletionNotifier  TaskCompletionNotifier
-	A2AStateObserver    A2ATaskStateObserver
-	runtimeLaunchLeases taskRuntimeLaunchLeaseStore
+	RuntimeLauncher       TaskRuntimeLauncher
+	CompletionNotifier    TaskCompletionNotifier
+	A2AStateObserver      A2ATaskStateObserver
+	runtimeLaunchLeases   taskRuntimeLaunchLeaseStore
+	a2aHumanRealtimeRoute func(context.Context, pgtype.UUID) (workspaceID, recipientUserID string, err error)
 	// Composio computes the per-task MCP overlay (Stage 3 of the Composio
 	// epic, MUL-3721) — the integration's "current user's connected apps
 	// → MCP session URL" hook called from each Enqueue* path. Optional: a
@@ -206,7 +207,7 @@ func NewTaskService(q *db.Queries, tx TxStarter, hub *realtime.Hub, bus *events.
 	if len(wakeups) > 0 {
 		wakeup = wakeups[0]
 	}
-	return &TaskService{
+	service := &TaskService{
 		Queries:             q,
 		TxStarter:           tx,
 		Hub:                 hub,
@@ -214,6 +215,14 @@ func NewTaskService(q *db.Queries, tx TxStarter, hub *realtime.Hub, bus *events.
 		Wakeup:              wakeup,
 		runtimeLaunchLeases: newPostgresTaskRuntimeLaunchLeaseStore(q),
 	}
+	service.a2aHumanRealtimeRoute = func(ctx context.Context, chatSessionID pgtype.UUID) (string, string, error) {
+		session, err := q.GetChatSession(ctx, chatSessionID)
+		if err != nil {
+			return "", "", err
+		}
+		return util.UUIDToString(session.WorkspaceID), util.UUIDToString(session.CreatorID), nil
+	}
+	return service
 }
 
 var trivialDoneMarkers = []string{
@@ -3692,6 +3701,15 @@ func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQ
 	s.launchRuntimeForTaskWithContext(ctx, task)
 }
 
+// NotifyA2ATaskEnqueued exposes a newly promoted A2A turn to the endpoint
+// owner's Web session before waking the runtime. Ordinary enqueue paths already
+// broadcast task:queued at their transaction boundary; A2A promotes its
+// deferred row in A2AService and therefore needs this explicit combined seam.
+func (s *TaskService) NotifyA2ATaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+	s.NotifyTaskEnqueued(ctx, task)
+}
+
 func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
 	s.launchRuntimeForTaskWithContext(context.Background(), task)
 }
@@ -4019,28 +4037,33 @@ func (s *TaskService) notifyRuntimeMayHaveWork(runtimeID pgtype.UUID, taskID str
 	s.Wakeup.NotifyTaskAvailable(runtimeKey, taskID)
 }
 
-// ShouldSuppressA2AHumanRealtime is the privacy gate shared by task/chat event
-// producers and regular member read handlers. A2A callers are external
-// principals: their local task/session IDs and execution transcript must not be
-// projected into the human workspace UI.
-//
-// The immutable task-context marker is the hot path and follows retry rows.
-// The database lookup is the authoritative compatibility fallback for a task
-// created before the marker existed. Lookup failures fail closed only for the
-// narrow shape used by external chat tasks, so an infrastructure problem cannot
-// turn into cross-principal disclosure while ordinary human task events remain
-// unaffected.
-func (s *TaskService) ShouldSuppressA2AHumanRealtime(ctx context.Context, task db.AgentTaskQueue) bool {
+// isA2AHumanProjectionTask classifies the narrow task shape that belongs to an
+// external A2A principal. The immutable task-context marker is the hot path and
+// follows retry rows; the database lookup covers rows created before the marker
+// existed.
+func (s *TaskService) isA2AHumanProjectionTask(ctx context.Context, task db.AgentTaskQueue) (bool, error) {
 	if hasA2ATaskOrigin(task.Context) {
-		return true
+		return true, nil
 	}
 	if !task.ChatSessionID.Valid || task.InitiatorUserID.Valid || task.OriginatorUserID.Valid {
-		return false
+		return false, nil
 	}
 	if s == nil || s.Queries == nil {
-		return true
+		return false, errors.New("A2A task classification is unavailable")
 	}
-	isA2A, err := s.Queries.IsA2ALocalTask(ctx, task.ID)
+	return s.Queries.IsA2ALocalTask(ctx, task.ID)
+}
+
+// ShouldSuppressA2AHumanRealtime keeps external execution transcripts and
+// progress details out of ordinary member APIs and workspace-wide broadcasts.
+// Visible A2A chat lifecycle and final-message events use
+// humanRealtimeRouteForTask below, which sends only to the endpoint owner's
+// user scope.
+//
+// Classification failures remain fail-closed so an infrastructure problem
+// cannot turn into cross-principal disclosure.
+func (s *TaskService) ShouldSuppressA2AHumanRealtime(ctx context.Context, task db.AgentTaskQueue) bool {
+	isA2A, err := s.isA2AHumanProjectionTask(ctx, task)
 	if err != nil {
 		slog.Error("A2A task privacy lookup failed; suppressing human projection",
 			"task_id", util.UUIDToString(task.ID),
@@ -4051,25 +4074,60 @@ func (s *TaskService) ShouldSuppressA2AHumanRealtime(ctx context.Context, task d
 	return isA2A
 }
 
+type humanRealtimeRoute struct {
+	workspaceID     string
+	recipientUserID string
+}
+
+// humanRealtimeRouteForTask keeps ordinary events on their existing workspace
+// fanout while routing visible A2A chat events only to the endpoint owner who
+// owns the backing chat_session. A2A tasks without a visible chat session, or
+// any failed owner lookup, remain suppressed.
+func (s *TaskService) humanRealtimeRouteForTask(ctx context.Context, task db.AgentTaskQueue) (humanRealtimeRoute, bool) {
+	isA2A, err := s.isA2AHumanProjectionTask(ctx, task)
+	if err != nil {
+		slog.Error("A2A task realtime route lookup failed; suppressing human projection",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return humanRealtimeRoute{}, false
+	}
+	if !isA2A {
+		workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
+		return humanRealtimeRoute{workspaceID: workspaceID}, workspaceID != ""
+	}
+	if !task.ChatSessionID.Valid || s == nil || s.a2aHumanRealtimeRoute == nil {
+		return humanRealtimeRoute{}, false
+	}
+	workspaceID, recipientUserID, err := s.a2aHumanRealtimeRoute(ctx, task.ChatSessionID)
+	if err != nil || workspaceID == "" || recipientUserID == "" {
+		slog.Error("A2A chat realtime owner lookup failed; suppressing human projection",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(task.ChatSessionID),
+			"error", err,
+		)
+		return humanRealtimeRoute{}, false
+	}
+	return humanRealtimeRoute{workspaceID: workspaceID, recipientUserID: recipientUserID}, true
+}
+
 func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTaskQueue) {
 	if s.A2AStateObserver != nil {
 		s.A2AStateObserver.SyncA2ALocalTask(ctx, task.ID)
 	}
-	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
-		return
-	}
 	payload := taskDispatchBroadcastPayload(task)
 
-	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
-	if workspaceID == "" {
+	route, ok := s.humanRealtimeRouteForTask(ctx, task)
+	if !ok {
 		return
 	}
 	s.Bus.Publish(events.Event{
-		Type:        protocol.EventTaskDispatch,
-		WorkspaceID: workspaceID,
-		ActorType:   "system",
-		ActorID:     "",
-		Payload:     payload,
+		Type:            protocol.EventTaskDispatch,
+		WorkspaceID:     route.workspaceID,
+		RecipientUserID: route.recipientUserID,
+		ActorType:       "system",
+		ActorID:         "",
+		Payload:         payload,
 	})
 }
 
@@ -4155,11 +4213,8 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 	if s.A2AStateObserver != nil {
 		s.A2AStateObserver.SyncA2ALocalTask(ctx, task.ID)
 	}
-	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
-		return
-	}
-	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
-	if workspaceID == "" {
+	route, ok := s.humanRealtimeRouteForTask(ctx, task)
+	if !ok {
 		return
 	}
 	payload := map[string]any{
@@ -4168,7 +4223,7 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 		"issue_id": util.UUIDToString(task.IssueID),
 		"status":   task.Status,
 	}
-	payload["workspace_id"] = workspaceID
+	payload["workspace_id"] = route.workspaceID
 	appendSafeDispatchMetadata(payload, task.Context)
 	if task.ChatSessionID.Valid {
 		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
@@ -4181,11 +4236,12 @@ func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, 
 		payload["failure_reason"] = failureReason
 	}
 	s.Bus.Publish(events.Event{
-		Type:        eventType,
-		WorkspaceID: workspaceID,
-		ActorType:   "system",
-		ActorID:     "",
-		Payload:     payload,
+		Type:            eventType,
+		WorkspaceID:     route.workspaceID,
+		RecipientUserID: route.recipientUserID,
+		ActorType:       "system",
+		ActorID:         "",
+		Payload:         payload,
 	})
 }
 
@@ -4223,11 +4279,8 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 }
 
 func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQueue, msg *db.ChatMessage) {
-	if s.ShouldSuppressA2AHumanRealtime(ctx, task) {
-		return
-	}
-	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
-	if workspaceID == "" {
+	route, ok := s.humanRealtimeRouteForTask(ctx, task)
+	if !ok {
 		return
 	}
 	payload := protocol.ChatDonePayload{
@@ -4256,13 +4309,14 @@ func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQu
 		}
 	}
 	s.Bus.Publish(events.Event{
-		Type:          protocol.EventChatDone,
-		WorkspaceID:   workspaceID,
-		ActorType:     "system",
-		ActorID:       "",
-		ChatSessionID: util.UUIDToString(task.ChatSessionID),
-		TaskID:        util.UUIDToString(task.ID),
-		Payload:       payload,
+		Type:            protocol.EventChatDone,
+		WorkspaceID:     route.workspaceID,
+		RecipientUserID: route.recipientUserID,
+		ActorType:       "system",
+		ActorID:         "",
+		ChatSessionID:   util.UUIDToString(task.ChatSessionID),
+		TaskID:          util.UUIDToString(task.ID),
+		Payload:         payload,
 	})
 	if tracePresent {
 		chattrace.LogStage(slog.Default(), chatTrace, "chat_done_published", "succeeded",

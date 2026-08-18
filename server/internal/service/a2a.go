@@ -55,7 +55,7 @@ type A2ATxStarter interface {
 
 // A2ATaskNotifier is the post-commit wakeup seam implemented by TaskService.
 type A2ATaskNotifier interface {
-	NotifyTaskEnqueued(context.Context, db.AgentTaskQueue)
+	NotifyA2ATaskEnqueued(context.Context, db.AgentTaskQueue)
 }
 
 // A2ATaskController is the narrow task lifecycle surface needed by public A2A
@@ -668,7 +668,7 @@ func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype
 	if claim := a2aRequestBoundTurnClaimFromContext(ctx); claim != nil && sameUUID(next.ID, claim.localTaskID) {
 		claim.promoted = true
 	}
-	s.TaskService.NotifyTaskEnqueued(ctx, next)
+	s.TaskService.NotifyA2ATaskEnqueued(ctx, next)
 }
 
 // GetTask returns only stable A2A identifiers and protocol-safe output. Local
