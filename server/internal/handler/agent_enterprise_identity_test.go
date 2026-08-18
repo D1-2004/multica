@@ -30,9 +30,7 @@ type enterpriseIdentityStatusTestResponse struct {
 	} `json:"identity"`
 }
 
-type fakeEnterpriseIdentityHandlerService struct {
-	rotate func(context.Context, pgtype.UUID, pgtype.UUID, string) (service.EnterpriseIdentitySourceRotationResult, error)
-}
+type fakeEnterpriseIdentityHandlerService struct{}
 
 func (f *fakeEnterpriseIdentityHandlerService) Run(context.Context) {}
 
@@ -64,15 +62,6 @@ func (f *fakeEnterpriseIdentityHandlerService) Revoke(
 	pgtype.UUID,
 ) error {
 	return nil
-}
-
-func (f *fakeEnterpriseIdentityHandlerService) ForceRotateIdentitySource(
-	ctx context.Context,
-	workspaceID pgtype.UUID,
-	agentID pgtype.UUID,
-	expectedPreviousSandboxID string,
-) (service.EnterpriseIdentitySourceRotationResult, error) {
-	return f.rotate(ctx, workspaceID, agentID, expectedPreviousSandboxID)
 }
 
 func createEnterpriseIdentityHandlerFixture(t *testing.T) (agentID string, memberUserID string) {
@@ -269,175 +258,5 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 	}
 	if strings.Contains(page, "%!") {
 		t.Fatalf("callback progress page contains a formatting error: %s", page)
-	}
-}
-
-func TestEnterpriseIdentitySourceRotationEnvironmentGuard(t *testing.T) {
-	cases := []struct {
-		environment string
-		want        bool
-	}{
-		{environment: "pre", want: true},
-		{environment: "prepub", want: true},
-		{environment: "staging", want: true},
-		{environment: "production", want: false},
-		{environment: "", want: false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.environment, func(t *testing.T) {
-			t.Setenv("AONE_ENV_TYPE", tc.environment)
-			if got := enterpriseIdentitySourceRotationEnabled(); got != tc.want {
-				t.Fatalf("rotation enabled = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestRotateAgentEnterpriseIdentitySourceIsHiddenOutsidePrepub(t *testing.T) {
-	t.Setenv("AONE_ENV_TYPE", "production")
-
-	handler := &Handler{}
-	request := httptest.NewRequest(
-		http.MethodPost,
-		"/api/workspaces/workspace-id/agent-identity/enterprise/source/rotate",
-		strings.NewReader(`{"agent_id":"agent-id"}`),
-	)
-	response := httptest.NewRecorder()
-	handler.RotateAgentEnterpriseIdentitySource(response, request)
-
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", response.Code)
-	}
-}
-
-func TestRotateAgentEnterpriseIdentitySourceRequiresWorkspaceAdmin(t *testing.T) {
-	t.Setenv("AONE_ENV_TYPE", "prepub")
-	agentID, memberUserID := createEnterpriseIdentityHandlerFixture(t)
-	handler := *testHandler
-	handler.EnterpriseIdentity = &service.EnterpriseIdentityService{}
-	body := strings.NewReader(fmt.Sprintf(
-		`{"agent_id":%q,"expected_previous_sandbox_id":"source-0"}`,
-		agentID,
-	))
-	request := newRequestAsUser(
-		memberUserID,
-		http.MethodPost,
-		"/api/workspaces/"+testWorkspaceID+"/agent-identity/enterprise/source/rotate",
-		body,
-	)
-	request = withURLParams(request, "id", testWorkspaceID)
-	response := httptest.NewRecorder()
-	handler.RotateAgentEnterpriseIdentitySource(response, request)
-
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403: %s", response.Code, response.Body.String())
-	}
-}
-
-func TestRotateAgentEnterpriseIdentitySourceRequiresExpectedPredecessor(t *testing.T) {
-	t.Setenv("AONE_ENV_TYPE", "prepub")
-	agentID, _ := createEnterpriseIdentityHandlerFixture(t)
-	handler := *testHandler
-	handler.EnterpriseIdentity = &fakeEnterpriseIdentityHandlerService{}
-	body := strings.NewReader(fmt.Sprintf(`{"agent_id":%q}`, agentID))
-	request := newRequestAsUser(
-		testUserID,
-		http.MethodPost,
-		"/api/workspaces/"+testWorkspaceID+"/agent-identity/enterprise/source/rotate",
-		body,
-	)
-	request = withURLParams(request, "id", testWorkspaceID)
-	response := httptest.NewRecorder()
-	handler.RotateAgentEnterpriseIdentitySource(response, request)
-
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400: %s", response.Code, response.Body.String())
-	}
-}
-
-func TestRotateAgentEnterpriseIdentitySourceAcceptsBeforeCompletion(t *testing.T) {
-	t.Setenv("AONE_ENV_TYPE", "prepub")
-	agentID, _ := createEnterpriseIdentityHandlerFixture(t)
-
-	type rotationCall struct {
-		ctx                       context.Context
-		workspaceID               pgtype.UUID
-		agentID                   pgtype.UUID
-		expectedPreviousSandboxID string
-	}
-	calls := make(chan rotationCall, 1)
-	release := make(chan struct{})
-	completed := make(chan struct{})
-	serviceUnderTest := &fakeEnterpriseIdentityHandlerService{
-		rotate: func(
-			ctx context.Context,
-			workspaceID pgtype.UUID,
-			agentID pgtype.UUID,
-			expectedPreviousSandboxID string,
-		) (service.EnterpriseIdentitySourceRotationResult, error) {
-			calls <- rotationCall{
-				ctx:                       ctx,
-				workspaceID:               workspaceID,
-				agentID:                   agentID,
-				expectedPreviousSandboxID: expectedPreviousSandboxID,
-			}
-			<-release
-			close(completed)
-			return service.EnterpriseIdentitySourceRotationResult{}, nil
-		},
-	}
-	handler := *testHandler
-	handler.EnterpriseIdentity = serviceUnderTest
-	body := strings.NewReader(fmt.Sprintf(
-		`{"agent_id":%q,"expected_previous_sandbox_id":"source-0"}`,
-		agentID,
-	))
-	requestContext, cancelRequest := context.WithCancel(context.Background())
-	request := newRequestAsUser(
-		testUserID,
-		http.MethodPost,
-		"/api/workspaces/"+testWorkspaceID+"/agent-identity/enterprise/source/rotate",
-		body,
-	).WithContext(requestContext)
-	request = withURLParams(request, "id", testWorkspaceID)
-	response := httptest.NewRecorder()
-	handler.RotateAgentEnterpriseIdentitySource(response, request)
-
-	if response.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, want 202: %s", response.Code, response.Body.String())
-	}
-	var payload rotateAgentEnterpriseIdentitySourceAcceptedResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if payload.Status != "accepted" || payload.ExpectedPreviousSandboxID != "source-0" {
-		t.Fatalf("response = %#v", payload)
-	}
-
-	var call rotationCall
-	select {
-	case call = <-calls:
-	case <-time.After(time.Second):
-		t.Fatal("rotation was not started")
-	}
-	cancelRequest()
-	if err := call.ctx.Err(); err != nil {
-		t.Fatalf("rotation context followed request cancellation: %v", err)
-	}
-	deadline, ok := call.ctx.Deadline()
-	if !ok || time.Until(deadline) <= 0 || time.Until(deadline) > enterpriseIdentitySourceRotationTimeout {
-		t.Fatalf("rotation deadline = %v, ok = %v", deadline, ok)
-	}
-	if uuidToString(call.workspaceID) != testWorkspaceID ||
-		uuidToString(call.agentID) != agentID ||
-		call.expectedPreviousSandboxID != "source-0" {
-		t.Fatalf("rotation call = %#v", call)
-	}
-
-	close(release)
-	select {
-	case <-completed:
-	case <-time.After(time.Second):
-		t.Fatal("rotation did not complete")
 	}
 }
