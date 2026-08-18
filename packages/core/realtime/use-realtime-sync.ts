@@ -1395,6 +1395,10 @@ export function useRealtimeSync(
       const payload = p as TaskQueuedPayload;
       if (!payload.chat_session_id) return;
       qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
+      // External A2A callers can create a chat session without this Web client
+      // running the create-session mutation. Refresh the owner-filtered thread
+      // list so the new conversation (and later input preview) appears live.
+      invalidateSessionLists();
       invalidatePendingAggregate();
     });
 

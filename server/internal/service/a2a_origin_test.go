@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -90,6 +91,52 @@ func TestA2ATaskLifecycleDoesNotPublishHumanWorkspaceEvents(t *testing.T) {
 	service.ReportProgress(context.Background(), ordinary, "workspace-visible", "ordinary progress", 1, 1)
 	if len(published) != 1 || published[0].Type != protocol.EventTaskProgress || published[0].WorkspaceID != "workspace-visible" {
 		t.Fatalf("ordinary progress event was unexpectedly suppressed: %+v", published)
+	}
+}
+
+func TestVisibleA2AChatLifecyclePublishesOnlyToOwner(t *testing.T) {
+	bus := events.New()
+	published := make([]events.Event, 0)
+	bus.SubscribeAll(func(event events.Event) { published = append(published, event) })
+	chatSessionID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	service := &TaskService{
+		Bus: bus,
+		a2aHumanRealtimeRoute: func(_ context.Context, got pgtype.UUID) (string, string, error) {
+			if got != chatSessionID {
+				t.Fatalf("chat session id = %s, want %s", util.UUIDToString(got), util.UUIDToString(chatSessionID))
+			}
+			return "workspace-secret", "owner-1", nil
+		},
+	}
+	task := db.AgentTaskQueue{
+		ID:            util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		ChatSessionID: chatSessionID,
+		Context:       []byte(`{"multica_origin":"a2a"}`),
+		Status:        "running",
+	}
+
+	service.NotifyA2ATaskEnqueued(context.Background(), task)
+	service.broadcastTaskDispatch(context.Background(), task)
+	service.broadcastTaskEvent(context.Background(), protocol.EventTaskRunning, task)
+	service.broadcastChatDone(context.Background(), task, nil, false)
+	service.ReportProgress(context.Background(), task, "workspace-secret", "private tool output", 1, 2)
+
+	wantTypes := []string{
+		protocol.EventTaskQueued,
+		protocol.EventTaskDispatch,
+		protocol.EventTaskRunning,
+		protocol.EventChatDone,
+	}
+	if len(published) != len(wantTypes) {
+		t.Fatalf("published events = %+v, want types %v", published, wantTypes)
+	}
+	for i, event := range published {
+		if event.Type != wantTypes[i] {
+			t.Fatalf("event[%d].Type = %q, want %q", i, event.Type, wantTypes[i])
+		}
+		if event.WorkspaceID != "workspace-secret" || event.RecipientUserID != "owner-1" {
+			t.Fatalf("event[%d] route = workspace %q recipient %q", i, event.WorkspaceID, event.RecipientUserID)
+		}
 	}
 }
 

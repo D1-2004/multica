@@ -238,7 +238,10 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 		// populated by producers so that flipping the switch later is a
 		// one-line change here. See review on PR #1429 for context.
 
-		if e.WorkspaceID != "" {
+		if e.RecipientUserID != "" {
+			realtime.M.RecordEvent(e.Type)
+			b.SendToUser(e.RecipientUserID, data)
+		} else if e.WorkspaceID != "" {
 			realtime.M.RecordEvent(e.Type)
 			b.BroadcastToWorkspace(e.WorkspaceID, data)
 		} else if strings.HasPrefix(e.Type, "daemon:") {
