@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/en/common.json";
@@ -32,7 +32,8 @@ vi.mock("@tanstack/react-query", () => ({
     if (opts.enabled === false) return { data: undefined };
     const key = JSON.stringify(opts.queryKey);
     if (key.includes("members")) return { data: membersRef.current };
-    if (key.includes("installations")) return { data: installationsRef.current };
+    if (key.includes("installations"))
+      return { data: installationsRef.current };
     return { data: undefined };
   },
   useQueryClient: () => ({ invalidateQueries: vi.fn() }),
@@ -64,6 +65,13 @@ vi.mock("@multica/core/slack", () => ({
 vi.mock("@multica/core/dingtalk", () => ({
   dingtalkInstallationsOptions: () => ({
     queryKey: ["dingtalk", "installations"],
+    queryFn: vi.fn(),
+  }),
+}));
+
+vi.mock("@multica/core/wecom", () => ({
+  wecomInstallationsOptions: () => ({
+    queryKey: ["wecom", "installations"],
     queryFn: vi.fn(),
   }),
 }));
@@ -137,11 +145,21 @@ vi.mock("../integrations/dingtalk-account-binding", () => ({
   ),
 }));
 
+// Same stubbing rationale for WeCom smart-bot: the shared bind entry has
+// its own coverage in wecom-tab.test.tsx (when added); here it's a marker.
+vi.mock("../../../settings/components/wecom-tab", () => ({
+  WecomAgentBindButton: ({ agentId }: { agentId: string }) => (
+    <div data-testid="wecom-bind-button" data-agent-id={agentId} />
+  ),
+}));
+
 import { IntegrationsTab } from "./integrations-tab";
 
 const TEST_RESOURCES = {
   en: { common: enCommon, agents: enAgents, settings: enSettings },
 };
+
+afterEach(cleanup);
 
 const agent: Agent = {
   id: "agent-1",
@@ -200,12 +218,14 @@ describe("IntegrationsTab", () => {
     expect(screen.getByText("Lark")).toBeTruthy();
     expect(screen.getByText("Slack")).toBeTruthy();
     expect(screen.getByText("Enterprise bot")).toBeTruthy();
+    expect(screen.getByText("WeCom")).toBeTruthy();
     const digitalEmployee = screen.getByRole("region", {
       name: /Enterprise digital employee/i,
     });
     const enterpriseBot = screen.getByText("Enterprise bot");
     const lark = screen.getByText("Lark");
     const slack = screen.getByText("Slack");
+    const wecom = screen.getByText("WeCom");
     expect(digitalEmployee).toHaveAttribute("data-agent-id", "agent-1");
     expect(digitalEmployee).toHaveAttribute("data-can-operate", "true");
     expect(
@@ -219,9 +239,21 @@ describe("IntegrationsTab", () => {
     expect(
       lark.compareDocumentPosition(slack) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(screen.getByTestId("lark-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
-    expect(screen.getByTestId("slack-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
-    expect(screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id")).toBe("agent-1");
+    expect(
+      slack.compareDocumentPosition(wecom) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      screen.getByTestId("lark-bind-button").getAttribute("data-agent-id"),
+    ).toBe("agent-1");
+    expect(
+      screen.getByTestId("slack-bind-button").getAttribute("data-agent-id"),
+    ).toBe("agent-1");
+    expect(
+      screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id"),
+    ).toBe("agent-1");
+    expect(
+      screen.getByTestId("wecom-bind-button").getAttribute("data-agent-id"),
+    ).toBe("agent-1");
   });
 
   it("shows Lark coming-soon but keeps the DingTalk bind entry when the install transport is not wired", () => {
@@ -242,10 +274,12 @@ describe("IntegrationsTab", () => {
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
     // DingTalk offers a manual-credential install path, so its bind entry
     // renders even when the scan-to-create transport is down.
-    expect(screen.queryByText(/DingTalk bot installation coming soon/i)).toBeNull();
-    expect(screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id")).toBe(
-      "agent-1",
-    );
+    expect(
+      screen.queryByText(/DingTalk bot installation coming soon/i),
+    ).toBeNull();
+    expect(
+      screen.getByTestId("dingtalk-bind-button").getAttribute("data-agent-id"),
+    ).toBe("agent-1");
   });
 
   it("shows the not-enabled notice when the deployment has no Lark key", () => {
@@ -286,17 +320,20 @@ describe("IntegrationsTab", () => {
       screen.getByRole("region", { name: /Enterprise digital employee/i }),
     ).toHaveAttribute("data-can-operate", "false");
     expect(
-      screen.getByText(/Only workspace owners and admins can create enterprise bots/i),
+      screen.getByText(
+        /Only workspace owners and admins can create enterprise bots/i,
+      ),
     ).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
     expect(screen.queryByTestId("slack-bind-button")).toBeNull();
     expect(screen.queryByTestId("dingtalk-bind-button")).toBeNull();
+    expect(screen.queryByTestId("wecom-bind-button")).toBeNull();
   });
 
   it("lets a non-admin agent owner bind Lark and DingTalk while Slack stays admin-only", () => {
     // The agent's owner (user-1) is only a plain workspace member. Lark
     // and DingTalk authorize the agent owner (canManageAgent), so both bind
-    // entries render and receive owner_id. Slack stays admin-only.
+    // entries render and receive owner_id. Slack and WeCom stay admin-only.
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(
       <IntegrationsTab
@@ -312,12 +349,13 @@ describe("IntegrationsTab", () => {
     const dingtalkButton = screen.getByTestId("dingtalk-bind-button");
     expect(dingtalkButton.getAttribute("data-agent-id")).toBe("agent-1");
     expect(dingtalkButton.getAttribute("data-agent-owner-id")).toBe("user-1");
-    // Only the Slack section falls back to the shared members note.
+    expect(screen.queryByTestId("wecom-bind-button")).toBeNull();
+    // Slack and WeCom fall back to the shared members note.
     expect(
       screen.getAllByText(
         /Only workspace owners and admins can create enterprise bots/i,
       ),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
   });
 
   it("renders the bind entry (not coming-soon) when installs are unavailable but the agent is already bound", () => {

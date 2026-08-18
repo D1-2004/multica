@@ -535,26 +535,17 @@ func envValue(extra map[string]string, key string) string {
 	return os.Getenv(key)
 }
 
-func replaceEnvValue(env []string, key, value string) []string {
-	prefix := key + "="
-	out := make([]string, 0, len(env)+1)
-	for _, entry := range env {
-		if !strings.HasPrefix(entry, prefix) {
-			out = append(out, entry)
+func addPiManagedExtensionArg(args []string, extensionPath string) []string {
+	insertAt := len(args)
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "@") {
+			insertAt = i
+			break
 		}
 	}
-	if value != "" {
-		out = append(out, prefix+value)
-	}
-	return out
-}
-
-func addPiManagedExtensionArg(args []string, extensionPath string) []string {
-	if len(args) == 0 {
-		return []string{"--no-extensions", "--extension", extensionPath}
-	}
 	out := make([]string, 0, len(args)+3)
-	out = append(out, args[:len(args)-1]...)
-	out = append(out, "--no-extensions", "--extension", extensionPath, args[len(args)-1])
+	out = append(out, args[:insertAt]...)
+	out = append(out, "--no-extensions", "--extension", extensionPath)
+	out = append(out, args[insertAt:]...)
 	return out
 }

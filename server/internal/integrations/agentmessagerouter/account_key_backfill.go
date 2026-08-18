@@ -14,14 +14,14 @@ import (
 type AccountKeyBackfillOutcome string
 
 const (
-	AccountKeyBackfillWouldUpdate      AccountKeyBackfillOutcome = "would_update"
-	AccountKeyBackfillUpdated          AccountKeyBackfillOutcome = "updated"
-	AccountKeyBackfillAlreadyComplete  AccountKeyBackfillOutcome = "already_complete"
-	AccountKeyBackfillSourceNotFound   AccountKeyBackfillOutcome = "source_not_found"
-	AccountKeyBackfillMissingTenant    AccountKeyBackfillOutcome = "missing_tenant"
-	AccountKeyBackfillInvalidLocal     AccountKeyBackfillOutcome = "invalid_local"
+	AccountKeyBackfillWouldUpdate       AccountKeyBackfillOutcome = "would_update"
+	AccountKeyBackfillUpdated           AccountKeyBackfillOutcome = "updated"
+	AccountKeyBackfillAlreadyComplete   AccountKeyBackfillOutcome = "already_complete"
+	AccountKeyBackfillSourceNotFound    AccountKeyBackfillOutcome = "source_not_found"
+	AccountKeyBackfillMissingTenant     AccountKeyBackfillOutcome = "missing_tenant"
+	AccountKeyBackfillInvalidLocal      AccountKeyBackfillOutcome = "invalid_local"
 	AccountKeyBackfillRouterUnavailable AccountKeyBackfillOutcome = "router_unavailable"
-	AccountKeyBackfillCASConflict      AccountKeyBackfillOutcome = "cas_conflict"
+	AccountKeyBackfillCASConflict       AccountKeyBackfillOutcome = "cas_conflict"
 )
 
 var accountKeyBackfillOutcomes = []AccountKeyBackfillOutcome{
@@ -44,10 +44,10 @@ type AccountKeyBackfillRecord struct {
 }
 
 type AccountKeyBackfillReport struct {
-	Apply   bool                               `json:"apply"`
-	Total   int                                `json:"total"`
-	Counts  map[AccountKeyBackfillOutcome]int  `json:"counts"`
-	Records []AccountKeyBackfillRecord         `json:"records"`
+	Apply   bool                              `json:"apply"`
+	Total   int                               `json:"total"`
+	Counts  map[AccountKeyBackfillOutcome]int `json:"counts"`
+	Records []AccountKeyBackfillRecord        `json:"records"`
 }
 
 type AccountKeyBackfillStore interface {

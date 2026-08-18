@@ -1,6 +1,6 @@
 ---
 name: multica-delegating-to-issues
-description: "Use in a Chat task when work becomes long-running, side-effectful, or domain-specific and should continue as Issue-backed work without occupying the Chat session. Covers semantic routing to an existing Issue, creating a stable new Issue, and the dedicated delegation command that preserves task identity and completion responsibility."
+description: "Use in a Chat task when long-running, side-effectful, or domain-specific work should continue as an Issue. Covers routing to an existing Issue, creating a stable Issue, and using the delegation command while preserving task identity and completion responsibility."
 user-invocable: false
 allowed-tools: Bash(multica *)
 ---

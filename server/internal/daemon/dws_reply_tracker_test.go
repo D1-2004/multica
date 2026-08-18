@@ -427,6 +427,7 @@ func TestExecuteAndDrainReturnsSuccessfulDWSReplyText(t *testing.T) {
 		agent.ExecOptions{},
 		slog.Default(),
 		"task-dws-reply",
+		"",
 		new(atomic.Int32),
 	)
 	if err != nil {
@@ -451,6 +452,7 @@ func TestExecuteAndDrainIdleWatchdogPreservesSuccessfulDWSReplyText(t *testing.T
 		agent.ExecOptions{},
 		slog.Default(),
 		"task-dws-reply-before-idle",
+		"",
 		new(atomic.Int32),
 	)
 	if err != nil {

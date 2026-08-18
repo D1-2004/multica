@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -58,6 +59,9 @@ func (f *fakeTypingAPIClient) GetMessage(context.Context, InstallationCredential
 }
 func (f *fakeTypingAPIClient) ListChatMessages(context.Context, InstallationCredentials, ListMessagesParams) ([]LarkMessage, error) {
 	return nil, nil
+}
+func (f *fakeTypingAPIClient) DownloadMessageResource(context.Context, InstallationCredentials, DownloadResourceParams) (DownloadedResource, error) {
+	return DownloadedResource{}, nil
 }
 func (f *fakeTypingAPIClient) BatchGetUsers(context.Context, InstallationCredentials, []string) (map[string]string, error) {
 	return nil, nil
@@ -333,8 +337,8 @@ func TestTypingIndicatorConcurrentAddAndClear(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 }
 
-// fakeTypingStore fakes channel_typing_indicator with the DELETE...RETURNING
-// semantics the real query has: a take claims the rows and empties the set.
+// fakeTypingStore models the durable indicator table and its destructive
+// take operation, so add and clear can be exercised across replica boundaries.
 type fakeTypingStore struct {
 	rows []db.ChannelTypingIndicator
 }
@@ -360,4 +364,65 @@ func (f *fakeTypingStore) TakeChannelTypingIndicators(_ context.Context, arg db.
 	}
 	f.rows = kept
 	return taken, nil
+}
+
+// A runtime teardown deletes the installation inside the transaction that
+// cancels its tasks, so the row the clear resolves credentials from is gone by
+// the time the cancel arrives. The reaction is still on the message and the
+// state has already been taken off the map, so the snapshot recorded at add
+// time is the only thing left that can remove it.
+func TestTypingIndicatorClearsAfterTheInstallationIsDeleted(t *testing.T) {
+	api := &fakeTypingAPIClient{addReturn: "reaction-123"}
+	queries := &fakeTypingQueries{}
+	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+	mgr.SetStore(&fakeTypingStore{})
+
+	inst := Installation{
+		ID:     pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
+		AppID:  "cli_test",
+		Region: "feishu",
+	}
+	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, Valid: true}
+
+	mgr.Add(context.Background(), inst, session, "msg-1", "")
+	if len(api.addCalled) != 1 {
+		t.Fatalf("setup: the reaction should be on the message; adds = %d", len(api.addCalled))
+	}
+
+	// The teardown transaction has committed.
+	queries.installErr = pgx.ErrNoRows
+
+	mgr.Clear(context.Background(), session)
+
+	if len(api.deleteCalled) != 1 {
+		t.Fatalf("the runtime was torn down and its installation deleted, but the reaction is still "+
+			"on msg-1 with nothing left to take it off (deletes = %d)", len(api.deleteCalled))
+	}
+}
+
+// The snapshot must not shadow a live row, and must not stand in for a lookup
+// that merely failed: a transient error says nothing about whether the
+// installation still exists, and clearing through a possibly-rotated secret is
+// worse than leaving the badge for the next ending.
+func TestTypingIndicatorDoesNotFallBackOnATransientLookupFailure(t *testing.T) {
+	api := &fakeTypingAPIClient{addReturn: "reaction-123"}
+	queries := &fakeTypingQueries{}
+	mgr := NewTypingIndicatorManager(api, fakeTypingCreds{secret: "shh"}, queries, newDiscardLogger())
+	mgr.SetStore(&fakeTypingStore{})
+
+	inst := Installation{
+		ID:     pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
+		AppID:  "cli_test",
+		Region: "feishu",
+	}
+	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, Valid: true}
+
+	mgr.Add(context.Background(), inst, session, "msg-1", "")
+	queries.installErr = errors.New("connection reset")
+
+	mgr.Clear(context.Background(), session)
+
+	if len(api.deleteCalled) != 0 {
+		t.Fatalf("a transient lookup failure fell back to the snapshot; deletes = %d", len(api.deleteCalled))
+	}
 }

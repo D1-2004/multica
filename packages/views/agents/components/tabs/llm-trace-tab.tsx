@@ -74,16 +74,16 @@ export function LLMTraceTab({
 
   return (
     <div className="flex h-full flex-col space-y-4">
-      <p className="text-xs text-muted-foreground">
+      <p className="text-caption text-muted-foreground">
         {t(($) => $.tab_body.llm_trace.intro)}
       </p>
 
       <div className="flex items-center justify-between gap-4 rounded-md border p-3">
         <div>
-          <Label htmlFor="llm-trace-enabled" className="text-xs font-medium">
+          <Label htmlFor="llm-trace-enabled" className="text-caption font-medium">
             {t(($) => $.tab_body.llm_trace.enabled_label)}
           </Label>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-caption text-muted-foreground">
             {t(($) => $.tab_body.llm_trace.enabled_hint)}
           </p>
         </div>
@@ -98,7 +98,7 @@ export function LLMTraceTab({
 
       {state.enabled && (
         <div className="space-y-1.5">
-          <Label htmlFor="llm-trace-sink-url" className="text-xs">
+          <Label htmlFor="llm-trace-sink-url" className="text-caption">
             {t(($) => $.tab_body.llm_trace.sink_url_label)}
           </Label>
           <Input
@@ -112,14 +112,14 @@ export function LLMTraceTab({
               }))
             }
             placeholder={t(($) => $.tab_body.llm_trace.sink_url_placeholder)}
-            className="font-mono text-xs"
+            className="font-mono text-caption"
           />
         </div>
       )}
 
       <div className="flex items-center justify-end gap-3 pt-2">
         {dirty && (
-          <span className="text-xs text-muted-foreground">
+          <span className="text-caption text-muted-foreground">
             {t(($) => $.tab_body.common.unsaved_changes)}
           </span>
         )}

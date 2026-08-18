@@ -180,14 +180,14 @@ func (h *Handler) AddDingTalkWorkspaceMembers(w http.ResponseWriter, r *http.Req
 				return
 			}
 			resp.AlreadyMemberCount++
-			resp.Members = append(resp.Members, memberWithUserResponse(existing, user))
+			resp.Members = append(resp.Members, h.memberWithUserResponse(existing, user))
 			continue
 		}
 
 		resp.AddedCount++
-		resp.Members = append(resp.Members, memberWithUserResponse(member, user))
+		resp.Members = append(resp.Members, h.memberWithUserResponse(member, user))
 		slog.Info("dingtalk member added", append(logger.RequestAttrs(r), "member_id", uuidToString(member.ID), "workspace_id", workspaceID, "dingtalk_user_id", selected.UserID, "email", user.Email, "role", role)...)
-		eventPayload := map[string]any{"member": memberWithUserResponse(member, user)}
+		eventPayload := map[string]any{"member": h.memberWithUserResponse(member, user)}
 		if ws, err := h.Queries.GetWorkspace(r.Context(), requester.WorkspaceID); err == nil {
 			eventPayload["workspace_name"] = ws.Name
 		}

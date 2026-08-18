@@ -8,6 +8,7 @@ import type {
   MemberWithUser,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
+import { runtimeDisplayLabel } from "@multica/core/runtimes";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 import { VisibilityBadge } from "./visibility-badge";
@@ -43,10 +44,10 @@ export function AgentOverviewSummary({
   return (
     <aside className="self-start rounded-xl border border-surface-border bg-surface p-5 shadow-[var(--surface-shadow)] xl:sticky xl:top-6">
       <section>
-        <h2 className="text-sm font-medium">
+        <h2 className="text-body font-medium">
           {t(($) => $.overview.agent_context)}
         </h2>
-        <dl className="mt-4 space-y-3 text-xs">
+        <dl className="mt-4 space-y-3 text-caption">
           {owner && (
             <SummaryRow label={t(($) => $.inspector.prop_owner)}>
               <span className="flex min-w-0 items-center gap-1.5">
@@ -70,15 +71,23 @@ export function AgentOverviewSummary({
                 }`}
                 aria-hidden="true"
               />
-              <Server className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <Server
+                className="h-3 w-3 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
               <span className="truncate">
-                {runtime?.name ?? t(($) => $.pickers.runtime_none)}
+                {runtime
+                  ? runtimeDisplayLabel(runtime)
+                  : t(($) => $.pickers.runtime_none)}
               </span>
             </span>
           </SummaryRow>
           <SummaryRow label={t(($) => $.inspector.prop_model)}>
             <span className="flex min-w-0 items-center gap-1.5 text-foreground">
-              <Bot className="h-3 w-3 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <Bot
+                className="h-3 w-3 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
               <span className="truncate">
                 {agent.model || t(($) => $.pickers.model_default)}
               </span>
@@ -94,10 +103,10 @@ export function AgentOverviewSummary({
 
       <section className="mt-5 border-t pt-5">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-sm font-medium">
+          <h2 className="text-body font-medium">
             {t(($) => $.inspector.section_skills)}
           </h2>
-          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+          <span className="font-mono text-caption tabular-nums text-muted-foreground">
             {agent.skills.length}
           </span>
         </div>
@@ -106,14 +115,14 @@ export function AgentOverviewSummary({
             {agent.skills.map((skill) => (
               <span
                 key={skill.id}
-                className="max-w-full truncate rounded-md border border-surface-border bg-surface-hover px-2 py-1 text-xs text-muted-foreground"
+                className="max-w-full truncate rounded-md border border-surface-border bg-surface-hover px-2 py-1 text-caption text-muted-foreground"
               >
                 {skill.name}
               </span>
             ))}
           </div>
         ) : (
-          <p className="mt-3 text-xs text-muted-foreground">
+          <p className="mt-3 text-caption text-muted-foreground">
             {t(($) => $.tab_body.skills.empty_title)}
           </p>
         )}
@@ -122,34 +131,45 @@ export function AgentOverviewSummary({
       {source && (
         <section className="mt-5 border-t pt-5">
           <div className="flex items-center justify-between gap-3">
-            <h2 className="flex items-center gap-1.5 text-sm font-medium">
+            <h2 className="flex items-center gap-1.5 text-body font-medium">
               <GitFork className="size-3.5" aria-hidden="true" />
               {t(($) => $.overview.source_title)}
             </h2>
             <span
-              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+              className={`rounded-full px-2 py-0.5 text-micro font-medium ${
                 source.sync_status === "ready"
                   ? "bg-success/10 text-success"
                   : "bg-destructive/10 text-destructive"
               }`}
             >
-              {t(($) => $.overview.source_status[source.sync_status === "ready" ? "ready" : source.sync_status === "disconnected" ? "disconnected" : "failed"])}
+              {t(
+                ($) =>
+                  $.overview.source_status[
+                    source.sync_status === "ready"
+                      ? "ready"
+                      : source.sync_status === "disconnected"
+                        ? "disconnected"
+                        : "failed"
+                  ],
+              )}
             </span>
           </div>
           <a
             href={`https://github.com/${source.repository}`}
             target="_blank"
             rel="noreferrer"
-            className="mt-3 block truncate text-xs font-medium text-foreground underline-offset-4 hover:underline"
+            className="mt-3 block truncate text-caption font-medium text-foreground underline-offset-4 hover:underline"
           >
             {source.repository}
           </a>
-          <dl className="mt-2 space-y-2 text-xs">
+          <dl className="mt-2 space-y-2 text-caption">
             <SummaryRow label={t(($) => $.overview.source_ref)}>
               <span className="font-mono text-foreground">{source.ref}</span>
             </SummaryRow>
             <SummaryRow label={t(($) => $.overview.source_commit)}>
-              <span className="font-mono text-foreground">{source.synced_commit_sha.slice(0, 12)}</span>
+              <span className="font-mono text-foreground">
+                {source.synced_commit_sha.slice(0, 12)}
+              </span>
             </SummaryRow>
             {source.last_synced_at && (
               <SummaryRow label={t(($) => $.overview.source_synced_at)}>
@@ -160,7 +180,7 @@ export function AgentOverviewSummary({
             )}
           </dl>
           {source.last_sync_error && (
-            <p className="mt-3 break-words text-xs leading-5 text-destructive">
+            <p className="mt-3 break-words text-caption leading-5 text-destructive">
               {source.last_sync_error}
             </p>
           )}

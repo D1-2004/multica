@@ -30,8 +30,8 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 				Messages:     []DispatchMessage{{OpenMsgID: "mid", Text: "hello"}},
 			},
 		},
-		Surface:            DispatchSurface{Type: "chat"},
-		Outbound:           DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 		CompletionCallback: &DispatchCompletionCallback{
 			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			UpdateURL:          "/api/v1/dispatch-tasks/router-task-1/execution-update",
@@ -131,7 +131,7 @@ func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 
 func TestDispatchRuntimeContextPersistsCompletionCallback(t *testing.T) {
 	command := DispatchCommand{
-		SchemaVersion:      "2.0",
+		SchemaVersion: "2.0",
 		CompletionCallback: &DispatchCompletionCallback{
 			URL:                "/api/v1/dispatch-tasks/router-task-1/execution-result",
 			UpdateURL:          "/api/v1/dispatch-tasks/router-task-1/execution-update",
@@ -172,8 +172,8 @@ func TestDispatchRequestFingerprintExcludesOnlyTransientIdentityContext(t *testi
 				Messages:     []DispatchMessage{{OpenMsgID: "mid", Text: "hello"}},
 			},
 		},
-		Surface:            DispatchSurface{Type: "chat"},
-		Outbound:           DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 		ExternalIdentity: AgentDispatchExternalIdentity{
 			ContextToken: "token-one",
 			ExpiresAt:    4102444800000,

@@ -24,7 +24,7 @@ func testMulticaMCPHandler(t *testing.T, enabled bool) *Handler {
 	provider.Set(featureflags.MulticaMCPChatSend, featureflag.Rule{Default: enabled})
 	return &Handler{
 		FeatureFlags: featureflag.NewService(provider),
-		cfg: Config{PublicURL: "https://api.multica.test"},
+		cfg:          Config{PublicURL: "https://api.multica.test"},
 	}
 }
 
@@ -868,7 +868,7 @@ func TestMulticaMCPChatSendRejectsSourceSession(t *testing.T) {
 	markTaskRunning(t, ctx, taskID)
 
 	r := mcpRequest(t, "tools/call", 2, map[string]any{
-		"name": multicaMCPChatSendTool,
+		"name":      multicaMCPChatSendTool,
 		"arguments": map[string]any{"session_id": sessionID, "content": "loop"},
 	})
 	r.Header.Set("X-User-ID", testUserID)

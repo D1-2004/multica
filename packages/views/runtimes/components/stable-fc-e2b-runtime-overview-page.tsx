@@ -84,9 +84,7 @@ function templateKey(runtime: FCE2BStableRuntimeOverview): string {
   return `${runtime.artifact_ref}:${runtime.artifact_build_id}`;
 }
 
-function runtimeAlignment(
-  runtime: FCE2BStableRuntimeOverview,
-): Alignment {
+function runtimeAlignment(runtime: FCE2BStableRuntimeOverview): Alignment {
   if (runtime.artifact_channel === "candidate") return "candidate";
   if (runtime.matches_active_release) return "active";
   if (runtime.matches_current_stable) return "current";
@@ -95,7 +93,8 @@ function runtimeAlignment(
 
 function formatDateTime(value: string | number, locale: string): string {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return typeof value === "string" ? value : "";
+  if (Number.isNaN(date.getTime()))
+    return typeof value === "string" ? value : "";
   return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
@@ -147,8 +146,7 @@ export function StableFCE2BRuntimeOverviewPage() {
   const [workspaceFilter, setWorkspaceFilter] = useState(ALL);
   const [providerFilter, setProviderFilter] = useState(ALL);
   const [healthFilter, setHealthFilter] = useState<HealthFilter>(ALL);
-  const [alignmentFilter, setAlignmentFilter] =
-    useState<AlignmentFilter>(ALL);
+  const [alignmentFilter, setAlignmentFilter] = useState<AlignmentFilter>(ALL);
   const [templateFilter, setTemplateFilter] = useState(ALL);
 
   const runtimes = useMemo(
@@ -189,16 +187,13 @@ export function StableFCE2BRuntimeOverviewPage() {
         (runtime) => runtime.status.toLowerCase() === "online",
       ).length,
       stableManaged: stableManaged.length,
-      current: stableManaged.filter(
-        (runtime) => runtime.matches_current_stable,
-      ).length,
-      active: stableManaged.filter(
-        (runtime) => runtime.matches_active_release,
-      ).length,
+      current: stableManaged.filter((runtime) => runtime.matches_current_stable)
+        .length,
+      active: stableManaged.filter((runtime) => runtime.matches_active_release)
+        .length,
       outdated: stableManaged.filter(
         (runtime) =>
-          !runtime.matches_current_stable &&
-          !runtime.matches_active_release,
+          !runtime.matches_current_stable && !runtime.matches_active_release,
       ).length,
       candidate: runtimes.filter(
         (runtime) => runtime.artifact_channel === "candidate",
@@ -278,10 +273,7 @@ export function StableFCE2BRuntimeOverviewPage() {
       ) {
         return false;
       }
-      if (
-        workspaceFilter !== ALL &&
-        runtime.workspace_id !== workspaceFilter
-      ) {
+      if (workspaceFilter !== ALL && runtime.workspace_id !== workspaceFilter) {
         return false;
       }
       if (providerFilter !== ALL && runtime.provider !== providerFilter) {
@@ -361,10 +353,18 @@ export function StableFCE2BRuntimeOverviewPage() {
         actions={
           <>
             <Select
+              items={[
+                {
+                  value: "aliyun_fc",
+                  label: t(($) => $.fc_e2b_runtime.backend_aliyun_fc),
+                },
+                {
+                  value: "asb",
+                  label: t(($) => $.fc_e2b_runtime.backend_asb),
+                },
+              ]}
               value={sandboxBackend}
-              onValueChange={(value) =>
-                changeBackend(value as SandboxBackend)
-              }
+              onValueChange={(value) => changeBackend(value as SandboxBackend)}
             >
               <SelectTrigger size="sm" className="w-44">
                 <SelectValue />
@@ -379,7 +379,7 @@ export function StableFCE2BRuntimeOverviewPage() {
               </SelectContent>
             </Select>
             {lastUpdatedAt > 0 && (
-              <span className="hidden text-xs text-muted-foreground lg:inline">
+              <span className="hidden text-caption text-muted-foreground lg:inline">
                 {t(($) => $.fc_e2b_stable_overview.last_updated, {
                   time: formatDateTime(lastUpdatedAt, i18n.language),
                 })}
@@ -434,9 +434,7 @@ export function StableFCE2BRuntimeOverviewPage() {
         <CollectionPageState
           icon={ShieldCheck}
           title={t(($) => $.fc_e2b_stable_overview.forbidden_title)}
-          description={t(
-            ($) => $.fc_e2b_stable_overview.forbidden_description,
-          )}
+          description={t(($) => $.fc_e2b_stable_overview.forbidden_description)}
           tone="warning"
         />
       ) : runtimesQuery.isLoading ? (
@@ -462,10 +460,10 @@ export function StableFCE2BRuntimeOverviewPage() {
         <div className="min-h-0 flex-1 overflow-y-auto">
           <main className="mx-auto w-full max-w-[1680px] space-y-5 p-4 sm:p-6">
             <div>
-              <h1 className="text-xl font-semibold tracking-tight">
+              <h1 className="text-title-lg font-semibold tracking-tight">
                 {t(($) => $.fc_e2b_stable_overview.heading)}
               </h1>
-              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              <p className="mt-1 max-w-3xl text-body text-muted-foreground">
                 {t(($) => $.fc_e2b_stable_overview.description)}
               </p>
             </div>
@@ -477,10 +475,7 @@ export function StableFCE2BRuntimeOverviewPage() {
                 managedCount={metrics.stableManaged}
                 coverage={stableCoverage}
               />
-              <ActiveReleaseCard
-                release={active}
-                progress={activeProgress}
-              />
+              <ActiveReleaseCard release={active} progress={activeProgress} />
             </section>
 
             <section className="grid grid-cols-2 overflow-hidden rounded-xl border bg-card shadow-sm sm:grid-cols-3 xl:grid-cols-6">
@@ -573,10 +568,10 @@ export function StableFCE2BRuntimeOverviewPage() {
                 <div className="flex flex-col gap-3 border-b p-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <h2 className="text-sm font-semibold">
+                      <h2 className="text-body font-semibold">
                         {t(($) => $.fc_e2b_stable_overview.runtime_list_title)}
                       </h2>
-                      <p className="mt-1 text-xs text-muted-foreground">
+                      <p className="mt-1 text-caption text-muted-foreground">
                         {t(($) => $.fc_e2b_stable_overview.showing, {
                           shown: filteredRuntimes.length,
                           total: runtimes.length,
@@ -660,13 +655,13 @@ function CurrentStableCard({
           <>
             <div className="min-w-0">
               <p
-                className="truncate text-sm font-semibold"
+                className="truncate text-body font-semibold"
                 title={current.artifact_alias}
               >
                 {current.artifact_alias}
               </p>
               <p
-                className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+                className="mt-1 truncate font-mono text-micro text-muted-foreground"
                 title={`${current.artifact_ref} · ${current.artifact_build_id}`}
               >
                 {current.artifact_build_id}
@@ -676,7 +671,7 @@ function CurrentStableCard({
               </p>
             </div>
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center justify-between text-caption">
                 <span className="text-muted-foreground">
                   {t(($) => $.fc_e2b_stable_overview.stable_coverage)}
                 </span>
@@ -686,7 +681,7 @@ function CurrentStableCard({
             </div>
           </>
         ) : (
-          <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+          <div className="rounded-lg border border-dashed p-4 text-body text-muted-foreground">
             {t(($) => $.fc_e2b_stable_overview.current_stable_empty)}
           </div>
         )}
@@ -726,13 +721,13 @@ function ActiveReleaseCard({
           <>
             <div className="min-w-0">
               <p
-                className="truncate text-sm font-semibold"
+                className="truncate text-body font-semibold"
                 title={release.artifact_alias}
               >
                 {release.artifact_alias}
               </p>
               <p
-                className="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+                className="mt-1 truncate font-mono text-micro text-muted-foreground"
                 title={`${release.artifact_ref} · ${release.artifact_build_id}`}
               >
                 {release.artifact_build_id}
@@ -742,7 +737,7 @@ function ActiveReleaseCard({
               </p>
             </div>
             <div className="space-y-2">
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center justify-between text-caption">
                 <span className="text-muted-foreground">
                   {t(($) => $.fc_e2b_stable.progress, {
                     updated: progress.updated,
@@ -756,12 +751,9 @@ function ActiveReleaseCard({
               <Progress value={progress.percentage} />
             </div>
             {release.next_batch_at && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-caption text-muted-foreground">
                 {t(($) => $.fc_e2b_stable_overview.next_batch, {
-                  time: formatDateTime(
-                    release.next_batch_at,
-                    i18n.language,
-                  ),
+                  time: formatDateTime(release.next_batch_at, i18n.language),
                 })}
               </p>
             )}
@@ -769,7 +761,7 @@ function ActiveReleaseCard({
         ) : (
           <div className="flex items-center gap-3 rounded-lg border border-dashed p-4">
             <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
-            <p className="text-sm text-muted-foreground">
+            <p className="text-body text-muted-foreground">
               {t(($) => $.fc_e2b_stable_overview.no_active_release)}
             </p>
           </div>
@@ -817,21 +809,23 @@ function OverviewMetric({
       )}
     >
       <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-xs font-medium text-muted-foreground">
+        <span className="truncate text-caption font-medium text-muted-foreground">
           {label}
         </span>
         <Icon className={cn("size-3.5 shrink-0", metricTone[tone])} />
       </div>
       <p
         className={cn(
-          "mt-3 font-mono text-2xl font-semibold tabular-nums tracking-tight",
+          "mt-3 font-mono text-display-sm font-semibold tabular-nums tracking-tight",
           metricTone[tone],
         )}
       >
         {value}
       </p>
       {hint && (
-        <p className="mt-1 truncate text-[11px] text-muted-foreground">{hint}</p>
+        <p className="mt-1 truncate text-micro text-muted-foreground">
+          {hint}
+        </p>
       )}
     </button>
   );
@@ -850,7 +844,9 @@ function TemplateDistributionCard({
   return (
     <Card className="gap-0 py-0 xl:sticky xl:top-4">
       <CardHeader className="border-b py-4">
-        <CardTitle>{t(($) => $.fc_e2b_stable_overview.templates_title)}</CardTitle>
+        <CardTitle>
+          {t(($) => $.fc_e2b_stable_overview.templates_title)}
+        </CardTitle>
         <CardDescription>
           {t(($) => $.fc_e2b_stable_overview.templates_description, {
             count: items.length,
@@ -859,7 +855,7 @@ function TemplateDistributionCard({
       </CardHeader>
       <div className="max-h-[520px] overflow-y-auto">
         {items.length === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">
+          <p className="p-4 text-body text-muted-foreground">
             {t(($) => $.fc_e2b_stable_overview.empty)}
           </p>
         ) : (
@@ -877,19 +873,19 @@ function TemplateDistributionCard({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p
-                    className="truncate text-xs font-medium"
+                    className="truncate text-caption font-medium"
                     title={item.alias || item.templateId}
                   >
                     {item.alias || item.templateId || "—"}
                   </p>
                   <p
-                    className="mt-1 truncate font-mono text-[10px] text-muted-foreground"
+                    className="mt-1 truncate font-mono text-micro text-muted-foreground"
                     title={`${item.templateId} · ${item.buildId}`}
                   >
                     {item.buildId || item.templateId || "—"}
                   </p>
                 </div>
-                <span className="shrink-0 font-mono text-lg font-semibold tabular-nums">
+                <span className="shrink-0 font-mono text-title font-semibold tabular-nums">
                   {item.runtimeCount}
                 </span>
               </div>
@@ -897,7 +893,7 @@ function TemplateDistributionCard({
                 {item.matchesCurrentStable && (
                   <Badge
                     variant="outline"
-                    className="border-primary/30 bg-primary/5 text-[10px] text-primary"
+                    className="border-primary/30 bg-primary/5 text-micro text-primary"
                   >
                     {t(($) => $.fc_e2b_stable_overview.alignment.current)}
                   </Badge>
@@ -905,12 +901,12 @@ function TemplateDistributionCard({
                 {item.matchesActiveRelease && (
                   <Badge
                     variant="outline"
-                    className="border-amber-500/30 bg-amber-500/5 text-[10px] text-amber-700 dark:text-amber-400"
+                    className="border-amber-500/30 bg-amber-500/5 text-micro text-amber-700 dark:text-amber-400"
                   >
                     {t(($) => $.fc_e2b_stable_overview.alignment.active)}
                   </Badge>
                 )}
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-micro text-muted-foreground">
                   {t(($) => $.fc_e2b_stable_overview.template_scope, {
                     online: item.onlineCount,
                     workspaces: item.workspaceCount,
@@ -961,10 +957,17 @@ function RuntimeFilters({
           value={search}
           onChange={(event) => onSearchChange(event.target.value)}
           placeholder={t(($) => $.fc_e2b_stable_overview.search_placeholder)}
-          className="h-8 pl-8 text-xs"
+          className="h-8 pl-8 text-caption"
         />
       </div>
       <Select
+        items={[
+          {
+            value: ALL,
+            label: t(($) => $.fc_e2b_stable_overview.filters.all_workspaces),
+          },
+          ...workspaces.map(([id, name]) => ({ value: id, label: name })),
+        ]}
         value={workspace}
         onValueChange={(value) => onWorkspaceChange(value ?? ALL)}
       >
@@ -983,6 +986,13 @@ function RuntimeFilters({
         </SelectContent>
       </Select>
       <Select
+        items={[
+          {
+            value: ALL,
+            label: t(($) => $.fc_e2b_stable_overview.filters.all_providers),
+          },
+          ...providers.map((item) => ({ value: item, label: item })),
+        ]}
         value={provider}
         onValueChange={(value) => onProviderChange(value ?? ALL)}
       >
@@ -1001,6 +1011,20 @@ function RuntimeFilters({
         </SelectContent>
       </Select>
       <Select
+        items={[
+          {
+            value: ALL,
+            label: t(($) => $.fc_e2b_stable_overview.filters.all_health),
+          },
+          {
+            value: "online",
+            label: t(($) => $.fc_e2b_stable.runtime_online),
+          },
+          {
+            value: "offline",
+            label: t(($) => $.fc_e2b_stable.runtime_offline),
+          },
+        ]}
         value={health}
         onValueChange={(value) =>
           onHealthChange((value ?? ALL) as HealthFilter)
@@ -1022,6 +1046,28 @@ function RuntimeFilters({
         </SelectContent>
       </Select>
       <Select
+        items={[
+          {
+            value: ALL,
+            label: t(($) => $.fc_e2b_stable_overview.filters.all_alignment),
+          },
+          {
+            value: "current",
+            label: t(($) => $.fc_e2b_stable_overview.alignment.current),
+          },
+          {
+            value: "active",
+            label: t(($) => $.fc_e2b_stable_overview.alignment.active),
+          },
+          {
+            value: "outdated",
+            label: t(($) => $.fc_e2b_stable_overview.alignment.outdated),
+          },
+          {
+            value: "candidate",
+            label: t(($) => $.fc_e2b_stable_overview.alignment.candidate),
+          },
+        ]}
         value={alignment}
         onValueChange={(value) =>
           onAlignmentChange((value ?? ALL) as AlignmentFilter)
@@ -1062,10 +1108,10 @@ function RuntimeOverviewTable({
     return (
       <div className="flex min-h-56 flex-col items-center justify-center gap-2 px-6 text-center">
         <Search className="size-5 text-muted-foreground" />
-        <p className="text-sm font-medium">
+        <p className="text-body font-medium">
           {t(($) => $.fc_e2b_stable_overview.no_matches)}
         </p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-caption text-muted-foreground">
           {t(($) => $.fc_e2b_stable_overview.no_matches_hint)}
         </p>
       </div>
@@ -1108,13 +1154,13 @@ function RuntimeOverviewTable({
                 <TableCell className="pl-4">
                   <div className="max-w-72 min-w-0">
                     <p
-                      className="truncate text-xs font-medium"
+                      className="truncate text-caption font-medium"
                       title={runtime.runtime_name}
                     >
                       {runtime.runtime_name}
                     </p>
                     <p
-                      className="mt-1 truncate text-[11px] text-muted-foreground"
+                      className="mt-1 truncate text-micro text-muted-foreground"
                       title={runtime.workspace_name}
                     >
                       {runtime.workspace_name}
@@ -1122,7 +1168,7 @@ function RuntimeOverviewTable({
                   </div>
                 </TableCell>
                 <TableCell>
-                  <span className="inline-flex items-center gap-1.5 text-xs">
+                  <span className="inline-flex items-center gap-1.5 text-caption">
                     <ProviderLogo
                       provider={runtime.provider}
                       className="size-3.5"
@@ -1133,7 +1179,7 @@ function RuntimeOverviewTable({
                 <TableCell>
                   <span
                     className={cn(
-                      "inline-flex items-center gap-1.5 text-xs",
+                      "inline-flex items-center gap-1.5 text-caption",
                       online
                         ? "text-emerald-600 dark:text-emerald-400"
                         : "text-muted-foreground",
@@ -1150,7 +1196,7 @@ function RuntimeOverviewTable({
                   </span>
                 </TableCell>
                 <TableCell>
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge variant="outline" className="text-micro">
                     {runtime.artifact_channel === "candidate"
                       ? t(($) => $.fc_e2b_stable_overview.channel.candidate)
                       : t(($) => $.fc_e2b_stable_overview.channel.stable)}
@@ -1159,13 +1205,13 @@ function RuntimeOverviewTable({
                 <TableCell>
                   <div className="max-w-80 min-w-0">
                     <p
-                      className="truncate text-xs font-medium"
+                      className="truncate text-caption font-medium"
                       title={runtime.artifact_alias}
                     >
                       {runtime.artifact_alias}
                     </p>
                     <p
-                      className="mt-1 truncate font-mono text-[10px] text-muted-foreground"
+                      className="mt-1 truncate font-mono text-micro text-muted-foreground"
                       title={`${runtime.artifact_ref} · ${runtime.artifact_build_id}`}
                     >
                       {runtime.artifact_build_id}
@@ -1181,7 +1227,7 @@ function RuntimeOverviewTable({
                     targetStatus={runtime.active_release_target_status}
                   />
                 </TableCell>
-                <TableCell className="pr-4 text-right text-[11px] text-muted-foreground">
+                <TableCell className="pr-4 text-right text-micro text-muted-foreground">
                   {formatDateTime(runtime.updated_at, i18n.language)}
                 </TableCell>
               </TableRow>
@@ -1210,11 +1256,11 @@ function AlignmentBadge({
   }[alignment];
   return (
     <div className="flex flex-col items-start gap-1">
-      <Badge variant="outline" className={cn("text-[10px]", className)}>
+      <Badge variant="outline" className={cn("text-micro", className)}>
         {alignmentLabel(alignment, t)}
       </Badge>
       {targetStatus && (
-        <span className="text-[10px] text-muted-foreground">
+        <span className="text-micro text-muted-foreground">
           {targetStatusLabel(targetStatus, t)}
         </span>
       )}
@@ -1263,12 +1309,8 @@ function targetStatusLabel(
     updating: t(($) => $.fc_e2b_stable_overview.target_status.updating),
     updated: t(($) => $.fc_e2b_stable_overview.target_status.updated),
     failed: t(($) => $.fc_e2b_stable_overview.target_status.failed),
-    rolling_back: t(
-      ($) => $.fc_e2b_stable_overview.target_status.rolling_back,
-    ),
-    rolled_back: t(
-      ($) => $.fc_e2b_stable_overview.target_status.rolled_back,
-    ),
+    rolling_back: t(($) => $.fc_e2b_stable_overview.target_status.rolling_back),
+    rolled_back: t(($) => $.fc_e2b_stable_overview.target_status.rolled_back),
   };
   return labels[status] ?? status;
 }

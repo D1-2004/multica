@@ -19,15 +19,15 @@ func TestHTTPCallbackTaskContextCarriesDispatchPolicyAndExternalIdentity(t *test
 		"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}
 	}`)
 	input := HTTPCallbackMessage{
-		ConversationID:       "conversation-1",
-		ConversationType:     "single",
-		MessageID:            "message-1",
-		SenderID:             "sender-1",
-			SenderStaffID:        "staff-1",
-			Text:                 "hello",
-			IdentityContextToken: "sealed-router-context",
-			IdentityContextTokenExpiresAt: 4102444800000,
-			DispatchContext:      dispatchContext,
+		ConversationID:                "conversation-1",
+		ConversationType:              "single",
+		MessageID:                     "message-1",
+		SenderID:                      "sender-1",
+		SenderStaffID:                 "staff-1",
+		Text:                          "hello",
+		IdentityContextToken:          "sealed-router-context",
+		IdentityContextTokenExpiresAt: 4102444800000,
+		DispatchContext:               dispatchContext,
 	}
 	message, err := InboundFromHTTPCallback(input, "client-1", "11111111-1111-1111-1111-111111111111")
 	if err != nil {
@@ -76,16 +76,16 @@ func TestAgentDispatchNormalizationDoesNotRequireRobotInstallation(t *testing.T)
 		"dispatch_outbound":{"mode":"dws","replyTo":"latest_message"}
 	}`)
 	message, err := InboundFromAgentDispatch(AgentDispatchMessage{
-		ConversationID:       "conversation-digital-employee",
-		ConversationType:     "group",
-		ConversationTitle:    "数字员工群",
-		MessageID:            "message-digital-employee",
-		SenderID:             "sender-digital-employee",
-			SenderName:           "张三",
-			Text:                 "hello",
-			IdentityContextToken: "sealed-digital-employee-context",
-			IdentityContextTokenExpiresAt: 4102444800000,
-			DispatchContext:      dispatchContext,
+		ConversationID:                "conversation-digital-employee",
+		ConversationType:              "group",
+		ConversationTitle:             "数字员工群",
+		MessageID:                     "message-digital-employee",
+		SenderID:                      "sender-digital-employee",
+		SenderName:                    "张三",
+		Text:                          "hello",
+		IdentityContextToken:          "sealed-digital-employee-context",
+		IdentityContextTokenExpiresAt: 4102444800000,
+		DispatchContext:               dispatchContext,
 	})
 	if err != nil {
 		t.Fatalf("InboundFromAgentDispatch: %v", err)

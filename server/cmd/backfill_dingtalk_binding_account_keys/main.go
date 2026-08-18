@@ -52,7 +52,7 @@ func run(ctx context.Context, options options, output io.Writer) error {
 		return errors.New("DATABASE_URL is required")
 	}
 	router, err := agentmessagerouter.NewClient(agentmessagerouter.ClientConfig{
-		BaseURL: strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_INTERNAL_URL")),
+		BaseURL:           strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_INTERNAL_URL")),
 		ServiceCredential: strings.TrimSpace(os.Getenv("AGENT_MESSAGE_ROUTER_SERVICE_CREDENTIAL")),
 	})
 	if err != nil {

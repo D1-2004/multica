@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/netip"
 	"os"
@@ -30,8 +31,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	composio "github.com/multica-ai/multica/server/internal/integrations/composio"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
+	"github.com/multica-ai/multica/server/internal/integrations/ghsnapshot"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
+	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	"github.com/multica-ai/multica/server/internal/managedagent"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -39,6 +42,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -76,6 +80,16 @@ type Config struct {
 	// invitation only. The public /api/config endpoint mirrors this flag so
 	// the UI can hide every "Create workspace" affordance — see #3433.
 	DisableWorkspaceCreation bool
+	// VCSIntegrationEnabled gates the self-hosted Git provider integration
+	// (Forgejo / Gitea / GitLab) at the deployment level, independent of whether
+	// MULTICA_VCS_SECRET_KEY is set. It is the product boundary: the feature is
+	// intended for self-hosted Multica only (where Multica and the Git instance
+	// can share a network), and is left off on the managed cloud — connect,
+	// rotate, and webhook handlers reject when it is false, and /api/config
+	// omits it so the UI hides the whole section rather than showing a
+	// "missing key" message a cloud user cannot act on. Populated from
+	// MULTICA_VCS_INTEGRATION_ENABLED; the self-host compose defaults it on.
+	VCSIntegrationEnabled bool
 	// PublicURL is the absolute base URL the API is reachable at from the
 	// public internet, with no trailing slash (e.g. "https://multica.ai").
 	// Used only to build webhook_url responses for autopilot webhook triggers
@@ -136,6 +150,11 @@ type Config struct {
 	LLMAPIKey       string
 	LLMBaseURL      string
 	LLMDefaultModel string
+	// ServerVersion is the build version of the running API binary (the same
+	// value main.go stamps via -X main.version and reports on /metrics).
+	// Surfaced through /api/config so self-hosted operators can confirm which
+	// server build is deployed. Empty in dev builds.
+	ServerVersion string
 }
 
 type cloudRuntimeProxy interface {
@@ -149,6 +168,15 @@ type RuntimeProfileRefreshNotifier interface {
 
 type WorkspaceSetRefreshNotifier interface {
 	NotifyWorkspacesChanged(userID string)
+}
+
+// DaemonPendingWorkNotifier pushes a runtime-scoped "heartbeat now" hint to the
+// daemon so a queued heartbeat-carried request (model discovery) is picked up
+// immediately instead of on the daemon's next scheduled tick (MUL-5444).
+// Satisfied by both *daemonws.Hub (single-node) and *daemonws.RelayNotifier
+// (multi-node, fans out through Redis).
+type DaemonPendingWorkNotifier interface {
+	NotifyPendingWork(runtimeID, kind string)
 }
 
 type Handler struct {
@@ -181,6 +209,16 @@ type Handler struct {
 	AgentDispatchKeys       *agentmessagerouter.DispatchKeyring
 	CFSigner                *auth.CloudFrontSigner
 	Analytics               analytics.Client
+	// DaemonPendingWork pushes "heartbeat now" hints for queued
+	// heartbeat-carried requests (MUL-5444). Optional: when nil,
+	// requestDaemonPendingWork falls back to the local DaemonHub, which is the
+	// correct delivery scope for a single-node deployment.
+	DaemonPendingWork DaemonPendingWorkNotifier
+	// ModelCatalogCache serves the last known good model list for a runtime so
+	// the picker can render without waiting for a daemon round trip
+	// (stale-while-revalidate, MUL-5444). Nil-safe: every call site treats a nil
+	// cache as a permanent miss and falls back to the full discovery flow.
+	ModelCatalogCache ModelCatalogCache
 	// Metrics is the shared business-metrics collector built by main.go.
 	// May be nil in tests / self-hosted with the metrics listener disabled;
 	// every Record* method is nil-safe and obsmetrics.RecordEvent treats a
@@ -247,10 +285,13 @@ type Handler struct {
 	// delivering events, to flush debounced run triggers and join in-flight
 	// reply goroutines. Built unconditionally (even without Lark).
 	ChannelRouter *engine.Router
-	// DingTalkStreamInbox is the durable admission worker for Stream callbacks.
-	// The connector commits encrypted callback payloads here before ACK; main
-	// runs the worker pool and joins it after Stream connections have stopped.
+	// DingTalkStreamInbox durably admits DingTalk Stream callbacks before ACK.
 	DingTalkStreamInbox *dingtalk.StreamInboxWorker
+	// ChannelMediaReconciler settles the channel-media intent ledger
+	// (uploaded-but-unbound object reclaim). Built in cmd/server/router.go
+	// where the storage backend exists; main.go starts it as an independent
+	// worker goroutine. Nil when no storage backend is configured.
+	ChannelMediaReconciler *service.ChannelMediaReconciler
 	// SlackInstall owns the bring-your-own-app Slack install lifecycle (register
 	// pasted tokens / list / revoke) and the at-rest encryption of each app's bot
 	// + app tokens (MUL-3666). Nil unless MULTICA_SLACK_SECRET_KEY is set.
@@ -263,66 +304,90 @@ type Handler struct {
 	// reads a chat session's bound Slack conversation on demand (MUL-3871). Nil
 	// unless Slack is configured; GetChatChannelHistory then reports "no channel
 	// integration". A future platform satisfies the same reader interface.
-	SlackHistory ChatChannelHistoryReader
-	// DingTalk is an optional deployment-wide capability client used by the
-	// settings members tab to resolve organization users and add them to a
-	// configured DingTalk group. Production prefers the private
-	// dingtalk-native-agent transport so Open Platform credentials stay outside
-	// this backend; the direct OpenAPI client remains available for explicit
-	// self-hosted deployments.
-	DingTalk              dingtalk.CapabilityClient
-	DingTalkNotifications dingtalk.PersonalNotificationClient
-	DingTalkOAuth         dingtalk.OAuthClient
-	// DingTalk bot installations (scan-to-create device flow). Both are
-	// nil when the DingTalk master key (MULTICA_DINGTALK_SECRET_KEY) is
-	// unset; the corresponding HTTP handlers return 503 in that case.
-	// Wired in cmd/server/router.go after handler.New.
-	DingTalkInstallations *dingtalk.InstallationService
-	// DingTalkRegistration owns the device-flow install lifecycle: begin
-	// a registration session against oapi.dingtalk.com, poll, and on
-	// success write the dingtalk channel_installation row. Nil when the
-	// at-rest key is unset or the RegistrationService failed to
-	// construct at boot.
-	DingTalkRegistration *dingtalk.RegistrationService
-	// DingTalkCredentialVerifier validates an operator-supplied
-	// (client_id, client_secret) pair on the manual install path
-	// (ManualInstallDingTalk) before it is persisted. Wired alongside
-	// DingTalkInstallations; nil disables the pre-check (offline / test
-	// builds), in which case the credentials are stored unverified.
-	DingTalkCredentialVerifier dingtalk.AppCredentialVerifier
-	// DingTalkBindingTokens mints/redeems the user-binding tokens behind
-	// the "link your DingTalk account" prompt. Nil unless the DingTalk
-	// bot integration is configured (MULTICA_DINGTALK_SECRET_KEY set).
+	SlackHistory                         ChatChannelHistoryReader
+	DingTalk                             dingtalk.CapabilityClient
+	DingTalkNotifications                dingtalk.PersonalNotificationClient
+	DingTalkOAuth                        dingtalk.OAuthClient
+	DingTalkInstallations                *dingtalk.InstallationService
+	DingTalkRegistration                 *dingtalk.RegistrationService
+	DingTalkCredentialVerifier           dingtalk.AppCredentialVerifier
 	DingTalkBindingTokens                *dingtalk.BindingTokenService
 	DingTalkAccountBindings              dingTalkAccountBindingService
 	DigitalEmployeeBindingMCPBindings    DigitalEmployeeBindingMCPService
 	DingTalkAccountBindingOrigin         string
 	dingTalkAccountBindingOriginProvider func() string
-	// Defaults to Queries; the narrow seam keeps authoritative metadata loading
-	// directly testable without changing production wiring.
-	dingTalkAccountBindingMetadata    dingTalkAccountBindingMetadataStore
-	dingTalkAccountBindingPermissions agentInvocationPermissionStore
-	multicaMCPBindingTasks            multicaMCPBindingTaskStore
-	multicaMCPAgents                  multicaMCPAgentQueryStore
-	// LarkOAuth resolves Feishu login codes for POST /auth/lark. Production
-	// prefers the private channel agent (LARK_AGENT_BASE_URL) so the app
-	// secret stays outside this backend; the direct client remains available
-	// for self-hosted / local-dev deployments.
-	LarkOAuth lark.OAuthClient
+	dingTalkAccountBindingMetadata       dingTalkAccountBindingMetadataStore
+	dingTalkAccountBindingPermissions    agentInvocationPermissionStore
+	multicaMCPBindingTasks               multicaMCPBindingTaskStore
+	multicaMCPAgents                     multicaMCPAgentQueryStore
+	LarkOAuth                            lark.OAuthClient
+	// WecomStore is the read/write handle over channel_installation rows scoped
+	// to channel_type='wecom'. Nil disables the wecom Web-UI endpoints (they
+	// return 503) and prevents boot from wiring the smart-bot supervisor.
+	WecomStore *wecom.Store
+	// WecomCredentials unseals a wecom installation's smart-bot secret for the
+	// WebSocket subscribe frame. Nil disables the wecom integration.
+	WecomCredentials wecom.CredentialsResolver
+	// WecomBindingTokens mints/redeems the user-binding tokens behind the
+	// "link your Multica account" prompt sent to first-time WeCom users
+	// (their aibot userid is a "T"-prefixed anonymized id with no relation
+	// to their real userid or email, so an explicit binding is required —
+	// see wecom/binding.go). Nil disables the redeem endpoint (returns 503)
+	// and the OutboundReplier's binding-prompt path.
+	WecomBindingTokens WecomBindingRedeemer
+
+	// WecomCredentialProbe overrides the install-time control check. Nil in
+	// production, which gets the real handshake probe; tests inject a fake so
+	// the install path runs without a socket.
+	WecomCredentialProbe wecom.CredentialProbe
+
+	// channelFileDelivery names the channel types that can, IN THIS
+	// DEPLOYMENT, carry a file the agent produced the last hop into the
+	// conversation. It answers the claim response's
+	// chat_channel_delivers_files, which the agent's PER-TURN prompt turns into
+	// either "run `multica attachment upload`" or "describe the file in words"
+	// (daemon/prompt.go). Not the brief: the brief is the prompt cache prefix and
+	// this is a per-turn verdict, so stating it there made one session render two
+	// briefs (MUL-5377).
+	//
+	// It is a deployment fact, not a property of the channel type, and that
+	// distinction is the whole reason it lives here. Whether the file arrives
+	// takes TWO things: an adapter that goes back for the bound attachment,
+	// and object storage for it to go back to. The first is a property of the
+	// code, the second of the configuration, and only the process that wired
+	// both knows the conjunction. A daemon that answers this from the channel
+	// type alone promises delivery a storage-less deployment cannot perform.
+	//
+	// Written once at boot by DeclareChannelFileDelivery (cmd/server/router.go,
+	// in the same branch that passes the storage to the adapter, so the two
+	// cannot drift), read-only from then on. Nil means no channel delivers
+	// files, which is what a deployment with no storage configured gets.
+	channelFileDelivery map[string]bool
 	// LLM is the basic LLM API layer (MUL-4238): a thin wrapper over the
 	// OpenAI Go SDK backing server-internal one-shot LLM helpers such as chat
 	// title generation. The generic passthrough endpoints were removed in
 	// MUL-4309, so it is internal-only now. Always non-nil (New builds it from
 	// Config); when unconfigured its Enabled() reports false and callers fall
 	// back silently.
-	LLM            *llm.Client
+	LLM *llm.Client
+	// VCSSecretBox encrypts/decrypts per-workspace Git provider access tokens and
+	// webhook secrets at rest (Forgejo / Gitea / GitLab). Nil when
+	// MULTICA_VCS_SECRET_KEY is unset; the connect/webhook handlers return 503
+	// in that case so a misconfigured self-host deployment surfaces a clear
+	// error rather than silently storing plaintext. Wired in
+	// cmd/server/router.go after New.
+	VCSSecretBox *secretbox.Box
+	// PRRefresh drives the GitHub API snapshot pipeline for PR cards (MUL-5265):
+	// webhook / page-visit / TTL triggers → authenticated GraphQL fetch →
+	// head-SHA-guarded atomic snapshot write. Always non-nil, but inert (every
+	// trigger is a no-op) when GITHUB_APP_ID / GITHUB_APP_PRIVATE_KEY are unset,
+	// so the feature degrades cleanly on deployments without a private key.
+	// Wired in cmd/server/router.go after New.
+	PRRefresh      *ghsnapshot.Manager
 	cfg            Config
 	configProvider func() Config
 }
 
-// SetConfigProvider installs a concurrency-safe dynamic configuration source.
-// The provider must return an immutable snapshot. Tests and self-hosted
-// deployments that do not install one continue to use the constructor config.
 func (h *Handler) SetConfigProvider(provider func() Config) {
 	if h != nil {
 		h.configProvider = provider
@@ -385,13 +450,19 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		daemonWorkspaceRefresh = daemonHub
 	}
 
+	llmClient := llm.New(llm.Config{
+		APIKey:       cfg.LLMAPIKey,
+		BaseURL:      cfg.LLMBaseURL,
+		DefaultModel: cfg.LLMDefaultModel,
+	})
+
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
+	// Chat follow-up suggestions run through the same internal LLM layer that
+	// backs auto-titling. A deployment with no MULTICA_LLM_* configuration gets
+	// a disabled client, which turns the feature off rather than failing.
+	taskSvc.QuickActions = llmClient
 	fcLauncher := service.NewFCE2BLauncher(queries, taskSvc, cfg.FCE2B, nil)
-	// In production txStarter IS the pool; the launcher needs it for the
-	// cross-replica sandbox lock (two replicas booting a sandbox for the same
-	// chat orphan one of them, billed until timeout). Tests pass a fake — they
-	// stay single-process, so nil is correct there.
 	if pool, ok := txStarter.(*pgxpool.Pool); ok {
 		fcLauncher.SetPool(pool)
 	}
@@ -431,6 +502,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		EmailService:                 emailService,
 		UpdateStore:                  NewInMemoryUpdateStore(),
 		ModelListStore:               NewInMemoryModelListStore(),
+		ModelCatalogCache:            NewInMemoryModelCatalogCache(),
 		LocalSkillListStore:          NewInMemoryLocalSkillListStore(),
 		LocalSkillImportStore:        NewInMemoryLocalSkillImportStore(),
 		LLMTraceExternalSink:         newHTTPTraceExternalSink(),
@@ -448,12 +520,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		}),
 		GitHubApp:           githubClient,
 		AgentIdentityGitHub: agentIdentityGitHub,
-		LLM: llm.New(llm.Config{
-			APIKey:       cfg.LLMAPIKey,
-			BaseURL:      cfg.LLMBaseURL,
-			DefaultModel: cfg.LLMDefaultModel,
-		}),
-		cfg: cfg,
+		LLM:                 llmClient,
+		cfg:                 cfg,
 	}
 	if pool, ok := txStarter.(*pgxpool.Pool); ok {
 		h.FCE2BStable = service.NewFCE2BStableService(
@@ -463,6 +531,18 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		)
 	}
 	h.WebhookDeliveryWorker = NewWebhookDeliveryWorker(h)
+
+	// GitHub API snapshot pipeline for PR cards (MUL-5265). Built
+	// unconditionally but inert (every trigger no-ops) when the App private key
+	// is unconfigured, so the feature degrades cleanly. main.go calls
+	// h.PRRefresh.Start(ctx) to launch its worker pool + TTL sweeper.
+	ghClient, err := ghsnapshot.NewClientFromEnv()
+	if err != nil {
+		// Malformed key is operator-actionable; the pipeline stays disabled.
+		slog.Warn("github: PR snapshot pipeline disabled (invalid App private key)", "err", err)
+	}
+	h.PRRefresh = ghsnapshot.NewManager(ghClient, queries, txStarter, h.broadcastPRSnapshotApplied)
+
 	return h
 }
 
@@ -517,6 +597,14 @@ func writeMeasuredJSON(w http.ResponseWriter, status int, v any) (int, error) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// writeErrorCode is writeError plus a stable machine-readable code, so a UI
+// can translate the failure instead of toasting the English sentence at a
+// user whose console is in another language. The sentence stays as the
+// fallback for anything that has not been given a translation yet.
+func writeErrorCode(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg, "code": code})
 }
 
 // Thin wrappers around util functions.
@@ -603,6 +691,45 @@ func parseUUIDSliceOrBadRequest(w http.ResponseWriter, ids []string, fieldName s
 		uuids[i] = u
 	}
 	return uuids, true
+}
+
+// DeclareChannelFileDelivery records that this deployment can put a file the
+// agent produced into a channelType conversation. Call it at boot, from the
+// same branch that gives the adapter what it needs to perform the delivery —
+// the point is that one condition produces both the capability and the claim
+// it is announced under, so a deployment cannot end up promising a hop it does
+// not have.
+//
+// Not safe to call once the server is serving: the map it writes is read
+// without a lock by every task claim.
+func (h *Handler) DeclareChannelFileDelivery(channelType string) {
+	if channelType == "" {
+		return
+	}
+	if h.channelFileDelivery == nil {
+		h.channelFileDelivery = map[string]bool{}
+	}
+	h.channelFileDelivery[channelType] = true
+}
+
+// channelDeliversFiles answers chat_channel_delivers_files for one claim.
+//
+// The default is false in every direction that is not an explicit declaration:
+// a channel nobody declared, a deployment with no object storage, an adapter
+// that was never wired. False is the safe answer because of what the two
+// answers cost. False when the file could have travelled loses a delivery the
+// agent then describes in words. True when it cannot has the agent write "the
+// chart is attached" into a room where nothing is attached, and the reader is
+// left hunting for it.
+//
+// Web chat (empty channel type) is not answered here. It has no adapter and no
+// last hop to have — the browser renders the attachment card off the same bind
+// — and the prompt handles it in its own branch.
+func (h *Handler) channelDeliversFiles(channelType string) bool {
+	if channelType == "" {
+		return false
+	}
+	return h.channelFileDelivery[channelType]
 }
 
 // publish sends a domain event through the event bus.
@@ -923,6 +1050,12 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 }
 
 // resolveIssueByIdentifier tries to look up an issue by "PREFIX-NUMBER" format.
+//
+// The prefix must match the workspace's own issue prefix, the same rule
+// `lookupIssueByIdentifier` applies to VCS webhooks. Without it every prefix
+// resolved to the same issue number, so `FOO-134` and `TRS-134` were
+// interchangeable — which makes the identifier URL `/{ws}/issues/{key}`
+// unusable as a canonical link.
 func (h *Handler) resolveIssueByIdentifier(ctx context.Context, id, workspaceID string) (db.Issue, bool) {
 	parts := splitIdentifier(id)
 	if parts == nil {
@@ -933,6 +1066,11 @@ func (h *Handler) resolveIssueByIdentifier(ctx context.Context, id, workspaceID 
 	}
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
+		return db.Issue{}, false
+	}
+	// Case-insensitive: a hand-typed `trs-134` should open `TRS-134`.
+	prefix := h.getIssuePrefix(ctx, wsUUID)
+	if prefix == "" || !strings.EqualFold(parts.prefix, prefix) {
 		return db.Issue{}, false
 	}
 	issue, err := h.Queries.GetIssueByNumber(ctx, db.GetIssueByNumberParams{
@@ -968,6 +1106,12 @@ func splitIdentifier(id string) *identifierParts {
 			return nil
 		}
 		num = num*10 + int(c-'0')
+		// Guard the int32 conversion below: a UUID whose last group happens to
+		// be all digits ("…-421234567890") reaches here and would otherwise be
+		// truncated into a plausible-looking issue number.
+		if num > math.MaxInt32 {
+			return nil
+		}
 	}
 	if num <= 0 {
 		return nil

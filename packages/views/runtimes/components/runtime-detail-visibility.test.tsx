@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { ComponentProps, ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   render,
@@ -51,7 +52,7 @@ vi.mock("@multica/core/api", () => ({
   api: {
     updateRuntime: (...args: unknown[]) => mockUpdateRuntime(...args),
     deleteRuntime: vi.fn(),
-    archiveAgentsAndDeleteRuntime: vi.fn(),
+    unbindAgentsAndDeleteRuntime: vi.fn(),
     deleteRuntimeProfile: (...args: unknown[]) =>
       mockDeleteRuntimeProfile(...args),
   },
@@ -174,17 +175,16 @@ vi.mock("@multica/core/runtimes/mutations", () => ({
     isPending: false,
   }),
   useDeleteRuntime: () => ({ mutate: vi.fn(), isPending: false, mutateAsync: vi.fn() }),
-  useArchiveAgentsAndDeleteRuntime: () => ({
+  useUnbindAgentsAndDeleteRuntime: () => ({
     mutate: vi.fn(),
     isPending: false,
     mutateAsync: vi.fn(),
   }),
 }));
 
-// Stubbing ProviderLogo / UsageSection / UpdateSection avoids dragging in
-// chart libs and additional query keys we don't care about here.
+// Stubbing ProviderLogo / UsageSection avoids dragging in chart libs and
+// additional query keys we don't care about here.
 vi.mock("./provider-logo", () => ({ ProviderLogo: () => null }));
-vi.mock("./update-section", () => ({ UpdateSection: () => null }));
 vi.mock("./usage-section", () => ({ UsageSection: () => null }));
 vi.mock("./asb-runtime-credential-section", () => ({
   ASBRuntimeCredentialSection: () => null,
@@ -196,7 +196,7 @@ vi.mock("../../agents/presence", () => ({
 }));
 vi.mock("../../common/actor-avatar", () => ({ ActorAvatar: () => null }));
 vi.mock("../../navigation", () => ({
-  AppLink: () => null,
+  AppLink: ({ children }: { children: ReactNode }) => <>{children}</>,
   useNavigation: () => ({ push: vi.fn(), replace: vi.fn() }),
 }));
 
@@ -241,12 +241,18 @@ function makeProfile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
   };
 }
 
-function renderDetail(runtime: AgentRuntime) {
+function renderDetail(
+  runtime: AgentRuntime,
+  props: Pick<
+    ComponentProps<typeof RuntimeDetail>,
+    "machineHref" | "machineLabel"
+  > = {},
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
-        <RuntimeDetail runtime={runtime} />
+        <RuntimeDetail runtime={runtime} {...props} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -270,6 +276,51 @@ describe("RuntimeDetail visibility section", () => {
     expect(screen.getByText("Visibility")).toBeInTheDocument();
     expect(screen.getByText("Private")).toBeInTheDocument();
     expect(screen.getByText("Public")).toBeInTheDocument();
+  });
+
+  it("keeps daemon CLI version details without rendering update controls", () => {
+    renderDetail(
+      makeRuntime({
+        metadata: { cli_version: "0.3.17" },
+        runtime_mode: "local",
+      }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Technical details" }),
+    );
+
+    expect(screen.getAllByText("0.3.17")).not.toHaveLength(0);
+    expect(
+      screen.queryByRole("button", { name: "Update" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses the provider name when the runtime alias is the machine name", () => {
+    renderDetail(
+      makeRuntime({
+        name: "Pi (Studio Mac)",
+        custom_name: "Studio Mac",
+        provider: "pi",
+      }),
+      { machineHref: "/runtimes/local:daemon-1", machineLabel: "Studio Mac" },
+    );
+
+    expect(screen.getAllByText("Pi")).toHaveLength(2);
+    expect(screen.getByRole("banner")).toHaveTextContent("Studio Mac");
+  });
+
+  it("preserves a runtime-specific alias that differs from the machine name", () => {
+    renderDetail(
+      makeRuntime({
+        name: "Pi (Studio Mac)",
+        custom_name: "Research Pi",
+        provider: "pi",
+      }),
+      { machineHref: "/runtimes/local:daemon-1", machineLabel: "Studio Mac" },
+    );
+
+    expect(screen.getAllByText("Research Pi")).toHaveLength(2);
   });
 
   it("flips visibility to public when the owner clicks the Public choice", async () => {

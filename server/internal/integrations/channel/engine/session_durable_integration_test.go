@@ -140,13 +140,17 @@ func newDurableSessionFixture(t *testing.T) durableSessionFixture {
 func newPreparedDurableSessionTask(f durableSessionFixture, body string) *service.PreparedChannelChatTask {
 	id := uuid.New()
 	return &service.PreparedChannelChatTask{
-		ID:               pgtype.UUID{Bytes: [16]byte(id), Valid: true},
-		AgentID:          f.agentID,
-		RuntimeID:        f.runtimeID,
-		InitiatorUserID:  f.userID,
-		OriginatorUserID: f.userID,
-		TaskContext:      []byte(fmt.Sprintf(`{"body":%q}`, body)),
-		DebounceSeconds:  service.ChannelChatDebounceWindow.Seconds(),
+		ID:                   pgtype.UUID{Bytes: [16]byte(id), Valid: true},
+		AgentID:              f.agentID,
+		RuntimeID:            f.runtimeID,
+		InitiatorUserID:      f.userID,
+		OriginatorUserID:     f.userID,
+		AccountableUserID:    f.userID,
+		OriginatorSource:     pgtype.Text{String: "direct_human", Valid: true},
+		TriggerEvidenceKind:  pgtype.Text{String: "chat", Valid: true},
+		TriggerEvidenceRefID: f.sessionID,
+		TaskContext:          []byte(fmt.Sprintf(`{"body":%q}`, body)),
+		DebounceSeconds:      service.ChannelChatDebounceWindow.Seconds(),
 	}
 }
 

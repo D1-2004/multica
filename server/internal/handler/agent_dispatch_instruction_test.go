@@ -24,8 +24,8 @@ func TestDispatchClaimComposesInstructionWithoutChangingUserContent(t *testing.T
 			Conversation: DispatchConversation{OpenConversationID: "cid-1"},
 			Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "用户消息"}},
 		}},
-		Surface:       DispatchSurface{Type: "issue"},
-		Outbound:      DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 	}, "ROUTER CONTEXT")
 	chatContext := dispatchTaskContextWithPromptForTest(t, DispatchCommand{
 		SchemaVersion: "2.0",
@@ -34,8 +34,8 @@ func TestDispatchClaimComposesInstructionWithoutChangingUserContent(t *testing.T
 			Conversation: DispatchConversation{OpenConversationID: "cid-1"},
 			Messages:     []DispatchMessage{{OpenMsgID: "msg-1", Text: "用户消息"}},
 		}},
-		Surface:       DispatchSurface{Type: "chat"},
-		Outbound:      DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 	}, "ROUTER CONTEXT")
 	commentID := "comment-1"
 	tests := []struct {
@@ -171,7 +171,7 @@ func TestDispatchClaimFallsBackToLegacyTaskFieldsWithoutInstructionCapability(t 
 	}
 
 	for _, tc := range tests {
-			t.Run(tc.name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			applyDingTalkDispatchPromptForClaimWithFeatureFlags(&tc.response, tc.context, flags, false)
 			if tc.response.Instruction != "" {
 				t.Fatalf("legacy claim instruction = %q, want empty", tc.response.Instruction)

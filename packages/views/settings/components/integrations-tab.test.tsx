@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { ApiError } from "@multica/core/api";
 import { configStore } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
@@ -48,11 +48,23 @@ vi.mock("./dingtalk-tab", () => ({
   DingTalkTab: () => <div data-testid="dingtalk-tab" />,
 }));
 
+vi.mock("./vcs-tab", () => ({
+  VCSTab: () => <div data-testid="vcs-tab" />,
+}));
+
+vi.mock("./wecom-tab", () => ({
+  WecomTab: () => <div data-testid="wecom-tab" />,
+}));
 import { IntegrationsTab } from "./integrations-tab";
+
+afterEach(cleanup);
 
 function renderTab() {
   return render(
-    <I18nProvider locale="en" resources={{ en: { common: enCommon, settings: enSettings } }}>
+    <I18nProvider
+      locale="en"
+      resources={{ en: { common: enCommon, settings: enSettings } }}
+    >
       <IntegrationsTab />
     </I18nProvider>,
   );
@@ -63,6 +75,11 @@ describe("Settings IntegrationsTab", () => {
     queryCallsRef.current = [];
     composioErrorRef.current = null;
     configStore.getState().setFeatureFlags({ [COMPOSIO_MCP_APPS_FLAG]: true });
+    // Reset the self-host-only VCS gate to its default (hidden) so tests stay
+    // isolated; individual tests opt in below.
+    configStore
+      .getState()
+      .setAuthConfig({ allowSignup: true, vcsIntegrationAvailable: false });
   });
 
   it("hides Composio and disables the toolkits query when the feature flag is off", () => {
@@ -83,10 +100,31 @@ describe("Settings IntegrationsTab", () => {
   });
 
   it("hides Composio when the feature flag is on but the server reports 503", () => {
-    composioErrorRef.current = new ApiError("unavailable", 503, "Service Unavailable");
+    composioErrorRef.current = new ApiError(
+      "unavailable",
+      503,
+      "Service Unavailable",
+    );
 
     renderTab();
 
     expect(screen.queryByTestId("composio-tab")).toBeNull();
+  });
+
+  it("hides the Git providers section when the deployment reports it unavailable", () => {
+    // Default (managed cloud / older server): vcsIntegrationAvailable is false.
+    renderTab();
+
+    expect(screen.queryByTestId("vcs-tab")).toBeNull();
+  });
+
+  it("shows the Git providers section on a self-hosted deployment that enables it", () => {
+    configStore
+      .getState()
+      .setAuthConfig({ allowSignup: true, vcsIntegrationAvailable: true });
+
+    renderTab();
+
+    expect(screen.getByTestId("vcs-tab")).toBeInTheDocument();
   });
 });

@@ -97,9 +97,9 @@ func TestRelayTaskLLMTraceUsesStoredCapabilityIndependentlyOfDaemonAuthorization
 	}{
 		{name: "expired", now: time.UnixMilli(1786464000000), task: baseTask, match: errLLMTraceExpired},
 		{
-			name: "absolute callback",
-			now:  time.UnixMilli(1786377600000),
-			task: db.AgentTaskQueue{Context: []byte(`{"completion_callback":{"telemetry_url":"https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786464000000}}`)},
+			name:  "absolute callback",
+			now:   time.UnixMilli(1786377600000),
+			task:  db.AgentTaskQueue{Context: []byte(`{"completion_callback":{"telemetry_url":"https://router.example.test/api/v1/dispatch-tasks/router-task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786464000000}}`)},
 			match: errLLMTraceUnavailable,
 		},
 	} {

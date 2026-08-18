@@ -101,13 +101,13 @@ func newDispatchRobotServer(t *testing.T) (*dispatchRobotRecorder, *httptest.Ser
 
 func dispatchLifecyclePayload(taskID, workspaceID, agentID, conversationType string) map[string]any {
 	return map[string]any{
-		"task_id":      taskID,
-		"issue_id":     "11111111-1111-1111-1111-111111111111",
-		"workspace_id": workspaceID,
-		"agent_id":     agentID,
+		"task_id":                  taskID,
+		"issue_id":                 "11111111-1111-1111-1111-111111111111",
+		"workspace_id":             workspaceID,
+		"agent_id":                 agentID,
 		"dispatch_idempotency_key": "dispatch-window:window-1",
-		"dispatch_source": map[string]any{"platform": "dingtalk", "type": "robot"},
-		"dispatch_outbound": map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
+		"dispatch_source":          map[string]any{"platform": "dingtalk", "type": "robot"},
+		"dispatch_outbound":        map[string]any{"mode": "robot_sdk", "replyTo": "latest_message"},
 		"dispatch_event_data": map[string]any{
 			"conversation": map[string]any{"openConversationId": "cid-1", "type": conversationType},
 			"sender":       map[string]any{"staffId": "staff-1"},

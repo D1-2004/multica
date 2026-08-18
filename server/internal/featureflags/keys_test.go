@@ -21,6 +21,18 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	}
 }
 
+// MUL-5345: hang stack capture is gone from this build, but v0.4.13–v0.4.18 are
+// installed and still hold a debugger channel open on every renderer whenever
+// this key arrives as `true`. Those clients are fail-closed on absence, so NOT
+// publishing the key is what disarms them — re-adding it would put a flag flip
+// back within reach of a fleet that can no longer produce a usable stack.
+func TestDesktopHangStackCaptureIsNotPublished(t *testing.T) {
+	flags := EvaluateFrontendPublicFlags(context.Background(), nil)
+	if _, published := flags["desktop_hang_stack_capture"]; published {
+		t.Fatal("hang stack capture must stay unpublished so installed clients keep their debugger channels closed")
+	}
+}
+
 func TestAgentSkillTogglesCompatDecisionStaysEnabled(t *testing.T) {
 	flags := EvaluateFrontendPublicFlags(context.Background(), nil)
 	if !flags[agentSkillTogglesCompat] {

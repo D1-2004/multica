@@ -1,14 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  Trash2,
-  ChevronRight,
-  Cloud,
-  Cpu,
-  Globe,
-  Lock,
-} from "lucide-react";
+import { Trash2, ChevronRight, Cloud, Cpu, Globe, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import type {
@@ -19,7 +12,10 @@ import type {
 } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
-import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
+import {
+  memberListOptions,
+  agentListOptions,
+} from "@multica/core/workspace/queries";
 import { useUpdateRuntime } from "@multica/core/runtimes/mutations";
 import {
   deriveRuntimeHealth,
@@ -46,12 +42,13 @@ import { AppLink, useNavigation } from "../../navigation";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { HealthBadge } from "./shared";
 import { ProviderLogo } from "./provider-logo";
-import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
+import { UpdateSection } from "./update-section";
 import { UpdateFCE2BRuntimeTemplateDialog } from "./update-fc-e2b-runtime-template-dialog";
 import { ASBRuntimeCredentialSection } from "./asb-runtime-credential-section";
+import { runtimeRowLabel } from "./runtime-machines";
 import { useT, useTimeAgo } from "../../i18n";
 
 function getCliVersion(metadata: Record<string, unknown>): string | null {
@@ -113,7 +110,6 @@ export function RuntimeDetail({
     runtime.runtime_mode === "local" ? getCliVersion(runtime.metadata) : null;
   const launchedBy =
     runtime.runtime_mode === "local" ? getLaunchedBy(runtime.metadata) : null;
-
   const user = useAuthStore((s) => s.user);
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
@@ -130,7 +126,7 @@ export function RuntimeDetail({
 
   const health = deriveRuntimeHealth(runtime, now);
   const ownerMember = runtime.owner_id
-    ? members.find((m) => m.user_id === runtime.owner_id) ?? null
+    ? (members.find((m) => m.user_id === runtime.owner_id) ?? null)
     : null;
 
   const currentMember = user
@@ -144,7 +140,7 @@ export function RuntimeDetail({
   const canEditVisibility =
     !!canEditRuntime && (!parseFCE2BRuntimeMetadata(runtime) || isAdmin);
   const runtimeProfile: RuntimeProfile | null = runtime.profile_id
-    ? profiles.find((p) => p.id === runtime.profile_id) ?? null
+    ? (profiles.find((p) => p.id === runtime.profile_id) ?? null)
     : null;
   const isCustomRuntime = !!runtime.profile_id;
   const canDelete = isCustomRuntime
@@ -172,6 +168,9 @@ export function RuntimeDetail({
   const lastSeen = runtime.last_seen_at
     ? timeAgo(runtime.last_seen_at)
     : t(($) => $.detail.never_seen);
+  const runtimeName = machineLabel
+    ? runtimeRowLabel(runtime, machineLabel)
+    : runtimeDisplayName(runtime);
 
   return (
     <div className="flex h-full flex-col">
@@ -183,13 +182,13 @@ export function RuntimeDetail({
             : []),
         ]}
         leaf={
-          <span className="truncate font-mono text-xs text-foreground">
-            {runtimeDisplayName(runtime)}
+          <span className="truncate font-mono text-caption text-foreground">
+            {runtimeName}
           </span>
         }
         actions={
           !canEditRuntime ? (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1 text-caption text-muted-foreground">
               <Lock className="h-3 w-3" />
               {t(($) => $.detail.read_only)}
             </span>
@@ -207,6 +206,7 @@ export function RuntimeDetail({
           <div className="min-w-0 space-y-5">
             <HeroCard
               runtime={runtime}
+              runtimeName={runtimeName}
               health={health}
               lastSeen={lastSeen}
               ownerMember={ownerMember}
@@ -288,6 +288,7 @@ function parseDeviceInfo(raw: string): { hostname: string; runtime?: string } {
 
 function HeroCard({
   runtime,
+  runtimeName,
   health,
   lastSeen,
   ownerMember,
@@ -295,6 +296,7 @@ function HeroCard({
   daemonShort,
 }: {
   runtime: AgentRuntime;
+  runtimeName: string;
   health: ReturnType<typeof deriveRuntimeHealth>;
   lastSeen: string;
   ownerMember: MemberWithUser | null;
@@ -303,7 +305,9 @@ function HeroCard({
 }) {
   const { t } = useT("runtimes");
   const [showDetails, setShowDetails] = useState(false);
-  const device = runtime.device_info ? parseDeviceInfo(runtime.device_info) : null;
+  const device = runtime.device_info
+    ? parseDeviceInfo(runtime.device_info)
+    : null;
   const hasTechDetails = !!cliVersion || !!daemonShort;
 
   return (
@@ -315,11 +319,11 @@ function HeroCard({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h2 className="truncate text-base font-semibold tracking-tight">
-              {runtimeDisplayName(runtime)}
+            <h2 className="truncate text-title-sm font-semibold tracking-tight">
+              {runtimeName}
             </h2>
             <HealthBadge health={health} />
-            <span className="text-xs text-muted-foreground">
+            <span className="text-caption text-muted-foreground">
               {t(($) => $.detail.last_seen, { when: lastSeen })}
             </span>
           </div>
@@ -339,10 +343,12 @@ function HeroCard({
                 size="sm"
                 enableHoverCard
               />
-              <span className="cursor-pointer truncate text-sm">{ownerMember.name}</span>
+              <span className="cursor-pointer truncate text-body">
+                {ownerMember.name}
+              </span>
             </span>
           ) : (
-            <span className="text-sm text-muted-foreground">—</span>
+            <span className="text-body text-muted-foreground">—</span>
           )}
         </Fact>
         <Fact label={t(($) => $.detail.fact_device)}>
@@ -350,7 +356,7 @@ function HeroCard({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="block truncate font-mono text-xs">
+                  <span className="block truncate font-mono text-caption">
                     {device.hostname}
                   </span>
                 }
@@ -358,11 +364,11 @@ function HeroCard({
               <TooltipContent>{device.hostname}</TooltipContent>
             </Tooltip>
           ) : (
-            <span className="text-sm text-muted-foreground">—</span>
+            <span className="text-body text-muted-foreground">—</span>
           )}
         </Fact>
         <Fact label={t(($) => $.detail.fact_runtime)}>
-          <span className="block truncate text-sm">
+          <span className="block truncate text-body">
             {device?.runtime ?? (
               <span className="capitalize">{runtime.provider}</span>
             )}
@@ -378,7 +384,7 @@ function HeroCard({
           <button
             type="button"
             onClick={() => setShowDetails((v) => !v)}
-            className="flex w-full items-center gap-1 px-4 py-2 text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            className="flex w-full items-center gap-1 px-4 py-2 text-caption text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             <ChevronRight
               className={`h-3 w-3 transition-transform ${
@@ -420,10 +426,12 @@ function Fact({
 }) {
   return (
     <div className={`min-w-0 ${compact ? "" : "px-4 py-3"}`}>
-      <dt className="text-[11px] uppercase tracking-wider text-muted-foreground">
+      <dt className="text-micro uppercase tracking-wider text-muted-foreground">
         {label}
       </dt>
-      <dd className={`mt-1 ${mono ? "font-mono text-xs" : ""}`}>{children}</dd>
+      <dd className={`mt-1 ${mono ? "font-mono text-caption" : ""}`}>
+        {children}
+      </dd>
     </div>
   );
 }
@@ -442,15 +450,17 @@ function ServingAgentsCard({
   return (
     <div className="rounded-lg border">
       <div className="flex items-center justify-between border-b px-4 py-2.5">
-        <span className="text-xs font-semibold">{t(($) => $.detail.serving_title)}</span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-caption font-semibold">
+          {t(($) => $.detail.serving_title)}
+        </span>
+        <span className="text-caption text-muted-foreground">
           {t(($) => $.detail.serving_count, { count: agents.length })}
         </span>
       </div>
       {agents.length === 0 ? (
         <div className="flex flex-col items-center px-4 py-6 text-center">
-          <Cpu className="h-5 w-5 text-muted-foreground/40" />
-          <p className="mt-2 text-xs text-muted-foreground">
+          <Cpu className="h-5 w-5 text-faint-foreground" />
+          <p className="mt-2 text-caption text-muted-foreground">
             {t(($) => $.detail.no_agents)}
           </p>
         </div>
@@ -461,7 +471,9 @@ function ServingAgentsCard({
             const av = detail
               ? availabilityConfig[detail.availability]
               : availabilityConfig.offline;
-            const avLabel = tAgents(($) => $.availability[detail?.availability ?? "offline"]);
+            const avLabel = tAgents(
+              ($) => $.availability[detail?.availability ?? "offline"],
+            );
             const wl = detail ? workloadConfig[detail.workload] : null;
             const running = detail?.runningCount ?? 0;
             const queued = detail?.queuedCount ?? 0;
@@ -471,34 +483,50 @@ function ServingAgentsCard({
                 href={agentHref(agent.id)}
                 className="group flex items-center gap-2 px-4 py-2 transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-none"
               >
-                <ActorAvatar actorType="agent" actorId={agent.id} size="sm" enableHoverCard showStatusDot />
+                <ActorAvatar
+                  actorType="agent"
+                  actorId={agent.id}
+                  size="sm"
+                  enableHoverCard
+                  showStatusDot
+                />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-medium">
+                  <div className="truncate text-caption font-medium">
                     {agent.name}
                   </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-caption">
                     <span className="inline-flex items-center gap-1.5">
-                      <span className={`h-1.5 w-1.5 rounded-full ${av.dotClass}`} />
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${av.dotClass}`}
+                      />
                       <span className={av.textClass}>{avLabel}</span>
                     </span>
                     {wl && detail && detail.workload !== "idle" && (
-                      <span className={`inline-flex items-center gap-1 ${wl.textClass}`}>
+                      <span
+                        className={`inline-flex items-center gap-1 ${wl.textClass}`}
+                      >
                         <span className="text-muted-foreground">·</span>
                         <wl.icon
                           className={`h-3 w-3 ${detail.workload === "working" ? "animate-spin" : ""}`}
                         />
                         {tAgents(($) => $.workload[detail.workload])}
                         {running > 0 && (
-                          <span className="text-muted-foreground">{t(($) => $.detail.running_chip, { count: running })}</span>
+                          <span className="text-muted-foreground">
+                            {t(($) => $.detail.running_chip, {
+                              count: running,
+                            })}
+                          </span>
                         )}
                         {queued > 0 && (
-                          <span className="text-muted-foreground">{t(($) => $.detail.queued_chip, { count: queued })}</span>
+                          <span className="text-muted-foreground">
+                            {t(($) => $.detail.queued_chip, { count: queued })}
+                          </span>
                         )}
                       </span>
                     )}
                   </div>
                 </div>
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-faint-foreground transition-colors group-hover:text-muted-foreground" />
               </AppLink>
             );
           })}
@@ -544,11 +572,13 @@ function DiagnosticsCard({
   return (
     <div className="rounded-lg border">
       <div className="border-b px-4 py-2.5">
-        <span className="text-xs font-semibold">{t(($) => $.detail.diagnostics_title)}</span>
+        <span className="text-caption font-semibold">
+          {t(($) => $.detail.diagnostics_title)}
+        </span>
       </div>
       <div className="space-y-3 p-4">
         <div>
-          <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+          <div className="mb-1.5 text-micro uppercase tracking-wide text-muted-foreground">
             {t(($) => $.detail.diagnostics_visibility)}
           </div>
           {canEditVisibility ? (
@@ -559,7 +589,7 @@ function DiagnosticsCard({
         </div>
         {isLocal && (
           <div className="border-t pt-3">
-            <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div className="mb-1.5 text-micro uppercase tracking-wide text-muted-foreground">
               {t(($) => $.detail.diagnostics_cli)}
             </div>
             <UpdateSection
@@ -572,24 +602,27 @@ function DiagnosticsCard({
         )}
         {fcE2BMetadata && (
           <div className="border-t pt-3">
-            <div className="mb-2 flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+            <div className="mb-2 flex items-center gap-1.5 text-micro uppercase tracking-wide text-muted-foreground">
               <Cloud className="h-3 w-3" />
               {t(($) => $.detail.cloud_image.title)}
             </div>
             <dl className="space-y-2 rounded-md border bg-muted/30 px-3 py-2.5">
               <div className="min-w-0">
-                <dt className="text-[11px] text-muted-foreground">
+                <dt className="text-micro text-muted-foreground">
                   {t(($) => $.detail.cloud_image.template)}
                 </dt>
-                <dd className="mt-0.5 truncate font-mono text-xs" title={currentTemplate}>
+                <dd
+                  className="mt-0.5 truncate font-mono text-caption"
+                  title={currentTemplate}
+                >
                   {currentTemplate}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3 border-t pt-2">
-                <dt className="text-[11px] text-muted-foreground">
+                <dt className="text-micro text-muted-foreground">
                   {t(($) => $.detail.cloud_image.provider)}
                 </dt>
-                <dd className="truncate text-xs font-medium">{provider}</dd>
+                <dd className="truncate text-caption font-medium">{provider}</dd>
               </div>
             </dl>
             {canManageTemplate && (
@@ -641,7 +674,7 @@ function VisibilityReadout({ runtime }: { runtime: AgentRuntime }) {
     <Tooltip>
       <TooltipTrigger
         render={
-          <span className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1.5 text-xs">
+          <span className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1.5 text-caption">
             <Icon className="h-3 w-3 text-muted-foreground" />
             <span className="font-medium">
               {t(($) => $.detail.visibility_label[visibility])}
@@ -733,7 +766,7 @@ function VisibilityChoice({
             type="button"
             onClick={onClick}
             disabled={disabled}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
+            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-caption font-medium transition-colors ${
               active
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground"

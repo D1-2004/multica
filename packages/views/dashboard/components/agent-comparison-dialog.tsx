@@ -268,7 +268,7 @@ export function AgentComparisonDialog({
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder={t(($) => $.comparison.search_agents)}
-                  className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                  className="min-w-0 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground"
                 />
               </div>
               <div
@@ -277,7 +277,7 @@ export function AgentComparisonDialog({
                 className="max-h-72 overflow-y-auto p-1"
               >
                 {filteredAgents.length === 0 ? (
-                  <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+                  <p className="px-2 py-6 text-center text-caption text-muted-foreground">
                     {t(($) => $.comparison.no_agents)}
                   </p>
                 ) : (
@@ -290,7 +290,7 @@ export function AgentComparisonDialog({
                         role="option"
                         aria-selected={selected}
                         onClick={() => toggleAgent(agent.id)}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-body hover:bg-muted"
                       >
                         <span
                           className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border ${
@@ -313,14 +313,14 @@ export function AgentComparisonDialog({
 
         <div className="flex min-h-7 flex-wrap items-center gap-1.5">
           {selectedAgents.length === 0 ? (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-caption text-muted-foreground">
               {t(($) => $.comparison.no_selection)}
             </span>
           ) : (
             selectedAgents.map((agent, index) => (
               <span
                 key={agent.id}
-                className="inline-flex items-center gap-1.5 rounded-full border bg-background py-1 pr-1 pl-2 text-xs"
+                className="inline-flex items-center gap-1.5 rounded-full border bg-background py-1 pr-1 pl-2 text-caption"
               >
                 <span
                   className="h-2 w-2 rounded-full"
@@ -345,7 +345,7 @@ export function AgentComparisonDialog({
         </div>
 
         {series.length === 0 ? (
-          <div className="flex h-[360px] items-center justify-center rounded-lg border border-dashed bg-muted/20 text-sm text-muted-foreground">
+          <div className="flex h-[360px] items-center justify-center rounded-lg border border-dashed bg-muted/20 text-body text-muted-foreground">
             {t(($) => $.comparison.no_selection)}
           </div>
         ) : (
@@ -438,7 +438,7 @@ function MetricPicker({
           key={option.value}
           type="button"
           onClick={() => onChange(option.value)}
-          className={`rounded-sm px-2.5 py-1 text-xs font-medium transition-colors ${
+          className={`rounded-sm px-2.5 py-1 text-caption font-medium transition-colors ${
             option.value === value
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"

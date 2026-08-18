@@ -1,4 +1,51 @@
 {
+  "quick_actions": {
+    "title": "クイックアクション",
+    "description": "実行するエージェントとプロンプトを事前に設定し、任意のタスクのサイドバーからワンクリックで実行します。",
+    "add": "クイックアクションを作成",
+    "search_placeholder": "クイックアクションを検索",
+    "loading": "クイックアクションを読み込んでいます…",
+    "no_results": "一致するクイックアクションはありません",
+    "actions_open": "「{{name}}」のアクションメニューを開く",
+    "columns": {
+      "name": "名前",
+      "target": "実行者",
+      "visibility": "公開範囲",
+      "usage": "使用回数",
+      "updated": "更新日"
+    },
+    "empty_title": "クイックアクションがありません",
+    "empty_hint": "コードレビュー、テスト作成、セキュリティ確認など、繰り返しエージェントに頼む作業を登録しましょう。",
+    "archived": "アーカイブ済み",
+    "visibility_public": "チーム",
+    "visibility_private": "自分のみ",
+    "visibility_public_hint": "ワークスペースの全員",
+    "visibility_private_hint": "自分だけ",
+    "field_visibility": "使用できる範囲",
+    "public_target_hint": "全員が実行できるエージェントのみ指定できます。",
+    "target_private": "非公開",
+    "target_missing": "実行者が利用できません",
+    "archive": "アーカイブ",
+    "unarchive": "復元",
+    "edit": "編集",
+    "delete": "削除",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "never_used": "未使用",
+    "used_count": "{{count}} 回使用",
+    "create_title": "クイックアクションを作成",
+    "edit_title": "クイックアクションを編集",
+    "dialog_description": "@メンションと同じく、タスクのコメントとして実行されます。",
+    "field_name": "名前",
+    "field_name_placeholder": "コードレビュー",
+    "field_target": "実行者",
+    "field_prompt": "プロンプト",
+    "field_prompt_placeholder": "このタスクに関連するコードをレビューし、正確性とエッジケースを重点的に確認してください。",
+    "prompt_hint": "そのまま送られます。タスクの内容は既に読めます。",
+    "template_not_supported": "変数はまだサポートされていません。{{token}} を削除してください。エージェントはこのタスクを既に読めます。",
+    "delete_title": "このクイックアクションを削除しますか？",
+    "delete_description": "すべてのタスクのサイドバーから消えます。過去の実行は実行ログに残ります。後で使う可能性があればアーカイブを選んでください。"
+  },
   "auto_save": {
     "saving": "保存中…",
     "saved": "保存済み",
@@ -57,25 +104,95 @@
     "send_error": "送信には Enter または Mod+Enter のみ使用できます。",
     "unsafe_error": "このキーは文字入力や基本的なキーボード操作と競合します。",
     "send_enter_hint": "Shift+Enterで段落の挿入、リストの継続、コードブロック内の改行ができます。",
-    "categories": { "general": "一般", "navigation": "ナビゲーション" },
+    "categories": {
+      "general": "一般",
+      "navigation": "ナビゲーション"
+    },
     "actions": {
-      "openSearch": { "label": "検索を開く", "description": "どこからでも検索やコマンドを実行します。" },
-      "createIssue": { "label": "Issueを作成", "description": "優先するissue作成フローを開きます。" },
-      "toggleSidebar": { "label": "サイドバーを切り替え", "description": "メインサイドバーの表示を切り替えます。" },
-      "findInIssue": { "label": "Issue内を検索", "description": "開いているissueの詳細を検索します。" },
-      "send": { "label": "送信", "description": "チャット、コメント、返信、フィードバック、プロンプトを送信します。" },
-      "goInbox": { "label": "受信トレイへ移動", "description": "ワークスペースの受信トレイを開きます。" },
-      "goChat": { "label": "チャットへ移動", "description": "ワークスペースのチャットを開きます。" },
-      "goMyIssues": { "label": "自分のIssuesへ移動", "description": "自分に割り当てられたissueを開きます。" },
-      "goIssues": { "label": "Issuesへ移動", "description": "Issue一覧を開きます。" },
-      "goProjects": { "label": "プロジェクトへ移動", "description": "プロジェクト一覧を開きます。" },
-      "goAutopilots": { "label": "自動化へ移動", "description": "ワークスペースの自動化を開きます。" },
-      "goAgents": { "label": "エージェントへ移動", "description": "エージェント一覧を開きます。" },
-      "goSquads": { "label": "Squadsへ移動", "description": "Squad一覧を開きます。" },
-      "goUsage": { "label": "使用量へ移動", "description": "使用量分析を開きます。" },
-      "goRuntimes": { "label": "ランタイムへ移動", "description": "ランタイム設定を開きます。" },
-      "goSkills": { "label": "Skillsへ移動", "description": "Skillライブラリを開きます。" },
-      "goSettings": { "label": "設定へ移動", "description": "ワークスペース設定を開きます。" }
+      "openSearch": {
+        "label": "検索を開く",
+        "description": "どこからでも検索やコマンドを実行します。"
+      },
+      "createIssue": {
+        "label": "Issueを作成",
+        "description": "優先するissue作成フローを開きます。"
+      },
+      "toggleSidebar": {
+        "label": "サイドバーを切り替え",
+        "description": "メインサイドバーの表示を切り替えます。"
+      },
+      "toggleChat": {
+        "label": "チャットウィンドウを切り替え",
+        "description": "フローティングチャットを開閉します。開いたときは入力欄にフォーカスします。"
+      },
+      "findInIssue": {
+        "label": "Issue内を検索",
+        "description": "開いているissueの詳細を検索します。"
+      },
+      "openThreadNav": {
+        "label": "スレッドナビゲーターを開く",
+        "description": "開いているタスクのコメントスレッドを一覧・検索して移動します。"
+      },
+      "send": {
+        "label": "送信",
+        "description": "チャット、コメント、返信、フィードバック、プロンプトを送信します。"
+      },
+      "goBack": {
+        "label": "戻る",
+        "description": "ブラウザーのように履歴を戻ります。"
+      },
+      "goForward": {
+        "label": "進む",
+        "description": "ブラウザーのように履歴を進みます。"
+      },
+      "goInbox": {
+        "label": "受信トレイへ移動",
+        "description": "ワークスペースの受信トレイを開きます。"
+      },
+      "goChat": {
+        "label": "チャットへ移動",
+        "description": "ワークスペースのチャットを開きます。"
+      },
+      "goMyIssues": {
+        "label": "自分のIssuesへ移動",
+        "description": "自分に割り当てられたissueを開きます。"
+      },
+      "goIssues": {
+        "label": "Issuesへ移動",
+        "description": "Issue一覧を開きます。"
+      },
+      "goProjects": {
+        "label": "プロジェクトへ移動",
+        "description": "プロジェクト一覧を開きます。"
+      },
+      "goAutopilots": {
+        "label": "自動化へ移動",
+        "description": "ワークスペースの自動化を開きます。"
+      },
+      "goAgents": {
+        "label": "エージェントへ移動",
+        "description": "エージェント一覧を開きます。"
+      },
+      "goSquads": {
+        "label": "Squadsへ移動",
+        "description": "Squad一覧を開きます。"
+      },
+      "goUsage": {
+        "label": "使用量へ移動",
+        "description": "使用量分析を開きます。"
+      },
+      "goRuntimes": {
+        "label": "ランタイムへ移動",
+        "description": "ランタイム設定を開きます。"
+      },
+      "goSkills": {
+        "label": "Skillsへ移動",
+        "description": "Skillライブラリを開きます。"
+      },
+      "goSettings": {
+        "label": "設定へ移動",
+        "description": "ワークスペース設定を開きます。"
+      }
     },
     "fixed": {
       "title": "固定のシステムショートカット",
@@ -92,6 +209,22 @@
     "floating_label": "フローティングチャット",
     "floating_hint": "すべてのページの隅にフローティングチャットボタンを表示します。デフォルトはオフ——オンにするとどこからでもチャットを呼び出せます。オフのときは専用タブでのみ利用できます。"
   },
+  "issue": {
+    "description": "各作成ダイアログのツールバーに常時表示するフィールドを選択します。非表示のフィールドは ⋯ メニューから引き続き使用でき、値がある間は自動的に表示されます。",
+    "quick_create_title": "エージェントで作成",
+    "quick_create_description": "クイック作成ツールバーに表示するフィールド。",
+    "manual_create_title": "手動で作成",
+    "manual_create_description": "手動作成ツールバーに表示するフィールド。",
+    "fields": {
+      "status": "ステータス",
+      "priority": "優先度",
+      "assignee": "担当者",
+      "labels": "ラベル",
+      "project": "プロジェクト",
+      "due_date": "期限",
+      "start_date": "開始日"
+    }
+  },
   "page": {
     "title": "設定",
     "my_account": "マイアカウント",
@@ -100,6 +233,7 @@
       "profile": "プロフィール",
       "preferences": "環境設定",
       "shortcuts": "ショートカット",
+      "issue": "タスク",
       "chat": "チャット",
       "notifications": "通知",
       "tokens": "API トークン",
@@ -110,59 +244,83 @@
       "labs": "ラボ",
       "members": "メンバー",
       "labels": "ラベル",
+      "properties": "プロパティ",
+      "quick_actions": "クイックアクション",
       "workspace_access": "DTA アクセス"
     }
   },
-  "workspace_access": {
-    "title": "DTA アクセス",
-    "description": "現在のワークスペースにだけ紐づく DTA 用アクセス認証情報を発行します。外部事業者には Multica アカウントや個人 API トークンを付与しません。",
-    "owner_only": "DTA アクセスを管理できるのはワークスペースオーナーだけです。",
-    "tokens_title": "DTA トークン",
-    "tokens_description": "各トークンは、このワークスペースの通常メンバー権限を持つ外部利用者を表します。有効期限を個別に設定し、即時に失効できます。",
-    "create": "トークンを作成",
-    "loading": "DTA アクセスを読み込み中…",
-    "empty": "DTA トークンはまだありません。",
-    "edit": "編集",
-    "expires": "有効期限",
-    "last_used": "最終使用",
-    "revoked": "失効済み",
-    "revoke": "キーを失効",
-    "revoke_confirm": "この DTA アクセスキーを失効しますか？このキーを使う DTA リクエストは直ちに失敗します。",
-    "delete": "レコードを削除",
-    "delete_confirm": "失効済みトークンのレコードを完全に削除しますか？サービスメンバー、Agent、履歴は保持されます。",
-    "saved": "DTA トークンを保存しました",
-    "save_failed": "DTA トークンを保存できませんでした",
-    "create_title": "DTA トークンを作成",
-    "edit_title": "DTA トークンを編集",
-    "name_placeholder": "外部利用者名",
-    "member_role": "ワークスペース通常メンバー権限",
-    "member_permissions_description": "このトークンは通常メンバーと同じ権限を持ち、自分の Agent、タスク、Trace、スケジュール、連携、stable の非公開 Runtime を管理できます。メンバーやワークスペース設定、公開マネージド Runtime、stable リリースは管理できません。",
-    "regenerate": "再生成",
-    "regenerated": "DTA トークンを再生成しました",
-    "regenerate_title": "DTA トークンを再生成",
-    "regenerate_warning": "現在のキーは直ちに無効になります。新しいキーを保存した後、DTA に再設定してください。",
-    "expiry_title": "有効期限",
-    "expiry_description": "期限を過ぎると、このトークンを使う DTA リクエストは直ちに失敗します。有効期限の編集または新しい期限でのキー再生成が可能です。",
-    "expiry": {
-      "keep": "現在の有効期限を維持",
-      "days": "{{count}} 日",
-      "never": "無期限"
+  "properties": {
+    "title": "プロパティ",
+    "description": "このワークスペースのタスクに型付きカスタムプロパティを定義します。値は各タスクに設定され、エージェントが読み書きできます。",
+    "search_placeholder": "名前で絞り込み...",
+    "new_property": "新規プロパティ",
+    "show_archived": "アーカイブ済みを表示",
+    "columns": {
+      "name": "名前",
+      "type": "タイプ",
+      "options": "オプション",
+      "usage": "使用数",
+      "updated": "更新日時"
     },
-    "permanent_warning": "無期限のトークンは失効するまで利用できます。可能な限り有効期限を設定してください。",
-    "cancel": "キャンセル",
-    "save": "保存",
-    "secret_title": "DTA アクセスキーを今すぐ保存",
-    "secret_warning": "このキーは一度だけ表示され、後から復元できません。承認済みの秘密情報受け渡し手段だけで共有してください。",
-    "secret_confirm": "キーをコピーして安全に保存しました",
-    "close": "閉じる"
+    "usage_count_other": "{{count}} 件のタスク",
+    "loading": "プロパティを読み込み中...",
+    "empty": "プロパティはまだありません",
+    "empty_hint": "Severity や Environment のような型付きフィールドを作成できます。エージェントはバリデーション付きで読み書きします。",
+    "no_results": "一致するプロパティがありません",
+    "save_failed": "プロパティを保存できませんでした",
+    "limit_hint": "{{count}}/{{max}} 個の有効なプロパティ",
+    "archived_badge": "アーカイブ済み",
+    "types": {
+      "text": "テキスト",
+      "number": "数値",
+      "select": "選択",
+      "multi_select": "複数選択",
+      "date": "日付",
+      "checkbox": "チェックボックス",
+      "url": "URL"
+    },
+    "actions": {
+      "open": "{{name}} の操作",
+      "edit": "編集",
+      "archive": "アーカイブ",
+      "unarchive": "復元"
+    },
+    "editor": {
+      "create_title": "新規プロパティ",
+      "edit_title": "プロパティを編集",
+      "admin_hint": "プロパティ定義を管理できるのはワークスペースのオーナーと管理者のみです。",
+      "icon": "アイコン",
+      "choose_icon": "アイコンを選択",
+      "remove_icon": "アイコンを削除",
+      "name": "名前",
+      "name_placeholder": "例: Severity",
+      "type": "タイプ",
+      "type_locked_hint": "作成後にタイプは変更できません。",
+      "description": "説明",
+      "description_placeholder": "このプロパティの意味と設定するタイミング",
+      "options": "オプション",
+      "option_name_placeholder": "オプション名",
+      "add_option": "オプションを追加",
+      "remove_option": "オプションを削除",
+      "cancel": "キャンセル",
+      "save": "プロパティを保存",
+      "saving": "保存中..."
+    },
+    "archive_dialog": {
+      "title": "プロパティをアーカイブしますか？",
+      "description": "「{{name}}」はピッカーとフィルターから非表示になります。タスク上の既存の値は保持され、後で復元できます。",
+      "cancel": "キャンセル",
+      "confirm": "プロパティをアーカイブ",
+      "failed": "プロパティをアーカイブできませんでした"
+    }
   },
   "labels": {
     "title": "ラベル",
-    "description": "このワークスペースの Issue、エージェント、Skill 用ラベルを個別に管理します。",
+    "description": "このワークスペースの Issue と Skill 用ラベルを個別に管理します。",
     "scopes": {
       "issue": "Issue",
-      "agent": "エージェント",
-      "skill": "Skill"
+      "skill": "Skill",
+      "agent": "エージェント"
     },
     "search_placeholder": "名前または説明で絞り込み...",
     "new_label": "新しいラベル",
@@ -177,7 +335,11 @@
     "empty": "{{scope}} ラベルはまだありません",
     "no_results": "一致するラベルがありません",
     "save_failed": "ラベルを保存できませんでした",
-    "actions": { "open": "{{name}} の操作", "edit": "編集", "delete": "削除" },
+    "actions": {
+      "open": "{{name}} の操作",
+      "edit": "編集",
+      "delete": "削除"
+    },
     "editor": {
       "create_title": "新しいラベル",
       "edit_title": "ラベルを編集",
@@ -187,10 +349,10 @@
       "description": "説明",
       "description_placeholder": "このラベルを使用する条件を説明",
       "color": "色",
-      "custom_color": "カスタム色を選択",
       "cancel": "キャンセル",
       "save": "ラベルを保存",
-      "saving": "保存中..."
+      "saving": "保存中...",
+      "custom_color": "カスタム色を選択"
     },
     "delete_dialog": {
       "title": "ラベルを削除しますか？",
@@ -232,6 +394,10 @@
       "comments": {
         "label": "コメントとメンション",
         "description": "フォロー中のイシューに新しいコメントが付いたとき、または誰かがあなたを @メンションしたとき"
+      },
+      "mentions": {
+        "label": "メンション",
+        "description": "誰かがあなたを @メンションしたとき（@all と @squad を含む）"
       },
       "updates": {
         "label": "優先度と期限",
@@ -369,14 +535,6 @@
     "connect_github": "GitHub を接続",
     "connect_opening": "開いています…",
     "connect_disabled_tooltip": "このサーバーには GitHub App が設定されていません",
-    "reusable_title": "利用可能な既存の接続",
-    "reusable_description": "管理している別のワークスペースの GitHub App 接続を再利用します。元のワークスペースの接続は維持されます。",
-    "reusable_from": "{{workspace}} から",
-    "reuse_connection": "この接続を使用",
-    "reusing_connection": "接続しています…",
-    "reuse_connection_aria": "{{workspace}} の {{login}} 接続を使用",
-    "toast_reused": "GitHub 接続を追加しました",
-    "toast_reuse_failed": "GitHub 接続を再利用できませんでした",
     "disconnect": "接続解除",
     "disconnecting": "接続解除中…",
     "disconnect_confirm_title": "GitHub App の接続を解除",
@@ -403,7 +561,56 @@
     "section_repositories": "リポジトリ",
     "repositories_shortcut_label": "リポジトリ URL はリポジトリタブにあります",
     "repositories_shortcut_link": "リポジトリを管理 →",
-    "toast_failed": "GitHub 設定を更新できませんでした"
+    "toast_failed": "GitHub 設定を更新できませんでした",
+    "reusable_title": "利用可能な既存の接続",
+    "reusable_description": "管理している別のワークスペースの GitHub App 接続を再利用します。元のワークスペースの接続は維持されます。",
+    "reusable_from": "{{workspace}} から",
+    "reuse_connection": "この接続を使用",
+    "reusing_connection": "接続しています…",
+    "reuse_connection_aria": "{{workspace}} の {{login}} 接続を使用",
+    "toast_reused": "GitHub 接続を追加しました",
+    "toast_reuse_failed": "GitHub 接続を再利用できませんでした"
+  },
+  "vcs": {
+    "section_title": "Git providers (self-hosted)",
+    "page_description": "セルフホストの Forgejo、Gitea、GitLab インスタンスを接続し、Pull request をタスクにミラーリングします。接続ごとにアクセストークンを使用し、エージェントはランタイム自身の Git 認証情報でブランチを push して PR を作成します。",
+    "connect_title": "Connect a provider instance",
+    "connected_as": "Connected as {{login}}",
+    "form_provider_label": "Provider",
+    "form_instance_url_label": "Instance URL",
+    "form_token_label": "Access token",
+    "form_token_placeholder": "Access token",
+    "form_token_hint": "Create an access token with read access to repositories. Forgejo/Gitea: Settings, Applications. GitLab: a personal access token with the read_api scope.",
+    "connect": "Connect",
+    "connecting": "Connecting...",
+    "disconnect": "Disconnect",
+    "disconnecting": "Disconnecting...",
+    "not_configured": "Git provider integration is not configured on this server. Ask an administrator to set",
+    "contact_admin": "Ask a workspace admin to connect a Git provider instance.",
+    "webhook_setup_title": "Finish setup in your provider",
+    "webhook_setup_description": "Add a webhook on your repository or organisation with the URL and secret below. Forgejo/Gitea: choose the Gitea format and the Pull Request (and Commit Status) events. GitLab: paste the secret as the token and enable Merge request and Pipeline events.",
+    "webhook_url_label": "Webhook URL",
+    "webhook_secret_label": "Webhook secret",
+    "webhook_secret_warning": "Copy the secret now. It is shown only once and cannot be retrieved later.",
+    "copy": "Copy",
+    "copied": "Copied to clipboard",
+    "copy_failed": "Could not copy",
+    "disconnect_confirm_title": "Disconnect this provider?",
+    "disconnect_confirm_description": "この接続でミラーリングされた Pull request と、そのタスクへのリンクが削除されます。この操作は元に戻せません。",
+    "disconnect_confirm_cancel": "Cancel",
+    "disconnect_confirm_action": "Disconnect",
+    "toast_connected": "Provider connected",
+    "toast_connect_failed": "Could not connect to the provider",
+    "toast_disconnected": "Provider disconnected",
+    "toast_disconnect_failed": "Could not disconnect",
+    "regenerate_webhook": "Regenerate webhook",
+    "rotate_confirm_title": "Regenerate webhook secret?",
+    "rotate_confirm_description": "The current webhook secret will stop working immediately. Deliveries from your Git provider will fail until you update the webhook secret in provider settings.",
+    "rotate_confirm_cancel": "Cancel",
+    "rotate_confirm_action": "Regenerate",
+    "rotating": "Regenerating...",
+    "toast_rotated": "Webhook secret regenerated",
+    "toast_rotate_failed": "Could not regenerate webhook secret"
   },
   "lark": {
     "section_title": "Lark",
@@ -560,8 +767,6 @@
     "not_enabled_description_prefix": "企業ボットの認証情報を保存するための暗号化設定（",
     "not_enabled_description_suffix": "）がサーバーにありません。設定後に企業ボットを作成できます。",
     "not_enabled_self_host_hint": "セルフホストの場合はプロジェクトの README を参照してください。",
-    "preview_title": "企業ボットのインストールは近日公開",
-    "preview_description": "暗号化キーは設定済みですが、このビルドではスキャンによるアプリ作成フローがまだ接続されていません。有効化されるとここにインストール入口が表示されます。",
     "connected_bots": "接続済みのボット",
     "loading": "読み込み中…",
     "empty_title": "接続済みのボットはまだありません",
@@ -577,19 +782,30 @@
     "disconnect_confirm_cancel": "キャンセル",
     "toast_disconnected": "DingTalk ボットを解除しました",
     "toast_disconnect_failed": "解除に失敗しました",
+    "bind_button": "企業ボットを作成",
+    "bind_button_title": "{{agent}} 用の DingTalk 企業ボットを作成",
+    "agent_bot_connected_label": "企業ボットに接続済み",
+    "agent_bot_disconnect_tooltip": "この DingTalk アプリとエージェントの接続を解除します。ボットは DingTalk のメッセージを受信しなくなります。",
+    "byo_dialog_title": "DingTalk ボットを接続",
+    "byo_docs_link": "Step-by-step：Multica エージェントを DingTalk に接続する",
+    "byo_appkey_label": "AppKey（client id）",
+    "byo_appsecret_label": "AppSecret（client secret）",
+    "byo_submit": "接続",
+    "byo_submitting": "接続中…",
+    "byo_cancel": "キャンセル",
+    "byo_success_toast": "DingTalk ボットを接続しました",
+    "byo_failed_toast": "DingTalk ボットを接続できませんでした",
+    "preview_title": "企業ボットのインストールは近日公開",
+    "preview_description": "暗号化キーは設定済みですが、このビルドではスキャンによるアプリ作成フローがまだ接続されていません。有効化されるとここにインストール入口が表示されます。",
     "toast_router_retry_succeeded": "Router 登録を復旧しました",
     "toast_router_retry_failed": "Router 登録の再試行に失敗しました",
     "router_registered": "HTTP コールバック · Router 登録済み",
     "router_registration_failed": "HTTP コールバック · Router 未登録",
     "router_retry": "Router を再試行",
-    "bind_button": "企業ボットを作成",
-    "bind_button_title": "{{agent}} 用の DingTalk 企業ボットを作成",
-    "agent_bot_connected_label": "企業ボットに接続済み",
     "agent_bot_approving_label": "企業ボットを審査中",
     "approving_hint": "DingTalk で審査中です。承認されるまでメッセージを送受信できません。",
     "agent_bot_manage_link": "DingTalk で管理",
     "agent_bot_manage_tooltip": "DingTalk 開発者コンソールを開き、作成したアプリの権限・資格情報・公開を管理します。",
-    "agent_bot_disconnect_tooltip": "この DingTalk アプリとエージェントの接続を解除します。ボットは DingTalk のメッセージを受信しなくなります。",
     "install_dialog_title": "企業ボットを作成",
     "install_dialog_description": "スマートフォンの DingTalk で下の QR コードをスキャンし、組織内にアプリを作成してください。",
     "install_dialog_description_for_agent": "スマートフォンの DingTalk で下の QR コードをスキャンし、{{agent}} 用のアプリを作成してください。",
@@ -634,6 +850,56 @@
     "install_manual_missing_fields": "AppKey と AppSecret の両方を入力してください。",
     "install_manual_error_generic": "アプリを接続できませんでした。AppKey と AppSecret を確認して、もう一度お試しください。"
   },
+  "wecom": {
+    "section_title": "WeCom",
+    "page_description": "各 Multica エージェントを専用の WeCom (企业微信) スマートボットに接続します。メンバーはボットに DM を送り、グループで @ メンションし、/issue と入力して Multica タスクを作成できます。WebSocket ロングコネクションで応答するため、公開コールバック URL は不要です。",
+    "not_enabled_title": "WeCom 連携が有効化されていません",
+    "not_enabled_description_prefix": "サーバー側で",
+    "not_enabled_description_suffix": "を設定すると WeCom スマートボットのインストールが有効になります。",
+    "not_enabled_self_host_hint": "セルフホスト運用の方はプロジェクトの README を参照してください。",
+    "preview_title": "WeCom インストールは近日提供予定",
+    "preview_description": "保存時暗号化キーは設定済みですが、このデプロイでは WeCom のインストールがまだ有効になっていません。",
+    "connected_bots": "接続済みのボット",
+    "loading": "読み込み中…",
+    "empty_title": "まだボットが接続されていません",
+    "empty_description_prefix": "このワークスペースでエージェントを開き",
+    "empty_description_cta": "WeCom を接続",
+    "empty_description_suffix": "をクリックしてスマートボットをインストールします。",
+    "revoked_badge": "無効化済み",
+    "bot_id_label": "Bot ID: {{botId}}",
+    "disconnect": "接続を解除",
+    "disconnecting": "解除中…",
+    "disconnect_confirm_title": "この WeCom ボットを解除しますか？",
+    "disconnect_confirm_description": "このボットはこのワークスペースの WeCom メッセージを受け取らなくなります。監査のためレコードは保持され、同じエージェントから再インストールできます。",
+    "disconnect_confirm_cancel": "キャンセル",
+    "toast_disconnected": "WeCom ボットを解除しました",
+    "toast_disconnect_failed": "接続解除に失敗しました",
+    "bind_button": "WeCom を接続",
+    "bind_button_title": "{{agent}} を WeCom スマートボットに接続",
+    "agent_bot_connected_label": "WeCom に接続済み",
+    "agent_bot_connected_label_with_id": "WeCom に接続済み — {{botId}}",
+    "agent_bot_disconnect_tooltip": "このスマートボットをエージェントから解除します。WeCom のメッセージを受け取らなくなります。",
+    "byo_dialog_title": "WeCom スマートボットを接続",
+    "byo_bot_id_label": "Bot ID",
+    "byo_bot_id_placeholder": "例: aibot_xxxxxxxxxxxxxxxx",
+    "byo_secret_label": "ロングコネクション Secret",
+    "byo_secret_placeholder": "管理コンソールに一度だけ表示される Secret を貼り付けます",
+    "byo_bot_name_label": "チャットでのボット名（任意）",
+    "byo_bot_name_placeholder": "例: Multica Bot",
+    "byo_bot_name_hint": "名前にスペースが含まれる場合のみ必要です。自分宛ての @ メンションと、その後に入力されたコマンドを区別するために使います。あとから変更するとき（WeCom 管理コンソールで改名した場合を含む）は、いったん接続を解除してから接続し直してください。",
+    "byo_submit": "接続",
+    "byo_submitting": "接続中…",
+    "byo_cancel": "キャンセル",
+    "byo_success_toast": "WeCom ボットを接続しました",
+    "byo_conflict_same_workspace": "このボットはこのワークスペースの別のエージェントに接続済みです。先にそちらで切断してから、ここに接続してください。",
+    "byo_conflict_archived_agent": "このボットはこのワークスペースのアーカイブ済みエージェントに接続されています。そのエージェントを復元するか、ボットを切断してから接続してください。",
+    "byo_conflict_other_workspace": "このボットは別の Multica ワークスペースに接続済みです。先にそちらで切断してから接続してください。",
+    "byo_rejected": "ボットを接続できませんでした。WeCom 管理コンソールの Bot ID とシークレット、および長時間接続が有効なスマートボットであることを確認してください。",
+    "byo_credentials_rejected": "WeCom がこの Bot ID とシークレットを拒否しました。WeCom 管理コンソールで両方を確認し、長時間接続が有効なスマートボットであることもご確認ください。",
+    "byo_credentials_unverifiable": "WeCom に接続できず、このボットを検証できませんでした。認証情報は変更されていません。少し時間をおいてもう一度お試しください。",
+    "byo_install_failed": "ボットを保存できませんでした。こちら側の問題です。認証情報は変更されていません。もう一度お試しいただき、続くようならサポートにご連絡ください。",
+    "byo_failed_toast": "WeCom ボットを接続できませんでした"
+  },
   "repositories": {
     "section_title": "リポジトリ",
     "description": "このワークスペースに関連付けられた Git リポジトリです。エージェントはこれらをクローンしてコードを作業します。",
@@ -641,6 +907,27 @@
     "url_empty": "（空の URL）",
     "description_placeholder": "説明（例: Go バックエンド + Next.js フロントエンド）",
     "add": "リポジトリを追加",
+    "connect_github": "GitHub に接続",
+    "choose_from_github": "GitHub から選択",
+    "github_not_configured": "この環境では GitHub 接続が設定されていません。",
+    "github_browse_not_configured": "リポジトリの参照には GITHUB_APP_ID と GITHUB_APP_PRIVATE_KEY が必要です。",
+    "github_connect_failed": "GitHub に接続できませんでした。もう一度お試しください。",
+    "github_picker_title": "GitHub リポジトリを選択",
+    "github_picker_description": "このワークスペースに追加するリポジトリを選択します。既存の手動設定は変更されません。",
+    "github_account": "GitHub アカウント",
+    "github_search_placeholder": "読み込み済みのリポジトリを検索",
+    "github_loading": "リポジトリを読み込み中…",
+    "github_load_failed": "GitHub からリポジトリを読み込めませんでした。インストール権限を確認して再試行してください。",
+    "github_empty": "このインストールでアクセスできるリポジトリはありません。",
+    "github_no_search_results": "読み込み済みのリポジトリに一致するものがありません。",
+    "github_private": "非公開",
+    "github_archived": "アーカイブ済み",
+    "github_added": "追加済み",
+    "github_load_more": "さらに読み込む",
+    "github_selected_count": "{{count}} 件選択",
+    "github_cancel": "キャンセル",
+    "github_import": "リポジトリを追加",
+    "complete_manual_entry_first": "空の手動リポジトリを入力するか削除してからインポートしてください。",
     "save": "保存",
     "saving": "保存中...",
     "saved_hint": "すべての変更を保存しました",
@@ -703,6 +990,20 @@
     "remove_action": "ワークスペースから削除",
     "cannot_demote_last_owner_title": "先に別のメンバーを owner に昇格させてください。ワークスペースには少なくとも 1 人の owner が必要です。",
     "cannot_demote_last_owner": "最後の owner は降格できません",
+    "roles": {
+      "owner": {
+        "label": "オーナー",
+        "description": "フルアクセス、すべての設定を管理"
+      },
+      "admin": {
+        "label": "管理者",
+        "description": "メンバーと設定を管理"
+      },
+      "member": {
+        "label": "メンバー",
+        "description": "イシューの作成と作業"
+      }
+    },
     "dingtalk_title": "DingTalk 組織から選択",
     "dingtalk_description": "組織の連絡先を検索し、選択したメンバーをワークスペースへ直接追加します。",
     "dingtalk_open_picker": "DingTalk から追加",
@@ -747,20 +1048,49 @@
     "toast_dingtalk_identity_missing": "{{count}} 人にサインイン用の DingTalk ID がありません。Open Platform 権限を確認してください。",
     "toast_dingtalk_group_missing": "先に DingTalk グループ chatid を入力してください",
     "toast_dingtalk_group_added": "{{count}} 人を DingTalk グループに追加しました",
-    "toast_dingtalk_group_failed": "DingTalk グループに追加できませんでした",
-    "roles": {
-      "owner": {
-        "label": "オーナー",
-        "description": "フルアクセス、すべての設定を管理"
-      },
-      "admin": {
-        "label": "管理者",
-        "description": "メンバーと設定を管理"
-      },
-      "member": {
-        "label": "メンバー",
-        "description": "イシューの作成と作業"
-      }
-    }
+    "toast_dingtalk_group_failed": "DingTalk グループに追加できませんでした"
+  },
+  "workspace_access": {
+    "title": "DTA アクセス",
+    "description": "現在のワークスペースにだけ紐づく DTA 用アクセス認証情報を発行します。外部事業者には Multica アカウントや個人 API トークンを付与しません。",
+    "owner_only": "DTA アクセスを管理できるのはワークスペースオーナーだけです。",
+    "tokens_title": "DTA トークン",
+    "tokens_description": "各トークンは、このワークスペースの通常メンバー権限を持つ外部利用者を表します。有効期限を個別に設定し、即時に失効できます。",
+    "create": "トークンを作成",
+    "loading": "DTA アクセスを読み込み中…",
+    "empty": "DTA トークンはまだありません。",
+    "edit": "編集",
+    "expires": "有効期限",
+    "last_used": "最終使用",
+    "revoked": "失効済み",
+    "revoke": "キーを失効",
+    "revoke_confirm": "この DTA アクセスキーを失効しますか？このキーを使う DTA リクエストは直ちに失敗します。",
+    "delete": "レコードを削除",
+    "delete_confirm": "失効済みトークンのレコードを完全に削除しますか？サービスメンバー、Agent、履歴は保持されます。",
+    "saved": "DTA トークンを保存しました",
+    "save_failed": "DTA トークンを保存できませんでした",
+    "create_title": "DTA トークンを作成",
+    "edit_title": "DTA トークンを編集",
+    "name_placeholder": "外部利用者名",
+    "member_role": "ワークスペース通常メンバー権限",
+    "member_permissions_description": "このトークンは通常メンバーと同じ権限を持ち、自分の Agent、タスク、Trace、スケジュール、連携、stable の非公開 Runtime を管理できます。メンバーやワークスペース設定、公開マネージド Runtime、stable リリースは管理できません。",
+    "regenerate": "再生成",
+    "regenerated": "DTA トークンを再生成しました",
+    "regenerate_title": "DTA トークンを再生成",
+    "regenerate_warning": "現在のキーは直ちに無効になります。新しいキーを保存した後、DTA に再設定してください。",
+    "expiry_title": "有効期限",
+    "expiry_description": "期限を過ぎると、このトークンを使う DTA リクエストは直ちに失敗します。有効期限の編集または新しい期限でのキー再生成が可能です。",
+    "expiry": {
+      "keep": "現在の有効期限を維持",
+      "days": "{{count}} 日",
+      "never": "無期限"
+    },
+    "permanent_warning": "無期限のトークンは失効するまで利用できます。可能な限り有効期限を設定してください。",
+    "cancel": "キャンセル",
+    "save": "保存",
+    "secret_title": "DTA アクセスキーを今すぐ保存",
+    "secret_warning": "このキーは一度だけ表示され、後から復元できません。承認済みの秘密情報受け渡し手段だけで共有してください。",
+    "secret_confirm": "キーをコピーして安全に保存しました",
+    "close": "閉じる"
   }
 }
