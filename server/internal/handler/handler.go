@@ -186,6 +186,7 @@ type enterpriseIdentityService interface {
 	PrepareBindingCompletion(context.Context, string) (service.PreparedEnterpriseIdentityBinding, error)
 	CompletePreparedBinding(context.Context, service.PreparedEnterpriseIdentityBinding, string) (service.CompleteEnterpriseIdentityBindingResult, error)
 	Revoke(context.Context, pgtype.UUID, pgtype.UUID) error
+	ForceRotateIdentitySource(context.Context, pgtype.UUID, pgtype.UUID, string) (service.EnterpriseIdentitySourceRotationResult, error)
 }
 
 type Handler struct {

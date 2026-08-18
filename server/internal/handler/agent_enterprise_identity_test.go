@@ -260,3 +260,41 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 		t.Fatalf("callback progress page contains a formatting error: %s", page)
 	}
 }
+
+func TestEnterpriseIdentitySourceRotationEnvironmentGuard(t *testing.T) {
+	cases := []struct {
+		environment string
+		want        bool
+	}{
+		{environment: "pre", want: true},
+		{environment: "prepub", want: true},
+		{environment: "staging", want: true},
+		{environment: "production", want: false},
+		{environment: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.environment, func(t *testing.T) {
+			t.Setenv("AONE_ENV_TYPE", tc.environment)
+			if got := enterpriseIdentitySourceRotationEnabled(); got != tc.want {
+				t.Fatalf("rotation enabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRotateAgentEnterpriseIdentitySourceIsHiddenOutsidePrepub(t *testing.T) {
+	t.Setenv("AONE_ENV_TYPE", "production")
+
+	handler := &Handler{}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/workspaces/workspace-id/agent-identity/enterprise/source/rotate",
+		strings.NewReader(`{"agent_id":"agent-id"}`),
+	)
+	response := httptest.NewRecorder()
+	handler.RotateAgentEnterpriseIdentitySource(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", response.Code)
+	}
+}

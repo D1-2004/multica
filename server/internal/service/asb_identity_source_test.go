@@ -104,7 +104,7 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/identity/wireguard":
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -117,7 +117,7 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 				t.Fatalf("BUC identity grant = %#v", grant)
 			}
 			attachCalls++
-			response.WriteHeader(http.StatusAccepted)
+			response.WriteHeader(http.StatusOK)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/endpoints/44772":
 			response.Header().Set("Content-Type", "application/json")
@@ -297,6 +297,204 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 	}
 }
 
+func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
+	const (
+		predecessorSandboxID = "identity-seed-predecessor"
+		rotatedSandboxID     = "identity-seed-rotated"
+		runtimeImageRef      = "registry.example/runtime@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+		employeeID           = "12345"
+		bucAgentID           = "agent-multica-asb"
+	)
+
+	states := map[string]string{
+		predecessorSandboxID: "Running",
+		rotatedSandboxID:     "Running",
+	}
+	deleteCalls := map[string]int{}
+	attachCalls := 0
+	probeCalls := 0
+	probeInvalid := false
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			var payload asbCreateSandboxRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode rotated seed request: %v", err)
+			}
+			if payload.Image.URI != runtimeImageRef ||
+				payload.Extensions["wireguard.lazyAuth"] != "true" ||
+				len(payload.Extensions) != 1 ||
+				payload.Metadata["multica.identity_source_rotation"] != "true" {
+				t.Fatalf("rotated seed create request = %#v", payload)
+			}
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":        rotatedSandboxID,
+				"status":    map[string]string{"state": "Pending"},
+				"createdAt": createdAt,
+			})
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/"+rotatedSandboxID+"/identity/wireguard":
+			attachCalls++
+			if request.URL.Query().Get("sync") != "true" {
+				t.Fatalf("rotated seed attach sync = %q", request.URL.Query().Get("sync"))
+			}
+			var grant ASBBUCIdentityGrant
+			if err := json.NewDecoder(request.Body).Decode(&grant); err != nil {
+				t.Fatalf("decode rotated seed identity grant: %v", err)
+			}
+			if grant.EmployeeID != employeeID ||
+				grant.OriginalSandboxID != predecessorSandboxID ||
+				grant.WireGuardCredentials != "wireguard-credentials" ||
+				grant.BUCAccessToken != "" || grant.BUCRefreshToken != "" || grant.BUCIDToken != "" {
+				t.Fatalf("rotated seed identity grant = %#v", grant)
+			}
+			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodGet &&
+			strings.HasPrefix(request.URL.Path, "/v1/sandboxes/") &&
+			!strings.Contains(request.URL.Path, "/endpoints/"):
+			sandboxID := strings.TrimPrefix(request.URL.Path, "/v1/sandboxes/")
+			state, exists := states[sandboxID]
+			if !exists {
+				http.NotFound(response, request)
+				return
+			}
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"id":        sandboxID,
+				"status":    map[string]string{"state": state},
+				"createdAt": createdAt,
+				"image":     map[string]string{"uri": runtimeImageRef},
+			})
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+rotatedSandboxID+"/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/exec",
+				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			probeCalls++
+			response.Header().Set("Content-Type", "text/event-stream")
+			if probeInvalid {
+				_, _ = io.WriteString(
+					response,
+					"data: {\"type\":\"error\",\"error\":{\"ename\":\"CommandError\",\"evalue\":\"42\"}}\n"+
+						"data: {\"type\":\"execution_complete\",\"execution_time\":1}\n",
+				)
+				return
+			}
+			_, _ = io.WriteString(response, "data: {\"type\":\"execution_complete\",\"execution_time\":1}\n")
+		case request.Method == http.MethodDelete && strings.HasPrefix(request.URL.Path, "/v1/sandboxes/"):
+			sandboxID := strings.TrimPrefix(request.URL.Path, "/v1/sandboxes/")
+			deleteCalls[sandboxID]++
+			states[sandboxID] = "Terminated"
+			response.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	box, err := secretbox.New(bytes.Repeat([]byte{0x43}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedAPIKey, err := box.Seal([]byte("runtime-api-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	store := &fakeASBIdentitySourceStore{
+		runtime: db.AgentRuntime{
+			ID:          runtimeID,
+			RuntimeMode: "cloud",
+			Provider:    "hermes",
+			Metadata: []byte(`{
+				"kind":"cloud-sandbox",
+				"sandbox_backend":"asb",
+				"provider":"hermes",
+				"artifact_kind":"oci_image",
+				"artifact_channel":"stable",
+				"artifact_ref":"registry.example/runtime@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+			}`),
+		},
+		credential: db.AsbRuntimeCredential{
+			RuntimeID:       runtimeID,
+			ApiKeyEncrypted: sealedAPIKey,
+		},
+	}
+	manager := &ASBIdentitySourceManager{
+		Store: store,
+		Credentials: &ASBRuntimeClientProvider{
+			Store:   store,
+			Secrets: box,
+			Config:  ASBConfig{APIURL: server.URL},
+		},
+		Capacity: fakeASBIdentitySourceCapacity{},
+		Config: ASBConfig{
+			ResourceCPU:           "2",
+			ResourceMemory:        "4Gi",
+			ReadyTimeout:          time.Second,
+			WireGuardReadyTimeout: time.Second,
+			WireGuardCredentials:  "wireguard-credentials",
+		},
+	}
+
+	rotated, err := manager.Rotate(
+		context.Background(),
+		runtimeID,
+		predecessorSandboxID,
+		employeeID,
+		bucAgentID,
+	)
+	if err != nil {
+		t.Fatalf("Rotate identity seed: %v", err)
+	}
+	if rotated.SandboxID != rotatedSandboxID || rotated.RuntimeID != runtimeID ||
+		states[predecessorSandboxID] != "Terminated" ||
+		states[rotatedSandboxID] != "Terminated" ||
+		deleteCalls[predecessorSandboxID] != 1 ||
+		deleteCalls[rotatedSandboxID] != 1 || attachCalls != 1 || probeCalls != 1 {
+		t.Fatalf(
+			"rotation=%#v states=%v delete_calls=%v attach_calls=%d probe_calls=%d",
+			rotated,
+			states,
+			deleteCalls,
+			attachCalls,
+			probeCalls,
+		)
+	}
+
+	states[predecessorSandboxID] = "Running"
+	states[rotatedSandboxID] = "Running"
+	deleteCalls = map[string]int{}
+	probeInvalid = true
+	_, err = manager.Rotate(
+		context.Background(),
+		runtimeID,
+		predecessorSandboxID,
+		employeeID,
+		bucAgentID,
+	)
+	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("Rotate invalid identity error = %v, want needs reauth", err)
+	}
+	if states[predecessorSandboxID] != "Running" ||
+		states[rotatedSandboxID] != "Terminated" ||
+		deleteCalls[predecessorSandboxID] != 0 ||
+		deleteCalls[rotatedSandboxID] != 1 {
+		t.Fatalf(
+			"failed rotation states=%v delete_calls=%v",
+			states,
+			deleteCalls,
+		)
+	}
+}
+
 func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T) {
 	const sandboxID = "identity-source-delayed-attach"
 	attachCalls := 0
@@ -307,14 +505,14 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			if attachCalls > 1 {
 				t.Fatalf("identity source attach calls = %d, want exactly one", attachCalls)
 			}
 			time.Sleep(10 * time.Millisecond)
-			response.WriteHeader(http.StatusAccepted)
+			response.WriteHeader(http.StatusOK)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
 			response.Header().Set("Content-Type", "application/json")
@@ -382,7 +580,7 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceDoesNotHideAsyncAttachFailure(t *testing.T) {
+func TestAttachAndProbeASBIdentitySourceTreatsKnownSyncPostCheckAsPending(t *testing.T) {
 	const sandboxID = "identity-source-wireguard-converging"
 	attachCalls := 0
 	var server *httptest.Server
@@ -391,7 +589,7 @@ func TestAttachAndProbeASBIdentitySourceDoesNotHideAsyncAttachFailure(t *testing
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			response.Header().Set("Content-Type", "application/json")
@@ -448,8 +646,8 @@ func TestAttachAndProbeASBIdentitySourceDoesNotHideAsyncAttachFailure(t *testing
 		"wg-client",
 		250*time.Millisecond,
 	)
-	if err == nil || !strings.Contains(err.Error(), "attach BUC identity") {
-		t.Fatalf("attachAndProbeASBIdentitySource error = %v, want attach failure", err)
+	if err != nil {
+		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
 	}
 	if attachCalls != 1 {
 		t.Fatalf("attach calls = %d, want exactly one", attachCalls)
