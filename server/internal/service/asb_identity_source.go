@@ -26,6 +26,7 @@ type EnterpriseIdentitySource interface {
 		enterpriseIdentitySourceKey,
 		BUCIdentityTokens,
 	) (EnterpriseIdentitySourceAvailability, error)
+	Rotate(context.Context, pgtype.UUID, string, string, string) (EnterpriseIdentitySourceAvailability, error)
 	Prepare(context.Context, pgtype.UUID, string, string, string) error
 	Park(context.Context, pgtype.UUID, string) error
 	Delete(context.Context, pgtype.UUID, string) error
@@ -40,8 +41,8 @@ type asbIdentitySourceRuntimeStore interface {
 // the credentials have been proven, the sandbox is terminated and retained as
 // a credential seed. ASB preserves the seed's identity directory and permits a
 // later sandbox in the same tenant to inherit it through buc.originalSandboxID.
-// Expired credentials are replaced only by a fresh employee authorization;
-// Multica does not derive another identity source from this terminated seed.
+// Rotating that terminated seed periodically keeps credentials fresh without
+// consuming a permanent sandbox slot.
 type ASBIdentitySourceManager struct {
 	Store          asbIdentitySourceRuntimeStore
 	Credentials    *ASBRuntimeClientProvider
@@ -197,6 +198,147 @@ func (m *ASBIdentitySourceManager) Create(
 	}, nil
 }
 
+func (m *ASBIdentitySourceManager) Rotate(
+	ctx context.Context,
+	runtimeID pgtype.UUID,
+	predecessorSandboxID string,
+	employeeID string,
+	bucAgentID string,
+) (EnterpriseIdentitySourceAvailability, error) {
+	config := m.currentConfig()
+	if m == nil || m.Store == nil || m.Credentials == nil || m.Capacity == nil {
+		return EnterpriseIdentitySourceAvailability{}, errors.New(
+			"ASB enterprise identity source manager is unavailable",
+		)
+	}
+	predecessorSandboxID = strings.TrimSpace(predecessorSandboxID)
+	if !runtimeID.Valid || predecessorSandboxID == "" ||
+		strings.TrimSpace(employeeID) == "" || strings.TrimSpace(bucAgentID) == "" {
+		return EnterpriseIdentitySourceAvailability{}, errors.New(
+			"ASB enterprise identity seed rotation input is incomplete",
+		)
+	}
+	runtime, err := m.Store.GetAgentRuntime(ctx, runtimeID)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"load ASB Runtime for enterprise identity seed rotation: %w",
+			err,
+		)
+	}
+	metadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil || metadata.SandboxBackend != SandboxBackendASB {
+		return EnterpriseIdentitySourceAvailability{}, errors.New(
+			"enterprise identity seed rotation requires an ASB Runtime",
+		)
+	}
+	client, err := m.Credentials.ClientForRuntime(ctx, runtimeID)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
+	if err := validateASBIdentitySeed(ctx, client, predecessorSandboxID); err != nil {
+		logASBIdentitySourceFailure("validate_predecessor_seed", predecessorSandboxID, err)
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
+	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
+		ImageURI:       metadata.ArtifactRef,
+		TimeoutSeconds: asbMaxCreateTimeout,
+		ResourceCPU:    config.ResourceCPU,
+		ResourceMemory: config.ResourceMemory,
+		Entrypoint:     []string{"sleep infinity"},
+		Metadata: map[string]string{
+			"multica.identity_source":             "true",
+			"multica.identity_source_rotation":    "true",
+			"multica.identity_source_predecessor": predecessorSandboxID,
+			"multica.runtime_id":                  util.UUIDToString(runtimeID),
+		},
+		Extensions: map[string]string{
+			"wireguard.lazyAuth": "true",
+		},
+	})
+	if err != nil {
+		logASBIdentitySourceFailure("create_rotated_seed", predecessorSandboxID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"create rotated ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	seedReady := false
+	defer func() {
+		if seedReady {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if cleanupErr := deleteASBIdentitySourceIfExists(
+			cleanupCtx,
+			client,
+			sandbox.ID,
+			m.sourceLifecycleTimeout(),
+		); cleanupErr != nil {
+			logASBIdentitySourceFailure("cleanup_rotated_seed", sandbox.ID, cleanupErr)
+		}
+	}()
+	if err := waitForASBSandboxRunning(ctx, client, sandbox.ID, config.ReadyTimeout); err != nil {
+		logASBIdentitySourceFailure("wait_rotated_seed_running", sandbox.ID, err)
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
+	// A rotating seed must become self-contained before the predecessor can be
+	// retired. The explicit inherited attach is the authoritative copy boundary;
+	// creating a worker with only buc.originalSandboxID does not prove that.
+	if err := attachAndProbeInheritedASBIdentitySource(
+		ctx,
+		client,
+		sandbox.ID,
+		employeeID,
+		bucAgentID,
+		predecessorSandboxID,
+		config.WireGuardCredentials,
+		config.WireGuardReadyTimeout,
+	); err != nil {
+		logASBIdentitySourceFailure("attach_and_probe_rotated_seed", sandbox.ID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"prove rotated ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	if err := terminateASBIdentitySource(
+		ctx,
+		client,
+		sandbox.ID,
+		m.sourceLifecycleTimeout(),
+	); err != nil {
+		logASBIdentitySourceFailure("terminate_rotated_seed", sandbox.ID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"terminate rotated ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	if err := terminateASBIdentitySource(
+		ctx,
+		client,
+		predecessorSandboxID,
+		m.sourceLifecycleTimeout(),
+	); err != nil {
+		logASBIdentitySourceFailure("terminate_predecessor_seed", predecessorSandboxID, err)
+		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+			"terminate predecessor ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	seedReady = true
+	slog.Info(
+		"ASB enterprise identity seed rotated",
+		"runtime_id", util.UUIDToString(runtimeID),
+		"predecessor_sandbox_id", predecessorSandboxID,
+		"sandbox_id", sandbox.ID,
+		"running_quota_retained", false,
+	)
+	return EnterpriseIdentitySourceAvailability{
+		SandboxID: sandbox.ID,
+		RuntimeID: runtimeID,
+	}, nil
+}
+
 func (m *ASBIdentitySourceManager) Prepare(
 	ctx context.Context,
 	runtimeID pgtype.UUID,
@@ -312,6 +454,57 @@ func attachAndProbeASBIdentitySource(
 	wireGuardCredentials string,
 	timeout time.Duration,
 ) error {
+	return attachAndProbeASBIdentitySourceGrant(
+		ctx,
+		client,
+		sandboxID,
+		employeeID,
+		bucAgentID,
+		ASBBUCIdentityGrant{
+			EmployeeID:           employeeID,
+			BUCAccessToken:       tokens.AccessToken,
+			BUCRefreshToken:      tokens.RefreshToken,
+			BUCIDToken:           tokens.IDToken,
+			WireGuardCredentials: wireGuardCredentials,
+		},
+		timeout,
+	)
+}
+
+func attachAndProbeInheritedASBIdentitySource(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+	bucAgentID string,
+	originalSandboxID string,
+	wireGuardCredentials string,
+	timeout time.Duration,
+) error {
+	return attachAndProbeASBIdentitySourceGrant(
+		ctx,
+		client,
+		sandboxID,
+		employeeID,
+		bucAgentID,
+		ASBBUCIdentityGrant{
+			EmployeeID:           employeeID,
+			WireGuardCredentials: wireGuardCredentials,
+			OriginalSandboxID:    originalSandboxID,
+		},
+		timeout,
+	)
+}
+
+func attachAndProbeASBIdentitySourceGrant(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+	bucAgentID string,
+	grant ASBBUCIdentityGrant,
+	timeout time.Duration,
+) error {
 	if timeout <= 0 {
 		return errors.New("ASB WireGuard ready timeout is not configured")
 	}
@@ -321,13 +514,7 @@ func attachAndProbeASBIdentitySource(
 		identityCtx,
 		client,
 		sandboxID,
-		ASBBUCIdentityGrant{
-			EmployeeID:           employeeID,
-			BUCAccessToken:       tokens.AccessToken,
-			BUCRefreshToken:      tokens.RefreshToken,
-			BUCIDToken:           tokens.IDToken,
-			WireGuardCredentials: wireGuardCredentials,
-		},
+		grant,
 	); err != nil {
 		return err
 	}
@@ -341,15 +528,39 @@ func attachAndProbeASBIdentitySource(
 		return fmt.Errorf("wait for attached ASB identity source to return running: %w", err)
 	}
 
-	// Preserve the last proven prepub contract: synchronous BUC attachment,
-	// followed only by the BUC reachability probe. A1 and other CLI checks belong
-	// to real task verification and must not make an otherwise valid binding fail.
+	return waitForASBIdentitySourceBUC(
+		identityCtx,
+		client,
+		sandboxID,
+		employeeID,
+		bucAgentID,
+		timeout,
+	)
+}
+
+func waitForASBIdentitySourceBUC(
+	ctx context.Context,
+	client *ASBClient,
+	sandboxID string,
+	employeeID string,
+	bucAgentID string,
+	timeout time.Duration,
+) error {
+	if timeout <= 0 {
+		return errors.New("ASB WireGuard ready timeout is not configured")
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	// Source establishment and rotation prove only BUC reachability. Starting
+	// the inherited WireGuard client also requests a security ticket, which is
+	// the zero-trust service's BUC-token validation and renewal point. A1 and
+	// other CLI checks belong to real task verification.
 	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
 	defer ticker.Stop()
 	var lastErr error
 	for {
 		if err := probeASBIdentitySourceBUC(
-			identityCtx,
+			probeCtx,
 			client,
 			sandboxID,
 			employeeID,
@@ -357,15 +568,26 @@ func attachAndProbeASBIdentitySource(
 		); err == nil {
 			return nil
 		} else {
-			lastErr = err
+			// Preserve a substantive invalid-identity result when the final probe
+			// itself is canceled by the outer convergence deadline.
+			if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
+				lastErr = err
+			}
 		}
 		select {
-		case <-identityCtx.Done():
-			if !errors.Is(identityCtx.Err(), context.DeadlineExceeded) {
-				return identityCtx.Err()
+		case <-probeCtx.Done():
+			if !errors.Is(probeCtx.Err(), context.DeadlineExceeded) {
+				return probeCtx.Err()
+			}
+			if errors.Is(lastErr, ErrEnterpriseIdentityNeedsReauth) {
+				return fmt.Errorf(
+					"temporary ASB enterprise identity seed did not present the expected identity within %s: %w",
+					timeout,
+					ErrEnterpriseIdentityNeedsReauth,
+				)
 			}
 			return fmt.Errorf(
-				"temporary ASB enterprise identity source did not become ready within %s: %w",
+				"temporary ASB enterprise identity seed did not become ready within %s: %w",
 				timeout,
 				lastErr,
 			)
@@ -392,13 +614,35 @@ func attachASBBUCIdentityOnce(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Submit the documented asynchronous attachment exactly once. The
-	// synchronous form executes an extra status command through ASB egress-ops;
-	// a failed status command is returned as HTTP 400 even when bootstrap was
-	// already submitted, so callers cannot distinguish convergence from a dead
-	// wgclient. Multica owns the bounded employee and Agent identity probe below.
-	// Repeating either form is unsafe because it restarts wgclient.
-	return client.AttachBUCIdentity(ctx, sandboxID, grant, false)
+	// Submit the synchronous attachment exactly once. ASB can accept bootstrap
+	// before its post-attach status command observes the tunnel, returning a
+	// known HTTP 400 convergence result. Multica then owns the bounded employee
+	// probe below. Never repeat this POST because it restarts wgclient.
+	err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
+	if err == nil {
+		return nil
+	}
+	if isASBWireGuardPostAttachCheckPending(err) {
+		slog.Info(
+			"ASB BUC identity bootstrap submitted; post-attach check is pending",
+			"sandbox_id", sandboxID,
+		)
+		return nil
+	}
+	return err
+}
+
+func isASBWireGuardPostAttachCheckPending(err error) bool {
+	var httpErr *ASBHTTPError
+	if !errors.As(err, &httpErr) ||
+		httpErr.Operation != "attach_buc_identity" ||
+		httpErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
+	return strings.Contains(message, "wireguard tunnel not ready yet") ||
+		(strings.Contains(message, "failed to check wireguard status") &&
+			strings.Contains(message, "status code 404"))
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {
@@ -494,6 +738,9 @@ func probeASBIdentitySourceBUC(
 		return err
 	}
 	if result.ExitCode == nil || *result.ExitCode != 0 || result.ErrorName != "" {
+		if result.ExitCode != nil && *result.ExitCode == asbIdentityInvalidExitCode {
+			return ErrEnterpriseIdentityNeedsReauth
+		}
 		return errors.New("ASB BUC identity probe failed")
 	}
 	return nil
@@ -697,9 +944,11 @@ func asbBUCOnlyIdentityProbeCommand() string {
 		"ok=p.get(\"success\") is True and str(p.get(\"errorCode\")) == \"0\" and " +
 		"str(d.get(\"empId\", \"\")) == os.environ[\"EXPECTED_EMP_ID\"] and " +
 		"str(d.get(\"agentId\", \"\")) == os.environ[\"EXPECTED_BUC_AGENT_ID\"]; " +
-		"raise SystemExit(0 if ok else 1)" +
+		fmt.Sprintf("raise SystemExit(0 if ok else %d)", asbIdentityInvalidExitCode) +
 		"'"
 }
+
+const asbIdentityInvalidExitCode = 42
 
 func asbBUCIdentityProbeCommand() string {
 	return asbBUCOnlyIdentityProbeCommand() + "; " +

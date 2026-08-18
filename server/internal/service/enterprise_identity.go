@@ -48,6 +48,7 @@ var (
 	ErrEnterpriseIdentityNeedsReauth       = errors.New("enterprise identity requires employee reauthorization")
 	ErrEnterpriseIdentityEmployeeConflict  = errors.New("enterprise identity must be revoked before binding another employee")
 	ErrEnterpriseIdentityBindingInProgress = errors.New("enterprise identity binding is already in progress")
+	ErrEnterpriseIdentitySourceChanged     = errors.New("enterprise identity source no longer matches the expected predecessor")
 
 	enterpriseEmployeeIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 	enterprisePathPartPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -207,6 +208,7 @@ type enterpriseIdentityStore interface {
 	CountActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.CountActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	UpsertAgentEnterpriseIdentity(context.Context, db.UpsertAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	CompareAndSwapAgentEnterpriseIdentitySource(context.Context, db.CompareAndSwapAgentEnterpriseIdentitySourceParams) (db.AgentEnterpriseIdentity, error)
+	RotateActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	TouchActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	CompareAndSwapAgentEnterpriseIdentityToken(context.Context, db.CompareAndSwapAgentEnterpriseIdentityTokenParams) (db.AgentEnterpriseIdentity, error)
 	ListAgentEnterpriseIdentitiesForMaintenance(context.Context, db.ListAgentEnterpriseIdentitiesForMaintenanceParams) ([]db.AgentEnterpriseIdentity, error)
@@ -385,6 +387,17 @@ type StartEnterpriseIdentityBindingInput struct {
 type StartEnterpriseIdentityBindingResult struct {
 	AuthorizeURL string
 	ExpiresAt    time.Time
+}
+
+// EnterpriseIdentitySourceRotationResult contains only the non-secret
+// coordinates needed to verify a seed rotation. Identity material never leaves
+// the service boundary.
+type EnterpriseIdentitySourceRotationResult struct {
+	PreviousRuntimeID  pgtype.UUID
+	PreviousSandboxID  string
+	RuntimeID          pgtype.UUID
+	SandboxID          string
+	AffectedReferences int64
 }
 
 func (s *EnterpriseIdentityService) StartBinding(
@@ -1580,45 +1593,105 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 	if !sameEnterpriseIdentitySourceSnapshot(identity, current) {
 		return nil
 	}
-	if err := s.Source.Prepare(
+	_, err = s.rotateIdentitySourceUnderLock(ctx, current)
+	return err
+}
+
+// ForceRotateIdentitySource rotates the source currently bound to an active
+// Agent without relying on the periodic age threshold. The expected predecessor
+// makes repeated asynchronous requests idempotent after the current source changes.
+func (s *EnterpriseIdentityService) ForceRotateIdentitySource(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+	expectedPredecessorSandboxID string,
+) (EnterpriseIdentitySourceRotationResult, error) {
+	expectedPredecessorSandboxID = strings.TrimSpace(expectedPredecessorSandboxID)
+	if expectedPredecessorSandboxID == "" {
+		return EnterpriseIdentitySourceRotationResult{}, errors.New(
+			"expected ASB enterprise identity predecessor sandbox is required",
+		)
+	}
+	current, releaseLocks, err := s.lockEnterpriseIdentityForSourceMutation(
+		ctx,
+		workspaceID,
+		agentID,
+	)
+	if err != nil {
+		return EnterpriseIdentitySourceRotationResult{}, err
+	}
+	defer releaseLocks()
+	if current.Status != "active" ||
+		!current.BucIdentitySourceRuntimeID.Valid ||
+		!current.BucIdentitySourceSandboxID.Valid ||
+		strings.TrimSpace(current.BucIdentitySourceSandboxID.String) == "" ||
+		!current.AuthxRefreshExpiresAt.Valid ||
+		!current.AuthxRefreshExpiresAt.Time.After(s.Now()) {
+		return EnterpriseIdentitySourceRotationResult{}, ErrEnterpriseIdentityNeedsReauth
+	}
+	if current.BucIdentitySourceSandboxID.String != expectedPredecessorSandboxID {
+		return EnterpriseIdentitySourceRotationResult{}, ErrEnterpriseIdentitySourceChanged
+	}
+	return s.rotateIdentitySourceUnderLock(ctx, current)
+}
+
+func (s *EnterpriseIdentityService) rotateIdentitySourceUnderLock(
+	ctx context.Context,
+	current db.AgentEnterpriseIdentity,
+) (EnterpriseIdentitySourceRotationResult, error) {
+	rotated, err := s.Source.Rotate(
 		ctx,
 		current.BucIdentitySourceRuntimeID,
 		current.BucIdentitySourceSandboxID.String,
 		current.RawEmpID,
 		current.BucAgentID,
-	); err != nil {
-		return err
+	)
+	if err != nil {
+		return EnterpriseIdentitySourceRotationResult{}, err
 	}
-	parked := false
-	defer func() {
-		if parked {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		_ = s.Source.Park(
-			cleanupCtx,
-			current.BucIdentitySourceRuntimeID,
-			current.BucIdentitySourceSandboxID.String,
+	if !rotated.RuntimeID.Valid ||
+		strings.TrimSpace(rotated.SandboxID) == "" ||
+		(rotated.RuntimeID == current.BucIdentitySourceRuntimeID &&
+			rotated.SandboxID == current.BucIdentitySourceSandboxID.String) {
+		return EnterpriseIdentitySourceRotationResult{}, errors.New(
+			"rotated ASB enterprise identity seed coordinate is invalid",
 		)
-	}()
-	if err := s.Source.Park(
-		ctx,
-		current.BucIdentitySourceRuntimeID,
-		current.BucIdentitySourceSandboxID.String,
-	); err != nil {
-		return err
 	}
-	parked = true
-	_, err = s.Store.TouchActiveAgentEnterpriseIdentitySourceReferences(
+	affected, err := s.Store.RotateActiveAgentEnterpriseIdentitySourceReferences(
 		ctx,
-		db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams{
-			WorkspaceID: current.WorkspaceID,
-			RuntimeID:   current.BucIdentitySourceRuntimeID,
-			SandboxID:   current.BucIdentitySourceSandboxID,
+		db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams{
+			NewRuntimeID:      rotated.RuntimeID,
+			NewSandboxID:      pgtype.Text{String: rotated.SandboxID, Valid: true},
+			WorkspaceID:       current.WorkspaceID,
+			ExpectedRuntimeID: current.BucIdentitySourceRuntimeID,
+			ExpectedSandboxID: current.BucIdentitySourceSandboxID,
 		},
 	)
-	return err
+	if err != nil {
+		return EnterpriseIdentitySourceRotationResult{}, fmt.Errorf(
+			"persist rotated ASB enterprise identity seed: %w",
+			err,
+		)
+	}
+	if affected == 0 {
+		return EnterpriseIdentitySourceRotationResult{}, errors.New(
+			"rotated ASB enterprise identity seed had no active references",
+		)
+	}
+	slog.Info(
+		"shared ASB enterprise identity seed references rotated",
+		"workspace_id", util.UUIDToString(current.WorkspaceID),
+		"predecessor_sandbox_id", current.BucIdentitySourceSandboxID.String,
+		"sandbox_id", rotated.SandboxID,
+		"affected_references", affected,
+	)
+	return EnterpriseIdentitySourceRotationResult{
+		PreviousRuntimeID:  current.BucIdentitySourceRuntimeID,
+		PreviousSandboxID:  current.BucIdentitySourceSandboxID.String,
+		RuntimeID:          rotated.RuntimeID,
+		SandboxID:          rotated.SandboxID,
+		AffectedReferences: affected,
+	}, nil
 }
 
 func (s *EnterpriseIdentityService) rotateAuthXToken(

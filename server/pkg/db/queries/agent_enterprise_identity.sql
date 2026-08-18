@@ -192,6 +192,17 @@ WHERE id = sqlc.arg('id')
   AND status = 'active'
 RETURNING *;
 
+-- name: RotateActiveAgentEnterpriseIdentitySourceReferences :execrows
+UPDATE agent_enterprise_identity
+SET buc_identity_source_runtime_id = sqlc.arg('new_runtime_id'),
+    buc_identity_source_sandbox_id = sqlc.arg('new_sandbox_id'),
+    buc_identity_source_updated_at = now(),
+    updated_at = now()
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND buc_identity_source_runtime_id = sqlc.arg('expected_runtime_id')
+  AND buc_identity_source_sandbox_id = sqlc.arg('expected_sandbox_id')
+  AND status = 'active';
+
 -- name: TouchActiveAgentEnterpriseIdentitySourceReferences :execrows
 UPDATE agent_enterprise_identity
 SET buc_identity_source_updated_at = now(),
