@@ -32,6 +32,30 @@ Do this in each Bash invocation (the shell re-reads the profile every time).
 Pipeline 66 runs 代码合并 → 构建 → 预发部署 → 预发集成测试, then parks at the
 manual **预发验证** gate. Deploying never publishes to production.
 
+## Upstream-sync deployment fence
+
+For a schema-breaking upstream sync, first deploy the compatibility CR while the
+fence remains `normal`. The operator API uses the existing log-tail bearer token:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  https://pre-fde-workbench.dingtalk.com/api/internal/deployment-fence
+
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"state":"draining","reason":"upstream schema sync"}' \
+  https://pre-fde-workbench.dingtalk.com/api/internal/deployment-fence
+```
+
+Poll the status until every live replica acknowledges the same draining revision,
+every `work` count is zero, and `unfenced_tables` is empty, then PUT `frozen`.
+A direct `normal -> frozen` transition is rejected. While draining/frozen the user-facing service is
+deliberately unavailable, but health, logs, and this operator endpoint remain
+available. Deploy the upstream-sync CR while frozen, verify the new revision and
+schema, then PUT `normal`. Never edit the backing tables directly: the API takes
+the cross-transaction advisory barrier that prevents a write from crossing the
+freeze boundary.
+
 ## Deploy
 
 Pushing to `develop` does **not** redeploy once the flow instance is parked at

@@ -347,7 +347,7 @@ rolling-deploy 兼容重试，避免旧 Pod 的短暂 404 让 Router 永远看�
    继续执行，留给后续
    comment-level cancellation 设计。
 
-迁移 `255_issue_delegated_task_completion` 只替换 migration 203 已有的取消
+迁移 `9030_issue_delegated_task_completion` 只替换 migration 203 已有的取消
 trigger：
 
 - 任意 task 有 child 时，取消该 task 不提前生成 callback；
@@ -355,7 +355,7 @@ trigger：
 
 这是对现有 completion lineage 的修正，不新增业务表。
 
-迁移 `257_delegated_comment_completion_fanout` 再扩展同一个 trigger：取消
+迁移 `9032_delegated_comment_completion_fanout` 再扩展同一个 trigger：取消
 物理叶子 task 时，按 `delivered_comment_ids → comment.source_task_id`
 分别写入评论 callback；没有评论映射时保持 migration 255 的单 lineage
 行为。

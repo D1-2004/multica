@@ -9,8 +9,8 @@ import (
 
 func TestUnifiedDingTalkEndpointMigrationIsReversibleWithoutRewritingRobotStatus(t *testing.T) {
 	dir := realMigrationsDir(t)
-	up := readMigrationForTest(t, filepath.Join(dir, "198_unified_dingtalk_router_registration.up.sql"))
-	down := readMigrationForTest(t, filepath.Join(dir, "198_unified_dingtalk_router_registration.down.sql"))
+	up := readMigrationForTest(t, filepath.Join(dir, "9020_unified_dingtalk_router_registration.up.sql"))
+	down := readMigrationForTest(t, filepath.Join(dir, "9020_unified_dingtalk_router_registration.down.sql"))
 
 	for _, fragment := range []string{
 		"create table if not exists agent_dispatch_endpoint",
@@ -45,8 +45,8 @@ func TestUnifiedDingTalkEndpointMigrationIsReversibleWithoutRewritingRobotStatus
 
 func TestLegacyDingTalkStreamRepairIsNarrowAndDoesNotRecreatePendingState(t *testing.T) {
 	dir := realMigrationsDir(t)
-	up := readMigrationForTest(t, filepath.Join(dir, "200_restore_legacy_dingtalk_stream_installations.up.sql"))
-	down := readMigrationForTest(t, filepath.Join(dir, "200_restore_legacy_dingtalk_stream_installations.down.sql"))
+	up := readMigrationForTest(t, filepath.Join(dir, "9022_restore_legacy_dingtalk_stream_installations.up.sql"))
+	down := readMigrationForTest(t, filepath.Join(dir, "9022_restore_legacy_dingtalk_stream_installations.down.sql"))
 
 	for _, required := range []string{
 		"channel_type = 'dingtalk'",
