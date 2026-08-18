@@ -722,34 +722,24 @@ func (q *Queries) RevokeAgentEnterpriseIdentity(ctx context.Context, arg RevokeA
 	return i, err
 }
 
-const rotateActiveAgentEnterpriseIdentitySourceReferences = `-- name: RotateActiveAgentEnterpriseIdentitySourceReferences :execrows
+const touchActiveAgentEnterpriseIdentitySourceReferences = `-- name: TouchActiveAgentEnterpriseIdentitySourceReferences :execrows
 UPDATE agent_enterprise_identity
-SET buc_identity_source_runtime_id = $1,
-    buc_identity_source_sandbox_id = $2,
-    buc_identity_source_updated_at = now(),
+SET buc_identity_source_updated_at = now(),
     updated_at = now()
-WHERE workspace_id = $3
-  AND buc_identity_source_runtime_id = $4
-  AND buc_identity_source_sandbox_id = $5
+WHERE workspace_id = $1
+  AND buc_identity_source_runtime_id = $2
+  AND buc_identity_source_sandbox_id = $3
   AND status = 'active'
 `
 
-type RotateActiveAgentEnterpriseIdentitySourceReferencesParams struct {
-	NewRuntimeID      pgtype.UUID `json:"new_runtime_id"`
-	NewSandboxID      pgtype.Text `json:"new_sandbox_id"`
-	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	ExpectedRuntimeID pgtype.UUID `json:"expected_runtime_id"`
-	ExpectedSandboxID pgtype.Text `json:"expected_sandbox_id"`
+type TouchActiveAgentEnterpriseIdentitySourceReferencesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+	SandboxID   pgtype.Text `json:"sandbox_id"`
 }
 
-func (q *Queries) RotateActiveAgentEnterpriseIdentitySourceReferences(ctx context.Context, arg RotateActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error) {
-	result, err := q.db.Exec(ctx, rotateActiveAgentEnterpriseIdentitySourceReferences,
-		arg.NewRuntimeID,
-		arg.NewSandboxID,
-		arg.WorkspaceID,
-		arg.ExpectedRuntimeID,
-		arg.ExpectedSandboxID,
-	)
+func (q *Queries) TouchActiveAgentEnterpriseIdentitySourceReferences(ctx context.Context, arg TouchActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, touchActiveAgentEnterpriseIdentitySourceReferences, arg.WorkspaceID, arg.RuntimeID, arg.SandboxID)
 	if err != nil {
 		return 0, err
 	}

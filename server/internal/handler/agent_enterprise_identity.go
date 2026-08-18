@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -51,20 +50,9 @@ type startAgentEnterpriseIdentityResponse struct {
 	ExpiresAt        int64  `json:"expires_at"`
 }
 
-type rotateAgentEnterpriseIdentitySourceRequest struct {
-	AgentID                   string `json:"agent_id"`
-	ExpectedPreviousSandboxID string `json:"expected_previous_sandbox_id"`
-}
-
-type rotateAgentEnterpriseIdentitySourceAcceptedResponse struct {
-	Status                    string `json:"status"`
-	ExpectedPreviousSandboxID string `json:"expected_previous_sandbox_id"`
-}
-
 const (
-	enterpriseIdentityCallbackTimeout       = 15 * time.Minute
-	enterpriseIdentityCallbackPollInterval  = 2 * time.Second
-	enterpriseIdentitySourceRotationTimeout = 5 * time.Minute
+	enterpriseIdentityCallbackTimeout      = 15 * time.Minute
+	enterpriseIdentityCallbackPollInterval = 2 * time.Second
 )
 
 func (h *Handler) GetAgentEnterpriseIdentityStatus(w http.ResponseWriter, r *http.Request) {
@@ -365,120 +353,6 @@ func (h *Handler) RevokeAgentEnterpriseIdentity(w http.ResponseWriter, r *http.R
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) RotateAgentEnterpriseIdentitySource(w http.ResponseWriter, r *http.Request) {
-	if !enterpriseIdentitySourceRotationEnabled() {
-		http.NotFound(w, r)
-		return
-	}
-	if h.EnterpriseIdentity == nil {
-		writeError(w, http.StatusServiceUnavailable, "enterprise sandbox identity is not configured")
-		return
-	}
-	var request rotateAgentEnterpriseIdentitySourceRequest
-	if err := decodeLimitedJSON(w, r, 4<<10, &request, "invalid_request"); err != nil {
-		return
-	}
-	workspaceID, agent, ok := h.authorizeAgentEnterpriseIdentitySourceRotation(
-		w,
-		r,
-		strings.TrimSpace(request.AgentID),
-	)
-	if !ok {
-		return
-	}
-	expectedPreviousSandboxID := strings.TrimSpace(request.ExpectedPreviousSandboxID)
-	if expectedPreviousSandboxID == "" {
-		writeError(w, http.StatusBadRequest, "expected_previous_sandbox_id is required")
-		return
-	}
-
-	requestAttrs := logger.RequestAttrs(r)
-	rotationContext, cancelRotation := context.WithTimeout(
-		context.WithoutCancel(r.Context()),
-		enterpriseIdentitySourceRotationTimeout,
-	)
-	go func() {
-		defer cancelRotation()
-		result, rotateErr := h.EnterpriseIdentity.ForceRotateIdentitySource(
-			rotationContext,
-			workspaceID,
-			agent.ID,
-			expectedPreviousSandboxID,
-		)
-		if rotateErr != nil {
-			status := "failed"
-			switch {
-			case errors.Is(rotateErr, service.ErrEnterpriseIdentitySourceChanged):
-				status = "stale_predecessor"
-			case errors.Is(rotateErr, service.ErrEnterpriseIdentityNeedsReauth):
-				status = "needs_reauthorization"
-			case errors.Is(rotateErr, context.DeadlineExceeded):
-				status = "timed_out"
-			}
-			slog.Warn(
-				"ASB enterprise identity source force rotation failed",
-				append(requestAttrs,
-					"workspace_id", util.UUIDToString(workspaceID),
-					"agent_id", util.UUIDToString(agent.ID),
-					"expected_predecessor_sandbox_id", expectedPreviousSandboxID,
-					"status", status,
-				)...,
-			)
-			return
-		}
-		slog.Info(
-			"ASB enterprise identity source force rotation completed",
-			append(requestAttrs,
-				"workspace_id", util.UUIDToString(workspaceID),
-				"agent_id", util.UUIDToString(agent.ID),
-				"previous_runtime_id", util.UUIDToString(result.PreviousRuntimeID),
-				"previous_sandbox_id", result.PreviousSandboxID,
-				"runtime_id", util.UUIDToString(result.RuntimeID),
-				"sandbox_id", result.SandboxID,
-				"affected_references", result.AffectedReferences,
-			)...,
-		)
-	}()
-
-	slog.Info(
-		"ASB enterprise identity source force rotation accepted",
-		append(requestAttrs,
-			"workspace_id", util.UUIDToString(workspaceID),
-			"agent_id", util.UUIDToString(agent.ID),
-			"expected_predecessor_sandbox_id", expectedPreviousSandboxID,
-		)...,
-	)
-	writeJSON(w, http.StatusAccepted, rotateAgentEnterpriseIdentitySourceAcceptedResponse{
-		Status:                    "accepted",
-		ExpectedPreviousSandboxID: expectedPreviousSandboxID,
-	})
-}
-
-func enterpriseIdentitySourceRotationEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("AONE_ENV_TYPE"))) {
-	case "pre", "prepub", "staging":
-		return true
-	default:
-		return false
-	}
-}
-
-func (h *Handler) authorizeAgentEnterpriseIdentitySourceRotation(
-	w http.ResponseWriter,
-	r *http.Request,
-	agentID string,
-) (pgtype.UUID, db.Agent, bool) {
-	workspaceID, agent, _, member, ok := h.loadAgentEnterpriseIdentityTarget(w, r, agentID)
-	if !ok {
-		return pgtype.UUID{}, db.Agent{}, false
-	}
-	if !roleAllowed(member.Role, "owner", "admin") {
-		writeError(w, http.StatusForbidden, "only workspace owners or admins can rotate enterprise identity sources")
-		return pgtype.UUID{}, db.Agent{}, false
-	}
-	return workspaceID, agent, true
 }
 
 func (h *Handler) authorizeAgentEnterpriseIdentity(

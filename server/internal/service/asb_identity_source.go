@@ -26,7 +26,6 @@ type EnterpriseIdentitySource interface {
 		enterpriseIdentitySourceKey,
 		BUCIdentityTokens,
 	) (EnterpriseIdentitySourceAvailability, error)
-	Rotate(context.Context, pgtype.UUID, string, string, string) (EnterpriseIdentitySourceAvailability, error)
 	Prepare(context.Context, pgtype.UUID, string, string, string) error
 	Park(context.Context, pgtype.UUID, string) error
 	Delete(context.Context, pgtype.UUID, string) error
@@ -41,8 +40,8 @@ type asbIdentitySourceRuntimeStore interface {
 // the credentials have been proven, the sandbox is terminated and retained as
 // a credential seed. ASB preserves the seed's identity directory and permits a
 // later sandbox in the same tenant to inherit it through buc.originalSandboxID.
-// Rotating that terminated seed periodically keeps credentials fresh without
-// consuming a permanent sandbox slot.
+// Expired credentials are replaced only by a fresh employee authorization;
+// Multica does not derive another identity source from this terminated seed.
 type ASBIdentitySourceManager struct {
 	Store          asbIdentitySourceRuntimeStore
 	Credentials    *ASBRuntimeClientProvider
@@ -198,149 +197,6 @@ func (m *ASBIdentitySourceManager) Create(
 	}, nil
 }
 
-func (m *ASBIdentitySourceManager) Rotate(
-	ctx context.Context,
-	runtimeID pgtype.UUID,
-	predecessorSandboxID string,
-	employeeID string,
-	bucAgentID string,
-) (EnterpriseIdentitySourceAvailability, error) {
-	config := m.currentConfig()
-	if m == nil || m.Store == nil || m.Credentials == nil || m.Capacity == nil {
-		return EnterpriseIdentitySourceAvailability{}, errors.New(
-			"ASB enterprise identity source manager is unavailable",
-		)
-	}
-	predecessorSandboxID = strings.TrimSpace(predecessorSandboxID)
-	if !runtimeID.Valid || predecessorSandboxID == "" ||
-		strings.TrimSpace(employeeID) == "" || strings.TrimSpace(bucAgentID) == "" {
-		return EnterpriseIdentitySourceAvailability{}, errors.New(
-			"ASB enterprise identity seed rotation input is incomplete",
-		)
-	}
-	runtime, err := m.Store.GetAgentRuntime(ctx, runtimeID)
-	if err != nil {
-		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
-			"load ASB Runtime for enterprise identity seed rotation: %w",
-			err,
-		)
-	}
-	metadata, err := ParseCloudSandboxRuntime(runtime)
-	if err != nil || metadata.SandboxBackend != SandboxBackendASB {
-		return EnterpriseIdentitySourceAvailability{}, errors.New(
-			"enterprise identity seed rotation requires an ASB Runtime",
-		)
-	}
-	client, err := m.Credentials.ClientForRuntime(ctx, runtimeID)
-	if err != nil {
-		return EnterpriseIdentitySourceAvailability{}, err
-	}
-	if err := validateASBIdentitySeed(ctx, client, predecessorSandboxID); err != nil {
-		logASBIdentitySourceFailure("validate_predecessor_seed", predecessorSandboxID, err)
-		return EnterpriseIdentitySourceAvailability{}, err
-	}
-	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
-		ImageURI:       metadata.ArtifactRef,
-		TimeoutSeconds: asbMaxCreateTimeout,
-		ResourceCPU:    config.ResourceCPU,
-		ResourceMemory: config.ResourceMemory,
-		Entrypoint:     []string{"sleep infinity"},
-		Metadata: map[string]string{
-			"multica.identity_source":             "true",
-			"multica.identity_source_rotation":    "true",
-			"multica.identity_source_predecessor": predecessorSandboxID,
-			"multica.runtime_id":                  util.UUIDToString(runtimeID),
-		},
-		Extensions: map[string]string{
-			"wireguard.lazyAuth": "true",
-		},
-	})
-	if err != nil {
-		logASBIdentitySourceFailure("create_rotated_seed", predecessorSandboxID, err)
-		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
-			"create rotated ASB enterprise identity seed: %w",
-			err,
-		)
-	}
-	seedReady := false
-	defer func() {
-		if seedReady {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if cleanupErr := deleteASBIdentitySourceIfExists(
-			cleanupCtx,
-			client,
-			sandbox.ID,
-			m.sourceLifecycleTimeout(),
-		); cleanupErr != nil {
-			logASBIdentitySourceFailure("cleanup_rotated_seed", sandbox.ID, cleanupErr)
-		}
-	}()
-	if err := waitForASBSandboxRunning(ctx, client, sandbox.ID, config.ReadyTimeout); err != nil {
-		logASBIdentitySourceFailure("wait_rotated_seed_running", sandbox.ID, err)
-		return EnterpriseIdentitySourceAvailability{}, err
-	}
-	// Match the initial source-establishment path: lazyAuth mounts the complete
-	// identity store, then the explicit synchronous attach copies the selected
-	// predecessor into this sandbox's own persistence directory. Creating a
-	// worker sandbox with only buc.originalSandboxID bypasses that authoritative
-	// attach boundary and does not prove the next generation is self-contained.
-	if err := attachAndProbeInheritedASBIdentitySource(
-		ctx,
-		client,
-		sandbox.ID,
-		employeeID,
-		bucAgentID,
-		predecessorSandboxID,
-		config.WireGuardCredentials,
-		config.WireGuardReadyTimeout,
-	); err != nil {
-		logASBIdentitySourceFailure("attach_and_probe_rotated_seed", sandbox.ID, err)
-		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
-			"prove rotated ASB enterprise identity seed: %w",
-			err,
-		)
-	}
-	if err := terminateASBIdentitySource(
-		ctx,
-		client,
-		sandbox.ID,
-		m.sourceLifecycleTimeout(),
-	); err != nil {
-		logASBIdentitySourceFailure("terminate_rotated_seed", sandbox.ID, err)
-		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
-			"terminate rotated ASB enterprise identity seed: %w",
-			err,
-		)
-	}
-	if err := terminateASBIdentitySource(
-		ctx,
-		client,
-		predecessorSandboxID,
-		m.sourceLifecycleTimeout(),
-	); err != nil {
-		logASBIdentitySourceFailure("terminate_predecessor_seed", predecessorSandboxID, err)
-		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
-			"terminate predecessor ASB enterprise identity seed: %w",
-			err,
-		)
-	}
-	seedReady = true
-	slog.Info(
-		"ASB enterprise identity seed rotated",
-		"runtime_id", util.UUIDToString(runtimeID),
-		"predecessor_sandbox_id", predecessorSandboxID,
-		"sandbox_id", sandbox.ID,
-		"running_quota_retained", false,
-	)
-	return EnterpriseIdentitySourceAvailability{
-		SandboxID: sandbox.ID,
-		RuntimeID: runtimeID,
-	}, nil
-}
-
 func (m *ASBIdentitySourceManager) Prepare(
 	ctx context.Context,
 	runtimeID pgtype.UUID,
@@ -468,31 +324,6 @@ func attachAndProbeASBIdentitySource(
 			BUCRefreshToken:      tokens.RefreshToken,
 			BUCIDToken:           tokens.IDToken,
 			WireGuardCredentials: wireGuardCredentials,
-		},
-		timeout,
-	)
-}
-
-func attachAndProbeInheritedASBIdentitySource(
-	ctx context.Context,
-	client *ASBClient,
-	sandboxID string,
-	employeeID string,
-	bucAgentID string,
-	originalSandboxID string,
-	wireGuardCredentials string,
-	timeout time.Duration,
-) error {
-	return attachAndProbeASBIdentitySourceGrant(
-		ctx,
-		client,
-		sandboxID,
-		employeeID,
-		bucAgentID,
-		ASBBUCIdentityGrant{
-			EmployeeID:           employeeID,
-			WireGuardCredentials: wireGuardCredentials,
-			OriginalSandboxID:    originalSandboxID,
 		},
 		timeout,
 	)
