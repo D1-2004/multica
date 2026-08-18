@@ -528,7 +528,7 @@ func TestInspectReusableASBSandboxRejectsUnavailableStates(t *testing.T) {
 	}
 }
 
-func TestResolveASBSandboxReleasesIdentitySourceAfterSandboxRunning(t *testing.T) {
+func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *testing.T) {
 	pool := newSandboxLockPool(t)
 	_, agentID, runtimeID := seedFCE2BSandboxRuntime(
 		t,
@@ -541,7 +541,9 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterSandboxRunning(t *testing.T
 		t.Fatalf("load runtime: %v", err)
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+	released := &atomic.Bool{}
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch {
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/quotas":
@@ -551,6 +553,25 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterSandboxRunning(t *testing.T
 			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Pending"},"createdAt":"2026-08-04T08:00:00Z"}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox":
 			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox/endpoints/44772":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			if released.Load() {
+				t.Error("identity source lease was released before the inherited identity probe")
+			}
+			var payload asbExecRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode inherited identity probe: %v", err)
+			}
+			if payload.Envs["EXPECTED_EMP_ID"] != "12345" ||
+				!strings.Contains(payload.Command, "get_zt_identity.json") {
+				t.Fatalf("inherited identity probe = %#v", payload)
+			}
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		default:
 			http.NotFound(response, request)
 		}
@@ -578,7 +599,6 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterSandboxRunning(t *testing.T
 		Secrets: box,
 		Config:  ASBConfig{APIURL: server.URL},
 	}
-	released := &atomic.Bool{}
 	identity := ASBResolvedIdentity{
 		Mode:               asbIdentityModeBound,
 		RawEmployeeID:      "12345",
@@ -592,7 +612,7 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterSandboxRunning(t *testing.T
 	}
 	launcher := &ASBLauncher{
 		Queries:     queries,
-		Config:      ASBConfig{TimeoutSeconds: 300, ReadyTimeout: time.Second, ResourceCPU: "2", ResourceMemory: "4Gi", WireGuardCredentials: "wireguard-credentials"},
+		Config:      ASBConfig{TimeoutSeconds: 300, ReadyTimeout: time.Second, WireGuardReadyTimeout: time.Second, ResourceCPU: "2", ResourceMemory: "4Gi", WireGuardCredentials: "wireguard-credentials"},
 		Client:      newTestASBClient(t, server),
 		Credentials: credentials,
 		Identity: fakeASBTaskIdentityResolver{
@@ -625,7 +645,54 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterSandboxRunning(t *testing.T
 		t.Fatalf("resolution = (%q, %v, %#v)", sandboxID, coldStart, resolvedIdentity)
 	}
 	if !released.Load() {
-		t.Fatal("identity source lease was not released after the sandbox became running")
+		t.Fatal("identity source lease was not released after inherited identity became ready")
+	}
+}
+
+func TestWaitSandboxInheritedBUCIdentityReadyRetriesUntilEmployeeMatches(t *testing.T) {
+	t.Parallel()
+
+	var execCalls atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/probe-sandbox/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			var payload asbExecRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode inherited identity probe: %v", err)
+			}
+			if payload.Envs["EXPECTED_EMP_ID"] != "12345" {
+				t.Fatalf("expected employee = %q", payload.Envs["EXPECTED_EMP_ID"])
+			}
+			response.Header().Set("Content-Type", "text/event-stream")
+			if execCalls.Add(1) == 1 {
+				_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"ExitCode","value":"42"}}`+"\n")
+			}
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	launcher := &ASBLauncher{Client: newTestASBClient(t, server)}
+	if err := launcher.waitSandboxInheritedBUCIdentityReady(
+		context.Background(),
+		"probe-sandbox",
+		"12345",
+		time.Second,
+	); err != nil {
+		t.Fatalf("wait for inherited BUC identity: %v", err)
+	}
+	if got := execCalls.Load(); got != 2 {
+		t.Fatalf("inherited BUC probe calls = %d, want 2", got)
 	}
 }
 
