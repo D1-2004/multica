@@ -238,6 +238,9 @@ function DingTalkMessageScopeSummary({
       {outcome.enabledDomains.includes("approval") ? (
         <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_approval)}</p>
       ) : null}
+      {outcome.enabledDomains.includes("emotion_reply") ? (
+        <p>{t(($) => $.tab_body.integrations.dingtalk_account_scope_emotion_reply)}</p>
+      ) : null}
     </div>
   );
 }
