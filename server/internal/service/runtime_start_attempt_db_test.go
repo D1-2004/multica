@@ -49,9 +49,9 @@ func TestRuntimeStartFailurePersistsAfterRequestCancellation(t *testing.T) {
 		attempt.ID,
 		task.ID,
 		task.RuntimeID,
-		"identity_preparing",
+		"sandbox_resolving",
 	); err != nil {
-		t.Fatalf("record identity stage: %v", err)
+		t.Fatalf("record sandbox resolving stage: %v", err)
 	}
 
 	requestCtx, cancelRequest := context.WithCancel(ctx)
@@ -80,8 +80,8 @@ func TestRuntimeStartFailurePersistsAfterRequestCancellation(t *testing.T) {
 		t.Fatalf("load failed attempt: %v", err)
 	}
 	if gotAttempt.Status != "failed" ||
-		gotAttempt.LastStage != "identity_preparing" ||
-		gotAttempt.ErrorCode != "ASB-IDENTITY-PREPARING-FAILED" {
+		gotAttempt.LastStage != "sandbox_resolving" ||
+		gotAttempt.ErrorCode != "ASB-SANDBOX-RESOLVING-FAILED" {
 		t.Fatalf("failed attempt = %+v", gotAttempt)
 	}
 }
