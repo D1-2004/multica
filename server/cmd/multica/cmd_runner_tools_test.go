@@ -153,6 +153,87 @@ func TestRunnerConnectionStateTracksCurrentProcessAndMachine(t *testing.T) {
 	}
 }
 
+func TestRunnerConfigBindingsAcceptLegacyAndMultipleServers(t *testing.T) {
+	legacy := runnerConfig{
+		ServerURL: "https://pre-fde-workbench.dingtalk.com/",
+		MachineID: "machine-pre",
+	}
+	bindings, err := legacy.bindings()
+	if err != nil {
+		t.Fatalf("legacy bindings: %v", err)
+	}
+	if len(bindings) != 1 || bindings[0].ServerURL != "https://pre-fde-workbench.dingtalk.com" || bindings[0].MachineID != "machine-pre" {
+		t.Fatalf("legacy bindings = %#v", bindings)
+	}
+
+	cfg := runnerConfig{}
+	if err := cfg.upsertBinding("https://pre-fde-workbench.dingtalk.com", "machine-pre"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.upsertBinding("https://fde-workbench.dingtalk.com", "machine-prod"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.upsertBinding("https://pre-fde-workbench.dingtalk.com/", "machine-pre-2"); err != nil {
+		t.Fatal(err)
+	}
+	bindings, err = cfg.bindings()
+	if err != nil {
+		t.Fatalf("multi bindings: %v", err)
+	}
+	if len(bindings) != 2 {
+		t.Fatalf("binding count = %d, want 2", len(bindings))
+	}
+	if bindings[0].ServerURL != "https://pre-fde-workbench.dingtalk.com" || bindings[0].MachineID != "machine-pre-2" {
+		t.Fatalf("updated pre binding = %#v", bindings[0])
+	}
+	if bindings[1].ServerURL != "https://fde-workbench.dingtalk.com" || bindings[1].MachineID != "machine-prod" {
+		t.Fatalf("prod binding = %#v", bindings[1])
+	}
+	if cfg.ServerURL != "" || cfg.MachineID != "" {
+		t.Fatalf("legacy fields should be cleared after upsert: %#v", cfg)
+	}
+	if _, found, err := cfg.bindingForURL("https://fde-workbench.dingtalk.com"); err != nil || !found {
+		t.Fatalf("prod binding lookup failed: found=%v err=%v", found, err)
+	}
+	if _, found, err := cfg.bindingForURL("https://example.invalid"); err != nil || found {
+		t.Fatalf("unknown server unexpectedly found: found=%v err=%v", found, err)
+	}
+}
+
+func TestRunnerConnectionStateTracksMultipleMachines(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := writeRunnerConnectionState("machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeRunnerConnectionState("machine-2"); err != nil {
+		t.Fatal(err)
+	}
+	if !runnerConnectionActive(os.Getpid(), "machine-1") || !runnerConnectionActive(os.Getpid(), "machine-2") {
+		t.Fatal("both Runner connections should be active")
+	}
+	cfg := runnerConfig{Servers: []runnerServerBinding{
+		{ServerURL: "https://pre.example", MachineID: "machine-1"},
+		{ServerURL: "https://prod.example", MachineID: "machine-2"},
+	}}
+	if !runnerAllBindingsConnected(os.Getpid(), cfg) {
+		t.Fatal("all bindings should be connected")
+	}
+	clearRunnerConnectionMachine(os.Getpid(), "machine-1")
+	if runnerConnectionActive(os.Getpid(), "machine-1") {
+		t.Fatal("cleared machine should be offline")
+	}
+	if !runnerConnectionActive(os.Getpid(), "machine-2") {
+		t.Fatal("remaining machine should stay online")
+	}
+	if runnerAllBindingsConnected(os.Getpid(), cfg) {
+		t.Fatal("partial connection should not count as fully online")
+	}
+	clearRunnerConnectionMachine(os.Getpid(), "machine-2")
+	if runnerConnectionActive(os.Getpid(), "machine-2") {
+		t.Fatal("last machine should be cleared")
+	}
+}
+
 func TestExecuteRunnerCallRejectsOversizedEncodedResult(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "control-bytes.txt")
