@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -163,6 +164,20 @@ func TestRunnerMCPForwardedToolsAlwaysRequireMachineID(t *testing.T) {
 		if len(required) == 0 || required[0] != "machine_id" {
 			t.Fatalf("tool %q does not require machine_id first: %#v", tool["name"], required)
 		}
+	}
+}
+
+func TestInjectDEAPA2ARunnerMCPSkipsOrdinaryA2A(t *testing.T) {
+	handler := &Handler{}
+	task := db.AgentTaskQueue{Context: []byte(`{"multica_origin":"a2a"}`)}
+	if err := handler.injectDEAPA2ARunnerMCP(
+		context.Background(),
+		db.AgentRuntime{},
+		task,
+		pgtype.UUID{},
+		&TaskAgentData{},
+	); err != nil {
+		t.Fatalf("ordinary A2A Runner inject = %v", err)
 	}
 }
 

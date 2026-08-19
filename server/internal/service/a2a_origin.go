@@ -95,6 +95,13 @@ func ShouldInjectRuntimeOwnerProfile(taskContext []byte) bool {
 	return !IsA2ATaskOrigin(taskContext)
 }
 
+// ShouldInjectA2ARunnerMCP is the DEAP hybrid: the Agent's bound local
+// Runner machines stay available, matching the robot path. Ordinary external
+// A2A stays isolated from the owner's desktop.
+func ShouldInjectA2ARunnerMCP(taskContext []byte) bool {
+	return requiresA2ADEAPDWSToken(taskContext)
+}
+
 // deapA2AOpenConversationID reads the DingTalk conversation id DEAP puts in
 // A2A request metadata. DEAP leaves A2A contextId empty and places the
 // conversation under metadata.context.attributes.sessionInfo.openConversationId.

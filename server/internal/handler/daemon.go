@@ -1727,6 +1727,26 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 				ferr = errors.New("A2A claim reached finalization without a2a-invocation-v2")
 			} else {
 				receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), task, deliveredCommentIDs, commentBackedTask)
+				if ferr == nil {
+					if err := h.injectDEAPA2ARunnerMCP(r.Context(), rt, task, parseUUID(resp.WorkspaceID), resp.Agent); err != nil {
+						if errors.Is(err, errRunnerMCPRuntimeUnsupported) {
+							slog.Error("batch claim: Runner MCP requires an MCP-capable Pi runtime; cancelling task",
+								"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
+							if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+								slog.Error("batch claim: cancel after Runner MCP capability mismatch failed",
+									"task_id", uuidToString(task.ID), "error", cancelErr)
+							}
+							continue
+						}
+						slog.Error("batch claim: inject DEAP Runner MCP failed; requeueing claim",
+							"task_id", uuidToString(task.ID), "error", err)
+						if _, rerr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), task); rerr != nil {
+							slog.Error("batch claim: requeue after DEAP Runner MCP injection failed",
+								"task_id", uuidToString(task.ID), "error", rerr)
+						}
+						continue
+					}
+				}
 			}
 		default:
 			tokenStr, ferr = auth.GenerateAgentTaskToken()
@@ -3154,6 +3174,27 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			ferr = errors.New("A2A claim reached finalization without a2a-invocation-v2")
 		} else {
 			receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), *task, deliveredCommentIDs, commentBackedTask)
+			if ferr == nil {
+				if err := h.injectDEAPA2ARunnerMCP(r.Context(), runtime, *task, parseUUID(resp.WorkspaceID), resp.Agent); err != nil {
+					if errors.Is(err, errRunnerMCPRuntimeUnsupported) {
+						outcome = "error_runtime_capability"
+						slog.Error("task claim: Runner MCP requires an MCP-capable Pi runtime; cancelling task",
+							"task_id", uuidToString(task.ID), "runtime_id", runtimeID)
+						if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+							slog.Error("task claim: cancel after Runner MCP capability mismatch failed",
+								"task_id", uuidToString(task.ID), "error", cancelErr)
+						}
+						writeError(w, http.StatusConflict, "Pi runtime template does not support managed MCP; rotate it to an MCP-capable template")
+						return
+					}
+					outcome = "error_runner_mcp"
+					slog.Error("task claim: failed to inject DEAP Runner MCP",
+						"task_id", uuidToString(task.ID), "error", err)
+					requeueFailedClaim("runner_mcp_injection")
+					writeError(w, http.StatusInternalServerError, "failed to configure Runner MCP")
+					return
+				}
+			}
 		}
 	default:
 		tokenStr, ferr = auth.GenerateAgentTaskToken()

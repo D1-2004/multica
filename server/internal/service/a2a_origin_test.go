@@ -55,6 +55,15 @@ func TestA2ATaskOriginMarker(t *testing.T) {
 	if !ShouldInjectRuntimeOwnerProfile(nil) {
 		t.Fatal("ordinary tasks must keep the existing runtime-owner profile behavior")
 	}
+	if ShouldInjectA2ARunnerMCP(newA2ATaskContext()) {
+		t.Fatal("ordinary A2A must not receive the owner's Runner MCP")
+	}
+	if !ShouldInjectA2ARunnerMCP(newA2ATaskContext(a2aintegration.InvocationIdentity{DEAPDWSToken: "deap-token"})) {
+		t.Fatal("DEAP A2A must receive the Agent-bound Runner MCP")
+	}
+	if ShouldInjectA2ARunnerMCP(nil) {
+		t.Fatal("ordinary tasks do not use the A2A Runner MCP gate")
+	}
 	if !hasA2ATaskOrigin([]byte(`{"trace":{"id":"trace"},"multica_origin":"a2a"}`)) {
 		t.Fatal("origin marker must survive additional task context fields")
 	}

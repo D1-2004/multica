@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -405,6 +406,47 @@ func (h *Handler) writeRunnerMCPToolError(w http.ResponseWriter, id json.RawMess
 		StructuredContent: structured,
 		IsError:           true,
 	})
+}
+
+// injectDEAPA2ARunnerMCP exposes the Agent-bound local Runner MCP on DEAP
+// A2A claims without putting a task token into AuthToken / MULTICA_TOKEN.
+// Ordinary external A2A stays tokenless and does not see the owner's machines.
+func (h *Handler) injectDEAPA2ARunnerMCP(
+	ctx context.Context,
+	runtime db.AgentRuntime,
+	task db.AgentTaskQueue,
+	workspaceID pgtype.UUID,
+	agentData *TaskAgentData,
+) error {
+	if !service.ShouldInjectA2ARunnerMCP(task.Context) {
+		return nil
+	}
+	if !runtime.OwnerID.Valid {
+		return errors.New("DEAP Runner MCP requires a Runtime owner")
+	}
+	hasBindings, err := h.Queries.AgentHasRunnerBindings(ctx, task.AgentID)
+	if err != nil {
+		return err
+	}
+	if !hasBindings {
+		return nil
+	}
+	token, err := auth.GenerateAgentTaskToken()
+	if err != nil {
+		return err
+	}
+	if err := h.injectRunnerMCP(ctx, runtime, task.AgentID, token, agentData); err != nil {
+		return err
+	}
+	_, err = h.Queries.CreateTaskToken(ctx, db.CreateTaskTokenParams{
+		TokenHash:   auth.HashToken(token),
+		TaskID:      task.ID,
+		AgentID:     task.AgentID,
+		WorkspaceID: workspaceID,
+		UserID:      runtime.OwnerID,
+		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(24 * time.Hour), Valid: true},
+	})
+	return err
 }
 
 func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData) error {
