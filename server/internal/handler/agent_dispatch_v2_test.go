@@ -1399,7 +1399,13 @@ func emotionReplyDispatchCommand() DispatchCommand {
 					OpenMsgID:  "msg-reacted",
 					OccurredAt: 1784500000000,
 					Text:       "本周发布计划已同步",
-					Reaction:   &DispatchMessageReaction{EmotionName: "赞", Action: "add", OperateTime: 1784500001000},
+					Reaction: &DispatchMessageReaction{
+						EmotionName:    "赞",
+						EmotionTypeV2:  1,
+						EmotionVersion: 3,
+						Action:         "add",
+						OperateTime:    1784500001000,
+					},
 				},
 			},
 		}},
@@ -1407,6 +1413,41 @@ func emotionReplyDispatchCommand() DispatchCommand {
 		Outbound:         DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 		ContextPrompt:    "ROUTER CONTEXT",
 		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token", ExpiresAt: 4102444800000},
+	}
+}
+
+// Router 契约中 emotionTypeV2/emotionVersion 是 JSON number（gateway 原始事件与
+// Router MessageReaction 模型均为整型）；struct 字段若声明为 string 会在
+// json.Unmarshal 阶段整体失败，回归防护见本条。
+func TestEmotionReplyDispatchParsesNumericEmotionFields(t *testing.T) {
+	raw := []byte(`{
+		"schemaVersion": "2.0",
+		"source": {"platform": "dingtalk", "sourceType": "digital_employee", "sourceId": "source-1"},
+		"event": {
+			"domain": "channel",
+			"type": "emotionReply",
+			"data": {
+				"conversation": {"openConversationId": "cid-group", "type": "group", "title": "发布同步群"},
+				"sender": {"openSenderId": "open-sender", "displayName": "张三"},
+				"messages": [{
+					"openMsgId": "msg-reacted",
+					"occurredAt": 1784500000000,
+					"text": "本周发布计划已同步",
+					"reaction": {"emotionName": "赞", "emotionTypeV2": 1, "emotionVersion": 3, "action": "add", "operateTime": 1784500001000}
+				}]
+			}
+		},
+		"surface": {"type": "issue"},
+		"outbound": {"mode": "dws", "replyTo": "latest_message"},
+		"externalIdentity": {"contextToken": "context-token", "expiresAt": 4102444800000}
+	}`)
+	var c DispatchCommand
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatalf("numeric emotion fields rejected at unmarshal: %v", err)
+	}
+	reaction := c.Event.Data.Messages[0].Reaction
+	if reaction == nil || reaction.EmotionTypeV2 != 1 || reaction.EmotionVersion != 3 {
+		t.Fatalf("reaction = %+v", reaction)
 	}
 }
 
