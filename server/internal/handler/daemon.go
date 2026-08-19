@@ -1449,16 +1449,14 @@ func failA2AClaimOnAgentLoadError(
 	}
 }
 
-// enforceA2AClaimExecutionSafety rechecks the hard runtime-safety policy at
-// both server-controlled pre-execution boundaries: after durable claim and
+// enforceA2AClaimExecutionSafety rechecks runtime family and daemon capability
+// at both server-controlled pre-execution boundaries: after durable claim and
 // immediately before StartTask moves the task to running. Admission and
 // execution can be separated by an arbitrarily long queue delay, so a missing
-// or unsupported runtime, a daemon without v2, or a revoked runtime-safety
-// exemption must fail the dispatched task rather than execute it under stale
-// authorization. Both the image manifest and daemon wire capability are hard
-// requirements for managed cloud execution.
-// The release feature flag is intentionally admission-only: turning it off
-// must not strand accepted work.
+// or unsupported runtime, or a daemon without v2, must fail the dispatched
+// task rather than execute it under stale authorization. Both the image
+// manifest and daemon wire capability are hard requirements for managed cloud
+// execution.
 func (h *Handler) enforceA2AClaimExecutionSafety(ctx context.Context, r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime) *claimBuildFailure {
 	if !service.IsA2ATaskOrigin(task.Context) {
 		return nil
@@ -1468,8 +1466,6 @@ func (h *Handler) enforceA2AClaimExecutionSafety(ctx context.Context, r *http.Re
 	switch {
 	case !isA2AClaimRuntimeSupported(runtime):
 		outcome = "error_a2a_runtime_unsupported"
-	case !evaluateAgentA2ARuntimeSafety(h.currentConfig().PublicURL).Allowed:
-		outcome = "error_a2a_runtime_unsafe"
 	case !requestUsesNativeA2AInvocation(r, task.Context, runtime):
 		outcome = "error_a2a_daemon_upgrade_required"
 	default:

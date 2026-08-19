@@ -17,7 +17,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -301,7 +300,6 @@ func TestAgentA2ACardTracksEnabledMulticaSkills(t *testing.T) {
 }
 
 func TestAgentA2AEndpointPresentationUsesConfiguredPublicURL(t *testing.T) {
-	allowUnsafeLocalAgentA2ARuntimeForTest(t)
 	ownerID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
 	agentID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 	endpointID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
@@ -363,9 +361,7 @@ func TestAgentA2AEndpointPresentationUsesConfiguredPublicURL(t *testing.T) {
 	}
 }
 
-func TestAgentA2AEndpointPresentationFailsClosedWithoutRuntimeSafety(t *testing.T) {
-	t.Setenv("APP_ENV", "production")
-	t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "true")
+func TestAgentA2AEndpointPresentationEnabledWithProductionPublicURL(t *testing.T) {
 	ownerID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
 	agentID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
 	h := &Handler{cfg: Config{PublicURL: "https://public.example.test/base"}}
@@ -387,11 +383,8 @@ func TestAgentA2AEndpointPresentationFailsClosedWithoutRuntimeSafety(t *testing.
 	if err != nil {
 		t.Fatalf("agentA2AEndpointPresentation: %v", err)
 	}
-	if response.Enabled {
-		t.Fatal("stored endpoint must be effectively disabled outside the runtime safety exemption")
-	}
-	if response.CardURL == "" || response.RPCURL == "" || card == nil {
-		t.Fatalf("owner-only export metadata should remain available: %#v, card=%#v", response, card)
+	if !response.Enabled || response.CardURL == "" || response.RPCURL == "" || card == nil {
+		t.Fatalf("production public URL must publish the stored endpoint: %#v, card=%#v", response, card)
 	}
 }
 
@@ -427,7 +420,6 @@ func TestAgentA2AManagementAllowsHumanOwnerAndWorkspaceAdmin(t *testing.T) {
 	}
 	requireAgentA2ATestSchema(t)
 	agentID, ownerID, memberID := privateAgentTestFixture(t)
-	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
 
 	// The default test user is the workspace owner and may manage another
 	// member's Agent. The endpoint remains delegated to the Agent's actual owner.
@@ -552,16 +544,6 @@ func TestAgentA2AManagementAllowsHumanOwnerAndWorkspaceAdmin(t *testing.T) {
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("machine workspace owner management status = %d, want 403: %s", response.Code, response.Body.String())
 	}
-
-	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, false)
-	response = httptest.NewRecorder()
-	testHandler.GetAgentA2AConfig(response, withAgentA2AURLParams(
-		newRequestAs(ownerID, http.MethodGet, "/api/agents/"+agentID+"/a2a", nil),
-		"id", agentID,
-	))
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("flag-off management status = %d, want 404: %s", response.Code, response.Body.String())
-	}
 }
 
 func TestAgentA2AConfigLazilyCreatesOneEndpointForCopiedAgent(t *testing.T) {
@@ -570,7 +552,6 @@ func TestAgentA2AConfigLazilyCreatesOneEndpointForCopiedAgent(t *testing.T) {
 	}
 	requireAgentA2ATestSchema(t)
 	agentID, ownerID, _ := privateAgentTestFixture(t)
-	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
 
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_a2a_endpoint WHERE agent_id = $1`, agentID); err != nil {
 		t.Fatalf("clear copied Agent endpoint: %v", err)
@@ -630,18 +611,14 @@ func TestAgentA2AConfigLazilyCreatesOneEndpointForCopiedAgent(t *testing.T) {
 	}
 }
 
-func TestAgentA2AEnableRequiresRuntimeSafetyExemption(t *testing.T) {
+func TestAgentA2AEnableRequiresConfiguredPublicURL(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	requireAgentA2ATestSchema(t)
 	agentID, ownerID, _ := privateAgentTestFixture(t)
 	assignAgentA2ATestRuntime(t, agentID, "local", "claude")
-	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
 	originalProvider := testHandler.configProvider
-	testHandler.SetConfigProvider(func() Config {
-		return Config{PublicURL: "http://127.0.0.1:8080"}
-	})
 	t.Cleanup(func() { testHandler.SetConfigProvider(originalProvider) })
 
 	putEnabled := func() *httptest.ResponseRecorder {
@@ -660,18 +637,18 @@ func TestAgentA2AEnableRequiresRuntimeSafetyExemption(t *testing.T) {
 		return response
 	}
 
-	t.Setenv("APP_ENV", "development")
-	t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "")
+	testHandler.SetConfigProvider(func() Config { return Config{} })
 	response := putEnabled()
-	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "runtime credential and tool-shell isolation") {
-		t.Fatalf("default enable response = %d %s, want clear 403", response.Code, response.Body.String())
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "MULTICA_PUBLIC_URL") {
+		t.Fatalf("missing public URL response = %d %s, want 400", response.Code, response.Body.String())
 	}
 
-	t.Setenv("APP_ENV", "production")
-	t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "true")
+	testHandler.SetConfigProvider(func() Config {
+		return Config{PublicURL: "https://public.example.test"}
+	})
 	response = putEnabled()
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("production override response = %d, want 403: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("configured public URL response = %d, want 200: %s", response.Code, response.Body.String())
 	}
 
 	response = httptest.NewRecorder()
@@ -1580,8 +1557,6 @@ func TestAgentA2ACredentialSecretAppearsOnlyInCreateResponse(t *testing.T) {
 	requireAgentA2ATestSchema(t)
 	agentID, ownerID, _ := privateAgentTestFixture(t)
 	assignAgentA2ATestRuntime(t, agentID, "local", "claude")
-	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
-	allowUnsafeLocalAgentA2ARuntimeForTest(t)
 	originalProvider := testHandler.configProvider
 	testHandler.SetConfigProvider(func() Config {
 		return Config{PublicURL: "http://127.0.0.1:8080"}
@@ -1682,8 +1657,6 @@ func TestAgentA2AOwnerTransferRevokesExistingCallersBeforeRebind(t *testing.T) {
 	requireAgentA2ATestSchema(t)
 	agentID, oldOwnerID, newOwnerID := privateAgentTestFixture(t)
 	assignAgentA2ATestRuntime(t, agentID, "local", "claude")
-	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
-	allowUnsafeLocalAgentA2ARuntimeForTest(t)
 	originalProvider := testHandler.configProvider
 	testHandler.SetConfigProvider(func() Config {
 		return Config{PublicURL: "http://127.0.0.1:8080"}
@@ -1781,8 +1754,6 @@ func requireAgentA2ATestSchema(t *testing.T) {
 
 func configureAgentA2ATestHandler(t *testing.T) {
 	t.Helper()
-	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
-	allowUnsafeLocalAgentA2ARuntimeForTest(t)
 	originalProvider := testHandler.configProvider
 	testHandler.SetConfigProvider(func() Config {
 		return Config{PublicURL: "http://127.0.0.1:8080"}

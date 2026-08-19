@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/managedagent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -338,10 +337,7 @@ func assertManagedOwnerA2AState(t *testing.T, pool *pgxpool.Pool, endpointID, cl
 
 func assertRevokedCredentialReturnsUnauthorized(t *testing.T, fixture managedOwnerFixture, rawToken string) {
 	t.Helper()
-	t.Setenv("APP_ENV", "test")
-	t.Setenv("MULTICA_A2A_ALLOW_UNSAFE_LOCAL_RUNTIME", "true")
 	provider := featureflag.NewStaticProvider()
-	provider.Set(featureflags.AgentA2AInbound, featureflag.Rule{Default: true})
 	protocolCalls := 0
 	h := &handler.Handler{
 		Queries:      db.New(fixture.pool),

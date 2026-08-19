@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -135,10 +134,6 @@ type agentA2AManagementScope struct {
 // credentials. Machine credentials remain forbidden because this surface can
 // mint bearer tokens and expose an Agent outside the workspace.
 func (h *Handler) requireAgentA2AManager(w http.ResponseWriter, r *http.Request) (agentA2AManagementScope, bool) {
-	if !featureflags.AgentA2AInboundEnabled(r.Context(), h.FeatureFlags) {
-		writeError(w, http.StatusNotFound, "agent A2A inbound is not enabled")
-		return agentA2AManagementScope{}, false
-	}
 	if r.Header.Get("X-Actor-Source") != "" {
 		writeError(w, http.StatusForbidden, "this endpoint is only available to human actors")
 		return agentA2AManagementScope{}, false
@@ -206,7 +201,6 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "enabled is required")
 		return
 	}
-	runtimeSafety := agentA2ARuntimeSafetyDecision{Mode: agentA2ARuntimeSafetyModeDenied}
 	if len(request.CardSkills) == 0 || string(request.CardSkills) == "null" {
 		writeError(w, http.StatusBadRequest, "card_skills must be an array")
 		return
@@ -259,14 +253,14 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, runtimeErr.Error())
 			return
 		}
-		runtimeSafety = evaluateAgentA2ARuntimeSafety(h.currentConfig().PublicURL)
-		if !runtimeSafety.Allowed {
-			writeError(w, http.StatusForbidden, agentA2AUnsafeRuntimeForbidden)
+		publicBaseURL, publicURLErr := normalizeAgentA2APublicBaseURL(h.currentConfig().PublicURL)
+		if publicURLErr != nil {
+			writeError(w, http.StatusBadRequest, publicURLErr.Error())
 			return
 		}
 		contentModes := agentA2AAdvertisedContentModes(h.Storage)
 		if _, buildErr := a2aintegration.BuildAgentCard(a2aintegration.CardConfig{
-			BaseURL:                runtimeSafety.PublicBaseURL,
+			BaseURL:                publicBaseURL,
 			PublicAgentID:          publicAgentID,
 			Name:                   request.CardName,
 			Description:            request.CardDescription,
@@ -303,17 +297,6 @@ func (h *Handler) UpdateAgentA2AConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update agent A2A configuration")
 		return
 	}
-	if *request.Enabled {
-		warnAgentA2AUnsafeRuntimeAccepted(
-			runtimeSafety.Mode,
-			"enable",
-			uuidToString(scope.WorkspaceID),
-			uuidToString(scope.Agent.ID),
-			publicAgentID,
-			"",
-		)
-	}
-
 	response, err := h.loadAgentA2AConfigResponse(r, scope)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent A2A configuration")
@@ -727,14 +710,13 @@ func (h *Handler) agentA2AEndpointPresentation(
 		UpdatedAt:         timestampToString(endpoint.UpdatedAt),
 	}
 
-	runtimeSafety := evaluateAgentA2ARuntimeSafety(h.currentConfig().PublicURL)
-	if runtimeSafety.PublicBaseURL == "" {
+	baseURL, err := normalizeAgentA2APublicBaseURL(h.currentConfig().PublicURL)
+	if err != nil {
 		// A disabled endpoint remains manageable when deployment configuration is
 		// absent. Empty URLs and a null Card make the misconfiguration explicit;
 		// callers must never synthesize an origin from request headers.
 		return response, nil, nil
 	}
-	baseURL := runtimeSafety.PublicBaseURL
 	cardURL, err := a2aintegration.AgentCardURL(baseURL, endpoint.PublicAgentID)
 	if err != nil {
 		return AgentA2AEndpointResponse{}, nil, err
@@ -769,8 +751,7 @@ func (h *Handler) agentA2AEndpointPresentation(
 	response.MCPURL = mcpURL
 	response.Enabled = endpoint.Enabled &&
 		uuidToString(endpoint.DelegatedByUserID) == uuidToString(agent.OwnerID) &&
-		!agent.ArchivedAt.Valid && agent.RuntimeID.Valid && runtimeSupported &&
-		runtimeSafety.Allowed
+		!agent.ArchivedAt.Valid && agent.RuntimeID.Valid && runtimeSupported
 	return response, card, nil
 }
 

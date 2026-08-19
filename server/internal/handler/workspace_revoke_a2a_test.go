@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -27,8 +26,6 @@ func TestRevokeMemberPermanentlyRevokesOwnedAgentA2AAccess(t *testing.T) {
 		t.Skip("database not available")
 	}
 	requireAgentA2ATestSchema(t)
-	withFeatureFlag(t, testHandler, featureflags.AgentA2AInbound, true)
-	allowUnsafeLocalAgentA2ARuntimeForTest(t)
 	originalProvider := testHandler.configProvider
 	testHandler.SetConfigProvider(func() Config {
 		return Config{PublicURL: "http://127.0.0.1:8080"}

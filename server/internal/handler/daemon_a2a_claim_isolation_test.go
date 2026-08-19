@@ -228,34 +228,6 @@ func TestClaimTaskByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 		wantPersistedError string
 	}{
 		{
-			name:            "feature flag off preserves admitted A2A task",
-			runtimeMode:     "local",
-			runtimeProvider: "claude",
-			taskContext:     `{"multica_origin":"a2a"}`,
-			withA2ABinding:  true,
-			revoke: func(_ *testing.T, provider *featureflag.StaticProvider) {
-				provider.Set(featureflags.AgentA2AInbound, featureflag.Rule{Default: false})
-			},
-			wantCode:      http.StatusOK,
-			wantTask:      true,
-			wantTaskState: "dispatched",
-		},
-		{
-			name:            "unsafe override revoked after admission",
-			runtimeMode:     "local",
-			runtimeProvider: "claude",
-			taskContext:     `{"multica_origin":"a2a"}`,
-			withA2ABinding:  true,
-			revoke: func(t *testing.T, _ *featureflag.StaticProvider) {
-				t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "")
-			},
-			wantCode:           http.StatusConflict,
-			wantTaskState:      "failed",
-			wantError:          a2aClaimRuntimeSafetyPolicyError,
-			wantFailureReason:  "agent_error",
-			wantPersistedError: a2aClaimRuntimeSafetyPolicyError,
-		},
-		{
 			name:               "unsupported cloud provider fails closed",
 			runtimeMode:        "cloud",
 			runtimeProvider:    "claude",
@@ -284,10 +256,7 @@ func TestClaimTaskByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 			runtimeMode:     "cloud",
 			runtimeProvider: "opencode",
 			taskContext:     `{}`,
-			revoke: func(t *testing.T, provider *featureflag.StaticProvider) {
-				provider.Set(featureflags.AgentA2AInbound, featureflag.Rule{Default: false})
-				t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "")
-			},
+			revoke: func(*testing.T, *featureflag.StaticProvider) {},
 			wantCode:      http.StatusOK,
 			wantTask:      true,
 			wantTaskState: "dispatched",
@@ -298,10 +267,6 @@ func TestClaimTaskByRuntime_A2AExecutionSafetyRecheck(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := withA2AClaimTestFlags(t, true, false)
 			allowA2AClaimExecutionForTest(t)
-			if !featureflags.AgentA2AInboundEnabled(ctx, testHandler.FeatureFlags) ||
-				!evaluateAgentA2ARuntimeSafety(testHandler.currentConfig().PublicURL).Allowed {
-				t.Fatal("test precondition: A2A execution must be allowed at admission time")
-			}
 
 			fixture := createQueuedA2AClaimTestTask(
 				t,
@@ -374,17 +339,10 @@ func TestClaimTaskByRuntime_A2ASafetyRejectTerminatesRuntimeStartAttempt(t *test
 		ctx,
 		"targeted A2A cloud runtime rejection",
 		"cloud",
-		"opencode",
+		"claude",
 		`{"multica_origin":"a2a"}`,
 		true,
 	)
-	if _, err := testPool.Exec(ctx, `
-		UPDATE agent_runtime
-		SET metadata = $2::jsonb
-		WHERE id = $1
-	`, fixture.runtimeID, agentA2ATestManagedOpenCodeStableM2Metadata); err != nil {
-		t.Fatalf("mark managed runtime for safety rejection: %v", err)
-	}
 	task, err := testHandler.Queries.GetAgentTask(ctx, parseUUID(fixture.taskID))
 	if err != nil {
 		t.Fatalf("load A2A task for runtime start attempt: %v", err)
@@ -398,9 +356,6 @@ func TestClaimTaskByRuntime_A2ASafetyRejectTerminatesRuntimeStartAttempt(t *test
 	if err != nil {
 		t.Fatalf("begin A2A runtime start attempt: %v", err)
 	}
-	// Runtime provider/version no longer rejects A2A. Revoke the deployment
-	// safety exemption to exercise the actual fail-closed execution gate.
-	t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "")
 
 	w := claimRuntimeStartFixture(t, fixture.runtimeID, map[string]any{
 		"target_task_id":           fixture.taskID,
@@ -447,10 +402,17 @@ func TestStartTask_A2AExecutionSafetyRecheck(t *testing.T) {
 	)
 	claim := postA2AClaimTestTask(fixture.runtimeID)
 	if claim.Code != http.StatusOK {
-		t.Fatalf("A2A claim before safety revocation = %d: %s", claim.Code, claim.Body.String())
+		t.Fatalf("A2A claim before runtime change = %d: %s", claim.Code, claim.Body.String())
 	}
 
-	t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "")
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_runtime
+		SET provider = 'codex'
+		WHERE id = $1
+	`, fixture.runtimeID); err != nil {
+		t.Fatalf("switch claimed A2A runtime to an unsupported family: %v", err)
+	}
+
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest(
 		http.MethodPost,
@@ -463,7 +425,7 @@ func TestStartTask_A2AExecutionSafetyRecheck(t *testing.T) {
 	req = withURLParam(req, "taskId", fixture.taskID)
 	testHandler.StartTask(w, req)
 	if w.Code != http.StatusConflict {
-		t.Fatalf("A2A StartTask after safety revocation = %d, want 409: %s", w.Code, w.Body.String())
+		t.Fatalf("A2A StartTask after runtime became unsupported = %d, want 409: %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), a2aClaimRuntimeSafetyPolicyError) {
 		t.Fatalf("A2A StartTask error = %s, want runtime safety policy error", w.Body.String())
@@ -698,10 +660,9 @@ func TestA2AClaimModeNegotiationRequiresV2Attestation(t *testing.T) {
 	}
 }
 
-func withA2AClaimTestFlags(t *testing.T, a2aEnabled, composioEnabled bool) *featureflag.StaticProvider {
+func withA2AClaimTestFlags(t *testing.T, _, composioEnabled bool) *featureflag.StaticProvider {
 	t.Helper()
 	provider := featureflag.NewStaticProvider()
-	provider.Set(featureflags.AgentA2AInbound, featureflag.Rule{Default: a2aEnabled})
 	provider.Set(featureflags.ComposioMCPApps, featureflag.Rule{Default: composioEnabled})
 	flags := featureflag.NewService(provider)
 
@@ -718,8 +679,6 @@ func withA2AClaimTestFlags(t *testing.T, a2aEnabled, composioEnabled bool) *feat
 
 func allowA2AClaimExecutionForTest(t *testing.T) {
 	t.Helper()
-	t.Setenv("APP_ENV", "test")
-	t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, "true")
 	originalProvider := testHandler.configProvider
 	testHandler.SetConfigProvider(func() Config {
 		return Config{PublicURL: "http://127.0.0.1:8080"}

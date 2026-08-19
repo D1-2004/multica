@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/util"
 )
@@ -38,10 +37,6 @@ type agentMCPGetTaskArguments struct {
 // The /connect/{accessToken} route is an intentionally simple capability URL
 // for clients such as Codex that cannot persist a literal HTTP auth header.
 func (h *Handler) HandleAgentMCP(w http.ResponseWriter, r *http.Request) {
-	if !featureflags.AgentA2AInboundEnabled(r.Context(), h.FeatureFlags) {
-		http.NotFound(w, r)
-		return
-	}
 	if h.A2AService == nil {
 		writeError(w, http.StatusServiceUnavailable, "Agent execution service is unavailable")
 		return

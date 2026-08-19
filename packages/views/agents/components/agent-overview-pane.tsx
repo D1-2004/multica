@@ -11,10 +11,7 @@ import type {
 import { runtimeSupportsMcpConfig } from "@multica/core/agents";
 import { isASBRuntime } from "@multica/core/runtimes";
 import { useFeatureEnabled } from "@multica/core/config";
-import {
-  AGENT_A2A_INBOUND_FLAG,
-  COMPOSIO_MCP_APPS_FLAG,
-} from "@multica/core/feature-flags";
+import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
 import { dingtalkAccountBindingsOptions } from "@multica/core/dingtalk-account-bindings";
@@ -188,10 +185,6 @@ export function AgentOverviewPane({
     COMPOSIO_MCP_APPS_FLAG,
     false,
   );
-  const agentA2AInboundEnabled = useFeatureEnabled(
-    AGENT_A2A_INBOUND_FLAG,
-    false,
-  );
   const [activeView, setActiveView] = useState<DetailTab>(() =>
     isDetailTab(urlView) ? urlView : "overview",
   );
@@ -227,7 +220,6 @@ export function AgentOverviewPane({
     dingtalkAccountListing?.configured === true ||
     wecomListing?.configured === true;
   const showMcpIntegration =
-    agentA2AInboundEnabled &&
     !!currentUserId &&
     !!agent.owner_id &&
     agent.owner_id === currentUserId;
@@ -274,18 +266,13 @@ export function AgentOverviewPane({
         }
         if (tab.id === "llm_trace") return agent.runtime_mode === "cloud";
         if (tab.id === "a2a") {
-          return (
-            agentA2AInboundEnabled &&
-            !!currentUserId &&
-            agent.owner_id === currentUserId
-          );
+          return !!currentUserId && agent.owner_id === currentUserId;
         }
         return true;
       }),
     [
       agent.owner_id,
       agent.runtime_mode,
-      agentA2AInboundEnabled,
       canEdit,
       currentUserId,
       runtime?.provider,

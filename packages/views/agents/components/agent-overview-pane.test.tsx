@@ -4,8 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
-import { configStore } from "@multica/core/config";
-import { AGENT_A2A_INBOUND_FLAG } from "@multica/core/feature-flags";
+
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
@@ -230,7 +229,6 @@ beforeEach(() => {
   slackListingRef.current = { installations: [], configured: false };
   dingtalkListingRef.current = { installations: [], configured: false };
   dingtalkAccountListingRef.current = { bindings: [], configured: false };
-  configStore.getState().setFeatureFlags({ [AGENT_A2A_INBOUND_FLAG]: false });
   wecomListingRef.current = { installations: [], configured: false };
 });
 
@@ -292,7 +290,6 @@ describe("AgentOverviewPane MCP tab visibility", () => {
 
 describe("AgentOverviewPane Integrations tab visibility", () => {
   it("shows Integrations to the agent owner for MCP export even without channel integrations", () => {
-    configStore.getState().setFeatureFlags({ [AGENT_A2A_INBOUND_FLAG]: true });
     renderPane([makeRuntime("claude")], { currentUserId: "user-1" });
 
     openCapabilities();
@@ -432,9 +429,7 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows A2A only to the agent owner when the inbound flag is enabled", () => {
-    configStore.getState().setFeatureFlags({ [AGENT_A2A_INBOUND_FLAG]: true });
-
+  it("shows A2A only to the agent owner", () => {
     const { unmount } = renderPane([makeRuntime("claude")], {
       currentUserId: "user-1",
     });
@@ -443,14 +438,6 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     unmount();
 
     renderPane([makeRuntime("claude")], { currentUserId: "user-2" });
-    openSettings();
-    expect(
-      screen.queryByRole("tab", { name: /^A2A$/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("hides A2A from the owner while the inbound flag is disabled", () => {
-    renderPane([makeRuntime("claude")], { currentUserId: "user-1" });
     openSettings();
     expect(
       screen.queryByRole("tab", { name: /^A2A$/i }),

@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -26,17 +25,11 @@ const maxAgentA2AProtocolBody = 16 << 20
 // for one enabled hosted Agent. Its origin comes only from MULTICA_PUBLIC_URL;
 // request Host and forwarding headers are never part of the disclosure URL.
 func (h *Handler) GetAgentA2ACard(w http.ResponseWriter, r *http.Request) {
-	if !featureflags.AgentA2AInboundEnabled(r.Context(), h.FeatureFlags) {
-		http.NotFound(w, r)
+	baseURL, err := normalizeAgentA2APublicBaseURL(h.currentConfig().PublicURL)
+	if err != nil {
+		writeError(w, http.StatusServiceUnavailable, "public URL is not configured")
 		return
 	}
-
-	runtimeSafety := evaluateAgentA2ARequestSafety(h.currentConfig().PublicURL, r.RemoteAddr)
-	if !runtimeSafety.Allowed {
-		http.NotFound(w, r)
-		return
-	}
-	baseURL := runtimeSafety.PublicBaseURL
 	endpoint, err := h.Queries.GetPublishedAgentA2AEndpointByPublicID(
 		r.Context(),
 		db.GetPublishedAgentA2AEndpointByPublicIDParams{
@@ -110,13 +103,8 @@ func (h *Handler) GetAgentA2ACard(w http.ResponseWriter, r *http.Request) {
 // removed after verification so the raw token cannot reach SDK logging or the
 // application service context.
 func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
-	if !featureflags.AgentA2AInboundEnabled(r.Context(), h.FeatureFlags) {
-		http.NotFound(w, r)
-		return
-	}
-	runtimeSafety := evaluateAgentA2ARequestSafety(h.currentConfig().PublicURL, r.RemoteAddr)
-	if !runtimeSafety.Allowed {
-		http.NotFound(w, r)
+	if _, err := normalizeAgentA2APublicBaseURL(h.currentConfig().PublicURL); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "public URL is not configured")
 		return
 	}
 	if h.A2AProtocol == nil {
@@ -190,14 +178,6 @@ func (h *Handler) HandleAgentA2ARPC(w http.ResponseWriter, r *http.Request) {
 	})
 	ctx = a2aintegration.WithInvocationIdentity(ctx, invocationIdentity)
 	_ = h.Queries.TouchAgentA2ACredentialLastUsed(ctx, credential.CredentialID)
-	warnAgentA2AUnsafeRuntimeAccepted(
-		runtimeSafety.Mode,
-		"rpc",
-		uuidToString(credential.WorkspaceID),
-		uuidToString(credential.AgentID),
-		credential.PublicAgentID,
-		uuidToString(credential.ClientID),
-	)
 	h.A2AProtocol.ServeHTTP(w, r.WithContext(ctx))
 }
 

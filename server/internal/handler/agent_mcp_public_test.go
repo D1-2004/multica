@@ -7,14 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/service"
 )
 
 func TestAgentMCPRejectsMissingCredentialBeforeDatabaseAccess(t *testing.T) {
 	h := &Handler{A2AService: &service.A2AService{}}
-	withFeatureFlag(t, h, featureflags.AgentA2AInbound, true)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/mcp/agents/public-agent", nil)
 	response := httptest.NewRecorder()

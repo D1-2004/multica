@@ -8,126 +8,39 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestAgentA2APublicRoutesCamouflageUnsafeRuntime(t *testing.T) {
-	tests := []struct {
-		name        string
-		appEnv      string
-		allowUnsafe string
-		publicURL   string
-	}{
-		{
-			name:      "override absent",
-			appEnv:    "development",
-			publicURL: "http://127.0.0.1:8080",
-		},
-		{
-			name:        "production override",
-			appEnv:      "production",
-			allowUnsafe: "true",
-			publicURL:   "http://127.0.0.1:8080",
-		},
-		{
-			name:        "non-loopback override",
-			appEnv:      "development",
-			allowUnsafe: "true",
-			publicURL:   "https://agents.example.test",
-		},
+func TestAgentA2APublicRoutesRequireConfiguredPublicURL(t *testing.T) {
+	h := &Handler{}
+
+	cardResponse := httptest.NewRecorder()
+	h.GetAgentA2ACard(cardResponse, httptest.NewRequest(http.MethodGet, "/api/a2a/agents/opaque/.well-known/agent-card.json", nil))
+	if cardResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Agent Card status = %d, want 503: %s", cardResponse.Code, cardResponse.Body.String())
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Setenv("APP_ENV", test.appEnv)
-			t.Setenv("AONE_ENV_TYPE", "")
-			t.Setenv("ENV_TYPE", "")
-			t.Setenv("GO_ENV", "")
-			t.Setenv(agentA2AAllowUnsafeLocalRuntimeEnv, test.allowUnsafe)
-			t.Setenv(agentA2AAllowUnsafePrereleaseRuntimeEnv, "")
-			t.Setenv(agentA2AUnsafePrereleasePublicURLEnv, "")
-			h := &Handler{cfg: Config{PublicURL: test.publicURL}}
-			withFeatureFlag(t, h, featureflags.AgentA2AInbound, true)
-
-			cardResponse := httptest.NewRecorder()
-			h.GetAgentA2ACard(cardResponse, httptest.NewRequest(http.MethodGet, "/api/a2a/agents/opaque/.well-known/agent-card.json", nil))
-			if cardResponse.Code != http.StatusNotFound {
-				t.Fatalf("Agent Card status = %d, want camouflage 404: %s", cardResponse.Code, cardResponse.Body.String())
-			}
-
-			rpcResponse := httptest.NewRecorder()
-			h.HandleAgentA2ARPC(rpcResponse, httptest.NewRequest(http.MethodPost, "/api/a2a/agents/opaque/v1", nil))
-			if rpcResponse.Code != http.StatusNotFound {
-				t.Fatalf("RPC status = %d, want camouflage 404: %s", rpcResponse.Code, rpcResponse.Body.String())
-			}
-		})
+	rpcResponse := httptest.NewRecorder()
+	h.HandleAgentA2ARPC(rpcResponse, httptest.NewRequest(http.MethodPost, "/api/a2a/agents/opaque/v1", nil))
+	if rpcResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("RPC status = %d, want 503: %s", rpcResponse.Code, rpcResponse.Body.String())
 	}
 }
 
-func TestAgentA2APublicRoutesRequireLoopbackSocketPeer(t *testing.T) {
-	allowUnsafeLocalAgentA2ARuntimeForTest(t)
+func TestAgentA2APublicRoutesUseConfiguredPublicURL(t *testing.T) {
 	database := &agentA2ARecordingDB{}
 	h := &Handler{
-		cfg:     Config{PublicURL: "http://127.0.0.1:8080"},
+		cfg:     Config{PublicURL: "https://agents.example.test"},
 		Queries: db.New(database),
 	}
-	withFeatureFlag(t, h, featureflags.AgentA2AInbound, true)
-
-	lanCardRequest := httptest.NewRequest(http.MethodGet, "/api/a2a/agents/opaque/.well-known/agent-card.json", nil)
-	lanCardRequest.RemoteAddr = "192.168.1.20:49152"
-	lanCardRequest.Header.Set("X-Forwarded-For", "127.0.0.1")
-	lanCardResponse := httptest.NewRecorder()
-	h.GetAgentA2ACard(lanCardResponse, lanCardRequest)
-	if lanCardResponse.Code != http.StatusNotFound || database.queryRowCalls != 0 {
-		t.Fatalf("LAN Card request = status:%d queries:%d, want 404 before DB", lanCardResponse.Code, database.queryRowCalls)
-	}
-
-	lanRPCRequest := httptest.NewRequest(http.MethodPost, "/api/a2a/agents/opaque/v1", nil)
-	lanRPCRequest.RemoteAddr = "192.168.1.20:49152"
-	lanRPCRequest.Header.Set("X-Forwarded-For", "127.0.0.1")
-	lanRPCResponse := httptest.NewRecorder()
-	h.HandleAgentA2ARPC(lanRPCResponse, lanRPCRequest)
-	if lanRPCResponse.Code != http.StatusNotFound {
-		t.Fatalf("LAN RPC status = %d, want camouflage 404", lanRPCResponse.Code)
-	}
-
-	loopbackCardRequest := httptest.NewRequest(http.MethodGet, "/api/a2a/agents/opaque/.well-known/agent-card.json", nil)
-	loopbackCardRequest.RemoteAddr = "127.0.0.1:49152"
-	loopbackCardRequest.Header.Set("X-Forwarded-For", "203.0.113.8")
-	loopbackCardResponse := httptest.NewRecorder()
-	h.GetAgentA2ACard(loopbackCardResponse, loopbackCardRequest)
-	if loopbackCardResponse.Code != http.StatusNotFound || database.queryRowCalls != 1 {
-		t.Fatalf("loopback Card request = status:%d queries:%d, want request to pass safety gate and query once", loopbackCardResponse.Code, database.queryRowCalls)
-	}
-
-	loopbackRPCRequest := httptest.NewRequest(http.MethodPost, "/api/a2a/agents/opaque/v1", nil)
-	loopbackRPCRequest.RemoteAddr = "127.0.0.1:49152"
-	loopbackRPCRequest.Header.Set("X-Forwarded-For", "203.0.113.8")
-	loopbackRPCResponse := httptest.NewRecorder()
-	h.HandleAgentA2ARPC(loopbackRPCResponse, loopbackRPCRequest)
-	if loopbackRPCResponse.Code != http.StatusServiceUnavailable {
-		t.Fatalf("loopback RPC status = %d, want 503 proving request passed safety gate", loopbackRPCResponse.Code)
-	}
-}
-
-func TestAgentA2APublicRoutesAllowPrereleaseRemoteSocketPeer(t *testing.T) {
-	const publicURL = "https://agents.example.test/a2a"
-	allowUnsafePrereleaseAgentA2ARuntimeForTest(t, publicURL)
-	database := &agentA2ARecordingDB{}
-	h := &Handler{
-		cfg:     Config{PublicURL: publicURL},
-		Queries: db.New(database),
-	}
-	withFeatureFlag(t, h, featureflags.AgentA2AInbound, true)
 
 	cardRequest := httptest.NewRequest(http.MethodGet, "/api/a2a/agents/opaque/.well-known/agent-card.json", nil)
 	cardRequest.RemoteAddr = "10.20.30.40:49152"
 	cardResponse := httptest.NewRecorder()
 	h.GetAgentA2ACard(cardResponse, cardRequest)
 	if cardResponse.Code != http.StatusNotFound || database.queryRowCalls != 1 {
-		t.Fatalf("prerelease Card request = status:%d queries:%d, want request to pass safety gate and query once", cardResponse.Code, database.queryRowCalls)
+		t.Fatalf("Card request = status:%d queries:%d, want 404 after one lookup", cardResponse.Code, database.queryRowCalls)
 	}
 
 	rpcRequest := httptest.NewRequest(http.MethodPost, "/api/a2a/agents/opaque/v1", nil)
@@ -135,7 +48,7 @@ func TestAgentA2APublicRoutesAllowPrereleaseRemoteSocketPeer(t *testing.T) {
 	rpcResponse := httptest.NewRecorder()
 	h.HandleAgentA2ARPC(rpcResponse, rpcRequest)
 	if rpcResponse.Code != http.StatusServiceUnavailable {
-		t.Fatalf("prerelease RPC status = %d, want 503 proving remote peer passed safety gate", rpcResponse.Code)
+		t.Fatalf("RPC status = %d, want 503 when protocol handler is unset", rpcResponse.Code)
 	}
 }
 
