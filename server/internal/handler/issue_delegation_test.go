@@ -22,9 +22,9 @@ func createDelegationSourceTask(t *testing.T, agentID, contextJSON string) (task
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority, chat_session_id,
-			initiator_user_id, originator_user_id, context, started_at
+			initiator_user_id, originator_user_id, accountable_user_id, context, started_at
 		)
-		VALUES ($1, $2, NULL, 'running', 2, $3, $4, $4, $5::jsonb, now())
+		VALUES ($1, $2, NULL, 'running', 2, $3, $4, $4, $4, $5::jsonb, now())
 		RETURNING id
 	`, agentID, testRuntimeID, chatSessionID, testUserID, contextJSON).Scan(&taskID); err != nil {
 		t.Fatalf("create source task: %v", err)
@@ -885,6 +885,56 @@ func TestDelegateIssueContinuePersistsCommentTaskAndHandoffTogether(t *testing.T
 		callbackPath != updateURL {
 		t.Fatalf("comment=%q target=%q callback=%q response=%+v",
 			commentContent, targetTaskID, callbackPath, delegated)
+	}
+}
+
+// The delegated follow-up task must carry the full attribution block, not just
+// an originator. Migration 199 dropped the transitional originator_source IS
+// NULL exemption, so a row with originator_user_id but no accountable_user_id
+// is rejected by agent_task_queue_accountable_matches_originator and the whole
+// continuation fails with a 500.
+func TestDelegateIssueContinueStampsAccountableAttributionOnFollowUpTask(t *testing.T) {
+	sourceAgentID := createHandlerTestAgent(t, "delegation-attribution-source", nil)
+	targetAgentID := createHandlerTestAgent(t, "delegation-attribution-target", nil)
+	issue := createDelegationContinuationIssue(t, targetAgentID, "委派续跑需要完整归因")
+	sourceTaskID, _ := createDelegationSourceTask(t, sourceAgentID, `{}`)
+
+	w := httptest.NewRecorder()
+	testHandler.DelegateIssue(w, delegationRequest(t, sourceTaskID, sourceAgentID, map[string]any{
+		"source_task_id": sourceTaskID,
+		"mode":           "continue",
+		"issue_id":       uuidToString(issue.ID),
+		"content":        "继续这个 Issue 的后续工作",
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("DelegateIssue continue = %d: %s", w.Code, w.Body.String())
+	}
+	var delegated IssueDelegationResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &delegated); err != nil {
+		t.Fatal(err)
+	}
+
+	var originator, accountable, source, delegatedFrom, evidenceKind, evidenceRef string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT COALESCE(originator_user_id::text, ''), COALESCE(accountable_user_id::text, ''),
+		       COALESCE(originator_source, ''), COALESCE(delegated_from_task_id::text, ''),
+		       COALESCE(trigger_evidence_kind, ''), COALESCE(trigger_evidence_ref_id::text, '')
+		FROM agent_task_queue WHERE id = $1
+	`, delegated.TargetTaskID).Scan(
+		&originator, &accountable, &source, &delegatedFrom, &evidenceKind, &evidenceRef,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if originator != testUserID || accountable != testUserID {
+		t.Fatalf("originator=%q accountable=%q, both want the source task's human %q",
+			originator, accountable, testUserID)
+	}
+	if source != "delegation" || delegatedFrom != sourceTaskID {
+		t.Fatalf("originator_source=%q delegated_from_task_id=%q, want delegation from %q",
+			source, delegatedFrom, sourceTaskID)
+	}
+	if evidenceKind != "comment" || evidenceRef != delegated.TriggerCommentID {
+		t.Fatalf("evidence=%s/%s, want comment/%s", evidenceKind, evidenceRef, delegated.TriggerCommentID)
 	}
 }
 
