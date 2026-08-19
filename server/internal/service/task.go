@@ -5612,9 +5612,10 @@ func (s *TaskService) launchRuntimeForTaskWithContext(ctx context.Context, task 
 	launchParent := context.Background()
 	if requiresA2ADEAPDWSToken(task.Context) {
 		if identity, ok := a2aintegration.InvocationIdentityFromContext(ctx); ok && strings.TrimSpace(identity.DEAPDWSToken) != "" {
-			// Preserve cancellation only for the request-scoped DEAP credential.
-			// Every ordinary launch retains its existing background lifecycle.
-			launchParent = ctx
+			// Keep the request-scoped DEAP DWS token for sandbox env injection.
+			// Do not inherit HTTP/A2A cancellation: ASB cold start regularly
+			// outlives the caller request.
+			launchParent = a2aintegration.WithInvocationIdentity(context.Background(), identity)
 		}
 	}
 	taskCopy := task

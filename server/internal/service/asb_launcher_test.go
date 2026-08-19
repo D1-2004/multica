@@ -30,6 +30,11 @@ type fakeASBTaskIdentityResolver struct {
 }
 
 func TestASBConfigCommandReadyTimeout(t *testing.T) {
+	t.Setenv("MULTICA_ASB_READY_TIMEOUT", "")
+	if got := ASBConfigFromEnv().ReadyTimeout; got != 6*time.Minute {
+		t.Fatalf("default sandbox ready timeout = %s, want 6m", got)
+	}
+
 	t.Setenv("MULTICA_ASB_COMMAND_READY_TIMEOUT", "")
 	if got := ASBConfigFromEnv().CommandReadyTimeout; got != 7*time.Minute {
 		t.Fatalf("default command ready timeout = %s, want 7m", got)

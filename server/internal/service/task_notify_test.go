@@ -66,6 +66,38 @@ func TestNotifyTaskEnqueued_PreservesDEAPDWSRequestContext(t *testing.T) {
 	}
 }
 
+func TestNotifyTaskEnqueued_DetachesDEAPDWSLaunchFromRequestCancel(t *testing.T) {
+	launcher := &stubRuntimeLauncher{calls: make(chan runtimeLaunchCall, 1)}
+	svc := &TaskService{
+		RuntimeLauncher:     launcher,
+		runtimeLaunchLeases: newFakeRuntimeLaunchLeaseStore(),
+	}
+	const token = "deap-request-token"
+	ctx, cancel := context.WithCancel(a2aintegration.WithInvocationIdentity(
+		context.Background(),
+		a2aintegration.InvocationIdentity{DEAPDWSToken: token},
+	))
+	task := db.AgentTaskQueue{
+		ID:        testUUID(21),
+		RuntimeID: testUUID(22),
+		Context:   []byte(a2aTaskDEAPDWSContextJSON),
+	}
+	svc.NotifyTaskEnqueued(ctx, task)
+	cancel()
+
+	select {
+	case got := <-launcher.calls:
+		if got.contextErr != nil {
+			t.Fatalf("ASB launch inherited request cancellation: %#v", got)
+		}
+		if got.identity.DEAPDWSToken != token {
+			t.Fatalf("detached launch lost DEAP DWS token: %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached DEAP DWS runtime launcher was not invoked")
+	}
+}
+
 type blockingRuntimeLauncher struct {
 	calls   chan runtimeLaunchCall
 	release chan struct{}

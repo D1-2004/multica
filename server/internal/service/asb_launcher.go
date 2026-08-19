@@ -26,7 +26,7 @@ import (
 
 const (
 	defaultASBTimeoutSeconds         = asbMaxCreateTimeout
-	defaultASBReadyTimeout           = 90 * time.Second
+	defaultASBReadyTimeout           = 6 * time.Minute
 	defaultASBCommandReadyTimeout    = 7 * time.Minute
 	defaultASBWireGuardReadyTimeout  = 4 * time.Minute
 	defaultASBWireGuardProbeInterval = 5 * time.Second
