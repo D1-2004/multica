@@ -78,6 +78,19 @@ func (e *enterpriseIdentityProviderError) Unwrap() error {
 	return e.Cause
 }
 
+func isBUCRefreshNeedsReauth(err error) bool {
+	var providerErr *enterpriseIdentityProviderError
+	if !errors.As(err, &providerErr) || !strings.EqualFold(providerErr.Provider, "buc") {
+		return false
+	}
+	switch providerErr.Code {
+	case "240115", "invalid_refresh_token", "invalid_grant":
+		return true
+	default:
+		return false
+	}
+}
+
 func newEnterpriseIdentityProviderError(
 	provider string,
 	operation string,

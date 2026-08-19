@@ -297,7 +297,7 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 	}
 }
 
-func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
+func TestASBIdentitySourceRotateAttachesTokensAndTerminatesBothSeeds(t *testing.T) {
 	const (
 		predecessorSandboxID = "identity-seed-predecessor"
 		rotatedSandboxID     = "identity-seed-rotated"
@@ -305,6 +305,12 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		employeeID           = "12345"
 		bucAgentID           = "agent-multica-asb"
 	)
+	tokens := BUCIdentityTokens{
+		AccessToken:  "buc-access",
+		RefreshToken: "buc-refresh",
+		IDToken:      "buc-id",
+		ExpiresIn:    3600,
+	}
 
 	states := map[string]string{
 		predecessorSandboxID: "Running",
@@ -347,9 +353,11 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 				t.Fatalf("decode rotated seed identity grant: %v", err)
 			}
 			if grant.EmployeeID != employeeID ||
-				grant.OriginalSandboxID != predecessorSandboxID ||
+				grant.OriginalSandboxID != "" ||
 				grant.WireGuardCredentials != "wireguard-credentials" ||
-				grant.BUCAccessToken != "" || grant.BUCRefreshToken != "" || grant.BUCIDToken != "" {
+				grant.BUCAccessToken != tokens.AccessToken ||
+				grant.BUCRefreshToken != tokens.RefreshToken ||
+				grant.BUCIDToken != tokens.IDToken {
 				t.Fatalf("rotated seed identity grant = %#v", grant)
 			}
 			response.WriteHeader(http.StatusOK)
@@ -450,6 +458,7 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		predecessorSandboxID,
 		employeeID,
 		bucAgentID,
+		tokens,
 	)
 	if err != nil {
 		t.Fatalf("Rotate identity seed: %v", err)
@@ -479,6 +488,7 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		predecessorSandboxID,
 		employeeID,
 		bucAgentID,
+		tokens,
 	)
 	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
 		t.Fatalf("Rotate invalid identity error = %v, want needs reauth", err)

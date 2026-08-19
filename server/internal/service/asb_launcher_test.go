@@ -148,24 +148,6 @@ func (resolver fakeASBTaskIdentityResolver) ResolveASBTaskIdentity(
 	return resolver.identity, resolver.err
 }
 
-func (resolver fakeASBTaskIdentityResolver) AcquireASBTaskIdentitySource(
-	context.Context,
-	pgtype.UUID,
-	pgtype.UUID,
-	pgtype.UUID,
-	string,
-) (func(context.Context) error, error) {
-	if resolver.err != nil {
-		return nil, resolver.err
-	}
-	return func(context.Context) error {
-		if resolver.released != nil {
-			resolver.released.Store(true)
-		}
-		return nil
-	}, nil
-}
-
 func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
 	t.Parallel()
 
@@ -340,7 +322,7 @@ func TestASBOrdinaryTaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 	}
 }
 
-func TestASBBoundIdentityDeclaresCreateTimeBUCInheritance(t *testing.T) {
+func TestASBBoundIdentityDeclaresLazyWireGuardAttach(t *testing.T) {
 	t.Parallel()
 
 	identity := ASBResolvedIdentity{
@@ -349,28 +331,30 @@ func TestASBBoundIdentityDeclaresCreateTimeBUCInheritance(t *testing.T) {
 		BUCAgentID:         "agent-multica-asb",
 		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
 		AIPID:              "aip-1",
-		SourceSandboxID:    "identity-source-1",
-		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentIdentityToken: "ait",
-		Fingerprint:        strings.Repeat("a", 64),
+		BUCTokens: BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+			ExpiresIn:    3600,
+		},
+		Fingerprint: strings.Repeat("a", 64),
 	}
 	if err := identity.validate(); err != nil {
 		t.Fatalf("validate bound identity: %v", err)
 	}
 	extensions := identity.sandboxExtensions("wireguard-credentials")
 	for key, expected := range map[string]string{
-		"spiffe.lazyAuth":          "true",
-		"wireguard.worker":         identity.RawEmployeeID,
-		"wireguard.uemCredentials": "wireguard-credentials",
-		"buc.originalSandboxID":    identity.SourceSandboxID,
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
 	} {
 		if extensions[key] != expected {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
 		}
 	}
-	for _, forbidden := range []string{"wireguard.lazyAuth"} {
+	for _, forbidden := range []string{"wireguard.worker", "buc.originalSandboxID"} {
 		if _, ok := extensions[forbidden]; ok {
-			t.Fatalf("bound sandbox extension %q mixes create-time and runtime BUC attachment", forbidden)
+			t.Fatalf("bound sandbox extension %q still inherits a terminated seed", forbidden)
 		}
 	}
 }
@@ -533,7 +517,7 @@ func TestInspectReusableASBSandboxRejectsUnavailableStates(t *testing.T) {
 	}
 }
 
-func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *testing.T) {
+func TestResolveASBSandboxAttachesFreshBUCTokensBeforeProbe(t *testing.T) {
 	pool := newSandboxLockPool(t)
 	_, agentID, runtimeID := seedFCE2BSandboxRuntime(
 		t,
@@ -546,7 +530,7 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *t
 		t.Fatalf("load runtime: %v", err)
 	}
 
-	released := &atomic.Bool{}
+	attached := &atomic.Bool{}
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -558,22 +542,37 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *t
 			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Pending"},"createdAt":"2026-08-04T08:00:00Z"}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox":
 			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/bound-sandbox/identity/wireguard":
+			var grant ASBBUCIdentityGrant
+			if err := json.NewDecoder(request.Body).Decode(&grant); err != nil {
+				t.Fatalf("decode BUC attach grant: %v", err)
+			}
+			if grant.OriginalSandboxID != "" ||
+				grant.BUCAccessToken != "buc-access" ||
+				grant.BUCRefreshToken != "buc-refresh" ||
+				grant.BUCIDToken != "buc-id" ||
+				grant.EmployeeID != "12345" {
+				t.Fatalf("BUC attach grant = %#v", grant)
+			}
+			attached.Store(true)
+			response.WriteHeader(http.StatusOK)
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox/endpoints/44772":
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"endpoint": server.URL + "/execd",
 				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
 			})
 		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
-			if released.Load() {
-				t.Error("identity source lease was released before the inherited identity probe")
+			if !attached.Load() {
+				t.Error("BUC identity was probed before attachWireguardIdentity")
 			}
 			var payload asbExecRequest
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatalf("decode inherited identity probe: %v", err)
+				t.Fatalf("decode BUC identity probe: %v", err)
 			}
 			if payload.Envs["EXPECTED_EMP_ID"] != "12345" ||
+				payload.Envs["EXPECTED_BUC_AGENT_ID"] != "agent-multica-asb" ||
 				!strings.Contains(payload.Command, "get_zt_identity.json") {
-				t.Fatalf("inherited identity probe = %#v", payload)
+				t.Fatalf("BUC identity probe = %#v", payload)
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
@@ -610,10 +609,14 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *t
 		BUCAgentID:         "agent-multica-asb",
 		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
 		AIPID:              "aip-1",
-		SourceSandboxID:    "identity-source-1",
-		SourceRuntimeID:    runtimeID,
 		AgentIdentityToken: "ait",
-		Fingerprint:        strings.Repeat("a", 64),
+		BUCTokens: BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+			ExpiresIn:    3600,
+		},
+		Fingerprint: strings.Repeat("a", 64),
 	}
 	launcher := &ASBLauncher{
 		Queries:     queries,
@@ -622,7 +625,6 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *t
 		Credentials: credentials,
 		Identity: fakeASBTaskIdentityResolver{
 			identity: identity,
-			released: released,
 		},
 	}
 	conn, err := pool.Acquire(context.Background())
@@ -649,8 +651,8 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *t
 	if sandboxID != "bound-sandbox" || !coldStart || resolvedIdentity != identity {
 		t.Fatalf("resolution = (%q, %v, %#v)", sandboxID, coldStart, resolvedIdentity)
 	}
-	if !released.Load() {
-		t.Fatal("identity source lease was not released after inherited identity became ready")
+	if !attached.Load() {
+		t.Fatal("new sandbox did not attach a refreshed BUC token trio")
 	}
 }
 

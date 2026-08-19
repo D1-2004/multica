@@ -26,7 +26,7 @@ type EnterpriseIdentitySource interface {
 		enterpriseIdentitySourceKey,
 		BUCIdentityTokens,
 	) (EnterpriseIdentitySourceAvailability, error)
-	Rotate(context.Context, pgtype.UUID, string, string, string) (EnterpriseIdentitySourceAvailability, error)
+	Rotate(context.Context, pgtype.UUID, string, string, string, BUCIdentityTokens) (EnterpriseIdentitySourceAvailability, error)
 	Prepare(context.Context, pgtype.UUID, string, string, string) error
 	Park(context.Context, pgtype.UUID, string) error
 	Delete(context.Context, pgtype.UUID, string) error
@@ -36,13 +36,11 @@ type asbIdentitySourceRuntimeStore interface {
 	GetAgentRuntime(context.Context, pgtype.UUID) (db.AgentRuntime, error)
 }
 
-// ASBIdentitySourceManager establishes a BUC credential directory inside a
-// short-lived ASB sandbox built from the owning Runtime's current image. After
-// the credentials have been proven, the sandbox is terminated and retained as
-// a credential seed. ASB preserves the seed's identity directory and permits a
-// later sandbox in the same tenant to inherit it through buc.originalSandboxID.
-// Rotating that terminated seed periodically keeps credentials fresh without
-// consuming a permanent sandbox slot.
+// ASBIdentitySourceManager proves BUC attach on a short-lived ASB sandbox built
+// from the owning Runtime's current image. After the credentials have been
+// proven, the sandbox is terminated. Task sandboxes do not inherit that seed;
+// they attach a persisted, refreshed BUC token trio. Seed rotation uses the
+// same token attach path.
 type ASBIdentitySourceManager struct {
 	Store          asbIdentitySourceRuntimeStore
 	Credentials    *ASBRuntimeClientProvider
@@ -204,6 +202,7 @@ func (m *ASBIdentitySourceManager) Rotate(
 	predecessorSandboxID string,
 	employeeID string,
 	bucAgentID string,
+	tokens BUCIdentityTokens,
 ) (EnterpriseIdentitySourceAvailability, error) {
 	config := m.currentConfig()
 	if m == nil || m.Store == nil || m.Credentials == nil || m.Capacity == nil {
@@ -213,7 +212,10 @@ func (m *ASBIdentitySourceManager) Rotate(
 	}
 	predecessorSandboxID = strings.TrimSpace(predecessorSandboxID)
 	if !runtimeID.Valid || predecessorSandboxID == "" ||
-		strings.TrimSpace(employeeID) == "" || strings.TrimSpace(bucAgentID) == "" {
+		strings.TrimSpace(employeeID) == "" || strings.TrimSpace(bucAgentID) == "" ||
+		strings.TrimSpace(tokens.AccessToken) == "" ||
+		strings.TrimSpace(tokens.RefreshToken) == "" ||
+		strings.TrimSpace(tokens.IDToken) == "" {
 		return EnterpriseIdentitySourceAvailability{}, errors.New(
 			"ASB enterprise identity seed rotation input is incomplete",
 		)
@@ -235,9 +237,13 @@ func (m *ASBIdentitySourceManager) Rotate(
 	if err != nil {
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
+	predecessorPresent := true
 	if err := validateASBIdentitySeed(ctx, client, predecessorSandboxID); err != nil {
-		logASBIdentitySourceFailure("validate_predecessor_seed", predecessorSandboxID, err)
-		return EnterpriseIdentitySourceAvailability{}, err
+		if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+			logASBIdentitySourceFailure("validate_predecessor_seed", predecessorSandboxID, err)
+			return EnterpriseIdentitySourceAvailability{}, err
+		}
+		predecessorPresent = false
 	}
 	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
 		ImageURI:       metadata.ArtifactRef,
@@ -282,16 +288,13 @@ func (m *ASBIdentitySourceManager) Rotate(
 		logASBIdentitySourceFailure("wait_rotated_seed_running", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
-	// A rotating seed must become self-contained before the predecessor can be
-	// retired. The explicit inherited attach is the authoritative copy boundary;
-	// creating a worker with only buc.originalSandboxID does not prove that.
-	if err := attachAndProbeInheritedASBIdentitySource(
+	if err := attachAndProbeASBIdentitySource(
 		ctx,
 		client,
 		sandbox.ID,
 		employeeID,
 		bucAgentID,
-		predecessorSandboxID,
+		tokens,
 		config.WireGuardCredentials,
 		config.WireGuardReadyTimeout,
 	); err != nil {
@@ -313,17 +316,19 @@ func (m *ASBIdentitySourceManager) Rotate(
 			err,
 		)
 	}
-	if err := terminateASBIdentitySource(
-		ctx,
-		client,
-		predecessorSandboxID,
-		m.sourceLifecycleTimeout(),
-	); err != nil {
-		logASBIdentitySourceFailure("terminate_predecessor_seed", predecessorSandboxID, err)
-		return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
-			"terminate predecessor ASB enterprise identity seed: %w",
-			err,
-		)
+	if predecessorPresent {
+		if err := terminateASBIdentitySource(
+			ctx,
+			client,
+			predecessorSandboxID,
+			m.sourceLifecycleTimeout(),
+		); err != nil {
+			logASBIdentitySourceFailure("terminate_predecessor_seed", predecessorSandboxID, err)
+			return EnterpriseIdentitySourceAvailability{}, fmt.Errorf(
+				"terminate predecessor ASB enterprise identity seed: %w",
+				err,
+			)
+		}
 	}
 	seedReady = true
 	slog.Info(
@@ -471,31 +476,6 @@ func attachAndProbeASBIdentitySource(
 	)
 }
 
-func attachAndProbeInheritedASBIdentitySource(
-	ctx context.Context,
-	client *ASBClient,
-	sandboxID string,
-	employeeID string,
-	bucAgentID string,
-	originalSandboxID string,
-	wireGuardCredentials string,
-	timeout time.Duration,
-) error {
-	return attachAndProbeASBIdentitySourceGrant(
-		ctx,
-		client,
-		sandboxID,
-		employeeID,
-		bucAgentID,
-		ASBBUCIdentityGrant{
-			EmployeeID:           employeeID,
-			WireGuardCredentials: wireGuardCredentials,
-			OriginalSandboxID:    originalSandboxID,
-		},
-		timeout,
-	)
-}
-
 func attachAndProbeASBIdentitySourceGrant(
 	ctx context.Context,
 	client *ASBClient,
@@ -551,11 +531,9 @@ func waitForASBIdentitySourceBUC(
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	// Source establishment and rotation prove only BUC reachability. Starting
-	// the inherited WireGuard client also requests a security ticket, which is
-	// the zero-trust service's BUC-token validation and renewal point. A1 and
-	// other CLI checks belong to real task verification and must not make an
-	// otherwise valid seed fail.
+	// Source establishment and rotation prove BUC attach from persisted tokens.
+	// A1 and other CLI checks belong to real task verification and must not make
+	// an otherwise valid seed fail.
 	ticker := time.NewTicker(asbIdentityProbeInterval(timeout))
 	defer ticker.Stop()
 	var lastErr error

@@ -198,6 +198,10 @@ func (f *fakeEnterpriseIdentityStore) UpsertAgentEnterpriseIdentity(
 		},
 		AuthxRefreshTokenEncrypted: params.AuthxRefreshTokenEncrypted,
 		AuthxRefreshExpiresAt:      params.AuthxRefreshExpiresAt,
+		BucAccessTokenEncrypted:    params.BucAccessTokenEncrypted,
+		BucRefreshTokenEncrypted:   params.BucRefreshTokenEncrypted,
+		BucIDTokenEncrypted:        params.BucIDTokenEncrypted,
+		BucAccessExpiresAt:         params.BucAccessExpiresAt,
 		TokenVersion:               1,
 		Status:                     "active",
 		BoundBy:                    params.BoundBy,
@@ -268,6 +272,21 @@ func (f *fakeEnterpriseIdentityStore) RotateActiveAgentEnterpriseIdentitySourceR
 		affected++
 	}
 	return affected, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentityBUCTokens(
+	_ context.Context,
+	params db.CompareAndSwapAgentEnterpriseIdentityBUCTokensParams,
+) (db.AgentEnterpriseIdentity, error) {
+	if params.ExpectedTokenVersion != f.current.TokenVersion {
+		return db.AgentEnterpriseIdentity{}, pgx.ErrNoRows
+	}
+	f.current.BucAccessTokenEncrypted = params.BucAccessTokenEncrypted
+	f.current.BucRefreshTokenEncrypted = params.BucRefreshTokenEncrypted
+	f.current.BucIDTokenEncrypted = params.BucIDTokenEncrypted
+	f.current.BucAccessExpiresAt = params.BucAccessExpiresAt
+	f.current.TokenVersion++
+	return f.current, nil
 }
 
 func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentityToken(
@@ -553,11 +572,13 @@ func (f *fakeEnterpriseIdentitySource) Rotate(
 	predecessorSandboxID string,
 	employeeID string,
 	bucAgentID string,
+	tokens BUCIdentityTokens,
 ) (EnterpriseIdentitySourceAvailability, error) {
 	f.rotated = append(f.rotated, predecessorSandboxID)
 	f.rotatedOn = append(f.rotatedOn, runtimeID)
 	f.employeeID = employeeID
 	f.bucAgentID = bucAgentID
+	f.tokens = tokens
 	if f.err != nil {
 		return EnterpriseIdentitySourceAvailability{}, f.err
 	}
@@ -666,6 +687,8 @@ func (f *fakeEnterpriseSandboxes) DeleteRuntimeSandbox(
 type fakeBUCOAuthClient struct {
 	tokens            BUCIdentityTokens
 	refreshResult     BUCIdentityTokens
+	refreshFrom       string
+	refreshErr        error
 	claims            bucIDTokenClaims
 	verifiedToken     string
 	ticket            string
@@ -678,7 +701,11 @@ func (f *fakeBUCOAuthClient) ExchangeCode(context.Context, string) (BUCIdentityT
 	return f.tokens, nil
 }
 
-func (f *fakeBUCOAuthClient) Refresh(context.Context, string) (BUCIdentityTokens, error) {
+func (f *fakeBUCOAuthClient) Refresh(_ context.Context, token string) (BUCIdentityTokens, error) {
+	f.refreshFrom = token
+	if f.refreshErr != nil {
+		return BUCIdentityTokens{}, f.refreshErr
+	}
 	return f.refreshResult, nil
 }
 
@@ -1013,7 +1040,7 @@ func TestValidateExistingIdemAgentRejectsDifferentOwner(t *testing.T) {
 	}
 }
 
-func TestEnterpriseIdentityCompleteBindingPersistsRollingSourceWithoutBUCTokens(t *testing.T) {
+func TestEnterpriseIdentityCompleteBindingPersistsRollingSourceAndBUCTokens(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
@@ -1105,6 +1132,13 @@ func TestEnterpriseIdentityCompleteBindingPersistsRollingSourceWithoutBUCTokens(
 	}
 	if string(opened) != "authx-refresh" {
 		t.Fatalf("stored refresh token = %q", opened)
+	}
+	openedBUCRefresh, err := serviceUnderTest.Secrets.Open(store.upsert.BucRefreshTokenEncrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(openedBUCRefresh) != "buc-refresh" {
+		t.Fatalf("stored BUC refresh token = %q", openedBUCRefresh)
 	}
 	if source.tokens.AccessToken != "buc-access" ||
 		source.tokens.RefreshToken != "buc-refresh" ||
@@ -1307,6 +1341,18 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sealedBUCAccess, err := box.Seal([]byte("buc-access"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedBUCRefresh, err := box.Seal([]byte("buc-refresh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedBUCID, err := box.Seal([]byte("buc-id"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := &fakeEnterpriseIdentityStore{
 		current: db.AgentEnterpriseIdentity{
 			ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
@@ -1320,6 +1366,10 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 			BucIdentitySourceRuntimeID: sourceRuntimeID,
 			AuthxRefreshTokenEncrypted: sealedRefresh,
 			AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
+			BucAccessTokenEncrypted:    sealedBUCAccess,
+			BucRefreshTokenEncrypted:   sealedBUCRefresh,
+			BucIDTokenEncrypted:        sealedBUCID,
+			BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
 			TokenVersion:               2,
 			Status:                     "active",
 		},
@@ -1359,6 +1409,9 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 		resolved.AgentIdentityToken != "ait-task" ||
 		resolved.SourceSandboxID != "identity-source-1" ||
 		resolved.SourceRuntimeID != sourceRuntimeID ||
+		resolved.BUCTokens.AccessToken != "buc-access" ||
+		resolved.BUCTokens.RefreshToken != "buc-refresh" ||
+		resolved.BUCTokens.IDToken != "buc-id" ||
 		len(resolved.Fingerprint) != 64 {
 		t.Fatalf("resolved = %#v", resolved)
 	}
@@ -1368,6 +1421,171 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	}
 	if string(rotated) != "refresh-new" {
 		t.Fatalf("rotation = %q", rotated)
+	}
+}
+
+func TestEnterpriseIdentityResolveRefreshesExpiredBUCAccessToken(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 19, 7, 0, 0, 0, time.UTC)
+	sourceRuntimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	taskRuntimeID := util.MustParseUUID("66666666-6666-6666-6666-666666666666")
+	box, err := secretbox.New(bytes.Repeat([]byte{0x42}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedRefresh, err := box.Seal([]byte("refresh-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, BUCIdentityTokens{
+		AccessToken:  "buc-access-old",
+		RefreshToken: "buc-refresh-old",
+		IDToken:      "buc-id",
+	})
+	store := &fakeEnterpriseIdentityStore{
+		current: db.AgentEnterpriseIdentity{
+			ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+			WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+			AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+			RawEmpID:                   "12345",
+			BucAgentID:                 "buc-agent-1",
+			AgentSpiffeID:              "spiffe://agents.example/ns/multica/agents/222",
+			AipID:                      "aip-1",
+			BucIdentitySourceSandboxID: pgtype.Text{String: "identity-source-1", Valid: true},
+			BucIdentitySourceRuntimeID: sourceRuntimeID,
+			AuthxRefreshTokenEncrypted: sealedRefresh,
+			AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+			BucAccessTokenEncrypted:    sealedBUCAccess,
+			BucRefreshTokenEncrypted:   sealedBUCRefresh,
+			BucIDTokenEncrypted:        sealedBUCID,
+			BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+			TokenVersion:               2,
+			Status:                     "active",
+		},
+	}
+	buc := &fakeBUCOAuthClient{
+		refreshResult: BUCIdentityTokens{
+			AccessToken:  "buc-access-new",
+			RefreshToken: "buc-refresh-new",
+			ExpiresIn:    259200,
+		},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		buc,
+		&fakeEnterpriseAuthX{renewResult: EnterpriseOIDCToken{
+			IDToken:          "authx-id",
+			RefreshToken:     "refresh-old",
+			ExpiresAt:        now.Add(time.Hour),
+			RefreshExpiresAt: now.Add(24 * time.Hour),
+		}},
+		&fakeEnterpriseIdem{ait: "ait-task"},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	serviceUnderTest.Secrets = box
+	serviceUnderTest.Tenants = &fakeEnterpriseIdentityTenantResolver{
+		runtimeIDs: []pgtype.UUID{sourceRuntimeID, taskRuntimeID},
+	}
+
+	resolved, err := serviceUnderTest.ResolveASBTaskIdentity(
+		context.Background(),
+		store.current.WorkspaceID,
+		store.current.AgentID,
+		taskRuntimeID,
+	)
+	if err != nil {
+		t.Fatalf("ResolveASBTaskIdentity: %v", err)
+	}
+	if buc.refreshFrom != "buc-refresh-old" ||
+		resolved.BUCTokens.AccessToken != "buc-access-new" ||
+		resolved.BUCTokens.RefreshToken != "buc-refresh-new" ||
+		resolved.BUCTokens.IDToken != "buc-id" {
+		t.Fatalf("resolved BUC tokens = %#v refresh_from=%q", resolved.BUCTokens, buc.refreshFrom)
+	}
+	openedRefresh, err := box.Open(store.current.BucRefreshTokenEncrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(openedRefresh) != "buc-refresh-new" {
+		t.Fatalf("persisted BUC refresh token = %q", openedRefresh)
+	}
+}
+
+func TestEnterpriseIdentityResolveMarksNeedsReauthWhenBUCRefreshTokenIsInvalid(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 19, 7, 0, 0, 0, time.UTC)
+	sourceRuntimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	taskRuntimeID := util.MustParseUUID("66666666-6666-6666-6666-666666666666")
+	box, err := secretbox.New(bytes.Repeat([]byte{0x42}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedRefresh, err := box.Seal([]byte("refresh-old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, BUCIdentityTokens{
+		AccessToken:  "buc-access-old",
+		RefreshToken: "buc-refresh-old",
+		IDToken:      "buc-id",
+	})
+	store := &fakeEnterpriseIdentityStore{
+		current: db.AgentEnterpriseIdentity{
+			ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+			WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+			AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+			RawEmpID:                   "12345",
+			BucAgentID:                 "buc-agent-1",
+			AgentSpiffeID:              "spiffe://agents.example/ns/multica/agents/222",
+			AipID:                      "aip-1",
+			BucIdentitySourceSandboxID: pgtype.Text{String: "identity-source-1", Valid: true},
+			BucIdentitySourceRuntimeID: sourceRuntimeID,
+			AuthxRefreshTokenEncrypted: sealedRefresh,
+			AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+			BucAccessTokenEncrypted:    sealedBUCAccess,
+			BucRefreshTokenEncrypted:   sealedBUCRefresh,
+			BucIDTokenEncrypted:        sealedBUCID,
+			BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+			TokenVersion:               2,
+			Status:                     "active",
+		},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{refreshErr: newEnterpriseIdentityProviderError(
+			"buc",
+			"refresh BUC OAuth token",
+			"buc_oauth_error",
+			http.StatusOK,
+			"240115",
+			nil,
+		)},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	serviceUnderTest.Secrets = box
+	serviceUnderTest.Tenants = &fakeEnterpriseIdentityTenantResolver{
+		runtimeIDs: []pgtype.UUID{sourceRuntimeID, taskRuntimeID},
+	}
+
+	_, err = serviceUnderTest.ResolveASBTaskIdentity(
+		context.Background(),
+		store.current.WorkspaceID,
+		store.current.AgentID,
+		taskRuntimeID,
+	)
+	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("ResolveASBTaskIdentity error = %v, want needs reauth", err)
+	}
+	if store.markNeedsReauth != 1 || store.current.Status != "needs_reauth" {
+		t.Fatalf("needs reauth marks = %d status=%q", store.markNeedsReauth, store.current.Status)
 	}
 }
 
@@ -1525,6 +1743,13 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	bucTokens := BUCIdentityTokens{
+		AccessToken:  "buc-access",
+		RefreshToken: "buc-refresh",
+		IDToken:      "buc-id",
+		ExpiresIn:    259200,
+	}
+	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, bucTokens)
 	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
 	identity := db.AgentEnterpriseIdentity{
 		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
@@ -1540,6 +1765,10 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 		},
 		AuthxRefreshTokenEncrypted: sealedRefresh,
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(10 * time.Minute), Valid: true},
+		BucAccessTokenEncrypted:    sealedBUCAccess,
+		BucRefreshTokenEncrypted:   sealedBUCRefresh,
+		BucIDTokenEncrypted:        sealedBUCID,
+		BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(72 * time.Hour), Valid: true},
 		TokenVersion:               2,
 		Status:                     "active",
 		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
@@ -1612,6 +1841,11 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 			store.current,
 		)
 	}
+	if source.tokens.AccessToken != bucTokens.AccessToken ||
+		source.tokens.RefreshToken != bucTokens.RefreshToken ||
+		source.tokens.IDToken != bucTokens.IDToken {
+		t.Fatalf("rotated seed BUC tokens = %#v", source.tokens)
+	}
 }
 
 func TestEnterpriseIdentityForceRotateSourceUsesCurrentLockedCoordinate(t *testing.T) {
@@ -1619,6 +1853,17 @@ func TestEnterpriseIdentityForceRotateSourceUsesCurrentLockedCoordinate(t *testi
 
 	now := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
 	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	box, err := secretbox.New(bytes.Repeat([]byte{0x24}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bucTokens := BUCIdentityTokens{
+		AccessToken:  "buc-access",
+		RefreshToken: "buc-refresh",
+		IDToken:      "buc-id",
+		ExpiresIn:    3600,
+	}
+	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, bucTokens)
 	identity := db.AgentEnterpriseIdentity{
 		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
 		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
@@ -1629,6 +1874,10 @@ func TestEnterpriseIdentityForceRotateSourceUsesCurrentLockedCoordinate(t *testi
 		BucIdentitySourceRuntimeID: runtimeID,
 		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		BucAccessTokenEncrypted:    sealedBUCAccess,
+		BucRefreshTokenEncrypted:   sealedBUCRefresh,
+		BucIDTokenEncrypted:        sealedBUCID,
+		BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
 		Status:                     "active",
 		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
 	}
@@ -1642,6 +1891,7 @@ func TestEnterpriseIdentityForceRotateSourceUsesCurrentLockedCoordinate(t *testi
 		&fakeEnterpriseSandboxes{},
 		now,
 	)
+	serviceUnderTest.Secrets = box
 
 	result, err := serviceUnderTest.ForceRotateIdentitySource(
 		context.Background(),
@@ -1664,6 +1914,11 @@ func TestEnterpriseIdentityForceRotateSourceUsesCurrentLockedCoordinate(t *testi
 		store.sourceRotation.NewSandboxID.String != "identity-source-rotated" {
 		t.Fatalf("persisted forced rotation = %#v", store.sourceRotation)
 	}
+	if source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource); source.tokens.AccessToken != bucTokens.AccessToken ||
+		source.tokens.RefreshToken != bucTokens.RefreshToken ||
+		source.tokens.IDToken != bucTokens.IDToken {
+		t.Fatalf("forced rotation BUC tokens = %#v", source.tokens)
+	}
 }
 
 func TestEnterpriseIdentityForceRotateSourceRejectsStalePredecessor(t *testing.T) {
@@ -1671,6 +1926,15 @@ func TestEnterpriseIdentityForceRotateSourceRejectsStalePredecessor(t *testing.T
 
 	now := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
 	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	box, err := secretbox.New(bytes.Repeat([]byte{0x24}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedBUCAccess, sealedBUCRefresh, sealedBUCID := mustSealBUCIdentityTokens(t, box, BUCIdentityTokens{
+		AccessToken:  "buc-access",
+		RefreshToken: "buc-refresh",
+		IDToken:      "buc-id",
+	})
 	identity := db.AgentEnterpriseIdentity{
 		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
 		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
@@ -1681,6 +1945,10 @@ func TestEnterpriseIdentityForceRotateSourceRejectsStalePredecessor(t *testing.T
 		BucIdentitySourceRuntimeID: runtimeID,
 		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		BucAccessTokenEncrypted:    sealedBUCAccess,
+		BucRefreshTokenEncrypted:   sealedBUCRefresh,
+		BucIDTokenEncrypted:        sealedBUCID,
+		BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(time.Hour), Valid: true},
 		Status:                     "active",
 		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
 	}
@@ -2115,6 +2383,27 @@ func TestHTTPBUCOAuthClientVerifyIDTokenUsesBUCJWKSForRSA(t *testing.T) {
 	if claims.Name != "测试员工" {
 		t.Fatalf("verified claims = %#v", claims)
 	}
+}
+
+func mustSealBUCIdentityTokens(
+	t *testing.T,
+	box *secretbox.Box,
+	tokens BUCIdentityTokens,
+) (access []byte, refresh []byte, idToken []byte) {
+	t.Helper()
+	access, err := box.Seal([]byte(tokens.AccessToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refresh, err = box.Seal([]byte(tokens.RefreshToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idToken, err = box.Seal([]byte(tokens.IDToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return access, refresh, idToken
 }
 
 func newTestEnterpriseIdentityService(

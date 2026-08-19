@@ -38,14 +38,13 @@ const (
 	defaultEnterpriseBindingCompletionTTL = 15 * time.Minute
 	defaultEnterpriseMaintenanceInterval  = 5 * time.Minute
 	defaultEnterpriseRefreshBefore        = 24 * time.Hour
-	// A short-lived inherited sandbox requests a WireGuard ticket immediately
-	// on startup. The zero-trust service validates the cached BUC ID token at
-	// that point and rotates its refresh-token family when renewal is due. Run
-	// this well inside the server-side credential cache lifetime so inactive
-	// Agents are refreshed without retaining a running sandbox.
+	// Bind still proves BUC attach on a short-lived seed. Task sandboxes do not
+	// inherit that seed; they attach a refreshed BUC token trio. Periodic seed
+	// rotation therefore also attaches persisted tokens rather than originalSandboxID.
 	defaultEnterpriseSourceRefreshInterval = 12 * time.Hour
 	defaultEnterpriseMaintenanceBatch      = int32(50)
 	enterpriseIdentityTokenLockClass       = int32(0x4549544b) // "EITK"
+	bucAccessTokenRefreshSkew              = time.Minute
 )
 
 var (
@@ -216,6 +215,7 @@ type enterpriseIdentityStore interface {
 	RotateActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	TouchActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	CompareAndSwapAgentEnterpriseIdentityToken(context.Context, db.CompareAndSwapAgentEnterpriseIdentityTokenParams) (db.AgentEnterpriseIdentity, error)
+	CompareAndSwapAgentEnterpriseIdentityBUCTokens(context.Context, db.CompareAndSwapAgentEnterpriseIdentityBUCTokensParams) (db.AgentEnterpriseIdentity, error)
 	ListAgentEnterpriseIdentitiesForMaintenance(context.Context, db.ListAgentEnterpriseIdentitiesForMaintenanceParams) ([]db.AgentEnterpriseIdentity, error)
 	MarkAgentEnterpriseIdentityNeedsReauth(context.Context, db.MarkAgentEnterpriseIdentityNeedsReauthParams) (int64, error)
 	MarkAgentEnterpriseIdentitiesNeedsReauthBySource(context.Context, db.MarkAgentEnterpriseIdentitiesNeedsReauthBySourceParams) ([]db.AgentEnterpriseIdentity, error)
@@ -900,6 +900,13 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 	}
 
 	stageStarted = time.Now()
+	sealedBUC, bucAccessExpiresAt, err := s.sealBUCIdentityTokens(bucTokens, s.Now())
+	if err != nil {
+		logEnterpriseIdentityBindingStageFailure("encrypt_buc_tokens", stageStarted, err, bindingAttrs...)
+		cleanupSource()
+		cleanupAIP()
+		return CompleteEnterpriseIdentityBindingResult{}, err
+	}
 	identity, err := s.Store.UpsertAgentEnterpriseIdentity(ctx, db.UpsertAgentEnterpriseIdentityParams{
 		WorkspaceID:                attempt.WorkspaceID,
 		AgentID:                    attempt.AgentID,
@@ -912,6 +919,10 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 		BucIdentitySourceRuntimeID: source.RuntimeID,
 		AuthxRefreshTokenEncrypted: sealedRefresh,
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: authXToken.RefreshExpiresAt, Valid: true},
+		BucAccessTokenEncrypted:    sealedBUC.access,
+		BucRefreshTokenEncrypted:   sealedBUC.refresh,
+		BucIDTokenEncrypted:        sealedBUC.idToken,
+		BucAccessExpiresAt:         pgtype.Timestamptz{Time: bucAccessExpiresAt, Valid: true},
 		BoundBy:                    attempt.ActorUserID,
 	})
 	if err != nil {
@@ -1121,9 +1132,7 @@ func (s *EnterpriseIdentityService) reuseOrCreateIdentitySource(
 		if !errors.Is(prepareErr, ErrEnterpriseIdentityNeedsReauth) {
 			return EnterpriseIdentitySourceAvailability{}, false, prepareErr
 		}
-		if err := s.markIdentitySourceNeedsReauthUnderLock(ctx, reusable); err != nil {
-			return EnterpriseIdentitySourceAvailability{}, false, err
-		}
+		// A vanished seed is not a BUC login expiry. Rebuild it from persisted tokens.
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return EnterpriseIdentitySourceAvailability{}, false, fmt.Errorf(
 			"find reusable ASB enterprise identity source: %w",
@@ -1339,11 +1348,11 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 			}
 			return ASBResolvedIdentity{}, fmt.Errorf("load enterprise identity: %w", err)
 		}
-		if !identity.BucIdentitySourceSandboxID.Valid ||
-			strings.TrimSpace(identity.BucIdentitySourceSandboxID.String) == "" ||
-			!identity.BucIdentitySourceRuntimeID.Valid ||
-			!identity.AuthxRefreshExpiresAt.Valid ||
-			!identity.AuthxRefreshExpiresAt.Time.After(s.Now()) {
+		if !identity.AuthxRefreshExpiresAt.Valid ||
+			!identity.AuthxRefreshExpiresAt.Time.After(s.Now()) ||
+			len(identity.BucRefreshTokenEncrypted) == 0 ||
+			len(identity.BucAccessTokenEncrypted) == 0 ||
+			len(identity.BucIDTokenEncrypted) == 0 {
 			s.markNeedsReauth(ctx, identity)
 			return ASBResolvedIdentity{}, ErrEnterpriseIdentityNeedsReauth
 		}
@@ -1351,11 +1360,21 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 		if err != nil {
 			return ASBResolvedIdentity{}, fmt.Errorf("resolve ASB Runtime credential scope: %w", err)
 		}
-		if !tenantScope.Contains(identity.BucIdentitySourceRuntimeID) {
-			s.markNeedsReauth(ctx, identity)
-			return ASBResolvedIdentity{}, ErrEnterpriseIdentityNeedsReauth
+		if !tenantScope.Contains(runtimeID) {
+			return ASBResolvedIdentity{}, fmt.Errorf("resolve ASB Runtime credential scope: runtime is outside its tenant")
 		}
-		updated, refreshed, err := s.rotateAuthXToken(ctx, identity)
+		updated, bucTokens, err := s.rotateBUCTokens(ctx, identity)
+		if errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+			s.markNeedsReauth(ctx, identity)
+			return ASBResolvedIdentity{}, err
+		}
+		if err != nil {
+			return ASBResolvedIdentity{}, fmt.Errorf("refresh BUC OAuth token: %w", err)
+		}
+		updated, refreshed, err := s.rotateAuthXToken(ctx, updated)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
@@ -1379,6 +1398,7 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 			SourceSandboxID:    updated.BucIdentitySourceSandboxID.String,
 			SourceRuntimeID:    updated.BucIdentitySourceRuntimeID,
 			AgentIdentityToken: ait,
+			BUCTokens:          bucTokens,
 			Fingerprint:        enterpriseIdentityFingerprint(updated),
 		}, nil
 	}
@@ -1516,16 +1536,33 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if !identity.BucIdentitySourceSandboxID.Valid ||
-			strings.TrimSpace(identity.BucIdentitySourceSandboxID.String) == "" ||
-			!identity.BucIdentitySourceRuntimeID.Valid ||
-			!identity.BucIdentitySourceUpdatedAt.Valid ||
-			!identity.AuthxRefreshExpiresAt.Valid ||
-			!identity.AuthxRefreshExpiresAt.Time.After(now) {
+		if !identity.AuthxRefreshExpiresAt.Valid ||
+			!identity.AuthxRefreshExpiresAt.Time.After(now) ||
+			len(identity.BucAccessTokenEncrypted) == 0 ||
+			len(identity.BucRefreshTokenEncrypted) == 0 ||
+			len(identity.BucIDTokenEncrypted) == 0 {
 			s.markNeedsReauth(ctx, identity)
 			continue
 		}
 		current := identity
+		if !current.BucAccessExpiresAt.Valid ||
+			!current.BucAccessExpiresAt.Time.After(now.Add(s.RefreshBefore)) {
+			updated, _, err := s.rotateBUCTokens(ctx, current)
+			if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+				s.markNeedsReauth(ctx, current)
+				continue
+			}
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				slog.Warn("enterprise identity BUC token maintenance failed",
+					"agent_id", util.UUIDToString(current.AgentID),
+					"error", err,
+				)
+				continue
+			}
+			if err == nil {
+				current = updated
+			}
+		}
 		if !current.AuthxRefreshExpiresAt.Time.After(now.Add(s.RefreshBefore)) {
 			updated, _, err := s.rotateAuthXToken(ctx, current)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -1539,7 +1576,11 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 				current = updated
 			}
 		}
-		if !current.BucIdentitySourceUpdatedAt.Time.After(now.Add(-s.SourceRefreshInterval)) {
+		if current.BucIdentitySourceSandboxID.Valid &&
+			strings.TrimSpace(current.BucIdentitySourceSandboxID.String) != "" &&
+			current.BucIdentitySourceRuntimeID.Valid &&
+			current.BucIdentitySourceUpdatedAt.Valid &&
+			!current.BucIdentitySourceUpdatedAt.Time.After(now.Add(-s.SourceRefreshInterval)) {
 			sourceCoordinate := util.UUIDToString(current.BucIdentitySourceRuntimeID) + ":" +
 				current.BucIdentitySourceSandboxID.String
 			if _, maintained := maintainedSources[sourceCoordinate]; maintained {
@@ -1617,7 +1658,10 @@ func (s *EnterpriseIdentityService) ForceRotateIdentitySource(
 		!current.BucIdentitySourceSandboxID.Valid ||
 		strings.TrimSpace(current.BucIdentitySourceSandboxID.String) == "" ||
 		!current.AuthxRefreshExpiresAt.Valid ||
-		!current.AuthxRefreshExpiresAt.Time.After(s.Now()) {
+		!current.AuthxRefreshExpiresAt.Time.After(s.Now()) ||
+		len(current.BucAccessTokenEncrypted) == 0 ||
+		len(current.BucRefreshTokenEncrypted) == 0 ||
+		len(current.BucIDTokenEncrypted) == 0 {
 		return EnterpriseIdentitySourceRotationResult{}, ErrEnterpriseIdentityNeedsReauth
 	}
 	if current.BucIdentitySourceSandboxID.String != expectedPredecessorSandboxID {
@@ -1630,12 +1674,18 @@ func (s *EnterpriseIdentityService) rotateIdentitySourceUnderLock(
 	ctx context.Context,
 	current db.AgentEnterpriseIdentity,
 ) (EnterpriseIdentitySourceRotationResult, error) {
+	updated, tokens, err := s.rotateBUCTokensLocked(ctx, current)
+	if err != nil {
+		return EnterpriseIdentitySourceRotationResult{}, err
+	}
+	current = updated
 	rotated, err := s.Source.Rotate(
 		ctx,
 		current.BucIdentitySourceRuntimeID,
 		current.BucIdentitySourceSandboxID.String,
 		current.RawEmpID,
 		current.BucAgentID,
+		tokens,
 	)
 	if err != nil {
 		return EnterpriseIdentitySourceRotationResult{}, err
@@ -1683,6 +1733,142 @@ func (s *EnterpriseIdentityService) rotateIdentitySourceUnderLock(
 		SandboxID:          rotated.SandboxID,
 		AffectedReferences: affected,
 	}, nil
+}
+
+type sealedBUCIdentityTokens struct {
+	access  []byte
+	refresh []byte
+	idToken []byte
+}
+
+func (s *EnterpriseIdentityService) sealBUCIdentityTokens(
+	tokens BUCIdentityTokens,
+	now time.Time,
+) (sealedBUCIdentityTokens, time.Time, error) {
+	if strings.TrimSpace(tokens.AccessToken) == "" ||
+		strings.TrimSpace(tokens.RefreshToken) == "" ||
+		strings.TrimSpace(tokens.IDToken) == "" ||
+		tokens.ExpiresIn <= 0 {
+		return sealedBUCIdentityTokens{}, time.Time{}, errors.New("BUC OAuth token set is incomplete")
+	}
+	access, err := s.Secrets.Seal([]byte(tokens.AccessToken))
+	if err != nil {
+		return sealedBUCIdentityTokens{}, time.Time{}, errors.New("encrypt BUC access token")
+	}
+	refresh, err := s.Secrets.Seal([]byte(tokens.RefreshToken))
+	if err != nil {
+		return sealedBUCIdentityTokens{}, time.Time{}, errors.New("encrypt BUC refresh token")
+	}
+	idToken, err := s.Secrets.Seal([]byte(tokens.IDToken))
+	if err != nil {
+		return sealedBUCIdentityTokens{}, time.Time{}, errors.New("encrypt BUC ID token")
+	}
+	return sealedBUCIdentityTokens{access: access, refresh: refresh, idToken: idToken},
+		now.Add(time.Duration(tokens.ExpiresIn) * time.Second),
+		nil
+}
+
+func (s *EnterpriseIdentityService) openBUCIdentityTokens(
+	identity db.AgentEnterpriseIdentity,
+) (BUCIdentityTokens, error) {
+	if len(identity.BucAccessTokenEncrypted) == 0 ||
+		len(identity.BucRefreshTokenEncrypted) == 0 ||
+		len(identity.BucIDTokenEncrypted) == 0 {
+		return BUCIdentityTokens{}, ErrEnterpriseIdentityNeedsReauth
+	}
+	access, err := s.Secrets.Open(identity.BucAccessTokenEncrypted)
+	if err != nil {
+		return BUCIdentityTokens{}, errors.New("decrypt BUC access token")
+	}
+	refresh, err := s.Secrets.Open(identity.BucRefreshTokenEncrypted)
+	if err != nil {
+		return BUCIdentityTokens{}, errors.New("decrypt BUC refresh token")
+	}
+	idToken, err := s.Secrets.Open(identity.BucIDTokenEncrypted)
+	if err != nil {
+		return BUCIdentityTokens{}, errors.New("decrypt BUC ID token")
+	}
+	return BUCIdentityTokens{
+		AccessToken:  string(access),
+		RefreshToken: string(refresh),
+		IDToken:      string(idToken),
+	}, nil
+}
+
+func (s *EnterpriseIdentityService) rotateBUCTokens(
+	ctx context.Context,
+	identity db.AgentEnterpriseIdentity,
+) (db.AgentEnterpriseIdentity, BUCIdentityTokens, error) {
+	unlock, err := s.TokenLock.Lock(ctx, identity.ID)
+	if err != nil {
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, err
+	}
+	defer unlock()
+
+	current, err := s.Store.GetAgentEnterpriseIdentity(
+		ctx,
+		db.GetAgentEnterpriseIdentityParams{
+			WorkspaceID: identity.WorkspaceID,
+			AgentID:     identity.AgentID,
+		},
+	)
+	if err != nil {
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, err
+	}
+	if current.ID != identity.ID {
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, ErrEnterpriseIdentityNeedsReauth
+	}
+	return s.rotateBUCTokensLocked(ctx, current)
+}
+
+func (s *EnterpriseIdentityService) rotateBUCTokensLocked(
+	ctx context.Context,
+	current db.AgentEnterpriseIdentity,
+) (db.AgentEnterpriseIdentity, BUCIdentityTokens, error) {
+	if current.Status != "active" {
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, ErrEnterpriseIdentityNeedsReauth
+	}
+	stored, err := s.openBUCIdentityTokens(current)
+	if err != nil {
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, err
+	}
+	now := s.Now()
+	if current.BucAccessExpiresAt.Valid &&
+		current.BucAccessExpiresAt.Time.After(now.Add(bucAccessTokenRefreshSkew)) {
+		return current, stored, nil
+	}
+	refreshed, err := s.BUC.Refresh(ctx, stored.RefreshToken)
+	if err != nil {
+		if isBUCRefreshNeedsReauth(err) {
+			return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, ErrEnterpriseIdentityNeedsReauth
+		}
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, err
+	}
+	if strings.TrimSpace(refreshed.AccessToken) == "" ||
+		strings.TrimSpace(refreshed.RefreshToken) == "" ||
+		refreshed.ExpiresIn <= 0 {
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, errors.New("refreshed BUC OAuth token set is incomplete")
+	}
+	// BUC refresh_token.json returns a new access/refresh pair and omits id_token.
+	if strings.TrimSpace(refreshed.IDToken) == "" {
+		refreshed.IDToken = stored.IDToken
+	}
+	sealed, accessExpiresAt, err := s.sealBUCIdentityTokens(refreshed, now)
+	if err != nil {
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, err
+	}
+	updated, err := s.Store.CompareAndSwapAgentEnterpriseIdentityBUCTokens(ctx, db.CompareAndSwapAgentEnterpriseIdentityBUCTokensParams{
+		BucAccessTokenEncrypted:  sealed.access,
+		BucRefreshTokenEncrypted: sealed.refresh,
+		BucIDTokenEncrypted:      sealed.idToken,
+		BucAccessExpiresAt:       pgtype.Timestamptz{Time: accessExpiresAt, Valid: true},
+		ID:                       current.ID,
+		ExpectedTokenVersion:     current.TokenVersion,
+	})
+	if err != nil {
+		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, fmt.Errorf("persist refreshed BUC tokens: %w", err)
+	}
+	return updated, refreshed, nil
 }
 
 func (s *EnterpriseIdentityService) rotateAuthXToken(
