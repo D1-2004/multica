@@ -340,37 +340,6 @@ func TestASBOrdinaryTaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 	}
 }
 
-func TestASBA2AColdStartInheritsFromLiveTaskSandbox(t *testing.T) {
-	t.Parallel()
-
-	identity := ASBResolvedIdentity{
-		Mode:               asbIdentityModeBound,
-		RawEmployeeID:      "12345",
-		BUCAgentID:         "agent-multica-asb",
-		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
-		AIPID:              "aip-1",
-		SourceSandboxID:    "identity-source-1",
-		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
-		AgentIdentityToken: "ait",
-		Fingerprint:        strings.Repeat("a", 64),
-	}
-	got := asbCreateIdentityForTask(
-		identity,
-		newA2ATaskContext(a2aintegration.InvocationIdentity{DEAPDWSToken: "deap-token"}),
-		"live-task-sandbox",
-	)
-	if got.SourceSandboxID != "live-task-sandbox" {
-		t.Fatalf("A2A inheritance source = %q, want live task sandbox", got.SourceSandboxID)
-	}
-	if extensions := got.sandboxExtensions("wg"); extensions["buc.originalSandboxID"] != "live-task-sandbox" {
-		t.Fatalf("A2A create extensions = %#v", extensions)
-	}
-	ordinary := asbCreateIdentityForTask(identity, nil, "live-task-sandbox")
-	if ordinary.SourceSandboxID != identity.SourceSandboxID {
-		t.Fatalf("robot inheritance source = %q, want seed", ordinary.SourceSandboxID)
-	}
-}
-
 func TestASBBoundIdentityDeclaresCreateTimeBUCInheritance(t *testing.T) {
 	t.Parallel()
 
@@ -683,6 +652,132 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *t
 	}
 	if !released.Load() {
 		t.Fatal("identity source lease was not released after inherited identity became ready")
+	}
+}
+
+func TestResolveASBSandboxAttachesInheritedIdentityForA2AColdStart(t *testing.T) {
+	pool := newSandboxLockPool(t)
+	_, agentID, runtimeID := seedFCE2BSandboxRuntime(
+		t,
+		pool,
+		"A2A ASB Inherited Attach",
+	)
+	queries := db.New(pool)
+	runtime, err := queries.GetAgentRuntime(context.Background(), runtimeID)
+	if err != nil {
+		t.Fatalf("load runtime: %v", err)
+	}
+
+	var attached atomic.Bool
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/quotas":
+			_, _ = io.WriteString(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":1}]`)
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			response.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(response, `{"id":"a2a-sandbox","status":{"state":"Pending"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/a2a-sandbox":
+			_, _ = io.WriteString(response, `{"id":"a2a-sandbox","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/a2a-sandbox/identity/wireguard":
+			var grant ASBBUCIdentityGrant
+			if err := json.NewDecoder(request.Body).Decode(&grant); err != nil {
+				t.Fatalf("decode inherited attach: %v", err)
+			}
+			if grant.EmployeeID != "12345" ||
+				grant.OriginalSandboxID != "identity-source-1" ||
+				grant.WireGuardCredentials != "wireguard-credentials" {
+				t.Fatalf("inherited attach grant = %#v", grant)
+			}
+			attached.Store(true)
+			response.WriteHeader(http.StatusOK)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/a2a-sandbox/endpoints/44772":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			if !attached.Load() {
+				t.Error("A2A inherited identity attach did not run before the CLI probe")
+			}
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	box, err := secretbox.New(bytes.Repeat([]byte{0x53}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedAPIKey, err := box.Seal([]byte(testASBAPIKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := db.AsbRuntimeCredential{
+		RuntimeID:       runtimeID,
+		ApiKeyEncrypted: encryptedAPIKey,
+		ApiKeyHint:      "-key",
+	}
+	identity := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    runtimeID,
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	launcher := &ASBLauncher{
+		Queries: queries,
+		Config: ASBConfig{
+			TimeoutSeconds:        300,
+			ReadyTimeout:          time.Second,
+			WireGuardReadyTimeout: time.Second,
+			ResourceCPU:           "2",
+			ResourceMemory:        "4Gi",
+			WireGuardCredentials:  "wireguard-credentials",
+		},
+		Client: newTestASBClient(t, server),
+		Credentials: &ASBRuntimeClientProvider{
+			Store: &fakeASBRuntimeCredentialStore{
+				credential:  credential,
+				credentials: []db.AsbRuntimeCredential{credential},
+			},
+			Secrets: box,
+			Config:  ASBConfig{APIURL: server.URL},
+		},
+		Identity: fakeASBTaskIdentityResolver{identity: identity},
+	}
+	conn, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire runtime lock connection: %v", err)
+	}
+	defer conn.Release()
+	launcher.Queries = db.New(conn)
+	sandboxID, coldStart, _, err := launcher.resolveSandbox(
+		context.Background(),
+		runtime,
+		CloudSandboxRuntimeMetadata{ArtifactRef: "registry.example/runtime@sha256:" + strings.Repeat("a", 64)},
+		fcE2BTaskScope{},
+		false,
+		agentID,
+		pgtype.UUID{},
+		identity,
+		conn,
+		chattrace.New("task"),
+		newA2ATaskContext(a2aintegration.InvocationIdentity{DEAPDWSToken: "deap-token"}),
+	)
+	if err != nil {
+		t.Fatalf("resolve sandbox: %v", err)
+	}
+	if sandboxID != "a2a-sandbox" || !coldStart || !attached.Load() {
+		t.Fatalf("A2A resolution = (%q, cold=%v, attached=%v)", sandboxID, coldStart, attached.Load())
 	}
 }
 
