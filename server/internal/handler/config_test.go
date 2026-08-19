@@ -9,6 +9,15 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 )
 
+func setHandlerWebURLs(t *testing.T, publicURL, appURL, frontendOrigin string) {
+	t.Helper()
+	orig := testHandler.cfg
+	t.Cleanup(func() { testHandler.cfg = orig })
+	testHandler.cfg.PublicURL = publicURL
+	testHandler.cfg.AppURL = appURL
+	testHandler.cfg.FrontendOrigin = frontendOrigin
+}
+
 func TestGetConfigReportsCdnSignedMode(t *testing.T) {
 	origStorage := testHandler.Storage
 	origSigner := testHandler.CFSigner
@@ -59,8 +68,7 @@ func TestGetConfigIncludesRuntimeAuthConfig(t *testing.T) {
 	t.Setenv("GOOGLE_CLIENT_ID", "google-client-id")
 	t.Setenv("POSTHOG_API_KEY", "phc_test")
 	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
-	t.Setenv("MULTICA_PUBLIC_URL", "https://api.example.com/")
-	t.Setenv("MULTICA_APP_URL", "https://app.example.com/")
+	setHandlerWebURLs(t, "https://api.example.com/", "https://app.example.com/", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -139,8 +147,7 @@ func TestGetConfigHonorsVCSIntegrationSwitch(t *testing.T) {
 }
 
 func TestGetConfigUsesAppURLForSameOriginDaemonSetup(t *testing.T) {
-	t.Setenv("MULTICA_PUBLIC_URL", "")
-	t.Setenv("MULTICA_APP_URL", "https://multica.internal.example/")
+	setHandlerWebURLs(t, "", "https://multica.internal.example/", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -163,9 +170,7 @@ func TestGetConfigUsesAppURLForSameOriginDaemonSetup(t *testing.T) {
 }
 
 func TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup(t *testing.T) {
-	t.Setenv("MULTICA_PUBLIC_URL", "")
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.internal.example/")
+	setHandlerWebURLs(t, "", "", "https://multica.internal.example/")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -188,9 +193,7 @@ func TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup(t *testing.T) {
 }
 
 func TestGetConfigOmitsOfficialCloudDaemonSetup(t *testing.T) {
-	t.Setenv("MULTICA_PUBLIC_URL", "https://api.multica.ai")
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.ai")
+	setHandlerWebURLs(t, "https://api.multica.ai", "", "https://multica.ai")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -222,9 +225,7 @@ func TestGetConfigOmitsOfficialCloudDaemonSetup(t *testing.T) {
 // official cloud must be recognised by its frontend host alone so the daemon
 // setup URLs are omitted and the dialog falls back to `multica setup`.
 func TestGetConfigOmitsCloudDaemonSetupWithoutPublicURL(t *testing.T) {
-	t.Setenv("MULTICA_PUBLIC_URL", "")
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.ai")
+	setHandlerWebURLs(t, "", "", "https://multica.ai")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -249,9 +250,7 @@ func TestGetConfigOmitsCloudDaemonSetupWithoutPublicURL(t *testing.T) {
 // TestGetConfigOmitsCloudDaemonSetupForConfiguredAppURL covers the official
 // cloud frontend when it is configured through MULTICA_APP_URL.
 func TestGetConfigOmitsCloudDaemonSetupForConfiguredAppURL(t *testing.T) {
-	t.Setenv("MULTICA_PUBLIC_URL", "")
-	t.Setenv("MULTICA_APP_URL", "https://multica.ai")
-	t.Setenv("FRONTEND_ORIGIN", "")
+	setHandlerWebURLs(t, "", "https://multica.ai", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -270,6 +269,36 @@ func TestGetConfigOmitsCloudDaemonSetupForConfiguredAppURL(t *testing.T) {
 	}
 	if cfg.DaemonAppURL != "" {
 		t.Fatalf("daemon_app_url: want omitted for official cloud, got %q", cfg.DaemonAppURL)
+	}
+}
+
+// TestGetConfigUsesLiveHandlerConfigForDaemonSetup reproduces the Aone
+// Diamond-mode regression: MULTICA_APP_URL is no longer required in the
+// process environment, so leftover env values (or empty ones) must not
+// hide web.app_url / web.public_url from /api/config. The connect-remote
+// dialog reads those fields; without them it printed api.multica.ai.
+func TestGetConfigUsesLiveHandlerConfigForDaemonSetup(t *testing.T) {
+	t.Setenv("MULTICA_PUBLIC_URL", "https://api.multica.ai")
+	t.Setenv("MULTICA_APP_URL", "")
+	t.Setenv("FRONTEND_ORIGIN", "")
+	setHandlerWebURLs(t, "https://api.internal.example", "https://app.internal.example", "https://app.internal.example")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	testHandler.GetConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var cfg AppConfig
+	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	if cfg.DaemonServerURL != "https://api.internal.example" {
+		t.Fatalf("daemon_server_url: want Diamond public_url, got %q", cfg.DaemonServerURL)
+	}
+	if cfg.DaemonAppURL != "https://app.internal.example" {
+		t.Fatalf("daemon_app_url: want Diamond app_url, got %q", cfg.DaemonAppURL)
 	}
 }
 

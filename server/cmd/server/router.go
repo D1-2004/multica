@@ -193,10 +193,11 @@ func dBaseBindingURLMatchesOrigin(bindingURL, expectedOrigin string) bool {
 	return err == nil && origin == expectedOrigin
 }
 
-// appURLFromEnv resolves the user-facing web app URL. It prefers
-// MULTICA_APP_URL and falls back to FRONTEND_ORIGIN, matching how the backend
-// resolves the app URL elsewhere (handler.daemonSetupURLsFromEnv) and the CLI
-// login flow (cmd/multica tryResolveAppURL). Empty when neither is set.
+// appURLFromEnv resolves the user-facing web app URL for environment-only
+// startups. It prefers MULTICA_APP_URL and falls back to FRONTEND_ORIGIN,
+// matching handler.resolveFrontendAppURL and the CLI login flow
+// (cmd/multica tryResolveAppURL). Diamond mode overwrites this snapshot
+// from web.app_url. Empty when neither is set.
 func appURLFromEnv() string {
 	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/"); v != "" {
 		return v
