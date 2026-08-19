@@ -609,7 +609,11 @@ export function filterRuntimesForSandboxBackend(
   return runtimes.filter((runtime) => {
     if (runtime.runtime_mode !== "cloud") return false;
     const metadata = parseCloudSandboxRuntimeMetadata(runtime);
-    return metadata === null || metadata.sandboxBackend === backend;
+    // ASB is explicit; unclassified/legacy cloud stays on the FC list.
+    if (backend === "asb") {
+      return metadata?.sandboxBackend === "asb";
+    }
+    return metadata === null || metadata.sandboxBackend === "aliyun_fc";
   });
 }
 
