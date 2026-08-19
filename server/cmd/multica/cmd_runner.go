@@ -103,9 +103,6 @@ func runRunnerBind(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.ServerURL != "" && cfg.ServerURL != serverURL {
-		return fmt.Errorf("this Runner is already registered with %s", cfg.ServerURL)
-	}
 	if err := ensureRunnerKey(&cfg); err != nil {
 		return err
 	}
@@ -184,14 +181,15 @@ func runRunnerBind(cmd *cobra.Command, _ []string) error {
 		case "pending":
 			continue
 		case "approved":
-			cfg.ServerURL = serverURL
-			cfg.MachineID = result.MachineID
+			if err := cfg.upsertBinding(serverURL, result.MachineID); err != nil {
+				return err
+			}
 			cfg.Roots = roots
 			if err := saveRunnerConfig(cfg); err != nil {
 				return err
 			}
 			fmt.Fprintln(os.Stderr, "Runner authorized. Starting the background service...")
-			if err := startRunnerBackground(); err != nil {
+			if err := restartRunnerBackground(); err != nil {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "Runner started and is connecting. File roots: %s\n", strings.Join(roots, ", "))
@@ -233,29 +231,26 @@ func runRunnerReconnect(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.ServerURL == "" || cfg.MachineID == "" {
-		return errors.New("Runner is not bound on this machine")
-	}
 	serverURL, _ := cmd.Flags().GetString("server-url")
 	serverURL, err = normalizeRunnerServerURL(serverURL)
 	if err != nil {
 		return err
 	}
-	configuredURL, err := normalizeRunnerServerURL(cfg.ServerURL)
+	binding, found, err := cfg.bindingForURL(serverURL)
 	if err != nil {
 		return err
 	}
-	if serverURL != configuredURL {
-		return fmt.Errorf("this Runner is registered with %s, not %s", configuredURL, serverURL)
+	if !found {
+		return fmt.Errorf("this Runner is not registered with %s", serverURL)
 	}
 	privateKey, err := runnerPrivateKey(cfg)
 	if err != nil {
 		return err
 	}
-	client := cli.NewAPIClient(serverURL, "", "")
+	client := cli.NewAPIClient(binding.ServerURL, "", "")
 	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 	defer cancel()
-	challenge, err := createRunnerChallenge(ctx, client, cfg.MachineID)
+	challenge, err := createRunnerChallenge(ctx, client, binding.MachineID)
 	if err != nil {
 		return fmt.Errorf("create reconnect challenge: %w", err)
 	}
@@ -265,7 +260,7 @@ func runRunnerReconnect(cmd *cobra.Command, _ []string) error {
 		ActiveBindingCount int64  `json:"active_binding_count"`
 		MachineOnline      bool   `json:"machine_online"`
 	}
-	path := "/api/runner/machines/" + url.PathEscape(cfg.MachineID) + "/reconnect"
+	path := "/api/runner/machines/" + url.PathEscape(binding.MachineID) + "/reconnect"
 	if err := client.PostJSONWithHeaders(ctx, path, map[string]string{
 		"reconnect_token": reconnectToken,
 	}, &result, headers); err != nil {
@@ -291,12 +286,12 @@ func runRunnerStart(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.ServerURL == "" || cfg.MachineID == "" {
-		return errors.New("Runner is not bound; copy a new install command from Agent settings")
-	}
-	cfg.ServerURL, err = normalizeRunnerServerURL(cfg.ServerURL)
+	bindings, err := cfg.bindings()
 	if err != nil {
 		return err
+	}
+	if len(bindings) == 0 {
+		return errors.New("Runner is not bound; copy a new install command from Agent settings")
 	}
 	privateKey, err := runnerPrivateKey(cfg)
 	if err != nil {
@@ -321,7 +316,7 @@ func runRunnerStart(cmd *cobra.Command, _ []string) error {
 	runnerCtx, stopSignals := runnerSignalContext(cmd.Context())
 	defer stopSignals()
 	defer stopAllRunnerBackgroundProcesses()
-	err = runRunnerLoop(runnerCtx, cfg, privateKey)
+	err = runAllRunnerLoops(runnerCtx, cfg, privateKey)
 	if errors.Is(err, errRunnerHasNoBindings) || (errors.Is(err, context.Canceled) && runnerCtx.Err() != nil) {
 		return nil
 	}
@@ -341,11 +336,15 @@ func ensureRunnerBackground(preserveRunning bool) error {
 	if err != nil {
 		return err
 	}
-	if cfg.ServerURL == "" || cfg.MachineID == "" {
+	bindings, err := cfg.bindings()
+	if err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
 		return errors.New("Runner is not bound; copy a new install command from Agent settings")
 	}
 	if pid, running := currentRunnerPID(); running {
-		if preserveRunning || runnerConnectionActive(pid, cfg.MachineID) {
+		if preserveRunning || runnerAllBindingsConnected(pid, cfg) {
 			fmt.Fprintf(os.Stderr, "Runner is already running and connected (pid %d).\n", pid)
 			return nil
 		}
@@ -359,7 +358,7 @@ func ensureRunnerBackground(preserveRunning bool) error {
 
 func restartRunnerBackground() error {
 	if pid, running := currentRunnerPID(); running {
-		fmt.Fprintf(os.Stderr, "Restarting offline Runner process %d...\n", pid)
+		fmt.Fprintf(os.Stderr, "Restarting Runner process %d to apply current bindings...\n", pid)
 		if err := stopAndWaitRunner(pid); err != nil {
 			return err
 		}
@@ -368,7 +367,11 @@ func restartRunnerBackground() error {
 	if err != nil {
 		return err
 	}
-	if cfg.ServerURL == "" || cfg.MachineID == "" {
+	bindings, err := cfg.bindings()
+	if err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
 		return errors.New("Runner is not bound; copy a new install command from Agent settings")
 	}
 	return launchRunnerBackground(cfg)
@@ -427,7 +430,7 @@ func launchRunnerBackground(cfg runnerConfig) error {
 		time.Sleep(100 * time.Millisecond)
 		if pid, running := currentRunnerPID(); running {
 			startedPID = pid
-			if runnerConnectionActive(pid, cfg.MachineID) {
+			if runnerAllBindingsConnected(pid, cfg) {
 				fmt.Fprintf(os.Stderr, "Runner started and connected (pid %d). Log: %s\n", pid, logPath)
 				return nil
 			}
@@ -484,20 +487,38 @@ func runRunnerStatus(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	bindings, err := cfg.bindings()
+	if err != nil {
+		return err
+	}
 	pid, running := currentRunnerPID()
 	status := "stopped"
 	if running {
 		status = "running (offline)"
-		if runnerConnectionActive(pid, cfg.MachineID) {
+		if runnerAllBindingsConnected(pid, cfg) {
 			status = "online"
+		} else {
+			for _, binding := range bindings {
+				if runnerConnectionActive(pid, binding.MachineID) {
+					status = "running (partial)"
+					break
+				}
+			}
 		}
 	}
 	fmt.Printf("Status: %s\n", status)
 	if running {
 		fmt.Printf("PID: %d\n", pid)
 	}
-	if cfg.MachineID != "" {
-		fmt.Printf("Machine: %s\nServer: %s\nRoots: %s\n", cfg.MachineID, cfg.ServerURL, strings.Join(cfg.Roots, ", "))
+	if len(cfg.Roots) > 0 {
+		fmt.Printf("Roots: %s\n", strings.Join(cfg.Roots, ", "))
+	}
+	for _, binding := range bindings {
+		connection := "offline"
+		if running && runnerConnectionActive(pid, binding.MachineID) {
+			connection = "online"
+		}
+		fmt.Printf("Server: %s\nMachine: %s\nConnection: %s\n", binding.ServerURL, binding.MachineID, connection)
 	}
 	return nil
 }
@@ -533,18 +554,57 @@ func normalizeRunnerServerURL(raw string) (string, error) {
 	return value, nil
 }
 
-func runRunnerLoop(ctx context.Context, cfg runnerConfig, privateKey ed25519.PrivateKey) error {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+func runAllRunnerLoops(ctx context.Context, cfg runnerConfig, privateKey ed25519.PrivateKey) error {
+	bindings, err := cfg.bindings()
+	if err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
+		return errors.New("Runner is not bound; copy a new install command from Agent settings")
+	}
+	errCh := make(chan error, len(bindings))
+	var wg sync.WaitGroup
+	for _, binding := range bindings {
+		wg.Add(1)
+		go func(binding runnerServerBinding) {
+			defer wg.Done()
+			errCh <- runRunnerLoop(ctx, binding, privateKey)
+		}(binding)
+	}
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+	var first error
+	for err := range errCh {
+		if err == nil || errors.Is(err, context.Canceled) {
+			continue
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return first
+}
+
+func runRunnerLoop(ctx context.Context, binding runnerServerBinding, privateKey ed25519.PrivateKey) error {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).With(
+		"server_url", binding.ServerURL,
+		"machine_id", binding.MachineID,
+	)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		err := runRunnerConnection(ctx, cfg, privateKey, logger)
+		err := runRunnerConnection(ctx, binding, privateKey, logger)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if errors.Is(err, errRunnerHasNoBindings) {
-			logger.Info("Runner has no connected Agent bindings; exiting")
+			logger.Info("Runner has no connected Agent bindings; leaving this server")
 			return err
 		}
 		logger.Warn("Runner connection closed", "error", err)
@@ -556,11 +616,11 @@ func runRunnerLoop(ctx context.Context, cfg runnerConfig, privateKey ed25519.Pri
 	}
 }
 
-func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed25519.PrivateKey, logger *slog.Logger) error {
-	client := cli.NewAPIClient(cfg.ServerURL, "", "")
+func runRunnerConnection(ctx context.Context, binding runnerServerBinding, privateKey ed25519.PrivateKey, logger *slog.Logger) error {
+	client := cli.NewAPIClient(binding.ServerURL, "", "")
 	challengeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	challenge, err := createRunnerChallenge(challengeCtx, client, cfg.MachineID)
+	challenge, err := createRunnerChallenge(challengeCtx, client, binding.MachineID)
 	if err != nil {
 		return fmt.Errorf("create connection challenge: %w", err)
 	}
@@ -568,7 +628,7 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 		return errRunnerHasNoBindings
 	}
 
-	wsURL, err := url.Parse(cfg.ServerURL)
+	wsURL, err := url.Parse(binding.ServerURL)
 	if err != nil {
 		return err
 	}
@@ -582,7 +642,7 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 	}
 	wsURL.Path = "/api/runner/ws"
 	query := wsURL.Query()
-	query.Set("machine_id", cfg.MachineID)
+	query.Set("machine_id", binding.MachineID)
 	wsURL.RawQuery = query.Encode()
 	headers := http.Header{}
 	for key, value := range runnerChallengeHeaders(challenge, privateKey) {
@@ -596,9 +656,12 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 		return fmt.Errorf("connect Runner WebSocket: %w", err)
 	}
 	defer conn.Close()
-	defer clearRunnerConnectionState(os.Getpid())
+	defer clearRunnerConnectionMachine(os.Getpid(), binding.MachineID)
 	conn.SetReadLimit(2 << 20)
-	logger.Info("Runner connected", "machine_id", cfg.MachineID)
+	logger.Info("Runner connected", "machine_id", binding.MachineID)
+	if err := writeRunnerConnectionState(binding.MachineID); err != nil {
+		return err
+	}
 
 	connectionCtx, connectionCancel := context.WithCancel(ctx)
 	defer connectionCancel()
@@ -666,8 +729,8 @@ func runRunnerConnection(ctx context.Context, cfg runnerConfig, privateKey ed255
 				<-heartbeatsDone
 				return errRunnerHasNoBindings
 			}
-			if !runnerConnectionActive(os.Getpid(), cfg.MachineID) {
-				if err := writeRunnerConnectionState(cfg.MachineID); err != nil {
+			if !runnerConnectionActive(os.Getpid(), binding.MachineID) {
+				if err := writeRunnerConnectionState(binding.MachineID); err != nil {
 					connectionCancel()
 					<-heartbeatsDone
 					return err
