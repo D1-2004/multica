@@ -782,7 +782,6 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 		identity,
 		runtimeLockConn,
 		trace,
-		task.Context,
 	)
 	if err != nil {
 		return asbLaunchSubmission{}, false, err
@@ -872,7 +871,6 @@ func (l *ASBLauncher) resolveSandbox(
 	identity ASBResolvedIdentity,
 	runtimeLockConn *pgxpool.Conn,
 	trace chattrace.Trace,
-	taskContext []byte,
 ) (string, bool, ASBResolvedIdentity, error) {
 	if err := identity.validate(); err != nil {
 		return "", false, ASBResolvedIdentity{}, err
@@ -1071,41 +1069,6 @@ func (l *ASBLauncher) resolveSandbox(
 			return "", true, ASBResolvedIdentity{}, err
 		}
 		if identity.Mode == asbIdentityModeBound {
-			if IsA2ATaskOrigin(taskContext) {
-				// Task create only declares buc.originalSandboxID. Seed rotation
-				// already treats that as insufficient proof and does an explicit
-				// inherited attach. A2A always cold-creates a new worker from the
-				// terminated seed; robot usually reuses a warm worker. Attach the
-				// seed here so A2A does not wait four minutes on a worker that
-				// never received the credential directory.
-				if err := attachASBBUCIdentitySource(
-					ctx,
-					l.Client,
-					sandbox.ID,
-					ASBBUCIdentityGrant{
-						EmployeeID:           identity.RawEmployeeID,
-						WireGuardCredentials: l.Config.WireGuardCredentials,
-						OriginalSandboxID:    identity.SourceSandboxID,
-					},
-				); err != nil {
-					releaseSource("release_source_after_failed_inherited_attach")
-					cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
-						runtime,
-						scope,
-						scoped,
-						identity.Fingerprint,
-						sandbox.ID,
-					)
-					identityErr := withRuntimeStartUserDetail(
-						fmt.Errorf("attach inherited ASB enterprise identity before task start: %w", err),
-						"ASB enterprise identity did not become ready before task start. Reauthorize the Agent enterprise identity and retry.",
-					)
-					if cleanupErr != nil {
-						return "", true, ASBResolvedIdentity{}, errors.Join(identityErr, cleanupErr)
-					}
-					return "", true, ASBResolvedIdentity{}, identityErr
-				}
-			}
 			if err := l.waitSandboxInheritedBUCIdentityReady(
 				ctx,
 				sandbox.ID,
