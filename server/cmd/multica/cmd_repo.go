@@ -338,6 +338,10 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	if daemonPort == "" {
 		return fmt.Errorf("MULTICA_DAEMON_PORT not set (this command is intended to be run by an agent inside a daemon task)")
 	}
+	taskCapability := strings.TrimSpace(os.Getenv("MULTICA_TOKEN"))
+	if !strings.HasPrefix(taskCapability, "mat_") {
+		return fmt.Errorf("task-scoped MULTICA_TOKEN not set (repo checkout is only available to an authorized daemon task)")
+	}
 
 	workspaceID := os.Getenv("MULTICA_WORKSPACE_ID")
 	agentName := os.Getenv("MULTICA_AGENT_NAME")
@@ -365,11 +369,17 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	}
 
 	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Post(
+	req, err := http.NewRequest(
+		http.MethodPost,
 		fmt.Sprintf("http://127.0.0.1:%s/repo/checkout", daemonPort),
-		"application/json",
 		bytes.NewReader(data),
 	)
+	if err != nil {
+		return fmt.Errorf("build daemon checkout request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+taskCapability)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}

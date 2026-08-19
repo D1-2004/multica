@@ -5637,6 +5637,96 @@ func (q *Queries) ListChatFinalizeDeferredExpired(ctx context.Context, arg ListC
 	return items, nil
 }
 
+const listHumanVisibleAgentTasks = `-- name: ListHumanVisibleAgentTasks :many
+SELECT task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+FROM agent_task_queue task
+WHERE task.agent_id = $1
+  AND COALESCE(task.context ->> 'multica_origin', '') <> 'a2a'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM a2a_context context
+      WHERE context.chat_session_id = task.chat_session_id
+  )
+ORDER BY created_at DESC
+`
+
+// External A2A principals share the execution engine but not the ordinary
+// member Activity surface. Keep ListAgentTasks unfiltered for schedulers and
+// concurrency/blocker checks; only this presentation query hides A2A rows.
+func (q *Queries) ListHumanVisibleAgentTasks(ctx context.Context, agentID pgtype.UUID) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listHumanVisibleAgentTasks, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingTasksByRuntime = `-- name: ListPendingTasksByRuntime :many
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at FROM agent_task_queue
 WHERE runtime_id = $1 AND status IN ('queued', 'dispatched')
@@ -6041,6 +6131,12 @@ SELECT atq.id, atq.agent_id, atq.issue_id, atq.status, atq.priority, atq.dispatc
 JOIN agent a ON a.id = atq.agent_id
 WHERE a.workspace_id = $1
   AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+  AND COALESCE(atq.context ->> 'multica_origin', '') <> 'a2a'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM a2a_context context
+      WHERE context.chat_session_id = atq.chat_session_id
+  )
 
 UNION ALL
 
@@ -6050,6 +6146,12 @@ JOIN LATERAL (
   FROM agent_task_queue atq
   WHERE atq.agent_id = a.id
     AND atq.status IN ('completed', 'failed')
+    AND COALESCE(atq.context ->> 'multica_origin', '') <> 'a2a'
+    AND NOT EXISTS (
+        SELECT 1
+        FROM a2a_context context
+        WHERE context.chat_session_id = atq.chat_session_id
+    )
   ORDER BY atq.completed_at DESC NULLS LAST, atq.created_at DESC, atq.id DESC
   LIMIT 1
 ) latest ON TRUE
@@ -6980,12 +7082,54 @@ func (q *Queries) PromoteDueDeferredChannelChatTasks(ctx context.Context, batchS
 }
 
 const promoteDueDeferredTasksForRuntime = `-- name: PromoteDueDeferredTasksForRuntime :many
-UPDATE agent_task_queue
+WITH a2a_fifo_candidates AS MATERIALIZED (
+  SELECT DISTINCT ON (task.chat_session_id)
+      task.id,
+      task.chat_session_id,
+      turn.control_signal
+  FROM agent_task_queue task
+  JOIN a2a_task_turn turn ON turn.local_task_id = task.id
+  JOIN a2a_task_binding binding ON binding.id = turn.binding_id
+  WHERE task.runtime_id = $1
+    AND task.status = 'deferred'
+    AND task.chat_session_id IS NOT NULL
+    AND binding.public_state IN ('TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_queue occupied
+      WHERE occupied.chat_session_id = task.chat_session_id
+        AND occupied.agent_id = task.agent_id
+        AND occupied.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+    )
+  ORDER BY task.chat_session_id, task.created_at, task.id
+), runnable_a2a AS MATERIALIZED (
+  SELECT candidate.id
+  FROM a2a_fifo_candidates candidate
+  JOIN agent_task_queue candidate_task ON candidate_task.id = candidate.id
+  WHERE candidate.control_signal IS NULL
+    AND COALESCE(candidate_task.context->>'deap_dws_token_required', 'false') <> 'true'
+    AND CASE
+      WHEN candidate_task.context->>'agent_identity_context_token_source' = 'external' THEN
+        CASE
+          WHEN jsonb_typeof(candidate_task.context->'agent_identity_context_token_expires_at') = 'number' THEN
+            (candidate_task.context->>'agent_identity_context_token_expires_at')::numeric
+              > extract(epoch FROM now() + interval '60 seconds') * 1000
+          ELSE FALSE
+        END
+      ELSE TRUE
+    END
+    AND pg_try_advisory_xact_lock(
+      hashtextextended(candidate.chat_session_id::text, 479823117)
+    )
+)
+UPDATE agent_task_queue AS task
 SET status = 'queued'
-WHERE runtime_id = $1
-  AND status = 'deferred'
-  AND chat_session_id IS NULL
-  AND fire_at <= now()
+WHERE task.runtime_id = $1
+  AND task.status = 'deferred'
+  AND (
+    (task.chat_session_id IS NULL AND task.fire_at <= now())
+    OR task.id IN (SELECT id FROM runnable_a2a)
+  )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
 
@@ -7064,12 +7208,54 @@ func (q *Queries) PromoteDueDeferredTasksForRuntime(ctx context.Context, runtime
 }
 
 const promoteDueDeferredTasksForRuntimes = `-- name: PromoteDueDeferredTasksForRuntimes :many
-UPDATE agent_task_queue
+WITH a2a_fifo_candidates AS MATERIALIZED (
+  SELECT DISTINCT ON (task.chat_session_id)
+      task.id,
+      task.chat_session_id,
+      turn.control_signal
+  FROM agent_task_queue task
+  JOIN a2a_task_turn turn ON turn.local_task_id = task.id
+  JOIN a2a_task_binding binding ON binding.id = turn.binding_id
+  WHERE task.runtime_id = ANY($1::uuid[])
+    AND task.status = 'deferred'
+    AND task.chat_session_id IS NOT NULL
+    AND binding.public_state IN ('TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING')
+    AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_queue occupied
+      WHERE occupied.chat_session_id = task.chat_session_id
+        AND occupied.agent_id = task.agent_id
+        AND occupied.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+    )
+  ORDER BY task.chat_session_id, task.created_at, task.id
+), runnable_a2a AS MATERIALIZED (
+  SELECT candidate.id
+  FROM a2a_fifo_candidates candidate
+  JOIN agent_task_queue candidate_task ON candidate_task.id = candidate.id
+  WHERE candidate.control_signal IS NULL
+    AND COALESCE(candidate_task.context->>'deap_dws_token_required', 'false') <> 'true'
+    AND CASE
+      WHEN candidate_task.context->>'agent_identity_context_token_source' = 'external' THEN
+        CASE
+          WHEN jsonb_typeof(candidate_task.context->'agent_identity_context_token_expires_at') = 'number' THEN
+            (candidate_task.context->>'agent_identity_context_token_expires_at')::numeric
+              > extract(epoch FROM now() + interval '60 seconds') * 1000
+          ELSE FALSE
+        END
+      ELSE TRUE
+    END
+    AND pg_try_advisory_xact_lock(
+      hashtextextended(candidate.chat_session_id::text, 479823117)
+    )
+)
+UPDATE agent_task_queue AS task
 SET status = 'queued'
-WHERE runtime_id = ANY($1::uuid[])
-  AND status = 'deferred'
-  AND chat_session_id IS NULL
-  AND fire_at <= now()
+WHERE task.runtime_id = ANY($1::uuid[])
+  AND task.status = 'deferred'
+  AND (
+    (task.chat_session_id IS NULL AND task.fire_at <= now())
+    OR task.id IN (SELECT id FROM runnable_a2a)
+  )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at
 `
 

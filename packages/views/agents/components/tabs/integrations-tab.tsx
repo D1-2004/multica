@@ -17,6 +17,7 @@ import { WecomAgentBindButton } from "../../../settings/components/wecom-tab";
 import { WecomMark } from "../../../settings/components/wecom-mark";
 import { useT } from "../../../i18n";
 import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-binding";
+import { AgentMCPLinkCard } from "../integrations/mcp-link-card";
 
 /**
  * Integrations tab on the agent detail page. Surfaces the same external-
@@ -33,10 +34,14 @@ import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-bin
  */
 export function IntegrationsTab({
   agent,
+  showMcpLink = false,
+  platformIntegrationsConfigured = true,
   canOperateDingTalkBinding,
   dingTalkBindingPermissionLoading,
 }: {
   agent: Agent;
+  showMcpLink?: boolean;
+  platformIntegrationsConfigured?: boolean;
   canOperateDingTalkBinding: boolean;
   dingTalkBindingPermissionLoading: boolean;
 }) {
@@ -106,6 +111,16 @@ export function IntegrationsTab({
   // `dingtalkConfigured`. DingTalkAgentBindButton picks scan vs. manual.
   const dingtalkConfigured = dingtalkListing?.configured === true;
 
+  if (showMcpLink && !platformIntegrationsConfigured) {
+    return (
+      <div className="space-y-6">
+        <p className="text-caption text-muted-foreground">
+          {t(($) => $.tab_body.integrations.intro)}
+        </p>
+        <AgentMCPLinkCard agent={agent} />
+      </div>
+    );
+  }
   const wecomConfigured = wecomListing?.configured === true;
   const wecomInstallSupported = wecomListing?.install_supported === true;
   const wecomHasActiveInstall =
@@ -147,6 +162,8 @@ export function IntegrationsTab({
       <p className="text-caption text-muted-foreground">
         {t(($) => $.tab_body.integrations.intro)}
       </p>
+
+      {showMcpLink && <AgentMCPLinkCard agent={agent} />}
 
       <DingTalkAccountBindingCard
         agentId={agent.id}

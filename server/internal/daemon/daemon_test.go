@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -55,6 +56,25 @@ func TestNormalizeServerBaseURL(t *testing.T) {
 	}
 	if got != "http://localhost:8080" {
 		t.Fatalf("expected http://localhost:8080, got %s", got)
+	}
+}
+
+func TestRunTaskA2AMissingAgentFailsClosed(t *testing.T) {
+	d := &Daemon{}
+	_, err := d.runTask(context.Background(), Task{
+		WorkspaceID:   "workspace-a2a",
+		A2AInvocation: true,
+	}, "claude", 0, slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "claim has no Agent configuration") {
+		t.Fatalf("runTask() error = %v, want missing A2A Agent configuration refusal", err)
+	}
+}
+
+func TestRunTaskOrdinaryMissingAgentKeepsExistingValidation(t *testing.T) {
+	d := &Daemon{}
+	_, err := d.runTask(context.Background(), Task{}, "claude", 0, slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "task has no workspace_id") {
+		t.Fatalf("runTask() error = %v, want existing workspace validation", err)
 	}
 }
 
@@ -239,6 +259,97 @@ func TestValidateReasonixStateSegmentRejectsTraversal(t *testing.T) {
 	}
 	if got, err := validateReasonixStateSegment("agent", "agent-1_uuid"); err != nil || got != "agent-1_uuid" {
 		t.Fatalf("safe segment = %q, %v", got, err)
+	}
+}
+
+func TestValidateManagedA2ADEAPDWSToken(t *testing.T) {
+	const token = "deap-request-token-secret"
+
+	got, err := validateManagedA2ADEAPDWSToken("fc-e2b", true, true, token, true)
+	if err != nil || got != token {
+		t.Fatalf("managed DEAP DWS token = %q, %v", got, err)
+	}
+	if got, err = validateManagedA2ADEAPDWSToken("fc-e2b", true, true, "", false); err != nil || got != "" {
+		t.Fatalf("absent DEAP DWS token = %q, %v", got, err)
+	}
+
+	for _, test := range []struct {
+		name             string
+		launchedBy       string
+		a2aInvocation    bool
+		managedRuntimeV2 bool
+		raw              string
+	}{
+		{name: "ordinary task", launchedBy: "fc-e2b", managedRuntimeV2: true, raw: token},
+		{name: "unattested runtime", launchedBy: "fc-e2b", a2aInvocation: true, raw: token},
+		{name: "local runtime", launchedBy: "local", a2aInvocation: true, managedRuntimeV2: true, raw: token},
+		{name: "empty token", launchedBy: "fc-e2b", a2aInvocation: true, managedRuntimeV2: true},
+		{name: "surrounding whitespace", launchedBy: "fc-e2b", a2aInvocation: true, managedRuntimeV2: true, raw: " " + token},
+		{name: "oversized token", launchedBy: "fc-e2b", a2aInvocation: true, managedRuntimeV2: true, raw: strings.Repeat("x", (64<<10)+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := validateManagedA2ADEAPDWSToken(
+				test.launchedBy,
+				test.a2aInvocation,
+				test.managedRuntimeV2,
+				test.raw,
+				true,
+			); err == nil {
+				t.Fatal("invalid request-scoped DEAP DWS identity was accepted")
+			}
+		})
+	}
+}
+
+func TestRestoreA2ATaskIdentityEnvRestoresDEAPDWSTokenAfterIsolation(t *testing.T) {
+	agentEnv := map[string]string{
+		protocol.AgentIdentityContextTokenEnvKey: "",
+		protocol.DEAPDWSTokenEnvKey:              "",
+		"DWS_CONFIG_DIR":                         "",
+		"GH_CONFIG_DIR":                          "",
+	}
+	restoreA2ATaskIdentityEnv(
+		agentEnv,
+		"external-context-token",
+		"/tmp/task/dws",
+		"/tmp/task/dws/gh",
+		"deap-request-token-secret",
+	)
+
+	if got := agentEnv[protocol.AgentIdentityContextTokenEnvKey]; got != "external-context-token" {
+		t.Fatalf("ContextToken = %q", got)
+	}
+	if got := agentEnv[protocol.DEAPDWSTokenEnvKey]; got != "deap-request-token-secret" {
+		t.Fatalf("DEAP DWS token = %q", got)
+	}
+	if got := agentEnv["DWS_CONFIG_DIR"]; got != "/tmp/task/dws" {
+		t.Fatalf("DWS_CONFIG_DIR = %q", got)
+	}
+	if got := agentEnv["GH_CONFIG_DIR"]; got != "/tmp/task/dws/gh" {
+		t.Fatalf("GH_CONFIG_DIR = %q", got)
+	}
+}
+
+func TestManagedA2AIdentityConfigDirs(t *testing.T) {
+	taskID := "11111111-1111-1111-1111-111111111111"
+	dwsDir := filepath.Join(t.TempDir(), taskID)
+	t.Setenv("DWS_CONFIG_DIR", dwsDir)
+	t.Setenv("GH_CONFIG_DIR", filepath.Join(dwsDir, "gh"))
+	dws, github, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token")
+	if err != nil || dws != dwsDir || github != filepath.Join(dwsDir, "gh") {
+		t.Fatalf("managed dirs = %q, %q, %v", dws, github, err)
+	}
+
+	t.Setenv("GH_CONFIG_DIR", filepath.Join(t.TempDir(), "gh"))
+	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token"); err == nil {
+		t.Fatal("GitHub config outside the task-local DWS root was accepted")
+	}
+	t.Setenv("GH_CONFIG_DIR", "")
+	if _, _, err := managedA2AIdentityConfigDirs("fc-e2b", taskID, "external-context-token"); err == nil {
+		t.Fatal("missing task-local GitHub config was accepted")
+	}
+	if dws, github, err := managedA2AIdentityConfigDirs("local", taskID, "external-context-token"); err != nil || dws != "" || github != "" {
+		t.Fatalf("local runtime unexpectedly required managed dirs: %q, %q, %v", dws, github, err)
 	}
 }
 
@@ -477,6 +588,7 @@ func TestTaskScopedAuthToken(t *testing.T) {
 	tests := []struct {
 		name    string
 		token   string
+		a2a     bool
 		want    string
 		wantErr string
 	}{
@@ -494,13 +606,23 @@ func TestTaskScopedAuthToken(t *testing.T) {
 			token: " mat_task_token ",
 			want:  "mat_task_token",
 		},
+		{
+			name: "A2A invocation is explicitly credentialless",
+			a2a:  true,
+		},
+		{
+			name:    "A2A invocation rejects an accidentally minted token",
+			token:   "mat_task_token",
+			a2a:     true,
+			wantErr: "A2A invocation unexpectedly received a task-scoped auth token",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := taskScopedAuthToken(Task{AuthToken: tt.token})
+			got, err := taskScopedAuthToken(Task{AuthToken: tt.token, A2AInvocation: tt.a2a})
 			if tt.wantErr != "" {
 				if err == nil {
 					t.Fatalf("taskScopedAuthToken() error = nil, want %q", tt.wantErr)
@@ -567,6 +689,134 @@ func TestTaskMulticaEnvironmentIncludesPrivateConfigRoot(t *testing.T) {
 	}
 	if env["MULTICA_TOKEN"] != fakeToken {
 		t.Fatal("custom env replaced task-scoped token")
+	}
+}
+
+func TestMaskA2AInheritedCredentialEnv(t *testing.T) {
+	t.Setenv("MULTICA_DAEMON_TOKEN", "mdt_owner_secret")
+	t.Setenv("DWS_CLIENT_SECRET", "dws_owner_secret")
+	t.Setenv("GH_TOKEN", "github_owner_secret")
+	t.Setenv("OPENAI_API_KEY", "ambient_provider_secret")
+	t.Setenv("HARMLESS_RUNTIME_SETTING", "keep")
+
+	agentEnv := map[string]string{
+		"MULTICA_TOKEN":      "",
+		"MULTICA_SERVER_URL": "https://multica.example.test",
+	}
+	maskA2AInheritedCredentialEnv(agentEnv)
+
+	for _, key := range []string{"MULTICA_DAEMON_TOKEN", "DWS_CLIENT_SECRET", "GH_TOKEN", "OPENAI_API_KEY"} {
+		if value, ok := agentEnv[key]; !ok || value != "" {
+			t.Fatalf("credential %s was not masked: %#v", key, agentEnv)
+		}
+	}
+	if _, ok := agentEnv["HARMLESS_RUNTIME_SETTING"]; ok {
+		t.Fatalf("non-credential setting was unnecessarily rewritten: %#v", agentEnv)
+	}
+	if agentEnv["MULTICA_SERVER_URL"] != "https://multica.example.test" {
+		t.Fatalf("explicit runtime value was overwritten: %#v", agentEnv)
+	}
+}
+
+func TestInjectTaskTraceEnv(t *testing.T) {
+	t.Run("ordinary task keeps trace context", func(t *testing.T) {
+		agentEnv := map[string]string{}
+		injectTaskTraceEnv(agentEnv, Task{
+			TraceID:              "trace-ordinary",
+			TraceStartedAtUnixMS: 1_786_000_000_123,
+		})
+
+		if got := agentEnv["MULTICA_TRACE_ID"]; got != "trace-ordinary" {
+			t.Fatalf("MULTICA_TRACE_ID = %q, want ordinary task trace", got)
+		}
+		if got := agentEnv["MULTICA_TRACE_STARTED_AT_UNIX_MS"]; got != "1786000000123" {
+			t.Fatalf("MULTICA_TRACE_STARTED_AT_UNIX_MS = %q, want ordinary task start time", got)
+		}
+		if _, ok := agentEnv["MULTICA_A2A_INVOCATION"]; ok {
+			t.Fatalf("ordinary task received A2A execution marker: %#v", agentEnv)
+		}
+	})
+
+	t.Run("A2A task does not inject trace context", func(t *testing.T) {
+		agentEnv := map[string]string{}
+		injectTaskTraceEnv(agentEnv, Task{
+			A2AInvocation:        true,
+			TraceID:              "trace-a2a",
+			TraceStartedAtUnixMS: 1_786_000_000_123,
+		})
+
+		for _, key := range []string{"MULTICA_TRACE_ID", "MULTICA_TRACE_STARTED_AT_UNIX_MS"} {
+			if _, ok := agentEnv[key]; ok {
+				t.Fatalf("A2A trace key %s was injected: %#v", key, agentEnv)
+			}
+		}
+	})
+}
+
+func TestTaskContextAgentID(t *testing.T) {
+	const internalAgentID = "22222222-2222-2222-2222-222222222222"
+	if got := taskContextAgentID(Task{}, internalAgentID); got != internalAgentID {
+		t.Fatalf("ordinary task Agent ID = %q, want %q", got, internalAgentID)
+	}
+	if got := taskContextAgentID(Task{A2AInvocation: true}, internalAgentID); got != "" {
+		t.Fatalf("A2A task leaked internal Agent ID into task context: %q", got)
+	}
+}
+
+func TestIsolateA2AChildEnv(t *testing.T) {
+	t.Setenv("MULTICA_RUNTIME_ID", "runtime-from-daemon")
+	t.Setenv("MULTICA_TRACE_ID", "trace-from-daemon")
+	t.Setenv("MULTICA_TRACE_STARTED_AT_UNIX_MS", "1786000000000")
+	t.Setenv("MULTICA_DAEMON_TOKEN", "mdt_owner_secret")
+	t.Setenv("DWS_CLIENT_SECRET", "dws_owner_secret")
+	t.Setenv("GH_TOKEN", "github_owner_secret")
+	t.Setenv("HARMLESS_RUNTIME_SETTING", "keep")
+
+	agentEnv := map[string]string{
+		"MULTICA_TOKEN":                    "mat_internal",
+		"MULTICA_SERVER_URL":               "https://internal.example.test",
+		"MULTICA_DAEMON_PORT":              "49152",
+		"MULTICA_WORKSPACE_ID":             "11111111-1111-1111-1111-111111111111",
+		"MULTICA_AGENT_NAME":               "internal-agent",
+		"MULTICA_AGENT_ID":                 "22222222-2222-2222-2222-222222222222",
+		"MULTICA_TASK_ID":                  "33333333-3333-3333-3333-333333333333",
+		"MULTICA_TASK_SLOT":                "7",
+		"MULTICA_TRACE_ID":                 "trace-from-task",
+		"MULTICA_TRACE_STARTED_AT_UNIX_MS": "1786000000123",
+		"MULTICA_AUTOPILOT_ID":             "44444444-4444-4444-4444-444444444444",
+		"SAFE_PROVIDER_SETTING":            "preserve",
+	}
+	isolateA2AChildEnv(agentEnv)
+
+	if got := agentEnv["MULTICA_A2A_INVOCATION"]; got != "1" {
+		t.Fatalf("MULTICA_A2A_INVOCATION = %q, want non-identifying execution marker", got)
+	}
+	for _, key := range []string{
+		"MULTICA_TOKEN",
+		"MULTICA_SERVER_URL",
+		"MULTICA_DAEMON_PORT",
+		"MULTICA_WORKSPACE_ID",
+		"MULTICA_RUNTIME_ID",
+		"MULTICA_AGENT_NAME",
+		"MULTICA_AGENT_ID",
+		"MULTICA_TASK_ID",
+		"MULTICA_TASK_SLOT",
+		"MULTICA_TRACE_ID",
+		"MULTICA_TRACE_STARTED_AT_UNIX_MS",
+		"MULTICA_AUTOPILOT_ID",
+		"MULTICA_DAEMON_TOKEN",
+		"DWS_CLIENT_SECRET",
+		"GH_TOKEN",
+	} {
+		if value, ok := agentEnv[key]; !ok || value != "" {
+			t.Fatalf("A2A-sensitive env %s was not explicitly cleared: %#v", key, agentEnv)
+		}
+	}
+	if got := agentEnv["SAFE_PROVIDER_SETTING"]; got != "preserve" {
+		t.Fatalf("safe explicit setting = %q, want preserve", got)
+	}
+	if _, ok := agentEnv["HARMLESS_RUNTIME_SETTING"]; ok {
+		t.Fatalf("harmless inherited setting was unnecessarily rewritten: %#v", agentEnv)
 	}
 }
 
@@ -5358,5 +5608,87 @@ func TestBuildPromptSquadLeaderMultiThreadCarvesOutNoAction(t *testing.T) {
 	}
 	if strings.Contains(ordinary, "Unless your outcome is") || strings.Contains(ordinary, "skip this ENTIRE fan-out block") {
 		t.Fatalf("ordinary multi-thread prompt leaked the leader carve-out\n---\n%s", ordinary)
+	}
+}
+
+func TestConfigureManagedA2AV2OpenCodeEnv(t *testing.T) {
+	t.Setenv("OPENAI_BASE_URL", "https://model.example/v1")
+	t.Setenv("OPENAI_API_KEY", "test-managed-key")
+	t.Setenv("OPENAI_MODEL", "test-model")
+	t.Setenv("MULTICA_TRACE_ID", "provider-generation-a2a")
+	t.Setenv("OPENCODE_PLUGIN", "ambient-plugin")
+	root := t.TempDir()
+	skills := []execenv.SkillContextForEnv{{Name: "Managed Skill", Content: "managed skill"}}
+	agentEnv := map[string]string{
+		"OPENAI_API_KEY":          "agent-override",
+		"XDG_CONFIG_HOME":         "/host/config",
+		"OPENCODE_CONFIG_CONTENT": `{"mcp":{"ambient":{}}}`,
+	}
+
+	const runtimeBrief = "managed A2A runtime brief"
+	if err := configureManagedA2AV2OpenCodeEnv(agentEnv, "opencode", root, runtimeBrief, skills); err != nil {
+		t.Fatal(err)
+	}
+	if agentEnv["OPENAI_BASE_URL"] != "https://model.example/v1" ||
+		agentEnv["OPENAI_API_KEY"] != "test-managed-key" ||
+		agentEnv["OPENAI_MODEL"] != "test-model" {
+		t.Fatalf("managed model bootstrap was not restored: %#v", agentEnv)
+	}
+	xdgRoot := filepath.Dir(agentEnv["OPENCODE_CONFIG"])
+	if !strings.HasPrefix(filepath.Base(xdgRoot), ".a2a-opencode-") || filepath.Dir(xdgRoot) != root {
+		t.Fatalf("unexpected isolated OpenCode root %q", xdgRoot)
+	}
+	for key, leaf := range map[string]string{
+		"XDG_CONFIG_HOME": "config",
+		"XDG_DATA_HOME":   "data",
+		"XDG_STATE_HOME":  "state",
+		"XDG_CACHE_HOME":  "cache",
+	} {
+		want := filepath.Join(xdgRoot, leaf)
+		if agentEnv[key] != want {
+			t.Errorf("%s = %q, want %q", key, agentEnv[key], want)
+		}
+		if info, err := os.Stat(want); err != nil || !info.IsDir() {
+			t.Errorf("%s directory not prepared: info=%v err=%v", key, info, err)
+		}
+	}
+	if agentEnv["OPENCODE_DISABLE_PROJECT_CONFIG"] != "true" ||
+		agentEnv["OPENCODE_DISABLE_CLAUDE_CODE_PROMPT"] != "true" ||
+		agentEnv["OPENCODE_CONFIG_DIR"] != filepath.Join(xdgRoot, "managed-config") ||
+		agentEnv["OPENCODE_CONFIG_CONTENT"] != "" ||
+		agentEnv["OPENCODE_PLUGIN"] != "" {
+		t.Fatalf("OpenCode ambient configuration was not replaced: %#v", agentEnv)
+	}
+	if agentEnv["HOME"] != filepath.Join(xdgRoot, "home") {
+		t.Fatalf("OpenCode HOME was not isolated: %#v", agentEnv)
+	}
+	if agentEnv["MULTICA_A2A_PROVIDER_GENERATION"] != "provider-generation-a2a" {
+		t.Fatalf("provider generation was not restored: %#v", agentEnv)
+	}
+	configBytes, err := os.ReadFile(agentEnv["OPENCODE_CONFIG"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(configBytes), "test-managed-key") ||
+		!strings.Contains(string(configBytes), `"deap"`) ||
+		!strings.Contains(string(configBytes), `runtime-brief.md"`) ||
+		!strings.Contains(string(configBytes), `"{env:OPENAI_API_KEY}"`) ||
+		!strings.Contains(string(configBytes), `"{env:MULTICA_A2A_PROVIDER_GENERATION}"`) {
+		t.Fatalf("unexpected managed OpenCode config: %s", configBytes)
+	}
+	if info, err := os.Stat(agentEnv["OPENCODE_CONFIG"]); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("managed OpenCode config mode = %v err=%v", info, err)
+	}
+	briefBytes, err := os.ReadFile(filepath.Join(xdgRoot, "runtime-brief.md"))
+	if err != nil || string(briefBytes) != runtimeBrief {
+		t.Fatalf("managed runtime brief = %q err=%v", briefBytes, err)
+	}
+	copiedSkill, err := os.ReadFile(filepath.Join(agentEnv["OPENCODE_CONFIG_DIR"], "skills", "managed-skill", "SKILL.md"))
+	if err != nil || !strings.Contains(string(copiedSkill), "managed skill") || !strings.Contains(string(copiedSkill), "name: managed-skill") {
+		t.Fatalf("managed skill copy = %q err=%v", copiedSkill, err)
+	}
+
+	if err := configureManagedA2AV2OpenCodeEnv(map[string]string{}, "codex", root, runtimeBrief, skills); err == nil {
+		t.Fatal("non-OpenCode provider must fail closed")
 	}
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Archive, ArchiveRestore, MoreHorizontal, Pencil, Trash2, UserRound } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
+import { Badge } from "@multica/ui/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -106,35 +107,42 @@ export function ChatSessionHeader({
       )}
 
       <div className="min-w-0 flex-1">
-        {editing ? (
-          <input
-            ref={inputRef}
-            value={draft}
-            maxLength={200}
-            aria-label={t(($) => $.header.rename)}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={commitRename}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commitRename();
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                setEditing(false);
-              }
-            }}
-            className="w-full rounded-sm bg-background px-1 py-0.5 text-body font-semibold outline-none ring-1 ring-border focus-visible:ring-brand"
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={startRename}
-            title={t(($) => $.header.rename)}
-            className="block max-w-full truncate text-left text-body font-semibold text-foreground outline-none hover:text-foreground/80 focus-visible:text-foreground/80"
-          >
-            {title}
-          </button>
-        )}
+        <div className="flex min-w-0 items-center gap-1.5">
+          {editing ? (
+            <input
+              ref={inputRef}
+              value={draft}
+              maxLength={200}
+              aria-label={t(($) => $.header.rename)}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commitRename}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitRename();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  setEditing(false);
+                }
+              }}
+              className="min-w-0 flex-1 rounded-sm bg-background px-1 py-0.5 text-body font-semibold outline-none ring-1 ring-border focus-visible:ring-brand"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={startRename}
+              title={t(($) => $.header.rename)}
+              className="block min-w-0 truncate text-left text-body font-semibold text-foreground outline-none hover:text-foreground/80 focus-visible:text-foreground/80"
+            >
+              {title}
+            </button>
+          )}
+          {session.is_a2a === true && (
+            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[9px] leading-none">
+              {t(($) => $.a2a_label)}
+            </Badge>
+          )}
+        </div>
         {agent && (
           <div className="truncate text-caption text-muted-foreground">
             {agent.name}

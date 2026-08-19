@@ -83,6 +83,15 @@ JOIN agent_skill ask ON ask.skill_id = s.id
 WHERE ask.agent_id = $1 AND ask.enabled = TRUE
 ORDER BY s.name ASC;
 
+-- name: ListEnabledAgentSkillCardMetadata :many
+-- Public Agent Cards need only stable identity and descriptive metadata. Do
+-- not load SKILL.md content or configuration into the anonymous card path.
+SELECT s.id, s.name, s.description
+FROM skill s
+JOIN agent_skill ask ON ask.skill_id = s.id
+WHERE ask.agent_id = $1 AND ask.enabled = TRUE
+ORDER BY s.name ASC, s.id ASC;
+
 -- name: ListAgentSkillSummaries :many
 -- Summary variant for the agent skills list endpoint — omits `content` for
 -- the same reason as ListSkillSummariesByWorkspace.

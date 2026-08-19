@@ -462,6 +462,7 @@ func main() {
 		WecomMetrics:       wecomMetrics,
 		DaemonHub:          daemonHub,
 		DaemonWakeup:       daemonWakeup,
+		RunnerRelay:        relay,
 		FeatureFlags:       flags,
 		HeartbeatScheduler: heartbeatScheduler,
 		SandboxRelaySigner: sandboxRelaySigner,
@@ -497,6 +498,7 @@ func main() {
 
 	// Start background sweeper to mark stale runtimes as offline.
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus)
+	go runRunnerArtifactCleanup(sweepCtx, queries)
 	go taskSvc.RunDeferredChannelTaskPromoter(sweepCtx)
 	go heartbeatScheduler.Run(sweepCtx)
 	if h.FCE2BStable != nil {
@@ -509,6 +511,9 @@ func main() {
 	go runDBStatsLogger(sweepCtx, pool)
 	if h.WebhookDeliveryWorker != nil {
 		go h.WebhookDeliveryWorker.Run(sweepCtx)
+	}
+	if h.A2APushWorker != nil {
+		go h.A2APushWorker.Run(sweepCtx)
 	}
 	if h.TaskCompletionWorker != nil {
 		go h.TaskCompletionWorker.Run(sweepCtx)
@@ -633,6 +638,9 @@ func main() {
 	heartbeatScheduler.Stop()
 	if h.WebhookDeliveryWorker != nil && !h.WebhookDeliveryWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("webhook delivery worker did not exit within shutdown timeout")
+	}
+	if h.A2APushWorker != nil && !h.A2APushWorker.WaitWithTimeout(5*time.Second) {
+		slog.Warn("A2A push worker did not exit within shutdown timeout")
 	}
 	if h.TaskCompletionWorker != nil && !h.TaskCompletionWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("task completion worker did not exit within shutdown timeout")

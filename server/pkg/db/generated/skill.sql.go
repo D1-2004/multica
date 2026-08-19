@@ -365,6 +365,42 @@ func (q *Queries) ListAgentSkillsByWorkspace(ctx context.Context, workspaceID pg
 	return items, nil
 }
 
+const listEnabledAgentSkillCardMetadata = `-- name: ListEnabledAgentSkillCardMetadata :many
+SELECT s.id, s.name, s.description
+FROM skill s
+JOIN agent_skill ask ON ask.skill_id = s.id
+WHERE ask.agent_id = $1 AND ask.enabled = TRUE
+ORDER BY s.name ASC, s.id ASC
+`
+
+type ListEnabledAgentSkillCardMetadataRow struct {
+	ID          pgtype.UUID `json:"id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+}
+
+// Public Agent Cards need only stable identity and descriptive metadata. Do
+// not load SKILL.md content or configuration into the anonymous card path.
+func (q *Queries) ListEnabledAgentSkillCardMetadata(ctx context.Context, agentID pgtype.UUID) ([]ListEnabledAgentSkillCardMetadataRow, error) {
+	rows, err := q.db.Query(ctx, listEnabledAgentSkillCardMetadata, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEnabledAgentSkillCardMetadataRow{}
+	for rows.Next() {
+		var i ListEnabledAgentSkillCardMetadataRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Description); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSkillFiles = `-- name: ListSkillFiles :many
 
 SELECT id, skill_id, path, content, created_at, updated_at FROM skill_file

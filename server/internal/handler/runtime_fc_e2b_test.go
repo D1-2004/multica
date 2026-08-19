@@ -26,6 +26,26 @@ type staticFCE2BTemplateRunner struct {
 	calls  int
 }
 
+type informationalStatusWriter struct {
+	header http.Header
+	codes  []int
+}
+
+func (w *informationalStatusWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *informationalStatusWriter) WriteHeader(code int) {
+	w.codes = append(w.codes, code)
+}
+
+func (w *informationalStatusWriter) Write(body []byte) (int, error) {
+	return len(body), nil
+}
+
 func (r *staticFCE2BTemplateRunner) Run(context.Context, string, []string, []string) (string, error) {
 	r.calls++
 	return r.output, r.err
@@ -46,6 +66,8 @@ func TestFCE2BTemplateCapabilities(t *testing.T) {
 		{service.FCE2BTemplate{Providers: []string{"hermes"}, Capabilities: []string{"dws", "dws.im_event"}}, []string{"hermes", "dws", "dws.im_event"}},
 		{service.FCE2BTemplate{Providers: []string{"opencode"}}, []string{"opencode"}},
 		{service.FCE2BTemplate{Providers: []string{"pi"}, Capabilities: []string{"dws"}}, []string{"pi", "dws"}},
+		{service.FCE2BTemplate{Providers: []string{"dsh"}, Capabilities: []string{service.A2AInboundOpenCodeCapability, service.A2AInboundHermesCapability, service.DSHTrajectoryCapability}}, []string{"dsh", service.A2AInboundOpenCodeCapability, service.DSHTrajectoryCapability}},
+		{service.FCE2BTemplate{Providers: []string{"opencode-v2"}, Capabilities: []string{service.A2AInboundOpenCodeCapability, service.A2AInboundPiCapability}}, []string{"opencode-v2", service.A2AInboundOpenCodeCapability}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.template.Template, func(t *testing.T) {
@@ -57,6 +79,34 @@ func TestFCE2BTemplateCapabilities(t *testing.T) {
 				t.Fatalf("fcE2BTemplateCapabilities(%q) = %#v, want %#v", tc.template.Template, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestValidateASBArtifactWithProgress(t *testing.T) {
+	w := &informationalStatusWriter{}
+	want := map[string]any{"schema_version": 7}
+	got, err := validateASBArtifactWithProgress(
+		context.Background(),
+		w,
+		time.Millisecond,
+		func(context.Context) (map[string]any, error) {
+			time.Sleep(5 * time.Millisecond)
+			return want, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("manifest = %#v, want %#v", got, want)
+	}
+	if len(w.codes) == 0 {
+		t.Fatal("slow validation emitted no informational response")
+	}
+	for _, code := range w.codes {
+		if code != http.StatusProcessing {
+			t.Fatalf("informational status = %d, want %d", code, http.StatusProcessing)
+		}
 	}
 }
 

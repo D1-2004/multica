@@ -39,6 +39,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -179,19 +180,33 @@ type DaemonPendingWorkNotifier interface {
 	NotifyPendingWork(runtimeID, kind string)
 }
 
+type enterpriseIdentityService interface {
+	Run(context.Context)
+	StartBinding(context.Context, service.StartEnterpriseIdentityBindingInput) (service.StartEnterpriseIdentityBindingResult, error)
+	PrepareBindingCompletion(context.Context, string) (service.PreparedEnterpriseIdentityBinding, error)
+	CompletePreparedBinding(context.Context, service.PreparedEnterpriseIdentityBinding, string) (service.CompleteEnterpriseIdentityBindingResult, error)
+	Revoke(context.Context, pgtype.UUID, pgtype.UUID) error
+	ForceRotateIdentitySource(context.Context, pgtype.UUID, pgtype.UUID, string) (service.EnterpriseIdentitySourceRotationResult, error)
+}
+
 type Handler struct {
 	Queries                 *db.Queries
 	DB                      dbExecutor
 	TxStarter               txStarter
 	Hub                     *realtime.Hub
 	DaemonHub               *daemonws.Hub
+	RunnerHub               *runnerws.Hub
+	RunnerRelay             realtime.Broadcaster
 	DaemonProfileRefresh    RuntimeProfileRefreshNotifier
 	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
 	Bus                     *events.Bus
 	TaskService             *service.TaskService
+	A2AService              *service.A2AService
+	A2AProtocol             http.Handler
+	A2APushWorker           *service.A2APushWorker
 	FCE2BLauncher           *service.FCE2BLauncher
 	ASBLauncher             *service.ASBLauncher
-	EnterpriseIdentity      *service.EnterpriseIdentityService
+	EnterpriseIdentity      enterpriseIdentityService
 	FCE2BStable             *service.FCE2BStableService
 	IssueService            *service.IssueService
 	IssueCommentService     *service.IssueCommentService
@@ -467,6 +482,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		fcLauncher.SetPool(pool)
 	}
 	taskSvc.RuntimeLauncher = fcLauncher
+	a2aSvc := service.NewA2AService(queries, txStarter, taskSvc, store)
+	taskSvc.A2AStateObserver = a2aSvc
 
 	githubClient, githubErr := githubapp.New(githubapp.Config{
 		AppID:           os.Getenv("GITHUB_APP_ID"),
@@ -491,10 +508,12 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		TxStarter:                    txStarter,
 		Hub:                          hub,
 		DaemonHub:                    daemonHub,
+		RunnerHub:                    runnerws.NewHub(),
 		DaemonProfileRefresh:         daemonProfileRefresh,
 		DaemonWorkspaceRefresh:       daemonWorkspaceRefresh,
 		Bus:                          bus,
 		TaskService:                  taskSvc,
+		A2AService:                   a2aSvc,
 		FCE2BLauncher:                fcLauncher,
 		IssueService:                 service.NewIssueService(queries, txStarter, bus, analyticsClient, taskSvc),
 		IssueCommentService:          service.NewIssueCommentService(queries, bus, taskSvc),
@@ -523,6 +542,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		LLM:                 llmClient,
 		cfg:                 cfg,
 	}
+	h.RunnerHub.SetHandlers(h.handleRunnerConnected, h.handleRunnerDisconnected, h.handleRunnerHeartbeat, h.handleRunnerResult)
 	if pool, ok := txStarter.(*pgxpool.Pool); ok {
 		h.FCE2BStable = service.NewFCE2BStableService(
 			pool,

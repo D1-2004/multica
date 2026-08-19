@@ -423,6 +423,36 @@ func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 	})
 }
 
+func TestA2AInvocationMarkerFailsClosedWithoutInternalIDs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := cli.SaveCLIConfig(cli.CLIConfig{
+		Token:       "mul_profile_token",
+		WorkspaceID: "profile-workspace",
+	}); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+	t.Setenv("MULTICA_DAEMON_PORT", "")
+	t.Setenv("MULTICA_TOKEN", "")
+	t.Setenv("MULTICA_WORKSPACE_ID", "")
+	t.Setenv(a2aInvocationEnvKey, "1")
+
+	if !inAgentExecutionContext() {
+		t.Fatal("A2A marker must count as an Agent execution context")
+	}
+	if !inDaemonManagedExecutionContext() {
+		t.Fatal("A2A marker must count as a daemon-managed execution context")
+	}
+	if got := resolveToken(testCmd()); got != "" {
+		t.Fatalf("resolveToken() = %q, want empty instead of profile token", got)
+	}
+	if got := resolveWorkspaceID(testCmd()); got != "" {
+		t.Fatalf("resolveWorkspaceID() = %q, want empty instead of profile workspace", got)
+	}
+}
+
 func TestNewAPIClient_AgentContextRequiresTaskToken(t *testing.T) {
 	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:8080")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")

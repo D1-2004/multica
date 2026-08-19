@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
+
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
 import enAgents from "../../locales/en/agents.json";
@@ -47,6 +48,9 @@ vi.mock("./tabs/identity-tab", () => ({
 }));
 vi.mock("./tabs/llm-trace-tab", () => ({
   LLMTraceTab: () => <div>llm-trace-tab</div>,
+}));
+vi.mock("./tabs/a2a-tab", () => ({
+  A2ATab: () => <div>a2a-tab</div>,
 }));
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
@@ -170,8 +174,12 @@ function makeASBRuntime(): AgentRuntime {
 
 function renderPane(
   runtimes: AgentRuntime[],
-  agentOverrides: Partial<Agent> = {},
-  { canEdit = true }: { canEdit?: boolean } = {},
+  options: {
+    currentUserId?: string;
+    agent?: Agent;
+    agentOverrides?: Partial<Agent>;
+    canEdit?: boolean;
+  } = {},
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -189,15 +197,18 @@ function renderPane(
       <NavigationProvider value={navigation}>
         <QueryClientProvider client={queryClient}>
           <AgentOverviewPane
-            agent={{ ...baseAgent, ...agentOverrides }}
+            agent={
+              options.agent ?? { ...baseAgent, ...options.agentOverrides }
+            }
             runtime={runtimes[0] ?? null}
             owner={null}
             runtimes={runtimes}
             members={[]}
             onUpdate={vi.fn().mockResolvedValue(undefined)}
-            canEdit={canEdit}
+            canEdit={options.canEdit ?? true}
             canOperateDingTalkBinding
             dingTalkBindingPermissionLoading={false}
+            currentUserId={options.currentUserId}
           />
         </QueryClientProvider>
       </NavigationProvider>
@@ -236,7 +247,9 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     (_label, provider) => {
       renderPane([makeRuntime(provider)]);
       openCapabilities();
-      expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("tab", { name: /^MCP$/i }),
+      ).toBeInTheDocument();
     },
   );
 
@@ -253,7 +266,9 @@ describe("AgentOverviewPane MCP tab visibility", () => {
   it("shows MCP only for Pi runtimes whose template declares the capability", () => {
     const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
     openCapabilities();
-    expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /^MCP$/i }),
+    ).toBeInTheDocument();
     unmount();
 
     renderPane([makeRuntime("pi", ["pi", "dws"])]);
@@ -274,6 +289,16 @@ describe("AgentOverviewPane MCP tab visibility", () => {
 });
 
 describe("AgentOverviewPane Integrations tab visibility", () => {
+  it("shows Integrations to the agent owner for MCP export even without channel integrations", () => {
+    renderPane([makeRuntime("claude")], { currentUserId: "user-1" });
+
+    openCapabilities();
+
+    expect(
+      screen.getByRole("tab", { name: /^Integrations$/i }),
+    ).toBeInTheDocument();
+  });
+
   it("shows the Integrations tab once the deployment has Lark configured", async () => {
     larkListingRef.current = { installations: [], configured: true };
     renderPane([makeRuntime("claude")]);
@@ -331,6 +356,7 @@ describe("AgentOverviewPane Identity tab", () => {
       "Instructions",
       "Skills",
       "MCP",
+      "Local Runner",
       "Integrations",
       "Identity",
     ]);
@@ -340,7 +366,9 @@ describe("AgentOverviewPane Identity tab", () => {
   });
 
   it("shows Identity for an ASB runtime even when DingTalk account binding is not configured", () => {
-    renderPane([makeASBRuntime()], { runtime_mode: "cloud" });
+    renderPane([makeASBRuntime()], {
+      agentOverrides: { runtime_mode: "cloud" },
+    });
     openCapabilities();
 
     expect(screen.getByRole("tab", { name: /^Identity$/i })).toBeInTheDocument();
@@ -371,7 +399,9 @@ describe("AgentOverviewPane Settings navigation", () => {
     ).not.toBeInTheDocument();
     unmount();
 
-    renderPane([makeRuntime("hermes")], { runtime_mode: "cloud" });
+    renderPane([makeRuntime("hermes")], {
+      agentOverrides: { runtime_mode: "cloud" },
+    });
     openSettings();
     expect(
       screen.getByRole("tab", { name: /^LLM Trace$/i }),
@@ -392,10 +422,25 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     // The env endpoints admit the agent owner or a workspace owner/admin
     // (MUL-5438) — the rule `canEdit` already encodes. Anyone else who opens
     // the tab hits a guaranteed 403 on "Reveal & edit".
-    renderPane([makeRuntime("claude")], {}, { canEdit: false });
+		renderPane([makeRuntime("claude")], { canEdit: false });
     openSettings();
     expect(
       screen.queryByRole("tab", { name: /^Environment$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows A2A only to the agent owner", () => {
+    const { unmount } = renderPane([makeRuntime("claude")], {
+      currentUserId: "user-1",
+    });
+    openSettings();
+    expect(screen.getByRole("tab", { name: /^A2A$/i })).toBeInTheDocument();
+    unmount();
+
+    renderPane([makeRuntime("claude")], { currentUserId: "user-2" });
+    openSettings();
+    expect(
+      screen.queryByRole("tab", { name: /^A2A$/i }),
     ).not.toBeInTheDocument();
   });
 });

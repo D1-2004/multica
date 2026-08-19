@@ -11,6 +11,10 @@ func scopeDetail(direct, group []string) *DingTalkMessageScopeDetail {
 	return &DingTalkMessageScopeDetail{DirectCids: direct, GroupCids: group}
 }
 
+func scopeDetailWithEmoji(direct, group, emoji []string) *DingTalkMessageScopeDetail {
+	return &DingTalkMessageScopeDetail{DirectCids: direct, GroupCids: group, EmojiReactionCids: emoji}
+}
+
 func TestNormalizeReportedMessageScope(t *testing.T) {
 	t.Run("accepts", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -238,5 +242,96 @@ func TestDingTalkAccountConfigDefaultsMissingScopeVersionToLegacy(t *testing.T) 
 	}
 	if config.MessageScopeVersion != DingTalkMessageScopeVersionLegacy || config.MessageScopeDetail != nil {
 		t.Fatalf("parsed = %#v", config)
+	}
+}
+
+func TestNormalizeMessageScopeDetailEmojiReactionBucket(t *testing.T) {
+	t.Run("missing emoji bucket normalizes to empty", func(t *testing.T) {
+		detail, err := normalizeDingTalkMessageScopeDetail(scopeDetail([]string{}, []string{"grp-1"}))
+		if err != nil {
+			t.Fatalf("normalizeDingTalkMessageScopeDetail: %v", err)
+		}
+		if detail.EmojiReactionCids == nil || len(detail.EmojiReactionCids) != 0 {
+			t.Fatalf("emoji bucket = %#v", detail.EmojiReactionCids)
+		}
+	})
+	t.Run("accepts specified emoji cids", func(t *testing.T) {
+		detail, err := normalizeDingTalkMessageScopeDetail(
+			scopeDetailWithEmoji([]string{"101:202"}, []string{}, []string{"grp-1", "grp-2"}))
+		if err != nil {
+			t.Fatalf("normalizeDingTalkMessageScopeDetail: %v", err)
+		}
+		if len(detail.EmojiReactionCids) != 2 || detail.EmojiReactionCids[0] != "grp-1" {
+			t.Fatalf("emoji bucket = %#v", detail.EmojiReactionCids)
+		}
+	})
+	t.Run("rejects", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			detail *DingTalkMessageScopeDetail
+		}{
+			{"emoji bucket rejects wildcard", scopeDetailWithEmoji([]string{"*"}, []string{}, []string{"*"})},
+			{"emoji bucket rejects wildcard among cids", scopeDetailWithEmoji([]string{"*"}, []string{}, []string{"grp-1", "*"})},
+			{"emoji bucket rejects empty cid", scopeDetailWithEmoji([]string{"*"}, []string{}, []string{""})},
+			{"emoji bucket rejects whitespace cid", scopeDetailWithEmoji([]string{"*"}, []string{}, []string{"grp 1"})},
+			{"emoji bucket rejects oversize cid", scopeDetailWithEmoji([]string{"*"}, []string{}, []string{strings.Repeat("a", maxScopeCIDBytes+1)})},
+			{"emoji bucket does not satisfy the both-empty rule", scopeDetailWithEmoji([]string{}, []string{}, []string{"grp-1"})},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if _, err := normalizeDingTalkMessageScopeDetail(tc.detail); err == nil {
+					t.Fatal("expected rejection")
+				}
+			})
+		}
+	})
+}
+
+func TestPublicBindingEchoesEmojiReactionScope(t *testing.T) {
+	t.Run("v1 upgrades to empty emoji bucket", func(t *testing.T) {
+		outcome := messageRouteOutcome(testBoundScopeConfig(DingTalkMessageScopeAll))
+		if outcome.Subscription.EmojiReactionCids == nil || len(outcome.Subscription.EmojiReactionCids) != 0 {
+			t.Fatalf("emoji view = %#v", outcome.Subscription.EmojiReactionCids)
+		}
+		if len(outcome.EmojiConversations) != 0 {
+			t.Fatalf("emoji conversations = %#v", outcome.EmojiConversations)
+		}
+	})
+	t.Run("v2 echoes stored emoji bucket and conversations", func(t *testing.T) {
+		config := testBoundScopeConfig(DingTalkMessageScopeCustom)
+		config.MessageScopeVersion = DingTalkMessageScopeVersionBuckets
+		config.MessageScopeDetail = scopeDetailWithEmoji([]string{}, []string{"grp-1"}, []string{"grp-2"})
+		config.Conversations = []DingTalkConversationSnapshot{{CID: "grp-1", Name: "Project"}}
+		config.EmojiConversations = []DingTalkConversationSnapshot{{CID: "grp-2", Name: "Emoji Group"}}
+		outcome := messageRouteOutcome(config)
+		if len(outcome.Subscription.EmojiReactionCids) != 1 || outcome.Subscription.EmojiReactionCids[0] != "grp-2" {
+			t.Fatalf("emoji view = %#v", outcome.Subscription.EmojiReactionCids)
+		}
+		if len(outcome.EmojiConversations) != 1 || outcome.EmojiConversations[0].CID != "grp-2" {
+			t.Fatalf("emoji conversations = %#v", outcome.EmojiConversations)
+		}
+	})
+}
+
+func TestDingTalkAccountConfigEmojiFieldsRoundTrip(t *testing.T) {
+	config := testBoundScopeConfig(DingTalkMessageScopeCustom)
+	config.MessageScopeVersion = DingTalkMessageScopeVersionBuckets
+	config.MessageScopeDetail = scopeDetailWithEmoji([]string{}, []string{"grp-1"}, []string{"grp-2"})
+	config.Conversations = []DingTalkConversationSnapshot{{CID: "grp-1", Name: "Project"}}
+	config.EmojiConversations = []DingTalkConversationSnapshot{{CID: "grp-2", Name: "Emoji Group"}}
+	raw, err := config.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	parsed, err := ParseDingTalkAccountConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDingTalkAccountConfig: %v", err)
+	}
+	if parsed.MessageScopeDetail == nil ||
+		len(parsed.MessageScopeDetail.EmojiReactionCids) != 1 ||
+		parsed.MessageScopeDetail.EmojiReactionCids[0] != "grp-2" {
+		t.Fatalf("parsed detail = %#v", parsed.MessageScopeDetail)
+	}
+	if len(parsed.EmojiConversations) != 1 || parsed.EmojiConversations[0].CID != "grp-2" {
+		t.Fatalf("parsed emoji conversations = %#v", parsed.EmojiConversations)
 	}
 }

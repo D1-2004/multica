@@ -755,6 +755,35 @@ func TestPendingChatTaskAggregatesIncludeDeferredRetry(t *testing.T) {
 	}
 }
 
+func TestPendingChatTasks_IncludeA2ASession(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "PendingVisibleA2AAgent", []byte("[]"))
+	sessionID := insertChatSessionAs(t, agentID, testUserID)
+	bindA2ATestContext(t, agentID, sessionID, testUserID)
+	taskID := insertPendingChatTask(t, agentID, sessionID, "running")
+
+	listW := httptest.NewRecorder()
+	testHandler.ListPendingChatTasks(
+		listW,
+		chatPendingCtxAs(t, newRequestAs(testUserID, "GET", "/api/chat/pending-tasks", nil), testUserID),
+	)
+	if tasks := decodePendingTasks(t, listW).Tasks; !containsPendingTask(tasks, taskID) {
+		t.Fatalf("A2A task %s was excluded from pending chat tasks: %+v", taskID, tasks)
+	}
+
+	hasW := httptest.NewRecorder()
+	testHandler.HasPendingChatTasks(
+		hasW,
+		chatPendingCtxAs(t, newRequestAs(testUserID, "GET", "/api/chat/pending-tasks/has-any", nil), testUserID),
+	)
+	if !decodeHasPending(t, hasW) {
+		t.Fatal("has-any returned false for an in-flight A2A chat task")
+	}
+}
+
 // TestHasPendingChatTasks_FalseWhenOnlyInaccessiblePrivateAgent verifies the P3
 // boolean endpoint preserves the same permission filtering as the list: a
 // member whose only in-flight task is on a private agent they can't access

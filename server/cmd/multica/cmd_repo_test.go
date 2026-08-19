@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -189,6 +190,51 @@ func TestRunRepoRemoveRejectsMissingRepoWithoutPatch(t *testing.T) {
 	}
 }
 
+func TestRunRepoCheckoutSendsTaskCapability(t *testing.T) {
+	const taskToken = "mat_checkout_capability"
+	var gotAuthorization string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuthorization = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"path":        "/tmp/work/repo",
+			"branch_name": "agent/test",
+		})
+	}))
+	t.Cleanup(srv.Close)
+	_, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MULTICA_DAEMON_PORT", port)
+	t.Setenv("MULTICA_TOKEN", taskToken)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_AGENT_NAME", "builder")
+	t.Setenv("MULTICA_TASK_ID", "task-1")
+
+	if err := runRepoCheckout(&cobra.Command{}, []string{"https://git.example.com/repo.git"}); err != nil {
+		t.Fatalf("runRepoCheckout: %v", err)
+	}
+	if gotAuthorization != "Bearer "+taskToken {
+		t.Fatalf("Authorization = %q, want task bearer", gotAuthorization)
+	}
+	if gotBody["workspace_id"] != "ws-1" || gotBody["task_id"] != "task-1" {
+		t.Fatalf("request context = %+v, want bound workspace/task", gotBody)
+	}
+}
+
+func TestRunRepoCheckoutRejectsMissingTaskCapability(t *testing.T) {
+	t.Setenv("MULTICA_DAEMON_PORT", "19514")
+	t.Setenv("MULTICA_TOKEN", "")
+	err := runRepoCheckout(&cobra.Command{}, []string{"https://git.example.com/repo.git"})
+	if err == nil || !strings.Contains(err.Error(), "task-scoped MULTICA_TOKEN") {
+		t.Fatalf("error = %v, want missing task capability", err)
+	}
+}
+
 func TestRunRepoCheckoutForwardsManagedCheckoutMode(t *testing.T) {
 	var body map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +253,7 @@ func TestRunRepoCheckoutForwardsManagedCheckoutMode(t *testing.T) {
 	defer srv.Close()
 
 	t.Setenv("MULTICA_DAEMON_PORT", strings.TrimPrefix(srv.URL, "http://127.0.0.1:"))
+	t.Setenv("MULTICA_TOKEN", "mat_checkout_mode_test")
 	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
 	t.Setenv("MULTICA_AGENT_NAME", "Test Agent")
 	t.Setenv("MULTICA_TASK_ID", "task-1")

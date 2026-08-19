@@ -1386,3 +1386,118 @@ func mustBuildDispatchPrompt(t *testing.T, command DispatchCommand) DispatchProm
 	}
 	return prompt
 }
+
+func emotionReplyDispatchCommand() DispatchCommand {
+	return DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "emotionReply", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-group", Type: "group", Title: "项目群"},
+			Sender:       DispatchSender{DisplayName: "张三", OpenDingTalkID: "open-sender"},
+			Messages: []DispatchMessage{
+				{
+					OpenMsgID:  "msg-reacted",
+					OccurredAt: 1784500000000,
+					Text:       "本周发布计划已同步",
+					Reaction:   &DispatchMessageReaction{EmotionName: "赞", Action: "add", OperateTime: 1784500001000},
+				},
+			},
+		}},
+		Surface:          DispatchSurface{Type: "issue"},
+		Outbound:         DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		ContextPrompt:    "ROUTER CONTEXT",
+		ExternalIdentity: AgentDispatchExternalIdentity{ContextToken: "context-token", ExpiresAt: 4102444800000},
+	}
+}
+
+func TestEmotionReplyDispatchValidatesAndRendersReactionEntries(t *testing.T) {
+	c := emotionReplyDispatchCommand()
+	if err := c.validate(); err != nil {
+		t.Fatalf("valid emotionReply dispatch rejected: %v", err)
+	}
+
+	prompt := mustBuildDispatchPrompt(t, c)
+	if !strings.Contains(prompt.DisplayContent, "张三") ||
+		!strings.Contains(prompt.DisplayContent, "对消息「本周发布计划已同步」贴上了表情 赞") {
+		t.Fatalf("display content = %q", prompt.DisplayContent)
+	}
+	for _, secret := range []string{"cid-group", "open-sender", "msg-reacted"} {
+		if strings.Contains(prompt.DisplayContent, secret) {
+			t.Fatalf("display content leaked %q: %q", secret, prompt.DisplayContent)
+		}
+	}
+
+	title := dispatchIssueTitle(c, dispatchWindowIdempotencyKey(c))
+	if !strings.Contains(title, "表情回复") || !strings.Contains(title, "赞") {
+		t.Fatalf("issue title = %q", title)
+	}
+
+	// add 与 remove 是独立事件：幂等键必须不同（remove 不抵消 add）。
+	removed := emotionReplyDispatchCommand()
+	removed.Event.Data.Messages[0].Reaction.Action = "remove"
+	if dispatchWindowIdempotencyKey(c) == dispatchWindowIdempotencyKey(removed) {
+		t.Fatal("add/remove reactions share the same idempotency key")
+	}
+}
+
+func TestEmotionReplyDispatchRendersEmptyTextAndRemoveAction(t *testing.T) {
+	c := emotionReplyDispatchCommand()
+	c.Event.Data.Messages[0].Text = ""
+	c.Event.Data.Messages[0].Reaction.Action = "remove"
+	if err := c.validate(); err != nil {
+		t.Fatalf("reaction on attachment-only message rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if !strings.Contains(prompt.DisplayContent, "对消息「一条消息」移除了表情 赞") {
+		t.Fatalf("display content = %q", prompt.DisplayContent)
+	}
+}
+
+func TestEmotionReplyDispatchRejectsInvalidReactionEntries(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		mutate func(*DispatchCommand)
+	}{
+		{"robot source", func(c *DispatchCommand) { c.Source.Type = "robot" }},
+		{"invalid action", func(c *DispatchCommand) { c.Event.Data.Messages[0].Reaction.Action = "peek" }},
+		{"empty emotion name", func(c *DispatchCommand) { c.Event.Data.Messages[0].Reaction.EmotionName = "" }},
+		{"missing openMsgId", func(c *DispatchCommand) { c.Event.Data.Messages[0].OpenMsgID = "" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := emotionReplyDispatchCommand()
+			tc.mutate(&c)
+			if err := c.validate(); err == nil {
+				t.Fatal("expected rejection")
+			}
+		})
+	}
+}
+
+func TestChannelMixedWindowRendersReactionAlongsideMessages(t *testing.T) {
+	// 混合窗口：顶层 type 仍是 message.created，条目级 reaction 独立分流渲染。
+	c := emotionReplyDispatchCommand()
+	c.Event.Type = "message.created"
+	c.Event.Data.Messages = append([]DispatchMessage{
+		{OpenMsgID: "msg-user", OccurredAt: 1784499999000, Text: "这个方案看一下"},
+	}, c.Event.Data.Messages...)
+	if err := c.validate(); err != nil {
+		t.Fatalf("mixed window rejected: %v", err)
+	}
+	prompt := mustBuildDispatchPrompt(t, c)
+	if !strings.Contains(prompt.DisplayContent, "这个方案看一下") ||
+		!strings.Contains(prompt.DisplayContent, "对消息「本周发布计划已同步」贴上了表情 赞") {
+		t.Fatalf("mixed display content = %q", prompt.DisplayContent)
+	}
+}
+
+func TestApplyDingTalkDispatchPromptRebuildsInstructionForEmotionReply(t *testing.T) {
+	context := dispatchTaskContextForTest(t, emotionReplyDispatchCommand())
+	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留交接"}
+	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
+	if response.Instruction != "ROUTER CONTEXT" {
+		t.Fatalf("emotionReply claim instruction = %q", response.Instruction)
+	}
+	if response.HandoffNote != "保留交接" {
+		t.Fatalf("user-visible handoff changed: %q", response.HandoffNote)
+	}
+}

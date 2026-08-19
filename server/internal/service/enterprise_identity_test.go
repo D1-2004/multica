@@ -20,6 +20,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -29,25 +30,29 @@ import (
 )
 
 type fakeEnterpriseIdentityStore struct {
-	attempt         db.AgentEnterpriseIdentityAttempt
-	agent           db.Agent
-	current         db.AgentEnterpriseIdentity
-	reusable        db.AgentEnterpriseIdentity
-	reusableArgs    db.GetReusableAgentEnterpriseIdentitySourceParams
-	references      []db.AgentEnterpriseIdentity
-	getCurrentErr   error
-	createAttempt   db.CreateAgentEnterpriseIdentityAttemptParams
-	upsert          db.UpsertAgentEnterpriseIdentityParams
-	sourceCAS       db.CompareAndSwapAgentEnterpriseIdentitySourceParams
-	cas             db.CompareAndSwapAgentEnterpriseIdentityTokenParams
-	markNeedsReauth int
-	maintenance     []db.AgentEnterpriseIdentity
-	maintenanceArgs db.ListAgentEnterpriseIdentitiesForMaintenanceParams
-	activeSessions  []db.FcE2bSandboxSession
-	markedStale     []db.MarkCloudSandboxSessionStaleParams
-	rotatedSources  int
-	sourceRotation  db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams
-	invalidSources  int
+	attempt               db.AgentEnterpriseIdentityAttempt
+	activeAttempt         db.AgentEnterpriseIdentityAttempt
+	completedAttempt      db.CompleteAgentEnterpriseIdentityAttemptParams
+	deletedAttemptsBefore pgtype.Timestamptz
+	agent                 db.Agent
+	current               db.AgentEnterpriseIdentity
+	reusable              db.AgentEnterpriseIdentity
+	reusableArgs          db.GetReusableAgentEnterpriseIdentitySourceParams
+	references            []db.AgentEnterpriseIdentity
+	getCurrentErr         error
+	createAttempt         db.CreateAgentEnterpriseIdentityAttemptParams
+	upsert                db.UpsertAgentEnterpriseIdentityParams
+	sourceCAS             db.CompareAndSwapAgentEnterpriseIdentitySourceParams
+	cas                   db.CompareAndSwapAgentEnterpriseIdentityTokenParams
+	markNeedsReauth       int
+	maintenance           []db.AgentEnterpriseIdentity
+	maintenanceArgs       db.ListAgentEnterpriseIdentitiesForMaintenanceParams
+	activeSessions        []db.FcE2bSandboxSession
+	markedStale           []db.MarkCloudSandboxSessionStaleParams
+	touchedSources        int
+	rotatedSources        int
+	sourceRotation        db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams
+	invalidSources        int
 }
 
 func (f *fakeEnterpriseIdentityStore) CreateAgentEnterpriseIdentityAttempt(
@@ -66,6 +71,32 @@ func (f *fakeEnterpriseIdentityStore) ConsumeAgentEnterpriseIdentityAttempt(
 		return db.AgentEnterpriseIdentityAttempt{}, pgx.ErrNoRows
 	}
 	return f.attempt, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) GetActiveAgentEnterpriseIdentityAttempt(
+	_ context.Context,
+	_ db.GetActiveAgentEnterpriseIdentityAttemptParams,
+) (db.AgentEnterpriseIdentityAttempt, error) {
+	if !f.activeAttempt.ID.Valid {
+		return db.AgentEnterpriseIdentityAttempt{}, pgx.ErrNoRows
+	}
+	return f.activeAttempt, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) CompleteAgentEnterpriseIdentityAttempt(
+	_ context.Context,
+	params db.CompleteAgentEnterpriseIdentityAttemptParams,
+) (int64, error) {
+	f.completedAttempt = params
+	return 1, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) DeleteExpiredAgentEnterpriseIdentityAttempts(
+	_ context.Context,
+	expiredBefore pgtype.Timestamptz,
+) (int64, error) {
+	f.deletedAttemptsBefore = expiredBefore
+	return 0, nil
 }
 
 func (f *fakeEnterpriseIdentityStore) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
@@ -190,6 +221,15 @@ func (f *fakeEnterpriseIdentityStore) CompareAndSwapAgentEnterpriseIdentitySourc
 		Valid: true,
 	}
 	return f.current, nil
+}
+
+func (f *fakeEnterpriseIdentityStore) TouchActiveAgentEnterpriseIdentitySourceReferences(
+	context.Context,
+	db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams,
+) (int64, error) {
+	f.touchedSources++
+	f.current.BucIdentitySourceUpdatedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	return 1, nil
 }
 
 func (f *fakeEnterpriseIdentityStore) RotateActiveAgentEnterpriseIdentitySourceReferences(
@@ -759,6 +799,98 @@ func TestEnterpriseIdentityStartBindingStoresOnlyHashedStateAndNonce(t *testing.
 	}
 }
 
+func TestEnterpriseIdentityStartBindingRejectsActiveAttempt(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 17, 4, 0, 0, 0, time.UTC)
+	store := &fakeEnterpriseIdentityStore{
+		activeAttempt: db.AgentEnterpriseIdentityAttempt{
+			ID:               util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+			CompletionStatus: "pending",
+		},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	_, err := serviceUnderTest.StartBinding(context.Background(), StartEnterpriseIdentityBindingInput{
+		WorkspaceID:  util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:      util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		RedirectPath: "/agents/222/settings",
+	})
+	if !errors.Is(err, ErrEnterpriseIdentityBindingInProgress) {
+		t.Fatalf("StartBinding error = %v, want binding in progress", err)
+	}
+	wantCutoff := now.Add(-defaultEnterpriseBindingCompletionTTL)
+	if !store.deletedAttemptsBefore.Valid || !store.deletedAttemptsBefore.Time.Equal(wantCutoff) {
+		t.Fatalf("expired attempt cleanup cutoff = %#v, want %s", store.deletedAttemptsBefore, wantCutoff)
+	}
+	if store.createAttempt.AgentID.Valid {
+		t.Fatalf("StartBinding created a duplicate OAuth attempt: %#v", store.createAttempt)
+	}
+}
+
+func TestEnterpriseIdentityCompleteBindingPersistsFailureStatus(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 17, 4, 0, 0, 0, time.UTC)
+	state := "oauth-state"
+	attemptID := util.MustParseUUID("44444444-4444-4444-4444-444444444444")
+	store := &fakeEnterpriseIdentityStore{
+		attempt: db.AgentEnterpriseIdentityAttempt{
+			ID:           attemptID,
+			WorkspaceID:  util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+			AgentID:      util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+			ActorUserID:  util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+			StateHash:    sha256Bytes(state),
+			NonceHash:    sha256Bytes("oauth-nonce"),
+			RedirectPath: "/agents/222/settings",
+		},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{verifyErr: ErrEnterpriseIdentityNeedsReauth},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	_, err := serviceUnderTest.CompleteBinding(context.Background(), state, "authorization-code")
+	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("CompleteBinding error = %v, want needs reauthorization", err)
+	}
+	if store.completedAttempt.ID != attemptID ||
+		store.completedAttempt.CompletionStatus != "failed" ||
+		!store.completedAttempt.CompletionErrorCode.Valid ||
+		store.completedAttempt.CompletionErrorCode.String != "needs_reauthorization" {
+		t.Fatalf("completed attempt = %#v", store.completedAttempt)
+	}
+}
+
+func TestEnterpriseIdentityBindingInProgressErrorMatchesOnlyPendingConstraint(t *testing.T) {
+	t.Parallel()
+
+	if !isEnterpriseIdentityBindingInProgressError(&pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "agent_enterprise_identity_attempt_one_pending_idx",
+	}) {
+		t.Fatal("pending binding constraint was not recognized")
+	}
+	if isEnterpriseIdentityBindingInProgressError(&pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "another_unique_constraint",
+	}) {
+		t.Fatal("unrelated unique constraint was recognized as binding in progress")
+	}
+}
+
 func TestEnterpriseIdentityStartBindingWithoutPreauthorizedApplications(t *testing.T) {
 	t.Parallel()
 
@@ -1064,6 +1196,71 @@ func TestEnterpriseIdentityReusesSharedSourceAcrossAgentsAndRuntimes(t *testing.
 			source.preparedOn,
 			source.parkedOn,
 			store.reusableArgs.RuntimeIds,
+		)
+	}
+}
+
+func TestEnterpriseIdentityReauthorizationCreatesFreshSource(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 15, 1, 0, 0, 0, time.UTC)
+	workspaceID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
+	boundBy := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	store := &fakeEnterpriseIdentityStore{reusable: db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                workspaceID,
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		BucIdentitySourceSandboxID: pgtype.Text{String: "expired-source-1", Valid: true},
+		BucIdentitySourceRuntimeID: runtimeID,
+		Status:                     "active",
+		BoundBy:                    boundBy,
+	}}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource)
+	tokens := BUCIdentityTokens{
+		AccessToken:  "fresh-access",
+		RefreshToken: "fresh-refresh",
+		IDToken:      "fresh-id",
+	}
+	availability, created, err := serviceUnderTest.provisionIdentitySourceForBinding(
+		context.Background(),
+		enterpriseIdentitySourceKey{
+			WorkspaceID:   workspaceID,
+			BoundBy:       boundBy,
+			RuntimeID:     runtimeID,
+			TenantLockKey: 42,
+			RawEmployeeID: "12345",
+			BUCAgentID:    "buc-agent-1",
+		},
+		[]pgtype.UUID{runtimeID},
+		tokens,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("provisionIdentitySourceForBinding: %v", err)
+	}
+	if !created || availability.SandboxID != "identity-source-1" ||
+		availability.RuntimeID != runtimeID {
+		t.Fatalf("fresh source availability = %#v, created=%t", availability, created)
+	}
+	if source.createCalls != 1 || source.tokens != tokens || source.key.RuntimeID != runtimeID {
+		t.Fatalf("fresh source creation = calls:%d tokens:%#v key:%#v", source.createCalls, source.tokens, source.key)
+	}
+	if len(source.prepared) != 0 || len(source.parked) != 0 {
+		t.Fatalf(
+			"reauthorization reused stale source: prepare=%v park=%v",
+			source.prepared,
+			source.parked,
 		)
 	}
 }
@@ -1408,15 +1605,106 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 		store.sourceRotation.ExpectedSandboxID.String != "source-1" ||
 		store.sourceRotation.NewRuntimeID != runtimeID ||
 		store.sourceRotation.NewSandboxID.String != "identity-source-rotated" ||
-		store.current.BucIdentitySourceSandboxID.String != "identity-source-rotated" ||
-		len(store.references) != 2 ||
-		store.references[0].BucIdentitySourceSandboxID.String != "identity-source-rotated" ||
-		store.references[1].BucIdentitySourceSandboxID.String != "identity-source-rotated" {
+		store.current.BucIdentitySourceSandboxID.String != "identity-source-rotated" {
 		t.Fatalf(
 			"persisted identity seed rotation = %#v current=%#v",
 			store.sourceRotation,
 			store.current,
 		)
+	}
+}
+
+func TestEnterpriseIdentityForceRotateSourceUsesCurrentLockedCoordinate(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
+	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	identity := db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		BucIdentitySourceSandboxID: pgtype.Text{String: "source-0", Valid: true},
+		BucIdentitySourceRuntimeID: runtimeID,
+		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		Status:                     "active",
+		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+	}
+	store := &fakeEnterpriseIdentityStore{current: identity}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+
+	result, err := serviceUnderTest.ForceRotateIdentitySource(
+		context.Background(),
+		identity.WorkspaceID,
+		identity.AgentID,
+		"source-0",
+	)
+	if err != nil {
+		t.Fatalf("ForceRotateIdentitySource: %v", err)
+	}
+	if result.PreviousRuntimeID != runtimeID ||
+		result.PreviousSandboxID != "source-0" ||
+		result.RuntimeID != runtimeID ||
+		result.SandboxID != "identity-source-rotated" ||
+		result.AffectedReferences != 1 {
+		t.Fatalf("rotation result = %#v", result)
+	}
+	if store.rotatedSources != 1 ||
+		store.sourceRotation.ExpectedSandboxID.String != "source-0" ||
+		store.sourceRotation.NewSandboxID.String != "identity-source-rotated" {
+		t.Fatalf("persisted forced rotation = %#v", store.sourceRotation)
+	}
+}
+
+func TestEnterpriseIdentityForceRotateSourceRejectsStalePredecessor(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 14, 8, 0, 0, 0, time.UTC)
+	runtimeID := util.MustParseUUID("55555555-5555-5555-5555-555555555555")
+	identity := db.AgentEnterpriseIdentity{
+		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:                util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:                    util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		RawEmpID:                   "12345",
+		BucAgentID:                 "buc-agent-1",
+		BucIdentitySourceSandboxID: pgtype.Text{String: "source-1", Valid: true},
+		BucIdentitySourceRuntimeID: runtimeID,
+		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: now.Add(24 * time.Hour), Valid: true},
+		Status:                     "active",
+		BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		&fakeEnterpriseIdentityStore{current: identity},
+		&fakeBUCOAuthClient{},
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+
+	_, err := serviceUnderTest.ForceRotateIdentitySource(
+		context.Background(),
+		identity.WorkspaceID,
+		identity.AgentID,
+		"source-0",
+	)
+	if !errors.Is(err, ErrEnterpriseIdentitySourceChanged) {
+		t.Fatalf("ForceRotateIdentitySource error = %v, want source changed", err)
+	}
+	if source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource); len(source.rotated) != 0 {
+		t.Fatalf("stale predecessor rotated sources = %#v", source.rotated)
 	}
 }
 

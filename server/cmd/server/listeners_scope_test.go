@@ -98,3 +98,27 @@ func TestRegisterListeners_TaskChatGoToWorkspace(t *testing.T) {
 		})
 	}
 }
+
+func TestRegisterListeners_RecipientUserOverridesWorkspaceFanout(t *testing.T) {
+	bus := events.New()
+	fb := &fakeBroadcaster{}
+	registerListeners(bus, fb)
+
+	bus.Publish(events.Event{
+		Type:            protocol.EventChatDone,
+		WorkspaceID:     "ws-1",
+		RecipientUserID: "owner-1",
+		ChatSessionID:   "chat-a2a",
+		Payload:         map[string]any{"chat_session_id": "chat-a2a"},
+	})
+
+	if len(fb.workspaceCalls) != 0 {
+		t.Fatalf("owner-scoped event leaked to workspace fanout: %+v", fb.workspaceCalls)
+	}
+	if len(fb.scopeCalls) != 0 {
+		t.Fatalf("owner-scoped event used an unclaimed resource scope: %+v", fb.scopeCalls)
+	}
+	if len(fb.userCalls) != 1 || fb.userCalls[0].userID != "owner-1" {
+		t.Fatalf("owner-scoped event routes = %+v, want one SendToUser(owner-1)", fb.userCalls)
+	}
+}

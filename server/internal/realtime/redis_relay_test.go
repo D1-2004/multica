@@ -46,6 +46,36 @@ func TestRedisRelayStopPreventsNewConsumers(t *testing.T) {
 	relay.Wait()
 }
 
+func TestRedisRelayRunnerSubscriptionOwnsMachineScopeConsumer(t *testing.T) {
+	hub := NewHub()
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
+	t.Cleanup(func() { client.Close() })
+
+	relay := NewRedisRelay(hub, client)
+	ctx, cancel := context.WithCancel(context.Background())
+	relay.mu.Lock()
+	relay.startCtx = ctx
+	relay.mu.Unlock()
+
+	relay.SubscribeRunnerMachine("machine-1")
+	relay.mu.Lock()
+	_, subscribed := relay.consumers[sk(ScopeRunnerMachine, "machine-1")]
+	relay.mu.Unlock()
+	if !subscribed {
+		t.Fatal("expected a machine-scoped consumer while Runner is connected")
+	}
+
+	relay.UnsubscribeRunnerMachine("machine-1")
+	relay.mu.Lock()
+	_, subscribed = relay.consumers[sk(ScopeRunnerMachine, "machine-1")]
+	relay.mu.Unlock()
+	if subscribed {
+		t.Fatal("expected machine-scoped consumer to stop after disconnect")
+	}
+	cancel()
+	relay.Wait()
+}
+
 func TestDualWriteBroadcasterFansOutLocallyBeforePublishing(t *testing.T) {
 	hub := NewHub()
 	client := attachRealtimeTestClient(hub, ScopeWorkspace, "workspace-1")

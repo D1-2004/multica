@@ -25,6 +25,13 @@ ARG COMMIT=unknown
 ARG DATE=unknown
 RUN cd server && CGO_ENABLED=1 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" -o bin/server ./cmd/server
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" -o bin/multica ./cmd/multica
+RUN cd server && for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do \
+      target_os="${target%/*}"; target_arch="${target#*/}"; \
+      mkdir -p "bin/runner-cli/${target_os}-${target_arch}"; \
+      CGO_ENABLED=0 GOOS="${target_os}" GOARCH="${target_arch}" go build \
+        -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+        -o "bin/runner-cli/${target_os}-${target_arch}/multica" ./cmd/multica; \
+    done
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/migrate ./cmd/migrate
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_task_usage_hourly ./cmd/backfill_task_usage_hourly
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_usage_cache ./cmd/backfill_codex_usage_cache

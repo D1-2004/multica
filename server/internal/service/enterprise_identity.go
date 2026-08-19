@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -26,16 +27,17 @@ import (
 )
 
 const (
-	defaultBUCAuthorizeURL               = "https://login.alibaba-inc.com/oauth2/auth.htm"
-	defaultBUCTokenURL                   = "https://login.alibaba-inc.com/rpc/oauth2/access_token.json"
-	defaultBUCIssuer                     = "https://login.alibaba-inc.com/oauth2"
-	defaultBUCJWKSURL                    = "https://login.alibaba-inc.com/oauth2/v1/keys"
-	defaultEnterpriseAuthXTTL            = int64(3600)
-	defaultEnterpriseAITTTL              = int64(900)
-	defaultEnterpriseIdemTimeout         = 15 * time.Second
-	defaultEnterpriseOAuthAttemptTTL     = 10 * time.Minute
-	defaultEnterpriseMaintenanceInterval = 5 * time.Minute
-	defaultEnterpriseRefreshBefore       = 24 * time.Hour
+	defaultBUCAuthorizeURL                = "https://login.alibaba-inc.com/oauth2/auth.htm"
+	defaultBUCTokenURL                    = "https://login.alibaba-inc.com/rpc/oauth2/access_token.json"
+	defaultBUCIssuer                      = "https://login.alibaba-inc.com/oauth2"
+	defaultBUCJWKSURL                     = "https://login.alibaba-inc.com/oauth2/v1/keys"
+	defaultEnterpriseAuthXTTL             = int64(3600)
+	defaultEnterpriseAITTTL               = int64(900)
+	defaultEnterpriseIdemTimeout          = 15 * time.Second
+	defaultEnterpriseOAuthAttemptTTL      = 10 * time.Minute
+	defaultEnterpriseBindingCompletionTTL = 15 * time.Minute
+	defaultEnterpriseMaintenanceInterval  = 5 * time.Minute
+	defaultEnterpriseRefreshBefore        = 24 * time.Hour
 	// A short-lived inherited sandbox requests a WireGuard ticket immediately
 	// on startup. The zero-trust service validates the cached BUC ID token at
 	// that point and rotates its refresh-token family when renewal is due. Run
@@ -47,9 +49,11 @@ const (
 )
 
 var (
-	ErrEnterpriseIdentityDisabled         = errors.New("enterprise identity is not configured")
-	ErrEnterpriseIdentityNeedsReauth      = errors.New("enterprise identity requires employee reauthorization")
-	ErrEnterpriseIdentityEmployeeConflict = errors.New("enterprise identity must be revoked before binding another employee")
+	ErrEnterpriseIdentityDisabled          = errors.New("enterprise identity is not configured")
+	ErrEnterpriseIdentityNeedsReauth       = errors.New("enterprise identity requires employee reauthorization")
+	ErrEnterpriseIdentityEmployeeConflict  = errors.New("enterprise identity must be revoked before binding another employee")
+	ErrEnterpriseIdentityBindingInProgress = errors.New("enterprise identity binding is already in progress")
+	ErrEnterpriseIdentitySourceChanged     = errors.New("enterprise identity source no longer matches the expected predecessor")
 
 	enterpriseEmployeeIDPattern = regexp.MustCompile(`^[1-9][0-9]*$`)
 	enterprisePathPartPattern   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
@@ -198,6 +202,9 @@ func (c EnterpriseIdentityConfig) Validate(_ ASBConfig) error {
 type enterpriseIdentityStore interface {
 	CreateAgentEnterpriseIdentityAttempt(context.Context, db.CreateAgentEnterpriseIdentityAttemptParams) (db.AgentEnterpriseIdentityAttempt, error)
 	ConsumeAgentEnterpriseIdentityAttempt(context.Context, []byte) (db.AgentEnterpriseIdentityAttempt, error)
+	GetActiveAgentEnterpriseIdentityAttempt(context.Context, db.GetActiveAgentEnterpriseIdentityAttemptParams) (db.AgentEnterpriseIdentityAttempt, error)
+	CompleteAgentEnterpriseIdentityAttempt(context.Context, db.CompleteAgentEnterpriseIdentityAttemptParams) (int64, error)
+	DeleteExpiredAgentEnterpriseIdentityAttempts(context.Context, pgtype.Timestamptz) (int64, error)
 	GetAgent(context.Context, pgtype.UUID) (db.Agent, error)
 	GetAgentEnterpriseIdentity(context.Context, db.GetAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	GetActiveAgentEnterpriseIdentity(context.Context, db.GetActiveAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
@@ -207,6 +214,7 @@ type enterpriseIdentityStore interface {
 	UpsertAgentEnterpriseIdentity(context.Context, db.UpsertAgentEnterpriseIdentityParams) (db.AgentEnterpriseIdentity, error)
 	CompareAndSwapAgentEnterpriseIdentitySource(context.Context, db.CompareAndSwapAgentEnterpriseIdentitySourceParams) (db.AgentEnterpriseIdentity, error)
 	RotateActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.RotateActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
+	TouchActiveAgentEnterpriseIdentitySourceReferences(context.Context, db.TouchActiveAgentEnterpriseIdentitySourceReferencesParams) (int64, error)
 	CompareAndSwapAgentEnterpriseIdentityToken(context.Context, db.CompareAndSwapAgentEnterpriseIdentityTokenParams) (db.AgentEnterpriseIdentity, error)
 	ListAgentEnterpriseIdentitiesForMaintenance(context.Context, db.ListAgentEnterpriseIdentitiesForMaintenanceParams) ([]db.AgentEnterpriseIdentity, error)
 	MarkAgentEnterpriseIdentityNeedsReauth(context.Context, db.MarkAgentEnterpriseIdentityNeedsReauthParams) (int64, error)
@@ -386,6 +394,17 @@ type StartEnterpriseIdentityBindingResult struct {
 	ExpiresAt    time.Time
 }
 
+// EnterpriseIdentitySourceRotationResult contains only the non-secret
+// coordinates needed to verify a seed rotation. Identity material never leaves
+// the service boundary.
+type EnterpriseIdentitySourceRotationResult struct {
+	PreviousRuntimeID  pgtype.UUID
+	PreviousSandboxID  string
+	RuntimeID          pgtype.UUID
+	SandboxID          string
+	AffectedReferences int64
+}
+
 func (s *EnterpriseIdentityService) StartBinding(
 	ctx context.Context,
 	input StartEnterpriseIdentityBindingInput,
@@ -393,6 +412,32 @@ func (s *EnterpriseIdentityService) StartBinding(
 	config := s.currentConfig()
 	if err := validateEnterpriseRedirectPath(input.RedirectPath); err != nil {
 		return StartEnterpriseIdentityBindingResult{}, err
+	}
+	now := s.Now()
+	staleAttemptCutoff := now.Add(-defaultEnterpriseBindingCompletionTTL)
+	if _, err := s.Store.DeleteExpiredAgentEnterpriseIdentityAttempts(
+		ctx,
+		pgtype.Timestamptz{Time: staleAttemptCutoff, Valid: true},
+	); err != nil {
+		return StartEnterpriseIdentityBindingResult{}, fmt.Errorf(
+			"delete expired enterprise identity binding attempts: %w",
+			err,
+		)
+	}
+	if _, err := s.Store.GetActiveAgentEnterpriseIdentityAttempt(
+		ctx,
+		db.GetActiveAgentEnterpriseIdentityAttemptParams{
+			WorkspaceID: input.WorkspaceID,
+			AgentID:     input.AgentID,
+			ActiveAfter: pgtype.Timestamptz{Time: staleAttemptCutoff, Valid: true},
+		},
+	); err == nil {
+		return StartEnterpriseIdentityBindingResult{}, ErrEnterpriseIdentityBindingInProgress
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return StartEnterpriseIdentityBindingResult{}, fmt.Errorf(
+			"load active enterprise identity binding attempt: %w",
+			err,
+		)
 	}
 	state, err := randomEnterpriseToken()
 	if err != nil {
@@ -402,7 +447,6 @@ func (s *EnterpriseIdentityService) StartBinding(
 	if err != nil {
 		return StartEnterpriseIdentityBindingResult{}, errors.New("generate enterprise identity OAuth nonce")
 	}
-	now := s.Now()
 	expiresAt := now.Add(config.OAuthAttemptTTL)
 	if _, err := s.Store.CreateAgentEnterpriseIdentityAttempt(ctx, db.CreateAgentEnterpriseIdentityAttemptParams{
 		WorkspaceID:       input.WorkspaceID,
@@ -454,6 +498,7 @@ type CompleteEnterpriseIdentityBindingResult struct {
 // The database row stays private to this package; callers only receive the
 // coordinates required to render and poll the progress page.
 type PreparedEnterpriseIdentityBinding struct {
+	AttemptID    pgtype.UUID
 	WorkspaceID  pgtype.UUID
 	AgentID      pgtype.UUID
 	RedirectPath string
@@ -477,6 +522,9 @@ func (s *EnterpriseIdentityService) PrepareBindingCompletion(
 	attempt, err := s.Store.ConsumeAgentEnterpriseIdentityAttempt(ctx, sha256Bytes(state))
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("consume_oauth_attempt", stageStarted, err)
+		if isEnterpriseIdentityBindingInProgressError(err) {
+			return PreparedEnterpriseIdentityBinding{}, ErrEnterpriseIdentityBindingInProgress
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			return PreparedEnterpriseIdentityBinding{}, errors.New("enterprise identity OAuth attempt is invalid, expired, or already used")
 		}
@@ -488,6 +536,7 @@ func (s *EnterpriseIdentityService) PrepareBindingCompletion(
 	}
 	logEnterpriseIdentityBindingStageSuccess("consume_oauth_attempt", stageStarted, bindingAttrs...)
 	return PreparedEnterpriseIdentityBinding{
+		AttemptID:    attempt.ID,
 		WorkspaceID:  attempt.WorkspaceID,
 		AgentID:      attempt.AgentID,
 		RedirectPath: attempt.RedirectPath,
@@ -512,7 +561,40 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 	ctx context.Context,
 	prepared PreparedEnterpriseIdentityBinding,
 	code string,
-) (CompleteEnterpriseIdentityBindingResult, error) {
+) (result CompleteEnterpriseIdentityBindingResult, resultErr error) {
+	defer func() {
+		if !prepared.AttemptID.Valid {
+			return
+		}
+		completionStatus := "succeeded"
+		completionErrorCode := pgtype.Text{}
+		if resultErr != nil {
+			completionStatus = "failed"
+			completionErrorCode = pgtype.Text{
+				String: enterpriseIdentityBindingCompletionErrorCode(resultErr),
+				Valid:  true,
+			}
+		}
+		completionCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		updated, completionErr := s.Store.CompleteAgentEnterpriseIdentityAttempt(
+			completionCtx,
+			db.CompleteAgentEnterpriseIdentityAttemptParams{
+				CompletionStatus:    completionStatus,
+				CompletionErrorCode: completionErrorCode,
+				ID:                  prepared.AttemptID,
+			},
+		)
+		if completionErr != nil || updated != 1 {
+			slog.Warn(
+				"enterprise identity binding attempt completion was not persisted",
+				"attempt_id", util.UUIDToString(prepared.AttemptID),
+				"status", completionStatus,
+				"updated_rows", updated,
+				"error_type", fmt.Sprintf("%T", completionErr),
+			)
+		}
+	}()
 	config := s.currentConfig()
 	bindingStarted := prepared.started
 	if bindingStarted.IsZero() {
@@ -702,11 +784,17 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 			unlockSource()
 		}
 	}()
-	source, sourceCreated, err := s.reuseOrCreateIdentitySource(
+	// Reauthorization carries a fresh one-shot BUC token set. Reusing the
+	// current Agent's existing source would discard those credentials and leave
+	// an expired WireGuard seed active even though the binding version advances.
+	// First-time bindings may still share a proven source across Agents in the
+	// same employee and ASB tenant scope.
+	source, sourceCreated, err := s.provisionIdentitySourceForBinding(
 		ctx,
 		sourceKey,
 		tenantScope.RuntimeIDs,
 		bucTokens,
+		oldIdentityFound,
 	)
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure(
@@ -884,6 +972,28 @@ func logEnterpriseIdentityBindingStageSuccess(stage string, started time.Time, a
 	slog.Info("enterprise identity binding stage completed", append(base, attributes...)...)
 }
 
+func isEnterpriseIdentityBindingInProgressError(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "agent_enterprise_identity_attempt_one_pending_idx"
+}
+
+func enterpriseIdentityBindingCompletionErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ErrEnterpriseIdentityBindingInProgress):
+		return "binding_in_progress"
+	case errors.Is(err, ErrEnterpriseIdentityNeedsReauth):
+		return "needs_reauthorization"
+	case errors.Is(err, ErrEnterpriseIdentityEmployeeConflict):
+		return "employee_conflict"
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return "timed_out"
+	default:
+		return "internal_error"
+	}
+}
+
 func logEnterpriseIdentityBindingStageFailure(
 	stage string,
 	started time.Time,
@@ -1021,6 +1131,23 @@ func (s *EnterpriseIdentityService) reuseOrCreateIdentitySource(
 		)
 	}
 
+	source, err := s.Source.Create(ctx, key, tokens)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, false, err
+	}
+	return source, true, nil
+}
+
+func (s *EnterpriseIdentityService) provisionIdentitySourceForBinding(
+	ctx context.Context,
+	key enterpriseIdentitySourceKey,
+	runtimeIDs []pgtype.UUID,
+	tokens BUCIdentityTokens,
+	forceFresh bool,
+) (EnterpriseIdentitySourceAvailability, bool, error) {
+	if !forceFresh {
+		return s.reuseOrCreateIdentitySource(ctx, key, runtimeIDs, tokens)
+	}
 	source, err := s.Source.Create(ctx, key, tokens)
 	if err != nil {
 		return EnterpriseIdentitySourceAvailability{}, false, err
@@ -1457,6 +1584,52 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 	if !sameEnterpriseIdentitySourceSnapshot(identity, current) {
 		return nil
 	}
+	_, err = s.rotateIdentitySourceUnderLock(ctx, current)
+	return err
+}
+
+// ForceRotateIdentitySource rotates the source currently bound to an active
+// Agent without relying on the periodic age threshold. The expected predecessor
+// makes repeated asynchronous requests idempotent after the current source changes.
+func (s *EnterpriseIdentityService) ForceRotateIdentitySource(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+	expectedPredecessorSandboxID string,
+) (EnterpriseIdentitySourceRotationResult, error) {
+	expectedPredecessorSandboxID = strings.TrimSpace(expectedPredecessorSandboxID)
+	if expectedPredecessorSandboxID == "" {
+		return EnterpriseIdentitySourceRotationResult{}, errors.New(
+			"expected ASB enterprise identity predecessor sandbox is required",
+		)
+	}
+	current, releaseLocks, err := s.lockEnterpriseIdentityForSourceMutation(
+		ctx,
+		workspaceID,
+		agentID,
+	)
+	if err != nil {
+		return EnterpriseIdentitySourceRotationResult{}, err
+	}
+	defer releaseLocks()
+	if current.Status != "active" ||
+		!current.BucIdentitySourceRuntimeID.Valid ||
+		!current.BucIdentitySourceSandboxID.Valid ||
+		strings.TrimSpace(current.BucIdentitySourceSandboxID.String) == "" ||
+		!current.AuthxRefreshExpiresAt.Valid ||
+		!current.AuthxRefreshExpiresAt.Time.After(s.Now()) {
+		return EnterpriseIdentitySourceRotationResult{}, ErrEnterpriseIdentityNeedsReauth
+	}
+	if current.BucIdentitySourceSandboxID.String != expectedPredecessorSandboxID {
+		return EnterpriseIdentitySourceRotationResult{}, ErrEnterpriseIdentitySourceChanged
+	}
+	return s.rotateIdentitySourceUnderLock(ctx, current)
+}
+
+func (s *EnterpriseIdentityService) rotateIdentitySourceUnderLock(
+	ctx context.Context,
+	current db.AgentEnterpriseIdentity,
+) (EnterpriseIdentitySourceRotationResult, error) {
 	rotated, err := s.Source.Rotate(
 		ctx,
 		current.BucIdentitySourceRuntimeID,
@@ -1465,7 +1638,15 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 		current.BucAgentID,
 	)
 	if err != nil {
-		return err
+		return EnterpriseIdentitySourceRotationResult{}, err
+	}
+	if !rotated.RuntimeID.Valid ||
+		strings.TrimSpace(rotated.SandboxID) == "" ||
+		(rotated.RuntimeID == current.BucIdentitySourceRuntimeID &&
+			rotated.SandboxID == current.BucIdentitySourceSandboxID.String) {
+		return EnterpriseIdentitySourceRotationResult{}, errors.New(
+			"rotated ASB enterprise identity seed coordinate is invalid",
+		)
 	}
 	affected, err := s.Store.RotateActiveAgentEnterpriseIdentitySourceReferences(
 		ctx,
@@ -1478,10 +1659,15 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("persist rotated ASB enterprise identity seed: %w", err)
+		return EnterpriseIdentitySourceRotationResult{}, fmt.Errorf(
+			"persist rotated ASB enterprise identity seed: %w",
+			err,
+		)
 	}
 	if affected == 0 {
-		return errors.New("rotated ASB enterprise identity seed had no active references")
+		return EnterpriseIdentitySourceRotationResult{}, errors.New(
+			"rotated ASB enterprise identity seed had no active references",
+		)
 	}
 	slog.Info(
 		"shared ASB enterprise identity seed references rotated",
@@ -1490,7 +1676,13 @@ func (s *EnterpriseIdentityService) refreshIdentitySource(
 		"sandbox_id", rotated.SandboxID,
 		"affected_references", affected,
 	)
-	return nil
+	return EnterpriseIdentitySourceRotationResult{
+		PreviousRuntimeID:  current.BucIdentitySourceRuntimeID,
+		PreviousSandboxID:  current.BucIdentitySourceSandboxID.String,
+		RuntimeID:          rotated.RuntimeID,
+		SandboxID:          rotated.SandboxID,
+		AffectedReferences: affected,
+	}, nil
 }
 
 func (s *EnterpriseIdentityService) rotateAuthXToken(

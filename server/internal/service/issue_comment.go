@@ -33,7 +33,10 @@ type IssueCommentCreateParams struct {
 	AgentIdentityContextToken string
 	DispatchContext           []byte
 	ParentTaskID              pgtype.UUID
-	Delegation                *IssueDelegationFollowUpParams
+	// AgentMCPClaimID makes an external MCP follow-up recoverable across a
+	// process crash between comment creation and task binding.
+	AgentMCPClaimID pgtype.UUID
+	Delegation      *IssueDelegationFollowUpParams
 }
 
 type IssueDelegationFollowUpParams struct {
@@ -80,12 +83,13 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 	}
 
 	comment, err := s.Queries.CreateComment(ctx, db.CreateCommentParams{
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		AuthorType:  "member",
-		AuthorID:    params.AuthorID,
-		Content:     params.Content,
-		Type:        "comment",
+		IssueID:         issue.ID,
+		WorkspaceID:     issue.WorkspaceID,
+		AuthorType:      "member",
+		AuthorID:        params.AuthorID,
+		Content:         params.Content,
+		Type:            "comment",
+		AgentMcpClaimID: params.AgentMCPClaimID,
 	})
 	if err != nil {
 		return IssueCommentCreateResult{}, fmt.Errorf("create issue comment: %w", err)
@@ -182,13 +186,14 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 		return IssueCommentCreateResult{}, fmt.Errorf("check delegated member comment: %w", commentErr)
 	}
 	comment, err := qtx.CreateComment(ctx, db.CreateCommentParams{
-		IssueID:      params.Issue.ID,
-		WorkspaceID:  params.Issue.WorkspaceID,
-		AuthorType:   "member",
-		AuthorID:     params.AuthorID,
-		Content:      params.Content,
-		Type:         "comment",
-		SourceTaskID: sourceTask.ID,
+		IssueID:         params.Issue.ID,
+		WorkspaceID:     params.Issue.WorkspaceID,
+		AuthorType:      "member",
+		AuthorID:        params.AuthorID,
+		Content:         params.Content,
+		Type:            "comment",
+		SourceTaskID:    sourceTask.ID,
+		AgentMcpClaimID: params.AgentMCPClaimID,
 	})
 	if err != nil {
 		return IssueCommentCreateResult{}, fmt.Errorf("create issue comment: %w", err)

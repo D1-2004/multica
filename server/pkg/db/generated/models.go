@@ -10,6 +10,150 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type A2aArtifact struct {
+	ID               pgtype.UUID        `json:"id"`
+	BindingID        pgtype.UUID        `json:"binding_id"`
+	PublicArtifactID string             `json:"public_artifact_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	Extensions       []string           `json:"extensions"`
+	Metadata         []byte             `json:"metadata"`
+	Parts            []byte             `json:"parts"`
+	Append           bool               `json:"append"`
+	LastChunk        bool               `json:"last_chunk"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aClient struct {
+	ID                 pgtype.UUID        `json:"id"`
+	EndpointID         pgtype.UUID        `json:"endpoint_id"`
+	Name               string             `json:"name"`
+	Status             string             `json:"status"`
+	Scopes             []string           `json:"scopes"`
+	RateLimitPerMinute pgtype.Int4        `json:"rate_limit_per_minute"`
+	MaxConcurrentTasks pgtype.Int4        `json:"max_concurrent_tasks"`
+	CreatedBy          pgtype.UUID        `json:"created_by"`
+	UpdatedBy          pgtype.UUID        `json:"updated_by"`
+	RevokedAt          pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy          pgtype.UUID        `json:"revoked_by"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aClientCredential struct {
+	ID          pgtype.UUID        `json:"id"`
+	ClientID    pgtype.UUID        `json:"client_id"`
+	KeyID       string             `json:"key_id"`
+	TokenHash   string             `json:"token_hash"`
+	TokenPrefix string             `json:"token_prefix"`
+	Status      string             `json:"status"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy   pgtype.UUID        `json:"revoked_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aContext struct {
+	ID              pgtype.UUID        `json:"id"`
+	EndpointID      pgtype.UUID        `json:"endpoint_id"`
+	ClientID        pgtype.UUID        `json:"client_id"`
+	PublicContextID string             `json:"public_context_id"`
+	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
+	LastActivityAt  pgtype.Timestamptz `json:"last_activity_at"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aPushConfig struct {
+	ID                         pgtype.UUID        `json:"id"`
+	BindingID                  pgtype.UUID        `json:"binding_id"`
+	EndpointID                 pgtype.UUID        `json:"endpoint_id"`
+	ClientID                   pgtype.UUID        `json:"client_id"`
+	PublicConfigID             string             `json:"public_config_id"`
+	CallbackUrl                string             `json:"callback_url"`
+	NotificationTokenEncrypted []byte             `json:"notification_token_encrypted"`
+	AuthScheme                 pgtype.Text        `json:"auth_scheme"`
+	AuthCredentialsEncrypted   []byte             `json:"auth_credentials_encrypted"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aPushDelivery struct {
+	ID             pgtype.UUID        `json:"id"`
+	PushConfigID   pgtype.UUID        `json:"push_config_id"`
+	EventID        pgtype.UUID        `json:"event_id"`
+	Status         string             `json:"status"`
+	AttemptCount   int32              `json:"attempt_count"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError      pgtype.Text        `json:"last_error"`
+	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type A2aTaskBinding struct {
+	ID                          pgtype.UUID        `json:"id"`
+	EndpointID                  pgtype.UUID        `json:"endpoint_id"`
+	ClientID                    pgtype.UUID        `json:"client_id"`
+	ContextID                   pgtype.UUID        `json:"context_id"`
+	AcceptedCredentialID        pgtype.UUID        `json:"accepted_credential_id"`
+	PublicTaskID                string             `json:"public_task_id"`
+	MessageID                   string             `json:"message_id"`
+	RequestFingerprint          string             `json:"request_fingerprint"`
+	ArtifactID                  string             `json:"artifact_id"`
+	RootLocalTaskID             pgtype.UUID        `json:"root_local_task_id"`
+	InputChatMessageID          pgtype.UUID        `json:"input_chat_message_id"`
+	RequestID                   pgtype.Text        `json:"request_id"`
+	CancelRequestedAt           pgtype.Timestamptz `json:"cancel_requested_at"`
+	FailureFinalizedLocalTaskID pgtype.UUID        `json:"failure_finalized_local_task_id"`
+	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz `json:"updated_at"`
+	PublicState                 string             `json:"public_state"`
+	StatusMessage               []byte             `json:"status_message"`
+	StatusUpdatedAt             pgtype.Timestamptz `json:"status_updated_at"`
+	NextEventSequence           int64              `json:"next_event_sequence"`
+}
+
+type A2aTaskEvent struct {
+	ID        pgtype.UUID        `json:"id"`
+	BindingID pgtype.UUID        `json:"binding_id"`
+	Sequence  int64              `json:"sequence"`
+	EventType string             `json:"event_type"`
+	DedupeKey string             `json:"dedupe_key"`
+	Payload   []byte             `json:"payload"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type A2aTaskTurn struct {
+	ID                         pgtype.UUID        `json:"id"`
+	BindingID                  pgtype.UUID        `json:"binding_id"`
+	EndpointID                 pgtype.UUID        `json:"endpoint_id"`
+	ClientID                   pgtype.UUID        `json:"client_id"`
+	AcceptedCredentialID       pgtype.UUID        `json:"accepted_credential_id"`
+	Sequence                   int32              `json:"sequence"`
+	MessageID                  string             `json:"message_id"`
+	RequestFingerprint         string             `json:"request_fingerprint"`
+	LocalTaskID                pgtype.UUID        `json:"local_task_id"`
+	InputChatMessageID         pgtype.UUID        `json:"input_chat_message_id"`
+	InputParts                 []byte             `json:"input_parts"`
+	MessageExtensions          []string           `json:"message_extensions"`
+	MessageMetadata            []byte             `json:"message_metadata"`
+	ReferenceTaskIds           []string           `json:"reference_task_ids"`
+	AcceptedOutputModes        []string           `json:"accepted_output_modes"`
+	ControlSignal              pgtype.Text        `json:"control_signal"`
+	ControlPayload             []byte             `json:"control_payload"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	CompletedAt                pgtype.Timestamptz `json:"completed_at"`
+	RequestBoundLeaseExpiresAt pgtype.Timestamptz `json:"request_bound_lease_expires_at"`
+}
+
 type ActivityLog struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
@@ -52,6 +196,21 @@ type Agent struct {
 	SystemKey             pgtype.Text `json:"system_key"`
 	DisabledRuntimeSkills []byte      `json:"disabled_runtime_skills"`
 	ServiceTier           pgtype.Text `json:"service_tier"`
+}
+
+type AgentA2aEndpoint struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	PublicAgentID     string             `json:"public_agent_id"`
+	Enabled           bool               `json:"enabled"`
+	DelegatedByUserID pgtype.UUID        `json:"delegated_by_user_id"`
+	CardName          string             `json:"card_name"`
+	CardDescription   string             `json:"card_description"`
+	CardVersion       string             `json:"card_version"`
+	CardSkills        []byte             `json:"card_skills"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type AgentBuilderDraft struct {
@@ -151,6 +310,9 @@ type AgentEnterpriseIdentityAttempt struct {
 	ExpiresAt             pgtype.Timestamptz `json:"expires_at"`
 	ConsumedAt            pgtype.Timestamptz `json:"consumed_at"`
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	CompletionStatus      string             `json:"completion_status"`
+	CompletionErrorCode   pgtype.Text        `json:"completion_error_code"`
+	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
 }
 
 // Allow-list of who may invoke a public_to agent (MUL-3963). One row per (agent, target_type, target); targets stack and canInvokeAgent OR-matches. workspace rows store the agent workspace_id in target_id; member rows store the user id; team rows are reserved and inert in V1. Rows only matter when agent.permission_mode = public_to. No DB foreign keys: agent_id / created_by / member target_id relationships are maintained in the application layer (see migration comment).
@@ -161,6 +323,38 @@ type AgentInvocationTarget struct {
 	TargetID   pgtype.UUID        `json:"target_id"`
 	CreatedBy  pgtype.UUID        `json:"created_by"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentMcpDelegation struct {
+	ID                   pgtype.UUID        `json:"id"`
+	EndpointID           pgtype.UUID        `json:"endpoint_id"`
+	ClientID             pgtype.UUID        `json:"client_id"`
+	AcceptedCredentialID pgtype.UUID        `json:"accepted_credential_id"`
+	PublicTaskID         string             `json:"public_task_id"`
+	RequestID            string             `json:"request_id"`
+	RequestFingerprint   string             `json:"request_fingerprint"`
+	Operation            string             `json:"operation"`
+	IssueID              pgtype.UUID        `json:"issue_id"`
+	RootLocalTaskID      pgtype.UUID        `json:"root_local_task_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Revocable many-to-many bindings between Agents and local Runner machines
+type AgentRunnerBinding struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	MachineID   pgtype.UUID        `json:"machine_id"`
+	BoundBy     pgtype.UUID        `json:"bound_by"`
+	Roots       []byte             `json:"roots"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy   pgtype.UUID        `json:"revoked_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	// Agent-scoped logical disconnect; the shared machine process exits only when no connected bindings remain
+	DisconnectedAt pgtype.Timestamptz `json:"disconnected_at"`
+	DisconnectedBy pgtype.UUID        `json:"disconnected_by"`
 }
 
 type AgentRuntime struct {
@@ -217,6 +411,24 @@ type AgentSourceSkill struct {
 	SourcePath    string             `json:"source_path"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Private, task-scoped index for a DSH native session trajectory stored in object storage.
+type AgentTaskDshTrajectory struct {
+	TaskID    pgtype.UUID `json:"task_id"`
+	SessionID string      `json:"session_id"`
+	// Internal ciphertext object key only. User APIs decrypt and stream it after task and private-agent authorization and never expose this key or a bucket URL.
+	StorageKey       string `json:"storage_key"`
+	EncryptionScheme string `json:"encryption_scheme"`
+	// Per-object AES-256 data key. Object storage receives only nonce-prefixed authenticated ciphertext, because attachment buckets and local /uploads routes may be public.
+	EncryptionKey   []byte             `json:"encryption_key"`
+	Sha256          string             `json:"sha256"`
+	SizeBytes       int64              `json:"size_bytes"`
+	StoredSizeBytes int64              `json:"stored_size_bytes"`
+	EventCount      int32              `json:"event_count"`
+	FormatVersion   int32              `json:"format_version"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type AgentTaskQueue struct {
@@ -611,21 +823,22 @@ type ClientUsageDaily struct {
 }
 
 type Comment struct {
-	ID             pgtype.UUID        `json:"id"`
-	IssueID        pgtype.UUID        `json:"issue_id"`
-	AuthorType     string             `json:"author_type"`
-	AuthorID       pgtype.UUID        `json:"author_id"`
-	Content        string             `json:"content"`
-	Type           string             `json:"type"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ParentID       pgtype.UUID        `json:"parent_id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
-	ResolvedByType pgtype.Text        `json:"resolved_by_type"`
-	ResolvedByID   pgtype.UUID        `json:"resolved_by_id"`
-	SourceTaskID   pgtype.UUID        `json:"source_task_id"`
-	QuickActionID  pgtype.UUID        `json:"quick_action_id"`
+	ID              pgtype.UUID        `json:"id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	AuthorType      string             `json:"author_type"`
+	AuthorID        pgtype.UUID        `json:"author_id"`
+	Content         string             `json:"content"`
+	Type            string             `json:"type"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ParentID        pgtype.UUID        `json:"parent_id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	ResolvedAt      pgtype.Timestamptz `json:"resolved_at"`
+	ResolvedByType  pgtype.Text        `json:"resolved_by_type"`
+	ResolvedByID    pgtype.UUID        `json:"resolved_by_id"`
+	SourceTaskID    pgtype.UUID        `json:"source_task_id"`
+	QuickActionID   pgtype.UUID        `json:"quick_action_id"`
+	AgentMcpClaimID pgtype.UUID        `json:"agent_mcp_claim_id"`
 }
 
 type CommentReaction struct {
@@ -1290,6 +1503,92 @@ type QuickAction struct {
 	CreatedByID   pgtype.UUID        `json:"created_by_id"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type RunnerAuthChallenge struct {
+	ID            pgtype.UUID        `json:"id"`
+	MachineID     pgtype.UUID        `json:"machine_id"`
+	ChallengeHash string             `json:"challenge_hash"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt    pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+// Durable cross-replica rendezvous for task-scoped Runner MCP calls
+type RunnerCall struct {
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	TaskID       pgtype.UUID        `json:"task_id"`
+	UserID       pgtype.UUID        `json:"user_id"`
+	MachineID    pgtype.UUID        `json:"machine_id"`
+	ToolName     string             `json:"tool_name"`
+	Arguments    []byte             `json:"arguments"`
+	Roots        []byte             `json:"roots"`
+	Result       []byte             `json:"result"`
+	Status       string             `json:"status"`
+	ErrorCode    pgtype.Text        `json:"error_code"`
+	ErrorMessage pgtype.Text        `json:"error_message"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	StartedAt    pgtype.Timestamptz `json:"started_at"`
+	CompletedAt  pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+// User-owned local Runner identities authenticated by an Ed25519 public key
+type RunnerMachine struct {
+	ID            pgtype.UUID        `json:"id"`
+	OwnerID       pgtype.UUID        `json:"owner_id"`
+	Name          string             `json:"name"`
+	Os            string             `json:"os"`
+	Arch          string             `json:"arch"`
+	PublicKey     []byte             `json:"public_key"`
+	ClientVersion string             `json:"client_version"`
+	LastSeenAt    pgtype.Timestamptz `json:"last_seen_at"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy     pgtype.UUID        `json:"revoked_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	// Server-assigned identifier for the currently registered Runner WebSocket
+	ConnectionID pgtype.UUID        `json:"connection_id"`
+	ConnectedAt  pgtype.Timestamptz `json:"connected_at"`
+}
+
+// Short-lived browser-approved OAuth device authorization for a Runner binding
+type RunnerPairingSession struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AgentID          pgtype.UUID        `json:"agent_id"`
+	OwnerID          pgtype.UUID        `json:"owner_id"`
+	PairingTokenHash string             `json:"pairing_token_hash"`
+	DeviceCodeHash   pgtype.Text        `json:"device_code_hash"`
+	UserCode         pgtype.Text        `json:"user_code"`
+	PublicKey        []byte             `json:"public_key"`
+	MachineName      pgtype.Text        `json:"machine_name"`
+	Os               pgtype.Text        `json:"os"`
+	Arch             pgtype.Text        `json:"arch"`
+	ClientVersion    string             `json:"client_version"`
+	Roots            []byte             `json:"roots"`
+	State            string             `json:"state"`
+	MachineID        pgtype.UUID        `json:"machine_id"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	ApprovedAt       pgtype.Timestamptz `json:"approved_at"`
+	DeniedAt         pgtype.Timestamptz `json:"denied_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Short-lived one-time credentials for reconnecting one Agent Runner binding from the bound machine
+type RunnerReconnectSession struct {
+	ID         pgtype.UUID        `json:"id"`
+	BindingID  pgtype.UUID        `json:"binding_id"`
+	MachineID  pgtype.UUID        `json:"machine_id"`
+	TokenHash  string             `json:"token_hash"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	ConsumedAt pgtype.Timestamptz `json:"consumed_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type RuntimeProfile struct {
