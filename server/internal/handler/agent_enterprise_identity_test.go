@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 )
 
@@ -27,6 +28,40 @@ type enterpriseIdentityStatusTestResponse struct {
 		BUCStatus           string `json:"buc_status"`
 		AgentIdentityStatus string `json:"agent_identity_status"`
 	} `json:"identity"`
+}
+
+type fakeEnterpriseIdentityHandlerService struct{}
+
+func (f *fakeEnterpriseIdentityHandlerService) Run(context.Context) {}
+
+func (f *fakeEnterpriseIdentityHandlerService) StartBinding(
+	context.Context,
+	service.StartEnterpriseIdentityBindingInput,
+) (service.StartEnterpriseIdentityBindingResult, error) {
+	return service.StartEnterpriseIdentityBindingResult{}, nil
+}
+
+func (f *fakeEnterpriseIdentityHandlerService) PrepareBindingCompletion(
+	context.Context,
+	string,
+) (service.PreparedEnterpriseIdentityBinding, error) {
+	return service.PreparedEnterpriseIdentityBinding{}, nil
+}
+
+func (f *fakeEnterpriseIdentityHandlerService) CompletePreparedBinding(
+	context.Context,
+	service.PreparedEnterpriseIdentityBinding,
+	string,
+) (service.CompleteEnterpriseIdentityBindingResult, error) {
+	return service.CompleteEnterpriseIdentityBindingResult{}, nil
+}
+
+func (f *fakeEnterpriseIdentityHandlerService) Revoke(
+	context.Context,
+	pgtype.UUID,
+	pgtype.UUID,
+) error {
+	return nil
 }
 
 func createEnterpriseIdentityHandlerFixture(t *testing.T) (agentID string, memberUserID string) {
@@ -197,8 +232,9 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 
 	page := enterpriseIdentityCallbackProgressPage(
 		"nonce",
-		"/api/workspaces/workspace-id/agent-identity/enterprise/status?agent_id=agent-id",
+		"/api/workspaces/workspace-id/agent-identity/enterprise/status?agent_id=agent-id&attempt_id=attempt-id",
 		"/settings?enterprise_identity=connected",
+		"/settings",
 		7,
 	)
 	for _, expected := range []string{
@@ -206,6 +242,11 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 		"集团账号权限助手",
 		"完成所有“前往授权”",
 		"fetch(statusURL",
+		"payload.binding_attempt?.status===\"failed\"",
+		"showBindingFailure(payload.binding_attempt.error_code)",
+		"callback-spinner",
+		"本次绑定已经停止，不会继续创建沙箱",
+		"href=\"/settings\" hidden",
 		"payload.binding_version",
 		"expectedBindingVersion=7",
 		"window.location.replace(redirectURL)",
@@ -214,5 +255,46 @@ func TestEnterpriseIdentityCallbackProgressPagePollsNewBindingVersion(t *testing
 		if !strings.Contains(page, expected) {
 			t.Fatalf("callback progress page does not contain %q", expected)
 		}
+	}
+	if strings.Contains(page, "%!") {
+		t.Fatalf("callback progress page contains a formatting error: %s", page)
+	}
+}
+
+func TestEnterpriseIdentitySourceRotationEnvironmentGuard(t *testing.T) {
+	cases := []struct {
+		environment string
+		want        bool
+	}{
+		{environment: "pre", want: true},
+		{environment: "prepub", want: true},
+		{environment: "staging", want: true},
+		{environment: "production", want: false},
+		{environment: "", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.environment, func(t *testing.T) {
+			t.Setenv("AONE_ENV_TYPE", tc.environment)
+			if got := enterpriseIdentitySourceRotationEnabled(); got != tc.want {
+				t.Fatalf("rotation enabled = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRotateAgentEnterpriseIdentitySourceIsHiddenOutsidePrepub(t *testing.T) {
+	t.Setenv("AONE_ENV_TYPE", "production")
+
+	handler := &Handler{}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/workspaces/workspace-id/agent-identity/enterprise/source/rotate",
+		strings.NewReader(`{"agent_id":"agent-id"}`),
+	)
+	response := httptest.NewRecorder()
+	handler.RotateAgentEnterpriseIdentitySource(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", response.Code)
 	}
 }

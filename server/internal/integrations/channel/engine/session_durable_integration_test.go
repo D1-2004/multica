@@ -47,9 +47,11 @@ func newDurableSessionFixture(t *testing.T) durableSessionFixture {
 	t.Cleanup(pool.Close)
 
 	if _, err := pool.Exec(ctx, `
-		CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_queue_deferred_chat_session
+		CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_task_queue_deferred_channel_session
 		ON agent_task_queue (chat_session_id)
-		WHERE status = 'deferred' AND chat_session_id IS NOT NULL
+		WHERE status = 'deferred'
+		  AND chat_session_id IS NOT NULL
+		  AND fire_at IS NOT NULL
 	`); err != nil {
 		t.Fatalf("ensure deferred channel-task index: %v", err)
 	}

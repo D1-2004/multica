@@ -352,7 +352,7 @@ type eventResult struct {
 // processEvents reads JSON lines from r, dispatches events to ch, and returns
 // the accumulated result. This is the core scanner loop, extracted for testability.
 func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventResult {
-	var output strings.Builder
+	var output opencodeAssistantTextAccumulator
 	var sessionID string
 	var usage TokenUsage
 	finalStatus := "completed"
@@ -538,10 +538,10 @@ func stepReportedUsage(part *opencodeEventPart) bool {
 	return t.Cache != nil && (t.Cache.Read > 0 || t.Cache.Write > 0)
 }
 
-func (b *opencodeBackend) handleTextEvent(event opencodeEvent, ch chan<- Message, output *strings.Builder) {
+func (b *opencodeBackend) handleTextEvent(event opencodeEvent, ch chan<- Message, output *opencodeAssistantTextAccumulator) {
 	text := event.Part.Text
 	if text != "" {
-		output.WriteString(text)
+		output.Append(event.Part.MessageID, text)
 		trySend(ch, Message{Type: MessageText, Content: text})
 	}
 }
@@ -586,6 +586,38 @@ func (b *opencodeBackend) handleToolResultEvent(event opencodeEvent, ch chan<- M
 		CallID: event.Part.CallID,
 		Output: output,
 	})
+}
+
+// opencodeAssistantTextAccumulator keeps the text of the latest assistant
+// message while the full event stream continues to be delivered through ch.
+// OpenCode creates a new messageID after each tool-result turn, so concatenating
+// every text event makes progress narration part of the terminal answer. DSH's
+// managed adapter emits one anonymous text message; consecutive anonymous
+// parts therefore form one message by contract.
+type opencodeAssistantTextAccumulator struct {
+	messageID string
+	anonymous bool
+	seen      bool
+	text      strings.Builder
+}
+
+func (a *opencodeAssistantTextAccumulator) Append(messageID, text string) {
+	anonymous := messageID == ""
+	sameMessage := a.seen && a.anonymous == anonymous
+	if !anonymous {
+		sameMessage = sameMessage && a.messageID == messageID
+	}
+	if !sameMessage {
+		a.text.Reset()
+		a.messageID = messageID
+		a.anonymous = anonymous
+		a.seen = true
+	}
+	a.text.WriteString(text)
+}
+
+func (a *opencodeAssistantTextAccumulator) String() string {
+	return a.text.String()
 }
 
 // handleToolUseEvent processes "tool_use" events from opencode. A single

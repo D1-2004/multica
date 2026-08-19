@@ -11,6 +11,18 @@ WHERE id = $1;
 SELECT * FROM member
 WHERE user_id = $1 AND workspace_id = $2;
 
+-- name: LockWorkspaceMemberForRevocation :one
+-- This is the outer linearization lock for member removal. A2A durable-grant
+-- creation takes FOR KEY SHARE on this same row before locking Agent-owned
+-- resources, so either the grant commits first and is included by the later
+-- revocation snapshots, or member deletion wins and the grant INSERT sees no
+-- eligible member after its lock wait.
+SELECT * FROM member
+WHERE id = sqlc.arg('member_id')
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND user_id = sqlc.arg('user_id')
+FOR UPDATE;
+
 -- name: CreateMember :one
 INSERT INTO member (workspace_id, user_id, role)
 VALUES ($1, $2, $3)

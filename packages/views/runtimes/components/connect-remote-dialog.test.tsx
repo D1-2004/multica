@@ -81,12 +81,9 @@ describe("ConnectRemoteDialog", () => {
 
     expect(baseElement).toHaveTextContent("multica setup");
     expect(baseElement).not.toHaveTextContent("multica setup self-host");
-    expect(baseElement).toHaveTextContent(
-      "multica config set server_url https://api.multica.ai",
-    );
-    expect(baseElement).toHaveTextContent(
-      "multica config set app_url https://multica.ai",
-    );
+    expect(baseElement).not.toHaveTextContent("https://api.multica.ai");
+    expect(baseElement).not.toHaveTextContent("https://multica.ai");
+    expect(baseElement).toHaveTextContent("multica login --token <YOUR_TOKEN>");
   });
 
   it("uses self-host daemon URLs from runtime config", () => {

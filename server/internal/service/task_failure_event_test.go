@@ -52,7 +52,7 @@ func TestTaskEventCarriesPayloadAndScopeHints(t *testing.T) {
 		ChatSessionID: testUUID(44),
 		Status:        "failed",
 	}
-	e := taskEvent(protocol.EventTaskFailed, "workspace-1", task, map[string]any{
+	e := taskEvent(protocol.EventTaskFailed, humanRealtimeRoute{workspaceID: "workspace-1"}, task, map[string]any{
 		"failure_reason": "timeout",
 		"retry_pending":  false,
 	})

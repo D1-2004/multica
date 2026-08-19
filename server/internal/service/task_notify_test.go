@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -26,12 +27,75 @@ type stubRuntimeLauncher struct {
 }
 
 type runtimeLaunchCall struct {
-	task db.AgentTaskQueue
+	task       db.AgentTaskQueue
+	identity   a2aintegration.InvocationIdentity
+	contextErr error
 }
 
-func (s *stubRuntimeLauncher) LaunchTask(_ context.Context, task db.AgentTaskQueue) error {
-	s.calls <- runtimeLaunchCall{task: task}
+func (s *stubRuntimeLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) error {
+	identity, _ := a2aintegration.InvocationIdentityFromContext(ctx)
+	s.calls <- runtimeLaunchCall{task: task, identity: identity, contextErr: ctx.Err()}
 	return nil
+}
+
+func TestNotifyTaskEnqueued_PreservesDEAPDWSRequestContext(t *testing.T) {
+	launcher := &stubRuntimeLauncher{calls: make(chan runtimeLaunchCall, 1)}
+	svc := &TaskService{
+		RuntimeLauncher:     launcher,
+		runtimeLaunchLeases: newFakeRuntimeLaunchLeaseStore(),
+	}
+	const token = "deap-request-token"
+	ctx := a2aintegration.WithInvocationIdentity(
+		context.Background(),
+		a2aintegration.InvocationIdentity{DEAPDWSToken: token},
+	)
+	task := db.AgentTaskQueue{
+		ID:        testUUID(18),
+		RuntimeID: testUUID(19),
+		Context:   []byte(a2aTaskDEAPDWSContextJSON),
+	}
+	svc.NotifyTaskEnqueued(ctx, task)
+
+	select {
+	case got := <-launcher.calls:
+		if got.contextErr != nil || got.identity.DEAPDWSToken != token {
+			t.Fatalf("request-bound launch = %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request-bound runtime launcher was not invoked")
+	}
+}
+
+func TestNotifyTaskEnqueued_DetachesDEAPDWSLaunchFromRequestCancel(t *testing.T) {
+	launcher := &stubRuntimeLauncher{calls: make(chan runtimeLaunchCall, 1)}
+	svc := &TaskService{
+		RuntimeLauncher:     launcher,
+		runtimeLaunchLeases: newFakeRuntimeLaunchLeaseStore(),
+	}
+	const token = "deap-request-token"
+	ctx, cancel := context.WithCancel(a2aintegration.WithInvocationIdentity(
+		context.Background(),
+		a2aintegration.InvocationIdentity{DEAPDWSToken: token},
+	))
+	task := db.AgentTaskQueue{
+		ID:        testUUID(21),
+		RuntimeID: testUUID(22),
+		Context:   []byte(a2aTaskDEAPDWSContextJSON),
+	}
+	svc.NotifyTaskEnqueued(ctx, task)
+	cancel()
+
+	select {
+	case got := <-launcher.calls:
+		if got.contextErr != nil {
+			t.Fatalf("ASB launch inherited request cancellation: %#v", got)
+		}
+		if got.identity.DEAPDWSToken != token {
+			t.Fatalf("detached launch lost DEAP DWS token: %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("detached DEAP DWS runtime launcher was not invoked")
+	}
 }
 
 type blockingRuntimeLauncher struct {

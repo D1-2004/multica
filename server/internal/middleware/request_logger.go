@@ -45,28 +45,32 @@ func webhookTriggerIDFromContext(ctx context.Context) string {
 // segment after this prefix IS a bearer credential, so the logger must
 // redact it — see redactWebhookPath.
 const webhookIngressPathPrefix = "/api/webhooks/autopilots/"
+const agentMCPConnectPathPrefix = "/api/mcp/connect/"
 
 // redactWebhookPath returns a logger-safe version of a request path. For
-// the autopilot webhook ingress path the trailing token segment is replaced
-// with "[redacted]"; every other path passes through untouched.
+// secret-bearing webhook and Agent MCP connection paths, the credential
+// segment is replaced with "[redacted]"; every other path passes through.
 //
 // Why this exists: r.URL.Path for a successful webhook delivery is
 // "/api/webhooks/autopilots/awt_<32-byte-base64>", and the token is the
 // only credential gating the route. Without redaction, every successful
 // delivery prints a replayable URL into the structured log stream.
 func redactWebhookPath(path string) string {
-	if !strings.HasPrefix(path, webhookIngressPathPrefix) {
+	prefix := webhookIngressPathPrefix
+	if strings.HasPrefix(path, agentMCPConnectPathPrefix) {
+		prefix = agentMCPConnectPathPrefix
+	} else if !strings.HasPrefix(path, webhookIngressPathPrefix) {
 		return path
 	}
-	rest := path[len(webhookIngressPathPrefix):]
+	rest := path[len(prefix):]
 	if rest == "" {
 		return path
 	}
 	// Preserve any sub-path after the token (currently none, but defensive).
 	if slash := strings.IndexByte(rest, '/'); slash >= 0 {
-		return webhookIngressPathPrefix + "[redacted]" + rest[slash:]
+		return prefix + "[redacted]" + rest[slash:]
 	}
-	return webhookIngressPathPrefix + "[redacted]"
+	return prefix + "[redacted]"
 }
 
 // boundedBuffer captures up to Cap bytes from a stream then silently drops the

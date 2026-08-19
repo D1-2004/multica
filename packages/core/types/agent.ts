@@ -299,6 +299,8 @@ export interface AgentTask {
   // `omitempty`, so the field may also be missing on non-failed tasks).
   failure_reason?: TaskFailureReason | "";
   created_at: string;
+  /** A private DSH native event ledger is available through the task-scoped viewer. */
+  dsh_trajectory_available?: boolean;
   /** Non-empty when the task was spawned from a chat session. */
   chat_session_id?: string;
   /** Non-empty when the task was spawned by an autopilot run. */
@@ -418,6 +420,13 @@ export interface MikaBootstrapResponse extends Agent {
   /** Absent only when the server could not resolve the session; retry the
    *  same call rather than creating one client-side. */
   onboarding_session?: ChatSession;
+}
+
+export interface DSHTrajectoryArtifact {
+  session_id: string;
+  sha256: string;
+  event_count: number;
+  jsonl: string;
 }
 
 export interface Agent {

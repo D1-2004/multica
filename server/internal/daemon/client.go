@@ -189,6 +189,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityTaskInstructionV1,
 		protocol.DaemonCapabilityRPCV1,
+		protocol.DaemonCapabilityA2AInvocationV2,
 	}, ",")
 }
 
@@ -393,6 +394,45 @@ func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
 		"messages": messages,
 	}, nil)
+}
+
+// ControlA2ATask forwards a task-scoped runtime control signal. The caller is
+// the daemon, not the child process; the local MCP server binds its one-time
+// bearer capability to taskID before this method is reachable.
+func (c *Client) ControlA2ATask(ctx context.Context, taskID string, request any, response any) error {
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/a2a-control", taskID), request, response)
+}
+
+func (c *Client) DownloadA2AAttachment(ctx context.Context, taskID, attachmentID string, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, errors.New("A2A attachment download limit must be positive")
+	}
+	path := fmt.Sprintf("/api/daemon/tasks/%s/a2a-attachments/%s", taskID, attachmentID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	c.setIdentityHeaders(req)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(body))}
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("A2A attachment exceeds %d bytes", limit)
+	}
+	return data, nil
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, resultMessage, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) error {

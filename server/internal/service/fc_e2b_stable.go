@@ -2365,7 +2365,7 @@ func stableRuntimeProvider(provider string) string {
 		return "hermes"
 	}
 	switch provider {
-	case "hermes", "opencode", "pi":
+	case "hermes", "opencode", "pi", "dsh", "opencode-v2":
 		return provider
 	default:
 		return ""
@@ -2386,7 +2386,7 @@ func stableRuntimeMetadataForBackend(
 }
 
 func assignStableBatches(releaseID string, targets []stableRuntimeTarget) {
-	byProviderWorkspace := make(map[string]map[string][]stableRuntimeTarget, 3)
+	byProviderWorkspace := make(map[string]map[string][]stableRuntimeTarget, len(FCE2BSupportedProviders))
 	for _, target := range targets {
 		workspaceID := util.UUIDToString(target.WorkspaceID)
 		if byProviderWorkspace[target.Provider] == nil {
@@ -2397,8 +2397,8 @@ func assignStableBatches(releaseID string, targets []stableRuntimeTarget) {
 			target,
 		)
 	}
-	byProvider := make(map[string][]stableRuntimeTarget, 3)
-	for _, provider := range []string{"hermes", "opencode", "pi"} {
+	byProvider := make(map[string][]stableRuntimeTarget, len(FCE2BSupportedProviders))
+	for _, provider := range FCE2BSupportedProviders {
 		workspaces := byProviderWorkspace[provider]
 		workspaceIDs := make([]string, 0, len(workspaces))
 		for workspaceID := range workspaces {
@@ -2430,7 +2430,7 @@ func assignStableBatches(releaseID string, targets []stableRuntimeTarget) {
 	}
 	ordered := make([]stableRuntimeTarget, 0, len(targets))
 	for index := 0; len(ordered) < len(targets); index++ {
-		for _, provider := range []string{"hermes", "opencode", "pi"} {
+		for _, provider := range FCE2BSupportedProviders {
 			if index < len(byProvider[provider]) {
 				ordered = append(ordered, byProvider[provider][index])
 			}
@@ -2831,7 +2831,7 @@ func (s *FCE2BStableService) stableLaunchHealthGate(ctx context.Context, release
 	if err := sessionRows.Err(); err != nil {
 		return err
 	}
-	for _, provider := range []string{"hermes", "opencode", "pi"} {
+	for _, provider := range FCE2BSupportedProviders {
 		health, present := candidate[provider]
 		if !present {
 			continue
@@ -3327,16 +3327,21 @@ func isStableSourceRevision(value string) bool {
 
 func releaseTemplate(release FCE2BStableRelease) FCE2BTemplate {
 	return FCE2BTemplate{
-		ID:                release.TemplateID,
-		BuildID:           release.TemplateBuildID,
-		Name:              release.TemplateAlias,
-		Template:          release.TemplateAlias,
-		Status:            "READY",
-		ManifestVersion:   3,
-		Providers:         []string{"hermes", "opencode", "pi"},
-		Capabilities:      []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
+		ID:              release.TemplateID,
+		BuildID:         release.TemplateBuildID,
+		SourceRevision:  release.SourceRevision,
+		Name:            release.TemplateAlias,
+		Template:        release.TemplateAlias,
+		Status:          "READY",
+		ManifestVersion: intMetadataValue(release.Manifest, "schema_version"),
+		Providers:       stringSliceMetadataValue(release.Manifest, "providers"),
+		Capabilities: manifestStringSliceForBackend(
+			release.Manifest,
+			"capabilities_by_backend",
+			string(SandboxBackendAliyunFC),
+		),
 		ComponentVersions: releaseComponentVersions(release.Manifest),
-		RunnerProtocol:    string(fcE2BRunnerLaunchRootLog),
+		RunnerProtocol:    stringMetadataValue(release.Manifest, "runner_protocol"),
 	}
 }
 
@@ -3412,11 +3417,12 @@ func runtimeUsesArtifact(runtime db.AgentRuntime, ref, buildID, digest string) b
 }
 
 func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableRelease) bool {
+	var bindingMatches bool
 	switch SandboxBackendKind(release.SandboxBackend) {
 	case SandboxBackendAliyunFC:
-		return runtimeUsesTemplate(runtime, release.TemplateID, release.TemplateBuildID)
+		bindingMatches = runtimeUsesTemplate(runtime, release.TemplateID, release.TemplateBuildID)
 	case SandboxBackendASB:
-		return runtimeUsesArtifact(
+		bindingMatches = runtimeUsesArtifact(
 			runtime,
 			release.ArtifactRef,
 			release.ArtifactBuildID,
@@ -3425,6 +3431,61 @@ func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableReleas
 	default:
 		return false
 	}
+	if !bindingMatches {
+		return false
+	}
+	metadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil {
+		return false
+	}
+	expectedManifestVersion := intMetadataValue(release.Manifest, "schema_version")
+	expectedRunnerProtocol := stringMetadataValue(release.Manifest, "runner_protocol")
+	expectedCapabilities := manifestStringSliceForBackend(
+		release.Manifest,
+		"capabilities_by_backend",
+		release.SandboxBackend,
+	)
+	if SandboxBackendKind(release.SandboxBackend) == SandboxBackendAliyunFC {
+		// FC persists the capabilities that the immutable Runtime provider can
+		// actually expose. A backend manifest may also advertise capabilities
+		// owned by sibling providers (for example OpenCode A2A on a Hermes
+		// Runtime), so comparing against the whole backend list rejects a
+		// successful template rotation even though its database readback is
+		// correct.
+		expectedCapabilities = stableReleaseCapabilitiesForProvider(metadata.Provider, expectedCapabilities)
+	}
+	return expectedManifestVersion > 0 &&
+		expectedRunnerProtocol != "" &&
+		len(expectedCapabilities) > 0 &&
+		metadata.ManifestVersion == expectedManifestVersion &&
+		metadata.RunnerProtocol == expectedRunnerProtocol &&
+		containsAllStrings(metadata.Capabilities, expectedCapabilities...)
+}
+
+func stableReleaseCapabilitiesForProvider(provider string, capabilities []string) []string {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	filtered := make([]string, 0, len(capabilities))
+	for _, capability := range capabilities {
+		capability = strings.ToLower(strings.TrimSpace(capability))
+		var owner string
+		switch capability {
+		case A2AInboundHermesCapability:
+			owner = "hermes"
+		case A2AInboundOpenCodeCapability:
+			if !usesOpenCodeA2AInboundAdapter(provider) {
+				continue
+			}
+		case A2AInboundPiCapability:
+			owner = "pi"
+		case "dsh_trajectory_v1":
+			owner = "dsh"
+		}
+		if owner != "" && owner != provider {
+			continue
+		}
+		filtered = append(filtered, capability)
+	}
+	return normalizeCloudSandboxCapabilities(filtered)
 }
 
 func isUniqueViolation(err error) bool {

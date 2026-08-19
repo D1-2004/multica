@@ -164,6 +164,15 @@ LEFT JOIN agent_task_queue atq
        ON sm.member_type = 'agent'
       AND atq.agent_id = sm.member_id
       AND atq.status IN ('dispatched', 'running', 'waiting_local_directory')
+      -- A2A tasks share the internal queue but are not part of the ordinary
+      -- member-facing squad presence projection. Treat either provenance
+      -- signal as authoritative so a partially-stamped A2A row fails closed.
+      AND COALESCE(atq.context ->> 'multica_origin', '') <> 'a2a'
+      AND NOT EXISTS (
+          SELECT 1
+          FROM a2a_context context
+          WHERE context.chat_session_id = atq.chat_session_id
+      )
 LEFT JOIN issue i
        ON i.id = atq.issue_id
 WHERE sm.squad_id = $1

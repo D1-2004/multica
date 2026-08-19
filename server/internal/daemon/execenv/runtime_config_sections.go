@@ -678,7 +678,8 @@ func writeMentions(b *strings.Builder) {
 // writeAttachments emits the Attachments pointer.
 func writeAttachments(b *strings.Builder) {
 	b.WriteString("## Attachments\n\n")
-	b.WriteString("Fetch issue/comment attachments via the authenticated CLI (`multica attachment --help`); never open Multica resource URLs directly.\n")
+	b.WriteString("Issues and comments may include file attachments (images, documents, etc.).\n")
+	b.WriteString("When a task includes attachment IDs and you need the files, inspect `multica attachment --help` and use the authenticated CLI path. Do not open Multica resource URLs directly.\n\n")
 	// Closes the inbound half of the MUL-4899 loop: an attachment the agent
 	// just downloaded is the most tempting local path to echo back, because it
 	// came from the conversation and *feels* shared. It is not — the download

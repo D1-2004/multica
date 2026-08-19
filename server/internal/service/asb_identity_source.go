@@ -282,11 +282,9 @@ func (m *ASBIdentitySourceManager) Rotate(
 		logASBIdentitySourceFailure("wait_rotated_seed_running", sandbox.ID, err)
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
-	// Match the initial source-establishment path: lazyAuth mounts the complete
-	// identity store, then the explicit synchronous attach copies the selected
-	// predecessor into this sandbox's own persistence directory. Creating a
-	// worker sandbox with only buc.originalSandboxID bypasses that authoritative
-	// attach boundary and does not prove the next generation is self-contained.
+	// A rotating seed must become self-contained before the predecessor can be
+	// retired. The explicit inherited attach is the authoritative copy boundary;
+	// creating a worker with only buc.originalSandboxID does not prove that.
 	if err := attachAndProbeInheritedASBIdentitySource(
 		ctx,
 		client,
@@ -619,19 +617,17 @@ func attachASBBUCIdentityOnce(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Submit the synchronous attachment exactly once. ASB can return the
-	// documented tunnel-converging response after it has started sandbox-side
-	// WireGuard setup. Repeating the POST restarts that setup and can keep the
-	// tunnel permanently unready. The caller therefore treats this one response
-	// as an in-progress attachment and proves completion through state and BUC
-	// probes only.
+	// Submit the synchronous attachment exactly once. ASB can accept bootstrap
+	// before its post-attach status command observes the tunnel, returning a
+	// known HTTP 400 convergence result. Multica then owns the bounded employee
+	// probe below. Never repeat this POST because it restarts wgclient.
 	err := client.AttachBUCIdentity(ctx, sandboxID, grant, true)
 	if err == nil {
 		return nil
 	}
-	if isASBWireGuardTunnelConverging(err) {
+	if isASBWireGuardPostAttachCheckPending(err) {
 		slog.Info(
-			"ASB BUC identity attachment is converging after single submission",
+			"ASB BUC identity bootstrap submitted; post-attach check is pending",
 			"sandbox_id", sandboxID,
 		)
 		return nil
@@ -639,15 +635,17 @@ func attachASBBUCIdentityOnce(
 	return err
 }
 
-func isASBWireGuardTunnelConverging(err error) bool {
+func isASBWireGuardPostAttachCheckPending(err error) bool {
 	var httpErr *ASBHTTPError
-	return errors.As(err, &httpErr) &&
-		httpErr.Operation == "attach_buc_identity" &&
-		httpErr.StatusCode == http.StatusBadRequest &&
-		strings.Contains(
-			strings.ToLower(httpErr.ErrorMessage),
-			"wireguard tunnel not ready yet",
-		)
+	if !errors.As(err, &httpErr) ||
+		httpErr.Operation != "attach_buc_identity" ||
+		httpErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
+	return strings.Contains(message, "wireguard tunnel not ready yet") ||
+		(strings.Contains(message, "failed to check wireguard status") &&
+			strings.Contains(message, "status code 404"))
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {
@@ -938,8 +936,8 @@ func asbEnterpriseCLIIdentityProbeFailureStage(err error) string {
 }
 
 func asbBUCOnlyIdentityProbeCommand() string {
-	// The sandbox=true variant additionally requires an SSO_TICKET. Source
-	// establishment only needs to prove the injected zero-trust identity.
+	// The sandbox=true variant additionally requires an SSO ticket. Source and
+	// task startup only need to prove the injected zero-trust identity.
 	return "set -euo pipefail; " +
 		"printf 'probe_stage=buc\\n' >&2; " +
 		"curl -fsS --max-time 10 -X POST " +

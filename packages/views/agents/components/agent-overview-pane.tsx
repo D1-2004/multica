@@ -40,6 +40,8 @@ import { IntegrationsTab } from "./tabs/integrations-tab";
 import { IdentityTab } from "./tabs/identity-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { LLMTraceTab } from "./tabs/llm-trace-tab";
+import { RunnerTab } from "./tabs/runner-tab";
+import { A2ATab } from "./tabs/a2a-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
@@ -55,6 +57,7 @@ export type DetailTab =
   | "instructions"
   | "skills"
   | "mcp_config"
+  | "runner"
   | "composio_mcp"
   | "integrations"
   | "identity"
@@ -63,7 +66,8 @@ export type DetailTab =
   | "env"
   | "custom_args"
   | "runtime_config"
-  | "llm_trace";
+  | "llm_trace"
+  | "a2a";
 
 type SecondaryTab = {
   id: DetailTab;
@@ -71,6 +75,7 @@ type SecondaryTab = {
     | "instructions"
     | "skills"
     | "mcp_config"
+    | "runner"
     | "composio_mcp"
     | "integrations"
     | "identity"
@@ -79,13 +84,15 @@ type SecondaryTab = {
     | "environment"
     | "custom_args"
     | "runtime_config"
-    | "llm_trace";
+    | "llm_trace"
+    | "a2a";
 };
 
 const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "instructions", labelKey: "instructions" },
   { id: "skills", labelKey: "skills" },
   { id: "mcp_config", labelKey: "mcp_config" },
+  { id: "runner", labelKey: "runner" },
   { id: "composio_mcp", labelKey: "composio_mcp" },
   { id: "integrations", labelKey: "integrations" },
   { id: "identity", labelKey: "identity" },
@@ -98,6 +105,7 @@ const SETTINGS_TABS: SecondaryTab[] = [
   { id: "custom_args", labelKey: "custom_args" },
   { id: "runtime_config", labelKey: "runtime_config" },
   { id: "llm_trace", labelKey: "llm_trace" },
+  { id: "a2a", labelKey: "a2a" },
 ];
 
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
@@ -211,6 +219,10 @@ export function AgentOverviewPane({
     dingtalkListing?.configured === true ||
     dingtalkAccountListing?.configured === true ||
     wecomListing?.configured === true;
+  const showMcpIntegration =
+    !!currentUserId &&
+    !!agent.owner_id &&
+    agent.owner_id === currentUserId;
 
   const visibleCapabilityTabs = useMemo(() => {
     const showMcp = runtime
@@ -224,8 +236,11 @@ export function AgentOverviewPane({
 
     return CAPABILITY_TABS.filter((tab) => {
       if (tab.id === "mcp_config") return showMcp;
+      if (tab.id === "runner") return canEdit;
       if (tab.id === "composio_mcp") return showComposioMcp;
-      if (tab.id === "integrations") return integrationsConfigured;
+      if (tab.id === "integrations") {
+        return integrationsConfigured || showMcpIntegration;
+      }
       if (tab.id === "identity") {
         return dingtalkAccountListing?.configured === true || isASBRuntime(runtime);
       }
@@ -235,9 +250,11 @@ export function AgentOverviewPane({
     agent.owner_id,
     composioMCPAppsEnabled,
     currentUserId,
+    canEdit,
     dingtalkAccountListing?.configured,
     integrationsConfigured,
     runtime,
+    showMcpIntegration,
   ]);
 
   const visibleSettingsTabs = useMemo(
@@ -248,9 +265,18 @@ export function AgentOverviewPane({
           return runtime?.provider === "openclaw";
         }
         if (tab.id === "llm_trace") return agent.runtime_mode === "cloud";
+        if (tab.id === "a2a") {
+          return !!currentUserId && agent.owner_id === currentUserId;
+        }
         return true;
       }),
-    [agent.runtime_mode, canEdit, runtime?.provider],
+    [
+      agent.owner_id,
+      agent.runtime_mode,
+      canEdit,
+      currentUserId,
+      runtime?.provider,
+    ],
   );
 
   const visibleViews = useMemo(
@@ -474,12 +500,22 @@ export function AgentOverviewPane({
                       onDirtyChange={setActiveDirty}
                     />
                   )}
+                  {effectiveView === "runner" && (
+                    <RunnerTab
+                      agent={agent}
+                      canBind={
+                        !!currentUserId && agent.owner_id === currentUserId
+                      }
+                    />
+                  )}
                   {effectiveView === "composio_mcp" && (
                     <AgentMcpTab agent={agent} />
                   )}
                   {effectiveView === "integrations" && (
                     <IntegrationsTab
                       agent={agent}
+                      showMcpLink={showMcpIntegration}
+                      platformIntegrationsConfigured={integrationsConfigured}
                       canOperateDingTalkBinding={canOperateDingTalkBinding}
                       dingTalkBindingPermissionLoading={
                         dingTalkBindingPermissionLoading
@@ -542,6 +578,7 @@ export function AgentOverviewPane({
                       onDirtyChange={setActiveDirty}
                     />
                   )}
+                  {effectiveView === "a2a" && <A2ATab agent={agent} />}
                 </div>
               </div>
             </section>

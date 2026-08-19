@@ -313,10 +313,30 @@ func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID
 }
 
 func (s *Service) updateExistingOwner(ctx context.Context, agentID, workspaceID, ownerID pgtype.UUID) (db.Agent, error) {
-	return s.queries.UpdateManagedAgentOwner(ctx, db.UpdateManagedAgentOwnerParams{
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return db.Agent{}, err
+	}
+	defer tx.Rollback(context.Background())
+
+	qtx := s.queries.WithTx(tx)
+	if _, err := qtx.LockManagedAgentOwnerChange(ctx, db.LockManagedAgentOwnerChangeParams{
+		AgentID: agentID, WorkspaceID: workspaceID, OwnerID: ownerID,
+		ManagedSourceKey: pgtype.Text{String: s.config.SourceKey, Valid: true},
+	}); err != nil {
+		return db.Agent{}, err
+	}
+	updated, err := qtx.ApplyManagedAgentOwnerChange(ctx, db.ApplyManagedAgentOwnerChangeParams{
 		AgentID: agentID, WorkspaceID: workspaceID, OwnerID: ownerID,
 		ManagedSourceKey: pgtype.Text{String: s.config.SourceKey, Valid: true},
 	})
+	if err != nil {
+		return db.Agent{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.Agent{}, err
+	}
+	return updated, nil
 }
 
 func (s *Service) Rollout(ctx context.Context, sha string, bundle agentsource.Bundle) error {

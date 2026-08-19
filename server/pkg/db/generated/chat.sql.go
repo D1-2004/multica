@@ -180,6 +180,99 @@ func (q *Queries) ClearChatSessionSessionIfMatches(ctx context.Context, arg Clea
 	return err
 }
 
+const createA2AChatTask = `-- name: CreateA2AChatTask :one
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context, max_attempts
+)
+VALUES (
+    $1, $2, NULL, 'deferred', 2, $3,
+    NULL, NULL, FALSE, NULL, NULL, $4, 1
+)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at
+`
+
+type CreateA2AChatTaskParams struct {
+	AgentID       pgtype.UUID `json:"agent_id"`
+	RuntimeID     pgtype.UUID `json:"runtime_id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	TaskContext   []byte      `json:"task_context"`
+}
+
+// A2A tasks deliberately have no human initiator/originator and no personal
+// runtime overlay. The endpoint owner is only chat_session ownership plumbing;
+// it must never become the caller identity or grant access to personal apps.
+// Every turn starts deferred so a polling daemon cannot claim two turns from
+// the same Context concurrently. The A2A scheduler promotes exactly one FIFO
+// turn after the transaction containing its message and identity has committed.
+// Retry stays disabled until A2A logical retry lineage is implemented.
+func (q *Queries) CreateA2AChatTask(ctx context.Context, arg CreateA2AChatTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, createA2AChatTask,
+		arg.AgentID,
+		arg.RuntimeID,
+		arg.ChatSessionID,
+		arg.TaskContext,
+	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
 const createChatDraftRestore = `-- name: CreateChatDraftRestore :one
 INSERT INTO chat_draft_restore (id, chat_session_id, task_id, content, attachment_ids)
 VALUES ($1, $2, $3, $4, $5)
@@ -514,6 +607,96 @@ func (q *Queries) CreateMikaOnboardingOpening(ctx context.Context, arg CreateMik
 	return i, err
 }
 
+const createPausedA2AChatTask = `-- name: CreatePausedA2AChatTask :one
+INSERT INTO agent_task_queue (
+    agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context, max_attempts
+)
+VALUES (
+    $1, $2, NULL, 'deferred', 2, $3,
+    NULL, NULL, FALSE, NULL, NULL, $4, 1
+)
+RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id, handoff_note, prepare_lease_expires_at, squad_id, runtime_mcp_overlay, escalation_for_task_id, fire_at, originator_user_id, runtime_connected_apps, coalesced_comment_ids, delivered_comment_ids, chat_input_task_id, chat_finalize_deferred_at, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, accountable_user_id, session_rollout_missing, retired_session_id, quick_actions_disabled, regenerate_quick_actions_for, runtime_launch_lease_token, runtime_launch_lease_expires_at
+`
+
+type CreatePausedA2AChatTaskParams struct {
+	AgentID       pgtype.UUID `json:"agent_id"`
+	RuntimeID     pgtype.UUID `json:"runtime_id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	TaskContext   []byte      `json:"task_context"`
+}
+
+// An expired external ContextToken must produce an AUTH_REQUIRED public task
+// without allowing the local execution to race a claim. The placeholder task
+// remains deferred with no fire_at; a later authenticated turn promotes it and
+// supplies the fresh task-private identity context.
+func (q *Queries) CreatePausedA2AChatTask(ctx context.Context, arg CreatePausedA2AChatTaskParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, createPausedA2AChatTask,
+		arg.AgentID,
+		arg.RuntimeID,
+		arg.ChatSessionID,
+		arg.TaskContext,
+	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
 const deferChatTaskForSealedPendingMedia = `-- name: DeferChatTaskForSealedPendingMedia :one
 UPDATE agent_task_queue AS task
 SET status = 'deferred', fire_at = pending.max_until
@@ -826,7 +1009,8 @@ func (q *Queries) GetChatSession(ctx context.Context, id pgtype.UUID) (ChatSessi
 
 const getChatSessionInWorkspace = `-- name: GetChatSessionInWorkspace :one
 SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id, last_read_at, is_agent_intro, pinned_at, project_id FROM chat_session
-WHERE id = $1 AND workspace_id = $2
+WHERE chat_session.id = $1
+  AND chat_session.workspace_id = $2
 `
 
 type GetChatSessionInWorkspaceParams struct {
@@ -1250,6 +1434,19 @@ func (q *Queries) HasPendingChatTurnForSession(ctx context.Context, chatSessionI
 	return has_pending, err
 }
 
+const isA2AChatSession = `-- name: IsA2AChatSession :one
+SELECT EXISTS (
+  SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = $1
+) AS is_a2a
+`
+
+func (q *Queries) IsA2AChatSession(ctx context.Context, chatSessionID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, isA2AChatSession, chatSessionID)
+	var is_a2a bool
+	err := row.Scan(&is_a2a)
+	return is_a2a, err
+}
+
 const linkChatMessageToTask = `-- name: LinkChatMessageToTask :exec
 UPDATE chat_message
 SET task_id = $2
@@ -1440,7 +1637,10 @@ SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_
        COALESCE(lm.role, '') AS last_message_role,
        lm.created_at AS last_message_at,
        lm.failure_reason AS last_message_failure_reason,
-       COALESCE(lm.message_kind, '') AS last_message_kind
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       EXISTS (
+         SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+       ) AS is_a2a
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -1496,6 +1696,7 @@ type ListAllChatSessionsByCreatorRow struct {
 	LastMessageAt            pgtype.Timestamptz `json:"last_message_at"`
 	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
 	LastMessageKind          string             `json:"last_message_kind"`
+	IsA2a                    bool               `json:"is_a2a"`
 }
 
 // Unlike ListChatSessionsByCreator this returns archived sessions too (for the
@@ -1537,6 +1738,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 			&i.LastMessageAt,
 			&i.LastMessageFailureReason,
 			&i.LastMessageKind,
+			&i.IsA2a,
 		); err != nil {
 			return nil, err
 		}
@@ -1876,7 +2078,10 @@ SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_
        COALESCE(lm.role, '') AS last_message_role,
        lm.created_at AS last_message_at,
        lm.failure_reason AS last_message_failure_reason,
-       COALESCE(lm.message_kind, '') AS last_message_kind
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       EXISTS (
+         SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+       ) AS is_a2a
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -1932,6 +2137,7 @@ type ListChatSessionsByCreatorRow struct {
 	LastMessageAt            pgtype.Timestamptz `json:"last_message_at"`
 	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
 	LastMessageKind          string             `json:"last_message_kind"`
+	IsA2a                    bool               `json:"is_a2a"`
 }
 
 // IM-style list: each active session with its unread *count* (assistant
@@ -1969,6 +2175,7 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 			&i.LastMessageAt,
 			&i.LastMessageFailureReason,
 			&i.LastMessageKind,
+			&i.IsA2a,
 		); err != nil {
 			return nil, err
 		}
@@ -3338,7 +3545,9 @@ VALUES (
     now() + make_interval(secs => $15::double precision)
 )
 ON CONFLICT (chat_session_id)
-    WHERE status = 'deferred' AND chat_session_id IS NOT NULL
+    WHERE status = 'deferred'
+      AND chat_session_id IS NOT NULL
+      AND fire_at IS NOT NULL
 DO UPDATE SET
     agent_id = EXCLUDED.agent_id,
     runtime_id = EXCLUDED.runtime_id,

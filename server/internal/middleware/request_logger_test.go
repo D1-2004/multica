@@ -146,6 +146,8 @@ func TestRedactWebhookPath(t *testing.T) {
 		{"/api/webhooks/autopilots/awt_secret", "/api/webhooks/autopilots/[redacted]"},
 		{"/api/webhooks/autopilots/awt_secret/", "/api/webhooks/autopilots/[redacted]/"},
 		{"/api/webhooks/autopilots/", "/api/webhooks/autopilots/"},
+		{"/api/mcp/connect/mca2a_secret", "/api/mcp/connect/[redacted]"},
+		{"/api/mcp/connect/mca2a_secret/extra", "/api/mcp/connect/[redacted]/extra"},
 		{"/api/webhooks/github", "/api/webhooks/github"},
 		{"/api/runtimes/abc", "/api/runtimes/abc"},
 		{"/", "/"},

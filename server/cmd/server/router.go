@@ -30,6 +30,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -193,10 +194,11 @@ func dBaseBindingURLMatchesOrigin(bindingURL, expectedOrigin string) bool {
 	return err == nil && origin == expectedOrigin
 }
 
-// appURLFromEnv resolves the user-facing web app URL. It prefers
-// MULTICA_APP_URL and falls back to FRONTEND_ORIGIN, matching how the backend
-// resolves the app URL elsewhere (handler.daemonSetupURLsFromEnv) and the CLI
-// login flow (cmd/multica tryResolveAppURL). Empty when neither is set.
+// appURLFromEnv resolves the user-facing web app URL for environment-only
+// startups. It prefers MULTICA_APP_URL and falls back to FRONTEND_ORIGIN,
+// matching handler.resolveFrontendAppURL and the CLI login flow
+// (cmd/multica tryResolveAppURL). Diamond mode overwrites this snapshot
+// from web.app_url. Empty when neither is set.
 func appURLFromEnv() string {
 	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_APP_URL")), "/"); v != "" {
 		return v
@@ -306,6 +308,7 @@ type RouterOptions struct {
 	WecomMetrics *obsmetrics.WecomMetrics
 	DaemonHub    *daemonws.Hub
 	DaemonWakeup service.TaskWakeupNotifier
+	RunnerRelay  realtime.Broadcaster
 	FeatureFlags *featureflag.Service
 	// HeartbeatScheduler, when non-nil, replaces the default synchronous
 	// passthrough scheduler on the constructed Handler. main.go injects a
@@ -420,6 +423,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		publicURLProvider = opts.RuntimeConfig.publicURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	if pushKey, pushKeyErr := secretbox.LoadKey("MULTICA_A2A_PUSH_SECRET_KEY"); pushKeyErr == nil {
+		pushSecrets, boxErr := secretbox.New(pushKey)
+		if boxErr != nil {
+			slog.Error("A2A push secret configuration is invalid; push notifications disabled", "error", boxErr)
+		} else {
+			h.A2AService.PushSecrets = pushSecrets
+			h.A2APushWorker = service.NewA2APushWorker(queries, h.A2AService)
+			h.A2AService.PushNotifier = h.A2APushWorker
+		}
+	} else {
+		slog.Info("A2A push notifications disabled (MULTICA_A2A_PUSH_SECRET_KEY not set)")
+	}
+	h.A2AProtocol = a2aintegration.NewJSONRPCHandler(h.A2AService)
+	h.RunnerRelay = opts.RunnerRelay
+	if setter, ok := opts.RunnerRelay.(interface {
+		SetRunnerMachineDeliverer(realtime.RunnerMachineDeliverer)
+	}); ok {
+		setter.SetRunnerMachineDeliverer(h)
+	}
 	if opts.RuntimeConfig != nil {
 		h.SetConfigProvider(opts.RuntimeConfig.handlerConfig)
 		h.SetDingTalkAccountBindingOriginProvider(opts.RuntimeConfig.dbaseBindingOrigin)
@@ -1614,6 +1636,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
+	runnerDeviceBeginRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_DEVICE_BEGIN", 30), time.Minute, trustedProxies)
+	runnerDevicePollRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_DEVICE_POLL", 600), time.Minute, trustedProxies)
+	runnerChallengeRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_RUNNER_CHALLENGE", 120), time.Minute, trustedProxies)
 	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
 	// LOGIN_PROVIDERS (with LOGIN_DINGTALK_ONLY as its legacy alias) closes
 	// the login paths of unlisted providers entirely — not merely hidden in
@@ -1651,6 +1676,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Public API
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
+	// Per-Agent A2A discovery is public metadata; JSON-RPC uses an endpoint-
+	// specific Bearer credential and derives all tenant context server-side.
+	r.Get("/api/a2a/agents/{publicAgentId}/.well-known/agent-card.json", h.GetAgentA2ACard)
+	r.Post("/api/a2a/agents/{publicAgentId}/v1", h.HandleAgentA2ARPC)
+	// The header-authenticated URL is canonical. The secret-bearing connect URL
+	// exists so a local Coding Agent can be configured with one copied command.
+	r.Post("/api/mcp/agents/{publicAgentId}", h.HandleAgentMCP)
+	r.Post("/api/mcp/connect/{accessToken}", h.HandleAgentMCP)
 
 	// Webhook ingress for autopilots. Outside the authenticated group on
 	// purpose: the bearer token in the URL path IS the credential. Workspace
@@ -1702,6 +1735,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// path; the callback never trusts identity coordinates from query params.
 	r.Get("/api/agent-enterprise-identity/buc/callback", h.CompleteAgentEnterpriseIdentityBinding)
 
+	// Runner installation and OAuth device authorization are public by design.
+	// The short-lived pairing token scopes device registration to an Agent; a
+	// logged-in owner must still approve it through the protected routes below.
+	r.Get("/api/runner/install", h.ServeRunnerInstall)
+	r.Get("/api/runner/binaries/{os}/{arch}", h.ServeRunnerBinary)
+	r.Get("/api/runner/binaries/{os}/{arch}/checksum", h.ServeRunnerBinaryChecksum)
+	r.With(runnerDeviceBeginRL).Post("/api/runner/device-authorizations", h.BeginRunnerDeviceAuthorization)
+	r.With(runnerDevicePollRL).Post("/api/runner/device-authorizations/token", h.PollRunnerDeviceAuthorization)
+	r.With(runnerChallengeRL).Post("/api/runner/machines/{machineId}/challenges", h.CreateRunnerChallenge)
+	r.With(runnerChallengeRL).Post("/api/runner/machines/{machineId}/reconnect", h.ReconnectRunnerBinding)
+	r.Get("/api/runner/ws", h.RunnerWebSocket)
+
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
 		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
@@ -1737,6 +1782,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/tasks/{taskId}/fail", h.FailTask)
 		r.Post("/tasks/{taskId}/usage", h.ReportTaskUsage)
 		r.Post("/tasks/{taskId}/messages", h.ReportTaskMessages)
+		r.Post("/tasks/{taskId}/a2a-control", h.ControlA2ATask)
+		r.Get("/tasks/{taskId}/a2a-attachments/{attachmentId}", h.DownloadDaemonA2AAttachment)
 		r.Get("/tasks/{taskId}/messages", h.ListTaskMessages)
 		r.Post("/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)
 		r.Post("/tasks/{taskId}/cancel-ack", h.AckTaskCancelled)
@@ -1763,6 +1810,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireHumanActor).Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/complete", h.CompleteOnboarding)
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
+		r.With(handler.RequireHumanActor).Get("/api/runner/device-authorizations/{userCode}", h.GetRunnerDeviceAuthorization)
+		r.With(handler.RequireHumanActor).Post("/api/runner/device-authorizations/{userCode}/approve", h.ApproveRunnerDeviceAuthorization)
+		r.With(handler.RequireHumanActor).Post("/api/runner/device-authorizations/{userCode}/deny", h.DenyRunnerDeviceAuthorization)
 		// DEPRECATED — shim routes for desktop < v3 during the rollout
 		// window. v3 frontend creates the Helper agent + starter issue
 		// via generic CreateAgent / CreateIssue and only calls /complete
@@ -1827,6 +1877,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// session_id or agent_id, then enforce membership and Agent permissions in
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
+		r.Handle("/api/runner-mcp", http.HandlerFunc(h.RunnerMCP))
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -1971,6 +2022,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/agent-identity/github/{connectionId}", h.DisconnectAgentIdentityGitHubConnection)
 					r.Get("/agent-identity/enterprise/status", h.GetAgentEnterpriseIdentityStatus)
 					r.Post("/agent-identity/enterprise/oauth/start", h.BeginAgentEnterpriseIdentityBinding)
+					r.With(handler.RequireHumanActor).Post("/agent-identity/enterprise/source/rotate", h.RotateAgentEnterpriseIdentitySource)
 					r.Delete("/agent-identity/enterprise", h.RevokeAgentEnterpriseIdentity)
 				})
 				// Slack integration (MUL-3666). Same admin/member split as
@@ -2139,8 +2191,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Task messages (user-facing, not daemon auth)
+			// User-readable task artifacts plus the task-token-only DSH upload.
+			// Each handler re-applies its own transcript/trajectory authorization.
 			r.Get("/api/tasks/{taskId}/messages", h.ListTaskMessagesByUser)
+			r.Put("/api/tasks/{taskId}/dsh-trajectory", h.UploadDSHTrajectory)
+			r.Get("/api/tasks/{taskId}/dsh-trajectory", h.GetDSHTrajectory)
 
 			// DTA deployment load verification. These endpoints expose only
 			// server-stamped smoke Issues, never generic Issue or Chat CRUD.
@@ -2326,6 +2381,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/skills/{skillId}/enabled", h.SetAgentSkillEnabled)
 					r.Put("/runtime-skills/enabled", h.SetAgentRuntimeSkillEnabled)
 					r.Delete("/skills/{skillId}", h.RemoveAgentSkill)
+					r.Route("/a2a", func(r chi.Router) {
+						r.Use(handler.RequireHumanActor)
+						r.Get("/", h.GetAgentA2AConfig)
+						r.Put("/", h.UpdateAgentA2AConfig)
+						r.Post("/clients", h.CreateAgentA2AClient)
+						r.Patch("/clients/{clientId}", h.UpdateAgentA2AClient)
+						r.Post("/clients/{clientId}/credentials", h.CreateAgentA2ACredential)
+						r.Delete("/clients/{clientId}/credentials/{credentialId}", h.DeleteAgentA2ACredential)
+					})
 					// Dedicated env-management endpoint. Admits the agent
 					// owner or a workspace owner/admin; agent actors are
 					// denied. Every reveal / write is audited to
@@ -2333,6 +2397,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// internal/handler/agent_env.go.
 					r.Get("/env", h.GetAgentEnv)
 					r.Put("/env", h.UpdateAgentEnv)
+					r.With(handler.RequireHumanActor).Get("/runner-bindings", h.ListAgentRunnerBindings)
+					r.With(handler.RequireHumanActor).Post("/runner-pairings", h.CreateAgentRunnerPairing)
+					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/disconnect", h.DisconnectAgentRunnerBinding)
+					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/reconnect-command", h.CreateAgentRunnerReconnectCommand)
+					r.With(handler.RequireHumanActor).Delete("/runner-bindings/{bindingId}", h.RevokeAgentRunnerBinding)
 				})
 			})
 

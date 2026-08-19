@@ -34,6 +34,7 @@ import { issueDetailOptions } from "@multica/core/issues/queries";
 import { AppLink } from "../../../navigation";
 import { TranscriptButton } from "../../../common/task-transcript";
 import { AttributionBadge } from "../../../issues/components/attribution-badge";
+import { DSHTrajectoryButton } from "../../../common/task-trajectory";
 import { taskStatusConfig } from "../../config";
 import { failureReasonLabel } from "./task-failure";
 import { Sparkline } from "../sparkline";
@@ -723,6 +724,7 @@ function TaskRow({
             title={t(($) => $.tab_body.activity.transcript_tooltip)}
           />
         )}
+        <DSHTrajectoryButton task={task} />
         {showCancel && (
           <Tooltip>
             <TooltipTrigger

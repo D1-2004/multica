@@ -149,7 +149,7 @@ func TestFCE2BProviderForTemplate(t *testing.T) {
 }
 
 func TestIsFCE2BSupportedProvider(t *testing.T) {
-	for _, provider := range []string{"hermes", "opencode", "pi", " Hermes ", "OPENCODE", " PI "} {
+	for _, provider := range []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", " Hermes ", "OPENCODE", " PI ", " DSH ", " OPENCODE-V2 "} {
 		if !IsFCE2BSupportedProvider(provider) {
 			t.Fatalf("IsFCE2BSupportedProvider(%q) = false, want true", provider)
 		}
@@ -169,6 +169,8 @@ func TestFCE2BRunnerCommandForProvider(t *testing.T) {
 		{"hermes", "multica-fc-hermes-container-log-entry"},
 		{"opencode", "multica-fc-opencode-container-log-entry"},
 		{"pi", "multica-fc-pi-container-log-entry"},
+		{"dsh", "multica-fc-dsh-container-log-entry"},
+		{"opencode-v2", "multica-fc-opencode-v2-container-log-entry"},
 		{" OpenCode ", "multica-fc-opencode-container-log-entry"},
 		{"", "multica-fc-hermes-container-log-entry"},
 	}
@@ -446,13 +448,13 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 }
 
 func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
-	const alias = "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"
+	const alias = "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"
 	got, err := parseFCE2BTemplates(`[
 		{
 			"templateID": "idt7f6on323gsyuqjt59",
 			"buildID": "a4aa129e-ef89-4fce-9fc9-605a1015e0e1",
-			"aliases": ["default", "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"],
-			"names": ["multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"],
+			"aliases": ["default", "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"],
+			"names": ["multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"],
 			"buildStatus": "ready",
 			"createdAt": "2026-07-08T13:16:30.740524Z",
 			"updatedAt": "2026-07-08T13:19:01.365773Z"
@@ -488,7 +490,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got[0].Providers, want) {
 		t.Fatalf("providers = %#v, want %#v", got[0].Providers, want)
 	}
-	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability}; !reflect.DeepEqual(got[0].Capabilities, want) {
+	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability}; !reflect.DeepEqual(got[0].Capabilities, want) {
 		t.Fatalf("capabilities = %#v, want %#v", got[0].Capabilities, want)
 	}
 	if want := map[string]string{
@@ -502,22 +504,56 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 }
 
 func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
-	const validAlias = "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"
+	const validAlias = "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"
 	tests := []struct {
-		name          string
-		buildID       string
-		alias         string
-		wantApplied   bool
-		wantPublished bool
+		name             string
+		buildID          string
+		alias            string
+		wantApplied      bool
+		wantPublished    bool
+		wantCapabilities []string
 	}{
-		{name: "valid current", buildID: "build-current", alias: validAlias, wantApplied: true, wantPublished: true},
-		{name: "valid previous", buildID: "build-previous", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-bbbbbb", wantApplied: true, wantPublished: true},
+		{
+			name:             "valid current",
+			buildID:          "build-current",
+			alias:            validAlias,
+			wantApplied:      true,
+			wantPublished:    true,
+			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability},
+		},
+		{
+			name:             "valid m6 A2A invocation v2",
+			buildID:          "build-v6",
+			alias:            "multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta2-r1-9a6bfa",
+			wantApplied:      true,
+			wantPublished:    true,
+			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability, A2AInvocationV2Capability},
+		},
+		{
+			name:             "valid m6 provider-complete A2A invocation v2",
+			buildID:          "build-v6-provider-complete",
+			alias:            "multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta3-r1-9a6bfa",
+			wantApplied:      true,
+			wantPublished:    true,
+			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability, A2AInvocationV2Capability, A2AInboundHermesCapability, A2AInboundPiCapability},
+		},
+		{
+			name:             "valid m4 compatibility",
+			buildID:          "build-previous",
+			alias:            "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-bbbbbb",
+			wantApplied:      true,
+			wantPublished:    true,
+			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability},
+		},
 		{name: "valid legacy", buildID: "build-legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
 		{name: "missing build ID", alias: validAlias},
 		{name: "old template name", buildID: "build-current", alias: "multica-fc-hermes-opencode-dws-v1"},
 		{name: "missing patch version", buildID: "build-current", alias: "multica-m3-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "leading zero", buildID: "build-current", alias: "multica-m3-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
-		{name: "current missing trace marker", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "current missing A2A marker", buildID: "build-current", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
+		{name: "m4 falsely claims A2A", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"},
+		{name: "m5 falsely claims provider-complete A2A", buildID: "build-current", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta3-r1-9a6bfa"},
+		{name: "m4 missing trace marker", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "previous falsely claims trace", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
 		{name: "previous falsely claims startup events", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
 		{name: "legacy falsely claims MCP", buildID: "build-current", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
@@ -538,10 +574,57 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 			if got := IsFCE2BTemplatePublished(template); got != test.wantPublished {
 				t.Fatalf("IsFCE2BTemplatePublished = %v, want %v: %+v", got, test.wantPublished, template)
 			}
+			if test.wantCapabilities != nil && !reflect.DeepEqual(template.Capabilities, test.wantCapabilities) {
+				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, test.wantCapabilities)
+			}
 		})
 	}
 	if _, err := applyFCE2BTemplateManifestAlias(nil, validAlias); err == nil {
 		t.Fatal("nil template was accepted")
+	}
+}
+
+func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
+	template := FCE2BTemplate{BuildID: "build-v7"}
+	published, err := applyFCE2BTemplateManifestAlias(
+		&template,
+		"multica-m7-vda499f3161a007c0-r1-9a6bfa",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !published || !IsFCE2BTemplatePublished(template) {
+		t.Fatalf("v7 alias was not published: %+v", template)
+	}
+	if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}; !reflect.DeepEqual(template.Providers, want) {
+		t.Fatalf("providers = %#v, want %#v", template.Providers, want)
+	}
+	if want := []string{
+		"dws",
+		"dws.im_event",
+		"mcp",
+		RuntimeStartCapabilityEventsV1,
+		LLMTraceCapability,
+		A2AInboundOpenCodeCapability,
+		A2AInvocationV2Capability,
+		A2AInboundHermesCapability,
+		A2AInboundPiCapability,
+		DSHTrajectoryCapability,
+	}; !reflect.DeepEqual(template.Capabilities, want) {
+		t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, want)
+	}
+	if template.ComponentVersions["dsh"] != "0.1.0-rc.6" ||
+		template.ComponentVersions["opencode-v2"] != "0.0.0-beta-202608110357" ||
+		template.SourceRevision != "9a6bfa" {
+		t.Fatalf("v7 contract = %+v", template)
+	}
+
+	wrong := FCE2BTemplate{BuildID: "build-v7-wrong"}
+	if applied, err := applyFCE2BTemplateManifestAlias(
+		&wrong,
+		"multica-m7-v0000000000000000-r1-9a6bfa",
+	); err != nil || applied {
+		t.Fatalf("wrong v7 fingerprint applied=%v err=%v", applied, err)
 	}
 }
 
@@ -964,6 +1047,106 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 	if !foundTraceEnabled || !foundTraceSinkURL {
 		t.Fatalf("exec args did not include LLM trace env: %#v", args)
+	}
+}
+
+func TestFCE2BA2ARunnerEnvIsTaskLocalForRuntimeV2(t *testing.T) {
+	taskID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtime := db.AgentRuntime{
+		ID:          util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		WorkspaceID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		DaemonID:    pgtype.Text{String: "fc-e2b:ws:opencode", Valid: true},
+		Name:        "FC OpenCode m2",
+		RuntimeMode: "cloud",
+		Provider:    "opencode",
+		Metadata: []byte(`{
+			"kind":"cloud-sandbox",
+			"sandbox_backend":"aliyun_fc",
+			"provider":"opencode",
+			"template":"multica-m2-opencode",
+			"template_id":"template-m2-id",
+			"template_channel":"stable",
+			"manifest_version":2,
+			"runner":"multica-fc-opencode-container-log-entry",
+		"capabilities":["opencode","a2a-invocation-v2"]
+		}`),
+	}
+	task := db.AgentTaskQueue{ID: taskID, Context: newA2ATaskContext()}
+	env := hardenCloudSandboxA2ARunnerEnv(task, runtime, map[string]string{"OPENAI_MODEL": "qwen3.7-plus"})
+	root := "/tmp/multica-dws/22222222-2222-2222-2222-222222222222"
+	want := map[string]string{
+		"DWS_CONFIG_DIR":                      root,
+		"GH_CONFIG_DIR":                       root + "/gh",
+		"XDG_CONFIG_HOME":                     root + "/xdg/config",
+		"XDG_DATA_HOME":                       root + "/xdg/data",
+		"XDG_STATE_HOME":                      root + "/xdg/state",
+		"XDG_CACHE_HOME":                      root + "/xdg/cache",
+		"OPENCODE_CONFIG_DIR":                 root + "/xdg/config/opencode",
+		"OPENCODE_CONFIG":                     "/home/user/.config/opencode/opencode.json",
+		"OPENCODE_CONFIG_CONTENT":             "",
+		"OPENCODE_DISABLE_CLAUDE_CODE_PROMPT": "true",
+		"MULTICA_A2A_INVOCATION":              "1",
+		"OPENAI_MODEL":                        "qwen3.7-plus",
+	}
+	if !reflect.DeepEqual(env, want) {
+		t.Fatalf("A2A runner env = %#v, want %#v", env, want)
+	}
+
+	runner := &fakeCommandRunner{}
+	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
+		ServerURL:  "https://api.multica.test",
+		LLMBaseURL: "https://api-deap.dingtalk.com/deapai",
+		LLMAPIKey:  "maas_secret",
+		CLIPath:    "/usr/local/bin/e2b",
+	}, runner)
+	launch := mustFCE2BRunnerLaunch(t, runtime)
+	if err := launcher.execRunOnce(context.Background(), "sbx_a2a_m2", runtime, launch.Mode, taskID, "mdt_test_token", false, env); err != nil {
+		t.Fatalf("execRunOnce A2A env: %v", err)
+	}
+	args := runner.calls[len(runner.calls)-1].args
+	dwsCount := 0
+	seen := make(map[string]string)
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] != "-e" {
+			continue
+		}
+		key, value, ok := strings.Cut(args[index+1], "=")
+		if !ok {
+			continue
+		}
+		seen[key] = value
+		if key == "DWS_CONFIG_DIR" {
+			dwsCount++
+		}
+	}
+	if dwsCount != 1 {
+		t.Fatalf("DWS_CONFIG_DIR occurrences = %d, want 1: %#v", dwsCount, args)
+	}
+	for key, value := range want {
+		if seen[key] != value {
+			t.Fatalf("exec env %s = %q, want %q", key, seen[key], value)
+		}
+	}
+	if _, present := seen["OPENCODE_DISABLE_PROJECT_CONFIG"]; present {
+		t.Fatal("runner must leave project-config isolation to the v2 daemon")
+	}
+}
+
+func TestFCE2BA2ARunnerEnvLeavesOrdinaryAndOtherProvidersUnchanged(t *testing.T) {
+	base := map[string]string{"OPENAI_MODEL": "qwen3.7-plus"}
+	ordinary := db.AgentTaskQueue{ID: util.MustParseUUID("22222222-2222-2222-2222-222222222222"), Context: []byte(`{}`)}
+	managed := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "opencode",
+		Metadata:    []byte(`{"kind":"fc-e2b","template":"legacy-opencode"}`),
+	}
+	if got := hardenCloudSandboxA2ARunnerEnv(ordinary, managed, base); !reflect.DeepEqual(got, base) {
+		t.Fatalf("ordinary task env changed: %#v", got)
+	}
+	otherProvider := managed
+	otherProvider.Provider = "hermes"
+	if got := hardenCloudSandboxA2ARunnerEnv(db.AgentTaskQueue{ID: ordinary.ID, Context: newA2ATaskContext()}, otherProvider, base); !reflect.DeepEqual(got, base) {
+		t.Fatalf("unsupported A2A provider env changed: %#v", got)
 	}
 }
 

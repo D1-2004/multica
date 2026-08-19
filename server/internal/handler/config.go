@@ -114,13 +114,13 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 		config.CdnDomain = h.Storage.CdnDomain()
 	}
 	config.CdnSigned = h.CFSigner != nil
-	config.DaemonServerURL, config.DaemonAppURL = daemonSetupURLsFromEnv()
+	config.DaemonServerURL, config.DaemonAppURL = daemonSetupURLs(current)
 	config.VCSIntegrationAvailable = h.cfg.VCSIntegrationEnabled
 	config.FeatureFlags = featureflags.EvaluateFrontendPublicFlags(r.Context(), h.FeatureFlags)
 	// Only surface the build version on self-hosted deployments. The managed
 	// cloud is continuously deployed and its users can't choose the build, so
 	// the Help popover's version row would just be noise there (MUL-4108).
-	if !isOfficialCloudDeployment() {
+	if !isOfficialCloudDeployment(current) {
 		config.ServerVersion = h.cfg.ServerVersion
 	}
 
@@ -189,9 +189,15 @@ func LoginProviderAllowed(name string) bool {
 	return false
 }
 
-func daemonSetupURLsFromEnv() (string, string) {
-	serverURL := normalizePublicURL(os.Getenv("MULTICA_PUBLIC_URL"))
-	appURL := resolveFrontendAppURL()
+// daemonSetupURLs returns the copy-paste daemon setup addresses for this
+// deployment. They come from the live handler config (Diamond web.public_url /
+// web.app_url in managed Aone, or the process env snapshot in self-host),
+// not from leftover environment variables that Diamond mode no longer
+// requires. Official Multica Cloud still omits them so the UI shows
+// `multica setup`.
+func daemonSetupURLs(cfg Config) (string, string) {
+	serverURL := normalizePublicURL(cfg.PublicURL)
+	appURL := resolveFrontendAppURL(cfg)
 	if appURL == "" {
 		return "", ""
 	}
@@ -206,13 +212,12 @@ func daemonSetupURLsFromEnv() (string, string) {
 }
 
 // resolveFrontendAppURL returns the operator-configured frontend origin
-// (MULTICA_APP_URL, falling back to FRONTEND_ORIGIN), normalized. Shared by
-// the daemon-setup URLs and the managed-cloud detection so both read the same
-// signal.
-func resolveFrontendAppURL() string {
-	appURL := normalizePublicURL(os.Getenv("MULTICA_APP_URL"))
+// (AppURL, then FrontendOrigin), normalized. Shared by the daemon-setup URLs
+// and the managed-cloud detection so both read the same signal.
+func resolveFrontendAppURL(cfg Config) string {
+	appURL := normalizePublicURL(cfg.AppURL)
 	if appURL == "" {
-		appURL = normalizePublicURL(os.Getenv("FRONTEND_ORIGIN"))
+		appURL = normalizePublicURL(cfg.FrontendOrigin)
 	}
 	return appURL
 }
@@ -239,8 +244,8 @@ func isOfficialCloudDaemonConfig(appURL string) bool {
 // Managed-cloud-only behavior — such as suppressing the Help popover's
 // server-version row, which only matters to self-hosted operators — is gated on
 // this.
-func isOfficialCloudDeployment() bool {
-	return isOfficialCloudDaemonConfig(resolveFrontendAppURL())
+func isOfficialCloudDeployment(cfg Config) bool {
+	return isOfficialCloudDaemonConfig(resolveFrontendAppURL(cfg))
 }
 
 func urlHostEquals(raw, want string) bool {

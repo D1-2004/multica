@@ -118,12 +118,26 @@ func ParseCloudSandboxRuntime(rt db.AgentRuntime) (CloudSandboxRuntimeMetadata, 
 			return CloudSandboxRuntimeMetadata{}, ErrCloudSandboxMetadata
 		}
 		artifactKind := strings.ToLower(strings.TrimSpace(wire.ArtifactKind))
-		if (backend == SandboxBackendAliyunFC && artifactKind != CloudSandboxArtifactE2BTemplate) ||
-			(backend == SandboxBackendASB && artifactKind != CloudSandboxArtifactOCIImage) {
-			return CloudSandboxRuntimeMetadata{}, ErrCloudSandboxMetadata
-		}
 		artifactRef := strings.TrimSpace(wire.ArtifactRef)
-		if artifactRef == "" {
+		artifactBuildID := strings.TrimSpace(wire.ArtifactBuildID)
+		artifactAlias := strings.TrimSpace(wire.ArtifactAlias)
+		artifactChannel := wire.ArtifactChannel
+		if backend == SandboxBackendAliyunFC && IsFCE2BSupportedProvider(provider) &&
+			artifactKind == "" && artifactRef == "" && strings.TrimSpace(wire.TemplateID) != "" {
+			// Some FC rows were migrated to kind=cloud-sandbox before the
+			// artifact_* vocabulary existed. They still carry the immutable FC
+			// template identity under template_id/template. Normalize that exact
+			// all-legacy shape for every supported FC provider; mixed partial
+			// metadata stays invalid.
+			artifactKind = CloudSandboxArtifactE2BTemplate
+			artifactRef = strings.TrimSpace(wire.TemplateID)
+			artifactBuildID = strings.TrimSpace(wire.TemplateBuildID)
+			artifactAlias = firstNonEmptyString(wire.TemplateAlias, wire.Template)
+			artifactChannel = wire.TemplateChannel
+		}
+		if (backend == SandboxBackendAliyunFC && artifactKind != CloudSandboxArtifactE2BTemplate) ||
+			(backend == SandboxBackendASB && artifactKind != CloudSandboxArtifactOCIImage) ||
+			artifactRef == "" {
 			return CloudSandboxRuntimeMetadata{}, ErrCloudSandboxMetadata
 		}
 		if backend == SandboxBackendASB {
@@ -136,7 +150,7 @@ func ParseCloudSandboxRuntime(rt db.AgentRuntime) (CloudSandboxRuntimeMetadata, 
 				return CloudSandboxRuntimeMetadata{}, ErrCloudSandboxMetadata
 			}
 		}
-		channel := normalizeCloudSandboxChannel(wire.ArtifactChannel)
+		channel := normalizeCloudSandboxChannel(artifactChannel)
 		return CloudSandboxRuntimeMetadata{
 			Kind:              CloudSandboxMetadataKind,
 			SandboxBackend:    backend,
@@ -144,8 +158,8 @@ func ParseCloudSandboxRuntime(rt db.AgentRuntime) (CloudSandboxRuntimeMetadata, 
 			ArtifactKind:      artifactKind,
 			ArtifactChannel:   channel,
 			ArtifactRef:       artifactRef,
-			ArtifactBuildID:   strings.TrimSpace(wire.ArtifactBuildID),
-			ArtifactAlias:     strings.TrimSpace(wire.ArtifactAlias),
+			ArtifactBuildID:   artifactBuildID,
+			ArtifactAlias:     artifactAlias,
 			ArtifactDigest:    strings.TrimSpace(wire.ArtifactDigest),
 			ManifestVersion:   wire.ManifestVersion,
 			RunnerProtocol:    strings.TrimSpace(wire.RunnerProtocol),

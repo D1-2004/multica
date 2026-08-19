@@ -16,6 +16,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -24,9 +25,16 @@ import (
 type fakeASBTaskIdentityResolver struct {
 	identity ASBResolvedIdentity
 	err      error
+	released *atomic.Bool
+	calls    *atomic.Int32
 }
 
 func TestASBConfigCommandReadyTimeout(t *testing.T) {
+	t.Setenv("MULTICA_ASB_READY_TIMEOUT", "")
+	if got := ASBConfigFromEnv().ReadyTimeout; got != 6*time.Minute {
+		t.Fatalf("default sandbox ready timeout = %s, want 6m", got)
+	}
+
 	t.Setenv("MULTICA_ASB_COMMAND_READY_TIMEOUT", "")
 	if got := ASBConfigFromEnv().CommandReadyTimeout; got != 7*time.Minute {
 		t.Fatalf("default command ready timeout = %s, want 7m", got)
@@ -35,6 +43,76 @@ func TestASBConfigCommandReadyTimeout(t *testing.T) {
 	t.Setenv("MULTICA_ASB_COMMAND_READY_TIMEOUT", "9m")
 	if got := ASBConfigFromEnv().CommandReadyTimeout; got != 9*time.Minute {
 		t.Fatalf("configured command ready timeout = %s, want 9m", got)
+	}
+}
+
+func TestNeedsCandidateASBArtifactActivation(t *testing.T) {
+	readyMetadata := map[string]any{
+		"artifact_status":  "READY",
+		"manifest_version": float64(7),
+	}
+	pendingMetadata := map[string]any{
+		"artifact_status":  "PENDING_STABLE_VALIDATION",
+		"manifest_version": float64(0),
+	}
+	candidateMetadata := map[string]any{"artifact_channel": CloudSandboxChannelCandidate}
+	stableMetadata := map[string]any{"artifact_channel": CloudSandboxChannelStable}
+
+	tests := []struct {
+		name     string
+		status   string
+		metadata map[string]any
+		managed  map[string]any
+		want     bool
+	}{
+		{
+			name:     "offline bootstrap",
+			status:   "offline",
+			metadata: pendingMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "online bootstrap with pending manifest",
+			status:   "online",
+			metadata: pendingMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "offline candidate with verified manifest",
+			status:   "offline",
+			metadata: readyMetadata,
+			managed:  candidateMetadata,
+			want:     true,
+		},
+		{
+			name:     "online verified candidate",
+			status:   "online",
+			metadata: readyMetadata,
+			managed:  candidateMetadata,
+			want:     false,
+		},
+		{
+			name:     "stable release update never activates",
+			status:   "offline",
+			metadata: pendingMetadata,
+			managed:  stableMetadata,
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := needsCandidateASBArtifactActivation(
+				db.AgentRuntime{Status: tt.status},
+				tt.metadata,
+				tt.managed,
+			)
+			if got != tt.want {
+				t.Fatalf("activation = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -64,6 +142,9 @@ func (resolver fakeASBTaskIdentityResolver) ResolveASBTaskIdentity(
 	pgtype.UUID,
 	pgtype.UUID,
 ) (ASBResolvedIdentity, error) {
+	if resolver.calls != nil {
+		resolver.calls.Add(1)
+	}
 	return resolver.identity, resolver.err
 }
 
@@ -77,7 +158,12 @@ func (resolver fakeASBTaskIdentityResolver) AcquireASBTaskIdentitySource(
 	if resolver.err != nil {
 		return nil, resolver.err
 	}
-	return func(context.Context) error { return nil }, nil
+	return func(context.Context) error {
+		if resolver.released != nil {
+			resolver.released.Store(true)
+		}
+		return nil
+	}, nil
 }
 
 func TestASBLaunchIdentityAllowsExplicitUnboundMode(t *testing.T) {
@@ -143,7 +229,118 @@ func TestASBLaunchWithoutIdentityServiceUsesUnboundMode(t *testing.T) {
 	}
 }
 
-func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
+func TestASBA2ATaskSkipsAgentEnterpriseIdentity(t *testing.T) {
+	t.Parallel()
+
+	bound := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	agentID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
+	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
+	var calls atomic.Int32
+	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: bound, calls: &calls}}
+	identity, err := launcher.resolveTaskIdentityForTask(
+		context.Background(),
+		db.AgentTaskQueue{
+			AgentID:   agentID,
+			RuntimeID: runtimeID,
+			Context:   newA2ATaskContext(),
+		},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != unboundASBResolvedIdentity() {
+		t.Fatalf("A2A identity = %#v, want unbound", identity)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("A2A task resolved Agent enterprise identity %d times", calls.Load())
+	}
+}
+
+func TestASBA2ADEAPDWSTaskResolvesAgentEnterpriseIdentity(t *testing.T) {
+	t.Parallel()
+
+	want := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	var calls atomic.Int32
+	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: want, calls: &calls}}
+	identity, err := launcher.resolveTaskIdentityForTask(
+		context.Background(),
+		db.AgentTaskQueue{
+			AgentID:   util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+			RuntimeID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+			Context: newA2ATaskContext(a2aintegration.InvocationIdentity{
+				DEAPDWSToken: "request-token",
+			}),
+		},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != want {
+		t.Fatalf("DEAP DWS A2A identity = %#v, want %#v", identity, want)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("DEAP DWS A2A identity resolver calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestASBOrdinaryTaskResolvesAgentEnterpriseIdentity(t *testing.T) {
+	t.Parallel()
+
+	want := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	var calls atomic.Int32
+	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: want, calls: &calls}}
+	identity, err := launcher.resolveTaskIdentityForTask(
+		context.Background(),
+		db.AgentTaskQueue{
+			AgentID:   util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+			RuntimeID: util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
+		},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity != want {
+		t.Fatalf("ordinary task identity = %#v, want %#v", identity, want)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("ordinary task identity resolver calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestASBBoundIdentityDeclaresCreateTimeBUCInheritance(t *testing.T) {
 	t.Parallel()
 
 	identity := ASBResolvedIdentity{
@@ -171,147 +368,10 @@ func TestASBBoundIdentityKeepsIdentityExtensions(t *testing.T) {
 			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
 		}
 	}
-	if _, ok := extensions["wireguard.lazyAuth"]; ok {
-		t.Fatal("bound sandbox extensions mix lazy WireGuard auth with create-time identity")
-	}
-}
-
-func TestASBLauncherUsesCreateTimeBUCAndAttachesAgentIdentityBeforeProbe(t *testing.T) {
-	t.Parallel()
-
-	var spiffeGrant ASBAgentIdentityGrant
-	var spiffeAttached atomic.Bool
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodGet &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/endpoints/44772":
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"endpoint": server.URL + "/execd",
-				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
-			})
-		case request.Method == http.MethodPost &&
-			request.URL.Path == "/execd/command":
-			if !spiffeAttached.Load() {
-				http.Error(response, "SPIFFE identity must be attached before the CLI probe", http.StatusConflict)
-				return
-			}
-			response.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
-		case request.Method == http.MethodPost &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
-			if err := json.NewDecoder(request.Body).Decode(&spiffeGrant); err != nil {
-				t.Fatalf("decode SPIFFE identity: %v", err)
-			}
-			spiffeAttached.Store(true)
-			response.WriteHeader(http.StatusAccepted)
-		default:
-			http.NotFound(response, request)
+	for _, forbidden := range []string{"wireguard.lazyAuth"} {
+		if _, ok := extensions[forbidden]; ok {
+			t.Fatalf("bound sandbox extension %q mixes create-time and runtime BUC attachment", forbidden)
 		}
-	}))
-	defer server.Close()
-
-	identity := ASBResolvedIdentity{
-		Mode:               asbIdentityModeBound,
-		RawEmployeeID:      "12345",
-		BUCAgentID:         "agent-multica-asb",
-		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
-		AIPID:              "aip-1",
-		SourceSandboxID:    "identity-source-1",
-		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
-		AgentIdentityToken: "ait",
-		Fingerprint:        strings.Repeat("a", 64),
-	}
-	launcher := &ASBLauncher{
-		Client: newTestASBClient(t, server),
-		Config: ASBConfig{
-			WireGuardCredentials:  "wireguard-credentials",
-			WireGuardReadyTimeout: time.Second,
-		},
-	}
-	if err := launcher.ensureSandboxIdentityReady(
-		context.Background(),
-		"sandbox-123",
-		identity,
-		launcher.Config.WireGuardReadyTimeout,
-	); err != nil {
-		t.Fatalf("ensureSandboxIdentityReady: %v", err)
-	}
-	if spiffeGrant.RawEmployeeID != identity.RawEmployeeID ||
-		spiffeGrant.AgentToken != identity.AgentIdentityToken ||
-		spiffeGrant.AgentID != identity.AgentSPIFFEID {
-		t.Fatalf("SPIFFE identity grant = %#v", spiffeGrant)
-	}
-}
-
-func TestASBLauncherProbesAfterSPIFFEAttachmentCSI502(t *testing.T) {
-	t.Parallel()
-
-	var probeObserved atomic.Bool
-	var attachCalls atomic.Int32
-	var server *httptest.Server
-	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		switch {
-		case request.Method == http.MethodGet &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/endpoints/44772":
-			_ = json.NewEncoder(response).Encode(map[string]any{
-				"endpoint": server.URL + "/execd",
-				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
-			})
-		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
-			probeObserved.Store(true)
-			response.Header().Set("Content-Type", "text/event-stream")
-			if attachCalls.Load() < 2 {
-				_, _ = io.WriteString(response, `data: {"type":"stderr","text":"probe_stage=a1\n"}`+"\n")
-				_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"CommandExecError","evalue":"1"}}`+"\n")
-			}
-			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
-		case request.Method == http.MethodPost &&
-			request.URL.Path == "/v1/sandboxes/sandbox-123/identity/spiffe":
-			if attachCalls.Add(1) >= 2 {
-				response.WriteHeader(http.StatusAccepted)
-				return
-			}
-			response.Header().Set("Content-Type", "application/json")
-			response.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(response, `{
-				"code":"BAD_REQUEST",
-				"message":"failed to attach sandbox spiffe identity to sandbox-123, got status code 502"
-			}`)
-		default:
-			http.NotFound(response, request)
-		}
-	}))
-	defer server.Close()
-
-	launcher := &ASBLauncher{
-		Client: newTestASBClient(t, server),
-		Config: ASBConfig{
-			WireGuardCredentials:  "wireguard-credentials",
-			WireGuardReadyTimeout: 500 * time.Millisecond,
-		},
-	}
-	identity := ASBResolvedIdentity{
-		Mode:               asbIdentityModeBound,
-		RawEmployeeID:      "12345",
-		BUCAgentID:         "agent-multica-asb",
-		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
-		AgentIdentityToken: "ait",
-		SourceSandboxID:    "identity-source-1",
-	}
-	if err := launcher.ensureSandboxIdentityReady(
-		context.Background(),
-		"sandbox-123",
-		identity,
-		launcher.Config.WireGuardReadyTimeout,
-	); err != nil {
-		t.Fatalf("ensureSandboxIdentityReady: %v", err)
-	}
-	if !probeObserved.Load() {
-		t.Fatal("enterprise CLI probe was not executed after the converging attachment response")
-	}
-	if attachCalls.Load() != 2 {
-		t.Fatalf("SPIFFE attachment calls = %d, want 2", attachCalls.Load())
 	}
 }
 
@@ -354,19 +414,6 @@ func TestASBOptionalIdentityAttachmentDoesNotBlockTaskStart(t *testing.T) {
 		t.Fatal("optional identity attachment request was not started")
 	}
 	close(releaseRequest)
-}
-
-func TestASBAgentIdentityAttachmentConvergingRejectsOtherBadRequest(t *testing.T) {
-	t.Parallel()
-
-	err := &ASBHTTPError{
-		Operation:    "attach_agent_identity",
-		StatusCode:   http.StatusBadRequest,
-		ErrorMessage: "identity grant is invalid",
-	}
-	if isASBAgentIdentityAttachmentConverging(err) {
-		t.Fatal("unrelated HTTP 400 must not be classified as a converging SPIFFE attachment")
-	}
 }
 
 func TestASBLauncherReadsTenantQuotaBeforeCreatingSandbox(t *testing.T) {
@@ -483,6 +530,174 @@ func TestInspectReusableASBSandboxRejectsUnavailableStates(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *testing.T) {
+	pool := newSandboxLockPool(t)
+	_, agentID, runtimeID := seedFCE2BSandboxRuntime(
+		t,
+		pool,
+		"Bound ASB Identity Source Lease",
+	)
+	queries := db.New(pool)
+	runtime, err := queries.GetAgentRuntime(context.Background(), runtimeID)
+	if err != nil {
+		t.Fatalf("load runtime: %v", err)
+	}
+
+	released := &atomic.Bool{}
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		switch {
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/quotas":
+			_, _ = io.WriteString(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":1}]`)
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			response.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Pending"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox":
+			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox/endpoints/44772":
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			if released.Load() {
+				t.Error("identity source lease was released before the inherited identity probe")
+			}
+			var payload asbExecRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode inherited identity probe: %v", err)
+			}
+			if payload.Envs["EXPECTED_EMP_ID"] != "12345" ||
+				!strings.Contains(payload.Command, "get_zt_identity.json") {
+				t.Fatalf("inherited identity probe = %#v", payload)
+			}
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	box, err := secretbox.New(bytes.Repeat([]byte{0x53}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedAPIKey, err := box.Seal([]byte(testASBAPIKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := db.AsbRuntimeCredential{
+		RuntimeID:       runtimeID,
+		ApiKeyEncrypted: encryptedAPIKey,
+		ApiKeyHint:      "-key",
+	}
+	credentials := &ASBRuntimeClientProvider{
+		Store: &fakeASBRuntimeCredentialStore{
+			credential:  credential,
+			credentials: []db.AsbRuntimeCredential{credential},
+		},
+		Secrets: box,
+		Config:  ASBConfig{APIURL: server.URL},
+	}
+	identity := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    runtimeID,
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	launcher := &ASBLauncher{
+		Queries:     queries,
+		Config:      ASBConfig{TimeoutSeconds: 300, ReadyTimeout: time.Second, WireGuardReadyTimeout: time.Second, ResourceCPU: "2", ResourceMemory: "4Gi", WireGuardCredentials: "wireguard-credentials"},
+		Client:      newTestASBClient(t, server),
+		Credentials: credentials,
+		Identity: fakeASBTaskIdentityResolver{
+			identity: identity,
+			released: released,
+		},
+	}
+	conn, err := pool.Acquire(context.Background())
+	if err != nil {
+		t.Fatalf("acquire runtime lock connection: %v", err)
+	}
+	defer conn.Release()
+	launcher.Queries = db.New(conn)
+	sandboxID, coldStart, resolvedIdentity, err := launcher.resolveSandbox(
+		context.Background(),
+		runtime,
+		CloudSandboxRuntimeMetadata{ArtifactRef: "registry.example/runtime@sha256:" + strings.Repeat("a", 64)},
+		fcE2BTaskScope{},
+		false,
+		agentID,
+		pgtype.UUID{},
+		identity,
+		conn,
+		chattrace.New("task"),
+	)
+	if err != nil {
+		t.Fatalf("resolve sandbox: %v", err)
+	}
+	if sandboxID != "bound-sandbox" || !coldStart || resolvedIdentity != identity {
+		t.Fatalf("resolution = (%q, %v, %#v)", sandboxID, coldStart, resolvedIdentity)
+	}
+	if !released.Load() {
+		t.Fatal("identity source lease was not released after inherited identity became ready")
+	}
+}
+
+func TestWaitSandboxInheritedBUCIdentityReadyRetriesUntilEmployeeMatches(t *testing.T) {
+	t.Parallel()
+
+	var execCalls atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/probe-sandbox/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			var payload asbExecRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode inherited identity probe: %v", err)
+			}
+			if payload.Envs["EXPECTED_EMP_ID"] != "12345" {
+				t.Fatalf("expected employee = %q", payload.Envs["EXPECTED_EMP_ID"])
+			}
+			response.Header().Set("Content-Type", "text/event-stream")
+			if execCalls.Add(1) == 1 {
+				_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"ExitCode","value":"42"}}`+"\n")
+			}
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	launcher := &ASBLauncher{Client: newTestASBClient(t, server)}
+	if err := launcher.waitSandboxInheritedBUCIdentityReady(
+		context.Background(),
+		"probe-sandbox",
+		"12345",
+		time.Second,
+	); err != nil {
+		t.Fatalf("wait for inherited BUC identity: %v", err)
+	}
+	if got := execCalls.Load(); got != 2 {
+		t.Fatalf("inherited BUC probe calls = %d, want 2", got)
 	}
 }
 
@@ -658,10 +873,14 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 	t.Parallel()
 
 	manifest := func(version int, capabilities ...string) map[string]any {
+		providers := []string{"hermes", "opencode", "pi"}
+		if version == 7 {
+			providers = append(providers, "dsh", "opencode-v2")
+		}
 		return map[string]any{
 			"schema_version":   version,
 			"sandbox_backends": []string{"aliyun_fc", "asb"},
-			"providers":        []string{"hermes", "opencode", "pi"},
+			"providers":        providers,
 			"capabilities_by_backend": map[string][]string{
 				"asb": append([]string{"dws", "mcp", "a1", "mw", "buc"}, capabilities...),
 			},
@@ -684,13 +903,40 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 			wantReleaseErr: true,
 		},
 		{
-			name:     "current schema v4 release",
-			manifest: manifest(4, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			name:           "existing schema v4 runtime",
+			manifest:       manifest(4, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			wantReleaseErr: true,
 		},
 		{
-			name:           "schema v4 release missing trace capability",
-			manifest:       manifest(4, RuntimeStartCapabilityEventsV1),
+			name:           "existing schema v5 runtime",
+			manifest:       manifest(5, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
 			wantReleaseErr: true,
+		},
+		{
+			name:           "existing schema v6 runtime",
+			manifest:       manifest(6, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability),
+			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v7 release missing trace capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability, DSHTrajectoryCapability),
+			wantRuntimeErr: false,
+			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v7 release missing A2A invocation capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, DSHTrajectoryCapability),
+			wantReleaseErr: true,
+		},
+		{
+			name:           "schema v7 release missing DSH trajectory capability",
+			manifest:       manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability),
+			wantRuntimeErr: true,
+			wantReleaseErr: true,
+		},
+		{
+			name:     "current schema v7 release",
+			manifest: manifest(7, RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability, DSHTrajectoryCapability),
 		},
 		{
 			name:           "unsupported schema v2",
@@ -699,8 +945,8 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 			wantReleaseErr: true,
 		},
 		{
-			name:           "unsupported schema v5",
-			manifest:       manifest(5, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
+			name:           "unsupported schema v8",
+			manifest:       manifest(8, RuntimeStartCapabilityEventsV1, LLMTraceCapability),
 			wantRuntimeErr: true,
 			wantReleaseErr: true,
 		},
@@ -723,11 +969,11 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	const runtimeAPIKey = "runtime-owned-validation-key"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	manifest := map[string]any{
-		"schema_version":   4,
+		"schema_version":   7,
 		"sandbox_backends": []string{"aliyun_fc", "asb"},
-		"providers":        []string{"hermes", "opencode", "pi"},
+		"providers":        []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
 		"capabilities_by_backend": map[string][]string{
-			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability},
+			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability, DSHTrajectoryCapability},
 		},
 		"identity_modes_by_backend": map[string][]string{
 			"asb": {"agent_identity", "spiffe", "buc_wireguard"},
@@ -841,7 +1087,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	if capacity.createRequests != 1 {
 		t.Fatalf("capacity create requests = %d, want 1", capacity.createRequests)
 	}
-	if intMetadataValue(got, "schema_version") != 4 {
+	if intMetadataValue(got, "schema_version") != 7 {
 		t.Fatalf("manifest = %#v", got)
 	}
 }

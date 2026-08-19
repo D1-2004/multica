@@ -241,8 +241,7 @@ func TestRuntimeStartFailureEventReturnsSafeErrorToChat(t *testing.T) {
 		testWorkspaceID,
 		"runtime-start-protocol-test",
 	)
-	req = withURLParam(req, "runtimeId", runtimeID)
-	req = withURLParam(req, "taskId", taskID)
+	req = withURLParams(req, "runtimeId", runtimeID, "taskId", taskID)
 	testHandler.RecordRuntimeStartEvent(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("failure event status = %d: %s", w.Code, w.Body.String())

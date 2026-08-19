@@ -108,7 +108,7 @@ WHERE task_id = @task_id
 
 -- name: FinalizeAgentTaskRuntimeStartAttemptForTask :one
 WITH claimable_task AS MATERIALIZED (
-    SELECT id
+    SELECT id, context
     FROM agent_task_queue
     WHERE id = @task_id
       AND runtime_id = @runtime_id
@@ -130,8 +130,16 @@ WHERE attempt.task_id = @task_id
   )
   AND EXISTS (
       SELECT 1
-      FROM task_token AS token
-      WHERE token.task_id = attempt.task_id
+      FROM claimable_task AS task
+      WHERE EXISTS (
+          SELECT 1
+          FROM task_token AS token
+          WHERE token.task_id = attempt.task_id
+      )
+      OR (
+          @allow_tokenless_a2a::boolean
+          AND task.context->>'multica_origin' = 'a2a'
+      )
   )
 RETURNING attempt.*;
 

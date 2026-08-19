@@ -13,9 +13,11 @@ import (
 // returns, with the few fields these tests assert on.
 type batchClaimResponse struct {
 	Tasks []struct {
-		ID        string `json:"id"`
-		RuntimeID string `json:"runtime_id"`
-		AuthToken string `json:"auth_token"`
+		ID                  string `json:"id"`
+		RuntimeID           string `json:"runtime_id"`
+		AuthToken           string `json:"auth_token"`
+		A2AInvocation       bool   `json:"a2a_invocation"`
+		A2AManagedRuntimeV2 bool   `json:"a2a_managed_runtime_v2"`
 	} `json:"tasks"`
 }
 

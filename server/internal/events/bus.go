@@ -7,11 +7,12 @@ import (
 
 // Event represents a domain event published by handlers or services.
 type Event struct {
-	Type        string // e.g. "issue:created", "inbox:new"
-	WorkspaceID string // routes to correct Hub room
-	ActorType   string // "member", "agent", or "system"
-	ActorID     string
-	Payload     any // JSON-serializable, same shape as current WS payloads
+	Type            string // e.g. "issue:created", "inbox:new"
+	WorkspaceID     string // routes to correct Hub room
+	RecipientUserID string // when set, routes realtime only to this user's connections
+	ActorType       string // "member", "agent", or "system"
+	ActorID         string
+	Payload         any // JSON-serializable, same shape as current WS payloads
 
 	// Optional scope hints used by the realtime fanout layer to route the
 	// event to a more specific scope than `workspace:{WorkspaceID}`. When set

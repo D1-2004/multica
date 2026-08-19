@@ -53,18 +53,88 @@ SELECT * FROM agent_source
 WHERE workspace_id = $1
   AND managed_source_key = $2;
 
--- name: UpdateManagedAgentOwner :one
-UPDATE agent AS target
-SET owner_id = sqlc.arg(owner_id),
-    updated_at = now()
+-- name: LockManagedAgentOwnerChange :one
+-- Lock the new owner's membership before the Agent. Holding the membership
+-- KEY SHARE lock through commit prevents a concurrent removal from leaving a
+-- managed Agent owned by a non-member. MATERIALIZED makes the lock order
+-- deterministic: new-owner member -> Agent.
+WITH locked_new_owner AS MATERIALIZED (
+    SELECT candidate.workspace_id, candidate.user_id
+    FROM member AS candidate
+    WHERE candidate.workspace_id = sqlc.arg(workspace_id)
+      AND candidate.user_id = sqlc.arg(owner_id)
+    FOR KEY SHARE OF candidate
+)
+SELECT target.*
+FROM locked_new_owner AS new_owner
+JOIN agent AS target
+  ON target.workspace_id = new_owner.workspace_id
 WHERE target.id = sqlc.arg(agent_id)
-  AND target.workspace_id = sqlc.arg(workspace_id)
   AND EXISTS (
       SELECT 1
       FROM agent_source
       WHERE agent_source.agent_id = target.id
         AND agent_source.managed_source_key = sqlc.arg(managed_source_key)
   )
+FOR UPDATE OF target;
+
+-- name: ApplyManagedAgentOwnerChange :one
+-- This must run as a second READ COMMITTED statement after
+-- LockManagedAgentOwnerChange. The fresh statement snapshot includes grants
+-- committed by transactions that held Agent SHARE while the first statement
+-- waited. The transaction still holds the Agent lock, so no new grant can pass
+-- admission until this cleanup and owner update commit.
+WITH eligible_agent AS MATERIALIZED (
+    SELECT target.id, target.owner_id
+    FROM agent AS target
+    WHERE target.id = sqlc.arg(agent_id)
+      AND target.workspace_id = sqlc.arg(workspace_id)
+      AND EXISTS (
+          SELECT 1
+          FROM agent_source
+          WHERE agent_source.agent_id = target.id
+            AND agent_source.managed_source_key = sqlc.arg(managed_source_key)
+      )
+), disabled_endpoint AS (
+    UPDATE agent_a2a_endpoint AS endpoint
+    SET enabled = FALSE,
+        updated_at = now()
+    FROM eligible_agent AS target
+    WHERE endpoint.agent_id = target.id
+      AND target.owner_id IS DISTINCT FROM sqlc.arg(owner_id)
+    RETURNING endpoint.id
+), revoked_clients AS (
+    UPDATE a2a_client AS client
+    SET status = 'revoked',
+        revoked_at = COALESCE(client.revoked_at, now()),
+        revoked_by = COALESCE(client.revoked_by, sqlc.arg(owner_id)),
+        updated_by = sqlc.arg(owner_id),
+        updated_at = now()
+    FROM disabled_endpoint AS endpoint
+    WHERE client.endpoint_id = endpoint.id
+    RETURNING client.id
+), revoked_credentials AS (
+    UPDATE a2a_client_credential AS credential
+    SET status = 'revoked',
+        revoked_at = now(),
+        revoked_by = sqlc.arg(owner_id),
+        updated_at = now()
+    -- Referencing revoked_clients fixes the lock order at
+    -- agent -> endpoint -> client -> credential.
+    WHERE credential.client_id IN (SELECT id FROM revoked_clients)
+      AND credential.status = 'active'
+    RETURNING credential.id
+), ownership_cleanup AS MATERIALIZED (
+    SELECT
+        (SELECT count(*) FROM revoked_clients) AS revoked_client_count,
+        (SELECT count(*) FROM revoked_credentials) AS revoked_credential_count
+)
+UPDATE agent AS target
+SET owner_id = sqlc.arg(owner_id),
+    updated_at = now()
+FROM eligible_agent AS eligible
+CROSS JOIN ownership_cleanup
+WHERE target.id = eligible.id
 RETURNING target.*;
 
 -- name: ListOutdatedIdleManagedAgentSources :many

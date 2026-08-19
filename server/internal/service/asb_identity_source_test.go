@@ -580,7 +580,7 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t *testing.T) {
+func TestAttachAndProbeASBIdentitySourceTreatsKnownSyncPostCheckAsPending(t *testing.T) {
 	const sandboxID = "identity-source-wireguard-converging"
 	attachCalls := 0
 	var server *httptest.Server
@@ -589,11 +589,14 @@ func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
+			if request.URL.Query().Get("sync") != "true" {
+				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
+			}
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(response, `{
 				"code":"BAD_REQUEST",
-				"message":"wireguard tunnel not ready yet, sandboxId=identity-source-wireguard-converging"
+				"message":"failed to check wireguard status for identity-source-wireguard-converging, got status code 404"
 			}`)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
@@ -629,7 +632,7 @@ func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t
 	if err != nil {
 		t.Fatalf("NewASBClient: %v", err)
 	}
-	if err := attachAndProbeASBIdentitySource(
+	err = attachAndProbeASBIdentitySource(
 		context.Background(),
 		client,
 		sandboxID,
@@ -642,7 +645,8 @@ func TestAttachAndProbeASBIdentitySourceProbesAfterWireGuardConvergingResponse(t
 		},
 		"wg-client",
 		250*time.Millisecond,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
 	}
 	if attachCalls != 1 {

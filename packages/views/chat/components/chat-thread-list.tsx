@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";
 import { useWorkspacePresenceMap } from "@multica/core/agents";
@@ -325,6 +326,11 @@ export function ChatThreadList({
             <span className={cn("min-w-0 flex-1 truncate text-body", unread > 0 ? "font-semibold text-foreground" : "font-medium")}>
               {titleText}
             </span>
+            {session.is_a2a === true && (
+              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[9px] leading-none">
+                {t(($) => $.a2a_label)}
+              </Badge>
+            )}
             <span className="ml-auto shrink-0 text-micro text-muted-foreground">{timeText}</span>
           </div>
 
