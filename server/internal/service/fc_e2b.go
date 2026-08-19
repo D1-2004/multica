@@ -798,7 +798,24 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123456])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimsta3|dimsta2|dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
 var fcE2BTemplateManifestV7AliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r1-([0-9a-f]{6})$`)
 
-const fcE2BTemplateManifestV7Fingerprint = "da499f3161a007c0"
+var fcE2BTemplateManifestV7ComponentVersionsByFingerprint = map[string]map[string]string{
+	"da499f3161a007c0": {
+		"hermes":      "0.19.0",
+		"opencode":    "v1.18.11",
+		"opencode-v2": "0.0.0-beta-202608110357",
+		"dsh":         "0.1.0-rc.6",
+		"pi":          "0.83.0",
+		"dws":         "v1.0.58-beta.4",
+	},
+	"41edc34be759811a": {
+		"hermes":      "0.19.0",
+		"opencode":    "v1.18.11",
+		"opencode-v2": "0.0.0-beta-202608110357",
+		"dsh":         "0.1.0-rc.6",
+		"pi":          "0.83.0",
+		"dws":         "v1.0.59-beta.3",
+	},
+}
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
 	if template == nil {
@@ -809,7 +826,8 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	}
 	alias = strings.TrimSpace(alias)
 	if matches := fcE2BTemplateManifestV7AliasPattern.FindStringSubmatch(alias); matches != nil {
-		if matches[1] != fcE2BTemplateManifestV7Fingerprint {
+		componentVersions, ok := fcE2BTemplateManifestV7ComponentVersionsByFingerprint[matches[1]]
+		if !ok {
 			return false, nil
 		}
 		template.Name = alias
@@ -828,14 +846,7 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 			A2AInboundPiCapability,
 			DSHTrajectoryCapability,
 		}
-		template.ComponentVersions = map[string]string{
-			"hermes":      "0.19.0",
-			"opencode":    "v1.18.11",
-			"opencode-v2": "0.0.0-beta-202608110357",
-			"dsh":         "0.1.0-rc.6",
-			"pi":          "0.83.0",
-			"dws":         "v1.0.58-beta.4",
-		}
+		template.ComponentVersions = cloneStringMap(componentVersions)
 		template.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
 		template.SourceRevision = matches[2]
 		return true, nil

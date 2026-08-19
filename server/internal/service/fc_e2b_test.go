@@ -585,38 +585,59 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 }
 
 func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
-	template := FCE2BTemplate{BuildID: "build-v7"}
-	published, err := applyFCE2BTemplateManifestAlias(
-		&template,
-		"multica-m7-vda499f3161a007c0-r1-9a6bfa",
-	)
-	if err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name               string
+		alias              string
+		wantDWS            string
+		wantSourceRevision string
+	}{
+		{
+			name:               "original DWS runtime",
+			alias:              "multica-m7-vda499f3161a007c0-r1-9a6bfa",
+			wantDWS:            "v1.0.58-beta.4",
+			wantSourceRevision: "9a6bfa",
+		},
+		{
+			name:               "DWS v1.0.59 runtime",
+			alias:              "multica-m7-v41edc34be759811a-r1-dcb7e7",
+			wantDWS:            "v1.0.59-beta.3",
+			wantSourceRevision: "dcb7e7",
+		},
 	}
-	if !published || !IsFCE2BTemplatePublished(template) {
-		t.Fatalf("v7 alias was not published: %+v", template)
-	}
-	if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}; !reflect.DeepEqual(template.Providers, want) {
-		t.Fatalf("providers = %#v, want %#v", template.Providers, want)
-	}
-	if want := []string{
-		"dws",
-		"dws.im_event",
-		"mcp",
-		RuntimeStartCapabilityEventsV1,
-		LLMTraceCapability,
-		A2AInboundOpenCodeCapability,
-		A2AInvocationV2Capability,
-		A2AInboundHermesCapability,
-		A2AInboundPiCapability,
-		DSHTrajectoryCapability,
-	}; !reflect.DeepEqual(template.Capabilities, want) {
-		t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, want)
-	}
-	if template.ComponentVersions["dsh"] != "0.1.0-rc.6" ||
-		template.ComponentVersions["opencode-v2"] != "0.0.0-beta-202608110357" ||
-		template.SourceRevision != "9a6bfa" {
-		t.Fatalf("v7 contract = %+v", template)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			template := FCE2BTemplate{BuildID: "build-v7"}
+			published, err := applyFCE2BTemplateManifestAlias(&template, test.alias)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !published || !IsFCE2BTemplatePublished(template) {
+				t.Fatalf("v7 alias was not published: %+v", template)
+			}
+			if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}; !reflect.DeepEqual(template.Providers, want) {
+				t.Fatalf("providers = %#v, want %#v", template.Providers, want)
+			}
+			if want := []string{
+				"dws",
+				"dws.im_event",
+				"mcp",
+				RuntimeStartCapabilityEventsV1,
+				LLMTraceCapability,
+				A2AInboundOpenCodeCapability,
+				A2AInvocationV2Capability,
+				A2AInboundHermesCapability,
+				A2AInboundPiCapability,
+				DSHTrajectoryCapability,
+			}; !reflect.DeepEqual(template.Capabilities, want) {
+				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, want)
+			}
+			if template.ComponentVersions["dsh"] != "0.1.0-rc.6" ||
+				template.ComponentVersions["opencode-v2"] != "0.0.0-beta-202608110357" ||
+				template.ComponentVersions["dws"] != test.wantDWS ||
+				template.SourceRevision != test.wantSourceRevision {
+				t.Fatalf("v7 contract = %+v", template)
+			}
+		})
 	}
 
 	wrong := FCE2BTemplate{BuildID: "build-v7-wrong"}
