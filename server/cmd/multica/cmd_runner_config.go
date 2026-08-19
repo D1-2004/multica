@@ -10,22 +10,33 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 )
 
+type runnerServerBinding struct {
+	ServerURL string `json:"server_url"`
+	MachineID string `json:"machine_id"`
+}
+
 type runnerConfig struct {
-	ServerURL  string   `json:"server_url"`
-	MachineID  string   `json:"machine_id,omitempty"`
-	PublicKey  string   `json:"public_key"`
-	PrivateKey string   `json:"private_key"`
-	Roots      []string `json:"roots"`
+	ServerURL  string                `json:"server_url,omitempty"`
+	MachineID  string                `json:"machine_id,omitempty"`
+	Servers    []runnerServerBinding `json:"servers,omitempty"`
+	PublicKey  string                `json:"public_key"`
+	PrivateKey string                `json:"private_key"`
+	Roots      []string              `json:"roots"`
 }
 
 type runnerConnectionState struct {
 	PID         int       `json:"pid"`
-	MachineID   string    `json:"machine_id"`
+	MachineIDs  []string  `json:"machine_ids,omitempty"`
+	MachineID   string    `json:"machine_id,omitempty"`
 	ConnectedAt time.Time `json:"connected_at"`
 }
+
+var runnerConnectionStateMu sync.Mutex
 
 func runnerStateDir() (string, error) {
 	home, err := os.UserHomeDir()
@@ -59,7 +70,89 @@ func loadRunnerConfig() (runnerConfig, error) {
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return runnerConfig{}, fmt.Errorf("parse Runner config: %w", err)
 	}
+	if _, err := cfg.bindings(); err != nil {
+		return runnerConfig{}, err
+	}
 	return cfg, nil
+}
+
+func (cfg runnerConfig) bindings() ([]runnerServerBinding, error) {
+	if len(cfg.Servers) > 0 {
+		out := make([]runnerServerBinding, 0, len(cfg.Servers))
+		seen := make(map[string]struct{}, len(cfg.Servers))
+		for _, binding := range cfg.Servers {
+			serverURL, err := normalizeRunnerServerURL(binding.ServerURL)
+			if err != nil {
+				return nil, fmt.Errorf("Runner server %q: %w", binding.ServerURL, err)
+			}
+			if strings.TrimSpace(binding.MachineID) == "" {
+				return nil, fmt.Errorf("Runner server %s is missing a machine id", serverURL)
+			}
+			if _, exists := seen[serverURL]; exists {
+				return nil, fmt.Errorf("Runner config lists %s more than once", serverURL)
+			}
+			seen[serverURL] = struct{}{}
+			out = append(out, runnerServerBinding{ServerURL: serverURL, MachineID: binding.MachineID})
+		}
+		return out, nil
+	}
+	if strings.TrimSpace(cfg.ServerURL) == "" && strings.TrimSpace(cfg.MachineID) == "" {
+		return nil, nil
+	}
+	serverURL, err := normalizeRunnerServerURL(cfg.ServerURL)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(cfg.MachineID) == "" {
+		return nil, fmt.Errorf("Runner server %s is missing a machine id", serverURL)
+	}
+	return []runnerServerBinding{{ServerURL: serverURL, MachineID: cfg.MachineID}}, nil
+}
+
+func (cfg runnerConfig) bindingForURL(serverURL string) (runnerServerBinding, bool, error) {
+	serverURL, err := normalizeRunnerServerURL(serverURL)
+	if err != nil {
+		return runnerServerBinding{}, false, err
+	}
+	bindings, err := cfg.bindings()
+	if err != nil {
+		return runnerServerBinding{}, false, err
+	}
+	for _, binding := range bindings {
+		if binding.ServerURL == serverURL {
+			return binding, true, nil
+		}
+	}
+	return runnerServerBinding{}, false, nil
+}
+
+func (cfg *runnerConfig) upsertBinding(serverURL, machineID string) error {
+	serverURL, err := normalizeRunnerServerURL(serverURL)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(machineID) == "" {
+		return fmt.Errorf("Runner server %s is missing a machine id", serverURL)
+	}
+	bindings, err := cfg.bindings()
+	if err != nil {
+		return err
+	}
+	replaced := false
+	for i, binding := range bindings {
+		if binding.ServerURL == serverURL {
+			bindings[i].MachineID = machineID
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		bindings = append(bindings, runnerServerBinding{ServerURL: serverURL, MachineID: machineID})
+	}
+	cfg.Servers = bindings
+	cfg.ServerURL = ""
+	cfg.MachineID = ""
+	return nil
 }
 
 func saveRunnerConfig(cfg runnerConfig) error {
@@ -152,7 +245,33 @@ func runnerConnectionStatePath() (string, error) {
 	return filepath.Join(dir, "connection.json"), nil
 }
 
-func writeRunnerConnectionState(machineID string) error {
+func (state runnerConnectionState) machineIDs() []string {
+	if len(state.MachineIDs) > 0 {
+		return append([]string(nil), state.MachineIDs...)
+	}
+	if state.MachineID != "" {
+		return []string{state.MachineID}
+	}
+	return nil
+}
+
+func readRunnerConnectionState() (runnerConnectionState, error) {
+	path, err := runnerConnectionStatePath()
+	if err != nil {
+		return runnerConnectionState{}, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return runnerConnectionState{}, err
+	}
+	var state runnerConnectionState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return runnerConnectionState{}, err
+	}
+	return state, nil
+}
+
+func persistRunnerConnectionState(state runnerConnectionState) error {
 	path, err := runnerConnectionStatePath()
 	if err != nil {
 		return err
@@ -160,11 +279,7 @@ func writeRunnerConnectionState(machineID string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create Runner state directory: %w", err)
 	}
-	raw, err := json.Marshal(runnerConnectionState{
-		PID:         os.Getpid(),
-		MachineID:   machineID,
-		ConnectedAt: time.Now().UTC(),
-	})
+	raw, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("encode Runner connection state: %w", err)
 	}
@@ -174,34 +289,103 @@ func writeRunnerConnectionState(machineID string) error {
 	return nil
 }
 
+func writeRunnerConnectionState(machineID string) error {
+	runnerConnectionStateMu.Lock()
+	defer runnerConnectionStateMu.Unlock()
+	state, err := readRunnerConnectionState()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read Runner connection state: %w", err)
+	}
+	if state.PID != os.Getpid() {
+		state = runnerConnectionState{PID: os.Getpid()}
+	}
+	ids := state.machineIDs()
+	found := false
+	for _, id := range ids {
+		if id == machineID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		ids = append(ids, machineID)
+	}
+	return persistRunnerConnectionState(runnerConnectionState{
+		PID:         os.Getpid(),
+		MachineIDs:  ids,
+		ConnectedAt: time.Now().UTC(),
+	})
+}
+
 func runnerConnectionActive(pid int, machineID string) bool {
-	path, err := runnerConnectionStatePath()
+	runnerConnectionStateMu.Lock()
+	defer runnerConnectionStateMu.Unlock()
+	return runnerConnectionActiveLocked(pid, machineID)
+}
+
+func runnerConnectionActiveLocked(pid int, machineID string) bool {
+	state, err := readRunnerConnectionState()
 	if err != nil {
 		return false
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	if state.PID != pid {
 		return false
 	}
-	var state runnerConnectionState
-	if json.Unmarshal(raw, &state) != nil {
+	for _, id := range state.machineIDs() {
+		if id == machineID {
+			return true
+		}
+	}
+	return false
+}
+
+func runnerAllBindingsConnected(pid int, cfg runnerConfig) bool {
+	bindings, err := cfg.bindings()
+	if err != nil || len(bindings) == 0 {
 		return false
 	}
-	return state.PID == pid && state.MachineID == machineID
+	runnerConnectionStateMu.Lock()
+	defer runnerConnectionStateMu.Unlock()
+	for _, binding := range bindings {
+		if !runnerConnectionActiveLocked(pid, binding.MachineID) {
+			return false
+		}
+	}
+	return true
 }
 
 func clearRunnerConnectionState(pid int) {
+	clearRunnerConnectionMachine(pid, "")
+}
+
+func clearRunnerConnectionMachine(pid int, machineID string) {
+	runnerConnectionStateMu.Lock()
+	defer runnerConnectionStateMu.Unlock()
 	path, err := runnerConnectionStatePath()
 	if err != nil {
 		return
 	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
+	state, err := readRunnerConnectionState()
+	if err != nil || state.PID != pid {
 		return
 	}
-	var state runnerConnectionState
-	if json.Unmarshal(raw, &state) != nil || state.PID != pid {
+	if machineID == "" {
+		_ = os.Remove(path)
 		return
 	}
-	_ = os.Remove(path)
+	ids := make([]string, 0, len(state.machineIDs()))
+	for _, id := range state.machineIDs() {
+		if id != machineID {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		_ = os.Remove(path)
+		return
+	}
+	_ = persistRunnerConnectionState(runnerConnectionState{
+		PID:         pid,
+		MachineIDs:  ids,
+		ConnectedAt: state.ConnectedAt,
+	})
 }
