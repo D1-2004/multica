@@ -251,6 +251,21 @@ func (identity ASBResolvedIdentity) validate() error {
 	}
 }
 
+func asbCreateIdentityForTask(
+	identity ASBResolvedIdentity,
+	taskContext []byte,
+	liveTaskSandboxID string,
+) ASBResolvedIdentity {
+	liveTaskSandboxID = strings.TrimSpace(liveTaskSandboxID)
+	if identity.Mode != asbIdentityModeBound ||
+		!IsA2ATaskOrigin(taskContext) ||
+		liveTaskSandboxID == "" {
+		return identity
+	}
+	identity.SourceSandboxID = liveTaskSandboxID
+	return identity
+}
+
 func (identity ASBResolvedIdentity) sandboxExtensions(
 	wireGuardCredentials string,
 ) map[string]string {
@@ -782,6 +797,7 @@ func (l *ASBLauncher) submitTaskUnderRuntimeLock(
 		identity,
 		runtimeLockConn,
 		trace,
+		task.Context,
 	)
 	if err != nil {
 		return asbLaunchSubmission{}, false, err
@@ -871,6 +887,7 @@ func (l *ASBLauncher) resolveSandbox(
 	identity ASBResolvedIdentity,
 	runtimeLockConn *pgxpool.Conn,
 	trace chattrace.Trace,
+	taskContext []byte,
 ) (string, bool, ASBResolvedIdentity, error) {
 	if err := identity.validate(); err != nil {
 		return "", false, ASBResolvedIdentity{}, err
@@ -953,10 +970,25 @@ func (l *ASBLauncher) resolveSandbox(
 		}
 	}
 
+	createIdentity := asbCreateIdentityForTask(
+		identity,
+		taskContext,
+		l.liveBoundASBTaskSandboxID(ctx, runtime, metadata, agentID, identity, taskContext),
+	)
+	if createIdentity.SourceSandboxID != identity.SourceSandboxID {
+		slog.Info(
+			"ASB A2A cold start inherits from a live task sandbox",
+			"runtime_id", util.UUIDToString(runtime.ID),
+			"source_sandbox_id", identity.SourceSandboxID,
+			"live_sandbox_id", createIdentity.SourceSandboxID,
+		)
+	}
+
 	for {
 		chattrace.LogStage(slog.Default(), trace, "asb_sandbox_create", "started",
 			"artifact_ref", metadata.ArtifactRef,
 			"identity_mode", string(identity.Mode),
+			"inheritance_sandbox_id", createIdentity.SourceSandboxID,
 		)
 		var releaseIdentitySource func(context.Context) error
 		if identity.Mode == asbIdentityModeBound {
@@ -1015,7 +1047,7 @@ func (l *ASBLauncher) resolveSandbox(
 				ResourceMemory: l.Config.ResourceMemory,
 				Entrypoint:     []string{"sleep infinity"},
 				Metadata:       sandboxMetadata,
-				Extensions:     identity.sandboxExtensions(l.Config.WireGuardCredentials),
+				Extensions:     createIdentity.sandboxExtensions(l.Config.WireGuardCredentials),
 			},
 		)
 		if err != nil {
@@ -1100,6 +1132,50 @@ func (l *ASBLauncher) resolveSandbox(
 		)
 		return sandbox.ID, true, identity, nil
 	}
+}
+
+func (l *ASBLauncher) liveBoundASBTaskSandboxID(
+	ctx context.Context,
+	runtime db.AgentRuntime,
+	metadata CloudSandboxRuntimeMetadata,
+	agentID pgtype.UUID,
+	identity ASBResolvedIdentity,
+	taskContext []byte,
+) string {
+	if l == nil || l.Queries == nil || l.Client == nil ||
+		identity.Mode != asbIdentityModeBound ||
+		!IsA2ATaskOrigin(taskContext) ||
+		!agentID.Valid {
+		return ""
+	}
+	sessions, err := l.Queries.ListActiveCloudSandboxSessionsByAgentIdentity(
+		ctx,
+		db.ListActiveCloudSandboxSessionsByAgentIdentityParams{
+			WorkspaceID:         runtime.WorkspaceID,
+			AgentID:             agentID,
+			IdentityFingerprint: identity.Fingerprint,
+		},
+	)
+	if err != nil {
+		return ""
+	}
+	for _, session := range sessions {
+		if session.RuntimeID != runtime.ID ||
+			session.ArtifactRef != metadata.ArtifactRef ||
+			session.SandboxID == "" ||
+			session.SandboxID == identity.SourceSandboxID {
+			continue
+		}
+		reusable, _, inspectErr := inspectReusableASBSandbox(ctx, l.Client, session.SandboxID)
+		if inspectErr != nil || !reusable {
+			continue
+		}
+		if probeErr := probeASBTaskBUCIdentity(ctx, l.Client, session.SandboxID, identity.RawEmployeeID); probeErr != nil {
+			continue
+		}
+		return session.SandboxID
+	}
+	return ""
 }
 
 func inspectReusableASBSandbox(

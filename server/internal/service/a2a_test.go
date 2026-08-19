@@ -16,6 +16,32 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestValidateA2ASendRequestKeepsDEAPRequestMetadata(t *testing.T) {
+	t.Parallel()
+
+	request := &a2a.SendMessageRequest{
+		Metadata: map[string]any{
+			"context": map[string]any{
+				"attributes": map[string]any{
+					"sessionInfo": map[string]any{"openConversationId": "cid-deap"},
+				},
+			},
+		},
+		Message: &a2a.Message{
+			ID:    "message-1",
+			Role:  a2a.MessageRoleUser,
+			Parts: a2a.ContentParts{a2a.NewTextPart("hello")},
+		},
+	}
+	got, err := validateA2ASendRequest(context.Background(), request, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deapA2AOpenConversationID(got.RequestMetadata, got.Metadata) != "cid-deap" {
+		t.Fatalf("request metadata = %#v", got.RequestMetadata)
+	}
+}
+
 func TestValidateA2ASendRequest(t *testing.T) {
 	valid := func() *a2a.SendMessageRequest {
 		return &a2a.SendMessageRequest{
@@ -40,6 +66,9 @@ func TestValidateA2ASendRequest(t *testing.T) {
 		{name: "default blocking", mutate: func(request *a2a.SendMessageRequest) { request.Config = nil }},
 		{name: "agent role", mutate: func(request *a2a.SendMessageRequest) { request.Message.Role = a2a.MessageRoleAgent }, wantErr: a2a.ErrInvalidParams},
 		{name: "missing message id", mutate: func(request *a2a.SendMessageRequest) { request.Message.ID = "" }, wantErr: a2a.ErrInvalidParams},
+		{name: "keeps DEAP request metadata", mutate: func(request *a2a.SendMessageRequest) {
+			request.Metadata = map[string]any{"context": map[string]any{"attributes": map[string]any{"sessionInfo": map[string]any{"openConversationId": "cid-deap"}}}}
+		}, wantReturnImmediately: true},
 		{name: "external context", mutate: func(request *a2a.SendMessageRequest) { request.Message.ContextID = "external-context" }, wantReturnImmediately: true},
 		{name: "task continuation", mutate: func(request *a2a.SendMessageRequest) { request.Message.TaskID = "external-task" }, wantReturnImmediately: true},
 		{name: "raw part", mutate: func(request *a2a.SendMessageRequest) {

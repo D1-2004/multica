@@ -340,6 +340,37 @@ func TestASBOrdinaryTaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 	}
 }
 
+func TestASBA2AColdStartInheritsFromLiveTaskSandbox(t *testing.T) {
+	t.Parallel()
+
+	identity := ASBResolvedIdentity{
+		Mode:               asbIdentityModeBound,
+		RawEmployeeID:      "12345",
+		BUCAgentID:         "agent-multica-asb",
+		AgentSPIFFEID:      "spiffe://multica.prod.ali/ns/default/agents/agent-1",
+		AIPID:              "aip-1",
+		SourceSandboxID:    "identity-source-1",
+		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentIdentityToken: "ait",
+		Fingerprint:        strings.Repeat("a", 64),
+	}
+	got := asbCreateIdentityForTask(
+		identity,
+		newA2ATaskContext(a2aintegration.InvocationIdentity{DEAPDWSToken: "deap-token"}),
+		"live-task-sandbox",
+	)
+	if got.SourceSandboxID != "live-task-sandbox" {
+		t.Fatalf("A2A inheritance source = %q, want live task sandbox", got.SourceSandboxID)
+	}
+	if extensions := got.sandboxExtensions("wg"); extensions["buc.originalSandboxID"] != "live-task-sandbox" {
+		t.Fatalf("A2A create extensions = %#v", extensions)
+	}
+	ordinary := asbCreateIdentityForTask(identity, nil, "live-task-sandbox")
+	if ordinary.SourceSandboxID != identity.SourceSandboxID {
+		t.Fatalf("robot inheritance source = %q, want seed", ordinary.SourceSandboxID)
+	}
+}
+
 func TestASBBoundIdentityDeclaresCreateTimeBUCInheritance(t *testing.T) {
 	t.Parallel()
 
@@ -642,6 +673,7 @@ func TestResolveASBSandboxReleasesIdentitySourceAfterInheritedIdentityReady(t *t
 		identity,
 		conn,
 		chattrace.New("task"),
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("resolve sandbox: %v", err)
@@ -816,6 +848,7 @@ func TestResolveASBSandboxReplacesUnavailableWarmSession(t *testing.T) {
 				unboundASBResolvedIdentity(),
 				conn,
 				chattrace.New("task"),
+				nil,
 			)
 			conn.Release()
 			if err != nil {

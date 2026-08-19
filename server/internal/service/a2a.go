@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/storage"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -97,6 +98,7 @@ type validatedA2ASend struct {
 	Parts               a2a.ContentParts
 	MessageExtensions   []string
 	Metadata            map[string]any
+	RequestMetadata     map[string]any
 	ReferenceTaskIDs    []string
 	AcceptedOutputModes []string
 	HistoryLength       int
@@ -320,13 +322,7 @@ func (s *A2AService) SendMessage(ctx context.Context, request *a2a.SendMessageRe
 			if err != nil {
 				return s.finishA2ASendError(ctx, tx, principalIDs, validated, err, "allocate context")
 			}
-			session, createErr := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
-				WorkspaceID:  admission.WorkspaceID,
-				AgentID:      admission.AgentID,
-				CreatorID:    admission.DelegatedByUserID,
-				Title:        admission.CardName,
-				IsAgentIntro: false,
-			})
+			session, createErr := s.resolveChatSessionForNewA2AContext(ctx, qtx, admission, validated)
 			if createErr != nil {
 				return s.finishA2ASendError(ctx, tx, principalIDs, validated, createErr, "create chat session")
 			}
@@ -671,6 +667,71 @@ func (s *A2AService) notifyNextA2ATask(ctx context.Context, chatSessionID pgtype
 	s.TaskService.NotifyA2ATaskEnqueued(ctx, next)
 }
 
+func (s *A2AService) resolveChatSessionForNewA2AContext(
+	ctx context.Context,
+	qtx *db.Queries,
+	admission db.LockAgentA2ASendAdmissionRow,
+	validated validatedA2ASend,
+) (db.ChatSession, error) {
+	if strings.TrimSpace(validated.Identity.DEAPDWSToken) != "" {
+		conversationID := deapA2AOpenConversationID(validated.RequestMetadata, validated.Metadata)
+		if conversationID != "" {
+			if session, ok := lookupDingTalkConversationChatSession(
+				ctx,
+				qtx,
+				admission.WorkspaceID,
+				admission.AgentID,
+				conversationID,
+			); ok {
+				slog.Info(
+					"reused DingTalk chat session for DEAP A2A turn",
+					"agent_id", util.UUIDToString(admission.AgentID),
+					"chat_session_id", util.UUIDToString(session.ID),
+				)
+				return session, nil
+			}
+		}
+	}
+	return qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
+		WorkspaceID:  admission.WorkspaceID,
+		AgentID:      admission.AgentID,
+		CreatorID:    admission.DelegatedByUserID,
+		Title:        admission.CardName,
+		IsAgentIntro: false,
+	})
+}
+
+func lookupDingTalkConversationChatSession(
+	ctx context.Context,
+	qtx *db.Queries,
+	workspaceID pgtype.UUID,
+	agentID pgtype.UUID,
+	conversationID string,
+) (db.ChatSession, bool) {
+	installation, err := qtx.GetActiveDingTalkBotInstallationByAgent(ctx, db.GetActiveDingTalkBotInstallationByAgentParams{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+	})
+	if err != nil {
+		return db.ChatSession{}, false
+	}
+	binding, err := qtx.GetChannelChatSessionBinding(ctx, db.GetChannelChatSessionBindingParams{
+		InstallationID: installation.ID,
+		ChannelChatID:  conversationID,
+	})
+	if err != nil {
+		return db.ChatSession{}, false
+	}
+	session, err := qtx.GetChatSessionInWorkspace(ctx, db.GetChatSessionInWorkspaceParams{
+		ID:          binding.ChatSessionID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil || !sameUUID(session.AgentID, agentID) {
+		return db.ChatSession{}, false
+	}
+	return session, true
+}
+
 // GetTask returns only stable A2A identifiers and protocol-safe output. Local
 // task, workspace, session, runtime, and filesystem identifiers never enter
 // the projection.
@@ -886,6 +947,7 @@ func validateA2ASendRequest(ctx context.Context, request *a2a.SendMessageRequest
 		Parts:               message.Parts,
 		MessageExtensions:   messageExtensions,
 		Metadata:            message.Metadata,
+		RequestMetadata:     request.Metadata,
 		ReferenceTaskIDs:    references,
 		AcceptedOutputModes: acceptedOutputModes,
 		HistoryLength:       historyLength,

@@ -15,6 +15,36 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func TestDEAPA2AOpenConversationID(t *testing.T) {
+	t.Parallel()
+
+	deapMetadata := map[string]any{
+		"context": map[string]any{
+			"source": "AI_AGENT",
+			"attributes": map[string]any{
+				"sessionInfo": map[string]any{
+					"openConversationId": " cid-deap ",
+					"history":            []any{},
+				},
+			},
+		},
+	}
+	if got := deapA2AOpenConversationID(nil, deapMetadata); got != "cid-deap" {
+		t.Fatalf("DEAP request metadata = %q", got)
+	}
+	if got := deapA2AOpenConversationID(map[string]any{
+		"sessionInfo": map[string]any{"openConversationId": "cid-message"},
+	}); got != "cid-message" {
+		t.Fatalf("message metadata = %q", got)
+	}
+	if got := deapA2AOpenConversationID(map[string]any{"openConversationId": "cid-flat"}); got != "cid-flat" {
+		t.Fatalf("flat metadata = %q", got)
+	}
+	if got := deapA2AOpenConversationID(nil, map[string]any{"context": "x"}); got != "" {
+		t.Fatalf("invalid metadata = %q", got)
+	}
+}
+
 func TestA2ATaskOriginMarker(t *testing.T) {
 	if !hasA2ATaskOrigin(newA2ATaskContext()) {
 		t.Fatal("new A2A task context must carry the durable origin marker")

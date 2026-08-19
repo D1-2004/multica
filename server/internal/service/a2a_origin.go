@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 )
@@ -92,4 +93,42 @@ func IsA2ATaskOrigin(taskContext []byte) bool {
 // brief is suppressed.
 func ShouldInjectRuntimeOwnerProfile(taskContext []byte) bool {
 	return !IsA2ATaskOrigin(taskContext)
+}
+
+// deapA2AOpenConversationID reads the DingTalk conversation id DEAP puts in
+// A2A request metadata. DEAP leaves A2A contextId empty and places the
+// conversation under metadata.context.attributes.sessionInfo.openConversationId.
+func deapA2AOpenConversationID(metadatas ...map[string]any) string {
+	for _, metadata := range metadatas {
+		if id := openConversationIDFromMetadata(metadata); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func openConversationIDFromMetadata(metadata map[string]any) string {
+	if id := metadataStringAt(metadata, "context", "attributes", "sessionInfo", "openConversationId"); id != "" {
+		return id
+	}
+	if id := metadataStringAt(metadata, "attributes", "sessionInfo", "openConversationId"); id != "" {
+		return id
+	}
+	if id := metadataStringAt(metadata, "sessionInfo", "openConversationId"); id != "" {
+		return id
+	}
+	return metadataStringAt(metadata, "openConversationId")
+}
+
+func metadataStringAt(root map[string]any, keys ...string) string {
+	var current any = root
+	for _, key := range keys {
+		object, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = object[key]
+	}
+	value, _ := current.(string)
+	return strings.TrimSpace(value)
 }
