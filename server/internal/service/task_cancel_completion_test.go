@@ -209,11 +209,11 @@ func TestCancelledDelegatedIssueTaskFansOutDeliveredCommentCallbacks(t *testing.
 	if err := fixture.pool.QueryRow(context.Background(), `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, status, priority, started_at,
-			initiator_user_id, originator_user_id, parent_task_id,
+			initiator_user_id, originator_user_id, accountable_user_id, parent_task_id,
 			trigger_comment_id, coalesced_comment_ids, delivered_comment_ids
 		)
 		VALUES (
-			$1, $2, $3, 'running', 2, now(), $4, $4, $5,
+			$1, $2, $3, 'running', 2, now(), $4, $4, $4, $5,
 			$6, ARRAY[$7::uuid], ARRAY[$6::uuid, $7::uuid]
 		)
 		RETURNING id

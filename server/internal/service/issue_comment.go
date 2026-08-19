@@ -259,6 +259,17 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 			}
 			break
 		}
+		// The delegated follow-up carries the same accountable human as the
+		// source Chat run, exactly like the create-mode delegation in
+		// IssueService. accountable_user_id must be stamped alongside
+		// originator_user_id: migration 199 dropped the transitional
+		// originator_source IS NULL exemption, so a row with an originator but
+		// no accountable now fails agent_task_queue_accountable_matches_originator.
+		originatorUserID := params.AuthorID
+		if !originatorUserID.Valid {
+			originatorUserID = sourceTask.OriginatorUserID
+		}
+		accountableUserID := originatorUserID
 		task, err = qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 			AgentID:                   params.Issue.AssigneeID,
 			RuntimeID:                 agent.RuntimeID,
@@ -266,7 +277,12 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 			Priority:                  priorityToInt(params.Issue.Priority),
 			TriggerCommentID:          comment.ID,
 			TriggerSummary:            pgtype.Text{String: triggerSummary, Valid: triggerSummary != ""},
-			OriginatorUserID:          params.AuthorID,
+			OriginatorUserID:          originatorUserID,
+			AccountableUserID:         accountableUserID,
+			OriginatorSource:          pgtype.Text{String: "delegation", Valid: true},
+			DelegatedFromTaskID:       sourceTask.ID,
+			TriggerEvidenceKind:       pgtype.Text{String: "comment", Valid: true},
+			TriggerEvidenceRefID:      comment.ID,
 			RuntimeMcpOverlay:         overlay.Overlay,
 			RuntimeConnectedApps:      overlay.ConnectedApps,
 			ParentTaskID:              sourceTask.ID,
