@@ -986,6 +986,12 @@ func TestVerifyStableTemplateRunsNativeSmokeAndChecksManifest(t *testing.T) {
 	if got := runner.calls[2].args; len(got) == 0 || got[len(got)-1] != "/usr/local/bin/runtime-smoke-test" {
 		t.Fatalf("smoke command = %#v", got)
 	}
+	if got := runner.timeouts[2]; got < fcE2BStableValidationTimeout-time.Second || got > fcE2BStableValidationTimeout {
+		t.Fatalf("smoke timeout = %s, want approximately %s", got, fcE2BStableValidationTimeout)
+	}
+	if got := runner.timeouts[1]; got <= 0 || got > time.Second {
+		t.Fatalf("ready probe timeout = %s, want configured sandbox-ready timeout", got)
+	}
 	if got := runner.calls[4].args; len(got) != 3 || got[0] != "sandbox" || got[1] != "kill" {
 		t.Fatalf("kill command = %#v", got)
 	}

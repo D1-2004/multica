@@ -88,6 +88,7 @@ func (f *fakeSandboxRelaySigner) Mint(request sandboxrelay.MintRequest) (string,
 type fakeCommandRunner struct {
 	calls     []fakeCommandCall
 	deadlines []bool
+	timeouts  []time.Duration
 	out       []string
 	errs      []error
 }
@@ -104,8 +105,13 @@ func (f *fakeCommandRunner) Run(ctx context.Context, name string, args []string,
 		args: append([]string(nil), args...),
 		env:  append([]string(nil), env...),
 	})
-	_, hasDeadline := ctx.Deadline()
+	deadline, hasDeadline := ctx.Deadline()
 	f.deadlines = append(f.deadlines, hasDeadline)
+	if hasDeadline {
+		f.timeouts = append(f.timeouts, time.Until(deadline))
+	} else {
+		f.timeouts = append(f.timeouts, 0)
+	}
 	var out string
 	if len(f.out) > 0 {
 		out = f.out[0]
