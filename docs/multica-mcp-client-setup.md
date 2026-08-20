@@ -1,6 +1,6 @@
 # Multica MCP 客户端接入指南
 
-本文说明如何在沙箱内通过 Multica CLI 调用服务端 MCP，以及如何在 Codex、Qoder 和 Claude Code 中显式接入 Multica 自托管 MCP。Multica 不会在执行任务（task）claim 时改写智能体或沙箱的 MCP 配置。
+本文说明如何在沙箱内通过 Multica CLI 调用服务端 MCP，以及如何在 Codex、Claude Code、Qoder 和 QoderWork 中显式接入 Multica 自托管 MCP。Multica 不会在执行任务（task）claim 时改写智能体或沙箱的 MCP 配置。
 
 协议和业务约束分别见：
 
@@ -34,7 +34,7 @@ Multica MCP 接受已有的 `mul_` Personal Access Token（PAT）和 `mat_` Task
 
 | 行为 | `mul_` PAT | `mat_` Task Token |
 | --- | --- | --- |
-| 适用场景 | 用户在本机 Codex、Qoder、Claude Code 中长期显式配置 | 正在运行的 Multica Agent 短期使用 |
+| 适用场景 | 用户在本机 Codex、Claude Code、Qoder、QoderWork 中长期显式配置 | 正在运行的 Multica Agent 短期使用 |
 | 身份 | PAT 所属用户 | 固定的用户、Agent、Task、Workspace |
 | Workspace | Chat 按 `session_id`、数字员工工具按 `agent_id` 反查，并校验 PAT 用户成员关系 | 服务端按 token row 覆盖客户端请求头 |
 | Chat 发消息 | 只能向该用户创建的已有 Chat 发消息，并按 `member` 权限触发 Agent | 只能从活跃 Chat Task 转到该用户创建的另一个 Chat，按 `agent` 身份执行并记录来源 |
@@ -50,7 +50,7 @@ Task Token 仍由 Multica 在任务 claim 时生成，并作为 `MULTICA_TOKEN` 
 
 ## 3. 沙箱内通过 CLI 动态调用
 
-沙箱无法访问预发或正式环境的公网 MCP endpoint 时，不要给 Codex、Qoder 或 Claude Code 注入远程 MCP 配置。改用 daemon 已经为当前 task 注入的 `MULTICA_SERVER_URL`、`MULTICA_TOKEN`、`MULTICA_AGENT_ID` 和 `MULTICA_TASK_ID`，通过通用 CLI 命令访问同一服务端能力。
+沙箱无法访问预发或正式环境的公网 MCP endpoint 时，不要给 Codex、Claude Code、Qoder 或 QoderWork 注入远程 MCP 配置。改用 daemon 已经为当前 task 注入的 `MULTICA_SERVER_URL`、`MULTICA_TOKEN`、`MULTICA_AGENT_ID` 和 `MULTICA_TASK_ID`，通过通用 CLI 命令访问同一服务端能力。
 
 先动态获取服务端当前发布的全部工具定义：
 
@@ -117,6 +117,8 @@ enabled = true
 
 这里的 `MULTICA_PAT` 是环境变量名。不要写成 `bearer_token_env_var = "mul_..."`，否则 Codex 会尝试读取一个名为 `mul_...` 的环境变量，最终不会发送 Authorization。Codex Desktop 修改环境变量后需要完全退出并重新启动；正式环境把 URL 换成 `https://fde-workbench.dingtalk.com/api/mcp`。
 
+在 Multica **设置 → MCP 连接** 中选择 Codex 时，系统会创建一个独立的 90 天 API Key（底层为 PAT），并通过 `http_headers.Authorization` 生成可直接粘贴到 `~/.codex/config.toml` 的 TOML。MCP 连接必须提供 API Key；生成后的配置会把凭证保存在本机 Codex 配置中，不要复制到项目配置或提交到 Git，不再使用时应在 **API Token** 页单独吊销。
+
 ## 5. 在 Qoder 中配置
 
 ### Qoder IDE
@@ -180,7 +182,31 @@ qodercli mcp list
 
 写操作默认应保留人工确认。若确实要配置权限，工具名格式为 `mcp__multica__<tool-name>`；不要默认放行 `mcp__multica__*`，因为其中包含发消息、绑定和解绑操作。
 
-## 6. 在 Claude Code 中配置
+## 6. 在 QoderWork 中配置
+
+1. 打开 QoderWork 桌面端，进入 **扩展 → 连接器**。
+2. 点击 **+ 添加 → 粘贴 JSON 配置**。
+3. 粘贴以下配置，并把 URL 和 PAT 替换成当前环境的值：
+
+```json
+{
+  "mcpServers": {
+    "multica": {
+      "type": "streamable-http",
+      "url": "https://pre-fde-workbench.dingtalk.com/api/mcp",
+      "headers": {
+        "Authorization": "Bearer mul_<personal-access-token>"
+      }
+    }
+  }
+}
+```
+
+4. 点击导入，在已安装的自定义连接器中确认 `multica` 已启用并能展开工具列表。
+
+QoderWork 的 JSON 导入要求远程服务使用 `streamable-http`；这与 Qoder IDE/CLI 接受的 `http` 别名不同。**设置 → MCP 连接** 中的一键配置会按客户端生成正确值，并把该客户端专用的 API Key 写入请求头。
+
+## 7. 在 Claude Code 中配置
 
 ### 方式 A：CLI 添加到 local scope
 
@@ -249,7 +275,7 @@ Claude Code 还支持 `headersHelper`。如果已有一个本机私有程序能�
 
 该程序必须在标准输出返回 `{"Authorization":"Bearer mat_..."}`，且不能把 token 写入日志。`headersHelper` 只解决任务运行期间刷新 header 的问题；日常本机接入优先使用 PAT。
 
-## 7. 可用工具和使用示例
+## 8. 可用工具和使用示例
 
 当前 endpoint 暴露 6 个工具：
 
@@ -262,7 +288,7 @@ Claude Code 还支持 `headersHelper`。如果已有一个本机私有程序能�
 | `search_agents` | 按名称关键词查询可见 Agent 的非敏感详细信息 | `keyword` |
 | `list_agents` | 获取调用方当前可见的全部活跃 Agent | 无 |
 
-可以直接在 Codex、Qoder 或 Claude Code 中用自然语言指定工具和参数，例如：
+可以直接在 Codex、Claude Code、Qoder 或 QoderWork 中用自然语言指定工具和参数，例如：
 
 ```text
 使用 Multica 的 search_agents 查找名称中包含“探针”的 Agent，并返回详细信息。
@@ -300,7 +326,7 @@ agent_id=<agent-uuid>
 
 PAT 调用 `chat_send_message` 时，目标必须是同一工作区内由 PAT 用户创建的活跃 Chat，且该用户有权触发目标 Agent；消息按用户本人发送，不写入 A→B Task 来源字段。Task Token 调用时，源执行任务还必须是活跃 Chat Task，目标必须是另一个 Chat，并记录 A→B 来源。该写操作不是幂等的，客户端超时后不要无条件重试，否则可能产生重复消息。
 
-## 8. 验证顺序
+## 9. 验证顺序
 
 1. 先在客户端确认 `multica` 状态为 connected。
 2. 确认能发现上述 6 个工具。
@@ -321,7 +347,7 @@ curl --fail-with-body --silent --show-error \
 
 成功响应中应包含 `serverInfo.name=multica`。这个命令只验证 endpoint 和鉴权，不执行任何业务写入。
 
-## 9. 常见问题
+## 10. 常见问题
 
 | 现象 | 常见原因 | 处理方式 |
 | --- | --- | --- |
@@ -333,9 +359,10 @@ curl --fail-with-body --silent --show-error \
 | `503 Multica MCP is not enabled` | release flag 未开启 | 开启 `FF_MULTICA_MCP_CHAT_SEND=true` |
 | 客户端 connected 但调用失败 | PAT 缺少 `agent_id`，或工具的工作区、Agent、Chat、绑定约束不满足；Task Token 也可能已结束 | 根据 tool result 检查参数和权限，必要时更新 token |
 | Qoder 看不到新工具 | 配置未重载或不在 Agent mode | 执行 `/mcp reload`，切换到 Agent mode |
+| QoderWork 导入失败 | 使用了 Qoder 的 `type: http`，或粘贴的不是完整 `mcpServers` JSON | 改用 `type: streamable-http`，从 **设置 → MCP 连接** 重新复制完整配置 |
 | Claude 看不到 server | 环境变量未设置、项目配置未批准或连接失败 | 执行 `claude mcp list`、`claude mcp get multica` 或 `/mcp` |
 
-## 10. 安全要求
+## 11. 安全要求
 
 - 不要把 `mul_` PAT 或 `mat_` Task Token 提交到 Git，也不要放进 URL、聊天正文、截图或日志。
 - 优先使用本机 scope、私有环境变量或受控的 header helper。
@@ -344,17 +371,19 @@ curl --fail-with-body --silent --show-error \
 - PAT 具有用户身份权限，应设置合理有效期并及时撤销不再使用的客户端凭据。
 - Task 结束后应删除本地保存的旧 Task Token，避免把鉴权失败误判为 MCP 协议问题。
 
-## 11. 客户端官方文档
+## 12. 客户端官方文档
 
 - [Qoder IDE MCP](https://docs.qoder.com/user-guide/chat/model-context-protocol)
 - [Qoder CLI MCP servers](https://docs.qoder.com/cli/mcp-servers)
 - [Qoder Agent SDK MCP integration](https://docs.qoder.com/cli/sdk/mcp)
+- [QoderWork Connector](https://docs.qoder.com/qoderwork/connectors)
 - [Claude Code MCP](https://code.claude.com/docs/en/mcp)
 
 ## 变更历史
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-20 | 增加独立的 **MCP 连接** 设置入口和四客户端一键配置说明，并补充 QoderWork 的 `streamable-http` JSON 导入方式。 | 将 MCP 接入与 API Token 管理解耦，同时明确连接必须提供 API Key，并为 Codex、Claude Code、Qoder、QoderWork 分别创建可独立吊销的短期凭证。 |
 | 2026-08-09 | 增加 `multica mcp tools` 和 `multica mcp call --method` 的沙箱调用方式、参数输入、透明分页、one-shot 生命周期和错误语义。 | 沙箱无法访问预发或正式公网 MCP endpoint 时，复用现有 CLI 服务地址和 task token 通道；工具定义完全由服务端动态发现，后续新增工具不再要求更新镜像，也不应让调用方承担 MCP 初始化细节。 |
 | 2026-08-07 | 增加 `search_agents` 和 `list_agents` 的权限边界、用法及验收步骤。 | 让客户端无需预先取得 Workspace ID 或 Agent UUID，就能发现当前可见的 Agent 并继续调用其他 MCP 工具。 |
 | 2026-08-07 | 增加 Codex 配置说明，并移除 PAT 客户端的 `X-Workspace-ID`；服务端改为按 `session_id` / `agent_id` 反查 Workspace。 | 通用 MCP Client 不应承担 Multica Workspace 上下文；资源 ID 已能唯一确定 Workspace，服务端可在同一处完成成员和权限校验。 |

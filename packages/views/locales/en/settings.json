@@ -236,6 +236,7 @@
       "issue": "Issue",
       "chat": "Chat",
       "notifications": "Notifications",
+      "mcp": "MCP Connections",
       "tokens": "API Tokens",
       "general": "General",
       "repositories": "Repositories",
@@ -422,6 +423,56 @@
       "granted": "This browser can show notification banners.",
       "denied": "Blocked by your browser. Enable notifications for this site in your browser settings.",
       "enabled_badge": "Enabled"
+    }
+  },
+  "mcp": {
+    "title": "MCP Connections",
+    "description": "Connect Multica's tools to supported AI clients from one place.",
+    "service_title": "Multica MCP",
+    "service_description": "Copy the service URL or create a ready-to-import configuration for your client.",
+    "endpoint_label": "MCP service URL",
+    "endpoint_aria": "Multica MCP service URL",
+    "copy_endpoint": "Copy MCP service URL",
+    "endpoint_copied": "MCP service URL copied",
+    "clients_label": "Add to a client",
+    "configure_aria": "Configure {{client}}",
+    "security_hint": "Each setup creates a separate 90-day API Key. The copied configuration contains that secret; keep it on your device and revoke it from API Tokens when it is no longer needed.",
+    "config_copied": "Configuration copied",
+    "config_ready": "Configuration ready.",
+    "copy_failed": "Could not copy the configuration",
+    "create_failed": "Could not create the MCP API Key",
+    "destinations": {
+      "codex": "Paste the TOML into ~/.codex/config.toml, then restart Codex.",
+      "claude": "Run the copied command in Terminal. It adds Multica to Claude's user scope on this computer.",
+      "qoder": "In Qoder, open Settings → MCP → My Servers, choose Add, and paste the JSON.",
+      "qoderwork": "In QoderWork, open Extensions → Connectors → + Add → Paste JSON Config."
+    },
+    "dialog": {
+      "title": "Connect {{client}}",
+      "description": "Multica will create a dedicated {{days}}-day API Key for {{client}} and include it in the copied configuration.",
+      "one_time_hint": "This credential is shown only now. Import it before closing this dialog.",
+      "cancel": "Cancel",
+      "create_and_copy": "Create API Key and copy",
+      "creating": "Creating...",
+      "copy_again": "Copy again",
+      "done": "Done"
+    },
+    "usage": {
+      "title": "How to use",
+      "steps": {
+        "api_key": {
+          "title": "Provide an API Key",
+          "description": "An API Key is required to connect to Multica MCP. Choosing a client above creates a dedicated 90-day key for that client."
+        },
+        "import": {
+          "title": "Import the configuration",
+          "description": "Paste the copied TOML, command, or JSON into the selected client, then reload its MCP connections."
+        },
+        "security": {
+          "title": "Keep the key private",
+          "description": "The configuration contains your API Key. Store it only on your device and revoke it from API Tokens when you stop using that client."
+        }
+      }
     }
   },
   "tokens": {

@@ -14,6 +14,7 @@ vi.mock("./preferences-tab", stub("PreferencesTab"));
 vi.mock("./chat-tab", stub("ChatTab"));
 vi.mock("./issue-tab", stub("IssueTab"));
 vi.mock("./tokens-tab", stub("TokensTab"));
+vi.mock("./mcp-connections-tab", stub("MCPConnectionsTab"));
 vi.mock("./workspace-tab", stub("WorkspaceTab"));
 vi.mock("./members-tab", stub("MembersTab"));
 vi.mock("./repositories-tab", stub("RepositoriesTab"));
@@ -107,5 +108,15 @@ describe("SettingsPage nav trigger", () => {
       screen.queryByRole("button", { name: "Toggle Sidebar" }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("Settings")).toBeInTheDocument();
+  });
+});
+
+describe("SettingsPage MCP connections tab", () => {
+  it("exposes MCP connections as its own account tab", () => {
+    renderWithI18n(<SettingsPage />);
+
+    expect(
+      screen.getByRole("tab", { name: "MCP Connections" }),
+    ).toBeInTheDocument();
   });
 });
