@@ -262,12 +262,8 @@ func (identity ASBResolvedIdentity) sandboxExtensions(
 		return nil
 	}
 	_ = wireGuardCredentials
-	// New task sandboxes attach a fresh BUC token trio after they are Running.
-	// lazyAuth keeps wgclient from starting until attachWireguardIdentity runs.
-	// SPIFFE remains a runtime attachment because its task-scoped token is issued
-	// immediately before launch.
+	// Same create contract as the identity seed: only wireguard.lazyAuth.
 	return map[string]string{
-		"spiffe.lazyAuth":    "true",
 		"wireguard.lazyAuth": "true",
 	}
 }
