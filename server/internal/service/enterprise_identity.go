@@ -744,102 +744,12 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
-	tenantScope, unlockRuntime, err := s.lockASBTenantCredentialScope(
-		ctx,
-		agent.RuntimeID,
-	)
-	if err != nil {
-		logEnterpriseIdentityBindingStageFailure("lock_asb_runtime", stageStarted, err, bindingAttrs...)
-		cleanupAIP()
-		return CompleteEnterpriseIdentityBindingResult{}, err
-	}
-	defer func() {
-		if unlockRuntime != nil {
-			unlockRuntime()
-		}
-	}()
-	logEnterpriseIdentityBindingStageSuccess("lock_asb_runtime", stageStarted, bindingAttrs...)
-	stageStarted = time.Now()
-	sourceKey := enterpriseIdentitySourceKey{
-		WorkspaceID:   attempt.WorkspaceID,
-		BoundBy:       attempt.ActorUserID,
-		RuntimeID:     agent.RuntimeID,
-		TenantLockKey: tenantScope.LockKey,
-		RawEmployeeID: employeeID,
-		BUCAgentID:    config.BUCAgentID,
-	}
-	unlockSource, err := s.SourceLock.Lock(ctx, sourceKey)
-	if err != nil {
-		logEnterpriseIdentityBindingStageFailure(
-			"lock_asb_identity_source",
-			stageStarted,
-			err,
-			bindingAttrs...,
-		)
-		cleanupAIP()
-		return CompleteEnterpriseIdentityBindingResult{}, err
-	}
-	defer func() {
-		if unlockSource != nil {
-			unlockSource()
-		}
-	}()
-	// Reauthorization carries a fresh one-shot BUC token set. Reusing the
-	// current Agent's existing source would discard those credentials and leave
-	// an expired WireGuard seed active even though the binding version advances.
-	// First-time bindings may still share a proven source across Agents in the
-	// same employee and ASB tenant scope.
-	source, sourceCreated, err := s.provisionIdentitySourceForBinding(
-		ctx,
-		sourceKey,
-		tenantScope.RuntimeIDs,
-		bucTokens,
-		oldIdentityFound,
-	)
-	if err != nil {
-		logEnterpriseIdentityBindingStageFailure(
-			"establish_asb_identity_source",
-			stageStarted,
-			err,
-			bindingAttrs...,
-		)
-		cleanupAIP()
-		return CompleteEnterpriseIdentityBindingResult{}, err
-	}
-	logEnterpriseIdentityBindingStageSuccess(
-		"establish_asb_identity_source",
-		stageStarted,
-		append(
-			bindingAttrs,
-			"source_sandbox_id", source.SandboxID,
-			"source_reused", !sourceCreated,
-		)...,
-	)
-	cleanupSource := func() {
-		if !sourceCreated {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if cleanupErr := s.Source.Delete(
-			cleanupCtx,
-			source.RuntimeID,
-			source.SandboxID,
-		); cleanupErr != nil {
-			slog.Warn(
-				"failed to delete uncommitted ASB enterprise identity source",
-				"agent_id", util.UUIDToString(attempt.AgentID),
-				"sandbox_id", source.SandboxID,
-				"error", cleanupErr,
-			)
-		}
-	}
+	logEnterpriseIdentityBindingStageSuccess("validate_asb_runtime", stageStarted, bindingAttrs...)
 
 	stageStarted = time.Now()
 	sealedRefresh, err := s.Secrets.Seal([]byte(authXToken.RefreshToken))
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("encrypt_authx_refresh_token", stageStarted, err, bindingAttrs...)
-		cleanupSource()
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, errors.New("encrypt AuthX refresh token")
 	}
@@ -861,7 +771,6 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 				err,
 				bindingAttrs...,
 			)
-			cleanupSource()
 			cleanupAIP()
 			return CompleteEnterpriseIdentityBindingResult{}, fmt.Errorf(
 				"lock existing enterprise identity binding: %w",
@@ -882,7 +791,6 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 				reloadErr,
 				bindingAttrs...,
 			)
-			cleanupSource()
 			cleanupAIP()
 			return CompleteEnterpriseIdentityBindingResult{}, fmt.Errorf(
 				"reload existing enterprise identity binding: %w",
@@ -891,7 +799,6 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 		}
 		if current.ID != oldIdentity.ID ||
 			(current.Status != "revoked" && current.RawEmpID != employeeID) {
-			cleanupSource()
 			cleanupAIP()
 			return CompleteEnterpriseIdentityBindingResult{},
 				ErrEnterpriseIdentityEmployeeConflict
@@ -903,7 +810,6 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 	sealedBUC, bucAccessExpiresAt, err := s.sealBUCIdentityTokens(bucTokens, s.Now())
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("encrypt_buc_tokens", stageStarted, err, bindingAttrs...)
-		cleanupSource()
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, err
 	}
@@ -915,8 +821,6 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 		BucAgentID:                 config.BUCAgentID,
 		AgentSpiffeID:              agentSPIFFEID,
 		AipID:                      aipID,
-		BucIdentitySourceSandboxID: pgtype.Text{String: source.SandboxID, Valid: true},
-		BucIdentitySourceRuntimeID: source.RuntimeID,
 		AuthxRefreshTokenEncrypted: sealedRefresh,
 		AuthxRefreshExpiresAt:      pgtype.Timestamptz{Time: authXToken.RefreshExpiresAt, Valid: true},
 		BucAccessTokenEncrypted:    sealedBUC.access,
@@ -927,20 +831,14 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 	})
 	if err != nil {
 		logEnterpriseIdentityBindingStageFailure("persist_binding", stageStarted, err, bindingAttrs...)
-		cleanupSource()
 		cleanupAIP()
 		return CompleteEnterpriseIdentityBindingResult{}, fmt.Errorf("persist enterprise identity binding: %w", err)
 	}
 	logEnterpriseIdentityBindingStageSuccess("persist_binding", stageStarted, bindingAttrs...)
-	sourceCreated = false
 	if unlockExistingIdentity != nil {
 		unlockExistingIdentity()
 		unlockExistingIdentity = nil
 	}
-	unlockSource()
-	unlockSource = nil
-	unlockRuntime()
-	unlockRuntime = nil
 	if oldIdentityFound {
 		if err := s.retireActiveSandboxes(ctx, attempt.WorkspaceID, attempt.AgentID, oldIdentity); err != nil {
 			slog.Warn("failed to retire sandboxes from replaced enterprise identity",
@@ -949,8 +847,7 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 			)
 		}
 		if oldIdentity.BucIdentitySourceSandboxID.Valid &&
-			oldIdentity.BucIdentitySourceRuntimeID.Valid &&
-			oldIdentity.BucIdentitySourceSandboxID.String != source.SandboxID {
+			oldIdentity.BucIdentitySourceRuntimeID.Valid {
 			if err := s.deleteIdentitySourceIfUnreferenced(ctx, oldIdentity); err != nil {
 				slog.Warn(
 					"failed to release replaced ASB enterprise identity source",
@@ -966,7 +863,7 @@ func (s *EnterpriseIdentityService) CompletePreparedBinding(
 		append(
 			bindingAttrs,
 			"duration_ms", enterpriseIdentityDurationMilliseconds(bindingStarted),
-			"credential_mode", "asb_shared_source",
+			"credential_mode", "buc_oauth_tokens",
 		)...,
 	)
 	return CompleteEnterpriseIdentityBindingResult{
@@ -1092,76 +989,6 @@ func (s *EnterpriseIdentityService) loadReplaceableIdentity(
 		return db.AgentEnterpriseIdentity{}, false, ErrEnterpriseIdentityEmployeeConflict
 	}
 	return identity, identity.ID.Valid, nil
-}
-
-func (s *EnterpriseIdentityService) reuseOrCreateIdentitySource(
-	ctx context.Context,
-	key enterpriseIdentitySourceKey,
-	runtimeIDs []pgtype.UUID,
-	tokens BUCIdentityTokens,
-) (EnterpriseIdentitySourceAvailability, bool, error) {
-	reusable, err := s.Store.GetReusableAgentEnterpriseIdentitySource(
-		ctx,
-		db.GetReusableAgentEnterpriseIdentitySourceParams{
-			WorkspaceID: key.WorkspaceID,
-			BoundBy:     key.BoundBy,
-			RawEmpID:    key.RawEmployeeID,
-			BucAgentID:  key.BUCAgentID,
-			RuntimeIds:  runtimeIDs,
-		},
-	)
-	if err == nil {
-		sandboxID := strings.TrimSpace(reusable.BucIdentitySourceSandboxID.String)
-		sourceRuntimeID := reusable.BucIdentitySourceRuntimeID
-		prepareErr := s.Source.Prepare(
-			ctx,
-			sourceRuntimeID,
-			sandboxID,
-			key.RawEmployeeID,
-			key.BUCAgentID,
-		)
-		if prepareErr == nil {
-			prepareErr = s.Source.Park(ctx, sourceRuntimeID, sandboxID)
-		}
-		if prepareErr == nil {
-			return EnterpriseIdentitySourceAvailability{
-				SandboxID: sandboxID,
-				RuntimeID: sourceRuntimeID,
-			}, false, nil
-		}
-		if !errors.Is(prepareErr, ErrEnterpriseIdentityNeedsReauth) {
-			return EnterpriseIdentitySourceAvailability{}, false, prepareErr
-		}
-		// A vanished seed is not a BUC login expiry. Rebuild it from persisted tokens.
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return EnterpriseIdentitySourceAvailability{}, false, fmt.Errorf(
-			"find reusable ASB enterprise identity source: %w",
-			err,
-		)
-	}
-
-	source, err := s.Source.Create(ctx, key, tokens)
-	if err != nil {
-		return EnterpriseIdentitySourceAvailability{}, false, err
-	}
-	return source, true, nil
-}
-
-func (s *EnterpriseIdentityService) provisionIdentitySourceForBinding(
-	ctx context.Context,
-	key enterpriseIdentitySourceKey,
-	runtimeIDs []pgtype.UUID,
-	tokens BUCIdentityTokens,
-	forceFresh bool,
-) (EnterpriseIdentitySourceAvailability, bool, error) {
-	if !forceFresh {
-		return s.reuseOrCreateIdentitySource(ctx, key, runtimeIDs, tokens)
-	}
-	source, err := s.Source.Create(ctx, key, tokens)
-	if err != nil {
-		return EnterpriseIdentitySourceAvailability{}, false, err
-	}
-	return source, true, nil
 }
 
 func (s *EnterpriseIdentityService) deleteIdentitySourceIfUnreferenced(
@@ -1531,7 +1358,6 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 	if err != nil {
 		return fmt.Errorf("list enterprise identities for maintenance: %w", err)
 	}
-	maintainedSources := make(map[string]struct{})
 	for _, identity := range identities {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1574,35 +1400,6 @@ func (s *EnterpriseIdentityService) maintainActiveIdentities(ctx context.Context
 			}
 			if err == nil {
 				current = updated
-			}
-		}
-		if current.BucIdentitySourceSandboxID.Valid &&
-			strings.TrimSpace(current.BucIdentitySourceSandboxID.String) != "" &&
-			current.BucIdentitySourceRuntimeID.Valid &&
-			current.BucIdentitySourceUpdatedAt.Valid &&
-			!current.BucIdentitySourceUpdatedAt.Time.After(now.Add(-s.SourceRefreshInterval)) {
-			sourceCoordinate := util.UUIDToString(current.BucIdentitySourceRuntimeID) + ":" +
-				current.BucIdentitySourceSandboxID.String
-			if _, maintained := maintainedSources[sourceCoordinate]; maintained {
-				continue
-			}
-			maintainedSources[sourceCoordinate] = struct{}{}
-			if err := s.refreshIdentitySource(ctx, current); err != nil {
-				if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
-					if markErr := s.markIdentitySourceNeedsReauth(ctx, current); markErr != nil {
-						slog.Warn(
-							"failed to invalidate shared ASB enterprise identity source",
-							"sandbox_id", current.BucIdentitySourceSandboxID.String,
-							"error", markErr,
-						)
-					}
-					continue
-				}
-				slog.Warn(
-					"ASB enterprise identity source maintenance failed",
-					"agent_id", util.UUIDToString(current.AgentID),
-					"error", err,
-				)
 			}
 		}
 	}

@@ -1041,18 +1041,18 @@ SELECT
     $5,
     $6,
     $7,
+    NULL,
+    NULL,
+    NULL,
     $8,
     $9,
-    now(),
     $10,
     $11,
     $12,
     $13,
-    $14,
-    $15,
     1,
     'active',
-    $16
+    $14
 FROM agent
 WHERE agent.id = $2
   AND agent.workspace_id = $1
@@ -1063,9 +1063,9 @@ DO UPDATE SET
     buc_agent_id = EXCLUDED.buc_agent_id,
     agent_spiffe_id = EXCLUDED.agent_spiffe_id,
     aip_id = EXCLUDED.aip_id,
-    buc_identity_source_sandbox_id = EXCLUDED.buc_identity_source_sandbox_id,
-    buc_identity_source_runtime_id = EXCLUDED.buc_identity_source_runtime_id,
-    buc_identity_source_updated_at = EXCLUDED.buc_identity_source_updated_at,
+    buc_identity_source_sandbox_id = NULL,
+    buc_identity_source_runtime_id = NULL,
+    buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = EXCLUDED.authx_refresh_token_encrypted,
     authx_refresh_expires_at = EXCLUDED.authx_refresh_expires_at,
     buc_access_token_encrypted = EXCLUDED.buc_access_token_encrypted,
@@ -1087,8 +1087,6 @@ type UpsertAgentEnterpriseIdentityParams struct {
 	BucAgentID                 string             `json:"buc_agent_id"`
 	AgentSpiffeID              string             `json:"agent_spiffe_id"`
 	AipID                      string             `json:"aip_id"`
-	BucIdentitySourceSandboxID pgtype.Text        `json:"buc_identity_source_sandbox_id"`
-	BucIdentitySourceRuntimeID pgtype.UUID        `json:"buc_identity_source_runtime_id"`
 	AuthxRefreshTokenEncrypted []byte             `json:"authx_refresh_token_encrypted"`
 	AuthxRefreshExpiresAt      pgtype.Timestamptz `json:"authx_refresh_expires_at"`
 	BucAccessTokenEncrypted    []byte             `json:"buc_access_token_encrypted"`
@@ -1107,8 +1105,6 @@ func (q *Queries) UpsertAgentEnterpriseIdentity(ctx context.Context, arg UpsertA
 		arg.BucAgentID,
 		arg.AgentSpiffeID,
 		arg.AipID,
-		arg.BucIdentitySourceSandboxID,
-		arg.BucIdentitySourceRuntimeID,
 		arg.AuthxRefreshTokenEncrypted,
 		arg.AuthxRefreshExpiresAt,
 		arg.BucAccessTokenEncrypted,

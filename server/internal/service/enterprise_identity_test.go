@@ -190,12 +190,6 @@ func (f *fakeEnterpriseIdentityStore) UpsertAgentEnterpriseIdentity(
 		BucAgentID:                 params.BucAgentID,
 		AgentSpiffeID:              params.AgentSpiffeID,
 		AipID:                      params.AipID,
-		BucIdentitySourceSandboxID: params.BucIdentitySourceSandboxID,
-		BucIdentitySourceRuntimeID: params.BucIdentitySourceRuntimeID,
-		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{
-			Time:  time.Now(),
-			Valid: true,
-		},
 		AuthxRefreshTokenEncrypted: params.AuthxRefreshTokenEncrypted,
 		AuthxRefreshExpiresAt:      params.AuthxRefreshExpiresAt,
 		BucAccessTokenEncrypted:    params.BucAccessTokenEncrypted,
@@ -1040,7 +1034,7 @@ func TestValidateExistingIdemAgentRejectsDifferentOwner(t *testing.T) {
 	}
 }
 
-func TestEnterpriseIdentityCompleteBindingPersistsRollingSourceAndBUCTokens(t *testing.T) {
+func TestEnterpriseIdentityCompleteBindingPersistsBUCTokensWithoutSeedSandbox(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
@@ -1140,18 +1134,12 @@ func TestEnterpriseIdentityCompleteBindingPersistsRollingSourceAndBUCTokens(t *t
 	if string(openedBUCRefresh) != "buc-refresh" {
 		t.Fatalf("stored BUC refresh token = %q", openedBUCRefresh)
 	}
-	if source.tokens.AccessToken != "buc-access" ||
-		source.tokens.RefreshToken != "buc-refresh" ||
-		source.tokens.IDToken != bucIDToken ||
-		source.key.RuntimeID != runtimeID ||
-		source.key.BoundBy != store.attempt.ActorUserID ||
-		source.employeeID != "12345" {
-		t.Fatalf("temporary ASB identity source input = %#v key=%#v", source.tokens, source.key)
+	if source.createCalls != 0 {
+		t.Fatalf("binding created %d identity seed sandboxes", source.createCalls)
 	}
-	if !store.upsert.BucIdentitySourceSandboxID.Valid ||
-		store.upsert.BucIdentitySourceSandboxID.String != "identity-source-1" ||
-		store.current.BucIdentitySourceRuntimeID != runtimeID {
-		t.Fatalf("persisted paused identity source = %#v", store.current)
+	if store.current.BucIdentitySourceSandboxID.Valid ||
+		store.current.BucIdentitySourceRuntimeID.Valid {
+		t.Fatalf("binding persisted identity seed coordinates: %#v", store.current)
 	}
 	if store.upsert.AgentSpiffeID == "" ||
 		store.upsert.AipID != "aip-1" {
@@ -1159,143 +1147,6 @@ func TestEnterpriseIdentityCompleteBindingPersistsRollingSourceAndBUCTokens(t *t
 	}
 	if len(sandboxes.deletedIDs) != 0 {
 		t.Fatalf("binding allocated or deleted sandbox state: %#v", sandboxes.deletedIDs)
-	}
-}
-
-func TestEnterpriseIdentityReusesSharedSourceAcrossAgentsAndRuntimes(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 8, 3, 4, 0, 0, 0, time.UTC)
-	workspaceID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
-	boundBy := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	sourceRuntimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
-	targetRuntimeID := util.MustParseUUID("88888888-8888-8888-8888-888888888888")
-	reusable := db.AgentEnterpriseIdentity{
-		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
-		WorkspaceID:                workspaceID,
-		AgentID:                    util.MustParseUUID("55555555-5555-5555-5555-555555555555"),
-		RawEmpID:                   "12345",
-		BucAgentID:                 "buc-agent-1",
-		BucIdentitySourceSandboxID: pgtype.Text{String: "shared-source-1", Valid: true},
-		BucIdentitySourceRuntimeID: sourceRuntimeID,
-		BucIdentitySourceUpdatedAt: pgtype.Timestamptz{Time: now, Valid: true},
-		Status:                     "active",
-		BoundBy:                    boundBy,
-	}
-	store := &fakeEnterpriseIdentityStore{reusable: reusable}
-	serviceUnderTest := newTestEnterpriseIdentityService(
-		t,
-		store,
-		&fakeBUCOAuthClient{},
-		&fakeEnterpriseAuthX{},
-		&fakeEnterpriseIdem{},
-		&fakeEnterpriseSandboxes{},
-		now,
-	)
-	source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource)
-	availability, created, err := serviceUnderTest.reuseOrCreateIdentitySource(
-		context.Background(),
-		enterpriseIdentitySourceKey{
-			WorkspaceID:   workspaceID,
-			BoundBy:       boundBy,
-			RuntimeID:     targetRuntimeID,
-			TenantLockKey: 42,
-			RawEmployeeID: "12345",
-			BUCAgentID:    "buc-agent-1",
-		},
-		[]pgtype.UUID{sourceRuntimeID, targetRuntimeID},
-		BUCIdentityTokens{},
-	)
-	if err != nil {
-		t.Fatalf("reuseOrCreateIdentitySource: %v", err)
-	}
-	if created || availability.SandboxID != "shared-source-1" || availability.RuntimeID != sourceRuntimeID {
-		t.Fatalf("shared source availability = %#v, created=%t", availability, created)
-	}
-	if source.createCalls != 0 || strings.Join(source.prepared, ",") != "shared-source-1" ||
-		strings.Join(source.parked, ",") != "shared-source-1" {
-		t.Fatalf(
-			"shared source actions: create=%d prepare=%v park=%v",
-			source.createCalls,
-			source.prepared,
-			source.parked,
-		)
-	}
-	if len(source.preparedOn) != 1 || source.preparedOn[0] != sourceRuntimeID ||
-		len(source.parkedOn) != 1 || source.parkedOn[0] != sourceRuntimeID ||
-		!containsUUID(store.reusableArgs.RuntimeIds, sourceRuntimeID) ||
-		!containsUUID(store.reusableArgs.RuntimeIds, targetRuntimeID) {
-		t.Fatalf(
-			"cross-Runtime source actions: prepare=%v park=%v query=%v",
-			source.preparedOn,
-			source.parkedOn,
-			store.reusableArgs.RuntimeIds,
-		)
-	}
-}
-
-func TestEnterpriseIdentityReauthorizationCreatesFreshSource(t *testing.T) {
-	t.Parallel()
-
-	now := time.Date(2026, 8, 15, 1, 0, 0, 0, time.UTC)
-	workspaceID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
-	boundBy := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	runtimeID := util.MustParseUUID("33333333-3333-3333-3333-333333333333")
-	store := &fakeEnterpriseIdentityStore{reusable: db.AgentEnterpriseIdentity{
-		ID:                         util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
-		WorkspaceID:                workspaceID,
-		RawEmpID:                   "12345",
-		BucAgentID:                 "buc-agent-1",
-		BucIdentitySourceSandboxID: pgtype.Text{String: "expired-source-1", Valid: true},
-		BucIdentitySourceRuntimeID: runtimeID,
-		Status:                     "active",
-		BoundBy:                    boundBy,
-	}}
-	serviceUnderTest := newTestEnterpriseIdentityService(
-		t,
-		store,
-		&fakeBUCOAuthClient{},
-		&fakeEnterpriseAuthX{},
-		&fakeEnterpriseIdem{},
-		&fakeEnterpriseSandboxes{},
-		now,
-	)
-	source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource)
-	tokens := BUCIdentityTokens{
-		AccessToken:  "fresh-access",
-		RefreshToken: "fresh-refresh",
-		IDToken:      "fresh-id",
-	}
-	availability, created, err := serviceUnderTest.provisionIdentitySourceForBinding(
-		context.Background(),
-		enterpriseIdentitySourceKey{
-			WorkspaceID:   workspaceID,
-			BoundBy:       boundBy,
-			RuntimeID:     runtimeID,
-			TenantLockKey: 42,
-			RawEmployeeID: "12345",
-			BUCAgentID:    "buc-agent-1",
-		},
-		[]pgtype.UUID{runtimeID},
-		tokens,
-		true,
-	)
-	if err != nil {
-		t.Fatalf("provisionIdentitySourceForBinding: %v", err)
-	}
-	if !created || availability.SandboxID != "identity-source-1" ||
-		availability.RuntimeID != runtimeID {
-		t.Fatalf("fresh source availability = %#v, created=%t", availability, created)
-	}
-	if source.createCalls != 1 || source.tokens != tokens || source.key.RuntimeID != runtimeID {
-		t.Fatalf("fresh source creation = calls:%d tokens:%#v key:%#v", source.createCalls, source.tokens, source.key)
-	}
-	if len(source.prepared) != 0 || len(source.parked) != 0 {
-		t.Fatalf(
-			"reauthorization reused stale source: prepare=%v park=%v",
-			source.prepared,
-			source.parked,
-		)
 	}
 }
 
@@ -1801,7 +1652,6 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 		now,
 	)
 	serviceUnderTest.Secrets = box
-	source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource)
 
 	if err := serviceUnderTest.maintainActiveIdentities(context.Background()); err != nil {
 		t.Fatalf("maintainActiveIdentities: %v", err)
@@ -1823,28 +1673,8 @@ func TestEnterpriseIdentityMaintenanceRefreshesPlatformCredentials(t *testing.T)
 		store.maintenanceArgs.BatchSize != defaultEnterpriseMaintenanceBatch {
 		t.Fatalf("maintenance query = %#v", store.maintenanceArgs)
 	}
-	if got := strings.Join(source.rotated, ","); got != "source-1" {
-		t.Fatalf("rotated identity seed = %q", got)
-	}
-	if len(source.rotatedOn) != 1 || source.rotatedOn[0] != runtimeID {
-		t.Fatalf("rotated identity seed Runtime = %v", source.rotatedOn)
-	}
-	if store.rotatedSources != 1 ||
-		store.sourceRotation.ExpectedRuntimeID != runtimeID ||
-		store.sourceRotation.ExpectedSandboxID.String != "source-1" ||
-		store.sourceRotation.NewRuntimeID != runtimeID ||
-		store.sourceRotation.NewSandboxID.String != "identity-source-rotated" ||
-		store.current.BucIdentitySourceSandboxID.String != "identity-source-rotated" {
-		t.Fatalf(
-			"persisted identity seed rotation = %#v current=%#v",
-			store.sourceRotation,
-			store.current,
-		)
-	}
-	if source.tokens.AccessToken != bucTokens.AccessToken ||
-		source.tokens.RefreshToken != bucTokens.RefreshToken ||
-		source.tokens.IDToken != bucTokens.IDToken {
-		t.Fatalf("rotated seed BUC tokens = %#v", source.tokens)
+	if source := serviceUnderTest.Source.(*fakeEnterpriseIdentitySource); len(source.rotated) != 0 {
+		t.Fatalf("maintenance rotated identity seeds = %v", source.rotated)
 	}
 }
 
