@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -840,6 +841,182 @@ func TestRerunIssueTargetsSourceTaskAgent(t *testing.T) {
 	if !task.ForceFreshSession {
 		t.Fatal("expected per-row rerun to also set force_fresh_session=true")
 	}
+}
+
+func TestRerunIssuePreservesExternalDWSIdentityWithoutReusingContextToken(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	issueID, agentID, runtimeID := setupRerunTestFixture(t)
+	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+
+	ctx := context.Background()
+	var sourceTaskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, context,
+			started_at, completed_at, failure_reason
+		)
+		VALUES (
+			$1, $2, $3, 'failed', 0, $4::jsonb,
+			now() - interval '1 minute', now() - interval '30 seconds', 'agent_error'
+		)
+		RETURNING id
+	`, agentID, runtimeID, issueID, `{
+		"dispatch_context_prompt":"ROUTER CONTEXT",
+		"external_identity":{
+			"contextToken":"nested-expired-token",
+			"expiresAt":1,
+			"dws":{"uid":"24710833","orgId":"439446171"}
+		},
+		"agent_identity_context_token":"expired-source-token",
+		"agent_identity_context_token_expires_at":1,
+		"agent_identity_context_token_source":"external",
+		"completion_callback":{"url":"https://router.example.invalid/complete","telemetry_token":"expired-telemetry-token"}
+	}`).Scan(&sourceTaskID); err != nil {
+		t.Fatalf("insert source task: %v", err)
+	}
+
+	queries := db.New(testPool)
+	hub := realtime.NewHub()
+	go hub.Run()
+	taskService := service.NewTaskService(queries, nil, hub, events.New())
+
+	task, err := taskService.RerunIssue(
+		ctx,
+		pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
+		pgtype.UUID{Bytes: parseUUIDBytes(sourceTaskID), Valid: true},
+		pgtype.UUID{},
+		pgtype.UUID{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("RerunIssue failed: %v", err)
+	}
+	if len(task.Context) == 0 {
+		t.Fatal("rerun lost the source task's stable external DWS identity")
+	}
+
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(task.Context, &got); err != nil {
+		t.Fatalf("decode rerun task context: %v", err)
+	}
+	var externalIdentity struct {
+		DWS *struct {
+			UID   string `json:"uid"`
+			OrgID string `json:"orgId"`
+		} `json:"dws"`
+	}
+	if err := json.Unmarshal(got["external_identity"], &externalIdentity); err != nil {
+		t.Fatalf("decode rerun external identity: %v", err)
+	}
+	if externalIdentity.DWS == nil || externalIdentity.DWS.UID != "24710833" || externalIdentity.DWS.OrgID != "439446171" {
+		t.Fatalf("rerun external DWS identity = %#v", externalIdentity.DWS)
+	}
+	var externalIdentityFields map[string]json.RawMessage
+	if err := json.Unmarshal(got["external_identity"], &externalIdentityFields); err != nil {
+		t.Fatalf("decode rerun external identity fields: %v", err)
+	}
+	for _, forbidden := range []string{"contextToken", "expiresAt"} {
+		if _, present := externalIdentityFields[forbidden]; present {
+			t.Errorf("rerun external identity must not reuse %s: %s", forbidden, task.Context)
+		}
+	}
+	for _, forbidden := range []string{
+		"agent_identity_context_token",
+		"agent_identity_context_token_expires_at",
+		"agent_identity_context_token_source",
+	} {
+		if _, present := got[forbidden]; present {
+			t.Errorf("rerun context must not reuse %s: %s", forbidden, task.Context)
+		}
+	}
+	var contextPrompt string
+	if err := json.Unmarshal(got["dispatch_context_prompt"], &contextPrompt); err != nil || contextPrompt != "ROUTER CONTEXT" {
+		t.Errorf("rerun dispatch context prompt = %q, err=%v", contextPrompt, err)
+	}
+	var callback map[string]json.RawMessage
+	if err := json.Unmarshal(got["completion_callback"], &callback); err != nil {
+		t.Fatalf("decode rerun completion callback: %v", err)
+	}
+	if _, present := callback["url"]; !present {
+		t.Errorf("rerun lost stable completion callback routing: %s", task.Context)
+	}
+	if _, present := callback["telemetry_token"]; present {
+		t.Errorf("rerun reused expired telemetry token: %s", task.Context)
+	}
+}
+
+func TestRerunIssueWithoutSourceTaskRecoversLatestStableExternalDWSIdentity(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+
+	issueID, agentID, runtimeID := setupRerunTestFixture(t)
+	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, context,
+			started_at, completed_at, failure_reason
+		)
+		VALUES (
+			$1, $2, $3, 'failed', 0, $4::jsonb,
+			now() - interval '1 minute', now() - interval '30 seconds', 'runtime_start_failed'
+		)
+	`, agentID, runtimeID, issueID, `{
+		"external_identity":{"dws":{"uid":"24710833","orgId":"439446171"}},
+		"agent_identity_context_token":"expired-source-token",
+		"agent_identity_context_token_expires_at":1,
+		"agent_identity_context_token_source":"external"
+	}`); err != nil {
+		t.Fatalf("insert delegated source task: %v", err)
+	}
+
+	queries := db.New(testPool)
+	hub := realtime.NewHub()
+	go hub.Run()
+	taskService := service.NewTaskService(queries, nil, hub, events.New())
+
+	task, err := taskService.RerunIssue(
+		ctx,
+		pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
+		pgtype.UUID{},
+		pgtype.UUID{},
+		pgtype.UUID{},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("RerunIssue failed: %v", err)
+	}
+	if !json.Valid(task.Context) || !jsonContainsExternalDWSIdentity(task.Context, "24710833", "439446171") {
+		t.Fatalf("generic rerun lost the latest stable external DWS identity: %s", task.Context)
+	}
+	if task.RerunOfTaskID.Valid {
+		t.Fatalf("generic rerun unexpectedly changed lineage: rerun_of_task_id=%s", util.UUIDToString(task.RerunOfTaskID))
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(task.Context, &got); err != nil {
+		t.Fatalf("decode generic rerun task context: %v", err)
+	}
+	if _, present := got["agent_identity_context_token"]; present {
+		t.Fatalf("generic rerun reused expired ContextToken: %s", task.Context)
+	}
+}
+
+func jsonContainsExternalDWSIdentity(raw []byte, uid, orgID string) bool {
+	var payload struct {
+		ExternalIdentity struct {
+			DWS *struct {
+				UID   string `json:"uid"`
+				OrgID string `json:"orgId"`
+			} `json:"dws"`
+		} `json:"external_identity"`
+	}
+	return json.Unmarshal(raw, &payload) == nil && payload.ExternalIdentity.DWS != nil &&
+		payload.ExternalIdentity.DWS.UID == uid && payload.ExternalIdentity.DWS.OrgID == orgID
 }
 
 // TestRerunIssueRejectsCrossIssueTask asserts a source task whose IssueID
