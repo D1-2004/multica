@@ -917,7 +917,7 @@ func (l *ASBLauncher) resolveSandbox(
 					identity.RawEmployeeID,
 				); probeErr != nil {
 					slog.Info(
-						"ASB warm sandbox lost inherited employee identity; creating a replacement",
+						"ASB warm sandbox lost task employee identity; creating a replacement",
 						"runtime_id", util.UUIDToString(runtime.ID),
 						"sandbox_id", session.SandboxID,
 						"scope_type", scope.typ,
@@ -928,7 +928,7 @@ func (l *ASBLauncher) resolveSandbox(
 					break
 				}
 				slog.Info(
-					"ASB warm sandbox inherited employee identity verified",
+					"ASB warm sandbox task employee identity verified",
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", session.SandboxID,
 					"duration_ms", time.Since(probeStarted).Milliseconds(),
@@ -1024,14 +1024,10 @@ func (l *ASBLauncher) resolveSandbox(
 			return "", true, ASBResolvedIdentity{}, err
 		}
 		if identity.Mode == asbIdentityModeBound {
-			if err := attachAndProbeASBIdentitySource(
+			if err := l.attachAndProbeASBTaskBUCIdentity(
 				ctx,
-				l.Client,
 				sandbox.ID,
-				identity.RawEmployeeID,
-				identity.BUCAgentID,
-				identity.BUCTokens,
-				l.Config.WireGuardCredentials,
+				identity,
 				l.Config.WireGuardReadyTimeout,
 			); err != nil {
 				cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
@@ -1041,9 +1037,13 @@ func (l *ASBLauncher) resolveSandbox(
 					identity.Fingerprint,
 					sandbox.ID,
 				)
+				userDetail := "ASB BUC identity attach did not become ready before task start."
+				if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+					userDetail = "ASB enterprise identity did not match the bound employee after attach. Reauthorize the Agent enterprise identity and retry."
+				}
 				identityErr := withRuntimeStartUserDetail(
 					fmt.Errorf("attach ASB enterprise identity before task start: %w", err),
-					"ASB enterprise identity did not become ready before task start. Reauthorize the Agent enterprise identity and retry.",
+					userDetail,
 				)
 				if cleanupErr != nil {
 					return "", true, ASBResolvedIdentity{}, errors.Join(identityErr, cleanupErr)
@@ -1317,7 +1317,47 @@ func isASBCommandServiceConverging(err error) bool {
 	}
 }
 
-func (l *ASBLauncher) waitSandboxInheritedBUCIdentityReady(
+func (l *ASBLauncher) attachAndProbeASBTaskBUCIdentity(
+	ctx context.Context,
+	sandboxID string,
+	identity ASBResolvedIdentity,
+	timeout time.Duration,
+) error {
+	if l == nil || l.Client == nil {
+		return errors.New("ASB launcher is unavailable")
+	}
+	if timeout <= 0 {
+		return errors.New("ASB WireGuard ready timeout is not configured")
+	}
+	identityCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := attachASBBUCIdentityOnce(identityCtx, l.Client, sandboxID, ASBBUCIdentityGrant{
+		EmployeeID:           identity.RawEmployeeID,
+		BUCAccessToken:       identity.BUCTokens.AccessToken,
+		BUCRefreshToken:      identity.BUCTokens.RefreshToken,
+		BUCIDToken:           identity.BUCTokens.IDToken,
+		WireGuardCredentials: l.Config.WireGuardCredentials,
+	}); err != nil {
+		return fmt.Errorf("attach BUC identity to ASB task sandbox: %w", err)
+	}
+	if err := waitForASBSandboxState(
+		identityCtx,
+		l.Client,
+		sandboxID,
+		timeout,
+		"running",
+	); err != nil {
+		return fmt.Errorf("wait for attached ASB task sandbox to return running: %w", err)
+	}
+	return l.waitSandboxTaskBUCIdentityReady(
+		identityCtx,
+		sandboxID,
+		identity.RawEmployeeID,
+		timeout,
+	)
+}
+
+func (l *ASBLauncher) waitSandboxTaskBUCIdentityReady(
 	ctx context.Context,
 	sandboxID string,
 	employeeID string,
@@ -1339,6 +1379,8 @@ func (l *ASBLauncher) waitSandboxInheritedBUCIdentityReady(
 			employeeID,
 		); err == nil {
 			return nil
+		} else if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+			return err
 		} else if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
 			lastErr = err
 		}
@@ -1348,7 +1390,7 @@ func (l *ASBLauncher) waitSandboxInheritedBUCIdentityReady(
 				return probeCtx.Err()
 			}
 			return fmt.Errorf(
-				"ASB inherited BUC identity did not become ready within %s: %w",
+				"ASB task BUC identity did not become ready within %s: %w",
 				timeout,
 				lastErr,
 			)
@@ -1357,9 +1399,9 @@ func (l *ASBLauncher) waitSandboxInheritedBUCIdentityReady(
 	}
 }
 
-// A task sandbox can expose a different non-empty zero-trust agentId from the
-// source seed. The inheritance boundary is therefore the exact employee match
-// plus a present agentId; the source-establishment path still verifies the
+// Task sandboxes attach persisted BUC tokens directly. Their zero-trust agentId
+// can differ from the configured BUC agentId, so the probe only requires the
+// exact employee and a present agentId. Source establishment still verifies the
 // configured BUC agentId exactly.
 func probeASBTaskBUCIdentity(
 	ctx context.Context,
@@ -1371,12 +1413,12 @@ func probeASBTaskBUCIdentity(
 	if err != nil {
 		if sandbox, stateErr := client.GetSandbox(ctx, sandboxID); stateErr == nil {
 			return fmt.Errorf(
-				"resolve ASB command endpoint for inherited BUC probe (sandbox_state=%s): %w",
+				"resolve ASB command endpoint for task BUC probe (sandbox_state=%s): %w",
 				strings.ToLower(strings.TrimSpace(sandbox.Status.State)),
 				err,
 			)
 		}
-		return fmt.Errorf("resolve ASB command endpoint for inherited BUC probe: %w", err)
+		return fmt.Errorf("resolve ASB command endpoint for task BUC probe: %w", err)
 	}
 	result, err := client.Exec(ctx, endpoint, ASBExecInput{
 		Command: asbTaskBUCIdentityProbeCommand(),
@@ -1391,6 +1433,12 @@ func probeASBTaskBUCIdentity(
 	})
 	if err != nil {
 		return err
+	}
+	if result.ExitCode != nil && *result.ExitCode == asbIdentityInvalidExitCode {
+		return fmt.Errorf(
+			"%w: task sandbox BUC identity does not match the bound employee",
+			ErrEnterpriseIdentityNeedsReauth,
+		)
 	}
 	if result.ExitCode == nil || *result.ExitCode != 0 || result.ErrorName != "" {
 		return &asbEnterpriseCLIIdentityProbeError{stage: "buc"}
@@ -1408,7 +1456,7 @@ func asbTaskBUCIdentityProbeCommand() string {
 		"ok=p.get(\"success\") is True and str(p.get(\"errorCode\")) == \"0\" and " +
 		"str(d.get(\"empId\", \"\")) == os.environ[\"EXPECTED_EMP_ID\"] and " +
 		"bool(str(d.get(\"agentId\", \"\")).strip()); " +
-		"raise SystemExit(0 if ok else 1)" +
+		fmt.Sprintf("raise SystemExit(0 if ok else %d)", asbIdentityInvalidExitCode) +
 		"'"
 }
 

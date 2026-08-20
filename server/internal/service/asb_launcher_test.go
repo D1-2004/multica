@@ -570,9 +570,10 @@ func TestResolveASBSandboxAttachesFreshBUCTokensBeforeProbe(t *testing.T) {
 				t.Fatalf("decode BUC identity probe: %v", err)
 			}
 			if payload.Envs["EXPECTED_EMP_ID"] != "12345" ||
-				payload.Envs["EXPECTED_BUC_AGENT_ID"] != "agent-multica-asb" ||
-				!strings.Contains(payload.Command, "get_zt_identity.json") {
-				t.Fatalf("BUC identity probe = %#v", payload)
+				payload.Envs["EXPECTED_BUC_AGENT_ID"] != "" ||
+				!strings.Contains(payload.Command, "get_zt_identity.json") ||
+				!strings.Contains(payload.Command, `bool(str(d.get("agentId", "")).strip())`) {
+				t.Fatalf("task BUC identity probe = %#v", payload)
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
@@ -656,7 +657,7 @@ func TestResolveASBSandboxAttachesFreshBUCTokensBeforeProbe(t *testing.T) {
 	}
 }
 
-func TestWaitSandboxInheritedBUCIdentityReadyRetriesUntilEmployeeMatches(t *testing.T) {
+func TestWaitSandboxTaskBUCIdentityReadyRetriesUntilEmployeeMatches(t *testing.T) {
 	t.Parallel()
 
 	var execCalls atomic.Int32
@@ -673,14 +674,14 @@ func TestWaitSandboxInheritedBUCIdentityReadyRetriesUntilEmployeeMatches(t *test
 		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
 			var payload asbExecRequest
 			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
-				t.Fatalf("decode inherited identity probe: %v", err)
+				t.Fatalf("decode task identity probe: %v", err)
 			}
 			if payload.Envs["EXPECTED_EMP_ID"] != "12345" {
 				t.Fatalf("expected employee = %q", payload.Envs["EXPECTED_EMP_ID"])
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
 			if execCalls.Add(1) == 1 {
-				_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"ExitCode","value":"42"}}`+"\n")
+				_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"Timeout","value":"1"}}`+"\n")
 			}
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		default:
@@ -690,16 +691,56 @@ func TestWaitSandboxInheritedBUCIdentityReadyRetriesUntilEmployeeMatches(t *test
 	defer server.Close()
 
 	launcher := &ASBLauncher{Client: newTestASBClient(t, server)}
-	if err := launcher.waitSandboxInheritedBUCIdentityReady(
+	if err := launcher.waitSandboxTaskBUCIdentityReady(
 		context.Background(),
 		"probe-sandbox",
 		"12345",
 		time.Second,
 	); err != nil {
-		t.Fatalf("wait for inherited BUC identity: %v", err)
+		t.Fatalf("wait for task BUC identity: %v", err)
 	}
 	if got := execCalls.Load(); got != 2 {
-		t.Fatalf("inherited BUC probe calls = %d, want 2", got)
+		t.Fatalf("task BUC probe calls = %d, want 2", got)
+	}
+}
+
+func TestWaitSandboxTaskBUCIdentityReadyFailsWhenPresentedIdentityIsWrong(t *testing.T) {
+	t.Parallel()
+
+	var execCalls atomic.Int32
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/probe-sandbox/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/execd",
+				"headers":  map[string]string{"X-Sandbox-Token": testEndpointToken},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
+			execCalls.Add(1)
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"ExitCode","value":"42"}}`+"\n")
+			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	launcher := &ASBLauncher{Client: newTestASBClient(t, server)}
+	err := launcher.waitSandboxTaskBUCIdentityReady(
+		context.Background(),
+		"probe-sandbox",
+		"12345",
+		time.Second,
+	)
+	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+		t.Fatalf("wait for wrong task BUC identity = %v, want needs reauth", err)
+	}
+	if got := execCalls.Load(); got != 1 {
+		t.Fatalf("wrong-identity probe calls = %d, want 1", got)
 	}
 }
 
