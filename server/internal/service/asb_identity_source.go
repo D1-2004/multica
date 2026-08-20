@@ -621,11 +621,9 @@ func isASBWireGuardPostAttachCheckPending(err error) bool {
 		return false
 	}
 	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
-	if strings.Contains(message, "commandexecerror") ||
-		strings.Contains(message, "exit status") ||
-		strings.Contains(message, `"type":"error"`) {
-		return false
-	}
+	// ASB runs wgclient in the background. Its sync response can include the
+	// last tunnel probe's CommandExecError even while wgclient is still
+	// converging, so the effective identity probe below remains authoritative.
 	return strings.Contains(message, "tunnel not ready") ||
 		(strings.Contains(message, "failed to check wireguard status") &&
 			strings.Contains(message, "status code 404"))
