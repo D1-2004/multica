@@ -364,7 +364,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 				t.Errorf("Agent Identity grant = %#v", grant)
 			}
 		case "/v1/sandboxes/" + testSandboxID + "/identity/wireguard":
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -376,7 +376,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 				grant.OriginalSandboxID != "" {
 				t.Errorf("BUC grant = %#v", grant)
 			}
-			response.WriteHeader(http.StatusOK)
+			response.WriteHeader(http.StatusAccepted)
 			return
 		default:
 			http.NotFound(response, request)
@@ -400,7 +400,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 		BUCRefreshToken:      testBUCRefresh,
 		BUCIDToken:           "test-buc-id",
 		WireGuardCredentials: "test-wireguard",
-	}, true); err != nil {
+	}); err != nil {
 		t.Fatalf("AttachBUCIdentity: %v", err)
 	}
 }
@@ -436,15 +436,14 @@ func TestASBClientAsynchronousAgentIdentityUsesLifecycleTimeout(t *testing.T) {
 	}
 }
 
-func TestASBClientSynchronousBUCIdentityUsesCallerDeadline(t *testing.T) {
+func TestASBClientAsynchronousBUCIdentityUsesLifecycleTimeout(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("sync") != "true" {
+		if request.URL.Query().Get("sync") != "false" {
 			t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
 		}
-		time.Sleep(80 * time.Millisecond)
-		response.WriteHeader(http.StatusOK)
+		response.WriteHeader(http.StatusAccepted)
 	}))
 	defer server.Close()
 
@@ -465,7 +464,7 @@ func TestASBClientSynchronousBUCIdentityUsesCallerDeadline(t *testing.T) {
 		BUCRefreshToken:      testBUCRefresh,
 		BUCIDToken:           "test-buc-id",
 		WireGuardCredentials: "test-wireguard",
-	}, true); err != nil {
+	}); err != nil {
 		t.Fatalf("AttachBUCIdentity: %v", err)
 	}
 }
@@ -487,7 +486,6 @@ func TestASBClientRejectsBUCIdentitySourceInheritance(t *testing.T) {
 			WireGuardCredentials: "wireguard-credentials",
 			OriginalSandboxID:    "identity-source-1",
 		},
-		true,
 	)
 	if err == nil || !strings.Contains(err.Error(), "does not inherit a source sandbox") {
 		t.Fatalf("AttachBUCIdentity error = %v", err)
@@ -507,7 +505,6 @@ func TestASBClientRejectsBUCIdentityWithoutTokensOrSource(t *testing.T) {
 			EmployeeID:           "12345",
 			WireGuardCredentials: "wireguard-credentials",
 		},
-		true,
 	)
 	if err == nil || !strings.Contains(err.Error(), "token trio is required") {
 		t.Fatalf("AttachBUCIdentity error = %v", err)

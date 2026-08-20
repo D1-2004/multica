@@ -543,6 +543,9 @@ func TestResolveASBSandboxAttachesFreshBUCTokensBeforeProbe(t *testing.T) {
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox":
 			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/bound-sandbox/identity/wireguard":
+			if request.URL.Query().Get("sync") != "false" {
+				t.Fatalf("task BUC attach sync = %q", request.URL.Query().Get("sync"))
+			}
 			var grant ASBBUCIdentityGrant
 			if err := json.NewDecoder(request.Body).Decode(&grant); err != nil {
 				t.Fatalf("decode BUC attach grant: %v", err)
@@ -555,7 +558,9 @@ func TestResolveASBSandboxAttachesFreshBUCTokensBeforeProbe(t *testing.T) {
 				t.Fatalf("BUC attach grant = %#v", grant)
 			}
 			attached.Store(true)
-			response.WriteHeader(http.StatusOK)
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(response, `{"code":"BAD_REQUEST","message":"tunnel not ready"}`)
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox/endpoints/44772":
 			_ = json.NewEncoder(response).Encode(map[string]any{
 				"endpoint": server.URL + "/execd",
@@ -572,7 +577,7 @@ func TestResolveASBSandboxAttachesFreshBUCTokensBeforeProbe(t *testing.T) {
 			if payload.Envs["EXPECTED_EMP_ID"] != "12345" ||
 				payload.Envs["EXPECTED_BUC_AGENT_ID"] != "" ||
 				!strings.Contains(payload.Command, "get_zt_identity.json") ||
-				!strings.Contains(payload.Command, `bool(str(d.get("agentId", "")).strip())`) {
+				!strings.Contains(payload.Command, "emp and emp!=expected") {
 				t.Fatalf("task BUC identity probe = %#v", payload)
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
@@ -681,7 +686,7 @@ func TestWaitSandboxTaskBUCIdentityReadyRetriesUntilEmployeeMatches(t *testing.T
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
 			if execCalls.Add(1) == 1 {
-				_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"Timeout","value":"1"}}`+"\n")
+				_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"ExitCode","value":"1"}}`+"\n")
 			}
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		default:

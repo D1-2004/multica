@@ -104,7 +104,7 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/identity/wireguard":
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -345,7 +345,7 @@ func TestASBIdentitySourceRotateAttachesTokensAndTerminatesBothSeeds(t *testing.
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+rotatedSandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("rotated seed attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -515,7 +515,7 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			if attachCalls > 1 {
@@ -599,7 +599,7 @@ func TestAttachAndProbeASBIdentitySourceTreatsKnownSyncPostCheckAsPending(t *tes
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "true" {
+			if request.URL.Query().Get("sync") != "false" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			response.Header().Set("Content-Type", "application/json")
@@ -767,17 +767,47 @@ func TestWaitForASBIdentitySourceBUCRequiresReauthAfterPersistentIdentityMismatc
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceDoesNotRetryOtherBadRequest(t *testing.T) {
-	const sandboxID = "identity-source-invalid-grant"
+func TestAttachAndProbeASBIdentitySourceIgnoresAttachBadRequestThenProbes(t *testing.T) {
+	const sandboxID = "identity-source-tunnel-not-ready"
 	attachCalls := 0
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		attachCalls++
-		response.Header().Set("Content-Type", "application/json")
-		response.WriteHeader(http.StatusBadRequest)
-		_, _ = io.WriteString(response, `{
-			"code":"BAD_REQUEST",
-			"message":"identity grant is invalid"
-		}`)
+	probeCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
+			attachCalls++
+			if request.URL.Query().Get("sync") != "false" {
+				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
+			}
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(response, `{
+				"code":"BAD_REQUEST",
+				"message":"tunnel not ready"
+			}`)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID:
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{
+				"id":"identity-source-tunnel-not-ready",
+				"status":{"state":"Running"},
+				"createdAt":"2026-07-31T05:00:00Z"
+			}`)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/exec",
+				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			probeCalls++
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, "data: {\"type\":\"execution_complete\",\"execution_time\":1}\n")
+		default:
+			http.NotFound(response, request)
+		}
 	}))
 	defer server.Close()
 
@@ -788,7 +818,7 @@ func TestAttachAndProbeASBIdentitySourceDoesNotRetryOtherBadRequest(t *testing.T
 	if err != nil {
 		t.Fatalf("NewASBClient: %v", err)
 	}
-	err = attachAndProbeASBIdentitySource(
+	if err := attachAndProbeASBIdentitySource(
 		context.Background(),
 		client,
 		sandboxID,
@@ -801,12 +831,14 @@ func TestAttachAndProbeASBIdentitySourceDoesNotRetryOtherBadRequest(t *testing.T
 		},
 		"wg-client",
 		250*time.Millisecond,
-	)
-	if err == nil {
-		t.Fatal("attachAndProbeASBIdentitySource() error = nil, want bad request")
+	); err != nil {
+		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
 	}
 	if attachCalls != 1 {
 		t.Fatalf("attach calls = %d, want 1", attachCalls)
+	}
+	if probeCalls < 1 {
+		t.Fatalf("probe calls = %d, want at least 1", probeCalls)
 	}
 }
 

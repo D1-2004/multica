@@ -1380,6 +1380,7 @@ func (l *ASBLauncher) waitSandboxTaskBUCIdentityReady(
 		); err == nil {
 			return nil
 		} else if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+			// Exit 42 means the sandbox already presented a different empId.
 			return err
 		} else if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
 			lastErr = err
@@ -1452,11 +1453,10 @@ func asbTaskBUCIdentityProbeCommand() string {
 		"curl -fsS --max-time 10 -X POST " +
 		"'https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json' | " +
 		"/opt/task-python/bin/python -c '" +
-		"import json,os,sys; p=json.load(sys.stdin); d=p.get(\"content\",{}).get(\"data\",{}); " +
-		"ok=p.get(\"success\") is True and str(p.get(\"errorCode\")) == \"0\" and " +
-		"str(d.get(\"empId\", \"\")) == os.environ[\"EXPECTED_EMP_ID\"] and " +
-		"bool(str(d.get(\"agentId\", \"\")).strip()); " +
-		fmt.Sprintf("raise SystemExit(0 if ok else %d)", asbIdentityInvalidExitCode) +
+		"import json,os,sys; p=json.load(sys.stdin); d=(p.get(\"content\") or {}).get(\"data\") or {}; " +
+		"emp=str(d.get(\"empId\") or \"\").strip(); agent=str(d.get(\"agentId\") or \"\").strip(); " +
+		"expected=os.environ[\"EXPECTED_EMP_ID\"].strip(); " +
+		"raise SystemExit(42 if emp and emp!=expected else 0 if p.get(\"success\") is True and str(p.get(\"errorCode\"))==\"0\" and emp==expected and agent else 1)" +
 		"'"
 }
 

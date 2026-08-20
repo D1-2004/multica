@@ -55,7 +55,6 @@ type ASBClient struct {
 	apiKey          string
 	capacityLockKey int32
 	lifecycleClient *http.Client
-	identityClient  *http.Client
 	execClient      *http.Client
 }
 
@@ -253,11 +252,6 @@ func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 
 	lifecycleClient := cloneASBHTTPClient(cfg.HTTPClient)
 	lifecycleClient.Timeout = timeout
-	identityClient := cloneASBHTTPClient(cfg.HTTPClient)
-	// A synchronous identity attachment waits for the sandbox-side identity
-	// service to finish. Its caller context is the authoritative deadline;
-	// the shorter generic lifecycle timeout must not cut that wait short.
-	identityClient.Timeout = 0
 	execClient := cloneASBHTTPClient(cfg.HTTPClient)
 	// The command endpoint streams until the command completes. The caller's
 	// context and the execd request timeout are the two authoritative limits.
@@ -268,7 +262,6 @@ func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 		apiKey:          cfg.APIKey,
 		capacityLockKey: asbAPIKeyCapacityLockKey(cfg.APIKey),
 		lifecycleClient: lifecycleClient,
-		identityClient:  identityClient,
 		execClient:      execClient,
 	}, nil
 }
@@ -631,7 +624,7 @@ func (c *ASBClient) AttachAgentIdentity(ctx context.Context, sandboxID string, g
 	)
 }
 
-func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, grant ASBBUCIdentityGrant, sync bool) error {
+func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, grant ASBBUCIdentityGrant) error {
 	if err := validateASBSandboxID(sandboxID); err != nil {
 		return err
 	}
@@ -648,23 +641,21 @@ func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, gra
 	if strings.TrimSpace(grant.OriginalSandboxID) != "" {
 		return errors.New("ASB BUC identity attach does not inherit a source sandbox")
 	}
-	query := url.Values{"sync": []string{strconv.FormatBool(sync)}}
-	httpClient := c.lifecycleClient
-	acceptedStatusCodes := []int{http.StatusAccepted}
-	if sync {
-		httpClient = c.identityClient
-		acceptedStatusCodes = []int{http.StatusOK}
-	}
+	// ASB's sync=true tunnel check can return HTTP 400 after a successful
+	// attach and stretches RT past 15s. Submit asynchronously; Multica proves
+	// BUC identity with the in-sandbox probe instead of the platform status check.
+	query := url.Values{"sync": []string{"false"}}
 	return c.doLifecycleJSONVia(
 		ctx,
-		httpClient,
+		c.lifecycleClient,
 		"attach_buc_identity",
 		http.MethodPost,
 		"/sandboxes/"+sandboxID+"/identity/wireguard",
 		query,
 		grant,
 		nil,
-		acceptedStatusCodes...,
+		http.StatusOK,
+		http.StatusAccepted,
 	)
 }
 
