@@ -101,9 +101,6 @@ JOIN workspace w ON w.id = ep.workspace_id
 JOIN agent a
   ON a.id = ep.agent_id
  AND a.workspace_id = ep.workspace_id
-JOIN member m
-  ON m.workspace_id = ep.workspace_id
- AND m.user_id = ep.actor_user_id
 WHERE ep.endpoint_id = $1::text
 `
 

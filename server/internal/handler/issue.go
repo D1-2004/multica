@@ -728,21 +728,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		return rows.Err()
 	})
 	if err != nil {
-		// Statement-timeout surfaces as SQLSTATE 57014. Return a 503
-		// so the frontend can distinguish a timeout ("try a more
-		// specific query") from a generic 500. This is the fail-fast
-		// path when GIN search indexes are absent or the database is
-		// overloaded; see runSearchQuery header for context.
-		if isSearchStatementTimeout(err) {
-			slog.Warn("search issues timed out",
-				"workspace_id", workspaceID,
-				"query", q,
-				"timeout", searchStatementTimeout)
-			writeError(w, http.StatusServiceUnavailable, "search timed out; please refine your query or try again")
-			return
-		}
-		slog.Warn("search issues failed", "error", err, "workspace_id", workspaceID, "query", q)
-		writeError(w, http.StatusInternalServerError, "failed to search issues")
+		writeSearchQueryFailure(w, err, "issues", workspaceID, q)
 		return
 	}
 

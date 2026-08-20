@@ -859,18 +859,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		return rows.Err()
 	})
 	if err != nil {
-		// Statement-timeout surfaces as SQLSTATE 57014 — same
-		// fail-fast contract as SearchIssues (see runSearchQuery).
-		if isSearchStatementTimeout(err) {
-			slog.Warn("search projects timed out",
-				"workspace_id", workspaceID,
-				"query", q,
-				"timeout", searchStatementTimeout)
-			writeError(w, http.StatusServiceUnavailable, "search timed out; please refine your query or try again")
-			return
-		}
-		slog.Warn("search projects failed", "error", err, "workspace_id", workspaceID, "query", q)
-		writeError(w, http.StatusInternalServerError, "failed to search projects")
+		writeSearchQueryFailure(w, err, "projects", workspaceID, q)
 		return
 	}
 

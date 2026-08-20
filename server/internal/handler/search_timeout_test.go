@@ -3,6 +3,9 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -29,6 +32,46 @@ func TestIsSearchStatementTimeout(t *testing.T) {
 				t.Errorf("isSearchStatementTimeout(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestIsSearchClientCanceled(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil error", nil, false},
+		{"plain error", errors.New("boom"), false},
+		{"context canceled", context.Canceled, true},
+		{"begin wrap", fmt.Errorf("begin search tx: %w", context.Canceled), true},
+		{"set timeout wrap", fmt.Errorf("set search statement_timeout: %w", context.Canceled), true},
+		{"57014 is not cancel", &pgconn.PgError{Code: "57014"}, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isSearchClientCanceled(tc.err); got != tc.want {
+				t.Errorf("isSearchClientCanceled(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSearchIssues_ClientCancelIsNotInternalError(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler tests require DATABASE_URL")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	path := fmt.Sprintf("/api/issues/search?workspace_id=%s&q=AGE-1", testWorkspaceID)
+	req := newRequest("GET", path, nil).WithContext(ctx)
+	w := httptest.NewRecorder()
+	testHandler.SearchIssues(w, req)
+	if w.Code == http.StatusInternalServerError {
+		t.Fatalf("client cancel mapped to 500: %s", w.Body.String())
+	}
+	if w.Code != searchClientClosedRequest {
+		t.Fatalf("client cancel: expected 499, got %d body=%s", w.Code, w.Body.String())
 	}
 }
 

@@ -257,9 +257,11 @@ WHERE id = sqlc.arg('id')
 RETURNING *;
 
 -- name: GetActiveDingTalkAccountBindingByEndpoint :one
--- Public dispatch resolution must fail closed when the workspace or agent was
--- deleted, or when the installer is no longer a workspace member. No secret is
--- selected: delivery authentication is derived and verified in the Go layer.
+-- Public dispatch resolution fails closed when the workspace or agent was
+-- deleted. Installer membership is not required: HMAC already authenticates
+-- the caller, and a digital-employee source must keep working after the
+-- original binder leaves. Match both the stored endpoint id and a dispatch
+-- URL that ends with that id (older rows only persisted the URL).
 SELECT ci.*
 FROM channel_installation ci
 JOIN workspace w
@@ -267,9 +269,9 @@ JOIN workspace w
 JOIN agent a
   ON a.id = ci.agent_id
  AND a.workspace_id = ci.workspace_id
-JOIN member m
-  ON m.workspace_id = ci.workspace_id
- AND m.user_id = ci.installer_user_id
 WHERE ci.channel_type = 'dingtalk_account'
   AND ci.status = 'active'
-  AND ci.config ->> 'dispatch_endpoint_id' = sqlc.arg('dispatch_endpoint_id')::text;
+  AND (
+    ci.config ->> 'dispatch_endpoint_id' = sqlc.arg('dispatch_endpoint_id')::text
+    OR ci.config ->> 'dispatch_url' LIKE '%/' || sqlc.arg('dispatch_endpoint_id')::text
+  );
