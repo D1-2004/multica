@@ -354,11 +354,13 @@ func TestASBBoundIdentityDeclaresLazyWireGuardAttach(t *testing.T) {
 		t.Fatalf("validate bound identity: %v", err)
 	}
 	extensions := identity.sandboxExtensions("wireguard-credentials")
-	if extensions["wireguard.lazyAuth"] != "true" {
-		t.Fatalf("bound sandbox extension wireguard.lazyAuth = %q, want true", extensions["wireguard.lazyAuth"])
-	}
-	if _, ok := extensions["spiffe.lazyAuth"]; ok {
-		t.Fatal("bound sandbox still declares spiffe.lazyAuth")
+	for key, expected := range map[string]string{
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
+	} {
+		if extensions[key] != expected {
+			t.Fatalf("bound sandbox extension %s = %q, want %q", key, extensions[key], expected)
+		}
 	}
 	for _, forbidden := range []string{"wireguard.worker", "buc.originalSandboxID"} {
 		if _, ok := extensions[forbidden]; ok {
