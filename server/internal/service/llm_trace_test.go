@@ -41,8 +41,8 @@ func TestLLMTraceEnvUsesAgentRuntimeConfig(t *testing.T) {
 			},
 		},
 		{
-			name:          "router telemetry is relayed through Multica",
-			runtimeConfig: `{"llm_trace":{"enabled":true,"sink_url":""}}`,
+			name:          "router telemetry defaults to relayed through Multica",
+			runtimeConfig: `{}`,
 			taskContext:   `{"completion_callback":{"telemetry_url":"/api/v1/dispatch-tasks/task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786377600000}}`,
 			want: map[string]string{
 				"MULTICA_LLM_TRACE_ENABLED":    "true",
@@ -52,12 +52,12 @@ func TestLLMTraceEnvUsesAgentRuntimeConfig(t *testing.T) {
 			},
 		},
 		{
-			name:          "disabled keeps an empty receiver",
+			name:          "disabled static sink still relays router telemetry",
 			runtimeConfig: `{"llm_trace":{"enabled":false,"sink_url":"https://trace.example.test/ingest"}}`,
 			taskContext:   `{"completion_callback":{"telemetry_url":"/api/v1/dispatch-tasks/task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786377600000}}`,
 			want: map[string]string{
-				"MULTICA_LLM_TRACE_ENABLED":    "false",
-				"MULTICA_LLM_TRACE_SINK_URL":   "",
+				"MULTICA_LLM_TRACE_ENABLED":    "true",
+				"MULTICA_LLM_TRACE_SINK_URL":   "https://pre-fde-workbench.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces",
 				"MULTICA_LLM_TRACE_TOKEN":      "",
 				"MULTICA_LLM_TRACE_EXPIRES_AT": "",
 			},

@@ -81,6 +81,38 @@ func TestRelayTaskLLMTraceUsesStoredRelativeCallback(t *testing.T) {
 	}
 }
 
+func TestRelayTaskLLMTraceDisabledAgentSinkStillForwardsRouterCallback(t *testing.T) {
+	router := &fakeLLMTraceRouter{status: http.StatusCreated}
+	sink := &fakeLLMTraceSink{status: http.StatusNoContent}
+	task := db.AgentTaskQueue{Context: []byte(`{
+		"completion_callback": {
+			"telemetry_url": "/api/v1/dispatch-tasks/router-task-1/llm-traces",
+			"telemetry_token": "task-capability",
+			"telemetry_expires_at": 1786464000000
+		}
+	}`)}
+	payload := []byte(`{"sequence":1}`)
+
+	status, err := relayTaskLLMTrace(
+		context.Background(),
+		task,
+		[]byte(`{"llm_trace":{"enabled":false,"sink_url":"https://trace.example.test/ingest"}}`),
+		payload,
+		time.UnixMilli(1786377600000),
+		router,
+		sink,
+	)
+	if err != nil || status != http.StatusNoContent {
+		t.Fatalf("status=%d err=%v", status, err)
+	}
+	if router.calls != 1 || sink.calls != 0 {
+		t.Fatalf("router calls=%d sink calls=%d", router.calls, sink.calls)
+	}
+	if string(router.payload) != string(payload) {
+		t.Fatalf("router payload=%s want=%s", router.payload, payload)
+	}
+}
+
 func TestRelayTaskLLMTraceUsesStoredCapabilityIndependentlyOfDaemonAuthorization(t *testing.T) {
 	baseTask := db.AgentTaskQueue{Context: []byte(`{
 		"completion_callback": {
