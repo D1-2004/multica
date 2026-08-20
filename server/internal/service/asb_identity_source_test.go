@@ -297,7 +297,7 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 	}
 }
 
-func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
+func TestASBIdentitySourceRotateAttachesTokensAndTerminatesBothSeeds(t *testing.T) {
 	const (
 		predecessorSandboxID = "identity-seed-predecessor"
 		rotatedSandboxID     = "identity-seed-rotated"
@@ -305,6 +305,12 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		employeeID           = "12345"
 		bucAgentID           = "agent-multica-asb"
 	)
+	tokens := BUCIdentityTokens{
+		AccessToken:  "buc-access",
+		RefreshToken: "buc-refresh",
+		IDToken:      "buc-id",
+		ExpiresIn:    3600,
+	}
 
 	states := map[string]string{
 		predecessorSandboxID: "Running",
@@ -347,9 +353,11 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 				t.Fatalf("decode rotated seed identity grant: %v", err)
 			}
 			if grant.EmployeeID != employeeID ||
-				grant.OriginalSandboxID != predecessorSandboxID ||
+				grant.OriginalSandboxID != "" ||
 				grant.WireGuardCredentials != "wireguard-credentials" ||
-				grant.BUCAccessToken != "" || grant.BUCRefreshToken != "" || grant.BUCIDToken != "" {
+				grant.BUCAccessToken != tokens.AccessToken ||
+				grant.BUCRefreshToken != tokens.RefreshToken ||
+				grant.BUCIDToken != tokens.IDToken {
 				t.Fatalf("rotated seed identity grant = %#v", grant)
 			}
 			response.WriteHeader(http.StatusOK)
@@ -450,6 +458,7 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		predecessorSandboxID,
 		employeeID,
 		bucAgentID,
+		tokens,
 	)
 	if err != nil {
 		t.Fatalf("Rotate identity seed: %v", err)
@@ -479,6 +488,7 @@ func TestASBIdentitySourceRotateInheritsAndTerminatesBothSeeds(t *testing.T) {
 		predecessorSandboxID,
 		employeeID,
 		bucAgentID,
+		tokens,
 	)
 	if !errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
 		t.Fatalf("Rotate invalid identity error = %v, want needs reauth", err)
@@ -757,7 +767,97 @@ func TestWaitForASBIdentitySourceBUCRequiresReauthAfterPersistentIdentityMismatc
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceDoesNotRetryOtherBadRequest(t *testing.T) {
+func TestAttachAndProbeASBIdentitySourceTreatsTunnelNotReadyAsPending(t *testing.T) {
+	const sandboxID = "identity-source-tunnel-not-ready"
+	attachCalls := 0
+	probeCalls := 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.Method == http.MethodPost &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
+			attachCalls++
+			if request.URL.Query().Get("sync") != "true" {
+				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
+			}
+			response.Header().Set("Content-Type", "application/json")
+			response.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(response, `{
+				"code":"BAD_REQUEST",
+				"message":"wireguard tunnel not ready yet, response={\"type\":\"error\",\"error\":{\"ename\":\"CommandExecError\",\"traceback\":[\"exit status 1\"]}}"
+			}`)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID:
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(response, `{
+				"id":"identity-source-tunnel-not-ready",
+				"status":{"state":"Running"},
+				"createdAt":"2026-07-31T05:00:00Z"
+			}`)
+		case request.Method == http.MethodGet &&
+			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/endpoints/44772":
+			response.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(response).Encode(map[string]any{
+				"endpoint": server.URL + "/exec",
+				"headers":  map[string]string{"X-Sandbox-Token": "endpoint-token"},
+			})
+		case request.Method == http.MethodPost && request.URL.Path == "/exec/command":
+			probeCalls++
+			response.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(response, "data: {\"type\":\"execution_complete\",\"execution_time\":1}\n")
+		default:
+			http.NotFound(response, request)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "runtime-api-key",
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	if err := attachAndProbeASBIdentitySource(
+		context.Background(),
+		client,
+		sandboxID,
+		"12345",
+		"agent-multica-asb",
+		BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
+		"wg-client",
+		250*time.Millisecond,
+	); err != nil {
+		t.Fatalf("attachAndProbeASBIdentitySource: %v", err)
+	}
+	if attachCalls != 1 {
+		t.Fatalf("attach calls = %d, want 1", attachCalls)
+	}
+	if probeCalls < 1 {
+		t.Fatalf("probe calls = %d, want at least 1", probeCalls)
+	}
+}
+
+func TestASBWireGuardPostAttachCheckPendingAcceptsCommandExit(t *testing.T) {
+	t.Parallel()
+
+	err := &ASBHTTPError{
+		Operation:  "attach_buc_identity",
+		StatusCode: http.StatusBadRequest,
+		ErrorMessage: "wireguard tunnel not ready yet, response=" +
+			`{"type":"init"}` + "\n" +
+			`{"type":"error","error":{"ename":"CommandExecError","traceback":["exit status 1"]}}`,
+	}
+	if !isASBWireGuardPostAttachCheckPending(err) {
+		t.Fatal("command exit from the ASB tunnel probe was not treated as pending")
+	}
+}
+
+func TestAttachAndProbeASBIdentitySourceRejectsUnrelatedBadRequest(t *testing.T) {
 	const sandboxID = "identity-source-invalid-grant"
 	attachCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {

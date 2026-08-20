@@ -254,9 +254,9 @@ func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 	lifecycleClient := cloneASBHTTPClient(cfg.HTTPClient)
 	lifecycleClient.Timeout = timeout
 	identityClient := cloneASBHTTPClient(cfg.HTTPClient)
-	// A synchronous identity attachment waits for the sandbox-side identity
-	// service to finish. Its caller context is the authoritative deadline;
-	// the shorter generic lifecycle timeout must not cut that wait short.
+	// A synchronous BUC identity attachment can outlive the generic lifecycle
+	// timeout while ASB checks the sandbox-side WireGuard state. The caller's
+	// context is the authoritative deadline for this one request.
 	identityClient.Timeout = 0
 	execClient := cloneASBHTTPClient(cfg.HTTPClient)
 	// The command endpoint streams until the command completes. The caller's
@@ -631,7 +631,7 @@ func (c *ASBClient) AttachAgentIdentity(ctx context.Context, sandboxID string, g
 	)
 }
 
-func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, grant ASBBUCIdentityGrant, sync bool) error {
+func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, grant ASBBUCIdentityGrant) error {
 	if err := validateASBSandboxID(sandboxID); err != nil {
 		return err
 	}
@@ -642,40 +642,26 @@ func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, gra
 	accessToken := strings.TrimSpace(grant.BUCAccessToken)
 	refreshToken := strings.TrimSpace(grant.BUCRefreshToken)
 	idToken := strings.TrimSpace(grant.BUCIDToken)
-	originalSandboxID := strings.TrimSpace(grant.OriginalSandboxID)
-	hasAnyToken := accessToken != "" || refreshToken != "" || idToken != ""
-	hasAllTokens := accessToken != "" && refreshToken != "" && idToken != ""
-	if hasAnyToken && !hasAllTokens {
-		return errors.New("ASB BUC identity token trio is incomplete")
-	}
-	// ASB can bootstrap from either a complete OAuth token trio or a retained
-	// source sandbox. Rotation deliberately uses the latter and never persists
-	// employee OAuth tokens in Multica.
-	if !hasAllTokens && originalSandboxID == "" {
+	if accessToken == "" || refreshToken == "" || idToken == "" {
 		return errors.New("ASB BUC identity token trio is required")
 	}
-	if originalSandboxID != "" {
-		if err := validateASBSandboxID(originalSandboxID); err != nil {
-			return err
-		}
+	if strings.TrimSpace(grant.OriginalSandboxID) != "" {
+		return errors.New("ASB BUC identity attach does not inherit a source sandbox")
 	}
-	query := url.Values{"sync": []string{strconv.FormatBool(sync)}}
-	httpClient := c.lifecycleClient
-	acceptedStatusCodes := []int{http.StatusAccepted}
-	if sync {
-		httpClient = c.identityClient
-		acceptedStatusCodes = []int{http.StatusOK}
-	}
+	// Keep ASB's synchronous attach semantics. The caller classifies the known
+	// false-negative post-attach HTTP 400 and then proves the effective employee
+	// identity with an in-sandbox BUC probe.
+	query := url.Values{"sync": []string{"true"}}
 	return c.doLifecycleJSONVia(
 		ctx,
-		httpClient,
+		c.identityClient,
 		"attach_buc_identity",
 		http.MethodPost,
 		"/sandboxes/"+sandboxID+"/identity/wireguard",
 		query,
 		grant,
 		nil,
-		acceptedStatusCodes...,
+		http.StatusOK,
 	)
 }
 

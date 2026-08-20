@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -106,9 +108,9 @@ func runSearchQuery(
 
 // isSearchStatementTimeout reports whether err is the canonical Postgres
 // query_canceled error (SQLSTATE 57014). Both `SET LOCAL statement_timeout`
-// firing and a client-side context cancellation surface as 57014 — the two
-// are indistinguishable from the client side, which is intentional in the
-// pgx layer.
+// firing and a client-side context cancellation *during Query* surface as
+// 57014. Cancellation that hits Begin / SET LOCAL first is still
+// context.Canceled — see isSearchClientCanceled.
 func isSearchStatementTimeout(err error) bool {
 	if err == nil {
 		return false
@@ -118,4 +120,38 @@ func isSearchStatementTimeout(err error) bool {
 		return pgErr.Code == "57014"
 	}
 	return false
+}
+
+// isSearchClientCanceled reports a caller abort (typeahead, navigation)
+// rather than a server-side failure. Begin and SET LOCAL run under the
+// request context, so an aborted search often returns context.Canceled
+// wrapped as "begin search tx" / "set search statement_timeout" instead
+// of SQLSTATE 57014. Mapping that to 500 makes the CLI / UI retry a
+// request the client already gave up on.
+func isSearchClientCanceled(err error) bool {
+	return errors.Is(err, context.Canceled)
+}
+
+// searchClientClosedRequest is nginx's conventional status for "the
+// client closed the connection". net/http has no named constant for it.
+const searchClientClosedRequest = 499
+
+func writeSearchQueryFailure(w http.ResponseWriter, err error, kind, workspaceID, query string) {
+	if isSearchClientCanceled(err) {
+		slog.Info("search "+kind+" canceled by client",
+			"workspace_id", workspaceID,
+			"query", query)
+		w.WriteHeader(searchClientClosedRequest)
+		return
+	}
+	if isSearchStatementTimeout(err) {
+		slog.Warn("search "+kind+" timed out",
+			"workspace_id", workspaceID,
+			"query", query,
+			"timeout", searchStatementTimeout)
+		writeError(w, http.StatusServiceUnavailable, "search timed out; please refine your query or try again")
+		return
+	}
+	slog.Warn("search "+kind+" failed", "error", err, "workspace_id", workspaceID, "query", query)
+	writeError(w, http.StatusInternalServerError, "failed to search "+kind)
 }

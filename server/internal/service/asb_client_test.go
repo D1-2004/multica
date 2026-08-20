@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -372,7 +371,9 @@ func TestASBClientIdentityInjection(t *testing.T) {
 			if err := json.NewDecoder(request.Body).Decode(&grant); err != nil {
 				t.Fatalf("decode BUC grant: %v", err)
 			}
-			if grant.EmployeeID != "12345" || grant.BUCRefreshToken != testBUCRefresh || grant.OriginalSandboxID != "anchor-1" {
+			if grant.EmployeeID != "12345" ||
+				grant.BUCRefreshToken != testBUCRefresh ||
+				grant.OriginalSandboxID != "" {
 				t.Errorf("BUC grant = %#v", grant)
 			}
 			response.WriteHeader(http.StatusOK)
@@ -399,8 +400,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 		BUCRefreshToken:      testBUCRefresh,
 		BUCIDToken:           "test-buc-id",
 		WireGuardCredentials: "test-wireguard",
-		OriginalSandboxID:    "anchor-1",
-	}, true); err != nil {
+	}); err != nil {
 		t.Fatalf("AttachBUCIdentity: %v", err)
 	}
 }
@@ -465,49 +465,31 @@ func TestASBClientSynchronousBUCIdentityUsesCallerDeadline(t *testing.T) {
 		BUCRefreshToken:      testBUCRefresh,
 		BUCIDToken:           "test-buc-id",
 		WireGuardCredentials: "test-wireguard",
-	}, true); err != nil {
+	}); err != nil {
 		t.Fatalf("AttachBUCIdentity: %v", err)
 	}
 }
 
-func TestASBClientAcceptsBUCIdentitySourceReuseWithoutTokenTrio(t *testing.T) {
+func TestASBClientRejectsBUCIdentitySourceInheritance(t *testing.T) {
 	t.Parallel()
 
-	var called atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		called.Store(true)
-		if request.URL.Path != "/v1/sandboxes/"+testSandboxID+"/identity/wireguard" ||
-			request.URL.Query().Get("sync") != "true" {
-			t.Fatalf("unexpected inherited BUC request: %s %s", request.Method, request.URL.String())
-		}
-		var grant ASBBUCIdentityGrant
-		if err := json.NewDecoder(request.Body).Decode(&grant); err != nil {
-			t.Fatalf("decode inherited BUC grant: %v", err)
-		}
-		if grant.OriginalSandboxID != "identity-source-1" ||
-			grant.BUCAccessToken != "" || grant.BUCRefreshToken != "" || grant.BUCIDToken != "" {
-			t.Fatalf("inherited BUC grant = %#v", grant)
-		}
-		response.WriteHeader(http.StatusOK)
-	}))
+	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()
-
 	client := newTestASBClient(t, server)
-	grant := ASBBUCIdentityGrant{
-		EmployeeID:           "12345",
-		WireGuardCredentials: "wireguard-credentials",
-		OriginalSandboxID:    "identity-source-1",
-	}
-	if err := client.AttachBUCIdentity(
+	err := client.AttachBUCIdentity(
 		context.Background(),
 		testSandboxID,
-		grant,
-		true,
-	); err != nil {
-		t.Fatalf("AttachBUCIdentity inherited source: %v", err)
-	}
-	if !called.Load() {
-		t.Fatal("source-only BUC grant did not reach the ASB API")
+		ASBBUCIdentityGrant{
+			EmployeeID:           "12345",
+			BUCAccessToken:       "test-buc-access",
+			BUCRefreshToken:      testBUCRefresh,
+			BUCIDToken:           "test-buc-id",
+			WireGuardCredentials: "wireguard-credentials",
+			OriginalSandboxID:    "identity-source-1",
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "does not inherit a source sandbox") {
+		t.Fatalf("AttachBUCIdentity error = %v", err)
 	}
 }
 
@@ -524,7 +506,6 @@ func TestASBClientRejectsBUCIdentityWithoutTokensOrSource(t *testing.T) {
 			EmployeeID:           "12345",
 			WireGuardCredentials: "wireguard-credentials",
 		},
-		true,
 	)
 	if err == nil || !strings.Contains(err.Error(), "token trio is required") {
 		t.Fatalf("AttachBUCIdentity error = %v", err)

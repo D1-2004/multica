@@ -222,7 +222,7 @@ describe("filterRuntimesForSandboxBackend", () => {
         [fc, asb, local, genericCloud],
         "asb",
       ).map((runtime) => runtime.id),
-    ).toEqual(["asb", "generic-cloud"]);
+    ).toEqual(["asb"]);
     expect(
       filterPhysicalRuntimes([fc, asb, local, genericCloud]).map(
         (runtime) => runtime.id,

@@ -703,6 +703,59 @@ func TestHandleAgentDispatchRejectsContinuationOutsideEndpointAgent(t *testing.T
 	}
 }
 
+func TestHandleAgentDispatchResolvesLegacyDispatchURLWithoutEndpointRow(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	agentID := createHandlerTestAgent(t, "test-bot-dispatch-legacy-url", nil)
+	keyring, err := agentmessagerouter.ParseDispatchKeyring(
+		"v1:ERERERERERERERERERERERERERERERERERERERERERE",
+		"v1",
+	)
+	if err != nil {
+		t.Fatalf("parse dispatch keyring: %v", err)
+	}
+	endpointID, err := keyring.GenerateEndpointID(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate dispatch endpoint: %v", err)
+	}
+	deliverySecret, err := keyring.DeriveDeliverySecret(endpointID)
+	if err != nil {
+		t.Fatalf("derive dispatch credential: %v", err)
+	}
+	var installationID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO channel_installation (
+			workspace_id, agent_id, channel_type, config, status, installer_user_id
+		) VALUES ($1, $2, 'dingtalk_account', jsonb_build_object(
+			'dispatch_url', $3::text
+		), 'active', $4)
+		RETURNING id
+	`, testWorkspaceID, agentID, "/api/webhooks/agent-dispatch/"+endpointID, testUserID).Scan(&installationID); err != nil {
+		t.Fatalf("insert legacy dispatch URL installation: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_installation WHERE id = $1`, installationID)
+	})
+	previousKeyring := testHandler.AgentDispatchKeys
+	testHandler.AgentDispatchKeys = keyring
+	t.Cleanup(func() { testHandler.AgentDispatchKeys = previousKeyring })
+
+	body := fmt.Sprintf(`{
+		"agentId":%q,
+		"input":{"userPrompt":{"text":"Resolve from stored dispatch URL."},"attachments":[]}
+	}`, agentID)
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+	if w.Code == http.StatusUnauthorized {
+		t.Fatalf("legacy dispatch URL should authenticate, got 401: %s", w.Body.String())
+	}
+}
+
 func TestHandleAgentDispatchRejectsMissingOrInvalidDeliverySecret(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "test-bot-dispatch-auth", nil)
 	endpointID, _ := createAgentDispatchEndpointForTest(t, testUserID, agentID)

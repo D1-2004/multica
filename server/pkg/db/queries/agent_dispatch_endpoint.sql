@@ -34,13 +34,13 @@ JOIN member m
 WHERE ep.agent_id = sqlc.arg('agent_id');
 
 -- name: GetAgentDispatchEndpointByEndpointID :one
+-- Inbound webhook auth is HMAC of the endpoint id. The installer may have
+-- left the workspace; delivery must still resolve as long as the workspace
+-- and agent exist. Management lookups keep the member join.
 SELECT ep.*
 FROM agent_dispatch_endpoint ep
 JOIN workspace w ON w.id = ep.workspace_id
 JOIN agent a
   ON a.id = ep.agent_id
  AND a.workspace_id = ep.workspace_id
-JOIN member m
-  ON m.workspace_id = ep.workspace_id
- AND m.user_id = ep.actor_user_id
 WHERE ep.endpoint_id = sqlc.arg('endpoint_id')::text;

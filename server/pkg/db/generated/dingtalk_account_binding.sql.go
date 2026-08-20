@@ -399,17 +399,16 @@ JOIN workspace w
 JOIN agent a
   ON a.id = ci.agent_id
  AND a.workspace_id = ci.workspace_id
-JOIN member m
-  ON m.workspace_id = ci.workspace_id
- AND m.user_id = ci.installer_user_id
 WHERE ci.channel_type = 'dingtalk_account'
   AND ci.status = 'active'
-  AND ci.config ->> 'dispatch_endpoint_id' = $1::text
+  AND (
+    ci.config ->> 'dispatch_endpoint_id' = $1::text
+    OR ci.config ->> 'dispatch_url' LIKE '%/' || $1::text
+  )
 `
 
-// Public dispatch resolution must fail closed when the workspace or agent was
-// deleted, or when the installer is no longer a workspace member. No secret is
-// selected: delivery authentication is derived and verified in the Go layer.
+// Public dispatch resolution fails closed when the workspace or agent was
+// deleted. HMAC authenticates the caller; installer membership is not required.
 func (q *Queries) GetActiveDingTalkAccountBindingByEndpoint(ctx context.Context, dispatchEndpointID string) (ChannelInstallation, error) {
 	row := q.db.QueryRow(ctx, getActiveDingTalkAccountBindingByEndpoint, dispatchEndpointID)
 	var i ChannelInstallation

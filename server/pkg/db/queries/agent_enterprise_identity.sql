@@ -70,6 +70,10 @@ INSERT INTO agent_enterprise_identity (
     buc_identity_source_updated_at,
     authx_refresh_token_encrypted,
     authx_refresh_expires_at,
+    buc_access_token_encrypted,
+    buc_refresh_token_encrypted,
+    buc_id_token_encrypted,
+    buc_access_expires_at,
     token_version,
     status,
     bound_by
@@ -82,11 +86,15 @@ SELECT
     sqlc.arg('buc_agent_id'),
     sqlc.arg('agent_spiffe_id'),
     sqlc.arg('aip_id'),
-    sqlc.arg('buc_identity_source_sandbox_id'),
-    sqlc.arg('buc_identity_source_runtime_id'),
-    now(),
+    NULL,
+    NULL,
+    NULL,
     sqlc.arg('authx_refresh_token_encrypted'),
     sqlc.arg('authx_refresh_expires_at'),
+    sqlc.arg('buc_access_token_encrypted'),
+    sqlc.arg('buc_refresh_token_encrypted'),
+    sqlc.arg('buc_id_token_encrypted'),
+    sqlc.arg('buc_access_expires_at'),
     1,
     'active',
     sqlc.arg('bound_by')
@@ -100,11 +108,15 @@ DO UPDATE SET
     buc_agent_id = EXCLUDED.buc_agent_id,
     agent_spiffe_id = EXCLUDED.agent_spiffe_id,
     aip_id = EXCLUDED.aip_id,
-    buc_identity_source_sandbox_id = EXCLUDED.buc_identity_source_sandbox_id,
-    buc_identity_source_runtime_id = EXCLUDED.buc_identity_source_runtime_id,
-    buc_identity_source_updated_at = EXCLUDED.buc_identity_source_updated_at,
+    buc_identity_source_sandbox_id = NULL,
+    buc_identity_source_runtime_id = NULL,
+    buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = EXCLUDED.authx_refresh_token_encrypted,
     authx_refresh_expires_at = EXCLUDED.authx_refresh_expires_at,
+    buc_access_token_encrypted = EXCLUDED.buc_access_token_encrypted,
+    buc_refresh_token_encrypted = EXCLUDED.buc_refresh_token_encrypted,
+    buc_id_token_encrypted = EXCLUDED.buc_id_token_encrypted,
+    buc_access_expires_at = EXCLUDED.buc_access_expires_at,
     token_version = agent_enterprise_identity.token_version + 1,
     status = 'active',
     bound_by = EXCLUDED.bound_by,
@@ -119,6 +131,10 @@ SET status = 'revoked',
     buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
+    buc_access_token_encrypted = NULL,
+    buc_refresh_token_encrypted = NULL,
+    buc_id_token_encrypted = NULL,
+    buc_access_expires_at = NULL,
     token_version = token_version + 1,
     updated_at = now()
 WHERE workspace_id = sqlc.arg('workspace_id')
@@ -134,6 +150,10 @@ SET status = 'needs_reauth',
     buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
+    buc_access_token_encrypted = NULL,
+    buc_refresh_token_encrypted = NULL,
+    buc_id_token_encrypted = NULL,
+    buc_access_expires_at = NULL,
     token_version = token_version + 1,
     updated_at = now()
 WHERE id = sqlc.arg('id')
@@ -148,6 +168,10 @@ SET status = 'needs_reauth',
     buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
+    buc_access_token_encrypted = NULL,
+    buc_refresh_token_encrypted = NULL,
+    buc_id_token_encrypted = NULL,
+    buc_access_expires_at = NULL,
     token_version = identity.token_version + 1,
     updated_at = now()
 FROM agent
@@ -165,6 +189,10 @@ FROM agent_enterprise_identity
 WHERE status = 'active'
   AND (
     authx_refresh_expires_at <= sqlc.arg('rotate_before')
+    OR buc_access_expires_at <= sqlc.arg('rotate_before')
+    OR buc_access_token_encrypted IS NULL
+    OR buc_refresh_token_encrypted IS NULL
+    OR buc_id_token_encrypted IS NULL
     OR buc_identity_source_updated_at <= sqlc.arg('source_check_before')
   )
 ORDER BY LEAST(authx_refresh_expires_at, buc_identity_source_updated_at), id
@@ -174,6 +202,19 @@ LIMIT sqlc.arg('batch_size');
 UPDATE agent_enterprise_identity
 SET authx_refresh_token_encrypted = sqlc.arg('authx_refresh_token_encrypted'),
     authx_refresh_expires_at = sqlc.arg('authx_refresh_expires_at'),
+    token_version = token_version + 1,
+    updated_at = now()
+WHERE id = sqlc.arg('id')
+  AND token_version = sqlc.arg('expected_token_version')
+  AND status = 'active'
+RETURNING *;
+
+-- name: CompareAndSwapAgentEnterpriseIdentityBUCTokens :one
+UPDATE agent_enterprise_identity
+SET buc_access_token_encrypted = sqlc.arg('buc_access_token_encrypted'),
+    buc_refresh_token_encrypted = sqlc.arg('buc_refresh_token_encrypted'),
+    buc_id_token_encrypted = sqlc.arg('buc_id_token_encrypted'),
+    buc_access_expires_at = sqlc.arg('buc_access_expires_at'),
     token_version = token_version + 1,
     updated_at = now()
 WHERE id = sqlc.arg('id')
@@ -220,6 +261,10 @@ SET status = 'needs_reauth',
     buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
+    buc_access_token_encrypted = NULL,
+    buc_refresh_token_encrypted = NULL,
+    buc_id_token_encrypted = NULL,
+    buc_access_expires_at = NULL,
     token_version = token_version + 1,
     updated_at = now()
 WHERE workspace_id = sqlc.arg('workspace_id')
