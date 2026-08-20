@@ -784,7 +784,7 @@ func TestAttachAndProbeASBIdentitySourceTreatsTunnelNotReadyAsPending(t *testing
 			response.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(response, `{
 				"code":"BAD_REQUEST",
-				"message":"wireguard tunnel not ready yet"
+				"message":"wireguard tunnel not ready yet, response={\"type\":\"error\",\"error\":{\"ename\":\"CommandExecError\",\"traceback\":[\"exit status 1\"]}}"
 			}`)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
@@ -842,7 +842,7 @@ func TestAttachAndProbeASBIdentitySourceTreatsTunnelNotReadyAsPending(t *testing
 	}
 }
 
-func TestASBWireGuardPostAttachCheckPendingRejectsCommandExit(t *testing.T) {
+func TestASBWireGuardPostAttachCheckPendingAcceptsCommandExit(t *testing.T) {
 	t.Parallel()
 
 	err := &ASBHTTPError{
@@ -852,8 +852,8 @@ func TestASBWireGuardPostAttachCheckPendingRejectsCommandExit(t *testing.T) {
 			`{"type":"init"}` + "\n" +
 			`{"type":"error","error":{"ename":"CommandExecError","traceback":["exit status 1"]}}`,
 	}
-	if isASBWireGuardPostAttachCheckPending(err) {
-		t.Fatal("command exit was treated as a converging WireGuard attachment")
+	if !isASBWireGuardPostAttachCheckPending(err) {
+		t.Fatal("command exit from the ASB tunnel probe was not treated as pending")
 	}
 }
 
