@@ -91,6 +91,19 @@ func isBUCRefreshNeedsReauth(err error) bool {
 	}
 }
 
+func isBUCAccessTokenRefreshRequired(err error) bool {
+	var providerErr *enterpriseIdentityProviderError
+	if !errors.As(err, &providerErr) || !strings.EqualFold(providerErr.Provider, "buc") {
+		return false
+	}
+	switch providerErr.Code {
+	case "240116", "240117", "access_token_refreshed", "access_token_expired":
+		return true
+	default:
+		return false
+	}
+}
+
 func newEnterpriseIdentityProviderError(
 	provider string,
 	operation string,
@@ -493,6 +506,7 @@ func (code enterpriseIdentityProviderCode) String() string {
 type BUCOAuthClient interface {
 	ExchangeCode(context.Context, string) (BUCIdentityTokens, error)
 	Refresh(context.Context, string) (BUCIdentityTokens, error)
+	LookupAccessTokenEmployeeID(context.Context, string) (string, error)
 	GenerateSSOTicket(context.Context, string) (string, error)
 	VerifyIDToken(context.Context, string, []byte, time.Time) (bucIDTokenClaims, error)
 }
@@ -500,6 +514,7 @@ type BUCOAuthClient interface {
 type HTTPBUCOAuthClient struct {
 	tokenURL     *url.URL
 	refreshURL   *url.URL
+	userInfoURL  *url.URL
 	ticketURL    *url.URL
 	issuer       string
 	jwksURL      *url.URL
@@ -545,6 +560,11 @@ func NewHTTPBUCOAuthClient(
 	refreshURL.RawPath = ""
 	refreshURL.RawQuery = ""
 	refreshURL.Fragment = ""
+	userInfoURL := *parsedTokenURL
+	userInfoURL.Path = "/rpc/oauth2/user_info.json"
+	userInfoURL.RawPath = ""
+	userInfoURL.RawQuery = ""
+	userInfoURL.Fragment = ""
 	client := &http.Client{Timeout: 20 * time.Second}
 	if source != nil {
 		*client = *source
@@ -558,6 +578,7 @@ func NewHTTPBUCOAuthClient(
 	return &HTTPBUCOAuthClient{
 		tokenURL:     parsedTokenURL,
 		refreshURL:   &refreshURL,
+		userInfoURL:  &userInfoURL,
 		ticketURL:    &ticketURL,
 		issuer:       parsedIssuer.String(),
 		jwksURL:      parsedJWKSURL,
@@ -613,6 +634,85 @@ func (c *HTTPBUCOAuthClient) Refresh(ctx context.Context, refreshToken string) (
 		"refresh BUC OAuth token",
 		false,
 	)
+}
+
+func (c *HTTPBUCOAuthClient) LookupAccessTokenEmployeeID(
+	ctx context.Context,
+	accessToken string,
+) (string, error) {
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
+		return "", errors.New("BUC access token is required")
+	}
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.userInfoURL.String(),
+		strings.NewReader(url.Values{"access_token": {accessToken}}.Encode()),
+	)
+	if err != nil {
+		return "", errors.New("build BUC access token validation request")
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Accept", "application/json")
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return "", newEnterpriseIdentityProviderError(
+			"buc",
+			"validate BUC access token",
+			"buc_transport_error",
+			0,
+			"",
+			err,
+		)
+	}
+	defer response.Body.Close()
+	raw, err := readEnterpriseIdentityResponse(response.Body)
+	if err != nil {
+		return "", err
+	}
+	var payload struct {
+		EmployeeID string                         `json:"emp_id"`
+		Error      string                         `json:"error"`
+		ErrorCode  enterpriseIdentityProviderCode `json:"error_code"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		if response.StatusCode != http.StatusOK {
+			return "", newEnterpriseIdentityProviderError(
+				"buc",
+				"validate BUC access token",
+				"buc_http_error",
+				response.StatusCode,
+				"",
+				err,
+			)
+		}
+		return "", errors.New("decode BUC access token validation response")
+	}
+	providerCode := firstNonEmptyString(payload.ErrorCode.String(), payload.Error)
+	providerReportedFailure := providerCode != "" && providerCode != "0"
+	if response.StatusCode != http.StatusOK || providerReportedFailure {
+		return "", newEnterpriseIdentityProviderError(
+			"buc",
+			"validate BUC access token",
+			"buc_access_token_error",
+			response.StatusCode,
+			providerCode,
+			nil,
+		)
+	}
+	employeeID := strings.TrimSpace(payload.EmployeeID)
+	if employeeID == "" {
+		return "", newEnterpriseIdentityProviderError(
+			"buc",
+			"validate BUC access token",
+			"buc_incomplete_response",
+			response.StatusCode,
+			"",
+			nil,
+		)
+	}
+	return employeeID, nil
 }
 
 func (c *HTTPBUCOAuthClient) requestTokens(

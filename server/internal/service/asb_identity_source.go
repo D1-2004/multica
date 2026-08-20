@@ -621,6 +621,11 @@ func isASBWireGuardPostAttachCheckPending(err error) bool {
 		return false
 	}
 	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
+	if strings.Contains(message, "commandexecerror") ||
+		strings.Contains(message, "exit status") ||
+		strings.Contains(message, `"type":"error"`) {
+		return false
+	}
 	return strings.Contains(message, "tunnel not ready") ||
 		(strings.Contains(message, "failed to check wireguard status") &&
 			strings.Contains(message, "status code 404"))

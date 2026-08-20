@@ -1199,7 +1199,7 @@ func (s *EnterpriseIdentityService) ResolveASBTaskIdentity(
 			return ASBResolvedIdentity{}, err
 		}
 		if err != nil {
-			return ASBResolvedIdentity{}, fmt.Errorf("refresh BUC OAuth token: %w", err)
+			return ASBResolvedIdentity{}, fmt.Errorf("resolve current BUC OAuth token: %w", err)
 		}
 		updated, refreshed, err := s.rotateAuthXToken(ctx, updated)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1630,9 +1630,23 @@ func (s *EnterpriseIdentityService) rotateBUCTokensLocked(
 		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, err
 	}
 	now := s.Now()
+	refreshReason := "access_token_expiring"
 	if current.BucAccessExpiresAt.Valid &&
 		current.BucAccessExpiresAt.Time.After(now.Add(bucAccessTokenRefreshSkew)) {
-		return current, stored, nil
+		employeeID, lookupErr := s.BUC.LookupAccessTokenEmployeeID(ctx, stored.AccessToken)
+		switch {
+		case lookupErr == nil && strings.TrimSpace(employeeID) == current.RawEmpID:
+			return current, stored, nil
+		case lookupErr == nil:
+			return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, ErrEnterpriseIdentityNeedsReauth
+		case isBUCAccessTokenRefreshRequired(lookupErr):
+			// A running wgclient can refresh the OAuth access token before Multica's
+			// persisted expiry. Refresh under the cross-replica token lock so a new
+			// sandbox never receives the superseded access token from the database.
+			refreshReason = "access_token_superseded"
+		default:
+			return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, lookupErr
+		}
 	}
 	refreshed, err := s.BUC.Refresh(ctx, stored.RefreshToken)
 	if err != nil {
@@ -1665,6 +1679,13 @@ func (s *EnterpriseIdentityService) rotateBUCTokensLocked(
 	if err != nil {
 		return db.AgentEnterpriseIdentity{}, BUCIdentityTokens{}, fmt.Errorf("persist refreshed BUC tokens: %w", err)
 	}
+	slog.Info(
+		"BUC OAuth tokens refreshed before ASB task attach",
+		"identity_id", util.UUIDToString(updated.ID),
+		"agent_id", util.UUIDToString(updated.AgentID),
+		"reason", refreshReason,
+		"access_ttl_seconds", refreshed.ExpiresIn,
+	)
 	return updated, refreshed, nil
 }
 

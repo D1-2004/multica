@@ -683,6 +683,9 @@ type fakeBUCOAuthClient struct {
 	refreshResult     BUCIdentityTokens
 	refreshFrom       string
 	refreshErr        error
+	lookupEmployeeID  string
+	lookupAccessToken string
+	lookupErr         error
 	claims            bucIDTokenClaims
 	verifiedToken     string
 	ticket            string
@@ -701,6 +704,20 @@ func (f *fakeBUCOAuthClient) Refresh(_ context.Context, token string) (BUCIdenti
 		return BUCIdentityTokens{}, f.refreshErr
 	}
 	return f.refreshResult, nil
+}
+
+func (f *fakeBUCOAuthClient) LookupAccessTokenEmployeeID(
+	_ context.Context,
+	accessToken string,
+) (string, error) {
+	f.lookupAccessToken = accessToken
+	if f.lookupErr != nil {
+		return "", f.lookupErr
+	}
+	if f.lookupEmployeeID != "" {
+		return f.lookupEmployeeID, nil
+	}
+	return "12345", nil
 }
 
 func (f *fakeBUCOAuthClient) GenerateSSOTicket(
@@ -1232,10 +1249,11 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 		RefreshExpiresAt: now.Add(24 * time.Hour),
 	}}
 	idem := &fakeEnterpriseIdem{ait: "ait-task"}
+	buc := &fakeBUCOAuthClient{}
 	serviceUnderTest := newTestEnterpriseIdentityService(
 		t,
 		store,
-		&fakeBUCOAuthClient{},
+		buc,
 		authX,
 		idem,
 		&fakeEnterpriseSandboxes{},
@@ -1272,6 +1290,9 @@ func TestEnterpriseIdentityResolveRotatesRefreshAndIssuesTaskAIT(t *testing.T) {
 	}
 	if string(rotated) != "refresh-new" {
 		t.Fatalf("rotation = %q", rotated)
+	}
+	if buc.lookupAccessToken != "buc-access" || buc.refreshFrom != "" {
+		t.Fatalf("BUC access resolution lookup=%q refresh=%q", buc.lookupAccessToken, buc.refreshFrom)
 	}
 }
 
@@ -1362,6 +1383,83 @@ func TestEnterpriseIdentityResolveRefreshesExpiredBUCAccessToken(t *testing.T) {
 	}
 	if string(openedRefresh) != "buc-refresh-new" {
 		t.Fatalf("persisted BUC refresh token = %q", openedRefresh)
+	}
+}
+
+func TestEnterpriseIdentityResolveRefreshesSupersededBUCAccessToken(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 20, 7, 0, 0, 0, time.UTC)
+	box, err := secretbox.New(bytes.Repeat([]byte{0x43}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedAccess, sealedRefresh, sealedID := mustSealBUCIdentityTokens(t, box, BUCIdentityTokens{
+		AccessToken:  "buc-access-superseded",
+		RefreshToken: "buc-refresh-current",
+		IDToken:      "buc-id-current",
+	})
+	identity := db.AgentEnterpriseIdentity{
+		ID:                       util.MustParseUUID("44444444-4444-4444-4444-444444444444"),
+		WorkspaceID:              util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AgentID:                  util.MustParseUUID("22222222-2222-2222-2222-222222222222"),
+		RawEmpID:                 "12345",
+		BucAccessTokenEncrypted:  sealedAccess,
+		BucRefreshTokenEncrypted: sealedRefresh,
+		BucIDTokenEncrypted:      sealedID,
+		BucAccessExpiresAt:       pgtype.Timestamptz{Time: now.Add(48 * time.Hour), Valid: true},
+		TokenVersion:             7,
+		Status:                   "active",
+	}
+	store := &fakeEnterpriseIdentityStore{current: identity}
+	buc := &fakeBUCOAuthClient{
+		lookupErr: newEnterpriseIdentityProviderError(
+			"buc",
+			"validate BUC access token",
+			"buc_access_token_error",
+			http.StatusOK,
+			"240116",
+			nil,
+		),
+		refreshResult: BUCIdentityTokens{
+			AccessToken:  "buc-access-refreshed",
+			RefreshToken: "buc-refresh-refreshed",
+			ExpiresIn:    259200,
+		},
+	}
+	serviceUnderTest := newTestEnterpriseIdentityService(
+		t,
+		store,
+		buc,
+		&fakeEnterpriseAuthX{},
+		&fakeEnterpriseIdem{},
+		&fakeEnterpriseSandboxes{},
+		now,
+	)
+	serviceUnderTest.Secrets = box
+
+	_, resolved, err := serviceUnderTest.rotateBUCTokens(context.Background(), identity)
+	if err != nil {
+		t.Fatalf("rotateBUCTokens: %v", err)
+	}
+	if buc.lookupAccessToken != "buc-access-superseded" ||
+		buc.refreshFrom != "buc-refresh-current" ||
+		resolved.AccessToken != "buc-access-refreshed" ||
+		resolved.RefreshToken != "buc-refresh-refreshed" ||
+		resolved.IDToken != "buc-id-current" {
+		t.Fatalf(
+			"resolved BUC tokens = %#v lookup=%q refresh=%q",
+			resolved,
+			buc.lookupAccessToken,
+			buc.refreshFrom,
+		)
+	}
+	persistedAccess, err := box.Open(store.current.BucAccessTokenEncrypted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(persistedAccess) != "buc-access-refreshed" {
+		t.Fatalf("persisted BUC access token = %q", persistedAccess)
 	}
 }
 
@@ -1974,6 +2072,82 @@ func TestHTTPBUCOAuthClientRefreshUsesDocumentedEndpointAndResponse(t *testing.T
 		tokens.IDToken != "" ||
 		tokens.ExpiresIn != 259200 {
 		t.Fatalf("refreshed BUC tokens = %#v", tokens)
+	}
+}
+
+func TestHTTPBUCOAuthClientLooksUpAccessTokenEmployee(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/rpc/oauth2/user_info.json" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("ParseForm: %v", err)
+		}
+		if r.Form.Get("access_token") != "buc-access-current" {
+			t.Errorf("access token lookup form is incomplete")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"emp_id":"12345","account":"employee"}`)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPBUCOAuthClient(
+		server.URL+"/rpc/oauth2/access_token.json",
+		server.URL+"/oauth2",
+		server.URL+"/oauth2/v1/keys",
+		"buc-client-1",
+		"buc-secret",
+		"https://multica.example/api/agent-enterprise-identity/buc/callback",
+		server.Client(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	employeeID, err := client.LookupAccessTokenEmployeeID(
+		context.Background(),
+		"buc-access-current",
+	)
+	if err != nil {
+		t.Fatalf("LookupAccessTokenEmployeeID: %v", err)
+	}
+	if employeeID != "12345" {
+		t.Fatalf("employee ID = %q", employeeID)
+	}
+}
+
+func TestHTTPBUCOAuthClientClassifiesSupersededAccessToken(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(
+			w,
+			`{"error":"access_token_refreshed","error_code":"240116","error_description":"access token was refreshed"}`,
+		)
+	}))
+	defer server.Close()
+
+	client, err := NewHTTPBUCOAuthClient(
+		server.URL+"/rpc/oauth2/access_token.json",
+		server.URL+"/oauth2",
+		server.URL+"/oauth2/v1/keys",
+		"buc-client-1",
+		"buc-secret",
+		"https://multica.example/api/agent-enterprise-identity/buc/callback",
+		server.Client(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.LookupAccessTokenEmployeeID(context.Background(), "buc-access-old")
+	if !isBUCAccessTokenRefreshRequired(err) {
+		t.Fatalf("LookupAccessTokenEmployeeID error = %v, want refresh required", err)
+	}
+	var providerErr *enterpriseIdentityProviderError
+	if !errors.As(err, &providerErr) || providerErr.Code != "240116" {
+		t.Fatalf("provider error = %#v", providerErr)
 	}
 }
 

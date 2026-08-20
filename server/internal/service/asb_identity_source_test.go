@@ -842,6 +842,21 @@ func TestAttachAndProbeASBIdentitySourceTreatsTunnelNotReadyAsPending(t *testing
 	}
 }
 
+func TestASBWireGuardPostAttachCheckPendingRejectsCommandExit(t *testing.T) {
+	t.Parallel()
+
+	err := &ASBHTTPError{
+		Operation:  "attach_buc_identity",
+		StatusCode: http.StatusBadRequest,
+		ErrorMessage: "wireguard tunnel not ready yet, response=" +
+			`{"type":"init"}` + "\n" +
+			`{"type":"error","error":{"ename":"CommandExecError","traceback":["exit status 1"]}}`,
+	}
+	if isASBWireGuardPostAttachCheckPending(err) {
+		t.Fatal("command exit was treated as a converging WireGuard attachment")
+	}
+}
+
 func TestAttachAndProbeASBIdentitySourceRejectsUnrelatedBadRequest(t *testing.T) {
 	const sandboxID = "identity-source-invalid-grant"
 	attachCalls := 0
