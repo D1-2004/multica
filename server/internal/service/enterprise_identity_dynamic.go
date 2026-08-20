@@ -106,6 +106,17 @@ func (c *dynamicEnterpriseIdentityClients) Refresh(ctx context.Context, token st
 	return clients.buc.Refresh(ctx, token)
 }
 
+func (c *dynamicEnterpriseIdentityClients) LookupAccessTokenEmployeeID(
+	ctx context.Context,
+	token string,
+) (string, error) {
+	clients, err := c.current()
+	if err != nil {
+		return "", err
+	}
+	return clients.buc.LookupAccessTokenEmployeeID(ctx, token)
+}
+
 func (c *dynamicEnterpriseIdentityClients) GenerateSSOTicket(ctx context.Context, token string) (string, error) {
 	clients, err := c.current()
 	if err != nil {

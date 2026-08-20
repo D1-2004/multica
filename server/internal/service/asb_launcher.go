@@ -200,8 +200,9 @@ func (c ASBConfig) ModelForAgent(model string) (string, error) {
 	return "", fmt.Errorf("agent model %q is not configured in MULTICA_ASB_OPENAI_MODELS", model)
 }
 
-// ASBResolvedIdentity contains only the short-lived AIT needed for one launch
-// plus stable, non-secret identity coordinates.
+// ASBResolvedIdentity contains the short-lived AIT needed for one launch,
+// BUC OAuth tokens used to attach WireGuard identity to a new sandbox, and
+// stable non-secret identity coordinates.
 type ASBResolvedIdentity struct {
 	Mode               asbIdentityMode
 	RawEmployeeID      string
@@ -211,6 +212,7 @@ type ASBResolvedIdentity struct {
 	SourceSandboxID    string
 	SourceRuntimeID    pgtype.UUID
 	AgentIdentityToken string
+	BUCTokens          BUCIdentityTokens
 	Fingerprint        string
 }
 
@@ -222,16 +224,15 @@ func (identity ASBResolvedIdentity) validate() error {
 			identity.BUCAgentID,
 			identity.AgentSPIFFEID,
 			identity.AIPID,
-			identity.SourceSandboxID,
 			identity.AgentIdentityToken,
 			identity.Fingerprint,
+			identity.BUCTokens.AccessToken,
+			identity.BUCTokens.RefreshToken,
+			identity.BUCTokens.IDToken,
 		} {
 			if strings.TrimSpace(value) == "" {
 				return errors.New("Agent enterprise identity is incomplete")
 			}
-		}
-		if !identity.SourceRuntimeID.Valid {
-			return errors.New("Agent enterprise identity source Runtime is incomplete")
 		}
 		return nil
 	case asbIdentityModeUnbound:
@@ -242,7 +243,10 @@ func (identity ASBResolvedIdentity) validate() error {
 			identity.AIPID != "" ||
 			identity.SourceSandboxID != "" ||
 			identity.SourceRuntimeID.Valid ||
-			identity.AgentIdentityToken != "" {
+			identity.AgentIdentityToken != "" ||
+			identity.BUCTokens.AccessToken != "" ||
+			identity.BUCTokens.RefreshToken != "" ||
+			identity.BUCTokens.IDToken != "" {
 			return errors.New("unbound ASB identity is invalid")
 		}
 		return nil
@@ -257,17 +261,14 @@ func (identity ASBResolvedIdentity) sandboxExtensions(
 	if identity.Mode == asbIdentityModeUnbound {
 		return nil
 	}
-	// ASB's documented replacement path inherits an existing identity seed at
-	// sandbox creation. The platform mounts the predecessor's credential
-	// directory before wgclient starts; the runtime identity API is reserved for
-	// lazy-auth sandboxes and does not reliably materialize a terminated seed.
+	_ = wireGuardCredentials
+	// New task sandboxes attach a fresh BUC token trio after they are Running.
+	// lazyAuth keeps wgclient from starting until attachWireguardIdentity runs.
 	// SPIFFE remains a runtime attachment because its task-scoped token is issued
 	// immediately before launch.
 	return map[string]string{
-		"spiffe.lazyAuth":          "true",
-		"wireguard.worker":         identity.RawEmployeeID,
-		"wireguard.uemCredentials": wireGuardCredentials,
-		"buc.originalSandboxID":    identity.SourceSandboxID,
+		"spiffe.lazyAuth":    "true",
+		"wireguard.lazyAuth": "true",
 	}
 }
 
@@ -393,13 +394,6 @@ type ASBTaskIdentityResolver interface {
 		pgtype.UUID,
 		pgtype.UUID,
 	) (ASBResolvedIdentity, error)
-	AcquireASBTaskIdentitySource(
-		context.Context,
-		pgtype.UUID,
-		pgtype.UUID,
-		pgtype.UUID,
-		string,
-	) (func(context.Context) error, error)
 }
 
 type ASBLauncher struct {
@@ -923,7 +917,7 @@ func (l *ASBLauncher) resolveSandbox(
 					identity.RawEmployeeID,
 				); probeErr != nil {
 					slog.Info(
-						"ASB warm sandbox lost inherited employee identity; creating a replacement",
+						"ASB warm sandbox lost task employee identity; creating a replacement",
 						"runtime_id", util.UUIDToString(runtime.ID),
 						"sandbox_id", session.SandboxID,
 						"scope_type", scope.typ,
@@ -934,7 +928,7 @@ func (l *ASBLauncher) resolveSandbox(
 					break
 				}
 				slog.Info(
-					"ASB warm sandbox inherited employee identity verified",
+					"ASB warm sandbox task employee identity verified",
 					"runtime_id", util.UUIDToString(runtime.ID),
 					"sandbox_id", session.SandboxID,
 					"duration_ms", time.Since(probeStarted).Milliseconds(),
@@ -958,44 +952,12 @@ func (l *ASBLauncher) resolveSandbox(
 			"artifact_ref", metadata.ArtifactRef,
 			"identity_mode", string(identity.Mode),
 		)
-		var releaseIdentitySource func(context.Context) error
-		if identity.Mode == asbIdentityModeBound {
-			if l.Identity == nil {
-				return "", true, ASBResolvedIdentity{}, errors.New(
-					"ASB enterprise identity resolver is unavailable for a bound Agent",
-				)
-			}
-			var err error
-			releaseIdentitySource, err = l.Identity.AcquireASBTaskIdentitySource(
-				ctx,
-				runtime.WorkspaceID,
-				agentID,
-				runtime.ID,
-				identity.SourceSandboxID,
-			)
-			if err != nil {
-				return "", true, ASBResolvedIdentity{}, withRuntimeStartUserDetail(
-					fmt.Errorf("acquire ASB enterprise identity source: %w", err),
-					"ASB enterprise identity source is unavailable. Reauthorize the Agent enterprise identity and retry.",
-				)
-			}
-		}
-
-		releaseSource := func(stage string) {
-			if releaseIdentitySource == nil {
-				return
-			}
-			releaseCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := releaseIdentitySource(releaseCtx); err != nil {
-				logASBIdentitySourceFailure(stage, identity.SourceSandboxID, err)
-			}
-			releaseIdentitySource = nil
-		}
-
 		sandboxMetadata := map[string]string{
 			"multica.runtime_id": util.UUIDToString(runtime.ID),
 			"multica.backend":    string(SandboxBackendASB),
+		}
+		if agentID.Valid {
+			sandboxMetadata["multica.agent_id"] = util.UUIDToString(agentID)
 		}
 		if excludedTaskID.Valid {
 			sandboxMetadata["multica.task_id"] = util.UUIDToString(excludedTaskID)
@@ -1019,13 +981,8 @@ func (l *ASBLauncher) resolveSandbox(
 			},
 		)
 		if err != nil {
-			releaseSource("release_source_after_failed_task_create")
 			return "", true, ASBResolvedIdentity{}, err
 		}
-		// Persist the control-plane handle before waiting for readiness or
-		// inherited identity. Capacity reconciliation must be able to find and
-		// safely reclaim every accepted create, including one that later fails
-		// during Pending, WireGuard convergence, or a CLI identity probe.
 		if scoped {
 			if _, err := l.Queries.UpsertCloudSandboxSession(ctx, db.UpsertCloudSandboxSessionParams{
 				WorkspaceID:         runtime.WorkspaceID,
@@ -1038,7 +995,6 @@ func (l *ASBLauncher) resolveSandbox(
 				SandboxBackend:      string(SandboxBackendASB),
 				IdentityFingerprint: identity.Fingerprint,
 			}); err != nil {
-				releaseSource("release_source_after_failed_session_record")
 				cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
 					runtime,
 					scope,
@@ -1056,7 +1012,6 @@ func (l *ASBLauncher) resolveSandbox(
 			}
 		}
 		if err := l.waitSandboxRunning(ctx, sandbox.ID); err != nil {
-			releaseSource("release_source_after_failed_wait_running")
 			if cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
 				runtime,
 				scope,
@@ -1069,13 +1024,12 @@ func (l *ASBLauncher) resolveSandbox(
 			return "", true, ASBResolvedIdentity{}, err
 		}
 		if identity.Mode == asbIdentityModeBound {
-			if err := l.waitSandboxInheritedBUCIdentityReady(
+			if err := l.attachAndProbeASBTaskBUCIdentity(
 				ctx,
 				sandbox.ID,
-				identity.RawEmployeeID,
+				identity,
 				l.Config.WireGuardReadyTimeout,
 			); err != nil {
-				releaseSource("release_source_after_failed_inherited_identity")
 				cleanupErr := l.deleteASBSandboxAfterIdentityFailure(
 					runtime,
 					scope,
@@ -1083,16 +1037,19 @@ func (l *ASBLauncher) resolveSandbox(
 					identity.Fingerprint,
 					sandbox.ID,
 				)
+				userDetail := "ASB BUC identity attach did not become ready before task start."
+				if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+					userDetail = "ASB enterprise identity did not match the bound employee after attach. Reauthorize the Agent enterprise identity and retry."
+				}
 				identityErr := withRuntimeStartUserDetail(
-					fmt.Errorf("prepare inherited ASB enterprise identity before task start: %w", err),
-					"ASB enterprise identity did not become ready before task start. Reauthorize the Agent enterprise identity and retry.",
+					fmt.Errorf("attach ASB enterprise identity before task start: %w", err),
+					userDetail,
 				)
 				if cleanupErr != nil {
 					return "", true, ASBResolvedIdentity{}, errors.Join(identityErr, cleanupErr)
 				}
 				return "", true, ASBResolvedIdentity{}, identityErr
 			}
-			releaseSource("release_source_after_inherited_identity_ready")
 		}
 		chattrace.LogStage(slog.Default(), trace, "asb_sandbox_create", "ready",
 			"sandbox_id", sandbox.ID,
@@ -1360,7 +1317,47 @@ func isASBCommandServiceConverging(err error) bool {
 	}
 }
 
-func (l *ASBLauncher) waitSandboxInheritedBUCIdentityReady(
+func (l *ASBLauncher) attachAndProbeASBTaskBUCIdentity(
+	ctx context.Context,
+	sandboxID string,
+	identity ASBResolvedIdentity,
+	timeout time.Duration,
+) error {
+	if l == nil || l.Client == nil {
+		return errors.New("ASB launcher is unavailable")
+	}
+	if timeout <= 0 {
+		return errors.New("ASB WireGuard ready timeout is not configured")
+	}
+	identityCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	if err := attachASBBUCIdentityOnce(identityCtx, l.Client, sandboxID, ASBBUCIdentityGrant{
+		EmployeeID:           identity.RawEmployeeID,
+		BUCAccessToken:       identity.BUCTokens.AccessToken,
+		BUCRefreshToken:      identity.BUCTokens.RefreshToken,
+		BUCIDToken:           identity.BUCTokens.IDToken,
+		WireGuardCredentials: l.Config.WireGuardCredentials,
+	}); err != nil {
+		return fmt.Errorf("attach BUC identity to ASB task sandbox: %w", err)
+	}
+	if err := waitForASBSandboxState(
+		identityCtx,
+		l.Client,
+		sandboxID,
+		timeout,
+		"running",
+	); err != nil {
+		return fmt.Errorf("wait for attached ASB task sandbox to return running: %w", err)
+	}
+	return l.waitSandboxTaskBUCIdentityReady(
+		identityCtx,
+		sandboxID,
+		identity.RawEmployeeID,
+		timeout,
+	)
+}
+
+func (l *ASBLauncher) waitSandboxTaskBUCIdentityReady(
 	ctx context.Context,
 	sandboxID string,
 	employeeID string,
@@ -1382,6 +1379,9 @@ func (l *ASBLauncher) waitSandboxInheritedBUCIdentityReady(
 			employeeID,
 		); err == nil {
 			return nil
+		} else if errors.Is(err, ErrEnterpriseIdentityNeedsReauth) {
+			// Exit 42 means the sandbox already presented a different empId.
+			return err
 		} else if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
 			lastErr = err
 		}
@@ -1391,7 +1391,7 @@ func (l *ASBLauncher) waitSandboxInheritedBUCIdentityReady(
 				return probeCtx.Err()
 			}
 			return fmt.Errorf(
-				"ASB inherited BUC identity did not become ready within %s: %w",
+				"ASB task BUC identity did not become ready within %s: %w",
 				timeout,
 				lastErr,
 			)
@@ -1400,9 +1400,9 @@ func (l *ASBLauncher) waitSandboxInheritedBUCIdentityReady(
 	}
 }
 
-// A task sandbox can expose a different non-empty zero-trust agentId from the
-// source seed. The inheritance boundary is therefore the exact employee match
-// plus a present agentId; the source-establishment path still verifies the
+// Task sandboxes attach persisted BUC tokens directly. Their zero-trust agentId
+// can differ from the configured BUC agentId, so the probe only requires the
+// exact employee and a present agentId. Source establishment still verifies the
 // configured BUC agentId exactly.
 func probeASBTaskBUCIdentity(
 	ctx context.Context,
@@ -1414,12 +1414,12 @@ func probeASBTaskBUCIdentity(
 	if err != nil {
 		if sandbox, stateErr := client.GetSandbox(ctx, sandboxID); stateErr == nil {
 			return fmt.Errorf(
-				"resolve ASB command endpoint for inherited BUC probe (sandbox_state=%s): %w",
+				"resolve ASB command endpoint for task BUC probe (sandbox_state=%s): %w",
 				strings.ToLower(strings.TrimSpace(sandbox.Status.State)),
 				err,
 			)
 		}
-		return fmt.Errorf("resolve ASB command endpoint for inherited BUC probe: %w", err)
+		return fmt.Errorf("resolve ASB command endpoint for task BUC probe: %w", err)
 	}
 	result, err := client.Exec(ctx, endpoint, ASBExecInput{
 		Command: asbTaskBUCIdentityProbeCommand(),
@@ -1435,6 +1435,12 @@ func probeASBTaskBUCIdentity(
 	if err != nil {
 		return err
 	}
+	if result.ExitCode != nil && *result.ExitCode == asbIdentityInvalidExitCode {
+		return fmt.Errorf(
+			"%w: task sandbox BUC identity does not match the bound employee",
+			ErrEnterpriseIdentityNeedsReauth,
+		)
+	}
 	if result.ExitCode == nil || *result.ExitCode != 0 || result.ErrorName != "" {
 		return &asbEnterpriseCLIIdentityProbeError{stage: "buc"}
 	}
@@ -1447,11 +1453,10 @@ func asbTaskBUCIdentityProbeCommand() string {
 		"curl -fsS --max-time 10 -X POST " +
 		"'https://login.alibaba-inc.com/rpc/cli/v1/get_zt_identity.json' | " +
 		"/opt/task-python/bin/python -c '" +
-		"import json,os,sys; p=json.load(sys.stdin); d=p.get(\"content\",{}).get(\"data\",{}); " +
-		"ok=p.get(\"success\") is True and str(p.get(\"errorCode\")) == \"0\" and " +
-		"str(d.get(\"empId\", \"\")) == os.environ[\"EXPECTED_EMP_ID\"] and " +
-		"bool(str(d.get(\"agentId\", \"\")).strip()); " +
-		"raise SystemExit(0 if ok else 1)" +
+		"import json,os,sys; p=json.load(sys.stdin); d=(p.get(\"content\") or {}).get(\"data\") or {}; " +
+		"emp=str(d.get(\"empId\") or \"\").strip(); agent=str(d.get(\"agentId\") or \"\").strip(); " +
+		"expected=os.environ[\"EXPECTED_EMP_ID\"].strip(); " +
+		"raise SystemExit(42 if emp and emp!=expected else 0 if p.get(\"success\") is True and str(p.get(\"errorCode\"))==\"0\" and emp==expected and agent else 1)" +
 		"'"
 }
 

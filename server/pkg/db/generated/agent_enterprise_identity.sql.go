@@ -20,7 +20,7 @@ WHERE id = $2
   AND buc_identity_source_sandbox_id = $3
   AND buc_identity_source_runtime_id = $4
   AND status = 'active'
-RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 `
 
 type CompareAndSwapAgentEnterpriseIdentitySourceParams struct {
@@ -57,6 +57,10 @@ func (q *Queries) CompareAndSwapAgentEnterpriseIdentitySource(ctx context.Contex
 		&i.BucIdentitySourceSandboxID,
 		&i.BucIdentitySourceRuntimeID,
 		&i.BucIdentitySourceUpdatedAt,
+		&i.BucAccessTokenEncrypted,
+		&i.BucRefreshTokenEncrypted,
+		&i.BucIDTokenEncrypted,
+		&i.BucAccessExpiresAt,
 	)
 	return i, err
 }
@@ -70,7 +74,7 @@ SET authx_refresh_token_encrypted = $1,
 WHERE id = $3
   AND token_version = $4
   AND status = 'active'
-RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 `
 
 type CompareAndSwapAgentEnterpriseIdentityTokenParams struct {
@@ -107,6 +111,70 @@ func (q *Queries) CompareAndSwapAgentEnterpriseIdentityToken(ctx context.Context
 		&i.BucIdentitySourceSandboxID,
 		&i.BucIdentitySourceRuntimeID,
 		&i.BucIdentitySourceUpdatedAt,
+		&i.BucAccessTokenEncrypted,
+		&i.BucRefreshTokenEncrypted,
+		&i.BucIDTokenEncrypted,
+		&i.BucAccessExpiresAt,
+	)
+	return i, err
+}
+
+const compareAndSwapAgentEnterpriseIdentityBUCTokens = `-- name: CompareAndSwapAgentEnterpriseIdentityBUCTokens :one
+UPDATE agent_enterprise_identity
+SET buc_access_token_encrypted = $1,
+    buc_refresh_token_encrypted = $2,
+    buc_id_token_encrypted = $3,
+    buc_access_expires_at = $4,
+    token_version = token_version + 1,
+    updated_at = now()
+WHERE id = $5
+  AND token_version = $6
+  AND status = 'active'
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
+`
+
+type CompareAndSwapAgentEnterpriseIdentityBUCTokensParams struct {
+	BucAccessTokenEncrypted  []byte             `json:"buc_access_token_encrypted"`
+	BucRefreshTokenEncrypted []byte             `json:"buc_refresh_token_encrypted"`
+	BucIDTokenEncrypted      []byte             `json:"buc_id_token_encrypted"`
+	BucAccessExpiresAt       pgtype.Timestamptz `json:"buc_access_expires_at"`
+	ID                       pgtype.UUID        `json:"id"`
+	ExpectedTokenVersion     int64              `json:"expected_token_version"`
+}
+
+func (q *Queries) CompareAndSwapAgentEnterpriseIdentityBUCTokens(ctx context.Context, arg CompareAndSwapAgentEnterpriseIdentityBUCTokensParams) (AgentEnterpriseIdentity, error) {
+	row := q.db.QueryRow(ctx, compareAndSwapAgentEnterpriseIdentityBUCTokens,
+		arg.BucAccessTokenEncrypted,
+		arg.BucRefreshTokenEncrypted,
+		arg.BucIDTokenEncrypted,
+		arg.BucAccessExpiresAt,
+		arg.ID,
+		arg.ExpectedTokenVersion,
+	)
+	var i AgentEnterpriseIdentity
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.RawEmpID,
+		&i.DisplayName,
+		&i.BucAgentID,
+		&i.AgentSpiffeID,
+		&i.AipID,
+		&i.AuthxRefreshTokenEncrypted,
+		&i.AuthxRefreshExpiresAt,
+		&i.TokenVersion,
+		&i.Status,
+		&i.BoundBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BucIdentitySourceSandboxID,
+		&i.BucIdentitySourceRuntimeID,
+		&i.BucIdentitySourceUpdatedAt,
+		&i.BucAccessTokenEncrypted,
+		&i.BucRefreshTokenEncrypted,
+		&i.BucIDTokenEncrypted,
+		&i.BucAccessExpiresAt,
 	)
 	return i, err
 }
@@ -292,7 +360,7 @@ func (q *Queries) DeleteExpiredAgentEnterpriseIdentityAttempts(ctx context.Conte
 }
 
 const getActiveAgentEnterpriseIdentity = `-- name: GetActiveAgentEnterpriseIdentity :one
-SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 FROM agent_enterprise_identity
 WHERE workspace_id = $1
   AND agent_id = $2
@@ -326,6 +394,10 @@ func (q *Queries) GetActiveAgentEnterpriseIdentity(ctx context.Context, arg GetA
 		&i.BucIdentitySourceSandboxID,
 		&i.BucIdentitySourceRuntimeID,
 		&i.BucIdentitySourceUpdatedAt,
+		&i.BucAccessTokenEncrypted,
+		&i.BucRefreshTokenEncrypted,
+		&i.BucIDTokenEncrypted,
+		&i.BucAccessExpiresAt,
 	)
 	return i, err
 }
@@ -372,7 +444,7 @@ func (q *Queries) GetActiveAgentEnterpriseIdentityAttempt(ctx context.Context, a
 }
 
 const getAgentEnterpriseIdentity = `-- name: GetAgentEnterpriseIdentity :one
-SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 FROM agent_enterprise_identity
 WHERE workspace_id = $1
   AND agent_id = $2
@@ -405,6 +477,10 @@ func (q *Queries) GetAgentEnterpriseIdentity(ctx context.Context, arg GetAgentEn
 		&i.BucIdentitySourceSandboxID,
 		&i.BucIdentitySourceRuntimeID,
 		&i.BucIdentitySourceUpdatedAt,
+		&i.BucAccessTokenEncrypted,
+		&i.BucRefreshTokenEncrypted,
+		&i.BucIDTokenEncrypted,
+		&i.BucAccessExpiresAt,
 	)
 	return i, err
 }
@@ -448,7 +524,7 @@ func (q *Queries) GetAgentEnterpriseIdentityAttemptStatus(ctx context.Context, a
 }
 
 const getReusableAgentEnterpriseIdentitySource = `-- name: GetReusableAgentEnterpriseIdentitySource :one
-SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 FROM agent_enterprise_identity
 WHERE workspace_id = $1
   AND bound_by = $2
@@ -499,12 +575,16 @@ func (q *Queries) GetReusableAgentEnterpriseIdentitySource(ctx context.Context, 
 		&i.BucIdentitySourceSandboxID,
 		&i.BucIdentitySourceRuntimeID,
 		&i.BucIdentitySourceUpdatedAt,
+		&i.BucAccessTokenEncrypted,
+		&i.BucRefreshTokenEncrypted,
+		&i.BucIDTokenEncrypted,
+		&i.BucAccessExpiresAt,
 	)
 	return i, err
 }
 
 const listActiveAgentEnterpriseIdentitiesByRuntime = `-- name: ListActiveAgentEnterpriseIdentitiesByRuntime :many
-SELECT identity.id, identity.workspace_id, identity.agent_id, identity.raw_emp_id, identity.display_name, identity.buc_agent_id, identity.agent_spiffe_id, identity.aip_id, identity.authx_refresh_token_encrypted, identity.authx_refresh_expires_at, identity.token_version, identity.status, identity.bound_by, identity.created_at, identity.updated_at, identity.buc_identity_source_sandbox_id, identity.buc_identity_source_runtime_id, identity.buc_identity_source_updated_at
+SELECT identity.id, identity.workspace_id, identity.agent_id, identity.raw_emp_id, identity.display_name, identity.buc_agent_id, identity.agent_spiffe_id, identity.aip_id, identity.authx_refresh_token_encrypted, identity.authx_refresh_expires_at, identity.token_version, identity.status, identity.bound_by, identity.created_at, identity.updated_at, identity.buc_identity_source_sandbox_id, identity.buc_identity_source_runtime_id, identity.buc_identity_source_updated_at, identity.buc_access_token_encrypted, identity.buc_refresh_token_encrypted, identity.buc_id_token_encrypted, identity.buc_access_expires_at
 FROM agent_enterprise_identity AS identity
 JOIN agent
   ON agent.id = identity.agent_id
@@ -545,6 +625,10 @@ func (q *Queries) ListActiveAgentEnterpriseIdentitiesByRuntime(ctx context.Conte
 			&i.BucIdentitySourceSandboxID,
 			&i.BucIdentitySourceRuntimeID,
 			&i.BucIdentitySourceUpdatedAt,
+			&i.BucAccessTokenEncrypted,
+			&i.BucRefreshTokenEncrypted,
+			&i.BucIDTokenEncrypted,
+			&i.BucAccessExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -557,7 +641,7 @@ func (q *Queries) ListActiveAgentEnterpriseIdentitiesByRuntime(ctx context.Conte
 }
 
 const listActiveAgentEnterpriseIdentitySourceReferences = `-- name: ListActiveAgentEnterpriseIdentitySourceReferences :many
-SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 FROM agent_enterprise_identity
 WHERE workspace_id = $1
   AND buc_identity_source_runtime_id = $2
@@ -600,6 +684,10 @@ func (q *Queries) ListActiveAgentEnterpriseIdentitySourceReferences(ctx context.
 			&i.BucIdentitySourceSandboxID,
 			&i.BucIdentitySourceRuntimeID,
 			&i.BucIdentitySourceUpdatedAt,
+			&i.BucAccessTokenEncrypted,
+			&i.BucRefreshTokenEncrypted,
+			&i.BucIDTokenEncrypted,
+			&i.BucAccessExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -612,11 +700,15 @@ func (q *Queries) ListActiveAgentEnterpriseIdentitySourceReferences(ctx context.
 }
 
 const listAgentEnterpriseIdentitiesForMaintenance = `-- name: ListAgentEnterpriseIdentitiesForMaintenance :many
-SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+SELECT id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 FROM agent_enterprise_identity
 WHERE status = 'active'
   AND (
     authx_refresh_expires_at <= $1
+    OR buc_access_expires_at <= $1
+    OR buc_access_token_encrypted IS NULL
+    OR buc_refresh_token_encrypted IS NULL
+    OR buc_id_token_encrypted IS NULL
     OR buc_identity_source_updated_at <= $2
   )
 ORDER BY LEAST(authx_refresh_expires_at, buc_identity_source_updated_at), id
@@ -657,6 +749,10 @@ func (q *Queries) ListAgentEnterpriseIdentitiesForMaintenance(ctx context.Contex
 			&i.BucIdentitySourceSandboxID,
 			&i.BucIdentitySourceRuntimeID,
 			&i.BucIdentitySourceUpdatedAt,
+			&i.BucAccessTokenEncrypted,
+			&i.BucRefreshTokenEncrypted,
+			&i.BucIDTokenEncrypted,
+			&i.BucAccessExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -676,6 +772,10 @@ SET status = 'needs_reauth',
     buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
+    buc_access_token_encrypted = NULL,
+    buc_refresh_token_encrypted = NULL,
+    buc_id_token_encrypted = NULL,
+    buc_access_expires_at = NULL,
     token_version = identity.token_version + 1,
     updated_at = now()
 FROM agent
@@ -704,13 +804,17 @@ SET status = 'needs_reauth',
     buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
+    buc_access_token_encrypted = NULL,
+    buc_refresh_token_encrypted = NULL,
+    buc_id_token_encrypted = NULL,
+    buc_access_expires_at = NULL,
     token_version = token_version + 1,
     updated_at = now()
 WHERE workspace_id = $1
   AND buc_identity_source_runtime_id = $2
   AND buc_identity_source_sandbox_id = $3
   AND status = 'active'
-RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 `
 
 type MarkAgentEnterpriseIdentitiesNeedsReauthBySourceParams struct {
@@ -747,6 +851,10 @@ func (q *Queries) MarkAgentEnterpriseIdentitiesNeedsReauthBySource(ctx context.C
 			&i.BucIdentitySourceSandboxID,
 			&i.BucIdentitySourceRuntimeID,
 			&i.BucIdentitySourceUpdatedAt,
+			&i.BucAccessTokenEncrypted,
+			&i.BucRefreshTokenEncrypted,
+			&i.BucIDTokenEncrypted,
+			&i.BucAccessExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -766,6 +874,10 @@ SET status = 'needs_reauth',
     buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
+    buc_access_token_encrypted = NULL,
+    buc_refresh_token_encrypted = NULL,
+    buc_id_token_encrypted = NULL,
+    buc_access_expires_at = NULL,
     token_version = token_version + 1,
     updated_at = now()
 WHERE id = $1
@@ -794,12 +906,16 @@ SET status = 'revoked',
     buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = NULL,
     authx_refresh_expires_at = NULL,
+    buc_access_token_encrypted = NULL,
+    buc_refresh_token_encrypted = NULL,
+    buc_id_token_encrypted = NULL,
+    buc_access_expires_at = NULL,
     token_version = token_version + 1,
     updated_at = now()
 WHERE workspace_id = $1
   AND agent_id = $2
   AND status <> 'revoked'
-RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at
+RETURNING id, workspace_id, agent_id, raw_emp_id, display_name, buc_agent_id, agent_spiffe_id, aip_id, authx_refresh_token_encrypted, authx_refresh_expires_at, token_version, status, bound_by, created_at, updated_at, buc_identity_source_sandbox_id, buc_identity_source_runtime_id, buc_identity_source_updated_at, buc_access_token_encrypted, buc_refresh_token_encrypted, buc_id_token_encrypted, buc_access_expires_at
 `
 
 type RevokeAgentEnterpriseIdentityParams struct {
@@ -829,6 +945,10 @@ func (q *Queries) RevokeAgentEnterpriseIdentity(ctx context.Context, arg RevokeA
 		&i.BucIdentitySourceSandboxID,
 		&i.BucIdentitySourceRuntimeID,
 		&i.BucIdentitySourceUpdatedAt,
+		&i.BucAccessTokenEncrypted,
+		&i.BucRefreshTokenEncrypted,
+		&i.BucIDTokenEncrypted,
+		&i.BucAccessExpiresAt,
 	)
 	return i, err
 }
@@ -905,6 +1025,10 @@ INSERT INTO agent_enterprise_identity (
     buc_identity_source_updated_at,
     authx_refresh_token_encrypted,
     authx_refresh_expires_at,
+    buc_access_token_encrypted,
+    buc_refresh_token_encrypted,
+    buc_id_token_encrypted,
+    buc_access_expires_at,
     token_version,
     status,
     bound_by
@@ -917,14 +1041,18 @@ SELECT
     $5,
     $6,
     $7,
+    NULL,
+    NULL,
+    NULL,
     $8,
     $9,
-    now(),
     $10,
     $11,
+    $12,
+    $13,
     1,
     'active',
-    $12
+    $14
 FROM agent
 WHERE agent.id = $2
   AND agent.workspace_id = $1
@@ -935,16 +1063,20 @@ DO UPDATE SET
     buc_agent_id = EXCLUDED.buc_agent_id,
     agent_spiffe_id = EXCLUDED.agent_spiffe_id,
     aip_id = EXCLUDED.aip_id,
-    buc_identity_source_sandbox_id = EXCLUDED.buc_identity_source_sandbox_id,
-    buc_identity_source_runtime_id = EXCLUDED.buc_identity_source_runtime_id,
-    buc_identity_source_updated_at = EXCLUDED.buc_identity_source_updated_at,
+    buc_identity_source_sandbox_id = NULL,
+    buc_identity_source_runtime_id = NULL,
+    buc_identity_source_updated_at = NULL,
     authx_refresh_token_encrypted = EXCLUDED.authx_refresh_token_encrypted,
     authx_refresh_expires_at = EXCLUDED.authx_refresh_expires_at,
+    buc_access_token_encrypted = EXCLUDED.buc_access_token_encrypted,
+    buc_refresh_token_encrypted = EXCLUDED.buc_refresh_token_encrypted,
+    buc_id_token_encrypted = EXCLUDED.buc_id_token_encrypted,
+    buc_access_expires_at = EXCLUDED.buc_access_expires_at,
     token_version = agent_enterprise_identity.token_version + 1,
     status = 'active',
     bound_by = EXCLUDED.bound_by,
     updated_at = now()
-RETURNING agent_enterprise_identity.id, agent_enterprise_identity.workspace_id, agent_enterprise_identity.agent_id, agent_enterprise_identity.raw_emp_id, agent_enterprise_identity.display_name, agent_enterprise_identity.buc_agent_id, agent_enterprise_identity.agent_spiffe_id, agent_enterprise_identity.aip_id, agent_enterprise_identity.authx_refresh_token_encrypted, agent_enterprise_identity.authx_refresh_expires_at, agent_enterprise_identity.token_version, agent_enterprise_identity.status, agent_enterprise_identity.bound_by, agent_enterprise_identity.created_at, agent_enterprise_identity.updated_at, agent_enterprise_identity.buc_identity_source_sandbox_id, agent_enterprise_identity.buc_identity_source_runtime_id, agent_enterprise_identity.buc_identity_source_updated_at
+RETURNING agent_enterprise_identity.id, agent_enterprise_identity.workspace_id, agent_enterprise_identity.agent_id, agent_enterprise_identity.raw_emp_id, agent_enterprise_identity.display_name, agent_enterprise_identity.buc_agent_id, agent_enterprise_identity.agent_spiffe_id, agent_enterprise_identity.aip_id, agent_enterprise_identity.authx_refresh_token_encrypted, agent_enterprise_identity.authx_refresh_expires_at, agent_enterprise_identity.token_version, agent_enterprise_identity.status, agent_enterprise_identity.bound_by, agent_enterprise_identity.created_at, agent_enterprise_identity.updated_at, agent_enterprise_identity.buc_identity_source_sandbox_id, agent_enterprise_identity.buc_identity_source_runtime_id, agent_enterprise_identity.buc_identity_source_updated_at, agent_enterprise_identity.buc_access_token_encrypted, agent_enterprise_identity.buc_refresh_token_encrypted, agent_enterprise_identity.buc_id_token_encrypted, agent_enterprise_identity.buc_access_expires_at
 `
 
 type UpsertAgentEnterpriseIdentityParams struct {
@@ -955,10 +1087,12 @@ type UpsertAgentEnterpriseIdentityParams struct {
 	BucAgentID                 string             `json:"buc_agent_id"`
 	AgentSpiffeID              string             `json:"agent_spiffe_id"`
 	AipID                      string             `json:"aip_id"`
-	BucIdentitySourceSandboxID pgtype.Text        `json:"buc_identity_source_sandbox_id"`
-	BucIdentitySourceRuntimeID pgtype.UUID        `json:"buc_identity_source_runtime_id"`
 	AuthxRefreshTokenEncrypted []byte             `json:"authx_refresh_token_encrypted"`
 	AuthxRefreshExpiresAt      pgtype.Timestamptz `json:"authx_refresh_expires_at"`
+	BucAccessTokenEncrypted    []byte             `json:"buc_access_token_encrypted"`
+	BucRefreshTokenEncrypted   []byte             `json:"buc_refresh_token_encrypted"`
+	BucIDTokenEncrypted        []byte             `json:"buc_id_token_encrypted"`
+	BucAccessExpiresAt         pgtype.Timestamptz `json:"buc_access_expires_at"`
 	BoundBy                    pgtype.UUID        `json:"bound_by"`
 }
 
@@ -971,10 +1105,12 @@ func (q *Queries) UpsertAgentEnterpriseIdentity(ctx context.Context, arg UpsertA
 		arg.BucAgentID,
 		arg.AgentSpiffeID,
 		arg.AipID,
-		arg.BucIdentitySourceSandboxID,
-		arg.BucIdentitySourceRuntimeID,
 		arg.AuthxRefreshTokenEncrypted,
 		arg.AuthxRefreshExpiresAt,
+		arg.BucAccessTokenEncrypted,
+		arg.BucRefreshTokenEncrypted,
+		arg.BucIDTokenEncrypted,
+		arg.BucAccessExpiresAt,
 		arg.BoundBy,
 	)
 	var i AgentEnterpriseIdentity
@@ -997,6 +1133,10 @@ func (q *Queries) UpsertAgentEnterpriseIdentity(ctx context.Context, arg UpsertA
 		&i.BucIdentitySourceSandboxID,
 		&i.BucIdentitySourceRuntimeID,
 		&i.BucIdentitySourceUpdatedAt,
+		&i.BucAccessTokenEncrypted,
+		&i.BucRefreshTokenEncrypted,
+		&i.BucIDTokenEncrypted,
+		&i.BucAccessExpiresAt,
 	)
 	return i, err
 }

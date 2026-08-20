@@ -295,6 +295,10 @@ type AgentEnterpriseIdentity struct {
 	BucIdentitySourceSandboxID pgtype.Text        `json:"buc_identity_source_sandbox_id"`
 	BucIdentitySourceRuntimeID pgtype.UUID        `json:"buc_identity_source_runtime_id"`
 	BucIdentitySourceUpdatedAt pgtype.Timestamptz `json:"buc_identity_source_updated_at"`
+	BucAccessTokenEncrypted    []byte             `json:"buc_access_token_encrypted"`
+	BucRefreshTokenEncrypted   []byte             `json:"buc_refresh_token_encrypted"`
+	BucIDTokenEncrypted        []byte             `json:"buc_id_token_encrypted"`
+	BucAccessExpiresAt         pgtype.Timestamptz `json:"buc_access_expires_at"`
 }
 
 type AgentEnterpriseIdentityAttempt struct {
