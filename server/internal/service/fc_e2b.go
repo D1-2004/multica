@@ -76,6 +76,11 @@ const (
 	fcE2BA2AIsolationRoot           = "/tmp/multica-dws"
 )
 
+// The native image smoke includes Chromium and LibreOffice probes. It is a
+// release-validation command, not a readiness probe, and must remain below
+// stableReleaseLeaseDuration while allowing cold filesystem caches to warm.
+const fcE2BStableValidationTimeout = 5 * time.Minute
+
 var errAgentIdentityContextTokenRefreshRequired = errors.New("Agent Identity ContextToken refresh required")
 
 type fcE2BRunnerLaunchMode string
@@ -815,6 +820,14 @@ var fcE2BTemplateManifestV7ComponentVersionsByFingerprint = map[string]map[strin
 		"pi":          "0.83.0",
 		"dws":         "v1.0.59-beta.3",
 	},
+	"baedb216407a5060": {
+		"hermes":      "0.19.0",
+		"opencode":    "v1.18.19",
+		"opencode-v2": "0.0.0-beta-202608110357",
+		"dsh":         "0.1.0-rc.8",
+		"pi":          "0.84.2",
+		"dws":         "v1.0.59",
+	},
 }
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
@@ -1395,7 +1408,7 @@ func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2B
 	if err := l.waitSandboxReady(ctx, sandboxID); err != nil {
 		return nil, err
 	}
-	if _, err := l.runE2BCommand(ctx, []string{
+	if _, err := l.runE2BCommandWithTimeout(ctx, fcE2BStableValidationTimeout, []string{
 		"sandbox", "exec",
 		"--user", "user",
 		sandboxID,
@@ -2856,6 +2869,10 @@ func (l *FCE2BLauncher) runE2BCommand(ctx context.Context, args []string) (strin
 	if timeout <= 0 {
 		timeout = defaultFCE2BSandboxReadyTimeout
 	}
+	return l.runE2BCommandWithTimeout(ctx, timeout, args)
+}
+
+func (l *FCE2BLauncher) runE2BCommandWithTimeout(ctx context.Context, timeout time.Duration, args []string) (string, error) {
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return l.Runner.Run(cmdCtx, l.Config.CLIPath, args, l.e2bEnv())
