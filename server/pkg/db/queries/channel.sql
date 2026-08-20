@@ -102,16 +102,18 @@ WHERE channel_type = sqlc.arg('channel_type')
 -- Robot-only dispatch endpoint resolution. The same endpoint may also be
 -- present on a dingtalk_account row for the agent; this query is the fallback
 -- that lets an HTTP_CALLBACK robot authenticate without a digital-employee
--- binding. Membership and ownership checks match the legacy endpoint query.
+-- binding. HMAC authenticates the caller; installer membership is not required.
 SELECT ci.*
 FROM channel_installation ci
 JOIN workspace w ON w.id = ci.workspace_id
 JOIN agent a ON a.id = ci.agent_id AND a.workspace_id = ci.workspace_id
-JOIN member m ON m.workspace_id = ci.workspace_id AND m.user_id = ci.installer_user_id
 WHERE ci.channel_type = 'dingtalk'
   AND ci.status = 'active'
   AND ci.config ->> 'transport_mode' = 'HTTP_CALLBACK'
-  AND ci.config ->> 'dispatch_endpoint_id' = sqlc.arg('dispatch_endpoint_id')::text;
+  AND (
+    ci.config ->> 'dispatch_endpoint_id' = sqlc.arg('dispatch_endpoint_id')::text
+    OR ci.config ->> 'dispatch_url' LIKE '%/' || sqlc.arg('dispatch_endpoint_id')::text
+  );
 
 -- name: GetActiveDingTalkBotInstallationByAgent :one
 SELECT ci.*
