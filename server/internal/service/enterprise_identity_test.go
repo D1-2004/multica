@@ -1403,6 +1403,7 @@ func TestEnterpriseIdentityResolveMarksNeedsReauthWhenBUCRefreshTokenIsInvalid(t
 			BucAccessExpiresAt:         pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
 			TokenVersion:               2,
 			Status:                     "active",
+			BoundBy:                    util.MustParseUUID("33333333-3333-3333-3333-333333333333"),
 		},
 	}
 	serviceUnderTest := newTestEnterpriseIdentityService(
@@ -1792,7 +1793,7 @@ func TestEnterpriseIdentityForceRotateSourceRejectsStalePredecessor(t *testing.T
 		now,
 	)
 
-	_, err := serviceUnderTest.ForceRotateIdentitySource(
+	_, err = serviceUnderTest.ForceRotateIdentitySource(
 		context.Background(),
 		identity.WorkspaceID,
 		identity.AgentID,

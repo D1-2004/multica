@@ -364,7 +364,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 				t.Errorf("Agent Identity grant = %#v", grant)
 			}
 		case "/v1/sandboxes/" + testSandboxID + "/identity/wireguard":
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -376,7 +376,7 @@ func TestASBClientIdentityInjection(t *testing.T) {
 				grant.OriginalSandboxID != "" {
 				t.Errorf("BUC grant = %#v", grant)
 			}
-			response.WriteHeader(http.StatusAccepted)
+			response.WriteHeader(http.StatusOK)
 			return
 		default:
 			http.NotFound(response, request)
@@ -436,14 +436,15 @@ func TestASBClientAsynchronousAgentIdentityUsesLifecycleTimeout(t *testing.T) {
 	}
 }
 
-func TestASBClientAsynchronousBUCIdentityUsesLifecycleTimeout(t *testing.T) {
+func TestASBClientSynchronousBUCIdentityUsesCallerDeadline(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if request.URL.Query().Get("sync") != "false" {
+		if request.URL.Query().Get("sync") != "true" {
 			t.Errorf("wireguard sync = %q", request.URL.Query().Get("sync"))
 		}
-		response.WriteHeader(http.StatusAccepted)
+		time.Sleep(80 * time.Millisecond)
+		response.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 

@@ -261,7 +261,12 @@ func TestASBA2ADEAPDWSTaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 		SourceSandboxID:    "identity-source-1",
 		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentIdentityToken: "ait",
-		Fingerprint:        strings.Repeat("a", 64),
+		BUCTokens: BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
+		Fingerprint: strings.Repeat("a", 64),
 	}
 	var calls atomic.Int32
 	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: want, calls: &calls}}
@@ -299,7 +304,12 @@ func TestASBOrdinaryTaskResolvesAgentEnterpriseIdentity(t *testing.T) {
 		SourceSandboxID:    "identity-source-1",
 		SourceRuntimeID:    util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 		AgentIdentityToken: "ait",
-		Fingerprint:        strings.Repeat("a", 64),
+		BUCTokens: BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
+		Fingerprint: strings.Repeat("a", 64),
 	}
 	var calls atomic.Int32
 	launcher := &ASBLauncher{Identity: fakeASBTaskIdentityResolver{identity: want, calls: &calls}}
@@ -543,7 +553,7 @@ func TestResolveASBSandboxAttachesFreshBUCTokensBeforeProbe(t *testing.T) {
 		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/bound-sandbox":
 			_, _ = io.WriteString(response, `{"id":"bound-sandbox","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
 		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes/bound-sandbox/identity/wireguard":
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("task BUC attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -686,7 +696,7 @@ func TestWaitSandboxTaskBUCIdentityReadyRetriesUntilEmployeeMatches(t *testing.T
 			}
 			response.Header().Set("Content-Type", "text/event-stream")
 			if execCalls.Add(1) == 1 {
-				_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"ExitCode","value":"1"}}`+"\n")
+				_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"ExitCode","evalue":"1"}}`+"\n")
 			}
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		default:
@@ -726,7 +736,7 @@ func TestWaitSandboxTaskBUCIdentityReadyFailsWhenPresentedIdentityIsWrong(t *tes
 		case request.Method == http.MethodPost && request.URL.Path == "/execd/command":
 			execCalls.Add(1)
 			response.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(response, `data: {"type":"error","error":{"name":"ExitCode","value":"42"}}`+"\n")
+			_, _ = io.WriteString(response, `data: {"type":"error","error":{"ename":"ExitCode","evalue":"42"}}`+"\n")
 			_, _ = io.WriteString(response, `data: {"type":"execution_complete","execution_time":1}`+"\n")
 		default:
 			http.NotFound(response, request)

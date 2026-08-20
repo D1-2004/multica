@@ -55,6 +55,7 @@ type ASBClient struct {
 	apiKey          string
 	capacityLockKey int32
 	lifecycleClient *http.Client
+	identityClient  *http.Client
 	execClient      *http.Client
 }
 
@@ -252,6 +253,11 @@ func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 
 	lifecycleClient := cloneASBHTTPClient(cfg.HTTPClient)
 	lifecycleClient.Timeout = timeout
+	identityClient := cloneASBHTTPClient(cfg.HTTPClient)
+	// A synchronous BUC identity attachment can outlive the generic lifecycle
+	// timeout while ASB checks the sandbox-side WireGuard state. The caller's
+	// context is the authoritative deadline for this one request.
+	identityClient.Timeout = 0
 	execClient := cloneASBHTTPClient(cfg.HTTPClient)
 	// The command endpoint streams until the command completes. The caller's
 	// context and the execd request timeout are the two authoritative limits.
@@ -262,6 +268,7 @@ func NewASBClient(cfg ASBClientConfig) (*ASBClient, error) {
 		apiKey:          cfg.APIKey,
 		capacityLockKey: asbAPIKeyCapacityLockKey(cfg.APIKey),
 		lifecycleClient: lifecycleClient,
+		identityClient:  identityClient,
 		execClient:      execClient,
 	}, nil
 }
@@ -641,13 +648,13 @@ func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, gra
 	if strings.TrimSpace(grant.OriginalSandboxID) != "" {
 		return errors.New("ASB BUC identity attach does not inherit a source sandbox")
 	}
-	// ASB's sync=true tunnel check can return HTTP 400 after a successful
-	// attach and stretches RT past 15s. Submit asynchronously; Multica proves
-	// BUC identity with the in-sandbox probe instead of the platform status check.
-	query := url.Values{"sync": []string{"false"}}
+	// Keep ASB's synchronous attach semantics. The caller classifies the known
+	// false-negative post-attach HTTP 400 and then proves the effective employee
+	// identity with an in-sandbox BUC probe.
+	query := url.Values{"sync": []string{"true"}}
 	return c.doLifecycleJSONVia(
 		ctx,
-		c.lifecycleClient,
+		c.identityClient,
 		"attach_buc_identity",
 		http.MethodPost,
 		"/sandboxes/"+sandboxID+"/identity/wireguard",
@@ -655,7 +662,6 @@ func (c *ASBClient) AttachBUCIdentity(ctx context.Context, sandboxID string, gra
 		grant,
 		nil,
 		http.StatusOK,
-		http.StatusAccepted,
 	)
 }
 

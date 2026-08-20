@@ -595,17 +595,17 @@ func attachASBBUCIdentityOnce(
 	sandboxID string,
 	grant ASBBUCIdentityGrant,
 ) error {
-	// Submit attachWireguardIdentity once with sync=false. ASB's platform
-	// status check can return HTTP 400 after the tunnel is already up.
-	// Multica ignores that 400 and proves 免登 with the BUC identity probe.
-	// Never repeat this POST because it restarts wgclient.
+	// Submit attachWireguardIdentity once with sync=true. ASB can finish the
+	// attach but misclassify its post-attach tunnel check as HTTP 400. Multica
+	// ignores only that known false negative and proves the effective identity
+	// with the BUC probe. Never repeat this POST because it restarts wgclient.
 	err := client.AttachBUCIdentity(ctx, sandboxID, grant)
 	if err == nil {
 		return nil
 	}
-	if isASBBUCAttachPlatformCheckRejected(err) {
+	if isASBWireGuardPostAttachCheckPending(err) {
 		slog.Info(
-			"ASB BUC identity attach returned HTTP 400; proving identity via BUC probe",
+			"ASB BUC identity bootstrap submitted; post-attach check is pending",
 			"sandbox_id", sandboxID,
 		)
 		return nil
@@ -613,11 +613,17 @@ func attachASBBUCIdentityOnce(
 	return err
 }
 
-func isASBBUCAttachPlatformCheckRejected(err error) bool {
+func isASBWireGuardPostAttachCheckPending(err error) bool {
 	var httpErr *ASBHTTPError
-	return errors.As(err, &httpErr) &&
-		httpErr.Operation == "attach_buc_identity" &&
-		httpErr.StatusCode == http.StatusBadRequest
+	if !errors.As(err, &httpErr) ||
+		httpErr.Operation != "attach_buc_identity" ||
+		httpErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(httpErr.ErrorMessage))
+	return strings.Contains(message, "tunnel not ready") ||
+		(strings.Contains(message, "failed to check wireguard status") &&
+			strings.Contains(message, "status code 404"))
 }
 
 func asbIdentityProbeInterval(timeout time.Duration) time.Duration {

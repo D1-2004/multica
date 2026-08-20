@@ -104,7 +104,7 @@ func TestASBIdentitySourceBecomesTerminatedCredentialSeed(t *testing.T) {
 			})
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sourceSandboxID+"/identity/wireguard":
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -345,7 +345,7 @@ func TestASBIdentitySourceRotateAttachesTokensAndTerminatesBothSeeds(t *testing.
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+rotatedSandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("rotated seed attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			var grant ASBBUCIdentityGrant
@@ -515,7 +515,7 @@ func TestAttachAndProbeASBIdentitySourceSubmitsAttachOnceThenProbes(t *testing.T
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			if attachCalls > 1 {
@@ -599,7 +599,7 @@ func TestAttachAndProbeASBIdentitySourceTreatsKnownSyncPostCheckAsPending(t *tes
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			response.Header().Set("Content-Type", "application/json")
@@ -767,7 +767,7 @@ func TestWaitForASBIdentitySourceBUCRequiresReauthAfterPersistentIdentityMismatc
 	}
 }
 
-func TestAttachAndProbeASBIdentitySourceIgnoresAttachBadRequestThenProbes(t *testing.T) {
+func TestAttachAndProbeASBIdentitySourceTreatsTunnelNotReadyAsPending(t *testing.T) {
 	const sandboxID = "identity-source-tunnel-not-ready"
 	attachCalls := 0
 	probeCalls := 0
@@ -777,14 +777,14 @@ func TestAttachAndProbeASBIdentitySourceIgnoresAttachBadRequestThenProbes(t *tes
 		case request.Method == http.MethodPost &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID+"/identity/wireguard":
 			attachCalls++
-			if request.URL.Query().Get("sync") != "false" {
+			if request.URL.Query().Get("sync") != "true" {
 				t.Fatalf("identity source attach sync = %q", request.URL.Query().Get("sync"))
 			}
 			response.Header().Set("Content-Type", "application/json")
 			response.WriteHeader(http.StatusBadRequest)
 			_, _ = io.WriteString(response, `{
 				"code":"BAD_REQUEST",
-				"message":"tunnel not ready"
+				"message":"wireguard tunnel not ready yet"
 			}`)
 		case request.Method == http.MethodGet &&
 			request.URL.Path == "/v1/sandboxes/"+sandboxID:
@@ -839,6 +839,49 @@ func TestAttachAndProbeASBIdentitySourceIgnoresAttachBadRequestThenProbes(t *tes
 	}
 	if probeCalls < 1 {
 		t.Fatalf("probe calls = %d, want at least 1", probeCalls)
+	}
+}
+
+func TestAttachAndProbeASBIdentitySourceRejectsUnrelatedBadRequest(t *testing.T) {
+	const sandboxID = "identity-source-invalid-grant"
+	attachCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		attachCalls++
+		response.Header().Set("Content-Type", "application/json")
+		response.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(response, `{
+			"code":"BAD_REQUEST",
+			"message":"identity grant is invalid"
+		}`)
+	}))
+	defer server.Close()
+
+	client, err := NewASBClient(ASBClientConfig{
+		BaseURL: server.URL,
+		APIKey:  "runtime-api-key",
+	})
+	if err != nil {
+		t.Fatalf("NewASBClient: %v", err)
+	}
+	err = attachAndProbeASBIdentitySource(
+		context.Background(),
+		client,
+		sandboxID,
+		"12345",
+		"agent-multica-asb",
+		BUCIdentityTokens{
+			AccessToken:  "buc-access",
+			RefreshToken: "buc-refresh",
+			IDToken:      "buc-id",
+		},
+		"wg-client",
+		250*time.Millisecond,
+	)
+	if err == nil {
+		t.Fatal("attachAndProbeASBIdentitySource() error = nil, want bad request")
+	}
+	if attachCalls != 1 {
+		t.Fatalf("attach calls = %d, want 1", attachCalls)
 	}
 }
 
