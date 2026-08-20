@@ -595,19 +595,37 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		name               string
 		alias              string
 		wantDWS            string
+		wantDSH            string
+		wantOpenCode       string
+		wantPi             string
 		wantSourceRevision string
 	}{
 		{
 			name:               "original DWS runtime",
 			alias:              "multica-m7-vda499f3161a007c0-r1-9a6bfa",
 			wantDWS:            "v1.0.58-beta.4",
+			wantDSH:            "0.1.0-rc.6",
+			wantOpenCode:       "v1.18.11",
+			wantPi:             "0.83.0",
 			wantSourceRevision: "9a6bfa",
 		},
 		{
 			name:               "DWS v1.0.59 runtime",
 			alias:              "multica-m7-v41edc34be759811a-r1-dcb7e7",
 			wantDWS:            "v1.0.59-beta.3",
+			wantDSH:            "0.1.0-rc.6",
+			wantOpenCode:       "v1.18.11",
+			wantPi:             "0.83.0",
 			wantSourceRevision: "dcb7e7",
+		},
+		{
+			name:               "formal DWS and latest toolchain runtime",
+			alias:              "multica-m7-vbaedb216407a5060-r1-f24f2e",
+			wantDWS:            "v1.0.59",
+			wantDSH:            "0.1.0-rc.8",
+			wantOpenCode:       "v1.18.19",
+			wantPi:             "0.84.2",
+			wantSourceRevision: "f24f2e",
 		},
 	}
 	for _, test := range tests {
@@ -637,7 +655,9 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 			}; !reflect.DeepEqual(template.Capabilities, want) {
 				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, want)
 			}
-			if template.ComponentVersions["dsh"] != "0.1.0-rc.6" ||
+			if template.ComponentVersions["dsh"] != test.wantDSH ||
+				template.ComponentVersions["opencode"] != test.wantOpenCode ||
+				template.ComponentVersions["pi"] != test.wantPi ||
 				template.ComponentVersions["opencode-v2"] != "0.0.0-beta-202608110357" ||
 				template.ComponentVersions["dws"] != test.wantDWS ||
 				template.SourceRevision != test.wantSourceRevision {

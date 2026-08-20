@@ -820,6 +820,14 @@ var fcE2BTemplateManifestV7ComponentVersionsByFingerprint = map[string]map[strin
 		"pi":          "0.83.0",
 		"dws":         "v1.0.59-beta.3",
 	},
+	"baedb216407a5060": {
+		"hermes":      "0.19.0",
+		"opencode":    "v1.18.19",
+		"opencode-v2": "0.0.0-beta-202608110357",
+		"dsh":         "0.1.0-rc.8",
+		"pi":          "0.84.2",
+		"dws":         "v1.0.59",
+	},
 }
 
 func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
