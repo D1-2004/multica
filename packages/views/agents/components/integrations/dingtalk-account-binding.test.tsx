@@ -119,6 +119,7 @@ const activeBinding = {
     enabledDomains: [],
     calendarStartEnabled: false,
     conversations: [],
+    emojiConversations: [],
   },
 };
 
@@ -302,6 +303,38 @@ describe("DingTalkAccountBindingCard", () => {
     renderCard();
 
     expect(await screen.findByText("Listening for approval events")).toBeInTheDocument();
+  });
+
+  it("shows the emoji reaction conversations when the binding subscribes to them", async () => {
+    listBindings.mockResolvedValue({
+      bindings: [
+        {
+          ...activeBinding,
+          messageRoute: {
+            ...activeBinding.messageRoute,
+            emojiConversations: [
+              { cid: "78288514993", name: "消息测试" },
+              { cid: "2960443310:6261898177", name: "叶志毅" },
+            ],
+          },
+        },
+      ],
+      configured: true,
+    });
+
+    renderCard();
+
+    expect(
+      await screen.findByText("Listening for emoji reactions in 2 conversations"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Listening for emoji reactions in 2 conversations",
+      }),
+    );
+    expect(await screen.findByText("消息测试")).toBeInTheDocument();
+    expect(screen.getByText("叶志毅")).toBeInTheDocument();
   });
 
   it("uses the exact Chinese listening summaries", () => {

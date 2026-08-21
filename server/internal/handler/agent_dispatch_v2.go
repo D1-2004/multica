@@ -62,8 +62,8 @@ type DispatchAttachment struct {
 // occurredAt 是表情操作时间；data 层 sender 是贴/移除表情的人。
 type DispatchMessageReaction struct {
 	EmotionName    string `json:"emotionName"`
-	EmotionTypeV2  string `json:"emotionTypeV2,omitempty"`
-	EmotionVersion string `json:"emotionVersion,omitempty"`
+	EmotionTypeV2  int64  `json:"emotionTypeV2,omitempty"`
+	EmotionVersion int64  `json:"emotionVersion,omitempty"`
 	Action         string `json:"action"` // "add" | "remove"
 	OperateTime    int64  `json:"operateTime,omitempty"`
 }
