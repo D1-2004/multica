@@ -181,6 +181,95 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	}
 }
 
+func TestHandleAgentDispatchV2AcceptsEmotionReplyAndQueuesIssueTask(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-emotion-reply-issue", nil)
+	body := fmt.Sprintf(`{
+		"schemaVersion":"2.0",
+		"agentId":%q,
+		"continuation":null,
+		"completionCallback":{"url":"/api/v1/dispatch-tasks/test-emotion-reply/execution-result"},
+		"source":{"platform":"dingtalk","type":"digital_employee"},
+		"event":{
+			"domain":"channel",
+			"type":"emotionReply",
+			"data":{
+				"conversation":{"openConversationId":"2960443310:6261898177","type":"single"},
+				"sender":{"displayName":"张三","openDingTalkId":"role53xzq5wvEMnGtqRrVzeBvwiEiE"},
+				"messages":[{
+					"openMsgId":"msghW4kFy6nrm9LXqcWYMjg2Q==",
+					"occurredAt":1787109176208,
+					"reaction":{
+						"emotionName":"憨笑",
+						"emotionTypeV2":1,
+						"emotionVersion":1,
+						"action":"add",
+						"operateTime":1787109176208
+					}
+				}]
+			}
+		},
+		"surface":{"type":"issue"},
+		"outbound":{"mode":"dws","replyTo":"latest_message"},
+		"contextPrompt":"ROUTER CONTEXT"
+	}`, agentID)
+
+	w := postAgentDispatchForTest(t, body, agentID)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("emotionReply dispatch: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var response AgentDispatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
+	})
+
+	var title string
+	var description pgtype.Text
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT title, description
+		FROM issue
+		WHERE id = $1
+	`, response.Continuation.IssueID).Scan(&title, &description); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(title, "【钉钉·私聊】张三：对消息「一条消息」的表情回复 憨笑 · ") {
+		t.Fatalf("title = %q", title)
+	}
+	if !strings.Contains(description.String, "张三") ||
+		!strings.Contains(description.String, "对消息「一条消息」贴上了表情 憨笑") {
+		t.Fatalf("description missing reaction summary: %s", description.String)
+	}
+	for _, private := range []string{"2960443310:6261898177", "msghW4kFy6nrm9LXqcWYMjg2Q==", "role53xzq5wvEMnGtqRrVzeBvwiEiE"} {
+		if strings.Contains(description.String, private) {
+			t.Errorf("description leaked %q: %s", private, description.String)
+		}
+	}
+
+	var taskContext []byte
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT context
+		FROM agent_task_queue
+		WHERE id = $1
+	`, response.TaskID).Scan(&taskContext); err != nil {
+		t.Fatal(err)
+	}
+	for _, structuredValue := range []string{
+		"dispatch_schema_version",
+		"dispatch_event_data",
+		"2960443310:6261898177",
+		"msghW4kFy6nrm9LXqcWYMjg2Q==",
+		"emotionReply",
+		"dispatch_context_prompt",
+		"ROUTER CONTEXT",
+	} {
+		if !strings.Contains(string(taskContext), structuredValue) {
+			t.Errorf("task structured context missing %q: %s", structuredValue, taskContext)
+		}
+	}
+}
+
 func TestHandleAgentDispatchV2SeparatesTitleDuplicatesFromAcceptanceIdempotency(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "test-v2-title-and-acceptance-idempotency", nil)
 	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
