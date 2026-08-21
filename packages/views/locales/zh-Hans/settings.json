@@ -236,6 +236,7 @@
       "issue": "任务",
       "chat": "聊天",
       "notifications": "通知",
+      "mcp": "MCP 连接",
       "tokens": "API Token",
       "general": "通用",
       "repositories": "代码仓库",
@@ -421,6 +422,56 @@
       "granted": "当前浏览器可以弹出通知横幅。",
       "denied": "已被浏览器拦截。请在浏览器设置中为本站点开启通知权限。",
       "enabled_badge": "已启用"
+    }
+  },
+  "mcp": {
+    "title": "MCP 连接",
+    "description": "在一个页面中将 Multica 工具接入支持的 AI 客户端。",
+    "service_title": "Multica MCP",
+    "service_description": "复制服务地址，或为所选客户端生成可直接导入的配置。",
+    "endpoint_label": "MCP 服务地址",
+    "endpoint_aria": "Multica MCP 服务地址",
+    "copy_endpoint": "复制 MCP 服务地址",
+    "endpoint_copied": "已复制 MCP 服务地址",
+    "clients_label": "添加到客户端",
+    "configure_aria": "配置 {{client}}",
+    "security_hint": "每次配置都会创建一个独立的 90 天 API Key。复制的配置包含该密钥，请只保存在本机；不再使用时可前往 API Token 单独吊销。",
+    "config_copied": "配置已复制",
+    "config_ready": "配置已生成。",
+    "copy_failed": "无法复制配置",
+    "create_failed": "无法创建 MCP API Key",
+    "destinations": {
+      "codex": "将 TOML 粘贴到 ~/.codex/config.toml，然后重启 Codex。",
+      "claude": "在终端运行复制的命令，它会将 Multica 添加到本机 Claude 的用户级配置。",
+      "qoder": "在 Qoder 中打开设置 → MCP → My Servers，选择添加并粘贴 JSON。",
+      "qoderwork": "在 QoderWork 中打开扩展 → 连接器 → + 添加 → 粘贴 JSON 配置。"
+    },
+    "dialog": {
+      "title": "连接 {{client}}",
+      "description": "Multica 将为 {{client}} 创建一个独立的 {{days}} 天 API Key，并写入复制的配置。",
+      "one_time_hint": "该凭证只在此刻显示，请在关闭弹窗前完成导入。",
+      "cancel": "取消",
+      "create_and_copy": "创建 API Key 并复制",
+      "creating": "创建中...",
+      "copy_again": "再次复制",
+      "done": "完成"
+    },
+    "usage": {
+      "title": "用法说明",
+      "steps": {
+        "api_key": {
+          "title": "提供 API Key",
+          "description": "连接 Multica MCP 必须提供 API Key。选择上方客户端后，Multica 会为该客户端创建一枚独立的 90 天密钥。"
+        },
+        "import": {
+          "title": "导入客户端配置",
+          "description": "将复制的 TOML、命令或 JSON 粘贴到所选客户端，然后重新加载 MCP 连接。"
+        },
+        "security": {
+          "title": "妥善保管密钥",
+          "description": "配置中包含 API Key，请仅保存在本机；不再使用该客户端时，到 API Token 页面吊销对应密钥。"
+        }
+      }
     }
   },
   "tokens": {
