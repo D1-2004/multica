@@ -2,7 +2,7 @@
 
 Multica can enable model request/response tracing for one Agent task without
 changing the model provider protocol. The runtime image's existing provider
-reverse proxy captures the pair and posts it to the selected receiver on a
+reverse proxy captures the pair and posts it to Multica's task relay on a
 best-effort, fail-open path.
 
 ## Configuration and precedence
@@ -18,13 +18,15 @@ The Agent setting remains:
 }
 ```
 
-Delivery is enabled only when `enabled` is true and at least one destination is
-available: a non-empty static `sink_url`, or a complete private Router callback
-containing relative `telemetry_url`, `telemetry_token`, and
-`telemetry_expires_at`. Multica always gives the sandbox its own absolute task
-relay URL. The two destinations do not override each other: after receiving one
-paired event, Multica forwards the unchanged JSON to every configured
-destination.
+Router telemetry is enabled by default whenever the task contains a complete
+private callback with relative `telemetry_url`, `telemetry_token`, and
+`telemetry_expires_at`; it does not depend on the Agent's `enabled` setting.
+That setting controls only delivery to the configured static `sink_url`.
+Multica enables capture when either the Router callback is complete or both
+`enabled` is true and `sink_url` is non-empty, and always gives the sandbox its
+own absolute task relay URL. The two destinations do not override each other:
+after receiving one paired event, Multica forwards the unchanged JSON to
+Router, and additionally to the static sink only when its switch is enabled.
 
 Multica passes these values only in the task's sandbox execution environment:
 
@@ -126,3 +128,4 @@ status, task identity, sequence, sizes, and bounded error classification.
 | 2026-08-08 | Bound the Multica trace endpoint to the existing per-task Sandbox Relay assertion before validating the Router capability | Preserve the proven sandbox control-plane tunnel without exposing its relay token to the model proxy configuration |
 | 2026-08-08 | Unified all sandbox trace delivery through daemon-authenticated Multica ingress and added server-side fan-out to both Router telemetry and the Agent static sink | Prevent a dynamic Router callback from suppressing the original trace destination, keep Router capabilities out of the sandbox, and reuse the same proven control-plane path as task lifecycle reporting |
 | 2026-08-13 | Added nullable `executionSummary.first_effective_reply_at` from the task's first persisted Agent activity by message-stream order; no historical outbox rows are backfilled | Preserve first-reply latency metrics after Router stopped fetching the post-terminal transcript |
+| 2026-08-20 | Made task-scoped Router telemetry default-on and limited the Agent `enabled` switch to the configured static sink | Preserve platform observability for every Router-dispatched task while keeping external trace forwarding explicitly controlled by the Agent setting |

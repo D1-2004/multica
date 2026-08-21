@@ -236,6 +236,7 @@
       "issue": "タスク",
       "chat": "チャット",
       "notifications": "通知",
+      "mcp": "MCP 接続",
       "tokens": "API トークン",
       "general": "一般",
       "repositories": "リポジトリ",
@@ -421,6 +422,56 @@
       "granted": "このブラウザは通知バナーを表示できます。",
       "denied": "ブラウザによってブロックされています。ブラウザの設定でこのサイトの通知を許可してください。",
       "enabled_badge": "有効"
+    }
+  },
+  "mcp": {
+    "title": "MCP 接続",
+    "description": "対応する AI クライアントに Multica のツールを一か所から接続します。",
+    "service_title": "Multica MCP",
+    "service_description": "サービス URL をコピーするか、クライアント向けのインポート可能な設定を生成します。",
+    "endpoint_label": "MCP サービス URL",
+    "endpoint_aria": "Multica MCP サービス URL",
+    "copy_endpoint": "MCP サービス URL をコピー",
+    "endpoint_copied": "MCP サービス URL をコピーしました",
+    "clients_label": "クライアントに追加",
+    "configure_aria": "{{client}} を設定",
+    "security_hint": "設定ごとに専用の 90 日間 API キーが作成されます。コピーした設定にはキーが含まれるため、この端末だけに保存し、不要になったら API トークンから失効してください。",
+    "config_copied": "設定をコピーしました",
+    "config_ready": "設定を生成しました。",
+    "copy_failed": "設定をコピーできませんでした",
+    "create_failed": "MCP API キーを作成できませんでした",
+    "destinations": {
+      "codex": "TOML を ~/.codex/config.toml に貼り付け、Codex を再起動してください。",
+      "claude": "コピーしたコマンドをターミナルで実行すると、この端末の Claude ユーザースコープに Multica が追加されます。",
+      "qoder": "Qoder で Settings → MCP → My Servers を開き、Add を選んで JSON を貼り付けてください。",
+      "qoderwork": "QoderWork で Extensions → Connectors → + Add → Paste JSON Config を開いてください。"
+    },
+    "dialog": {
+      "title": "{{client}} に接続",
+      "description": "Multica は {{client}} 専用の {{days}} 日間 API キーを作成し、コピーする設定に含めます。",
+      "one_time_hint": "この認証情報が表示されるのは今回だけです。ダイアログを閉じる前にインポートしてください。",
+      "cancel": "キャンセル",
+      "create_and_copy": "API キーを作成してコピー",
+      "creating": "作成中...",
+      "copy_again": "もう一度コピー",
+      "done": "完了"
+    },
+    "usage": {
+      "title": "使い方",
+      "steps": {
+        "api_key": {
+          "title": "API キーを用意する",
+          "description": "Multica MCP への接続には API キーが必要です。上でクライアントを選ぶと、そのクライアント専用の 90 日間キーが作成されます。"
+        },
+        "import": {
+          "title": "設定をインポートする",
+          "description": "コピーした TOML、コマンド、または JSON を選択したクライアントに貼り付け、MCP 接続を再読み込みします。"
+        },
+        "security": {
+          "title": "キーを安全に保管する",
+          "description": "設定には API キーが含まれます。この端末だけに保存し、使用をやめるときは API トークンから失効してください。"
+        }
+      }
     }
   },
   "tokens": {

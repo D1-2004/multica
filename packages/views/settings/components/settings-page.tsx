@@ -10,6 +10,7 @@ import {
   FolderGit2,
   FlaskConical,
   Bell,
+  Cable,
   Plug,
   MessageCircle,
   Tags,
@@ -36,6 +37,7 @@ import { PreferencesTab } from "./preferences-tab";
 import { ChatTab } from "./chat-tab";
 import { IssueTab } from "./issue-tab";
 import { TokensTab } from "./tokens-tab";
+import { MCPConnectionsTab } from "./mcp-connections-tab";
 import { WorkspaceTab } from "./workspace-tab";
 import { MembersTab } from "./members-tab";
 import { RepositoriesTab } from "./repositories-tab";
@@ -58,6 +60,7 @@ const ACCOUNT_TAB_KEYS = [
   "issue",
   "chat",
   "notifications",
+  "mcp",
   "tokens",
 ] as const;
 const ACCOUNT_TAB_ICONS = {
@@ -67,6 +70,7 @@ const ACCOUNT_TAB_ICONS = {
   issue: ListTodo,
   chat: MessageCircle,
   notifications: Bell,
+  mcp: Cable,
   tokens: Key,
 } as const;
 
@@ -287,6 +291,9 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           </TabsContent>
           <TabsContent value="notifications">
             <NotificationsTab />
+          </TabsContent>
+          <TabsContent value="mcp">
+            <MCPConnectionsTab />
           </TabsContent>
           <TabsContent value="tokens">
             <TokensTab />

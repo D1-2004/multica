@@ -1372,6 +1372,10 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlan(ctx context.Context, iss
 }
 
 func (s *TaskService) enqueueMentionTaskWithCommentPlanAndIdentityContext(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, agentIdentityContextToken string) (db.AgentTaskQueue, error) {
+	return s.enqueueMentionTaskWithCommentPlanAndDispatchContext(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, forceFreshSession, handoffNote, actorUserID, rerunOfTaskID, agentIdentityContextToken, nil)
+}
+
+func (s *TaskService) enqueueMentionTaskWithCommentPlanAndDispatchContext(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, forceFreshSession bool, handoffNote string, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, agentIdentityContextToken string, dispatchContext []byte) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
 		slog.Error("mention task enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
@@ -1427,6 +1431,7 @@ func (s *TaskService) enqueueMentionTaskWithCommentPlanAndIdentityContext(ctx co
 		// from a later request against a new HEAD (TEN-356).
 		HeadSha:                   headShaText(s.ResolveIssueReviewSHA(ctx, issue.ID)),
 		AgentIdentityContextToken: agentIdentityContextTokenText(agentIdentityContextToken),
+		DispatchContext:           dispatchContext,
 	})
 	if err != nil {
 		// A concurrent enqueue for the same (issue, agent) won the race and the
@@ -4989,6 +4994,81 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 // to a structured 403 (no task was cancelled or created).
 var ErrRerunInvokeNotAllowed = errors.New("rerun: operator not allowed to invoke target agent")
 
+func rerunDispatchContext(sourceTask db.AgentTaskQueue) ([]byte, error) {
+	if len(sourceTask.Context) == 0 {
+		return nil, nil
+	}
+
+	payload := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(sourceTask.Context, &payload); err != nil {
+		return nil, fmt.Errorf("decode source task context for rerun: %w", err)
+	}
+	delete(payload, protocol.AgentIdentityContextTokenJSONKey)
+	delete(payload, protocol.AgentIdentityContextTokenExpiresAtJSONKey)
+	delete(payload, protocol.AgentIdentityContextTokenSourceJSONKey)
+
+	stableDWS, hasStableDWS, err := fcE2BExternalDWSIdentity(sourceTask)
+	if err != nil {
+		return nil, fmt.Errorf("decode source task external DWS identity for rerun: %w", err)
+	}
+	if hasStableDWS {
+		externalIdentity, err := json.Marshal(map[string]any{
+			"dws": map[string]string{
+				"uid":   stableDWS.UID,
+				"orgId": stableDWS.OrgID,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encode source task external DWS identity for rerun: %w", err)
+		}
+		payload["external_identity"] = externalIdentity
+	} else {
+		delete(payload, "external_identity")
+	}
+
+	if rawCallback, present := payload["completion_callback"]; present {
+		callback := make(map[string]json.RawMessage)
+		if err := json.Unmarshal(rawCallback, &callback); err != nil {
+			return nil, fmt.Errorf("decode source task completion callback for rerun: %w", err)
+		}
+		delete(callback, "telemetry_url")
+		delete(callback, "telemetry_token")
+		delete(callback, "telemetry_expires_at")
+		encodedCallback, err := json.Marshal(callback)
+		if err != nil {
+			return nil, fmt.Errorf("encode source task completion callback for rerun: %w", err)
+		}
+		payload["completion_callback"] = encodedCallback
+	}
+
+	contextJSON, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode source task context for rerun: %w", err)
+	}
+	return contextJSON, nil
+}
+
+func (s *TaskService) latestStableRerunDispatchContext(ctx context.Context, issueID pgtype.UUID, agentID pgtype.UUID) ([]byte, error) {
+	tasks, err := s.Queries.ListTasksByIssue(ctx, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("list issue tasks for rerun context: %w", err)
+	}
+	for _, task := range tasks {
+		if util.UUIDToString(task.AgentID) != util.UUIDToString(agentID) {
+			continue
+		}
+		_, present, err := fcE2BExternalDWSIdentity(task)
+		if err != nil {
+			return nil, fmt.Errorf("inspect prior task external DWS identity for rerun: %w", err)
+		}
+		if !present {
+			continue
+		}
+		return rerunDispatchContext(task)
+	}
+	return nil, nil
+}
+
 // Only tasks belonging to the target agent on this issue are cancelled.
 // Tasks owned by other agents on the same issue (e.g. a parallel
 // @-mention agent) are left alone — rerun must not collateral-cancel
@@ -5013,6 +5093,7 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		isLeader            bool
 		squadID             pgtype.UUID
 		coalescedCommentIDs []pgtype.UUID
+		dispatchContext     []byte
 	)
 	if sourceTaskID.Valid {
 		sourceTask, err := s.Queries.GetAgentTask(ctx, sourceTaskID)
@@ -5021,6 +5102,10 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		}
 		if !sourceTask.IssueID.Valid || util.UUIDToString(sourceTask.IssueID) != util.UUIDToString(issueID) {
 			return nil, fmt.Errorf("source task does not belong to this issue")
+		}
+		dispatchContext, err = rerunDispatchContext(sourceTask)
+		if err != nil {
+			return nil, err
 		}
 		agentID = sourceTask.AgentID
 		isLeader = sourceTask.IsLeaderTask
@@ -5077,6 +5162,18 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		}
 	}
 
+	if !sourceTaskID.Valid {
+		// Legacy/API callers do not identify a source row. Recover only the
+		// newest stable external identity for this issue and resolved agent;
+		// do not set rerun lineage, because that would also opt the task into
+		// source-session/workdir reuse. rerunDispatchContext strips the old
+		// short-lived ContextToken so launch can mint a fresh one.
+		dispatchContext, err = s.latestStableRerunDispatchContext(ctx, issueID, agentID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// Cancel only the target agent's active/queued tasks on this issue.
 	cancelled, err := s.Queries.CancelAgentTasksByIssueAndAgent(ctx, db.CancelAgentTasksByIssueAndAgentParams{
 		IssueID: issueID,
@@ -5100,7 +5197,7 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 	// sourceTaskID is the rerun lineage: it rides the CreateAgentTask insert
 	// (rerun_of_task_id) so the queued event / daemon claim never sees a NULL
 	// lineage, and it stays distinct from system-retry's retry_of_task_id (§5).
-	task, err := s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, actorUserID, sourceTaskID)
+	task, err := s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, actorUserID, sourceTaskID, dispatchContext)
 	if err != nil {
 		return nil, err
 	}
@@ -5179,12 +5276,12 @@ func (s *TaskService) promoteNewestSurvivingComment(ctx context.Context, ids []p
 // handler ignores this flag for reruns and instead reads the exact source task
 // (rerun_of_task_id) to reuse its workdir and, when the failure did not poison
 // the conversation, resume its session (MUL-4869).
-func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID) (db.AgentTaskQueue, error) {
+func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, coalescedCommentIDs []pgtype.UUID, isLeader bool, squadID pgtype.UUID, actorUserID pgtype.UUID, rerunOfTaskID pgtype.UUID, dispatchContext []byte) (db.AgentTaskQueue, error) {
 	if issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid &&
 		util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agentID) {
-		return s.enqueueIssueTaskWithCommentPlan(ctx, issue, triggerCommentID, coalescedCommentIDs, true, "", actorUserID, rerunOfTaskID, pgtype.Timestamptz{})
+		return s.enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx, issue, triggerCommentID, coalescedCommentIDs, true, "", actorUserID, rerunOfTaskID, pgtype.Timestamptz{}, "", dispatchContext, pgtype.UUID{})
 	}
-	return s.enqueueMentionTaskWithCommentPlan(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, true, "", actorUserID, rerunOfTaskID)
+	return s.enqueueMentionTaskWithCommentPlanAndDispatchContext(ctx, issue, agentID, triggerCommentID, coalescedCommentIDs, isLeader, squadID, true, "", actorUserID, rerunOfTaskID, "", dispatchContext)
 }
 
 // HandleFailedTasks runs the post-failure side effects for a batch of
