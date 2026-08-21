@@ -192,12 +192,14 @@ edge verifies the sandbox assertion and daemon-token digest before Multica
 applies ordinary `DaemonAuth` and task ownership checks. The sandbox assertion
 remains outside provider proxy configuration.
 
-Agent `runtime_config.llm_trace.enabled` remains the delivery switch. A complete
-Router telemetry capability and the Agent's configured static sink are
-independent destinations. Multica fans out one sandbox submission to both when
-both are present. A static sink receives the unchanged trace JSON without a
-Router or daemon token. Missing or disabled configuration produces no trace
-delivery.
+Task-scoped Router telemetry is enabled by default whenever a complete Router
+capability is present. Agent `runtime_config.llm_trace.enabled` controls only
+delivery to the configured static sink. The two destinations are independent:
+Multica fans out one sandbox submission to both when the static sink is enabled,
+and continues to forward to Router when it is disabled or absent. A static sink
+receives the unchanged trace JSON without a Router or daemon token. With neither
+a complete Router capability nor an enabled non-empty static sink, the runtime
+does not capture or deliver traces.
 
 The terminal `execution-result` request now also accepts an optional
 `executionSummary`. Multica freezes the same task timing, usage, message/tool
@@ -401,3 +403,12 @@ parsing or rewriting Router's context string.
 - Reason: Router now consumes the immutable terminal summary without querying
   the post-terminal transcript, so the summary must carry the original first
   activity signal used by first-reply latency metrics.
+
+## Change record: 2026-08-20 Default Router LLM trace delivery
+
+- History: Router task telemetry is now default-on whenever its private
+  callback is complete. Agent `runtime_config.llm_trace.enabled` now controls
+  only fan-out to the configured static trace sink.
+- Reason: Platform observability must not depend on an Agent's optional external
+  trace destination, while the existing sandbox-to-Multica relay remains the
+  single capture and delivery path.

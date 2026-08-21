@@ -103,9 +103,7 @@ func relayTaskLLMTrace(
 			SinkURL string `json:"sink_url"`
 		} `json:"llm_trace"`
 	}
-	if json.Unmarshal(runtimeConfig, &config) != nil || !config.LLMTrace.Enabled {
-		return 0, errLLMTraceUnavailable
-	}
+	_ = json.Unmarshal(runtimeConfig, &config)
 	var taskContext struct {
 		CompletionCallback llmTraceCallback `json:"completion_callback"`
 	}
@@ -113,7 +111,10 @@ func relayTaskLLMTrace(
 		return 0, errLLMTraceUnavailable
 	}
 	callback := taskContext.CompletionCallback
-	staticSinkURL := strings.TrimSpace(config.LLMTrace.SinkURL)
+	staticSinkURL := ""
+	if config.LLMTrace.Enabled {
+		staticSinkURL = strings.TrimSpace(config.LLMTrace.SinkURL)
+	}
 	hasCallback := strings.TrimSpace(callback.TelemetryURL) != "" ||
 		strings.TrimSpace(callback.TelemetryToken) != "" || callback.TelemetryExpiresAt != 0
 	if !hasCallback && staticSinkURL == "" {
