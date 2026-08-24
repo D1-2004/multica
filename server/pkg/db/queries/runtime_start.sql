@@ -205,3 +205,99 @@ WHERE id = @id
   AND runtime_id = @runtime_id
   AND status = 'starting'
 RETURNING *;
+
+-- name: MarkAgentTaskRuntimeStartCapacityWaiting :one
+-- Capacity pressure is not a task failure. Lock the queued task before its
+-- startup attempt, matching the claim/failure lock order, so a concurrent
+-- daemon claim wins cleanly and the attempt is never mislabeled as waiting
+-- after the task has already left the queue.
+WITH queued_task AS MATERIALIZED (
+    SELECT task.id
+    FROM agent_task_queue AS task
+    WHERE task.id = @task_id
+      AND task.runtime_id = @runtime_id
+      AND task.status = 'queued'
+    FOR UPDATE
+)
+UPDATE agent_task_runtime_start_attempt AS attempt
+SET status = 'blocked',
+    last_stage = 'sandbox_capacity_waiting',
+    error_code = 'ASB-CAPACITY-WAITING',
+    error_detail = @error_detail,
+    finished_at = now(),
+    updated_at = now()
+WHERE attempt.id = @id
+  AND attempt.task_id = @task_id
+  AND attempt.runtime_id = @runtime_id
+  AND attempt.status = 'starting'
+  AND EXISTS (SELECT 1 FROM queued_task)
+RETURNING attempt.*;
+
+-- name: SupersedeAgentTaskRuntimeStartAttemptForTerminalTask :execrows
+-- A cancellation can win the task row lock while the launcher is converting a
+-- capacity error into a blocked attempt. Close that observability record only
+-- when the task is already terminal; a concurrent claim keeps ownership of the
+-- normal claim finalizer.
+UPDATE agent_task_runtime_start_attempt AS attempt
+SET status = 'superseded',
+    last_stage = 'task_terminal_before_capacity_wait',
+    error_code = 'TASK-TERMINAL-BEFORE-CAPACITY-WAIT',
+    error_detail = 'task became terminal before ASB capacity wait was recorded',
+    finished_at = now(),
+    updated_at = now()
+WHERE attempt.id = @id
+  AND attempt.task_id = @task_id
+  AND attempt.runtime_id = @runtime_id
+  AND attempt.status = 'starting'
+  AND EXISTS (
+      SELECT 1
+      FROM agent_task_queue AS task
+      WHERE task.id = attempt.task_id
+        AND task.runtime_id = attempt.runtime_id
+        AND task.status IN ('completed', 'failed', 'cancelled')
+  );
+
+-- name: ListASBCapacityWaitingTasks :many
+-- Only the latest startup attempt controls retry eligibility. A later
+-- serialization block suppresses an older capacity-wait record, while an ASB
+-- attempt abandoned past the task-launch lease is recovered after a crash.
+-- Return one task per Runtime without a global LIMIT so a busy tenant cannot
+-- hide every other tenant before exact credential scopes are resolved in Go.
+SELECT DISTINCT ON (task.runtime_id) task.*
+FROM agent_task_queue AS task
+JOIN LATERAL (
+    SELECT attempt.backend,
+           attempt.status,
+           attempt.error_code,
+           attempt.finished_at,
+           attempt.updated_at
+    FROM agent_task_runtime_start_attempt AS attempt
+    WHERE attempt.task_id = task.id
+      AND attempt.runtime_id = task.runtime_id
+    ORDER BY attempt.created_at DESC, attempt.id DESC
+    LIMIT 1
+) AS latest_attempt ON true
+WHERE task.status = 'queued'
+  -- DEAP DWS tokens are request-bound and intentionally absent from durable
+  -- task context, so those A2A launches cannot be resumed by this worker.
+  AND COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
+  AND (
+      (
+          latest_attempt.status = 'blocked'
+          AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
+          AND COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
+              <= now() - make_interval(secs => sqlc.arg('retry_seconds')::double precision)
+      )
+      OR
+      (
+          latest_attempt.backend = 'asb'
+          AND latest_attempt.status = 'starting'
+          AND latest_attempt.updated_at
+              <= now() - make_interval(secs => sqlc.arg('stale_seconds')::double precision)
+      )
+  )
+  AND (
+      task.runtime_launch_lease_expires_at IS NULL
+      OR task.runtime_launch_lease_expires_at <= now()
+  )
+ORDER BY task.runtime_id, task.priority DESC, task.created_at ASC, task.id ASC;

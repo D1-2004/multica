@@ -86,6 +86,306 @@ func TestRuntimeStartFailurePersistsAfterRequestCancellation(t *testing.T) {
 	}
 }
 
+func TestASBCapacityWaitKeepsTaskQueuedAndUsesLatestAttempt(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	svc := NewTaskService(queries, pool, nil, events.New())
+	taskID, _, _ := dispatchedCommentTaskFixture(t, ctx, pool)
+	taskUUID := util.MustParseUUID(taskID)
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'queued',
+		    dispatched_at = NULL,
+		    completed_at = NULL,
+		    error = NULL,
+		    failure_reason = NULL,
+		    created_at = now() - interval '3 hours'
+		WHERE id = $1
+	`, taskUUID); err != nil {
+		t.Fatalf("reset task to queued: %v", err)
+	}
+	task, err := queries.GetAgentTask(ctx, taskUUID)
+	if err != nil {
+		t.Fatalf("load queued task: %v", err)
+	}
+
+	capacityAttempt, err := svc.BeginRuntimeStartAttempt(
+		ctx,
+		task,
+		SandboxBackendASB,
+		RuntimeStartProtocolHTTPJSONV1,
+	)
+	if err != nil {
+		t.Fatalf("begin capacity attempt: %v", err)
+	}
+	if _, err := svc.RecordRuntimeStartStage(
+		ctx,
+		capacityAttempt.ID,
+		task.ID,
+		task.RuntimeID,
+		"sandbox_resolving",
+	); err != nil {
+		t.Fatalf("record sandbox resolving: %v", err)
+	}
+	if waiting, err := svc.MarkRuntimeStartCapacityWaiting(ctx, capacityAttempt); err != nil || !waiting {
+		t.Fatalf("mark capacity waiting: %v", err)
+	}
+
+	queued, err := queries.GetAgentTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("load capacity-waiting task: %v", err)
+	}
+	if queued.Status != "queued" || queued.CompletedAt.Valid || queued.Error.Valid || queued.FailureReason.Valid {
+		t.Fatalf("capacity-waiting task became terminal: %+v", queued)
+	}
+	gotAttempt, err := queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+		ID: capacityAttempt.ID, TaskID: task.ID, RuntimeID: task.RuntimeID,
+	})
+	if err != nil {
+		t.Fatalf("load capacity attempt: %v", err)
+	}
+	if gotAttempt.Status != "blocked" ||
+		gotAttempt.LastStage != asbCapacityWaitingStage ||
+		gotAttempt.ErrorCode != asbCapacityWaitingErrorCode ||
+		!gotAttempt.FinishedAt.Valid {
+		t.Fatalf("capacity attempt = %+v", gotAttempt)
+	}
+
+	waiting, err := queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
+		RetrySeconds: 0,
+		StaleSeconds: time.Hour.Seconds(),
+	})
+	if err != nil {
+		t.Fatalf("list capacity waits: %v", err)
+	}
+	if len(waiting) != 1 || waiting[0].ID != task.ID {
+		t.Fatalf("capacity waits = %+v, want task %s", waiting, taskID)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET context = context || '{"deap_dws_token_required":true}'::jsonb
+		WHERE id = $1
+	`, task.ID); err != nil {
+		t.Fatalf("mark request-bound A2A task: %v", err)
+	}
+	waiting, err = queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
+		RetrySeconds: 0,
+		StaleSeconds: time.Hour.Seconds(),
+	})
+	if err != nil {
+		t.Fatalf("list request-bound capacity waits: %v", err)
+	}
+	for _, candidate := range waiting {
+		if candidate.ID == task.ID {
+			t.Fatal("request-bound DEAP DWS task entered durable capacity retry")
+		}
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET context = context - 'deap_dws_token_required'
+		WHERE id = $1
+	`, task.ID); err != nil {
+		t.Fatalf("restore durable task context: %v", err)
+	}
+
+	// The generic queued backlog sweeper must not expire an intentional ASB
+	// capacity wait, even though this fixture predates the normal two-hour TTL.
+	expired, err := queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+		TtlSecs:            1,
+		AsbCapacityTtlSecs: 24 * time.Hour.Seconds(),
+		MaxPerTick:         10,
+	})
+	if err != nil {
+		t.Fatalf("expire queues with capacity waiter: %v", err)
+	}
+	for _, candidate := range expired {
+		if candidate.ID == task.ID {
+			t.Fatal("capacity-waiting task was expired by generic queue TTL")
+		}
+	}
+
+	// A newer serialization block supersedes the historical capacity record.
+	// The capacity worker must stop selecting it, and normal queue TTL applies.
+	leaseStore := newPostgresTaskRuntimeLaunchLeaseStore(queries)
+	lease, acquired, err := leaseStore.Acquire(ctx, task.ID, runtimeLaunchLeaseDuration)
+	if err != nil || !acquired {
+		t.Fatalf("acquire capacity retry lease: acquired=%v err=%v", acquired, err)
+	}
+	serializationAttempt, err := svc.BeginRuntimeStartAttempt(
+		withTaskRuntimeLaunchLease(ctx, lease),
+		task,
+		SandboxBackendASB,
+		RuntimeStartProtocolHTTPJSONV1,
+	)
+	if err != nil {
+		t.Fatalf("begin newer serialization attempt: %v", err)
+	}
+	expired, err = queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+		TtlSecs:            1,
+		AsbCapacityTtlSecs: 24 * time.Hour.Seconds(),
+		MaxPerTick:         10,
+	})
+	if err != nil {
+		t.Fatalf("expire queue during capacity retry: %v", err)
+	}
+	for _, candidate := range expired {
+		if candidate.ID == task.ID {
+			t.Fatal("active capacity retry was expired while its launch lease was held")
+		}
+	}
+	if err := leaseStore.Release(ctx, lease); err != nil {
+		t.Fatalf("release capacity retry lease: %v", err)
+	}
+	if err := svc.MarkRuntimeStartBlocked(ctx, serializationAttempt); err != nil {
+		t.Fatalf("mark newer serialization block: %v", err)
+	}
+	waiting, err = queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
+		RetrySeconds: 0,
+		StaleSeconds: time.Hour.Seconds(),
+	})
+	if err != nil {
+		t.Fatalf("list capacity waits after newer attempt: %v", err)
+	}
+	for _, candidate := range waiting {
+		if candidate.ID == task.ID {
+			t.Fatal("historical capacity attempt overrode the latest serialization attempt")
+		}
+	}
+	expired, err = queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+		TtlSecs:            1,
+		AsbCapacityTtlSecs: 24 * time.Hour.Seconds(),
+		MaxPerTick:         10,
+	})
+	if err != nil {
+		t.Fatalf("expire queue after capacity wait ended: %v", err)
+	}
+	found := false
+	for _, candidate := range expired {
+		if candidate.ID == task.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("task with newer non-capacity attempt remained exempt from queue TTL")
+	}
+}
+
+func TestASBCapacityWaiterRecoversAbandonedASBStartAttempt(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	svc := NewTaskService(queries, pool, nil, events.New())
+	taskID, _, _ := dispatchedCommentTaskFixture(t, ctx, pool)
+	taskUUID := util.MustParseUUID(taskID)
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'queued',
+		    dispatched_at = NULL,
+		    created_at = now() - interval '3 hours'
+		WHERE id = $1
+	`, taskUUID); err != nil {
+		t.Fatalf("reset abandoned ASB task: %v", err)
+	}
+	task, err := queries.GetAgentTask(ctx, taskUUID)
+	if err != nil {
+		t.Fatalf("load abandoned ASB task: %v", err)
+	}
+	attempt, err := svc.BeginRuntimeStartAttempt(
+		ctx,
+		task,
+		SandboxBackendASB,
+		RuntimeStartProtocolHTTPJSONV1,
+	)
+	if err != nil {
+		t.Fatalf("begin abandoned ASB attempt: %v", err)
+	}
+	expired, err := queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+		TtlSecs:            1,
+		AsbCapacityTtlSecs: 24 * time.Hour.Seconds(),
+		MaxPerTick:         10,
+	})
+	if err != nil {
+		t.Fatalf("expire queue before stale ASB recovery: %v", err)
+	}
+	for _, candidate := range expired {
+		if candidate.ID == task.ID {
+			t.Fatal("first ASB start crash expired before stale-start recovery window")
+		}
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_runtime_start_attempt
+		SET updated_at = now() - interval '4 minutes'
+		WHERE id = $1
+	`, attempt.ID); err != nil {
+		t.Fatalf("age abandoned ASB attempt: %v", err)
+	}
+
+	waiting, err := queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
+		RetrySeconds: 5,
+		StaleSeconds: (3 * time.Minute).Seconds(),
+	})
+	if err != nil {
+		t.Fatalf("list abandoned ASB attempts: %v", err)
+	}
+	found := false
+	for _, candidate := range waiting {
+		if candidate.ID == task.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("stale ASB start attempt was not recovered after its launch lease expired")
+	}
+}
+
+func TestASBCapacityWaitClosesAttemptWhenCancellationWins(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	svc := NewTaskService(queries, pool, nil, events.New())
+	taskID, _, _ := dispatchedCommentTaskFixture(t, ctx, pool)
+	taskUUID := util.MustParseUUID(taskID)
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'queued', dispatched_at = NULL
+		WHERE id = $1
+	`, taskUUID); err != nil {
+		t.Fatalf("reset cancellable ASB task: %v", err)
+	}
+	task, err := queries.GetAgentTask(ctx, taskUUID)
+	if err != nil {
+		t.Fatalf("load cancellable ASB task: %v", err)
+	}
+	attempt, err := svc.BeginRuntimeStartAttempt(ctx, task, SandboxBackendASB, RuntimeStartProtocolHTTPJSONV1)
+	if err != nil {
+		t.Fatalf("begin cancellable ASB attempt: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'cancelled', completed_at = now()
+		WHERE id = $1
+	`, task.ID); err != nil {
+		t.Fatalf("cancel ASB task: %v", err)
+	}
+	waiting, err := svc.MarkRuntimeStartCapacityWaiting(ctx, attempt)
+	if err != nil {
+		t.Fatalf("close cancelled capacity attempt: %v", err)
+	}
+	if waiting {
+		t.Fatal("cancelled task was recorded as capacity waiting")
+	}
+	got, err := queries.GetAgentTaskRuntimeStartAttempt(ctx, db.GetAgentTaskRuntimeStartAttemptParams{
+		ID: attempt.ID, TaskID: task.ID, RuntimeID: task.RuntimeID,
+	})
+	if err != nil {
+		t.Fatalf("load cancelled ASB attempt: %v", err)
+	}
+	if got.Status != "superseded" || got.LastStage != "task_terminal_before_capacity_wait" || !got.FinishedAt.Valid {
+		t.Fatalf("cancelled ASB attempt = %+v", got)
+	}
+}
+
 func TestNewRuntimeLaunchLeaseSupersedesAbandonedAttempt(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,18 @@ func (s *stubWakeup) NotifyTaskAvailable(runtimeID, taskID string) {
 
 type stubRuntimeLauncher struct {
 	calls chan runtimeLaunchCall
+}
+
+type capacityWakeRuntimeLauncher struct {
+	wakeups atomic.Int32
+}
+
+func (*capacityWakeRuntimeLauncher) LaunchTask(context.Context, db.AgentTaskQueue) error {
+	return nil
+}
+
+func (launcher *capacityWakeRuntimeLauncher) NotifyRuntimeCapacityMayBeAvailable() {
+	launcher.wakeups.Add(1)
 }
 
 type runtimeLaunchCall struct {
@@ -267,6 +280,23 @@ func TestNotifyTaskEnqueued_InvokesRuntimeLauncher(t *testing.T) {
 	}
 	if got := len(wakeup.calls); got != 1 {
 		t.Fatalf("expected wakeup to remain wired, got %d calls", got)
+	}
+}
+
+func TestNotifyTaskFinishedSignalsCapacityWaiter(t *testing.T) {
+	launcher := &capacityWakeRuntimeLauncher{}
+	svc := &TaskService{RuntimeLauncher: launcher}
+	svc.NotifyTaskFinished(db.AgentTaskQueue{RuntimeID: testUUID(40)})
+	if got := launcher.wakeups.Load(); got != 1 {
+		t.Fatalf("single terminal capacity wakeups = %d, want 1", got)
+	}
+	svc.notifyTasksFinished([]db.AgentTaskQueue{
+		{RuntimeID: testUUID(41)},
+		{RuntimeID: testUUID(41)},
+		{RuntimeID: testUUID(42)},
+	})
+	if got := launcher.wakeups.Load(); got != 2 {
+		t.Fatalf("batch terminal capacity wakeups = %d, want 2 total", got)
 	}
 }
 

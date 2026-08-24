@@ -383,6 +383,131 @@ func (q *Queries) GetStartingAgentTaskRuntimeStartAttemptByTask(ctx context.Cont
 	return i, err
 }
 
+const listASBCapacityWaitingTasks = `-- name: ListASBCapacityWaitingTasks :many
+SELECT DISTINCT ON (task.runtime_id) task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+FROM agent_task_queue AS task
+JOIN LATERAL (
+    SELECT attempt.backend,
+           attempt.status,
+           attempt.error_code,
+           attempt.finished_at,
+           attempt.updated_at
+    FROM agent_task_runtime_start_attempt AS attempt
+    WHERE attempt.task_id = task.id
+      AND attempt.runtime_id = task.runtime_id
+    ORDER BY attempt.created_at DESC, attempt.id DESC
+    LIMIT 1
+) AS latest_attempt ON true
+WHERE task.status = 'queued'
+  -- DEAP DWS tokens are request-bound and intentionally absent from durable
+  -- task context, so those A2A launches cannot be resumed by this worker.
+  AND COALESCE(task.context->>'deap_dws_token_required', 'false') <> 'true'
+  AND (
+      (
+          latest_attempt.status = 'blocked'
+          AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
+          AND COALESCE(latest_attempt.finished_at, latest_attempt.updated_at)
+              <= now() - make_interval(secs => $1::double precision)
+      )
+      OR
+      (
+          latest_attempt.backend = 'asb'
+          AND latest_attempt.status = 'starting'
+          AND latest_attempt.updated_at
+              <= now() - make_interval(secs => $2::double precision)
+      )
+  )
+  AND (
+      task.runtime_launch_lease_expires_at IS NULL
+      OR task.runtime_launch_lease_expires_at <= now()
+  )
+ORDER BY task.runtime_id, task.priority DESC, task.created_at ASC, task.id ASC
+`
+
+type ListASBCapacityWaitingTasksParams struct {
+	RetrySeconds float64 `json:"retry_seconds"`
+	StaleSeconds float64 `json:"stale_seconds"`
+}
+
+// Only the latest startup attempt controls retry eligibility. A later
+// serialization block suppresses an older capacity-wait record, while an ASB
+// attempt abandoned past the task-launch lease is recovered after a crash.
+// Return one task per Runtime without a global LIMIT so a busy tenant cannot
+// hide every other tenant before exact credential scopes are resolved in Go.
+func (q *Queries) ListASBCapacityWaitingTasks(ctx context.Context, arg ListASBCapacityWaitingTasksParams) ([]AgentTaskQueue, error) {
+	rows, err := q.db.Query(ctx, listASBCapacityWaitingTasks, arg.RetrySeconds, arg.StaleSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentTaskQueue{}
+	for rows.Next() {
+		var i AgentTaskQueue
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.IssueID,
+			&i.Status,
+			&i.Priority,
+			&i.DispatchedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.Result,
+			&i.Error,
+			&i.CreatedAt,
+			&i.Context,
+			&i.RuntimeID,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.TriggerCommentID,
+			&i.ChatSessionID,
+			&i.AutopilotRunID,
+			&i.Attempt,
+			&i.MaxAttempts,
+			&i.ParentTaskID,
+			&i.FailureReason,
+			&i.TriggerSummary,
+			&i.ForceFreshSession,
+			&i.IsLeaderTask,
+			&i.WaitReason,
+			&i.InitiatorUserID,
+			&i.HandoffNote,
+			&i.PrepareLeaseExpiresAt,
+			&i.SquadID,
+			&i.RuntimeMcpOverlay,
+			&i.EscalationForTaskID,
+			&i.FireAt,
+			&i.OriginatorUserID,
+			&i.RuntimeConnectedApps,
+			&i.CoalescedCommentIds,
+			&i.DeliveredCommentIds,
+			&i.ChatInputTaskID,
+			&i.ChatFinalizeDeferredAt,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
+			&i.AccountableUserID,
+			&i.SessionRolloutMissing,
+			&i.RetiredSessionID,
+			&i.QuickActionsDisabled,
+			&i.RegenerateQuickActionsFor,
+			&i.RuntimeLaunchLeaseToken,
+			&i.RuntimeLaunchLeaseExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAgentTaskRuntimeStartBlocked = `-- name: MarkAgentTaskRuntimeStartBlocked :one
 UPDATE agent_task_runtime_start_attempt
 SET status = 'blocked',
@@ -405,6 +530,71 @@ type MarkAgentTaskRuntimeStartBlockedParams struct {
 
 func (q *Queries) MarkAgentTaskRuntimeStartBlocked(ctx context.Context, arg MarkAgentTaskRuntimeStartBlockedParams) (AgentTaskRuntimeStartAttempt, error) {
 	row := q.db.QueryRow(ctx, markAgentTaskRuntimeStartBlocked, arg.ID, arg.TaskID, arg.RuntimeID)
+	var i AgentTaskRuntimeStartAttempt
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.RuntimeID,
+		&i.Backend,
+		&i.Protocol,
+		&i.SandboxID,
+		&i.ColdStart,
+		&i.Status,
+		&i.LastStage,
+		&i.ErrorCode,
+		&i.ErrorDetail,
+		&i.RunnerStartedAt,
+		&i.DaemonStartedAt,
+		&i.ClaimFinalizedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const markAgentTaskRuntimeStartCapacityWaiting = `-- name: MarkAgentTaskRuntimeStartCapacityWaiting :one
+WITH queued_task AS MATERIALIZED (
+    SELECT task.id
+    FROM agent_task_queue AS task
+    WHERE task.id = $3
+      AND task.runtime_id = $4
+      AND task.status = 'queued'
+    FOR UPDATE
+)
+UPDATE agent_task_runtime_start_attempt AS attempt
+SET status = 'blocked',
+    last_stage = 'sandbox_capacity_waiting',
+    error_code = 'ASB-CAPACITY-WAITING',
+    error_detail = $1,
+    finished_at = now(),
+    updated_at = now()
+WHERE attempt.id = $2
+  AND attempt.task_id = $3
+  AND attempt.runtime_id = $4
+  AND attempt.status = 'starting'
+  AND EXISTS (SELECT 1 FROM queued_task)
+RETURNING attempt.id, attempt.task_id, attempt.runtime_id, attempt.backend, attempt.protocol, attempt.sandbox_id, attempt.cold_start, attempt.status, attempt.last_stage, attempt.error_code, attempt.error_detail, attempt.runner_started_at, attempt.daemon_started_at, attempt.claim_finalized_at, attempt.finished_at, attempt.created_at, attempt.updated_at
+`
+
+type MarkAgentTaskRuntimeStartCapacityWaitingParams struct {
+	ErrorDetail string      `json:"error_detail"`
+	ID          pgtype.UUID `json:"id"`
+	TaskID      pgtype.UUID `json:"task_id"`
+	RuntimeID   pgtype.UUID `json:"runtime_id"`
+}
+
+// Capacity pressure is not a task failure. Lock the queued task before its
+// startup attempt, matching the claim/failure lock order, so a concurrent
+// daemon claim wins cleanly and the attempt is never mislabeled as waiting
+// after the task has already left the queue.
+func (q *Queries) MarkAgentTaskRuntimeStartCapacityWaiting(ctx context.Context, arg MarkAgentTaskRuntimeStartCapacityWaitingParams) (AgentTaskRuntimeStartAttempt, error) {
+	row := q.db.QueryRow(ctx, markAgentTaskRuntimeStartCapacityWaiting,
+		arg.ErrorDetail,
+		arg.ID,
+		arg.TaskID,
+		arg.RuntimeID,
+	)
 	var i AgentTaskRuntimeStartAttempt
 	err := row.Scan(
 		&i.ID,
@@ -579,6 +769,45 @@ func (q *Queries) SupersedeAgentTaskRuntimeStartAttemptForLease(ctx context.Cont
 	var i SupersedeAgentTaskRuntimeStartAttemptForLeaseRow
 	err := row.Scan(&i.LeaseValid, &i.SupersededCount)
 	return i, err
+}
+
+const supersedeAgentTaskRuntimeStartAttemptForTerminalTask = `-- name: SupersedeAgentTaskRuntimeStartAttemptForTerminalTask :execrows
+UPDATE agent_task_runtime_start_attempt AS attempt
+SET status = 'superseded',
+    last_stage = 'task_terminal_before_capacity_wait',
+    error_code = 'TASK-TERMINAL-BEFORE-CAPACITY-WAIT',
+    error_detail = 'task became terminal before ASB capacity wait was recorded',
+    finished_at = now(),
+    updated_at = now()
+WHERE attempt.id = $1
+  AND attempt.task_id = $2
+  AND attempt.runtime_id = $3
+  AND attempt.status = 'starting'
+  AND EXISTS (
+      SELECT 1
+      FROM agent_task_queue AS task
+      WHERE task.id = attempt.task_id
+        AND task.runtime_id = attempt.runtime_id
+        AND task.status IN ('completed', 'failed', 'cancelled')
+  )
+`
+
+type SupersedeAgentTaskRuntimeStartAttemptForTerminalTaskParams struct {
+	ID        pgtype.UUID `json:"id"`
+	TaskID    pgtype.UUID `json:"task_id"`
+	RuntimeID pgtype.UUID `json:"runtime_id"`
+}
+
+// A cancellation can win the task row lock while the launcher is converting a
+// capacity error into a blocked attempt. Close that observability record only
+// when the task is already terminal; a concurrent claim keeps ownership of the
+// normal claim finalizer.
+func (q *Queries) SupersedeAgentTaskRuntimeStartAttemptForTerminalTask(ctx context.Context, arg SupersedeAgentTaskRuntimeStartAttemptForTerminalTaskParams) (int64, error) {
+	result, err := q.db.Exec(ctx, supersedeAgentTaskRuntimeStartAttemptForTerminalTask, arg.ID, arg.TaskID, arg.RuntimeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateAgentTaskRuntimeStartSandbox = `-- name: UpdateAgentTaskRuntimeStartSandbox :one

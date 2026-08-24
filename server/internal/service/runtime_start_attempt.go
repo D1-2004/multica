@@ -464,3 +464,50 @@ func (s *TaskService) MarkRuntimeStartBlocked(ctx context.Context, attempt db.Ag
 	)
 	return nil
 }
+
+// MarkRuntimeStartCapacityWaiting closes one startup attempt without making the
+// task terminal. A later capacity-wait worker creates a fresh attempt under the
+// normal task launch lease once another sandbox becomes safely reclaimable.
+func (s *TaskService) MarkRuntimeStartCapacityWaiting(
+	ctx context.Context,
+	attempt db.AgentTaskRuntimeStartAttempt,
+) (bool, error) {
+	if cause := context.Cause(ctx); errors.Is(cause, errRuntimeLaunchLeaseLost) {
+		return false, cause
+	}
+	updated, err := s.Queries.MarkAgentTaskRuntimeStartCapacityWaiting(
+		ctx,
+		db.MarkAgentTaskRuntimeStartCapacityWaitingParams{
+			ErrorDetail: asbCapacityUnavailableMessage,
+			ID:          attempt.ID,
+			TaskID:      attempt.TaskID,
+			RuntimeID:   attempt.RuntimeID,
+		},
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// A concurrent claim owns its normal finalizer. A terminal transition has
+		// no such finalizer, so close the abandoned starting attempt explicitly.
+		if _, supersedeErr := s.Queries.SupersedeAgentTaskRuntimeStartAttemptForTerminalTask(
+			ctx,
+			db.SupersedeAgentTaskRuntimeStartAttemptForTerminalTaskParams{
+				ID: attempt.ID, TaskID: attempt.TaskID, RuntimeID: attempt.RuntimeID,
+			},
+		); supersedeErr != nil {
+			return false, fmt.Errorf("close terminal task Runtime start attempt: %w", supersedeErr)
+		}
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("mark Runtime start waiting for ASB capacity: %w", err)
+	}
+	slog.Info("runtime start waiting for ASB sandbox capacity",
+		"task_id", util.UUIDToString(updated.TaskID),
+		"runtime_id", util.UUIDToString(updated.RuntimeID),
+		"runtime_start_attempt_id", util.UUIDToString(updated.ID),
+		"backend", updated.Backend,
+		"startup_status_protocol", updated.Protocol,
+		"stage", updated.LastStage,
+		"error_code", updated.ErrorCode,
+	)
+	return true, nil
+}
