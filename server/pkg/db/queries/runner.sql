@@ -105,6 +105,42 @@ WHERE b.workspace_id = $1
   AND m.revoked_at IS NULL
 ORDER BY b.created_at DESC;
 
+-- name: ListRunnerBindingsForOwner :many
+SELECT
+    m.id AS machine_id,
+    m.name,
+    m.os,
+    m.arch,
+    m.client_version,
+    m.last_seen_at,
+    m.connection_id,
+    b.id AS binding_id,
+    b.workspace_id,
+    w.name AS workspace_name,
+    w.slug AS workspace_slug,
+    b.agent_id,
+    a.name AS agent_name,
+    b.roots,
+    b.disconnected_at,
+    b.created_at AS bound_at
+FROM runner_machine m
+JOIN agent_runner_binding b ON b.machine_id = m.id
+JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id
+JOIN workspace w ON w.id = b.workspace_id
+WHERE m.owner_id = $1
+  AND m.revoked_at IS NULL
+  AND b.revoked_at IS NULL
+ORDER BY m.created_at DESC, m.id, b.created_at DESC, b.id;
+
+-- name: GetRunnerBindingForOwner :one
+SELECT b.*
+FROM agent_runner_binding b
+JOIN runner_machine m ON m.id = b.machine_id
+WHERE b.id = sqlc.arg(binding_id)
+  AND m.owner_id = sqlc.arg(owner_id)
+  AND b.revoked_at IS NULL
+  AND m.revoked_at IS NULL;
+
 -- name: GetActiveAgentRunnerBinding :one
 SELECT
     b.id AS binding_id,

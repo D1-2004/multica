@@ -3,9 +3,22 @@ import { api } from "../api";
 
 export const runnerBindingKeys = {
   all: (workspaceId: string) => ["runner-bindings", workspaceId] as const,
+  accountAll: () => ["runner-bindings", "account"] as const,
+  account: (userId: string) =>
+    [...runnerBindingKeys.accountAll(), userId] as const,
   agent: (workspaceId: string, agentId: string) =>
     [...runnerBindingKeys.all(workspaceId), "agent", agentId] as const,
 };
+
+export function accountRunnerBindingsOptions(userId: string) {
+  return queryOptions({
+    queryKey: runnerBindingKeys.account(userId),
+    queryFn: () => api.listAccountRunnerBindings(),
+    enabled: !!userId,
+    refetchInterval: 5_000,
+    refetchOnWindowFocus: "always" as const,
+  });
+}
 
 export function agentRunnerBindingsOptions(
   workspaceId: string,

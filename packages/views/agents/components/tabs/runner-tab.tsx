@@ -1,17 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  Check,
-  Copy,
   Laptop,
   Loader2,
   Plus,
   Power,
   RefreshCw,
-  Terminal,
   Trash2,
   Wifi,
   WifiOff,
@@ -41,18 +38,9 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@multica/ui/components/ui/dialog";
-import { copyText } from "@multica/ui/lib/clipboard";
-import { CODE_LIGATURE_CLASS } from "@multica/ui/lib/code-style";
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../../i18n";
+import { RunnerCommandDialog } from "../../../runner/runner-command-dialog";
 
 export function RunnerTab({
   agent,
@@ -328,6 +316,8 @@ export function RunnerTab({
         description={t(($) => $.tab_body.runner.command_description)}
         expiry={t(($) => $.tab_body.runner.command_expiry)}
         copiedToast={t(($) => $.tab_body.runner.copied_toast)}
+        copyAria={t(($) => $.tab_body.runner.copy_aria)}
+        closeLabel={t(($) => $.tab_body.runner.close)}
         onClose={() => {
           setPairing(null);
           createPairing.reset();
@@ -340,6 +330,8 @@ export function RunnerTab({
         description={t(($) => $.tab_body.runner.reconnect_command_description)}
         expiry={t(($) => $.tab_body.runner.reconnect_command_expiry)}
         copiedToast={t(($) => $.tab_body.runner.reconnect_copied_toast)}
+        copyAria={t(($) => $.tab_body.runner.copy_aria)}
+        closeLabel={t(($) => $.tab_body.runner.close)}
         onClose={() => {
           setReconnectCommand(null);
           createReconnectCommand.reset();
@@ -421,85 +413,5 @@ export function RunnerTab({
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-function RunnerCommandDialog({
-  command,
-  title,
-  description,
-  expiry,
-  copiedToast,
-  onClose,
-}: {
-  command: string | null;
-  title: string;
-  description: string;
-  expiry: string;
-  copiedToast: string;
-  onClose: () => void;
-}) {
-  const { t } = useT("agents");
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!command) setCopied(false);
-  }, [command]);
-
-  const handleCopy = async () => {
-    if (!command) return;
-    if (await copyText(command)) {
-      setCopied(true);
-      toast.success(copiedToast);
-    }
-  };
-
-  return (
-    <Dialog open={command !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        {command && (
-          <div className="space-y-3">
-            <div className="flex items-start gap-2 rounded-lg bg-muted px-3 py-3">
-              <Terminal
-                className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
-                aria-hidden
-              />
-              <code
-                className={cn(
-                  "min-w-0 flex-1 break-all whitespace-pre-wrap font-mono text-xs",
-                  CODE_LIGATURE_CLASS,
-                )}
-              >
-                {command}
-              </code>
-              <button
-                type="button"
-                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                aria-label={t(($) => $.tab_body.runner.copy_aria)}
-                onClick={() => void handleCopy()}
-              >
-                {copied ? (
-                  <Check className="h-4 w-4 text-success" aria-hidden />
-                ) : (
-                  <Copy className="h-4 w-4" aria-hidden />
-                )}
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {expiry}
-            </p>
-          </div>
-        )}
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
-            {t(($) => $.tab_body.runner.close)}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
