@@ -13,7 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/chattrace"
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -202,18 +201,10 @@ type multicaMCPToolCallError struct {
 
 func (e *multicaMCPToolCallError) Error() string { return e.message }
 
-func (h *Handler) multicaMCPChatSendEnabled(r *http.Request) bool {
-	return h != nil && featureflags.MulticaMCPChatSendEnabled(r.Context(), h.FeatureFlags)
-}
-
 // MulticaMCP is a stateless MCP Streamable HTTP endpoint. V1 does not expose
 // server-initiated messages, so GET correctly reports 405 and every JSON-RPC
 // exchange is completed by one POST response.
 func (h *Handler) MulticaMCP(w http.ResponseWriter, r *http.Request) {
-	if !h.multicaMCPChatSendEnabled(r) {
-		writeError(w, http.StatusServiceUnavailable, "Multica MCP is not enabled")
-		return
-	}
 	if !multicaMCPTaskTokenAuthenticated(r) && !multicaMCPPersonalTokenAuthenticated(r) {
 		writeError(w, http.StatusForbidden, "Multica MCP requires a task token or personal access token")
 		return

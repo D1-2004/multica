@@ -20,13 +20,7 @@
 
 预发和正式环境的 URL、执行任务、工作区和 token 必须属于同一个环境。不要用预发环境生成的 token 调用正式 endpoint，反之亦然。
 
-服务端还必须开启 release flag：
-
-```bash
-FF_MULTICA_MCP_CHAT_SEND=true
-```
-
-虽然 flag 名保留了第一期的 `chat_send` 命名，它当前控制整个 `/api/mcp` endpoint，包括 Chat 续写和数字员工绑定工具。
+服务端 `/api/mcp` 默认可用，不需要额外的发布开关。
 
 ## 2. 两种鉴权模式
 
@@ -356,7 +350,6 @@ curl --fail-with-body --silent --show-error \
 | Codex 显示连接失败 | 把真实 token 写进了 `bearer_token_env_var`，或 Codex 进程读不到所配置的环境变量 | 该字段只填 `MULTICA_PAT`，设置环境变量后完全重启 Codex |
 | Workspace 相关 tool error | `session_id` / `agent_id` 不存在、跨环境，或 PAT 用户已不是目标 Workspace 成员 | 检查资源 ID、PAT 所属环境和成员关系；不需要增加 Workspace header |
 | `403 untrusted MCP Origin` | 浏览器型客户端发送了未受信任的 `Origin` | 使用配置的 Multica origin，或检查服务端 Public/App/Frontend URL 配置 |
-| `503 Multica MCP is not enabled` | release flag 未开启 | 开启 `FF_MULTICA_MCP_CHAT_SEND=true` |
 | 客户端 connected 但调用失败 | PAT 缺少 `agent_id`，或工具的工作区、Agent、Chat、绑定约束不满足；Task Token 也可能已结束 | 根据 tool result 检查参数和权限，必要时更新 token |
 | Qoder 看不到新工具 | 配置未重载或不在 Agent mode | 执行 `/mcp reload`，切换到 Agent mode |
 | QoderWork 导入失败 | 使用了 Qoder 的 `type: http`，或粘贴的不是完整 `mcpServers` JSON | 改用 `type: streamable-http`，从 **设置 → MCP 连接** 重新复制完整配置 |
