@@ -101,7 +101,7 @@ SET owner_id = $1,
 FROM eligible_agent AS eligible
 CROSS JOIN ownership_cleanup
 WHERE target.id = eligible.id
-RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key, target.disabled_runtime_skills, target.service_tier
+RETURNING target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key, target.disabled_runtime_skills, target.service_tier, target.dispatch_prompt, target.dispatch_always_new_issue
 `
 
 type ApplyManagedAgentOwnerChangeParams struct {
@@ -153,6 +153,8 @@ func (q *Queries) ApplyManagedAgentOwnerChange(ctx context.Context, arg ApplyMan
 		&i.SystemKey,
 		&i.DisabledRuntimeSkills,
 		&i.ServiceTier,
+		&i.DispatchPrompt,
+		&i.DispatchAlwaysNewIssue,
 	)
 	return i, err
 }
@@ -589,7 +591,7 @@ WITH locked_new_owner AS MATERIALIZED (
       AND candidate.user_id = $4
     FOR KEY SHARE OF candidate
 )
-SELECT target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key, target.disabled_runtime_skills, target.service_tier
+SELECT target.id, target.workspace_id, target.name, target.avatar_url, target.runtime_mode, target.runtime_config, target.visibility, target.status, target.max_concurrent_tasks, target.owner_id, target.created_at, target.updated_at, target.description, target.runtime_id, target.instructions, target.archived_at, target.archived_by, target.custom_env, target.custom_args, target.mcp_config, target.model, target.thinking_level, target.composio_toolkit_allowlist, target.permission_mode, target.kind, target.system_key, target.disabled_runtime_skills, target.service_tier, target.dispatch_prompt, target.dispatch_always_new_issue
 FROM locked_new_owner AS new_owner
 JOIN agent AS target
   ON target.workspace_id = new_owner.workspace_id
@@ -651,6 +653,8 @@ func (q *Queries) LockManagedAgentOwnerChange(ctx context.Context, arg LockManag
 		&i.SystemKey,
 		&i.DisabledRuntimeSkills,
 		&i.ServiceTier,
+		&i.DispatchPrompt,
+		&i.DispatchAlwaysNewIssue,
 	)
 	return i, err
 }

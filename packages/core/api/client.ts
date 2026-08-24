@@ -366,6 +366,8 @@ import {
   SubscribersListSchema,
   TimelineEntriesSchema,
   UserSchema,
+  AgentDispatchPromptDefaultSchema,
+  type AgentDispatchPromptDefault,
   WebhookDeliveryResponseSchema,
   BillingBalanceSchema,
   BillingTransactionsPageSchema,
@@ -1672,6 +1674,25 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  /**
+   * The managed dispatch policy the Agent settings editor seeds itself from.
+   * Failure is not fatal to the editor — an older backend has no such route,
+   * and a blank seed only means the author starts from an empty field.
+   */
+  async getAgentDispatchPromptDefault(
+    id: string,
+  ): Promise<AgentDispatchPromptDefault> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${id}/dispatch-prompt-default`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentDispatchPromptDefaultSchema,
+      { prompt: "" },
+      { endpoint: "GET /api/agents/{id}/dispatch-prompt-default" },
+    );
   }
 
   async archiveAgent(id: string): Promise<Agent> {

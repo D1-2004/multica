@@ -454,6 +454,17 @@ export interface Agent {
   /** Read-only product half of a system agent's prompt, served from the
    *  backend binary. Absent for ordinary agents. */
   system_instructions?: string;
+  /** Replaces the Diamond-composed dispatch instruction (common + surface
+   *  policy) for every Agent Dispatch V2 run this agent claims. Empty — the
+   *  default — keeps the Diamond composition. Unrelated to `instructions`,
+   *  which is the persona applied to every task regardless of origin.
+   *  Optional because older backends omit it. Server caps it at 32000 chars. */
+  dispatch_prompt?: string;
+  /** When true, each inbound channel message becomes its own Issue instead of
+   *  a follow-up comment on the Issue the Router is still pointing at. Only
+   *  affects the `issue` dispatch mode; approval and calendar continuations
+   *  are unaffected. Optional because older backends omit it. */
+  dispatch_always_new_issue?: boolean;
   avatar_url: string | null;
   runtime_mode: AgentRuntimeMode;
   runtime_config: Record<string, unknown>;
@@ -738,6 +749,8 @@ export interface UpdateAgentRequest {
   name?: string;
   description?: string;
   instructions?: string;
+  dispatch_prompt?: string;
+  dispatch_always_new_issue?: boolean;
   avatar_url?: string;
   runtime_id?: string;
   runtime_config?: Record<string, unknown>;

@@ -205,7 +205,19 @@ func (b *DispatchPromptBuilder) build(c DispatchCommand) (DispatchPrompt, error)
 	return strategy(c), nil
 }
 
-func buildDispatchInstruction(flags *featureflag.Service, surfaceType, contextPrompt string) string {
+// buildDispatchInstruction composes the task-level instruction. An Agent that
+// authored its own dispatch prompt replaces the whole Diamond layer with it —
+// both common.prompt and <surface>.prompt are dropped, so the author owns the
+// complete fixed policy including its safety and delivery clauses.
+//
+// contextPrompt is never replaceable. It is not authored policy: it carries the
+// per-dispatch delivery facts (conversation, message and sender locators,
+// outbound ownership) that the Router resolved for this run, and no static
+// prompt can stand in for them.
+func buildDispatchInstruction(flags *featureflag.Service, surfaceType, agentPrompt, contextPrompt string) string {
+	if authored := strings.TrimSpace(agentPrompt); authored != "" {
+		return joinDispatchPromptSections(authored, contextPrompt)
+	}
 	return joinDispatchPromptSections(
 		resolveDispatchRuntimePrompt(flags, featureflag.DispatchCommonRuntimePromptFlagKey),
 		resolveSurfaceRuntimePrompt(flags, surfaceType),
@@ -611,13 +623,14 @@ func applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(
 	rawContext []byte,
 	flags *featureflag.Service,
 ) {
-	applyDingTalkDispatchPromptForClaimWithFeatureFlags(response, rawContext, flags, true)
+	applyDingTalkDispatchPromptForClaimWithFeatureFlags(response, rawContext, flags, "", true)
 }
 
 func applyDingTalkDispatchPromptForClaimWithFeatureFlags(
 	response *AgentTaskResponse,
 	rawContext []byte,
 	flags *featureflag.Service,
+	agentPrompt string,
 	supportsTaskInstruction bool,
 ) {
 	if response == nil || len(rawContext) == 0 {
@@ -655,11 +668,11 @@ func applyDingTalkDispatchPromptForClaimWithFeatureFlags(
 		return
 	}
 	if supportsTaskInstruction {
-		response.Instruction = buildDispatchInstruction(flags, stored.Surface.Type, stored.ContextPrompt)
+		response.Instruction = buildDispatchInstruction(flags, stored.Surface.Type, agentPrompt, stored.ContextPrompt)
 		return
 	}
 
-	instruction := buildLegacyDispatchInstruction(stored, flags)
+	instruction := buildLegacyDispatchInstruction(stored, flags, agentPrompt)
 	if instruction == "" {
 		return
 	}
@@ -684,10 +697,20 @@ func applyDingTalkDispatchPromptForClaimWithFeatureFlags(
 	}
 }
 
-func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *featureflag.Service) string {
+// buildLegacyDispatchInstruction serves daemons without task-instruction-v1.
+// An authored Agent prompt replaces the Diamond surface section here for the
+// same reason it does on the modern path. The hard-coded safety preamble and
+// the DWS workflow block stay: they are not Diamond policy but the structural
+// scaffolding and resolved delivery locators that reproduce old-image
+// behavior, and they are the legacy analogue of contextPrompt.
+func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *featureflag.Service, agentPrompt string) string {
+	surfacePrompt := strings.TrimSpace(agentPrompt)
+	if surfacePrompt == "" {
+		surfacePrompt = resolveSurfaceRuntimePrompt(flags, stored.Surface.Type)
+	}
 	runtimePrompt := joinDispatchPromptSections(
 		legacyDispatchExternalInputSafetyPrompt(),
-		resolveSurfaceRuntimePrompt(flags, stored.Surface.Type),
+		surfacePrompt,
 	)
 	workflowPrompt := ""
 	if stored.Outbound.Mode == protocol.DispatchOutboundModeDWS {

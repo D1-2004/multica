@@ -19,6 +19,24 @@ mode has an explicit initial persistence materializer:
 `calendar/calendar.started` and `approval/approval.status_changed` contracts
 remain Issue-only because neither has a foreground Chat session to release.
 
+### Issue threading
+
+Within `issue`, an Agent controls whether a conversation threads. `agent.dispatch_always_new_issue`
+is `false` by default, which keeps the behavior above: the Router replays the
+issue continuation and Multica appends a follow-up comment. Set to `true`, every
+inbound **channel** message becomes its own Issue and the replayed continuation
+is ignored. This is a Multica-side decision — the Router still persists and
+replays the continuation, and `surface.type` stays `issue`.
+
+Approval and calendar continuations are deliberately exempt. Those rewrite a
+continuation to correlate a system callback back to the Issue that produced it
+(see the `关联Issue` auto-link), which is correlation rather than conversational
+threading; forcing a new Issue there would orphan every approval status change.
+
+A side effect worth knowing: threading refuses a follow-up with `409` while the
+referenced Issue still has a pending agent task. `dispatch_always_new_issue`
+does not hit that guard, because each message gets its own Issue.
+
 Channel slash commands do not override this choice. In particular, text such as
 `/issue`, `/new`, `/reset`, or `/unbind` remains prompt content when delivered by
 Agent Dispatch V2.
@@ -133,6 +151,13 @@ If all three new composition inputs are blank, an instruction-capable daemon
 receives no task instruction. This does not switch it onto the legacy builder.
 Conversely, a daemon without `task-instruction-v1` always uses the legacy
 builder, even when Diamond common or Router context sections are available.
+
+An Agent may opt out of the Diamond composition entirely. A non-empty
+`agent.dispatch_prompt` replaces both the common and the surface section for
+every dispatch that Agent claims, on the instruction-capable and the legacy
+claim path alike. It never replaces `contextPrompt` (or, on the legacy path, the
+resolved DWS workflow block): those carry this run's delivery locators, not
+authored policy. See [Diamond configuration](diamond.md#agent-authored-override).
 
 Event projection in the prompt builder is independent of `surface.type`. The
 same structured event can therefore run as an Issue, Chat, or Auto mode without
@@ -351,6 +376,34 @@ parsing or rewriting Router's context string.
 - Reason: Rolling deployments must preserve complete prompt behavior while old
   runtime images still ignore `instruction`, without mixing legacy policy into
   new images or duplicating instructions.
+
+## Change record: 2026-08-24 Agent-level Issue threading control
+
+- History: Added `agent.dispatch_always_new_issue`, `false` by default. When
+  `true`, an `issue`-surface `channel/message.created` dispatch that carries an
+  issue continuation creates a new Issue instead of a follow-up comment. The
+  approval auto-link and the calendar contract keep their continuations. Surface
+  selection, the Router contract, and the persisted dispatch context are
+  unchanged; the Router still replays the continuation and Multica ignores it.
+- Reason: One Issue per conversation is wrong for Agents whose inbound messages
+  are independent work items — the thread grows without bound and a second
+  message is refused with `409` while the first task is still running. Keeping
+  this on the Multica side rather than adding a fourth `surface.type` avoids a
+  lockstep Router release for what is purely a persistence decision.
+
+## Change record: 2026-08-24 Agent-authored dispatch prompt
+
+- History: Added `agent.dispatch_prompt`, empty by default. A non-empty value
+  replaces the Diamond `common` + `<surface>` composition for that Agent at
+  claim time on both the instruction-capable and legacy claim paths.
+  `contextPrompt` and the legacy DWS workflow block are unaffected. Dispatch
+  mode selection, materializer choice, outbound ownership, and persisted
+  dispatch context are unchanged.
+- Reason: One fleet-wide Diamond document cannot fit every Agent's job. Giving
+  the Agent owner a complete replacement keeps per-Agent policy out of the
+  deployment configuration, at the cost of opting that Agent out of later
+  Diamond policy updates — which is why the override is per-Agent and explicit
+  rather than a silent merge.
 
 ## Change record: 2026-08-07 DingTalk Chat title projection
 

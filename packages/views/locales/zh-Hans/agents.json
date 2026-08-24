@@ -269,6 +269,7 @@
     "activity": "动态",
     "tasks": "Tasks",
     "instructions": "指令",
+    "dispatch": "任务派发",
     "skills": "Skills",
     "environment": "环境变量",
     "custom_args": "自定义参数",
@@ -561,6 +562,17 @@
       "workspace_notes_intro": "在下面补充你们团队的上下文和偏好，它们会叠加在 Multica 为这个智能体维护的指令之上。支持 Markdown。",
       "workspace_notes_placeholder": "写下这个智能体应该始终知道的上下文。\n\n# 示例\n我们的主仓库是 github.com/acme/platform。\n即使聊天用中文，任务也一律用英文写。\n周五不部署。",
       "github_managed": "此 System Prompt 由关联的 GitHub 仓库管理；请同步来源来更新内容。"
+    },
+    "dispatch": {
+      "prompt_label": "自定义派发提示词",
+      "prompt_intro": "替换该智能体处理外部渠道派发消息时收到的托管指令。留空则沿用托管指令。它不改变运行模式，每次派发的交付上下文始终会附加在后面。",
+      "prompt_placeholder": "留空则使用托管指令。",
+      "prompt_override_active": "该智能体使用你的提示词，托管策略更新不再对它生效。",
+      "prompt_override_inactive": "该智能体使用托管指令。",
+      "always_new_issue_label": "每条消息新建任务",
+      "always_new_issue_hint": "在任务模式下，每条新消息单独建一个任务，而不是追加到上一个任务。审批和日程事件仍会延续原任务。",
+      "restore_managed": "恢复托管",
+      "prompt_seeded_hint": "已预填托管策略。保存后就成为该智能体自己的副本，后续托管更新不再对它生效。"
     },
     "env": {
       "intro_readonly": "在智能体进程启动时注入。只有工作区所有者 / 管理员可以查看或编辑值；每次解锁和编辑都会写入工作区审计日志。",

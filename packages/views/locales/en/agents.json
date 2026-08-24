@@ -278,6 +278,7 @@
     "activity": "Activity",
     "tasks": "Tasks",
     "instructions": "Instructions",
+    "dispatch": "Dispatch",
     "skills": "Skills",
     "environment": "Environment",
     "custom_args": "Custom Args",
@@ -571,6 +572,17 @@
       "workspace_notes_intro": "Add your team's context and preferences below. They apply on top of the instructions Multica maintains for this agent. Markdown is supported.",
       "workspace_notes_placeholder": "Add context this agent should always have.\n\n# Example\nOur main repository is github.com/acme/platform.\nWrite issues in English even when we chat in Chinese.\nWe do not deploy on Fridays.",
       "github_managed": "This system prompt is managed by the connected GitHub repository. Sync the source to update it."
+    },
+    "dispatch": {
+      "prompt_label": "Custom dispatch prompt",
+      "prompt_intro": "Replaces the managed instruction this agent receives for messages dispatched from an external channel. Leave it empty to keep the managed one. It does not change the run mode, and the per-run delivery context is always appended.",
+      "prompt_placeholder": "Leave empty to use the managed instruction.",
+      "prompt_override_active": "This agent uses your prompt. Managed policy updates no longer reach it.",
+      "prompt_override_inactive": "This agent uses the managed instruction.",
+      "always_new_issue_label": "New Issue for every message",
+      "always_new_issue_hint": "In Task mode, create a separate Issue for each incoming message instead of appending to the previous one. Approval and calendar events still continue their original Issue.",
+      "restore_managed": "Restore managed",
+      "prompt_seeded_hint": "Seeded with the managed policy. Saving makes this agent's own copy — later managed updates will not reach it."
     },
     "env": {
       "intro_readonly": "Injected into the agent process at launch. Only workspace owners and admins can read or edit values; every reveal and edit is recorded in the workspace audit log.",

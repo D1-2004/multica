@@ -261,6 +261,7 @@
     "activity": "アクティビティ",
     "tasks": "タスク",
     "instructions": "指示",
+    "dispatch": "ディスパッチ",
     "skills": "スキル",
     "environment": "環境",
     "custom_args": "カスタム引数",
@@ -417,6 +418,17 @@
       "workspace_notes_intro": "チームのコンテキストや好みを下に追加してください。Multica がこのエージェント向けに管理している指示の上に適用されます。Markdown が使えます。",
       "workspace_notes_placeholder": "このエージェントが常に知っておくべきことを書きます。\n\n# 例\nメインリポジトリは github.com/acme/platform です。\nチャットが日本語でも、タスクは英語で書いてください。\n金曜日はデプロイしません。",
       "github_managed": "この System Prompt は接続された GitHub リポジトリで管理されています。更新するにはソースを同期してください。"
+    },
+    "dispatch": {
+      "prompt_label": "カスタムディスパッチプロンプト",
+      "prompt_intro": "外部チャネルからディスパッチされたメッセージに対して、このエージェントが受け取る管理指示を置き換えます。空欄のままにすると管理指示が使われます。実行モードは変わらず、実行ごとの配信コンテキストは常に末尾に追加されます。",
+      "prompt_placeholder": "空欄の場合は管理指示を使用します。",
+      "prompt_override_active": "このエージェントはあなたのプロンプトを使用します。管理ポリシーの更新は適用されません。",
+      "prompt_override_inactive": "このエージェントは管理指示を使用します。",
+      "always_new_issue_label": "メッセージごとに新しい Issue",
+      "always_new_issue_hint": "タスクモードで、受信メッセージごとに個別の Issue を作成します（前の Issue に追記しません）。承認とカレンダーのイベントは元の Issue を継続します。",
+      "restore_managed": "管理版に戻す",
+      "prompt_seeded_hint": "管理ポリシーを初期表示しています。保存するとこのエージェント専用のコピーになり、以降の管理ポリシー更新は適用されません。"
     },
     "env": {
       "intro_readonly": "エージェントプロセスの起動時に注入されます。値の読み取りや編集ができるのはワークスペースのオーナーと admin のみで、すべての表示と編集はワークスペースの監査ログに記録されます。",

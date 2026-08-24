@@ -397,7 +397,49 @@ func (h *Handler) executeAgentDispatchV2(
 		writeError(w, http.StatusBadRequest, "continuation must identify an issue")
 		return
 	}
+	// "New Issue every time": an Agent may opt out of conversational Issue
+	// threading so each inbound channel message becomes its own Issue instead
+	// of a follow-up comment on the one the Router is still pointing at. The
+	// Router keeps persisting and replaying the issue continuation; Multica
+	// ignores it here, which is why this needs no Router-side change.
+	//
+	// Deliberately scoped to channel messages. The approval auto-link above
+	// and the calendar contract rewrite a continuation to correlate a system
+	// callback back to the Issue that produced it — that is not conversational
+	// threading, and forcing a new Issue there would orphan every approval
+	// status change from the approval it belongs to.
+	if command.Event.Domain == "channel" &&
+		h.agentAlwaysCreatesNewIssue(r.Context(), dispatchContext.WorkspaceID, dispatchContext.AgentID) {
+		agent, ok := h.resolveAgentDispatchAgent(
+			w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, dispatchContext.AgentID)
+		if !ok {
+			return
+		}
+		slog.Info("MULTICA_AGENT_DISPATCH_CONTINUATION",
+			"outcome", "always_new_issue_ignored_continuation",
+			"previousIssueFingerprint", agentDispatchIdentifierFingerprint(command.Continuation.IssueID),
+		)
+		h.createAgentDispatchIssueV2(w, r, command, plan.Prompt, dispatchContext, agent)
+		return
+	}
 	h.createAgentDispatchCommentV2(w, r, command, plan.Prompt, dispatchContext)
+}
+
+// agentAlwaysCreatesNewIssue reads the Agent's Issue-threading preference. It
+// fails closed to the existing threading behavior: a lookup error must not
+// turn one conversation into a stream of orphan Issues.
+func (h *Handler) agentAlwaysCreatesNewIssue(ctx context.Context, workspaceID, agentID pgtype.UUID) bool {
+	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID: agentID, WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		slog.Warn("agent dispatch: failed to read Issue-threading preference",
+			"agent_id", uuidToString(agentID),
+			"error", err,
+		)
+		return false
+	}
+	return agent.DispatchAlwaysNewIssue
 }
 
 func bindDispatchCompletionTarget(

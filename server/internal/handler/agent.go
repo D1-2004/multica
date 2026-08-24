@@ -36,6 +36,12 @@ import (
 // char_length and the front-end's String.prototype.length-with-counter UX.
 const maxAgentDescriptionLength = 255
 
+// maxAgentDispatchPromptLength bounds the authored dispatch prompt. It has to
+// hold a complete replacement for the Diamond common + surface policy, which
+// today runs to a few thousand characters, while still refusing a paste that
+// would blow up every claim response for this agent.
+const maxAgentDispatchPromptLength = 32000
+
 type AgentResponse struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
@@ -62,12 +68,24 @@ type AgentResponse struct {
 	SystemKey string `json:"system_key,omitempty"`
 	// SystemInstructions is the read-only product half of a system agent's
 	// prompt, filled from the server binary. Empty for ordinary agents.
-	SystemInstructions string          `json:"system_instructions,omitempty"`
-	AvatarURL          *string         `json:"avatar_url"`
-	RuntimeMode        string          `json:"runtime_mode"`
-	RuntimeConfig      any             `json:"runtime_config"`
-	CustomArgs         []string        `json:"custom_args"`
-	McpConfig          json.RawMessage `json:"mcp_config"`
+	SystemInstructions string `json:"system_instructions,omitempty"`
+	// DispatchPrompt replaces the Diamond-composed dispatch instruction
+	// (common + surface policy) for every Agent Dispatch V2 run this agent
+	// claims. Empty — the default — keeps the Diamond composition. It is
+	// unrelated to Instructions, which is the agent's own persona and applies
+	// to every task regardless of origin.
+	DispatchPrompt string `json:"dispatch_prompt"`
+	// DispatchAlwaysNewIssue turns off conversational Issue threading for this
+	// agent's Agent Dispatch V2 channel messages: every inbound message becomes
+	// its own Issue instead of a follow-up comment on the Issue the Router is
+	// still pointing at. Approval and calendar continuations are unaffected —
+	// those correlate a system callback back to its originating Issue.
+	DispatchAlwaysNewIssue bool            `json:"dispatch_always_new_issue"`
+	AvatarURL              *string         `json:"avatar_url"`
+	RuntimeMode            string          `json:"runtime_mode"`
+	RuntimeConfig          any             `json:"runtime_config"`
+	CustomArgs             []string        `json:"custom_args"`
+	McpConfig              json.RawMessage `json:"mcp_config"`
 	// custom_env is intentionally NOT serialized on agent resources. The
 	// agent_list/get/create/update/archive/restore responses and WS events
 	// only expose coarse metadata (has_custom_env, custom_env_key_count) so
@@ -187,6 +205,8 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		Instructions:             a.Instructions,
 		SystemKey:                a.SystemKey.String,
 		SystemInstructions:       systemInstructionsFor(a),
+		DispatchPrompt:           a.DispatchPrompt,
+		DispatchAlwaysNewIssue:   a.DispatchAlwaysNewIssue,
 		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
 		RuntimeMode:              a.RuntimeMode,
 		RuntimeConfig:            rc,
@@ -1448,12 +1468,14 @@ func (h *Handler) sendAgentWelcomeChat(ctx context.Context, agent db.Agent, crea
 }
 
 type UpdateAgentRequest struct {
-	Name          *string `json:"name"`
-	Description   *string `json:"description"`
-	Instructions  *string `json:"instructions"`
-	AvatarURL     *string `json:"avatar_url"`
-	RuntimeID     *string `json:"runtime_id"`
-	RuntimeConfig any     `json:"runtime_config"`
+	Name                   *string `json:"name"`
+	Description            *string `json:"description"`
+	Instructions           *string `json:"instructions"`
+	DispatchPrompt         *string `json:"dispatch_prompt"`
+	DispatchAlwaysNewIssue *bool   `json:"dispatch_always_new_issue"`
+	AvatarURL              *string `json:"avatar_url"`
+	RuntimeID              *string `json:"runtime_id"`
+	RuntimeConfig          any     `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
 	// Use `PUT /api/agents/{id}/env` for env changes — that path admits
 	// the agent owner or a workspace owner/admin, denies agent actors,
@@ -1726,6 +1748,19 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Instructions != nil {
 		params.Instructions = pgtype.Text{String: *req.Instructions, Valid: true}
+	}
+	if req.DispatchPrompt != nil {
+		if utf8.RuneCountInString(*req.DispatchPrompt) > maxAgentDispatchPromptLength {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("dispatch_prompt must be %d characters or fewer", maxAgentDispatchPromptLength))
+			return
+		}
+		// The column is NOT NULL DEFAULT '', so an explicit empty string is a
+		// real clear here — COALESCE only skips a SQL NULL. No dedicated
+		// Clear query is needed the way thinking_level and mcp_config need one.
+		params.DispatchPrompt = pgtype.Text{String: *req.DispatchPrompt, Valid: true}
+	}
+	if req.DispatchAlwaysNewIssue != nil {
+		params.DispatchAlwaysNewIssue = pgtype.Bool{Bool: *req.DispatchAlwaysNewIssue, Valid: true}
 	}
 	if req.AvatarURL != nil {
 		avatarURL, ok := h.acceptAvatarURL(w, r, *req.AvatarURL, existing.AvatarUrl.String)

@@ -68,6 +68,32 @@ The server maps these sections to internal feature-flag keys. This keeps the exi
 | `chat` | `FF_DISPATCH_CHAT_RUNTIME_PROMPT` | `dispatch_chat_runtime_prompt` |
 | `auto` | `FF_DISPATCH_AUTO_RUNTIME_PROMPT` | `dispatch_auto_runtime_prompt` |
 
+### Agent-authored override
+
+An Agent may replace this document's contribution entirely. `agent.dispatch_prompt`
+is empty by default, which keeps the Diamond composition described below. When an
+Agent owner saves a non-empty prompt, that text replaces **both** `common.prompt`
+and the current `<surface>.prompt` for every dispatch that Agent claims — the
+author owns the complete fixed policy, including the safety, delivery, and
+truthfulness clauses that `common` would otherwise contribute.
+
+The override is resolved at claim time from the current database row, exactly
+like the Diamond snapshot it replaces, so an edit reaches continuation tasks and
+delegated Issue follow-ups without re-dispatching. Whitespace-only is treated as
+empty. The Router-supplied `contextPrompt` is never replaceable: it is not
+authored policy but this run's resolved delivery facts.
+
+| | `dispatch_prompt` empty (default) | `dispatch_prompt` set |
+|---|---|---|
+| Composition | `common.prompt` + `<surface>.prompt` + `contextPrompt` | `dispatch_prompt` + `contextPrompt` |
+| Reacts to a Diamond update | yes | no — the Agent is opted out of this document |
+
+Because the override drops `common`, an operator changing a fleet-wide safety
+rule in Diamond does not reach any Agent that has authored its own prompt. Audit
+`agent.dispatch_prompt` alongside this document when rolling out a policy change.
+
+## Claim-time composition
+
 There is no fixed dispatch prompt embedded in the binary. For each daemon claim, Multica assembles the independent task-level `instruction` in this exact order:
 
 ```text
@@ -116,6 +142,7 @@ Diamond is not a secret store. Do not place database URLs, JWT secrets, service 
 
 | Date | Change | Reason |
 |---|---|---|
+| 2026-08-24 | Added the Agent-level `dispatch_prompt` override, which replaces `common` and the surface section for that Agent. | Let an Agent owner author the complete dispatch policy when the fleet-wide Diamond document does not fit that Agent's job, without forking the deployment configuration. |
 | 2026-08-06 | Selected the new or legacy prompt builder directly from daemon capability. | Preserve complete old-image behavior while keeping legacy hard-coded policy out of instruction-capable runtime tasks. |
 | 2026-08-06 | Added capability-gated selection between the new instruction path and the legacy claim path. | Bind prompt construction to the actual daemon consumer during rolling upgrades instead of guessing from runtime metadata. |
 | 2026-08-04 | Added `common.prompt` and claim-time `common + mode + contextPrompt` composition through the independent task `instruction` field. | Keep fixed policy in Diamond, dynamic delivery facts in Router context, and all private instructions out of user-visible Issue, comment, chat, and handoff content. |

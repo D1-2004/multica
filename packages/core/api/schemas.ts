@@ -2460,6 +2460,19 @@ export const EMPTY_AGENT_TEMPLATE_DETAIL: AgentTemplate = {
 // ---------------------------------------------------------------------------
 // Agent invocation permissions (MUL-3963)
 //
+/**
+ * The deployment-managed dispatch policy an agent-level `dispatch_prompt`
+ * would replace. Served per-agent and manage-gated, so it is not public config.
+ * An older backend has no such route; the caller falls back to an empty prompt,
+ * which just means the editor opens blank instead of seeded.
+ */
+export const AgentDispatchPromptDefaultSchema = z.object({
+  prompt: z.string().default(""),
+});
+export type AgentDispatchPromptDefault = z.infer<
+  typeof AgentDispatchPromptDefaultSchema
+>;
+
 // Full agent request/response payloads are NOT zod-validated today — the API
 // client returns them typed directly (see client.ts `listAgents` /
 // `getAgent` / `createAgent`), so there is no `AgentSchema` /

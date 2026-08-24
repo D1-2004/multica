@@ -269,6 +269,7 @@
     "activity": "활동",
     "tasks": "작업",
     "instructions": "지침",
+    "dispatch": "디스패치",
     "skills": "스킬",
     "environment": "환경",
     "custom_args": "사용자 지정 인자",
@@ -425,6 +426,17 @@
       "workspace_notes_intro": "팀의 컨텍스트와 선호를 아래에 추가하세요. Multica가 이 에이전트를 위해 관리하는 지침 위에 적용됩니다. Markdown을 지원합니다.",
       "workspace_notes_placeholder": "이 에이전트가 항상 알아야 할 내용을 적으세요.\n\n# 예시\n메인 저장소는 github.com/acme/platform입니다.\n채팅은 한국어로 해도 태스크는 영어로 작성하세요.\n금요일에는 배포하지 않습니다.",
       "github_managed": "이 System Prompt는 연결된 GitHub 저장소에서 관리합니다. 업데이트하려면 소스를 동기화하세요."
+    },
+    "dispatch": {
+      "prompt_label": "사용자 지정 디스패치 프롬프트",
+      "prompt_intro": "외부 채널에서 디스패치된 메시지에 대해 이 에이전트가 받는 관리 지침을 대체합니다. 비워 두면 관리 지침을 사용합니다. 실행 모드는 바뀌지 않으며, 실행별 전달 컨텍스트는 항상 뒤에 추가됩니다.",
+      "prompt_placeholder": "비워 두면 관리 지침을 사용합니다.",
+      "prompt_override_active": "이 에이전트는 사용자 프롬프트를 사용합니다. 관리 정책 업데이트가 적용되지 않습니다.",
+      "prompt_override_inactive": "이 에이전트는 관리 지침을 사용합니다.",
+      "always_new_issue_label": "메시지마다 새 이슈",
+      "always_new_issue_hint": "작업 모드에서 수신 메시지마다 별도의 이슈를 만듭니다(이전 이슈에 추가하지 않음). 승인 및 캘린더 이벤트는 원래 이슈를 계속 사용합니다.",
+      "restore_managed": "관리 버전으로 복원",
+      "prompt_seeded_hint": "관리 정책을 미리 채웠습니다. 저장하면 이 에이전트만의 사본이 되어 이후 관리 정책 업데이트가 적용되지 않습니다."
     },
     "env": {
       "intro_readonly": "에이전트 프로세스가 시작될 때 주입됩니다. 워크스페이스 소유자와 관리자만 값을 읽거나 수정할 수 있으며, 모든 공개와 수정은 워크스페이스 감사 로그에 기록됩니다.",

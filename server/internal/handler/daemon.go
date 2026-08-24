@@ -2886,10 +2886,19 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	clearA2AClaimWorkspaceData(&resp, task.Context)
 
 	supportsTaskInstruction := requestHasDaemonCapability(r, protocol.DaemonCapabilityTaskInstructionV1)
+	// Agent-authored dispatch prompt, resolved at claim time exactly like the
+	// Diamond snapshot it replaces, so an edit reaches continuation tasks and
+	// Issue follow-ups without re-dispatching. A failed agent load falls back
+	// to the Diamond composition rather than dropping the instruction.
+	agentDispatchPrompt := ""
+	if agentLoadErr == nil {
+		agentDispatchPrompt = agent.DispatchPrompt
+	}
 	applyDingTalkDispatchPromptForClaimWithFeatureFlags(
 		&resp,
 		task.Context,
 		h.FeatureFlags,
+		agentDispatchPrompt,
 		supportsTaskInstruction,
 	)
 	if supportsTaskInstruction {

@@ -31,6 +31,7 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { ActivityTab } from "./tabs/activity-tab";
 import { InstructionsTab } from "./tabs/instructions-tab";
+import { DispatchTab } from "./tabs/dispatch-tab";
 import { SkillsTab } from "./tabs/skills-tab";
 import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
@@ -55,6 +56,7 @@ export type DetailTab =
   | "overview"
   | "work"
   | "instructions"
+  | "dispatch"
   | "skills"
   | "mcp_config"
   | "runner"
@@ -73,6 +75,7 @@ type SecondaryTab = {
   id: DetailTab;
   labelKey:
     | "instructions"
+    | "dispatch"
     | "skills"
     | "mcp_config"
     | "runner"
@@ -90,6 +93,7 @@ type SecondaryTab = {
 
 const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "instructions", labelKey: "instructions" },
+  { id: "dispatch", labelKey: "dispatch" },
   { id: "skills", labelKey: "skills" },
   { id: "mcp_config", labelKey: "mcp_config" },
   { id: "runner", labelKey: "runner" },
@@ -483,6 +487,14 @@ export function AgentOverviewPane({
                       }
                       onDirtyChange={setActiveDirty}
                       readOnly={source != null}
+                    />
+                  )}
+                  {effectiveView === "dispatch" && (
+                    <DispatchTab
+                      agent={agent}
+                      onSave={(updates) => onUpdate(agent.id, updates)}
+                      onDirtyChange={setActiveDirty}
+                      readOnly={!canEdit}
                     />
                   )}
                   {effectiveView === "skills" && (

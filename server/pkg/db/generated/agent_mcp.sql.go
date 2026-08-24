@@ -707,7 +707,7 @@ func (q *Queries) ListAgentMCPDelegationsByIssue(ctx context.Context, arg ListAg
 
 const lockAgentMCPDelegationAdmission = `-- name: LockAgentMCPDelegationAdmission :one
 WITH locked_agent AS MATERIALIZED (
-    SELECT agent.id, agent.workspace_id, agent.name, agent.avatar_url, agent.runtime_mode, agent.runtime_config, agent.visibility, agent.status, agent.max_concurrent_tasks, agent.owner_id, agent.created_at, agent.updated_at, agent.description, agent.runtime_id, agent.instructions, agent.archived_at, agent.archived_by, agent.custom_env, agent.custom_args, agent.mcp_config, agent.model, agent.thinking_level, agent.composio_toolkit_allowlist, agent.permission_mode, agent.kind, agent.system_key
+    SELECT agent.id, agent.workspace_id, agent.name, agent.avatar_url, agent.runtime_mode, agent.runtime_config, agent.visibility, agent.status, agent.max_concurrent_tasks, agent.owner_id, agent.created_at, agent.updated_at, agent.description, agent.runtime_id, agent.instructions, agent.archived_at, agent.archived_by, agent.custom_env, agent.custom_args, agent.mcp_config, agent.model, agent.thinking_level, agent.composio_toolkit_allowlist, agent.permission_mode, agent.kind, agent.system_key, agent.disabled_runtime_skills, agent.service_tier, agent.dispatch_prompt, agent.dispatch_always_new_issue
     FROM agent
     JOIN agent_runtime runtime
       ON runtime.id = agent.runtime_id
