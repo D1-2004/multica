@@ -226,26 +226,15 @@ routes, while `/api/config` exposes the same decision so Web/Desktop shows the
 DTA Access settings tab. Turning it off again blocks all `dta_` requests and
 hides the management UI; it does not delete DTA Tokens, agents, or traces.
 
-`multica_mcp_chat_send` controls the server-hosted MCP endpoint and defaults to
-`false`. The name is retained from the first Chat-continuation release, but the
-flag now gates every tool exposed by `/api/mcp`, including the digital-employee
-binding tools. Enable it when explicitly configured MCP clients are ready to
-call the Multica API endpoint:
-
-```yaml
-multica_mcp_chat_send:
-  default: true
-```
-
-The environment override is `FF_MULTICA_MCP_CHAT_SEND=true`. The backend
-decision gates protocol discovery and tool execution on `/api/mcp`. Task claim
-does not inject Multica into Agent or sandbox MCP configuration, regardless of
-the flag value, so enabling the service cannot change sandbox startup. Explicit
-clients authenticate with an existing `mul_` Personal Access Token or an active
-`mat_` Task Token; the flag does not mint either credential. See
+The server-hosted MCP endpoint is always available and no longer has a release
+flag. `/api/mcp` still requires an existing `mul_` Personal Access Token or an
+active `mat_` Task Token, enforces trusted browser origins, and applies each
+tool's business authorization. Task claim does not inject Multica into Agent or
+sandbox MCP configuration, so making the endpoint available does not change
+sandbox startup. See
 [Multica self-hosted MCP Chat send](multica-mcp-chat-send.md) for the protocol
-and rollout contract, and [Multica MCP client setup](multica-mcp-client-setup.md)
-for Qoder and Claude Code configuration.
+contract, and [Multica MCP client setup](multica-mcp-client-setup.md) for Qoder
+and Claude Code configuration.
 
 ### Security note: never rely on the frontend alone
 
@@ -271,10 +260,7 @@ See `docs/design.md` and `docs/timezone-architecture-rfc.md` for prior examples 
 
 | Date | Change | Reason |
 |---|---|---|
-| 2026-08-07 | Documented that the MCP endpoint accepts existing `mul_` PAT and active `mat_` Task Token credentials. | Keep endpoint rollout control separate from credential lifecycle and client installation. |
-| 2026-08-07 | Clarified that `multica_mcp_chat_send` gates the full MCP endpoint and linked the client setup guide. | The endpoint now exposes digital-employee binding tools in addition to Chat continuation, while client adoption remains explicit. |
-| 2026-08-07 | Removed claim-time Multica MCP injection; the flag now gates only the server-hosted endpoint. | Keep MCP adoption explicit and prevent a server rollout from changing sandbox startup configuration. |
-| 2026-08-06 | Added the default-off `multica_mcp_chat_send` release flag and its rollout contract. | Keep discovery and execution of the server-hosted MCP action under one server-side kill switch during mixed Runtime rollout. |
+| 2026-08-24 | Removed the server-hosted MCP release flag and made `/api/mcp` always available. | Runtime instructions advertise the endpoint in every environment; availability must match that contract while authentication and business authorization remain enforced. |
 | 2026-08-04 | Added Diamond `common.prompt` and documented claim-time `common + mode + Router contextPrompt` instruction composition. | Separate fixed policy configuration from dynamic delivery context and keep private instructions out of user-visible content. |
 | 2026-08-04 | Made the Diamond provider always active and removed its deployment enable switch. | Ensure dynamic surface prompts are not accidentally bypassed when only the fixed Diamond coordinates are configured. |
 | 2026-08-01 | Defined Diamond as the dynamic source for `issue/chat/auto.prompt` and removed binary-embedded surface prompt fallback. | Keep changeable Agent behavior policy in configuration while retaining security and outbound protocol constraints in code. |

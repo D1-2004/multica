@@ -11,20 +11,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
-	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/featureflag"
 )
 
-func testMulticaMCPHandler(t *testing.T, enabled bool) *Handler {
+func testMulticaMCPHandler(t *testing.T) *Handler {
 	t.Helper()
-	provider := featureflag.NewStaticProvider()
-	provider.Set(featureflags.MulticaMCPChatSend, featureflag.Rule{Default: enabled})
 	return &Handler{
-		FeatureFlags: featureflag.NewService(provider),
-		cfg:          Config{PublicURL: "https://api.multica.test"},
+		cfg: Config{PublicURL: "https://api.multica.test"},
 	}
 }
 
@@ -70,7 +65,7 @@ func decodeMCPResponse(t *testing.T, w *httptest.ResponseRecorder) map[string]an
 }
 
 func TestMulticaMCPInitialize(t *testing.T) {
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	w := httptest.NewRecorder()
 	r := mcpRequest(t, "initialize", 1, map[string]any{
 		"protocolVersion": multicaMCPProtocolVersion,
@@ -94,8 +89,8 @@ func TestMulticaMCPInitialize(t *testing.T) {
 	}
 }
 
-func TestMulticaMCPToolsListPublishesChatAndSelfDigitalEmployeeActions(t *testing.T) {
-	h := testMulticaMCPHandler(t, true)
+func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T) {
+	h := testMulticaMCPHandler(t)
 	w := httptest.NewRecorder()
 	h.MulticaMCP(w, mcpRequest(t, "tools/list", "list-1", map[string]any{}))
 
@@ -219,7 +214,7 @@ func TestMulticaMCPAgentQueriesUsePATVisibilityAcrossWorkspaces(t *testing.T) {
 		},
 		targets: []db.AgentInvocationTarget{{AgentID: sharedAgent, TargetType: "member", TargetID: userID}},
 	}
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	h.multicaMCPAgents = store
 
 	listRequest := personalMCPRequest(t, "tools/call", "agent-list", map[string]any{
@@ -264,7 +259,7 @@ func TestMulticaMCPAgentQueriesKeepTaskTokenInItsWorkspace(t *testing.T) {
 	workspaceB := util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 	privateAgent := util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 	otherAgent := util.MustParseUUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	h.multicaMCPAgents = &fakeMulticaMCPAgentQueryStore{
 		workspaces: []db.Workspace{{ID: workspaceA, Name: "Workspace A"}, {ID: workspaceB, Name: "Workspace B"}},
 		agents: map[string][]db.Agent{
@@ -287,7 +282,7 @@ func TestMulticaMCPAgentQueriesKeepTaskTokenInItsWorkspace(t *testing.T) {
 }
 
 func TestMulticaMCPSearchAgentsRequiresKeyword(t *testing.T) {
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	w := httptest.NewRecorder()
 	h.MulticaMCP(w, personalMCPRequest(t, "tools/call", "agent-search-empty", map[string]any{
 		"name": multicaMCPAgentSearchTool, "arguments": map[string]any{"keyword": "  "},
@@ -300,7 +295,7 @@ func TestMulticaMCPSearchAgentsRequiresKeyword(t *testing.T) {
 }
 
 func TestMulticaMCPTransportAndJSONRPCFailures(t *testing.T) {
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 
 	t.Run("GET returns 405", func(t *testing.T) {
 		r := mcpRequest(t, "tools/list", 1, nil)
@@ -340,9 +335,9 @@ func TestMulticaMCPTransportAndJSONRPCFailures(t *testing.T) {
 	})
 }
 
-func TestMulticaMCPRequiresSupportedBearerAndReleaseFlag(t *testing.T) {
+func TestMulticaMCPRequiresSupportedBearer(t *testing.T) {
 	t.Run("JWT or cookie-shaped human actor", func(t *testing.T) {
-		h := testMulticaMCPHandler(t, true)
+		h := testMulticaMCPHandler(t)
 		r := mcpRequest(t, "tools/list", 1, nil)
 		r.Header.Del("X-Actor-Source")
 		w := httptest.NewRecorder()
@@ -353,26 +348,17 @@ func TestMulticaMCPRequiresSupportedBearerAndReleaseFlag(t *testing.T) {
 	})
 
 	t.Run("personal access token", func(t *testing.T) {
-		h := testMulticaMCPHandler(t, true)
+		h := testMulticaMCPHandler(t)
 		w := httptest.NewRecorder()
 		h.MulticaMCP(w, personalMCPRequest(t, "tools/list", 1, nil))
 		if w.Code != http.StatusOK {
 			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 		}
 	})
-
-	t.Run("flag disabled", func(t *testing.T) {
-		h := testMulticaMCPHandler(t, false)
-		w := httptest.NewRecorder()
-		h.MulticaMCP(w, mcpRequest(t, "tools/list", 1, nil))
-		if w.Code != http.StatusServiceUnavailable {
-			t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-		}
-	})
 }
 
 func TestMulticaMCPDigitalEmployeeGetReportsUnconfiguredAsToolError(t *testing.T) {
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	w := httptest.NewRecorder()
 	h.MulticaMCP(w, mcpRequest(t, "tools/call", "binding-get-1", map[string]any{
 		"name":      multicaMCPBindingGetTool,
@@ -461,7 +447,7 @@ func TestMulticaMCPDigitalEmployeeGetPinsTaskAgentAndUsesHumanOriginator(t *test
 		WorkspaceID: util.UUIDToString(workspaceID), AgentID: util.UUIDToString(agentID),
 		Status: "active", RouterBindingStatus: "valid", RetryStatus: "not_required",
 	}}
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	h.DigitalEmployeeBindingMCPBindings = service
 	h.multicaMCPBindingTasks = &fakeMulticaMCPTaskStore{task: db.AgentTaskQueue{
 		ID: taskID, AgentID: agentID, Status: "running", OriginatorUserID: originatorID,
@@ -508,7 +494,7 @@ func TestMulticaMCPPersonalTokenBindingUsesSelectedAgent(t *testing.T) {
 		WorkspaceID: util.UUIDToString(workspaceID), AgentID: util.UUIDToString(agentID),
 		Status: "active", RouterBindingStatus: "valid", RetryStatus: "not_required",
 	}}
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	h.DigitalEmployeeBindingMCPBindings = service
 	h.dingTalkAccountBindingMetadata = &beginBindingMetadataDB{
 		agent: db.Agent{
@@ -542,7 +528,7 @@ func TestMulticaMCPPersonalTokenBindingUsesSelectedAgent(t *testing.T) {
 }
 
 func TestMulticaMCPPersonalTokenBindingRequiresAgent(t *testing.T) {
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	h.DigitalEmployeeBindingMCPBindings = &fakeMulticaMCPBindingService{}
 	w := httptest.NewRecorder()
 	h.MulticaMCP(w, personalMCPRequest(t, "tools/call", "binding-get-pat-missing-agent", map[string]any{
@@ -582,7 +568,7 @@ func TestMulticaMCPTaskTokenBindingRejectsDifferentAgent(t *testing.T) {
 	originatorID := util.MustParseUUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
 	taskID := util.MustParseUUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
 	service := &fakeMulticaMCPBindingService{}
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	h.DigitalEmployeeBindingMCPBindings = service
 	h.multicaMCPBindingTasks = &fakeMulticaMCPTaskStore{task: db.AgentTaskQueue{
 		ID: taskID, AgentID: taskAgentID, Status: "running", OriginatorUserID: originatorID,
@@ -633,7 +619,7 @@ func TestMulticaMCPDigitalEmployeeMutationsApplySafeDefaultsAndOriginator(t *tes
 		TenantID: "tenant-a", DigitalEmployeeID: "employee-a",
 		Status: "active", RouterBindingStatus: "valid", RetryStatus: "not_required",
 	}}
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	h.DigitalEmployeeBindingMCPBindings = service
 	h.multicaMCPBindingTasks = &fakeMulticaMCPTaskStore{task: db.AgentTaskQueue{
 		ID: taskID, AgentID: agentID, Status: "running", OriginatorUserID: originatorID,
@@ -704,7 +690,7 @@ func TestMulticaMCPDigitalEmployeeMutationsApplySafeDefaultsAndOriginator(t *tes
 }
 
 func TestMulticaMCPPersonalTokenChatSendDoesNotRequireSourceTask(t *testing.T) {
-	h := testMulticaMCPHandler(t, true)
+	h := testMulticaMCPHandler(t)
 	r := personalMCPRequest(t, "tools/call", "chat-pat-no-source-task", map[string]any{
 		"name": multicaMCPChatSendTool,
 		"arguments": map[string]any{
@@ -731,7 +717,6 @@ func TestMulticaMCPPersonalTokenChatSendUsesMemberIdentity(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	withFeatureFlag(t, testHandler, featureflags.MulticaMCPChatSend, true)
 	ctx := context.Background()
 	targetAgentID := createHandlerTestAgent(t, "MCP PAT target agent", nil)
 	targetSessionID := createHandlerTestChatSession(t, targetAgentID)
@@ -792,7 +777,6 @@ func TestMulticaMCPChatSendContinuesAnotherOwnedSession(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	withFeatureFlag(t, testHandler, featureflags.MulticaMCPChatSend, true)
 	ctx := context.Background()
 	sourceAgentID := createHandlerTestAgent(t, "MCP source agent", nil)
 	sourceSessionID := createHandlerTestChatSession(t, sourceAgentID)
@@ -860,7 +844,6 @@ func TestMulticaMCPChatSendRejectsSourceSession(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	withFeatureFlag(t, testHandler, featureflags.MulticaMCPChatSend, true)
 	ctx := context.Background()
 	agentID := createHandlerTestAgent(t, "MCP self target agent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)

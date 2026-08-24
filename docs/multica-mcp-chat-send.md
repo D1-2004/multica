@@ -15,30 +15,15 @@ Multica API 同时承担 MCP Server 和业务服务角色：
 
 这是一条服务端受控、客户端显式选择的能力。工具定义、校验规则和业务行为都随 Multica API 发布；部署服务端 MCP 不会改变现有 Agent 或沙箱的启动配置。
 
-## 2. 发布开关与运行条件
+## 2. 运行条件
 
-能力默认关闭，由后端 release flag `multica_mcp_chat_send` 控制 `/api/mcp` 的协议发现和工具执行。该开关不修改 task claim 响应。
-
-全局开启：
-
-```bash
-FF_MULTICA_MCP_CHAT_SEND=true
-```
-
-或在 `MULTICA_FEATURE_FLAGS_FILE` 中配置：
-
-```yaml
-multica_mcp_chat_send:
-  default: true
-```
-
-显式接入还必须满足以下条件：
+`/api/mcp` 默认可用，不受发布开关控制。显式接入必须满足以下条件：
 
 - 调用方能够访问 Multica API 的 `/api/mcp` 地址。
 - 调用方本身支持 Streamable HTTP MCP，并显式传入 `mul_` PAT 或当前任务的 `mat_` 令牌。
 - 沙箱和 Agent 的既有 `mcp_config` 保持不变；是否安装和使用 Multica MCP 由调用方负责，不能依赖 claim 自动注入。
 
-建议滚动顺序：先发布服务端且保持 flag 关闭，确认 API 与数据库基线正常，再开启 flag。开启或关闭 flag 都不会改变沙箱启动配置；已经排队的目标 Chat 任务是正常业务数据，不会因关 flag 被删除。
+服务端滚动发布期间，旧副本仍可能保留发布前行为；验收必须等待所有副本更新。MCP endpoint 的可用性不会改变沙箱启动配置，已经排队的目标 Chat 任务仍是正常业务数据。
 
 ## 3. MCP 传输协议
 
@@ -136,7 +121,7 @@ Task Token 还必须满足：源任务是 `running` 或 `dispatched` 状态的 C
 
 ### 失败语义
 
-- HTTP 鉴权、release flag、Origin 和协议版本错误使用对应的 `4xx/503`。
+- HTTP 鉴权、Origin 和协议版本错误使用对应的 `4xx`。
 - JSON-RPC 结构、方法名和参数错误使用 JSON-RPC error。
 - 已通过协议校验、但 PAT 用户、源任务（仅 Task Token）或目标 Chat 不满足业务约束时，返回 MCP tool result `isError=true`，不创建目标消息或任务。
 - 内部数据库错误只返回通用失败信息，详细错误仅写服务端日志且不包含 token。
@@ -197,12 +182,13 @@ Multica 只提供服务端 endpoint，不拥有 Client 的 MCP 配置：
 - 单任务 claim 和批量 claim 都只返回既有任务令牌，不向 `mcp_config.mcpServers` 增加 `multica`。
 - Agent 已配置的 `mcpServers` 和 provider 扩展字段不会被本功能覆盖。
 - 调用方可以自行使用 `multica` 作为 Client 侧 server name，但必须显式配置可信 URL 和 `Authorization` 请求头。
-- flag 只决定 `/api/mcp` 是否接受调用；关闭 flag 不清理或改写任何 Client、Agent 或沙箱配置。
+- `/api/mcp` 始终接受通过鉴权的协议请求，但不会改写任何 Client、Agent 或沙箱配置。
 
 ## 变更历史
 
 | 日期 | 变更 | 原因 |
 |---|---|---|
+| 2026-08-24 | 移除服务端 MCP 发布开关，`/api/mcp` 改为默认可用。 | Runtime 在所有环境都公开该命令；服务端可用性必须与能力声明一致，同时继续依赖鉴权、Origin 和业务权限保护。 |
 | 2026-08-07 | 新增 `search_agents` 和 `list_agents`，由服务端推导 Workspace，并按 PAT 用户可见性或 Task Token Workspace 返回非敏感 Agent 详情。 | 让通用 MCP Client 能先通过名称找到 Agent UUID、查看 Agent 元数据，再调用绑定或 Chat 等后续工具，同时避免重新引入客户端 Workspace header 或泄露 Agent 配置凭据。 |
 | 2026-08-07 | PAT 客户端不再传 Workspace header；服务端从目标 Chat 或 Agent 反查 Workspace 并校验成员关系。 | Streamable HTTP Client 的连接初始化不携带业务资源，要求全局 Workspace header 会阻断 Codex 等通用客户端；资源级解析同时避免多 Workspace 用户产生默认选择歧义。 |
 | 2026-08-07 | 增加 `mul_` PAT 鉴权；PAT 以用户成员身份继续已有 Chat，`mat_` Task Token 继续保留 A→B 固定任务身份和来源追溯。 | 支持 Qoder、Claude Code 使用已有个人令牌显式接入，同时不扩大运行中 Agent 的最小权限边界。 |
