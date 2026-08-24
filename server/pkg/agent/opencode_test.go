@@ -1367,6 +1367,112 @@ func TestOpencodeProcessEventsUsageOnlyFinalStepStaysCompleted(t *testing.T) {
 	}
 }
 
+func TestOpenCodeUsageModel(t *testing.T) {
+	tests := []struct {
+		name           string
+		configured     string
+		runnerProvider string
+		managedModel   string
+		want           string
+	}{
+		{
+			name:           "explicit configured model wins",
+			configured:     "reported-model",
+			runnerProvider: "opencode",
+			managedModel:   "qwen3.8-max",
+			want:           "reported-model",
+		},
+		{
+			name:           "managed runner model attributes usage",
+			runnerProvider: "opencode",
+			managedModel:   "qwen3.8-max",
+			want:           "qwen3.8-max",
+		},
+		{
+			name:         "ordinary runtime ignores ambient OpenAI model",
+			managedModel: "ambient-model",
+			want:         "unknown",
+		},
+		{
+			name:           "other managed provider does not attribute OpenCode usage",
+			runnerProvider: "hermes",
+			managedModel:   "qwen3.8-max",
+			want:           "unknown",
+		},
+		{
+			name:           "missing managed model stays unknown",
+			runnerProvider: "opencode",
+			want:           "unknown",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := opencodeUsageModel(tt.configured, tt.runnerProvider, tt.managedModel); got != tt.want {
+				t.Fatalf("opencodeUsageModel() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestOpencodeBackendAttributesManagedRunnerUsageWithoutSelectingModel(t *testing.T) {
+	t.Setenv("OPENAI_MODEL", "qwen3.8-max")
+	tempDir := t.TempDir()
+	argsFile := filepath.Join(tempDir, "argv.txt")
+	fakePath := filepath.Join(tempDir, "opencode")
+	writeTestExecutable(t, fakePath, []byte(fakeOpencodeScript()))
+
+	backend, err := New("opencode", Config{
+		ExecutablePath: fakePath,
+		Logger:         slog.Default(),
+		Env: map[string]string{
+			"OPENCODE_ARGS_FILE":      argsFile,
+			"OPENCODE_USAGE_TOKENS":   "1",
+			"MULTICA_RUNNER_PROVIDER": "opencode",
+			// Agent custom_env is part of Config.Env. The runner wrote its
+			// OpenCode config before the daemon layered this child value, so
+			// attribution must use the outer frozen OPENAI_MODEL instead.
+			"OPENAI_MODEL": "spoofed-child-model",
+		},
+	})
+	if err != nil {
+		t.Fatalf("new opencode backend: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+		Cwd:     t.TempDir(),
+		Timeout: 5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	go func() {
+		for range session.Messages {
+		}
+	}()
+	result := <-session.Result
+	if _, ok := result.Usage["unknown"]; ok {
+		t.Fatalf("managed OpenCode usage remained unknown: %+v", result.Usage)
+	}
+	usage, ok := result.Usage["qwen3.8-max"]
+	if !ok {
+		t.Fatalf("launcher model usage missing: %+v", result.Usage)
+	}
+	if usage.InputTokens != 300 || usage.OutputTokens != 120 || usage.CacheReadTokens != 80 {
+		t.Fatalf("usage = %+v, want input=300 output=120 cache_read=80", usage)
+	}
+
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args file: %v", err)
+	}
+	args := splitNonEmptyLines(string(raw))
+	if containsString(args, "--model") || containsString(args, "qwen3.8-max") {
+		t.Fatalf("attribution model leaked into OpenCode argv: %v", args)
+	}
+}
+
 // ── Windows native-binary resolution tests ──
 
 // fakeStat returns a statFn that reports any path in `present` as existing
@@ -1521,7 +1627,11 @@ if [ -f "$PWD/opencode.json" ] && grep -Eq '"question"[[:space:]]*:[[:space:]]*"
 fi
 printf '{"type":"step_start","timestamp":1,"sessionID":"ses_fake","part":{"type":"step-start"}}\n'
 printf '{"type":"text","timestamp":2,"sessionID":"ses_fake","part":{"type":"text","text":"ok"}}\n'
-printf '{"type":"step_finish","timestamp":3,"sessionID":"ses_fake","part":{"type":"step-finish"}}\n'
+if [ -n "$OPENCODE_USAGE_TOKENS" ]; then
+  printf '{"type":"step_finish","timestamp":3,"sessionID":"ses_fake","part":{"type":"step-finish","tokens":{"input":300,"output":120,"cache":{"write":0,"read":80}}}}\n'
+else
+  printf '{"type":"step_finish","timestamp":3,"sessionID":"ses_fake","part":{"type":"step-finish"}}\n'
+fi
 `
 }
 

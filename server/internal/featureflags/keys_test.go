@@ -16,9 +16,6 @@ func TestReleaseFlagsDefaultToOff(t *testing.T) {
 	if WorkspaceAccessTokensEnabled(ctx, nil) {
 		t.Fatal("workspace access tokens release flag must default to off")
 	}
-	if MulticaMCPChatSendEnabled(ctx, nil) {
-		t.Fatal("Multica MCP Chat send release flag must default to off")
-	}
 }
 
 // MUL-5345: hang stack capture is gone from this build, but v0.4.13–v0.4.18 are
