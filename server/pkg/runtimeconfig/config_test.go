@@ -149,29 +149,67 @@ func TestProductionEnvironmentPrefersAoneEnvironmentType(t *testing.T) {
 }
 
 type fakeDiamondClient struct {
-	content   string
-	getErr    error
-	listenErr error
-	onChange  func(string)
-	cancelled bool
-	closed    bool
+	content                       string
+	manifestFingerprintsContent   string
+	getErr                        error
+	manifestFingerprintsGetErr    error
+	listenErr                     error
+	manifestFingerprintsListenErr error
+	onChange                      func(string)
+	manifestFingerprintsOnChange  func(string)
+	cancelled                     bool
+	manifestFingerprintsCancelled bool
+	closed                        bool
 }
 
 func (c *fakeDiamondClient) GetConfig(dataID, group string) (string, error) {
-	if dataID != DiamondDataID || group != DiamondGroup {
+	if group != DiamondGroup {
 		return "", errors.New("unexpected coordinates")
 	}
-	return c.content, c.getErr
+	switch dataID {
+	case DiamondDataID:
+		return c.content, c.getErr
+	case ManifestFingerprintsDiamondDataID:
+		content := c.manifestFingerprintsContent
+		if content == "" {
+			content = validManifestFingerprintsJSON()
+		}
+		return content, c.manifestFingerprintsGetErr
+	default:
+		return "", errors.New("unexpected coordinates")
+	}
 }
 
 func (c *fakeDiamondClient) ListenConfig(dataID, group string, onChange func(string)) error {
-	c.onChange = onChange
-	return c.listenErr
+	if group != DiamondGroup {
+		return errors.New("unexpected coordinates")
+	}
+	switch dataID {
+	case DiamondDataID:
+		c.onChange = onChange
+		return c.listenErr
+	case ManifestFingerprintsDiamondDataID:
+		c.manifestFingerprintsOnChange = onChange
+		return c.manifestFingerprintsListenErr
+	default:
+		return errors.New("unexpected coordinates")
+	}
 }
 
 func (c *fakeDiamondClient) CancelListenConfig(dataID, group string) error {
-	c.cancelled = true
-	return nil
+	if group != DiamondGroup {
+		return errors.New("unexpected coordinates")
+	}
+	switch dataID {
+	case DiamondDataID:
+		c.cancelled = true
+		return nil
+	case ManifestFingerprintsDiamondDataID:
+		c.manifestFingerprintsCancelled = true
+		return nil
+	default:
+		return errors.New("unexpected coordinates")
+	}
 }
 
 func (c *fakeDiamondClient) CloseClient() { c.closed = true }
@@ -184,8 +222,8 @@ func TestDiamondServiceAppliesValidUpdateAndRejectsInvalidUpdate(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = service.Close() })
 	first := service.Current()
-	if first.Generation != 1 || client.onChange == nil {
-		t.Fatalf("initial snapshot = %#v, listener=%v", first, client.onChange != nil)
+	if first.Generation != 1 || client.onChange == nil || client.manifestFingerprintsOnChange == nil {
+		t.Fatalf("initial snapshot = %#v, runtime listener=%v, fingerprints listener=%v", first, client.onChange != nil, client.manifestFingerprintsOnChange != nil)
 	}
 
 	updated := strings.Replace(validJSON(), `"default_model": "qwen3.8-max"`, `"default_model": "qwen3-max"`, 1)
@@ -255,7 +293,10 @@ func TestDiamondServiceRequiresInitialFetchAndListener(t *testing.T) {
 		client *fakeDiamondClient
 	}{
 		{name: "fetch", client: &fakeDiamondClient{getErr: errors.New("unavailable")}},
+		{name: "fingerprints fetch", client: &fakeDiamondClient{content: validJSON(), manifestFingerprintsGetErr: errors.New("unavailable")}},
+		{name: "fingerprints validation", client: &fakeDiamondClient{content: validJSON(), manifestFingerprintsContent: `{"version":1,"fingerprints":{}}`}},
 		{name: "listener", client: &fakeDiamondClient{content: validJSON(), listenErr: errors.New("unavailable")}},
+		{name: "fingerprints listener", client: &fakeDiamondClient{content: validJSON(), manifestFingerprintsListenErr: errors.New("unavailable")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			service, err := newDiamondService(nil, true, func() (diamondClient, error) { return test.client, nil })
@@ -264,6 +305,9 @@ func TestDiamondServiceRequiresInitialFetchAndListener(t *testing.T) {
 			}
 			if !test.client.closed {
 				t.Fatal("failed startup must close client")
+			}
+			if test.name == "fingerprints listener" && !test.client.cancelled {
+				t.Fatal("failed fingerprints listener startup must cancel runtime config listener")
 			}
 		})
 	}
@@ -278,7 +322,7 @@ func TestDiamondServiceCloseCancelsListener(t *testing.T) {
 	if err := service.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if !client.cancelled || !client.closed {
-		t.Fatalf("cancelled=%v closed=%v", client.cancelled, client.closed)
+	if !client.cancelled || !client.manifestFingerprintsCancelled || !client.closed {
+		t.Fatalf("runtime cancelled=%v fingerprints cancelled=%v closed=%v", client.cancelled, client.manifestFingerprintsCancelled, client.closed)
 	}
 }

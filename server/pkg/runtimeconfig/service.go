@@ -27,17 +27,19 @@ type Snapshot struct {
 }
 
 type Service struct {
-	snapshot atomic.Pointer[Snapshot]
-	logger   *slog.Logger
-	prod     bool
+	snapshot             atomic.Pointer[Snapshot]
+	manifestFingerprints atomic.Pointer[ManifestFingerprintsSnapshot]
+	logger               *slog.Logger
+	prod                 bool
 
-	applyMu     sync.Mutex
-	mu          sync.Mutex
-	closeOnce   sync.Once
-	closeFunc   func() error
-	closeErr    error
-	validator   func(Config) error
-	subscribers []func(Snapshot)
+	applyMu                     sync.Mutex
+	manifestFingerprintsApplyMu sync.Mutex
+	mu                          sync.Mutex
+	closeOnce                   sync.Once
+	closeFunc                   func() error
+	closeErr                    error
+	validator                   func(Config) error
+	subscribers                 []func(Snapshot)
 }
 
 func NewStatic(cfg Config) (*Service, error) {

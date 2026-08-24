@@ -372,13 +372,96 @@
       "name": "Name",
       "description": "Description",
       "usage": "Used by",
+      "tasks": "Tasks",
+      "tokens": "Tokens",
+      "cost": "Cost",
       "updated": "Updated"
     },
+    "sort": {
+      "updated": "Recently updated",
+      "cost_high": "Highest cost",
+      "cost_low": "Lowest cost",
+      "tokens_high": "Most tokens",
+      "tokens_low": "Fewest tokens"
+    },
+    "cost_partial": "{{count}} tasks are not fully priced; {{tokens}} tokens are excluded from this subtotal.",
     "usage_count": "{{count}} used",
     "loading": "Loading labels...",
     "empty": "No {{scope}} labels yet",
     "no_results": "No matching labels",
     "save_failed": "Couldn't save label",
+    "usage_detail": {
+      "title": "Label usage",
+      "back": "Back to label settings",
+      "periods": {
+        "7d": "7D",
+        "30d": "30D",
+        "90d": "90D",
+        "all": "All time"
+      },
+      "unpriced_notice": "{{count}} tasks are not fully priced and {{tokens}} tokens are excluded. Cost figures show the priced subtotal only.",
+      "kpi": {
+        "cost": "Priced cost",
+        "cost_partial": "Partial subtotal",
+        "cost_complete": "All recorded usage is priced",
+        "tokens": "Total tokens",
+        "tasks": "Related tasks",
+        "unpriced": "Not fully priced",
+        "unpriced_hint": "{{tokens}} unpriced tokens"
+      },
+      "chart": {
+        "title": "Daily usage trend",
+        "description": "Tokens and priced cost for tasks carrying this label.",
+        "tokens": "Tokens",
+        "cost": "Cost",
+        "empty": "No daily usage in this period."
+      },
+      "breakdown": {
+        "title": "Provider and model distribution",
+        "description": "Ranked by priced cost, then tokens when cost is unavailable.",
+        "providers": "By provider",
+        "models": "By model",
+        "unknown_provider": "Unknown provider",
+        "unknown_model": "Unknown model",
+        "empty": "No usage breakdown available."
+      },
+      "sort": {
+        "cost_high": "Cost: high to low",
+        "cost_low": "Cost: low to high",
+        "tokens_high": "Tokens: high to low",
+        "tokens_low": "Tokens: low to high",
+        "recent": "Most recent",
+        "oldest": "Oldest"
+      },
+      "tasks": {
+        "title": "Related tasks",
+        "count": "{{count}} tasks in this period",
+        "empty": "No related tasks in this period.",
+        "issue": "Issue",
+        "status": "Status",
+        "agent": "Agent",
+        "model": "Provider / model",
+        "completed": "Activity",
+        "tokens": "Tokens",
+        "cost": "Cost",
+        "unpriced": "This cost is incomplete.",
+        "unpriced_tokens": "{{tokens}} tokens are not priced.",
+        "no_usage": "No usage",
+        "unknown_issue": "Unknown issue",
+        "page": "Page {{page}} of {{total}}",
+        "previous": "Previous",
+        "next": "Next"
+      },
+      "empty": {
+        "title": "No usage yet",
+        "description": "Tasks associated with this label will appear after an agent runs them."
+      },
+      "error": {
+        "title": "Couldn't load label usage",
+        "description": "Check your connection and try again.",
+        "retry": "Try again"
+      }
+    },
     "actions": {
       "open": "Actions for {{name}}",
       "edit": "Edit",

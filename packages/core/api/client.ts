@@ -142,6 +142,8 @@ import type {
   IssueLabelsResponse,
   LabelResourceType,
   ResourceLabelsResponse,
+  LabelUsageParams,
+  LabelUsageResponse,
   PinnedItem,
   CreatePinRequest,
   PinnedItemType,
@@ -419,6 +421,8 @@ import {
   EMPTY_LABEL,
   EMPTY_LIST_LABELS_RESPONSE,
   EMPTY_RESOURCE_LABELS_RESPONSE,
+  LabelUsageResponseSchema,
+  EMPTY_LABEL_USAGE_RESPONSE,
   GitHubAgentPreviewSchema,
   GitHubInstallationSchema,
   ListGitHubInstallationsResponseSchema,
@@ -3990,9 +3994,12 @@ export class ApiClient {
   // Labels
   async listLabels(
     resourceType: LabelResourceType = "issue",
+    options?: { includeUsage?: boolean },
   ): Promise<ListLabelsResponse> {
+    const search = new URLSearchParams({ resource_type: resourceType });
+    if (options?.includeUsage === true) search.set("include_usage", "true");
     const raw = await this.fetch<unknown>(
-      `/api/labels?resource_type=${resourceType}`,
+      `/api/labels?${search.toString()}`,
     );
     return parseWithFallback(
       raw,
@@ -4033,6 +4040,29 @@ export class ApiClient {
 
   async deleteLabel(id: string): Promise<void> {
     await this.fetch(`/api/labels/${id}`, { method: "DELETE" });
+  }
+
+  async getLabelUsage(
+    id: string,
+    params: LabelUsageParams,
+  ): Promise<LabelUsageResponse> {
+    const search = new URLSearchParams({
+      period: params.period,
+      sort: params.sort,
+      direction: params.direction,
+      tz: params.tz,
+      page: String(params.page),
+      page_size: String(params.page_size),
+    });
+    const raw = await this.fetch<unknown>(
+      `/api/labels/${encodeURIComponent(id)}/usage?${search.toString()}`,
+    );
+    return parseWithFallback(
+      raw,
+      LabelUsageResponseSchema,
+      EMPTY_LABEL_USAGE_RESPONSE,
+      { endpoint: "GET /api/labels/{id}/usage" },
+    );
   }
 
   // Custom issue properties

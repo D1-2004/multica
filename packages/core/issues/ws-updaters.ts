@@ -297,6 +297,10 @@ export function patchIssueLabels(
 
 /** Reconcile server-filtered label windows only after the write commits. */
 export function invalidateIssueLabelDerivatives(qc: QueryClient, wsId: string) {
+  // Label attachment changes alter both the settings summary and every
+  // period/sort variant of the label usage detail. These caches live under a
+  // dedicated prefix so ordinary lightweight label pickers stay untouched.
+  qc.invalidateQueries({ queryKey: labelKeys.usageRoot(wsId) });
   // A committed response/event must cancel or supersede any per-parent fetch
   // that started before the label write and could otherwise land afterward.
   qc.invalidateQueries({ queryKey: issueKeys.childrenAll(wsId) });
@@ -443,4 +447,7 @@ export function onIssueDeleted(
   qc.invalidateQueries({ queryKey: issueKeys.assigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: issueKeys.myAssigneeGroupsAll(wsId) });
   qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+  // Deleting an issue cascades its label assignments, tasks, and usage rows.
+  // No separate label/task event is guaranteed after that cascade.
+  qc.invalidateQueries({ queryKey: labelKeys.usageRoot(wsId) });
 }

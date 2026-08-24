@@ -57,6 +57,7 @@ import type {
   InboxItem,
   InboxWorkspaceUnread,
   Label,
+  LabelUsageResponse,
   IssueProperty,
   ListPropertiesResponse,
   QuickAction,
@@ -647,6 +648,17 @@ export const EMPTY_ISSUE_PULL_REQUESTS_RESPONSE: {
 // Label responses are consumed by settings tables and resource pickers. Keep
 // the resource type lenient so newer server scopes do not break older clients,
 // while defaulting fields that predate scoped label catalogs.
+export const LabelUsageSummarySchema = z
+  .object({
+    total_tokens: z.number().nonnegative(),
+    total_cost_usd_ticks: z.number().nonnegative(),
+    uncosted_tokens: z.number().nonnegative(),
+    task_count: z.number().int().nonnegative(),
+    priced_task_count: z.number().int().nonnegative(),
+    unpriced_task_count: z.number().int().nonnegative(),
+  })
+  .loose();
+
 export const LabelSchema = z
   .object({
     id: z.string(),
@@ -656,6 +668,7 @@ export const LabelSchema = z
     description: z.string().optional().default(""),
     color: z.string(),
     usage_count: z.number().optional().default(0),
+    usage_summary: LabelUsageSummarySchema.optional().catch(undefined),
     created_at: z.string(),
     updated_at: z.string(),
   })
@@ -671,6 +684,98 @@ export const EMPTY_LABEL: Label = {
   usage_count: 0,
   created_at: "",
   updated_at: "",
+};
+
+const LabelUsageDailySchema = z
+  .object({
+    date: z.string(),
+    total_tokens: z.number().nonnegative(),
+    total_cost_usd_ticks: z.number().nonnegative(),
+    uncosted_tokens: z.number().nonnegative(),
+    task_count: z.number().int().nonnegative(),
+    priced_task_count: z.number().int().nonnegative(),
+    unpriced_task_count: z.number().int().nonnegative(),
+  })
+  .loose();
+
+const LabelUsageBreakdownSchema = z
+  .object({
+    provider: z.string(),
+    model: z.string(),
+    total_tokens: z.number().nonnegative(),
+    total_cost_usd_ticks: z.number().nonnegative(),
+    uncosted_tokens: z.number().nonnegative(),
+    task_count: z.number().int().nonnegative(),
+    unpriced_task_count: z.number().int().nonnegative(),
+  })
+  .loose();
+
+const LabelUsageTaskBreakdownSchema = z
+  .object({
+    provider: z.string(),
+    model: z.string(),
+    total_tokens: z.number().nonnegative(),
+    total_cost_usd_ticks: z.number().nonnegative(),
+    uncosted_tokens: z.number().nonnegative(),
+    is_priced: z.boolean(),
+  })
+  .loose();
+
+const LabelUsageTaskSchema = z
+  .object({
+    task_id: z.string(),
+    issue_id: z.string().default(""),
+    issue_identifier: z.string().default(""),
+    issue_title: z.string().default(""),
+    status: z.string().default(""),
+    provider: z.string().default(""),
+    model: z.string().default(""),
+    has_usage: z.boolean(),
+    total_tokens: z.number().nonnegative(),
+    total_cost_usd_ticks: z.number().nonnegative(),
+    uncosted_tokens: z.number().nonnegative(),
+    is_priced: z.boolean(),
+    usage_breakdown: z.array(LabelUsageTaskBreakdownSchema).default([]),
+    created_at: z.string().default(""),
+    completed_at: z.string().nullable().optional(),
+    activity_at: z.string(),
+  })
+  .loose();
+
+const LabelUsagePaginationSchema = z
+  .object({
+    page: z.number().int().positive().default(1),
+    page_size: z.number().int().positive().default(25),
+    total: z.number().int().nonnegative().default(0),
+    total_pages: z.number().int().nonnegative().default(0),
+  })
+  .loose();
+
+export const LabelUsageResponseSchema = z
+  .object({
+    label: LabelSchema,
+    summary: LabelUsageSummarySchema,
+    daily: z.array(LabelUsageDailySchema).default([]),
+    breakdown: z.array(LabelUsageBreakdownSchema).default([]),
+    tasks: z.array(LabelUsageTaskSchema).default([]),
+    pagination: LabelUsagePaginationSchema,
+  })
+  .loose();
+
+export const EMPTY_LABEL_USAGE_RESPONSE: LabelUsageResponse = {
+  label: EMPTY_LABEL,
+  summary: {
+    total_tokens: 0,
+    total_cost_usd_ticks: 0,
+    uncosted_tokens: 0,
+    task_count: 0,
+    priced_task_count: 0,
+    unpriced_task_count: 0,
+  },
+  daily: [],
+  breakdown: [],
+  tasks: [],
+  pagination: { page: 1, page_size: 25, total: 0, total_pages: 0 },
 };
 
 export const ListLabelsResponseSchema = z

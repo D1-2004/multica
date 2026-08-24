@@ -465,7 +465,7 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 			"createdAt": "2026-07-08T13:16:30.740524Z",
 			"updatedAt": "2026-07-08T13:19:01.365773Z"
 		}
-	]`)
+	]`, nil)
 	if err != nil {
 		t.Fatalf("parseFCE2BTemplates returned error: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			template := FCE2BTemplate{BuildID: test.buildID}
-			published, err := applyFCE2BTemplateManifestAlias(&template, test.alias)
+			published, err := applyFCE2BTemplateManifestAlias(&template, test.alias, nil)
 			if err != nil {
 				t.Fatalf("apply manifest alias: %v", err)
 			}
@@ -585,8 +585,29 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 			}
 		})
 	}
-	if _, err := applyFCE2BTemplateManifestAlias(nil, validAlias); err == nil {
+	if _, err := applyFCE2BTemplateManifestAlias(nil, validAlias, nil); err == nil {
 		t.Fatal("nil template was accepted")
+	}
+}
+
+func testFCE2BManifestV7Catalog() map[string]map[string]string {
+	return map[string]map[string]string{
+		"da499f3161a007c0": {
+			"hermes": "0.19.0", "opencode": "v1.18.11", "opencode-v2": "0.0.0-beta-202608110357",
+			"dsh": "0.1.0-rc.6", "pi": "0.83.0", "dws": "v1.0.58-beta.4",
+		},
+		"41edc34be759811a": {
+			"hermes": "0.19.0", "opencode": "v1.18.11", "opencode-v2": "0.0.0-beta-202608110357",
+			"dsh": "0.1.0-rc.6", "pi": "0.83.0", "dws": "v1.0.59-beta.3",
+		},
+		"baedb216407a5060": {
+			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
+			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.59",
+		},
+		"bc80cb4524f2bc75": {
+			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
+			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.1",
+		},
 	}
 }
 
@@ -627,11 +648,20 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 			wantPi:             "0.84.2",
 			wantSourceRevision: "f24f2e",
 		},
+		{
+			name:               "latest DWS beta runtime from Diamond catalog",
+			alias:              "multica-m7-vbc80cb4524f2bc75-r1-2c5ead",
+			wantDWS:            "v1.0.60-beta.1",
+			wantDSH:            "0.1.0-rc.8",
+			wantOpenCode:       "v1.18.19",
+			wantPi:             "0.84.2",
+			wantSourceRevision: "2c5ead",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			template := FCE2BTemplate{BuildID: "build-v7"}
-			published, err := applyFCE2BTemplateManifestAlias(&template, test.alias)
+			published, err := applyFCE2BTemplateManifestAlias(&template, test.alias, testFCE2BManifestV7Catalog())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -670,6 +700,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 	if applied, err := applyFCE2BTemplateManifestAlias(
 		&wrong,
 		"multica-m7-v0000000000000000-r1-9a6bfa",
+		testFCE2BManifestV7Catalog(),
 	); err != nil || applied {
 		t.Fatalf("wrong v7 fingerprint applied=%v err=%v", applied, err)
 	}
@@ -684,10 +715,11 @@ func TestListFCE2BTemplatesReadsOnlyManifestAliases(t *testing.T) {
 		{"id":"tpl-no-build","aliases":["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-bbbbbb"],"status":"ready"}
 	]`}}
 	templates, err := ListFCE2BTemplates(context.Background(), FCE2BConfig{
-		APIKey:  "test-key",
-		APIURL:  "https://fc-e2b.test",
-		Domain:  "fc-e2b.test",
-		CLIPath: "e2b-test",
+		APIKey:                      "test-key",
+		APIURL:                      "https://fc-e2b.test",
+		Domain:                      "fc-e2b.test",
+		CLIPath:                     "e2b-test",
+		ManifestV7ComponentVersions: testFCE2BManifestV7Catalog(),
 	}, runner)
 	if err != nil {
 		t.Fatalf("list templates: %v", err)
@@ -707,6 +739,27 @@ func TestListFCE2BTemplatesReadsOnlyManifestAliases(t *testing.T) {
 	}
 	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, []string{"template", "list", "--format", "json"}) {
 		t.Fatalf("template list calls = %#v", runner.calls)
+	}
+}
+
+func TestFCE2BTemplateAPIPreservesLegacyAliasesWithoutV7Catalog(t *testing.T) {
+	cfg := FCE2BConfig{
+		APIKey:  "test-key",
+		APIURL:  "https://fc-e2b.test",
+		Domain:  "fc-e2b.test",
+		CLIPath: "e2b-test",
+	}
+	if err := cfg.ValidateTemplateAPI(); err != nil {
+		t.Fatalf("legacy template API config: %v", err)
+	}
+	template := FCE2BTemplate{BuildID: "legacy-build"}
+	applied, err := applyFCE2BTemplateManifestAlias(
+		&template,
+		"multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta3-r1-9a6bfa",
+		nil,
+	)
+	if err != nil || !applied {
+		t.Fatalf("legacy alias applied=%v err=%v", applied, err)
 	}
 }
 

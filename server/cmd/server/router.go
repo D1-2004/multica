@@ -2245,6 +2245,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/", h.CreateLabel)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetLabel)
+					r.Get("/usage", h.GetLabelUsage)
 					r.Put("/", h.UpdateLabel)
 					r.Delete("/", h.DeleteLabel)
 				})
