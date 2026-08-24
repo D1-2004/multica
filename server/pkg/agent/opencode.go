@@ -298,14 +298,19 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		b.cfg.Logger.Info("opencode finished", "pid", cmd.Process.Pid, "status", scanResult.status, "duration", duration.Round(time.Millisecond).String())
 
 		// Build usage map. OpenCode doesn't report model per-step, so we
-		// attribute all usage to the configured model (or "unknown").
+		// attribute all usage to the configured model. Managed FC/E2B runs
+		// intentionally leave opts.Model empty to avoid a second --model
+		// selection after the runner writes its provider config; in that one
+		// environment, OPENAI_MODEL is the launcher-resolved default written
+		// into the runner-owned OpenCode config and is used for attribution only.
 		var usage map[string]TokenUsage
 		u := scanResult.usage
 		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
-			model := opts.Model
-			if model == "" {
-				model = "unknown"
-			}
+			model := opencodeUsageModel(
+				opts.Model,
+				envValue(b.cfg.Env, "MULTICA_RUNNER_PROVIDER"),
+				os.Getenv("OPENAI_MODEL"),
+			)
 			usage = map[string]TokenUsage{model: u}
 		}
 
@@ -320,6 +325,18 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func opencodeUsageModel(configuredModel, runnerProvider, managedModel string) string {
+	if model := strings.TrimSpace(configuredModel); model != "" {
+		return model
+	}
+	if strings.EqualFold(strings.TrimSpace(runnerProvider), "opencode") {
+		if model := strings.TrimSpace(managedModel); model != "" {
+			return model
+		}
+	}
+	return "unknown"
 }
 
 func appendOpenCodeImageArgs(args []string, images []InputImage) []string {
