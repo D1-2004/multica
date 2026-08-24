@@ -55,6 +55,8 @@ function workspaceScoped(slug: string) {
     skills: () => `${ws}/skills`,
     skillDetail: (id: string) => `${ws}/skills/${encode(id)}`,
     settings: () => `${ws}/settings`,
+    settingsLabels: () => `${ws}/settings?tab=labels`,
+    labelUsage: (id: string) => `${ws}/settings/labels/${encode(id)}`,
     attachmentPreview: (id: string) => `${ws}/attachments/${encode(id)}/preview`,
   };
 }

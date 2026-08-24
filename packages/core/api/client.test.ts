@@ -827,6 +827,215 @@ describe("ApiClient A2A config response schemas", () => {
 });
 
 describe("ApiClient label response schemas", () => {
+  const label = {
+    id: "label-1",
+    workspace_id: "workspace-1",
+    resource_type: "issue",
+    name: "Expensive",
+    description: "Track costly work",
+    color: "#3b82f6",
+    usage_count: 2,
+    created_at: "2026-08-01T00:00:00Z",
+    updated_at: "2026-08-24T00:00:00Z",
+  };
+
+  it("parses list summaries without requiring a detail request", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(new Response(
+        JSON.stringify({
+          labels: [
+            {
+              ...label,
+              usage_summary: {
+                total_tokens: 12_000,
+                total_cost_usd_ticks: 4_200_000_000,
+                uncosted_tokens: 2_000,
+                task_count: 2,
+                priced_task_count: 1,
+                unpriced_task_count: 1,
+              },
+            },
+          ],
+          total: 1,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      )),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    const response = await client.listLabels("issue", { includeUsage: true });
+    await client.listLabels("skill");
+
+    expect(response.labels[0]?.usage_summary).toMatchObject({
+      total_tokens: 12_000,
+      uncosted_tokens: 2_000,
+      unpriced_task_count: 1,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      "resource_type=issue&include_usage=true",
+    );
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("resource_type=skill");
+    expect(String(fetchMock.mock.calls[1]?.[0])).not.toContain("include_usage");
+  });
+
+  it("parses label usage detail and forwards period, sorting, pagination, and timezone", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          label,
+          summary: {
+            total_tokens: 12_000,
+            total_cost_usd_ticks: 4_200_000_000,
+            uncosted_tokens: 2_000,
+            task_count: 2,
+            priced_task_count: 1,
+            unpriced_task_count: 1,
+          },
+          daily: [
+            {
+              date: "2026-08-24",
+              total_tokens: 12_000,
+              total_cost_usd_ticks: 4_200_000_000,
+              uncosted_tokens: 2_000,
+              task_count: 2,
+              priced_task_count: 1,
+              unpriced_task_count: 1,
+            },
+          ],
+          breakdown: [
+            {
+              provider: "opencode",
+              model: "qwen3.8-max",
+              total_tokens: 12_000,
+              total_cost_usd_ticks: 4_200_000_000,
+              uncosted_tokens: 2_000,
+              task_count: 2,
+              unpriced_task_count: 1,
+            },
+          ],
+          tasks: [
+            {
+              task_id: "task-1",
+              issue_id: "issue-1",
+              issue_identifier: "MUL-1",
+              issue_title: "Investigate spend",
+              status: "completed",
+              provider: "",
+              model: "",
+              has_usage: true,
+              is_priced: false,
+              total_tokens: 12_000,
+              total_cost_usd_ticks: 4_200_000_000,
+              uncosted_tokens: 2_000,
+              usage_breakdown: [
+                {
+                  provider: "opencode",
+                  model: "qwen3.8-max",
+                  total_tokens: 12_000,
+                  total_cost_usd_ticks: 4_200_000_000,
+                  uncosted_tokens: 2_000,
+                  is_priced: false,
+                },
+              ],
+              created_at: "2026-08-24T01:00:00Z",
+              completed_at: "2026-08-24T01:01:00Z",
+              activity_at: "2026-08-24T01:01:00Z",
+            },
+          ],
+          pagination: { page: 2, page_size: 25, total: 27, total_pages: 2 },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    const response = await client.getLabelUsage("label/1", {
+      period: "90d",
+      sort: "tokens",
+      direction: "asc",
+      tz: "Asia/Shanghai",
+      page: 2,
+      page_size: 25,
+    });
+
+    expect(response.tasks[0]).toMatchObject({
+      activity_at: "2026-08-24T01:01:00Z",
+      uncosted_tokens: 2_000,
+    });
+    expect(response.tasks[0]?.usage_breakdown).toHaveLength(1);
+    const requestURL = String(fetchMock.mock.calls[0]?.[0]);
+    expect(requestURL).toContain("/api/labels/label%2F1/usage?");
+    expect(requestURL).toContain("period=90d");
+    expect(requestURL).toContain("sort=tokens");
+    expect(requestURL).toContain("direction=asc");
+    expect(requestURL).toContain("tz=Asia%2FShanghai");
+    expect(requestURL).toContain("page=2");
+    expect(requestURL).toContain("page_size=25");
+  });
+
+  it("drops an incomplete list summary instead of claiming its known cost is complete", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            labels: [
+              {
+                ...label,
+                usage_summary: {
+                  total_tokens: 12_000,
+                  total_cost_usd_ticks: 4_200_000_000,
+                  task_count: 2,
+                  priced_task_count: 1,
+                  unpriced_task_count: 1,
+                },
+              },
+            ],
+            total: 1,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const response = await new ApiClient("https://api.example.test").listLabels(
+      "issue",
+      { includeUsage: true },
+    );
+
+    expect(response.labels[0]?.usage_summary).toBeUndefined();
+  });
+
+  it("falls back to an empty usage detail when the response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ summary: "invalid", tasks: {} }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").getLabelUsage("label-1", {
+        period: "30d",
+        sort: "cost",
+        direction: "desc",
+        tz: "UTC",
+        page: 1,
+        page_size: 25,
+      }),
+    ).resolves.toMatchObject({
+      label: { id: "" },
+      summary: { total_tokens: 0, uncosted_tokens: 0 },
+      tasks: [],
+    });
+  });
+
   it("falls back safely for malformed label catalog, label, and resource responses", async () => {
     const fetchMock = vi.fn().mockImplementation(() =>
       Promise.resolve(

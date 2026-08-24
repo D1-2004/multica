@@ -900,6 +900,11 @@ export function useRealtimeSync(
         // shape as the tasks invalidation above — any task lifecycle
         // event shifts the aggregated usage numbers.
         qc.invalidateQueries({ queryKey: ["issues", "usage"] });
+        // Label cost/token summaries and detail pages are task-derived. Keep
+        // only those heavier label queries fresh; ordinary label pickers use
+        // a separate lightweight key and must not refetch on every lifecycle
+        // event.
+        qc.invalidateQueries({ queryKey: labelKeys.usageRoot(wsId) });
         // Squad members-status reads the same task lifecycle to flip
         // working ↔ idle for each agent member.
         invalidateSquadMemberStatusQueries(qc, wsId);

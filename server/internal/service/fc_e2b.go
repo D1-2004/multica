@@ -115,6 +115,7 @@ type FCE2BConfig struct {
 	LLMBaseURL                        string
 	LLMAPIKey                         string
 	LLMModels                         []string
+	ManifestV7ComponentVersions       map[string]map[string]string
 	AgentIdentityControlBaseURL       string
 	AgentIdentitySandboxBaseURL       string
 	AgentIdentityBaseURL              string
@@ -723,7 +724,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 	if err != nil {
 		return nil, fmt.Errorf("FC/E2B template list failed: %w", err)
 	}
-	templates, err := parseFCE2BTemplates(out)
+	templates, err := parseFCE2BTemplates(out, cfg.ManifestV7ComponentVersions)
 	if err != nil {
 		return nil, err
 	}
@@ -733,7 +734,10 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 	return templates, nil
 }
 
-func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
+func parseFCE2BTemplates(
+	output string,
+	manifestV7ComponentVersions map[string]map[string]string,
+) ([]FCE2BTemplate, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
 		return nil, errors.New("FC/E2B template list returned empty output")
@@ -779,7 +783,11 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 		var manifestAlias string
 		for _, alias := range stringValues(obj, "aliases", "names") {
 			candidate := t
-			published, err := applyFCE2BTemplateManifestAlias(&candidate, alias)
+			published, err := applyFCE2BTemplateManifestAlias(
+				&candidate,
+				alias,
+				manifestV7ComponentVersions,
+			)
 			if err != nil {
 				return nil, err
 			}
@@ -803,34 +811,11 @@ func parseFCE2BTemplates(output string) ([]FCE2BTemplate, error) {
 var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123456])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimsta3|dimsta2|dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
 var fcE2BTemplateManifestV7AliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r1-([0-9a-f]{6})$`)
 
-var fcE2BTemplateManifestV7ComponentVersionsByFingerprint = map[string]map[string]string{
-	"da499f3161a007c0": {
-		"hermes":      "0.19.0",
-		"opencode":    "v1.18.11",
-		"opencode-v2": "0.0.0-beta-202608110357",
-		"dsh":         "0.1.0-rc.6",
-		"pi":          "0.83.0",
-		"dws":         "v1.0.58-beta.4",
-	},
-	"41edc34be759811a": {
-		"hermes":      "0.19.0",
-		"opencode":    "v1.18.11",
-		"opencode-v2": "0.0.0-beta-202608110357",
-		"dsh":         "0.1.0-rc.6",
-		"pi":          "0.83.0",
-		"dws":         "v1.0.59-beta.3",
-	},
-	"baedb216407a5060": {
-		"hermes":      "0.19.0",
-		"opencode":    "v1.18.19",
-		"opencode-v2": "0.0.0-beta-202608110357",
-		"dsh":         "0.1.0-rc.8",
-		"pi":          "0.84.2",
-		"dws":         "v1.0.59",
-	},
-}
-
-func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (bool, error) {
+func applyFCE2BTemplateManifestAlias(
+	template *FCE2BTemplate,
+	alias string,
+	manifestV7ComponentVersions map[string]map[string]string,
+) (bool, error) {
 	if template == nil {
 		return false, errors.New("FC/E2B template is nil")
 	}
@@ -839,7 +824,7 @@ func applyFCE2BTemplateManifestAlias(template *FCE2BTemplate, alias string) (boo
 	}
 	alias = strings.TrimSpace(alias)
 	if matches := fcE2BTemplateManifestV7AliasPattern.FindStringSubmatch(alias); matches != nil {
-		componentVersions, ok := fcE2BTemplateManifestV7ComponentVersionsByFingerprint[matches[1]]
+		componentVersions, ok := manifestV7ComponentVersions[matches[1]]
 		if !ok {
 			return false, nil
 		}

@@ -23,15 +23,16 @@ import (
 // ---------------------------------------------------------------------------
 
 type LabelResponse struct {
-	ID           string `json:"id"`
-	WorkspaceID  string `json:"workspace_id"`
-	ResourceType string `json:"resource_type"`
-	Name         string `json:"name"`
-	Description  string `json:"description"`
-	Color        string `json:"color"`
-	UsageCount   int64  `json:"usage_count"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID           string                     `json:"id"`
+	WorkspaceID  string                     `json:"workspace_id"`
+	ResourceType string                     `json:"resource_type"`
+	Name         string                     `json:"name"`
+	Description  string                     `json:"description"`
+	Color        string                     `json:"color"`
+	UsageCount   int64                      `json:"usage_count"`
+	UsageSummary *LabelUsageSummaryResponse `json:"usage_summary,omitempty"`
+	CreatedAt    string                     `json:"created_at"`
+	UpdatedAt    string                     `json:"updated_at"`
 }
 
 func labelToResponse(l db.IssueLabel) LabelResponse {
@@ -47,8 +48,8 @@ func labelToResponse(l db.IssueLabel) LabelResponse {
 	}
 }
 
-func labelListRowToResponse(l db.ListLabelsRow) LabelResponse {
-	return LabelResponse{
+func labelListRowToResponse(l db.ListLabelsRow, includeUsage bool) LabelResponse {
+	resp := LabelResponse{
 		ID:           uuidToString(l.ID),
 		WorkspaceID:  uuidToString(l.WorkspaceID),
 		ResourceType: l.ResourceType,
@@ -59,6 +60,17 @@ func labelListRowToResponse(l db.ListLabelsRow) LabelResponse {
 		CreatedAt:    timestampToString(l.CreatedAt),
 		UpdatedAt:    timestampToString(l.UpdatedAt),
 	}
+	if includeUsage && l.ResourceType == "issue" {
+		resp.UsageSummary = &LabelUsageSummaryResponse{
+			TotalTokens:       l.TotalTokens,
+			TotalCostUSDTicks: l.TotalCostUsdTicks,
+			UncostedTokens:    l.UncostedTokens,
+			TaskCount:         l.TaskCount,
+			PricedTaskCount:   l.PricedTaskCount,
+			UnpricedTaskCount: l.UnpricedTaskCount,
+		}
+	}
+	return resp
 }
 
 func labelsToResponse(list []db.IssueLabel) []LabelResponse {
@@ -148,8 +160,9 @@ func (h *Handler) ListLabels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	includeUsage := r.URL.Query().Get("include_usage") == "true"
 	labels, err := h.Queries.ListLabels(r.Context(), db.ListLabelsParams{
-		WorkspaceID: parseUUID(workspaceID), ResourceType: resourceType,
+		WorkspaceID: parseUUID(workspaceID), ResourceType: resourceType, IncludeUsage: includeUsage,
 	})
 	if err != nil {
 		slog.Warn("ListLabels failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -158,7 +171,7 @@ func (h *Handler) ListLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]LabelResponse, len(labels))
 	for i, label := range labels {
-		resp[i] = labelListRowToResponse(label)
+		resp[i] = labelListRowToResponse(label, includeUsage)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"labels": resp, "total": len(resp)})
 }

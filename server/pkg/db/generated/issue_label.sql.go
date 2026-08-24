@@ -291,6 +291,79 @@ func (q *Queries) DetachLabelFromSkill(ctx context.Context, arg DetachLabelFromS
 	return err
 }
 
+const getIssueLabelUsageSummary = `-- name: GetIssueLabelUsageSummary :one
+WITH task_totals AS (
+    SELECT
+        atq.id AS task_id,
+        COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at,
+        COUNT(tu.id)::bigint AS usage_row_count,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ), 0)::bigint AS total_tokens,
+        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        COALESCE(
+            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            FALSE
+        ) AS is_priced
+    FROM issue_label l
+    JOIN issue_to_label il ON il.label_id = l.id
+    JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
+    JOIN agent_task_queue atq ON atq.issue_id = i.id
+    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    WHERE l.id = $1::uuid
+      AND l.workspace_id = $2::uuid
+      AND l.resource_type = 'issue'
+    GROUP BY atq.id, atq.completed_at, atq.created_at
+), filtered_tasks AS (
+    SELECT task_id, activity_at, usage_row_count, total_tokens, total_cost_usd_ticks, uncosted_tokens, is_priced
+    FROM task_totals
+    WHERE $3::timestamptz IS NULL
+       OR activity_at >= $3::timestamptz
+)
+SELECT
+    COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
+    COALESCE(SUM(total_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+    COALESCE(SUM(uncosted_tokens), 0)::bigint AS uncosted_tokens,
+    COUNT(*)::bigint AS task_count,
+    COUNT(*) FILTER (WHERE is_priced)::bigint AS priced_task_count,
+    COUNT(*) FILTER (WHERE NOT is_priced)::bigint AS unpriced_task_count
+FROM filtered_tasks
+`
+
+type GetIssueLabelUsageSummaryParams struct {
+	LabelID     pgtype.UUID        `json:"label_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+type GetIssueLabelUsageSummaryRow struct {
+	TotalTokens       int64 `json:"total_tokens"`
+	TotalCostUsdTicks int64 `json:"total_cost_usd_ticks"`
+	UncostedTokens    int64 `json:"uncosted_tokens"`
+	TaskCount         int64 `json:"task_count"`
+	PricedTaskCount   int64 `json:"priced_task_count"`
+	UnpricedTaskCount int64 `json:"unpriced_task_count"`
+}
+
+func (q *Queries) GetIssueLabelUsageSummary(ctx context.Context, arg GetIssueLabelUsageSummaryParams) (GetIssueLabelUsageSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getIssueLabelUsageSummary, arg.LabelID, arg.WorkspaceID, arg.Since)
+	var i GetIssueLabelUsageSummaryRow
+	err := row.Scan(
+		&i.TotalTokens,
+		&i.TotalCostUsdTicks,
+		&i.UncostedTokens,
+		&i.TaskCount,
+		&i.PricedTaskCount,
+		&i.UnpricedTaskCount,
+	)
+	return i, err
+}
+
 const getLabel = `-- name: GetLabel :one
 SELECT id, workspace_id, name, color, created_at, updated_at, resource_type, description FROM issue_label
 WHERE id = $1 AND workspace_id = $2
@@ -317,15 +390,395 @@ func (q *Queries) GetLabel(ctx context.Context, arg GetLabelParams) (IssueLabel,
 	return i, err
 }
 
+const listIssueLabelUsageBreakdown = `-- name: ListIssueLabelUsageBreakdown :many
+WITH label_tasks AS (
+    SELECT
+        atq.id AS task_id,
+        COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at
+    FROM issue_label l
+    JOIN issue_to_label il ON il.label_id = l.id
+    JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
+    JOIN agent_task_queue atq ON atq.issue_id = i.id
+    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    WHERE l.id = $2::uuid
+      AND l.workspace_id = $3::uuid
+      AND l.resource_type = 'issue'
+    GROUP BY atq.id, atq.completed_at, atq.created_at
+)
+SELECT
+    LOWER(tu.provider) AS provider,
+    tu.model,
+    SUM(
+        tu.input_tokens + tu.output_tokens +
+        tu.cache_read_tokens + tu.cache_write_tokens
+    )::bigint AS total_tokens,
+    COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+    COALESCE(SUM(
+        tu.input_tokens + tu.output_tokens +
+        tu.cache_read_tokens + tu.cache_write_tokens
+    ) FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+    COUNT(DISTINCT lt.task_id)::bigint AS task_count,
+    COUNT(DISTINCT lt.task_id) FILTER (WHERE tu.cost_usd_ticks IS NULL)::bigint AS unpriced_task_count
+FROM label_tasks lt
+JOIN task_usage tu ON tu.task_id = lt.task_id
+WHERE $1::timestamptz IS NULL
+   OR lt.activity_at >= $1::timestamptz
+GROUP BY LOWER(tu.provider), tu.model
+ORDER BY total_cost_usd_ticks DESC, total_tokens DESC, LOWER(tu.provider), tu.model
+`
+
+type ListIssueLabelUsageBreakdownParams struct {
+	Since       pgtype.Timestamptz `json:"since"`
+	LabelID     pgtype.UUID        `json:"label_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+}
+
+type ListIssueLabelUsageBreakdownRow struct {
+	Provider          string `json:"provider"`
+	Model             string `json:"model"`
+	TotalTokens       int64  `json:"total_tokens"`
+	TotalCostUsdTicks int64  `json:"total_cost_usd_ticks"`
+	UncostedTokens    int64  `json:"uncosted_tokens"`
+	TaskCount         int64  `json:"task_count"`
+	UnpricedTaskCount int64  `json:"unpriced_task_count"`
+}
+
+func (q *Queries) ListIssueLabelUsageBreakdown(ctx context.Context, arg ListIssueLabelUsageBreakdownParams) ([]ListIssueLabelUsageBreakdownRow, error) {
+	rows, err := q.db.Query(ctx, listIssueLabelUsageBreakdown, arg.Since, arg.LabelID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueLabelUsageBreakdownRow{}
+	for rows.Next() {
+		var i ListIssueLabelUsageBreakdownRow
+		if err := rows.Scan(
+			&i.Provider,
+			&i.Model,
+			&i.TotalTokens,
+			&i.TotalCostUsdTicks,
+			&i.UncostedTokens,
+			&i.TaskCount,
+			&i.UnpricedTaskCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueLabelUsageDaily = `-- name: ListIssueLabelUsageDaily :many
+WITH task_totals AS (
+    SELECT
+        atq.id AS task_id,
+        COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ), 0)::bigint AS total_tokens,
+        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        COALESCE(
+            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            FALSE
+        ) AS is_priced
+    FROM issue_label l
+    JOIN issue_to_label il ON il.label_id = l.id
+    JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
+    JOIN agent_task_queue atq ON atq.issue_id = i.id
+    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    WHERE l.id = $2::uuid
+      AND l.workspace_id = $3::uuid
+      AND l.resource_type = 'issue'
+    GROUP BY atq.id, atq.completed_at, atq.created_at
+), filtered_tasks AS (
+    SELECT task_id, activity_at, total_tokens, total_cost_usd_ticks, uncosted_tokens, is_priced
+    FROM task_totals
+    WHERE $4::timestamptz IS NULL
+       OR activity_at >= $4::timestamptz
+)
+SELECT
+    DATE(activity_at AT TIME ZONE $1::text) AS date,
+    SUM(total_tokens)::bigint AS total_tokens,
+    SUM(total_cost_usd_ticks)::bigint AS total_cost_usd_ticks,
+    SUM(uncosted_tokens)::bigint AS uncosted_tokens,
+    COUNT(*)::bigint AS task_count,
+    COUNT(*) FILTER (WHERE is_priced)::bigint AS priced_task_count,
+    COUNT(*) FILTER (WHERE NOT is_priced)::bigint AS unpriced_task_count
+FROM filtered_tasks
+GROUP BY DATE(activity_at AT TIME ZONE $1::text)
+ORDER BY DATE(activity_at AT TIME ZONE $1::text) ASC
+`
+
+type ListIssueLabelUsageDailyParams struct {
+	Tz          string             `json:"tz"`
+	LabelID     pgtype.UUID        `json:"label_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+type ListIssueLabelUsageDailyRow struct {
+	Date              pgtype.Date `json:"date"`
+	TotalTokens       int64       `json:"total_tokens"`
+	TotalCostUsdTicks int64       `json:"total_cost_usd_ticks"`
+	UncostedTokens    int64       `json:"uncosted_tokens"`
+	TaskCount         int64       `json:"task_count"`
+	PricedTaskCount   int64       `json:"priced_task_count"`
+	UnpricedTaskCount int64       `json:"unpriced_task_count"`
+}
+
+func (q *Queries) ListIssueLabelUsageDaily(ctx context.Context, arg ListIssueLabelUsageDailyParams) ([]ListIssueLabelUsageDailyRow, error) {
+	rows, err := q.db.Query(ctx, listIssueLabelUsageDaily,
+		arg.Tz,
+		arg.LabelID,
+		arg.WorkspaceID,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueLabelUsageDailyRow{}
+	for rows.Next() {
+		var i ListIssueLabelUsageDailyRow
+		if err := rows.Scan(
+			&i.Date,
+			&i.TotalTokens,
+			&i.TotalCostUsdTicks,
+			&i.UncostedTokens,
+			&i.TaskCount,
+			&i.PricedTaskCount,
+			&i.UnpricedTaskCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIssueLabelUsageTasks = `-- name: ListIssueLabelUsageTasks :many
+WITH task_totals AS (
+    SELECT
+        atq.id AS task_id,
+        i.id AS issue_id,
+        CASE
+            WHEN w.issue_prefix = '' THEN '#' || i.number::text
+            ELSE w.issue_prefix || '-' || i.number::text
+        END::text AS issue_identifier,
+        i.title AS issue_title,
+        atq.status,
+        atq.created_at,
+        atq.completed_at,
+        COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at,
+        CASE WHEN COUNT(tu.id) = 1 THEN MIN(LOWER(tu.provider)) ELSE '' END::text AS provider,
+        CASE WHEN COUNT(tu.id) = 1 THEN MIN(tu.model) ELSE '' END::text AS model,
+        COUNT(tu.id) > 0 AS has_usage,
+        COALESCE(
+            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            FALSE
+        )::boolean AS is_priced,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ), 0)::bigint AS total_tokens,
+        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        COALESCE(
+            JSONB_AGG(
+                JSONB_BUILD_OBJECT(
+                    'provider', LOWER(tu.provider),
+                    'model', tu.model,
+                    'total_tokens', tu.input_tokens + tu.output_tokens + tu.cache_read_tokens + tu.cache_write_tokens,
+                    'total_cost_usd_ticks', COALESCE(tu.cost_usd_ticks, 0),
+                    'uncosted_tokens', CASE WHEN tu.cost_usd_ticks IS NULL
+                        THEN tu.input_tokens + tu.output_tokens + tu.cache_read_tokens + tu.cache_write_tokens
+                        ELSE 0
+                    END,
+                    'is_priced', tu.cost_usd_ticks IS NOT NULL
+                ) ORDER BY LOWER(tu.provider), tu.model
+            ) FILTER (WHERE tu.id IS NOT NULL),
+            '[]'::jsonb
+        )::jsonb AS usage_breakdown
+    FROM issue_label l
+    JOIN issue_to_label il ON il.label_id = l.id
+    JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
+    JOIN workspace w ON w.id = i.workspace_id
+    JOIN agent_task_queue atq ON atq.issue_id = i.id
+    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    WHERE l.id = $5::uuid
+      AND l.workspace_id = $6::uuid
+      AND l.resource_type = 'issue'
+    GROUP BY
+        atq.id, i.id, i.number, i.title, w.issue_prefix,
+        atq.status, atq.created_at, atq.completed_at
+), filtered_tasks AS (
+    SELECT task_id, issue_id, issue_identifier, issue_title, status, created_at, completed_at, activity_at, provider, model, has_usage, is_priced, total_tokens, total_cost_usd_ticks, uncosted_tokens, usage_breakdown
+    FROM task_totals
+    WHERE $7::timestamptz IS NULL
+       OR activity_at >= $7::timestamptz
+)
+SELECT task_id, issue_id, issue_identifier, issue_title, status, created_at, completed_at, activity_at, provider, model, has_usage, is_priced, total_tokens, total_cost_usd_ticks, uncosted_tokens, usage_breakdown
+FROM filtered_tasks
+ORDER BY
+    CASE WHEN $1::text = 'cost' THEN is_priced END DESC,
+    CASE WHEN $1::text = 'cost'   AND $2::text = 'asc'  THEN total_cost_usd_ticks END ASC,
+    CASE WHEN $1::text = 'cost'   AND $2::text = 'desc' THEN total_cost_usd_ticks END DESC,
+    CASE WHEN $1::text = 'tokens' AND $2::text = 'asc'  THEN total_tokens END ASC,
+    CASE WHEN $1::text = 'tokens' AND $2::text = 'desc' THEN total_tokens END DESC,
+    CASE WHEN $1::text = 'recent' AND $2::text = 'asc'  THEN activity_at END ASC,
+    CASE WHEN $1::text = 'recent' AND $2::text = 'desc' THEN activity_at END DESC,
+    activity_at DESC,
+    task_id ASC
+LIMIT $4::int
+OFFSET $3::int
+`
+
+type ListIssueLabelUsageTasksParams struct {
+	Sort        string             `json:"sort"`
+	Direction   string             `json:"direction"`
+	Offset      int32              `json:"offset"`
+	PageSize    int32              `json:"page_size"`
+	LabelID     pgtype.UUID        `json:"label_id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+type ListIssueLabelUsageTasksRow struct {
+	TaskID            pgtype.UUID        `json:"task_id"`
+	IssueID           pgtype.UUID        `json:"issue_id"`
+	IssueIdentifier   string             `json:"issue_identifier"`
+	IssueTitle        string             `json:"issue_title"`
+	Status            string             `json:"status"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	ActivityAt        pgtype.Timestamptz `json:"activity_at"`
+	Provider          string             `json:"provider"`
+	Model             string             `json:"model"`
+	HasUsage          bool               `json:"has_usage"`
+	IsPriced          bool               `json:"is_priced"`
+	TotalTokens       int64              `json:"total_tokens"`
+	TotalCostUsdTicks int64              `json:"total_cost_usd_ticks"`
+	UncostedTokens    int64              `json:"uncosted_tokens"`
+	UsageBreakdown    []byte             `json:"usage_breakdown"`
+}
+
+func (q *Queries) ListIssueLabelUsageTasks(ctx context.Context, arg ListIssueLabelUsageTasksParams) ([]ListIssueLabelUsageTasksRow, error) {
+	rows, err := q.db.Query(ctx, listIssueLabelUsageTasks,
+		arg.Sort,
+		arg.Direction,
+		arg.Offset,
+		arg.PageSize,
+		arg.LabelID,
+		arg.WorkspaceID,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListIssueLabelUsageTasksRow{}
+	for rows.Next() {
+		var i ListIssueLabelUsageTasksRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.IssueID,
+			&i.IssueIdentifier,
+			&i.IssueTitle,
+			&i.Status,
+			&i.CreatedAt,
+			&i.CompletedAt,
+			&i.ActivityAt,
+			&i.Provider,
+			&i.Model,
+			&i.HasUsage,
+			&i.IsPriced,
+			&i.TotalTokens,
+			&i.TotalCostUsdTicks,
+			&i.UncostedTokens,
+			&i.UsageBreakdown,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLabels = `-- name: ListLabels :many
+WITH issue_label_task_usage AS (
+    -- One row per task is the load-bearing grain here. A task can report more
+    -- than one (provider, model) usage row, so aggregating before joining the
+    -- label catalogue prevents task counts and per-label totals from being
+    -- multiplied by that model fan-out.
+    SELECT
+        il.label_id,
+        atq.id AS task_id,
+        COUNT(tu.id)::bigint AS usage_row_count,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ), 0)::bigint AS total_tokens,
+        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        COALESCE(
+            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            FALSE
+        ) AS is_priced
+    FROM issue_to_label il
+    JOIN issue i ON i.id = il.issue_id
+    JOIN agent_task_queue atq ON atq.issue_id = i.id
+    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    WHERE i.workspace_id = $1::uuid
+      AND $2::text = 'issue'
+      AND $3::boolean
+    GROUP BY il.label_id, atq.id
+), issue_label_usage AS (
+    SELECT
+        label_id,
+        SUM(total_tokens)::bigint AS total_tokens,
+        SUM(total_cost_usd_ticks)::bigint AS total_cost_usd_ticks,
+        SUM(uncosted_tokens)::bigint AS uncosted_tokens,
+        COUNT(*)::bigint AS task_count,
+        COUNT(*) FILTER (WHERE is_priced)::bigint AS priced_task_count,
+        COUNT(*) FILTER (WHERE NOT is_priced)::bigint AS unpriced_task_count
+    FROM issue_label_task_usage
+    GROUP BY label_id
+)
 SELECT l.id, l.workspace_id, l.name, l.color, l.created_at, l.updated_at, l.resource_type, l.description,
     CASE l.resource_type
         WHEN 'issue' THEN (SELECT COUNT(*) FROM issue_to_label x WHERE x.label_id = l.id)
         WHEN 'agent' THEN (SELECT COUNT(*) FROM agent_to_label x WHERE x.label_id = l.id)
         WHEN 'skill' THEN (SELECT COUNT(*) FROM skill_to_label x WHERE x.label_id = l.id)
         ELSE 0
-    END::bigint AS usage_count
+    END::bigint AS usage_count,
+    CASE WHEN l.resource_type = 'issue' THEN COALESCE(lu.total_tokens, 0) ELSE 0 END::bigint AS total_tokens,
+    CASE WHEN l.resource_type = 'issue' THEN COALESCE(lu.total_cost_usd_ticks, 0) ELSE 0 END::bigint AS total_cost_usd_ticks,
+    CASE WHEN l.resource_type = 'issue' THEN COALESCE(lu.uncosted_tokens, 0) ELSE 0 END::bigint AS uncosted_tokens,
+    CASE WHEN l.resource_type = 'issue' THEN COALESCE(lu.task_count, 0) ELSE 0 END::bigint AS task_count,
+    CASE WHEN l.resource_type = 'issue' THEN COALESCE(lu.priced_task_count, 0) ELSE 0 END::bigint AS priced_task_count,
+    CASE WHEN l.resource_type = 'issue' THEN COALESCE(lu.unpriced_task_count, 0) ELSE 0 END::bigint AS unpriced_task_count
 FROM issue_label l
+LEFT JOIN issue_label_usage lu ON lu.label_id = l.id
 WHERE l.workspace_id = $1::uuid
   AND l.resource_type = $2::text
 ORDER BY LOWER(name) ASC
@@ -334,22 +787,29 @@ ORDER BY LOWER(name) ASC
 type ListLabelsParams struct {
 	WorkspaceID  pgtype.UUID `json:"workspace_id"`
 	ResourceType string      `json:"resource_type"`
+	IncludeUsage bool        `json:"include_usage"`
 }
 
 type ListLabelsRow struct {
-	ID           pgtype.UUID        `json:"id"`
-	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
-	Name         string             `json:"name"`
-	Color        string             `json:"color"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
-	ResourceType string             `json:"resource_type"`
-	Description  string             `json:"description"`
-	UsageCount   int64              `json:"usage_count"`
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	Name              string             `json:"name"`
+	Color             string             `json:"color"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ResourceType      string             `json:"resource_type"`
+	Description       string             `json:"description"`
+	UsageCount        int64              `json:"usage_count"`
+	TotalTokens       int64              `json:"total_tokens"`
+	TotalCostUsdTicks int64              `json:"total_cost_usd_ticks"`
+	UncostedTokens    int64              `json:"uncosted_tokens"`
+	TaskCount         int64              `json:"task_count"`
+	PricedTaskCount   int64              `json:"priced_task_count"`
+	UnpricedTaskCount int64              `json:"unpriced_task_count"`
 }
 
 func (q *Queries) ListLabels(ctx context.Context, arg ListLabelsParams) ([]ListLabelsRow, error) {
-	rows, err := q.db.Query(ctx, listLabels, arg.WorkspaceID, arg.ResourceType)
+	rows, err := q.db.Query(ctx, listLabels, arg.WorkspaceID, arg.ResourceType, arg.IncludeUsage)
 	if err != nil {
 		return nil, err
 	}
@@ -367,6 +827,12 @@ func (q *Queries) ListLabels(ctx context.Context, arg ListLabelsParams) ([]ListL
 			&i.ResourceType,
 			&i.Description,
 			&i.UsageCount,
+			&i.TotalTokens,
+			&i.TotalCostUsdTicks,
+			&i.UncostedTokens,
+			&i.TaskCount,
+			&i.PricedTaskCount,
+			&i.UnpricedTaskCount,
 		); err != nil {
 			return nil, err
 		}
