@@ -61,8 +61,14 @@ const (
 	// time-bounded exit. 2 hours is conservatively above any reasonable
 	// "queued behind a long-running task" window for an online runtime, so we
 	// don't expire legitimately-pending work, while still draining the historical
-	// 87k autopilot backlog within ~24h once enabled.
+	// 87k autopilot backlog within ~24h once enabled. Tasks whose latest Runtime
+	// startup attempt is explicitly waiting for ASB tenant capacity are exempt:
+	// they use the separate 24-hour capacity-wait TTL below instead.
 	queuedTTLSeconds = 2 * 3600.0
+	// asbCapacityWaitTTLSeconds bounds the dedicated ASB capacity queue. Normal
+	// queued cleanup is too short for multi-hour tasks, while an unbounded
+	// exemption would strand work forever if ASB is disabled or misconfigured.
+	asbCapacityWaitTTLSeconds = 24 * 3600.0
 	// queuedExpireBatchSize caps how many queued rows a single sweeper tick
 	// transitions to failed. Keeps the sweep transaction short even when
 	// the historical backlog is large (~89k at MUL-1899 baseline). At 30s
@@ -298,8 +304,9 @@ func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.
 // big backlog can't monopolise the DB.
 func sweepExpiredQueuedTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService) {
 	failedTasks, err := queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
-		TtlSecs:    queuedTTLSeconds,
-		MaxPerTick: queuedExpireBatchSize,
+		TtlSecs:            queuedTTLSeconds,
+		AsbCapacityTtlSecs: asbCapacityWaitTTLSeconds,
+		MaxPerTick:         queuedExpireBatchSize,
 	})
 	if err != nil {
 		slog.Warn("task sweeper: failed to expire stale queued tasks", "error", err)

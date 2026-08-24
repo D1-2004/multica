@@ -1370,7 +1370,8 @@ RETURNING *;
 -- is offline, we still need to drain the historical 87k+ doomed rows and
 -- handle edge cases where a runtime goes offline AFTER a task is already
 -- queued (the admission check protects new enqueues, not in-flight queue
--- depth).
+-- depth). Tasks explicitly waiting for ASB sandbox capacity are excluded below;
+-- they are a healthy durable queue rather than an offline-Runtime backlog.
 --
 -- Concurrency safety: the daemon's claim path may race with this sweeper to
 -- transition the same row out of 'queued'. We protect against that two
@@ -1387,10 +1388,47 @@ RETURNING *;
 -- the DB when the backlog is large — the sweeper drains the rest on
 -- subsequent ticks.
 WITH victims AS (
-    SELECT id FROM agent_task_queue
-    WHERE status = 'queued'
-      AND created_at < now() - make_interval(secs => @ttl_secs::double precision)
-    ORDER BY created_at ASC
+    SELECT queued_task.id
+    FROM agent_task_queue AS queued_task
+    WHERE queued_task.status = 'queued'
+      AND queued_task.created_at < now() - make_interval(secs => @ttl_secs::double precision)
+      -- ASB capacity waits are an intentional durable queue, not an offline
+      -- Runtime backlog. Keep them for the dedicated capacity-wait TTL, until
+      -- capacity becomes reclaimable, or until the user cancels the task. Only
+      -- the latest startup attempt controls this exemption so a later
+      -- non-capacity outcome restores normal TTL cleanup.
+      AND (
+          queued_task.runtime_launch_lease_expires_at IS NULL
+          OR queued_task.runtime_launch_lease_expires_at <= now()
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM agent_task_runtime_start_attempt AS latest_attempt
+          WHERE latest_attempt.id = (
+              SELECT candidate.id
+              FROM agent_task_runtime_start_attempt AS candidate
+              WHERE candidate.task_id = queued_task.id
+                AND candidate.runtime_id = queued_task.runtime_id
+              ORDER BY candidate.created_at DESC, candidate.id DESC
+              LIMIT 1
+          )
+            AND COALESCE(queued_task.context->>'deap_dws_token_required', 'false') <> 'true'
+            AND queued_task.created_at >= now() - make_interval(
+                secs => sqlc.arg('asb_capacity_ttl_secs')::double precision
+            )
+            AND (
+                (
+                    latest_attempt.status = 'blocked'
+                    AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
+                )
+                OR
+                (
+                    latest_attempt.backend = 'asb'
+                    AND latest_attempt.status = 'starting'
+                )
+            )
+      )
+    ORDER BY queued_task.created_at ASC
     LIMIT @max_per_tick::int
     FOR UPDATE SKIP LOCKED
 )
@@ -1404,6 +1442,37 @@ FROM victims v
 WHERE t.id = v.id
   AND t.status = 'queued'
   AND t.created_at < now() - make_interval(secs => @ttl_secs::double precision)
+  AND (
+      t.runtime_launch_lease_expires_at IS NULL
+      OR t.runtime_launch_lease_expires_at <= now()
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_runtime_start_attempt AS latest_attempt
+      WHERE latest_attempt.id = (
+          SELECT candidate.id
+          FROM agent_task_runtime_start_attempt AS candidate
+          WHERE candidate.task_id = t.id
+            AND candidate.runtime_id = t.runtime_id
+          ORDER BY candidate.created_at DESC, candidate.id DESC
+          LIMIT 1
+      )
+        AND COALESCE(t.context->>'deap_dws_token_required', 'false') <> 'true'
+        AND t.created_at >= now() - make_interval(
+            secs => sqlc.arg('asb_capacity_ttl_secs')::double precision
+        )
+        AND (
+            (
+                latest_attempt.status = 'blocked'
+                AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
+            )
+            OR
+            (
+                latest_attempt.backend = 'asb'
+                AND latest_attempt.status = 'starting'
+            )
+        )
+  )
 RETURNING t.*;
 
 -- name: FindAgentIssuesWithLostCompletion :many
