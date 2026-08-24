@@ -2102,6 +2102,13 @@ describe("RuntimeModelListRequestSchema", () => {
         label: "GPT-5.6-Sol",
         provider: "openai",
         default: true,
+        pricing: {
+          input: 5,
+          output: 30,
+          cache_read: 0.5,
+          cache_write: 6.25,
+          base_tier_max_input_tokens: 32000,
+        },
         thinking: {
           supported_levels: [{ value: "high", label: "High" }],
           default_level: "low",
@@ -2121,11 +2128,32 @@ describe("RuntimeModelListRequestSchema", () => {
     expect(parsed.status).toBe("completed");
     expect(parsed.supported).toBe(true);
     expect(parsed.models?.[0]?.default).toBe(true);
+    expect(parsed.models?.[0]?.pricing).toEqual({
+      input: 5,
+      output: 30,
+      cache_read: 0.5,
+      cache_write: 6.25,
+      base_tier_max_input_tokens: 32000,
+    });
     expect(parsed.models?.[0]?.thinking?.supported_levels).toEqual([
       { value: "high", label: "High" },
     ]);
     expect(parsed.models?.[0]?.service_tiers).toEqual([{ id: "fast", name: "Fast" }]);
     expect(parsed.cached).toBeUndefined();
+  });
+
+  it("keeps a selectable model when only its additive pricing is malformed", () => {
+    const parsed = parseWithFallback(
+      {
+        ...completed,
+        models: [{ ...completed.models[0], pricing: { input: "invalid" } }],
+      },
+      RuntimeModelListRequestSchema,
+      MALFORMED_RUNTIME_MODEL_LIST_REQUEST,
+      { endpoint: "test" },
+    );
+    expect(parsed.models?.[0]?.id).toBe("gpt-5.6-sol");
+    expect(parsed.models?.[0]?.pricing).toBeUndefined();
   });
 
   it("keeps the additive cache markers when the server serves a snapshot", () => {

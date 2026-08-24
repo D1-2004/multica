@@ -10,12 +10,12 @@ MULTICA_RUNTIME_CONFIG_SOURCE=diamond
 
 The coordinates are fixed so an application cannot accidentally point at another team's documents:
 
-| Setting | Runtime settings | Runtime manifest fingerprints |
-|---|---|---|
-| Application | `dt-fde-multica` | `dt-fde-multica` |
-| Data ID | `dt-fde-multica-runtime.json` | `dt-fde-multica-runtime-manifest-fingerprints.json` |
-| Group | `DEFAULT_GROUP` | `DEFAULT_GROUP` |
-| Type | `json` | `json` |
+| Setting | Runtime settings | Runtime manifest fingerprints | Model pricing |
+|---|---|---|---|
+| Application | `dt-fde-multica` | `dt-fde-multica` | `dt-fde-multica` |
+| Data ID | `dt-fde-multica-runtime.json` | `dt-fde-multica-runtime-manifest-fingerprints.json` | `dt-fde-multica-model-pricing.json` |
+| Group | `DEFAULT_GROUP` | `DEFAULT_GROUP` | `DEFAULT_GROUP` |
+| Type | `json` | `json` | `json` |
 
 This document is separate from `dt-fde-multica.json`, whose strict schema contains dispatch prompts and uses fail-open feature-rule semantics.
 
@@ -24,7 +24,7 @@ This document is separate from `dt-fde-multica.json`, whose strict schema contai
 There are two explicit deployment modes:
 
 - An empty `MULTICA_RUNTIME_CONFIG_SOURCE` keeps the existing environment-only/self-hosted path.
-- The exact value `diamond` makes the runtime settings and manifest-fingerprint documents authoritative. The server requires the initial fetch and listener registration for both Data IDs. It does not read a moved legacy environment value as a second source.
+- The exact value `diamond` makes the runtime settings, manifest-fingerprint, and model-pricing documents authoritative. The server requires the initial fetch and listener registration for all three Data IDs. It does not read a moved legacy environment value as a second source.
 
 The document is decoded with unknown-field rejection and validated as a complete snapshot. A valid listener update atomically replaces the previous snapshot. An invalid later update is rejected and the last valid snapshot remains active. Logs contain only the Data ID, group, schema version, generation, model count, and SHA-256 digest; the document body is not logged.
 
@@ -78,11 +78,21 @@ See [the complete fingerprint example](runtime-manifest-fingerprints.example.jso
 
 The environment-only/self-hosted path can still parse the explicit m1-m6 aliases. With no managed fingerprint catalog, unknown compact m7 aliases are deliberately ignored rather than guessed.
 
+## Managed model pricing
+
+The model-pricing document is a strict, dynamically watched USD catalog. Every model listed in `runtime.llm.models` must have an exact price entry; the pricing document may be a superset so operators can publish a new price before adding the model to the Runtime catalog. This price-first order keeps every live generation valid.
+
+Each model declares input, output, cache-read, and cache-write USD rates per million tokens. `base_tier_max_input_tokens` marks providers whose public list price changes with request size; aggregate task usage cannot recover each request's prompt size, so Multica uses the documented base tier as an estimate and labels it as a starting price in the model picker. Provider-reported cost remains authoritative when present.
+
+At read time Multica applies the managed catalog to usage without provider cost. The same calculation feeds Runtime usage, workspace statistics, task execution costs, and label summaries/detail sorting. Hermes' transport-only `custom:` model prefix resolves to the exact managed model ID; unfamiliar variants are not priced by fuzzy prefix matching.
+
+See [the complete pricing example](runtime-model-pricing.example.json) and [the source ledger](runtime-model-pricing.md). The checked-in rates use public list prices as of 2026-08-24; CNY prices use the official USD/CNY central parity snapshot recorded in the source ledger. Promotional discounts are not embedded.
+
 ## Release procedure
 
-1. Build the runtime-settings JSON from the current environment snapshot without placing secrets in it, and build the manifest-fingerprint JSON from the verified Runtime image contracts.
-2. Validate the runtime-settings document with the same strict parser used by the server: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for the production document). Run `go test ./pkg/runtimeconfig` to validate the checked-in fingerprint example and canonical fingerprint contract.
-3. Publish both Data IDs to the target Diamond unit before releasing the binary.
+1. Build the runtime-settings JSON from the current environment snapshot without placing secrets in it, build the manifest-fingerprint JSON from verified Runtime image contracts, and build the model-pricing JSON from authoritative provider price sheets.
+2. Validate the runtime-settings document with the same strict parser used by the server: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for the production document). Run `go test ./pkg/runtimeconfig ./pkg/modelpricing` to validate both managed catalogs.
+3. Publish the model-pricing Data ID first, then the runtime settings and manifest fingerprints, before releasing the binary.
 4. Add `MULTICA_RUNTIME_CONFIG_SOURCE=diamond` and `MULTICA_RUNTIME_LLM_API_KEY` to the target Aone environment trait while preserving the complete old trait snapshot.
 5. Release the binary to that environment.
 6. Verify every replica loaded the same Diamond digest and registered a listener.

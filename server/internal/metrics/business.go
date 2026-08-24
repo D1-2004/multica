@@ -3,6 +3,7 @@ package metrics
 import (
 	"sync"
 
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 	"github.com/prometheus/client_golang/prometheus"
 )
@@ -260,12 +261,33 @@ func (m *BusinessMetrics) RecordTaskLeaseExpired(source string) {
 // cannot express request-level rules such as xAI's 2x surcharge above a 200K
 // prompt, so for those providers the local estimate is structurally low.
 func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, modelAlias string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSDTicks int64) {
+	m.recordLLMUsage(source, runtimeMode, rawProvider, modelAlias, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSDTicks, "", nil)
+}
+
+// RecordManagedLLMUsage applies the deployment-owned Diamond rate when the
+// static upstream catalog does not know the selected model.
+func (m *BusinessMetrics) RecordManagedLLMUsage(source, runtimeMode, rawProvider, modelAlias string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSDTicks int64, managedModel string, managedRate modelpricing.Rate) {
+	m.recordLLMUsage(source, runtimeMode, rawProvider, modelAlias, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSDTicks, managedModel, &managedRate)
+}
+
+func (m *BusinessMetrics) recordLLMUsage(source, runtimeMode, rawProvider, modelAlias string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, costUSDTicks int64, managedModel string, managedRate *modelpricing.Rate) {
 	if m == nil {
 		return
 	}
 	source = NormalizeTaskSource(source)
 	runtimeMode = NormalizeRuntimeMode(runtimeMode)
 	price, priced := PriceForModelAlias(modelAlias)
+	if !priced && managedRate != nil {
+		price = ModelPrice{
+			Provider:       NormalizeRuntimeProvider(rawProvider),
+			Model:          managedModel,
+			InputPerM:      managedRate.Input,
+			OutputPerM:     managedRate.Output,
+			CacheReadPerM:  managedRate.CacheRead,
+			CacheWritePerM: managedRate.CacheWrite,
+		}
+		priced = true
+	}
 	if !priced {
 		provider := NormalizeRuntimeProvider(rawProvider)
 		alias := NormalizeModelAlias(modelAlias)

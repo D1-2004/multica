@@ -256,6 +256,8 @@
     "managed_by_runtime_title": "模型选择由该运行时管理。",
     "managed_by_runtime_hint": "请在运行时主机上配置模型（例如 Hermes 会从自身配置文件读取）。",
     "discovery_failed": "发现失败",
+    "price": "输入 ${{input}} · 输出 ${{output}} / 百万 token",
+    "price_from": "起步价：输入 ${{input}} · 输出 ${{output}} / 百万 token",
     "clear_full": "清除选择（使用提供方默认）"
   },
   "tabs": {

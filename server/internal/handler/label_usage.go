@@ -17,11 +17,10 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// LabelUsageSummaryResponse preserves the same authoritative-cost split as
-// issue and dashboard usage: provider-reported cost is summed as-is, while
-// tokens from rows without a provider cost remain explicit for estimation by
-// the client. A task is priced only when it has at least one usage row and all
-// of its rows carry authoritative cost.
+// LabelUsageSummaryResponse preserves the same cost split as issue and
+// dashboard usage: provider-reported cost is authoritative, Diamond prices
+// complete managed models, and only unknown-model tokens remain uncosted. A
+// task is priced when it has usage and every row resolves by either source.
 type LabelUsageSummaryResponse struct {
 	TotalTokens       int64 `json:"total_tokens"`
 	TotalCostUSDTicks int64 `json:"total_cost_usd_ticks"`
@@ -224,8 +223,14 @@ func (h *Handler) GetLabelUsage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	pricingJSON, err := h.currentConfig().ModelPricing.SQLJSON()
+	if err != nil {
+		slog.Error("encode model pricing for label usage", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to get label usage")
+		return
+	}
 	commonSummaryParams := db.GetIssueLabelUsageSummaryParams{
-		LabelID: labelID, WorkspaceID: workspaceID, Since: query.since,
+		LabelID: labelID, WorkspaceID: workspaceID, Since: query.since, ModelPricing: pricingJSON,
 	}
 	summaryRow, err := h.Queries.GetIssueLabelUsageSummary(r.Context(), commonSummaryParams)
 	if err != nil {
@@ -234,7 +239,7 @@ func (h *Handler) GetLabelUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dailyRows, err := h.Queries.ListIssueLabelUsageDaily(r.Context(), db.ListIssueLabelUsageDailyParams{
-		Tz: query.timezone, LabelID: labelID, WorkspaceID: workspaceID, Since: query.since,
+		Tz: query.timezone, LabelID: labelID, WorkspaceID: workspaceID, Since: query.since, ModelPricing: pricingJSON,
 	})
 	if err != nil {
 		slog.Warn("ListIssueLabelUsageDaily failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -242,7 +247,7 @@ func (h *Handler) GetLabelUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	breakdownRows, err := h.Queries.ListIssueLabelUsageBreakdown(r.Context(), db.ListIssueLabelUsageBreakdownParams{
-		Since: query.since, LabelID: labelID, WorkspaceID: workspaceID,
+		Since: query.since, LabelID: labelID, WorkspaceID: workspaceID, ModelPricing: pricingJSON,
 	})
 	if err != nil {
 		slog.Warn("ListIssueLabelUsageBreakdown failed", append(logger.RequestAttrs(r), "error", err)...)
@@ -253,7 +258,7 @@ func (h *Handler) GetLabelUsage(w http.ResponseWriter, r *http.Request) {
 	taskRows, err := h.Queries.ListIssueLabelUsageTasks(r.Context(), db.ListIssueLabelUsageTasksParams{
 		Sort: query.sort, Direction: query.direction,
 		Offset: int32(offset), PageSize: int32(query.pageSize),
-		LabelID: labelID, WorkspaceID: workspaceID, Since: query.since,
+		LabelID: labelID, WorkspaceID: workspaceID, Since: query.since, ModelPricing: pricingJSON,
 	})
 	if err != nil {
 		slog.Warn("ListIssueLabelUsageTasks failed", append(logger.RequestAttrs(r), "error", err)...)

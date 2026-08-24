@@ -92,11 +92,9 @@ type RuntimeUsageResponse struct {
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	// Cost split: `CostUSDTicks` is what the provider itself charged for the
-	// rows behind this aggregate (1e-10 USD), and the `Uncosted*` token
-	// counts are the tokens from rows the provider did NOT price. The client
-	// reports authoritative + estimate(uncosted), so a window mixing both
-	// kinds of row stays whole. See migration 213.
+	// Cost split: `CostUSDTicks` is provider-reported cost plus the managed
+	// Diamond estimate for catalog models (1e-10 USD). `Uncosted*` contains
+	// only tokens that neither source could price.
 	CostUSDTicks             int64 `json:"cost_usd_ticks"`
 	UncostedInputTokens      int64 `json:"uncosted_input_tokens"`
 	UncostedOutputTokens     int64 `json:"uncosted_output_tokens"`
@@ -150,8 +148,16 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 	if err != nil {
 		return nil, err
 	}
+	pricing := h.currentConfig().ModelPricing
 	resp := make([]RuntimeUsageResponse, len(rows))
 	for i, row := range rows {
+		cost := applyModelPricing(pricing, row.Model, usageCostSplit{
+			CostUSDTicks:             row.CostUsdTicks,
+			UncostedInputTokens:      row.UncostedInputTokens,
+			UncostedOutputTokens:     row.UncostedOutputTokens,
+			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+		})
 		resp[i] = RuntimeUsageResponse{
 			RuntimeID:                resolvedRuntimeID,
 			Date:                     row.Date.Time.Format("2006-01-02"),
@@ -161,11 +167,11 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 			OutputTokens:             row.OutputTokens,
 			CacheReadTokens:          row.CacheReadTokens,
 			CacheWriteTokens:         row.CacheWriteTokens,
-			CostUSDTicks:             row.CostUsdTicks,
-			UncostedInputTokens:      row.UncostedInputTokens,
-			UncostedOutputTokens:     row.UncostedOutputTokens,
-			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
-			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+			CostUSDTicks:             cost.CostUSDTicks,
+			UncostedInputTokens:      cost.UncostedInputTokens,
+			UncostedOutputTokens:     cost.UncostedOutputTokens,
+			UncostedCacheReadTokens:  cost.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: cost.UncostedCacheWriteTokens,
 		}
 	}
 	return resp, nil
@@ -271,8 +277,16 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	pricing := h.currentConfig().ModelPricing
 	resp := make([]RuntimeUsageByAgentResponse, len(rows))
 	for i, row := range rows {
+		cost := applyModelPricing(pricing, row.Model, usageCostSplit{
+			CostUSDTicks:             row.CostUsdTicks,
+			UncostedInputTokens:      row.UncostedInputTokens,
+			UncostedOutputTokens:     row.UncostedOutputTokens,
+			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+		})
 		resp[i] = RuntimeUsageByAgentResponse{
 			AgentID:                  uuidToString(row.AgentID),
 			Provider:                 row.Provider,
@@ -281,11 +295,11 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 			OutputTokens:             row.OutputTokens,
 			CacheReadTokens:          row.CacheReadTokens,
 			CacheWriteTokens:         row.CacheWriteTokens,
-			CostUSDTicks:             row.CostUsdTicks,
-			UncostedInputTokens:      row.UncostedInputTokens,
-			UncostedOutputTokens:     row.UncostedOutputTokens,
-			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
-			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+			CostUSDTicks:             cost.CostUSDTicks,
+			UncostedInputTokens:      cost.UncostedInputTokens,
+			UncostedOutputTokens:     cost.UncostedOutputTokens,
+			UncostedCacheReadTokens:  cost.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: cost.UncostedCacheWriteTokens,
 			TaskCount:                row.TaskCount,
 		}
 	}
@@ -352,8 +366,16 @@ func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	pricing := h.currentConfig().ModelPricing
 	resp := make([]RuntimeUsageByHourResponse, len(rows))
 	for i, row := range rows {
+		cost := applyModelPricing(pricing, row.Model, usageCostSplit{
+			CostUSDTicks:             row.CostUsdTicks,
+			UncostedInputTokens:      row.UncostedInputTokens,
+			UncostedOutputTokens:     row.UncostedOutputTokens,
+			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+		})
 		resp[i] = RuntimeUsageByHourResponse{
 			Hour:                     int(row.Hour),
 			Model:                    row.Model,
@@ -361,11 +383,11 @@ func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) 
 			OutputTokens:             row.OutputTokens,
 			CacheReadTokens:          row.CacheReadTokens,
 			CacheWriteTokens:         row.CacheWriteTokens,
-			CostUSDTicks:             row.CostUsdTicks,
-			UncostedInputTokens:      row.UncostedInputTokens,
-			UncostedOutputTokens:     row.UncostedOutputTokens,
-			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
-			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+			CostUSDTicks:             cost.CostUSDTicks,
+			UncostedInputTokens:      cost.UncostedInputTokens,
+			UncostedOutputTokens:     cost.UncostedOutputTokens,
+			UncostedCacheReadTokens:  cost.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: cost.UncostedCacheWriteTokens,
 			TaskCount:                row.TaskCount,
 		}
 	}

@@ -139,8 +139,8 @@ func modelCatalogCacheDecision(models []ModelEntry, supported, fallback bool) mo
 
 // cloneModelEntries deep-copies a catalog so the in-memory backend hands out
 // values a caller cannot mutate into the shared cache. A shallow slice copy is
-// not enough: ModelEntry carries a *ModelThinking (with its own level slice) and
-// a ServiceTiers slice, all of which would still alias the cached objects. The
+// not enough: ModelEntry carries Pricing and ModelThinking pointers (the latter
+// with its own level slice) plus a ServiceTiers slice. The
 // Redis backend gets this for free by round-tripping through JSON, and the two
 // implementations must not differ in whether the returned value is independent.
 func cloneModelEntries(models []ModelEntry) []ModelEntry {
@@ -150,6 +150,10 @@ func cloneModelEntries(models []ModelEntry) []ModelEntry {
 	out := make([]ModelEntry, len(models))
 	for i, m := range models {
 		clone := m
+		if m.Pricing != nil {
+			pricing := *m.Pricing
+			clone.Pricing = &pricing
+		}
 		if m.Thinking != nil {
 			thinking := *m.Thinking
 			if m.Thinking.SupportedLevels != nil {

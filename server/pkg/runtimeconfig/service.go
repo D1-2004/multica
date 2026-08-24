@@ -29,11 +29,13 @@ type Snapshot struct {
 type Service struct {
 	snapshot             atomic.Pointer[Snapshot]
 	manifestFingerprints atomic.Pointer[ManifestFingerprintsSnapshot]
+	modelPricing         atomic.Pointer[ModelPricingSnapshot]
 	logger               *slog.Logger
 	prod                 bool
 
 	applyMu                     sync.Mutex
 	manifestFingerprintsApplyMu sync.Mutex
+	modelPricingApplyMu         sync.Mutex
 	mu                          sync.Mutex
 	closeOnce                   sync.Once
 	closeFunc                   func() error
@@ -106,6 +108,14 @@ func (s *Service) ApplyJSON(data []byte) (Snapshot, error) {
 	cfg, err := ParseStrict(data, s.prod)
 	if err != nil {
 		return s.Current(), err
+	}
+	if pricing := s.ModelPricing(); pricing.Generation > 0 {
+		pricingConfig := ModelPricingConfig{
+			Version: pricing.Version, Currency: pricing.Currency, Unit: pricing.Unit, Models: pricing.Models,
+		}
+		if err := pricingConfig.ValidateModels(cfg.Runtime.LLM.Models); err != nil {
+			return s.Current(), err
+		}
 	}
 	s.mu.Lock()
 	validator := s.validator

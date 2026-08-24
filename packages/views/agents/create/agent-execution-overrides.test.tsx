@@ -37,6 +37,12 @@ import { AgentExecutionOverrides } from "./agent-configuration-panel";
 const FAST_MODEL: RuntimeModel = {
   id: "gpt-5.6-sol",
   label: "GPT-5.6 Sol",
+  pricing: {
+    input: 5,
+    output: 30,
+    cache_read: 0.5,
+    cache_write: 6.25,
+  },
   thinking: {
     supported_levels: [
       { value: "medium", label: "Medium" },

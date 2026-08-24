@@ -1,5 +1,33 @@
 -- name: ListLabels :many
-WITH issue_label_task_usage AS (
+WITH model_pricing AS (
+    SELECT sqlc.arg('model_pricing')::jsonb AS catalog
+), priced_task_usage AS (
+    SELECT
+        tu.*,
+        CASE
+            WHEN tu.cost_usd_ticks IS NOT NULL THEN tu.cost_usd_ticks
+            WHEN rate.value IS NOT NULL THEN ROUND((
+                tu.input_tokens * (rate.value->>'input')::numeric +
+                tu.output_tokens * (rate.value->>'output')::numeric +
+                tu.cache_read_tokens * (rate.value->>'cache_read')::numeric +
+                tu.cache_write_tokens * (rate.value->>'cache_write')::numeric
+            ) * 10000)::bigint
+        END AS effective_cost_usd_ticks
+    FROM task_usage tu
+    CROSS JOIN model_pricing pricing
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(
+            pricing.catalog -> LOWER(tu.model),
+            CASE
+                WHEN POSITION('/' IN LOWER(tu.model)) > 1
+                 AND POSITION('/' IN LOWER(tu.model)) < LENGTH(LOWER(tu.model))
+                THEN pricing.catalog -> SUBSTRING(
+                    LOWER(tu.model) FROM POSITION('/' IN LOWER(tu.model)) + 1
+                )
+            END
+        ) AS value
+    ) rate ON TRUE
+), issue_label_task_usage AS (
     -- One row per task is the load-bearing grain here. A task can report more
     -- than one (provider, model) usage row, so aggregating before joining the
     -- label catalogue prevents task counts and per-label totals from being
@@ -12,19 +40,19 @@ WITH issue_label_task_usage AS (
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
         ), 0)::bigint AS total_tokens,
-        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(tu.effective_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
         COALESCE(SUM(
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
-        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.effective_cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
         COALESCE(
-            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            BOOL_AND(tu.effective_cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
             FALSE
         ) AS is_priced
     FROM issue_to_label il
     JOIN issue i ON i.id = il.issue_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
-    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    LEFT JOIN priced_task_usage tu ON tu.task_id = atq.id
     WHERE i.workspace_id = sqlc.arg('workspace_id')::uuid
       AND sqlc.arg('resource_type')::text = 'issue'
       AND sqlc.arg('include_usage')::boolean
@@ -61,7 +89,35 @@ WHERE l.workspace_id = sqlc.arg('workspace_id')::uuid
 ORDER BY LOWER(name) ASC;
 
 -- name: GetIssueLabelUsageSummary :one
-WITH task_totals AS (
+WITH model_pricing AS (
+    SELECT sqlc.arg('model_pricing')::jsonb AS catalog
+), priced_task_usage AS (
+    SELECT
+        tu.*,
+        CASE
+            WHEN tu.cost_usd_ticks IS NOT NULL THEN tu.cost_usd_ticks
+            WHEN rate.value IS NOT NULL THEN ROUND((
+                tu.input_tokens * (rate.value->>'input')::numeric +
+                tu.output_tokens * (rate.value->>'output')::numeric +
+                tu.cache_read_tokens * (rate.value->>'cache_read')::numeric +
+                tu.cache_write_tokens * (rate.value->>'cache_write')::numeric
+            ) * 10000)::bigint
+        END AS effective_cost_usd_ticks
+    FROM task_usage tu
+    CROSS JOIN model_pricing pricing
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(
+            pricing.catalog -> LOWER(tu.model),
+            CASE
+                WHEN POSITION('/' IN LOWER(tu.model)) > 1
+                 AND POSITION('/' IN LOWER(tu.model)) < LENGTH(LOWER(tu.model))
+                THEN pricing.catalog -> SUBSTRING(
+                    LOWER(tu.model) FROM POSITION('/' IN LOWER(tu.model)) + 1
+                )
+            END
+        ) AS value
+    ) rate ON TRUE
+), task_totals AS (
     SELECT
         atq.id AS task_id,
         COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at,
@@ -70,20 +126,20 @@ WITH task_totals AS (
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
         ), 0)::bigint AS total_tokens,
-        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(tu.effective_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
         COALESCE(SUM(
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
-        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.effective_cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
         COALESCE(
-            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            BOOL_AND(tu.effective_cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
             FALSE
         ) AS is_priced
     FROM issue_label l
     JOIN issue_to_label il ON il.label_id = l.id
     JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
-    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    LEFT JOIN priced_task_usage tu ON tu.task_id = atq.id
     WHERE l.id = sqlc.arg('label_id')::uuid
       AND l.workspace_id = sqlc.arg('workspace_id')::uuid
       AND l.resource_type = 'issue'
@@ -104,7 +160,35 @@ SELECT
 FROM filtered_tasks;
 
 -- name: ListIssueLabelUsageDaily :many
-WITH task_totals AS (
+WITH model_pricing AS (
+    SELECT sqlc.arg('model_pricing')::jsonb AS catalog
+), priced_task_usage AS (
+    SELECT
+        tu.*,
+        CASE
+            WHEN tu.cost_usd_ticks IS NOT NULL THEN tu.cost_usd_ticks
+            WHEN rate.value IS NOT NULL THEN ROUND((
+                tu.input_tokens * (rate.value->>'input')::numeric +
+                tu.output_tokens * (rate.value->>'output')::numeric +
+                tu.cache_read_tokens * (rate.value->>'cache_read')::numeric +
+                tu.cache_write_tokens * (rate.value->>'cache_write')::numeric
+            ) * 10000)::bigint
+        END AS effective_cost_usd_ticks
+    FROM task_usage tu
+    CROSS JOIN model_pricing pricing
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(
+            pricing.catalog -> LOWER(tu.model),
+            CASE
+                WHEN POSITION('/' IN LOWER(tu.model)) > 1
+                 AND POSITION('/' IN LOWER(tu.model)) < LENGTH(LOWER(tu.model))
+                THEN pricing.catalog -> SUBSTRING(
+                    LOWER(tu.model) FROM POSITION('/' IN LOWER(tu.model)) + 1
+                )
+            END
+        ) AS value
+    ) rate ON TRUE
+), task_totals AS (
     SELECT
         atq.id AS task_id,
         COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at,
@@ -112,20 +196,20 @@ WITH task_totals AS (
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
         ), 0)::bigint AS total_tokens,
-        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(tu.effective_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
         COALESCE(SUM(
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
-        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.effective_cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
         COALESCE(
-            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            BOOL_AND(tu.effective_cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
             FALSE
         ) AS is_priced
     FROM issue_label l
     JOIN issue_to_label il ON il.label_id = l.id
     JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
-    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    LEFT JOIN priced_task_usage tu ON tu.task_id = atq.id
     WHERE l.id = sqlc.arg('label_id')::uuid
       AND l.workspace_id = sqlc.arg('workspace_id')::uuid
       AND l.resource_type = 'issue'
@@ -149,7 +233,35 @@ GROUP BY DATE(activity_at AT TIME ZONE sqlc.arg('tz')::text)
 ORDER BY DATE(activity_at AT TIME ZONE sqlc.arg('tz')::text) ASC;
 
 -- name: ListIssueLabelUsageBreakdown :many
-WITH label_tasks AS (
+WITH model_pricing AS (
+    SELECT sqlc.arg('model_pricing')::jsonb AS catalog
+), priced_task_usage AS (
+    SELECT
+        tu.*,
+        CASE
+            WHEN tu.cost_usd_ticks IS NOT NULL THEN tu.cost_usd_ticks
+            WHEN rate.value IS NOT NULL THEN ROUND((
+                tu.input_tokens * (rate.value->>'input')::numeric +
+                tu.output_tokens * (rate.value->>'output')::numeric +
+                tu.cache_read_tokens * (rate.value->>'cache_read')::numeric +
+                tu.cache_write_tokens * (rate.value->>'cache_write')::numeric
+            ) * 10000)::bigint
+        END AS effective_cost_usd_ticks
+    FROM task_usage tu
+    CROSS JOIN model_pricing pricing
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(
+            pricing.catalog -> LOWER(tu.model),
+            CASE
+                WHEN POSITION('/' IN LOWER(tu.model)) > 1
+                 AND POSITION('/' IN LOWER(tu.model)) < LENGTH(LOWER(tu.model))
+                THEN pricing.catalog -> SUBSTRING(
+                    LOWER(tu.model) FROM POSITION('/' IN LOWER(tu.model)) + 1
+                )
+            END
+        ) AS value
+    ) rate ON TRUE
+), label_tasks AS (
     SELECT
         atq.id AS task_id,
         COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at
@@ -157,7 +269,7 @@ WITH label_tasks AS (
     JOIN issue_to_label il ON il.label_id = l.id
     JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
-    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    LEFT JOIN priced_task_usage tu ON tu.task_id = atq.id
     WHERE l.id = sqlc.arg('label_id')::uuid
       AND l.workspace_id = sqlc.arg('workspace_id')::uuid
       AND l.resource_type = 'issue'
@@ -170,22 +282,50 @@ SELECT
         tu.input_tokens + tu.output_tokens +
         tu.cache_read_tokens + tu.cache_write_tokens
     )::bigint AS total_tokens,
-    COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+    COALESCE(SUM(tu.effective_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
     COALESCE(SUM(
         tu.input_tokens + tu.output_tokens +
         tu.cache_read_tokens + tu.cache_write_tokens
-    ) FILTER (WHERE tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+    ) FILTER (WHERE tu.effective_cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
     COUNT(DISTINCT lt.task_id)::bigint AS task_count,
-    COUNT(DISTINCT lt.task_id) FILTER (WHERE tu.cost_usd_ticks IS NULL)::bigint AS unpriced_task_count
+    COUNT(DISTINCT lt.task_id) FILTER (WHERE tu.effective_cost_usd_ticks IS NULL)::bigint AS unpriced_task_count
 FROM label_tasks lt
-JOIN task_usage tu ON tu.task_id = lt.task_id
+JOIN priced_task_usage tu ON tu.task_id = lt.task_id
 WHERE sqlc.narg('since')::timestamptz IS NULL
    OR lt.activity_at >= sqlc.narg('since')::timestamptz
 GROUP BY LOWER(tu.provider), tu.model
 ORDER BY total_cost_usd_ticks DESC, total_tokens DESC, LOWER(tu.provider), tu.model;
 
 -- name: ListIssueLabelUsageTasks :many
-WITH task_totals AS (
+WITH model_pricing AS (
+    SELECT sqlc.arg('model_pricing')::jsonb AS catalog
+), priced_task_usage AS (
+    SELECT
+        tu.*,
+        CASE
+            WHEN tu.cost_usd_ticks IS NOT NULL THEN tu.cost_usd_ticks
+            WHEN rate.value IS NOT NULL THEN ROUND((
+                tu.input_tokens * (rate.value->>'input')::numeric +
+                tu.output_tokens * (rate.value->>'output')::numeric +
+                tu.cache_read_tokens * (rate.value->>'cache_read')::numeric +
+                tu.cache_write_tokens * (rate.value->>'cache_write')::numeric
+            ) * 10000)::bigint
+        END AS effective_cost_usd_ticks
+    FROM task_usage tu
+    CROSS JOIN model_pricing pricing
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(
+            pricing.catalog -> LOWER(tu.model),
+            CASE
+                WHEN POSITION('/' IN LOWER(tu.model)) > 1
+                 AND POSITION('/' IN LOWER(tu.model)) < LENGTH(LOWER(tu.model))
+                THEN pricing.catalog -> SUBSTRING(
+                    LOWER(tu.model) FROM POSITION('/' IN LOWER(tu.model)) + 1
+                )
+            END
+        ) AS value
+    ) rate ON TRUE
+), task_totals AS (
     SELECT
         atq.id AS task_id,
         atq.agent_id,
@@ -213,30 +353,30 @@ WITH task_totals AS (
         CASE WHEN COUNT(tu.id) = 1 THEN MIN(tu.model) ELSE '' END::text AS model,
         COUNT(tu.id) > 0 AS has_usage,
         COALESCE(
-            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            BOOL_AND(tu.effective_cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
             FALSE
         )::boolean AS is_priced,
         COALESCE(SUM(
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
         ), 0)::bigint AS total_tokens,
-        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(tu.effective_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
         COALESCE(SUM(
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
-        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.effective_cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
         COALESCE(
             JSONB_AGG(
                 JSONB_BUILD_OBJECT(
                     'provider', LOWER(tu.provider),
                     'model', tu.model,
                     'total_tokens', tu.input_tokens + tu.output_tokens + tu.cache_read_tokens + tu.cache_write_tokens,
-                    'total_cost_usd_ticks', COALESCE(tu.cost_usd_ticks, 0),
-                    'uncosted_tokens', CASE WHEN tu.cost_usd_ticks IS NULL
+                    'total_cost_usd_ticks', COALESCE(tu.effective_cost_usd_ticks, 0),
+                    'uncosted_tokens', CASE WHEN tu.effective_cost_usd_ticks IS NULL
                         THEN tu.input_tokens + tu.output_tokens + tu.cache_read_tokens + tu.cache_write_tokens
                         ELSE 0
                     END,
-                    'is_priced', tu.cost_usd_ticks IS NOT NULL
+                    'is_priced', tu.effective_cost_usd_ticks IS NOT NULL
                 ) ORDER BY LOWER(tu.provider), tu.model
             ) FILTER (WHERE tu.id IS NOT NULL),
             '[]'::jsonb
@@ -247,7 +387,7 @@ WITH task_totals AS (
     JOIN workspace w ON w.id = i.workspace_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
     LEFT JOIN agent a ON a.id = atq.agent_id AND a.workspace_id = i.workspace_id
-    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    LEFT JOIN priced_task_usage tu ON tu.task_id = atq.id
     WHERE l.id = sqlc.arg('label_id')::uuid
       AND l.workspace_id = sqlc.arg('workspace_id')::uuid
       AND l.resource_type = 'issue'
@@ -306,7 +446,7 @@ UPDATE issue_label SET
     description = COALESCE(sqlc.narg('description'), description),
     color = COALESCE(sqlc.narg('color'), color),
     updated_at = now()
-WHERE id = $1 AND workspace_id = $2
+WHERE issue_label.id = $1 AND issue_label.workspace_id = $2
   AND NOT EXISTS (
       SELECT 1 FROM agent_okr
       WHERE agent_okr.label_id = issue_label.id
@@ -319,13 +459,13 @@ RETURNING *;
 -- infrastructure errors; it rechecks the OKR reference on ErrNoRows so a
 -- concurrent reference becomes 409 rather than a misleading 404.
 DELETE FROM issue_label
-WHERE id = $1 AND workspace_id = $2
+WHERE issue_label.id = $1 AND issue_label.workspace_id = $2
   AND NOT EXISTS (
       SELECT 1 FROM agent_okr
       WHERE agent_okr.label_id = issue_label.id
         AND agent_okr.workspace_id = issue_label.workspace_id
   )
-RETURNING id;
+RETURNING issue_label.id;
 
 -- The resource-label junctions deliberately have no foreign keys. Keeping
 -- their cleanup in the same application transaction as the owner deletion

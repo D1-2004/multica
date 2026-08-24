@@ -10,6 +10,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
@@ -94,6 +95,29 @@ func TestBusinessMetricsLLMPricingAndUnpricedTokens(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.llmRequests.WithLabelValues("other", "unknown", "local")); got != 1 {
 		t.Fatalf("unpriced request counter = %v, want 1", got)
+	}
+}
+
+func TestBusinessMetricsUsesManagedDiamondRate(t *testing.T) {
+	m := NewBusinessMetrics()
+	rate := modelpricing.Rate{Input: 1.5, Output: 6, CacheRead: 0.3, CacheWrite: 1.875}
+	m.RecordManagedLLMUsage(
+		"issue", "cloud", "hermes", "custom:qwen3.8-max",
+		1_000_000, 1_000_000, 1_000_000, 1_000_000,
+		0, "qwen3.8-max", rate,
+	)
+
+	if got := testutil.ToFloat64(m.llmTokens.WithLabelValues("hermes", "qwen3.8-max", "input", "cloud", "issue")); got != 1_000_000 {
+		t.Fatalf("managed input tokens = %v, want 1000000", got)
+	}
+	if got := testutil.ToFloat64(m.llmCostUSD.WithLabelValues("hermes", "qwen3.8-max", "output", "cloud", "issue")); got != 6 {
+		t.Fatalf("managed output cost = %v, want 6", got)
+	}
+	if got := testutil.ToFloat64(m.llmUnpricedTokens.WithLabelValues("hermes", "custom_qwen3_8_max", "input")); got != 0 {
+		t.Fatalf("managed tokens were also marked unpriced: %v", got)
+	}
+	if got := testutil.ToFloat64(m.llmRequests.WithLabelValues("hermes", "qwen3.8-max", "cloud")); got != 1 {
+		t.Fatalf("managed request counter = %v, want 1", got)
 	}
 }
 

@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 )
 
 func setAgentOKRsForTest(t *testing.T, agentID string, body map[string]any) *httptest.ResponseRecorder {
@@ -561,5 +563,105 @@ func TestAgentOKRSpendRollsUpPerLabelWithoutDoubleCounting(t *testing.T) {
 	}
 	if objSpend := spend[objLabelID]; objSpend.TaskCount != 0 || objSpend.TotalCostUSDTicks != 0 {
 		t.Errorf("objective inherited its key result's spend: %+v", objSpend)
+	}
+}
+
+func TestAgentOKRSpendMatchesLabelUsageWithDiamondPricing(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	originalPricing := testHandler.cfg.ModelPricing
+	testHandler.cfg.ModelPricing = modelpricing.Catalog{
+		"qwen3.8-max":  {Input: 1, Output: 2, CacheRead: 0.1, CacheWrite: 0.5},
+		"qwen3.7-plus": {Input: 0.5, Output: 1, CacheRead: 0.05, CacheWrite: 0.25},
+	}
+	t.Cleanup(func() { testHandler.cfg.ModelPricing = originalPricing })
+
+	agentID := createHandlerTestAgent(t, "okr-diamond-pricing", nil)
+	objective := "计价一致"
+	keyResult := "标签与 OKR 同价"
+	if w := setAgentOKRsForTest(t, agentID, map[string]any{
+		"okrs": []map[string]any{{"objective": objective, "key_results": []string{keyResult}}},
+	}); w.Code != http.StatusOK {
+		t.Fatalf("set OKRs: got %d: %s", w.Code, w.Body.String())
+	}
+
+	var labelID, issueID, taskID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id FROM issue_label WHERE workspace_id = $1 AND name = $2`,
+		testWorkspaceID, agentOKRKeyResultPrefix+keyResult).Scan(&labelID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, assignee_type, assignee_id,
+		                   creator_type, creator_id, number, position)
+		VALUES ($1, 'OKR Diamond 计价', 'todo', 'none', 'agent', $2, 'member', $3,
+		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1), 0)
+		RETURNING id`, testWorkspaceID, agentID, testUserID).Scan(&issueID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage WHERE task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue_to_label WHERE issue_id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_okr WHERE agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue_label WHERE description = $1`, agentOKRLabelDescription)
+	})
+	if _, err := testPool.Exec(ctx,
+		`INSERT INTO issue_to_label (issue_id, label_id) VALUES ($1, $2)`, issueID, labelID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(ctx,
+		`INSERT INTO agent_task_queue (agent_id, issue_id, status, completed_at)
+		 VALUES ($1, $2, 'completed', now()) RETURNING id`,
+		agentID, issueID).Scan(&taskID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO task_usage (
+			task_id, provider, model, input_tokens, output_tokens,
+			cache_read_tokens, cache_write_tokens, cost_usd_ticks
+		) VALUES
+			($1, 'runtime-exact',           'qwen3.8-max',                    1000000,       0, 0, 0, NULL),
+			($1, 'runtime-custom',          'custom:qwen3.7-plus',                  0, 1000000, 0, 0, NULL),
+			($1, 'runtime-provider',        'opencode/qwen3.8-max',           1000000,       0, 0, 0, NULL),
+			($1, 'runtime-provider-custom', 'opencode/custom:qwen3.7-plus',         0, 1000000, 0, 0, NULL),
+			($1, 'provider',                'qwen3.8-max',                    1000000,       0, 0, 0, 777),
+			($1, 'runtime-unknown',         'opencode/qwen3.8-max-preview',       123,       0, 0, 0, NULL)
+	`, taskID); err != nil {
+		t.Fatal(err)
+	}
+
+	spend, usageAvailable := testHandler.agentOKRSpendFor(
+		ctx, parseUUID(agentID), parseUUID(testWorkspaceID))
+	if !usageAvailable {
+		t.Fatal("Agent OKR usage query unexpectedly unavailable")
+	}
+	okr := spend[labelID]
+	pricingJSON, err := testHandler.cfg.ModelPricing.SQLJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	label, err := testHandler.Queries.GetIssueLabelUsageSummary(ctx, db.GetIssueLabelUsageSummaryParams{
+		LabelID:      parseUUID(labelID),
+		WorkspaceID:  parseUUID(testWorkspaceID),
+		Since:        pgtype.Timestamptz{},
+		ModelPricing: pricingJSON,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if okr.TotalTokens != label.TotalTokens ||
+		okr.TotalCostUSDTicks != label.TotalCostUsdTicks ||
+		okr.UncostedTokens != label.UncostedTokens ||
+		okr.TaskCount != label.TaskCount ||
+		okr.UnpricedTaskCount != label.UnpricedTaskCount {
+		t.Fatalf("Agent OKR spend = %+v, label usage = %+v", okr, label)
+	}
+	if okr.TotalTokens != 5_000_123 || okr.TotalCostUSDTicks != 40_000_000_777 ||
+		okr.UncostedTokens != 123 || okr.TaskCount != 1 || okr.UnpricedTaskCount != 1 {
+		t.Fatalf("unexpected priced OKR spend: %+v", okr)
 	}
 }

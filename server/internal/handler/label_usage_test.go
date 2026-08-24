@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 )
 
 func createLabelUsageTestIssue(t *testing.T, title string) IssueResponse {
@@ -62,6 +63,11 @@ func TestLabelUsageAggregatesAtTaskGrainAndPaginates(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
+	originalPricing := testHandler.cfg.ModelPricing
+	testHandler.cfg.ModelPricing = modelpricing.Catalog{
+		"unpriced-model": {Input: 1, Output: 1, CacheRead: 1, CacheWrite: 1},
+	}
+	t.Cleanup(func() { testHandler.cfg.ModelPricing = originalPricing })
 	agentID := createHandlerTestAgent(t, "label-usage-"+uuid.NewString()[:8], []byte("[]"))
 	label := createLabelUsageTestLabel(t, "issue")
 	recentIssue := createLabelUsageTestIssue(t, "Recent label usage")
@@ -155,9 +161,9 @@ func TestLabelUsageAggregatesAtTaskGrainAndPaginates(t *testing.T) {
 	if listed == nil || listed.UsageSummary == nil {
 		t.Fatalf("label usage summary missing: %+v", listed)
 	}
-	if got := *listed.UsageSummary; got.TotalTokens != 310 || got.TotalCostUSDTicks != 1500 ||
-		got.UncostedTokens != 10 || got.TaskCount != 3 ||
-		got.PricedTaskCount != 1 || got.UnpricedTaskCount != 2 {
+	if got := *listed.UsageSummary; got.TotalTokens != 310 || got.TotalCostUSDTicks != 101500 ||
+		got.UncostedTokens != 0 || got.TaskCount != 3 ||
+		got.PricedTaskCount != 2 || got.UnpricedTaskCount != 1 {
 		t.Fatalf("list usage summary = %+v", got)
 	}
 
@@ -178,9 +184,9 @@ func TestLabelUsageAggregatesAtTaskGrainAndPaginates(t *testing.T) {
 	if detail.Period != "7d" || detail.Timezone != "UTC" {
 		t.Fatalf("period/timezone = %s/%s", detail.Period, detail.Timezone)
 	}
-	if got := detail.Summary; got.TotalTokens != 110 || got.TotalCostUSDTicks != 500 ||
-		got.UncostedTokens != 10 || got.TaskCount != 2 ||
-		got.PricedTaskCount != 0 || got.UnpricedTaskCount != 2 {
+	if got := detail.Summary; got.TotalTokens != 110 || got.TotalCostUSDTicks != 100500 ||
+		got.UncostedTokens != 0 || got.TaskCount != 2 ||
+		got.PricedTaskCount != 1 || got.UnpricedTaskCount != 1 {
 		t.Fatalf("detail summary = %+v", got)
 	}
 	if len(detail.Tasks) != 1 || detail.Tasks[0].TaskID != recentTask {

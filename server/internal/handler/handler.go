@@ -47,6 +47,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/llm"
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 )
 
 // randomID returns a random 16-byte hex string used as a request ID for
@@ -132,8 +133,11 @@ type Config struct {
 	FCE2B                               service.FCE2BConfig
 	ASB                                 service.ASBConfig
 	EnterpriseIdentity                  service.EnterpriseIdentityConfig
-	AttachmentDownloadMode              string
-	AttachmentDownloadURLTTL            time.Duration
+	// ModelPricing is the deployment-owned Diamond catalog used to complete
+	// usage rows that do not carry provider-reported cost.
+	ModelPricing             modelpricing.Catalog
+	AttachmentDownloadMode   string
+	AttachmentDownloadURLTTL time.Duration
 	// AttachmentFrameAncestors are trusted browser origins allowed to embed
 	// attachment preview responses. In production this should mirror the
 	// frontend/CORS origin allowlist so split app/api self-hosted deployments

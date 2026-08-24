@@ -148,9 +148,8 @@ func parseProjectIDParam(w http.ResponseWriter, r *http.Request) (pgtype.UUID, b
 }
 
 // DashboardUsageDailyResponse is one (date, agent, provider, model) bucket.
-// Cost-side math happens on the client from a per-model pricing table;
-// agent_id supports the leaderboard comparison chart, while provider + model
-// let the client disambiguate bare model ids that collide across providers.
+// Managed model cost is completed from Diamond before the response; provider
+// and model remain for grouping and unknown-model diagnostics.
 type DashboardUsageDailyResponse struct {
 	Date             string `json:"date"`
 	AgentID          string `json:"agent_id"`
@@ -212,8 +211,16 @@ func (h *Handler) listDashboardUsageDaily(
 	if err != nil {
 		return nil, err
 	}
+	pricing := h.currentConfig().ModelPricing
 	resp := make([]DashboardUsageDailyResponse, len(rows))
 	for i, row := range rows {
+		cost := applyModelPricing(pricing, row.Model, usageCostSplit{
+			CostUSDTicks:             row.CostUsdTicks,
+			UncostedInputTokens:      row.UncostedInputTokens,
+			UncostedOutputTokens:     row.UncostedOutputTokens,
+			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+		})
 		resp[i] = DashboardUsageDailyResponse{
 			Date:                     row.Date.Time.Format("2006-01-02"),
 			Provider:                 row.Provider,
@@ -222,11 +229,11 @@ func (h *Handler) listDashboardUsageDaily(
 			OutputTokens:             row.OutputTokens,
 			CacheReadTokens:          row.CacheReadTokens,
 			CacheWriteTokens:         row.CacheWriteTokens,
-			CostUSDTicks:             row.CostUsdTicks,
-			UncostedInputTokens:      row.UncostedInputTokens,
-			UncostedOutputTokens:     row.UncostedOutputTokens,
-			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
-			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+			CostUSDTicks:             cost.CostUSDTicks,
+			UncostedInputTokens:      cost.UncostedInputTokens,
+			UncostedOutputTokens:     cost.UncostedOutputTokens,
+			UncostedCacheReadTokens:  cost.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: cost.UncostedCacheWriteTokens,
 			TaskCount:                row.TaskCount,
 		}
 	}
@@ -342,8 +349,16 @@ func (h *Handler) listDashboardUsageByAgent(
 	if err != nil {
 		return nil, err
 	}
+	pricing := h.currentConfig().ModelPricing
 	resp := make([]DashboardUsageByAgentResponse, len(rows))
 	for i, row := range rows {
+		cost := applyModelPricing(pricing, row.Model, usageCostSplit{
+			CostUSDTicks:             row.CostUsdTicks,
+			UncostedInputTokens:      row.UncostedInputTokens,
+			UncostedOutputTokens:     row.UncostedOutputTokens,
+			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+		})
 		resp[i] = DashboardUsageByAgentResponse{
 			AgentID:                  uuidToString(row.AgentID),
 			Provider:                 row.Provider,
@@ -352,11 +367,11 @@ func (h *Handler) listDashboardUsageByAgent(
 			OutputTokens:             row.OutputTokens,
 			CacheReadTokens:          row.CacheReadTokens,
 			CacheWriteTokens:         row.CacheWriteTokens,
-			CostUSDTicks:             row.CostUsdTicks,
-			UncostedInputTokens:      row.UncostedInputTokens,
-			UncostedOutputTokens:     row.UncostedOutputTokens,
-			UncostedCacheReadTokens:  row.UncostedCacheReadTokens,
-			UncostedCacheWriteTokens: row.UncostedCacheWriteTokens,
+			CostUSDTicks:             cost.CostUSDTicks,
+			UncostedInputTokens:      cost.UncostedInputTokens,
+			UncostedOutputTokens:     cost.UncostedOutputTokens,
+			UncostedCacheReadTokens:  cost.UncostedCacheReadTokens,
+			UncostedCacheWriteTokens: cost.UncostedCacheWriteTokens,
 			TaskCount:                row.TaskCount,
 		}
 	}

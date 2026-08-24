@@ -1102,6 +1102,8 @@ export interface RuntimeModel {
   label: string;
   provider?: string;
   default?: boolean;
+  /** Deployment-owned USD rates per million tokens. */
+  pricing?: RuntimeModelPricing;
   /**
    * Per-model reasoning/effort catalog discovered by the daemon. Currently
    * populated for claude, codex, and opencode runtimes; omitted (or undefined)
@@ -1111,6 +1113,15 @@ export interface RuntimeModel {
   thinking?: RuntimeModelThinking;
   /** Runtime-native execution tiers advertised for this exact model. */
   service_tiers?: RuntimeModelServiceTier[];
+}
+
+export interface RuntimeModelPricing {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  /** Non-zero when the displayed rates are the provider's first request-size tier. */
+  base_tier_max_input_tokens?: number;
 }
 
 export interface RuntimeModelServiceTier {

@@ -265,6 +265,8 @@
     "managed_by_runtime_title": "Model selection is managed by this runtime.",
     "managed_by_runtime_hint": "Configure the model on the runtime host (e.g. Hermes reads it from its own config file).",
     "discovery_failed": "discovery failed",
+    "price": "Input ${{input}} · output ${{output}} / 1M tokens",
+    "price_from": "From input ${{input}} · output ${{output}} / 1M tokens",
     "clear_full": "Clear selection (use provider default)"
   },
   "tabs": {

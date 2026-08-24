@@ -248,6 +248,8 @@
     "managed_by_runtime_title": "このランタイムがモデル選択を管理します。",
     "managed_by_runtime_hint": "ランタイムホストでモデルを設定してください（例: Hermes は自身の設定ファイルから読み込みます）。",
     "discovery_failed": "検出に失敗しました",
+    "price": "入力 ${{input}}・出力 ${{output}} / 100万トークン",
+    "price_from": "開始価格: 入力 ${{input}}・出力 ${{output}} / 100万トークン",
     "clear_full": "選択をクリア（プロバイダーのデフォルトを使用）"
   },
   "tabs": {

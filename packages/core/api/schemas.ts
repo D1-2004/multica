@@ -3638,6 +3638,16 @@ const RuntimeModelSchema = z
     label: z.string().default(""),
     provider: z.string().optional(),
     default: z.boolean().optional(),
+    pricing: z
+      .object({
+        input: z.number().nonnegative(),
+        output: z.number().nonnegative(),
+        cache_read: z.number().nonnegative(),
+        cache_write: z.number().nonnegative(),
+        base_tier_max_input_tokens: z.number().int().positive().optional(),
+      })
+      .optional()
+      .catch(undefined),
     thinking: RuntimeModelThinkingSchema.nullable()
       .optional()
       .transform((v) => v ?? undefined),

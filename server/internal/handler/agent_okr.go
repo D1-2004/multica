@@ -330,9 +330,15 @@ func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpen
 // page: the objectives still render, with spend omitted rather than the whole
 // request failing over a reporting number.
 func (h *Handler) agentOKRSpendFor(ctx context.Context, agentID, workspaceID pgtype.UUID) (map[string]AgentOKRSpend, bool) {
+	pricingJSON, err := h.currentConfig().ModelPricing.SQLJSON()
+	if err != nil {
+		slog.Error("encode model pricing for Agent OKR usage", "agent_id", uuidToString(agentID), "error", err)
+		return nil, false
+	}
 	rows, err := h.Queries.ListAgentOKRUsage(ctx, db.ListAgentOKRUsageParams{
-		AgentID:     agentID,
-		WorkspaceID: workspaceID,
+		AgentID:      agentID,
+		WorkspaceID:  workspaceID,
+		ModelPricing: pricingJSON,
 	})
 	if err != nil {
 		slog.Warn("ListAgentOKRUsage failed", "agent_id", uuidToString(agentID), "error", err)
