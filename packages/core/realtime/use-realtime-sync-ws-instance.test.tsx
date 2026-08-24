@@ -9,6 +9,7 @@ import type { WSClient } from "../api/ws-client";
 import { chatKeys } from "../chat/queries";
 import { defaultStorage } from "../platform/storage";
 import { issueKeys } from "../issues/queries";
+import { labelKeys } from "../labels/queries";
 import { workspaceWorkingAgentsKeys } from "../agents/queries";
 import { workspaceKeys } from "../workspace/queries";
 import {
@@ -350,6 +351,9 @@ describe("useRealtimeSync — Table server membership invalidation", () => {
     });
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: workspaceWorkingAgentsKeys.all("ws-1"),
+    });
+    expect(invalidate).toHaveBeenCalledWith({
+      queryKey: labelKeys.usageRoot("ws-1"),
     });
   });
 

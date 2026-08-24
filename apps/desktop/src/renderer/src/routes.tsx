@@ -1,5 +1,10 @@
 import { useEffect } from "react";
-import { createMemoryRouter, Outlet, useMatches } from "react-router-dom";
+import {
+  createMemoryRouter,
+  Outlet,
+  useMatches,
+  useParams,
+} from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
 import { IssueDetailPage } from "./pages/issue-detail-page";
 import { ProjectDetailPage } from "./pages/project-detail-page";
@@ -31,6 +36,7 @@ import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/vie
 import { InboxPage } from "@multica/views/inbox";
 import { ChatPage } from "@multica/views/chat";
 import { SettingsPage } from "@multica/views/settings";
+import { LabelUsagePage } from "@multica/views/labels";
 import { useT } from "@multica/views/i18n";
 import { Download, Server } from "lucide-react";
 import { DaemonSettingsTab } from "./components/daemon-settings-tab";
@@ -63,6 +69,11 @@ function DesktopSettingsRoute() {
       ]}
     />
   );
+}
+
+function DesktopLabelUsageRoute() {
+  const { id } = useParams<{ id: string }>();
+  return id ? <LabelUsagePage labelId={id} /> : null;
 }
 
 /**
@@ -242,6 +253,11 @@ export const appRoutes: RouteObject[] = [
             path: "settings",
             element: <DesktopSettingsRoute />,
             handle: { title: "Settings" },
+          },
+          {
+            path: "settings/labels/:id",
+            element: <DesktopLabelUsageRoute />,
+            handle: { title: "Label usage" },
           },
         ],
       },

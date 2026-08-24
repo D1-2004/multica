@@ -370,13 +370,96 @@
       "name": "名前",
       "description": "説明",
       "usage": "使用数",
+      "tasks": "作業数",
+      "tokens": "トークン",
+      "cost": "コスト",
       "updated": "更新日"
     },
+    "sort": {
+      "updated": "最近の更新",
+      "cost_high": "コストの高い順",
+      "cost_low": "コストの低い順",
+      "tokens_high": "トークンの多い順",
+      "tokens_low": "トークンの少ない順"
+    },
+    "cost_partial": "{{count}} 件の作業が完全に価格計算されておらず、{{tokens}} トークンはこの小計に含まれていません。",
     "usage_count": "{{count}} 件で使用",
     "loading": "ラベルを読み込み中...",
     "empty": "{{scope}} ラベルはまだありません",
     "no_results": "一致するラベルがありません",
     "save_failed": "ラベルを保存できませんでした",
+    "usage_detail": {
+      "title": "ラベル使用量",
+      "back": "ラベル設定に戻る",
+      "periods": {
+        "7d": "7日間",
+        "30d": "30日間",
+        "90d": "90日間",
+        "all": "全期間"
+      },
+      "unpriced_notice": "{{count}} 件の作業が完全に価格計算されておらず、{{tokens}} トークンは除外されています。コストは価格計算済み分の小計です。",
+      "kpi": {
+        "cost": "価格計算済みコスト",
+        "cost_partial": "部分的な小計",
+        "cost_complete": "記録された使用量はすべて価格計算済みです",
+        "tokens": "合計トークン",
+        "tasks": "関連作業",
+        "unpriced": "未価格計算",
+        "unpriced_hint": "{{tokens}} トークンが未価格計算"
+      },
+      "chart": {
+        "title": "日別使用量の推移",
+        "description": "このラベルが付いた作業のトークンと価格計算済みコストです。",
+        "tokens": "トークン",
+        "cost": "コスト",
+        "empty": "この期間の日別使用量はありません。"
+      },
+      "breakdown": {
+        "title": "プロバイダーとモデルの内訳",
+        "description": "価格計算済みコスト、コストがない場合はトークン数で順位付けします。",
+        "providers": "プロバイダー別",
+        "models": "モデル別",
+        "unknown_provider": "不明なプロバイダー",
+        "unknown_model": "不明なモデル",
+        "empty": "使用量の内訳はありません。"
+      },
+      "sort": {
+        "cost_high": "コスト: 高い順",
+        "cost_low": "コスト: 低い順",
+        "tokens_high": "トークン: 多い順",
+        "tokens_low": "トークン: 少ない順",
+        "recent": "新しい順",
+        "oldest": "古い順"
+      },
+      "tasks": {
+        "title": "関連作業",
+        "count": "この期間に {{count}} 件の作業",
+        "empty": "この期間に関連する作業はありません。",
+        "issue": "タスク",
+        "status": "ステータス",
+        "agent": "エージェント",
+        "model": "プロバイダー / モデル",
+        "completed": "アクティビティ",
+        "tokens": "トークン",
+        "cost": "コスト",
+        "unpriced": "このコストは不完全です。",
+        "unpriced_tokens": "{{tokens}} トークンが価格計算されていません。",
+        "no_usage": "使用量なし",
+        "unknown_issue": "不明なタスク",
+        "page": "{{page}} / {{total}} ページ",
+        "previous": "前へ",
+        "next": "次へ"
+      },
+      "empty": {
+        "title": "使用量はまだありません",
+        "description": "エージェントがこのラベルに関連するタスクを実行すると、ここに表示されます。"
+      },
+      "error": {
+        "title": "ラベル使用量を読み込めませんでした",
+        "description": "接続を確認してもう一度お試しください。",
+        "retry": "再試行"
+      }
+    },
     "actions": {
       "open": "{{name}} の操作",
       "edit": "編集",

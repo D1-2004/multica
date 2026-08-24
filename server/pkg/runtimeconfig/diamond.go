@@ -1,6 +1,7 @@
 package runtimeconfig
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -101,7 +102,17 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 	if err != nil {
 		return nil, fmt.Errorf("validate required runtime Diamond config: %w", err)
 	}
+
+	manifestFingerprintsContent, err := client.GetConfig(ManifestFingerprintsDiamondDataID, DiamondGroup)
+	if err != nil {
+		return nil, fmt.Errorf("fetch required Runtime manifest fingerprints Diamond config: %w", err)
+	}
+	manifestFingerprints, err := service.ApplyManifestFingerprintsJSON([]byte(manifestFingerprintsContent))
+	if err != nil {
+		return nil, fmt.Errorf("validate required Runtime manifest fingerprints Diamond config: %w", err)
+	}
 	logUpdate(logger, "runtime Diamond config loaded", snapshot)
+	logManifestFingerprintsUpdate(logger, "Runtime manifest fingerprints Diamond config loaded", manifestFingerprints)
 
 	if err := client.ListenConfig(DiamondDataID, DiamondGroup, func(content string) {
 		next, applyErr := service.ApplyJSON([]byte(content))
@@ -120,13 +131,46 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 	}); err != nil {
 		return nil, fmt.Errorf("listen to required runtime Diamond config: %w", err)
 	}
+	if err := client.ListenConfig(ManifestFingerprintsDiamondDataID, DiamondGroup, func(content string) {
+		next, applyErr := service.ApplyManifestFingerprintsJSON([]byte(content))
+		if applyErr != nil {
+			current := service.ManifestFingerprints()
+			if logger != nil {
+				logger.Error("Runtime manifest fingerprints Diamond update rejected; retaining previous snapshot",
+					slog.String("data_id", ManifestFingerprintsDiamondDataID),
+					slog.Uint64("generation", current.Generation),
+					slog.String("sha256", current.SHA256),
+					slog.Int("count", len(current.Fingerprints)),
+					slog.String("error", applyErr.Error()),
+				)
+			}
+			return
+		}
+		logManifestFingerprintsUpdate(logger, "Runtime manifest fingerprints Diamond config updated", next)
+	}); err != nil {
+		_ = client.CancelListenConfig(DiamondDataID, DiamondGroup)
+		return nil, fmt.Errorf("listen to required Runtime manifest fingerprints Diamond config: %w", err)
+	}
 	service.setCloseFunc(func() error {
-		err := client.CancelListenConfig(DiamondDataID, DiamondGroup)
+		runtimeErr := client.CancelListenConfig(DiamondDataID, DiamondGroup)
+		fingerprintsErr := client.CancelListenConfig(ManifestFingerprintsDiamondDataID, DiamondGroup)
 		client.CloseClient()
-		return err
+		return errors.Join(runtimeErr, fingerprintsErr)
 	})
 	closeClient = false
 	return service, nil
+}
+
+func logManifestFingerprintsUpdate(logger *slog.Logger, message string, snapshot ManifestFingerprintsSnapshot) {
+	if logger == nil {
+		return
+	}
+	logger.Info(message,
+		slog.String("data_id", ManifestFingerprintsDiamondDataID),
+		slog.Uint64("generation", snapshot.Generation),
+		slog.String("sha256", snapshot.SHA256),
+		slog.Int("count", len(snapshot.Fingerprints)),
+	)
 }
 
 func logUpdate(logger *slog.Logger, message string, snapshot Snapshot) {

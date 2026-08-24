@@ -239,6 +239,25 @@ describe("onIssueLabelsChanged", () => {
     expectInvalidated(qc, flatKey);
   });
 
+  it("invalidates label usage summaries and details after label membership changes", () => {
+    const summaryKey = labelKeys.listWithUsage(WS_ID, "issue");
+    const detailKey = labelKeys.usage(WS_ID, labelB.id, {
+      period: "30d",
+      sort: "cost",
+      direction: "desc",
+      tz: "UTC",
+      page: 1,
+      page_size: 25,
+    });
+    qc.setQueryData(summaryKey, { labels: [], total: 0 });
+    qc.setQueryData(detailKey, { summary: {} });
+
+    onIssueLabelsChanged(qc, WS_ID, ISSUE_ID, [labelB]);
+
+    expectInvalidated(qc, summaryKey);
+    expectInvalidated(qc, detailKey);
+  });
+
   it("patches the parent's children cache so the sub-issues panel stays fresh", () => {
     const child = { ...baseIssue, parent_issue_id: PARENT_ISSUE_ID };
     const childrenKey = issueKeys.children(WS_ID, PARENT_ISSUE_ID);
@@ -771,6 +790,15 @@ describe("onIssueDeleted", () => {
 
   beforeEach(() => {
     qc = new QueryClient();
+  });
+
+  it("invalidates label usage after cascading issue deletion", () => {
+    const usageKey = labelKeys.listWithUsage(WS_ID, "issue");
+    qc.setQueryData(usageKey, { labels: [], total: 0 });
+
+    onIssueDeleted(qc, WS_ID, ISSUE_ID);
+
+    expectInvalidated(qc, usageKey);
   });
 
   it("removes every cache entry scoped directly to the deleted issue", () => {

@@ -35,6 +35,8 @@ describe("paths.workspace(slug)", () => {
     expect(ws.squads()).toBe("/acme/squads");
     expect(ws.squadDetail("sq_1")).toBe("/acme/squads/sq_1");
     expect(ws.settings()).toBe("/acme/settings");
+    expect(ws.settingsLabels()).toBe("/acme/settings?tab=labels");
+    expect(ws.labelUsage("label/one")).toBe("/acme/settings/labels/label%2Fone");
     expect(ws.attachmentPreview("att_42")).toBe("/acme/attachments/att_42/preview");
   });
 

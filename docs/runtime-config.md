@@ -8,14 +8,14 @@ This source is explicitly enabled with:
 MULTICA_RUNTIME_CONFIG_SOURCE=diamond
 ```
 
-The coordinates are fixed so an application cannot accidentally point at another team's document:
+The coordinates are fixed so an application cannot accidentally point at another team's documents:
 
-| Setting | Value |
-|---|---|
-| Application | `dt-fde-multica` |
-| Data ID | `dt-fde-multica-runtime.json` |
-| Group | `DEFAULT_GROUP` |
-| Type | `json` |
+| Setting | Runtime settings | Runtime manifest fingerprints |
+|---|---|---|
+| Application | `dt-fde-multica` | `dt-fde-multica` |
+| Data ID | `dt-fde-multica-runtime.json` | `dt-fde-multica-runtime-manifest-fingerprints.json` |
+| Group | `DEFAULT_GROUP` | `DEFAULT_GROUP` |
+| Type | `json` | `json` |
 
 This document is separate from `dt-fde-multica.json`, whose strict schema contains dispatch prompts and uses fail-open feature-rule semantics.
 
@@ -24,7 +24,7 @@ This document is separate from `dt-fde-multica.json`, whose strict schema contai
 There are two explicit deployment modes:
 
 - An empty `MULTICA_RUNTIME_CONFIG_SOURCE` keeps the existing environment-only/self-hosted path.
-- The exact value `diamond` makes the runtime document authoritative. The server requires both the initial fetch and listener registration. It does not read a moved legacy environment value as a second source.
+- The exact value `diamond` makes the runtime settings and manifest-fingerprint documents authoritative. The server requires the initial fetch and listener registration for both Data IDs. It does not read a moved legacy environment value as a second source.
 
 The document is decoded with unknown-field rejection and validated as a complete snapshot. A valid listener update atomically replaces the previous snapshot. An invalid later update is rejected and the last valid snapshot remains active. Logs contain only the Data ID, group, schema version, generation, model count, and SHA-256 digest; the document body is not logged.
 
@@ -62,11 +62,27 @@ The following legacy environment settings are represented by the runtime documen
 
 See [the complete example](runtime-config.example.json) for schema version 1.
 
+## Runtime manifest fingerprint catalog
+
+An m7 Runtime template alias contains a 16-character fingerprint instead of embedding every component version. The second managed document maps that fingerprint to the exact six-component contract used by the Runtime image builder. This keeps the existing alias and verification mechanism while allowing a newly built candidate image to become recognizable through a Diamond update rather than a Multica code change.
+
+The document has one strict schema:
+
+- `version` must be `1`;
+- `fingerprints` must be non-empty;
+- every key must be exactly 16 lowercase hexadecimal characters;
+- every value must contain exactly `hermes`, `opencode`, `opencode-v2`, `dsh`, `pi`, and `dws`;
+- the server independently recomputes `sha256(canonical m7 contract)[:16]` and rejects a key that does not match its component versions.
+
+See [the complete fingerprint example](runtime-manifest-fingerprints.example.json). A valid listener update atomically replaces the entire catalog. An invalid update keeps the previous generation. Application logs contain only the Data ID, generation, entry count, and document SHA-256.
+
+The environment-only/self-hosted path can still parse the explicit m1-m6 aliases. With no managed fingerprint catalog, unknown compact m7 aliases are deliberately ignored rather than guessed.
+
 ## Release procedure
 
-1. Build the JSON from the current environment snapshot without placing secrets in it.
-2. Validate it with the same strict parser used by the server: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for the production document).
-3. Publish it to the target Diamond unit.
+1. Build the runtime-settings JSON from the current environment snapshot without placing secrets in it, and build the manifest-fingerprint JSON from the verified Runtime image contracts.
+2. Validate the runtime-settings document with the same strict parser used by the server: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for the production document). Run `go test ./pkg/runtimeconfig` to validate the checked-in fingerprint example and canonical fingerprint contract.
+3. Publish both Data IDs to the target Diamond unit before releasing the binary.
 4. Add `MULTICA_RUNTIME_CONFIG_SOURCE=diamond` and `MULTICA_RUNTIME_LLM_API_KEY` to the target Aone environment trait while preserving the complete old trait snapshot.
 5. Release the binary to that environment.
 6. Verify every replica loaded the same Diamond digest and registered a listener.
