@@ -500,6 +500,9 @@ func main() {
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus)
 	go runRunnerArtifactCleanup(sweepCtx, queries)
 	go taskSvc.RunDeferredChannelTaskPromoter(sweepCtx)
+	if h.ASBLauncher != nil {
+		go h.ASBLauncher.RunCapacityWaiter(sweepCtx)
+	}
 	go heartbeatScheduler.Run(sweepCtx)
 	if h.FCE2BStable != nil {
 		go h.FCE2BStable.Run(sweepCtx)

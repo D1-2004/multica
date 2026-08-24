@@ -1,276 +1,124 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestPeerASBTaskSandboxCandidatesSelectOldestForeignOrdinaryTasks(t *testing.T) {
-	t.Parallel()
-
-	localRuntimeID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
-	peerRuntimeID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	oldTaskID := "33333333-3333-3333-3333-333333333333"
-	newTaskID := "44444444-4444-4444-4444-444444444444"
-	oldCreatedAt := time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC)
-	newCreatedAt := oldCreatedAt.Add(time.Minute)
-
-	sandboxes := []ASBSandbox{
-		{
-			ID:        "peer-new",
-			Status:    ASBSandboxStatus{State: "Running"},
-			CreatedAt: newCreatedAt,
-			Metadata: map[string]string{
-				"multica.backend":    string(SandboxBackendASB),
-				"multica.runtime_id": util.UUIDToString(peerRuntimeID),
-				"multica.task_id":    newTaskID,
-			},
-		},
-		{
-			ID:        "peer-old-pending",
-			Status:    ASBSandboxStatus{State: "Pending"},
-			CreatedAt: oldCreatedAt,
-			Metadata: map[string]string{
-				"multica.backend":    string(SandboxBackendASB),
-				"multica.runtime_id": util.UUIDToString(peerRuntimeID),
-				"multica.task_id":    oldTaskID,
-			},
-		},
-		{
-			ID:        "local-task",
-			Status:    ASBSandboxStatus{State: "Running"},
-			CreatedAt: oldCreatedAt.Add(-time.Hour),
-			Metadata: map[string]string{
-				"multica.backend":    string(SandboxBackendASB),
-				"multica.runtime_id": util.UUIDToString(localRuntimeID),
-				"multica.task_id":    oldTaskID,
-			},
-		},
-		{
-			ID:        "peer-anchor",
-			Status:    ASBSandboxStatus{State: "Running"},
-			CreatedAt: oldCreatedAt.Add(-2 * time.Hour),
-			Metadata: map[string]string{
-				"multica.backend":         string(SandboxBackendASB),
-				"multica.runtime_id":      util.UUIDToString(peerRuntimeID),
-				"multica.task_id":         oldTaskID,
-				"multica.identity_source": "true",
-			},
-		},
-		{
-			ID:        "peer-release-validation",
-			Status:    ASBSandboxStatus{State: "Running"},
-			CreatedAt: oldCreatedAt.Add(-3 * time.Hour),
-			Metadata: map[string]string{
-				"multica.backend":            string(SandboxBackendASB),
-				"multica.runtime_id":         util.UUIDToString(peerRuntimeID),
-				"multica.task_id":            oldTaskID,
-				"multica.release_validation": "true",
-			},
-		},
-		{
-			ID:        "peer-terminal",
-			Status:    ASBSandboxStatus{State: "Terminated"},
-			CreatedAt: oldCreatedAt.Add(-4 * time.Hour),
-			Metadata: map[string]string{
-				"multica.backend":    string(SandboxBackendASB),
-				"multica.runtime_id": util.UUIDToString(peerRuntimeID),
-				"multica.task_id":    oldTaskID,
-			},
-		},
-		{
-			ID:        "peer-without-task-fence",
-			Status:    ASBSandboxStatus{State: "Running"},
-			CreatedAt: oldCreatedAt.Add(-5 * time.Hour),
-			Metadata: map[string]string{
-				"multica.backend":    string(SandboxBackendASB),
-				"multica.runtime_id": util.UUIDToString(peerRuntimeID),
-			},
-		},
-	}
-
-	candidates := peerASBTaskSandboxCandidates([]pgtype.UUID{localRuntimeID}, sandboxes)
-	if len(candidates) != 3 {
-		t.Fatalf("candidate count = %d, want 3", len(candidates))
-	}
-	if candidates[0].sandbox.ID != "peer-without-task-fence" ||
-		candidates[1].sandbox.ID != "peer-old-pending" ||
-		candidates[2].sandbox.ID != "peer-new" {
-		t.Fatalf(
-			"candidate order = [%s, %s, %s]",
-			candidates[0].sandbox.ID,
-			candidates[1].sandbox.ID,
-			candidates[2].sandbox.ID,
-		)
-	}
-}
-
-func TestOrdinaryASBTaskMetadataExcludesAnchorAndReleaseValidation(t *testing.T) {
-	t.Parallel()
-
-	runtimeID := "11111111-1111-1111-1111-111111111111"
-	taskID := "22222222-2222-2222-2222-222222222222"
-	ordinary := map[string]string{
-		"multica.backend":    string(SandboxBackendASB),
-		"multica.runtime_id": runtimeID,
-		"multica.task_id":    taskID,
-	}
-	if !isOrdinaryASBTaskSandboxMetadata(ordinary) {
-		t.Fatal("ordinary task metadata was rejected")
-	}
-	for name, metadata := range map[string]map[string]string{
-		"anchor": {
-			"multica.backend":         string(SandboxBackendASB),
-			"multica.runtime_id":      runtimeID,
-			"multica.task_id":         taskID,
-			"multica.identity_source": "true",
-		},
-		"release validation": {
-			"multica.backend":            string(SandboxBackendASB),
-			"multica.runtime_id":         runtimeID,
-			"multica.task_id":            taskID,
-			"multica.release_validation": "true",
-		},
-		"missing task fence": {
-			"multica.backend":    string(SandboxBackendASB),
-			"multica.runtime_id": runtimeID,
-		},
-	} {
-		if isOrdinaryASBTaskSandboxMetadata(metadata) {
-			t.Fatalf("%s metadata was accepted as an ordinary task", name)
-		}
-	}
-}
-
-func TestReclaimPeerASBTaskSandboxDeletesWithoutTaskStatusLookup(t *testing.T) {
-	t.Parallel()
-
-	localRuntimeID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
-	peerRuntimeID := util.MustParseUUID("22222222-2222-2222-2222-222222222222")
-	taskID := "33333333-3333-3333-3333-333333333333"
-	createdAt := time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC)
-	candidate := ASBSandbox{
-		ID:        "peer-task",
-		Status:    ASBSandboxStatus{State: "Running"},
-		CreatedAt: createdAt,
-		Metadata: map[string]string{
-			"multica.backend":    string(SandboxBackendASB),
-			"multica.runtime_id": util.UUIDToString(peerRuntimeID),
-			"multica.task_id":    taskID,
-		},
-	}
-
-	var deleted atomic.Bool
-	var deleteCalls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		response.Header().Set("Content-Type", "application/json")
-		switch {
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/peer-task":
-			if deleted.Load() {
-				response.WriteHeader(http.StatusNotFound)
-				_, _ = io.WriteString(response, `{"code":"NOT_FOUND","message":"sandbox not found"}`)
-				return
-			}
-			_, _ = io.WriteString(response, `{
-				"id":"peer-task",
-				"status":{"state":"Running"},
-				"createdAt":"2026-08-06T08:00:00Z",
-				"metadata":{
-					"multica.backend":"asb",
-					"multica.runtime_id":"22222222-2222-2222-2222-222222222222",
-					"multica.task_id":"33333333-3333-3333-3333-333333333333"
-				}
-			}`)
-		case request.Method == http.MethodDelete && request.URL.Path == "/v1/sandboxes/peer-task":
-			deleteCalls.Add(1)
-			deleted.Store(true)
-			response.WriteHeader(http.StatusNoContent)
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/quotas":
-			_, _ = io.WriteString(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":4}]`)
-		default:
-			t.Fatalf("unexpected ASB request: %s %s", request.Method, request.URL.Path)
-		}
-	}))
-	defer server.Close()
-	client := newTestASBClient(t, server)
-
-	reclaimed, err := reclaimPeerASBTaskSandbox(
-		context.Background(),
-		client,
-		localRuntimeID,
-		[]pgtype.UUID{localRuntimeID},
-		[]ASBSandbox{candidate},
-	)
+func TestASBCapacityFullWithOnlyBusyOrForeignSandboxesDoesNotDelete(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	taskID, _, workspaceID := dispatchedCommentTaskFixture(t, ctx, pool)
+	task, err := queries.GetAgentTask(ctx, util.MustParseUUID(taskID))
 	if err != nil {
-		t.Fatalf("reclaimPeerASBTaskSandbox: %v", err)
+		t.Fatalf("load active task: %v", err)
 	}
-	if !reclaimed || deleteCalls.Load() != 1 {
-		t.Fatalf("reclaimed = %t, delete calls = %d", reclaimed, deleteCalls.Load())
+	if !task.IssueID.Valid {
+		t.Fatal("capacity fixture task has no issue scope")
 	}
-}
 
-func TestReclaimPeerASBTaskSandboxRechecksAnchorMetadataBeforeDelete(t *testing.T) {
-	t.Parallel()
-
-	localRuntimeID := util.MustParseUUID("11111111-1111-1111-1111-111111111111")
-	candidate := ASBSandbox{
-		ID:        "changed-to-anchor",
-		Status:    ASBSandboxStatus{State: "Running"},
-		CreatedAt: time.Date(2026, 8, 6, 8, 0, 0, 0, time.UTC),
-		Metadata: map[string]string{
-			"multica.backend":    string(SandboxBackendASB),
-			"multica.runtime_id": "22222222-2222-2222-2222-222222222222",
-			"multica.task_id":    "33333333-3333-3333-3333-333333333333",
-		},
+	box, err := secretbox.New(bytes.Repeat([]byte{0x61}, secretbox.KeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedAPIKey, err := box.Seal([]byte(testASBAPIKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpsertASBRuntimeCredential(ctx, db.UpsertASBRuntimeCredentialParams{
+		RuntimeID:       task.RuntimeID,
+		ApiKeyEncrypted: encryptedAPIKey,
+		ApiKeyHint:      "-key",
+	}); err != nil {
+		t.Fatalf("seed ASB Runtime credential: %v", err)
+	}
+	if _, err := queries.UpsertCloudSandboxSession(ctx, db.UpsertCloudSandboxSessionParams{
+		WorkspaceID:         util.MustParseUUID(workspaceID),
+		RuntimeID:           task.RuntimeID,
+		ScopeType:           fcE2BScopeTypeIssue,
+		ScopeID:             task.IssueID,
+		SandboxID:           "busy-local",
+		ArtifactRef:         "registry.example/runtime@sha256:" + strings.Repeat("a", 64),
+		ExpiresAt:           pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+		SandboxBackend:      string(SandboxBackendASB),
+		IdentityFingerprint: asbUnboundIdentityFingerprint,
+	}); err != nil {
+		t.Fatalf("seed busy ASB session: %v", err)
 	}
 
 	var deleteCalls atomic.Int32
+	var createCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
 		switch {
-		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/changed-to-anchor":
-			_, _ = io.WriteString(response, `{
-				"id":"changed-to-anchor",
-				"status":{"state":"Running"},
-				"createdAt":"2026-08-06T08:00:00Z",
-				"metadata":{
-					"multica.backend":"asb",
-					"multica.runtime_id":"22222222-2222-2222-2222-222222222222",
-					"multica.task_id":"33333333-3333-3333-3333-333333333333",
-					"multica.identity_source":"true"
-				}
-			}`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes/quotas":
+			_, _ = io.WriteString(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":5}]`)
+		case request.Method == http.MethodGet && request.URL.Path == "/v1/sandboxes":
+			state := request.URL.Query().Get("state")
+			items := "[]"
+			totalItems := 0
+			if state == "Running" {
+				totalItems = 2
+				items = fmt.Sprintf(`[
+					{"id":"busy-local","status":{"state":"Running"},"createdAt":"2026-08-24T05:00:00Z","metadata":{"multica.backend":"asb","multica.runtime_id":"%s","multica.task_id":"%s"}},
+					{"id":"unknown-foreign","status":{"state":"Running"},"createdAt":"2026-08-24T04:00:00Z","metadata":{"multica.backend":"asb","multica.runtime_id":"11111111-1111-1111-1111-111111111111","multica.task_id":"22222222-2222-2222-2222-222222222222"}}
+				]`, util.UUIDToString(task.RuntimeID), taskID)
+			}
+			_, _ = fmt.Fprintf(response, `{"items":%s,"pagination":{"page":1,"pageSize":100,"totalItems":%d,"totalPages":1,"hasNextPage":false}}`, items, totalItems)
 		case request.Method == http.MethodDelete:
 			deleteCalls.Add(1)
 			response.WriteHeader(http.StatusNoContent)
+		case request.Method == http.MethodPost && request.URL.Path == "/v1/sandboxes":
+			createCalls.Add(1)
+			response.WriteHeader(http.StatusAccepted)
+			_, _ = io.WriteString(response, `{"id":"unexpected","status":{"state":"Pending"},"createdAt":"2026-08-24T06:00:00Z"}`)
 		default:
 			t.Fatalf("unexpected ASB request: %s %s", request.Method, request.URL.Path)
 		}
 	}))
 	defer server.Close()
 	client := newTestASBClient(t, server)
-
-	reclaimed, err := reclaimPeerASBTaskSandbox(
-		context.Background(),
-		client,
-		localRuntimeID,
-		[]pgtype.UUID{localRuntimeID},
-		[]ASBSandbox{candidate},
-	)
-	if err != nil {
-		t.Fatalf("reclaimPeerASBTaskSandbox: %v", err)
+	credentials := &ASBRuntimeClientProvider{
+		Store:   queries,
+		Secrets: box,
+		Config:  ASBConfig{APIURL: server.URL},
 	}
-	if reclaimed || deleteCalls.Load() != 0 {
-		t.Fatalf("reclaimed = %t, delete calls = %d", reclaimed, deleteCalls.Load())
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire capacity connection: %v", err)
+	}
+	defer conn.Release()
+	_, err = createASBSandboxWithCapacityOnConnection(
+		ctx,
+		db.New(conn),
+		credentials,
+		client,
+		task.RuntimeID,
+		pgtype.UUID{},
+		conn,
+		ASBCreateSandboxInput{Metadata: map[string]string{"multica.backend": string(SandboxBackendASB)}},
+	)
+	if !errors.Is(err, ErrASBCapacityUnavailable) {
+		t.Fatalf("capacity result = %v, want ErrASBCapacityUnavailable", err)
+	}
+	if deleteCalls.Load() != 0 || createCalls.Load() != 0 {
+		t.Fatalf("busy capacity made delete=%d create=%d calls", deleteCalls.Load(), createCalls.Load())
 	}
 }
 
@@ -314,6 +162,42 @@ func TestWaitForASBCapacityReleaseObservesSandboxAndQuota(t *testing.T) {
 	}
 }
 
+func TestASBCapacityContentionRemainsQueueableWhileQuotaIsFull(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name         string
+		usage        int
+		wantCapacity bool
+	}{
+		{name: "slot still occupied", usage: 5, wantCapacity: true},
+		{name: "slot released", usage: 4, wantCapacity: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if request.Method != http.MethodGet || request.URL.Path != "/v1/sandboxes/quotas" {
+					http.NotFound(response, request)
+					return
+				}
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(response, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":5,"usage":%d}]`, test.usage)
+			}))
+			defer server.Close()
+			cause := errors.New("capacity release raced with another creator")
+			err := asbCapacityUnavailableIfStillExhausted(
+				context.Background(),
+				newTestASBClient(t, server),
+				cause,
+			)
+			if errors.Is(err, ErrASBCapacityUnavailable) != test.wantCapacity {
+				t.Fatalf("capacity classification = %v, want capacity=%v", err, test.wantCapacity)
+			}
+			if !errors.Is(err, cause) {
+				t.Fatalf("capacity classification lost original cause: %v", err)
+			}
+		})
+	}
+}
+
 func TestGetLiveASBSandboxTreatsNotFoundAsMissing(t *testing.T) {
 	t.Parallel()
 
@@ -341,17 +225,20 @@ func TestGetLiveASBSandboxTreatsNotFoundAsMissing(t *testing.T) {
 	}
 }
 
-func TestIsActiveASBTaskStatus(t *testing.T) {
+func TestIsTerminalASBTaskStatusFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	for _, status := range []string{"queued", "dispatched", "running", "waiting_local_directory", "deferred"} {
-		if !isActiveASBTaskStatus(status) {
-			t.Fatalf("status %q should fence its sandbox from reclaim", status)
+		if isTerminalASBTaskStatus(status) {
+			t.Fatalf("status %q must fence its sandbox from reclaim", status)
 		}
 	}
 	for _, status := range []string{"completed", "failed", "cancelled"} {
-		if isActiveASBTaskStatus(status) {
+		if !isTerminalASBTaskStatus(status) {
 			t.Fatalf("status %q should allow an untracked sandbox reclaim", status)
 		}
+	}
+	if isTerminalASBTaskStatus("future_non_terminal_status") {
+		t.Fatal("unknown task status must fail closed")
 	}
 }

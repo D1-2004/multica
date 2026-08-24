@@ -965,6 +965,41 @@ func (q *Queries) GetRunnerAuthChallenge(ctx context.Context, arg GetRunnerAuthC
 	return i, err
 }
 
+const getRunnerBindingForOwner = `-- name: GetRunnerBindingForOwner :one
+SELECT b.id, b.workspace_id, b.agent_id, b.machine_id, b.bound_by, b.roots, b.revoked_at, b.revoked_by, b.created_at, b.updated_at, b.disconnected_at, b.disconnected_by
+FROM agent_runner_binding b
+JOIN runner_machine m ON m.id = b.machine_id
+WHERE b.id = $1
+  AND m.owner_id = $2
+  AND b.revoked_at IS NULL
+  AND m.revoked_at IS NULL
+`
+
+type GetRunnerBindingForOwnerParams struct {
+	BindingID pgtype.UUID `json:"binding_id"`
+	OwnerID   pgtype.UUID `json:"owner_id"`
+}
+
+func (q *Queries) GetRunnerBindingForOwner(ctx context.Context, arg GetRunnerBindingForOwnerParams) (AgentRunnerBinding, error) {
+	row := q.db.QueryRow(ctx, getRunnerBindingForOwner, arg.BindingID, arg.OwnerID)
+	var i AgentRunnerBinding
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.MachineID,
+		&i.BoundBy,
+		&i.Roots,
+		&i.RevokedAt,
+		&i.RevokedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisconnectedAt,
+		&i.DisconnectedBy,
+	)
+	return i, err
+}
+
 const getRunnerCall = `-- name: GetRunnerCall :one
 SELECT id, workspace_id, agent_id, task_id, user_id, machine_id, tool_name, arguments, roots, result, status, error_code, error_message, expires_at, started_at, completed_at, created_at, updated_at FROM runner_call WHERE id = $1
 `
@@ -1269,6 +1304,90 @@ func (q *Queries) ListQueuedRunnerCalls(ctx context.Context, machineID pgtype.UU
 			&i.CompletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunnerBindingsForOwner = `-- name: ListRunnerBindingsForOwner :many
+SELECT
+    m.id AS machine_id,
+    m.name,
+    m.os,
+    m.arch,
+    m.client_version,
+    m.last_seen_at,
+    m.connection_id,
+    b.id AS binding_id,
+    b.workspace_id,
+    w.name AS workspace_name,
+    w.slug AS workspace_slug,
+    b.agent_id,
+    a.name AS agent_name,
+    b.roots,
+    b.disconnected_at,
+    b.created_at AS bound_at
+FROM runner_machine m
+JOIN agent_runner_binding b ON b.machine_id = m.id
+JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id
+JOIN workspace w ON w.id = b.workspace_id
+WHERE m.owner_id = $1
+  AND m.revoked_at IS NULL
+  AND b.revoked_at IS NULL
+ORDER BY m.created_at DESC, m.id, b.created_at DESC, b.id
+`
+
+type ListRunnerBindingsForOwnerRow struct {
+	MachineID      pgtype.UUID        `json:"machine_id"`
+	Name           string             `json:"name"`
+	Os             string             `json:"os"`
+	Arch           string             `json:"arch"`
+	ClientVersion  string             `json:"client_version"`
+	LastSeenAt     pgtype.Timestamptz `json:"last_seen_at"`
+	ConnectionID   pgtype.UUID        `json:"connection_id"`
+	BindingID      pgtype.UUID        `json:"binding_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	WorkspaceName  string             `json:"workspace_name"`
+	WorkspaceSlug  string             `json:"workspace_slug"`
+	AgentID        pgtype.UUID        `json:"agent_id"`
+	AgentName      string             `json:"agent_name"`
+	Roots          []byte             `json:"roots"`
+	DisconnectedAt pgtype.Timestamptz `json:"disconnected_at"`
+	BoundAt        pgtype.Timestamptz `json:"bound_at"`
+}
+
+func (q *Queries) ListRunnerBindingsForOwner(ctx context.Context, ownerID pgtype.UUID) ([]ListRunnerBindingsForOwnerRow, error) {
+	rows, err := q.db.Query(ctx, listRunnerBindingsForOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRunnerBindingsForOwnerRow{}
+	for rows.Next() {
+		var i ListRunnerBindingsForOwnerRow
+		if err := rows.Scan(
+			&i.MachineID,
+			&i.Name,
+			&i.Os,
+			&i.Arch,
+			&i.ClientVersion,
+			&i.LastSeenAt,
+			&i.ConnectionID,
+			&i.BindingID,
+			&i.WorkspaceID,
+			&i.WorkspaceName,
+			&i.WorkspaceSlug,
+			&i.AgentID,
+			&i.AgentName,
+			&i.Roots,
+			&i.DisconnectedAt,
+			&i.BoundAt,
 		); err != nil {
 			return nil, err
 		}

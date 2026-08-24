@@ -2882,11 +2882,48 @@ func (q *Queries) DeleteSystemAgentByID(ctx context.Context, id pgtype.UUID) err
 
 const expireStaleQueuedTasks = `-- name: ExpireStaleQueuedTasks :many
 WITH victims AS (
-    SELECT id FROM agent_task_queue
-    WHERE status = 'queued'
-      AND created_at < now() - make_interval(secs => $1::double precision)
-    ORDER BY created_at ASC
-    LIMIT $2::int
+    SELECT queued_task.id
+    FROM agent_task_queue AS queued_task
+    WHERE queued_task.status = 'queued'
+      AND queued_task.created_at < now() - make_interval(secs => $1::double precision)
+      -- ASB capacity waits are an intentional durable queue, not an offline
+      -- Runtime backlog. Keep them for the dedicated capacity-wait TTL, until
+      -- capacity becomes reclaimable, or until the user cancels the task. Only
+      -- the latest startup attempt controls this exemption so a later
+      -- non-capacity outcome restores normal TTL cleanup.
+      AND (
+          queued_task.runtime_launch_lease_expires_at IS NULL
+          OR queued_task.runtime_launch_lease_expires_at <= now()
+      )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM agent_task_runtime_start_attempt AS latest_attempt
+          WHERE latest_attempt.id = (
+              SELECT candidate.id
+              FROM agent_task_runtime_start_attempt AS candidate
+              WHERE candidate.task_id = queued_task.id
+                AND candidate.runtime_id = queued_task.runtime_id
+              ORDER BY candidate.created_at DESC, candidate.id DESC
+              LIMIT 1
+          )
+            AND COALESCE(queued_task.context->>'deap_dws_token_required', 'false') <> 'true'
+            AND queued_task.created_at >= now() - make_interval(
+                secs => $2::double precision
+            )
+            AND (
+                (
+                    latest_attempt.status = 'blocked'
+                    AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
+                )
+                OR
+                (
+                    latest_attempt.backend = 'asb'
+                    AND latest_attempt.status = 'starting'
+                )
+            )
+      )
+    ORDER BY queued_task.created_at ASC
+    LIMIT $3::int
     FOR UPDATE SKIP LOCKED
 )
 UPDATE agent_task_queue t
@@ -2899,12 +2936,44 @@ FROM victims v
 WHERE t.id = v.id
   AND t.status = 'queued'
   AND t.created_at < now() - make_interval(secs => $1::double precision)
+  AND (
+      t.runtime_launch_lease_expires_at IS NULL
+      OR t.runtime_launch_lease_expires_at <= now()
+  )
+  AND NOT EXISTS (
+      SELECT 1
+      FROM agent_task_runtime_start_attempt AS latest_attempt
+      WHERE latest_attempt.id = (
+          SELECT candidate.id
+          FROM agent_task_runtime_start_attempt AS candidate
+          WHERE candidate.task_id = t.id
+            AND candidate.runtime_id = t.runtime_id
+          ORDER BY candidate.created_at DESC, candidate.id DESC
+          LIMIT 1
+      )
+        AND COALESCE(t.context->>'deap_dws_token_required', 'false') <> 'true'
+        AND t.created_at >= now() - make_interval(
+            secs => $2::double precision
+        )
+        AND (
+            (
+                latest_attempt.status = 'blocked'
+                AND latest_attempt.error_code = 'ASB-CAPACITY-WAITING'
+            )
+            OR
+            (
+                latest_attempt.backend = 'asb'
+                AND latest_attempt.status = 'starting'
+            )
+        )
+  )
 RETURNING t.id, t.agent_id, t.issue_id, t.status, t.priority, t.dispatched_at, t.started_at, t.completed_at, t.result, t.error, t.created_at, t.context, t.runtime_id, t.session_id, t.work_dir, t.trigger_comment_id, t.chat_session_id, t.autopilot_run_id, t.attempt, t.max_attempts, t.parent_task_id, t.failure_reason, t.trigger_summary, t.force_fresh_session, t.is_leader_task, t.wait_reason, t.initiator_user_id, t.handoff_note, t.prepare_lease_expires_at, t.squad_id, t.runtime_mcp_overlay, t.escalation_for_task_id, t.fire_at, t.originator_user_id, t.runtime_connected_apps, t.coalesced_comment_ids, t.delivered_comment_ids, t.chat_input_task_id, t.chat_finalize_deferred_at, t.originator_source, t.delegated_from_task_id, t.retry_of_task_id, t.rerun_of_task_id, t.rule_version_id, t.trigger_evidence_kind, t.trigger_evidence_ref_id, t.accountable_user_id, t.session_rollout_missing, t.retired_session_id, t.quick_actions_disabled, t.regenerate_quick_actions_for, t.runtime_launch_lease_token, t.runtime_launch_lease_expires_at
 `
 
 type ExpireStaleQueuedTasksParams struct {
-	TtlSecs    float64 `json:"ttl_secs"`
-	MaxPerTick int32   `json:"max_per_tick"`
+	TtlSecs            float64 `json:"ttl_secs"`
+	AsbCapacityTtlSecs float64 `json:"asb_capacity_ttl_secs"`
+	MaxPerTick         int32   `json:"max_per_tick"`
 }
 
 // Fails tasks that have been sitting in 'queued' for longer than the TTL.
@@ -2913,7 +2982,8 @@ type ExpireStaleQueuedTasksParams struct {
 // is offline, we still need to drain the historical 87k+ doomed rows and
 // handle edge cases where a runtime goes offline AFTER a task is already
 // queued (the admission check protects new enqueues, not in-flight queue
-// depth).
+// depth). Tasks explicitly waiting for ASB sandbox capacity are excluded below;
+// they are a healthy durable queue rather than an offline-Runtime backlog.
 //
 // Concurrency safety: the daemon's claim path may race with this sweeper to
 // transition the same row out of 'queued'. We protect against that two
@@ -2931,7 +3001,7 @@ type ExpireStaleQueuedTasksParams struct {
 // the DB when the backlog is large — the sweeper drains the rest on
 // subsequent ticks.
 func (q *Queries) ExpireStaleQueuedTasks(ctx context.Context, arg ExpireStaleQueuedTasksParams) ([]AgentTaskQueue, error) {
-	rows, err := q.db.Query(ctx, expireStaleQueuedTasks, arg.TtlSecs, arg.MaxPerTick)
+	rows, err := q.db.Query(ctx, expireStaleQueuedTasks, arg.TtlSecs, arg.AsbCapacityTtlSecs, arg.MaxPerTick)
 	if err != nil {
 		return nil, err
 	}

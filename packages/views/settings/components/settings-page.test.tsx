@@ -15,6 +15,7 @@ vi.mock("./chat-tab", stub("ChatTab"));
 vi.mock("./issue-tab", stub("IssueTab"));
 vi.mock("./tokens-tab", stub("TokensTab"));
 vi.mock("./mcp-connections-tab", stub("MCPConnectionsTab"));
+vi.mock("./local-runner-tab", stub("LocalRunnerTab"));
 vi.mock("./workspace-tab", stub("WorkspaceTab"));
 vi.mock("./members-tab", stub("MembersTab"));
 vi.mock("./repositories-tab", stub("RepositoriesTab"));
@@ -117,6 +118,16 @@ describe("SettingsPage MCP connections tab", () => {
 
     expect(
       screen.getByRole("tab", { name: "MCP Connections" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("SettingsPage Local Runner tab", () => {
+  it("exposes the account-wide Runner inventory under My Account", () => {
+    renderWithI18n(<SettingsPage />);
+
+    expect(
+      screen.getByRole("tab", { name: "Local Runner" }),
     ).toBeInTheDocument();
   });
 });

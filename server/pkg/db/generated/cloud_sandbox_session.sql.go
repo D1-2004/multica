@@ -183,13 +183,10 @@ WHERE session.runtime_id = ANY($1::uuid[])
       FROM agent_task_queue AS task
       WHERE task.runtime_id = session.runtime_id
         AND task.id IS DISTINCT FROM $2::uuid
-        AND task.status IN (
-            'queued',
-            'dispatched',
-            'running',
-            'waiting_local_directory',
-            'deferred'
-        )
+        -- Reclaim only when every matching task is explicitly terminal. This
+        -- fail-closed predicate also fences any future non-terminal status that
+        -- an older binary does not yet know about during a rolling deploy.
+        AND task.status NOT IN ('completed', 'failed', 'cancelled')
         AND (
             (session.scope_type = 'chat' AND task.chat_session_id = session.scope_id)
             OR

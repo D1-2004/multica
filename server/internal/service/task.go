@@ -121,6 +121,10 @@ type TaskRuntimeLauncher interface {
 	LaunchTask(ctx context.Context, task db.AgentTaskQueue) error
 }
 
+type TaskRuntimeCapacityWakeup interface {
+	NotifyRuntimeCapacityMayBeAvailable()
+}
+
 // triggerSummaryMaxLen caps the snapshot length so the row stays cheap to
 // transmit (it ends up in every task list response). 200 is enough for a
 // recognisable preview of a one-paragraph comment.
@@ -4091,6 +4095,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// Broadcast
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
 	s.triggerNextQueuedTaskForTerminal(ctx, task)
+	// Capacity is shared across ASB Runtimes, so a successful completion must
+	// also wake waiters outside this task's Runtime/Agent serialization lane.
+	s.notifyRuntimeCapacityMayBeAvailable()
 
 	return &task, nil
 }
@@ -5699,11 +5706,26 @@ func (s *TaskService) NotifyA2ATaskEnqueued(ctx context.Context, task db.AgentTa
 }
 
 func (s *TaskService) launchRuntimeForTask(task db.AgentTaskQueue) {
-	s.launchRuntimeForTaskWithContext(context.Background(), task)
+	s.launchRuntimeForTaskWithCompletion(task, nil)
 }
 
 func (s *TaskService) launchRuntimeForTaskWithContext(ctx context.Context, task db.AgentTaskQueue) {
+	s.launchRuntimeForTaskWithContextAndCompletion(ctx, task, nil)
+}
+
+func (s *TaskService) launchRuntimeForTaskWithCompletion(task db.AgentTaskQueue, done func()) {
+	s.launchRuntimeForTaskWithContextAndCompletion(context.Background(), task, done)
+}
+
+func (s *TaskService) launchRuntimeForTaskWithContextAndCompletion(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	done func(),
+) {
 	if s == nil || s.RuntimeLauncher == nil || s.runtimeLaunchLeases == nil {
+		if done != nil {
+			done()
+		}
 		return
 	}
 	launchParent := context.Background()
@@ -5717,6 +5739,9 @@ func (s *TaskService) launchRuntimeForTaskWithContext(ctx context.Context, task 
 	}
 	taskCopy := task
 	go func(parent context.Context) {
+		if done != nil {
+			defer done()
+		}
 		taskKey := util.UUIDToString(taskCopy.ID)
 		trace, traceErr := chattrace.ForTask(taskCopy.Context, taskKey, taskCopy.CreatedAt.Time)
 		if traceErr != nil {
@@ -5975,6 +6000,11 @@ func sameTaskSerializationGroup(a, b db.AgentTaskQueue) bool {
 // become claimable because an agent-capacity or serialization barrier cleared.
 func (s *TaskService) NotifyTaskFinished(task db.AgentTaskQueue) {
 	s.notifyRuntimeMayHaveWork(task.RuntimeID, "")
+	// CompleteTask already sends the cross-Runtime capacity wake at its commit
+	// boundary. Failure/cancellation paths reach this method instead.
+	if task.Status != "completed" {
+		s.notifyRuntimeCapacityMayBeAvailable()
+	}
 }
 
 // notifyTasksFinished is the batch form used by bulk terminal transitions.
@@ -5982,6 +6012,7 @@ func (s *TaskService) NotifyTaskFinished(task db.AgentTaskQueue) {
 // cache bump and one websocket hint rather than a burst of identical work.
 func (s *TaskService) notifyTasksFinished(tasks []db.AgentTaskQueue) {
 	seen := make(map[string]struct{}, len(tasks))
+	notifiedCapacity := false
 	for _, task := range tasks {
 		if !task.RuntimeID.Valid {
 			continue
@@ -5992,6 +6023,19 @@ func (s *TaskService) notifyTasksFinished(tasks []db.AgentTaskQueue) {
 		}
 		seen[runtimeKey] = struct{}{}
 		s.notifyRuntimeMayHaveWork(task.RuntimeID, "")
+		notifiedCapacity = true
+	}
+	if notifiedCapacity {
+		s.notifyRuntimeCapacityMayBeAvailable()
+	}
+}
+
+func (s *TaskService) notifyRuntimeCapacityMayBeAvailable() {
+	if s == nil || s.RuntimeLauncher == nil {
+		return
+	}
+	if wakeup, ok := s.RuntimeLauncher.(TaskRuntimeCapacityWakeup); ok {
+		wakeup.NotifyRuntimeCapacityMayBeAvailable()
 	}
 }
 

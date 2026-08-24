@@ -406,6 +406,7 @@ type ASBLauncher struct {
 	Identity       ASBTaskIdentityResolver
 	Credentials    *ASBRuntimeClientProvider
 	Capacity       ASBSandboxCapacity
+	CapacityWait   *asbCapacityWaitCoordinator
 	Pool           *pgxpool.Pool
 }
 
@@ -449,12 +450,13 @@ func NewASBLauncher(
 	credentials *ASBRuntimeClientProvider,
 ) *ASBLauncher {
 	return &ASBLauncher{
-		Queries:     queries,
-		Tasks:       tasks,
-		Common:      common,
-		Config:      cfg,
-		Identity:    identity,
-		Credentials: credentials,
+		Queries:      queries,
+		Tasks:        tasks,
+		Common:       common,
+		Config:       cfg,
+		Identity:     identity,
+		Credentials:  credentials,
+		CapacityWait: newASBCapacityWaitCoordinator(),
 	}
 }
 
@@ -577,6 +579,36 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 	releaseRuntimeLock()
 	lockHeld = false
 	if err != nil {
+		if errors.Is(err, ErrASBCapacityUnavailable) && !requiresA2ADEAPDWSToken(task.Context) {
+			waiting, waitErr := l.Tasks.MarkRuntimeStartCapacityWaiting(ctx, attempt)
+			if waitErr != nil {
+				if errors.Is(waitErr, errRuntimeLaunchLeaseLost) {
+					return waitErr
+				}
+				failure := NewRuntimeStartFailure(
+					SandboxBackendASB,
+					"ASB-CAPACITY-WAIT-RECORD-FAILED",
+					asbCapacityWaitingStage,
+					true,
+					"沙箱容量排队状态记录失败。",
+					waitErr.Error(),
+				)
+				return l.failLaunch(ctx, task, attempt.ID, failure)
+			}
+			if !waiting {
+				return nil
+			}
+			slog.Info("ASB task queued while tenant sandbox capacity is busy",
+				"task_id", taskID,
+				"runtime_id", runtimeID,
+				"runtime_start_attempt_id", util.UUIDToString(attempt.ID),
+			)
+			chattrace.LogStage(slog.Default(), trace, "asb_capacity_wait", "queued",
+				"task_id", taskID,
+				"runtime_id", runtimeID,
+			)
+			return nil
+		}
 		failure := ClassifyRuntimeStartError(SandboxBackendASB, err)
 		failure = runtimeStartFailureAtLastStage(ctx, l.Queries, attempt, failure)
 		return l.failLaunch(ctx, task, attempt.ID, failure)

@@ -66,6 +66,15 @@ func (l *CloudSandboxLauncher) LaunchTask(ctx context.Context, task db.AgentTask
 	}
 }
 
+func (l *CloudSandboxLauncher) NotifyRuntimeCapacityMayBeAvailable() {
+	if l == nil || l.ASB == nil {
+		return
+	}
+	if wakeup, ok := l.ASB.(TaskRuntimeCapacityWakeup); ok {
+		wakeup.NotifyRuntimeCapacityMayBeAvailable()
+	}
+}
+
 type ASBEnterpriseRuntime struct {
 	Launcher *ASBLauncher
 	Identity *EnterpriseIdentityService

@@ -58,6 +58,12 @@ type runnerBindingResponse struct {
 	BoundAt       string   `json:"bound_at"`
 }
 
+type runnerBindingScope struct {
+	BindingID   pgtype.UUID
+	WorkspaceID pgtype.UUID
+	AgentID     pgtype.UUID
+}
+
 func runnerBindingOnline(disconnectedAt pgtype.Timestamptz, connectionID pgtype.UUID, lastSeenAt pgtype.Timestamptz, now time.Time) bool {
 	return !disconnectedAt.Valid && runnerMachineOnline(connectionID, lastSeenAt, now)
 }
@@ -300,6 +306,12 @@ func (h *Handler) CreateAgentRunnerReconnectCommand(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
+	h.createRunnerReconnectCommand(w, r, runnerBindingScope{
+		BindingID: bindingID, WorkspaceID: agent.WorkspaceID, AgentID: agent.ID,
+	})
+}
+
+func (h *Handler) createRunnerReconnectCommand(w http.ResponseWriter, r *http.Request, scope runnerBindingScope) {
 	publicURL, err := runnerBaseURL(h.currentConfig().PublicURL)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Runner reconnect requires MULTICA_PUBLIC_URL")
@@ -314,8 +326,8 @@ func (h *Handler) CreateAgentRunnerReconnectCommand(w http.ResponseWriter, r *ht
 	token := "rrs_" + uuidToString(sessionID) + "_" + secret
 	expiresAt := time.Now().Add(runnerReconnectTTL)
 	session, err := h.Queries.CreateRunnerReconnectSession(r.Context(), db.CreateRunnerReconnectSessionParams{
-		BindingID: bindingID,
-		AgentID:   agent.ID,
+		BindingID: scope.BindingID,
+		AgentID:   scope.AgentID,
 		SessionID: sessionID,
 		TokenHash: auth.HashToken(token),
 		ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
@@ -330,8 +342,8 @@ func (h *Handler) CreateAgentRunnerReconnectCommand(w http.ResponseWriter, r *ht
 	}
 	slog.Info("Runner reconnect command created",
 		"event", "runner_reconnect_command_created",
-		"workspace_id", uuidToString(agent.WorkspaceID),
-		"agent_id", uuidToString(agent.ID),
+		"workspace_id", uuidToString(scope.WorkspaceID),
+		"agent_id", uuidToString(scope.AgentID),
 		"binding_id", uuidToString(session.BindingID),
 		"machine_id", uuidToString(session.MachineID),
 		"actor_id", requestUserID(r),
@@ -351,6 +363,12 @@ func (h *Handler) DisconnectAgentRunnerBinding(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
+	h.disconnectRunnerBinding(w, r, runnerBindingScope{
+		BindingID: bindingID, WorkspaceID: agent.WorkspaceID, AgentID: agent.ID,
+	})
+}
+
+func (h *Handler) disconnectRunnerBinding(w http.ResponseWriter, r *http.Request, scope runnerBindingScope) {
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to disconnect Runner binding")
@@ -359,7 +377,7 @@ func (h *Handler) DisconnectAgentRunnerBinding(w http.ResponseWriter, r *http.Re
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	binding, err := qtx.DisconnectAgentRunnerBinding(r.Context(), db.DisconnectAgentRunnerBindingParams{
-		ID: bindingID, AgentID: agent.ID, DisconnectedBy: parseUUID(requestUserID(r)),
+		ID: scope.BindingID, AgentID: scope.AgentID, DisconnectedBy: parseUUID(requestUserID(r)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "Runner binding not found")
@@ -370,7 +388,7 @@ func (h *Handler) DisconnectAgentRunnerBinding(w http.ResponseWriter, r *http.Re
 		return
 	}
 	expiredCalls, err := qtx.ExpireRunnerCallsForBindingDisconnect(r.Context(), db.ExpireRunnerCallsForBindingDisconnectParams{
-		AgentID: agent.ID, MachineID: binding.MachineID,
+		AgentID: scope.AgentID, MachineID: binding.MachineID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to stop active Runner calls")
@@ -382,13 +400,13 @@ func (h *Handler) DisconnectAgentRunnerBinding(w http.ResponseWriter, r *http.Re
 		return
 	}
 	details, _ := json.Marshal(map[string]any{
-		"agent_id":             uuidToString(agent.ID),
+		"agent_id":             uuidToString(scope.AgentID),
 		"binding_id":           uuidToString(binding.ID),
 		"machine_id":           uuidToString(binding.MachineID),
 		"active_binding_count": activeBindings,
 	})
 	if _, err := qtx.CreateActivity(r.Context(), db.CreateActivityParams{
-		WorkspaceID: agent.WorkspaceID,
+		WorkspaceID: scope.WorkspaceID,
 		IssueID:     pgtype.UUID{},
 		ActorType:   pgtype.Text{String: "member", Valid: true},
 		ActorID:     parseUUID(requestUserID(r)),
@@ -408,8 +426,8 @@ func (h *Handler) DisconnectAgentRunnerBinding(w http.ResponseWriter, r *http.Re
 	h.notifyRunnerBindingsChanged(uuidToString(binding.MachineID), activeBindings)
 	slog.Info("Runner binding disconnected",
 		"event", "runner_binding_disconnected",
-		"workspace_id", uuidToString(agent.WorkspaceID),
-		"agent_id", uuidToString(agent.ID),
+		"workspace_id", uuidToString(scope.WorkspaceID),
+		"agent_id", uuidToString(scope.AgentID),
 		"binding_id", uuidToString(binding.ID),
 		"machine_id", uuidToString(binding.MachineID),
 		"actor_id", requestUserID(r),
@@ -431,6 +449,12 @@ func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	h.revokeRunnerBinding(w, r, runnerBindingScope{
+		BindingID: bindingID, WorkspaceID: agent.WorkspaceID, AgentID: agent.ID,
+	})
+}
+
+func (h *Handler) revokeRunnerBinding(w http.ResponseWriter, r *http.Request, scope runnerBindingScope) {
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to revoke Runner binding")
@@ -439,8 +463,8 @@ func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Reques
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	revoked, err := qtx.RevokeAgentRunnerBinding(r.Context(), db.RevokeAgentRunnerBindingParams{
-		ID:        bindingID,
-		AgentID:   agent.ID,
+		ID:        scope.BindingID,
+		AgentID:   scope.AgentID,
 		RevokedBy: parseUUID(requestUserID(r)),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -452,7 +476,7 @@ func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	expiredCalls, err := qtx.ExpireRunnerCallsForBinding(r.Context(), db.ExpireRunnerCallsForBindingParams{
-		AgentID: agent.ID, MachineID: revoked.MachineID,
+		AgentID: scope.AgentID, MachineID: revoked.MachineID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to stop active Runner calls")
@@ -468,13 +492,13 @@ func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	details, _ := json.Marshal(map[string]any{
-		"agent_id":             uuidToString(agent.ID),
+		"agent_id":             uuidToString(scope.AgentID),
 		"binding_id":           uuidToString(revoked.ID),
 		"machine_id":           uuidToString(revoked.MachineID),
 		"active_binding_count": activeBindings,
 	})
 	if _, err := qtx.CreateActivity(r.Context(), db.CreateActivityParams{
-		WorkspaceID: agent.WorkspaceID,
+		WorkspaceID: scope.WorkspaceID,
 		IssueID:     pgtype.UUID{},
 		ActorType:   pgtype.Text{String: "member", Valid: true},
 		ActorID:     parseUUID(requestUserID(r)),
@@ -494,8 +518,8 @@ func (h *Handler) RevokeAgentRunnerBinding(w http.ResponseWriter, r *http.Reques
 	h.notifyRunnerBindingsChanged(uuidToString(revoked.MachineID), activeBindings)
 	slog.Info("Runner binding revoked",
 		"event", "runner_binding_revoked",
-		"workspace_id", uuidToString(agent.WorkspaceID),
-		"agent_id", uuidToString(agent.ID),
+		"workspace_id", uuidToString(scope.WorkspaceID),
+		"agent_id", uuidToString(scope.AgentID),
 		"binding_id", uuidToString(revoked.ID),
 		"machine_id", uuidToString(revoked.MachineID),
 		"actor_id", requestUserID(r),
