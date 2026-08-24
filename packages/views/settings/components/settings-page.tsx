@@ -17,6 +17,7 @@ import {
   Keyboard,
   ShieldCheck,
   ListTodo,
+  Laptop,
   Zap,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
@@ -50,6 +51,7 @@ import { PropertiesTab } from "./properties-tab";
 import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { WorkspaceAccessTab } from "./workspace-access-tab";
+import { LocalRunnerTab } from "./local-runner-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
 
@@ -61,6 +63,7 @@ const ACCOUNT_TAB_KEYS = [
   "chat",
   "notifications",
   "mcp",
+  "local_runner",
   "tokens",
 ] as const;
 const ACCOUNT_TAB_ICONS = {
@@ -71,6 +74,7 @@ const ACCOUNT_TAB_ICONS = {
   chat: MessageCircle,
   notifications: Bell,
   mcp: Cable,
+  local_runner: Laptop,
   tokens: Key,
 } as const;
 
@@ -269,7 +273,8 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${
             activeTab === "labels" ||
             activeTab === "properties" ||
-            activeTab === "quick-actions"
+            activeTab === "quick-actions" ||
+            activeTab === "local_runner"
               ? "max-w-5xl"
               : "max-w-3xl"
           }`}
@@ -294,6 +299,9 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           </TabsContent>
           <TabsContent value="mcp">
             <MCPConnectionsTab />
+          </TabsContent>
+          <TabsContent value="local_runner">
+            <LocalRunnerTab />
           </TabsContent>
           <TabsContent value="tokens">
             <TokensTab />

@@ -21,6 +21,39 @@ export interface RunnerMachineBindingList {
   machines: RunnerMachineBinding[];
 }
 
+export interface AccountRunnerBinding {
+  bindingId: string;
+  workspaceId: string;
+  workspaceName: string;
+  workspaceSlug: string;
+  agentId: string;
+  agentName: string;
+  roots: string[];
+  disconnected: boolean;
+  boundAt: string;
+}
+
+export interface AccountRunnerMachine {
+  machineId: string;
+  name: string;
+  os: string;
+  arch: string;
+  clientVersion: string;
+  online: boolean;
+  lastSeenAt: string | null;
+  bindings: AccountRunnerBinding[];
+}
+
+export interface AccountRunnerBindingList {
+  machines: AccountRunnerMachine[];
+}
+
+export interface AccountRunnerBindingTarget {
+  bindingId: string;
+  workspaceId: string;
+  agentId: string;
+}
+
 export interface CreateRunnerPairingResponse {
   id: string;
   installCommand: string;

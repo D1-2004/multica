@@ -225,6 +225,7 @@ import type {
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type {
+  AccountRunnerBindingList,
   CreateRunnerPairingResponse,
   CreateRunnerReconnectCommandResponse,
   RunnerDeviceAuthorization,
@@ -232,6 +233,7 @@ import type {
   RunnerMachineBindingList,
 } from "../runner/types";
 import {
+  AccountRunnerBindingListSchema,
   CreateRunnerPairingResponseSchema,
   CreateRunnerReconnectCommandResponseSchema,
   RunnerDeviceAuthorizationResultSchema,
@@ -1713,6 +1715,19 @@ export class ApiClient {
     return RunnerMachineBindingListSchema.parse(raw);
   }
 
+  async listAccountRunnerBindings(): Promise<AccountRunnerBindingList | null> {
+    const raw = await this.fetch<unknown>("/api/me/runner-bindings");
+    return parseWithFallback<AccountRunnerBindingList | null>(
+      raw,
+      AccountRunnerBindingListSchema,
+      null,
+      {
+        endpoint: "GET /api/me/runner-bindings",
+        includeReceived: false,
+      },
+    );
+  }
+
   async createAgentRunnerPairing(
     agentId: string,
   ): Promise<CreateRunnerPairingResponse> {
@@ -1751,6 +1766,36 @@ export class ApiClient {
       { method: "POST" },
     );
     return CreateRunnerReconnectCommandResponseSchema.parse(raw);
+  }
+
+  async disconnectAccountRunnerBinding(bindingId: string): Promise<void> {
+    await this.fetch(`/api/me/runner-bindings/${bindingId}/disconnect`, {
+      method: "POST",
+    });
+  }
+
+  async createAccountRunnerReconnectCommand(
+    bindingId: string,
+  ): Promise<CreateRunnerReconnectCommandResponse | null> {
+    const raw = await this.fetch<unknown>(
+      `/api/me/runner-bindings/${bindingId}/reconnect-command`,
+      { method: "POST" },
+    );
+    return parseWithFallback<CreateRunnerReconnectCommandResponse | null>(
+      raw,
+      CreateRunnerReconnectCommandResponseSchema,
+      null,
+      {
+        endpoint: "POST /api/me/runner-bindings/{bindingId}/reconnect-command",
+        includeReceived: false,
+      },
+    );
+  }
+
+  async revokeAccountRunnerBinding(bindingId: string): Promise<void> {
+    await this.fetch(`/api/me/runner-bindings/${bindingId}`, {
+      method: "DELETE",
+    });
   }
 
   async getRunnerDeviceAuthorization(

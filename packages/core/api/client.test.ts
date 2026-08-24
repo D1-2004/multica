@@ -189,6 +189,166 @@ describe("ApiClient Runner contracts", () => {
       new ApiClient("https://api.example.test").listAgentRunnerBindings(agentId),
     ).resolves.toMatchObject({ machines: [{ disconnected: false }] });
   });
+
+  it("maps account Runner machines separately from their Agent bindings", async () => {
+    const workspaceId = "55555555-5555-4555-8555-555555555555";
+    const secondAgentId = "66666666-6666-4666-8666-666666666666";
+    const secondBindingId = "77777777-7777-4777-8777-777777777777";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            machines: [
+              {
+                machine_id: machineId,
+                name: "build-mac",
+                os: "darwin",
+                arch: "arm64",
+                client_version: "0.2.0",
+                online: true,
+                last_seen_at: "2026-08-12T10:00:00Z",
+                bindings: [
+                  {
+                    binding_id: bindingId,
+                    workspace_id: workspaceId,
+                    workspace_name: "Platform",
+                    workspace_slug: "platform",
+                    agent_id: agentId,
+                    agent_name: "Coder",
+                    roots: ["/Users/dev/project"],
+                    disconnected: false,
+                    bound_at: "2026-08-12T09:00:00Z",
+                  },
+                  {
+                    binding_id: secondBindingId,
+                    workspace_id: workspaceId,
+                    workspace_name: "Platform",
+                    workspace_slug: "platform",
+                    agent_id: secondAgentId,
+                    agent_name: "Reviewer",
+                    roots: ["/Users/dev/review"],
+                    disconnected: true,
+                    bound_at: "2026-08-12T09:30:00Z",
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            reconnect_command:
+              "curl example.test | sh -s -- --reconnect-token secret",
+            expires_at: "2026-08-12T10:20:00Z",
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listAccountRunnerBindings()).resolves.toEqual({
+      machines: [
+        expect.objectContaining({
+          machineId,
+          online: true,
+          bindings: [
+            expect.objectContaining({
+              bindingId,
+              agentId,
+              workspaceSlug: "platform",
+              disconnected: false,
+            }),
+            expect.objectContaining({
+              bindingId: secondBindingId,
+              agentId: secondAgentId,
+              disconnected: true,
+            }),
+          ],
+        }),
+      ],
+    });
+    await expect(
+      client.disconnectAccountRunnerBinding(bindingId),
+    ).resolves.toBeUndefined();
+    await expect(
+      client.createAccountRunnerReconnectCommand(secondBindingId),
+    ).resolves.toEqual({
+      reconnectCommand:
+        "curl example.test | sh -s -- --reconnect-token secret",
+      expiresAt: "2026-08-12T10:20:00Z",
+    });
+    await expect(
+      client.revokeAccountRunnerBinding(secondBindingId),
+    ).resolves.toBeUndefined();
+
+    expect(
+      fetchMock.mock.calls.map(([url, init]) => ({
+        url,
+        method: init?.method ?? "GET",
+      })),
+    ).toEqual([
+      {
+        url: "https://api.example.test/api/me/runner-bindings",
+        method: "GET",
+      },
+      {
+        url: `https://api.example.test/api/me/runner-bindings/${bindingId}/disconnect`,
+        method: "POST",
+      },
+      {
+        url: `https://api.example.test/api/me/runner-bindings/${secondBindingId}/reconnect-command`,
+        method: "POST",
+      },
+      {
+        url: `https://api.example.test/api/me/runner-bindings/${secondBindingId}`,
+        method: "DELETE",
+      },
+    ]);
+  });
+
+  it("degrades malformed account Runner responses without logging file roots", async () => {
+    const warn = vi.fn();
+    setSchemaLogger({ ...noopLogger, warn });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            machines: "not-an-array",
+            roots: ["/Users/private/secret-project"],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            reconnect_command: 42,
+            expires_at: "2026-08-12T10:20:00Z",
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listAccountRunnerBindings()).resolves.toBeNull();
+    await expect(
+      client.createAccountRunnerReconnectCommand(bindingId),
+    ).resolves.toBeNull();
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(
+      "/Users/private/secret-project",
+    );
+  });
 });
 
 describe("ApiClient pull-request response schema", () => {
