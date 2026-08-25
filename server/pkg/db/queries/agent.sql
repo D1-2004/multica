@@ -144,7 +144,7 @@ UPDATE agent SET
     status = COALESCE(sqlc.narg('status'), status),
     max_concurrent_tasks = COALESCE(sqlc.narg('max_concurrent_tasks'), max_concurrent_tasks),
     instructions = COALESCE(sqlc.narg('instructions'), instructions),
-    dispatch_prompt = COALESCE(sqlc.narg('dispatch_prompt'), dispatch_prompt),
+    dispatch_prompt_overrides = COALESCE(sqlc.narg('dispatch_prompt_overrides'), dispatch_prompt_overrides),
     dispatch_always_new_issue = COALESCE(sqlc.narg('dispatch_always_new_issue'), dispatch_always_new_issue),
     custom_env = COALESCE(sqlc.narg('custom_env'), custom_env),
     custom_args = COALESCE(sqlc.narg('custom_args'), custom_args),

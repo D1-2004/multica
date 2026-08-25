@@ -2371,11 +2371,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
-					// The managed dispatch policy an agent-level
-					// dispatch_prompt would replace. Agent-scoped and
-					// manage-gated: it is deployment configuration, so it
-					// does not belong on the public /api/config.
-					r.Get("/dispatch-prompt-default", h.GetAgentDispatchPromptDefault)
+					// The composed inbound prompt structure for this agent.
+					// Agent-scoped and manage-gated: the managed policy is
+					// deployment configuration, so it does not belong on the
+					// public /api/config.
+					r.Get("/dispatch-prompt-preview", h.GetAgentDispatchPromptPreview)
 					r.Post("/source/sync", h.SyncAgentSource)
 					r.Put("/", h.UpdateAgent)
 					r.Post("/archive", h.ArchiveAgent)

@@ -205,24 +205,35 @@ func (b *DispatchPromptBuilder) build(c DispatchCommand) (DispatchPrompt, error)
 	return strategy(c), nil
 }
 
-// buildDispatchInstruction composes the task-level instruction. An Agent that
-// authored its own dispatch prompt replaces the whole Diamond layer with it —
-// both common.prompt and <surface>.prompt are dropped, so the author owns the
-// complete fixed policy including its safety and delivery clauses.
-//
-// contextPrompt is never replaceable. It is not authored policy: it carries the
-// per-dispatch delivery facts (conversation, message and sender locators,
-// outbound ownership) that the Router resolved for this run, and no static
-// prompt can stand in for them.
-func buildDispatchInstruction(flags *featureflag.Service, surfaceType, agentPrompt, contextPrompt string) string {
-	if authored := strings.TrimSpace(agentPrompt); authored != "" {
-		return joinDispatchPromptSections(authored, contextPrompt)
+// dispatchInstructionAppliesTo reports whether a persisted dispatch context is
+// one the instruction projection covers. Kept separate from composition so the
+// claim path and the preview agree on the gate.
+func dispatchInstructionAppliesTo(stored persistedDispatchContext) bool {
+	if stored.Source.Platform != "dingtalk" {
+		return false
 	}
-	return joinDispatchPromptSections(
-		resolveDispatchRuntimePrompt(flags, featureflag.DispatchCommonRuntimePromptFlagKey),
-		resolveSurfaceRuntimePrompt(flags, surfaceType),
-		contextPrompt,
-	)
+	// emotionReply 与 message.created 共享同一份 DWS outbound 运行时指令；
+	// 不放行会导致表情事件的 claim 投影丢失回复指令。
+	channelMessage := stored.Domain == "channel" &&
+		(stored.Type == "message.created" || stored.Type == "emotionReply") &&
+		stored.Outbound.ReplyTo == protocol.DispatchReplyToLatestMessage &&
+		(stored.Surface.Type == protocol.DispatchSurfaceTypeIssue ||
+			stored.Surface.Type == protocol.DispatchSurfaceTypeChat ||
+			stored.Surface.Type == protocol.DispatchSurfaceTypeAuto) &&
+		(stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
+	calendarIssue := stored.Source.Type == "digital_employee" &&
+		stored.Domain == "calendar" && stored.Type == "calendar.started" &&
+		stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
+		(stored.Outbound.Mode == protocol.DispatchOutboundModeNone ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
+	approvalIssue := stored.Source.Type == "digital_employee" &&
+		stored.Domain == "approval" && stored.Type == "approval.status_changed" &&
+		stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
+		(stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
+	return channelMessage || calendarIssue || approvalIssue
 }
 
 func resolveDispatchRuntimePrompt(flags *featureflag.Service, flagKey string) string {
@@ -581,18 +592,6 @@ const dingTalkReplyFormattingInstruction = `## DingTalk Reply Formatting
 
 The final user-visible reply will be delivered through DingTalk Markdown. Do not use Markdown tables or raw HTML because result rows can disappear during delivery. Use plain numbered or bulleted lines instead. For search or list results, include actual items rather than only a count or summary. When an item has a URL, include its title and complete URL in the visible reply. Never refer to item numbers whose rows are absent.`
 
-func applyDingTalkReplyFormattingInstruction(response *AgentTaskResponse, rawContext []byte) {
-	if response == nil || !isDingTalkTaskContext(rawContext) {
-		return
-	}
-	existing := strings.TrimSpace(response.Instruction)
-	if existing == "" {
-		response.Instruction = dingTalkReplyFormattingInstruction
-		return
-	}
-	response.Instruction = existing + "\n\n" + dingTalkReplyFormattingInstruction
-}
-
 func isDingTalkTaskContext(rawContext []byte) bool {
 	if len(rawContext) == 0 {
 		return false
@@ -623,64 +622,78 @@ func applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(
 	rawContext []byte,
 	flags *featureflag.Service,
 ) {
-	applyDingTalkDispatchPromptForClaimWithFeatureFlags(response, rawContext, flags, "", true)
+	applyTaskInstructionForClaim(response, rawContext, flags, nil, "")
 }
 
-func applyDingTalkDispatchPromptForClaimWithFeatureFlags(
+// applyTaskInstructionForClaim composes the entire instruction-capable
+// projection in one pass. Reply formatting and BUC authorization used to be
+// appended by separate callers after this one ran; folding them into the
+// segment composer is what lets the settings preview show the real text rather
+// than a reconstruction, and removes the ordering coupling between three
+// call sites in the claim path.
+func applyTaskInstructionForClaim(
 	response *AgentTaskResponse,
 	rawContext []byte,
 	flags *featureflag.Service,
-	agentPrompt string,
-	supportsTaskInstruction bool,
+	overrides map[string]string,
+	enterpriseAuthorizationURL string,
 ) {
-	if response == nil || len(rawContext) == 0 {
+	if response == nil {
 		return
+	}
+	stored, present := parsePersistedDispatchContext(rawContext)
+	instruction := instructionFromSegments(composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored:                     stored,
+		Present:                    present,
+		DingTalkContext:            isDingTalkTaskContext(rawContext),
+		Flags:                      flags,
+		Overrides:                  overrides,
+		EnterpriseAuthorizationURL: enterpriseAuthorizationURL,
+	}))
+	if instruction == "" {
+		return
+	}
+	response.Instruction = instruction
+}
+
+// parsePersistedDispatchContext reports the stored dispatch envelope and
+// whether the task carries one the instruction projection covers.
+func parsePersistedDispatchContext(rawContext []byte) (persistedDispatchContext, bool) {
+	if len(rawContext) == 0 {
+		return persistedDispatchContext{}, false
 	}
 	var stored persistedDispatchContext
 	if err := json.Unmarshal(rawContext, &stored); err != nil {
-		return
+		return persistedDispatchContext{}, false
 	}
-	if stored.Source.Platform != "dingtalk" {
-		return
-	}
-	// emotionReply 与 message.created 共享同一份 DWS outbound 运行时指令；
-	// 不放行会导致表情事件的 claim 投影丢失回复指令。
-	channelMessage := stored.Domain == "channel" &&
-		(stored.Type == "message.created" || stored.Type == "emotionReply") &&
-		stored.Outbound.ReplyTo == protocol.DispatchReplyToLatestMessage &&
-		(stored.Surface.Type == protocol.DispatchSurfaceTypeIssue ||
-			stored.Surface.Type == protocol.DispatchSurfaceTypeChat ||
-			stored.Surface.Type == protocol.DispatchSurfaceTypeAuto) &&
-		(stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
-			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
-	calendarIssue := stored.Source.Type == "digital_employee" &&
-		stored.Domain == "calendar" && stored.Type == "calendar.started" &&
-		stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
-		(stored.Outbound.Mode == protocol.DispatchOutboundModeNone ||
-			stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
-			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
-	approvalIssue := stored.Source.Type == "digital_employee" &&
-		stored.Domain == "approval" && stored.Type == "approval.status_changed" &&
-		stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
-		(stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
-			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
-	if !channelMessage && !calendarIssue && !approvalIssue {
-		return
-	}
-	if supportsTaskInstruction {
-		response.Instruction = buildDispatchInstruction(flags, stored.Surface.Type, agentPrompt, stored.ContextPrompt)
-		return
-	}
+	return stored, dispatchInstructionAppliesTo(stored)
+}
 
-	instruction := buildLegacyDispatchInstruction(stored, flags, agentPrompt)
+// applyLegacyDingTalkDispatchPrompt serves daemons without task-instruction-v1:
+// the instruction field stays empty and the same policy is prepended into the
+// content field the old image already reads.
+func applyLegacyDingTalkDispatchPrompt(
+	response *AgentTaskResponse,
+	rawContext []byte,
+	flags *featureflag.Service,
+	overrides map[string]string,
+) {
+	if response == nil {
+		return
+	}
+	stored, present := parsePersistedDispatchContext(rawContext)
+	if !present {
+		return
+	}
+	instruction := buildLegacyDispatchInstruction(stored, flags, overrides[DispatchSegmentPolicy])
 	if instruction == "" {
 		return
 	}
 	response.Instruction = ""
 	inputLabel := "## External DingTalk Message\n\n"
-	if calendarIssue {
+	if stored.Domain == "calendar" {
 		inputLabel = "## External DingTalk Calendar Event\n\n"
-	} else if approvalIssue {
+	} else if stored.Domain == "approval" {
 		inputLabel = "## External DingTalk Approval Event\n\n"
 	}
 	legacyContent := instruction + "\n\n---\n\n" + inputLabel
@@ -697,12 +710,6 @@ func applyDingTalkDispatchPromptForClaimWithFeatureFlags(
 	}
 }
 
-// buildLegacyDispatchInstruction serves daemons without task-instruction-v1.
-// An authored Agent prompt replaces the Diamond surface section here for the
-// same reason it does on the modern path. The hard-coded safety preamble and
-// the DWS workflow block stay: they are not Diamond policy but the structural
-// scaffolding and resolved delivery locators that reproduce old-image
-// behavior, and they are the legacy analogue of contextPrompt.
 func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *featureflag.Service, agentPrompt string) string {
 	surfacePrompt := strings.TrimSpace(agentPrompt)
 	if surfacePrompt == "" {

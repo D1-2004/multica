@@ -55,21 +55,3 @@ func buildEnterpriseIdentityAuthorizationURL(appURL, workspaceSlug, agentID stri
 	login.RawQuery = loginQuery.Encode()
 	return login.String()
 }
-
-func applyEnterpriseIdentityAuthorizationInstruction(response *AgentTaskResponse, authorizationURL string) {
-	if response == nil || strings.TrimSpace(authorizationURL) == "" {
-		return
-	}
-	instruction := strings.Replace(
-		enterpriseIdentityAuthorizationInstruction,
-		"%s",
-		authorizationURL,
-		1,
-	)
-	existing := strings.TrimSpace(response.Instruction)
-	if existing == "" {
-		response.Instruction = instruction
-		return
-	}
-	response.Instruction = existing + "\n\n" + instruction
-}
