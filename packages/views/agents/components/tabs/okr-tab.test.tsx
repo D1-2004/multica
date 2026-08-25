@@ -145,6 +145,110 @@ describe("OKRTab", () => {
     expect(screen.queryByDisplayValue("Gone")).not.toBeInTheDocument();
   });
 
+  it("shows what each objective and key result has cost", async () => {
+    mockList.mockResolvedValue([
+      {
+        objective: "Shorten turnaround",
+        label: "O: Shorten turnaround",
+        color: "",
+        spend: {
+          total_tokens: 1000,
+          total_cost_usd_ticks: 25_000_000_000,
+          task_count: 3,
+          unpriced_task_count: 0,
+        },
+        key_results: [
+          {
+            text: "Median under 2h",
+            label: "KR: Median under 2h",
+            color: "",
+            spend: {
+              total_tokens: 400,
+              total_cost_usd_ticks: 12_000_000_000,
+              task_count: 1,
+              unpriced_task_count: 0,
+            },
+          },
+        ],
+      },
+    ]);
+    renderTab();
+    await screen.findByDisplayValue("Shorten turnaround");
+    expect(screen.getByText("$2.50")).toBeInTheDocument();
+    expect(screen.getByText("3 tasks")).toBeInTheDocument();
+    expect(screen.getByText("$1.20")).toBeInTheDocument();
+    expect(screen.getByText("1 task")).toBeInTheDocument();
+  });
+
+  it("marks a cost as a floor when some tasks ran unpriced", async () => {
+    mockList.mockResolvedValue([
+      {
+        objective: "Partly priced",
+        label: "O: Partly priced",
+        color: "",
+        spend: {
+          total_tokens: 900,
+          total_cost_usd_ticks: 5_000_000_000,
+          task_count: 4,
+          unpriced_task_count: 2,
+        },
+        key_results: [],
+      },
+    ]);
+    renderTab();
+    await screen.findByDisplayValue("Partly priced");
+    expect(screen.getByText("$0.50*")).toBeInTheDocument();
+  });
+
+  it("does not show a cost for an entry that has never run", async () => {
+    mockList.mockResolvedValue([
+      {
+        objective: "Brand new",
+        label: "O: Brand new",
+        color: "",
+        spend: {
+          total_tokens: 0,
+          total_cost_usd_ticks: 0,
+          task_count: 0,
+          unpriced_task_count: 0,
+        },
+        key_results: [],
+      },
+    ]);
+    renderTab();
+    await screen.findByDisplayValue("Brand new");
+    // A zero-task entry has nothing to report; "$0.00" would read as a measured
+    // result rather than an absence of one.
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  });
+
+  it("hides cost while the set is being edited", async () => {
+    mockList.mockResolvedValue([
+      {
+        objective: "Costed",
+        label: "O: Costed",
+        color: "",
+        spend: {
+          total_tokens: 10,
+          total_cost_usd_ticks: 30_000_000_000,
+          task_count: 2,
+          unpriced_task_count: 0,
+        },
+        key_results: [],
+      },
+    ]);
+    renderTab();
+    await screen.findByDisplayValue("Costed");
+    expect(screen.getByText("$3.00")).toBeInTheDocument();
+
+    // Costs belong to saved entries. Once the list is being reordered or
+    // retyped, a positional cost could land on the wrong row.
+    fireEvent.change(screen.getByLabelText("Objective"), {
+      target: { value: "Costed and renamed" },
+    });
+    expect(screen.queryByText("$3.00")).not.toBeInTheDocument();
+  });
+
   it("tells the owner that removing an OKR keeps its label", async () => {
     renderTab();
     await screen.findByText("No OKRs yet.");

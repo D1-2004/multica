@@ -4,12 +4,59 @@ import { useEffect, useState } from "react";
 import { Loader2, Plus, Save, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
-import type { Agent } from "@multica/core/types";
+import type { Agent, AgentOKRSpend } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { useT } from "../../../i18n";
 
 type DraftOKR = { objective: string; keyResults: string[] };
+
+// Ticks are the integer cost unit the usage tables store; the divisor matches
+// the one the label usage page and runtime utils already use.
+const COST_USD_TICKS_PER_USD = 10_000_000_000;
+
+function formatSpendUsd(ticks: number): string {
+  const usd = ticks / COST_USD_TICKS_PER_USD;
+  if (usd === 0) return "$0.00";
+  // Anything that rounds to zero at two decimals is still real money spent —
+  // showing "$0.00" next to 40 tasks reads as a bug, not as "almost nothing".
+  if (usd < 0.01) return "<$0.01";
+  if (usd >= 100) return `$${usd.toFixed(0)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+/**
+ * Cost of the work tagged with this objective or key result.
+ *
+ * Rendered only once the entry exists server-side: a row the owner just typed
+ * has no label yet, so it has nothing to have spent.
+ */
+function SpendChip({ spend }: { spend: AgentOKRSpend | undefined }) {
+  const { t } = useT("agents");
+  if (!spend || spend.task_count === 0) return null;
+
+  const cost = formatSpendUsd(spend.total_cost_usd_ticks);
+  const partial = spend.unpriced_task_count > 0;
+
+  return (
+    <span
+      className="ml-auto flex shrink-0 items-baseline gap-2 pl-2 text-caption tabular-nums text-muted-foreground"
+      title={
+        partial
+          ? t(($) => $.tab_body.okr.spend_partial_hint)
+          : t(($) => $.tab_body.okr.spend_hint)
+      }
+    >
+      <span className="font-medium text-foreground">
+        {cost}
+        {partial ? "*" : ""}
+      </span>
+      <span>
+        {t(($) => $.tab_body.okr.spend_tasks, { count: spend.task_count })}
+      </span>
+    </span>
+  );
+}
 
 /**
  * Agent OKRs. Each objective and key result becomes a real workspace label, and
@@ -51,6 +98,18 @@ export function OKRTab({
   }, [okrs]);
 
   const isDirty = JSON.stringify(draft) !== baseline;
+
+  // Spend belongs to what is saved, not to what is being typed. Index by
+  // position against the loaded set so an unsaved edit never shows a cost that
+  // belongs to a different entry.
+  const savedSpend = (okrIndex: number, keyResultIndex?: number) => {
+    if (isDirty) return undefined;
+    const saved = okrs?.[okrIndex];
+    if (!saved) return undefined;
+    return keyResultIndex === undefined
+      ? saved.spend
+      : saved.key_results[keyResultIndex]?.spend;
+  };
 
   useEffect(() => {
     onDirtyChange?.(isDirty);
@@ -142,6 +201,7 @@ export function OKRTab({
                 disabled={readOnly}
                 aria-label={t(($) => $.tab_body.okr.objective_label)}
               />
+              <SpendChip spend={savedSpend(okrIndex)} />
               {!readOnly && (
                 <Button
                   size="xs"
@@ -177,6 +237,7 @@ export function OKRTab({
                     disabled={readOnly}
                     aria-label={t(($) => $.tab_body.okr.key_result_label)}
                   />
+                  <SpendChip spend={savedSpend(okrIndex, keyResultIndex)} />
                   {!readOnly && (
                     <Button
                       size="xs"

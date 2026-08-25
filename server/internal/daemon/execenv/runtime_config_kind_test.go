@@ -130,6 +130,7 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		kindQuickCreate: true, kindChat: true,
 	}
 	issueKinds := map[taskKind]bool{kindIssue: true}
+	noKinds := map[taskKind]bool{}
 	checks := []sectionCheck{
 		{"# Multica Agent Runtime", allKinds},
 		{"## Background Task Safety", allKinds},
@@ -146,9 +147,11 @@ func TestBuildMetaSkillContentSlimKindMatrix(t *testing.T) {
 		{"## Issue Metadata", issueKinds},
 		{"## Instruction Precedence", issueKinds},
 		{"## Sub-issue Creation", issueKinds},
-		// Quick-create included: it used to be skipped here and carry its own
-		// copy in issue_context.md, which nothing read. One index, one place.
-		{"## Skills", allKinds},
+		// Provider-gated now, not kind-gated: this matrix runs on "claude",
+		// which lists the daemon-written SKILL.md files itself, so the brief
+		// suppresses its own index. TestBriefSkillsIndexIsProviderGated covers
+		// both sides of that gate.
+		{"## Skills", noKinds},
 		{"## Mentions", issueKinds},
 		{"## Attachments", issueKinds},
 	}

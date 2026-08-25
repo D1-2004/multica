@@ -32,16 +32,33 @@ const (
 	agentOKRLabelDescription = "Multica Agent OKR"
 )
 
+// AgentOKRSpend is what the agent's work on one objective or key result has
+// cost so far, rolled up from the tasks on every Issue carrying its label.
+type AgentOKRSpend struct {
+	TotalTokens       int64 `json:"total_tokens"`
+	TotalCostUSDTicks int64 `json:"total_cost_usd_ticks"`
+	TaskCount         int64 `json:"task_count"`
+	// UnpricedTaskCount is how many of those tasks ran on a model with no
+	// price attached. The cost is a floor when this is non-zero, and the UI
+	// says so rather than presenting a number that is quietly incomplete.
+	UnpricedTaskCount int64 `json:"unpriced_task_count"`
+}
+
 type AgentOKRKeyResultDTO struct {
-	Text  string `json:"text"`
-	Label string `json:"label"`
-	Color string `json:"color"`
+	Text  string        `json:"text"`
+	Label string        `json:"label"`
+	Color string        `json:"color"`
+	Spend AgentOKRSpend `json:"spend"`
 }
 
 type AgentOKRDTO struct {
-	Objective  string                 `json:"objective"`
-	Label      string                 `json:"label"`
-	Color      string                 `json:"color"`
+	Objective string `json:"objective"`
+	Label     string `json:"label"`
+	Color     string `json:"color"`
+	// Spend is this objective's own label only. It is not the sum of its key
+	// results: an Issue may carry the objective label, a key result label, or
+	// both, so adding them would double-count the overlap.
+	Spend      AgentOKRSpend          `json:"spend"`
 	KeyResults []AgentOKRKeyResultDTO `json:"key_results"`
 }
 
@@ -72,7 +89,9 @@ func (h *Handler) ListAgentOKRs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent OKRs")
 		return
 	}
-	writeJSON(w, http.StatusOK, AgentOKRResponse{OKRs: agentOKRsFromRows(rows)})
+	writeJSON(w, http.StatusOK, AgentOKRResponse{
+		OKRs: agentOKRsFromRows(rows, h.agentOKRSpendFor(r.Context(), agent.ID, agent.WorkspaceID)),
+	})
 }
 
 func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
@@ -206,10 +225,12 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to reload agent OKRs")
 		return
 	}
-	writeJSON(w, http.StatusOK, AgentOKRResponse{OKRs: agentOKRsFromRows(rows)})
+	writeJSON(w, http.StatusOK, AgentOKRResponse{
+		OKRs: agentOKRsFromRows(rows, h.agentOKRSpendFor(r.Context(), agent.ID, agent.WorkspaceID)),
+	})
 }
 
-func agentOKRsFromRows(rows []db.ListAgentOKRsRow) []AgentOKRDTO {
+func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpend) []AgentOKRDTO {
 	okrs := make([]AgentOKRDTO, 0)
 	byObjectiveID := map[string]int{}
 	for _, row := range rows {
@@ -221,6 +242,7 @@ func agentOKRsFromRows(rows []db.ListAgentOKRsRow) []AgentOKRDTO {
 			Objective:  strings.TrimPrefix(row.LabelName, agentOKRObjectivePrefix),
 			Label:      row.LabelName,
 			Color:      row.LabelColor,
+			Spend:      spend[uuidToString(row.LabelID)],
 			KeyResults: []AgentOKRKeyResultDTO{},
 		})
 	}
@@ -236,29 +258,80 @@ func agentOKRsFromRows(rows []db.ListAgentOKRsRow) []AgentOKRDTO {
 			Text:  strings.TrimPrefix(row.LabelName, agentOKRKeyResultPrefix),
 			Label: row.LabelName,
 			Color: row.LabelColor,
+			Spend: spend[uuidToString(row.LabelID)],
 		})
 	}
 	return okrs
 }
 
-// buildAgentOKRInstructions renders the OKR section appended to an agent's
-// instructions. It names the exact label strings and the exact command, because
-// an agent told only "tag the issue" invents labels and the catalog fragments.
+// agentOKRSpendFor rolls up spend per OKR label. A failure is not fatal to the
+// page: the objectives still render, with spend omitted rather than the whole
+// request failing over a reporting number.
+func (h *Handler) agentOKRSpendFor(ctx context.Context, agentID, workspaceID pgtype.UUID) map[string]AgentOKRSpend {
+	rows, err := h.Queries.ListAgentOKRUsage(ctx, db.ListAgentOKRUsageParams{
+		AgentID:     agentID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		return map[string]AgentOKRSpend{}
+	}
+	spend := make(map[string]AgentOKRSpend, len(rows))
+	for _, row := range rows {
+		spend[uuidToString(row.LabelID)] = AgentOKRSpend{
+			TotalTokens:       row.TotalTokens,
+			TotalCostUSDTicks: row.TotalCostUsdTicks,
+			TaskCount:         row.TaskCount,
+			UnpricedTaskCount: row.UnpricedTaskCount,
+		}
+	}
+	return spend
+}
+
+// buildAgentOKRInstructions renders the objectives section appended to an
+// agent's instructions.
+//
+// Objectives lead. These are what the agent is being measured on, and they
+// belong in the prompt for the same reason a person's goals belong in their
+// brief: they change what work is worth doing and how a judgment call gets
+// made. Framing the whole section as a tagging vocabulary — which the first
+// version did — reduced a goal to a label picker and told the model nothing
+// about why the goal existed.
+//
+// Tagging is a consequence, so it comes second and only exists because the
+// objectives above it do. It still names the exact label strings and the exact
+// command: an agent told only "tag the issue" invents labels and the catalog
+// fragments.
+//
+// Returns empty when there are no objectives. Nothing is injected in that case
+// — not a heading, not an empty list. An agent with no objectives should read
+// a prompt that never mentions them.
 func buildAgentOKRInstructions(okrs []AgentOKRDTO) string {
 	if len(okrs) == 0 {
 		return ""
 	}
 	var section strings.Builder
-	section.WriteString("## OKR Tagging\n\n")
-	section.WriteString("Tag every Issue you own with the OKR labels it advances. ")
-	section.WriteString("Use only the label names listed below, exactly as written — do not invent, translate, or reword them, and do not create new labels.\n\n")
+	section.WriteString("## Objectives\n\n")
+	section.WriteString("These are the objectives you are accountable for. ")
+	section.WriteString("Let them inform what you prioritize, what you push back on, and how you judge whether a piece of work is worth doing. ")
+	section.WriteString("They do not override your Agent Identity or any explicit instruction in a task — when they conflict, the task wins and you say so.\n\n")
+
 	for _, okr := range okrs {
-		section.WriteString("- " + okr.Label + "\n")
+		section.WriteString("- **" + okr.Objective + "**\n")
 		for _, keyResult := range okr.KeyResults {
-			section.WriteString("  - " + keyResult.Label + "\n")
+			section.WriteString("  - " + keyResult.Text + "\n")
 		}
 	}
-	section.WriteString("\nAttach a label with `multica issue label add <issue> \"<label name>\"`. ")
+
+	section.WriteString("\n### Tagging\n\n")
+	section.WriteString("When work you own advances one of the objectives above, tag its Issue so the contribution is attributable. ")
+	section.WriteString("Use only these label names, exactly as written — do not invent, translate, or reword them, and do not create new labels:\n\n")
+	for _, okr := range okrs {
+		section.WriteString("- `" + okr.Label + "`\n")
+		for _, keyResult := range okr.KeyResults {
+			section.WriteString("  - `" + keyResult.Label + "`\n")
+		}
+	}
+	section.WriteString("\nAttach one with `multica issue label add <issue> \"<label name>\"`. ")
 	section.WriteString("Attach the objective label plus every key result the work actually advances. ")
 	section.WriteString("If none of them apply, attach nothing and say so in your result rather than forcing an unrelated tag.")
 	return section.String()
@@ -275,5 +348,5 @@ func (h *Handler) agentOKRInstructionsFor(ctx context.Context, agentID, workspac
 	if err != nil || len(rows) == 0 {
 		return ""
 	}
-	return buildAgentOKRInstructions(agentOKRsFromRows(rows))
+	return buildAgentOKRInstructions(agentOKRsFromRows(rows, nil))
 }
