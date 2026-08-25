@@ -454,12 +454,11 @@ export interface Agent {
   /** Read-only product half of a system agent's prompt, served from the
    *  backend binary. Absent for ordinary agents. */
   system_instructions?: string;
-  /** Replaces the Diamond-composed dispatch instruction (common + surface
-   *  policy) for every Agent Dispatch V2 run this agent claims. Empty — the
-   *  default — keeps the Diamond composition. Unrelated to `instructions`,
-   *  which is the persona applied to every task regardless of origin.
-   *  Optional because older backends omit it. Server caps it at 32000 chars. */
-  dispatch_prompt?: string;
+  /** Per-segment replacements for the composed inbound task instruction, keyed
+   *  by segment id. An absent key keeps the managed text. Unrelated to
+   *  `instructions`, which is the persona applied to every task regardless of
+   *  origin. Optional because older backends omit it. */
+  dispatch_prompt_overrides?: Record<string, string>;
   /** When true, each inbound channel message becomes its own Issue instead of
    *  a follow-up comment on the Issue the Router is still pointing at. Only
    *  affects the `issue` dispatch mode; approval and calendar continuations
@@ -749,7 +748,7 @@ export interface UpdateAgentRequest {
   name?: string;
   description?: string;
   instructions?: string;
-  dispatch_prompt?: string;
+  dispatch_prompt_overrides?: Record<string, string>;
   dispatch_always_new_issue?: boolean;
   avatar_url?: string;
   runtime_id?: string;
@@ -1282,4 +1281,49 @@ export interface RuntimeLocalSkillImportResult {
   status: "created" | "updated" | "conflict";
   skill?: Skill;
   conflict?: RuntimeLocalSkillImportConflict;
+}
+
+/** One row of the composed inbound task instruction. */
+export interface DispatchPromptSegment {
+  id: string;
+  /** "managed" = deployment configuration, "builtin" = product constant,
+   *  "router" = resolved per dispatch. */
+  source: string;
+  customizable: boolean;
+  overridden: boolean;
+  /** Whether the segment reaches the agent in the previewed scenario. */
+  included: boolean;
+  excluded_reason?: string;
+  managed_text: string;
+  effective_text: string;
+}
+
+/** A section the daemon assembles on the runtime, listed by name and origin
+ *  only — the server does not own that text and will not reproduce it. */
+export interface DispatchPromptRuntimeSection {
+  id: string;
+  source: string;
+  customizable: boolean;
+  origin: string;
+}
+
+export interface DispatchPromptPreview {
+  surface: string;
+  segments: DispatchPromptSegment[];
+  instruction: string;
+  runtime_sections: DispatchPromptRuntimeSection[];
+}
+
+export interface AgentOKRKeyResult {
+  text: string;
+  /** The workspace label name this key result materializes as. */
+  label: string;
+  color: string;
+}
+
+export interface AgentOKR {
+  objective: string;
+  label: string;
+  color: string;
+  key_results: AgentOKRKeyResult[];
 }

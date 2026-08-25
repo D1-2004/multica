@@ -31,7 +31,7 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { ActivityTab } from "./tabs/activity-tab";
 import { InstructionsTab } from "./tabs/instructions-tab";
-import { DispatchTab } from "./tabs/dispatch-tab";
+import { OKRTab } from "./tabs/okr-tab";
 import { SkillsTab } from "./tabs/skills-tab";
 import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
@@ -56,7 +56,7 @@ export type DetailTab =
   | "overview"
   | "work"
   | "instructions"
-  | "dispatch"
+  | "okr"
   | "skills"
   | "mcp_config"
   | "runner"
@@ -75,8 +75,9 @@ type SecondaryTab = {
   id: DetailTab;
   labelKey:
     | "instructions"
-    | "dispatch"
-    | "skills"
+    | "okr"
+  | "okr"
+      | "skills"
     | "mcp_config"
     | "runner"
     | "composio_mcp"
@@ -93,7 +94,7 @@ type SecondaryTab = {
 
 const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "instructions", labelKey: "instructions" },
-  { id: "dispatch", labelKey: "dispatch" },
+  { id: "okr", labelKey: "okr" },
   { id: "skills", labelKey: "skills" },
   { id: "mcp_config", labelKey: "mcp_config" },
   { id: "runner", labelKey: "runner" },
@@ -489,10 +490,9 @@ export function AgentOverviewPane({
                       readOnly={source != null}
                     />
                   )}
-                  {effectiveView === "dispatch" && (
-                    <DispatchTab
+                  {effectiveView === "okr" && (
+                    <OKRTab
                       agent={agent}
-                      onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
                       readOnly={!canEdit}
                     />
@@ -526,6 +526,8 @@ export function AgentOverviewPane({
                   {effectiveView === "integrations" && (
                     <IntegrationsTab
                       agent={agent}
+                      onUpdate={onUpdate}
+                      canEdit={canEdit}
                       showMcpLink={showMcpIntegration}
                       platformIntegrationsConfigured={integrationsConfigured}
                       canOperateDingTalkBinding={canOperateDingTalkBinding}

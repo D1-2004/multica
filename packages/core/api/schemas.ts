@@ -2461,17 +2461,57 @@ export const EMPTY_AGENT_TEMPLATE_DETAIL: AgentTemplate = {
 // Agent invocation permissions (MUL-3963)
 //
 /**
- * The deployment-managed dispatch policy an agent-level `dispatch_prompt`
- * would replace. Served per-agent and manage-gated, so it is not public config.
- * An older backend has no such route; the caller falls back to an empty prompt,
- * which just means the editor opens blank instead of seeded.
+ * The composed inbound task instruction for one agent. Served per-agent and
+ * manage-gated, so it is not public config. Every field defaults so a backend
+ * that predates a segment cannot blank the whole preview.
  */
-export const AgentDispatchPromptDefaultSchema = z.object({
-  prompt: z.string().default(""),
+export const DispatchPromptSegmentSchema = z.object({
+  id: z.string(),
+  source: z.string().default("builtin"),
+  customizable: z.boolean().default(false),
+  overridden: z.boolean().default(false),
+  included: z.boolean().default(false),
+  excluded_reason: z.string().optional(),
+  managed_text: z.string().default(""),
+  effective_text: z.string().default(""),
 });
-export type AgentDispatchPromptDefault = z.infer<
-  typeof AgentDispatchPromptDefaultSchema
+
+export const DispatchPromptRuntimeSectionSchema = z.object({
+  id: z.string(),
+  source: z.string().default("builtin"),
+  customizable: z.boolean().default(false),
+  origin: z.string().default(""),
+});
+
+export const DispatchPromptPreviewSchema = z.object({
+  surface: z.string().default("auto"),
+  segments: z.array(DispatchPromptSegmentSchema).default([]),
+  instruction: z.string().default(""),
+  runtime_sections: z.array(DispatchPromptRuntimeSectionSchema).default([]),
+});
+export type DispatchPromptPreviewPayload = z.infer<
+  typeof DispatchPromptPreviewSchema
 >;
+
+export const AgentOKRSchema = z.object({
+  objective: z.string().default(""),
+  label: z.string().default(""),
+  color: z.string().default(""),
+  key_results: z
+    .array(
+      z.object({
+        text: z.string().default(""),
+        label: z.string().default(""),
+        color: z.string().default(""),
+      }),
+    )
+    .default([]),
+});
+
+export const AgentOKRResponseSchema = z.object({
+  okrs: z.array(AgentOKRSchema).default([]),
+});
+export type AgentOKRResponsePayload = z.infer<typeof AgentOKRResponseSchema>;
 
 // Full agent request/response payloads are NOT zod-validated today — the API
 // client returns them typed directly (see client.ts `listAgents` /

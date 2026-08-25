@@ -37,6 +37,8 @@ import type {
   AgentBuilderSessionSummary,
   StoredAgentDraft,
   UpdateAgentRequest,
+  DispatchPromptPreview,
+  AgentOKR,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   AgentTask,
@@ -366,8 +368,8 @@ import {
   SubscribersListSchema,
   TimelineEntriesSchema,
   UserSchema,
-  AgentDispatchPromptDefaultSchema,
-  type AgentDispatchPromptDefault,
+  DispatchPromptPreviewSchema,
+  AgentOKRResponseSchema,
   WebhookDeliveryResponseSchema,
   BillingBalanceSchema,
   BillingTransactionsPageSchema,
@@ -1677,22 +1679,50 @@ export class ApiClient {
   }
 
   /**
-   * The managed dispatch policy the Agent settings editor seeds itself from.
-   * Failure is not fatal to the editor — an older backend has no such route,
-   * and a blank seed only means the author starts from an empty field.
+   * The composed inbound task instruction for one agent, produced by the same
+   * server function the claim path uses. Falls back to an empty preview so an
+   * older backend renders an explanatory empty state rather than crashing the
+   * settings dialog.
    */
-  async getAgentDispatchPromptDefault(
+  async getAgentDispatchPromptPreview(
     id: string,
-  ): Promise<AgentDispatchPromptDefault> {
+    surface: string,
+  ): Promise<DispatchPromptPreview> {
     const raw = await this.fetch<unknown>(
-      `/api/agents/${id}/dispatch-prompt-default`,
+      `/api/agents/${id}/dispatch-prompt-preview?surface=${encodeURIComponent(surface)}`,
     );
     return parseWithFallback(
       raw,
-      AgentDispatchPromptDefaultSchema,
-      { prompt: "" },
-      { endpoint: "GET /api/agents/{id}/dispatch-prompt-default" },
+      DispatchPromptPreviewSchema,
+      { surface, segments: [], instruction: "", runtime_sections: [] },
+      { endpoint: "GET /api/agents/{id}/dispatch-prompt-preview" },
     );
+  }
+
+  async listAgentOKRs(id: string): Promise<AgentOKR[]> {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/okrs`);
+    return parseWithFallback(
+      raw,
+      AgentOKRResponseSchema,
+      { okrs: [] },
+      { endpoint: "GET /api/agents/{id}/okrs" },
+    ).okrs;
+  }
+
+  async setAgentOKRs(
+    id: string,
+    okrs: { objective: string; key_results: string[] }[],
+  ): Promise<AgentOKR[]> {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/okrs`, {
+      method: "PUT",
+      body: JSON.stringify({ okrs }),
+    });
+    return parseWithFallback(
+      raw,
+      AgentOKRResponseSchema,
+      { okrs: [] },
+      { endpoint: "PUT /api/agents/{id}/okrs" },
+    ).okrs;
   }
 
   async archiveAgent(id: string): Promise<Agent> {

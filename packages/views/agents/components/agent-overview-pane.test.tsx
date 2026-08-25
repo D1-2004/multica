@@ -28,8 +28,8 @@ vi.mock("./agent-access-settings", () => ({
 vi.mock("./tabs/instructions-tab", () => ({
   InstructionsTab: () => <div>instructions-tab</div>,
 }));
-vi.mock("./tabs/dispatch-tab", () => ({
-  DispatchTab: () => <div>dispatch-tab</div>,
+vi.mock("./tabs/okr-tab", () => ({
+  OKRTab: () => <div>okr-tab</div>,
 }));
 vi.mock("./tabs/skills-tab", () => ({
   SkillsTab: () => <div>skills-tab</div>,
@@ -357,7 +357,7 @@ describe("AgentOverviewPane Identity tab", () => {
       "Capabilities",
       "Settings",
       "Instructions",
-      "Dispatch",
+      "OKR",
       "Skills",
       "MCP",
       "Local Runner",
