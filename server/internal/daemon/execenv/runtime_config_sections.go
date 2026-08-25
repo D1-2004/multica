@@ -270,8 +270,7 @@ func writeAvailableCommands(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("Prefer `--output json` for structured data. The default brief lists only the core agent loop and common issue create/update tasks; for everything else run `multica --help` or `multica <command> --help`.\n\n")
 	b.WriteString("### Core\n")
-	b.WriteString("- `multica mcp tools --output json` — discover the MCP tools and schemas currently published by the server; tool names are not compiled into the CLI.\n")
-	b.WriteString("- `multica mcp call --method <name> [--arguments '<json>' | --arguments-file <path> | --arguments-stdin] --output json` — call a method returned by `mcp tools`; do not guess method names or arguments.\n")
+	writeMCPDiscoveryCommands(b)
 	b.WriteString("- `multica issue get <id> --output json` — full issue.\n")
 	b.WriteString("- `multica issue comment list <issue-id> [--roots-only] [--summary] [--thread <comment-id> [--tail N] | --recent N] [--since <RFC3339>] --output json` — thread-aware comment reads. Bound a wide read with `--roots-only --summary` (roots plus `reply_count` / `last_activity_at`, clipped bodies); bound a deep one with `--thread <id> --tail N`; add `--compact` to any JSON read to drop echoed/null/bookkeeping fields. Careful with `--recent N`: it caps THREADS, not comments, and can return the whole history on a small issue. Resolved-thread folding, paging cursors, and full flag semantics: `--help`.\n")
 	b.WriteString("- `multica issue create --title \"...\" [--description-file <path>] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--stage N] [--project <project-id>] [--due-date <YYYY-MM-DD>] [--attachment <path>]` — create an issue. For agent-authored long descriptions prefer `--description-file <path>` (heredoc stdin can swallow trailing flags, #4182). Write that file inside your working directory (e.g. `./description.md`), never `/tmp` or shared paths — same workdir rule as `## Comment Formatting`.\n")
@@ -515,11 +514,23 @@ func writeWorkflowHeader(b *strings.Builder) {
 // Room shape is run context rather than an agent/provider invariant, so it is
 // emitted by daemon.BuildPrompt instead of fragmenting this cached brief across
 // group, direct, and unknown-audience chat sessions (MUL-5377, MUL-5442).
-func writeWorkflowChat(b *strings.Builder) {
+// delegates reports whether this run gets `## Background Issue Delegation`, and
+// is therefore allowed to point at it. Only an A2A chat run does not: it has no
+// task token, so the section is withheld (see the dispatcher), and a pointer to
+// a section that is not in the file is worse than no pointer at all.
+func writeWorkflowChat(b *strings.Builder, delegates bool) {
 	b.WriteString("**You are in chat mode.**\n\n")
 	b.WriteString("- Respond conversationally to the user's message; keep it concise and direct.\n")
 	b.WriteString("- Anything about this workspace — issues, projects, members, agents — comes from the `multica` CLI, not from memory. `multica workspace get --output json` reads the workspace itself.\n")
-	b.WriteString("- Perform actions the user asks for with the CLI; for code changes, check the repository out first.\n\n")
+	if delegates {
+		// Without this clause the same brief said "check the repository out for
+		// code changes" while the delegation section sent code and repository
+		// work to the background. Reading is not changing, and naming that line
+		// is what keeps both statements true.
+		b.WriteString("- Perform actions the user asks for with the CLI. Reading a repository to answer a question is fine here; work that CHANGES code or a repository is background work — see `## Background Issue Delegation`.\n\n")
+		return
+	}
+	b.WriteString("- Perform actions the user asks for with the CLI, and check a repository out when you need its contents.\n\n")
 }
 
 // writeWorkflowQuickCreate emits the quick-create workflow's hard
@@ -913,14 +924,23 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	writeWorkflowHeader(&b)
 	switch kind {
 	case kindChat:
-		writeWorkflowChat(&b)
+		writeWorkflowChat(&b, !ctx.A2AInvocation)
 		// Where the chat/background boundary lives decides whether the room
 		// stays responsive, and it does not change between turns of a session —
 		// so it belongs in the cached brief. It was written for this surface and
 		// then left unwired; deployments that needed it had to re-send an
 		// equivalent policy in every per-turn instruction, which is the same
 		// text at full price on each turn plus a second copy to keep in sync.
-		writeBackgroundIssueDelegation(&b)
+		//
+		// Not for A2A. An A2A run is a chat session by construction but holds no
+		// task-scoped token, and `multica issue delegate` refuses anything whose
+		// actor source is not `task_token` — so the section would be mandatory
+		// instruction that can only ever 403, on a surface whose contract (see
+		// daemon.buildChatPromptForProvider's A2A branch) is to answer the caller
+		// directly.
+		if !ctx.A2AInvocation {
+			writeBackgroundIssueDelegation(&b)
+		}
 	case kindQuickCreate:
 		writeWorkflowQuickCreate(&b)
 	case kindAutopilotRunOnly:

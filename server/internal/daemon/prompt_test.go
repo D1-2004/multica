@@ -670,13 +670,23 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 // a run to answer confidently off a partial record and to read an absent message
 // as nothing having been said.
 //
-// The replacement must therefore do three things and is pinned on all three:
-// scope the record, deny the gap-means-silence inference, and route the run to
-// its own tooling before it falls back to asking the user. Slack is excluded —
+// The replacement carries three claims with three different preconditions, and
+// each is pinned to the condition that makes it true — an unconditional version
+// of any one of them is a lie on some real turn. Slack is excluded throughout:
 // it has a Multica reader and gets the commands instead.
 func TestBuildChatPromptPartialRecordOnChannelsMulticaCannotRead(t *testing.T) {
 	t.Parallel()
 
+	const (
+		slice     = "only the slice Multica recorded"
+		trimmed   = "trimmed at the start when it did not fit"
+		others    = "Messages other people exchanged"
+		notSilent = "never as proof nothing was said"
+		reader    = "Multica ships no history reader"
+		fallback  = "ask the user rather than guessing"
+	)
+
+	// A group room on a cold claim: every clause applies.
 	for _, channelType := range []string{
 		execenv.ChannelTypeFeishu,
 		execenv.ChannelTypeWecom,
@@ -685,37 +695,92 @@ func TestBuildChatPromptPartialRecordOnChannelsMulticaCannotRead(t *testing.T) {
 		out := buildChatPrompt(Task{
 			ChatSessionID:   "sess-1",
 			ChatChannelType: channelType,
+			ChatType:        execenv.ChatTypeGroup,
+			ChatHistory:     "User:\n上次说的那个\n\nAssistant:\n收到",
 			ChatMessage:     "刚才群里说到哪了",
 		})
-		for _, want := range []string{
-			// The record is a slice, and the prompt names what is missing from
-			// it rather than leaving the run to assume it is complete.
-			"only the slice Multica recorded",
-			"Messages other people exchanged",
-			// The inference that actually produces the wrong answer.
-			"never as proof nothing was said",
-			// Multica-scoped, not a claim about the world.
-			"Multica ships no history reader",
-			"your own",
-			// The fallback, so "I have no tool" does not become "I will guess".
-			"ask the user rather than guessing",
-		} {
+		for _, want := range []string{slice, trimmed, others, notSilent, reader, "your own", fallback} {
 			if !strings.Contains(out, want) {
-				t.Errorf("channel=%s: prompt missing %q\n--- output ---\n%s", channelType, want, out)
+				t.Errorf("channel=%s group+transcript: prompt missing %q\n--- output ---\n%s", channelType, want, out)
 			}
 		}
-		// The old absolute claim must not come back on a surface where the
+		// The old absolute must not come back on a surface where the
 		// conversation is sitting in a room the run may well be able to read.
 		if strings.Contains(out, "there is no command that can fetch more") {
 			t.Errorf("channel=%s: prompt still asserts the conversation is unfetchable", channelType)
 		}
 	}
 
+	// A 1:1 room. Every message was addressed to the agent, so the record IS the
+	// conversation — and the audience line in the same message already said the
+	// room is direct. Warning about other people's messages here sends the run
+	// after history it already holds in full.
+	direct := buildChatPrompt(Task{
+		ChatSessionID:   "sess-1",
+		ChatChannelType: execenv.ChannelTypeDingTalk,
+		ChatType:        execenv.ChatTypeP2P,
+		ChatHistory:     "User:\nhi",
+		ChatMessage:     "接着上次那个",
+	})
+	for _, banned := range []string{others, notSilent} {
+		if strings.Contains(direct, banned) {
+			t.Errorf("direct room told its record is missing other people's messages: %q\n%s", banned, direct)
+		}
+	}
+	for _, want := range []string{slice, reader, fallback} {
+		if !strings.Contains(direct, want) {
+			t.Errorf("direct room lost %q — the record is still a Multica slice with no reader\n%s", want, direct)
+		}
+	}
+
+	// A warm resume carries no database transcript: the run's own provider
+	// session is its memory and nothing was trimmed. Claiming otherwise makes it
+	// distrust an accurate record on every turn.
+	warm := buildChatPrompt(Task{
+		ChatSessionID:   "sess-1",
+		ChatChannelType: execenv.ChannelTypeDingTalk,
+		ChatType:        execenv.ChatTypeGroup,
+		PriorSessionID:  "provider-session-1",
+		ChatHistory:     "User:\nnot sent on a warm resume",
+		ChatMessage:     "继续",
+	})
+	if strings.Contains(warm, trimmed) {
+		t.Errorf("warm resume was told its context is trimmed, but no transcript was sent:\n%s", warm)
+	}
+	for _, want := range []string{slice, others, reader} {
+		if !strings.Contains(warm, want) {
+			t.Errorf("warm resume lost %q — the record is still only what Multica saw\n%s", want, warm)
+		}
+	}
+
 	// Slack has a Multica reader, so it keeps the commands and must NOT be told
 	// to fall back to its own tooling.
 	slack := buildChatPrompt(Task{ChatSessionID: "s", ChatChannelType: execenv.ChannelTypeSlack, ChatMessage: "hi"})
-	if strings.Contains(slack, "Multica ships no history reader") {
+	if strings.Contains(slack, reader) {
 		t.Errorf("slack has a reader and must not be told otherwise:\n%s", slack)
+	}
+}
+
+// The transcript is not in Multica; the work this chat delegated is. The ban had
+// to be narrowed when the chat brief started requiring a `multica issue list`
+// lookup as the first step of every delegation — an absolute "never look in
+// Multica issues" would have the run skip it and open a duplicate Issue.
+func TestBuildChatPromptBansReconstructionNotIssueLookup(t *testing.T) {
+	t.Parallel()
+
+	out := buildChatPrompt(Task{
+		ChatSessionID:   "sess-1",
+		ChatChannelType: execenv.ChannelTypeDingTalk,
+		ChatMessage:     "别再发了",
+	})
+	if !strings.Contains(out, "never reconstruct this conversation from Multica issues or comments") {
+		t.Errorf("the transcript ban must survive:\n%s", out)
+	}
+	if !strings.Contains(out, "Issues this chat delegated are a separate thing") {
+		t.Errorf("delegated work must stay lookup-able, or the delegation policy's first step is forbidden:\n%s", out)
+	}
+	if strings.Contains(out, "never look in Multica issues or comments for it") {
+		t.Errorf("the old absolute is back and forbids the delegation lookup:\n%s", out)
 	}
 }
 

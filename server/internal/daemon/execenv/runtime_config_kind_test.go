@@ -266,6 +266,45 @@ func TestChatAvailableCommandsDropsIssueScopedSurface(t *testing.T) {
 	}
 }
 
+// An A2A invocation is a chat session by construction, so it lands on kindChat —
+// but it runs without a task-scoped token and every task-token endpoint refuses
+// it, `multica issue delegate` included. Emitting the delegation policy there
+// would be a mandatory instruction that can only 403, and its advice is the
+// inverse of the A2A contract (answer the caller directly). Everything else the
+// chat brief carries still applies.
+func TestA2AChatBriefOmitsDelegationItCannotPerform(t *testing.T) {
+	t.Parallel()
+
+	a2a := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1", A2AInvocation: true, AgentName: "Eve", AgentID: "eve-1",
+	})
+	if strings.Contains(a2a, "## Background Issue Delegation") {
+		t.Error("A2A run told to delegate through an endpoint that refuses it for lack of a task token")
+	}
+	if strings.Contains(a2a, "multica issue delegate") {
+		t.Error("A2A brief still advertises the delegate command")
+	}
+	if !strings.Contains(a2a, "**You are in chat mode.**") {
+		t.Error("A2A is still a chat run and keeps the rest of the chat brief")
+	}
+	// A pointer to a section the file does not contain is worse than no pointer.
+	if strings.Contains(a2a, "see `## Background Issue Delegation`") {
+		t.Error("A2A workflow points at a section its own brief omits")
+	}
+
+	human := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1", AgentName: "Eve", AgentID: "eve-1",
+	})
+	if !strings.Contains(human, "## Background Issue Delegation") {
+		t.Error("an ordinary chat run must keep the delegation policy")
+	}
+	// The workflow used to tell the run to check code out while the delegation
+	// policy, in the same brief, sent code and repository work to the background.
+	if !strings.Contains(human, "work that CHANGES code or a repository is background work") {
+		t.Error("chat workflow must reconcile repo checkout with the delegation boundary")
+	}
+}
+
 // The issue-bearing kinds keep the full list; this is the other half of the
 // scoping decision above.
 func TestIssueKindsKeepFullAvailableCommands(t *testing.T) {
