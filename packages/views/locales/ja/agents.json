@@ -482,6 +482,7 @@
       "label_hint": "Saving creates a workspace label per entry (O: … and KR: …). Removing an OKR leaves its label in place, because issues may already carry it.",
       "spend_hint": "このエントリのラベルが付いたタスクの実行コスト。",
       "spend_partial_hint": "Cost of every agent task on Issues tagged with this entry. Some tasks ran on a model with no price attached, so this is a floor.",
+      "spend_unavailable": "コストデータを一時的に取得できません。目標の内容は引き続き確認できます。",
       "spend_tasks_other": "{{count}} 件"
     },
     "env": {

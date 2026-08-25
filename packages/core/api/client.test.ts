@@ -826,6 +826,96 @@ describe("ApiClient A2A config response schemas", () => {
   );
 });
 
+describe("ApiClient Agent OKR response schema", () => {
+  it("preserves stable row and label ids and exposes usage availability", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            usage_available: true,
+            okrs: [
+              {
+                id: "objective-1",
+                label_id: "label-o-1",
+                position: 2,
+                objective: "Ship",
+                label: "O: Ship",
+                color: "#6366f1",
+                spend: {
+                  total_tokens: 100,
+                  total_cost_usd_ticks: 200,
+                  uncosted_tokens: 30,
+                  task_count: 2,
+                  unpriced_task_count: 1,
+                },
+                key_results: [
+                  {
+                    id: "kr-1",
+                    label_id: "label-kr-1",
+                    position: 0,
+                    text: "Reach 90%",
+                    label: "KR: Reach 90%",
+                    color: "#0ea5e9",
+                  },
+                ],
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const response = await new ApiClient("https://api.example.test").listAgentOKRs(
+      "agent-1",
+    );
+    expect(response.usage_available).toBe(true);
+    expect(response.okrs[0]).toMatchObject({
+      id: "objective-1",
+      label_id: "label-o-1",
+      position: 2,
+      spend: { uncosted_tokens: 30 },
+    });
+    expect(response.okrs[0]?.key_results[0]).toMatchObject({
+      id: "kr-1",
+      label_id: "label-kr-1",
+      position: 0,
+    });
+  });
+
+  it("drops only malformed optional spend and keeps the objective", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            usage_available: "not-a-boolean",
+            okrs: [
+              {
+                objective: "Visible goal",
+                label: "O: Visible goal",
+                color: "#6366f1",
+                spend: "not-an-object",
+                key_results: [],
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    const response = await new ApiClient("https://api.example.test").listAgentOKRs(
+      "agent-1",
+    );
+    expect(response.usage_available).toBe(false);
+    expect(response.okrs).toHaveLength(1);
+    expect(response.okrs[0]?.objective).toBe("Visible goal");
+    expect(response.okrs[0]?.spend).toBeUndefined();
+  });
+});
+
 describe("ApiClient label response schemas", () => {
   const label = {
     id: "label-1",
@@ -918,6 +1008,8 @@ describe("ApiClient label response schemas", () => {
           tasks: [
             {
               task_id: "task-1",
+              agent_id: "agent-1",
+              agent_name: "Daily Reporter",
               issue_id: "issue-1",
               issue_identifier: "MUL-1",
               issue_title: "Investigate spend",
@@ -942,6 +1034,13 @@ describe("ApiClient label response schemas", () => {
               created_at: "2026-08-24T01:00:00Z",
               completed_at: "2026-08-24T01:01:00Z",
               activity_at: "2026-08-24T01:01:00Z",
+              attribution: {
+                source: "direct_human",
+                precise: true,
+                initiator: { id: "user-1", name: "Owner" },
+                originator: { id: "user-1", name: "Owner" },
+                evidence: { kind: "issue_assignment", ref_id: "issue-1" },
+              },
             },
           ],
           pagination: { page: 2, page_size: 25, total: 27, total_pages: 2 },
@@ -962,8 +1061,15 @@ describe("ApiClient label response schemas", () => {
     });
 
     expect(response.tasks[0]).toMatchObject({
+      agent_id: "agent-1",
+      agent_name: "Daily Reporter",
       activity_at: "2026-08-24T01:01:00Z",
       uncosted_tokens: 2_000,
+      attribution: {
+        source: "direct_human",
+        precise: true,
+        initiator: { id: "user-1", name: "Owner" },
+      },
     });
     expect(response.tasks[0]?.usage_breakdown).toHaveLength(1);
     const requestURL = String(fetchMock.mock.calls[0]?.[0]);

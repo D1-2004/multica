@@ -188,6 +188,11 @@ func (q *Queries) DeleteIssueLabelAssignmentsByLabel(ctx context.Context, labelI
 const deleteLabel = `-- name: DeleteLabel :one
 DELETE FROM issue_label
 WHERE id = $1 AND workspace_id = $2
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_okr
+      WHERE agent_okr.label_id = issue_label.id
+        AND agent_okr.workspace_id = issue_label.workspace_id
+  )
 RETURNING id
 `
 
@@ -196,8 +201,9 @@ type DeleteLabelParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-// :one RETURNING id so the handler distinguishes pgx.ErrNoRows (→ 404) from
-// infrastructure errors (→ 500), and avoids a TOCTOU precheck.
+// :one RETURNING id lets the handler distinguish missing rows from
+// infrastructure errors; it rechecks the OKR reference on ErrNoRows so a
+// concurrent reference becomes 409 rather than a misleading 404.
 func (q *Queries) DeleteLabel(ctx context.Context, arg DeleteLabelParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, deleteLabel, arg.ID, arg.WorkspaceID)
 	var id pgtype.UUID
@@ -571,6 +577,8 @@ const listIssueLabelUsageTasks = `-- name: ListIssueLabelUsageTasks :many
 WITH task_totals AS (
     SELECT
         atq.id AS task_id,
+        atq.agent_id,
+        COALESCE(a.name, '')::text AS agent_name,
         i.id AS issue_id,
         CASE
             WHEN w.issue_prefix = '' THEN '#' || i.number::text
@@ -580,6 +588,15 @@ WITH task_totals AS (
         atq.status,
         atq.created_at,
         atq.completed_at,
+        atq.originator_user_id,
+        atq.accountable_user_id,
+        atq.originator_source,
+        atq.delegated_from_task_id,
+        atq.retry_of_task_id,
+        atq.rerun_of_task_id,
+        atq.rule_version_id,
+        atq.trigger_evidence_kind,
+        atq.trigger_evidence_ref_id,
         COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at,
         CASE WHEN COUNT(tu.id) = 1 THEN MIN(LOWER(tu.provider)) ELSE '' END::text AS provider,
         CASE WHEN COUNT(tu.id) = 1 THEN MIN(tu.model) ELSE '' END::text AS model,
@@ -618,20 +635,25 @@ WITH task_totals AS (
     JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
     JOIN workspace w ON w.id = i.workspace_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
+    LEFT JOIN agent a ON a.id = atq.agent_id AND a.workspace_id = i.workspace_id
     LEFT JOIN task_usage tu ON tu.task_id = atq.id
     WHERE l.id = $5::uuid
       AND l.workspace_id = $6::uuid
       AND l.resource_type = 'issue'
     GROUP BY
-        atq.id, i.id, i.number, i.title, w.issue_prefix,
-        atq.status, atq.created_at, atq.completed_at
+        atq.id, atq.agent_id, a.name, i.id, i.number, i.title, w.issue_prefix,
+        atq.status, atq.created_at, atq.completed_at,
+        atq.originator_user_id, atq.accountable_user_id,
+        atq.originator_source, atq.delegated_from_task_id,
+        atq.retry_of_task_id, atq.rerun_of_task_id, atq.rule_version_id,
+        atq.trigger_evidence_kind, atq.trigger_evidence_ref_id
 ), filtered_tasks AS (
-    SELECT task_id, issue_id, issue_identifier, issue_title, status, created_at, completed_at, activity_at, provider, model, has_usage, is_priced, total_tokens, total_cost_usd_ticks, uncosted_tokens, usage_breakdown
+    SELECT task_id, agent_id, agent_name, issue_id, issue_identifier, issue_title, status, created_at, completed_at, originator_user_id, accountable_user_id, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, activity_at, provider, model, has_usage, is_priced, total_tokens, total_cost_usd_ticks, uncosted_tokens, usage_breakdown
     FROM task_totals
     WHERE $7::timestamptz IS NULL
        OR activity_at >= $7::timestamptz
 )
-SELECT task_id, issue_id, issue_identifier, issue_title, status, created_at, completed_at, activity_at, provider, model, has_usage, is_priced, total_tokens, total_cost_usd_ticks, uncosted_tokens, usage_breakdown
+SELECT task_id, agent_id, agent_name, issue_id, issue_identifier, issue_title, status, created_at, completed_at, originator_user_id, accountable_user_id, originator_source, delegated_from_task_id, retry_of_task_id, rerun_of_task_id, rule_version_id, trigger_evidence_kind, trigger_evidence_ref_id, activity_at, provider, model, has_usage, is_priced, total_tokens, total_cost_usd_ticks, uncosted_tokens, usage_breakdown
 FROM filtered_tasks
 ORDER BY
     CASE WHEN $1::text = 'cost' THEN is_priced END DESC,
@@ -658,22 +680,33 @@ type ListIssueLabelUsageTasksParams struct {
 }
 
 type ListIssueLabelUsageTasksRow struct {
-	TaskID            pgtype.UUID        `json:"task_id"`
-	IssueID           pgtype.UUID        `json:"issue_id"`
-	IssueIdentifier   string             `json:"issue_identifier"`
-	IssueTitle        string             `json:"issue_title"`
-	Status            string             `json:"status"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
-	ActivityAt        pgtype.Timestamptz `json:"activity_at"`
-	Provider          string             `json:"provider"`
-	Model             string             `json:"model"`
-	HasUsage          bool               `json:"has_usage"`
-	IsPriced          bool               `json:"is_priced"`
-	TotalTokens       int64              `json:"total_tokens"`
-	TotalCostUsdTicks int64              `json:"total_cost_usd_ticks"`
-	UncostedTokens    int64              `json:"uncosted_tokens"`
-	UsageBreakdown    []byte             `json:"usage_breakdown"`
+	TaskID               pgtype.UUID        `json:"task_id"`
+	AgentID              pgtype.UUID        `json:"agent_id"`
+	AgentName            string             `json:"agent_name"`
+	IssueID              pgtype.UUID        `json:"issue_id"`
+	IssueIdentifier      string             `json:"issue_identifier"`
+	IssueTitle           string             `json:"issue_title"`
+	Status               string             `json:"status"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	CompletedAt          pgtype.Timestamptz `json:"completed_at"`
+	OriginatorUserID     pgtype.UUID        `json:"originator_user_id"`
+	AccountableUserID    pgtype.UUID        `json:"accountable_user_id"`
+	OriginatorSource     pgtype.Text        `json:"originator_source"`
+	DelegatedFromTaskID  pgtype.UUID        `json:"delegated_from_task_id"`
+	RetryOfTaskID        pgtype.UUID        `json:"retry_of_task_id"`
+	RerunOfTaskID        pgtype.UUID        `json:"rerun_of_task_id"`
+	RuleVersionID        pgtype.UUID        `json:"rule_version_id"`
+	TriggerEvidenceKind  pgtype.Text        `json:"trigger_evidence_kind"`
+	TriggerEvidenceRefID pgtype.UUID        `json:"trigger_evidence_ref_id"`
+	ActivityAt           pgtype.Timestamptz `json:"activity_at"`
+	Provider             string             `json:"provider"`
+	Model                string             `json:"model"`
+	HasUsage             bool               `json:"has_usage"`
+	IsPriced             bool               `json:"is_priced"`
+	TotalTokens          int64              `json:"total_tokens"`
+	TotalCostUsdTicks    int64              `json:"total_cost_usd_ticks"`
+	UncostedTokens       int64              `json:"uncosted_tokens"`
+	UsageBreakdown       []byte             `json:"usage_breakdown"`
 }
 
 func (q *Queries) ListIssueLabelUsageTasks(ctx context.Context, arg ListIssueLabelUsageTasksParams) ([]ListIssueLabelUsageTasksRow, error) {
@@ -695,12 +728,23 @@ func (q *Queries) ListIssueLabelUsageTasks(ctx context.Context, arg ListIssueLab
 		var i ListIssueLabelUsageTasksRow
 		if err := rows.Scan(
 			&i.TaskID,
+			&i.AgentID,
+			&i.AgentName,
 			&i.IssueID,
 			&i.IssueIdentifier,
 			&i.IssueTitle,
 			&i.Status,
 			&i.CreatedAt,
 			&i.CompletedAt,
+			&i.OriginatorUserID,
+			&i.AccountableUserID,
+			&i.OriginatorSource,
+			&i.DelegatedFromTaskID,
+			&i.RetryOfTaskID,
+			&i.RerunOfTaskID,
+			&i.RuleVersionID,
+			&i.TriggerEvidenceKind,
+			&i.TriggerEvidenceRefID,
 			&i.ActivityAt,
 			&i.Provider,
 			&i.Model,
@@ -1159,6 +1203,11 @@ UPDATE issue_label SET
     color = COALESCE($5, color),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_okr
+      WHERE agent_okr.label_id = issue_label.id
+        AND agent_okr.workspace_id = issue_label.workspace_id
+  )
 RETURNING id, workspace_id, name, color, created_at, updated_at, resource_type, description
 `
 

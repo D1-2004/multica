@@ -52,22 +52,25 @@ type LabelUsageBreakdownResponse struct {
 }
 
 type LabelUsageTaskResponse struct {
-	TaskID            string          `json:"task_id"`
-	IssueID           string          `json:"issue_id"`
-	IssueIdentifier   string          `json:"issue_identifier"`
-	IssueTitle        string          `json:"issue_title"`
-	Status            string          `json:"status"`
-	Provider          string          `json:"provider"`
-	Model             string          `json:"model"`
-	TotalTokens       int64           `json:"total_tokens"`
-	TotalCostUSDTicks int64           `json:"total_cost_usd_ticks"`
-	UncostedTokens    int64           `json:"uncosted_tokens"`
-	HasUsage          bool            `json:"has_usage"`
-	IsPriced          bool            `json:"is_priced"`
-	CreatedAt         string          `json:"created_at"`
-	CompletedAt       *string         `json:"completed_at,omitempty"`
-	ActivityAt        string          `json:"activity_at"`
-	UsageBreakdown    json.RawMessage `json:"usage_breakdown"`
+	TaskID            string           `json:"task_id"`
+	AgentID           string           `json:"agent_id"`
+	AgentName         string           `json:"agent_name"`
+	IssueID           string           `json:"issue_id"`
+	IssueIdentifier   string           `json:"issue_identifier"`
+	IssueTitle        string           `json:"issue_title"`
+	Status            string           `json:"status"`
+	Provider          string           `json:"provider"`
+	Model             string           `json:"model"`
+	TotalTokens       int64            `json:"total_tokens"`
+	TotalCostUSDTicks int64            `json:"total_cost_usd_ticks"`
+	UncostedTokens    int64            `json:"uncosted_tokens"`
+	HasUsage          bool             `json:"has_usage"`
+	IsPriced          bool             `json:"is_priced"`
+	CreatedAt         string           `json:"created_at"`
+	CompletedAt       *string          `json:"completed_at,omitempty"`
+	ActivityAt        string           `json:"activity_at"`
+	UsageBreakdown    json.RawMessage  `json:"usage_breakdown"`
+	Attribution       *TaskAttribution `json:"attribution,omitempty"`
 }
 
 type LabelUsagePaginationResponse struct {
@@ -291,6 +294,7 @@ func (h *Handler) GetLabelUsage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	tasks := make([]LabelUsageTaskResponse, len(taskRows))
+	attributions := make([]*TaskAttribution, len(taskRows))
 	for i, row := range taskRows {
 		usageBreakdown := json.RawMessage(row.UsageBreakdown)
 		if !json.Valid(usageBreakdown) {
@@ -298,8 +302,22 @@ func (h *Handler) GetLabelUsage(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to get label usage")
 			return
 		}
+		attribution := taskAttributionBase(db.AgentTaskQueue{
+			OriginatorUserID:     row.OriginatorUserID,
+			AccountableUserID:    row.AccountableUserID,
+			OriginatorSource:     row.OriginatorSource,
+			DelegatedFromTaskID:  row.DelegatedFromTaskID,
+			RetryOfTaskID:        row.RetryOfTaskID,
+			RerunOfTaskID:        row.RerunOfTaskID,
+			RuleVersionID:        row.RuleVersionID,
+			TriggerEvidenceKind:  row.TriggerEvidenceKind,
+			TriggerEvidenceRefID: row.TriggerEvidenceRefID,
+		})
+		attributions[i] = attribution
 		tasks[i] = LabelUsageTaskResponse{
 			TaskID:            uuidToString(row.TaskID),
+			AgentID:           uuidToString(row.AgentID),
+			AgentName:         row.AgentName,
 			IssueID:           uuidToString(row.IssueID),
 			IssueIdentifier:   row.IssueIdentifier,
 			IssueTitle:        row.IssueTitle,
@@ -315,8 +333,10 @@ func (h *Handler) GetLabelUsage(w http.ResponseWriter, r *http.Request) {
 			CompletedAt:       timestampToPtr(row.CompletedAt),
 			ActivityAt:        timestampToString(row.ActivityAt),
 			UsageBreakdown:    usageBreakdown,
+			Attribution:       attribution,
 		}
 	}
+	h.hydrateTaskAttributions(r.Context(), attributions)
 	totalPages := int64(0)
 	if summary.TaskCount > 0 {
 		totalPages = (summary.TaskCount + int64(query.pageSize) - 1) / int64(query.pageSize)

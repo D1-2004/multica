@@ -148,6 +148,30 @@ multica issue metadata delete <issue-id> --key <stale-key>
 `--value` is JSON-parsed by default (bool/number are sniffed); pass `--type
 string|number|bool` to force a type.
 
+## Label usage: task-level cost and accountable-human evidence
+
+Read a label's complete cost and task attribution without scraping the Settings
+UI:
+
+```bash
+multica label usage <label-id-or-name> --period all --sort recent --direction desc --all --output json
+```
+
+The JSON is the complete label-usage response: `summary`, `daily`,
+provider/model `breakdown`, and `tasks`. `--all` follows every task page and
+returns one merged `tasks` array; `pagination.complete=true` confirms that the
+walk finished. Each task carries `agent_id` / `agent_name` for the executor and
+the existing `attribution` object (`source`, `precise`, accountable
+`initiator`, authorization `originator`, evidence, and retry/delegation/rerun
+lineage).
+
+`total_cost_usd_ticks` is the authoritative priced portion in units of
+`1e-10 USD`. Check `unpriced_task_count` and `uncosted_tokens` before calling it
+a complete cost: when either is non-zero, the amount is a lower bound, not
+zero-cost work. A label belongs to an Issue, so the response can contain tasks
+executed by more than one agent; group or filter by task id and `agent_id`
+rather than assuming the Issue assignee executed every run.
+
 ## Custom properties: typed workflow state
 
 Workspaces may define custom issue properties (Severity, Environment, QA

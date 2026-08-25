@@ -33,6 +33,16 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `agent skills list` | 890 | reads bindings, no side effect | `multica agent skills list --help` |
 | `agent env get` | 1024 | `GET /api/agents/{id}/env` (1034) | `multica agent env get --help` |
 | `agent env set` | 1059 | `PUT /api/agents/{id}/env` with full `custom_env` map (1079) | `multica agent env set --help` |
+| `agent okr list` | `server/cmd/multica/cmd_agent_okr.go:19,32` | Resolves an Agent ref, then GETs `/api/agents/{id}/okrs`; JSON preserves the complete `{usage_available,okrs}` response | `multica agent okr list --help` |
+
+## Agent OKRs — `server/internal/handler/agent_okr.go`
+
+| Contract | Source | Behavior |
+|---|---|---|
+| Response identity + availability | `AgentOKRResponse` around line 75; `agentOKRsFromRows` around line 279 | O/KR rows expose `id`, stable `label_id`, authored `position`; spend is omitted when `usage_available=false` |
+| Read and whole-set write | `ListAgentOKRs` line 90; `SetAgentOKRs` line 110 | GET is read-only; PUT replaces the authored tree transactionally and may reuse only the Agent's currently referenced labels |
+| Spend split | `agentOKRSpendFor` line 330; `pkg/db/queries/agent_okr.sql` | Returns authoritative USD ticks plus `uncosted_tokens`; query failure is a false availability bit, never measured zero |
+| Claim-time goal injection | `buildAgentOKRInstructions` line 370; `daemon.go` OKR claim block | Current goals lead the appended instruction; exact materialized labels follow as the tagging vocabulary |
 
 ## Copy command — `server/cmd/multica/cmd_agent_copy.go`
 

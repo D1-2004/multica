@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func setAgentOKRsForTest(t *testing.T, agentID string, body map[string]any) *httptest.ResponseRecorder {
@@ -56,8 +58,18 @@ func TestSetAgentOKRs_MaterializesAttachableIssueLabels(t *testing.T) {
 	if response.OKRs[0].Label != "O: 提升交付效率" {
 		t.Errorf("objective label = %q", response.OKRs[0].Label)
 	}
+	if response.OKRs[0].ID == "" || response.OKRs[0].LabelID == "" || response.OKRs[0].Position != 0 {
+		t.Errorf("objective identity = %+v", response.OKRs[0])
+	}
 	if response.OKRs[0].KeyResults[0].Label != "KR: 平均响应<2h" {
 		t.Errorf("key result label = %q", response.OKRs[0].KeyResults[0].Label)
+	}
+	if response.OKRs[0].KeyResults[0].ID == "" || response.OKRs[0].KeyResults[0].LabelID == "" ||
+		response.OKRs[0].KeyResults[0].Position != 0 {
+		t.Errorf("key result identity = %+v", response.OKRs[0].KeyResults[0])
+	}
+	if !response.UsageAvailable {
+		t.Error("usage_available = false, want successful spend query")
 	}
 
 	// The namespace matters: an 'agent'-namespace label cannot be attached to
@@ -126,6 +138,166 @@ func TestSetAgentOKRs_RewriteReplacesTheSetAndKeepsLabels(t *testing.T) {
 	}
 }
 
+func TestSetAgentOKRs_PreservesAuthoredObjectiveOrder(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "okr-order", nil)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_okr WHERE agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue_label WHERE description = $1`, agentOKRLabelDescription)
+	})
+
+	w := setAgentOKRsForTest(t, agentID, map[string]any{"okrs": []map[string]any{
+		{"objective": "First", "key_results": []string{"First KR"}},
+		{"objective": "Second", "key_results": []string{"Second KR"}},
+		{"objective": "Third", "key_results": []string{}},
+	}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("set OKRs: got %d: %s", w.Code, w.Body.String())
+	}
+	got := decodeAgentOKRs(t, w).OKRs
+	if len(got) != 3 || got[0].Objective != "First" || got[1].Objective != "Second" || got[2].Objective != "Third" {
+		t.Fatalf("objective order = %+v", got)
+	}
+	for i := range got {
+		if got[i].Position != int32(i) {
+			t.Errorf("objective %d position = %d", i, got[i].Position)
+		}
+	}
+}
+
+func TestSetAgentOKRs_ReusesOnlyItsCurrentLabels(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "okr-owned-label", nil)
+	name := "Owned " + agentID[:8]
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_okr WHERE agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue_label WHERE name = $1`, agentOKRObjectivePrefix+name)
+	})
+
+	first := setAgentOKRsForTest(t, agentID, map[string]any{
+		"okrs": []map[string]any{{"objective": name, "key_results": []string{}}},
+	})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first write: got %d: %s", first.Code, first.Body.String())
+	}
+	firstLabelID := decodeAgentOKRs(t, first).OKRs[0].LabelID
+	second := setAgentOKRsForTest(t, agentID, map[string]any{
+		"okrs": []map[string]any{{"objective": name, "key_results": []string{}}},
+	})
+	if second.Code != http.StatusOK {
+		t.Fatalf("rewrite: got %d: %s", second.Code, second.Body.String())
+	}
+	if got := decodeAgentOKRs(t, second).OKRs[0].LabelID; got != firstLabelID {
+		t.Fatalf("label_id changed: %s -> %s", firstLabelID, got)
+	}
+}
+
+func TestSetAgentOKRs_RejectsAnUnownedSameNameLabel(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "okr-label-conflict", nil)
+	name := "Conflict " + agentID[:8]
+	labelName := agentOKRObjectivePrefix + name
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO issue_label (workspace_id, resource_type, name, description, color)
+		VALUES ($1, 'issue', $2, 'ordinary label', '#000000')
+	`, testWorkspaceID, labelName); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_okr WHERE agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue_label WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, labelName)
+	})
+
+	w := setAgentOKRsForTest(t, agentID, map[string]any{
+		"okrs": []map[string]any{{"objective": name, "key_results": []string{}}},
+	})
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", w.Code, w.Body.String())
+	}
+	var description string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT description FROM issue_label WHERE workspace_id = $1 AND name = $2
+	`, testWorkspaceID, labelName).Scan(&description); err != nil {
+		t.Fatal(err)
+	}
+	if description != "ordinary label" {
+		t.Fatalf("conflicting label was overwritten: %q", description)
+	}
+}
+
+func TestSetAgentOKRs_RejectsALegacyLabelSharedWithAnotherAgent(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "okr-shared-a", nil)
+	otherAgentID := createHandlerTestAgent(t, "okr-shared-b", nil)
+	name := "Shared " + agentID[:8]
+	first := setAgentOKRsForTest(t, agentID, map[string]any{
+		"okrs": []map[string]any{{"objective": name, "key_results": []string{}}},
+	})
+	if first.Code != http.StatusOK {
+		t.Fatalf("first write: got %d: %s", first.Code, first.Body.String())
+	}
+	labelID := decodeAgentOKRs(t, first).OKRs[0].LabelID
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO agent_okr (workspace_id, agent_id, kind, label_id, position)
+		VALUES ($1, $2, 'objective', $3, 0)
+	`, testWorkspaceID, otherAgentID, labelID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_okr WHERE agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_okr WHERE agent_id = $1`, otherAgentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue_label WHERE id = $1`, labelID)
+	})
+
+	rewrite := setAgentOKRsForTest(t, agentID, map[string]any{
+		"okrs": []map[string]any{{"objective": name, "key_results": []string{}}},
+	})
+	if rewrite.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rewrite.Code, rewrite.Body.String())
+	}
+}
+
+func TestAgentOKRReferencedLabelRejectsGenericUpdateAndDelete(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "okr-protected-label", nil)
+	name := "Protected " + agentID[:8]
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_okr WHERE agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue_label WHERE name = $1`, agentOKRObjectivePrefix+name)
+	})
+	w := setAgentOKRsForTest(t, agentID, map[string]any{
+		"okrs": []map[string]any{{"objective": name, "key_results": []string{}}},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("set OKRs: got %d: %s", w.Code, w.Body.String())
+	}
+	labelID := decodeAgentOKRs(t, w).OKRs[0].LabelID
+
+	updateReq := withURLParam(newRequest(http.MethodPut, "/api/labels/"+labelID, map[string]any{"name": "renamed"}), "id", labelID)
+	update := httptest.NewRecorder()
+	testHandler.UpdateLabel(update, updateReq)
+	if update.Code != http.StatusConflict {
+		t.Fatalf("update status = %d, want 409: %s", update.Code, update.Body.String())
+	}
+
+	deleteReq := withURLParam(newRequest(http.MethodDelete, "/api/labels/"+labelID, nil), "id", labelID)
+	deleted := httptest.NewRecorder()
+	testHandler.DeleteLabel(deleted, deleteReq)
+	if deleted.Code != http.StatusConflict {
+		t.Fatalf("delete status = %d, want 409: %s", deleted.Code, deleted.Body.String())
+	}
+}
+
 // Clearing is a rewrite to an empty list.
 func TestSetAgentOKRs_EmptyListClearsTheSet(t *testing.T) {
 	if testHandler == nil {
@@ -165,6 +337,13 @@ func TestSetAgentOKRs_RejectsInvalidInput(t *testing.T) {
 		}},
 		"oversized key result": {"okrs": []map[string]any{
 			{"objective": "目标", "key_results": []string{strings.Repeat("中", maxAgentOKRTextLength+1)}},
+		}},
+		"duplicate objectives": {"okrs": []map[string]any{
+			{"objective": "Same", "key_results": []string{}},
+			{"objective": "same", "key_results": []string{}},
+		}},
+		"duplicate key results": {"okrs": []map[string]any{
+			{"objective": "Goal", "key_results": []string{"Same", "same"}},
 		}},
 	} {
 		if w := setAgentOKRsForTest(t, agentID, body); w.Code != http.StatusBadRequest {
@@ -258,6 +437,27 @@ func TestBuildAgentOKRInstructionsInjectsNothingWithoutOKRs(t *testing.T) {
 	}
 }
 
+func TestAgentOKRDTOOmitsSpendWhenUsageIsUnavailable(t *testing.T) {
+	t.Parallel()
+	rows := []db.ListAgentOKRsRow{{
+		ID:      parseUUID("11111111-1111-1111-1111-111111111111"),
+		LabelID: parseUUID("22222222-2222-2222-2222-222222222222"),
+		Kind:    "objective", Position: 0,
+		LabelName: "O: Visible", LabelColor: "#6366f1",
+	}}
+	okrs := agentOKRsFromRows(rows, nil, false)
+	if len(okrs) != 1 || okrs[0].Spend != nil {
+		t.Fatalf("OKRs = %+v", okrs)
+	}
+	payload, err := json.Marshal(AgentOKRResponse{OKRs: okrs, UsageAvailable: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), `"spend"`) || !strings.Contains(string(payload), `"usage_available":false`) {
+		t.Fatalf("payload = %s", payload)
+	}
+}
+
 // The claim path must not inject a section for an agent that never configured
 // one. Checked end to end rather than only on the builder, because the empty
 // case is decided by the loader.
@@ -332,8 +532,11 @@ func TestAgentOKRSpendRollsUpPerLabelWithoutDoubleCounting(t *testing.T) {
 		}
 	}
 
-	spend := testHandler.agentOKRSpendFor(
+	spend, usageAvailable := testHandler.agentOKRSpendFor(
 		context.Background(), parseUUID(agentID), parseUUID(testWorkspaceID))
+	if !usageAvailable {
+		t.Fatal("usage query unexpectedly unavailable")
+	}
 	got := spend[krLabelID]
 
 	if got.TaskCount != 1 {

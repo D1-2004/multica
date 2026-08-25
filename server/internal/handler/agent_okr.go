@@ -3,12 +3,15 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -32,11 +35,14 @@ const (
 	agentOKRLabelDescription = "Multica Agent OKR"
 )
 
-// AgentOKRSpend is what the agent's work on one objective or key result has
-// cost so far, rolled up from the tasks on every Issue carrying its label.
+// AgentOKRSpend is what one objective/label combination has cost so far,
+// rolled up from every task on every Issue carrying its label. Collaboration
+// is intentional: callers that need self-vs-collaborator split use the label
+// usage task rows and their executor agent ids.
 type AgentOKRSpend struct {
 	TotalTokens       int64 `json:"total_tokens"`
 	TotalCostUSDTicks int64 `json:"total_cost_usd_ticks"`
+	UncostedTokens    int64 `json:"uncosted_tokens"`
 	TaskCount         int64 `json:"task_count"`
 	// UnpricedTaskCount is how many of those tasks ran on a model with no
 	// price attached. The cost is a floor when this is non-zero, and the UI
@@ -45,25 +51,32 @@ type AgentOKRSpend struct {
 }
 
 type AgentOKRKeyResultDTO struct {
-	Text  string        `json:"text"`
-	Label string        `json:"label"`
-	Color string        `json:"color"`
-	Spend AgentOKRSpend `json:"spend"`
+	ID       string         `json:"id"`
+	LabelID  string         `json:"label_id"`
+	Position int32          `json:"position"`
+	Text     string         `json:"text"`
+	Label    string         `json:"label"`
+	Color    string         `json:"color"`
+	Spend    *AgentOKRSpend `json:"spend,omitempty"`
 }
 
 type AgentOKRDTO struct {
+	ID        string `json:"id"`
+	LabelID   string `json:"label_id"`
+	Position  int32  `json:"position"`
 	Objective string `json:"objective"`
 	Label     string `json:"label"`
 	Color     string `json:"color"`
 	// Spend is this objective's own label only. It is not the sum of its key
 	// results: an Issue may carry the objective label, a key result label, or
 	// both, so adding them would double-count the overlap.
-	Spend      AgentOKRSpend          `json:"spend"`
+	Spend      *AgentOKRSpend         `json:"spend,omitempty"`
 	KeyResults []AgentOKRKeyResultDTO `json:"key_results"`
 }
 
 type AgentOKRResponse struct {
-	OKRs []AgentOKRDTO `json:"okrs"`
+	OKRs           []AgentOKRDTO `json:"okrs"`
+	UsageAvailable bool          `json:"usage_available"`
 }
 
 // SetAgentOKRsRequest replaces the whole set. Partial edits are not offered:
@@ -89,8 +102,10 @@ func (h *Handler) ListAgentOKRs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load agent OKRs")
 		return
 	}
+	spend, usageAvailable := h.agentOKRSpendFor(r.Context(), agent.ID, agent.WorkspaceID)
 	writeJSON(w, http.StatusOK, AgentOKRResponse{
-		OKRs: agentOKRsFromRows(rows, h.agentOKRSpendFor(r.Context(), agent.ID, agent.WorkspaceID)),
+		OKRs:           agentOKRsFromRows(rows, spend, usageAvailable),
+		UsageAvailable: usageAvailable,
 	})
 }
 
@@ -117,6 +132,7 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 		keyResults []string
 	}
 	normalized := make([]normalizedOKR, 0, len(request.OKRs))
+	seenLabels := make(map[string]struct{})
 	for _, entry := range request.OKRs {
 		objective := strings.TrimSpace(entry.Objective)
 		if objective == "" {
@@ -127,6 +143,12 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("objective must be %d characters or fewer", maxAgentOKRTextLength))
 			return
 		}
+		objectiveLabelKey := strings.ToLower(agentOKRObjectivePrefix + objective)
+		if _, duplicate := seenLabels[objectiveLabelKey]; duplicate {
+			writeError(w, http.StatusBadRequest, "objectives must be unique within an agent")
+			return
+		}
+		seenLabels[objectiveLabelKey] = struct{}{}
 		if len(entry.KeyResults) > maxAgentOKRKeyResults {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("at most %d key results per objective", maxAgentOKRKeyResults))
 			return
@@ -141,6 +163,12 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, fmt.Sprintf("key result must be %d characters or fewer", maxAgentOKRTextLength))
 				return
 			}
+			keyResultLabelKey := strings.ToLower(agentOKRKeyResultPrefix + keyResult)
+			if _, duplicate := seenLabels[keyResultLabelKey]; duplicate {
+				writeError(w, http.StatusBadRequest, "key results must be unique within an agent")
+				return
+			}
+			seenLabels[keyResultLabelKey] = struct{}{}
 			keyResults = append(keyResults, keyResult)
 		}
 		normalized = append(normalized, normalizedOKR{objective: objective, keyResults: keyResults})
@@ -156,6 +184,14 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	queries := h.Queries.WithTx(tx)
+	reusableLabelIDs, err := queries.ListAgentOKRLabelIDs(r.Context(), db.ListAgentOKRLabelIDsParams{
+		AgentID:     agent.ID,
+		WorkspaceID: agent.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load current Agent OKR labels")
+		return
+	}
 
 	if err := queries.DeleteAgentOKRsByAgent(r.Context(), db.DeleteAgentOKRsByAgentParams{
 		AgentID:     agent.ID,
@@ -167,12 +203,17 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 
 	for objectiveIndex, entry := range normalized {
 		objectiveLabel, err := queries.UpsertAgentOKRLabel(r.Context(), db.UpsertAgentOKRLabelParams{
-			WorkspaceID: agent.WorkspaceID,
-			Name:        agentOKRObjectivePrefix + entry.objective,
-			Description: agentOKRLabelDescription,
-			Color:       agentOKRObjectiveColor,
+			WorkspaceID:      agent.WorkspaceID,
+			Name:             agentOKRObjectivePrefix + entry.objective,
+			Description:      agentOKRLabelDescription,
+			Color:            agentOKRObjectiveColor,
+			ReusableLabelIds: reusableLabelIDs,
 		})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) || isUniqueViolation(err) {
+				writeError(w, http.StatusConflict, "objective label name is already used outside this Agent's current OKR set")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to create objective label")
 			return
 		}
@@ -189,12 +230,17 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 		}
 		for keyResultIndex, keyResult := range entry.keyResults {
 			keyResultLabel, err := queries.UpsertAgentOKRLabel(r.Context(), db.UpsertAgentOKRLabelParams{
-				WorkspaceID: agent.WorkspaceID,
-				Name:        agentOKRKeyResultPrefix + keyResult,
-				Description: agentOKRLabelDescription,
-				Color:       agentOKRKeyResultColor,
+				WorkspaceID:      agent.WorkspaceID,
+				Name:             agentOKRKeyResultPrefix + keyResult,
+				Description:      agentOKRLabelDescription,
+				Color:            agentOKRKeyResultColor,
+				ReusableLabelIds: reusableLabelIDs,
 			})
 			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) || isUniqueViolation(err) {
+					writeError(w, http.StatusConflict, "key-result label name is already used outside this Agent's current OKR set")
+					return
+				}
 				writeError(w, http.StatusInternalServerError, "failed to create key result label")
 				return
 			}
@@ -225,12 +271,14 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to reload agent OKRs")
 		return
 	}
+	spend, usageAvailable := h.agentOKRSpendFor(r.Context(), agent.ID, agent.WorkspaceID)
 	writeJSON(w, http.StatusOK, AgentOKRResponse{
-		OKRs: agentOKRsFromRows(rows, h.agentOKRSpendFor(r.Context(), agent.ID, agent.WorkspaceID)),
+		OKRs:           agentOKRsFromRows(rows, spend, usageAvailable),
+		UsageAvailable: usageAvailable,
 	})
 }
 
-func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpend) []AgentOKRDTO {
+func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpend, usageAvailable bool) []AgentOKRDTO {
 	okrs := make([]AgentOKRDTO, 0)
 	byObjectiveID := map[string]int{}
 	for _, row := range rows {
@@ -238,13 +286,20 @@ func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpen
 			continue
 		}
 		byObjectiveID[uuidToString(row.ID)] = len(okrs)
-		okrs = append(okrs, AgentOKRDTO{
+		entry := AgentOKRDTO{
+			ID:         uuidToString(row.ID),
+			LabelID:    uuidToString(row.LabelID),
+			Position:   row.Position,
 			Objective:  strings.TrimPrefix(row.LabelName, agentOKRObjectivePrefix),
 			Label:      row.LabelName,
 			Color:      row.LabelColor,
-			Spend:      spend[uuidToString(row.LabelID)],
 			KeyResults: []AgentOKRKeyResultDTO{},
-		})
+		}
+		if usageAvailable {
+			value := spend[uuidToString(row.LabelID)]
+			entry.Spend = &value
+		}
+		okrs = append(okrs, entry)
 	}
 	for _, row := range rows {
 		if row.Kind != "key_result" || !row.ParentID.Valid {
@@ -254,12 +309,19 @@ func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpen
 		if !ok {
 			continue
 		}
-		okrs[index].KeyResults = append(okrs[index].KeyResults, AgentOKRKeyResultDTO{
-			Text:  strings.TrimPrefix(row.LabelName, agentOKRKeyResultPrefix),
-			Label: row.LabelName,
-			Color: row.LabelColor,
-			Spend: spend[uuidToString(row.LabelID)],
-		})
+		entry := AgentOKRKeyResultDTO{
+			ID:       uuidToString(row.ID),
+			LabelID:  uuidToString(row.LabelID),
+			Position: row.Position,
+			Text:     strings.TrimPrefix(row.LabelName, agentOKRKeyResultPrefix),
+			Label:    row.LabelName,
+			Color:    row.LabelColor,
+		}
+		if usageAvailable {
+			value := spend[uuidToString(row.LabelID)]
+			entry.Spend = &value
+		}
+		okrs[index].KeyResults = append(okrs[index].KeyResults, entry)
 	}
 	return okrs
 }
@@ -267,24 +329,26 @@ func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpen
 // agentOKRSpendFor rolls up spend per OKR label. A failure is not fatal to the
 // page: the objectives still render, with spend omitted rather than the whole
 // request failing over a reporting number.
-func (h *Handler) agentOKRSpendFor(ctx context.Context, agentID, workspaceID pgtype.UUID) map[string]AgentOKRSpend {
+func (h *Handler) agentOKRSpendFor(ctx context.Context, agentID, workspaceID pgtype.UUID) (map[string]AgentOKRSpend, bool) {
 	rows, err := h.Queries.ListAgentOKRUsage(ctx, db.ListAgentOKRUsageParams{
 		AgentID:     agentID,
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		return map[string]AgentOKRSpend{}
+		slog.Warn("ListAgentOKRUsage failed", "agent_id", uuidToString(agentID), "error", err)
+		return nil, false
 	}
 	spend := make(map[string]AgentOKRSpend, len(rows))
 	for _, row := range rows {
 		spend[uuidToString(row.LabelID)] = AgentOKRSpend{
 			TotalTokens:       row.TotalTokens,
 			TotalCostUSDTicks: row.TotalCostUsdTicks,
+			UncostedTokens:    row.UncostedTokens,
 			TaskCount:         row.TaskCount,
 			UnpricedTaskCount: row.UnpricedTaskCount,
 		}
 	}
-	return spend
+	return spend, true
 }
 
 // buildAgentOKRInstructions renders the objectives section appended to an
@@ -348,5 +412,5 @@ func (h *Handler) agentOKRInstructionsFor(ctx context.Context, agentID, workspac
 	if err != nil || len(rows) == 0 {
 		return ""
 	}
-	return buildAgentOKRInstructions(agentOKRsFromRows(rows, nil))
+	return buildAgentOKRInstructions(agentOKRsFromRows(rows, nil, false))
 }

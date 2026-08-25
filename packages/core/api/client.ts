@@ -38,7 +38,7 @@ import type {
   StoredAgentDraft,
   UpdateAgentRequest,
   DispatchPromptPreview,
-  AgentOKR,
+  AgentOKRResponse,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   AgentTask,
@@ -1699,20 +1699,20 @@ export class ApiClient {
     );
   }
 
-  async listAgentOKRs(id: string): Promise<AgentOKR[]> {
+  async listAgentOKRs(id: string): Promise<AgentOKRResponse> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/okrs`);
     return parseWithFallback(
       raw,
       AgentOKRResponseSchema,
-      { okrs: [] },
+      { okrs: [], usage_available: false },
       { endpoint: "GET /api/agents/{id}/okrs" },
-    ).okrs;
+    );
   }
 
   async setAgentOKRs(
     id: string,
     okrs: { objective: string; key_results: string[] }[],
-  ): Promise<AgentOKR[]> {
+  ): Promise<AgentOKRResponse> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/okrs`, {
       method: "PUT",
       body: JSON.stringify({ okrs }),
@@ -1720,9 +1720,9 @@ export class ApiClient {
     return parseWithFallback(
       raw,
       AgentOKRResponseSchema,
-      { okrs: [] },
+      { okrs: [], usage_available: false },
       { endpoint: "PUT /api/agents/{id}/okrs" },
-    ).okrs;
+    );
   }
 
   async archiveAgent(id: string): Promise<Agent> {

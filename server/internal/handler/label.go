@@ -272,6 +272,18 @@ func (h *Handler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	managed, err := h.Queries.IsLabelReferencedByAgentOKR(r.Context(), db.IsLabelReferencedByAgentOKRParams{
+		LabelID: idUUID, WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		slog.Warn("IsLabelReferencedByAgentOKR in UpdateLabel failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to verify label ownership")
+		return
+	}
+	if managed {
+		writeError(w, http.StatusConflict, "label is managed by an Agent OKR; update it from the Agent OKR settings")
+		return
+	}
 	params := db.UpdateLabelParams{
 		ID:          idUUID,
 		WorkspaceID: wsUUID,
@@ -303,6 +315,12 @@ func (h *Handler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 	label, err := h.Queries.UpdateLabel(r.Context(), params)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if managedNow, checkErr := h.Queries.IsLabelReferencedByAgentOKR(r.Context(), db.IsLabelReferencedByAgentOKRParams{
+				LabelID: idUUID, WorkspaceID: wsUUID,
+			}); checkErr == nil && managedNow {
+				writeError(w, http.StatusConflict, "label is managed by an Agent OKR; update it from the Agent OKR settings")
+				return
+			}
 			writeError(w, http.StatusNotFound, "label not found")
 			return
 		}
@@ -341,6 +359,18 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	managed, err := qtx.IsLabelReferencedByAgentOKR(r.Context(), db.IsLabelReferencedByAgentOKRParams{
+		LabelID: idUUID, WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		slog.Warn("IsLabelReferencedByAgentOKR in DeleteLabel failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to verify label ownership")
+		return
+	}
+	if managed {
+		writeError(w, http.StatusConflict, "label is managed by an Agent OKR; remove it from the Agent OKR settings first")
+		return
+	}
 
 	// Keep every relationship cleanup and the catalog deletion atomic. The
 	// resource-label junctions intentionally use application-level cleanup
@@ -362,6 +392,12 @@ func (h *Handler) DeleteLabel(w http.ResponseWriter, r *http.Request) {
 		ID: idUUID, WorkspaceID: wsUUID,
 	}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if managedNow, checkErr := qtx.IsLabelReferencedByAgentOKR(r.Context(), db.IsLabelReferencedByAgentOKRParams{
+				LabelID: idUUID, WorkspaceID: wsUUID,
+			}); checkErr == nil && managedNow {
+				writeError(w, http.StatusConflict, "label is managed by an Agent OKR; remove it from the Agent OKR settings first")
+				return
+			}
 			writeError(w, http.StatusNotFound, "label not found")
 			return
 		}

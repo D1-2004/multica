@@ -63,12 +63,12 @@ describe("OKRTab", () => {
   beforeEach(() => {
     mockList.mockReset();
     mockSet.mockReset();
-    mockList.mockResolvedValue([]);
-    mockSet.mockResolvedValue([]);
+    mockList.mockResolvedValue({ okrs: [], usage_available: true });
+    mockSet.mockResolvedValue({ okrs: [], usage_available: true });
   });
 
   it("renders stored OKRs with their key results", async () => {
-    mockList.mockResolvedValue([
+    mockList.mockResolvedValue({ okrs: [
       {
         objective: "Shorten turnaround",
         label: "O: Shorten turnaround",
@@ -77,7 +77,7 @@ describe("OKRTab", () => {
           { text: "Median under 2h", label: "KR: Median under 2h", color: "#0ea5e9" },
         ],
       },
-    ]);
+    ], usage_available: true });
     renderTab();
     expect(await screen.findByDisplayValue("Shorten turnaround")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Median under 2h")).toBeInTheDocument();
@@ -136,9 +136,9 @@ describe("OKRTab", () => {
   });
 
   it("removes an objective", async () => {
-    mockList.mockResolvedValue([
+    mockList.mockResolvedValue({ okrs: [
       { objective: "Gone", label: "O: Gone", color: "", key_results: [] },
-    ]);
+    ], usage_available: true });
     renderTab();
     await screen.findByDisplayValue("Gone");
     fireEvent.click(screen.getByRole("button", { name: /remove objective/i }));
@@ -146,7 +146,7 @@ describe("OKRTab", () => {
   });
 
   it("shows what each objective and key result has cost", async () => {
-    mockList.mockResolvedValue([
+    mockList.mockResolvedValue({ okrs: [
       {
         objective: "Shorten turnaround",
         label: "O: Shorten turnaround",
@@ -171,7 +171,7 @@ describe("OKRTab", () => {
           },
         ],
       },
-    ]);
+    ], usage_available: true });
     renderTab();
     await screen.findByDisplayValue("Shorten turnaround");
     expect(screen.getByText("$2.50")).toBeInTheDocument();
@@ -181,7 +181,7 @@ describe("OKRTab", () => {
   });
 
   it("marks a cost as a floor when some tasks ran unpriced", async () => {
-    mockList.mockResolvedValue([
+    mockList.mockResolvedValue({ okrs: [
       {
         objective: "Partly priced",
         label: "O: Partly priced",
@@ -194,14 +194,14 @@ describe("OKRTab", () => {
         },
         key_results: [],
       },
-    ]);
+    ], usage_available: true });
     renderTab();
     await screen.findByDisplayValue("Partly priced");
     expect(screen.getByText("$0.50*")).toBeInTheDocument();
   });
 
   it("does not show a cost for an entry that has never run", async () => {
-    mockList.mockResolvedValue([
+    mockList.mockResolvedValue({ okrs: [
       {
         objective: "Brand new",
         label: "O: Brand new",
@@ -214,7 +214,7 @@ describe("OKRTab", () => {
         },
         key_results: [],
       },
-    ]);
+    ], usage_available: true });
     renderTab();
     await screen.findByDisplayValue("Brand new");
     // A zero-task entry has nothing to report; "$0.00" would read as a measured
@@ -222,8 +222,28 @@ describe("OKRTab", () => {
     expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
   });
 
+  it("distinguishes an unavailable usage query from measured zero", async () => {
+    mockList.mockResolvedValue({
+      okrs: [
+        {
+          objective: "Still visible",
+          label: "O: Still visible",
+          color: "",
+          key_results: [],
+        },
+      ],
+      usage_available: false,
+    });
+    renderTab();
+    await screen.findByDisplayValue("Still visible");
+    expect(
+      screen.getByText(/cost data is temporarily unavailable/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("$0.00")).not.toBeInTheDocument();
+  });
+
   it("hides cost while the set is being edited", async () => {
-    mockList.mockResolvedValue([
+    mockList.mockResolvedValue({ okrs: [
       {
         objective: "Costed",
         label: "O: Costed",
@@ -236,7 +256,7 @@ describe("OKRTab", () => {
         },
         key_results: [],
       },
-    ]);
+    ], usage_available: true });
     renderTab();
     await screen.findByDisplayValue("Costed");
     expect(screen.getByText("$3.00")).toBeInTheDocument();
@@ -258,9 +278,9 @@ describe("OKRTab", () => {
   });
 
   it("offers no editing affordance when read-only", async () => {
-    mockList.mockResolvedValue([
+    mockList.mockResolvedValue({ okrs: [
       { objective: "Fixed", label: "O: Fixed", color: "", key_results: [] },
-    ]);
+    ], usage_available: true });
     renderTab(true);
     await screen.findByDisplayValue("Fixed");
     expect(screen.getByDisplayValue("Fixed")).toBeDisabled();
