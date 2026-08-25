@@ -2494,16 +2494,25 @@ export type DispatchPromptPreviewPayload = z.infer<
   typeof DispatchPromptPreviewSchema
 >;
 
+const AgentOKRSpendSchema = z.object({
+  total_tokens: z.number().default(0),
+  total_cost_usd_ticks: z.number().default(0),
+  task_count: z.number().default(0),
+  unpriced_task_count: z.number().default(0),
+});
+
 export const AgentOKRSchema = z.object({
   objective: z.string().default(""),
   label: z.string().default(""),
   color: z.string().default(""),
+  spend: AgentOKRSpendSchema.optional(),
   key_results: z
     .array(
       z.object({
         text: z.string().default(""),
         label: z.string().default(""),
         color: z.string().default(""),
+        spend: AgentOKRSpendSchema.optional(),
       }),
     )
     .default([]),

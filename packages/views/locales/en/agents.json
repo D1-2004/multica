@@ -623,7 +623,7 @@
     },
     "okr": {
       "loading": "Loading OKRs…",
-      "intro": "Objectives and key results this agent works toward. Each one becomes a workspace label, and the agent is told to tag the issues it owns with the ones the work advances.",
+      "intro": "The objectives this agent is accountable for. They are injected into its prompt to inform what it prioritizes and pushes back on — they do not override an explicit instruction in a task. Each entry also becomes a workspace label the agent tags its Issues with, which is where the cost below comes from.",
       "empty": "No OKRs yet.",
       "objective_label": "Objective",
       "objective_placeholder": "e.g. Shorten delivery turnaround",
@@ -633,7 +633,11 @@
       "add_key_result": "Add key result",
       "remove_objective": "Remove objective",
       "remove_key_result": "Remove key result",
-      "label_hint": "Saving creates a workspace label per entry (O: … and KR: …). Removing an OKR leaves its label in place, because issues may already carry it."
+      "label_hint": "Saving creates a workspace label per entry (O: … and KR: …). Removing an OKR leaves its label in place, because issues may already carry it.",
+      "spend_hint": "Cost of every agent task on Issues tagged with this entry.",
+      "spend_partial_hint": "Cost of every agent task on Issues tagged with this entry. Some tasks ran on a model with no price attached, so this is a floor.",
+      "spend_tasks_one": "{{count}} task",
+      "spend_tasks_other": "{{count}} tasks"
     },
     "env": {
       "intro_readonly": "Injected into the agent process at launch. Only workspace owners and admins can read or edit values; every reveal and edit is recorded in the workspace audit log.",
