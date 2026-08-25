@@ -596,7 +596,20 @@
       "always_new_issue_label": "每条消息新建任务",
       "always_new_issue_hint": "在任务模式下，每条新消息单独建一个任务，而不是追加到上一个任务。审批和日程事件仍会延续原任务。",
       "open_dialog": "入站提示词",
-      "open_dialog_hint": "查看并自定义这个智能体收到的指令。"
+      "open_dialog_hint": "查看并自定义这个智能体收到的指令。",
+      "scope_title": "什么时候会注入",
+      "scope_body": "只对来自外部渠道的工作生效。你在 Multica 里自己创建的任务和对话不会收到它。不支持独立指令字段的旧运行时，会改为把策略前置到任务正文里。",
+      "condition_dingtalk_dispatch": "派发到该智能体的钉钉消息、日程事件和审批事件会注入。",
+      "condition_per_dispatch": "由 Router 在每次派发时解析——本次要回复的会话、消息和发送者。",
+      "condition_any_dingtalk_task": "所有钉钉任务都会注入，包括没有派发信封的那些。",
+      "condition_enterprise_runtime": "仅当智能体运行在企业身份运行时上才注入。",
+      "status_active": "本模式下生效",
+      "status_inactive": "不生效",
+      "show_content": "展开内容",
+      "hide_content": "收起内容",
+      "content_empty": "未配置内容。",
+      "assembled_title": "组装结果",
+      "assembled_hint": "以上各段按顺序拼接——这就是智能体收到的文本。"
     },
     "okr": {
       "loading": "正在加载 OKR…",

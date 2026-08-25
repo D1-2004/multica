@@ -606,7 +606,20 @@
       "always_new_issue_label": "New task for every message",
       "always_new_issue_hint": "In Task mode, create a separate task for each incoming message instead of appending to the previous one. Approval and calendar events still continue their original task.",
       "open_dialog": "Inbound prompt",
-      "open_dialog_hint": "Review and customize what this agent is told."
+      "open_dialog_hint": "Review and customize what this agent is told.",
+      "scope_title": "When this applies",
+      "scope_body": "Only to work that arrives from an external channel. Issues and chats you create inside Multica never receive it. Older runtimes that do not support a separate instruction field get the policy prepended to the task content instead.",
+      "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent.",
+      "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to.",
+      "condition_any_dingtalk_task": "Injected for every DingTalk task, including ones that arrive without a dispatch envelope.",
+      "condition_enterprise_runtime": "Injected only when the agent runs on an enterprise-identity runtime.",
+      "status_active": "Active in this mode",
+      "status_inactive": "Not active",
+      "show_content": "Show content",
+      "hide_content": "Hide content",
+      "content_empty": "Nothing configured.",
+      "assembled_title": "Assembled result",
+      "assembled_hint": "The segments above, joined in order — this is the text the agent receives."
     },
     "okr": {
       "loading": "Loading OKRs…",

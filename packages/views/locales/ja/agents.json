@@ -452,7 +452,20 @@
       "always_new_issue_label": "メッセージごとに新しいタスク",
       "always_new_issue_hint": "In Task mode, create a separate task for each incoming message instead of appending to the previous one. Approval and calendar events still continue their original task.",
       "open_dialog": "受信プロンプト",
-      "open_dialog_hint": "Review and customize what this agent is told."
+      "open_dialog_hint": "Review and customize what this agent is told.",
+      "scope_title": "適用されるタイミング",
+      "scope_body": "Only to work that arrives from an external channel. Issues and chats you create inside Multica never receive it. Older runtimes that do not support a separate instruction field get the policy prepended to the task content instead.",
+      "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent.",
+      "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to.",
+      "condition_any_dingtalk_task": "Injected for every DingTalk task, including ones that arrive without a dispatch envelope.",
+      "condition_enterprise_runtime": "Injected only when the agent runs on an enterprise-identity runtime.",
+      "status_active": "このモードで有効",
+      "status_inactive": "無効",
+      "show_content": "内容を表示",
+      "hide_content": "内容を隠す",
+      "content_empty": "Nothing configured.",
+      "assembled_title": "組み立て結果",
+      "assembled_hint": "The segments above, joined in order — this is the text the agent receives."
     },
     "okr": {
       "loading": "OKR を読み込み中…",

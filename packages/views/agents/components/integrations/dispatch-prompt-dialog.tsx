@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, RotateCcw, Save } from "lucide-react";
+import { ChevronDown, Info, Loader2, RotateCcw, Save } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import type { Agent, DispatchPromptSegment } from "@multica/core/types";
@@ -20,6 +20,15 @@ import { useT } from "../../../i18n";
 const SURFACES = ["issue", "chat", "auto"] as const;
 type Surface = (typeof SURFACES)[number];
 
+/** Localized copy each segment card needs, resolved by the parent so the typed
+ *  i18n selector stays bound to the "agents" namespace. */
+type SegmentCopy = {
+  label: string;
+  source: string;
+  condition: string;
+  excluded: string;
+};
+
 /**
  * Shows the inbound prompt an agent actually receives and lets its owner
  * replace individual segments.
@@ -28,6 +37,12 @@ type Surface = (typeof SURFACES)[number];
  * composes it with the same function the claim path uses, so what is shown
  * cannot drift from what the agent is told. Reproducing the composition in the
  * client would be a second implementation that silently starts lying.
+ *
+ * The layout leads with conditions, not bytes. The question an owner actually
+ * has is "when does this reach the agent" — so every card states its injection
+ * condition and whether it is active, and the raw text stays collapsed. Four
+ * always-open scroll panes nested inside a scrolling dialog made the structure
+ * unreadable.
  */
 export function DispatchPromptDialog({
   agent,
@@ -114,9 +129,8 @@ export function DispatchPromptDialog({
     }
   };
 
-  // Explicit lookups rather than dynamic indexing: the typed i18n selector
-  // cannot express `$.x[id]`, and an unknown id falls back to the raw id so a
-  // segment added server-side still renders instead of blanking the row.
+  // An unknown id from a newer backend falls back to the raw id so the row
+  // still renders instead of going blank.
   const segmentLabel = (id: string) => {
     switch (id) {
       case "policy":
@@ -132,51 +146,59 @@ export function DispatchPromptDialog({
     }
   };
 
+  const copyFor = (segment: DispatchPromptSegment): SegmentCopy => ({
+    label: segmentLabel(segment.id),
+    source:
+      segment.source === "managed"
+        ? t(($) => $.tab_body.dispatch.source_managed)
+        : segment.source === "router"
+          ? t(($) => $.tab_body.dispatch.source_router)
+          : t(($) => $.tab_body.dispatch.source_builtin),
+    condition: (() => {
+      switch (segment.condition) {
+        case "dingtalk_dispatch":
+          return t(($) => $.tab_body.dispatch.condition_dingtalk_dispatch);
+        case "per_dispatch":
+          return t(($) => $.tab_body.dispatch.condition_per_dispatch);
+        case "any_dingtalk_task":
+          return t(($) => $.tab_body.dispatch.condition_any_dingtalk_task);
+        case "enterprise_runtime":
+          return t(($) => $.tab_body.dispatch.condition_enterprise_runtime);
+        default:
+          return "";
+      }
+    })(),
+    excluded: (() => {
+      switch (segment.excluded_reason) {
+        case "no_dispatch_context":
+          return t(($) => $.tab_body.dispatch.excluded_no_dispatch_context);
+        case "not_a_dingtalk_task":
+          return t(($) => $.tab_body.dispatch.excluded_not_a_dingtalk_task);
+        case "not_an_enterprise_identity_runtime":
+          return t(($) => $.tab_body.dispatch.excluded_not_enterprise_runtime);
+        case "not_supplied":
+          return t(($) => $.tab_body.dispatch.excluded_not_supplied);
+        default:
+          return t(($) => $.tab_body.dispatch.excluded_empty);
+      }
+    })(),
+  });
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] w-[min(56rem,92vw)] max-w-none flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="border-b px-5 py-4">
+      <DialogContent className="flex max-h-[88vh] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[60rem]">
+        <DialogHeader className="border-b px-6 py-4">
           <DialogTitle>{t(($) => $.tab_body.dispatch.dialog_title)}</DialogTitle>
           <DialogDescription>
             {t(($) => $.tab_body.dispatch.dialog_description)}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
-            <span className="text-caption text-muted-foreground">
-              {t(($) => $.tab_body.dispatch.preview_mode)}
-            </span>
-            {SURFACES.map((option) => (
-              <Button
-                key={option}
-                size="xs"
-                variant={surface === option ? "default" : "outline"}
-                onClick={() => {
-                  setSurface(option);
-                  setActiveSegment(null);
-                }}
-              >
-                {surfaceLabel(option)}
-              </Button>
-            ))}
-          </div>
-
-          {isLoading ? (
-            <div className="flex items-center gap-2 py-8 text-caption text-muted-foreground">
-              <Loader2
-                className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
-                aria-hidden="true"
-              />
-              {t(($) => $.tab_body.dispatch.preview_loading)}
-            </div>
-          ) : segments.length === 0 ? (
-            <p className="py-8 text-caption text-muted-foreground">
-              {t(($) => $.tab_body.dispatch.preview_unavailable)}
-            </p>
-          ) : selected ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          {selected ? (
             <SegmentEditor
               segment={selected}
+              copy={copyFor(selected)}
               draft={draft}
               onDraftChange={setDraft}
               onBack={() => setActiveSegment(null)}
@@ -184,42 +206,96 @@ export function DispatchPromptDialog({
               onRestore={restoreSegment}
               saving={saving}
               readOnly={readOnly}
-              label={segmentLabel(selected.id)}
             />
           ) : (
-            <SegmentList
-              segments={segments}
-              onSelect={setActiveSegment}
-              segmentLabel={segmentLabel}
-              readOnly={readOnly}
-            />
-          )}
+            <>
+              <div className="mb-5 flex gap-3 rounded-lg border bg-muted/30 px-4 py-3">
+                <Info
+                  className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <div className="min-w-0 space-y-1">
+                  <p className="text-body font-medium">
+                    {t(($) => $.tab_body.dispatch.scope_title)}
+                  </p>
+                  <p className="text-pretty text-caption leading-relaxed text-muted-foreground">
+                    {t(($) => $.tab_body.dispatch.scope_body)}
+                  </p>
+                </div>
+              </div>
 
-          {!selected && (preview?.runtime_sections.length ?? 0) > 0 && (
-            <div className="mt-6 rounded-lg border bg-muted/30 px-4 py-3">
-              <p className="text-body font-medium">
-                {t(($) => $.tab_body.dispatch.runtime_sections_title)}
-              </p>
-              <p className="mt-1 text-caption leading-snug text-muted-foreground">
-                {t(($) => $.tab_body.dispatch.runtime_sections_hint)}
-              </p>
-              <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1">
-                {preview?.runtime_sections.map((section) => (
-                  <li
-                    key={section.id}
-                    className="text-caption text-muted-foreground"
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <span className="text-caption text-muted-foreground">
+                  {t(($) => $.tab_body.dispatch.preview_mode)}
+                </span>
+                {SURFACES.map((option) => (
+                  <Button
+                    key={option}
+                    size="xs"
+                    variant={surface === option ? "default" : "outline"}
+                    onClick={() => setSurface(option)}
                   >
-                    {section.id}
-                    <span className="ml-1 opacity-60">({section.origin})</span>
-                  </li>
+                    {surfaceLabel(option)}
+                  </Button>
                 ))}
-              </ul>
-            </div>
+              </div>
+
+              {isLoading ? (
+                <div className="flex items-center gap-2 py-10 text-caption text-muted-foreground">
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                  {t(($) => $.tab_body.dispatch.preview_loading)}
+                </div>
+              ) : segments.length === 0 ? (
+                <p className="py-10 text-caption text-muted-foreground">
+                  {t(($) => $.tab_body.dispatch.preview_unavailable)}
+                </p>
+              ) : (
+                <ol className="space-y-2.5">
+                  {segments.map((segment, index) => (
+                    <SegmentCard
+                      key={segment.id}
+                      segment={segment}
+                      copy={copyFor(segment)}
+                      index={index + 1}
+                      onEdit={() => setActiveSegment(segment.id)}
+                      readOnly={readOnly}
+                    />
+                  ))}
+                </ol>
+              )}
+
+              {(preview?.runtime_sections.length ?? 0) > 0 && (
+                <div className="mt-6 rounded-lg border px-4 py-3">
+                  <p className="text-body font-medium">
+                    {t(($) => $.tab_body.dispatch.runtime_sections_title)}
+                  </p>
+                  <p className="mt-1 text-pretty text-caption leading-relaxed text-muted-foreground">
+                    {t(($) => $.tab_body.dispatch.runtime_sections_hint)}
+                  </p>
+                  <ul className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1">
+                    {preview?.runtime_sections.map((section) => (
+                      <li
+                        key={section.id}
+                        className="text-caption text-muted-foreground"
+                      >
+                        {section.id}
+                        <span className="ml-1 opacity-60">
+                          ({section.origin})
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
         </div>
 
         {!selected && (
-          <div className="flex items-start gap-4 border-t px-5 py-4">
+          <div className="flex items-start gap-4 border-t px-6 py-4">
             <div className="min-w-0 flex-1 space-y-1">
               <label
                 htmlFor={`agent-dispatch-always-new-issue-${agent.id}`}
@@ -227,7 +303,7 @@ export function DispatchPromptDialog({
               >
                 {t(($) => $.tab_body.dispatch.always_new_issue_label)}
               </label>
-              <p className="text-pretty text-caption leading-snug text-muted-foreground">
+              <p className="text-pretty text-caption leading-relaxed text-muted-foreground">
                 {t(($) => $.tab_body.dispatch.always_new_issue_hint)}
               </p>
             </div>
@@ -250,101 +326,98 @@ export function DispatchPromptDialog({
   );
 }
 
-function SegmentList({
-  segments,
-  onSelect,
-  segmentLabel,
+function SegmentCard({
+  segment,
+  copy,
+  index,
+  onEdit,
   readOnly,
 }: {
-  segments: DispatchPromptSegment[];
-  onSelect: (id: string) => void;
-  segmentLabel: (id: string) => string;
+  segment: DispatchPromptSegment;
+  copy: SegmentCopy;
+  index: number;
+  onEdit: () => void;
   readOnly: boolean;
 }) {
   const { t } = useT("agents");
-  const sourceLabel = (source: string) => {
-    switch (source) {
-      case "managed":
-        return t(($) => $.tab_body.dispatch.source_managed);
-      case "router":
-        return t(($) => $.tab_body.dispatch.source_router);
-      default:
-        return t(($) => $.tab_body.dispatch.source_builtin);
-    }
-  };
-  const excludedLabel = (reason: string | undefined) => {
-    switch (reason) {
-      case "no_dispatch_context":
-        return t(($) => $.tab_body.dispatch.excluded_no_dispatch_context);
-      case "not_a_dingtalk_task":
-        return t(($) => $.tab_body.dispatch.excluded_not_a_dingtalk_task);
-      case "not_an_enterprise_identity_runtime":
-        return t(($) => $.tab_body.dispatch.excluded_not_enterprise_runtime);
-      case "not_supplied":
-        return t(($) => $.tab_body.dispatch.excluded_not_supplied);
-      default:
-        return t(($) => $.tab_body.dispatch.excluded_empty);
-    }
-  };
+  const [expanded, setExpanded] = useState(false);
+  const hasContent = segment.effective_text.trim().length > 0;
+
   return (
-    <ol className="space-y-2">
-      {segments.map((segment, index) => (
-        <li key={segment.id}>
-          <div
-            className={`rounded-lg border px-4 py-3 ${
-              segment.included ? "" : "opacity-60"
-            }`}
-          >
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className="text-caption tabular-nums text-muted-foreground">
-                {index + 1}
+    <li className="rounded-lg border">
+      <div className="flex flex-wrap items-start gap-x-3 gap-y-2 px-4 py-3">
+        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-caption tabular-nums text-muted-foreground">
+          {index}
+        </span>
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-body font-medium">{copy.label}</span>
+            <span className="rounded border px-1.5 py-0.5 text-caption text-muted-foreground">
+              {copy.source}
+            </span>
+            {segment.overridden && (
+              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-caption font-medium text-primary">
+                {t(($) => $.tab_body.dispatch.badge_overridden)}
               </span>
-              <span className="text-body font-medium">
-                {segmentLabel(segment.id)}
+            )}
+            {segment.included ? (
+              <span className="text-caption font-medium text-emerald-600 dark:text-emerald-400">
+                {t(($) => $.tab_body.dispatch.status_active)}
               </span>
-              <span className="rounded border px-1.5 py-0.5 text-caption text-muted-foreground">
-                {sourceLabel(segment.source)}
+            ) : (
+              <span className="text-caption text-muted-foreground">
+                {t(($) => $.tab_body.dispatch.status_inactive)} · {copy.excluded}
               </span>
-              {segment.overridden && (
-                <span className="rounded bg-primary/10 px-1.5 py-0.5 text-caption font-medium text-primary">
-                  {t(($) => $.tab_body.dispatch.badge_overridden)}
-                </span>
-              )}
-              {!segment.included && (
-                <span className="text-caption text-muted-foreground">
-                  {excludedLabel(segment.excluded_reason)}
-                </span>
-              )}
-              <span className="flex-1" />
-              {segment.customizable && !readOnly && (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => onSelect(segment.id)}
-                >
-                  {t(($) => $.tab_body.dispatch.edit_segment)}
-                </Button>
-              )}
-              {!segment.customizable && (
-                <span className="text-caption text-muted-foreground">
-                  {t(($) => $.tab_body.dispatch.not_customizable)}
-                </span>
-              )}
-            </div>
-            {segment.effective_text.trim().length > 0 && (
-              <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap text-caption leading-6 text-muted-foreground">
-                {segment.effective_text}
-              </pre>
             )}
           </div>
-        </li>
-      ))}
-    </ol>
+          {copy.condition && (
+            <p className="text-pretty text-caption leading-relaxed text-muted-foreground">
+              {copy.condition}
+            </p>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {hasContent && (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => setExpanded((value) => !value)}
+              aria-expanded={expanded}
+            >
+              <ChevronDown
+                className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`}
+                aria-hidden="true"
+              />
+              {expanded
+                ? t(($) => $.tab_body.dispatch.hide_content)
+                : t(($) => $.tab_body.dispatch.show_content)}
+            </Button>
+          )}
+          {segment.customizable ? (
+            !readOnly && (
+              <Button size="xs" variant="outline" onClick={onEdit}>
+                {t(($) => $.tab_body.dispatch.edit_segment)}
+              </Button>
+            )
+          ) : (
+            <span className="text-caption text-muted-foreground">
+              {t(($) => $.tab_body.dispatch.not_customizable)}
+            </span>
+          )}
+        </div>
+      </div>
+      {expanded && (
+        <pre className="max-h-72 overflow-auto border-t px-4 py-3 text-caption leading-relaxed whitespace-pre-wrap text-muted-foreground">
+          {segment.effective_text}
+        </pre>
+      )}
+    </li>
   );
 }
 
 function SegmentEditor({
   segment,
+  copy,
   draft,
   onDraftChange,
   onBack,
@@ -352,9 +425,9 @@ function SegmentEditor({
   onRestore,
   saving,
   readOnly,
-  label,
 }: {
   segment: DispatchPromptSegment;
+  copy: SegmentCopy;
   draft: string;
   onDraftChange: (value: string) => void;
   onBack: () => void;
@@ -362,7 +435,6 @@ function SegmentEditor({
   onRestore: () => void;
   saving: boolean;
   readOnly: boolean;
-  label: string;
 }) {
   const { t } = useT("agents");
   const isDirty = draft !== segment.effective_text;
@@ -372,9 +444,14 @@ function SegmentEditor({
         <Button size="xs" variant="ghost" onClick={onBack}>
           {t(($) => $.tab_body.dispatch.back_to_structure)}
         </Button>
-        <span className="text-body font-medium">{label}</span>
+        <span className="text-body font-medium">{copy.label}</span>
       </div>
-      <p className="text-caption leading-snug text-muted-foreground">
+      {copy.condition && (
+        <p className="text-pretty text-caption leading-relaxed text-muted-foreground">
+          {copy.condition}
+        </p>
+      )}
+      <p className="text-caption leading-relaxed text-muted-foreground">
         {segment.overridden
           ? t(($) => $.tab_body.dispatch.segment_override_active)
           : t(($) => $.tab_body.dispatch.segment_seeded_hint)}
@@ -382,10 +459,10 @@ function SegmentEditor({
       <Textarea
         value={draft}
         onChange={(event) => onDraftChange(event.target.value)}
-        rows={16}
-        className="min-h-80 resize-y leading-6"
+        rows={18}
+        className="min-h-96 resize-y leading-relaxed"
         disabled={readOnly}
-        aria-label={label}
+        aria-label={copy.label}
       />
       {!readOnly && (
         <div className="flex flex-wrap items-center justify-end gap-3">

@@ -363,3 +363,47 @@ func TestGetAgentDispatchPromptPreviewShowsOverrideAgainstManaged(t *testing.T) 
 		t.Errorf("assembled instruction still carries the managed policy: %q", response.Instruction)
 	}
 }
+
+// Every segment must report its injection condition, including the ones that
+// are active right now. "It is showing in this preview" does not tell an owner
+// when the segment will actually reach the agent.
+func TestDispatchPromptPreviewReportsAnInjectionConditionForEverySegment(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "dispatch-preview-conditions", nil)
+
+	w := httptest.NewRecorder()
+	testHandler.GetAgentDispatchPromptPreview(w, withURLParam(newRequestAs(
+		testUserID, http.MethodGet, "/api/agents/"+agentID+"/dispatch-prompt-preview", nil,
+	), "id", agentID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview: got %d: %s", w.Code, w.Body.String())
+	}
+	var response AgentDispatchPromptPreviewResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	want := map[string]string{
+		DispatchSegmentPolicy:             "dingtalk_dispatch",
+		DispatchSegmentContext:            "per_dispatch",
+		DispatchSegmentReplyFormatting:    "any_dingtalk_task",
+		DispatchSegmentEnterpriseIdentity: "enterprise_runtime",
+	}
+	seen := map[string]bool{}
+	for _, segment := range response.Segments {
+		seen[segment.ID] = true
+		if segment.Condition == "" {
+			t.Errorf("segment %q reported no injection condition", segment.ID)
+		}
+		if expected, ok := want[segment.ID]; ok && segment.Condition != expected {
+			t.Errorf("segment %q condition = %q, want %q", segment.ID, segment.Condition, expected)
+		}
+	}
+	for id := range want {
+		if !seen[id] {
+			t.Errorf("preview omitted segment %q", id)
+		}
+	}
+}

@@ -357,7 +357,6 @@ describe("AgentOverviewPane Identity tab", () => {
       "Capabilities",
       "Settings",
       "Instructions",
-      "OKR",
       "Skills",
       "MCP",
       "Local Runner",

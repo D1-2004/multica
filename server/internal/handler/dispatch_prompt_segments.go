@@ -55,6 +55,11 @@ type DispatchPromptSegment struct {
 	Customizable bool `json:"customizable"`
 	// Overridden reports whether this agent authored a replacement.
 	Overridden bool `json:"overridden"`
+	// Condition names the gate that decides whether this segment is injected at
+	// all. It is always present, not only when the segment is excluded: an owner
+	// editing a prompt needs to know when it will reach the agent, and "it is
+	// showing right now" does not answer that. The UI maps the key to copy.
+	Condition string `json:"condition"`
 	// Included reports whether the segment reaches the agent in the previewed
 	// scenario; ExcludedReason names the gate that dropped it.
 	Included       bool   `json:"included"`
@@ -138,13 +143,14 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	segments = append(segments, dispatchSegment(
 		DispatchSegmentPolicy, dispatchSegmentSourceManaged,
 		managedPolicy, in.Overrides,
-		in.Present, "no_dispatch_context",
+		in.Present, "dingtalk_dispatch", "no_dispatch_context",
 	))
 
 	segments = append(segments, DispatchPromptSegment{
 		ID:             DispatchSegmentContext,
 		Source:         dispatchSegmentSourceRouter,
 		Customizable:   false,
+		Condition:      "per_dispatch",
 		Included:       in.Present && strings.TrimSpace(in.Stored.ContextPrompt) != "",
 		ExcludedReason: dispatchExcludedReason(in.Present, "no_dispatch_context", "not_supplied"),
 		ManagedText:    in.Stored.ContextPrompt,
@@ -154,7 +160,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	segments = append(segments, dispatchSegment(
 		DispatchSegmentReplyFormatting, dispatchSegmentSourceBuiltin,
 		dingTalkReplyFormattingInstruction, in.Overrides,
-		in.DingTalkContext, "not_a_dingtalk_task",
+		in.DingTalkContext, "any_dingtalk_task", "not_a_dingtalk_task",
 	))
 
 	enterpriseManaged := ""
@@ -164,7 +170,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	segments = append(segments, dispatchSegment(
 		DispatchSegmentEnterpriseIdentity, dispatchSegmentSourceBuiltin,
 		enterpriseManaged, in.Overrides,
-		strings.TrimSpace(in.EnterpriseAuthorizationURL) != "", "not_an_enterprise_identity_runtime",
+		strings.TrimSpace(in.EnterpriseAuthorizationURL) != "", "enterprise_runtime", "not_an_enterprise_identity_runtime",
 	))
 
 	return segments
@@ -174,6 +180,7 @@ func dispatchSegment(
 	id, source, managed string,
 	overrides map[string]string,
 	applies bool,
+	condition string,
 	excludedReason string,
 ) DispatchPromptSegment {
 	// A blank override is "restore the managed text", never "make this segment
@@ -197,6 +204,7 @@ func dispatchSegment(
 		ID:             id,
 		Source:         source,
 		Customizable:   true,
+		Condition:      condition,
 		Overridden:     overridden,
 		Included:       included,
 		ExcludedReason: reason,

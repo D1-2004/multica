@@ -2470,6 +2470,7 @@ export const DispatchPromptSegmentSchema = z.object({
   source: z.string().default("builtin"),
   customizable: z.boolean().default(false),
   overridden: z.boolean().default(false),
+  condition: z.string().default(""),
   included: z.boolean().default(false),
   excluded_reason: z.string().optional(),
   managed_text: z.string().default(""),

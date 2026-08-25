@@ -1291,6 +1291,10 @@ export interface DispatchPromptSegment {
   source: string;
   customizable: boolean;
   overridden: boolean;
+  /** The gate that decides whether this segment is injected at all. Always
+   *  present — "it is showing right now" does not tell an owner when it will
+   *  reach the agent. */
+  condition: string;
   /** Whether the segment reaches the agent in the previewed scenario. */
   included: boolean;
   excluded_reason?: string;

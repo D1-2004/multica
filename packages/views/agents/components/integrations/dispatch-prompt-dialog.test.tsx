@@ -54,6 +54,7 @@ function preview(overrides: Partial<DispatchPromptPreview> = {}): DispatchPrompt
         id: "policy",
         source: "managed",
         customizable: true,
+        condition: "dingtalk_dispatch",
         overridden: false,
         included: true,
         managed_text: "MANAGED POLICY",
@@ -63,6 +64,7 @@ function preview(overrides: Partial<DispatchPromptPreview> = {}): DispatchPrompt
         id: "context",
         source: "router",
         customizable: false,
+        condition: "per_dispatch",
         overridden: false,
         included: false,
         excluded_reason: "not_supplied",
@@ -73,6 +75,7 @@ function preview(overrides: Partial<DispatchPromptPreview> = {}): DispatchPrompt
         id: "reply_formatting",
         source: "builtin",
         customizable: true,
+        condition: "any_dingtalk_task",
         overridden: false,
         included: true,
         managed_text: "REPLY RULES",
@@ -139,10 +142,43 @@ describe("DispatchPromptDialog", () => {
     expect(screen.getAllByRole("button", { name: /^edit$/i })).toHaveLength(2);
   });
 
-  it("explains why an excluded segment is not in play", async () => {
+  it("states each segment's injection condition, not just its bytes", async () => {
     renderDialog();
     await screen.findByText("Managed policy");
-    expect(screen.getByText(/resolved per dispatch/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Injected for DingTalk messages, calendar events/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Injected for every DingTalk task/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Resolved by the router for each dispatch/i),
+    ).toBeInTheDocument();
+  });
+
+  it("marks which segments are active in the previewed mode", async () => {
+    renderDialog();
+    await screen.findByText("Managed policy");
+    expect(screen.getAllByText("Active in this mode")).toHaveLength(2);
+    expect(
+      screen.getByText(/Not active · resolved per dispatch/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says up front that Multica-created work never receives this", async () => {
+    renderDialog();
+    expect(
+      await screen.findByText(/Issues and chats you create inside Multica/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps segment text collapsed until asked", async () => {
+    renderDialog();
+    await screen.findByText("Managed policy");
+    expect(screen.queryByText("MANAGED POLICY")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getAllByRole("button", { name: /show content/i })[0]!);
+    expect(await screen.findByText("MANAGED POLICY")).toBeInTheDocument();
   });
 
   it("re-requests the preview when the mode changes", async () => {
@@ -191,6 +227,7 @@ describe("DispatchPromptDialog", () => {
             id: "policy",
             source: "managed",
             customizable: true,
+            condition: "dingtalk_dispatch",
             overridden: true,
             included: true,
             managed_text: "MANAGED POLICY",

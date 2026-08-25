@@ -155,12 +155,21 @@ builder, even when Diamond common or Router context sections are available.
 The claim-time `instruction` is composed from four ordered segments, not one
 blob:
 
-| # | Segment | Source | Overridable |
-|---|---|---|---|
-| 1 | `policy` | Diamond `common` + `<surface>` | yes |
-| 2 | `context` | Router, per dispatch | no |
-| 3 | `reply_formatting` | product constant | yes |
-| 4 | `enterprise_identity` | product constant + resolved URL | yes |
+| # | Segment | Source | Overridable | Injected when |
+|---|---|---|---|---|
+| 1 | `policy` | Diamond `common` + `<surface>` | yes | the task carries a dispatch envelope this projection covers (`dingtalk_dispatch`) |
+| 2 | `context` | Router, per dispatch | no | the Router supplied a `contextPrompt` (`per_dispatch`) |
+| 3 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
+| 4 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
+
+Each segment reports its gate as a stable `condition` key, present whether or
+not the segment is active in the previewed scenario. A preview that only
+explained exclusions would answer "why is this missing" but not "when will this
+reach the agent", which is the question an owner editing a prompt actually has.
+
+None of these segments reach work created inside Multica — a web-authored Issue
+or a Multica chat is not a dispatch. Daemons without `task-instruction-v1` get
+no `instruction` at all; the policy is prepended into the task content instead.
 
 `agent.dispatch_prompt_overrides` replaces segments by id; an absent key keeps
 the managed text, and a blank value means "restore managed" rather than "make
