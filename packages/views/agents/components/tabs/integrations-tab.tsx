@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { MessagesSquare, ScanLine, Webhook } from "lucide-react";
+import { MessagesSquare, ScanLine, SlidersHorizontal, Webhook } from "lucide-react";
 import type { Agent } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -17,6 +18,7 @@ import { WecomAgentBindButton } from "../../../settings/components/wecom-tab";
 import { WecomMark } from "../../../settings/components/wecom-mark";
 import { useT } from "../../../i18n";
 import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-binding";
+import { DispatchPromptDialog } from "../integrations/dispatch-prompt-dialog";
 import { AgentMCPLinkCard } from "../integrations/mcp-link-card";
 
 /**
@@ -38,15 +40,20 @@ export function IntegrationsTab({
   platformIntegrationsConfigured = true,
   canOperateDingTalkBinding,
   dingTalkBindingPermissionLoading,
+  onUpdate,
+  canEdit = false,
 }: {
   agent: Agent;
   showMcpLink?: boolean;
   platformIntegrationsConfigured?: boolean;
   canOperateDingTalkBinding: boolean;
   dingTalkBindingPermissionLoading: boolean;
+  onUpdate?: (id: string, data: Record<string, unknown>) => Promise<void>;
+  canEdit?: boolean;
 }) {
   const { t } = useT("agents");
   const { t: ts } = useT("settings");
+  const [promptDialogOpen, setPromptDialogOpen] = useState(false);
   const wsId = useWorkspaceId();
   const user = useAuthStore((s) => s.user);
 
@@ -172,6 +179,43 @@ export function IntegrationsTab({
         canOperate={canOperateDingTalkBinding}
         permissionLoading={dingTalkBindingPermissionLoading}
       />
+
+      {onUpdate && (
+        <section className="rounded-lg border">
+          <div className="flex items-start gap-3 p-4">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+              <SlidersHorizontal className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 flex-1 space-y-1">
+              <h3 className="text-body font-medium">
+                {t(($) => $.tab_body.dispatch.open_dialog)}
+              </h3>
+              <p className="text-caption leading-snug text-muted-foreground">
+                {t(($) => $.tab_body.dispatch.open_dialog_hint)}
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end border-t px-4 py-3">
+            <button
+              type="button"
+              onClick={() => setPromptDialogOpen(true)}
+              className="rounded-md border px-3 py-1.5 text-caption font-medium transition-colors hover:bg-accent"
+            >
+              {t(($) => $.tab_body.dispatch.open_dialog)}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {onUpdate && (
+        <DispatchPromptDialog
+          agent={agent}
+          open={promptDialogOpen}
+          onOpenChange={setPromptDialogOpen}
+          onSave={(updates) => onUpdate(agent.id, updates)}
+          readOnly={!canEdit}
+        />
+      )}
 
       <section className="rounded-lg border">
         <div className="flex items-start gap-3 p-4">

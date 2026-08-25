@@ -86,6 +86,11 @@ export type {
   RuntimeLocalSkillImportResult,
   IssueUsageSummary,
   MikaBootstrapResponse,
+  DispatchPromptSegment,
+  DispatchPromptRuntimeSection,
+  DispatchPromptPreview,
+  AgentOKR,
+  AgentOKRKeyResult,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
 export type {

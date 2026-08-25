@@ -106,6 +106,17 @@ WHERE task_id = @task_id
   AND runtime_id = @runtime_id
   AND status = 'starting';
 
+-- name: GetLatestAgentTaskRuntimeStartAttemptByTask :one
+-- Skill visibility and other execution-time policy must follow the backend
+-- that actually launched this task, even after the shared Runtime row rotates
+-- to another backend or artifact.
+SELECT *
+FROM agent_task_runtime_start_attempt
+WHERE task_id = @task_id
+  AND runtime_id = @runtime_id
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+
 -- name: FinalizeAgentTaskRuntimeStartAttemptForTask :one
 WITH claimable_task AS MATERIALIZED (
     SELECT id, context

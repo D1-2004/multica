@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS agent_okr_agent_idx;

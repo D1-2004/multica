@@ -2096,6 +2096,23 @@ func skillImportOverwriteFailure(err error) (int, string) {
 	}
 }
 
+// mergeImportedSkillConfig keeps execution policy owned by the workspace while
+// refreshing importer-owned provenance. Re-importing a skill must not silently
+// remove its Runtime capability boundary.
+func mergeImportedSkillConfig(existingRaw []byte, imported map[string]any) map[string]any {
+	merged := make(map[string]any, len(imported)+1)
+	for key, value := range imported {
+		merged[key] = value
+	}
+	var existing map[string]any
+	if err := json.Unmarshal(existingRaw, &existing); err == nil {
+		if execution, ok := existing["execution"]; ok {
+			merged["execution"] = execution
+		}
+	}
+	return merged
+}
+
 func (h *Handler) resolveImportSkillConflict(w http.ResponseWriter, r *http.Request, strategy string, workspaceID string, workspaceUUID, creatorUUID pgtype.UUID, creatorID string, name string, imported *importedSkill, config map[string]any, files []CreateSkillFileRequest, existing db.Skill) {
 	existingInfo := existingSkillIdentity(existing, creatorID)
 	switch strategy {

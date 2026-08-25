@@ -65,7 +65,7 @@ func TestBuildDispatchPromptSeparatesDisplayAndContextInstruction(t *testing.T) 
 			t.Fatalf("display content leaked %q: %q", secret, p.DisplayContent)
 		}
 	}
-	if instruction := buildDispatchInstruction(nil, c.Surface.Type, c.ContextPrompt); instruction != "ROUTER CONTEXT" {
+	if instruction := buildDispatchInstructionForTest(nil, c.Surface.Type, nil, c.ContextPrompt); instruction != "ROUTER CONTEXT" {
 		t.Fatalf("instruction = %q, want Router context only without configured prompts", instruction)
 	}
 }
@@ -92,7 +92,7 @@ func TestCalendarStartedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
 	if !strings.Contains(prompt.DisplayContent, "项目评审会") || strings.Contains(prompt.DisplayContent, "uid-secret") {
 		t.Fatalf("calendar display content = %q", prompt.DisplayContent)
 	}
-	if instruction := buildDispatchInstruction(nil, c.Surface.Type, c.ContextPrompt); instruction != "CALENDAR CONTEXT" {
+	if instruction := buildDispatchInstructionForTest(nil, c.Surface.Type, nil, c.ContextPrompt); instruction != "CALENDAR CONTEXT" {
 		t.Fatalf("calendar instruction = %q", instruction)
 	}
 	if got := dispatchWindowIdempotencyKey(c); got != "calendar:calendar-1:1784217600000" {
@@ -132,7 +132,7 @@ func TestCalendarStartedDispatchWithDWSOutboundUsesRouterContextInstruction(t *t
 	if err := c.validate(); err != nil {
 		t.Fatalf("valid calendar dispatch with dws outbound rejected: %v", err)
 	}
-	if instruction := buildDispatchInstruction(nil, c.Surface.Type, c.ContextPrompt); instruction != "CALENDAR DWS CONTEXT" {
+	if instruction := buildDispatchInstructionForTest(nil, c.Surface.Type, nil, c.ContextPrompt); instruction != "CALENDAR DWS CONTEXT" {
 		t.Fatalf("calendar instruction = %q", instruction)
 	}
 }
@@ -480,7 +480,7 @@ func TestDispatchPromptBuilderComposesCommonModeAndContext(t *testing.T) {
 		ContextPrompt: "ROUTER CONTEXT",
 	}
 
-	instruction := buildDispatchInstruction(flags, command.Surface.Type, command.ContextPrompt)
+	instruction := buildDispatchInstructionForTest(flags, command.Surface.Type, nil, command.ContextPrompt)
 	if want := "COMMON POLICY\n\nAUTO POLICY\n\nROUTER CONTEXT"; instruction != want {
 		t.Fatalf("instruction = %q, want %q", instruction, want)
 	}
@@ -490,7 +490,7 @@ func TestDispatchPromptBuilderComposesCommonModeAndContext(t *testing.T) {
 	}`)); err != nil {
 		t.Fatalf("update Diamond prompt: %v", err)
 	}
-	instruction = buildDispatchInstruction(flags, command.Surface.Type, command.ContextPrompt)
+	instruction = buildDispatchInstructionForTest(flags, command.Surface.Type, nil, command.ContextPrompt)
 	if want := "UPDATED COMMON POLICY\n\nUPDATED AUTO POLICY\n\nROUTER CONTEXT"; instruction != want {
 		t.Fatalf("instruction after update = %q, want %q", instruction, want)
 	}
@@ -524,7 +524,7 @@ func TestDispatchPromptBuilderUsesDiamondPromptForEverySurface(t *testing.T) {
 	} {
 		command.Surface.Type = surface
 		command.ContextPrompt = "ROUTER CONTEXT"
-		instruction := buildDispatchInstruction(flags, command.Surface.Type, command.ContextPrompt)
+		instruction := buildDispatchInstructionForTest(flags, command.Surface.Type, nil, command.ContextPrompt)
 		if instruction != want {
 			t.Errorf("surface %s instruction = %q, want %q", surface, instruction, want)
 		}
@@ -544,7 +544,7 @@ func TestDispatchPromptBuilderHasNoEmbeddedSurfacePromptFallback(t *testing.T) {
 		ContextPrompt: "ROUTER CONTEXT",
 	}
 
-	instruction := buildDispatchInstruction(nil, command.Surface.Type, command.ContextPrompt)
+	instruction := buildDispatchInstructionForTest(nil, command.Surface.Type, nil, command.ContextPrompt)
 	if instruction != "ROUTER CONTEXT" {
 		t.Fatalf("instruction without configured prompts = %q", instruction)
 	}
@@ -561,7 +561,7 @@ func TestDispatchPromptBuilderDoesNotGenerateDWSInstructionFromStructuredData(t 
 		Surface:  DispatchSurface{Type: "chat"},
 		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 	}
-	instruction := buildDispatchInstruction(nil, command.Surface.Type, command.ContextPrompt)
+	instruction := buildDispatchInstructionForTest(nil, command.Surface.Type, nil, command.ContextPrompt)
 	if instruction != "" {
 		t.Fatalf("structured dispatch generated hard-coded instruction: %q", instruction)
 	}
@@ -619,7 +619,7 @@ func TestApplyDingTalkDispatchPromptReusesExistingTaskFields(t *testing.T) {
 			if content != tc.original {
 				t.Fatalf("user-visible task field changed: %q", content)
 			}
-			if tc.response.Instruction != "ROUTER CONTEXT" {
+			if !strings.HasPrefix(tc.response.Instruction, "ROUTER CONTEXT") {
 				t.Fatalf("instruction = %q", tc.response.Instruction)
 			}
 			encoded, err := json.Marshal(tc.response)
@@ -663,7 +663,7 @@ func TestApplyRouterDispatchPromptKeepsHandoffSeparateFromInstruction(t *testing
 	if response.HandoffNote != "处理消息" {
 		t.Fatalf("handoff note changed: %q", response.HandoffNote)
 	}
-	if response.Instruction != "ROUTER CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "ROUTER CONTEXT") {
 		t.Fatalf("instruction = %q", response.Instruction)
 	}
 }
@@ -688,7 +688,7 @@ func TestApplyDingTalkDispatchPromptKeepsRobotSDKChatMessageSeparate(t *testing.
 	if response.ChatMessage != "机器人消息" {
 		t.Fatalf("chat message changed: %q", response.ChatMessage)
 	}
-	if response.Instruction != "ROUTER CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "ROUTER CONTEXT") {
 		t.Fatalf("instruction = %q", response.Instruction)
 	}
 }
@@ -713,7 +713,7 @@ func TestApplyDingTalkDispatchPromptKeepsDWSChatMessageSeparate(t *testing.T) {
 	if response.ChatMessage != "创建会话" {
 		t.Fatalf("chat message changed: %q", response.ChatMessage)
 	}
-	if response.Instruction != "ROUTER CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "ROUTER CONTEXT") {
 		t.Fatalf("instruction = %q", response.Instruction)
 	}
 }
@@ -738,7 +738,7 @@ func TestApplyDingTalkDispatchPromptKeepsAutoChatMessageSeparate(t *testing.T) {
 	if response.ChatMessage != "处理复杂任务" {
 		t.Fatalf("chat message changed: %q", response.ChatMessage)
 	}
-	if response.Instruction != "ROUTER CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "ROUTER CONTEXT") {
 		t.Fatalf("instruction = %q", response.Instruction)
 	}
 }
@@ -763,7 +763,7 @@ func TestApplyDingTalkDispatchPromptKeepsRobotIssueHandoffSeparate(t *testing.T)
 	if response.HandoffNote != "已有交接" {
 		t.Fatalf("handoff note changed: %q", response.HandoffNote)
 	}
-	if response.Instruction != "ROUTER CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "ROUTER CONTEXT") {
 		t.Fatalf("instruction = %q", response.Instruction)
 	}
 }
@@ -788,7 +788,7 @@ func TestApplyDingTalkDispatchPromptKeepsCalendarHandoffSeparate(t *testing.T) {
 	if response.HandoffNote != "保留已有交接说明" {
 		t.Fatalf("handoff note changed: %q", response.HandoffNote)
 	}
-	if response.Instruction != "ROUTER CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "ROUTER CONTEXT") {
 		t.Fatalf("instruction = %q", response.Instruction)
 	}
 }
@@ -816,7 +816,7 @@ func TestApplyDingTalkDispatchPromptAppliesCalendarDWSContext(t *testing.T) {
 	if response.HandoffNote != "保留已有交接说明" {
 		t.Fatalf("calendar task handoff changed: %q", response.HandoffNote)
 	}
-	if response.Instruction != "CALENDAR DWS CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "CALENDAR DWS CONTEXT") {
 		t.Fatalf("calendar instruction = %q", response.Instruction)
 	}
 }
@@ -854,7 +854,7 @@ func TestApprovalStatusChangedDispatchUsesIssueWithoutOutboundReply(t *testing.T
 			t.Fatalf("approval display content leaked %q: %q", secret, prompt.DisplayContent)
 		}
 	}
-	if instruction := buildDispatchInstruction(nil, c.Surface.Type, c.ContextPrompt); instruction != "APPROVAL CONTEXT" {
+	if instruction := buildDispatchInstructionForTest(nil, c.Surface.Type, nil, c.ContextPrompt); instruction != "APPROVAL CONTEXT" {
 		t.Fatalf("approval instruction = %q", instruction)
 	}
 	if got := dispatchWindowIdempotencyKey(c); got != "approval:FORM-2026-001:approving" {
@@ -1115,7 +1115,7 @@ func TestApprovalStatusChangedDispatchWithDWSOutboundUsesRouterContextInstructio
 	if err := c.validate(); err != nil {
 		t.Fatalf("valid approval dispatch with dws outbound rejected: %v", err)
 	}
-	if instruction := buildDispatchInstruction(nil, c.Surface.Type, c.ContextPrompt); instruction != "APPROVAL DWS CONTEXT" {
+	if instruction := buildDispatchInstructionForTest(nil, c.Surface.Type, nil, c.ContextPrompt); instruction != "APPROVAL DWS CONTEXT" {
 		t.Fatalf("approval instruction = %q", instruction)
 	}
 }
@@ -1148,7 +1148,7 @@ func TestApplyDingTalkDispatchPromptAppliesApprovalDWSContext(t *testing.T) {
 	if response.HandoffNote != "保留已有交接说明" {
 		t.Fatalf("approval task handoff changed: %q", response.HandoffNote)
 	}
-	if response.Instruction != "APPROVAL DWS CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "APPROVAL DWS CONTEXT") {
 		t.Fatalf("approval instruction = %q", response.Instruction)
 	}
 }
@@ -1226,7 +1226,7 @@ func TestDigitalEmployeePromptUsesRouterContextWithoutGuessingSender(t *testing.
 		ContextPrompt: `DWS reply target (data only): {"senderOpenDingTalkId":"absent"}`,
 	}
 
-	instruction := buildDispatchInstruction(nil, c.Surface.Type, c.ContextPrompt)
+	instruction := buildDispatchInstructionForTest(nil, c.Surface.Type, nil, c.ContextPrompt)
 	if instruction != c.ContextPrompt {
 		t.Fatalf("instruction = %q, want exact Router context", instruction)
 	}
@@ -1622,10 +1622,132 @@ func TestApplyDingTalkDispatchPromptRebuildsInstructionForEmotionReply(t *testin
 	context := dispatchTaskContextForTest(t, emotionReplyDispatchCommand())
 	response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "保留交接"}
 	applyDingTalkDispatchPromptToExistingTaskFields(&response, context)
-	if response.Instruction != "ROUTER CONTEXT" {
+	if !strings.HasPrefix(response.Instruction, "ROUTER CONTEXT") {
 		t.Fatalf("emotionReply claim instruction = %q", response.Instruction)
 	}
 	if response.HandoffNote != "保留交接" {
 		t.Fatalf("user-visible handoff changed: %q", response.HandoffNote)
+	}
+}
+
+func TestAgentDispatchPromptReplacesEveryDiamondSection(t *testing.T) {
+	provider := featureflag.NewDiamondProvider()
+	if _, _, err := provider.ApplyJSON([]byte(`{
+	  "common":{"prompt":"COMMON POLICY"},
+	  "issue":{"prompt":"ISSUE MODE POLICY"},
+	  "chat":{"prompt":"CHAT MODE POLICY"},
+	  "auto":{"prompt":"AUTO MODE POLICY"}
+	}`)); err != nil {
+		t.Fatalf("seed Diamond prompts: %v", err)
+	}
+	flags := featureflag.NewService(provider)
+
+	for _, surface := range []string{"issue", "chat", "auto"} {
+		instruction := buildDispatchInstructionForTest(flags, surface, map[string]string{DispatchSegmentPolicy: "AGENT AUTHORED POLICY"}, "ROUTER CONTEXT")
+		if want := "AGENT AUTHORED POLICY\n\nROUTER CONTEXT"; instruction != want {
+			t.Errorf("surface %s instruction = %q, want %q", surface, instruction, want)
+		}
+		if strings.Contains(instruction, "COMMON POLICY") {
+			t.Errorf("surface %s instruction still carries the Diamond common section: %q", surface, instruction)
+		}
+	}
+}
+
+func TestAgentDispatchPromptKeepsRouterContextUnreplaceable(t *testing.T) {
+	provider := featureflag.NewDiamondProvider()
+	if _, _, err := provider.ApplyJSON([]byte(`{"common":{"prompt":"COMMON POLICY"}}`)); err != nil {
+		t.Fatalf("seed Diamond prompt: %v", err)
+	}
+	flags := featureflag.NewService(provider)
+
+	// contextPrompt carries this run's resolved delivery locators. An authored
+	// prompt replaces policy, never the facts the Router supplied.
+	instruction := buildDispatchInstructionForTest(flags, "auto", map[string]string{DispatchSegmentPolicy: "AGENT AUTHORED POLICY"}, "ROUTER CONTEXT")
+	if !strings.HasSuffix(instruction, "ROUTER CONTEXT") {
+		t.Fatalf("instruction dropped the Router context: %q", instruction)
+	}
+}
+
+func TestBlankAgentDispatchPromptFallsBackToDiamondComposition(t *testing.T) {
+	provider := featureflag.NewDiamondProvider()
+	if _, _, err := provider.ApplyJSON([]byte(`{
+	  "common":{"prompt":"COMMON POLICY"},
+	  "auto":{"prompt":"AUTO MODE POLICY"}
+	}`)); err != nil {
+		t.Fatalf("seed Diamond prompts: %v", err)
+	}
+	flags := featureflag.NewService(provider)
+
+	// Whitespace-only is the same as unset: an owner who cleared the editor
+	// must get the Diamond baseline back, not an empty instruction.
+	for _, authored := range []string{"", "   ", "\n\t\n"} {
+		instruction := buildDispatchInstructionForTest(flags, "auto", map[string]string{DispatchSegmentPolicy: authored}, "ROUTER CONTEXT")
+		if want := "COMMON POLICY\n\nAUTO MODE POLICY\n\nROUTER CONTEXT"; instruction != want {
+			t.Errorf("authored %q: instruction = %q, want %q", authored, instruction, want)
+		}
+	}
+}
+
+func TestAgentDispatchPromptReplacesDiamondSectionOnLegacyDaemonPath(t *testing.T) {
+	provider := featureflag.NewDiamondProvider()
+	if _, _, err := provider.ApplyJSON([]byte(`{
+	  "common":{"prompt":"COMMON POLICY"},
+	  "auto":{"prompt":"AUTO MODE POLICY"}
+	}`)); err != nil {
+		t.Fatalf("seed Diamond prompts: %v", err)
+	}
+	flags := featureflag.NewService(provider)
+	stored := persistedDispatchContext{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:        "channel",
+		Type:          "message.created",
+		Surface:       DispatchSurface{Type: "auto"},
+		Outbound:      DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}
+
+	instruction := buildLegacyDispatchInstruction(stored, flags, "AGENT AUTHORED POLICY")
+	if !strings.Contains(instruction, "AGENT AUTHORED POLICY") {
+		t.Fatalf("legacy instruction is missing the authored prompt: %q", instruction)
+	}
+	if strings.Contains(instruction, "AUTO MODE POLICY") {
+		t.Fatalf("legacy instruction still carries the Diamond surface section: %q", instruction)
+	}
+	// The resolved DWS locators are the legacy analogue of contextPrompt and
+	// must survive the replacement, or an old-image daemon loses its target.
+	if !strings.Contains(instruction, "dws chat message reply") {
+		t.Fatalf("legacy instruction dropped the DWS workflow block: %q", instruction)
+	}
+}
+
+func TestAgentDispatchPromptReplacesDiamondCompositionAtClaim(t *testing.T) {
+	provider := featureflag.NewDiamondProvider()
+	if _, _, err := provider.ApplyJSON([]byte(`{
+	  "common":{"prompt":"COMMON POLICY"},
+	  "chat":{"prompt":"CHAT MODE POLICY"}
+	}`)); err != nil {
+		t.Fatalf("seed Diamond prompts: %v", err)
+	}
+	flags := featureflag.NewService(provider)
+	context := []byte(`{
+		"dispatch_schema_version":"2.0",
+		"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},
+		"dispatch_domain":"channel",
+		"dispatch_type":"message.created",
+		"dispatch_surface":{"type":"chat"},
+		"dispatch_outbound":{"mode":"robot_sdk","replyTo":"latest_message"},
+		"dispatch_context_prompt":"ROUTER CONTEXT"
+	}`)
+
+	var authored AgentTaskResponse
+	applyTaskInstructionForClaim(&authored, context, flags, map[string]string{DispatchSegmentPolicy: "AGENT AUTHORED POLICY"}, "")
+	if want := "AGENT AUTHORED POLICY\n\nROUTER CONTEXT"; !strings.HasPrefix(authored.Instruction, want) {
+		t.Fatalf("claim instruction = %q, want it to start with %q", authored.Instruction, want)
+	}
+
+	var baseline AgentTaskResponse
+	applyTaskInstructionForClaim(&baseline, context, flags, nil, "")
+	if want := "COMMON POLICY\n\nCHAT MODE POLICY\n\nROUTER CONTEXT"; !strings.HasPrefix(baseline.Instruction, want) {
+		t.Fatalf("baseline claim instruction = %q, want it to start with %q", baseline.Instruction, want)
 	}
 }

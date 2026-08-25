@@ -1463,3 +1463,111 @@ func TestHandleAgentDispatchV2RobotSDKChatKeepsInstallationGuards(t *testing.T) 
 		})
 	}
 }
+
+// dispatchChannelMessageForTest sends one Agent Dispatch V2 channel message over
+// an already-created endpoint and returns the decoded response. Passing
+// continuationIssueID replays what the Router would send on the next message of
+// the same conversation. The endpoint is a parameter because
+// agent_dispatch_endpoint is unique per agent, so a two-message conversation
+// has to reuse one.
+func dispatchChannelMessageForTest(
+	t *testing.T,
+	endpointID, deliverySecret, agentID, conversationID, messageID, continuationIssueID string,
+) AgentDispatchResponse {
+	t.Helper()
+	origin := fmt.Sprintf(`"agentId":%q,"continuation":null`, agentID)
+	if continuationIssueID != "" {
+		origin = fmt.Sprintf(`"continuation":{"kind":"issue","issueId":%q}`, continuationIssueID)
+	}
+	body := fmt.Sprintf(`{
+		"schemaVersion":"2.0",
+		%s,
+		"source":{"platform":"dingtalk","type":"digital_employee"},
+		"event":{
+			"domain":"channel",
+			"type":"message.created",
+			"data":{
+				"conversation":{"openConversationId":%q,"type":"single"},
+				"sender":{"displayName":"张三"},
+				"messages":[{"openMsgId":%q,"occurredAt":1784512800000,"text":"请处理"}]
+			}
+		},
+		"surface":{"type":"issue"},
+		"outbound":{"mode":"dws","replyTo":"latest_message"}
+	}`, origin, conversationID, messageID)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+deliverySecret)
+	req = withURLParams(req, "endpointId", endpointID)
+	w := httptest.NewRecorder()
+	testHandler.HandleAgentDispatch(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("dispatch %s: expected 201, got %d: %s", messageID, w.Code, w.Body.String())
+	}
+	var response AgentDispatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode dispatch %s: %v", messageID, err)
+	}
+	if response.Continuation.Kind != "issue" || response.Continuation.IssueID == "" {
+		t.Fatalf("dispatch %s: expected an issue continuation, got %+v", messageID, response.Continuation)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.Continuation.IssueID)
+	})
+	return response
+}
+
+// A second message in the same conversation normally appends a follow-up
+// comment to the Issue the first one created. With dispatch_always_new_issue it
+// must instead produce a second Issue and leave the first untouched.
+func TestHandleAgentDispatchV2AlwaysNewIssueIgnoresContinuation(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-always-new-issue", nil)
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE agent SET dispatch_always_new_issue = true WHERE id = $1`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+
+	first := dispatchChannelMessageForTest(
+		t, endpointID, deliverySecret, agentID, "cid-always-new", "msg-always-new-1", "")
+	second := dispatchChannelMessageForTest(
+		t, endpointID, deliverySecret, agentID, "cid-always-new", "msg-always-new-2", first.Continuation.IssueID)
+
+	if second.Continuation.IssueID == first.Continuation.IssueID {
+		t.Fatalf("always-new dispatch reused issue %s", first.Continuation.IssueID)
+	}
+	var commentCount int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM comment WHERE issue_id = $1`, first.Continuation.IssueID).Scan(&commentCount); err != nil {
+		t.Fatal(err)
+	}
+	if commentCount != 0 {
+		t.Fatalf("always-new dispatch left %d comment(s) on the first issue", commentCount)
+	}
+}
+
+// The default must stay conversational: without the flag the second message
+// threads onto the Issue the first one created.
+func TestHandleAgentDispatchV2WithoutAlwaysNewIssueKeepsThreading(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "test-v2-threading-default", nil)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+
+	first := dispatchChannelMessageForTest(
+		t, endpointID, deliverySecret, agentID, "cid-threading-default", "msg-threading-1", "")
+	// A follow-up is refused with 409 while the Issue still has a pending agent
+	// task, so settle the first run before threading the second message onto it.
+	// dispatch_always_new_issue sidesteps this guard entirely, which is part of
+	// why an Agent would turn it on.
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE agent_task_queue SET status = 'completed', completed_at = now() WHERE issue_id = $1`,
+		first.Continuation.IssueID); err != nil {
+		t.Fatal(err)
+	}
+	second := dispatchChannelMessageForTest(
+		t, endpointID, deliverySecret, agentID, "cid-threading-default", "msg-threading-2", first.Continuation.IssueID)
+
+	if second.Continuation.IssueID != first.Continuation.IssueID {
+		t.Fatalf("default threading created a new issue %s, want %s", second.Continuation.IssueID, first.Continuation.IssueID)
+	}
+}

@@ -31,6 +31,7 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { ActivityTab } from "./tabs/activity-tab";
 import { InstructionsTab } from "./tabs/instructions-tab";
+import { OKRTab } from "./tabs/okr-tab";
 import { SkillsTab } from "./tabs/skills-tab";
 import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
@@ -55,6 +56,7 @@ export type DetailTab =
   | "overview"
   | "work"
   | "instructions"
+  | "okr"
   | "skills"
   | "mcp_config"
   | "runner"
@@ -73,7 +75,9 @@ type SecondaryTab = {
   id: DetailTab;
   labelKey:
     | "instructions"
-    | "skills"
+    | "okr"
+  | "okr"
+      | "skills"
     | "mcp_config"
     | "runner"
     | "composio_mcp"
@@ -100,6 +104,7 @@ const CAPABILITY_TABS: SecondaryTab[] = [
 
 const SETTINGS_TABS: SecondaryTab[] = [
   { id: "general", labelKey: "general" },
+  { id: "okr", labelKey: "okr" },
   { id: "access", labelKey: "access" },
   { id: "env", labelKey: "environment" },
   { id: "custom_args", labelKey: "custom_args" },
@@ -485,6 +490,13 @@ export function AgentOverviewPane({
                       readOnly={source != null}
                     />
                   )}
+                  {effectiveView === "okr" && (
+                    <OKRTab
+                      agent={agent}
+                      onDirtyChange={setActiveDirty}
+                      readOnly={!canEdit}
+                    />
+                  )}
                   {effectiveView === "skills" && (
                     <SkillsTab
                       agent={agent}
@@ -514,6 +526,8 @@ export function AgentOverviewPane({
                   {effectiveView === "integrations" && (
                     <IntegrationsTab
                       agent={agent}
+                      onUpdate={onUpdate}
+                      canEdit={canEdit}
                       showMcpLink={showMcpIntegration}
                       platformIntegrationsConfigured={integrationsConfigured}
                       canOperateDingTalkBinding={canOperateDingTalkBinding}

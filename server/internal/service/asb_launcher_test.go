@@ -1270,6 +1270,7 @@ func TestASBExecRunOnceUsesDefaultUserAndUnboundedBackgroundCommand(t *testing.T
 		t.Fatalf("ASB background runner must not have a command timeout: request=%s", capturedBody)
 	}
 	if captured.Envs["MULTICA_RUNNER_PROVIDER"] != "hermes" ||
+		captured.Envs["MULTICA_CLOUD_SANDBOX_BACKEND"] != "asb" ||
 		captured.Envs["HOME"] != asbRunnerHome ||
 		captured.Envs["USER"] != "user" ||
 		captured.Envs["LOGNAME"] != "user" ||

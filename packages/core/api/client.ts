@@ -37,6 +37,8 @@ import type {
   AgentBuilderSessionSummary,
   StoredAgentDraft,
   UpdateAgentRequest,
+  DispatchPromptPreview,
+  AgentOKR,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
   AgentTask,
@@ -366,6 +368,8 @@ import {
   SubscribersListSchema,
   TimelineEntriesSchema,
   UserSchema,
+  DispatchPromptPreviewSchema,
+  AgentOKRResponseSchema,
   WebhookDeliveryResponseSchema,
   BillingBalanceSchema,
   BillingTransactionsPageSchema,
@@ -1672,6 +1676,53 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  /**
+   * The composed inbound task instruction for one agent, produced by the same
+   * server function the claim path uses. Falls back to an empty preview so an
+   * older backend renders an explanatory empty state rather than crashing the
+   * settings dialog.
+   */
+  async getAgentDispatchPromptPreview(
+    id: string,
+    surface: string,
+  ): Promise<DispatchPromptPreview> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${id}/dispatch-prompt-preview?surface=${encodeURIComponent(surface)}`,
+    );
+    return parseWithFallback(
+      raw,
+      DispatchPromptPreviewSchema,
+      { surface, segments: [], instruction: "", runtime_sections: [] },
+      { endpoint: "GET /api/agents/{id}/dispatch-prompt-preview" },
+    );
+  }
+
+  async listAgentOKRs(id: string): Promise<AgentOKR[]> {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/okrs`);
+    return parseWithFallback(
+      raw,
+      AgentOKRResponseSchema,
+      { okrs: [] },
+      { endpoint: "GET /api/agents/{id}/okrs" },
+    ).okrs;
+  }
+
+  async setAgentOKRs(
+    id: string,
+    okrs: { objective: string; key_results: string[] }[],
+  ): Promise<AgentOKR[]> {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/okrs`, {
+      method: "PUT",
+      body: JSON.stringify({ okrs }),
+    });
+    return parseWithFallback(
+      raw,
+      AgentOKRResponseSchema,
+      { okrs: [] },
+      { endpoint: "PUT /api/agents/{id}/okrs" },
+    ).okrs;
   }
 
   async archiveAgent(id: string): Promise<Agent> {

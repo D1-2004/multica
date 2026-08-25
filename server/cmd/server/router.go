@@ -2371,6 +2371,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
+					// The composed inbound prompt structure for this agent.
+					// Agent-scoped and manage-gated: the managed policy is
+					// deployment configuration, so it does not belong on the
+					// public /api/config.
+					r.Get("/dispatch-prompt-preview", h.GetAgentDispatchPromptPreview)
 					r.Post("/source/sync", h.SyncAgentSource)
 					r.Put("/", h.UpdateAgent)
 					r.Post("/archive", h.ArchiveAgent)
@@ -2380,6 +2385,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)
+					// OKRs materialize as workspace labels the agent tags
+					// issues with; the catalog is injected into its prompt.
+					r.Get("/okrs", h.ListAgentOKRs)
+					r.Put("/okrs", h.SetAgentOKRs)
 					r.Get("/labels", h.ListLabelsForAgent)
 					r.Post("/labels", h.AttachLabelToAgent)
 					r.Delete("/labels/{labelId}", h.DetachLabelFromAgent)
