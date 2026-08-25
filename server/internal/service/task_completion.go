@@ -64,6 +64,33 @@ func failedCompletionResultMessage(result []byte) string {
 	return payload.ResultMessage
 }
 
+func taskExecutionUpdateResultMessage(result []byte) string {
+	return redact.Text(util.UnescapeBackslashEscapes(failedCompletionResultMessage(result)))
+}
+
+func freezeTaskExecutionUpdateResultMessage(
+	ctx context.Context,
+	qtx *db.Queries,
+	terminalTaskID pgtype.UUID,
+	result []byte,
+) (bool, error) {
+	resultMessage := taskExecutionUpdateResultMessage(result)
+	executionUpdate, err := qtx.FreezeTaskExecutionUpdateResultMessage(ctx, db.FreezeTaskExecutionUpdateResultMessageParams{
+		TerminalTaskID: terminalTaskID,
+		ResultMessage:  pgtype.Text{String: resultMessage, Valid: strings.TrimSpace(resultMessage) != ""},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := qtx.ReleaseTaskCompletionsForExecutionUpdate(ctx, executionUpdate.RootTaskID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func resolveFailedCompletionReply(
 	ctx context.Context,
 	reader lastTaskReplyReader,
@@ -240,10 +267,11 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 }
 
 type failedTaskFinalization struct {
-	Task             db.AgentTaskQueue
-	Retry            *db.AgentTaskQueue
-	RetryCreated     bool
-	CompletionQueued bool
+	Task                 db.AgentTaskQueue
+	Retry                *db.AgentTaskQueue
+	RetryCreated         bool
+	CompletionQueued     bool
+	ExecutionUpdateReady bool
 }
 
 func (s *TaskService) finalizeFailedTask(
@@ -302,6 +330,13 @@ func (s *TaskService) finalizeFailedTask(
 			result.RetryCreated = true
 			return nil
 		}
+		if locked.ChatSessionID.Valid {
+			ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, locked.ID, locked.Result)
+			if freezeErr != nil {
+				return fmt.Errorf("freeze task execution update result message: %w", freezeErr)
+			}
+			result.ExecutionUpdateReady = ready
+		}
 
 		queued, enqueueErr := s.enqueueTaskCompletionInTx(
 			ctx,
@@ -332,7 +367,7 @@ func (s *TaskService) finalizeFailedTask(
 		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, *result.Retry)
 		s.NotifyTaskEnqueued(ctx, *result.Retry)
 	}
-	if result.CompletionQueued && s.CompletionNotifier != nil {
+	if (result.CompletionQueued || result.ExecutionUpdateReady) && s.CompletionNotifier != nil {
 		s.CompletionNotifier.NotifyTaskCompletion()
 	}
 	return result, nil
@@ -358,6 +393,7 @@ func (s *TaskService) ReconcileTaskCompletions(
 		return 0, err
 	}
 	reconciled := 0
+	executionUpdateReady := false
 	for _, taskID := range taskIDs {
 		queued := false
 		task, taskErr := s.Queries.GetAgentTask(ctx, taskID)
@@ -397,6 +433,13 @@ func (s *TaskService) ReconcileTaskCompletions(
 			} else if task.Status != "failed" {
 				return nil
 			}
+			if task.ChatSessionID.Valid {
+				ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, task.ID, task.Result)
+				if freezeErr != nil {
+					return fmt.Errorf("freeze task execution update result message: %w", freezeErr)
+				}
+				executionUpdateReady = executionUpdateReady || ready
+			}
 			var enqueueErr error
 			queued, enqueueErr = s.enqueueTaskCompletionInTx(
 				ctx,
@@ -415,7 +458,7 @@ func (s *TaskService) ReconcileTaskCompletions(
 			reconciled++
 		}
 	}
-	if reconciled > 0 && s.CompletionNotifier != nil {
+	if (reconciled > 0 || executionUpdateReady) && s.CompletionNotifier != nil {
 		s.CompletionNotifier.NotifyTaskCompletion()
 	}
 	return reconciled, nil

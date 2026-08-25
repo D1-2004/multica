@@ -13,9 +13,13 @@ INSERT INTO task_execution_update_outbox AS existing (
     request_id,
     agent_id,
     target_agent_id,
-    update_type
+    update_type,
+    status,
+    result_message_frozen
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    CASE WHEN sqlc.arg('result_message_frozen') THEN 'queued' ELSE 'waiting_result' END,
+    sqlc.arg('result_message_frozen')
 )
 ON CONFLICT (root_task_id) DO UPDATE
 SET updated_at = existing.updated_at
@@ -30,12 +34,36 @@ WHERE existing.target_task_id = EXCLUDED.target_task_id
   AND existing.update_type = EXCLUDED.update_type
 RETURNING *;
 
+-- name: FreezeTaskExecutionUpdateResultMessage :one
+WITH RECURSIVE lineage AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = sqlc.arg('terminal_task_id')
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN lineage child ON parent.id = child.parent_task_id
+)
+UPDATE task_execution_update_outbox AS execution_update
+SET result_message = sqlc.narg('result_message'),
+    result_message_frozen = TRUE,
+    status = 'queued',
+    available_at = now(),
+    updated_at = now()
+WHERE execution_update.root_task_id IN (SELECT id FROM lineage)
+  AND execution_update.status = 'waiting_result'
+  AND execution_update.result_message_frozen = FALSE
+RETURNING execution_update.*;
+
 -- name: ClaimTaskExecutionUpdate :one
 WITH candidate AS (
     SELECT queued.id
     FROM task_execution_update_outbox queued
     WHERE queued.status = 'queued'
       AND queued.target_identity = $1
+      AND queued.result_message_frozen
       AND queued.available_at <= now()
       AND (queued.lease_expires_at IS NULL OR queued.lease_expires_at <= now())
     ORDER BY queued.available_at ASC, queued.created_at ASC

@@ -17,6 +17,7 @@ WITH candidate AS (
     FROM task_execution_update_outbox queued
     WHERE queued.status = 'queued'
       AND queued.target_identity = $1
+      AND queued.result_message_frozen
       AND queued.available_at <= now()
       AND (queued.lease_expires_at IS NULL OR queued.lease_expires_at <= now())
     ORDER BY queued.available_at ASC, queued.created_at ASC
@@ -30,7 +31,7 @@ SET lease_token = gen_random_uuid(),
     updated_at = now()
 FROM candidate
 WHERE execution_update.id = candidate.id
-RETURNING execution_update.id, execution_update.root_task_id, execution_update.target_task_id, execution_update.issue_id, execution_update.issue_identifier, execution_update.callback_url, execution_update.target_identity, execution_update.request_id, execution_update.agent_id, execution_update.target_agent_id, execution_update.update_type, execution_update.occurred_at, execution_update.status, execution_update.available_at, execution_update.attempt_count, execution_update.lease_token, execution_update.lease_expires_at, execution_update.last_error, execution_update.delivered_at, execution_update.created_at, execution_update.updated_at
+RETURNING execution_update.id, execution_update.root_task_id, execution_update.target_task_id, execution_update.issue_id, execution_update.issue_identifier, execution_update.callback_url, execution_update.target_identity, execution_update.request_id, execution_update.agent_id, execution_update.target_agent_id, execution_update.update_type, execution_update.occurred_at, execution_update.status, execution_update.available_at, execution_update.attempt_count, execution_update.lease_token, execution_update.lease_expires_at, execution_update.last_error, execution_update.delivered_at, execution_update.created_at, execution_update.updated_at, execution_update.result_message, execution_update.result_message_frozen
 `
 
 func (q *Queries) ClaimTaskExecutionUpdate(ctx context.Context, targetIdentity string) (TaskExecutionUpdateOutbox, error) {
@@ -58,6 +59,8 @@ func (q *Queries) ClaimTaskExecutionUpdate(ctx context.Context, targetIdentity s
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ResultMessage,
+		&i.ResultMessageFrozen,
 	)
 	return i, err
 }
@@ -73,7 +76,7 @@ SET status = 'delivered',
 WHERE id = $1
   AND lease_token = $2
   AND status = 'queued'
-RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, result_message, result_message_frozen
 `
 
 type CompleteTaskExecutionUpdateParams struct {
@@ -106,6 +109,8 @@ func (q *Queries) CompleteTaskExecutionUpdate(ctx context.Context, arg CompleteT
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ResultMessage,
+		&i.ResultMessageFrozen,
 	)
 	return i, err
 }
@@ -120,7 +125,7 @@ SET status = 'dead_letter',
 WHERE id = $1
   AND lease_token = $2
   AND status = 'queued'
-RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, result_message, result_message_frozen
 `
 
 type DeadLetterTaskExecutionUpdateParams struct {
@@ -154,6 +159,8 @@ func (q *Queries) DeadLetterTaskExecutionUpdate(ctx context.Context, arg DeadLet
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ResultMessage,
+		&i.ResultMessageFrozen,
 	)
 	return i, err
 }
@@ -170,9 +177,13 @@ INSERT INTO task_execution_update_outbox AS existing (
     request_id,
     agent_id,
     target_agent_id,
-    update_type
+    update_type,
+    status,
+    result_message_frozen
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    CASE WHEN $11 THEN 'queued' ELSE 'waiting_result' END,
+    $11
 )
 ON CONFLICT (root_task_id) DO UPDATE
 SET updated_at = existing.updated_at
@@ -185,20 +196,21 @@ WHERE existing.target_task_id = EXCLUDED.target_task_id
   AND existing.agent_id = EXCLUDED.agent_id
   AND existing.target_agent_id = EXCLUDED.target_agent_id
   AND existing.update_type = EXCLUDED.update_type
-RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, result_message, result_message_frozen
 `
 
 type EnqueueTaskExecutionUpdateParams struct {
-	RootTaskID      pgtype.UUID `json:"root_task_id"`
-	TargetTaskID    pgtype.UUID `json:"target_task_id"`
-	IssueID         pgtype.UUID `json:"issue_id"`
-	IssueIdentifier string      `json:"issue_identifier"`
-	CallbackUrl     string      `json:"callback_url"`
-	TargetIdentity  string      `json:"target_identity"`
-	RequestID       string      `json:"request_id"`
-	AgentID         pgtype.UUID `json:"agent_id"`
-	TargetAgentID   pgtype.UUID `json:"target_agent_id"`
-	UpdateType      string      `json:"update_type"`
+	RootTaskID          pgtype.UUID `json:"root_task_id"`
+	TargetTaskID        pgtype.UUID `json:"target_task_id"`
+	IssueID             pgtype.UUID `json:"issue_id"`
+	IssueIdentifier     string      `json:"issue_identifier"`
+	CallbackUrl         string      `json:"callback_url"`
+	TargetIdentity      string      `json:"target_identity"`
+	RequestID           string      `json:"request_id"`
+	AgentID             pgtype.UUID `json:"agent_id"`
+	TargetAgentID       pgtype.UUID `json:"target_agent_id"`
+	UpdateType          string      `json:"update_type"`
+	ResultMessageFrozen bool        `json:"result_message_frozen"`
 }
 
 // =============================
@@ -216,6 +228,7 @@ func (q *Queries) EnqueueTaskExecutionUpdate(ctx context.Context, arg EnqueueTas
 		arg.AgentID,
 		arg.TargetAgentID,
 		arg.UpdateType,
+		arg.ResultMessageFrozen,
 	)
 	var i TaskExecutionUpdateOutbox
 	err := row.Scan(
@@ -240,6 +253,68 @@ func (q *Queries) EnqueueTaskExecutionUpdate(ctx context.Context, arg EnqueueTas
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ResultMessage,
+		&i.ResultMessageFrozen,
+	)
+	return i, err
+}
+
+const freezeTaskExecutionUpdateResultMessage = `-- name: FreezeTaskExecutionUpdateResultMessage :one
+WITH RECURSIVE lineage AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = $1
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN lineage child ON parent.id = child.parent_task_id
+)
+UPDATE task_execution_update_outbox AS execution_update
+SET result_message = $2,
+    result_message_frozen = TRUE,
+    status = 'queued',
+    available_at = now(),
+    updated_at = now()
+WHERE execution_update.root_task_id IN (SELECT id FROM lineage)
+  AND execution_update.status = 'waiting_result'
+  AND execution_update.result_message_frozen = FALSE
+RETURNING execution_update.id, execution_update.root_task_id, execution_update.target_task_id, execution_update.issue_id, execution_update.issue_identifier, execution_update.callback_url, execution_update.target_identity, execution_update.request_id, execution_update.agent_id, execution_update.target_agent_id, execution_update.update_type, execution_update.occurred_at, execution_update.status, execution_update.available_at, execution_update.attempt_count, execution_update.lease_token, execution_update.lease_expires_at, execution_update.last_error, execution_update.delivered_at, execution_update.created_at, execution_update.updated_at, execution_update.result_message, execution_update.result_message_frozen
+`
+
+type FreezeTaskExecutionUpdateResultMessageParams struct {
+	TerminalTaskID pgtype.UUID `json:"terminal_task_id"`
+	ResultMessage  pgtype.Text `json:"result_message"`
+}
+
+func (q *Queries) FreezeTaskExecutionUpdateResultMessage(ctx context.Context, arg FreezeTaskExecutionUpdateResultMessageParams) (TaskExecutionUpdateOutbox, error) {
+	row := q.db.QueryRow(ctx, freezeTaskExecutionUpdateResultMessage, arg.TerminalTaskID, arg.ResultMessage)
+	var i TaskExecutionUpdateOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.RootTaskID,
+		&i.TargetTaskID,
+		&i.IssueID,
+		&i.IssueIdentifier,
+		&i.CallbackUrl,
+		&i.TargetIdentity,
+		&i.RequestID,
+		&i.AgentID,
+		&i.TargetAgentID,
+		&i.UpdateType,
+		&i.OccurredAt,
+		&i.Status,
+		&i.AvailableAt,
+		&i.AttemptCount,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.LastError,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ResultMessage,
+		&i.ResultMessageFrozen,
 	)
 	return i, err
 }
@@ -254,7 +329,7 @@ SET available_at = $3,
 WHERE id = $1
   AND lease_token = $2
   AND status = 'queued'
-RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at
+RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, result_message, result_message_frozen
 `
 
 type RetryTaskExecutionUpdateParams struct {
@@ -294,6 +369,8 @@ func (q *Queries) RetryTaskExecutionUpdate(ctx context.Context, arg RetryTaskExe
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ResultMessage,
+		&i.ResultMessageFrozen,
 	)
 	return i, err
 }

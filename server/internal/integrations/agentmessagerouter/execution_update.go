@@ -24,6 +24,7 @@ type ExecutionUpdateRequest struct {
 	ExternalTaskID string                   `json:"externalTaskId"`
 	UpdateType     string                   `json:"updateType"`
 	OccurredAt     int64                    `json:"occurredAt"`
+	ResultMessage  string                   `json:"resultMessage,omitempty"`
 	Extension      ExecutionUpdateExtension `json:"extension"`
 }
 

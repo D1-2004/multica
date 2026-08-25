@@ -300,16 +300,17 @@ func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Contex
 			return IssueCommentCreateResult{}, fmt.Errorf("load delegation workspace: %w", workspaceErr)
 		}
 		if _, updateErr := qtx.EnqueueTaskExecutionUpdate(ctx, db.EnqueueTaskExecutionUpdateParams{
-			RootTaskID:      sourceTask.ID,
-			TargetTaskID:    task.ID,
-			IssueID:         params.Issue.ID,
-			IssueIdentifier: fmt.Sprintf("%s-%d", workspace.IssuePrefix, params.Issue.Number),
-			CallbackUrl:     params.Delegation.CallbackUpdateURL,
-			TargetIdentity:  params.Delegation.CallbackTarget,
-			RequestID:       "multica-handoff:" + util.UUIDToString(sourceTask.ID),
-			AgentID:         sourceTask.AgentID,
-			TargetAgentID:   task.AgentID,
-			UpdateType:      "delegated_to_issue",
+			RootTaskID:          sourceTask.ID,
+			TargetTaskID:        task.ID,
+			IssueID:             params.Issue.ID,
+			IssueIdentifier:     fmt.Sprintf("%s-%d", workspace.IssuePrefix, params.Issue.Number),
+			CallbackUrl:         params.Delegation.CallbackUpdateURL,
+			TargetIdentity:      params.Delegation.CallbackTarget,
+			RequestID:           "multica-handoff:" + util.UUIDToString(sourceTask.ID),
+			AgentID:             sourceTask.AgentID,
+			TargetAgentID:       task.AgentID,
+			UpdateType:          "delegated_to_issue",
+			ResultMessageFrozen: false,
 		}); updateErr != nil {
 			return IssueCommentCreateResult{}, fmt.Errorf("enqueue delegation update: %w", updateErr)
 		}

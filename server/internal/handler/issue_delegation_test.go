@@ -220,7 +220,7 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 		handoffAgentID != sourceAgentID ||
 		handoffTargetAgentID != targetAgentID ||
 		handoffUpdateType != "delegated_to_issue" ||
-		handoffStatus != "queued" {
+		handoffStatus != "waiting_result" {
 		t.Fatalf(
 			"handoff outbox root=%q target=%q issue=%q callback=%q identity=%q request=%q agent=%q target_agent=%q type=%q status=%q",
 			handoffRootTaskID,
@@ -234,6 +234,32 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 			handoffUpdateType,
 			handoffStatus,
 		)
+	}
+	var initialResultMessage *string
+	var initialResultMessageFrozen bool
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT result_message, result_message_frozen
+		FROM task_execution_update_outbox
+		WHERE root_task_id = $1
+	`, sourceTaskID).Scan(&initialResultMessage, &initialResultMessageFrozen); err != nil {
+		t.Fatal(err)
+	}
+	if initialResultMessage != nil || initialResultMessageFrozen {
+		t.Fatalf("initial handoff result message = %#v frozen=%v", initialResultMessage, initialResultMessageFrozen)
+	}
+	var oldWorkerClaimable int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM task_execution_update_outbox
+		WHERE root_task_id = $1
+		  AND status = 'queued'
+		  AND available_at <= now()
+		  AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+	`, sourceTaskID).Scan(&oldWorkerClaimable); err != nil {
+		t.Fatal(err)
+	}
+	if oldWorkerClaimable != 0 {
+		t.Fatalf("old worker can claim waiting handoff: count=%d", oldWorkerClaimable)
 	}
 	var targetContext struct {
 		Surface struct {
@@ -255,13 +281,27 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 	if _, err := testHandler.TaskService.CompleteTask(
 		context.Background(),
 		sourceTaskUUID,
-		[]byte(`{"output":"已转入后台处理"}`),
+		[]byte(`{"output":"已转入后台处理","result_message":"任务已转入后台"}`),
 		"chat-session-runtime",
 		"",
 		false,
 		"",
 	); err != nil {
 		t.Fatal(err)
+	}
+	var frozenResultMessage *string
+	var frozenResultMessageReady bool
+	var frozenStatus string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT result_message, result_message_frozen, status
+		FROM task_execution_update_outbox
+		WHERE root_task_id = $1
+	`, sourceTaskID).Scan(&frozenResultMessage, &frozenResultMessageReady, &frozenStatus); err != nil {
+		t.Fatal(err)
+	}
+	if frozenResultMessage == nil || *frozenResultMessage != "任务已转入后台" ||
+		!frozenResultMessageReady || frozenStatus != "queued" {
+		t.Fatalf("frozen handoff result message = %#v frozen=%v status=%q", frozenResultMessage, frozenResultMessageReady, frozenStatus)
 	}
 	var sourceOutboxCount int
 	if err := testPool.QueryRow(context.Background(), `
