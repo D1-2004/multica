@@ -68,12 +68,42 @@ type DispatchMessageReaction struct {
 	OperateTime    int64  `json:"operateTime,omitempty"`
 }
 
+type DispatchReferencedMessage struct {
+	MessageID string `json:"messageId,omitempty"`
+	OpenMsgID string `json:"openMsgId,omitempty"`
+	Text      string `json:"text,omitempty"`
+	SenderUID string `json:"senderUid,omitempty"`
+}
+
+func (m *DispatchReferencedMessage) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		MessageID string `json:"messageId"`
+		OpenMsgID string `json:"openMsgId"`
+		OpenID    string `json:"openId"`
+		MsgID     string `json:"msgId"`
+		Text      string `json:"text"`
+		Content   string `json:"content"`
+		SenderUID string `json:"senderUid"`
+		SenderID  string `json:"senderId"`
+	}
+	var value wire
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	m.MessageID = strings.TrimSpace(value.MessageID)
+	m.OpenMsgID = firstNonEmpty(value.OpenMsgID, value.OpenID, value.MsgID)
+	m.Text = firstNonEmpty(value.Text, value.Content)
+	m.SenderUID = firstNonEmpty(value.SenderUID, value.SenderID)
+	return nil
+}
+
 type DispatchMessage struct {
-	OpenMsgID   string                   `json:"openMsgId"`
-	OccurredAt  int64                    `json:"occurredAt"`
-	Text        string                   `json:"text,omitempty"`
-	Attachments []DispatchAttachment     `json:"attachments,omitempty"`
-	Reaction    *DispatchMessageReaction `json:"reaction,omitempty"`
+	OpenMsgID         string                     `json:"openMsgId"`
+	OccurredAt        int64                      `json:"occurredAt"`
+	Text              string                     `json:"text,omitempty"`
+	Attachments       []DispatchAttachment       `json:"attachments,omitempty"`
+	Reaction          *DispatchMessageReaction   `json:"reaction,omitempty"`
+	ReferencedMessage *DispatchReferencedMessage `json:"referencedMessage,omitempty"`
 }
 
 type DispatchCalendarAttendee struct {
@@ -805,21 +835,39 @@ func buildDingTalkChannelDisplay(c DispatchCommand) string {
 			b.WriteString(dispatchReactionDisplay(m))
 			continue
 		}
-		text := strings.TrimSpace(m.Text)
-		hasMessageContent := false
-		if text != "" {
-			b.WriteString(text)
-			hasMessageContent = true
-		}
-		for _, a := range m.Attachments {
-			if hasMessageContent {
-				b.WriteString("\n")
-			}
-			b.WriteString(dispatchAttachmentDisplay(a))
-			hasMessageContent = true
-		}
+		b.WriteString(dispatchMessageDisplay(m))
 	}
 	return strings.TrimSpace(b.String()) + "\n"
+}
+
+func dispatchMessageDisplay(m DispatchMessage) string {
+	var b strings.Builder
+	if referencedText := dispatchReferencedMessageText(m.ReferencedMessage); referencedText != "" {
+		b.WriteString("引用消息：\n")
+		b.WriteString(referencedText)
+		b.WriteString("\n\n当前回复：\n")
+	}
+	text := strings.TrimSpace(m.Text)
+	hasMessageContent := false
+	if text != "" {
+		b.WriteString(text)
+		hasMessageContent = true
+	}
+	for _, a := range m.Attachments {
+		if hasMessageContent {
+			b.WriteString("\n")
+		}
+		b.WriteString(dispatchAttachmentDisplay(a))
+		hasMessageContent = true
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func dispatchReferencedMessageText(m *DispatchReferencedMessage) string {
+	if m == nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Text)
 }
 
 // dispatchReactionDisplay 渲染表情反应条目（语义模板与 Router 对接文档建议一致）：
