@@ -2883,34 +2883,60 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
+	// OKR tagging catalog. Appended to the agent's own instructions so it
+	// reaches every task kind through the runtime brief, the same way the squad
+	// briefing does — the dispatch instruction only covers DingTalk runs, and
+	// tagging applies to all work the agent owns.
+	if resp.Agent != nil {
+		if okrInstructions := h.agentOKRInstructionsFor(r.Context(), task.AgentID, parseUUID(resp.WorkspaceID)); okrInstructions != "" {
+			if strings.TrimSpace(resp.Agent.Instructions) == "" {
+				resp.Agent.Instructions = okrInstructions
+			} else {
+				resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + okrInstructions
+			}
+		}
+	}
+
 	clearA2AClaimWorkspaceData(&resp, task.Context)
 
 	supportsTaskInstruction := requestHasDaemonCapability(r, protocol.DaemonCapabilityTaskInstructionV1)
-	applyDingTalkDispatchPromptForClaimWithFeatureFlags(
-		&resp,
-		task.Context,
-		h.FeatureFlags,
-		supportsTaskInstruction,
-	)
+	// Agent-authored segment overrides, resolved at claim time exactly like the
+	// managed configuration they replace, so an edit reaches continuation tasks
+	// and Issue follow-ups without re-dispatching. A failed agent load falls
+	// back to the managed composition rather than dropping the instruction.
+	var dispatchOverrides map[string]string
+	if agentLoadErr == nil {
+		dispatchOverrides = parseDispatchPromptOverrides(agent.DispatchPromptOverrides)
+	}
 	if supportsTaskInstruction {
-		applyDingTalkReplyFormattingInstruction(&resp, task.Context)
+		// The BUC segment needs a resolvable link; an unresolvable one is a
+		// deployment misconfiguration worth logging, not a reason to drop the
+		// rest of the instruction.
+		enterpriseAuthorizationURL := ""
 		if h.EnterpriseIdentity != nil && service.IsASBRuntime(runtime) {
-			authorizationURL := buildEnterpriseIdentityAuthorizationURL(
+			enterpriseAuthorizationURL = buildEnterpriseIdentityAuthorizationURL(
 				h.currentConfig().AppURL,
 				workspaceSlug,
 				resp.AgentID,
 			)
-			if authorizationURL == "" {
+			if enterpriseAuthorizationURL == "" {
 				slog.Warn(
 					"ASB BUC authorization link could not be built",
 					"task_id", uuidToString(task.ID),
 					"agent_id", resp.AgentID,
 					"workspace_id", resp.WorkspaceID,
 				)
-			} else {
-				applyEnterpriseIdentityAuthorizationInstruction(&resp, authorizationURL)
 			}
 		}
+		applyTaskInstructionForClaim(
+			&resp,
+			task.Context,
+			h.FeatureFlags,
+			dispatchOverrides,
+			enterpriseAuthorizationURL,
+		)
+	} else {
+		applyLegacyDingTalkDispatchPrompt(&resp, task.Context, h.FeatureFlags, dispatchOverrides)
 	}
 
 	// DSH headless deliberately creates one fresh native session per task and

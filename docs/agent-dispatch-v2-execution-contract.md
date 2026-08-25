@@ -19,6 +19,24 @@ mode has an explicit initial persistence materializer:
 `calendar/calendar.started` and `approval/approval.status_changed` contracts
 remain Issue-only because neither has a foreground Chat session to release.
 
+### Issue threading
+
+Within `issue`, an Agent controls whether a conversation threads. `agent.dispatch_always_new_issue`
+is `false` by default, which keeps the behavior above: the Router replays the
+issue continuation and Multica appends a follow-up comment. Set to `true`, every
+inbound **channel** message becomes its own Issue and the replayed continuation
+is ignored. This is a Multica-side decision — the Router still persists and
+replays the continuation, and `surface.type` stays `issue`.
+
+Approval and calendar continuations are deliberately exempt. Those rewrite a
+continuation to correlate a system callback back to the Issue that produced it
+(see the `关联Issue` auto-link), which is correlation rather than conversational
+threading; forcing a new Issue there would orphan every approval status change.
+
+A side effect worth knowing: threading refuses a follow-up with `409` while the
+referenced Issue still has a pending agent task. `dispatch_always_new_issue`
+does not hit that guard, because each message gets its own Issue.
+
 Channel slash commands do not override this choice. In particular, text such as
 `/issue`, `/new`, `/reset`, or `/unbind` remains prompt content when delivered by
 Agent Dispatch V2.
@@ -133,6 +151,39 @@ If all three new composition inputs are blank, an instruction-capable daemon
 receives no task instruction. This does not switch it onto the legacy builder.
 Conversely, a daemon without `task-instruction-v1` always uses the legacy
 builder, even when Diamond common or Router context sections are available.
+
+The claim-time `instruction` is composed from four ordered segments, not one
+blob:
+
+| # | Segment | Source | Overridable | Injected when |
+|---|---|---|---|---|
+| 1 | `policy` | Diamond `common` + `<surface>` | yes | the task carries a dispatch envelope this projection covers (`dingtalk_dispatch`) |
+| 2 | `context` | Router, per dispatch | no | the Router supplied a `contextPrompt` (`per_dispatch`) |
+| 3 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
+| 4 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
+
+Each segment reports its gate as a stable `condition` key, present whether or
+not the segment is active in the previewed scenario. A preview that only
+explained exclusions would answer "why is this missing" but not "when will this
+reach the agent", which is the question an owner editing a prompt actually has.
+
+None of these segments reach work created inside Multica — a web-authored Issue
+or a Multica chat is not a dispatch. Daemons without `task-instruction-v1` get
+no `instruction` at all; the policy is prepended into the task content instead.
+
+`agent.dispatch_prompt_overrides` replaces segments by id; an absent key keeps
+the managed text, and a blank value means "restore managed" rather than "make
+this empty". Segment 2 is not overridable because it carries this run's resolved
+delivery locators rather than authored policy — replacing it would leave the
+agent with no reply target. On the legacy claim path the resolved DWS workflow
+block is exempt for the same reason.
+
+`GET /api/agents/{id}/dispatch-prompt-preview` renders this composition through
+the same function the claim path uses, so the settings UI cannot drift from what
+the agent receives. It also returns a structural index of the sections the daemon
+assembles on the runtime (the brief and the per-turn body); the server does not
+own that text and deliberately does not reproduce it.
+See [Diamond configuration](diamond.md#agent-authored-override).
 
 Event projection in the prompt builder is independent of `surface.type`. The
 same structured event can therefore run as an Issue, Chat, or Auto mode without
@@ -351,6 +402,61 @@ parsing or rewriting Router's context string.
 - Reason: Rolling deployments must preserve complete prompt behavior while old
   runtime images still ignore `instruction`, without mixing legacy policy into
   new images or duplicating instructions.
+
+## Change record: 2026-08-25 Segmented instruction composition and preview
+
+- History: `agent.dispatch_prompt` (TEXT) became
+  `agent.dispatch_prompt_overrides` (JSONB, keyed by segment id). Reply
+  formatting and BUC authorization, previously appended by two separate calls
+  after the dispatch projection ran, are now segments of one composition. Added
+  `GET /api/agents/{id}/dispatch-prompt-preview`. The assembled text an agent
+  receives is unchanged.
+- Reason: a single override could only ever replace the first segment, which
+  left the other two invisible and uncustomizable, and made a faithful preview
+  impossible. Composing once means the preview is the claim path rather than a
+  reconstruction of it — a second implementation would drift and start lying
+  about what the agent was told.
+
+## Change record: 2026-08-25 Agent OKR tagging
+
+- History: Added `agent_okr`. Each objective and key result materializes as an
+  `issue`-namespace workspace label, and the catalog is appended to the agent's
+  instructions with the exact label names and the exact `multica issue label
+  add` invocation. A rewrite replaces the set and leaves orphaned labels in the
+  catalog.
+- Reason: tagging is only useful if it is consistent. An agent told to "tag the
+  issue" invents a label per run and the catalog fragments; naming the fixed set
+  in the prompt makes the tags aggregate. Labels land in the `issue` namespace
+  because the `agent` namespace cannot be attached to an issue. Orphaned labels
+  survive a rewrite because issues may already carry them.
+
+## Change record: 2026-08-24 Agent-level Issue threading control
+
+- History: Added `agent.dispatch_always_new_issue`, `false` by default. When
+  `true`, an `issue`-surface `channel/message.created` dispatch that carries an
+  issue continuation creates a new Issue instead of a follow-up comment. The
+  approval auto-link and the calendar contract keep their continuations. Surface
+  selection, the Router contract, and the persisted dispatch context are
+  unchanged; the Router still replays the continuation and Multica ignores it.
+- Reason: One Issue per conversation is wrong for Agents whose inbound messages
+  are independent work items — the thread grows without bound and a second
+  message is refused with `409` while the first task is still running. Keeping
+  this on the Multica side rather than adding a fourth `surface.type` avoids a
+  lockstep Router release for what is purely a persistence decision.
+
+## Change record: 2026-08-24 Agent-authored dispatch prompt
+
+- History: Added `agent.dispatch_prompt`, empty by default. A non-empty value
+  replaces the Diamond `common` + `<surface>` composition for that Agent at
+  claim time on both the instruction-capable and legacy claim paths.
+  `contextPrompt` and the legacy DWS workflow block are unaffected. Dispatch
+  mode selection, materializer choice, outbound ownership, and persisted
+  dispatch context are unchanged.
+- Reason: One fleet-wide Diamond document cannot fit every Agent's job. Giving
+  the Agent owner a complete replacement keeps per-Agent policy out of the
+  deployment configuration, at the cost of opting that Agent out of later
+  Diamond policy updates — which is why the override is per-Agent and explicit
+  rather than a silent merge.
 
 ## Change record: 2026-08-07 DingTalk Chat title projection
 

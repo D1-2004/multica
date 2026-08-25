@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestBuildEnterpriseIdentityAuthorizationURL(t *testing.T) {
@@ -34,15 +37,20 @@ func TestBuildEnterpriseIdentityAuthorizationURLRejectsUnsafeBase(t *testing.T) 
 	}
 }
 
-func TestApplyEnterpriseIdentityAuthorizationInstructionPreservesExistingInstruction(t *testing.T) {
+func TestEnterpriseIdentityAuthorizationSegmentCarriesTheFullPolicy(t *testing.T) {
 	t.Parallel()
 
-	response := AgentTaskResponse{Instruction: "existing trusted instruction"}
+	response := AgentTaskResponse{}
 	authorizationURL := "https://multica-pre.example.com/login?next=%2Fyufa%2Fagents%2Fagent-id%3Fenterprise_identity%3Dauthorize%26view%3Didentity"
-	applyEnterpriseIdentityAuthorizationInstruction(&response, authorizationURL)
+	context, err := json.Marshal(map[string]any{
+		protocol.DingTalkStreamSourceJSONKey: map[string]any{"hostname": "stream-host"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyTaskInstructionForClaim(&response, context, nil, nil, authorizationURL)
 
 	for _, expected := range []string{
-		"existing trusted instruction",
 		"a1 command",
 		"nw-aliwork-cli",
 		"IdentityAuthFailed",
