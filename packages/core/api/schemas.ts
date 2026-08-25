@@ -648,6 +648,39 @@ export const EMPTY_ISSUE_PULL_REQUESTS_RESPONSE: {
 // Label responses are consumed by settings tables and resource pickers. Keep
 // the resource type lenient so newer server scopes do not break older clients,
 // while defaulting fields that predate scoped label catalogs.
+// Human attribution is shared by Agent task lists and label-usage task rows.
+// Keep every nested field defensive so an older backend or a departed member
+// degrades only this additive object rather than the containing response.
+const AttributionUserSchema = z
+  .object({
+    id: z.string().default(""),
+    name: z.string().optional(),
+    email: z.string().optional(),
+    avatar_url: z.string().optional(),
+  })
+  .loose();
+
+const TaskEvidenceSchema = z
+  .object({
+    kind: z.string().default(""),
+    ref_id: z.string().default(""),
+  })
+  .loose();
+
+const TaskAttributionSchema = z
+  .object({
+    source: z.string().default("unattributed"),
+    precise: z.boolean().default(false),
+    initiator: AttributionUserSchema.optional(),
+    originator: AttributionUserSchema.optional(),
+    evidence: TaskEvidenceSchema.optional(),
+    rule_version_id: z.string().optional(),
+    delegated_from_task_id: z.string().optional(),
+    retry_of_task_id: z.string().optional(),
+    rerun_of_task_id: z.string().optional(),
+  })
+  .loose();
+
 export const LabelUsageSummarySchema = z
   .object({
     total_tokens: z.number().nonnegative(),
@@ -724,6 +757,8 @@ const LabelUsageTaskBreakdownSchema = z
 const LabelUsageTaskSchema = z
   .object({
     task_id: z.string(),
+    agent_id: z.string().default(""),
+    agent_name: z.string().default(""),
     issue_id: z.string().default(""),
     issue_identifier: z.string().default(""),
     issue_title: z.string().default(""),
@@ -739,6 +774,7 @@ const LabelUsageTaskSchema = z
     created_at: z.string().default(""),
     completed_at: z.string().nullable().optional(),
     activity_at: z.string(),
+    attribution: TaskAttributionSchema.optional().catch(undefined),
   })
   .loose();
 
@@ -2150,40 +2186,6 @@ export const RuntimeUsageByHourListSchema = z.array(RuntimeUsageByHourSchema);
 // can drift while task-list consumers still validate the fields they render.
 // ---------------------------------------------------------------------------
 
-// Human attribution (MUL-4302 §9): who an agent run is accountable to, and how
-// that human was resolved. Every field is defensive so a departed member, an
-// autopilot run (no originator), or an older backend degrades to a partial
-// object instead of a parse failure.
-const AttributionUserSchema = z
-  .object({
-    id: z.string().default(""),
-    name: z.string().optional(),
-    email: z.string().optional(),
-    avatar_url: z.string().optional(),
-  })
-  .loose();
-
-const TaskEvidenceSchema = z
-  .object({
-    kind: z.string().default(""),
-    ref_id: z.string().default(""),
-  })
-  .loose();
-
-const TaskAttributionSchema = z
-  .object({
-    source: z.string().default("unattributed"),
-    precise: z.boolean().default(false),
-    initiator: AttributionUserSchema.optional(),
-    originator: AttributionUserSchema.optional(),
-    evidence: TaskEvidenceSchema.optional(),
-    rule_version_id: z.string().optional(),
-    delegated_from_task_id: z.string().optional(),
-    retry_of_task_id: z.string().optional(),
-    rerun_of_task_id: z.string().optional(),
-  })
-  .loose();
-
 const OptionalStringArraySchema = z.preprocess(
   (value) =>
     Array.isArray(value) && value.every((item) => typeof item === "string")
@@ -2497,22 +2499,29 @@ export type DispatchPromptPreviewPayload = z.infer<
 const AgentOKRSpendSchema = z.object({
   total_tokens: z.number().default(0),
   total_cost_usd_ticks: z.number().default(0),
+  uncosted_tokens: z.number().default(0),
   task_count: z.number().default(0),
   unpriced_task_count: z.number().default(0),
 });
 
 export const AgentOKRSchema = z.object({
+  id: z.string().default(""),
+  label_id: z.string().default(""),
+  position: z.number().int().default(0),
   objective: z.string().default(""),
   label: z.string().default(""),
   color: z.string().default(""),
-  spend: AgentOKRSpendSchema.optional(),
+  spend: AgentOKRSpendSchema.optional().catch(undefined),
   key_results: z
     .array(
       z.object({
+        id: z.string().default(""),
+        label_id: z.string().default(""),
+        position: z.number().int().default(0),
         text: z.string().default(""),
         label: z.string().default(""),
         color: z.string().default(""),
-        spend: AgentOKRSpendSchema.optional(),
+        spend: AgentOKRSpendSchema.optional().catch(undefined),
       }),
     )
     .default([]),
@@ -2520,6 +2529,10 @@ export const AgentOKRSchema = z.object({
 
 export const AgentOKRResponseSchema = z.object({
   okrs: z.array(AgentOKRSchema).default([]),
+  // Older servers returned spend without an availability bit. Treat that
+  // legacy shape as available; the new server sends false explicitly when the
+  // usage query failed and omits every spend object.
+  usage_available: z.boolean().optional().catch(false).default(true),
 });
 export type AgentOKRResponsePayload = z.infer<typeof AgentOKRResponseSchema>;
 

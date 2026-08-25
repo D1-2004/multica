@@ -70,6 +70,7 @@ import {
   AgentA2AConfigSchema,
   AgentA2AClientSchema,
   AgentA2ACredentialSecretResponseSchema,
+  LabelUsageResponseSchema,
   EMPTY_AGENT_A2A_CONFIG,
   EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE,
 } from "./schemas";
@@ -2319,5 +2320,48 @@ describe("WeCom installation schemas", () => {
       { endpoint: "POST /api/wecom/binding/redeem" },
     );
     expect(redeem).toEqual(EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE);
+  });
+});
+
+describe("label usage task attribution schema", () => {
+  it("drops malformed optional attribution without dropping the task", () => {
+    const parsed = LabelUsageResponseSchema.parse({
+      label: {
+        id: "label-1",
+        workspace_id: "workspace-1",
+        name: "OKR",
+        color: "#000000",
+        created_at: "2026-08-25T00:00:00Z",
+        updated_at: "2026-08-25T00:00:00Z",
+      },
+      summary: {
+        total_tokens: 1,
+        total_cost_usd_ticks: 2,
+        uncosted_tokens: 0,
+        task_count: 1,
+        priced_task_count: 1,
+        unpriced_task_count: 0,
+      },
+      tasks: [
+        {
+          task_id: "task-1",
+          agent_id: "agent-1",
+          agent_name: "Reporter",
+          has_usage: true,
+          is_priced: true,
+          total_tokens: 1,
+          total_cost_usd_ticks: 2,
+          uncosted_tokens: 0,
+          usage_breakdown: [],
+          activity_at: "2026-08-25T01:00:00Z",
+          attribution: "malformed",
+        },
+      ],
+      pagination: { page: 1, page_size: 25, total: 1, total_pages: 1 },
+    });
+
+    expect(parsed.tasks).toHaveLength(1);
+    expect(parsed.tasks[0]?.agent_id).toBe("agent-1");
+    expect(parsed.tasks[0]?.attribution).toBeUndefined();
   });
 });

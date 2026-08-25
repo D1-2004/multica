@@ -188,6 +188,8 @@ ORDER BY total_cost_usd_ticks DESC, total_tokens DESC, LOWER(tu.provider), tu.mo
 WITH task_totals AS (
     SELECT
         atq.id AS task_id,
+        atq.agent_id,
+        COALESCE(a.name, '')::text AS agent_name,
         i.id AS issue_id,
         CASE
             WHEN w.issue_prefix = '' THEN '#' || i.number::text
@@ -197,6 +199,15 @@ WITH task_totals AS (
         atq.status,
         atq.created_at,
         atq.completed_at,
+        atq.originator_user_id,
+        atq.accountable_user_id,
+        atq.originator_source,
+        atq.delegated_from_task_id,
+        atq.retry_of_task_id,
+        atq.rerun_of_task_id,
+        atq.rule_version_id,
+        atq.trigger_evidence_kind,
+        atq.trigger_evidence_ref_id,
         COALESCE(MAX(tu.created_at), atq.completed_at, atq.created_at) AS activity_at,
         CASE WHEN COUNT(tu.id) = 1 THEN MIN(LOWER(tu.provider)) ELSE '' END::text AS provider,
         CASE WHEN COUNT(tu.id) = 1 THEN MIN(tu.model) ELSE '' END::text AS model,
@@ -235,13 +246,18 @@ WITH task_totals AS (
     JOIN issue i ON i.id = il.issue_id AND i.workspace_id = l.workspace_id
     JOIN workspace w ON w.id = i.workspace_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
+    LEFT JOIN agent a ON a.id = atq.agent_id AND a.workspace_id = i.workspace_id
     LEFT JOIN task_usage tu ON tu.task_id = atq.id
     WHERE l.id = sqlc.arg('label_id')::uuid
       AND l.workspace_id = sqlc.arg('workspace_id')::uuid
       AND l.resource_type = 'issue'
     GROUP BY
-        atq.id, i.id, i.number, i.title, w.issue_prefix,
-        atq.status, atq.created_at, atq.completed_at
+        atq.id, atq.agent_id, a.name, i.id, i.number, i.title, w.issue_prefix,
+        atq.status, atq.created_at, atq.completed_at,
+        atq.originator_user_id, atq.accountable_user_id,
+        atq.originator_source, atq.delegated_from_task_id,
+        atq.retry_of_task_id, atq.rerun_of_task_id, atq.rule_version_id,
+        atq.trigger_evidence_kind, atq.trigger_evidence_ref_id
 ), filtered_tasks AS (
     SELECT *
     FROM task_totals
@@ -291,13 +307,24 @@ UPDATE issue_label SET
     color = COALESCE(sqlc.narg('color'), color),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_okr
+      WHERE agent_okr.label_id = issue_label.id
+        AND agent_okr.workspace_id = issue_label.workspace_id
+  )
 RETURNING *;
 
 -- name: DeleteLabel :one
--- :one RETURNING id so the handler distinguishes pgx.ErrNoRows (→ 404) from
--- infrastructure errors (→ 500), and avoids a TOCTOU precheck.
+-- :one RETURNING id lets the handler distinguish missing rows from
+-- infrastructure errors; it rechecks the OKR reference on ErrNoRows so a
+-- concurrent reference becomes 409 rather than a misleading 404.
 DELETE FROM issue_label
 WHERE id = $1 AND workspace_id = $2
+  AND NOT EXISTS (
+      SELECT 1 FROM agent_okr
+      WHERE agent_okr.label_id = issue_label.id
+        AND agent_okr.workspace_id = issue_label.workspace_id
+  )
 RETURNING id;
 
 -- The resource-label junctions deliberately have no foreign keys. Keeping

@@ -65,7 +65,17 @@ func (q *Queries) DeleteAgentOKRsByAgent(ctx context.Context, arg DeleteAgentOKR
 }
 
 const listAgentOKRLabelIDs = `-- name: ListAgentOKRLabelIDs :many
-SELECT label_id FROM agent_okr WHERE agent_id = $1 AND workspace_id = $2
+SELECT DISTINCT mine.label_id
+FROM agent_okr mine
+WHERE mine.agent_id = $1
+  AND mine.workspace_id = $2
+  AND NOT EXISTS (
+      SELECT 1
+      FROM agent_okr other
+      WHERE other.workspace_id = mine.workspace_id
+        AND other.label_id = mine.label_id
+        AND other.agent_id <> mine.agent_id
+  )
 `
 
 type ListAgentOKRLabelIDsParams struct {
@@ -75,7 +85,9 @@ type ListAgentOKRLabelIDsParams struct {
 
 // Used to decide which labels a rewrite orphaned. The catalog rows themselves
 // are left in place: a label may already be attached to issues, and silently
-// deleting it would strip tags off historical work.
+// deleting it would strip tags off historical work. Legacy labels shared by
+// multiple agents are excluded: neither agent may rewrite a shared vocabulary
+// entry until it chooses an unambiguous name.
 func (q *Queries) ListAgentOKRLabelIDs(ctx context.Context, arg ListAgentOKRLabelIDsParams) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, listAgentOKRLabelIDs, arg.AgentID, arg.WorkspaceID)
 	if err != nil {
@@ -96,6 +108,30 @@ func (q *Queries) ListAgentOKRLabelIDs(ctx context.Context, arg ListAgentOKRLabe
 	return items, nil
 }
 
+const isLabelReferencedByAgentOKR = `-- name: IsLabelReferencedByAgentOKR :one
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_okr
+    WHERE label_id = $1::uuid
+      AND workspace_id = $2::uuid
+)::boolean
+`
+
+type IsLabelReferencedByAgentOKRParams struct {
+	LabelID     pgtype.UUID `json:"label_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Generic label update/delete must not mutate the live vocabulary injected
+// into an Agent prompt. Orphaned labels left by an OKR rewrite are deliberately
+// editable/deletable because no current agent_okr row references them.
+func (q *Queries) IsLabelReferencedByAgentOKR(ctx context.Context, arg IsLabelReferencedByAgentOKRParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isLabelReferencedByAgentOKR, arg.LabelID, arg.WorkspaceID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listAgentOKRUsage = `-- name: ListAgentOKRUsage :many
 WITH task_totals AS (
     SELECT
@@ -106,6 +142,10 @@ WITH task_totals AS (
             tu.cache_read_tokens + tu.cache_write_tokens
         ), 0)::bigint AS total_tokens,
         COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(
+            tu.input_tokens + tu.output_tokens +
+            tu.cache_read_tokens + tu.cache_write_tokens
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
         COALESCE(
             BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
             FALSE
@@ -122,6 +162,7 @@ SELECT
     label_id,
     COALESCE(SUM(total_tokens), 0)::bigint AS total_tokens,
     COALESCE(SUM(total_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+    COALESCE(SUM(uncosted_tokens), 0)::bigint AS uncosted_tokens,
     COUNT(*)::bigint AS task_count,
     COUNT(*) FILTER (WHERE NOT is_priced)::bigint AS unpriced_task_count
 FROM task_totals
@@ -137,11 +178,15 @@ type ListAgentOKRUsageRow struct {
 	LabelID           pgtype.UUID `json:"label_id"`
 	TotalTokens       int64       `json:"total_tokens"`
 	TotalCostUsdTicks int64       `json:"total_cost_usd_ticks"`
+	UncostedTokens    int64       `json:"uncosted_tokens"`
 	TaskCount         int64       `json:"task_count"`
 	UnpricedTaskCount int64       `json:"unpriced_task_count"`
 }
 
-// Cost and token spend per OKR label, for the whole agent in one pass.
+// Cost and token spend per configured OKR label in one pass. This is the
+// target/label combination cost: every task on a labeled Issue participates,
+// including collaborating agents. Executor splits come from label usage task
+// rows, not from this summary.
 //
 // Per-label usage already exists as GetIssueLabelUsageSummary, but that is one
 // round trip per label; an agent with 3 objectives and 9 key results would pay
@@ -163,6 +208,7 @@ func (q *Queries) ListAgentOKRUsage(ctx context.Context, arg ListAgentOKRUsagePa
 			&i.LabelID,
 			&i.TotalTokens,
 			&i.TotalCostUsdTicks,
+			&i.UncostedTokens,
 			&i.TaskCount,
 			&i.UnpricedTaskCount,
 		); err != nil {
@@ -185,9 +231,17 @@ SELECT
     label.description AS label_description
 FROM agent_okr okr
 JOIN issue_label label ON label.id = okr.label_id
+JOIN agent_okr objective ON objective.id = CASE
+    WHEN okr.kind = 'objective' THEN okr.id
+    ELSE okr.parent_id
+END
+    AND objective.kind = 'objective'
+    AND objective.agent_id = okr.agent_id
+    AND objective.workspace_id = okr.workspace_id
 WHERE okr.agent_id = $1 AND okr.workspace_id = $2
 ORDER BY
-    COALESCE(okr.parent_id, okr.id),
+    objective.position,
+    objective.created_at,
     okr.kind = 'key_result',
     okr.position,
     okr.created_at
@@ -252,28 +306,33 @@ INSERT INTO issue_label (workspace_id, resource_type, name, description, color)
 VALUES ($1, 'issue', $2, $3, $4)
 ON CONFLICT (workspace_id, resource_type, (LOWER(name)))
 DO UPDATE SET
+    name = EXCLUDED.name,
     description = EXCLUDED.description,
+    color = EXCLUDED.color,
     updated_at = now()
+WHERE issue_label.id = ANY($5::uuid[])
 RETURNING id, workspace_id, name, color, created_at, updated_at, resource_type, description
 `
 
 type UpsertAgentOKRLabelParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Color       string      `json:"color"`
+	WorkspaceID      pgtype.UUID   `json:"workspace_id"`
+	Name             string        `json:"name"`
+	Description      string        `json:"description"`
+	Color            string        `json:"color"`
+	ReusableLabelIds []pgtype.UUID `json:"reusable_label_ids"`
 }
 
 // OKR labels are server-managed and land in the 'issue' namespace so the agent
-// can attach them to issues through the ordinary labeling path. Keyed on the
-// catalog's (workspace, resource_type, lower(name)) uniqueness so renaming an
-// OKR to an existing label reuses that label instead of failing.
+// can attach them to issues through the ordinary labeling path. A rewrite may
+// reuse only labels referenced by that agent's previous OKR set; other
+// same-name labels make this query return no row.
 func (q *Queries) UpsertAgentOKRLabel(ctx context.Context, arg UpsertAgentOKRLabelParams) (IssueLabel, error) {
 	row := q.db.QueryRow(ctx, upsertAgentOKRLabel,
 		arg.WorkspaceID,
 		arg.Name,
 		arg.Description,
 		arg.Color,
+		arg.ReusableLabelIds,
 	)
 	var i IssueLabel
 	err := row.Scan(

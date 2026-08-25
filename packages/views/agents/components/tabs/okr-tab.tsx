@@ -81,11 +81,12 @@ export function OKRTab({
   const [draft, setDraft] = useState<DraftOKR[]>([]);
   const [baseline, setBaseline] = useState<string>("[]");
 
-  const { data: okrs, isLoading } = useQuery({
+  const { data: okrResponse, isLoading } = useQuery({
     queryKey: ["agent-okrs", agent.id],
     queryFn: () => api.listAgentOKRs(agent.id),
     retry: false,
   });
+  const okrs = okrResponse?.okrs;
 
   useEffect(() => {
     if (!okrs) return;
@@ -103,7 +104,7 @@ export function OKRTab({
   // position against the loaded set so an unsaved edit never shows a cost that
   // belongs to a different entry.
   const savedSpend = (okrIndex: number, keyResultIndex?: number) => {
-    if (isDirty) return undefined;
+    if (isDirty || okrResponse?.usage_available === false) return undefined;
     const saved = okrs?.[okrIndex];
     if (!saved) return undefined;
     return keyResultIndex === undefined
@@ -178,6 +179,12 @@ export function OKRTab({
       <p className="max-w-2xl text-pretty text-body leading-6 text-muted-foreground">
         {t(($) => $.tab_body.okr.intro)}
       </p>
+
+      {okrResponse?.usage_available === false ? (
+        <p className="text-caption text-warning">
+          {t(($) => $.tab_body.okr.spend_unavailable)}
+        </p>
+      ) : null}
 
       {draft.length === 0 && (
         <p className="text-caption text-muted-foreground">

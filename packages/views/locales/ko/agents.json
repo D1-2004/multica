@@ -490,6 +490,7 @@
       "label_hint": "Saving creates a workspace label per entry (O: … and KR: …). Removing an OKR leaves its label in place, because issues may already carry it.",
       "spend_hint": "이 항목의 라벨이 붙은 작업의 실행 비용.",
       "spend_partial_hint": "Cost of every agent task on Issues tagged with this entry. Some tasks ran on a model with no price attached, so this is a floor.",
+      "spend_unavailable": "비용 데이터를 일시적으로 불러올 수 없습니다. 목표 내용은 계속 확인할 수 있습니다.",
       "spend_tasks_other": "{{count}}개 작업"
     },
     "env": {

@@ -173,6 +173,20 @@ comment-triggered runs otherwise must not change status unless asked.
 `--value` is JSON-parsed by default (bool/number sniff); `--type` forces
 `string`/`number`/`bool`.
 
+## Label usage CLI and task attribution
+
+| Behavior | File:line |
+|---|---|
+| `multica label usage <label-ref>` flags and read-only handler | `server/cmd/multica/cmd_label_usage.go:15,34` |
+| `--all` follows task pages and stamps `pagination.complete` | `server/cmd/multica/cmd_label_usage.go:92-122` |
+| HTTP label-usage task DTO | `server/internal/handler/label_usage.go:54` |
+| Executor and accountable-human hydration | `server/internal/handler/label_usage.go:293-339` |
+| SQL task grain, executor, usage, and attribution columns | `server/pkg/db/queries/issue_label.sql:187` (`ListIssueLabelUsageTasks`) |
+
+The CLI preserves the complete API response. Each task has `agent_id`,
+`agent_name`, and the same `TaskAttribution` shape as the Issue execution log;
+the summary retains the authoritative-cost vs uncosted-token split.
+
 ## Custom properties CLI
 
 | Behavior | File:line |
