@@ -1918,19 +1918,23 @@ func TestBriefByteIdenticalAcrossRunsForEveryKind(t *testing.T) {
 	}
 }
 
-// TestBriefSkillsListIsNamesOnly pins the shape of the `## Skills` section: an
-// index of invocable names, with no descriptions and no per-provider branch.
+// TestBriefSkillsIndexIsProviderGated pins both sides of the `## Skills` gate.
 //
-// Descriptions were removed because every runtime CLI already builds its own
-// listing from the SKILL.md frontmatter the daemon writes, so the brief's copy
-// was the same routing signal paid for twice — ~3,100 tokens per brief on a
-// real task, 40% of the whole brief (MUL-5529).
+// The index is suppressed for every provider whose CLI lists the daemon-written
+// SKILL.md files itself. On a real opencode task that CLI listing was 9,545
+// bytes of full descriptions in the same prompt, so Multica's own names-only
+// copy was a second listing of the same set. MUL-5529 removed the descriptions
+// for this reason; the names follow.
 //
-// The provider branch was removed because its fallback was wrong: it told
-// providers outside a hardcoded list to look in `.agent_context/skills/`, but
-// the only providers that ever reached it — grok and traecli — have their files
-// written to `.grok/skills` and `.traecli/skills` and discover them natively.
-func TestBriefSkillsListIsNamesOnly(t *testing.T) {
+// It survives for fallback providers, where skills land in .agent_context/skills/
+// and nothing scans them — there the index is the model's only signal that the
+// skills exist.
+//
+// Known trade: this makes skill discoverability on native providers depend on
+// the CLI continuing to publish its listing. That is a behavior no Multica
+// release controls. The failure is visible rather than silent — an agent that
+// cannot see its skills stops invoking them, which shows up in traces.
+func TestBriefSkillsIndexIsProviderGated(t *testing.T) {
 	t.Parallel()
 
 	ctx := TaskContextForEnv{
@@ -1946,25 +1950,37 @@ func TestBriefSkillsListIsNamesOnly(t *testing.T) {
 		},
 	}
 
-	// grok and traecli are the providers that used to take the removed branch;
-	// the rest are a spread across the native-discovery list.
-	for _, provider := range []string{"claude", "codex", "opencode", "hermes", "grok", "traecli", "some-unknown-provider"} {
-		t.Run(provider, func(t *testing.T) {
+	// A spread across the native-discovery list, including codex and hermes,
+	// which reach their skills through a per-task home rather than a
+	// workdir-relative directory.
+	for _, provider := range []string{"claude", "codex", "opencode", "hermes", "grok", "traecli"} {
+		t.Run("native/"+provider, func(t *testing.T) {
 			t.Parallel()
 			out := buildMetaSkillContent(provider, ctx)
-
-			if !strings.Contains(out, "- **pr-review**\n") {
-				t.Errorf("brief does not list the skill by slug:\n%s", out)
+			if strings.Contains(out, "## Skills") {
+				t.Errorf("%s lists skills itself; the brief must not repeat the index:\n%s", provider, out)
 			}
-			if strings.Contains(out, "Use when reviewing a pull request") {
-				t.Errorf("brief still carries the skill description; the CLI's own listing already has it:\n%s", out)
-			}
-			if strings.Contains(out, ".agent_context/skills/") {
-				t.Errorf("brief still points at the removed fallback path:\n%s", out)
-			}
-			if !strings.Contains(out, "discovered automatically") {
-				t.Errorf("brief lost the native-discovery framing:\n%s", out)
+			if strings.Contains(out, "- **pr-review**") {
+				t.Errorf("%s brief still carries the skill index:\n%s", provider, out)
 			}
 		})
 	}
+
+	t.Run("fallback/some-unknown-provider", func(t *testing.T) {
+		t.Parallel()
+		out := buildMetaSkillContent("some-unknown-provider", ctx)
+
+		if !strings.Contains(out, "- **pr-review**\n") {
+			t.Errorf("fallback provider lost its only skill signal:\n%s", out)
+		}
+		if strings.Contains(out, "Use when reviewing a pull request") {
+			t.Errorf("brief still carries the skill description:\n%s", out)
+		}
+		if strings.Contains(out, ".agent_context/skills/") {
+			t.Errorf("brief still points at the removed fallback path:\n%s", out)
+		}
+		if !strings.Contains(out, "discovered automatically") {
+			t.Errorf("brief lost the native-discovery framing:\n%s", out)
+		}
+	})
 }
