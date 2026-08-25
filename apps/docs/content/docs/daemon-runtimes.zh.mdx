@@ -144,9 +144,9 @@ Multica 对并发有两层限额：
 
 即使这一步因网络问题没完成，还有**每 30 秒**一次的服务器端扫描作为后备：超过 45 秒没心跳的运行时会被统一标记为失联，上面的任务也一并回收。
 
-## FC/E2B 任务上下文环境变量
+## 任务上下文环境变量
 
-每种运行时都会把当前任务上下文传给 Agent 进程。FC/E2B 云运行时由服务端在每次 `sandbox exec` 时传入，即使复用热沙箱，运行时入口也会保留这些变量并传递给 Agent；本地 Daemon 则在拉起子进程时设置同样的变量。它们不是 Daemon 部署配置，也不是沙箱模板构建参数：
+每种运行时都会把当前任务上下文传给 Agent 进程。FC/E2B 云运行时由服务端在每次 `sandbox exec` 时传入，即使复用热沙箱，运行时入口也会保留这些变量并传递给 Agent。本地 Daemon 也会在拉起子进程时设置同样的变量，但它是用户自行安装的二进制：`MULTICA_CHAT_SESSION_ID` 从下方变更记录标注的 CLI 版本起才有，旧版本安装的 Daemon 上它展开为空，用它拼出的 metadata 过滤条件会静默匹配到错误的集合。它们不是 Daemon 部署配置，也不是沙箱模板构建参数：
 
 | 环境变量 | 语义 |
 |---|---|
@@ -175,3 +175,4 @@ Multica 对并发有两层限额：
 | 日期 | 变更 | 原因 |
 |---|---|---|
 | 2026-07-29 | 为 FC/E2B 云沙箱增加按任务注入的 `MULTICA_CHAT_SESSION_ID` | 让 Chat Agent 无需重建运行时镜像或升级本地 Daemon，即可使用稳定会话标识路由后台 Issue |
+| 2026-08-26 | 本地 Daemon 为 chat 任务导出 `MULTICA_CHAT_SESSION_ID` | Chat 的 runtime brief 现在把 `multica issue list --metadata "multica.chat_session_id=$MULTICA_CHAT_SESSION_ID"` 作为找回本会话已委派 Issue 的方式；本地 Daemon 上该变量未设置，过滤条件会匹配到错误的集合。需要包含本次改动的 Daemon CLI |

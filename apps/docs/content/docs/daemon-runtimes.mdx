@@ -176,9 +176,9 @@ When the daemon crashes or is force-killed, the tasks it had picked up are left 
 
 Even if this step fails due to a network issue, there's a server-side scan **every 30 seconds** as a backstop: any runtime without a heartbeat for over 45 seconds is marked missing, and its tasks are reclaimed along with it.
 
-## FC/E2B task context environment variables
+## Task context environment variables
 
-Every runtime passes the current task context to the agent process. For cloud FC/E2B runtimes the server sets it on each `sandbox exec` invocation, and the runtime entrypoint preserves the variables when it starts the agent, including when a warm sandbox is reused; a local daemon sets the same variables on the process it spawns. They are not daemon deployment settings or sandbox template build-time variables:
+Every runtime passes the current task context to the agent process. For cloud FC/E2B runtimes the server sets it on each `sandbox exec` invocation, and the runtime entrypoint preserves the variables when it starts the agent, including when a warm sandbox is reused. A local daemon sets the same variables on the process it spawns — but it is a binary the user installs, so `MULTICA_CHAT_SESSION_ID` is only there from the CLI release noted in the change history below; an older installed daemon expands it to empty, and a metadata filter built from it silently matches the wrong set. They are not daemon deployment settings or sandbox template build-time variables:
 
 | Variable | Semantics |
 |---|---|
@@ -207,3 +207,4 @@ More scenarios in [Troubleshooting](/troubleshooting).
 | Date | Change | Reason |
 |---|---|---|
 | 2026-07-29 | Added per-task `MULTICA_CHAT_SESSION_ID` injection for FC/E2B cloud sandboxes | Allows Chat agents to route background Issues with stable conversation identity without rebuilding the runtime image or changing local daemons |
+| 2026-08-26 | Local daemon runtimes export `MULTICA_CHAT_SESSION_ID` for chat tasks | The chat runtime brief now teaches `multica issue list --metadata "multica.chat_session_id=$MULTICA_CHAT_SESSION_ID"` as the way a chat run finds the Issue it already delegated to; on a local daemon that variable was unset, so the filter matched the wrong set. Requires the daemon CLI shipping this change |
