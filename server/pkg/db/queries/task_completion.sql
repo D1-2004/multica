@@ -146,6 +146,14 @@ WHERE existing.terminal_task_id = EXCLUDED.terminal_task_id
   AND existing.failure_reason IS NOT DISTINCT FROM EXCLUDED.failure_reason
 RETURNING *;
 
+-- name: ReleaseTaskCompletionsForExecutionUpdate :execrows
+UPDATE task_completion_outbox
+SET available_at = now(),
+    updated_at = now()
+WHERE root_task_id = @root_task_id
+  AND status = 'queued'
+  AND available_at = 'infinity'::timestamptz;
+
 -- name: EnqueueSynchronousTaskCompletion :one
 INSERT INTO task_completion_outbox AS existing (
     root_task_id,

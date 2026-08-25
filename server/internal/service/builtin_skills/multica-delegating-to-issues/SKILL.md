@@ -96,8 +96,12 @@ responsibility.
 The server returns `release_parent: true` only after the Issue or comment,
 background task, task lineage, and reliable handoff update have committed
 together. After that response, briefly tell the user that the work has moved to
-the background, then stop the current Chat task. Do not continue executing the
-delegated business work in Chat.
+the background through the task's normal outbound path, then stop the current Chat task.
+For DWS outbound, this acknowledgement must be a successful
+`dws chat message reply`; a terminal stdout-only sentence is not a delivered
+user reply. The server records that successful DWS reply as the user-visible
+handoff result without exposing callback details to the command. Do not
+continue executing the delegated business work in Chat.
 
 If the command fails or does not return `release_parent: true`, control has not
 transferred. Keep the current Chat task responsible for reporting the failure;

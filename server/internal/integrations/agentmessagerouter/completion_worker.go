@@ -182,6 +182,7 @@ func (w *CompletionWorker) processNextExecutionUpdate(ctx context.Context) (bool
 		ExternalTaskID: util.UUIDToString(executionUpdate.RootTaskID),
 		UpdateType:     executionUpdate.UpdateType,
 		OccurredAt:     executionUpdate.OccurredAt.Time.UnixMilli(),
+		ResultMessage:  redact.Text(util.UnescapeBackslashEscapes(executionUpdate.ResultMessage.String)),
 		Extension: ExecutionUpdateExtension{
 			IssueID:         util.UUIDToString(executionUpdate.IssueID),
 			IssueIdentifier: executionUpdate.IssueIdentifier,

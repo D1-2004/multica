@@ -3,6 +3,7 @@ package agentmessagerouter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -89,21 +91,56 @@ func enqueueWorkerTestExecutionUpdate(
 	t.Helper()
 	now := time.Now().UnixNano()
 	row, err := queries.EnqueueTaskExecutionUpdate(context.Background(), db.EnqueueTaskExecutionUpdateParams{
-		RootTaskID:      pgtype.UUID{Bytes: [16]byte{byte(now), 11}, Valid: true},
-		TargetTaskID:    pgtype.UUID{Bytes: [16]byte{byte(now), 12}, Valid: true},
-		IssueID:         pgtype.UUID{Bytes: [16]byte{byte(now), 13}, Valid: true},
-		IssueIdentifier: "MUL-123",
-		CallbackUrl:     "/api/v1/dispatch-tasks/router-" + suffix + "/execution-update",
-		TargetIdentity:  targetIdentity,
-		RequestID:       fmt.Sprintf("worker-update-test:%s:%d", suffix, now),
-		AgentID:         pgtype.UUID{Bytes: [16]byte{byte(now), 14}, Valid: true},
-		TargetAgentID:   pgtype.UUID{Bytes: [16]byte{byte(now), 15}, Valid: true},
-		UpdateType:      "delegated_to_issue",
+		RootTaskID:          pgtype.UUID{Bytes: [16]byte{byte(now), 11}, Valid: true},
+		TargetTaskID:        pgtype.UUID{Bytes: [16]byte{byte(now), 12}, Valid: true},
+		IssueID:             pgtype.UUID{Bytes: [16]byte{byte(now), 13}, Valid: true},
+		IssueIdentifier:     "MUL-123",
+		CallbackUrl:         "/api/v1/dispatch-tasks/router-" + suffix + "/execution-update",
+		TargetIdentity:      targetIdentity,
+		RequestID:           fmt.Sprintf("worker-update-test:%s:%d", suffix, now),
+		AgentID:             pgtype.UUID{Bytes: [16]byte{byte(now), 14}, Valid: true},
+		TargetAgentID:       pgtype.UUID{Bytes: [16]byte{byte(now), 15}, Valid: true},
+		UpdateType:          "delegated_to_issue",
+		ResultMessageFrozen: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return row
+}
+
+func TestEnqueueTaskExecutionUpdateReplayPreservesFrozenPayload(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	update := enqueueWorkerTestExecutionUpdate(t, queries, "router-target:v1:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "replay-frozen")
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_execution_update_outbox WHERE id = $1`, update.ID)
+	})
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE task_execution_update_outbox SET result_message = $2 WHERE id = $1
+	`, update.ID, "任务已转入后台"); err != nil {
+		t.Fatal(err)
+	}
+
+	replayed, err := queries.EnqueueTaskExecutionUpdate(context.Background(), db.EnqueueTaskExecutionUpdateParams{
+		RootTaskID:          update.RootTaskID,
+		TargetTaskID:        update.TargetTaskID,
+		IssueID:             update.IssueID,
+		IssueIdentifier:     update.IssueIdentifier,
+		CallbackUrl:         update.CallbackUrl,
+		TargetIdentity:      update.TargetIdentity,
+		RequestID:           update.RequestID,
+		AgentID:             update.AgentID,
+		TargetAgentID:       update.TargetAgentID,
+		UpdateType:          update.UpdateType,
+		ResultMessageFrozen: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !replayed.ResultMessageFrozen || replayed.ResultMessage.String != "任务已转入后台" {
+		t.Fatalf("replayed result message = %#v frozen=%v", replayed.ResultMessage, replayed.ResultMessageFrozen)
+	}
 }
 
 func TestCompletionWorkerDeliversExecutionUpdateBeforeTerminalWork(t *testing.T) {
@@ -173,6 +210,147 @@ func TestCompletionWorkerDeliversExecutionUpdateBeforeTerminalWork(t *testing.T)
 	}
 }
 
+func TestCompletionWorkerRetriesIdenticalFrozenExecutionUpdateResultMessage(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	var received []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		received = append(received, body)
+		if len(received) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]string{
+				"dispatchTaskId": "router-stable-result",
+				"requestId":      body["requestId"].(string),
+				"updateType":     "delegated_to_issue",
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(ClientConfig{BaseURL: server.URL, ServiceCredential: "service-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := enqueueWorkerTestExecutionUpdate(t, queries, client.TargetIdentity(), "stable-result")
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE task_execution_update_outbox
+		SET result_message = $2, result_message_frozen = TRUE
+		WHERE id = $1
+	`, update.ID, "任务已转入后台"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_execution_update_outbox WHERE id = $1`, update.ID)
+	})
+
+	worker := NewCompletionWorker(queries, client, nil)
+	if worked, processErr := worker.ProcessNext(context.Background()); processErr != nil || !worked {
+		t.Fatalf("first delivery worked=%v error=%v", worked, processErr)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE task_execution_update_outbox SET available_at = now() WHERE id = $1
+	`, update.ID); err != nil {
+		t.Fatal(err)
+	}
+	if worked, processErr := worker.ProcessNext(context.Background()); processErr != nil || !worked {
+		t.Fatalf("retry delivery worked=%v error=%v", worked, processErr)
+	}
+	if len(received) != 2 {
+		t.Fatalf("request count = %d, want 2", len(received))
+	}
+	first, err := json.Marshal(received[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := json.Marshal(received[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatalf("retry payload changed:\nfirst=%s\nsecond=%s", first, second)
+	}
+	if received[0]["resultMessage"] != "任务已转入后台" {
+		t.Fatalf("resultMessage = %#v", received[0]["resultMessage"])
+	}
+	var status string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT status FROM task_execution_update_outbox WHERE id = $1
+	`, update.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "delivered" {
+		t.Fatalf("status = %q, want delivered", status)
+	}
+}
+
+func TestCompletionWorkerConsumesLegacyExecutionUpdateWithoutResultMessage(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]string{
+				"dispatchTaskId": "router-legacy-update",
+				"requestId":      received["requestId"].(string),
+				"updateType":     "delegated_to_issue",
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(ClientConfig{BaseURL: server.URL, ServiceCredential: "service-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var updateID pgtype.UUID
+	if err := pool.QueryRow(context.Background(), `
+		INSERT INTO task_execution_update_outbox (
+			root_task_id, target_task_id, issue_id, issue_identifier,
+			callback_url, target_identity, request_id, agent_id,
+			target_agent_id, update_type
+		) VALUES (
+			gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), 'MUL-LEGACY',
+			'/api/v1/dispatch-tasks/router-legacy-update/execution-update',
+			$1, $2, gen_random_uuid(), gen_random_uuid(), 'delegated_to_issue'
+		)
+		RETURNING id
+	`, client.TargetIdentity(), fmt.Sprintf("worker-legacy-update:%d", time.Now().UnixNano())).Scan(&updateID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_execution_update_outbox WHERE id = $1`, updateID)
+	})
+
+	worker := NewCompletionWorker(queries, client, nil)
+	if worked, processErr := worker.ProcessNext(context.Background()); processErr != nil || !worked {
+		t.Fatalf("legacy delivery worked=%v error=%v", worked, processErr)
+	}
+	if _, present := received["resultMessage"]; present {
+		t.Fatalf("legacy request included resultMessage: %#v", received)
+	}
+	var status string
+	if err := pool.QueryRow(context.Background(), `
+		SELECT status FROM task_execution_update_outbox WHERE id = $1
+	`, updateID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "delivered" {
+		t.Fatalf("legacy status = %q, want delivered", status)
+	}
+}
+
 func TestCompletionWorkerDoesNotDeliverTerminalWhileExecutionUpdateRetries(t *testing.T) {
 	pool := taskCompletionTestPool(t)
 	queries := db.New(pool)
@@ -220,6 +398,81 @@ func TestCompletionWorkerDoesNotDeliverTerminalWhileExecutionUpdateRetries(t *te
 	}
 	if updateRequests != 1 || terminalRequests != 0 {
 		t.Fatalf("update requests=%d terminal requests=%d", updateRequests, terminalRequests)
+	}
+}
+
+func TestWaitingExecutionUpdateHoldsTerminalCompletionForOldWorker(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	targetIdentity := "router-target:v1:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	now := time.Now().UnixNano()
+	update, err := queries.EnqueueTaskExecutionUpdate(context.Background(), db.EnqueueTaskExecutionUpdateParams{
+		RootTaskID:          pgtype.UUID{Bytes: [16]byte{byte(now), 21}, Valid: true},
+		TargetTaskID:        pgtype.UUID{Bytes: [16]byte{byte(now), 22}, Valid: true},
+		IssueID:             pgtype.UUID{Bytes: [16]byte{byte(now), 23}, Valid: true},
+		IssueIdentifier:     "MUL-WAITING",
+		CallbackUrl:         "/api/v1/dispatch-tasks/router-waiting/execution-update",
+		TargetIdentity:      targetIdentity,
+		RequestID:           fmt.Sprintf("worker-waiting-update:%d", now),
+		AgentID:             pgtype.UUID{Bytes: [16]byte{byte(now), 24}, Valid: true},
+		TargetAgentID:       pgtype.UUID{Bytes: [16]byte{byte(now), 25}, Valid: true},
+		UpdateType:          "delegated_to_issue",
+		ResultMessageFrozen: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion, err := queries.EnqueueTaskCompletion(context.Background(), db.EnqueueTaskCompletionParams{
+		RootTaskID:      update.RootTaskID,
+		TerminalTaskID:  update.TargetTaskID,
+		CallbackUrl:     "/api/v1/dispatch-tasks/router-waiting/execution-result",
+		TargetIdentity:  targetIdentity,
+		RequestID:       fmt.Sprintf("worker-waiting-completion:%d", now),
+		AgentID:         update.AgentID,
+		ExecutionStatus: "completed",
+		ResultMessage:   "done",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE id = $1`, completion.ID)
+		pool.Exec(context.Background(), `DELETE FROM task_execution_update_outbox WHERE id = $1`, update.ID)
+	})
+
+	var held bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT available_at = 'infinity'::timestamptz
+		FROM task_completion_outbox WHERE id = $1
+	`, completion.ID).Scan(&held); err != nil {
+		t.Fatal(err)
+	}
+	if !held {
+		t.Fatal("terminal completion is visible before the handoff result is frozen")
+	}
+	if _, err := queries.ClaimTaskCompletion(context.Background(), targetIdentity); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("old worker claimed held terminal completion: %v", err)
+	}
+
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE task_execution_update_outbox
+		SET result_message = '任务已转入后台', result_message_frozen = TRUE, status = 'queued'
+		WHERE id = $1
+	`, update.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ReleaseTaskCompletionsForExecutionUpdate(context.Background(), update.RootTaskID); err != nil {
+		t.Fatal(err)
+	}
+	var available bool
+	if err := pool.QueryRow(context.Background(), `
+		SELECT available_at <= now()
+		FROM task_completion_outbox WHERE id = $1
+	`, completion.ID).Scan(&available); err != nil {
+		t.Fatal(err)
+	}
+	if !available {
+		t.Fatal("terminal completion was not released with the frozen handoff")
 	}
 }
 
