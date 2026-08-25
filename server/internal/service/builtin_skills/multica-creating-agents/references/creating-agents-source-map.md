@@ -126,16 +126,16 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 
 | Contract | Line | Behavior |
 |---|---|---|
-| Fresh agent re-read on claim | 1109–1111 | `GetAgent(task.AgentID)` — claim uses persisted fields, not create output |
-| Workspace skills FIRST | 1115 | `skills := h.TaskService.LoadAgentSkills(...)` |
-| Built-ins appended | 1116 | `skills = append(skills, h.TaskService.BuiltinSkills()...)` |
+| Exact task Runtime passed to skill assembly | 1992, 1996 | Both ref and full claims pass the authorized Runtime plus persisted startup backend, not the Agent's current binding |
+| Workspace skill capability filter | `task.go` 5519–5524 | Runtime-compatible workspace skills first, then built-ins and capability-gated DWS |
 | Runtime payload | `daemon.go` `TaskAgentData` | Carries `Instructions`, `Skills`, `CustomEnv`, `CustomArgs`, `Model`, `ThinkingLevel`, `ServiceTier`, and `McpConfig`; metadata-only fields remain absent |
 
 ## Skill loading — `server/internal/service/task.go`
 
 | Contract | Line | Behavior |
 |---|---|---|
-| `LoadAgentSkills` | 1685 | `ListAgentSkills` + per-skill `ListSkillFiles` → content + supporting files for execution |
+| `LoadAgentSkills` | 5491–5512 | `ListAgentSkills` + config + per-skill `ListSkillFiles` → execution candidates |
+| Runtime requirements | `skill_runtime_capability.go` | Cloud Runtime must match `config.execution.required_sandbox_backends` and advertise every `required_runtime_capabilities` entry; malformed requirements fail closed |
 
 ## Built-in skills — `server/internal/service/builtin_skills.go`
 

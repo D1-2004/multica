@@ -270,12 +270,17 @@ multica agent skills add <agent-id> --skill-ids <skill-id> --output json
 multica agent skills list <agent-id> --output json
 ```
 
-At claim time the daemon assembles the agent's skills as workspace-bound skills
-FIRST, then appends the platform built-in skills. `LoadAgentSkills` loads each
-bound skill's content plus its supporting files; built-in skills are embedded
-at compile time and loaded from `SKILL.md` + sibling files. Both reach the
-provider as skill content — which is why capability belongs in a bound skill,
-not pasted into `instructions`.
+At claim time the daemon starts with workspace-bound skills compatible with the
+task's exact Runtime, then appends platform built-ins. A cloud-only dependency
+belongs in `skill.config.execution.required_runtime_capabilities`; a
+backend-only workflow uses `required_sandbox_backends`. Every capability must be
+advertised and the actual backend must be listed, or the skill is omitted from
+full and ref-based claims. The backend comes from the task's persisted Runtime
+start attempt and must still match Runtime metadata. Local runtimes keep their
+machine-owned skill availability. `LoadAgentSkills` loads each bound skill's
+content plus supporting files; built-ins are embedded at compile time and loaded
+from `SKILL.md` plus sibling files. Capability belongs in a bound skill, not in
+`instructions`.
 
 ## Side effects needing approval
 
