@@ -1686,7 +1686,17 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		if handled, _ := h.repairStaleCommentPlanIfNeeded(r.Context(), &task, rtWorkspaceID); handled {
 			continue
 		}
-		resp, deliveredCommentIDs, _, _, failure := h.buildClaimedTaskResponse(r, &task, rt, uuidToString(task.RuntimeID), rtWorkspaceID)
+		taskBackend, backendErr := h.latestTaskSandboxBackend(r.Context(), task, rt)
+		if backendErr != nil {
+			slog.Error("batch claim: load task sandbox backend failed; requeueing claim",
+				"task_id", uuidToString(task.ID), "error", backendErr)
+			if _, rerr := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), task); rerr != nil {
+				slog.Error("batch claim: requeue after sandbox backend lookup failed",
+					"task_id", uuidToString(task.ID), "error", rerr)
+			}
+			continue
+		}
+		resp, deliveredCommentIDs, _, _, failure := h.buildClaimedTaskResponse(r, &task, rt, taskBackend, uuidToString(task.RuntimeID), rtWorkspaceID)
 		if failure != nil {
 			// Builder rejected this task (workspace isolation / chat-input);
 			// it has already cancelled the task where the failure requires it.
@@ -1808,6 +1818,31 @@ type claimBuildFailure struct {
 	message string
 }
 
+func sandboxBackendFromStartAttempt(attempt db.AgentTaskRuntimeStartAttempt) (service.SandboxBackendKind, error) {
+	backend := service.SandboxBackendKind(strings.ToLower(strings.TrimSpace(attempt.Backend)))
+	if backend != service.SandboxBackendAliyunFC && backend != service.SandboxBackendASB {
+		return "", fmt.Errorf("invalid task runtime start backend %q", attempt.Backend)
+	}
+	return backend, nil
+}
+
+func (h *Handler) latestTaskSandboxBackend(ctx context.Context, task db.AgentTaskQueue, runtime db.AgentRuntime) (service.SandboxBackendKind, error) {
+	if runtime.RuntimeMode != "cloud" {
+		return "", nil
+	}
+	attempt, err := h.Queries.GetLatestAgentTaskRuntimeStartAttemptByTask(ctx, db.GetLatestAgentTaskRuntimeStartAttemptByTaskParams{
+		TaskID:    task.ID,
+		RuntimeID: task.RuntimeID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return sandboxBackendFromStartAttempt(attempt)
+}
+
 // buildClaimedTaskResponse assembles the full daemon claim payload for a
 // single already-claimed task and computes the exact comment ids embedded in
 // it (deliveredCommentIDs). Shared by the per-runtime handler
@@ -1816,7 +1851,7 @@ type claimBuildFailure struct {
 // feed the same delivery receipt into FinalizeTaskClaim. A non-nil failure
 // means the task must not be dispatched; the builder has already cancelled it
 // where the failure semantics require it.
-func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
+func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQueue, runtime db.AgentRuntime, taskBackend service.SandboxBackendKind, runtimeID, runtimeWorkspaceID string) (resp AgentTaskResponse, deliveredCommentIDs []pgtype.UUID, agentSkillCount, builtinSkillCount int, failure *claimBuildFailure) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp = taskToResponse(*task, runtimeWorkspaceID)
 	// Claim-only capability: this server resolves the squad-leader role on the
@@ -1954,11 +1989,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 		}
 		if useSkillRefs {
-			_, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+			_, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend)
 			agentSkillCount = len(skillRefs)
 			resp.Agent.SkillRefs = skillRefs
 		} else {
-			skills := h.TaskService.LoadAgentExecutionSkills(r.Context(), task.AgentID)
+			skills := h.TaskService.LoadAgentExecutionSkills(r.Context(), task.AgentID, runtime, taskBackend)
 			agentSkillCount = len(skills)
 			builtinSkills := h.TaskService.BuiltinSkills()
 			builtinSkillCount = len(builtinSkills)
@@ -3080,7 +3115,20 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		TaskID:    task.ID,
 		RuntimeID: task.RuntimeID,
 	})
+	var taskBackend service.SandboxBackendKind
 	if attemptErr == nil {
+		var backendErr error
+		taskBackend, backendErr = sandboxBackendFromStartAttempt(attempt)
+		if backendErr != nil {
+			outcome = "error_runtime_start_backend"
+			if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
+				outcome = "error_runtime_start_requeue"
+				writeError(w, http.StatusInternalServerError, "failed to requeue task after invalid runtime start backend")
+				return
+			}
+			writeError(w, http.StatusConflict, "runtime start backend is invalid")
+			return
+		}
 		if attempt.Protocol == service.RuntimeStartProtocolHTTPJSONV1 {
 			if !attemptProvided || requestedAttemptID != attempt.ID || strings.TrimSpace(req.StartupStatusProtocol) != attempt.Protocol {
 				outcome = "error_runtime_start_protocol"
@@ -3138,7 +3186,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	outcome = "claimed"
 	buildStart = time.Now()
 
-	resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure := h.buildClaimedTaskResponse(r, task, runtime, runtimeID, runtimeWorkspaceID)
+	resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure := h.buildClaimedTaskResponse(r, task, runtime, taskBackend, runtimeID, runtimeWorkspaceID)
 	if failure != nil {
 		outcome = failure.outcome
 		writeError(w, failure.status, failure.message)
@@ -3336,7 +3384,12 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	bundles, _ := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID)
+	taskBackend, err := h.latestTaskSandboxBackend(r.Context(), task, runtime)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load task sandbox backend")
+		return
+	}
+	bundles, _ := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend)
 	allowed := make(map[string]service.AgentSkillData, len(bundles))
 	for _, bundle := range bundles {
 		allowed[bundle.Source+"\x00"+bundle.ID] = bundle

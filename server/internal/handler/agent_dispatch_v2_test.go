@@ -372,6 +372,93 @@ func TestBuildDispatchPromptRetainsAllMessagesAndSafeAttachmentDisplay(t *testin
 	}
 }
 
+func TestBuildDispatchPromptRendersReferencedMessageContext(t *testing.T) {
+	c := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Sender: DispatchSender{DisplayName: "李四", OpenDingTalkID: "open-sender-secret"},
+			Messages: []DispatchMessage{
+				{
+					OpenMsgID: "current-open-secret",
+					Text:      "@助手 继续处理",
+					ReferencedMessage: &DispatchReferencedMessage{
+						MessageID: "referenced-message-secret",
+						OpenMsgID: "referenced-open-secret",
+						Text:      "我是被引用消息的 AI 可读内容",
+						SenderUID: "referenced-sender-secret",
+					},
+				},
+			},
+		}},
+	}
+
+	display := mustBuildDispatchPrompt(t, c).DisplayContent
+	for _, visible := range []string{"李四", "引用消息：", "我是被引用消息的 AI 可读内容", "当前回复：", "@助手 继续处理"} {
+		if !strings.Contains(display, visible) {
+			t.Errorf("display content missing %q: %q", visible, display)
+		}
+	}
+	for _, private := range []string{"open-sender-secret", "current-open-secret", "referenced-message-secret", "referenced-open-secret", "referenced-sender-secret"} {
+		if strings.Contains(display, private) {
+			t.Errorf("display content leaked %q: %q", private, display)
+		}
+	}
+}
+
+func TestDispatchMessageReferencedMessageAcceptsRouterAliases(t *testing.T) {
+	raw := []byte(`{
+		"schemaVersion": "2.0",
+		"agentId": "agent",
+		"source": {"platform": "dingtalk", "type": "digital_employee"},
+		"event": {
+			"domain": "channel",
+			"type": "message.created",
+			"data": {
+				"conversation": {"openConversationId": "cid", "type": "group"},
+				"sender": {"openDingTalkId": "open-sender", "displayName": "李四"},
+				"messages": [{
+					"openMsgId": "current-open",
+					"occurredAt": 1787600000000,
+					"text": "@助手 继续",
+					"referencedMessage": {
+						"messageId": "referenced-message",
+						"msgId": "referenced-open",
+						"content": "上一轮回复内容",
+						"senderUid": "referenced-sender"
+					}
+				}]
+			}
+		},
+		"surface": {"type": "issue"},
+		"outbound": {"mode": "dws", "replyTo": "latest_message"}
+	}`)
+	var c DispatchCommand
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatalf("referencedMessage aliases rejected at unmarshal: %v", err)
+	}
+	referenced := c.Event.Data.Messages[0].ReferencedMessage
+	if referenced == nil {
+		t.Fatal("referencedMessage was not decoded")
+	}
+	if referenced.MessageID != "referenced-message" ||
+		referenced.OpenMsgID != "referenced-open" ||
+		referenced.Text != "上一轮回复内容" ||
+		referenced.SenderUID != "referenced-sender" {
+		t.Fatalf("referencedMessage = %+v", referenced)
+	}
+
+	display := mustBuildDispatchPrompt(t, c).DisplayContent
+	if !strings.Contains(display, "上一轮回复内容") || !strings.Contains(display, "@助手 继续") {
+		t.Fatalf("display content missing referenced context: %q", display)
+	}
+	context := dispatchTaskContextForTest(t, c)
+	for _, visible := range []string{`"referencedMessage"`, `"messageId":"referenced-message"`, `"openMsgId":"referenced-open"`, `"text":"上一轮回复内容"`, `"senderUid":"referenced-sender"`} {
+		if !strings.Contains(string(context), visible) {
+			t.Fatalf("dispatch context missing %s: %s", visible, string(context))
+		}
+	}
+}
+
 func TestDispatchPromptBuilderComposesCommonModeAndContext(t *testing.T) {
 	provider := featureflag.NewDiamondProvider()
 	if _, _, err := provider.ApplyJSON([]byte(`{
