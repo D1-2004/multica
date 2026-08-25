@@ -512,7 +512,7 @@ func (h *Handler) createAgentDispatchChatV2(
 			writeError(w, http.StatusUnprocessableEntity, "chat attachments are not supported yet")
 			return
 		}
-		if value := strings.TrimSpace(message.Text); value != "" {
+		if value := dispatchMessageDisplay(message); value != "" {
 			textParts = append(textParts, value)
 		}
 	}
