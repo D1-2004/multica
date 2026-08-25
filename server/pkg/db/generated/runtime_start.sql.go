@@ -345,6 +345,48 @@ func (q *Queries) GetAgentTaskRuntimeStartAttempt(ctx context.Context, arg GetAg
 	return i, err
 }
 
+const getLatestAgentTaskRuntimeStartAttemptByTask = `-- name: GetLatestAgentTaskRuntimeStartAttemptByTask :one
+SELECT id, task_id, runtime_id, backend, protocol, sandbox_id, cold_start, status, last_stage, error_code, error_detail, runner_started_at, daemon_started_at, claim_finalized_at, finished_at, created_at, updated_at
+FROM agent_task_runtime_start_attempt
+WHERE task_id = $1
+  AND runtime_id = $2
+ORDER BY created_at DESC, id DESC
+LIMIT 1
+`
+
+type GetLatestAgentTaskRuntimeStartAttemptByTaskParams struct {
+	TaskID    pgtype.UUID `json:"task_id"`
+	RuntimeID pgtype.UUID `json:"runtime_id"`
+}
+
+// Skill visibility and other execution-time policy must follow the backend
+// that actually launched this task, even after the shared Runtime row rotates
+// to another backend or artifact.
+func (q *Queries) GetLatestAgentTaskRuntimeStartAttemptByTask(ctx context.Context, arg GetLatestAgentTaskRuntimeStartAttemptByTaskParams) (AgentTaskRuntimeStartAttempt, error) {
+	row := q.db.QueryRow(ctx, getLatestAgentTaskRuntimeStartAttemptByTask, arg.TaskID, arg.RuntimeID)
+	var i AgentTaskRuntimeStartAttempt
+	err := row.Scan(
+		&i.ID,
+		&i.TaskID,
+		&i.RuntimeID,
+		&i.Backend,
+		&i.Protocol,
+		&i.SandboxID,
+		&i.ColdStart,
+		&i.Status,
+		&i.LastStage,
+		&i.ErrorCode,
+		&i.ErrorDetail,
+		&i.RunnerStartedAt,
+		&i.DaemonStartedAt,
+		&i.ClaimFinalizedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getStartingAgentTaskRuntimeStartAttemptByTask = `-- name: GetStartingAgentTaskRuntimeStartAttemptByTask :one
 SELECT id, task_id, runtime_id, backend, protocol, sandbox_id, cold_start, status, last_stage, error_code, error_detail, runner_started_at, daemon_started_at, claim_finalized_at, finished_at, created_at, updated_at
 FROM agent_task_runtime_start_attempt

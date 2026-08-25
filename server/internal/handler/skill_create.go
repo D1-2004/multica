@@ -115,7 +115,7 @@ type skillOverwriteInput struct {
 	ExpectedName string
 	Description  string
 	Content      string
-	Config       any
+	Config       map[string]any
 	Files        []CreateSkillFileRequest
 }
 
@@ -128,18 +128,11 @@ type skillOverwriteInput struct {
 //
 // Preserved: id, created_by, created_at, name, and agent_skill bindings (the
 // row identity and the binding table are never touched). Replaced: description,
-// content, config (origin), and the full file set — files absent from the new
-// bundle are pruned via DeleteSkillFilesBySkill. On any error the tx rolls back,
-// leaving the original skill unchanged.
+// content, config origin, and the full file set — files absent from the new
+// bundle are pruned via DeleteSkillFilesBySkill. The existing execution policy
+// is preserved so a re-import cannot remove a Runtime capability boundary. On
+// any error the tx rolls back, leaving the original skill unchanged.
 func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
-	config, err := json.Marshal(input.Config)
-	if err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-	if input.Config == nil {
-		config = []byte("{}")
-	}
-
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
@@ -148,7 +141,7 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 
 	qtx := h.Queries.WithTx(tx)
 
-	existing, err := qtx.GetSkillInWorkspace(ctx, db.GetSkillInWorkspaceParams{
+	existing, err := qtx.GetSkillInWorkspaceForUpdate(ctx, db.GetSkillInWorkspaceForUpdateParams{
 		ID:          input.TargetSkillID,
 		WorkspaceID: input.WorkspaceID,
 	})
@@ -172,6 +165,10 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	// one skill's content onto another.
 	if input.ExpectedName != "" && existing.Name != input.ExpectedName {
 		return SkillWithFilesResponse{}, errSkillOverwriteNameMismatch
+	}
+	config, err := json.Marshal(mergeImportedSkillConfig(existing.Config, input.Config))
+	if err != nil {
+		return SkillWithFilesResponse{}, err
 	}
 
 	// Name is intentionally left unset (COALESCE keeps the existing name): the

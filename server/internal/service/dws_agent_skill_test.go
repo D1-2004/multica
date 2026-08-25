@@ -114,15 +114,24 @@ func TestLoadAgentExecutionSkillsFollowsRuntimeDWSCapability(t *testing.T) {
 		pool.Exec(cleanupCtx, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 
-	firstSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(firstDWSAgentID))
+	dwsRuntime, err := queries.GetAgentRuntime(ctx, util.MustParseUUID(dwsRuntimeID))
+	if err != nil {
+		t.Fatalf("load DWS runtime: %v", err)
+	}
+	nonDWSRuntime, err := queries.GetAgentRuntime(ctx, util.MustParseUUID(nonDWSRuntimeID))
+	if err != nil {
+		t.Fatalf("load non-DWS runtime: %v", err)
+	}
+
+	firstSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(firstDWSAgentID), dwsRuntime, SandboxBackendASB)
 	if !hasSkillName(firstSkills, "multica-dws") {
 		t.Fatalf("first DWS runtime agent skills missing multica-dws: %#v", skillNames(firstSkills))
 	}
-	secondSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(secondDWSAgentID))
+	secondSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(secondDWSAgentID), dwsRuntime, SandboxBackendASB)
 	if !hasSkillName(secondSkills, "multica-dws") {
 		t.Fatalf("second DWS runtime agent skills missing multica-dws: %#v", skillNames(secondSkills))
 	}
-	nonDWSSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(nonDWSAgentID))
+	nonDWSSkills := svc.LoadAgentExecutionSkills(ctx, util.MustParseUUID(nonDWSAgentID), nonDWSRuntime, SandboxBackendAliyunFC)
 	if hasSkillName(nonDWSSkills, "multica-dws") {
 		t.Fatalf("non-DWS runtime agent unexpectedly received multica-dws: %#v", skillNames(nonDWSSkills))
 	}
