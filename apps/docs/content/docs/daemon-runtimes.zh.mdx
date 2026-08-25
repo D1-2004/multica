@@ -146,7 +146,7 @@ Multica 对并发有两层限额：
 
 ## FC/E2B 任务上下文环境变量
 
-对于 FC/E2B 云运行时，服务端会在每次 `sandbox exec` 时传入当前任务上下文。即使复用热沙箱，现有运行时入口也会保留这些变量并传递给 Agent。它们不是 Daemon 部署配置，也不是沙箱模板构建参数：
+每种运行时都会把当前任务上下文传给 Agent 进程。FC/E2B 云运行时由服务端在每次 `sandbox exec` 时传入，即使复用热沙箱，运行时入口也会保留这些变量并传递给 Agent；本地 Daemon 则在拉起子进程时设置同样的变量。它们不是 Daemon 部署配置，也不是沙箱模板构建参数：
 
 | 环境变量 | 语义 |
 |---|---|
@@ -154,8 +154,6 @@ Multica 对并发有两层限额：
 | `MULTICA_CHAT_SESSION_ID` | 当前 Multica Chat Session 的稳定 ID。同一 Chat 的后续轮次保持不变；非 Chat 任务不注入 |
 
 需要把 Chat 创建的后台 Issue 归属到原会话时，应使用 `MULTICA_CHAT_SESSION_ID`，不要使用每轮变化的 `MULTICA_TASK_ID`，也不要使用底层 provider 的会话恢复 ID。
-
-当前契约只覆盖服务端管理的 FC/E2B 云沙箱；本地 Daemon 运行时不会收到 `MULTICA_CHAT_SESSION_ID`。
 
 ## Agent 不工作怎么排查
 

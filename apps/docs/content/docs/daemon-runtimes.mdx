@@ -178,7 +178,7 @@ Even if this step fails due to a network issue, there's a server-side scan **eve
 
 ## FC/E2B task context environment variables
 
-For cloud FC/E2B runtimes, the server passes the current task context through every `sandbox exec` invocation. The existing runtime entrypoint preserves these variables when it starts the agent, including when a warm sandbox is reused. They are not daemon deployment settings or sandbox template build-time variables:
+Every runtime passes the current task context to the agent process. For cloud FC/E2B runtimes the server sets it on each `sandbox exec` invocation, and the runtime entrypoint preserves the variables when it starts the agent, including when a warm sandbox is reused; a local daemon sets the same variables on the process it spawns. They are not daemon deployment settings or sandbox template build-time variables:
 
 | Variable | Semantics |
 |---|---|
@@ -186,8 +186,6 @@ For cloud FC/E2B runtimes, the server passes the current task context through ev
 | `MULTICA_CHAT_SESSION_ID` | Stable ID of the current Multica Chat Session. It remains unchanged across later turns in the same Chat and is omitted for non-Chat tasks |
 
 Use `MULTICA_CHAT_SESSION_ID` when associating a background Issue with the Chat that created it. Do not use the per-turn `MULTICA_TASK_ID` or the underlying provider's resume session ID for that relationship.
-
-This contract currently applies only to server-managed FC/E2B cloud sandboxes. Local daemon runtimes do not receive `MULTICA_CHAT_SESSION_ID`.
 
 ## Troubleshooting agents that aren't working
 

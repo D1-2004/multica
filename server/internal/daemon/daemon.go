@@ -141,7 +141,7 @@ func taskScopedAuthToken(task Task) (string, error) {
 }
 
 func taskMulticaEnvironment(task Task, agentName, token, configRoot, workspacesRoot, serverURL string, healthPort, slot int, tempDir string) map[string]string {
-	return map[string]string{
+	env := map[string]string{
 		"MULTICA_TOKEN":        token,
 		cli.TaskConfigRootEnv:  configRoot,
 		TaskWorkspacesRootEnv:  workspacesRoot,
@@ -156,6 +156,19 @@ func taskMulticaEnvironment(task Task, agentName, token, configRoot, workspacesR
 		"TMP":                  tempDir,
 		"TEMP":                 tempDir,
 	}
+	// The chat session id is what `multica issue list --metadata
+	// "multica.chat_session_id=$MULTICA_CHAT_SESSION_ID"` filters on, and that
+	// lookup is how a chat run finds the Issue it already delegated to instead
+	// of opening a second one for the same request. The cloud sandbox path has
+	// always exported it (service.fcE2BChatSessionIDEnvKey); a locally-run
+	// daemon did not, so on that path the variable expanded to empty and the
+	// filter silently matched the wrong set. Set only for chat tasks — an issue
+	// or autopilot run has no session, and exporting an empty value reads as
+	// "there is one, and it is blank".
+	if task.ChatSessionID != "" {
+		env["MULTICA_CHAT_SESSION_ID"] = task.ChatSessionID
+	}
+	return env
 }
 
 // taskRunner executes a single agent task and returns the result.

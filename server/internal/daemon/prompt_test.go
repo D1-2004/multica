@@ -658,6 +658,67 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 	})
 }
 
+// TestBuildChatPromptPartialRecordOnChannelsMulticaCannotRead pins what the run
+// is told about the record it was handed on Feishu / WeCom / DingTalk.
+//
+// Two claims used to be wrong at once. The prompt said "work from the context
+// already provided", describing the Multica slice as if it were the
+// conversation — in a group room it is only the messages addressed to the agent
+// plus its own replies. And it said there is "no command that can fetch more",
+// which is true of Multica and false of the world: an agent deployed as a native
+// account on the platform routinely carries its own reader. Together they taught
+// a run to answer confidently off a partial record and to read an absent message
+// as nothing having been said.
+//
+// The replacement must therefore do three things and is pinned on all three:
+// scope the record, deny the gap-means-silence inference, and route the run to
+// its own tooling before it falls back to asking the user. Slack is excluded —
+// it has a Multica reader and gets the commands instead.
+func TestBuildChatPromptPartialRecordOnChannelsMulticaCannotRead(t *testing.T) {
+	t.Parallel()
+
+	for _, channelType := range []string{
+		execenv.ChannelTypeFeishu,
+		execenv.ChannelTypeWecom,
+		execenv.ChannelTypeDingTalk,
+	} {
+		out := buildChatPrompt(Task{
+			ChatSessionID:   "sess-1",
+			ChatChannelType: channelType,
+			ChatMessage:     "刚才群里说到哪了",
+		})
+		for _, want := range []string{
+			// The record is a slice, and the prompt names what is missing from
+			// it rather than leaving the run to assume it is complete.
+			"only the slice Multica recorded",
+			"Messages other people exchanged",
+			// The inference that actually produces the wrong answer.
+			"never as proof nothing was said",
+			// Multica-scoped, not a claim about the world.
+			"Multica ships no history reader",
+			"your own",
+			// The fallback, so "I have no tool" does not become "I will guess".
+			"ask the user rather than guessing",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("channel=%s: prompt missing %q\n--- output ---\n%s", channelType, want, out)
+			}
+		}
+		// The old absolute claim must not come back on a surface where the
+		// conversation is sitting in a room the run may well be able to read.
+		if strings.Contains(out, "there is no command that can fetch more") {
+			t.Errorf("channel=%s: prompt still asserts the conversation is unfetchable", channelType)
+		}
+	}
+
+	// Slack has a Multica reader, so it keeps the commands and must NOT be told
+	// to fall back to its own tooling.
+	slack := buildChatPrompt(Task{ChatSessionID: "s", ChatChannelType: execenv.ChannelTypeSlack, ChatMessage: "hi"})
+	if strings.Contains(slack, "Multica ships no history reader") {
+		t.Errorf("slack has a reader and must not be told otherwise:\n%s", slack)
+	}
+}
+
 // TestBuildChatPromptNoNarrationOnEveryChannel pins the THIRD axis of the chat
 // channel policy: the no-narration delivery rule keys off "is there a channel at
 // all", like the upload axis and unlike the Slack-only history axis.

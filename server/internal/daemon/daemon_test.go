@@ -1106,12 +1106,22 @@ func TestSessionContinuityNoticeMatchesSurface(t *testing.T) {
 			wantMentions: "not readable from anywhere",
 		},
 		{
-			// Multica ships no history reader for Feishu, so despite being a
-			// channel it is in the same position as a web chat.
-			name:         "feishu has no history reader",
+			// Multica ships no history reader for Feishu — but the room does,
+			// and the people in it still see every word. The notice may say
+			// Multica cannot fetch it; it may NOT say nobody can, because the
+			// same per-turn message tells this run to try its own platform
+			// tooling. Asserting the Multica-scoped phrasing is what stops a
+			// future edit from collapsing this back onto the web-chat text.
+			name:         "feishu conversation survives in the room",
 			task:         Task{ChatSessionID: "chat-1", ChatChannelType: execenv.ChannelTypeFeishu},
 			tellUser:     true,
-			wantMentions: "not readable from anywhere",
+			wantMentions: "Multica ships no history reader for this platform",
+		},
+		{
+			name:         "dingtalk conversation survives in the room",
+			task:         Task{ChatSessionID: "chat-1", ChatChannelType: execenv.ChannelTypeDingTalk},
+			tellUser:     true,
+			wantMentions: "still in the room",
 		},
 	}
 
@@ -1135,6 +1145,26 @@ func TestSessionContinuityNoticeMatchesSurface(t *testing.T) {
 				t.Errorf("recoverable surface must name the real loss:\n%s", notice)
 			}
 		})
+	}
+
+	// "not readable from anywhere" is a claim about the world, and it is only
+	// true where there is no room: a channel-backed chat always has one. This
+	// is the guard for the contradiction the split exists to remove — the
+	// per-turn chat prompt tells every channel run it may read the conversation
+	// back with its own tooling.
+	for _, channelType := range []string{
+		execenv.ChannelTypeFeishu,
+		execenv.ChannelTypeWecom,
+		execenv.ChannelTypeDingTalk,
+		execenv.ChannelTypeSlack,
+	} {
+		notice := sessionContinuityNoticeFor(Task{ChatSessionID: "chat-1", ChatChannelType: channelType})
+		if strings.Contains(notice, "not readable from anywhere") {
+			t.Errorf("channel %q claims the conversation is unreadable, but it is in the room:\n%s", channelType, notice)
+		}
+	}
+	if notice := sessionContinuityNoticeFor(Task{ChatSessionID: "chat-1"}); !strings.Contains(notice, "not readable from anywhere") {
+		t.Errorf("web chat has no room and no reader; the absolute claim is true there and must stay:\n%s", notice)
 	}
 
 	// The notice only renders when the resume actually failed.

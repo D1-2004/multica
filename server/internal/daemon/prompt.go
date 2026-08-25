@@ -18,7 +18,14 @@ func sessionContinuityNoticeFor(task Task) string {
 	if task.ChatChannelType == execenv.ChannelTypeSlack {
 		return execenv.SessionContinuityNoticeChannelHistory
 	}
-	// Web chat (no channel type) and every channel Multica cannot read back.
+	if task.ChatChannelType != "" {
+		// A channel Multica cannot read back. The room still holds every word,
+		// so the web-chat notice — which states outright that the history is
+		// readable from nowhere — is false here, and directly contradicts the
+		// channel block the same per-turn message carries.
+		return execenv.SessionContinuityNoticeChannelNoReader
+	}
+	// Web chat: no room, no channel, no reader. Nothing can fetch it.
 	return execenv.SessionContinuityNoticeUnrecoverable
 }
 
@@ -484,7 +491,7 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	// silently dropped it for Feishu/Lark (GH #6006).
 	if task.ChatChannelType != "" {
 		platform := channelDisplayName(task.ChatChannelType)
-		fmt.Fprintf(&b, "You are operating inside a %s conversation — not the Multica web app. This conversation and its history live in %s, NOT in Multica; never look in Multica issues or comments for it.\n", platform, platform)
+		fmt.Fprintf(&b, "You are a participant in this %s conversation, not a user of the Multica web app. The conversation and its history live in %s, NOT in Multica; never look in Multica issues or comments for it.\n", platform, platform)
 		if task.ChatChannelType == execenv.ChannelTypeSlack {
 			b.WriteString("The message below may be only what triggered you. Read the conversation with:\n")
 			b.WriteString("- `multica chat history --output json` — the channel overview: recent top-level messages, each thread tagged with a `thread_id` and `reply_count`. It does NOT expand thread contents.\n")
@@ -499,7 +506,22 @@ func buildChatPromptForProvider(task Task, provider string) string {
 			// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
 			b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer.\n")
 		} else {
-			fmt.Fprintf(&b, "Work from the context already provided to you below — Multica has no history reader for %s, so there is no command that can fetch more of this conversation. If you genuinely need earlier context that is not here, ask the user for it rather than guessing.\n", platform)
+			// What the run is handed is NOT the conversation — it is the slice
+			// of it that reached Multica: the messages addressed to this agent
+			// and its own replies, bounded and possibly trimmed at the front
+			// (handler.boundedChatHistoryTranscript). In a group room that is a
+			// small fraction of what was said. The old copy ("work from the
+			// context already provided") described that slice as the whole
+			// conversation, so a run reasoned confidently off a partial record
+			// and read an absent message as nothing having been said.
+			//
+			// Multica genuinely ships no history reader for this platform, but
+			// "Multica cannot fetch it" is not "it cannot be fetched": an agent
+			// deployed as a native account on the platform routinely carries its
+			// own tooling for exactly this. Naming a specific tool here would
+			// bind a platform-agnostic file to one deployment's skill set, so
+			// the copy points at the agent's own tools without naming them.
+			fmt.Fprintf(&b, "The conversation context you were given is only the slice Multica recorded — messages addressed to you and your own replies, bounded in length and possibly trimmed at the start. Messages other people exchanged, and anything said before you were brought in, are not in it: treat a gap as missing context, never as proof nothing was said. Multica ships no history reader for %s, so when you need more, read it with your own %s tools or skills if you have them, and otherwise ask the user rather than guessing.\n", platform, platform)
 		}
 		// Scoped to process, not results — a completion confirmation IS the deliverable.
 		fmt.Fprintf(&b, "Reply to %s with the final outcome only. Do NOT narrate planned or in-progress steps (\"我先读取…\"); completed actions are part of the outcome.\n", platform)

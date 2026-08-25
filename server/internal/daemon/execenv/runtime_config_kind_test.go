@@ -205,6 +205,92 @@ func TestBriefDueDateTeachesCalendarDayFormat(t *testing.T) {
 	}
 }
 
+// TestChatAvailableCommandsDropsIssueScopedSurface locks the chat variant of
+// Available Commands.
+//
+// A chat run has no issue id. Every command that takes one is unreachable from
+// it, and the `## Issue Metadata` section that says when to touch the bag is
+// already out of scope for the kind — so those bullets shipped on every chat
+// turn as commands with no governing policy, led by the longest single line in
+// the brief. What a chat turn actually reaches for stays, and `--help` remains
+// the route to everything else.
+func TestChatAvailableCommandsDropsIssueScopedSurface(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1", AgentName: "Eve", AgentID: "eve-1",
+	})
+
+	for _, want := range []string{
+		"## Available Commands",
+		"`multica <command> --help`",
+		"multica mcp tools --output json",
+		"multica mcp call --method <name>",
+		"multica issue list",
+		"multica issue get <id> --output json",
+		"multica issue create --title",
+		"multica issue status <id> <status>",
+		"multica repo checkout <url>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chat Available Commands missing %q\n---\n%s", want, out)
+		}
+	}
+
+	for _, banned := range []string{
+		"multica issue comment list <issue-id>",
+		"multica issue comment add <issue-id>",
+		"multica issue metadata list <issue-id>",
+		"multica issue metadata set <issue-id>",
+		"multica issue metadata delete <issue-id>",
+		"multica issue children <id>",
+	} {
+		if strings.Contains(out, banned) {
+			t.Errorf("chat brief advertises issue-scoped command %q with no issue to use it on", banned)
+		}
+	}
+
+	// The delegation policy owns the delegate flags; the command list must not
+	// grow a second copy that can drift from the policy governing it.
+	if !strings.Contains(out, "## Background Issue Delegation") {
+		t.Error("chat brief must carry the delegation policy — it is what keeps the room responsive")
+	}
+	if strings.Count(out, "multica issue delegate --title") != 1 {
+		t.Error("delegate flags must appear exactly once, inside the policy that governs them")
+	}
+	// Ending the turn after a successful handoff has to be reconciled with
+	// Background Task Safety, which is in the same brief and forbids ending a
+	// turn while waiting on something.
+	if !strings.Contains(out, "not a background process you are waiting on") {
+		t.Error("delegation must state why ending the turn is not the forbidden background-and-yield")
+	}
+}
+
+// The issue-bearing kinds keep the full list; this is the other half of the
+// scoping decision above.
+func TestIssueKindsKeepFullAvailableCommands(t *testing.T) {
+	t.Parallel()
+
+	for name, ctx := range map[string]TaskContextForEnv{
+		"comment":   {IssueID: "i-1", TriggerCommentID: "tc-1"},
+		"assign":    {IssueID: "i-1"},
+		"autopilot": {AutopilotRunID: "r-1"},
+	} {
+		out := buildMetaSkillContent("claude", ctx)
+		for _, want := range []string{
+			"multica issue comment list <issue-id>",
+			"multica issue metadata list <issue-id>",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s brief lost full Available Commands entry %q", name, want)
+			}
+		}
+		if strings.Contains(out, "## Background Issue Delegation") {
+			t.Errorf("%s brief must not carry the chat-only delegation policy", name)
+		}
+	}
+}
+
 // TestBriefOwnsAutopilotIssueCommandsGuard pins the guard's single emission
 // point: the autopilot brief carries AutopilotIssueCommandsGuard, and the
 // per-turn prompt defers to it (daemon.TestBuildPromptAutopilotRunOnly pins

@@ -298,10 +298,42 @@ func writeAvailableCommands(b *strings.Builder, ctx TaskContextForEnv) {
 
 func writeBackgroundIssueDelegation(b *strings.Builder) {
 	b.WriteString("## Background Issue Delegation\n\n")
-	b.WriteString("In Chat, keep genuinely quick explanations, small lookups, and short answers in the foreground. Do not spend a separate long preflight turn classifying the request: start with a cheap step when useful, then delegate as soon as sustained execution, specialist domain work, code or repository changes, several dependent tool calls, external waiting, or coordinated side effects would occupy the Chat session. Public information alone does not make a task lightweight; collecting news, composing a card, sending it to people, and creating a todo is a background delivery job.\n\n")
-	b.WriteString("Before creating an Issue, list this Chat's prior delegations with `multica issue list --metadata \"multica.chat_session_id=$MULTICA_CHAT_SESSION_ID\" --limit 100 --output json`. Continue an existing Issue only when it represents the same subject and intended deliverable, including contextual follow-ups such as \"continue\", \"that is wrong\", or \"do not send it anymore\". Otherwise create a new Issue with a stable, self-contained title: subject or object + intended deliverable + necessary scope. Choose the Agent whose domain best matches the work.\n\n")
-	b.WriteString("Use `multica issue delegate --issue <id> --content-file <path> --output json` to continue, or `multica issue delegate --title \"...\" --description-file <path> --assignee-id <agent-id> --output json` to create. Do not use `multica issue create` or `multica issue comment add` as a substitute: only delegation transfers completion responsibility and does not expose callback URLs, callback tokens, or context tokens to the model. This server-managed transfer is not a sandbox background process and is the supported way to release Chat safely.\n\n")
-	b.WriteString("After success returns `release_parent: true`, briefly tell the user the work moved to the background and end the Chat turn. Do not continue the delegated business work in Chat.\n\n")
+	b.WriteString("Keep genuinely quick answers, small lookups and single atomic actions in this turn. Delegate as soon as the work needs sustained execution, specialist domain work, code or repository changes, several dependent tool calls, external waiting, or coordinated side effects. Public information alone does not make a task light: collecting news, composing a card, sending it to people and creating a todo is a background delivery job. Do not burn a separate turn classifying — start with a cheap step when it helps, and delegate the moment the shape is clear. If work you kept turns out to be larger than it looked, stop and delegate what is left instead of finishing it here.\n\n")
+	b.WriteString("Before creating an Issue, list this chat's prior delegations with `multica issue list --metadata \"multica.chat_session_id=$MULTICA_CHAT_SESSION_ID\" --limit 100 --output json`, and continue the one that shares the same subject and intended deliverable — corrections, follow-ups, scope cuts and \"stop sending it\" all belong to the existing Issue. Otherwise create one with a stable, self-contained title (subject + deliverable + scope), assigned to the agent whose domain matches the work.\n\n")
+	b.WriteString("`multica issue delegate --issue <id> --content-file <path> --output json` continues one; `multica issue delegate --title \"...\" --description-file <path> --assignee-id <agent-id> --output json` creates one. `multica issue create` and `multica issue comment add` are NOT substitutes: only delegation transfers completion responsibility, and only it keeps callback URLs and context tokens away from the model. Once the call returns `release_parent: true`, the server owns completion: this is a transfer of responsibility, not a background process you are waiting on, so ending the turn here is the correct finish and not the \"standing by\" that `## Background Task Safety` forbids. Say in one line that the work moved to the background and stop — never keep doing the delegated work here. If the call fails, responsibility never moved: report the failure and do not claim a background run started.\n\n")
+}
+
+// writeMCPDiscoveryCommands emits the two MCP bullets shared by every
+// Available Commands variant that has an MCP surface at all. Held in one
+// function because the pair is a protocol contract — discover, then call what
+// discovery returned — and two hand-maintained copies of a contract drift.
+func writeMCPDiscoveryCommands(b *strings.Builder) {
+	b.WriteString("- `multica mcp tools --output json` — discover the MCP tools and schemas currently published by the server; tool names are not compiled into the CLI.\n")
+	b.WriteString("- `multica mcp call --method <name> [--arguments '<json>' | --arguments-file <path> | --arguments-stdin] --output json` — call a method returned by `mcp tools`; do not guess method names or arguments.\n")
+}
+
+// writeAvailableCommandsChat emits the chat-scoped Available Commands section.
+//
+// A chat run has no issue, so more than half of the default list is unreachable
+// from it: `issue comment list` / `comment add` / `metadata *` / `children` all
+// take an issue id this surface does not have, and the comment-list bullet alone
+// is the single longest line in the brief. They shipped on every chat turn as
+// dead weight, and worse than dead — a model handed a comment API in a room with
+// no issue reaches for it, then reports the failure as an answer.
+//
+// What a chat turn actually reaches for is kept: MCP discovery, finding and
+// reading issues, creating or updating one, and checking out a repo. Delegation
+// commands are NOT duplicated here; `## Background Issue Delegation` owns them,
+// because the flags only mean anything alongside the policy that governs them.
+func writeAvailableCommandsChat(b *strings.Builder) {
+	b.WriteString("## Available Commands\n\n")
+	b.WriteString("Prefer `--output json` for structured data. Listed here are only the commands a chat turn normally reaches for; for everything else run `multica --help` or `multica <command> --help` rather than guessing a flag.\n\n")
+	b.WriteString("### Core\n")
+	writeMCPDiscoveryCommands(b)
+	b.WriteString("- `multica issue list [--status X] [--assignee X] [--metadata \"<key>=<value>\"] [--limit N] --output json` — find issues; `multica issue get <id> --output json` reads one in full.\n")
+	b.WriteString("- `multica issue create --title \"...\" [--description-file <path>] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--project <project-id>] [--due-date <YYYY-MM-DD>] [--attachment <path>]` — create an issue. For agent-authored long descriptions prefer `--description-file <path>` (heredoc stdin can swallow trailing flags, #4182). Write that file inside your working directory (e.g. `./description.md`), never `/tmp` or shared paths.\n")
+	b.WriteString("- `multica issue update <id> [--title X] [--description-file <path>] [--priority X] [--status X] [--assignee X]` and `multica issue status <id> <status>` — change fields, or flip status (todo / in_progress / in_review / done / blocked / backlog / cancelled).\n")
+	b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>]` — repository checkout on a dedicated branch.\n\n")
 }
 
 // writeAvailableCommandsQuickCreate emits a minimal Available Commands
@@ -428,17 +460,31 @@ func writeInstructionPrecedence(b *strings.Builder) {
 //   - Slack: the conversation lives in the channel and `multica chat history` /
 //     `multica chat thread` can fetch it — see buildChatPrompt, which hands the
 //     agent exactly those commands. Recoverable, just from a different place.
-//   - Web chat and Feishu: nothing can fetch it. A web chat's history lived only
-//     in the provider session, and Multica ships no history reader for Feishu
-//     (handler/chat_history.go is hardwired to Slack), so the run has only the
-//     inbound context for this turn.
+//   - A channel Multica cannot read back (Feishu, WeCom, DingTalk): the
+//     conversation is still there, in the room, and the people in it can see
+//     every word. What is unavailable is a MULTICA path to it —
+//     handler/chat_history.go is hardwired to Slack. Whether the run itself can
+//     reach the room depends on tooling the prompt cannot see, so this variant
+//     says who cannot fetch it rather than asserting nobody can.
+//   - Web chat: nothing can fetch it. There is no room and no channel; the
+//     history lived only in the provider session, so the run has only the
+//     inbound context for this turn. This is the ONLY surface where "not
+//     readable from anywhere" is a true statement.
 //
-// Only the last group warrants telling the user. On the first two the discussion
-// survives, so announcing "the previous context was lost" describes a loss that
-// did not happen — the user reasonably hears "the discussion is gone" when not a
-// word of it is. There the notice informs the agent and leaves mentioning it to
-// the agent's judgement. What is actually gone on every surface is the agent's
-// own unrecorded working memory, and each variant says so.
+// The last two warrant telling the user, the first two do not. Where the
+// discussion survives in a place the agent is already told to read, announcing
+// "the previous context was lost" describes a loss that did not happen — the
+// user reasonably hears "the discussion is gone" when not a word of it is.
+// There the notice informs the agent and leaves mentioning it to the agent's
+// judgement. What is actually gone on every surface is the agent's own
+// unrecorded working memory, and each variant says so.
+//
+// The channel-without-reader variant exists because the previous two-way split
+// sent Feishu/WeCom/DingTalk to the web-chat text, which states as fact that the
+// history "is not readable from anywhere". The per-turn chat prompt tells the
+// same run, in the same message, that it may read the conversation back with its
+// own platform tooling. Two absolute claims about the same conversation, one of
+// them false, is worse than either alone.
 //
 // Emitted into the per-turn user message rather than the runtime brief: it is
 // true of one run and false of the next on the same issue, so rendering it into
@@ -448,6 +494,9 @@ const SessionContinuityNoticeIssue = "## Session Continuity Notice\n\n" +
 
 const SessionContinuityNoticeChannelHistory = "## Session Continuity Notice\n\n" +
 	"This run was meant to continue an earlier conversation, but that provider session could not be restored, so you are on a fresh one. The channel conversation itself is unaffected — read it back with `multica chat history` / `multica chat thread` before acting, and treat what you find there as the authoritative version. What is gone is only your own working memory from earlier turns: what you already tried, what you ruled out, and how far you had got. Re-derive what you need instead of assuming it. Do not open your reply by announcing this — raise it only where it actually matters.\n\n"
+
+const SessionContinuityNoticeChannelNoReader = "## Session Continuity Notice\n\n" +
+	"This run was meant to continue an earlier conversation, but that provider session could not be restored, so you are on a fresh one. The conversation itself is untouched — it is still in the room, and the people in it can see all of it. What is unavailable is a Multica path back to it: Multica ships no history reader for this platform, so nothing in the Multica CLI will hand it to you. Read it back with your own platform tools or skills if you have them, and treat what you find there as the authoritative version. What is otherwise gone is your own working memory from earlier turns: what you already tried, what you ruled out, and how far you had got — re-derive what you need instead of assuming it. **If you cannot read the conversation back, tell the user up front (one short sentence) that the earlier context did not carry over**, so they understand why the thread did not continue.\n\n"
 
 const SessionContinuityNoticeUnrecoverable = "## Session Continuity Notice\n\n" +
 	"This run was meant to continue an earlier conversation, but that session's context could NOT be restored — you are starting fresh with no memory of the previous turns. That history is not readable from anywhere now: there is no command that fetches it, and only the context already in this message survives. **When you reply, tell the user up front (one short sentence) that the previous conversation context was unavailable and this is a new session**, so they understand why the thread did not carry over.\n\n"
@@ -468,13 +517,9 @@ func writeWorkflowHeader(b *strings.Builder) {
 // group, direct, and unknown-audience chat sessions (MUL-5377, MUL-5442).
 func writeWorkflowChat(b *strings.Builder) {
 	b.WriteString("**You are in chat mode.**\n\n")
-	b.WriteString("- Respond conversationally and helpfully to the user's message\n")
-	b.WriteString("- You have full access to the `multica` CLI to look up issues, workspace info, members, agents, etc.\n")
-	b.WriteString("- If asked about issues, use `multica issue list --output json` or `multica issue get <id> --output json`\n")
-	b.WriteString("- If asked about the workspace, use `multica workspace get --output json`\n")
-	b.WriteString("- If asked to perform actions (create issues, update status, etc.), use the appropriate CLI commands\n")
-	b.WriteString("- If the task requires code changes, use `multica repo checkout <url>` to get the code first. Use `--ref <branch-or-sha>` when you need an exact revision\n")
-	b.WriteString("- Keep responses concise and direct\n\n")
+	b.WriteString("- Respond conversationally to the user's message; keep it concise and direct.\n")
+	b.WriteString("- Anything about this workspace — issues, projects, members, agents — comes from the `multica` CLI, not from memory. `multica workspace get --output json` reads the workspace itself.\n")
+	b.WriteString("- Perform actions the user asks for with the CLI; for code changes, check the repository out first.\n\n")
 }
 
 // writeWorkflowQuickCreate emits the quick-create workflow's hard
@@ -746,7 +791,18 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 		b.WriteString("- On CLI failure, exit with the CLI error as the only output — the platform turns it into a `quick_create_failed` inbox item for the user.\n\n")
 		b.WriteString("**Delivering files here:** your stdout is text-only. A file that belongs to the new issue goes on the `multica issue create` call itself via `--attachment <path>`; never put its path in the description or in your stdout line.\n")
 	case kindChat:
-		b.WriteString("This is a chat session. Your reply is delivered directly to the chat window the user is reading.\n\n")
+		// Naming the surface here is not decoration: the per-turn prompt tells a
+		// channel-backed run it is inside that conversation and NOT in the
+		// Multica web app, and this line used to answer "chat window the user is
+		// reading" underneath it. Two statements about the same surface that
+		// disagree cost more than the one they replace. Channel type is fixed for
+		// the life of a session, so branching on it does not fragment the cached
+		// prefix the way a per-turn value would.
+		if ctx.ChatChannelType != "" {
+			fmt.Fprintf(b, "This is a chat session inside a %s conversation. Your reply is delivered as a message into that conversation.\n\n", ChannelDisplayName(ctx.ChatChannelType))
+		} else {
+			b.WriteString("This is a chat session. Your reply is delivered directly to the chat window the user is reading.\n\n")
+		}
 		// Two-layer channel policy (MUL-4899). This is the DELIVERY layer, and
 		// the brief answers only the half that is stable for the whole session.
 		//
@@ -795,7 +851,8 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 //
 //	Section               | comment | assign | autopilot | quick_create | chat
 //	----------------------+---------+--------+-----------+--------------+------
-//	Available Commands    |   full  |  full  |   full    |   minimal    | full
+//	Available Commands    |   full  |  full  |   full    |   minimal    | chat
+//	Background Delegation |    —    |   —    |     —     |      —       |  ✓
 //	Issue Body Formatting |    ✓    |   ✓    |     ✓     |      ✓       |  ✓
 //	Comment Formatting    |    ✓    |   ✓    |     —     |      —       |  —
 //	Repositories          |    △    |   △    |     △     |      —       |  △
@@ -828,6 +885,8 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	switch kind {
 	case kindQuickCreate:
 		writeAvailableCommandsQuickCreate(&b)
+	case kindChat:
+		writeAvailableCommandsChat(&b)
 	default:
 		writeAvailableCommands(&b, ctx)
 	}
@@ -855,6 +914,13 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	switch kind {
 	case kindChat:
 		writeWorkflowChat(&b)
+		// Where the chat/background boundary lives decides whether the room
+		// stays responsive, and it does not change between turns of a session —
+		// so it belongs in the cached brief. It was written for this surface and
+		// then left unwired; deployments that needed it had to re-send an
+		// equivalent policy in every per-turn instruction, which is the same
+		// text at full price on each turn plus a second copy to keep in sync.
+		writeBackgroundIssueDelegation(&b)
 	case kindQuickCreate:
 		writeWorkflowQuickCreate(&b)
 	case kindAutopilotRunOnly:
