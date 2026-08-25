@@ -459,16 +459,17 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 				return IssueCreateResult{}, fmt.Errorf("load delegation workspace: %w", workspaceErr)
 			}
 			if _, updateErr := qtx.EnqueueTaskExecutionUpdate(ctx, db.EnqueueTaskExecutionUpdateParams{
-				RootTaskID:      delegationSource.ID,
-				TargetTaskID:    task.ID,
-				IssueID:         issue.ID,
-				IssueIdentifier: fmt.Sprintf("%s-%d", workspace.IssuePrefix, issue.Number),
-				CallbackUrl:     p.Delegation.CallbackUpdateURL,
-				TargetIdentity:  p.Delegation.CallbackTarget,
-				RequestID:       "multica-handoff:" + util.UUIDToString(delegationSource.ID),
-				AgentID:         delegationSource.AgentID,
-				TargetAgentID:   task.AgentID,
-				UpdateType:      "delegated_to_issue",
+				RootTaskID:          delegationSource.ID,
+				TargetTaskID:        task.ID,
+				IssueID:             issue.ID,
+				IssueIdentifier:     fmt.Sprintf("%s-%d", workspace.IssuePrefix, issue.Number),
+				CallbackUrl:         p.Delegation.CallbackUpdateURL,
+				TargetIdentity:      p.Delegation.CallbackTarget,
+				RequestID:           "multica-handoff:" + util.UUIDToString(delegationSource.ID),
+				AgentID:             delegationSource.AgentID,
+				TargetAgentID:       task.AgentID,
+				UpdateType:          "delegated_to_issue",
+				ResultMessageFrozen: false,
 			}); updateErr != nil {
 				return IssueCreateResult{}, fmt.Errorf("enqueue delegation update: %w", updateErr)
 			}

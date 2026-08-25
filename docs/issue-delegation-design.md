@@ -145,11 +145,35 @@ root_task_id        = source Chat task
 target_task_id      = target Issue task
 callback_url        = Router /execution-update
 request_id          = multica-handoff:<source_task_id>
-status              = queued | delivered | dead_letter
+result_message      = source Chat 本次已确认送达的 DWS 用户可见回复，可空
+result_message_frozen = false | true
+status              = waiting_result | queued | delivered | dead_letter
 ```
 
 `root_task_id` 和 `request_id` 均唯一，同一个源 task 的顺序重试只会复用同一
 交接；不同的 Issue/task 不能覆盖已经提交的交接。
+
+新交接先以 `status = waiting_result`、`result_message_frozen = false` 和空
+`result_message` 提交，使 Issue、目标 task 和控制权边界保持原子。新 worker 只领取
+`queued + frozen`，仍在滚动发布中的旧 worker 也只认识 `queued`，因此两者都看不到
+等待正文的行。migration 安装的 completion outbox `BEFORE INSERT` trigger 还会把
+同一 root 的提前终态 callback 设为 `available_at = infinity`；这是旧 completion
+worker 已有的领取条件，所以旧 Pod 也不能越过 handoff。trigger 对 execution update
+行加锁，使提前终态写入与正文冻结串行化。源 Chat task 结束时，
+Multica 从 daemon `/complete` 或 `/fail` 的 `result_message` 读取本次用户可见输出，
+在同一终态事务中完成反斜杠换行解码、敏感信息脱敏，并原子切换为
+`result_message_frozen = true, status = queued, available_at = now()`，同时释放被
+hold 的 terminal completion，然后唤醒现有 completion worker。该值来自 daemon
+对成功 `dws chat message reply` 工具结果的
+回执跟踪，不从 provider 最终 stdout、Issue 内容、task message 或日志推断。
+若 sweeper 等既有路径直接写入终态，completion reconciler 会先按同一 task lineage
+补做冻结，再允许 worker 领取，避免异常终止留下永久不可投递的 handoff。
+
+空输出冻结为 SQL `NULL`，请求中省略 `resultMessage`。migration 9076 对升级前的
+既有行以及旧二进制新写入的行使用 `queued + result_message_frozen = true`，仍按
+原协议消费；新行一旦冻结，429/5xx 等重试只读取同一 outbox 快照，不重新读取
+task 或运行时输出。回滚 migration 时先把 `waiting_result` 收敛为 `queued + frozen`，
+再恢复旧 status 约束并删除新增列，避免约束或列删除失败。
 
 ## 5. 私有上下文转移
 
@@ -259,7 +283,8 @@ Router 下发两个明确的 callback：
 telemetry 字段是可选的一组；Chat → Issue 交接时作为私有 task context 原样
 继承，使最终执行 task 使用同一个 Router task-scoped LLM trace 能力。
 
-原子事务提交后，completion worker 先投递 handoff update：
+原子事务提交后，源 Chat task 先正常发送简短交接说明并结束本轮；终态事务冻结
+这次已确认送达的用户可见回复后，completion worker 投递 handoff update：
 
 ```json
 {
@@ -268,6 +293,7 @@ telemetry 字段是可选的一组；Chat → Issue 交接时作为私有 task c
   "externalTaskId": "<source_task_id>",
   "updateType": "delegated_to_issue",
   "occurredAt": 1785376800000,
+  "resultMessage": "已转入后台处理，完成后会继续回复。",
   "extension": {
     "issueId": "<issue_id>",
     "issueIdentifier": "MUL-123",
@@ -276,6 +302,9 @@ telemetry 字段是可选的一组；Chat → Issue 交接时作为私有 task c
   }
 }
 ```
+
+`resultMessage` 是可选顶层字段；空输出或升级前记录省略。`occurredAt` 仍表示
+handoff outbox 创建时间，不改写为源 Chat task 的终态时间。
 
 Router 校验源 Agent 和外部 task 映射，把快照写入
 `dispatch_task.metadata.executionHandoff`，但不修改 task 的 terminal 状态。
@@ -440,17 +469,21 @@ Content-Type: application/json
 1. 执行 migration 255，更新取消 trigger；
 2. 执行 migration 256，创建 execution update outbox；
 3. 执行 migration 257，启用取消终态的评论 callback 扇出；
-4. 先发布兼容版 Multica server 与随镜像分发的 CLI；普通 Dispatch 继续允许
+4. 执行 fork migration 9076，为 execution update outbox 增加可选
+   `result_message`、冻结标记、旧 worker 不会领取的 `waiting_result` 状态，以及
+   使用旧 `available_at` 门槛保护 terminal 顺序的 completion hold trigger；
+5. 先发布兼容版 Multica server 与随镜像分发的 CLI；普通 Dispatch 继续允许
    缺少 `updateUrl`，只有实际调用 delegation 时才保守拒绝释放 Chat；
-5. Multica 全量后再发布 Router，使其支持 `/execution-update` 并下发
+6. Multica 全量后再发布 Router，使其支持 `/execution-update` 并下发
    `completionCallback.updateUrl`；
-6. 不新增 Daemon claim 协议字段；LLM trace capability 只通过 cloud sandbox
+7. 不新增 Daemon claim 协议字段；LLM trace capability 只通过 cloud sandbox
    task exec 环境传入 runtime runner。
 
 ## 12. 变更历史
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-25 | `delegated_to_issue` execution update 新增可选顶层 `resultMessage`；新 outbox 行以 `waiting_result + frozen=false` 等待源 Chat 终态事务把 daemon 已确认送达的 DWS 回复脱敏冻结并原子切为 `queued`，旧行和旧二进制写入的 queued 行保持可消费，空输出继续省略；completion trigger 以 `available_at=infinity` 阻止旧 worker 提前投递 terminal，冻结时同事务释放；down migration 先释放 terminal、收敛 waiting 行再恢复旧约束 | Router 需要用 Multica 本次真实用户可见输出回复原消息；仅用新 worker 的 frozen 过滤无法阻止滚动发布中的旧 worker 提前领取，也不能保护 update-before-terminal，因此等待态和 terminal hold 必须复用旧 Claim 已有的 status/available_at 条件，同时冻结后的不可变快照继续保证重试幂等 |
 | 2026-08-14 | task completion outbox 和取消触发器新增 `canceled` 终态，reconciliation 同步按该值回调；既有 `failed/cancelled` 历史行不回填 | 取消是独立业务终态，不应继续被 Router 计入失败数和失败率；保留 failureReason 便于诊断但不再决定统计分类 |
 | 2026-07-29 | 初版提出独立 delegation 表、状态机和 completion resolver | 当时按“多个外部任务可合并到一个 Issue task 且分别回调”建模，导致实现超出 surface handoff 本身 |
 | 2026-07-30 | 重构为 Chat Dispatch → Issue Dispatch 桥接；删除 delegation 表和独立状态机，复用 task lineage、Issue materializer、completion outbox；callback 使用 root Agent ID | 澄清后确认两种 surface 已共享完整身份、创建和回调链路，新工具只需从可信源 task 取参数并切换 surface；同时保留 Router 的 Agent 校验 |

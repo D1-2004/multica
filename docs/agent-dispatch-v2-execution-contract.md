@@ -209,6 +209,24 @@ Outbound selection is independent of source type and surface. Issue plus DWS,
 chat plus DWS, Issue plus robot SDK, and chat plus robot SDK remain valid
 compositions subject to the command's ordinary validation.
 
+For a successful Chat-to-Issue handoff, Multica sends the non-terminal
+`delegated_to_issue` execution update only after the source Chat turn reaches a
+terminal transaction. The request accepts an optional top-level
+`resultMessage`: it is the redacted text recorded by the daemon only after a
+`dws chat message reply` tool result confirms success. Provider final output,
+Issue content, task-message text, and logs are not substitutes for this value.
+Empty values are omitted.
+
+The handoff row is committed atomically with the Issue and target task as
+`waiting_result`, so neither a new worker (`queued` plus frozen) nor an old
+worker (`queued` only) can claim it during a rolling binary deployment. The
+source terminal transaction freezes `resultMessage` and atomically changes the
+row to `queued`. A database trigger holds an early terminal completion at
+`available_at = infinity`, a condition understood by old completion workers;
+the same freeze transaction releases it. Delivery retries reuse the frozen
+outbox value. Rows created by older binaries remain `queued` with the default
+frozen value and send the old payload without `resultMessage`.
+
 ## LLM telemetry and terminal summary
 
 `completionCallback` may carry a task-scoped telemetry capability in addition
@@ -518,3 +536,16 @@ parsing or rewriting Router's context string.
 - Reason: Platform observability must not depend on an Agent's optional external
   trace destination, while the existing sandbox-to-Multica relay remains the
   single capture and delivery path.
+
+## Change record: 2026-08-25 Delegation handoff result message
+
+- History: Added optional top-level `resultMessage` to `delegated_to_issue`
+  execution updates. New handoff rows use `waiting_result` until the source Chat
+  terminal transaction atomically freezes the daemon-confirmed DWS reply and
+  moves them to `queued`; terminal callbacks are held through the legacy
+  `available_at` gate; old-binary rows and empty results remain consumable.
+- Reason: Router needs the actual user-visible handoff acknowledgement, but it
+  does not exist when the Issue/outbox control boundary first commits. Encoding
+  the wait in status hides it from old `status = 'queued'` workers during a
+  rolling deployment, while the terminal hold preserves update-before-terminal
+  ordering and freezing once preserves immutable retry payloads.

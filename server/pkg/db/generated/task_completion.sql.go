@@ -338,6 +338,23 @@ func (q *Queries) EnqueueTaskCompletion(ctx context.Context, arg EnqueueTaskComp
 	return i, err
 }
 
+const releaseTaskCompletionsForExecutionUpdate = `-- name: ReleaseTaskCompletionsForExecutionUpdate :execrows
+UPDATE task_completion_outbox
+SET available_at = now(),
+    updated_at = now()
+WHERE root_task_id = $1
+  AND status = 'queued'
+  AND available_at = 'infinity'::timestamptz
+`
+
+func (q *Queries) ReleaseTaskCompletionsForExecutionUpdate(ctx context.Context, rootTaskID pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, releaseTaskCompletionsForExecutionUpdate, rootTaskID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getLastTaskReplyText = `-- name: GetLastTaskReplyText :one
 WITH RECURSIVE lineage AS (
     SELECT task.id, task.parent_task_id

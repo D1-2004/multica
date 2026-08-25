@@ -2530,6 +2530,7 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		cancelledChatMessage *CancelledChatMessageResult
 		err                  error
 		sourceTransitioned   bool
+		executionUpdateReady bool
 	)
 	if opts.QueuedOnly {
 		if opts.QueueAction != "edit" && opts.QueueAction != "remove" {
@@ -2569,6 +2570,11 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 			if !cancelled.ChatSessionID.Valid {
 				return nil
 			}
+			ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, cancelled.ID, nil)
+			if freezeErr != nil {
+				return fmt.Errorf("freeze task execution update result message: %w", freezeErr)
+			}
+			executionUpdateReady = ready
 			return qtx.AdvanceCancelledChatSessionPointer(ctx, cancelled.ID)
 		})
 	}
@@ -2599,6 +2605,9 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		// Broadcast cancellation as a task:failed event so frontends clear the live card
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
 		s.NotifyTaskFinished(task)
+		if executionUpdateReady && s.CompletionNotifier != nil {
+			s.CompletionNotifier.NotifyTaskCompletion()
+		}
 	}
 
 	cancelledTargets := make([]db.AgentTaskQueue, 0, len(delegatedTargets))
@@ -3881,6 +3890,7 @@ func isTerminalAgentTaskStatus(status string) bool {
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
 	var completionQueued bool
+	var executionUpdateReady bool
 	// chatAssistantMsg is the single assistant outcome row written for a chat
 	// task inside the completion transaction below. It is broadcast (chat:done)
 	// only after the transaction commits.
@@ -3901,6 +3911,13 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			return err
 		}
 		task = t
+		if t.ChatSessionID.Valid {
+			ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, t.ID, result)
+			if freezeErr != nil {
+				return fmt.Errorf("freeze task execution update result message: %w", freezeErr)
+			}
+			executionUpdateReady = ready
+		}
 
 		if t.ChatSessionID.Valid {
 			// Pin the chat_session's runtime_id alongside the session_id so the
@@ -4002,7 +4019,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		)
 	}
 	s.captureTaskCompleted(ctx, task)
-	if completionQueued && s.CompletionNotifier != nil {
+	if (completionQueued || executionUpdateReady) && s.CompletionNotifier != nil {
 		s.CompletionNotifier.NotifyTaskCompletion()
 	}
 
@@ -4456,6 +4473,7 @@ func (s *TaskService) failTaskWithResultMessage(
 	var task db.AgentTaskQueue
 	var retried *db.AgentTaskQueue
 	var completionQueued bool
+	var executionUpdateReady bool
 	var failureResult []byte
 	if strings.TrimSpace(resultMessage) != "" {
 		failureResult, _ = json.Marshal(failedCompletionPayload{ResultMessage: resultMessage})
@@ -4586,6 +4604,13 @@ func (s *TaskService) failTaskWithResultMessage(
 			}
 			retried = &child
 		} else {
+			if t.ChatSessionID.Valid {
+				ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, t.ID, failureResult)
+				if freezeErr != nil {
+					return fmt.Errorf("freeze task execution update result message: %w", freezeErr)
+				}
+				executionUpdateReady = ready
+			}
 			queued, completionErr := s.enqueueTaskCompletionInTx(
 				ctx,
 				qtx,
@@ -4664,7 +4689,7 @@ func (s *TaskService) failTaskWithResultMessage(
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
-	if completionQueued && s.CompletionNotifier != nil {
+	if (completionQueued || executionUpdateReady) && s.CompletionNotifier != nil {
 		s.CompletionNotifier.NotifyTaskCompletion()
 	}
 
