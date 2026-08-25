@@ -2385,6 +2385,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)
+					// OKRs materialize as workspace labels the agent tags
+					// issues with; the catalog is injected into its prompt.
+					r.Get("/okrs", h.ListAgentOKRs)
+					r.Put("/okrs", h.SetAgentOKRs)
 					r.Get("/labels", h.ListLabelsForAgent)
 					r.Post("/labels", h.AttachLabelToAgent)
 					r.Delete("/labels/{labelId}", h.DetachLabelFromAgent)

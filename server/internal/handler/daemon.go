@@ -2883,6 +2883,20 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		)
 	}
 
+	// OKR tagging catalog. Appended to the agent's own instructions so it
+	// reaches every task kind through the runtime brief, the same way the squad
+	// briefing does — the dispatch instruction only covers DingTalk runs, and
+	// tagging applies to all work the agent owns.
+	if resp.Agent != nil {
+		if okrInstructions := h.agentOKRInstructionsFor(r.Context(), task.AgentID, parseUUID(resp.WorkspaceID)); okrInstructions != "" {
+			if strings.TrimSpace(resp.Agent.Instructions) == "" {
+				resp.Agent.Instructions = okrInstructions
+			} else {
+				resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + okrInstructions
+			}
+		}
+	}
+
 	clearA2AClaimWorkspaceData(&resp, task.Context)
 
 	supportsTaskInstruction := requestHasDaemonCapability(r, protocol.DaemonCapabilityTaskInstructionV1)
