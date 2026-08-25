@@ -117,14 +117,17 @@ Hidden body.`,
 		},
 	}
 
-	// The brief is now the only Multica-rendered skill listing, for every kind.
+	// The brief renders its index only for providers that do not list the
+	// daemon-written SKILL.md files themselves; "codex" seeds a per-task
+	// CODEX_HOME the CLI scans natively, so this matrix runs on a fallback
+	// provider where the index is the model's only signal.
 	for _, kind := range []TaskContextForEnv{
 		{IssueID: ctx.IssueID, AgentName: ctx.AgentName, AgentID: ctx.AgentID, AgentSkills: ctx.AgentSkills},
 		{QuickCreatePrompt: ctx.QuickCreatePrompt, AgentName: ctx.AgentName, AgentID: ctx.AgentID, AgentSkills: ctx.AgentSkills},
 		{AutopilotRunID: ctx.AutopilotRunID, AgentName: ctx.AgentName, AgentID: ctx.AgentID, AgentSkills: ctx.AgentSkills},
 		{ChatSessionID: "c-1", AgentName: ctx.AgentName, AgentID: ctx.AgentID, AgentSkills: ctx.AgentSkills},
 	} {
-		out := buildMetaSkillContent("codex", kind)
+		out := buildMetaSkillContent("", kind)
 		// Listings carry the on-disk slug, not the display name (MUL-5529).
 		if !strings.Contains(out, "visible-skill") {
 			t.Errorf("brief missing visible skill:\n%s", out)

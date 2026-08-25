@@ -951,12 +951,6 @@ func TestInjectRuntimeConfigClaude(t *testing.T) {
 		"Multica Agent Runtime",
 		"multica issue get",
 		"multica issue comment list",
-		// Skills are listed by on-disk slug: that is the directory
-		// writeSkillFiles creates and the only identifier the model can
-		// actually invoke (MUL-5529).
-		"go-conventions",
-		"pr-review",
-		"discovered automatically",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("CLAUDE.md missing %q", want)
@@ -1668,12 +1662,11 @@ func TestInjectRuntimeConfigOpencode(t *testing.T) {
 	if !strings.Contains(s, "Multica Agent Runtime") {
 		t.Error("AGENTS.md missing meta skill header")
 	}
-	// Listed by on-disk slug rather than the display name (MUL-5529).
-	if !strings.Contains(s, "coding") {
-		t.Error("AGENTS.md missing skill name")
-	}
-	if !strings.Contains(s, "discovered automatically") {
-		t.Error("AGENTS.md missing native skill discovery hint")
+	// No skill index here: this provider lists the daemon-written SKILL.md
+	// files itself, so the brief suppresses its own copy
+	// (TestBriefSkillsIndexIsProviderGated).
+	if strings.Contains(s, "## Skills") {
+		t.Error("AGENTS.md repeats a skill index the CLI already publishes")
 	}
 
 	// CLAUDE.md should NOT exist.
@@ -1704,12 +1697,11 @@ func TestInjectRuntimeConfigKiro(t *testing.T) {
 	if !strings.Contains(s, "Multica Agent Runtime") {
 		t.Error("AGENTS.md missing meta skill header")
 	}
-	// Listed by on-disk slug rather than the display name (MUL-5529).
-	if !strings.Contains(s, "coding") {
-		t.Error("AGENTS.md missing skill name")
-	}
-	if !strings.Contains(s, "discovered automatically") {
-		t.Error("AGENTS.md missing native skill discovery hint")
+	// No skill index here: this provider lists the daemon-written SKILL.md
+	// files itself, so the brief suppresses its own copy
+	// (TestBriefSkillsIndexIsProviderGated).
+	if strings.Contains(s, "## Skills") {
+		t.Error("AGENTS.md repeats a skill index the CLI already publishes")
 	}
 }
 
@@ -1735,12 +1727,11 @@ func TestInjectRuntimeConfigQoder(t *testing.T) {
 	if !strings.Contains(s, "Multica Agent Runtime") {
 		t.Error("AGENTS.md missing meta skill header")
 	}
-	// Listed by on-disk slug rather than the display name (MUL-5529).
-	if !strings.Contains(s, "coding") {
-		t.Error("AGENTS.md missing skill name")
-	}
-	if !strings.Contains(s, "discovered automatically") {
-		t.Error("AGENTS.md missing native skill discovery hint")
+	// No skill index here: this provider lists the daemon-written SKILL.md
+	// files itself, so the brief suppresses its own copy
+	// (TestBriefSkillsIndexIsProviderGated).
+	if strings.Contains(s, "## Skills") {
+		t.Error("AGENTS.md repeats a skill index the CLI already publishes")
 	}
 }
 
@@ -1791,12 +1782,10 @@ func TestInjectRuntimeConfigAntigravity(t *testing.T) {
 	if !strings.Contains(s, "Multica Agent Runtime") {
 		t.Error("AGENTS.md missing meta skill header")
 	}
-	// Listed by on-disk slug rather than the display name (MUL-5529).
-	if !strings.Contains(s, "coding") {
-		t.Error("AGENTS.md missing skill name")
-	}
-	if !strings.Contains(s, "discovered automatically") {
-		t.Error("AGENTS.md for Antigravity should advertise native skill discovery")
+	// No skill index: Antigravity lists the daemon-written SKILL.md files
+	// itself (TestBriefSkillsIndexIsProviderGated).
+	if strings.Contains(s, "## Skills") {
+		t.Error("AGENTS.md for Antigravity repeats the CLI's own skill index")
 	}
 	if strings.Contains(s, ".agent_context/skills/") {
 		t.Error("AGENTS.md for Antigravity must not reference the .agent_context/skills/ fallback")
@@ -2266,8 +2255,8 @@ func TestInjectRuntimeConfigHermes(t *testing.T) {
 	// HERMES_HOME/skills (see hermes_home.go), so AGENTS.md must use the
 	// "discovered automatically" framing and must NOT point the agent at the
 	// old .agent_context/skills/ fallback it never read (issue #5242).
-	if !strings.Contains(s, "discovered automatically") {
-		t.Error("AGENTS.md for Hermes should describe skills as discovered automatically")
+	if strings.Contains(s, "## Skills") {
+		t.Error("AGENTS.md for Hermes repeats the CLI's own skill index")
 	}
 	if strings.Contains(s, ".agent_context/skills/") {
 		t.Error("AGENTS.md for Hermes should not reference the .agent_context/skills/ fallback path")

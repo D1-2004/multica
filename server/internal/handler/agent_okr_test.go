@@ -182,8 +182,44 @@ func TestSetAgentOKRs_RejectsInvalidInput(t *testing.T) {
 	}
 }
 
-// The prompt must name the exact label strings and the exact command; an agent
-// told only "tag the issue" invents labels and the catalog fragments.
+// Objectives lead and tagging follows. The first version framed the whole
+// section as a tagging vocabulary, which told the model what to write on an
+// Issue but nothing about what it was trying to achieve.
+func TestBuildAgentOKRInstructionsLeadsWithObjectives(t *testing.T) {
+	t.Parallel()
+
+	instructions := buildAgentOKRInstructions([]AgentOKRDTO{{
+		Objective: "提升交付效率",
+		Label:     "O: 提升交付效率",
+		KeyResults: []AgentOKRKeyResultDTO{
+			{Text: "平均响应<2h", Label: "KR: 平均响应<2h"},
+		},
+	}})
+
+	objectives := strings.Index(instructions, "## Objectives")
+	tagging := strings.Index(instructions, "### Tagging")
+	if objectives < 0 || tagging < 0 {
+		t.Fatalf("expected both an Objectives and a Tagging section:\n%s", instructions)
+	}
+	if objectives > tagging {
+		t.Errorf("tagging precedes the objectives it derives from:\n%s", instructions)
+	}
+	// The objective must appear as its own text, not only inside a label
+	// string — the point is that the agent knows the goal, not the tag.
+	if !strings.Contains(instructions, "**提升交付效率**") {
+		t.Errorf("objective is not stated as a goal:\n%s", instructions)
+	}
+	if !strings.Contains(instructions, "accountable for") {
+		t.Errorf("objectives section does not say what they are for:\n%s", instructions)
+	}
+	// Objectives inform judgment; they must not read as an override of the task.
+	if !strings.Contains(instructions, "the task wins") {
+		t.Errorf("objectives section is missing its precedence clause:\n%s", instructions)
+	}
+}
+
+// The tagging half still has to be exact: an agent told only "tag the issue"
+// invents labels and the catalog fragments.
 func TestBuildAgentOKRInstructionsNamesExactLabelsAndCommand(t *testing.T) {
 	t.Parallel()
 
@@ -196,8 +232,8 @@ func TestBuildAgentOKRInstructionsNamesExactLabelsAndCommand(t *testing.T) {
 	}})
 
 	for _, want := range []string{
-		"O: 提升交付效率",
-		"KR: 平均响应<2h",
+		"`O: 提升交付效率`",
+		"`KR: 平均响应<2h`",
 		"multica issue label add",
 		"do not invent",
 	} {
@@ -207,9 +243,120 @@ func TestBuildAgentOKRInstructionsNamesExactLabelsAndCommand(t *testing.T) {
 	}
 }
 
-func TestBuildAgentOKRInstructionsIsEmptyWithoutOKRs(t *testing.T) {
+// An agent with no objectives must read a prompt that never mentions them —
+// no heading, no empty list, nothing.
+func TestBuildAgentOKRInstructionsInjectsNothingWithoutOKRs(t *testing.T) {
 	t.Parallel()
-	if got := buildAgentOKRInstructions(nil); got != "" {
-		t.Fatalf("expected no OKR section, got %q", got)
+
+	for name, okrs := range map[string][]AgentOKRDTO{
+		"nil":   nil,
+		"empty": {},
+	} {
+		if got := buildAgentOKRInstructions(okrs); got != "" {
+			t.Errorf("%s: expected no OKR section at all, got %q", name, got)
+		}
+	}
+}
+
+// The claim path must not inject a section for an agent that never configured
+// one. Checked end to end rather than only on the builder, because the empty
+// case is decided by the loader.
+func TestAgentOKRInstructionsAreAbsentForAnAgentWithoutOKRs(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "okr-none", nil)
+
+	got := testHandler.agentOKRInstructionsFor(
+		context.Background(), parseUUID(agentID), parseUUID(testWorkspaceID))
+	if got != "" {
+		t.Fatalf("agent without OKRs received an objectives section:\n%s", got)
+	}
+}
+
+// Spend is rolled up per label in one query. task_usage is unique per
+// (task, provider, model), so a task that used two models has two rows: tokens
+// and cost sum across them, but it is still one task.
+func TestAgentOKRSpendRollsUpPerLabelWithoutDoubleCounting(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "okr-spend", nil)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_okr WHERE agent_id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(),
+			`DELETE FROM issue_label WHERE description = $1`, agentOKRLabelDescription)
+	})
+
+	if w := setAgentOKRsForTest(t, agentID, map[string]any{
+		"okrs": []map[string]any{{"objective": "省钱目标", "key_results": []string{"KR 成本"}}},
+	}); w.Code != http.StatusOK {
+		t.Fatalf("set OKRs: got %d: %s", w.Code, w.Body.String())
+	}
+
+	var krLabelID string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT id FROM issue_label WHERE name = 'KR: KR 成本'`).Scan(&krLabelID); err != nil {
+		t.Fatal(err)
+	}
+
+	// One issue carrying the key-result label, one task on it, two usage rows.
+	var issueID, taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (workspace_id, title, status, priority, assignee_type, assignee_id,
+		                   creator_type, creator_id, number, position)
+		VALUES ($1, '成本任务', 'todo', 'none', 'agent', $2, 'member', $3,
+		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1), 0)
+		RETURNING id`, testWorkspaceID, agentID, testUserID).Scan(&issueID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+	if _, err := testPool.Exec(context.Background(),
+		`INSERT INTO issue_to_label (issue_id, label_id) VALUES ($1, $2)`, issueID, krLabelID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(context.Background(),
+		`INSERT INTO agent_task_queue (agent_id, issue_id, status, completed_at)
+		 VALUES ($1, $2, 'completed', now()) RETURNING id`,
+		agentID, issueID).Scan(&taskID); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range []string{"model-a", "model-b"} {
+		if _, err := testPool.Exec(context.Background(), `
+			INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens,
+			                        cache_read_tokens, cache_write_tokens, cost_usd_ticks)
+			VALUES ($1, 'test', $2, 100, 50, 0, 0, 1000)`, taskID, model); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	spend := testHandler.agentOKRSpendFor(
+		context.Background(), parseUUID(agentID), parseUUID(testWorkspaceID))
+	got := spend[krLabelID]
+
+	if got.TaskCount != 1 {
+		t.Errorf("task_count = %d, want 1 (one task, not one row per model)", got.TaskCount)
+	}
+	if got.TotalTokens != 300 {
+		t.Errorf("total_tokens = %d, want 300 (two models × 150)", got.TotalTokens)
+	}
+	if got.TotalCostUSDTicks != 2000 {
+		t.Errorf("total_cost_usd_ticks = %d, want 2000 (two models × 1000)", got.TotalCostUSDTicks)
+	}
+	if got.UnpricedTaskCount != 0 {
+		t.Errorf("unpriced_task_count = %d, want 0 — every row carried a price", got.UnpricedTaskCount)
+	}
+
+	// The objective's own label carries no Issue, so it reports nothing rather
+	// than inheriting its key result's spend.
+	var objLabelID string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT id FROM issue_label WHERE name = 'O: 省钱目标'`).Scan(&objLabelID); err != nil {
+		t.Fatal(err)
+	}
+	if objSpend := spend[objLabelID]; objSpend.TaskCount != 0 || objSpend.TotalCostUSDTicks != 0 {
+		t.Errorf("objective inherited its key result's spend: %+v", objSpend)
 	}
 }

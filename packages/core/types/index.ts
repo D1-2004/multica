@@ -91,6 +91,7 @@ export type {
   DispatchPromptPreview,
   AgentOKR,
   AgentOKRKeyResult,
+  AgentOKRSpend,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
 export type {

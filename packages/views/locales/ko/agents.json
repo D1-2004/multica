@@ -477,7 +477,7 @@
     },
     "okr": {
       "loading": "OKR 불러오는 중…",
-      "intro": "Objectives and key results this agent works toward. Each one becomes a workspace label, and the agent is told to tag the issues it owns with the ones the work advances.",
+      "intro": "The objectives this agent is accountable for. They are injected into its prompt to inform what it prioritizes and pushes back on — they do not override an explicit instruction in a task. Each entry also becomes a workspace label the agent tags its Issues with, which is where the cost below comes from.",
       "empty": "아직 OKR이 없습니다.",
       "objective_label": "목표",
       "objective_placeholder": "e.g. Shorten delivery turnaround",
@@ -487,7 +487,10 @@
       "add_key_result": "핵심 결과 추가",
       "remove_objective": "목표 삭제",
       "remove_key_result": "핵심 결과 삭제",
-      "label_hint": "Saving creates a workspace label per entry (O: … and KR: …). Removing an OKR leaves its label in place, because issues may already carry it."
+      "label_hint": "Saving creates a workspace label per entry (O: … and KR: …). Removing an OKR leaves its label in place, because issues may already carry it.",
+      "spend_hint": "이 항목의 라벨이 붙은 작업의 실행 비용.",
+      "spend_partial_hint": "Cost of every agent task on Issues tagged with this entry. Some tasks ran on a model with no price attached, so this is a floor.",
+      "spend_tasks_other": "{{count}}개 작업"
     },
     "env": {
       "intro_readonly": "에이전트 프로세스가 시작될 때 주입됩니다. 워크스페이스 소유자와 관리자만 값을 읽거나 수정할 수 있으며, 모든 공개와 수정은 워크스페이스 감사 로그에 기록됩니다.",

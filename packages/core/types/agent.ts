@@ -1318,16 +1318,32 @@ export interface DispatchPromptPreview {
   runtime_sections: DispatchPromptRuntimeSection[];
 }
 
+/** What an objective or key result has cost so far, rolled up from the tasks on
+ *  every Issue carrying its label. */
+export interface AgentOKRSpend {
+  total_tokens: number;
+  total_cost_usd_ticks: number;
+  task_count: number;
+  /** Tasks that ran on a model with no price attached. When non-zero the cost
+   *  is a floor, and the UI says so rather than showing a quietly partial
+   *  number. */
+  unpriced_task_count: number;
+}
+
 export interface AgentOKRKeyResult {
   text: string;
   /** The workspace label name this key result materializes as. */
   label: string;
   color: string;
+  spend?: AgentOKRSpend;
 }
 
 export interface AgentOKR {
   objective: string;
   label: string;
   color: string;
+  /** This objective's own label only — not the sum of its key results, which
+   *  would double-count an Issue carrying both. */
+  spend?: AgentOKRSpend;
   key_results: AgentOKRKeyResult[];
 }

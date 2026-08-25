@@ -2,6 +2,7 @@ package execenv
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -633,22 +634,21 @@ func writeSubIssueCreation(b *strings.Builder) {
 
 // writeSkills emits the Skills section: an index of invocable skill names.
 //
-// Names only, deliberately. Every runtime CLI discovers the SKILL.md files the
-// daemon writes and builds its own listing from their frontmatter, so repeating
-// the descriptions here bought a second, more expensive copy of what the model
-// already had — measured at ~3,100 tokens per brief on a real task, 40% of the
-// whole brief — and no extra routing signal (MUL-5529).
+// Only for providers that do NOT list the skills themselves. Every runtime CLI
+// with a dedicated discovery root reads the SKILL.md files the daemon writes
+// and builds its own listing from their frontmatter — on a real opencode task
+// that listing was 9,545 bytes of full descriptions, so repeating even the
+// names here is a second copy of something already in the same prompt. MUL-5529
+// removed the descriptions for this reason; the names go the same way for the
+// same reason.
 //
-// The index itself stays because it is the one skill listing Multica controls.
-// Each CLI's own listing is theirs: its format, and whether it exists at all,
-// can change with any release.
-//
-// There is no per-provider branch. The old fallback told providers outside a
-// hardcoded list to read `.agent_context/skills/`, which was the wrong path for
-// every provider that actually reached it — grok and traecli write to
-// `.grok/skills` and `.traecli/skills` — while both discover natively and never
-// needed the pointer.
-func writeSkills(b *strings.Builder, ctx TaskContextForEnv) {
+// The index survives for the fallback providers, where skills land in
+// .agent_context/skills/ and nothing scans them: there the index is the only
+// signal the model gets that the skills exist at all.
+func writeSkills(b *strings.Builder, provider string, ctx TaskContextForEnv) {
+	if providerDiscoversSkillsNatively(provider) {
+		return
+	}
 	skills := modelVisibleSkills(ctx.AgentSkills)
 	if len(skills) == 0 {
 		return
@@ -659,6 +659,24 @@ func writeSkills(b *strings.Builder, ctx TaskContextForEnv) {
 		fmt.Fprintf(b, "- **%s**\n", skill.Name)
 	}
 	b.WriteString("\n")
+}
+
+// providerDiscoversSkillsNatively reports whether the runtime CLI finds the
+// SKILL.md files the daemon writes without being told they exist.
+//
+// Derived from skillsDirPath rather than a second provider list: every provider
+// with a branch there writes into that CLI's documented discovery root, and only
+// the fallback lands in .agent_context/skills/. Keeping one list means a new
+// provider cannot be added to one and forgotten in the other.
+func providerDiscoversSkillsNatively(provider string) bool {
+	switch provider {
+	case "codex", "hermes":
+		// Absent from skillsDirPath's switch because their skills are seeded
+		// into a per-task CODEX_HOME / HERMES_HOME during Prepare instead of a
+		// workdir-relative directory. Both CLIs scan that home natively.
+		return true
+	}
+	return skillsDirPath("", provider) != filepath.Join(".agent_context", "skills")
 }
 
 // writeMentions emits the @mention side-effects section (compressed).
@@ -852,7 +870,7 @@ func buildMetaSkillContentSlim(provider string, ctx TaskContextForEnv) string {
 	// Every kind, quick-create included. Quick-create used to be skipped here
 	// and carried its own copy in issue_context.md instead; now that both are
 	// the same names-only index, the brief is the one that survives.
-	writeSkills(&b, ctx)
+	writeSkills(&b, provider, ctx)
 
 	if kind == kindIssue {
 		writeMentions(&b)
