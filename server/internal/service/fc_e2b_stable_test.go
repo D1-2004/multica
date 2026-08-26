@@ -140,6 +140,38 @@ func TestStableTargetsForManifestExcludesProvidersMissingFromArtifact(t *testing
 	}
 }
 
+func TestStableRuntimeMissingForReleaseUsesMetadataProvider(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	runtime := db.AgentRuntime{
+		RuntimeMode: "cloud",
+		Provider:    "hermes",
+		Metadata: []byte(`{
+			"kind":"cloud-sandbox",
+			"sandbox_backend":"asb",
+			"provider":"codex",
+			"artifact_kind":"oci_image",
+			"artifact_channel":"stable",
+			"artifact_ref":"registry.example/runtime@sha256:` + digest + `",
+			"artifact_digest":"sha256:` + digest + `"
+		}`),
+	}
+	fiveProviderRelease := FCE2BStableRelease{Manifest: map[string]any{
+		"providers": []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
+	}}
+	if stableRuntimeMissingForRelease(runtime, "", fiveProviderRelease, SandboxBackendASB) {
+		t.Fatal("metadata Codex Runtime was included in a five-provider release")
+	}
+	sevenProviderRelease := FCE2BStableRelease{Manifest: map[string]any{
+		"providers": []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
+	}}
+	if !stableRuntimeMissingForRelease(runtime, "", sevenProviderRelease, SandboxBackendASB) {
+		t.Fatal("eligible Codex Runtime without a target was not reported missing")
+	}
+	if stableRuntimeMissingForRelease(runtime, "updated", sevenProviderRelease, SandboxBackendASB) {
+		t.Fatal("updated Codex Runtime was still reported missing")
+	}
+}
+
 func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
 	release := FCE2BStableRelease{
 		TemplateID:      "template-five-runner",

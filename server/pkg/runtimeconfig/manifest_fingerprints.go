@@ -22,18 +22,6 @@ var (
 	manifestComponentVersion   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	manifestComponentKeys      = [...]string{"hermes", "opencode", "opencode-v2", "dsh", "pi", "dws"}
 	manifestProviders          = [...]string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"}
-	manifestCapabilities       = [...]string{
-		"dws",
-		"dws.im_event",
-		"mcp",
-		"runtime_start_events_v1",
-		"llm_trace_v1",
-		"a2a_inbound_opencode_v1",
-		"a2a-invocation-v2",
-		"a2a_inbound_hermes_v1",
-		"a2a_inbound_pi_v1",
-		"dsh_trajectory_v1",
-	}
 )
 
 const manifestRunnerProtocol = "root-log-v1"
@@ -111,7 +99,7 @@ func manifestFingerprint(components map[string]string) (string, error) {
 
 func manifestFingerprintForProviders(components map[string]string, providers []string) (string, error) {
 	contract := map[string]any{
-		"capabilities":       manifestCapabilities[:],
+		"capabilities":       ManifestCapabilitiesForProviders(providers),
 		"component_versions": components,
 		"providers":          providers,
 		"runner_protocol":    manifestRunnerProtocol,
@@ -123,6 +111,41 @@ func manifestFingerprintForProviders(components map[string]string, providers []s
 	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:8]), nil
+}
+
+// ManifestCapabilitiesForProviders derives the schema-v7 image capability set
+// in stable wire order. Shared execution capabilities are always present;
+// provider-specific capabilities are advertised only when the corresponding
+// runner is actually part of the image.
+func ManifestCapabilitiesForProviders(providers []string) []string {
+	present := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		present[strings.ToLower(strings.TrimSpace(provider))] = struct{}{}
+	}
+	capabilities := []string{
+		"dws",
+		"dws.im_event",
+		"mcp",
+		"runtime_start_events_v1",
+		"llm_trace_v1",
+	}
+	_, hasOpenCode := present["opencode"]
+	_, hasOpenCodeV2 := present["opencode-v2"]
+	_, hasDSH := present["dsh"]
+	if hasOpenCode || hasOpenCodeV2 || hasDSH {
+		capabilities = append(capabilities, "a2a_inbound_opencode_v1")
+	}
+	capabilities = append(capabilities, "a2a-invocation-v2")
+	if _, ok := present["hermes"]; ok {
+		capabilities = append(capabilities, "a2a_inbound_hermes_v1")
+	}
+	if _, ok := present["pi"]; ok {
+		capabilities = append(capabilities, "a2a_inbound_pi_v1")
+	}
+	if hasDSH {
+		capabilities = append(capabilities, "dsh_trajectory_v1")
+	}
+	return capabilities
 }
 
 // ManifestProvidersForFingerprint recovers the exact non-empty provider set

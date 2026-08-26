@@ -2160,6 +2160,10 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	if err := validateASBRuntimeManifest(artifact.Manifest); err != nil {
 		return ASBRuntimeArtifactUpdateResult{}, err
 	}
+	providers, err := cloudSandboxManifestProviders(artifact.Manifest)
+	if err != nil {
+		return ASBRuntimeArtifactUpdateResult{}, err
+	}
 	conn, err := l.Pool.Acquire(ctx)
 	if err != nil {
 		return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("acquire connection for ASB artifact update: %w", err)
@@ -2178,8 +2182,13 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	if err != nil {
 		return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("lock ASB runtime row: %w", err)
 	}
-	if !IsASBRuntime(runtime) {
+	runtimeMetadata, err := ParseCloudSandboxRuntime(runtime)
+	if err != nil || runtimeMetadata.SandboxBackend != SandboxBackendASB {
 		return ASBRuntimeArtifactUpdateResult{}, ErrCloudSandboxRuntimeRequired
+	}
+	provider := runtimeMetadata.Provider
+	if err := validateCloudSandboxArtifactProvider(providers, provider); err != nil {
+		return ASBRuntimeArtifactUpdateResult{}, err
 	}
 	var metadata map[string]any
 	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil || metadata == nil {
@@ -2351,15 +2360,38 @@ func validateCloudSandboxManifestProviders(providers []string) error {
 		return errors.New("cloud sandbox runtime manifest must declare at least one provider")
 	}
 	seen := make(map[string]struct{}, len(providers))
+	previousIndex := -1
 	for _, provider := range providers {
 		normalized := strings.ToLower(strings.TrimSpace(provider))
-		if !IsFCE2BSupportedProvider(normalized) {
+		if provider != normalized {
+			return fmt.Errorf("cloud sandbox runtime manifest provider %q is not canonical", provider)
+		}
+		providerIndex := -1
+		for index, supported := range FCE2BSupportedProviders {
+			if supported == normalized {
+				providerIndex = index
+				break
+			}
+		}
+		if providerIndex < 0 {
 			return fmt.Errorf("cloud sandbox runtime manifest declares unsupported provider %q", provider)
 		}
 		if _, exists := seen[normalized]; exists {
 			return fmt.Errorf("cloud sandbox runtime manifest declares duplicate provider %q", provider)
 		}
+		if providerIndex < previousIndex {
+			return errors.New("cloud sandbox runtime manifest providers must use canonical order")
+		}
 		seen[normalized] = struct{}{}
+		previousIndex = providerIndex
+	}
+	return nil
+}
+
+func validateCloudSandboxArtifactProvider(providers []string, provider string) error {
+	provider = stableRuntimeProvider(provider)
+	if provider == "" || !containsAllStrings(providers, provider) {
+		return fmt.Errorf("%w: %s", ErrFCE2BTemplateProviderUnsupported, provider)
 	}
 	return nil
 }

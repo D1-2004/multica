@@ -91,6 +91,55 @@ func TestManifestProvidersForFingerprintAcceptsAnySupportedCardinality(t *testin
 			t.Fatalf("fingerprint %s resolved providers %#v, want %#v", fingerprint, resolved, providers)
 		}
 	}
+	reversedFingerprint, err := manifestFingerprintForProviders(components, []string{"opencode", "hermes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, matched, err := ManifestProvidersForFingerprint(reversedFingerprint, components); err != nil || matched || resolved != nil {
+		t.Fatalf("non-canonical provider order resolved=%#v matched=%v err=%v", resolved, matched, err)
+	}
+}
+
+func TestManifestCapabilitiesForProvidersDoesNotAdvertiseMissingRunners(t *testing.T) {
+	tests := []struct {
+		providers []string
+		want      []string
+	}{
+		{
+			providers: []string{"hermes"},
+			want: []string{
+				"dws", "dws.im_event", "mcp", "runtime_start_events_v1", "llm_trace_v1",
+				"a2a-invocation-v2", "a2a_inbound_hermes_v1",
+			},
+		},
+		{
+			providers: []string{"dsh"},
+			want: []string{
+				"dws", "dws.im_event", "mcp", "runtime_start_events_v1", "llm_trace_v1",
+				"a2a_inbound_opencode_v1", "a2a-invocation-v2", "dsh_trajectory_v1",
+			},
+		},
+		{
+			providers: []string{"opencode-v2"},
+			want: []string{
+				"dws", "dws.im_event", "mcp", "runtime_start_events_v1", "llm_trace_v1",
+				"a2a_inbound_opencode_v1", "a2a-invocation-v2",
+			},
+		},
+		{
+			providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
+			want: []string{
+				"dws", "dws.im_event", "mcp", "runtime_start_events_v1", "llm_trace_v1",
+				"a2a_inbound_opencode_v1", "a2a-invocation-v2", "a2a_inbound_hermes_v1",
+				"a2a_inbound_pi_v1", "dsh_trajectory_v1",
+			},
+		},
+	}
+	for _, test := range tests {
+		if got := ManifestCapabilitiesForProviders(test.providers); !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("providers %#v capabilities = %#v, want %#v", test.providers, got, test.want)
+		}
+	}
 }
 
 func TestParseManifestFingerprintsStrictAcceptsFiveProviderCatalogKey(t *testing.T) {

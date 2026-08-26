@@ -1058,6 +1058,9 @@ func TestValidateASBManifestAcceptsAnyNonEmptySupportedProviderSet(t *testing.T)
 	for name, providers := range map[string][]string{
 		"empty":       {},
 		"duplicate":   {"hermes", "hermes"},
+		"wrong order": {"opencode", "hermes"},
+		"uppercase":   {"Hermes"},
+		"whitespace":  {" hermes"},
 		"unsupported": {"unknown"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -1065,6 +1068,18 @@ func TestValidateASBManifestAcceptsAnyNonEmptySupportedProviderSet(t *testing.T)
 				t.Fatal("invalid provider set was accepted")
 			}
 		})
+	}
+}
+
+func TestValidateCloudSandboxArtifactProviderRequiresRuntimeSupport(t *testing.T) {
+	providers := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+	for _, provider := range providers {
+		if err := validateCloudSandboxArtifactProvider(providers, provider); err != nil {
+			t.Fatalf("supported provider %q rejected: %v", provider, err)
+		}
+	}
+	if err := validateCloudSandboxArtifactProvider(providers, "codex"); !errors.Is(err, ErrFCE2BTemplateProviderUnsupported) {
+		t.Fatalf("unsupported runtime provider error = %v", err)
 	}
 }
 

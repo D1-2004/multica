@@ -840,18 +840,7 @@ func applyFCE2BTemplateManifestAlias(
 		template.Template = alias
 		template.ManifestVersion = 7
 		template.Providers = providers
-		template.Capabilities = []string{
-			"dws",
-			"dws.im_event",
-			"mcp",
-			RuntimeStartCapabilityEventsV1,
-			LLMTraceCapability,
-			A2AInboundOpenCodeCapability,
-			A2AInvocationV2Capability,
-			A2AInboundHermesCapability,
-			A2AInboundPiCapability,
-			DSHTrajectoryCapability,
-		}
+		template.Capabilities = runtimeconfig.ManifestCapabilitiesForProviders(providers)
 		template.ComponentVersions = cloneStringMap(componentVersions)
 		template.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
 		template.SourceRevision = matches[2]

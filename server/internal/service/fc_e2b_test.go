@@ -634,6 +634,10 @@ func testFCE2BManifestV7Catalog() map[string]map[string]string {
 			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.2",
 		},
+		"ccb1492bfcb45e36": {
+			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
+			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.2",
+		},
 	}
 }
 
@@ -647,6 +651,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		wantPi             string
 		wantSourceRevision string
 		wantProviders      []string
+		wantCapabilities   []string
 	}{
 		{
 			name:               "original DWS runtime",
@@ -703,6 +708,20 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 			wantPi:             "0.84.2",
 			wantSourceRevision: "dacbd3",
 		},
+		{
+			name:               "single provider does not inherit other runner capabilities",
+			alias:              "multica-m7-vccb1492bfcb45e36-r1-111111",
+			wantDWS:            "v1.0.60-beta.2",
+			wantDSH:            "0.1.0-rc.8",
+			wantOpenCode:       "v1.18.19",
+			wantPi:             "0.84.2",
+			wantSourceRevision: "111111",
+			wantProviders:      []string{"hermes"},
+			wantCapabilities: []string{
+				"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1,
+				LLMTraceCapability, A2AInvocationV2Capability, A2AInboundHermesCapability,
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -721,19 +740,17 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 			if !reflect.DeepEqual(template.Providers, wantProviders) {
 				t.Fatalf("providers = %#v, want %#v", template.Providers, wantProviders)
 			}
-			if want := []string{
-				"dws",
-				"dws.im_event",
-				"mcp",
-				RuntimeStartCapabilityEventsV1,
-				LLMTraceCapability,
-				A2AInboundOpenCodeCapability,
-				A2AInvocationV2Capability,
-				A2AInboundHermesCapability,
-				A2AInboundPiCapability,
-				DSHTrajectoryCapability,
-			}; !reflect.DeepEqual(template.Capabilities, want) {
-				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, want)
+			wantCapabilities := test.wantCapabilities
+			if wantCapabilities == nil {
+				wantCapabilities = []string{
+					"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1,
+					LLMTraceCapability, A2AInboundOpenCodeCapability,
+					A2AInvocationV2Capability, A2AInboundHermesCapability,
+					A2AInboundPiCapability, DSHTrajectoryCapability,
+				}
+			}
+			if !reflect.DeepEqual(template.Capabilities, wantCapabilities) {
+				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, wantCapabilities)
 			}
 			if template.ComponentVersions["dsh"] != test.wantDSH ||
 				template.ComponentVersions["opencode"] != test.wantOpenCode ||
