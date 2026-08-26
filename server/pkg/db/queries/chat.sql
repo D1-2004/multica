@@ -1026,6 +1026,34 @@ INSERT INTO chat_session_pending_fresh (chat_session_id)
 VALUES ($1)
 ON CONFLICT (chat_session_id) DO NOTHING;
 
+-- name: CreateImmediateChannelChatTask :one
+-- Persists a channel chat task whose trusted upstream already sealed the input
+-- batch. Each delivery gets its own queued task instead of participating in the
+-- per-session deferred upsert. fire_at keeps the existing notification worker
+-- able to recover the post-commit daemon wake/runtime-launch handoff.
+WITH consumed_pending_fresh AS (
+    DELETE FROM chat_session_pending_fresh
+    WHERE chat_session_id = @chat_session_id
+    RETURNING chat_session_id
+)
+INSERT INTO agent_task_queue (
+    id, agent_id, runtime_id, issue_id, status, priority, chat_session_id,
+    initiator_user_id, originator_user_id, accountable_user_id, force_fresh_session,
+    runtime_mcp_overlay, runtime_connected_apps, context, originator_source,
+    trigger_evidence_kind, trigger_evidence_ref_id, chat_input_task_id, fire_at
+)
+VALUES (
+    @id, @agent_id, @runtime_id, NULL, 'queued', 2, @chat_session_id,
+    @initiator_user_id, @originator_user_id, sqlc.narg(accountable_user_id),
+    COALESCE(sqlc.narg('force_fresh_session')::boolean, FALSE)
+        OR EXISTS (SELECT 1 FROM consumed_pending_fresh),
+    sqlc.narg(runtime_mcp_overlay), sqlc.narg(runtime_connected_apps),
+    sqlc.narg(task_context), sqlc.narg(originator_source),
+    sqlc.narg(trigger_evidence_kind), sqlc.narg(trigger_evidence_ref_id), @id,
+    now()
+)
+RETURNING *;
+
 -- name: UpsertDeferredChannelChatTask :one
 -- Persists the channel chat's silence-window batch before the inbound handler
 -- may report success. A partial unique index permits one open deferred batch

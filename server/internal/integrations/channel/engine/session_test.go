@@ -67,6 +67,9 @@ type fakeSessionQueries struct {
 	upsertedTask          db.AgentTaskQueue
 	upsertTaskCalls       int
 	upsertTaskErr         error
+	immediateTask         db.AgentTaskQueue
+	immediateTaskCalls    int
+	immediateTaskErr      error
 	linkedAttachments     []pgtype.UUID
 	lastLinkParams        db.LinkAttachmentsToChatMessageParams
 	lockPendingCalls      int
@@ -148,6 +151,36 @@ func (f *fakeSessionQueries) UpsertDeferredChannelChatTask(_ context.Context, ar
 		ForceFreshSession:    forceFresh,
 	}
 	f.upsertedTask = task
+	return task, nil
+}
+
+func (f *fakeSessionQueries) CreateImmediateChannelChatTask(_ context.Context, arg db.CreateImmediateChannelChatTaskParams) (db.AgentTaskQueue, error) {
+	f.immediateTaskCalls++
+	if f.immediateTaskErr != nil {
+		return db.AgentTaskQueue{}, f.immediateTaskErr
+	}
+	forceFresh := arg.ForceFreshSession.Valid && arg.ForceFreshSession.Bool
+	if f.pendingFresh {
+		forceFresh = true
+		f.pendingFresh = false
+	}
+	task := db.AgentTaskQueue{
+		ID:                   arg.ID,
+		AgentID:              arg.AgentID,
+		RuntimeID:            arg.RuntimeID,
+		ChatSessionID:        arg.ChatSessionID,
+		Status:               "queued",
+		FireAt:               pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		InitiatorUserID:      arg.InitiatorUserID,
+		OriginatorUserID:     arg.OriginatorUserID,
+		AccountableUserID:    arg.AccountableUserID,
+		OriginatorSource:     arg.OriginatorSource,
+		TriggerEvidenceKind:  arg.TriggerEvidenceKind,
+		TriggerEvidenceRefID: arg.TriggerEvidenceRefID,
+		ForceFreshSession:    forceFresh,
+		ChatInputTaskID:      arg.ID,
+	}
+	f.immediateTask = task
 	return task, nil
 }
 
@@ -559,6 +592,45 @@ func TestAppendUserMessage_DurableTaskAndMessageShareTransaction(t *testing.T) {
 	}
 	if res.TaskID != prepared.ID || !res.TaskFireAt.Valid {
 		t.Fatalf("append result task = (%v, %v), want durable task and fire_at", res.TaskID, res.TaskFireAt)
+	}
+}
+
+func TestAppendUserMessage_ImmediateTaskDoesNotEnterDeferredUpsert(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	prepared := &service.PreparedChannelChatTask{
+		ID:                   uid(9),
+		AgentID:              uid(2),
+		RuntimeID:            uid(3),
+		InitiatorUserID:      uid(7),
+		OriginatorUserID:     uid(7),
+		AccountableUserID:    uid(7),
+		OriginatorSource:     pgtype.Text{String: "direct_human", Valid: true},
+		TriggerEvidenceKind:  pgtype.Text{String: "chat", Valid: true},
+		TriggerEvidenceRefID: uid(1),
+		TaskContext:          []byte(`{"source":"router"}`),
+		DebounceSeconds:      0,
+	}
+
+	res, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID:      uid(1),
+		Sender:         uid(7),
+		InstallationID: uid(8),
+		Body:           "already aggregated",
+		MessageID:      "m-immediate",
+		PreparedTask:   prepared,
+	})
+	if err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	if f.upsertTaskCalls != 0 {
+		t.Fatalf("immediate Router task entered deferred upsert %d time(s)", f.upsertTaskCalls)
+	}
+	if f.immediateTaskCalls != 1 || !res.TaskID.Valid || res.TaskID != prepared.ID {
+		t.Fatalf("immediate task calls/result = %d/%v, want 1/%v", f.immediateTaskCalls, res.TaskID, prepared.ID)
+	}
+	if len(f.messageTaskIDs) != 1 || f.messageTaskIDs[0] != res.TaskID {
+		t.Fatalf("immediate message task ids = %v, task = %v", f.messageTaskIDs, res.TaskID)
 	}
 }
 

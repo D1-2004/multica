@@ -575,6 +575,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 				return Result{}, finalizeRelease, fmt.Errorf("prepare durable chat task: %w", err)
 			}
 		} else {
+			if msg.DisableRunBatching {
+				prepared.DebounceSeconds = 0
+			}
 			preparedTask = &prepared
 		}
 	}
@@ -609,6 +612,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	postAppendFinalize := finalizeNone
 	if !appendRes.DedupMarked {
 		postAppendFinalize = finalizeMark
+	}
+	if preparedTask != nil && preparedTask.DebounceSeconds <= 0 && appendRes.Task.ID.Valid {
+		r.tasks.NotifyChannelChatTaskEnqueued(ctx, appendRes.Task)
 	}
 
 	res := Result{

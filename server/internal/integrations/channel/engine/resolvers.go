@@ -171,8 +171,10 @@ type AppendResult struct {
 	MessageID pgtype.UUID
 	Content   string
 	CreatedAt pgtype.Timestamptz
-	// TaskID is the durable deferred task atomically committed with the message.
-	// It is zero for legacy channel paths that still enqueue after append.
+	// Task is the durable task atomically committed with the message. Immediate
+	// tasks are returned in full so the Router can publish queued before waking
+	// the daemon. It is zero for legacy paths that enqueue after append.
+	Task       db.AgentTaskQueue
 	TaskID     pgtype.UUID
 	TaskFireAt pgtype.Timestamptz
 }
@@ -432,6 +434,7 @@ type IssueCreator interface {
 type TaskEnqueuer interface {
 	EnqueueChatTask(ctx context.Context, session db.ChatSession, identity service.ChatTaskIdentity, forceFreshSession bool, taskContext []byte) (db.AgentTaskQueue, error)
 	PrepareChannelChatTask(ctx context.Context, session db.ChatSession, identity service.ChatTaskIdentity, forceFreshSession bool, taskContext []byte) (service.PreparedChannelChatTask, error)
+	NotifyChannelChatTaskEnqueued(ctx context.Context, task db.AgentTaskQueue)
 	PromoteChannelChatTasksIfMediaReady(ctx context.Context, sessionID pgtype.UUID) error
 	PromoteDeferredChannelIssueTask(ctx context.Context, taskID pgtype.UUID) error
 }

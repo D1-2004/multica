@@ -291,6 +291,7 @@ func InboundFromHTTPCallback(in HTTPCallbackMessage, clientID, installationID st
 	}
 	message, err := inboundFromAgentDispatch(AgentDispatchMessage(in), clientID, installationID)
 	if err == nil {
+		message.DisableRunBatching = true
 		return message, nil
 	}
 	if errors.Is(err, errAgentDispatchMessageIDRequired) {
