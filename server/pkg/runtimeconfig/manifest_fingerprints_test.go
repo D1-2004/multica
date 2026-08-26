@@ -47,6 +47,46 @@ func TestParseManifestFingerprintsStrictAcceptsExactContract(t *testing.T) {
 	}
 }
 
+func TestManifestFingerprintHashMatchesDocumentedExampleKey(t *testing.T) {
+	got, err := manifestFingerprint(map[string]string{
+		"hermes":      "0.19.0",
+		"opencode":    "v1.18.19",
+		"opencode-v2": "0.0.0-beta-202608110357",
+		"dsh":         "0.1.0-rc.8",
+		"pi":          "0.84.2",
+		"dws":         "v1.0.59",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "0e70a766342698a9" {
+		t.Fatalf("local contract hash = %q, want 0e70a766342698a9", got)
+	}
+}
+
+func TestParseManifestFingerprintsStrictAcceptsCatalogKeysThatDoNotMatchLocalHash(t *testing.T) {
+	raw := `{
+  "version": 1,
+  "fingerprints": {
+    "baedb216407a5060": {
+      "hermes": "0.19.0",
+      "opencode": "v1.18.19",
+      "opencode-v2": "0.0.0-beta-202608110357",
+      "dsh": "0.1.0-rc.8",
+      "pi": "0.84.2",
+      "dws": "v1.0.59"
+    }
+  }
+}`
+	cfg, err := ParseManifestFingerprintsStrict([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseManifestFingerprintsStrict: %v", err)
+	}
+	if got := cfg.Fingerprints["baedb216407a5060"]["dws"]; got != "v1.0.59" {
+		t.Fatalf("catalog DWS version = %q", got)
+	}
+}
+
 func TestParseManifestFingerprintsStrictRejectsInvalidDocuments(t *testing.T) {
 	tests := []struct {
 		name string
@@ -61,7 +101,6 @@ func TestParseManifestFingerprintsStrictRejectsInvalidDocuments(t *testing.T) {
 		{name: "extra component", raw: strings.Replace(validManifestFingerprintsJSON(), `      "dws": "v1.0.59"`, `      "dws": "v1.0.59", "extra": "v1"`, 1)},
 		{name: "blank version", raw: strings.Replace(validManifestFingerprintsJSON(), `"dws": "v1.0.59"`, `"dws": " "`, 1)},
 		{name: "surrounding whitespace", raw: strings.Replace(validManifestFingerprintsJSON(), `"dws": "v1.0.59"`, `"dws": " v1.0.59"`, 1)},
-		{name: "fingerprint mismatch", raw: strings.Replace(validManifestFingerprintsJSON(), `"dws": "v1.0.59"`, `"dws": "v1.0.60-beta.1"`, 1)},
 		{name: "trailing value", raw: validManifestFingerprintsJSON() + ` {}`},
 	}
 	for _, test := range tests {

@@ -101,13 +101,6 @@ func (c ManifestFingerprintsConfig) Validate() error {
 				return errors.New("Runtime manifest component versions contain unsupported characters")
 			}
 		}
-		expected, err := manifestFingerprint(components)
-		if err != nil {
-			return err
-		}
-		if fingerprint != expected {
-			return errors.New("Runtime manifest fingerprint does not match its component versions")
-		}
 	}
 	return nil
 }
