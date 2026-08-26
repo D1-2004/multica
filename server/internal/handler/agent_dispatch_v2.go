@@ -1189,12 +1189,18 @@ func dispatchQuoteBlock(text string) string {
 // the sentence this run has to act on, so replaying that promise on every
 // historical turn points the run at the wrong instruction.
 func dispatchRecordUtterance(content string) string {
-	opener := strings.Index(content, dispatchCurrentUtteranceMarker)
-	if opener < 0 {
-		return content
-	}
-	if antecedent := strings.Index(content[opener:], dispatchQuotedAntecedentMarker); antecedent >= 0 {
-		if cut := strings.LastIndex(content[:opener+antecedent], "\n\n"); cut >= 0 {
+	// The two reductions are independent, and have to be: a chat_session holds
+	// rows written by every rendering this code has shipped. One of them wrote
+	// the attribution with no opener above it, and requiring the pair meant those
+	// rows kept their attribution line forever. Each strip stands on its own
+	// evidence instead.
+	//
+	// The attribution is always the last paragraph — dispatchQuoteBlock prefixes
+	// every quoted line, including blank ones, so a quote body never introduces a
+	// paragraph break of its own.
+	if cut := strings.LastIndex(content, "\n\n"); cut >= 0 {
+		tail := content[cut+2:]
+		if strings.Contains(tail, "引用了") && strings.Contains(tail, dispatchQuotedAntecedentMarker) {
 			content = strings.TrimRight(content[:cut], " \n")
 		}
 	}

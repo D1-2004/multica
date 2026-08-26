@@ -484,6 +484,22 @@ func TestDispatchRecordUtteranceKeepsOnlyWhatWasSaid(t *testing.T) {
 	}
 }
 
+// A chat_session holds rows written by every rendering this code has shipped.
+// The intermediate one wrote the attribution with no opener above it; those rows
+// must still reduce.
+func TestDispatchRecordUtteranceReducesEveryPersistedRendering(t *testing.T) {
+	attribution := "冬翔 引用了你（本数字员工）自己" + dispatchQuotedAntecedentMarker
+	for name, rendered := range map[string]string{
+		"opener + quoted body": "冬翔 " + dispatchCurrentUtteranceMarker + "\n有\n\n" + attribution + "：\n> 好的，请说！",
+		"attribution only":     "有\n\n" + attribution + "。",
+		"opener only":          "冬翔 " + dispatchCurrentUtteranceMarker + "\n有",
+	} {
+		if got := dispatchRecordUtterance(rendered); got != "有" {
+			t.Errorf("%s: record utterance = %q, want %q", name, got, "有")
+		}
+	}
+}
+
 func TestDispatchRecordUtteranceLeavesOrdinaryMessagesAlone(t *testing.T) {
 	for _, content := range []string{
 		"普通消息",
