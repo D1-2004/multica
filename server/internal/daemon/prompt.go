@@ -67,7 +67,7 @@ func chatHistoryRecoveryBlock(history, channelType string) string {
 		"# What this is\n" +
 		"The messages exchanged with you earlier in this conversation, as Multica recorded them. Use it as context for the latest user message; do not restate it unless the user asks.\n\n" +
 		"# What it is not\n" +
-		"It is not the conversation, and it is not the whole of your context. Where `…[truncated]…` appears, the middle of that message was removed; a leading `[older turns were trimmed from this transcript]` means older turns are missing from the record entirely. Treat either marker as context you do not have, never as proof of what was said — when a decision turns on what is behind one, go and read the conversation instead of inferring it.\n\n" +
+		"It is not the conversation, and it is not the whole of your context. Where `…[truncated]…` appears, the middle of that message was removed, and older turns may be missing from the record entirely. Treat it as context you may not have all of, never as proof of what was said — when a decision turns on what is not in it, go and read the conversation instead of inferring it.\n\n" +
 		channelCaveat +
 		"# Record\n" +
 		history + "\n" +

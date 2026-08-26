@@ -3443,19 +3443,6 @@ func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
 	return msgs
 }
 
-// chatHistoryOmittedMarker heads a transcript that lost whole turns to the
-// message or byte bound. Without it the agent reads a bounded window as the
-// whole conversation and answers "you never told me" about something the user
-// did tell it — the transcript is truthful about every message it shows and
-// silent about the ones it dropped, and silence is the failure mode.
-//
-// It names TRIMMING specifically, not absence in general. On a group-room
-// channel the per-turn prompt separately warns that the Multica record never
-// contained messages between other people; a marker that said only "messages
-// are missing" would read as that second, larger claim and make a complete
-// transcript look partial.
-const chatHistoryOmittedMarker = "[older turns were trimmed from this transcript]"
-
 // chatHistoryClipMarker replaces the middle of one over-long message. Its width
 // is fixed so the clip arithmetic below cannot depend on the size of the number
 // it is about to print.
@@ -3555,9 +3542,10 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 //
 // Two bounds apply, in order: every message is clipped to
 // chatHistoryMessageRunes, and the assembled result is then held under maxBytes
-// by dropping the oldest turns. Both losses are declared — the clip inline, the
-// drop in a leading marker — because the block is consumed as an interaction
-// record and a silent gap in one reads as "this was never said".
+// by dropping the oldest turns. The clip is declared inline. The drop is not:
+// the leading marker that used to announce it read as an alarm on most turns,
+// and the run now carries a ready-to-run command for reading the conversation
+// itself back, which recovers a dropped turn instead of merely naming it.
 //
 // makeChatHistoryAuthoritative clears PriorSessionID whenever this returns
 // anything, so on a cloud chat this string replaces the provider session as the
@@ -3577,23 +3565,11 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 		// characters of head and tail says less than the omission marker alone.
 		minClipBytes = 400
 	)
-	// Counted over the FULL input, before any bound is applied. A message with
-	// no text contributes nothing to the transcript, so dropping one is not a
-	// loss and must not raise the omitted marker. Deciding this from
-	// `len(msgs) > maxMessages` instead would head a complete transcript with a
-	// warning, and the per-turn prompt tells the run to treat a declared gap as
-	// missing context it must go and fetch.
-	recoverable := 0
-	for i := range msgs {
-		if strings.TrimSpace(dispatchRecordUtterance(msgs[i].Content)) != "" {
-			recoverable++
-		}
-	}
 	if len(msgs) > maxMessages {
 		msgs = msgs[len(msgs)-maxMessages:]
 	}
 	var selected []string
-	included, total := 0, 0
+	total := 0
 	for i := len(msgs) - 1; i >= 0; i-- {
 		content := strings.TrimSpace(dispatchRecordUtterance(msgs[i].Content))
 		if content == "" {
@@ -3615,12 +3591,10 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 			// budget either way, so this is the last part.
 			if budget >= minClipBytes {
 				selected = append(selected, prefix+clipChatHistoryMessage(content, budget))
-				included++
 			}
 			break
 		}
 		selected = append(selected, prefix+content)
-		included++
 		total += separator + len(prefix) + len(content)
 	}
 	if len(selected) == 0 {
@@ -3629,11 +3603,7 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
 		selected[i], selected[j] = selected[j], selected[i]
 	}
-	joined := strings.Join(selected, "\n\n")
-	if included < recoverable {
-		return chatHistoryOmittedMarker + "\n\n" + joined
-	}
-	return joined
+	return strings.Join(selected, "\n\n")
 }
 
 func makeChatHistoryAuthoritative(resp *AgentTaskResponse) {

@@ -684,7 +684,7 @@ func TestBuildChatPromptPartialRecordOnChannelsMulticaCannotRead(t *testing.T) {
 		closeTag  = "</interaction-record>"
 		notWhole  = "it is not the whole of your context"
 		clipNote  = "Where `…[truncated]…` appears, the middle of that message was removed"
-		dropNote  = "older turns are missing from the record entirely"
+		dropNote  = "older turns may be missing from the record entirely"
 		goRead    = "go and read the conversation instead of inferring it"
 		sliceLine = "only the slice Multica recorded"
 		others    = "Messages other people exchanged"
