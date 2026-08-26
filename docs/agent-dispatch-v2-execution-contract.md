@@ -177,21 +177,25 @@ blob:
 
 `quoted_message` carries facts, not policy, so it is composed from the persisted
 dispatch envelope and is not overridable. It states that the quoted text is the
-antecedent rather than a new request, reports whether this Agent wrote the
-quoted message itself, and prints one ready-to-run read-back command per quoted
-message with the real `openConversationId` and `openMsgId` substituted in:
+antecedent rather than a new request, then prints one line per quoted message
+with the real `openMsgId` substituted into a runnable read-back command:
 
 ```text
-- conversation cidXXX, quoted message msgYYY (1820 characters, TRUNCATED in visible text): `dws chat message list-by-ids --msg-ids msgYYY --format json`
+- msgYYY (1820 chars, TRUNCATED, by you): `dws chat message list-by-ids --msg-ids msgYYY --format json`
 ```
 
-A quote the display truncated is marked TRUNCATED and must be read back before
-the Agent relies on anything the excerpt does not show. When the dispatch supplies
-no quoted-message id, the hint falls back to
-`dws chat message search-advanced --conversation-ids <openConversationId>` so the
-conversation is still reachable. The commands are spelled out rather than left as
-placeholders because an Agent that has to assemble one from a JSON blob is an
-Agent that guesses.
+`by you` marks a quote this Agent wrote itself; otherwise the line carries the
+quoted sender's uid, or `sender unknown`. A quote the display truncated is marked
+`TRUNCATED` and must be read back before the Agent relies on anything the excerpt
+does not show. A single trailing fallback line carries the real
+`openConversationId` for `dws chat message search-advanced`, which covers both a
+dispatch that supplied no quoted-message id and an id that fails to resolve.
+
+The commands are spelled out rather than left as placeholders, because an Agent
+that has to assemble one from a data blob is an Agent that guesses. The segment
+carries no structured duplicate of those lines and no quoted text: a hint longer
+than the excerpt it replaces defeats its own purpose, so the whole block stays
+close to the size of one excerpt.
 
 Each segment reports its gate as a stable `condition` key, present whether or
 not the segment is active in the previewed scenario. A preview that only
@@ -619,10 +623,10 @@ parsing or rewriting Router's context string.
 - History: Display content for a quoted DingTalk reply now leads with the
   current message, names the quoted message's author relative to the dispatch,
   and inlines at most 500 characters of the original. A new non-overridable
-  `quoted_message` instruction segment carries `quotedOpenMsgId`,
-  `quotedSenderUid`, `quotedSenderIsSelf`, the reading rule, and one ready-to-run
-  read-back command per quote with the real conversation and message ids printed
-  in; the legacy prompt builder emits the same block.
+  `quoted_message` instruction segment carries the reading rule plus one compact
+  line per quote — message id, length, truncation state, whether this Agent wrote
+  it — each ending in a runnable read-back command, and one conversation-scoped
+  fallback line; the legacy prompt builder emits the same block.
   `persistedDispatchContext` now reads the private `external_identity.dws`
   descriptor already stored beside the envelope.
 - Reason: The previous rendering opened with the untruncated original under a
