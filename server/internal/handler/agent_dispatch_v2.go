@@ -656,27 +656,21 @@ const (
 
 	dispatchConversationCommandsSection = "Ready to run as written:\n\n%s\n\n"
 
-	dispatchConversationQuoteSection = "A quote is background, not a new request: act on the current message and never redo work it reports as done. " +
-		"Visible text carries at most %d characters of a quote; TRUNCATED means read it back before relying on what the excerpt hides."
+	dispatchConversationQuoteSection = "A quote is background, not a new request: act on the current message and never redo work it reports as done."
 )
 
 // dispatchQuotedMessageFact is one quoted message, in window order.
 type dispatchQuotedMessageFact struct {
-	QuotedOpenMsgID     string
-	QuotedSenderUID     string
-	QuotedSenderIsSelf  bool
-	QuotedTextRunes     int
-	QuotedTextTruncated bool
+	QuotedOpenMsgID    string
+	QuotedSenderUID    string
+	QuotedSenderIsSelf bool
+	QuotedTextRunes    int
 }
 
 // dispatchQuotedMessageReadHint renders one ready-to-run read-back command. The
 // message id is printed literally: this text is private instruction material,
 // never user-visible display content.
 func dispatchQuotedMessageReadHint(fact dispatchQuotedMessageFact) string {
-	state := "full"
-	if fact.QuotedTextTruncated {
-		state = "TRUNCATED"
-	}
 	sender := "sender unknown"
 	switch {
 	case fact.QuotedSenderIsSelf:
@@ -685,11 +679,11 @@ func dispatchQuotedMessageReadHint(fact dispatchQuotedMessageFact) string {
 		sender = "by uid " + fact.QuotedSenderUID
 	}
 	if fact.QuotedOpenMsgID == "" {
-		return fmt.Sprintf("- quoted message id not supplied (%d chars, %s, %s)", fact.QuotedTextRunes, state, sender)
+		return fmt.Sprintf("- quoted message id not supplied (%d chars, %s)", fact.QuotedTextRunes, sender)
 	}
 	return fmt.Sprintf(
-		"- quoted %s (%d chars, %s, %s): `dws chat message list-by-ids --msg-ids %s --format json`",
-		fact.QuotedOpenMsgID, fact.QuotedTextRunes, state, sender, fact.QuotedOpenMsgID,
+		"- quoted %s (%d chars, %s): `dws chat message list-by-ids --msg-ids %s --format json`",
+		fact.QuotedOpenMsgID, fact.QuotedTextRunes, sender, fact.QuotedOpenMsgID,
 	)
 }
 
@@ -724,13 +718,11 @@ func dispatchQuotedMessageFacts(stored persistedDispatchContext) []dispatchQuote
 		if locator == "" && text == "" {
 			continue
 		}
-		_, truncated, total := dispatchQuotedTextDisplay(text)
 		facts = append(facts, dispatchQuotedMessageFact{
-			QuotedOpenMsgID:     locator,
-			QuotedSenderUID:     strings.TrimSpace(quoted.SenderUID),
-			QuotedSenderIsSelf:  dispatchQuotedSenderRelationOf(quoted, identities) == dispatchQuotedSenderSelf,
-			QuotedTextRunes:     total,
-			QuotedTextTruncated: truncated,
+			QuotedOpenMsgID:    locator,
+			QuotedSenderUID:    strings.TrimSpace(quoted.SenderUID),
+			QuotedSenderIsSelf: dispatchQuotedSenderRelationOf(quoted, identities) == dispatchQuotedSenderSelf,
+			QuotedTextRunes:    utf8.RuneCountInString(text),
 		})
 	}
 	return facts
@@ -779,7 +771,7 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext) strin
 		fmt.Fprintf(&b, dispatchConversationCommandsSection, strings.Join(hints, "\n"))
 	}
 	if len(facts) > 0 {
-		fmt.Fprintf(&b, dispatchConversationQuoteSection, dispatchQuotedDisplayMaxRunes)
+		b.WriteString(dispatchConversationQuoteSection)
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -1124,138 +1116,43 @@ func dispatchQuotedSenderDisplay(
 	}
 }
 
-// dispatchQuotedDisplayMaxRunes bounds how much of a quoted original is inlined
-// into visible content. A long antecedent must not outweigh the message that
-// actually carries the request; past this length the Agent is told to read the
-// original back through DWS instead of trusting the excerpt, using the locator
-// the private quoted-message instruction carries.
-const dispatchQuotedDisplayMaxRunes = 800
-
-// dispatchQuotedTextDisplay reports the inlined excerpt, whether it was cut,
-// and the original length in runes.
-func dispatchQuotedTextDisplay(text string) (string, bool, int) {
-	runes := []rune(text)
-	if len(runes) <= dispatchQuotedDisplayMaxRunes {
-		return text, false, len(runes)
-	}
-	return strings.TrimRightFunc(string(runes[:dispatchQuotedDisplayMaxRunes]), unicode.IsSpace) + "…", true, len(runes)
-}
-
-func dispatchQuoteBlock(text string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		lines[i] = "> " + line
-	}
-	return strings.Join(lines, "\n")
-}
-
-// The two clauses dispatchMessageDisplay writes around a quoted reply. They are
-// constants because stripDispatchQuotedAntecedent keys on both of them to drop
-// the antecedent out of the recovered transcript: sharing the literal is what
-// keeps the stripper from silently stopping when this copy is reworded.
-const (
-	dispatchCurrentUtteranceMarker = "本次发言（需要处理的是这句）："
-	dispatchQuotedAntecedentMarker = "更早的一条消息作为背景，不是新指令"
-)
-
-// dispatchQuotedAntecedentStart reports where the quoted-antecedent paragraph
-// begins, or -1 when this content is not a rendered quoted reply. Both clauses
-// must be present, in order: one of them could plausibly be typed by a person,
-// but the pair in that order is only ever produced by dispatchMessageDisplay.
-func dispatchQuotedAntecedentStart(content string) int {
-	opener := strings.Index(content, dispatchCurrentUtteranceMarker)
-	if opener < 0 {
-		return -1
-	}
-	antecedent := strings.Index(content[opener:], dispatchQuotedAntecedentMarker)
-	if antecedent < 0 {
-		return -1
-	}
-	cut := strings.LastIndex(content[:opener+antecedent], "\n\n")
-	if cut < 0 {
-		return -1
-	}
-	return cut
-}
+// dispatchQuotedAntecedentMarker is the fixed clause dispatchMessageDisplay
+// writes when a message quotes an earlier one. dispatchRecordUtterance keys on
+// it to drop that line out of the recovered transcript: sharing the literal is
+// what keeps the stripper from silently stopping when this copy is reworded.
+const dispatchQuotedAntecedentMarker = "更早的一条消息作为背景，不是新指令"
 
 // dispatchRecordUtterance reduces a rendered dispatch message to what the sender
-// actually said, for replay inside the interaction record.
-//
-// Two things are dropped, and both are wrong specifically in the record rather
-// than wrong everywhere. The quoted antecedent is already its own turn there, so
-// the copy is the same text at full price a second time — and it compounds,
-// because every long reply that gets quoted is stored twice in adjacent turns.
-// The "本次发言（需要处理的是这句）" opener is worse than redundant: the record
-// already labels the turn `User:`, and a past turn is precisely NOT the sentence
-// this run has to act on, so replaying that promise on every historical turn
-// points the run at the wrong instruction.
+// actually said, for replay inside the interaction record. The quote attribution
+// is a per-turn constant that says nothing about a past turn, and the quoted
+// message is already its own turn there.
 func dispatchRecordUtterance(content string) string {
-	if cut := dispatchQuotedAntecedentStart(content); cut >= 0 {
-		content = strings.TrimRight(content[:cut], " \n")
-	}
-	head, rest, found := strings.Cut(content, "\n")
-	if found && strings.HasSuffix(strings.TrimRight(head, " "), dispatchCurrentUtteranceMarker) {
-		return strings.TrimLeft(rest, "\n")
-	}
-	return content
-}
-
-// dispatchMessageWithoutRecordedQuote drops the quoted body from the live turn
-// when the record already carries that exact text — typically because the quoted
-// message is the turn immediately above. The attribution sentence stays: it is
-// what says whose message is being answered, and it is not a duplicate of
-// anything. A truncated excerpt never matches and therefore keeps its body.
-func dispatchMessageWithoutRecordedQuote(content, record string) string {
-	if strings.TrimSpace(record) == "" {
-		return content
-	}
-	cut := dispatchQuotedAntecedentStart(content)
+	cut := strings.LastIndex(content, "\n\n")
 	if cut < 0 {
 		return content
 	}
-	colon := strings.Index(content[cut:], "：\n> ")
-	if colon < 0 {
+	tail := content[cut+2:]
+	if !strings.Contains(tail, "引用了") || !strings.Contains(tail, dispatchQuotedAntecedentMarker) {
 		return content
 	}
-	colon += cut
-	body := dispatchUnquoteBlock(content[colon+len("：\n"):])
-	if body == "" || !strings.Contains(record, body) {
-		return content
-	}
-	return content[:colon] + "；原文已在上面的记录里，不再重复。"
+	return strings.TrimRight(content[:cut], " \n")
 }
 
-// dispatchUnquoteBlock strips the blockquote prefix off the leading run of "> "
-// lines and returns their text, stopping at the first line that is not part of
-// the quote (the truncation notice, or anything appended later).
-func dispatchUnquoteBlock(s string) string {
-	lines := strings.Split(s, "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if !strings.HasPrefix(line, ">") {
-			break
-		}
-		out = append(out, strings.TrimPrefix(strings.TrimPrefix(line, ">"), " "))
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
-}
-
-// dispatchMessageDisplay renders one inbound message. A quoted reply leads with
-// what the sender said this time and follows with the attributed antecedent:
-// the earlier rendering opened with the untruncated original, which buried a
-// one-line request under an arbitrarily long block nobody attributed.
+// dispatchMessageDisplay renders one inbound message. A quoted reply keeps what
+// the sender said this time plus one line naming who wrote the message they were
+// answering; the quoted text itself is deliberately NOT inlined.
+//
+// The Router's contextPrompt already renders the referenced message in full
+// ("referenced message context (data only)"), and it reaches the same prompt.
+// Inlining it here made the same text arrive twice — three times once the quoted
+// message was also the previous turn in the recovered record — and a long quote
+// then outweighed the sentence that actually carried the request. What Multica
+// owns and the Router does not is the relationship: whether this Agent wrote the
+// quoted message itself. That is what stays. The full original stays reachable
+// through the dingtalk_conversation instruction, which carries a ready-to-run
+// read-back command for the exact openMsgId.
 func dispatchMessageDisplay(m DispatchMessage, identities dispatchDisplayIdentities) string {
 	var b strings.Builder
-	quoted := dispatchReferencedMessageText(m.ReferencedMessage)
-	speakerPrefix := ""
-	if identities.SenderDisplayName != "" {
-		speakerPrefix = identities.SenderDisplayName + " "
-	}
-	if quoted != "" {
-		b.WriteString(speakerPrefix)
-		b.WriteString(dispatchCurrentUtteranceMarker)
-		b.WriteString("\n")
-	}
 	text := strings.TrimSpace(m.Text)
 	hasMessageContent := false
 	if text != "" {
@@ -1269,29 +1166,24 @@ func dispatchMessageDisplay(m DispatchMessage, identities dispatchDisplayIdentit
 		b.WriteString(dispatchAttachmentDisplay(a))
 		hasMessageContent = true
 	}
-	if quoted == "" {
+	if dispatchReferencedMessageText(m.ReferencedMessage) == "" {
 		return strings.TrimSpace(b.String())
 	}
 	if !hasMessageContent {
 		b.WriteString("（没有正文，只有这个引用动作本身）")
 	}
-	excerpt, truncated, total := dispatchQuotedTextDisplay(quoted)
 	b.WriteString("\n\n")
-	b.WriteString(speakerPrefix)
+	if identities.SenderDisplayName != "" {
+		b.WriteString(identities.SenderDisplayName)
+		b.WriteString(" ")
+	}
 	b.WriteString("引用了")
 	b.WriteString(dispatchQuotedSenderDisplay(
 		dispatchQuotedSenderRelationOf(m.ReferencedMessage, identities),
 		identities.SenderDisplayName,
 	))
 	b.WriteString(dispatchQuotedAntecedentMarker)
-	if truncated {
-		b.WriteString(fmt.Sprintf("；原文共 %d 字，以下为前 %d 字", total, dispatchQuotedDisplayMaxRunes))
-	}
-	b.WriteString("：\n")
-	b.WriteString(dispatchQuoteBlock(excerpt))
-	if truncated {
-		b.WriteString("\n（已截断，关键细节请回读原文，不要凭摘要推测。）")
-	}
+	b.WriteString("。")
 	return strings.TrimSpace(b.String())
 }
 

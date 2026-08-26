@@ -124,17 +124,23 @@ Multica builds prompt material from the structured source event:
 - fixed safety, delivery, response, and routing policy comes from Diamond
   `common.prompt` plus the prompt for the current `surface.type`.
 
-A message carrying `referencedMessage` is rendered as an attributed pair rather
-than two anonymous blocks. Display content leads with what the sender said this
-time, then names who wrote the quoted message — this Agent itself, the current
-sender, or somebody else in the conversation — and inlines at most 800
-characters of the original, reporting the full length and telling the Agent to
-read the original back before drawing conclusions when it truncates. The
-relationship is resolved from `referencedMessage.senderUid` against
-`externalIdentity.dws.uid` and the sender identifiers already in the envelope;
-none of those identifiers reach display content. The locator that makes the
-original re-readable travels in the private `dingtalk_conversation` instruction
-segment instead.
+A message carrying `referencedMessage` keeps what the sender said this time plus
+one line naming who wrote the message they were answering — this Agent itself,
+the current sender, or somebody else in the conversation. The quoted text itself
+is deliberately not reproduced: the Router's `contextPrompt` already renders it in
+full as `referenced message context (data only)` and reaches the same prompt, so
+inlining it here delivered the same text twice, and three times whenever the
+quoted message was also the previous turn in the recovered record. What Multica
+owns and the Router does not is the relationship, resolved from
+`referencedMessage.senderUid` against `externalIdentity.dws.uid` and the sender
+identifiers already in the envelope; none of those identifiers reach display
+content. The full original stays reachable through the `dingtalk_conversation`
+instruction, which carries a ready-to-run read-back command for the exact
+`openMsgId`.
+
+`boundedChatHistoryTranscript` drops that attribution line when it replays a
+message as history: it is a per-turn constant that says nothing about a past
+turn, and the quoted message is already its own turn in the record.
 
 The daemon claim task accepts an optional `instruction` string. When it is
 non-blank, the daemon prepends it to the generated per-task prompt for every
@@ -209,25 +215,9 @@ that has to assemble one from a data blob is an Agent that guesses. The segment
 carries no structured duplicate of those lines and no quoted text: the locator
 half stays no longer than the excerpt it points past.
 
-A quoted reply is rendered into the persisted chat message, so the rendering
-would be replayed into every later recovered transcript. Two reductions happen at
-claim time, keyed on the two fixed clauses `dispatchMessageDisplay` writes around
-a quote:
-
-- `boundedChatHistoryTranscript` replays only what each sender said — the quoted
-  antecedent is already its own turn in the record, and the
-  `本次发言（需要处理的是这句）` opener promises something true only of the live
-  turn, so replaying it on every historical turn points the run at the wrong
-  sentence.
-- the live turn drops its quoted *body* when that exact text is already in the
-  record — normally because the quoted message is the turn directly above — and
-  keeps the attribution sentence, which is not a duplicate of anything. A
-  truncated excerpt never matches and keeps its body.
-
-The Router's own `contextPrompt` separately renders a `referenced message context
-(data only)` line carrying the same quoted text and ids. Multica does not parse or
-suppress it — `contextPrompt` is passed through verbatim — so a quoted dispatch
-currently carries that text twice, and Router owns the deduplication.
+The quoted text reaches the run exactly once, from the Router's `contextPrompt`.
+Multica renders only the relationship and the read-back locator, so no part of
+this projection reproduces it.
 
 Each segment reports its gate as a stable `condition` key, present whether or
 not the segment is active in the previewed scenario. A preview that only
@@ -687,3 +677,18 @@ parsing or rewriting Router's context string.
   answer in its own delivery-report voice. The conversation is readable through
   the injected DWS capability, so the frame was wrong in a way that made the
   session read as non-native.
+
+## Change record: 2026-08-26 Stop reproducing the quoted message
+
+- History: Display content for a quoted DingTalk reply no longer inlines the
+  quoted original. It carries what the sender said plus one attribution line, and
+  `boundedChatHistoryTranscript` drops even that line when replaying the turn as
+  history. The display-side excerpt cap, blockquote rendering and truncation
+  notice are gone with it, and the `dingtalk_conversation` hint reports a quote's
+  length without claiming any of it is visible.
+- Reason: The Router's `contextPrompt` already renders `referenced message
+  context (data only)` with the quoted text in full into the same prompt. Multica's
+  copy was a second one, and a third appeared whenever the quoted message was also
+  the previous turn in the recovered record — a pre-release trace showed one short
+  reply present three times. Multica keeps only what the Router cannot resolve:
+  whether this Agent wrote the quoted message itself.

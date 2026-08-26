@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -395,19 +394,17 @@ func TestBuildDispatchPromptRendersReferencedMessageContext(t *testing.T) {
 
 	display := mustBuildDispatchPrompt(t, c).DisplayContent
 	for _, visible := range []string{
-		"李四 本次发言",
 		"@助手 继续处理",
-		"李四 引用了其他人（不是你本数字员工）更早的一条消息作为背景，不是新指令",
-		"> 我是被引用消息的 AI 可读内容",
+		"李四 引用了其他人（不是你本数字员工）" + dispatchQuotedAntecedentMarker,
 	} {
 		if !strings.Contains(display, visible) {
 			t.Errorf("display content missing %q: %q", visible, display)
 		}
 	}
-	// The current message has to lead: a quoted antecedent that opens the text
-	// buries the request the sender actually made.
-	if strings.Index(display, "@助手 继续处理") > strings.Index(display, "我是被引用消息的 AI 可读内容") {
-		t.Errorf("quoted original precedes the current message: %q", display)
+	// The quoted text belongs to the Router's contextPrompt; Multica must not
+	// render a second copy of it into user-visible content.
+	if strings.Contains(display, "我是被引用消息的 AI 可读内容") {
+		t.Errorf("display content reproduced the quoted original: %q", display)
 	}
 	for _, private := range []string{"open-sender-secret", "current-open-secret", "referenced-message-secret", "referenced-open-secret", "referenced-sender-secret"} {
 		if strings.Contains(display, private) {
@@ -416,51 +413,9 @@ func TestBuildDispatchPromptRendersReferencedMessageContext(t *testing.T) {
 	}
 }
 
-// In the turn it arrives on the rendered wrapper is what makes the reply legible;
-// in the record it is a duplicate plus a promise that is false for a past turn.
-func TestDispatchRecordUtteranceKeepsOnlyWhatWasSaid(t *testing.T) {
-	identities := dispatchDisplayIdentities{
-		SenderDisplayName: "冬翔",
-		AgentDWSUID:       "25698887",
-	}
-	rendered := dispatchMessageDisplay(DispatchMessage{
-		OpenMsgID: "current-open",
-		Text:      "很好",
-		ReferencedMessage: &DispatchReferencedMessage{
-			OpenMsgID: "referenced-open",
-			Text:      "我可以帮你完成以下任务：\n\n- 发送消息\n- 创建待办",
-			SenderUID: "25698887",
-		},
-	}, identities)
-	for _, want := range []string{"我可以帮你完成以下任务", dispatchCurrentUtteranceMarker} {
-		if !strings.Contains(rendered, want) {
-			t.Fatalf("live turn lost %q: %q", want, rendered)
-		}
-	}
-
-	if got := dispatchRecordUtterance(rendered); got != "很好" {
-		t.Fatalf("record utterance = %q, want just what the sender said", got)
-	}
-}
-
-func TestDispatchRecordUtteranceLeavesOrdinaryMessagesAlone(t *testing.T) {
-	for _, content := range []string{
-		"普通消息",
-		"",
-		// One clause alone is something a person could plausibly type; only the
-		// pair, in order, is a rendered quote.
-		"我引用了你" + dispatchQuotedAntecedentMarker,
-		"多行\n普通消息",
-	} {
-		if got := dispatchRecordUtterance(content); got != content {
-			t.Errorf("dispatchRecordUtterance(%q) = %q, want unchanged", content, got)
-		}
-	}
-}
-
-// The quoted message is normally the turn directly above in the record. Keeping
-// both copies spends the prompt twice on one message.
-func TestDispatchMessageWithoutRecordedQuoteDropsTheDuplicateBody(t *testing.T) {
+// The Router's contextPrompt already carries the referenced message in full, so
+// the only thing Multica renders is the relationship the Router cannot resolve.
+func TestDispatchMessageDisplayNamesTheQuoteWithoutReproducingIt(t *testing.T) {
 	identities := dispatchDisplayIdentities{SenderDisplayName: "冬翔", AgentDWSUID: "237396"}
 	rendered := dispatchMessageDisplay(DispatchMessage{
 		OpenMsgID: "current-open",
@@ -471,33 +426,42 @@ func TestDispatchMessageWithoutRecordedQuoteDropsTheDuplicateBody(t *testing.T) 
 			SenderUID: "237396",
 		},
 	}, identities)
-	record := "User:\nhi\n\nAssistant:\n你好！有什么可以帮你的吗？"
 
-	got := dispatchMessageWithoutRecordedQuote(rendered, record)
-	if strings.Contains(got, "> 你好！有什么可以帮你的吗？") {
-		t.Fatalf("live turn kept a body the record already carries: %q", got)
-	}
-	for _, want := range []string{"hh", "引用了你（本数字员工）自己", "原文已在上面的记录里"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("live turn lost %q: %q", want, got)
-		}
+	want := "hh\n\n冬翔 引用了你（本数字员工）自己" + dispatchQuotedAntecedentMarker + "。"
+	if rendered != want {
+		t.Fatalf("rendered = %q, want %q", rendered, want)
 	}
 }
 
-func TestDispatchMessageWithoutRecordedQuoteKeepsABodyTheRecordLacks(t *testing.T) {
-	identities := dispatchDisplayIdentities{SenderDisplayName: "冬翔", AgentDWSUID: "237396"}
+// A record turn is already labelled; the attribution line is a per-turn constant
+// that says nothing about a past turn.
+func TestDispatchRecordUtteranceKeepsOnlyWhatWasSaid(t *testing.T) {
 	rendered := dispatchMessageDisplay(DispatchMessage{
 		OpenMsgID: "current-open",
-		Text:      "hh",
+		Text:      "很好",
 		ReferencedMessage: &DispatchReferencedMessage{
 			OpenMsgID: "referenced-open",
-			Text:      "一条记录里没有的更早消息",
-			SenderUID: "237396",
+			Text:      "我可以帮你完成以下任务",
+			SenderUID: "25698887",
 		},
-	}, identities)
-	for _, record := range []string{"", "User:\nhi\n\nAssistant:\n别的内容"} {
-		if got := dispatchMessageWithoutRecordedQuote(rendered, record); got != rendered {
-			t.Errorf("live turn was rewritten against record %q: %q", record, got)
+	}, dispatchDisplayIdentities{SenderDisplayName: "冬翔", AgentDWSUID: "25698887"})
+
+	if got := dispatchRecordUtterance(rendered); got != "很好" {
+		t.Fatalf("record utterance = %q, want just what the sender said", got)
+	}
+}
+
+func TestDispatchRecordUtteranceLeavesOrdinaryMessagesAlone(t *testing.T) {
+	for _, content := range []string{
+		"普通消息",
+		"",
+		"多行\n普通消息",
+		// A trailing paragraph needs BOTH clauses before anything is cut.
+		"正文\n\n我引用了你的话",
+		"正文\n\n" + dispatchQuotedAntecedentMarker,
+	} {
+		if got := dispatchRecordUtterance(content); got != content {
+			t.Errorf("dispatchRecordUtterance(%q) = %q, want unchanged", content, got)
 		}
 	}
 }
@@ -525,7 +489,7 @@ func TestBuildDispatchPromptAttributesQuotedMessageToTheAgentItself(t *testing.T
 	}
 
 	display := mustBuildDispatchPrompt(t, c).DisplayContent
-	if !strings.Contains(display, "引用了你（本数字员工）自己更早的一条消息") {
+	if !strings.Contains(display, "引用了你（本数字员工）自己"+dispatchQuotedAntecedentMarker) {
 		t.Fatalf("display content did not attribute the quote to the agent: %q", display)
 	}
 	if strings.Contains(display, "25698887") {
@@ -553,43 +517,8 @@ func TestBuildDispatchPromptAttributesQuotedMessageToTheCurrentSender(t *testing
 	}
 
 	display := mustBuildDispatchPrompt(t, c).DisplayContent
-	if !strings.Contains(display, "引用了冬翔 自己更早的一条消息") {
+	if !strings.Contains(display, "引用了冬翔 自己"+dispatchQuotedAntecedentMarker) {
 		t.Fatalf("display content did not attribute the quote to the sender: %q", display)
-	}
-}
-
-func TestBuildDispatchPromptBoundsQuotedOriginalAndReportsItsLength(t *testing.T) {
-	original := strings.Repeat("原", dispatchQuotedDisplayMaxRunes+37)
-	c := DispatchCommand{
-		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
-		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
-			Sender: DispatchSender{DisplayName: "冬翔"},
-			Messages: []DispatchMessage{
-				{
-					OpenMsgID: "current-open",
-					Text:      "按这个继续",
-					ReferencedMessage: &DispatchReferencedMessage{
-						OpenMsgID: "referenced-open",
-						Text:      original,
-						SenderUID: "someone-else",
-					},
-				},
-			},
-		}},
-	}
-
-	display := mustBuildDispatchPrompt(t, c).DisplayContent
-	if strings.Contains(display, original) {
-		t.Fatalf("display content inlined the untruncated original: %q", display)
-	}
-	if !strings.Contains(display, fmt.Sprintf("；原文共 %d 字，以下为前 %d 字", dispatchQuotedDisplayMaxRunes+37, dispatchQuotedDisplayMaxRunes)) {
-		t.Fatalf("display content did not report the truncation: %q", display)
-	}
-	if !strings.Contains(display, "按这个继续") {
-		t.Fatalf("display content dropped the current message: %q", display)
-	}
-	if !strings.Contains(display, "（已截断，关键细节请回读原文，不要凭摘要推测。）") {
-		t.Fatalf("display content did not point at the read-back path: %q", display)
 	}
 }
 
@@ -609,7 +538,7 @@ func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *tes
 					Text:      "好的 没问题",
 					ReferencedMessage: &DispatchReferencedMessage{
 						OpenMsgID: "referenced-open",
-						Text:      strings.Repeat("长", dispatchQuotedDisplayMaxRunes+1),
+						Text:      strings.Repeat("长", 501),
 						SenderUID: "25698887",
 					},
 				},
@@ -639,11 +568,8 @@ func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *tes
 	}
 	// Both read-back commands are printed with real ids so they run as written.
 	for _, want := range []string{
-		fmt.Sprintf(
-			"- quoted referenced-open (%d chars, TRUNCATED, by you): "+
-				"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
-			dispatchQuotedDisplayMaxRunes+1,
-		),
+		"- quoted referenced-open (501 chars, by you): " +
+			"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
 		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
 		// The conversation, not Multica's mirror of it, is what the run answers from.
 		"source of truth",
@@ -653,11 +579,11 @@ func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *tes
 			t.Errorf("dingtalk_conversation instruction missing %q: %q", want, conversation.EffectiveText)
 		}
 	}
-	// The locator half must stay no longer than the excerpt it points past; the
-	// source-of-truth rule replaces nothing and is measured separately.
+	// The locator half is the whole point of the block being short: it replaces a
+	// quoted body that is no longer rendered anywhere in visible content.
 	locators := strings.Replace(conversation.EffectiveText, dispatchConversationSSOTSection, "", 1)
-	if runes := utf8.RuneCountInString(locators); runes > dispatchQuotedDisplayMaxRunes {
-		t.Errorf("dingtalk_conversation locators are %d runes, longer than the excerpt they replace", runes)
+	if runes := utf8.RuneCountInString(locators); runes > 400 {
+		t.Errorf("dingtalk_conversation locators grew to %d runes: %q", runes, locators)
 	}
 	if !strings.Contains(instructionFromSegments(segments), "## DingTalk Conversation") {
 		t.Fatal("composed instruction dropped the dingtalk_conversation segment")
@@ -689,7 +615,7 @@ func TestDingTalkConversationInstructionNamesAMissingQuotedLocator(t *testing.T)
 
 	instruction := buildDispatchConversationInstruction(stored)
 	for _, want := range []string{
-		"- quoted message id not supplied (6 chars, full, by uid someone-else)",
+		"- quoted message id not supplied (6 chars, by uid someone-else)",
 		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
 	} {
 		if !strings.Contains(instruction, want) {
@@ -841,8 +767,10 @@ func TestDispatchMessageReferencedMessageAcceptsRouterAliases(t *testing.T) {
 	}
 
 	display := mustBuildDispatchPrompt(t, c).DisplayContent
-	if !strings.Contains(display, "上一轮回复内容") || !strings.Contains(display, "@助手 继续") {
-		t.Fatalf("display content missing referenced context: %q", display)
+	// The quoted body belongs to the Router's contextPrompt; only the relationship
+	// is rendered here, and the locator travels in the private instruction.
+	if strings.Contains(display, "上一轮回复内容") || !strings.Contains(display, "@助手 继续") {
+		t.Fatalf("display content mishandled the referenced context: %q", display)
 	}
 	context := dispatchTaskContextForTest(t, c)
 	for _, visible := range []string{`"referencedMessage"`, `"messageId":"referenced-message"`, `"openMsgId":"referenced-open"`, `"text":"上一轮回复内容"`, `"senderUid":"referenced-sender"`} {

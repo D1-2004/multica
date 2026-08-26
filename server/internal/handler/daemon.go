@@ -2667,11 +2667,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					}
 				}
 			}
-			// The quoted antecedent is usually the turn directly above in the
-			// record. Keeping both copies spends the prompt twice on one message
-			// and invites the run to read them as two separate events.
-			resp.ChatMessage = dispatchMessageWithoutRecordedQuote(
-				strings.Join(parts, "\n\n"), resp.ChatHistory)
+			resp.ChatMessage = strings.Join(parts, "\n\n")
 
 			// Fail closed: a task-owned direct task that resolves to no user text
 			// (and is not the agent's proactive intro) must never dispatch an
@@ -3569,10 +3565,10 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 // good; it is not gone from the conversation, which still holds every word and
 // which the per-turn prompt tells the run how to go and read.
 //
-// A dispatched message is also reduced to its bare utterance here: the quoted
-// antecedent is already its own turn in this record, and the "本次发言（需要处理
-// 的是这句）" opener promises something that is only true of the live turn. Both
-// would otherwise be replayed on every historical turn.
+// A dispatched message is also reduced to its bare utterance here: the quote
+// attribution line dispatchMessageDisplay appends is a per-turn constant that
+// says nothing about a past turn, so replaying it on every historical turn is
+// noise the byte budget pays for.
 func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	const (
 		maxMessages = 20
