@@ -73,6 +73,82 @@ func TestParseManifestFingerprintsStrictRejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
+// The pre-release outage of 2026-08-26, as a test.
+//
+// Adding "claude" and "codex" to manifestProviders changed the fingerprint this
+// binary computes for an unchanged set of component versions
+// (baedb216407a5060 -> 0e70a766342698a9). The Diamond document still held the
+// previous key — correct for every Runtime image in production, since the key is
+// minted when an image is built — and startup turned that disagreement into
+// os.Exit(1). Every replica crash-looped on
+//
+//	required runtime configuration failed to load
+//	  error="validate required Runtime manifest fingerprints Diamond config:
+//	         Runtime manifest fingerprint does not match its component versions"
+//
+// and Aone rolled the deploy back.
+//
+// The disagreement costs one unpublished FC/E2B template
+// (service.applyFCE2BTemplateManifestAlias skips an alias it cannot resolve).
+// It must never cost the server. A structurally broken document still must.
+func TestStaleFingerprintDocumentLoadsInsteadOfKillingStartup(t *testing.T) {
+	service, err := NewStatic(mustParseConfig(t, validJSON()))
+	if err != nil {
+		t.Fatalf("NewStatic: %v", err)
+	}
+
+	// Byte-for-byte the shape that was live in Diamond: a well-formed document
+	// whose key this binary would now compute differently.
+	stale := strings.Replace(validManifestFingerprintsJSON(), "0e70a766342698a9", "baedb216407a5060", 1)
+
+	if _, err := ParseManifestFingerprintsStrict([]byte(stale)); err == nil {
+		t.Fatal("the strict contract must still reject a disagreeing key — CI and the documented example rely on it")
+	}
+
+	snapshot, err := service.ApplyManifestFingerprintsJSON([]byte(stale))
+	if err != nil {
+		t.Fatalf("a disagreeing key must not fail the load that startup exits on: %v", err)
+	}
+	// Kept as authored, not re-keyed: which side is stale is not knowable here,
+	// and inventing a key breaks lookups whenever the images are the right ones.
+	if got := snapshot.Fingerprints["baedb216407a5060"]["dws"]; got != "v1.0.59" {
+		t.Fatalf("entry was not stored under the key the document authored: %#v", snapshot.Fingerprints)
+	}
+	if _, rekeyed := snapshot.Fingerprints["0e70a766342698a9"]; rekeyed {
+		t.Fatal("entry was re-keyed to this binary's computed fingerprint")
+	}
+
+	// The disagreement is still reported, and names both sides.
+	mismatches, err := ManifestFingerprintsConfig{
+		Version:      ManifestFingerprintsSchemaVersion,
+		Fingerprints: snapshot.Fingerprints,
+	}.FingerprintMismatches()
+	if err != nil {
+		t.Fatalf("FingerprintMismatches: %v", err)
+	}
+	if len(mismatches) != 1 ||
+		mismatches[0].Fingerprint != "baedb216407a5060" ||
+		mismatches[0].Expected != "0e70a766342698a9" {
+		t.Fatalf("mismatch report = %#v", mismatches)
+	}
+
+	// A document that cannot be indexed at all is still a load failure: there is
+	// nothing to serve from it, so tolerating it would only hide the breakage.
+	for name, raw := range map[string]string{
+		"wrong version":   strings.Replace(validManifestFingerprintsJSON(), `"version": 1`, `"version": 2`, 1),
+		"empty catalog":   `{"version":1,"fingerprints":{}}`,
+		"bad key shape":   strings.Replace(validManifestFingerprintsJSON(), "0e70a766342698a9", "NOTHEX", 1),
+		"missing key":     strings.Replace(validManifestFingerprintsJSON(), `      "dws": "v1.0.59"`, `      "unused": "v1.0.59"`, 1),
+		"unknown field":   strings.Replace(validManifestFingerprintsJSON(), `"version": 1`, `"version": 1, "versoin": 1`, 1),
+		"trailing value":  validManifestFingerprintsJSON() + ` {}`,
+		"blank component": strings.Replace(validManifestFingerprintsJSON(), `"dws": "v1.0.59"`, `"dws": " "`, 1),
+	} {
+		if _, err := service.ApplyManifestFingerprintsJSON([]byte(raw)); err == nil {
+			t.Errorf("%s: a structurally unusable document must still fail the load", name)
+		}
+	}
+}
+
 func TestManifestFingerprintsUpdateIsAtomicAndImmutable(t *testing.T) {
 	service, err := NewStatic(mustParseConfig(t, validJSON()))
 	if err != nil {

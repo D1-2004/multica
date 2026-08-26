@@ -205,6 +205,178 @@ func TestBriefDueDateTeachesCalendarDayFormat(t *testing.T) {
 	}
 }
 
+// TestChatAvailableCommandsDropsIssueScopedSurface locks the chat variant of
+// Available Commands.
+//
+// A chat run has no issue id. Every command that takes one is unreachable from
+// it, and the `## Issue Metadata` section that says when to touch the bag is
+// already out of scope for the kind — so those bullets shipped on every chat
+// turn as commands with no governing policy, led by the longest single line in
+// the brief. What a chat turn actually reaches for stays, and `--help` remains
+// the route to everything else.
+func TestChatAvailableCommandsDropsIssueScopedSurface(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1", AgentName: "Eve", AgentID: "eve-1",
+	})
+
+	for _, want := range []string{
+		"## Available Commands",
+		"`multica <command> --help`",
+		"multica mcp tools --output json",
+		"multica mcp call --method <name>",
+		"multica issue list",
+		"multica issue get <id> --output json",
+		"multica issue create --title",
+		"multica issue status <id> <status>",
+		"multica repo checkout <url>",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("chat Available Commands missing %q\n---\n%s", want, out)
+		}
+	}
+
+	for _, banned := range []string{
+		"multica issue comment list <issue-id>",
+		"multica issue comment add <issue-id>",
+		"multica issue metadata list <issue-id>",
+		"multica issue metadata set <issue-id>",
+		"multica issue metadata delete <issue-id>",
+		"multica issue children <id>",
+	} {
+		if strings.Contains(out, banned) {
+			t.Errorf("chat brief advertises issue-scoped command %q with no issue to use it on", banned)
+		}
+	}
+
+	// The delegation policy owns the delegate flags; the command list must not
+	// grow a second copy that can drift from the policy governing it.
+	if !strings.Contains(out, "## Background Issue Delegation") {
+		t.Error("chat brief must carry the delegation policy — it is what keeps the room responsive")
+	}
+	if strings.Count(out, "multica issue delegate --title") != 1 {
+		t.Error("delegate flags must appear exactly once, inside the policy that governs them")
+	}
+	// Ending the turn after a successful handoff has to be reconciled with
+	// Background Task Safety, which is in the same brief and forbids ending a
+	// turn while waiting on something.
+	if !strings.Contains(out, "not a background process you are waiting on") {
+		t.Error("delegation must state why ending the turn is not the forbidden background-and-yield")
+	}
+}
+
+// The delegation section shares its context window with whatever surface policy
+// a deployment puts in the per-turn dispatch instruction, and that instruction
+// arrives later and more specific than this file. The DingTalk auto surface
+// ships one with hard thresholds and an explicit "do not run a business step and
+// then decide", so anything here that prescribes HOW to reach the decision is a
+// live contradiction rather than redundancy — and redundancy a deployment can
+// choose to pay for, while a contradiction it cannot.
+//
+// This pins the boundary as stated (what belongs in the room, what does not, and
+// what to do when work turns out larger than it looked) and pins OUT the
+// procedural advice that fought a stricter policy.
+func TestDelegationPolicyComposesWithAStricterSurfacePolicy(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1", AgentName: "Eve", AgentID: "eve-1",
+	})
+
+	for _, want := range []string{
+		// The boundary itself, which is what the section is for.
+		"Keep genuinely quick answers, small lookups and single atomic actions in this turn",
+		"Public information alone does not make a task light",
+		// Uncertainty resolves toward delegating, matching a stricter policy
+		// instead of licensing a probe.
+		"when the shape is genuinely unclear, delegate instead of probing",
+		// Mid-turn escalation still has to be allowed, or work started here has
+		// nowhere to go once it grows.
+		"stop and delegate what is left instead of finishing it here",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("delegation policy missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// Telling the run to do a business step before deciding contradicts a
+	// surface policy that forbids exactly that, and it is how half the work ends
+	// up in the room and half in the background.
+	for _, banned := range []string{
+		"start with a cheap step",
+		"start with a cheap step when useful",
+	} {
+		if strings.Contains(out, banned) {
+			t.Errorf("delegation policy prescribes a probe (%q) that a stricter surface policy forbids", banned)
+		}
+	}
+}
+
+// An A2A invocation is a chat session by construction, so it lands on kindChat —
+// but it runs without a task-scoped token and every task-token endpoint refuses
+// it, `multica issue delegate` included. Emitting the delegation policy there
+// would be a mandatory instruction that can only 403, and its advice is the
+// inverse of the A2A contract (answer the caller directly). Everything else the
+// chat brief carries still applies.
+func TestA2AChatBriefOmitsDelegationItCannotPerform(t *testing.T) {
+	t.Parallel()
+
+	a2a := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1", A2AInvocation: true, AgentName: "Eve", AgentID: "eve-1",
+	})
+	if strings.Contains(a2a, "## Background Issue Delegation") {
+		t.Error("A2A run told to delegate through an endpoint that refuses it for lack of a task token")
+	}
+	if strings.Contains(a2a, "multica issue delegate") {
+		t.Error("A2A brief still advertises the delegate command")
+	}
+	if !strings.Contains(a2a, "**You are in chat mode.**") {
+		t.Error("A2A is still a chat run and keeps the rest of the chat brief")
+	}
+	// A pointer to a section the file does not contain is worse than no pointer.
+	if strings.Contains(a2a, "see `## Background Issue Delegation`") {
+		t.Error("A2A workflow points at a section its own brief omits")
+	}
+
+	human := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1", AgentName: "Eve", AgentID: "eve-1",
+	})
+	if !strings.Contains(human, "## Background Issue Delegation") {
+		t.Error("an ordinary chat run must keep the delegation policy")
+	}
+	// The workflow used to tell the run to check code out while the delegation
+	// policy, in the same brief, sent code and repository work to the background.
+	if !strings.Contains(human, "work that CHANGES code or a repository is background work") {
+		t.Error("chat workflow must reconcile repo checkout with the delegation boundary")
+	}
+}
+
+// The issue-bearing kinds keep the full list; this is the other half of the
+// scoping decision above.
+func TestIssueKindsKeepFullAvailableCommands(t *testing.T) {
+	t.Parallel()
+
+	for name, ctx := range map[string]TaskContextForEnv{
+		"comment":   {IssueID: "i-1", TriggerCommentID: "tc-1"},
+		"assign":    {IssueID: "i-1"},
+		"autopilot": {AutopilotRunID: "r-1"},
+	} {
+		out := buildMetaSkillContent("claude", ctx)
+		for _, want := range []string{
+			"multica issue comment list <issue-id>",
+			"multica issue metadata list <issue-id>",
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s brief lost full Available Commands entry %q", name, want)
+			}
+		}
+		if strings.Contains(out, "## Background Issue Delegation") {
+			t.Errorf("%s brief must not carry the chat-only delegation policy", name)
+		}
+	}
+}
+
 // TestBriefOwnsAutopilotIssueCommandsGuard pins the guard's single emission
 // point: the autopilot brief carries AutopilotIssueCommandsGuard, and the
 // per-turn prompt defers to it (daemon.TestBuildPromptAutopilotRunOnly pins

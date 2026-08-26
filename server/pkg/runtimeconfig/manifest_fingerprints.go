@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -55,10 +57,10 @@ type ManifestFingerprintsSnapshot struct {
 	SHA256       string
 }
 
-// ParseManifestFingerprintsStrict decodes one complete fingerprint document.
-// Unknown fields and trailing JSON are rejected before validating the exact
-// fingerprint and component-key contracts.
-func ParseManifestFingerprintsStrict(data []byte) (ManifestFingerprintsConfig, error) {
+// decodeManifestFingerprints performs the JSON half of parsing: unknown fields
+// and trailing values are rejected. Shared by the strict and structural parsers
+// so the two can never disagree about what a well-formed document looks like.
+func decodeManifestFingerprints(data []byte) (ManifestFingerprintsConfig, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var cfg ManifestFingerprintsConfig
@@ -72,13 +74,84 @@ func ParseManifestFingerprintsStrict(data []byte) (ManifestFingerprintsConfig, e
 		}
 		return ManifestFingerprintsConfig{}, fmt.Errorf("parse trailing Runtime manifest fingerprints: %w", err)
 	}
+	return cfg, nil
+}
+
+// parseManifestFingerprintsStructural is what the running server uses: the
+// document must be well-formed and indexable, but its keys are taken as
+// authored. See Service.ApplyManifestFingerprintsJSON.
+func parseManifestFingerprintsStructural(data []byte) (ManifestFingerprintsConfig, error) {
+	cfg, err := decodeManifestFingerprints(data)
+	if err != nil {
+		return ManifestFingerprintsConfig{}, err
+	}
+	if err := cfg.ValidateStructure(); err != nil {
+		return ManifestFingerprintsConfig{}, err
+	}
+	return cloneManifestFingerprintsConfig(cfg), nil
+}
+
+// logManifestFingerprintsMismatch names the disagreeing keys once per apply so
+// a stale document is visible in the log tail instead of surfacing later as an
+// FC/E2B template that silently never appears.
+func (s *Service) logManifestFingerprintMismatches(cfg ManifestFingerprintsConfig) {
+	if s == nil || s.logger == nil {
+		return
+	}
+	mismatches, err := cfg.FingerprintMismatches()
+	if err != nil || len(mismatches) == 0 {
+		return
+	}
+	for _, mismatch := range mismatches {
+		s.logger.Error("Runtime manifest fingerprint does not match this binary's component contract; entry kept as authored",
+			slog.String("data_id", ManifestFingerprintsDiamondDataID),
+			slog.String("fingerprint", mismatch.Fingerprint),
+			slog.String("expected_fingerprint", mismatch.Expected),
+			slog.String("impact", "templates published under this fingerprint resolve only if the Runtime image mints the same key"),
+		)
+	}
+}
+
+// ParseManifestFingerprintsStrict decodes one complete fingerprint document.
+// Unknown fields and trailing JSON are rejected before validating the exact
+// fingerprint and component-key contracts.
+func ParseManifestFingerprintsStrict(data []byte) (ManifestFingerprintsConfig, error) {
+	cfg, err := decodeManifestFingerprints(data)
+	if err != nil {
+		return ManifestFingerprintsConfig{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return ManifestFingerprintsConfig{}, err
 	}
 	return cloneManifestFingerprintsConfig(cfg), nil
 }
 
+// Validate enforces the full contract: the document is structurally sound AND
+// every key equals the fingerprint this binary computes for its component
+// versions. Used by ParseManifestFingerprintsStrict, which is what CI and the
+// documented example are checked against.
+//
+// The running server does NOT use this. See ValidateStructure.
 func (c ManifestFingerprintsConfig) Validate() error {
+	if err := c.ValidateStructure(); err != nil {
+		return err
+	}
+	mismatches, err := c.FingerprintMismatches()
+	if err != nil {
+		return err
+	}
+	if len(mismatches) > 0 {
+		return errors.New("Runtime manifest fingerprint does not match its component versions")
+	}
+	return nil
+}
+
+// ValidateStructure checks everything that makes the document usable at all:
+// schema version, key shape, the exact six component keys, and version charset.
+// A document failing any of these cannot be indexed and is a real load failure.
+//
+// Deliberately excludes the checksum comparison. See FingerprintMismatches.
+func (c ManifestFingerprintsConfig) ValidateStructure() error {
 	if c.Version != ManifestFingerprintsSchemaVersion {
 		return fmt.Errorf("Runtime manifest fingerprints version must be %d", ManifestFingerprintsSchemaVersion)
 	}
@@ -101,15 +174,47 @@ func (c ManifestFingerprintsConfig) Validate() error {
 				return errors.New("Runtime manifest component versions contain unsupported characters")
 			}
 		}
-		expected, err := manifestFingerprint(components)
-		if err != nil {
-			return err
-		}
-		if fingerprint != expected {
-			return errors.New("Runtime manifest fingerprint does not match its component versions")
-		}
 	}
 	return nil
+}
+
+// ManifestFingerprintMismatch reports one key whose checksum disagrees with what
+// this binary computes for the component versions filed under it.
+type ManifestFingerprintMismatch struct {
+	Fingerprint string
+	Expected    string
+}
+
+// FingerprintMismatches lists the keys this binary would have computed
+// differently. It is a disagreement, not a corruption — and which side is right
+// is not knowable from here.
+//
+// The key is minted when a Runtime sandbox image is built and travels to the
+// server inside the template alias (`multica-m7-v<16hex>-r1-<6hex>`), where
+// service.applyFCE2BTemplateManifestAlias looks it up. Recomputing it from
+// manifestProviders / manifestCapabilities asserts that the operator's document
+// agrees with THIS binary's compiled contract — so the moment the server's
+// contract moves ahead of the deployed images (adding a provider changes the
+// hash), a document that is still correct for every image in production reads
+// as invalid.
+//
+// A miss costs one template not being published (applyFCE2BTemplateManifestAlias
+// returns false and the template is skipped). That is a degraded cloud-runtime
+// catalog, which is why it must never be a reason to refuse to start: see
+// Service.ApplyManifestFingerprintsJSON.
+func (c ManifestFingerprintsConfig) FingerprintMismatches() ([]ManifestFingerprintMismatch, error) {
+	var mismatches []ManifestFingerprintMismatch
+	for fingerprint, components := range c.Fingerprints {
+		expected, err := manifestFingerprint(components)
+		if err != nil {
+			return nil, err
+		}
+		if fingerprint != expected {
+			mismatches = append(mismatches, ManifestFingerprintMismatch{Fingerprint: fingerprint, Expected: expected})
+		}
+	}
+	sort.Slice(mismatches, func(i, j int) bool { return mismatches[i].Fingerprint < mismatches[j].Fingerprint })
+	return mismatches, nil
 }
 
 func manifestFingerprint(components map[string]string) (string, error) {
@@ -141,7 +246,23 @@ func (s *Service) ManifestFingerprints() ManifestFingerprintsSnapshot {
 }
 
 // ApplyManifestFingerprintsJSON atomically replaces the fingerprint snapshot
-// only after the complete document passes strict validation.
+// once the document is structurally sound.
+//
+// A checksum disagreement is reported, not refused. The keys are minted by
+// Runtime sandbox images and this binary's expectation of them changes whenever
+// the compiled provider or capability list does — so treating a disagreement as
+// a load failure makes every such change a flag day that can only be survived by
+// updating an operator-managed Diamond document in the same instant. It was
+// worse than that at startup: NewFromEnv turned the error into os.Exit(1), so a
+// document that was still correct for every deployed image took the whole server
+// down and left the deploy rolling back, while the identical document arriving
+// through the live listener was tolerated (the callback logs and retains). One
+// of those two behaviours had to go, and the fatal one is the wrong one — the
+// cost of a stale entry is one unpublished FC/E2B template, not an outage.
+//
+// The entries are stored exactly as authored. Re-keying them to the computed
+// value would be a guess about which side is stale, and would break lookups
+// whenever the images, not the document, are the ones that are right.
 func (s *Service) ApplyManifestFingerprintsJSON(data []byte) (ManifestFingerprintsSnapshot, error) {
 	if s == nil {
 		return ManifestFingerprintsSnapshot{}, errors.New("runtime config service is nil")
@@ -149,10 +270,11 @@ func (s *Service) ApplyManifestFingerprintsJSON(data []byte) (ManifestFingerprin
 	s.manifestFingerprintsApplyMu.Lock()
 	defer s.manifestFingerprintsApplyMu.Unlock()
 
-	cfg, err := ParseManifestFingerprintsStrict(data)
+	cfg, err := parseManifestFingerprintsStructural(data)
 	if err != nil {
 		return s.ManifestFingerprints(), err
 	}
+	s.logManifestFingerprintMismatches(cfg)
 	previous := s.manifestFingerprints.Load()
 	generation := uint64(1)
 	if previous != nil {

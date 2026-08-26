@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -3442,40 +3443,192 @@ func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
 	return msgs
 }
 
+// chatHistoryOmittedMarker heads a transcript that lost whole turns to the
+// message or byte bound. Without it the agent reads a bounded window as the
+// whole conversation and answers "you never told me" about something the user
+// did tell it — the transcript is truthful about every message it shows and
+// silent about the ones it dropped, and silence is the failure mode.
+//
+// It names TRIMMING specifically, not absence in general. On a group-room
+// channel the per-turn prompt separately warns that the Multica record never
+// contained messages between other people; a marker that said only "messages
+// are missing" would read as that second, larger claim and make a complete
+// transcript look partial.
+const chatHistoryOmittedMarker = "[older turns were trimmed from this transcript]"
+
+// chatHistoryClipMarker replaces the middle of one over-long message. Its width
+// is fixed so the clip arithmetic below cannot depend on the size of the number
+// it is about to print.
+const chatHistoryClipMarker = "\n…[truncated]…\n"
+
+// chatHistoryMessageRunes is the per-message cap. Owner decision (2026-08-26):
+// every message is clipped to this, not only the one that would overrun the
+// byte budget.
+//
+// The earlier rule — clip nothing while the budget has room — was built on the
+// premise that this transcript is the run's only memory, so discarding anything
+// discards it permanently. That premise is what changed: the block now declares
+// itself an interaction record rather than the context, and the per-turn prompt
+// routes a run that needs more to the platform conversation, which still holds
+// every word. Under that framing a 3000-character paste costs the whole window
+// for no gain, and the head and tail of it identify the message perfectly well.
+const chatHistoryMessageRunes = 200
+
+// clipChatHistoryMessageToRunes applies the per-message cap. Rune-based because
+// the cap is stated in characters and these transcripts are largely CJK, where
+// a byte count is three times the number a reader means.
+func clipChatHistoryMessageToRunes(content string, maxRunes int) string {
+	if utf8.RuneCountInString(content) <= maxRunes {
+		return content
+	}
+	head := maxRunes * 2 / 3
+	tail := maxRunes - head
+	runes := []rune(content)
+	return string(runes[:head]) + chatHistoryClipMarker + string(runes[len(runes)-tail:])
+}
+
+// clipChatHistoryMessage bounds ONE message to maxBytes so a single long paste
+// cannot spend the whole transcript budget on itself. It is the backstop below
+// the per-message rune cap, not the primary rule.
+//
+// Head and tail are both kept: the opening states what the message is about and
+// the closing usually carries the actual ask, so a head-only clip drops the
+// request and keeps the preamble.
+//
+// Cut on rune boundaries, not byte offsets: these transcripts are largely CJK
+// and a raw byte slice emits U+FFFD. Sliced on the string rather than through
+// []rune so a multi-megabyte paste does not allocate a rune array to throw away.
+//
+// The result is always <= maxBytes and never longer than the input: the caller
+// sizes maxBytes from the remaining budget, so a marker wider than the span it
+// replaced must not push the part back over the bound it was called to respect.
+func clipChatHistoryMessage(content string, maxBytes int) string {
+	if len(content) <= maxBytes {
+		return content
+	}
+	budget := maxBytes - len(chatHistoryClipMarker)
+	if budget <= 0 {
+		return ""
+	}
+	head := headBytesOnRuneBoundary(content, budget*2/3)
+	tail := tailBytesOnRuneBoundary(content, budget-len(head))
+	clipped := head + chatHistoryClipMarker + tail
+	if len(clipped) >= len(content) {
+		return content
+	}
+	return clipped
+}
+
+// headBytesOnRuneBoundary returns the longest prefix of s that is at most n
+// bytes and does not split a rune.
+func headBytesOnRuneBoundary(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// tailBytesOnRuneBoundary returns the longest suffix of s that is at most n
+// bytes and does not split a rune.
+func tailBytesOnRuneBoundary(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	start := len(s) - n
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return s[start:]
+}
+
+// boundedChatHistoryTranscript renders the recoverable prefix of a chat session
+// for a claim that cannot resume a provider-local session.
+//
+// Two bounds apply, in order: every message is clipped to
+// chatHistoryMessageRunes, and the assembled result is then held under maxBytes
+// by dropping the oldest turns. Both losses are declared — the clip inline, the
+// drop in a leading marker — because the block is consumed as an interaction
+// record and a silent gap in one reads as "this was never said".
+//
+// makeChatHistoryAuthoritative clears PriorSessionID whenever this returns
+// anything, so on a cloud chat this string replaces the provider session as the
+// run's Multica-side memory. What it clips is therefore gone from Multica for
+// good; it is not gone from the conversation, which still holds every word and
+// which the per-turn prompt tells the run how to go and read.
 func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	const (
 		maxMessages = 20
 		maxBytes    = 12000
+		// A clip smaller than this is not worth emitting: the marker plus a few
+		// characters of head and tail says less than the omission marker alone.
+		minClipBytes = 400
 	)
+	// Counted over the FULL input, before any bound is applied. A message with
+	// no text contributes nothing to the transcript, so dropping one is not a
+	// loss and must not raise the omitted marker. Deciding this from
+	// `len(msgs) > maxMessages` instead would head a complete transcript with a
+	// warning, and the per-turn prompt tells the run to treat a declared gap as
+	// missing context it must go and fetch.
+	recoverable := 0
+	for i := range msgs {
+		if strings.TrimSpace(msgs[i].Content) != "" {
+			recoverable++
+		}
+	}
 	if len(msgs) > maxMessages {
 		msgs = msgs[len(msgs)-maxMessages:]
 	}
 	var selected []string
-	total := 0
+	included, total := 0, 0
 	for i := len(msgs) - 1; i >= 0; i-- {
 		content := strings.TrimSpace(msgs[i].Content)
 		if content == "" {
 			continue
 		}
-		role := "User"
+		content = clipChatHistoryMessageToRunes(content, chatHistoryMessageRunes)
+		prefix := "User:\n"
 		if msgs[i].Role == "assistant" {
-			role = "Assistant"
+			prefix = "Assistant:\n"
 		}
-		part := role + ":\n" + content
-		partBytes := len(part)
+		separator := 0
 		if len(selected) > 0 {
-			partBytes += 2
+			separator = 2
 		}
-		if total > 0 && total+partBytes > maxBytes {
+		budget := maxBytes - total - separator - len(prefix)
+		if len(content) > budget {
+			// Spend what budget is left on the part of this message that still
+			// fits rather than dropping it whole. Everything older is out of
+			// budget either way, so this is the last part.
+			if budget >= minClipBytes {
+				selected = append(selected, prefix+clipChatHistoryMessage(content, budget))
+				included++
+			}
 			break
 		}
-		selected = append(selected, part)
-		total += partBytes
+		selected = append(selected, prefix+content)
+		included++
+		total += separator + len(prefix) + len(content)
+	}
+	if len(selected) == 0 {
+		return ""
 	}
 	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
 		selected[i], selected[j] = selected[j], selected[i]
 	}
-	return strings.Join(selected, "\n\n")
+	joined := strings.Join(selected, "\n\n")
+	if included < recoverable {
+		return chatHistoryOmittedMarker + "\n\n" + joined
+	}
+	return joined
 }
 
 func makeChatHistoryAuthoritative(resp *AgentTaskResponse) {
