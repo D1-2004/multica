@@ -3564,6 +3564,11 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 // run's Multica-side memory. What it clips is therefore gone from Multica for
 // good; it is not gone from the conversation, which still holds every word and
 // which the per-turn prompt tells the run how to go and read.
+//
+// A dispatched quoted reply also has its quoted antecedent dropped here: the
+// quoted message is already its own turn in this record, so replaying the quote
+// stores the same text twice in adjacent turns and spends the byte budget on a
+// duplicate instead of on an older turn.
 func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	const (
 		maxMessages = 20
@@ -3580,7 +3585,7 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	// missing context it must go and fetch.
 	recoverable := 0
 	for i := range msgs {
-		if strings.TrimSpace(msgs[i].Content) != "" {
+		if strings.TrimSpace(stripDispatchQuotedAntecedent(msgs[i].Content)) != "" {
 			recoverable++
 		}
 	}
@@ -3590,7 +3595,7 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	var selected []string
 	included, total := 0, 0
 	for i := len(msgs) - 1; i >= 0; i-- {
-		content := strings.TrimSpace(msgs[i].Content)
+		content := strings.TrimSpace(stripDispatchQuotedAntecedent(msgs[i].Content))
 		if content == "" {
 			continue
 		}

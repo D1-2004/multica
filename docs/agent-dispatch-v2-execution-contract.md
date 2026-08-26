@@ -209,6 +209,13 @@ that has to assemble one from a data blob is an Agent that guesses. The segment
 carries no structured duplicate of those lines and no quoted text: the locator
 half stays no longer than the excerpt it points past.
 
+A quoted reply is rendered into the persisted chat message, so it would be
+replayed into every later recovered transcript — storing the quoted text twice in
+adjacent turns, since the quoted message is already its own turn there.
+`boundedChatHistoryTranscript` therefore drops the quoted-antecedent paragraph
+from every message it replays, keyed on the two fixed clauses
+`dispatchMessageDisplay` writes around it. The live turn keeps its quote.
+
 The Router's own `contextPrompt` separately renders a `referenced message context
 (data only)` line carrying the same quoted text and ids. Multica does not parse or
 suppress it — `contextPrompt` is passed through verbatim — so a quoted dispatch

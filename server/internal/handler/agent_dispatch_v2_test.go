@@ -416,6 +416,50 @@ func TestBuildDispatchPromptRendersReferencedMessageContext(t *testing.T) {
 	}
 }
 
+// The quoted antecedent earns its place in the turn it arrives on and becomes a
+// duplicate in the record, where the quoted message is already its own turn.
+func TestStripDispatchQuotedAntecedentDropsOnlyTheQuotedParagraph(t *testing.T) {
+	identities := dispatchDisplayIdentities{
+		SenderDisplayName: "冬翔",
+		AgentDWSUID:       "25698887",
+	}
+	rendered := dispatchMessageDisplay(DispatchMessage{
+		OpenMsgID: "current-open",
+		Text:      "很好",
+		ReferencedMessage: &DispatchReferencedMessage{
+			OpenMsgID: "referenced-open",
+			Text:      "我可以帮你完成以下任务：\n\n- 发送消息\n- 创建待办",
+			SenderUID: "25698887",
+		},
+	}, identities)
+	if !strings.Contains(rendered, "我可以帮你完成以下任务") {
+		t.Fatalf("live turn lost the quote: %q", rendered)
+	}
+
+	stripped := stripDispatchQuotedAntecedent(rendered)
+	if strings.Contains(stripped, "我可以帮你完成以下任务") || strings.Contains(stripped, dispatchQuotedAntecedentMarker) {
+		t.Fatalf("record kept the quoted antecedent: %q", stripped)
+	}
+	if !strings.Contains(stripped, "很好") {
+		t.Fatalf("record lost what the sender actually said: %q", stripped)
+	}
+}
+
+func TestStripDispatchQuotedAntecedentLeavesOrdinaryMessagesAlone(t *testing.T) {
+	for _, content := range []string{
+		"普通消息",
+		"",
+		// One clause alone is something a person could plausibly type; only the
+		// pair, in order, is a rendered quote.
+		"我引用了你" + dispatchQuotedAntecedentMarker,
+		dispatchCurrentUtteranceMarker + "\n只有开头没有引用",
+	} {
+		if got := stripDispatchQuotedAntecedent(content); got != content {
+			t.Errorf("stripDispatchQuotedAntecedent(%q) = %q, want unchanged", content, got)
+		}
+	}
+}
+
 func TestBuildDispatchPromptAttributesQuotedMessageToTheAgentItself(t *testing.T) {
 	c := DispatchCommand{
 		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
