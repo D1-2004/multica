@@ -507,7 +507,7 @@ func TestBuildDispatchPromptBoundsQuotedOriginalAndReportsItsLength(t *testing.T
 	}
 }
 
-func TestQuotedMessageInstructionCarriesRereadLocatorAndSelfAttribution(t *testing.T) {
+func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *testing.T) {
 	stored := persistedDispatchContext{
 		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
 		Domain:   "channel",
@@ -539,40 +539,46 @@ func TestQuotedMessageInstructionCarriesRereadLocatorAndSelfAttribution(t *testi
 		Present:         true,
 		DingTalkContext: true,
 	})
-	var quoted *DispatchPromptSegment
+	var conversation *DispatchPromptSegment
 	for i := range segments {
-		if segments[i].ID == DispatchSegmentQuotedMessage {
-			quoted = &segments[i]
+		if segments[i].ID == DispatchSegmentDingTalkConversation {
+			conversation = &segments[i]
 		}
 	}
-	if quoted == nil {
-		t.Fatal("quoted_message segment was not composed")
+	if conversation == nil {
+		t.Fatal("dingtalk_conversation segment was not composed")
 	}
-	if !quoted.Included || quoted.Customizable {
-		t.Fatalf("quoted_message segment = %+v, want included and non-customizable", *quoted)
+	if !conversation.Included || conversation.Customizable {
+		t.Fatalf("dingtalk_conversation segment = %+v, want included and non-customizable", *conversation)
 	}
-	// The read-back command is printed with real ids so it runs as written, and
-	// the whole hint stays no longer than the excerpt it points past.
-	want := fmt.Sprintf(
-		"- referenced-open (%d chars, TRUNCATED, by you): "+
-			"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
-		dispatchQuotedDisplayMaxRunes+1,
-	)
-	if !strings.Contains(quoted.EffectiveText, want) {
-		t.Errorf("quoted_message instruction missing %q: %q", want, quoted.EffectiveText)
+	// Both read-back commands are printed with real ids so they run as written.
+	for _, want := range []string{
+		fmt.Sprintf(
+			"- quoted referenced-open (%d chars, TRUNCATED, by you): "+
+				"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
+			dispatchQuotedDisplayMaxRunes+1,
+		),
+		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
+		// The conversation, not Multica's mirror of it, is what the run answers from.
+		"source of truth",
+		"never proof a DingTalk message exists",
+	} {
+		if !strings.Contains(conversation.EffectiveText, want) {
+			t.Errorf("dingtalk_conversation instruction missing %q: %q", want, conversation.EffectiveText)
+		}
 	}
-	if !strings.Contains(quoted.EffectiveText, "--conversation-ids cid-trusted") {
-		t.Errorf("quoted_message instruction missing the conversation fallback: %q", quoted.EffectiveText)
+	// The locator half must stay no longer than the excerpt it points past; the
+	// source-of-truth rule replaces nothing and is measured separately.
+	locators := strings.Replace(conversation.EffectiveText, dispatchConversationSSOTSection, "", 1)
+	if runes := utf8.RuneCountInString(locators); runes > dispatchQuotedDisplayMaxRunes {
+		t.Errorf("dingtalk_conversation locators are %d runes, longer than the excerpt they replace", runes)
 	}
-	if runes := utf8.RuneCountInString(quoted.EffectiveText); runes > dispatchQuotedDisplayMaxRunes {
-		t.Errorf("quoted_message instruction is %d runes, longer than the excerpt it replaces", runes)
-	}
-	if !strings.Contains(instructionFromSegments(segments), "## Quoted DingTalk Message") {
-		t.Fatal("composed instruction dropped the quoted-message segment")
+	if !strings.Contains(instructionFromSegments(segments), "## DingTalk Conversation") {
+		t.Fatal("composed instruction dropped the dingtalk_conversation segment")
 	}
 }
 
-func TestQuotedMessageInstructionFallsBackToConversationListingWithoutLocator(t *testing.T) {
+func TestDingTalkConversationInstructionNamesAMissingQuotedLocator(t *testing.T) {
 	stored := persistedDispatchContext{
 		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
 		Domain:   "channel",
@@ -595,18 +601,54 @@ func TestQuotedMessageInstructionFallsBackToConversationListingWithoutLocator(t 
 		},
 	}
 
-	instruction := buildDispatchQuotedMessageInstruction(stored)
+	instruction := buildDispatchConversationInstruction(stored)
 	for _, want := range []string{
 		"- quoted message id not supplied (6 chars, full, by uid someone-else)",
-		"If that fails: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
+		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
 	} {
 		if !strings.Contains(instruction, want) {
-			t.Fatalf("quoted_message instruction missing %q: %q", want, instruction)
+			t.Fatalf("dingtalk_conversation instruction missing %q: %q", want, instruction)
 		}
 	}
 }
 
-func TestQuotedMessageSegmentExcludedWithoutQuotedMessage(t *testing.T) {
+// An Issue run answers through its own surface, so it gets the quote rule and
+// locators but never the instruction to read the room before replying.
+func TestDingTalkConversationInstructionSkipsReadbackOnIssueSurface(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:   "channel",
+		Type:     "message.created",
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Messages: []DispatchMessage{{
+				OpenMsgID: "current-open",
+				Text:      "继续",
+				ReferencedMessage: &DispatchReferencedMessage{
+					OpenMsgID: "referenced-open",
+					Text:      "更早的一条消息",
+					SenderUID: "someone-else",
+				},
+			}},
+		},
+	}
+
+	instruction := buildDispatchConversationInstruction(stored)
+	if !strings.Contains(instruction, "- quoted referenced-open") {
+		t.Fatalf("issue-surface instruction dropped the quoted locator: %q", instruction)
+	}
+	for _, unwanted := range []string{"source of truth", "- conversation: `dws chat message search-advanced"} {
+		if strings.Contains(instruction, unwanted) {
+			t.Fatalf("issue-surface instruction leaked the readback rule %q: %q", unwanted, instruction)
+		}
+	}
+}
+
+// A plain chat/auto message still gets the readback rule: the run has to be able
+// to reconstruct the conversation even when nothing was quoted.
+func TestDingTalkConversationSegmentCoversAnUnquotedChatMessage(t *testing.T) {
 	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
 		Stored: persistedDispatchContext{
 			Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
@@ -615,22 +657,59 @@ func TestQuotedMessageSegmentExcludedWithoutQuotedMessage(t *testing.T) {
 			Surface:  DispatchSurface{Type: "auto"},
 			Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
 			EventData: DispatchEventData{
-				Messages: []DispatchMessage{{OpenMsgID: "current-open", Text: "普通消息"}},
+				Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+				Messages:     []DispatchMessage{{OpenMsgID: "current-open", Text: "普通消息"}},
 			},
 		},
 		Present:         true,
 		DingTalkContext: true,
 	})
 	for _, segment := range segments {
-		if segment.ID != DispatchSegmentQuotedMessage {
+		if segment.ID != DispatchSegmentDingTalkConversation {
 			continue
 		}
-		if segment.Included || segment.ExcludedReason != "no_quoted_message" {
-			t.Fatalf("quoted_message segment = %+v, want excluded as no_quoted_message", segment)
+		if !segment.Included {
+			t.Fatalf("dingtalk_conversation segment = %+v, want included for a chat dispatch", segment)
+		}
+		if strings.Contains(segment.EffectiveText, "quoted") {
+			t.Fatalf("unquoted dispatch carried quote text: %q", segment.EffectiveText)
+		}
+		if !strings.Contains(segment.EffectiveText, "--conversation-ids cid-trusted") {
+			t.Fatalf("unquoted dispatch missing the conversation readback: %q", segment.EffectiveText)
 		}
 		return
 	}
-	t.Fatal("quoted_message segment was not composed")
+	t.Fatal("dingtalk_conversation segment was not composed")
+}
+
+// Robot-SDK dispatches have no injected current-user DWS capability, so every
+// command in the block would be one the run cannot execute.
+func TestDingTalkConversationSegmentExcludedWithoutDWSOutbound(t *testing.T) {
+	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored: persistedDispatchContext{
+			Source:   DispatchSource{Platform: "dingtalk", Type: "robot"},
+			Domain:   "channel",
+			Type:     "message.created",
+			Surface:  DispatchSurface{Type: "auto"},
+			Outbound: DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+			EventData: DispatchEventData{
+				Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+				Messages:     []DispatchMessage{{OpenMsgID: "current-open", Text: "普通消息"}},
+			},
+		},
+		Present:         true,
+		DingTalkContext: true,
+	})
+	for _, segment := range segments {
+		if segment.ID != DispatchSegmentDingTalkConversation {
+			continue
+		}
+		if segment.Included || segment.ExcludedReason != "no_conversation_context" {
+			t.Fatalf("dingtalk_conversation segment = %+v, want excluded as no_conversation_context", segment)
+		}
+		return
+	}
+	t.Fatal("dingtalk_conversation segment was not composed")
 }
 
 func TestDispatchMessageReferencedMessageAcceptsRouterAliases(t *testing.T) {

@@ -29,7 +29,7 @@ func sessionContinuityNoticeFor(task Task) string {
 	return execenv.SessionContinuityNoticeUnrecoverable
 }
 
-func chatHistoryRecoveryBlock(history string) string {
+func chatHistoryRecoveryBlock(history, channelType string) string {
 	history = strings.TrimSpace(history)
 	if history == "" {
 		return ""
@@ -52,11 +52,23 @@ func chatHistoryRecoveryBlock(history string) string {
 	// clipped" would be a claim this side cannot check, and false against any
 	// server that does not clip; keying the wording to the markers is true under
 	// every pairing.
+	// On an IM channel the record's assistant turns are a second-hand copy: what
+	// was recorded is the text the run returned to Multica, while what the room
+	// received was whatever outbound tool actually ran. Runs read their own
+	// "已通过 DWS 回复" back out of this record, took it as proof a message had
+	// been delivered, and then wrote replies in that same self-reporting voice.
+	// A web chat has no such gap — there the recorded turn IS the delivered one —
+	// so the caveat is channel-gated rather than stated unconditionally.
+	channelCaveat := ""
+	if strings.TrimSpace(channelType) != "" {
+		channelCaveat = "An assistant turn here is what this agent returned to Multica, not necessarily what the room received: never read one as proof a message was delivered, and never copy its self-reporting voice into a reply.\n\n"
+	}
 	return "<interaction-record>\n" +
 		"# What this is\n" +
 		"The messages exchanged with you earlier in this conversation, as Multica recorded them. Use it as context for the latest user message; do not restate it unless the user asks.\n\n" +
 		"# What it is not\n" +
 		"It is not the conversation, and it is not the whole of your context. Where `…[truncated]…` appears, the middle of that message was removed; a leading `[older turns were trimmed from this transcript]` means older turns are missing from the record entirely. Treat either marker as context you do not have, never as proof of what was said — when a decision turns on what is behind one, go and read the conversation instead of inferring it.\n\n" +
+		channelCaveat +
 		"# Record\n" +
 		history + "\n" +
 		"</interaction-record>\n\n"
@@ -73,7 +85,7 @@ func backendResumeRecoveryContext(task Task) string {
 	if task.PriorSessionResumeUnavailable {
 		return ""
 	}
-	if history := chatHistoryRecoveryBlock(task.ChatHistory); history != "" {
+	if history := chatHistoryRecoveryBlock(task.ChatHistory, task.ChatChannelType); history != "" {
 		return history
 	}
 	return sessionContinuityNoticeFor(task)
@@ -108,7 +120,7 @@ const (
 // Returns "" when none of the blocks apply.
 func perTurnContextBlocks(task Task) string {
 	var b strings.Builder
-	if task.PriorSessionResumeUnavailable && chatHistoryRecoveryBlock(task.ChatHistory) == "" {
+	if task.PriorSessionResumeUnavailable && chatHistoryRecoveryBlock(task.ChatHistory, task.ChatChannelType) == "" {
 		b.WriteString(sessionContinuityNoticeFor(task))
 	}
 	b.WriteString(execenv.BuildTaskInitiatorBlock(task.InitiatorType, task.InitiatorName, task.InitiatorEmail))
@@ -499,7 +511,7 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	// block above describes that document, so it has to know whether one is
 	// being sent; the block that writes it is further down and unchanged.
 	carriesTranscript := (task.PriorSessionID == "" || task.PriorSessionResumeUnavailable) &&
-		chatHistoryRecoveryBlock(task.ChatHistory) != ""
+		chatHistoryRecoveryBlock(task.ChatHistory, task.ChatChannelType) != ""
 	// Channel awareness (MUL-3871). When the session is backed by an IM channel,
 	// the agent must KNOW it is operating inside that channel — otherwise an ask
 	// like "what did you just talk about" sends it to read Multica instead of the
@@ -590,7 +602,7 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	// owns this transcript. Emit the database copy only for a fresh/recovered
 	// session so history is neither duplicated nor lost.
 	if task.PriorSessionID == "" || task.PriorSessionResumeUnavailable {
-		b.WriteString(chatHistoryRecoveryBlock(task.ChatHistory))
+		b.WriteString(chatHistoryRecoveryBlock(task.ChatHistory, task.ChatChannelType))
 	}
 	if task.Agent != nil && len(task.Agent.Skills) > 0 {
 		refs := ExtractSlashSkills(task.ChatMessage)

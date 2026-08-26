@@ -137,8 +137,8 @@ export function DispatchPromptDialog({
         return t(($) => $.tab_body.dispatch.segment_policy);
       case "context":
         return t(($) => $.tab_body.dispatch.segment_context);
-      case "quoted_message":
-        return t(($) => $.tab_body.dispatch.segment_quoted_message);
+      case "dingtalk_conversation":
+        return t(($) => $.tab_body.dispatch.segment_dingtalk_conversation);
       case "reply_formatting":
         return t(($) => $.tab_body.dispatch.segment_reply_formatting);
       case "enterprise_identity":
@@ -162,8 +162,8 @@ export function DispatchPromptDialog({
           return t(($) => $.tab_body.dispatch.condition_dingtalk_dispatch);
         case "per_dispatch":
           return t(($) => $.tab_body.dispatch.condition_per_dispatch);
-        case "message_quotes_another":
-          return t(($) => $.tab_body.dispatch.condition_message_quotes_another);
+        case "dingtalk_conversation":
+          return t(($) => $.tab_body.dispatch.condition_dingtalk_conversation);
         case "any_dingtalk_task":
           return t(($) => $.tab_body.dispatch.condition_any_dingtalk_task);
         case "enterprise_runtime":
@@ -182,8 +182,8 @@ export function DispatchPromptDialog({
           return t(($) => $.tab_body.dispatch.excluded_not_enterprise_runtime);
         case "not_supplied":
           return t(($) => $.tab_body.dispatch.excluded_not_supplied);
-        case "no_quoted_message":
-          return t(($) => $.tab_body.dispatch.excluded_no_quoted_message);
+        case "no_conversation_context":
+          return t(($) => $.tab_body.dispatch.excluded_no_conversation_context);
         default:
           return t(($) => $.tab_body.dispatch.excluded_empty);
       }

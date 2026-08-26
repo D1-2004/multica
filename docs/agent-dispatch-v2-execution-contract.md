@@ -133,7 +133,7 @@ read the original back before drawing conclusions when it truncates. The
 relationship is resolved from `referencedMessage.senderUid` against
 `externalIdentity.dws.uid` and the sender identifiers already in the envelope;
 none of those identifiers reach display content. The locator that makes the
-original re-readable travels in the private `quoted_message` instruction
+original re-readable travels in the private `dingtalk_conversation` instruction
 segment instead.
 
 The daemon claim task accepts an optional `instruction` string. When it is
@@ -171,31 +171,48 @@ blob:
 |---|---|---|---|---|
 | 1 | `policy` | Diamond `common` + `<surface>` | yes | the task carries a dispatch envelope this projection covers (`dingtalk_dispatch`) |
 | 2 | `context` | Router, per dispatch | no | the Router supplied a `contextPrompt` (`per_dispatch`) |
-| 3 | `quoted_message` | Multica, per dispatch | no | the dispatch window contains a message with `referencedMessage` (`message_quotes_another`) |
+| 3 | `dingtalk_conversation` | Multica, per dispatch | no | a DWS-outbound channel dispatch that is either chat/auto or carries a quoted message (`dingtalk_conversation`) |
 | 4 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
 | 5 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
 
-`quoted_message` carries facts, not policy, so it is composed from the persisted
-dispatch envelope and is not overridable. It states that the quoted text is the
-antecedent rather than a new request, then prints one line per quoted message
-with the real `openMsgId` substituted into a runnable read-back command:
+`dingtalk_conversation` carries facts, not policy, so it is composed from the
+persisted dispatch envelope and is not overridable. It gates on `outbound.mode`
+being `dws`: every line in it is a DWS command, and a robot-SDK dispatch has no
+injected current-user capability to run them with.
+
+It has two halves. The source-of-truth half is injected for `chat` and `auto`
+only — an Issue run answers through its own surface and must not be told to read
+the room first. It states that the DingTalk conversation, not Multica's record of
+it, is authoritative, and that an assistant turn in that record is text written
+back to the platform rather than proof a DingTalk message exists or a reply style
+to copy. That is the direct fix for runs that read their own "已通过 DWS 回复" out
+of a recovered transcript and treated it as delivery. The daemon-side
+`<interaction-record>` block states the same caveat next to the record itself
+whenever the session is backed by an IM channel.
+
+The locator half prints one runnable command per target, with the real ids
+substituted in:
 
 ```text
-- msgYYY (1820 chars, TRUNCATED, by you): `dws chat message list-by-ids --msg-ids msgYYY --format json`
+- conversation: `dws chat message search-advanced --conversation-ids cidXXX --limit 50 --format json`
+- quoted msgYYY (1820 chars, TRUNCATED, by you): `dws chat message list-by-ids --msg-ids msgYYY --format json`
 ```
 
 `by you` marks a quote this Agent wrote itself; otherwise the line carries the
 quoted sender's uid, or `sender unknown`. A quote the display truncated is marked
 `TRUNCATED` and must be read back before the Agent relies on anything the excerpt
-does not show. A single trailing fallback line carries the real
-`openConversationId` for `dws chat message search-advanced`, which covers both a
-dispatch that supplied no quoted-message id and an id that fails to resolve.
+does not show; when the dispatch supplied no quoted-message id the line says so
+and the conversation command remains the way in.
 
 The commands are spelled out rather than left as placeholders, because an Agent
 that has to assemble one from a data blob is an Agent that guesses. The segment
-carries no structured duplicate of those lines and no quoted text: a hint longer
-than the excerpt it replaces defeats its own purpose, so the whole block stays
-close to the size of one excerpt.
+carries no structured duplicate of those lines and no quoted text: the locator
+half stays no longer than the excerpt it points past.
+
+The Router's own `contextPrompt` separately renders a `referenced message context
+(data only)` line carrying the same quoted text and ids. Multica does not parse or
+suppress it — `contextPrompt` is passed through verbatim — so a quoted dispatch
+currently carries that text twice, and Router owns the deduplication.
 
 Each segment reports its gate as a stable `condition` key, present whether or
 not the segment is active in the previewed scenario. A preview that only
@@ -623,10 +640,11 @@ parsing or rewriting Router's context string.
 - History: Display content for a quoted DingTalk reply now leads with the
   current message, names the quoted message's author relative to the dispatch,
   and inlines at most 800 characters of the original. A new non-overridable
-  `quoted_message` instruction segment carries the reading rule plus one compact
-  line per quote — message id, length, truncation state, whether this Agent wrote
-  it — each ending in a runnable read-back command, and one conversation-scoped
-  fallback line; the legacy prompt builder emits the same block.
+  `dingtalk_conversation` instruction segment carries the reading rule plus one
+  compact line per quote — message id, length, truncation state, whether this
+  Agent wrote it — each ending in a runnable read-back command, and a
+  conversation-scoped read-back command for chat/auto runs;
+  the legacy prompt builder emits the same block.
   `persistedDispatchContext` now reads the private `external_identity.dws`
   descriptor already stored beside the envelope.
 - Reason: The previous rendering opened with the untruncated original under a
@@ -636,3 +654,21 @@ parsing or rewriting Router's context string.
   recover anything the Router had already trimmed. Attribution and the re-read
   locator make the relationship explicit and the original recoverable without
   putting message identifiers into user-visible content.
+
+## Change record: 2026-08-26 DingTalk conversation as the source of truth
+
+- History: Merged the quoted-message instruction into a `dingtalk_conversation`
+  segment that a DWS-outbound chat or auto dispatch always receives, whether or
+  not anything was quoted. It names the DingTalk conversation as authoritative,
+  prints the real `openConversationId` in a runnable
+  `dws chat message search-advanced` command, and states that an assistant turn
+  in Multica's recovered record is text written back to the platform rather than
+  a delivered message. The daemon's `<interaction-record>` block carries the same
+  caveat for any IM-channel session.
+- Reason: A pre-release trace showed a chat run whose recovered history held
+  undecryptable inbound payloads and four assistant turns reading
+  "已通过 DWS 回复", with the frame telling it no command could fetch more of the
+  conversation. The run had no way to recover the real exchange and learned to
+  answer in its own delivery-report voice. The conversation is readable through
+  the injected DWS capability, so the frame was wrong in a way that made the
+  session read as non-native.

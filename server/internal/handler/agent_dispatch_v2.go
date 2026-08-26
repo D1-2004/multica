@@ -630,18 +630,35 @@ const dingTalkReplyFormattingInstruction = `## DingTalk Reply Formatting
 
 The final user-visible reply will be delivered through DingTalk Markdown. Do not use Markdown tables or raw HTML because result rows can disappear during delivery. Use plain numbered or bulleted lines instead. For search or list results, include actual items rather than only a count or summary. When an item has a URL, include its title and complete URL in the visible reply. Never refer to item numbers whose rows are absent.`
 
-// dispatchQuotedMessageInstructionFormat is the private reading rule for a
-// triggering message that quotes an earlier one. Visible content carries a
-// bounded excerpt and the resolved relationship, so the locators that make the
-// original re-readable travel here — as runnable commands rather than
-// placeholders, because an Agent that has to assemble one from a data blob is
-// an Agent that guesses. A hint longer than the text it replaces is not a hint,
-// so this stays close to the size of the excerpt it points past.
-const dispatchQuotedMessageInstructionFormat = "## Quoted DingTalk Message\n\n" +
-	"The current message quotes an earlier one. Act on the current message; the quote is background, not a new request, and work it reports as done is done. " +
-	"Visible text shows at most %d characters of a quote — read a TRUNCATED one back before relying on anything it does not show.\n\n" +
-	"%s\n\n" +
-	"If that fails: `dws chat message search-advanced --conversation-ids %s --limit 50 --format json`"
+// The DingTalk conversation block is the private half of a dispatched IM run.
+// Visible content carries the message text; the identifiers that make the rest
+// of the conversation re-readable can only travel here, and they travel as
+// commands that run as written — an Agent that has to assemble one from a data
+// blob is an Agent that guesses.
+//
+// The SSOT paragraph exists because of what a chat run is actually handed. Its
+// recovered history is a Multica-side mirror: undecryptable inbound payloads
+// stay unreadable in it, and every recorded assistant turn is the text the run
+// wrote back to the platform, not the message DingTalk delivered. Runs read
+// their own "已通过 DWS 回复" back out of that record, treated it as proof a
+// reply existed, and adopted it as a reply style. Naming the conversation as
+// the source of truth, and the record as a mirror, is what stops both.
+const (
+	dispatchConversationInstructionHeader = "## DingTalk Conversation\n\n"
+
+	// Chat and auto only: an Issue run is not the conversation's foreground and
+	// must not be told to read the room before answering.
+	dispatchConversationSSOTSection = "The DingTalk conversation is the source of truth for this run; Multica's record of it is a partial mirror. " +
+		"An assistant turn in that record is text written back to the platform — never proof a DingTalk message exists, and never a reply style to copy. " +
+		"Answer the person; do not report your own delivery.\n\n" +
+		"Read the conversation back whenever the trigger message alone does not settle what is asked, and understand the exchange before answering. " +
+		"Any claim elsewhere that it cannot be fetched is out of date.\n\n"
+
+	dispatchConversationCommandsSection = "Ready to run as written:\n\n%s\n\n"
+
+	dispatchConversationQuoteSection = "A quote is background, not a new request: act on the current message and never redo work it reports as done. " +
+		"Visible text carries at most %d characters of a quote; TRUNCATED means read it back before relying on what the excerpt hides."
+)
 
 // dispatchQuotedMessageFact is one quoted message, in window order.
 type dispatchQuotedMessageFact struct {
@@ -671,8 +688,15 @@ func dispatchQuotedMessageReadHint(fact dispatchQuotedMessageFact) string {
 		return fmt.Sprintf("- quoted message id not supplied (%d chars, %s, %s)", fact.QuotedTextRunes, state, sender)
 	}
 	return fmt.Sprintf(
-		"- %s (%d chars, %s, %s): `dws chat message list-by-ids --msg-ids %s --format json`",
+		"- quoted %s (%d chars, %s, %s): `dws chat message list-by-ids --msg-ids %s --format json`",
 		fact.QuotedOpenMsgID, fact.QuotedTextRunes, state, sender, fact.QuotedOpenMsgID,
+	)
+}
+
+func dispatchConversationReadHint(conversationID string) string {
+	return fmt.Sprintf(
+		"- conversation: `dws chat message search-advanced --conversation-ids %s --limit 50 --format json`",
+		conversationID,
 	)
 }
 
@@ -712,27 +736,52 @@ func dispatchQuotedMessageFacts(stored persistedDispatchContext) []dispatchQuote
 	return facts
 }
 
-// buildDispatchQuotedMessageInstruction is empty unless this dispatch window
-// actually contains a quoted reply, so an ordinary message costs no prompt.
-func buildDispatchQuotedMessageInstruction(stored persistedDispatchContext) string {
-	facts := dispatchQuotedMessageFacts(stored)
-	if len(facts) == 0 {
+// dispatchConversationReadbackApplies reports whether this run is the
+// conversation's foreground. Chat materializes the reply into the room, and
+// auto is chat until it delegates; an Issue run answers through its own surface
+// and is deliberately left out.
+func dispatchConversationReadbackApplies(stored persistedDispatchContext) bool {
+	switch stored.Surface.Type {
+	case protocol.DispatchSurfaceTypeChat, protocol.DispatchSurfaceTypeAuto:
+		return strings.TrimSpace(stored.EventData.Conversation.OpenConversationID) != ""
+	default:
+		return false
+	}
+}
+
+// buildDispatchConversationInstruction is empty unless this run can actually
+// reach DingTalk: every command in it is a DWS command, so a robot-SDK dispatch
+// with no injected current-user capability would be told to run what it cannot.
+func buildDispatchConversationInstruction(stored persistedDispatchContext) string {
+	if stored.Domain != "channel" || stored.Outbound.Mode != protocol.DispatchOutboundModeDWS {
 		return ""
 	}
-	hints := make([]string, 0, len(facts))
+	conversationID := strings.TrimSpace(stored.EventData.Conversation.OpenConversationID)
+	facts := dispatchQuotedMessageFacts(stored)
+	readback := dispatchConversationReadbackApplies(stored)
+	if !readback && len(facts) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(dispatchConversationInstructionHeader)
+	if readback {
+		b.WriteString(dispatchConversationSSOTSection)
+	}
+	hints := make([]string, 0, len(facts)+1)
+	if readback {
+		hints = append(hints, dispatchConversationReadHint(conversationID))
+	}
 	for _, fact := range facts {
 		hints = append(hints, dispatchQuotedMessageReadHint(fact))
 	}
-	conversationID := strings.TrimSpace(stored.EventData.Conversation.OpenConversationID)
-	if conversationID == "" {
-		conversationID = "<openConversationId>"
+	if len(hints) > 0 {
+		fmt.Fprintf(&b, dispatchConversationCommandsSection, strings.Join(hints, "\n"))
 	}
-	return fmt.Sprintf(
-		dispatchQuotedMessageInstructionFormat,
-		dispatchQuotedDisplayMaxRunes,
-		strings.Join(hints, "\n"),
-		conversationID,
-	)
+	if len(facts) > 0 {
+		fmt.Fprintf(&b, dispatchConversationQuoteSection, dispatchQuotedDisplayMaxRunes)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func isDingTalkTaskContext(rawContext []byte) bool {
@@ -878,7 +927,7 @@ func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *feat
 		})
 	}
 
-	quotedMessagePrompt := buildDispatchQuotedMessageInstruction(stored)
+	conversationPrompt := buildDispatchConversationInstruction(stored)
 
 	var instruction strings.Builder
 	instruction.WriteString("## Trusted DingTalk Dispatch\n\n")
@@ -886,14 +935,14 @@ func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *feat
 	if runtimePrompt != "" {
 		instruction.WriteString(runtimePrompt)
 	}
-	if quotedMessagePrompt != "" {
+	if conversationPrompt != "" {
 		if runtimePrompt != "" {
 			instruction.WriteString("\n\n")
 		}
-		instruction.WriteString(quotedMessagePrompt)
+		instruction.WriteString(conversationPrompt)
 	}
 	if workflowPrompt != "" {
-		if runtimePrompt != "" || quotedMessagePrompt != "" {
+		if runtimePrompt != "" || conversationPrompt != "" {
 			instruction.WriteString("\n\n")
 		}
 		instruction.WriteString(workflowPrompt)
