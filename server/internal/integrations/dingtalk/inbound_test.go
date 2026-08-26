@@ -39,6 +39,22 @@ func TestInboundFromHTTPCallbackDisablesRunBatching(t *testing.T) {
 	}
 }
 
+func TestInboundFromAgentDispatchDisablesRunBatching(t *testing.T) {
+	msg, err := InboundFromAgentDispatch(AgentDispatchMessage{
+		ConversationID:   "cid-router",
+		ConversationType: "single",
+		MessageID:        "msg-router",
+		SenderStaffID:    "staff-router",
+		Text:             "already aggregated upstream",
+	})
+	if err != nil {
+		t.Fatalf("InboundFromAgentDispatch: %v", err)
+	}
+	if !msg.DisableRunBatching {
+		t.Fatal("authenticated Router dispatch must disable the Multica run batching window")
+	}
+}
+
 func TestInboundFromBotCallback(t *testing.T) {
 	cases := []struct {
 		name  string
