@@ -673,7 +673,17 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	case execenv.ChannelCarriesFiles(task.ChatChannelType, task.ChatChannelDeliversFiles):
 		fmt.Fprintf(&b, "\nTo include a file or image you produced in your reply, run `multica attachment upload <local-path>`. It binds to your reply and Multica sends it into the %s conversation as a separate message right after your text — there is no way to place it inline, so write your reply to read correctly with the file arriving after it.\n", channelDisplayName(task.ChatChannelType))
 	default:
-		fmt.Fprintf(&b, "\nThis reply is delivered to %s as text. You cannot attach a file to it: `multica attachment upload` binds to a Multica chat reply, which this is not. If you produce a file, describe it in words — never write its local path as a link, and never upload it and then write as though it arrived.\n", channelDisplayName(task.ChatChannelType))
+		// "You cannot attach a file to it" was an absolute, and it was false.
+		// What is true is narrower: MULTICA'S attachment path does not reach
+		// this conversation. An agent deployed as a native account on the
+		// platform usually can deliver a file — upload it with its own tooling
+		// and grant the reader access — and the old copy told it not to try,
+		// so a requested file came back as a paragraph of prose instead.
+		//
+		// The two guards survive verbatim, because they are what the sentence
+		// is really for: a local path is not a deliverable, and an upload that
+		// has not actually happened is not a delivery.
+		fmt.Fprintf(&b, "\nYour reply reaches %s as text. `multica attachment upload` will not carry a file here — it binds to a Multica chat reply, and this is not one. That is a limit of Multica's attachment path, not of this conversation: if your own %s tooling can upload a file and grant the reader access, that is how a file gets delivered here. Without such a tool, describe the file in words. Either way, never write a local path as a link, and never write as though a file arrived until an upload has actually put it somewhere the reader can open.\n", channelDisplayName(task.ChatChannelType), channelDisplayName(task.ChatChannelType))
 	}
 	return b.String()
 }

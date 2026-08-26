@@ -898,7 +898,7 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 			channelType: execenv.ChannelTypeSlack,
 			wantUpload:  false,
 			wantHistory: true,
-			wantPhrases: []string{"Slack", "delivered to Slack as text", "You cannot attach a file to it"},
+			wantPhrases: []string{"Slack", "reply reaches Slack as text", "will not carry a file here"},
 		},
 		{
 			name:        "feishu: no upload, no history",
@@ -908,8 +908,10 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 			wantPhrases: []string{
 				"Feishu/Lark",
 				"no history reader for Feishu/Lark",
-				"delivered to Feishu/Lark as text",
-				"You cannot attach a file to it",
+				"reply reaches Feishu/Lark as text",
+				"will not carry a file here",
+				// The route that replaces the old flat prohibition.
+				"grant the reader access",
 			},
 		},
 		{
@@ -943,8 +945,8 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 			wantUpload:    false,
 			wantHistory:   false,
 			wantPhrases: []string{
-				"delivered to WeCom as text",
-				"You cannot attach a file to it",
+				"reply reaches WeCom as text",
+				"will not carry a file here",
 			},
 		},
 	}
@@ -2024,7 +2026,7 @@ func TestChatChannelDeliversFilesDefaultsOffAcrossVersions(t *testing.T) {
 	if strings.Contains(out, "run `multica attachment upload <local-path>`") {
 		t.Errorf("an old server's WeCom claim was told to upload files\n--- output ---\n%s", out)
 	}
-	if !strings.Contains(out, "You cannot attach a file to it") {
+	if !strings.Contains(out, "will not carry a file here") {
 		t.Errorf("an old server's WeCom claim was not told the conversation is text-only\n--- output ---\n%s", out)
 	}
 
