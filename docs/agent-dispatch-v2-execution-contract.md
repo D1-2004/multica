@@ -212,10 +212,11 @@ compositions subject to the command's ordinary validation.
 For a successful Chat-to-Issue handoff, Multica sends the non-terminal
 `delegated_to_issue` execution update only after the source Chat turn reaches a
 terminal transaction. The request accepts an optional top-level
-`resultMessage`: it is the redacted text recorded by the daemon only after a
-`dws chat message reply` tool result confirms success. Provider final output,
-Issue content, task-message text, and logs are not substitutes for this value.
-Empty values are omitted.
+`resultMessage`: it is the normalized and redacted provider-selected final
+output frozen from the source turn's immutable `/complete` payload. A DWS reply
+tool receipt may still serve legacy terminal and failure delivery semantics, but
+it does not select this execution-update body. Issue content, task-message text,
+and logs are not substitutes for this value. Empty values are omitted.
 
 The handoff row is committed atomically with the Issue and target task as
 `waiting_result`, so neither a new worker (`queued` plus frozen) nor an old
@@ -549,3 +550,15 @@ parsing or rewriting Router's context string.
   the wait in status hides it from old `status = 'queued'` workers during a
   rolling deployment, while the terminal hold preserves update-before-terminal
   ordering and freezing once preserves immutable retry payloads.
+
+## Change record: 2026-08-26 Delegation handoff final output source
+
+- History: Changed `delegated_to_issue.resultMessage` to freeze the provider's
+  final `output` from the immutable source Chat terminal payload. The legacy DWS
+  reply tracker remains available to terminal and failure compatibility paths
+  but no longer chooses the execution-update body.
+- Reason: A successful delegation now asks the Agent to acknowledge the handoff
+  through its ordinary final assistant reply, without requiring a DWS reply tool
+  call. Reading the old receipt therefore dropped valid acknowledgements, while
+  freezing terminal `output` preserves retry immutability, rolling-worker
+  visibility, and update-before-terminal ordering.

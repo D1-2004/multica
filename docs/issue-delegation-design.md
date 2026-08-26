@@ -145,7 +145,7 @@ root_task_id        = source Chat task
 target_task_id      = target Issue task
 callback_url        = Router /execution-update
 request_id          = multica-handoff:<source_task_id>
-result_message      = source Chat 本次已确认送达的 DWS 用户可见回复，可空
+result_message      = source Chat 本轮 provider 选定的最终 AI 输出，可空
 result_message_frozen = false | true
 status              = waiting_result | queued | delivered | dead_letter
 ```
@@ -160,12 +160,14 @@ status              = waiting_result | queued | delivered | dead_letter
 同一 root 的提前终态 callback 设为 `available_at = infinity`；这是旧 completion
 worker 已有的领取条件，所以旧 Pod 也不能越过 handoff。trigger 对 execution update
 行加锁，使提前终态写入与正文冻结串行化。源 Chat task 结束时，
-Multica 从 daemon `/complete` 或 `/fail` 的 `result_message` 读取本次用户可见输出，
+Multica 从 daemon `/complete` 的不可变终态 JSON `output` 读取本轮 provider
+选定的最终 AI 输出，
 在同一终态事务中完成反斜杠换行解码、敏感信息脱敏，并原子切换为
 `result_message_frozen = true, status = queued, available_at = now()`，同时释放被
-hold 的 terminal completion，然后唤醒现有 completion worker。该值来自 daemon
-对成功 `dws chat message reply` 工具结果的
-回执跟踪，不从 provider 最终 stdout、Issue 内容、task message 或日志推断。
+hold 的 terminal completion，然后唤醒现有 completion worker。daemon 对成功
+`dws chat message reply` 工具结果的旧回执跟踪仍服务 terminal completion 与失败
+兼容链，但不再决定该 execution update 的正文；Issue 内容、task message 和日志也
+不是回调正文来源。
 若 sweeper 等既有路径直接写入终态，completion reconciler 会先按同一 task lineage
 补做冻结，再允许 worker 领取，避免异常终止留下永久不可投递的 handoff。
 
@@ -492,3 +494,4 @@ Content-Type: application/json
 | 2026-07-30 | 增加续写幂等返回、claim 竞争后的私有上下文继承、failed completion reconciliation，以及 migration 257 的取消回调扇出 | 工具重放、评论晚于 claim 和物理 task 失败/取消都是可能产生重复指令或孤儿 callback 的边界，需要在不改队列调度算法的前提下补齐闭环 |
 | 2026-08-07 | 私有继承 `completionCallback` 的 telemetry URL/token/expiry，并由 task exec 环境交给 runtime | Chat → Issue handoff 不能打断同一 Router task 的推理链路；能力凭证必须避免进入用户内容、Daemon claim 和日志 |
 | 2026-08-08 | telemetry URL 改为与 execution callback 共用 Router Base URL 的相对路径；runtime 收到的是 Multica 绝对 HTTPS relay URL，Multica 再向 Router 内网转发 | 云沙箱可访问 Multica 控制面但不保证能访问 Router 内网入口，交接后的 trace 也必须复用同一条可达通路 |
+| 2026-08-26 | `delegated_to_issue.resultMessage` 改为冻结源 Chat 终态 JSON 中的 provider `output`；旧 DWS reply tracker 保留给 terminal/失败兼容链，但不再参与 handoff update 正文选择 | delegation 成功后的提示要求 Agent 用普通最终回复告知用户，当前不再要求额外调用 DWS reply 工具；继续依赖工具回执会让合法的普通最终回复被冻结为空，同时直接冻结终态 `output` 仍保持事务内快照、重试不变和 update-before-terminal 顺序 |

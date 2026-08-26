@@ -65,7 +65,11 @@ func failedCompletionResultMessage(result []byte) string {
 }
 
 func taskExecutionUpdateResultMessage(result []byte) string {
-	return redact.Text(util.UnescapeBackslashEscapes(failedCompletionResultMessage(result)))
+	var payload protocol.TaskCompletedPayload
+	if json.Unmarshal(result, &payload) != nil {
+		return ""
+	}
+	return redact.Text(util.UnescapeBackslashEscapes(payload.Output))
 }
 
 func freezeTaskExecutionUpdateResultMessage(
