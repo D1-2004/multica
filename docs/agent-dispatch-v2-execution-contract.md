@@ -127,7 +127,7 @@ Multica builds prompt material from the structured source event:
 A message carrying `referencedMessage` is rendered as an attributed pair rather
 than two anonymous blocks. Display content leads with what the sender said this
 time, then names who wrote the quoted message — this Agent itself, the current
-sender, or somebody else in the conversation — and inlines at most 500
+sender, or somebody else in the conversation — and inlines at most 800
 characters of the original, reporting the full length and telling the Agent to
 read the original back before drawing conclusions when it truncates. The
 relationship is resolved from `referencedMessage.senderUid` against
@@ -622,7 +622,7 @@ parsing or rewriting Router's context string.
 
 - History: Display content for a quoted DingTalk reply now leads with the
   current message, names the quoted message's author relative to the dispatch,
-  and inlines at most 500 characters of the original. A new non-overridable
+  and inlines at most 800 characters of the original. A new non-overridable
   `quoted_message` instruction segment carries the reading rule plus one compact
   line per quote — message id, length, truncation state, whether this Agent wrote
   it — each ending in a runnable read-back command, and one conversation-scoped

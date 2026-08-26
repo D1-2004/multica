@@ -1080,7 +1080,7 @@ func dispatchQuotedSenderDisplay(
 // actually carries the request; past this length the Agent is told to read the
 // original back through DWS instead of trusting the excerpt, using the locator
 // the private quoted-message instruction carries.
-const dispatchQuotedDisplayMaxRunes = 500
+const dispatchQuotedDisplayMaxRunes = 800
 
 // dispatchQuotedTextDisplay reports the inlined excerpt, whether it was cut,
 // and the original length in runes.

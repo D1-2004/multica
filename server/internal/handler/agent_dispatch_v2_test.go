@@ -553,15 +553,18 @@ func TestQuotedMessageInstructionCarriesRereadLocatorAndSelfAttribution(t *testi
 	}
 	// The read-back command is printed with real ids so it runs as written, and
 	// the whole hint stays no longer than the excerpt it points past.
-	want := "- referenced-open (501 chars, TRUNCATED, by you): " +
-		"`dws chat message list-by-ids --msg-ids referenced-open --format json`"
+	want := fmt.Sprintf(
+		"- referenced-open (%d chars, TRUNCATED, by you): "+
+			"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
+		dispatchQuotedDisplayMaxRunes+1,
+	)
 	if !strings.Contains(quoted.EffectiveText, want) {
 		t.Errorf("quoted_message instruction missing %q: %q", want, quoted.EffectiveText)
 	}
 	if !strings.Contains(quoted.EffectiveText, "--conversation-ids cid-trusted") {
 		t.Errorf("quoted_message instruction missing the conversation fallback: %q", quoted.EffectiveText)
 	}
-	if runes := utf8.RuneCountInString(quoted.EffectiveText); runes > dispatchQuotedDisplayMaxRunes+len(want) {
+	if runes := utf8.RuneCountInString(quoted.EffectiveText); runes > dispatchQuotedDisplayMaxRunes {
 		t.Errorf("quoted_message instruction is %d runes, longer than the excerpt it replaces", runes)
 	}
 	if !strings.Contains(instructionFromSegments(segments), "## Quoted DingTalk Message") {
