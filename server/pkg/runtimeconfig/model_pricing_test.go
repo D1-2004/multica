@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/pkg/modelpricing"
 )
@@ -111,6 +112,40 @@ func TestModelPricingUpdateIsAtomicAndImmutable(t *testing.T) {
 	}
 	if next.Generation != 2 || next.SHA256 == current.SHA256 || next.Models["qwen3.8-max"].Input != 2 {
 		t.Fatalf("updated snapshot = %#v", next)
+	}
+}
+
+func TestRuntimeAndModelPricingUpdatesShareApplyLock(t *testing.T) {
+	service, err := NewStatic(mustParseConfig(t, validJSON()))
+	if err != nil {
+		t.Fatalf("NewStatic: %v", err)
+	}
+
+	// Holding the runtime apply lock must also stop a pricing update. Otherwise
+	// the two listeners can validate against stale opposite snapshots and commit
+	// a runtime model list that its final pricing catalog does not cover.
+	service.applyMu.Lock()
+	done := make(chan error, 1)
+	go func() {
+		_, applyErr := service.ApplyModelPricingJSON([]byte(validModelPricingJSON()))
+		done <- applyErr
+	}()
+
+	select {
+	case applyErr := <-done:
+		service.applyMu.Unlock()
+		t.Fatalf("pricing update bypassed runtime apply lock: %v", applyErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+	service.applyMu.Unlock()
+
+	select {
+	case applyErr := <-done:
+		if applyErr != nil {
+			t.Fatalf("pricing update after unlock: %v", applyErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("pricing update remained blocked after runtime apply lock was released")
 	}
 }
 

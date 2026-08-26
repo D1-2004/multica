@@ -33,9 +33,11 @@ type Service struct {
 	logger               *slog.Logger
 	prod                 bool
 
+	// applyMu serializes runtime-model and pricing-catalog updates. Each
+	// document validates against the other's current snapshot, so separate
+	// locks could admit two individually valid updates as one invalid pair.
 	applyMu                     sync.Mutex
 	manifestFingerprintsApplyMu sync.Mutex
-	modelPricingApplyMu         sync.Mutex
 	mu                          sync.Mutex
 	closeOnce                   sync.Once
 	closeFunc                   func() error

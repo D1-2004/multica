@@ -128,8 +128,8 @@ func (s *Service) ApplyModelPricingJSON(data []byte) (ModelPricingSnapshot, erro
 	if s == nil {
 		return ModelPricingSnapshot{}, errors.New("runtime config service is nil")
 	}
-	s.modelPricingApplyMu.Lock()
-	defer s.modelPricingApplyMu.Unlock()
+	s.applyMu.Lock()
+	defer s.applyMu.Unlock()
 
 	cfg, err := ParseModelPricingStrict(data)
 	if err != nil {
