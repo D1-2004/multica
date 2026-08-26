@@ -2617,15 +2617,28 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			} else {
 				inputLoadErr = err
 			}
-			// The Multica transcript is the authoritative continuity source for a
-			// cloud chat. Do not also ask the sandbox daemon to resume a
-			// provider-local session: cloud Runtime images are released separately
-			// from the server, and older daemons turn a missing/incompatible session
-			// into an explicit "history is unrecoverable" notice even when this
-			// transcript is present. Starting one coherent provider session from the
-			// database copy makes the contract identical for FC/ASB and cold/warm
-			// sandboxes, without depending on the image's daemon version.
-			makeChatHistoryAuthoritative(&resp)
+			// Cloud Chat default: database history is the only continuity
+			// source (makeChatHistoryAuthoritative). An agent may opt into
+			// --resume on a warm 1:1 sandbox when the last completed answer
+			// is still inside the 20-minute window and the agent's
+			// instructions, skills, and runtime have not changed. ChatHistory
+			// stays on the payload either way so a failed provider resume can
+			// still rebuild from the transcript.
+			currentIdentity := ""
+			if agentLoadErr == nil {
+				currentIdentity = cloudChatResumeIdentityFromClaim(agent, runtime, resp.Agent)
+			}
+			warmResume := h.shouldWarmResumeCloudChat(r.Context(), agent, agentLoadErr, runtime, *task, cs, resp, currentIdentity)
+			if err := h.Queries.SetChatSessionResumeIdentity(r.Context(), db.SetChatSessionResumeIdentityParams{
+				ID:             cs.ID,
+				ResumeIdentity: currentIdentity,
+			}); err != nil {
+				slog.Warn("chat claim: persist resume identity failed",
+					"chat_session_id", uuidToString(cs.ID), "error", err)
+			}
+			if !warmResume {
+				makeChatHistoryAuthoritative(&resp)
+			}
 			// A read failure must NOT masquerade as "zero input". Preserve the
 			// just-dispatched task (the stale-dispatched reclaim redelivers it)
 			// and reject the claim with 5xx, rather than cancelling a valid direct

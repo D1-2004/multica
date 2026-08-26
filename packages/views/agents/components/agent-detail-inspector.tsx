@@ -15,6 +15,7 @@ import {
 import { runtimeModelsOptions } from "@multica/core/runtimes";
 import { isImeComposing } from "@multica/core/utils";
 import { Input } from "@multica/ui/components/ui/input";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { AvatarUploadControl } from "../../common/avatar-upload-control";
 import {
@@ -311,6 +312,20 @@ export function AgentDetailInspector({
               value={agent.max_concurrent_tasks}
               canEdit={canEdit}
               onSave={(next) => update({ max_concurrent_tasks: next })}
+            />
+          </SettingsRow>
+          <SettingsRow
+            label={t(($) => $.inspector.prop_chat_session_resume)}
+            description={t(($) => $.inspector.prop_chat_session_resume_hint)}
+            align="start"
+          >
+            <Switch
+              checked={agent.chat_session_resume === true}
+              disabled={!canEdit}
+              onCheckedChange={(checked) => {
+                void update({ chat_session_resume: checked });
+              }}
+              aria-label={t(($) => $.inspector.prop_chat_session_resume)}
             />
           </SettingsRow>
         </SettingsCard>

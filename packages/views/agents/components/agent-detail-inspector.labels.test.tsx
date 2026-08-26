@@ -69,4 +69,24 @@ describe("AgentDetailInspector labels", () => {
     expect(screen.queryByTestId("resource-label-picker")).toBeNull();
     expect(screen.queryByText("Labels")).toBeNull();
   });
+
+  it("saves chat session resume independently of other execution fields", async () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={{ ...agent, chat_session_resume: false }}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    screen.getByLabelText("Resume last session").click();
+    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+      chat_session_resume: true,
+    });
+  });
 });

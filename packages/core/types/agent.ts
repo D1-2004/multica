@@ -464,6 +464,13 @@ export interface Agent {
    *  affects the `issue` dispatch mode; approval and calendar continuations
    *  are unaffected. Optional because older backends omit it. */
   dispatch_always_new_issue?: boolean;
+  /**
+   * When true, a cloud 1:1 chat may `--resume` the prior provider session if
+   * the sandbox is still warm, the last completed answer is within 20
+   * minutes, and instructions / skills / runtime have not changed. Optional
+   * because older backends omit it; treat `undefined` as false.
+   */
+  chat_session_resume?: boolean;
   avatar_url: string | null;
   runtime_mode: AgentRuntimeMode;
   runtime_config: Record<string, unknown>;
@@ -750,6 +757,7 @@ export interface UpdateAgentRequest {
   instructions?: string;
   dispatch_prompt_overrides?: Record<string, string>;
   dispatch_always_new_issue?: boolean;
+  chat_session_resume?: boolean;
   avatar_url?: string;
   runtime_id?: string;
   runtime_config?: Record<string, unknown>;

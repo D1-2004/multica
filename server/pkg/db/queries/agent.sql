@@ -125,6 +125,12 @@ SET runtime_id = @runtime_id,
 WHERE id = @id AND kind = 'system' AND system_key LIKE 'agent_builder:%'
 RETURNING *;
 
+-- name: GetAgentChatSessionResume :one
+SELECT chat_session_resume FROM agent WHERE id = $1;
+
+-- name: UpdateAgentChatSessionResume :exec
+UPDATE agent SET chat_session_resume = $2, updated_at = now() WHERE id = $1;
+
 -- name: UpdateAgent :one
 -- composio_toolkit_allowlist is set wholesale: the API layer is responsible
 -- for normalising the request payload to either (a) the new slug list — sent
