@@ -165,9 +165,9 @@ Multica 从 daemon `/complete` 的不可变终态 JSON `output` 读取本轮 pro
 在同一终态事务中完成反斜杠换行解码、敏感信息脱敏，并原子切换为
 `result_message_frozen = true, status = queued, available_at = now()`，同时释放被
 hold 的 terminal completion，然后唤醒现有 completion worker。daemon 对成功
-`dws chat message reply` 工具结果的旧回执跟踪仍服务 terminal completion 与失败
-兼容链，但不再决定该 execution update 的正文；Issue 内容、task message 和日志也
-不是回调正文来源。
+工具结果不再建立独立回复正文来源；普通 terminal completion 与该 execution
+update 都使用终态 `output` 的事务内快照。Issue 内容、task message、工具回执和
+日志也不是回调正文来源；失败继续使用显式 `error + failure_reason` 契约。
 若 sweeper 等既有路径直接写入终态，completion reconciler 会先按同一 task lineage
 补做冻结，再允许 worker 领取，避免异常终止留下永久不可投递的 handoff。
 
@@ -337,7 +337,7 @@ external_run_id  = terminal Issue task ID
 
 对于评论 callback，`result_message` 优先使用本 terminal task 对该评论所在
 thread 发布的 Agent 回复；同一 thread 的多条输入共享该 thread 的合并回复；
-没有回复时使用 task `result_message/output` 兜底。callback 继续使用
+没有回复时使用 task provider `output` 兜底。callback 继续使用
 `externalTaskId = source task ID`、评论终态 request ID 和
 `executionResult.terminalTaskId`，不扩展 Router 既有 terminal 协议。
 
@@ -495,3 +495,4 @@ Content-Type: application/json
 | 2026-08-07 | 私有继承 `completionCallback` 的 telemetry URL/token/expiry，并由 task exec 环境交给 runtime | Chat → Issue handoff 不能打断同一 Router task 的推理链路；能力凭证必须避免进入用户内容、Daemon claim 和日志 |
 | 2026-08-08 | telemetry URL 改为与 execution callback 共用 Router Base URL 的相对路径；runtime 收到的是 Multica 绝对 HTTPS relay URL，Multica 再向 Router 内网转发 | 云沙箱可访问 Multica 控制面但不保证能访问 Router 内网入口，交接后的 trace 也必须复用同一条可达通路 |
 | 2026-08-26 | `delegated_to_issue.resultMessage` 改为冻结源 Chat 终态 JSON 中的 provider `output`；旧 DWS reply tracker 保留给 terminal/失败兼容链，但不再参与 handoff update 正文选择 | delegation 成功后的提示要求 Agent 用普通最终回复告知用户，当前不再要求额外调用 DWS reply 工具；继续依赖工具回执会让合法的普通最终回复被冻结为空，同时直接冻结终态 `output` 仍保持事务内快照、重试不变和 update-before-terminal 顺序 |
+| 2026-08-26 | 删除 daemon DWS reply tracker 及其在 provider result、终态 pending report、daemon callback、handler DTO 和失败 task JSON 中的专属 `ResultMessage/result_message` 透传；普通 terminal 和 handoff update 统一从 provider `output` 冻结正文，失败只保留显式错误契约；提示词也不再要求 Agent 执行 DWS reply 命令；Router 两类 outbox 的 `result_message` 快照与评论 thread 回复映射继续保留 | 最终回复已由 Router/ServerPush 统一投递，DWS 工具成功回执不再是 AI 输出事实源；清理重复来源可避免普通最终回复被覆盖或丢失，同时不改变重试 payload、滚动二进制可见性和 update-before-terminal 顺序 |

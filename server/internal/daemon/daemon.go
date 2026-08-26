@@ -195,7 +195,6 @@ type terminalTaskReport struct {
 	kind          terminalTaskReportKind
 	taskID        string
 	output        string
-	resultMessage string
 	branchName    string
 	errorMessage  string
 	sessionID     string
@@ -5037,7 +5036,6 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			kind:                  terminalTaskReportComplete,
 			taskID:                taskID,
 			output:                result.Comment,
-			resultMessage:         result.ResultMessage,
 			branchName:            result.BranchName,
 			sessionID:             result.SessionID,
 			workDir:               result.WorkDir,
@@ -5070,7 +5068,6 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 				Kind:                  pendingReportKindComplete,
 				TaskID:                taskID,
 				Output:                result.Comment,
-				ResultMessage:         result.ResultMessage,
 				BranchName:            result.BranchName,
 				SessionID:             result.SessionID,
 				WorkDir:               result.WorkDir,
@@ -5093,7 +5090,6 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			kind:                  terminalTaskReportFail,
 			taskID:                taskID,
 			errorMessage:          fallbackErrMsg,
-			resultMessage:         result.ResultMessage,
 			sessionID:             result.SessionID,
 			workDir:               result.WorkDir,
 			failureReason:         taskfailure.Classify(fallbackErrMsg).String(),
@@ -5106,7 +5102,6 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 					Kind:                  pendingReportKindFail,
 					TaskID:                taskID,
 					Error:                 fallbackErrMsg,
-					ResultMessage:         result.ResultMessage,
 					FailureReason:         taskfailure.Classify(fallbackErrMsg).String(),
 					SessionID:             result.SessionID,
 					WorkDir:               result.WorkDir,
@@ -5139,7 +5134,6 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			kind:                  terminalTaskReportFail,
 			taskID:                taskID,
 			errorMessage:          result.Comment,
-			resultMessage:         result.ResultMessage,
 			sessionID:             result.SessionID,
 			workDir:               result.WorkDir,
 			failureReason:         failureReason,
@@ -5152,7 +5146,6 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 					Kind:                  pendingReportKindFail,
 					TaskID:                taskID,
 					Error:                 result.Comment,
-					ResultMessage:         result.ResultMessage,
 					FailureReason:         failureReason,
 					SessionID:             result.SessionID,
 					WorkDir:               result.WorkDir,
@@ -5175,9 +5168,9 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.resultMessage, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID)
 	case terminalTaskReportFail:
-		return d.client.FailTaskWithResultMessage(ctx, report.taskID, report.errorMessage, report.resultMessage, report.sessionID, report.workDir, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID)
+		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID)
 	default:
 		return fmt.Errorf("unsupported terminal task report kind %d", report.kind)
 	}
@@ -6682,14 +6675,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// calls (e.g. posting comments via CLI, pushing code). Treat as
 			// a normal completion so the task is not incorrectly marked as
 			// blocked.
-			return taskResultWithAgentReply(result, TaskResult{
+			return TaskResult{
 				Status:    "completed",
 				Comment:   "",
 				SessionID: result.SessionID,
 				WorkDir:   env.WorkDir,
 				EnvRoot:   env.RootDir,
 				Usage:     usageEntries,
-			}), nil
+			}, nil
 		}
 		// Detect "poisoned" terminal output: the agent didn't reach a real
 		// conclusion but emitted a known fallback marker (iteration limit,
@@ -6702,7 +6695,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			taskLog.Warn("agent finished with poisoned fallback output, classifying as blocked",
 				"failure_reason", reason,
 			)
-			return taskResultWithAgentReply(result, TaskResult{
+			return TaskResult{
 				Status:        "blocked",
 				Comment:       result.Output,
 				SessionID:     result.SessionID,
@@ -6710,7 +6703,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				EnvRoot:       env.RootDir,
 				Usage:         usageEntries,
 				FailureReason: reason,
-			}), nil
+			}, nil
 		}
 		taskResult = TaskResult{
 			Status:    "completed",
@@ -6737,7 +6730,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			)
 			failureReason = reason
 		}
-		return taskResultWithAgentReply(result, TaskResult{
+		return TaskResult{
 			Status:        "blocked",
 			Comment:       comment,
 			SessionID:     result.SessionID,
@@ -6745,7 +6738,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			EnvRoot:       env.RootDir,
 			FailureReason: failureReason,
 			Usage:         usageEntries,
-		}), nil
+		}, nil
 	case "idle_watchdog":
 		// The idle watchdog force-stopped the run because the backend
 		// went silent (e.g. claude blocked on a tool call against a
@@ -6756,7 +6749,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		if comment == "" {
 			comment = idleWatchdogReason(d.cfg.AgentIdleWatchdog)
 		}
-		return taskResultWithAgentReply(result, TaskResult{
+		return TaskResult{
 			Status:        "blocked",
 			Comment:       comment,
 			SessionID:     result.SessionID,
@@ -6764,21 +6757,21 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			EnvRoot:       env.RootDir,
 			FailureReason: "idle_watchdog",
 			Usage:         usageEntries,
-		}), nil
+		}, nil
 	case "cancelled":
 		// Server cancelled the task (e.g. issue reassignment, user cancel).
 		// handleTask's cancelledByPoll branch already discards this result,
 		// so this case is mainly defensive — and preserves the "cancelled"
 		// status string for the "agent finished" log line so operators can
 		// distinguish "task cancelled by server" from a real timeout.
-		return taskResultWithAgentReply(result, TaskResult{
+		return TaskResult{
 			Status:    "cancelled",
 			Comment:   "task cancelled by server",
 			SessionID: result.SessionID,
 			WorkDir:   env.WorkDir,
 			EnvRoot:   env.RootDir,
 			Usage:     usageEntries,
-		}), nil
+		}, nil
 	default:
 		errMsg := result.Error
 		if errMsg == "" {
@@ -6841,7 +6834,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// fact.
 			failureReason = taskfailure.Classify(errMsg).String()
 		}
-		return taskResultWithAgentReply(result, TaskResult{
+		return TaskResult{
 			Status:        "blocked",
 			Comment:       errMsg,
 			SessionID:     result.SessionID,
@@ -6849,7 +6842,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			EnvRoot:       env.RootDir,
 			Usage:         usageEntries,
 			FailureReason: failureReason,
-		}), nil
+		}, nil
 	}
 }
 
@@ -7103,7 +7096,6 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	// message batch, so the result hand-off below can wait for the transcript
 	// tail to be persisted.
 	drainFinished := make(chan struct{})
-	dwsReplies := newDWSReplyTracker()
 	go func() {
 		defer close(drainFinished)
 		var mu sync.Mutex
@@ -7186,7 +7178,6 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 						"message_type", string(msg.Type),
 					)
 				}
-				dwsReplies.Observe(msg)
 				switch msg.Type {
 				case agent.MessageStatus:
 					// Persist the session/work_dir as soon as the backend
@@ -7355,7 +7346,6 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 	case result := <-session.Result:
 		resultObservedAt := time.Now()
 		waitForDrain()
-		result.ResultMessage = dwsReplies.ResultMessage()
 		taskLog.Info("provider result received",
 			"event", "provider_result_received",
 			"stage", "provider_execute",
@@ -7381,16 +7371,14 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 		// hand back (and let runTask fail-and-broadcast) a still-flushing
 		// transcript either.
 		waitForDrain()
-		resultMessage := dwsReplies.ResultMessage()
 		// Idle watchdog cancels via agentCancel(), which propagates here as
 		// context.Canceled. Check this BEFORE the generic cancelled/timeout
 		// classifiers so a watchdog-induced stop isn't misreported as
 		// "task cancelled by server".
 		if idleWatchdogFired.Load() {
 			return agent.Result{
-				Status:        "idle_watchdog",
-				ResultMessage: resultMessage,
-				Error:         idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load())),
+				Status: "idle_watchdog",
+				Error:  idleWatchdogReason(time.Duration(idleWatchdogThreshold.Load())),
 			}, toolCount.Load(), nil
 		}
 		// Distinguish external cancellation (e.g. server-initiated cancel
@@ -7405,9 +7393,8 @@ func (d *Daemon) executeAndDrain(ctx context.Context, backend agent.Backend, pro
 			}, toolCount.Load(), nil
 		}
 		return agent.Result{
-			Status:        "timeout",
-			ResultMessage: resultMessage,
-			Error:         "agent did not produce result within drain timeout",
+			Status: "timeout",
+			Error:  "agent did not produce result within drain timeout",
 		}, toolCount.Load(), nil
 	}
 }
@@ -7518,17 +7505,7 @@ func mergeUsage(a, b map[string]agent.TokenUsage) map[string]agent.TokenUsage {
 
 func mergeResumeRetryResult(first, retry agent.Result) agent.Result {
 	retry.Usage = mergeUsage(first.Usage, retry.Usage)
-	if retry.ResultMessage == "" {
-		retry.ResultMessage = first.ResultMessage
-	}
 	return retry
-}
-
-func taskResultWithAgentReply(result agent.Result, taskResult TaskResult) TaskResult {
-	if taskResult.Status != "cancelled" {
-		taskResult.ResultMessage = result.ResultMessage
-	}
-	return taskResult
 }
 
 // repoDataToInfo converts daemon RepoData to repocache RepoInfo.

@@ -199,10 +199,13 @@ The child therefore does not receive the automatic front-stage policy.
 
 `outbound.mode` is the only field that selects outbound ownership:
 
-- `dws` delegates acknowledgement and final DingTalk delivery to the Agent's
-  DWS capability according to the configured fixed prompt and Router's dynamic
-  context. Multica suppresses server-side typing and robot replies for that
-  dispatch.
+- `dws` selects the current-user DWS capability for acknowledgement work. When
+  Router terminal delivery is configured, Router owns lifecycle status and
+  final DingTalk delivery through ServerPush, using Multica's terminal callback
+  body; the Agent must not send a second direct DWS reply. Multica suppresses
+  robot-SDK typing and replies for this mode. Compatibility inputs that omit a
+  completion callback still instruct the Agent to finish with ordinary provider
+  output; they do not restore direct DWS final-reply ownership.
 - `robot_sdk` keeps Multica's channel typing and robot reply lifecycle enabled.
 
 Outbound selection is independent of source type and surface. Issue plus DWS,
@@ -213,10 +216,10 @@ For a successful Chat-to-Issue handoff, Multica sends the non-terminal
 `delegated_to_issue` execution update only after the source Chat turn reaches a
 terminal transaction. The request accepts an optional top-level
 `resultMessage`: it is the normalized and redacted provider-selected final
-output frozen from the source turn's immutable `/complete` payload. A DWS reply
-tool receipt may still serve legacy terminal and failure delivery semantics, but
-it does not select this execution-update body. Issue content, task-message text,
-and logs are not substitutes for this value. Empty values are omitted.
+output frozen from the source turn's immutable `/complete` payload. The same
+`output` is the ordinary terminal `execution_result` body when no comment-scoped
+persisted reply applies. Issue content, task-message text, tool receipts, and
+logs are not substitutes for this value. Empty values are omitted.
 
 The handoff row is committed atomically with the Issue and target task as
 `waiting_result`, so neither a new worker (`queued` plus frozen) nor an old
@@ -562,3 +565,20 @@ parsing or rewriting Router's context string.
   call. Reading the old receipt therefore dropped valid acknowledgements, while
   freezing terminal `output` preserves retry immutability, rolling-worker
   visibility, and update-before-terminal ordering.
+
+## Change record: 2026-08-26 Remove legacy DWS reply receipt source
+
+- History: Removed the daemon DWS reply tracker and its private
+  `ResultMessage`/`result_message` transport through provider results, pending
+  terminal reports, daemon callbacks, handler DTOs, and failed-task JSON. A
+  completed task now derives both Router terminal delivery and delegated update
+  delivery from the provider-selected final `output`; failed callbacks retain
+  the explicit `error` and `failureReason` contract. Router outbox
+  `result_message` snapshots and comment-scoped persisted replies remain part of
+  the current callback protocol.
+- Reason: Router/ServerPush is the durable final-reply owner whenever a
+  completion callback exists, so a successful `dws chat message reply` tool
+  receipt is no longer an AI-output authority. Removing the duplicate source
+  prevents ordinary final replies from being replaced or suppressed while
+  keeping outbox immutability, rolling-worker visibility, update-before-terminal
+  ordering, and one provider-output contract across compatibility inputs.

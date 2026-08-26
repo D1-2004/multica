@@ -57,7 +57,6 @@ type pendingTerminalReport struct {
 	Kind                  string    `json:"kind"`
 	TaskID                string    `json:"task_id"`
 	Output                string    `json:"output,omitempty"`
-	ResultMessage         string    `json:"result_message,omitempty"`
 	BranchName            string    `json:"branch_name,omitempty"`
 	Error                 string    `json:"error,omitempty"`
 	FailureReason         string    `json:"failure_reason,omitempty"`
@@ -248,13 +247,12 @@ func (d *Daemon) drainPendingReports(ctx context.Context) {
 		var err error
 		switch r.Kind {
 		case pendingReportKindComplete:
-			err = d.client.completeTaskWithSchedule(ctx, r.TaskID, r.Output, r.ResultMessage, r.BranchName, r.SessionID, r.WorkDir, r.SessionRolloutMissing, r.RetiredSessionID, nil)
+			err = d.client.completeTaskWithSchedule(ctx, r.TaskID, r.Output, r.BranchName, r.SessionID, r.WorkDir, r.SessionRolloutMissing, r.RetiredSessionID, nil)
 		case pendingReportKindFail:
-			err = d.client.failTaskWithResultMessageAndSchedule(
+			err = d.client.failTaskWithSchedule(
 				ctx,
 				r.TaskID,
 				r.Error,
-				r.ResultMessage,
 				r.SessionID,
 				r.WorkDir,
 				r.FailureReason,

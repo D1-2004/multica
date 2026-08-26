@@ -97,9 +97,8 @@ The server returns `release_parent: true` only after the Issue or comment,
 background task, task lineage, and reliable handoff update have committed
 together. After that response, briefly tell the user that the work has moved to
 the background through the task's normal final assistant reply, then stop the current Chat task.
-This is also the acknowledgement for DWS outbound; do not add
-a `dws chat message reply` tool call solely for the handoff. The server freezes
-the provider-selected final output as the user-visible handoff result without
+That provider-selected final output is the sole handoff
+acknowledgement body: Multica freezes it for Router/ServerPush delivery without
 exposing callback details to the command. Do not continue executing the
 delegated business work in Chat.
 

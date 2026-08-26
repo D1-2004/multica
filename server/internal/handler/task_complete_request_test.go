@@ -7,10 +7,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func TestTaskCompleteRequestPreservesResultMessageInProtocolPayload(t *testing.T) {
-	request := TaskCompleteRequest{
-		Output:        "agent execution summary",
-		ResultMessage: "最终回复正文",
+func TestTaskCompleteRequestIgnoresLegacyResultMessage(t *testing.T) {
+	var request TaskCompleteRequest
+	if err := json.Unmarshal([]byte(`{"output":"provider final output","result_message":"旧 DWS 工具回执"}`), &request); err != nil {
+		t.Fatal(err)
 	}
 	data, err := json.Marshal(request)
 	if err != nil {
@@ -21,18 +21,22 @@ func TestTaskCompleteRequestPreservesResultMessageInProtocolPayload(t *testing.T
 	if err := json.Unmarshal(data, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.Output != "agent execution summary" {
+	if payload.Output != "provider final output" {
 		t.Fatalf("output = %q", payload.Output)
 	}
-	if payload.ResultMessage != "最终回复正文" {
-		t.Fatalf("result message = %q", payload.ResultMessage)
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := raw["result_message"]; ok {
+		t.Fatalf("legacy result_message survived typed payload: %#v", raw)
 	}
 }
 
-func TestTaskFailRequestPreservesResultMessage(t *testing.T) {
-	request := TaskFailRequest{
-		Error:         "runtime timed out",
-		ResultMessage: "已向用户说明任务超时",
+func TestTaskFailRequestIgnoresLegacyResultMessage(t *testing.T) {
+	var request TaskFailRequest
+	if err := json.Unmarshal([]byte(`{"error":"runtime timed out","result_message":"旧 DWS 工具回执"}`), &request); err != nil {
+		t.Fatal(err)
 	}
 	data, err := json.Marshal(request)
 	if err != nil {
@@ -43,7 +47,10 @@ func TestTaskFailRequestPreservesResultMessage(t *testing.T) {
 	if err := json.Unmarshal(data, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload["result_message"] != "已向用户说明任务超时" {
-		t.Fatalf("result_message = %#v", payload["result_message"])
+	if payload["error"] != "runtime timed out" {
+		t.Fatalf("error = %#v", payload["error"])
+	}
+	if _, ok := payload["result_message"]; ok {
+		t.Fatalf("legacy result_message survived typed payload: %#v", payload)
 	}
 }

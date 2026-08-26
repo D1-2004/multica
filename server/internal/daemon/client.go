@@ -435,15 +435,12 @@ func (c *Client) DownloadA2AAttachment(ctx context.Context, taskID, attachmentID
 	return data, nil
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, resultMessage, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) error {
-	return c.completeTaskWithSchedule(ctx, taskID, output, resultMessage, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) error {
+	return c.completeTaskWithSchedule(ctx, taskID, output, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
 }
 
-func (c *Client) completeTaskWithSchedule(ctx context.Context, taskID, output, resultMessage, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, schedule []time.Duration) error {
+func (c *Client) completeTaskWithSchedule(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, schedule []time.Duration) error {
 	body := map[string]any{"output": output}
-	if resultMessage != "" {
-		body["result_message"] = resultMessage
-	}
 	if branchName != "" {
 		body["branch_name"] = branchName
 	}
@@ -472,22 +469,11 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 }
 
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string, sessionRolloutMissing bool, retiredSessionID string) error {
-	return c.failTaskWithResultMessageAndSchedule(ctx, taskID, errMsg, "", sessionID, workDir, failureReason, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
-}
-
-func (c *Client) FailTaskWithResultMessage(ctx context.Context, taskID, errMsg, resultMessage, sessionID, workDir, failureReason string, sessionRolloutMissing bool, retiredSessionID string) error {
-	return c.failTaskWithResultMessageAndSchedule(ctx, taskID, errMsg, resultMessage, sessionID, workDir, failureReason, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
+	return c.failTaskWithSchedule(ctx, taskID, errMsg, sessionID, workDir, failureReason, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
 }
 
 func (c *Client) failTaskWithSchedule(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string, sessionRolloutMissing bool, retiredSessionID string, schedule []time.Duration) error {
-	return c.failTaskWithResultMessageAndSchedule(ctx, taskID, errMsg, "", sessionID, workDir, failureReason, sessionRolloutMissing, retiredSessionID, schedule)
-}
-
-func (c *Client) failTaskWithResultMessageAndSchedule(ctx context.Context, taskID, errMsg, resultMessage, sessionID, workDir, failureReason string, sessionRolloutMissing bool, retiredSessionID string, schedule []time.Duration) error {
 	body := map[string]any{"error": errMsg}
-	if resultMessage != "" {
-		body["result_message"] = resultMessage
-	}
 	if sessionID != "" {
 		body["session_id"] = sessionID
 	}

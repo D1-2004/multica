@@ -48,20 +48,8 @@ type TaskCompletionNotifier interface {
 	NotifyTaskCompletion()
 }
 
-type failedCompletionPayload struct {
-	ResultMessage string `json:"result_message,omitempty"`
-}
-
 type lastTaskReplyReader interface {
 	GetLastTaskReplyText(context.Context, pgtype.UUID) (pgtype.Text, error)
-}
-
-func failedCompletionResultMessage(result []byte) string {
-	var payload failedCompletionPayload
-	if json.Unmarshal(result, &payload) != nil {
-		return ""
-	}
-	return payload.ResultMessage
 }
 
 func taskExecutionUpdateResultMessage(result []byte) string {
@@ -99,11 +87,7 @@ func resolveFailedCompletionReply(
 	ctx context.Context,
 	reader lastTaskReplyReader,
 	taskID pgtype.UUID,
-	result []byte,
 ) (string, error) {
-	if explicit := failedCompletionResultMessage(result); strings.TrimSpace(explicit) != "" {
-		return explicit, nil
-	}
 	reply, err := reader.GetLastTaskReplyText(ctx, taskID)
 	if err == nil {
 		return reply.String, nil
@@ -128,17 +112,8 @@ func buildTaskCompletion(
 		if strings.TrimSpace(resultMessage) == "" {
 			var payload protocol.TaskCompletedPayload
 			if json.Unmarshal(result, &payload) == nil {
-				completionMessage := payload.ResultMessage
-				if strings.TrimSpace(completionMessage) == "" {
-					completionMessage = payload.Output
-				}
-				resultMessage = redact.Text(util.UnescapeBackslashEscapes(completionMessage))
+				resultMessage = redact.Text(util.UnescapeBackslashEscapes(payload.Output))
 			}
-		}
-	} else if status == "failed" {
-		if explicit := failedCompletionResultMessage(result); strings.TrimSpace(explicit) != "" &&
-			(!target.CommentID.Valid || strings.TrimSpace(resultMessage) == "") {
-			resultMessage = redact.Text(util.UnescapeBackslashEscapes(explicit))
 		}
 	}
 	return TaskCompletion{
@@ -216,7 +191,7 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 	fallbackReply := ""
 	if status == "failed" || status == "canceled" {
 		var replyErr error
-		fallbackReply, replyErr = resolveFailedCompletionReply(ctx, qtx, task.ID, result)
+		fallbackReply, replyErr = resolveFailedCompletionReply(ctx, qtx, task.ID)
 		if replyErr != nil {
 			return false, replyErr
 		}

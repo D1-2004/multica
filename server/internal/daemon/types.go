@@ -284,7 +284,6 @@ type TaskUsageEntry struct {
 type TaskResult struct {
 	Status        string `json:"status"`
 	Comment       string `json:"comment"`
-	ResultMessage string `json:"result_message,omitempty"`
 	BranchName    string `json:"branch_name,omitempty"`
 	EnvType       string `json:"env_type,omitempty"`
 	SessionID     string `json:"session_id,omitempty"` // Claude session ID for future resumption
