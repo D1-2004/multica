@@ -581,7 +581,14 @@ func buildChatPromptForProvider(task Task, provider string) string {
 			//     platform routinely carries its own tooling. Naming a specific
 			//     tool would bind a platform-agnostic file to one deployment's
 			//     skill set, so the copy points at the run's own tools without
-			//     naming them.
+			//     naming them — and defers to the per-turn instruction, which
+			//     is where a deployment that HAS a concrete command prints it.
+			//     A DingTalk dispatch ships one (`## DingTalk Conversation`,
+			//     with the real openConversationId substituted in), and this
+			//     file used to read as a flat denial that any such command
+			//     existed — a live contradiction inside one prompt window, with
+			//     this side the more proximate of the two because it sits right
+			//     above the record it is talking about.
 			// When a record is attached it introduces itself (see
 			// chatHistoryRecoveryBlock), and repeating that here was the same
 			// claim at full price twice. Without one, nothing else says the
@@ -592,7 +599,7 @@ func buildChatPromptForProvider(task Task, provider string) string {
 			if audience != execenv.ChatAudienceDirect {
 				b.WriteString("Messages other people exchanged, and anything said before you were brought in, never entered the Multica record at all: treat a gap as missing context, never as proof nothing was said.\n")
 			}
-			fmt.Fprintf(&b, "Multica ships no history reader for %s, so when you need more, read it with your own %s tools or skills if you have them, and otherwise ask the user rather than guessing.\n", platform, platform)
+			fmt.Fprintf(&b, "Multica ships no history reader for %s, but that is a limit on Multica, not on the conversation: when you need more of it, read it back with your own %s tools or skills, and follow the per-turn instruction above when it prints the exact command for this deployment. Ask the user rather than guessing only when you have no way to read it back.\n", platform, platform)
 		}
 		// Scoped to process, not results — a completion confirmation IS the deliverable.
 		fmt.Fprintf(&b, "Reply to %s with the final outcome only. Do NOT narrate planned or in-progress steps (\"我先读取…\"); completed actions are part of the outcome.\n", platform)

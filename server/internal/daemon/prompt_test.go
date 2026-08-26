@@ -690,7 +690,7 @@ func TestBuildChatPromptPartialRecordOnChannelsMulticaCannotRead(t *testing.T) {
 		others    = "Messages other people exchanged"
 		notSilent = "never as proof nothing was said"
 		reader    = "Multica ships no history reader"
-		fallback  = "ask the user rather than guessing"
+		fallback  = "Ask the user rather than guessing only when you have no way to read it back"
 	)
 
 	// A group room on a cold claim: the record is attached and introduces
