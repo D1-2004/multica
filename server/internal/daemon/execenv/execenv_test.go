@@ -5701,10 +5701,16 @@ func TestInjectRuntimeConfigIssueMetadataSectionScope(t *testing.T) {
 	t.Parallel()
 
 	// Discovery lines in Available Commands → Core appear in every runtime
-	// config except quick-create (whose minimal Available Commands lists
-	// only `issue create`). These are the single discovery point for the
-	// CLI when an agent decides to read or write metadata outside the
-	// numbered workflow.
+	// config whose Available Commands is the full variant. Quick-create's
+	// minimal list advertises only `issue create`, and chat's scoped list
+	// (writeAvailableCommandsChat) drops every issue-scoped command: a chat
+	// run has no issue id, and the `## Issue Metadata` section that says when
+	// and why to touch the bag is already out of scope for it, so the three
+	// lines shipped as commands with no governing policy. `multica --help`
+	// remains the discovery route on that surface. Pin renegotiated with the
+	// chat-scoped list; the full-variant kinds below still hold the line.
+	// These are the single discovery point for the CLI when an agent decides
+	// to read or write metadata outside the numbered workflow.
 	coreDiscoveryLines := []string{
 		"multica issue metadata list <issue-id>",
 		"multica issue metadata set <issue-id> --key <k> --value <v> [--type string|number|bool]",
@@ -5858,11 +5864,12 @@ func TestInjectRuntimeConfigIssueMetadataSectionScope(t *testing.T) {
 			}
 			s := string(data)
 
-			// Global Core discovery lines apply everywhere EXCEPT
-			// quick-create, whose minimal Available Commands
+			// Global Core discovery lines apply to the kinds that get the
+			// full Available Commands. Quick-create's minimal list
 			// intentionally advertises only `issue create` — the hard
-			// guardrails forbid every other CLI call for that kind.
-			if tc.ctx.QuickCreatePrompt == "" {
+			// guardrails forbid every other CLI call for that kind — and
+			// chat's scoped list carries no issue-scoped command at all.
+			if tc.ctx.QuickCreatePrompt == "" && tc.ctx.ChatSessionID == "" {
 				for _, want := range coreDiscoveryLines {
 					if !strings.Contains(s, want) {
 						t.Errorf("Available Commands → Core missing %q\n---\n%s", want, s)

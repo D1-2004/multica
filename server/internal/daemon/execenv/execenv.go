@@ -136,6 +136,15 @@ type TaskContextForEnv struct {
 	ProjectDescription            string                  // durable project-level context, rendered into the brief's Project Context section
 	ProjectResources              []ProjectResourceForEnv // resources attached to the project
 	ChatSessionID                 string                  // non-empty for chat tasks
+	// A2AInvocation marks a chat task driven by an external A2A caller rather
+	// than a person in a room. It is a chat session by construction
+	// (service/a2a.go enqueues with the a2a_context's ChatSessionID), so
+	// classifyTask sees kindChat — but the run holds no task-scoped token
+	// (taskScopedAuthToken returns "" for it), and every task-token endpoint,
+	// issue delegation included, refuses it. Sections that assume a person and
+	// a token gate on this. Fixed for the life of an a2a_context, so reading it
+	// here does not fragment the cached prefix (MUL-5377).
+	A2AInvocation bool
 	// ChatChannelType is the IM platform behind a chat session ("slack",
 	// "feishu", "wecom"); empty for a web/mobile chat. It names the surface in
 	// the brief's copy; what that surface can DELIVER is the separate field

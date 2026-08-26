@@ -2,20 +2,25 @@ package service
 
 import "testing"
 
-func TestTaskExecutionUpdateResultMessageUsesPersistedDaemonReceipt(t *testing.T) {
+func TestTaskExecutionUpdateResultMessageUsesPersistedProviderOutput(t *testing.T) {
 	tests := []struct {
 		name   string
 		result []byte
 		want   string
 	}{
 		{
-			name:   "successful DWS reply text",
-			result: []byte(`{"output":"provider final output","result_message":"任务已转入后台\\n第二行"}`),
+			name:   "ordinary final output without DWS reply",
+			result: []byte(`{"output":"任务已转入后台\\n第二行"}`),
 			want:   "任务已转入后台\n第二行",
 		},
 		{
-			name:   "provider output is not a DWS receipt",
-			result: []byte(`{"output":"provider final output"}`),
+			name:   "legacy DWS receipt does not override provider output",
+			result: []byte(`{"output":"provider final output","result_message":"旧 DWS 工具回执"}`),
+			want:   "provider final output",
+		},
+		{
+			name:   "legacy DWS receipt without provider output",
+			result: []byte(`{"result_message":"旧 DWS 工具回执"}`),
 		},
 		{
 			name:   "invalid result",

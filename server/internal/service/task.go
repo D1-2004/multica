@@ -4332,32 +4332,10 @@ func (s *TaskService) FailTask(
 	sessionRolloutMissing bool,
 	retiredSessionID string,
 ) (*db.AgentTaskQueue, error) {
-	return s.failTaskWithResultMessage(
+	return s.failTask(
 		ctx,
 		taskID,
 		errMsg,
-		"",
-		sessionID,
-		workDir,
-		failureReason,
-		sessionRolloutMissing,
-		retiredSessionID,
-		failTaskOptions{},
-	)
-}
-
-func (s *TaskService) FailTaskWithResultMessage(
-	ctx context.Context,
-	taskID pgtype.UUID,
-	errMsg, resultMessage, sessionID, workDir, failureReason string,
-	sessionRolloutMissing bool,
-	retiredSessionID string,
-) (*db.AgentTaskQueue, error) {
-	return s.failTaskWithResultMessage(
-		ctx,
-		taskID,
-		errMsg,
-		resultMessage,
 		sessionID,
 		workDir,
 		failureReason,
@@ -4387,11 +4365,10 @@ func (s *TaskService) FailA2ATaskForExecutionSafety(
 	taskID pgtype.UUID,
 	errMsg string,
 ) (*db.AgentTaskQueue, error) {
-	return s.failTaskWithResultMessage(
+	return s.failTask(
 		ctx,
 		taskID,
 		errMsg,
-		"",
 		"",
 		"",
 		"agent_error",
@@ -4401,10 +4378,10 @@ func (s *TaskService) FailA2ATaskForExecutionSafety(
 	)
 }
 
-func (s *TaskService) failTaskWithResultMessage(
+func (s *TaskService) failTask(
 	ctx context.Context,
 	taskID pgtype.UUID,
-	errMsg, resultMessage, sessionID, workDir, failureReason string,
+	errMsg, sessionID, workDir, failureReason string,
 	sessionRolloutMissing bool,
 	retiredSessionID string,
 	options failTaskOptions,
@@ -4442,11 +4419,11 @@ func (s *TaskService) failTaskWithResultMessage(
 		retryFireAt      pgtype.Timestamptz
 		retryMaxAttempts pgtype.Int4
 	)
-	if strings.TrimSpace(resultMessage) == "" && retryableReasons[failureReason] {
+	if retryableReasons[failureReason] {
 		if parent, perr := s.Queries.GetAgentTask(ctx, taskID); perr != nil {
 			slog.Warn("fail task auto-retry: load parent failed",
 				"task_id", util.UUIDToString(taskID), "error", perr)
-		} else if retryEligibleForReportedFailure(failureReason, parent, resultMessage) {
+		} else if retryEligible(failureReason, parent) {
 			wantRetry = true
 			// Persist the reason-aware effective budget into the child so the
 			// retry chain self-describes (e.g. provider_network → max_attempts=3),
@@ -4474,17 +4451,13 @@ func (s *TaskService) failTaskWithResultMessage(
 	var retried *db.AgentTaskQueue
 	var completionQueued bool
 	var executionUpdateReady bool
-	var failureResult []byte
-	if strings.TrimSpace(resultMessage) != "" {
-		failureResult, _ = json.Marshal(failedCompletionPayload{ResultMessage: resultMessage})
-	}
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
 		}
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:                    taskID,
-			Result:                failureResult,
+			Result:                nil,
 			Error:                 pgtype.Text{String: errMsg, Valid: true},
 			FailureReason:         pgtype.Text{String: failureReason, Valid: failureReason != ""},
 			SessionID:             pgtype.Text{String: sessionID, Valid: sessionID != ""},
@@ -4605,7 +4578,7 @@ func (s *TaskService) failTaskWithResultMessage(
 			retried = &child
 		} else {
 			if t.ChatSessionID.Valid {
-				ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, t.ID, failureResult)
+				ready, freezeErr := freezeTaskExecutionUpdateResultMessage(ctx, qtx, t.ID, nil)
 				if freezeErr != nil {
 					return fmt.Errorf("freeze task execution update result message: %w", freezeErr)
 				}
@@ -4616,7 +4589,7 @@ func (s *TaskService) failTaskWithResultMessage(
 				qtx,
 				t,
 				"failed",
-				failureResult,
+				nil,
 				errMsg,
 				failureReason,
 			)
@@ -4876,18 +4849,9 @@ func ResumeUnsafeFailure(failureReason, errorText string) bool {
 // so both agree on which failures re-run.
 func retryEligible(failureReason string, t db.AgentTaskQueue) bool {
 	return retryableReasons[failureReason] &&
-		strings.TrimSpace(failedCompletionResultMessage(t.Result)) == "" &&
 		t.Attempt < retryAttemptCeiling(failureReason, t.MaxAttempts) &&
 		!t.AutopilotRunID.Valid &&
 		(t.IssueID.Valid || t.ChatSessionID.Valid)
-}
-
-func retryEligibleForReportedFailure(
-	failureReason string,
-	task db.AgentTaskQueue,
-	resultMessage string,
-) bool {
-	return strings.TrimSpace(resultMessage) == "" && retryEligible(failureReason, task)
 }
 
 // MaybeRetryFailedTask spawns a fresh queued attempt for a recently-failed

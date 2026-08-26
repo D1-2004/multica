@@ -1021,6 +1021,68 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 	}
 }
 
+func TestValidateASBManifestAcceptsAnyNonEmptySupportedProviderSet(t *testing.T) {
+	t.Parallel()
+	base := func(providers []string, capabilities ...string) map[string]any {
+		return map[string]any{
+			"schema_version":   7,
+			"sandbox_backends": []string{"aliyun_fc", "asb"},
+			"providers":        providers,
+			"capabilities_by_backend": map[string][]string{
+				"asb": append([]string{"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability}, capabilities...),
+			},
+			"identity_modes_by_backend": map[string][]string{
+				"asb": {"agent_identity", "spiffe", "buc_wireguard"},
+			},
+			"runner_protocol": string(fcE2BRunnerLaunchRootLog),
+		}
+	}
+	for name, manifest := range map[string]map[string]any{
+		"one provider":   base([]string{"hermes"}),
+		"codex only":     base([]string{"codex"}),
+		"five providers": base([]string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}, DSHTrajectoryCapability),
+		"seven providers": base(
+			[]string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
+			DSHTrajectoryCapability,
+		),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateASBRuntimeManifest(manifest); err != nil {
+				t.Fatalf("runtime manifest rejected: %v", err)
+			}
+			if err := validateASBReleaseManifest(manifest); err != nil {
+				t.Fatalf("release manifest rejected: %v", err)
+			}
+		})
+	}
+	for name, providers := range map[string][]string{
+		"empty":       {},
+		"duplicate":   {"hermes", "hermes"},
+		"wrong order": {"opencode", "hermes"},
+		"uppercase":   {"Hermes"},
+		"whitespace":  {" hermes"},
+		"unsupported": {"unknown"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateASBRuntimeManifest(base(providers)); err == nil {
+				t.Fatal("invalid provider set was accepted")
+			}
+		})
+	}
+}
+
+func TestValidateCloudSandboxArtifactProviderRequiresRuntimeSupport(t *testing.T) {
+	providers := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+	for _, provider := range providers {
+		if err := validateCloudSandboxArtifactProvider(providers, provider); err != nil {
+			t.Fatalf("supported provider %q rejected: %v", provider, err)
+		}
+	}
+	if err := validateCloudSandboxArtifactProvider(providers, "codex"); !errors.Is(err, ErrFCE2BTemplateProviderUnsupported) {
+		t.Fatalf("unsupported runtime provider error = %v", err)
+	}
+}
+
 func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	t.Parallel()
 

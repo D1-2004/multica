@@ -175,10 +175,9 @@ type TaskProgressPayload struct {
 
 // TaskCompletedPayload is sent from daemon to server when a task finishes.
 type TaskCompletedPayload struct {
-	TaskID        string `json:"task_id"`
-	PRURL         string `json:"pr_url,omitempty"`
-	Output        string `json:"output,omitempty"`
-	ResultMessage string `json:"result_message,omitempty"`
+	TaskID string `json:"task_id"`
+	PRURL  string `json:"pr_url,omitempty"`
+	Output string `json:"output,omitempty"`
 }
 
 // ChatQuickActionsPayload supplements one completed chat turn with the

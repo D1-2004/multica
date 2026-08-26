@@ -1713,10 +1713,27 @@ func TestAgentDispatchPromptReplacesDiamondSectionOnLegacyDaemonPath(t *testing.
 	if strings.Contains(instruction, "AUTO MODE POLICY") {
 		t.Fatalf("legacy instruction still carries the Diamond surface section: %q", instruction)
 	}
-	// The resolved DWS locators are the legacy analogue of contextPrompt and
-	// must survive the replacement, or an old-image daemon loses its target.
-	if !strings.Contains(instruction, "dws chat message reply") {
-		t.Fatalf("legacy instruction dropped the DWS workflow block: %q", instruction)
+	if strings.Contains(instruction, "dws chat message reply") {
+		t.Fatalf("legacy instruction still requires the removed DWS reply command: %q", instruction)
+	}
+	if !strings.Contains(instruction, "ordinary final assistant reply") {
+		t.Fatalf("legacy instruction is missing the provider final-output contract: %q", instruction)
+	}
+}
+
+func TestLegacyDWSWorkflowWithCompletionCallbackUsesRouterFinalOutput(t *testing.T) {
+	prompt := buildLegacyDingTalkDWSWorkflowPrompt(DispatchCommand{
+		CompletionCallback: &DispatchCompletionCallback{
+			URL: "/api/v1/dispatch-tasks/router-task-1/execution-result",
+		},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+
+	if strings.Contains(prompt, "dws chat message reply") {
+		t.Fatalf("durable Router delivery still requires the legacy DWS reply command: %q", prompt)
+	}
+	if !strings.Contains(prompt, "ordinary final assistant reply") {
+		t.Fatalf("durable Router delivery is missing the provider final-output instruction: %q", prompt)
 	}
 }
 

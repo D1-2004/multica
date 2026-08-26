@@ -899,6 +899,8 @@ func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *ht
 			writeError(w, http.StatusNotFound, "runtime not found")
 		case errors.Is(err, service.ErrCloudSandboxRuntimeRequired):
 			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, service.ErrFCE2BTemplateProviderUnsupported):
+			writeError(w, http.StatusBadRequest, "ASB artifact does not support the runtime provider")
 		default:
 			slog.Error("ASB runtime artifact update failed",
 				"error", err,

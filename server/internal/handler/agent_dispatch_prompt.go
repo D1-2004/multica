@@ -60,6 +60,11 @@ var runtimeComposedSections = []DispatchPromptRuntimeSection{
 	{ID: "comment_formatting", Source: "builtin", Origin: "runtime_config_sections.go"},
 	{ID: "instruction_precedence", Source: "builtin", Origin: "runtime_config_sections.go"},
 	{ID: "workflow", Source: "builtin", Origin: "runtime_config_sections.go"},
+	// Chat only, and withheld from A2A chat runs, which hold no task token and
+	// cannot delegate. Listed because the index exists so a reader can see every
+	// section that reaches the model, and this one carries the chat/background
+	// boundary the surface policy leans on.
+	{ID: "background_issue_delegation", Source: "builtin", Origin: "runtime_config_sections.go"},
 	{ID: "mentions", Source: "builtin", Origin: "runtime_config_sections.go"},
 	{ID: "attachments", Source: "builtin", Origin: "runtime_config_sections.go"},
 	{ID: "output", Source: "builtin", Origin: "runtime_config_sections.go"},

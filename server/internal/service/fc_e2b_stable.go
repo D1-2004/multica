@@ -1278,6 +1278,7 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
+	targets = stableTargetsForManifest(release.ID, targets, manifest)
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -1421,6 +1422,7 @@ func (s *FCE2BStableService) validateASBRelease(
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
+	targets = stableTargetsForManifest(release.ID, targets, manifest)
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -1786,24 +1788,11 @@ func (s *FCE2BStableService) observeRelease(ctx context.Context, release FCE2BSt
 	var missing int
 	if err := s.Pool.QueryRow(ctx, `
 		SELECT count(*)
-		FROM agent_runtime runtime
-		JOIN fc_e2b_stable_release live_release ON live_release.id = $1
-		LEFT JOIN fc_e2b_stable_release_target target
-		  ON target.release_id = live_release.id
-		 AND target.runtime_id = runtime.id
-		 AND target.sandbox_backend = live_release.sandbox_backend
-		WHERE runtime.runtime_mode = 'cloud'
-		  AND CASE
-		        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
-		        ELSE runtime.metadata->>'sandbox_backend'
-		      END = live_release.sandbox_backend
-		  AND COALESCE(
-		        NULLIF(runtime.metadata->>'artifact_channel', ''),
-		        NULLIF(runtime.metadata->>'template_channel', ''),
-		        'stable'
-		      ) = 'stable'
-		  AND (target.id IS NULL OR target.status <> 'updated')
-	`, release.ID).Scan(&missing); err != nil {
+		FROM fc_e2b_stable_release_target target
+		WHERE target.release_id = $1
+		  AND target.sandbox_backend = $2
+		  AND target.status <> 'updated'
+	`, release.ID, release.SandboxBackend).Scan(&missing); err != nil {
 		return s.releaseLease(ctx, release.ID, token, err)
 	}
 	if missing > 0 {
@@ -1853,14 +1842,8 @@ func (s *FCE2BStableService) finalizeObservation(
 	); err != nil {
 		return false, fmt.Errorf("lock cloud sandbox stable channel for finalization: %w", err)
 	}
-	var missingTargets int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*)
-		FROM fc_e2b_stable_release_target target
-		WHERE target.release_id = $1
-		  AND target.sandbox_backend = $2
-		  AND target.status <> 'updated'
-	`, release.ID, backend).Scan(&missingTargets); err != nil {
+	missingTargets, err := countMissingStableTargetsForRelease(ctx, tx, release, backend)
+	if err != nil {
 		return false, fmt.Errorf("check final stable rollout consistency: %w", err)
 	}
 	if missingTargets > 0 {
@@ -1930,6 +1913,81 @@ func (s *FCE2BStableService) finalizeObservation(
 		return false, err
 	}
 	return true, nil
+}
+
+func countMissingStableTargetsForRelease(
+	ctx context.Context,
+	tx pgx.Tx,
+	release FCE2BStableRelease,
+	backend SandboxBackendKind,
+) (int, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT runtime.id, runtime.workspace_id, runtime.owner_id,
+		       runtime.provider, runtime.runtime_mode, runtime.metadata,
+		       target.status
+		FROM agent_runtime runtime
+		LEFT JOIN fc_e2b_stable_release_target target
+		  ON target.release_id = $1
+		 AND target.runtime_id = runtime.id
+		 AND target.sandbox_backend = $2
+		WHERE runtime.runtime_mode = 'cloud'
+		  AND CASE
+		        WHEN runtime.metadata->>'kind' = 'fc-e2b' THEN 'aliyun_fc'
+		        ELSE runtime.metadata->>'sandbox_backend'
+		      END = $2
+		  AND COALESCE(
+		        NULLIF(runtime.metadata->>'artifact_channel', ''),
+		        NULLIF(runtime.metadata->>'template_channel', ''),
+		        'stable'
+		      ) = 'stable'
+	`, release.ID, backend)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	missing := 0
+	for rows.Next() {
+		var runtime db.AgentRuntime
+		var targetStatus pgtype.Text
+		if err := rows.Scan(
+			&runtime.ID,
+			&runtime.WorkspaceID,
+			&runtime.OwnerID,
+			&runtime.Provider,
+			&runtime.RuntimeMode,
+			&runtime.Metadata,
+			&targetStatus,
+		); err != nil {
+			return 0, err
+		}
+		status := ""
+		if targetStatus.Valid {
+			status = targetStatus.String
+		}
+		if stableRuntimeMissingForRelease(runtime, status, release, backend) {
+			missing++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	return missing, nil
+}
+
+func stableRuntimeMissingForRelease(
+	runtime db.AgentRuntime,
+	targetStatus string,
+	release FCE2BStableRelease,
+	backend SandboxBackendKind,
+) bool {
+	metadata, eligible := stableRuntimeMetadataForBackend(runtime, backend)
+	if !eligible || !containsAllStrings(
+		stringSliceMetadataValue(release.Manifest, "providers"),
+		metadata.Provider,
+	) {
+		return false
+	}
+	return targetStatus != "updated"
 }
 
 func (s *FCE2BStableService) rollbackRelease(ctx context.Context, release FCE2BStableRelease, token uuid.UUID) error {
@@ -2126,6 +2184,7 @@ func (s *FCE2BStableService) reconcileTargets(ctx context.Context, release FCE2B
 	if err != nil {
 		return err
 	}
+	targets = stableTargetsForManifest(release.ID, targets, release.Manifest)
 	for _, target := range targets {
 		batchIndex := target.BatchIndex
 		if batchIndex < release.CurrentBatch {
@@ -2252,10 +2311,14 @@ func (s *FCE2BStableService) removeStaleStableTargets(
 			rows.Close()
 			return fmt.Errorf("scan stable release target for strict validation: %w", err)
 		}
-		if _, eligible := stableRuntimeMetadataForBackend(
+		metadata, eligible := stableRuntimeMetadataForBackend(
 			runtime,
 			SandboxBackendKind(release.SandboxBackend),
-		); !eligible {
+		)
+		if !eligible || !containsAllStrings(
+			stringSliceMetadataValue(release.Manifest, "providers"),
+			metadata.Provider,
+		) {
 			invalidRuntimeIDs = append(invalidRuntimeIDs, runtime.ID)
 		}
 	}
@@ -2349,6 +2412,26 @@ func (s *FCE2BStableService) listStableRuntimes(
 	}
 	assignStableBatches(releaseID, targets)
 	return targets, nil
+}
+
+func stableTargetsForManifest(
+	releaseID string,
+	targets []stableRuntimeTarget,
+	manifest map[string]any,
+) []stableRuntimeTarget {
+	providers := stringSliceMetadataValue(manifest, "providers")
+	allowed := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		allowed[strings.ToLower(strings.TrimSpace(provider))] = struct{}{}
+	}
+	filtered := make([]stableRuntimeTarget, 0, len(targets))
+	for _, target := range targets {
+		if _, ok := allowed[strings.ToLower(strings.TrimSpace(target.Provider))]; ok {
+			filtered = append(filtered, target)
+		}
+	}
+	assignStableBatches(releaseID, filtered)
+	return filtered
 }
 
 func stableRuntimeOwnedByDeveloper(ownerID pgtype.UUID, developerUserIDs map[string]struct{}) bool {

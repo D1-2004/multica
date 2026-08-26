@@ -1106,12 +1106,22 @@ func TestSessionContinuityNoticeMatchesSurface(t *testing.T) {
 			wantMentions: "not readable from anywhere",
 		},
 		{
-			// Multica ships no history reader for Feishu, so despite being a
-			// channel it is in the same position as a web chat.
-			name:         "feishu has no history reader",
+			// Multica ships no history reader for Feishu — but the room does,
+			// and the people in it still see every word. The notice may say
+			// Multica cannot fetch it; it may NOT say nobody can, because the
+			// same per-turn message tells this run to try its own platform
+			// tooling. Asserting the Multica-scoped phrasing is what stops a
+			// future edit from collapsing this back onto the web-chat text.
+			name:         "feishu conversation survives in the room",
 			task:         Task{ChatSessionID: "chat-1", ChatChannelType: execenv.ChannelTypeFeishu},
 			tellUser:     true,
-			wantMentions: "not readable from anywhere",
+			wantMentions: "Multica ships no history reader for this platform",
+		},
+		{
+			name:         "dingtalk conversation survives in the room",
+			task:         Task{ChatSessionID: "chat-1", ChatChannelType: execenv.ChannelTypeDingTalk},
+			tellUser:     true,
+			wantMentions: "still in the room",
 		},
 	}
 
@@ -1135,6 +1145,26 @@ func TestSessionContinuityNoticeMatchesSurface(t *testing.T) {
 				t.Errorf("recoverable surface must name the real loss:\n%s", notice)
 			}
 		})
+	}
+
+	// "not readable from anywhere" is a claim about the world, and it is only
+	// true where there is no room: a channel-backed chat always has one. This
+	// is the guard for the contradiction the split exists to remove — the
+	// per-turn chat prompt tells every channel run it may read the conversation
+	// back with its own tooling.
+	for _, channelType := range []string{
+		execenv.ChannelTypeFeishu,
+		execenv.ChannelTypeWecom,
+		execenv.ChannelTypeDingTalk,
+		execenv.ChannelTypeSlack,
+	} {
+		notice := sessionContinuityNoticeFor(Task{ChatSessionID: "chat-1", ChatChannelType: channelType})
+		if strings.Contains(notice, "not readable from anywhere") {
+			t.Errorf("channel %q claims the conversation is unreadable, but it is in the room:\n%s", channelType, notice)
+		}
+	}
+	if notice := sessionContinuityNoticeFor(Task{ChatSessionID: "chat-1"}); !strings.Contains(notice, "not readable from anywhere") {
+		t.Errorf("web chat has no room and no reader; the absolute claim is true there and must stay:\n%s", notice)
 	}
 
 	// The notice only renders when the resume actually failed.
@@ -1853,10 +1883,9 @@ func TestMergeUsage(t *testing.T) {
 	}
 }
 
-func TestMergeResumeRetryResultPreservesLastSuccessfulDWSReply(t *testing.T) {
+func TestMergeResumeRetryResultMergesUsage(t *testing.T) {
 	first := agent.Result{
-		Status:        "failed",
-		ResultMessage: "首轮已发送回复",
+		Status: "failed",
 		Usage: map[string]agent.TokenUsage{
 			"m1": {InputTokens: 5},
 		},
@@ -1869,34 +1898,8 @@ func TestMergeResumeRetryResultPreservesLastSuccessfulDWSReply(t *testing.T) {
 		},
 	}
 	merged := mergeResumeRetryResult(first, retryWithoutReply)
-	if merged.ResultMessage != "首轮已发送回复" {
-		t.Fatalf("result message = %q", merged.ResultMessage)
-	}
 	if merged.Usage["m1"].InputTokens != 15 {
 		t.Fatalf("usage = %+v", merged.Usage)
-	}
-
-	retryWithReply := agent.Result{
-		Status:        "completed",
-		ResultMessage: "重试后新回复",
-	}
-	merged = mergeResumeRetryResult(first, retryWithReply)
-	if merged.ResultMessage != "重试后新回复" {
-		t.Fatalf("newer retry result message = %q", merged.ResultMessage)
-	}
-}
-
-func TestTaskResultWithAgentReplyPreservesBlockedReplyButNotCancelled(t *testing.T) {
-	agentResult := agent.Result{ResultMessage: "已发送给用户的失败说明"}
-
-	blocked := taskResultWithAgentReply(agentResult, TaskResult{Status: "blocked"})
-	if blocked.ResultMessage != "已发送给用户的失败说明" {
-		t.Fatalf("blocked result message = %q", blocked.ResultMessage)
-	}
-
-	cancelled := taskResultWithAgentReply(agentResult, TaskResult{Status: "cancelled"})
-	if cancelled.ResultMessage != "" {
-		t.Fatalf("cancelled result message = %q", cancelled.ResultMessage)
 	}
 }
 
@@ -4072,12 +4075,11 @@ func TestReportTaskResult_CompletedHitsCompleteEndpoint(t *testing.T) {
 
 	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default()}
 	d.reportTaskResult(context.Background(), "task-1", TaskResult{
-		Status:        "completed",
-		Comment:       "all good",
-		ResultMessage: "最终回复正文",
-		BranchName:    "agent/foo",
-		SessionID:     "ses-1",
-		WorkDir:       "/tmp/foo",
+		Status:     "completed",
+		Comment:    "all good",
+		BranchName: "agent/foo",
+		SessionID:  "ses-1",
+		WorkDir:    "/tmp/foo",
 	}, slog.Default())
 
 	rec.mu.Lock()
@@ -4088,8 +4090,8 @@ func TestReportTaskResult_CompletedHitsCompleteEndpoint(t *testing.T) {
 	if rec.payload["output"] != "all good" {
 		t.Errorf("output: got %v", rec.payload["output"])
 	}
-	if rec.payload["result_message"] != "最终回复正文" {
-		t.Errorf("result_message: got %v", rec.payload["result_message"])
+	if _, ok := rec.payload["result_message"]; ok {
+		t.Errorf("legacy result_message was sent: %v", rec.payload)
 	}
 	if rec.payload["branch_name"] != "agent/foo" {
 		t.Errorf("branch_name: got %v", rec.payload["branch_name"])
@@ -4317,9 +4319,8 @@ func TestReportTaskResult_TransientCompleteExhaustedDoesNotFallback(t *testing.T
 	pending := loadPendingReportStore("", nil)
 	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default(), pendingReports: pending}
 	d.reportTaskResult(context.Background(), "task-stuck", TaskResult{
-		Status:        "completed",
-		Comment:       "agent execution summary",
-		ResultMessage: "最终回复正文",
+		Status:  "completed",
+		Comment: "provider final output",
 	}, slog.Default())
 
 	if got := completeCalls.Load(); got != int32(len(defaultTerminalRetrySchedule)+1) {
@@ -4329,8 +4330,8 @@ func TestReportTaskResult_TransientCompleteExhaustedDoesNotFallback(t *testing.T
 		t.Fatalf("exhausted transient retries must NOT fall back to /fail; got %d /fail calls", got)
 	}
 	queued := pending.Snapshot()
-	if len(queued) != 1 || queued[0].ResultMessage != "最终回复正文" {
-		t.Fatalf("pending report lost result message: %+v", queued)
+	if len(queued) != 1 || queued[0].Output != "provider final output" {
+		t.Fatalf("pending report lost provider output: %+v", queued)
 	}
 }
 
@@ -4361,9 +4362,8 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 
 	d := &Daemon{client: NewClient(srv.URL), logger: slog.Default()}
 	d.reportTaskResult(context.Background(), "task-bad", TaskResult{
-		Status:        "completed",
-		Comment:       "ok",
-		ResultMessage: "已向用户回复完成",
+		Status:  "completed",
+		Comment: "ok",
 	}, slog.Default())
 
 	if got := completeCalls.Load(); got != 1 {
@@ -4372,8 +4372,11 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 	if got := failCalls.Load(); got != 1 {
 		t.Fatalf("permanent /complete should fall back to /fail exactly once, got %d", got)
 	}
-	if failedBody["result_message"] != "已向用户回复完成" {
-		t.Fatalf("fallback fail result_message = %#v", failedBody["result_message"])
+	if failedBody["error"] == "" {
+		t.Fatalf("fallback fail lost explicit error contract: %#v", failedBody)
+	}
+	if _, ok := failedBody["result_message"]; ok {
+		t.Fatalf("fallback fail retained legacy result_message: %#v", failedBody)
 	}
 }
 

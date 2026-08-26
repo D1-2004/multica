@@ -102,7 +102,7 @@ func TestClient_VersionOmittedWhenUnset(t *testing.T) {
 	}
 }
 
-func TestClientCompleteTaskIncludesResultMessage(t *testing.T) {
+func TestClientCompleteTaskUsesOutputWithoutLegacyResultMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/daemon/tasks/task-1/complete" {
 			t.Fatalf("path = %q", r.URL.Path)
@@ -111,11 +111,11 @@ func TestClientCompleteTaskIncludesResultMessage(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["output"] != "agent execution summary" {
+		if body["output"] != "provider final output" {
 			t.Fatalf("output = %#v", body["output"])
 		}
-		if body["result_message"] != "最终回复正文" {
-			t.Fatalf("result_message = %#v", body["result_message"])
+		if _, ok := body["result_message"]; ok {
+			t.Fatalf("legacy result_message was sent: %#v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
@@ -126,8 +126,7 @@ func TestClientCompleteTaskIncludesResultMessage(t *testing.T) {
 	if err := c.CompleteTask(
 		context.Background(),
 		"task-1",
-		"agent execution summary",
-		"最终回复正文",
+		"provider final output",
 		"",
 		"",
 		"",
@@ -138,8 +137,8 @@ func TestClientCompleteTaskIncludesResultMessage(t *testing.T) {
 	}
 }
 
-func TestClientFailTaskWithResultMessageIncludesResultMessage(t *testing.T) {
-	requests := make(chan map[string]any, 2)
+func TestClientFailTaskUsesExplicitErrorWithoutResultMessage(t *testing.T) {
+	requests := make(chan map[string]any, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -152,11 +151,10 @@ func TestClientFailTaskWithResultMessageIncludesResultMessage(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL)
-	if err := c.FailTaskWithResultMessage(
+	if err := c.FailTask(
 		context.Background(),
 		"task-1",
 		"runtime timed out",
-		"已向用户说明任务超时",
 		"",
 		"",
 		"timeout",
@@ -165,26 +163,12 @@ func TestClientFailTaskWithResultMessageIncludesResultMessage(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	withResultMessage := <-requests
-	if withResultMessage["result_message"] != "已向用户说明任务超时" {
-		t.Fatalf("result_message = %#v", withResultMessage["result_message"])
+	payload := <-requests
+	if payload["error"] != "runtime timed out" || payload["failure_reason"] != "timeout" {
+		t.Fatalf("failure payload = %#v", payload)
 	}
-
-	if err := c.FailTask(
-		context.Background(),
-		"task-2",
-		"runtime timed out",
-		"",
-		"",
-		"timeout",
-		false,
-		"",
-	); err != nil {
-		t.Fatal(err)
-	}
-	legacy := <-requests
-	if _, ok := legacy["result_message"]; ok {
-		t.Fatalf("legacy FailTask unexpectedly sent result_message: %#v", legacy)
+	if _, ok := payload["result_message"]; ok {
+		t.Fatalf("failure payload unexpectedly sent result_message: %#v", payload)
 	}
 }
 
@@ -540,7 +524,7 @@ func TestTerminalReportsCarryRetiredSessionID(t *testing.T) {
 			name:     "complete",
 			endpoint: "/api/daemon/tasks/task-1/complete",
 			call: func(c *Client) error {
-				return c.CompleteTask(context.Background(), "task-1", "done", "", "", "", "/tmp/wd", false, "POISONED-S")
+				return c.CompleteTask(context.Background(), "task-1", "done", "", "", "/tmp/wd", false, "POISONED-S")
 			},
 		},
 		{
@@ -583,7 +567,7 @@ func TestTerminalReportsOmitEmptyRetiredSessionID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := NewClient(srv.URL).CompleteTask(context.Background(), "task-1", "done", "", "", "sess-1", "/tmp/wd", false, ""); err != nil {
+	if err := NewClient(srv.URL).CompleteTask(context.Background(), "task-1", "done", "", "sess-1", "/tmp/wd", false, ""); err != nil {
 		t.Fatalf("CompleteTask: %v", err)
 	}
 	if _, present := body["retired_session_id"]; present {

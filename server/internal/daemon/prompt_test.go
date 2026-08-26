@@ -635,7 +635,7 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 			ChatHistory:   "User:\n1+1等于多少\n\nAssistant:\n1+1等于2。",
 			ChatMessage:   "+2呢",
 		})
-		for _, want := range []string{"Recovered conversation history from earlier turns", "1+1等于2。", "User message:\n+2呢"} {
+		for _, want := range []string{"<interaction-record>", "# What this is", "1+1等于2。", "User message:\n+2呢"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("cold-start chat prompt missing %q\n--- output ---\n%s", want, out)
 			}
@@ -656,6 +656,145 @@ func TestBuildChatPromptChannelAwareness(t *testing.T) {
 			t.Fatalf("warm resumed prompt lost the current message:\n%s", out)
 		}
 	})
+}
+
+// TestBuildChatPromptPartialRecordOnChannelsMulticaCannotRead pins what the run
+// is told about the record it was handed on Feishu / WeCom / DingTalk.
+//
+// Two claims used to be wrong at once. The prompt said "work from the context
+// already provided", describing the Multica slice as if it were the
+// conversation — in a group room it is only the messages addressed to the agent
+// plus its own replies. And it said there is "no command that can fetch more",
+// which is true of Multica and false of the world: an agent deployed as a native
+// account on the platform routinely carries its own reader. Together they taught
+// a run to answer confidently off a partial record and to read an absent message
+// as nothing having been said.
+//
+// The replacement splits by where each claim belongs. What the attached record
+// is and is not now travels inside the record's own delimiters, next to the
+// markers it describes; what is true of the recording whether or not a record is
+// attached stays in the prose. Each is pinned to the condition that makes it
+// true — an unconditional version of any one of them is a lie on some real turn.
+// Slack is excluded throughout: it has a Multica reader and gets the commands.
+func TestBuildChatPromptPartialRecordOnChannelsMulticaCannotRead(t *testing.T) {
+	t.Parallel()
+
+	const (
+		openTag   = "<interaction-record>"
+		closeTag  = "</interaction-record>"
+		notWhole  = "it is not the whole of your context"
+		clipNote  = "Where `…[truncated]…` appears, the middle of that message was removed"
+		dropNote  = "older turns are missing from the record entirely"
+		goRead    = "go and read the conversation instead of inferring it"
+		sliceLine = "only the slice Multica recorded"
+		others    = "Messages other people exchanged"
+		notSilent = "never as proof nothing was said"
+		reader    = "Multica ships no history reader"
+		fallback  = "ask the user rather than guessing"
+	)
+
+	// A group room on a cold claim: the record is attached and introduces
+	// itself, and the recording-wide caveats are in the prose around it.
+	for _, channelType := range []string{
+		execenv.ChannelTypeFeishu,
+		execenv.ChannelTypeWecom,
+		execenv.ChannelTypeDingTalk,
+	} {
+		out := buildChatPrompt(Task{
+			ChatSessionID:   "sess-1",
+			ChatChannelType: channelType,
+			ChatType:        execenv.ChatTypeGroup,
+			ChatHistory:     "User:\n上次说的那个\n\nAssistant:\n收到",
+			ChatMessage:     "刚才群里说到哪了",
+		})
+		for _, want := range []string{
+			openTag, closeTag, notWhole, clipNote, dropNote, goRead,
+			others, notSilent, reader, "your own", fallback,
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("channel=%s group+record: prompt missing %q\n--- output ---\n%s", channelType, want, out)
+			}
+		}
+		// The record introduces itself, so the prose must not say it again.
+		if strings.Contains(out, sliceLine) {
+			t.Errorf("channel=%s: the record's own framing is duplicated in the prose", channelType)
+		}
+		if strings.Contains(out, "there is no command that can fetch more") {
+			t.Errorf("channel=%s: prompt still asserts the conversation is unfetchable", channelType)
+		}
+	}
+
+	// A 1:1 room. Every message was addressed to the agent, so the record IS the
+	// conversation — and the audience line in the same message already said the
+	// room is direct. Warning about other people's messages here sends the run
+	// after history it already holds in full.
+	direct := buildChatPrompt(Task{
+		ChatSessionID:   "sess-1",
+		ChatChannelType: execenv.ChannelTypeDingTalk,
+		ChatType:        execenv.ChatTypeP2P,
+		ChatHistory:     "User:\nhi",
+		ChatMessage:     "接着上次那个",
+	})
+	for _, banned := range []string{others, notSilent} {
+		if strings.Contains(direct, banned) {
+			t.Errorf("direct room told its record is missing other people's messages: %q\n%s", banned, direct)
+		}
+	}
+	for _, want := range []string{openTag, notWhole, reader, fallback} {
+		if !strings.Contains(direct, want) {
+			t.Errorf("direct room lost %q\n%s", want, direct)
+		}
+	}
+
+	// A warm resume carries no record at all. Nothing then introduces the
+	// partial view, so the prose has to — and it must not describe a document
+	// that was never sent.
+	warm := buildChatPrompt(Task{
+		ChatSessionID:   "sess-1",
+		ChatChannelType: execenv.ChannelTypeDingTalk,
+		ChatType:        execenv.ChatTypeGroup,
+		PriorSessionID:  "provider-session-1",
+		ChatHistory:     "User:\nnot sent on a warm resume",
+		ChatMessage:     "继续",
+	})
+	if strings.Contains(warm, openTag) {
+		t.Errorf("warm resume rendered a record block with no record in it:\n%s", warm)
+	}
+	for _, want := range []string{sliceLine, others, reader} {
+		if !strings.Contains(warm, want) {
+			t.Errorf("warm resume lost %q — the record is still only what Multica saw\n%s", want, warm)
+		}
+	}
+
+	// Slack has a Multica reader, so it keeps the commands and must NOT be told
+	// to fall back to its own tooling.
+	slack := buildChatPrompt(Task{ChatSessionID: "s", ChatChannelType: execenv.ChannelTypeSlack, ChatMessage: "hi"})
+	if strings.Contains(slack, reader) {
+		t.Errorf("slack has a reader and must not be told otherwise:\n%s", slack)
+	}
+}
+
+// The transcript is not in Multica; the work this chat delegated is. The ban had
+// to be narrowed when the chat brief started requiring a `multica issue list`
+// lookup as the first step of every delegation — an absolute "never look in
+// Multica issues" would have the run skip it and open a duplicate Issue.
+func TestBuildChatPromptBansReconstructionNotIssueLookup(t *testing.T) {
+	t.Parallel()
+
+	out := buildChatPrompt(Task{
+		ChatSessionID:   "sess-1",
+		ChatChannelType: execenv.ChannelTypeDingTalk,
+		ChatMessage:     "别再发了",
+	})
+	if !strings.Contains(out, "never reconstruct this conversation from Multica issues or comments") {
+		t.Errorf("the transcript ban must survive:\n%s", out)
+	}
+	if !strings.Contains(out, "Issues this chat delegated are a separate thing") {
+		t.Errorf("delegated work must stay lookup-able, or the delegation policy's first step is forbidden:\n%s", out)
+	}
+	if strings.Contains(out, "never look in Multica issues or comments for it") {
+		t.Errorf("the old absolute is back and forbids the delegation lookup:\n%s", out)
+	}
 }
 
 // TestBuildChatPromptNoNarrationOnEveryChannel pins the THIRD axis of the chat
@@ -772,7 +911,7 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 			channelType: execenv.ChannelTypeSlack,
 			wantUpload:  false,
 			wantHistory: true,
-			wantPhrases: []string{"Slack", "delivered to Slack as text", "You cannot attach a file to it"},
+			wantPhrases: []string{"Slack", "reply reaches Slack as text", "will not carry a file here"},
 		},
 		{
 			name:        "feishu: no upload, no history",
@@ -782,8 +921,10 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 			wantPhrases: []string{
 				"Feishu/Lark",
 				"no history reader for Feishu/Lark",
-				"delivered to Feishu/Lark as text",
-				"You cannot attach a file to it",
+				"reply reaches Feishu/Lark as text",
+				"will not carry a file here",
+				// The route that replaces the old flat prohibition.
+				"grant the reader access",
 			},
 		},
 		{
@@ -817,8 +958,8 @@ func TestBuildChatPromptTwoLayerChannelPolicy(t *testing.T) {
 			wantUpload:    false,
 			wantHistory:   false,
 			wantPhrases: []string{
-				"delivered to WeCom as text",
-				"You cannot attach a file to it",
+				"reply reaches WeCom as text",
+				"will not carry a file here",
 			},
 		},
 	}
@@ -1898,7 +2039,7 @@ func TestChatChannelDeliversFilesDefaultsOffAcrossVersions(t *testing.T) {
 	if strings.Contains(out, "run `multica attachment upload <local-path>`") {
 		t.Errorf("an old server's WeCom claim was told to upload files\n--- output ---\n%s", out)
 	}
-	if !strings.Contains(out, "You cannot attach a file to it") {
+	if !strings.Contains(out, "will not carry a file here") {
 		t.Errorf("an old server's WeCom claim was not told the conversation is text-only\n--- output ---\n%s", out)
 	}
 

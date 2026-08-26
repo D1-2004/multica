@@ -326,6 +326,7 @@ func TestDelegatingToIssuesSkillCoversBackgroundTransferContract(t *testing.T) {
 		"multica issue create",
 		"completion_callback",
 		"agent_identity_context_token",
+		"dws chat message reply",
 	} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("delegating-to-issues skill teaches unsafe or ordinary issue path %q", forbidden)

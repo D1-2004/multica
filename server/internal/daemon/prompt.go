@@ -18,7 +18,14 @@ func sessionContinuityNoticeFor(task Task) string {
 	if task.ChatChannelType == execenv.ChannelTypeSlack {
 		return execenv.SessionContinuityNoticeChannelHistory
 	}
-	// Web chat (no channel type) and every channel Multica cannot read back.
+	if task.ChatChannelType != "" {
+		// A channel Multica cannot read back. The room still holds every word,
+		// so the web-chat notice — which states outright that the history is
+		// readable from nowhere — is false here, and directly contradicts the
+		// channel block the same per-turn message carries.
+		return execenv.SessionContinuityNoticeChannelNoReader
+	}
+	// Web chat: no room, no channel, no reader. Nothing can fetch it.
 	return execenv.SessionContinuityNoticeUnrecoverable
 }
 
@@ -27,7 +34,32 @@ func chatHistoryRecoveryBlock(history string) string {
 	if history == "" {
 		return ""
 	}
-	return "Recovered conversation history from earlier turns. Use it as context for the latest user message; do not restate it unless the user asks:\n" + history + "\n\n"
+	// Delimited and headed rather than introduced by a sentence. The old copy
+	// ("Recovered conversation history from earlier turns…") had no boundary at
+	// its end, so a run could not tell where the record stopped and its own
+	// instructions resumed, and nothing in it said the record was partial — a
+	// run read a bounded, clipped window as the conversation and answered "you
+	// never told me" about something the user did tell it.
+	//
+	// The two losses this block can carry are named here, next to the markers
+	// that represent them, so a marker encountered mid-record is already
+	// explained rather than being mistaken for content.
+	//
+	// Stated as what a marker MEANS, never as what the record always is. The
+	// content is produced server-side (handler.boundedChatHistoryTranscript) and
+	// this frame is rendered by the daemon inside a Runtime image released on
+	// its own schedule, so the two versions routinely differ. "Every message is
+	// clipped" would be a claim this side cannot check, and false against any
+	// server that does not clip; keying the wording to the markers is true under
+	// every pairing.
+	return "<interaction-record>\n" +
+		"# What this is\n" +
+		"The messages exchanged with you earlier in this conversation, as Multica recorded them. Use it as context for the latest user message; do not restate it unless the user asks.\n\n" +
+		"# What it is not\n" +
+		"It is not the conversation, and it is not the whole of your context. Where `…[truncated]…` appears, the middle of that message was removed; a leading `[older turns were trimmed from this transcript]` means older turns are missing from the record entirely. Treat either marker as context you do not have, never as proof of what was said — when a decision turns on what is behind one, go and read the conversation instead of inferring it.\n\n" +
+		"# Record\n" +
+		history + "\n" +
+		"</interaction-record>\n\n"
 }
 
 // backendResumeRecoveryContext returns the context the backend should inject if
@@ -454,7 +486,8 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	// brief. The compact anchors here preserve the non-inferable boundaries: a
 	// group reply is not private to its sender and people not otherwise present
 	// in the run context may read it. Unknown never defaults to private.
-	switch execenv.AudienceOf(task.ChatChannelType, task.ChatType) {
+	audience := execenv.AudienceOf(task.ChatChannelType, task.ChatType)
+	switch audience {
 	case execenv.ChatAudienceGroup:
 		b.WriteString("Audience: group room; not private; unseen members may read replies.\n\n")
 	case execenv.ChatAudienceUnknown:
@@ -462,6 +495,11 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	default:
 		b.WriteString("Audience: direct room.\n\n")
 	}
+	// Whether THIS turn actually carries the database transcript. The channel
+	// block above describes that document, so it has to know whether one is
+	// being sent; the block that writes it is further down and unchanged.
+	carriesTranscript := (task.PriorSessionID == "" || task.PriorSessionResumeUnavailable) &&
+		chatHistoryRecoveryBlock(task.ChatHistory) != ""
 	// Channel awareness (MUL-3871). When the session is backed by an IM channel,
 	// the agent must KNOW it is operating inside that channel — otherwise an ask
 	// like "what did you just talk about" sends it to read Multica instead of the
@@ -484,7 +522,13 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	// silently dropped it for Feishu/Lark (GH #6006).
 	if task.ChatChannelType != "" {
 		platform := channelDisplayName(task.ChatChannelType)
-		fmt.Fprintf(&b, "You are operating inside a %s conversation — not the Multica web app. This conversation and its history live in %s, NOT in Multica; never look in Multica issues or comments for it.\n", platform, platform)
+		// "Never look in Multica issues" was an absolute, and since the chat
+		// brief started carrying `## Background Issue Delegation` it collides
+		// with that section's first mandatory step — finding the Issue this
+		// chat already delegated to, by metadata, so a correction continues it
+		// instead of opening a duplicate. Scope the ban to what it means: the
+		// TRANSCRIPT is not in Multica. Work this chat handed off still is.
+		fmt.Fprintf(&b, "You are a participant in this %s conversation, not a user of the Multica web app. The conversation and its history live in %s, NOT in Multica — never reconstruct this conversation from Multica issues or comments. Issues this chat delegated are a separate thing and remain yours to look up.\n", platform, platform)
 		if task.ChatChannelType == execenv.ChannelTypeSlack {
 			b.WriteString("The message below may be only what triggered you. Read the conversation with:\n")
 			b.WriteString("- `multica chat history --output json` — the channel overview: recent top-level messages, each thread tagged with a `thread_id` and `reply_count`. It does NOT expand thread contents.\n")
@@ -499,7 +543,44 @@ func buildChatPromptForProvider(task Task, provider string) string {
 			// prefixed with "我先读取…"). Tell the agent to keep them out of its answer.
 			b.WriteString("Do these reads SILENTLY as an internal step — they are how you gather context, not part of your answer.\n")
 		} else {
-			fmt.Fprintf(&b, "Work from the context already provided to you below — Multica has no history reader for %s, so there is no command that can fetch more of this conversation. If you genuinely need earlier context that is not here, ask the user for it rather than guessing.\n", platform)
+			// What the run is handed is NOT the conversation — it is the slice
+			// of it that reached Multica: the messages addressed to this agent
+			// and its own replies. The old copy ("work from the context already
+			// provided") described that slice as the whole conversation, so a
+			// run reasoned confidently off a partial record and read an absent
+			// message as nothing having been said.
+			//
+			// Three claims, each with its own precondition, because stating one
+			// where it does not hold is how this text starts lying:
+			//
+			//   - "bounded and trimmed at the start" is a property of
+			//     handler.boundedChatHistoryTranscript, and that transcript is
+			//     only written on a cold/recovered cloud claim. A warm resume or
+			//     a local daemon carries no such document; telling those runs
+			//     their memory is trimmed makes them distrust an accurate record.
+			//   - "other people's messages are not in it" is true of a room with
+			//     other people in it. In a p2p room every message was addressed
+			//     to the agent, so the record IS the conversation — and the
+			//     audience line a few lines above already told this run the room
+			//     is direct.
+			//   - the platform-tooling route holds everywhere Multica has no
+			//     reader. "Multica cannot fetch it" is not "it cannot be
+			//     fetched": an agent deployed as a native account on the
+			//     platform routinely carries its own tooling. Naming a specific
+			//     tool would bind a platform-agnostic file to one deployment's
+			//     skill set, so the copy points at the run's own tools without
+			//     naming them.
+			// When a record is attached it introduces itself (see
+			// chatHistoryRecoveryBlock), and repeating that here was the same
+			// claim at full price twice. Without one, nothing else says the
+			// run is working from a partial view, so one line has to.
+			if !carriesTranscript {
+				b.WriteString("What you can see of this conversation is only the slice Multica recorded of it.\n")
+			}
+			if audience != execenv.ChatAudienceDirect {
+				b.WriteString("Messages other people exchanged, and anything said before you were brought in, never entered the Multica record at all: treat a gap as missing context, never as proof nothing was said.\n")
+			}
+			fmt.Fprintf(&b, "Multica ships no history reader for %s, so when you need more, read it with your own %s tools or skills if you have them, and otherwise ask the user rather than guessing.\n", platform, platform)
 		}
 		// Scoped to process, not results — a completion confirmation IS the deliverable.
 		fmt.Fprintf(&b, "Reply to %s with the final outcome only. Do NOT narrate planned or in-progress steps (\"我先读取…\"); completed actions are part of the outcome.\n", platform)
@@ -619,7 +700,17 @@ func buildChatPromptForProvider(task Task, provider string) string {
 	case execenv.ChannelCarriesFiles(task.ChatChannelType, task.ChatChannelDeliversFiles):
 		fmt.Fprintf(&b, "\nTo include a file or image you produced in your reply, run `multica attachment upload <local-path>`. It binds to your reply and Multica sends it into the %s conversation as a separate message right after your text — there is no way to place it inline, so write your reply to read correctly with the file arriving after it.\n", channelDisplayName(task.ChatChannelType))
 	default:
-		fmt.Fprintf(&b, "\nThis reply is delivered to %s as text. You cannot attach a file to it: `multica attachment upload` binds to a Multica chat reply, which this is not. If you produce a file, describe it in words — never write its local path as a link, and never upload it and then write as though it arrived.\n", channelDisplayName(task.ChatChannelType))
+		// "You cannot attach a file to it" was an absolute, and it was false.
+		// What is true is narrower: MULTICA'S attachment path does not reach
+		// this conversation. An agent deployed as a native account on the
+		// platform usually can deliver a file — upload it with its own tooling
+		// and grant the reader access — and the old copy told it not to try,
+		// so a requested file came back as a paragraph of prose instead.
+		//
+		// The two guards survive verbatim, because they are what the sentence
+		// is really for: a local path is not a deliverable, and an upload that
+		// has not actually happened is not a delivery.
+		fmt.Fprintf(&b, "\nYour reply reaches %s as text. `multica attachment upload` will not carry a file here — it binds to a Multica chat reply, and this is not one. That is a limit of Multica's attachment path, not of this conversation: if your own %s tooling can upload a file and grant the reader access, that is how a file gets delivered here. Without such a tool, describe the file in words. Either way, never write a local path as a link, and never write as though a file arrived until an upload has actually put it somewhere the reader can open.\n", channelDisplayName(task.ChatChannelType), channelDisplayName(task.ChatChannelType))
 	}
 	return b.String()
 }

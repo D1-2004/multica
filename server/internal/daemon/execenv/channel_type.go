@@ -16,6 +16,12 @@ const (
 	ChannelTypeSlack  = "slack"
 	ChannelTypeFeishu = "feishu"
 	ChannelTypeWecom  = "wecom"
+	// Mirrors dingtalk.channelTypeDingTalk, the unexported discriminator the
+	// DingTalk integration writes on every channel row — same arrangement as
+	// slack.TypeSlack and channel.TypeFeishu above. Without it here the prompt
+	// copy fell through ChannelDisplayName's default and named the platform by
+	// its raw lowercase wire value.
+	ChannelTypeDingTalk = "dingtalk"
 )
 
 // Room-shape discriminators, mirroring channel_chat_session_binding.chat_type
@@ -108,6 +114,8 @@ func ChannelDisplayName(channelType string) string {
 		return "Feishu/Lark"
 	case ChannelTypeWecom:
 		return "WeCom"
+	case ChannelTypeDingTalk:
+		return "DingTalk"
 	default:
 		return channelType
 	}
