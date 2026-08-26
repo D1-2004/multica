@@ -3461,8 +3461,35 @@ const chatHistoryOmittedMarker = "[older turns were trimmed from this transcript
 // it is about to print.
 const chatHistoryClipMarker = "\n…[truncated]…\n"
 
+// chatHistoryMessageRunes is the per-message cap. Owner decision (2026-08-26):
+// every message is clipped to this, not only the one that would overrun the
+// byte budget.
+//
+// The earlier rule — clip nothing while the budget has room — was built on the
+// premise that this transcript is the run's only memory, so discarding anything
+// discards it permanently. That premise is what changed: the block now declares
+// itself an interaction record rather than the context, and the per-turn prompt
+// routes a run that needs more to the platform conversation, which still holds
+// every word. Under that framing a 3000-character paste costs the whole window
+// for no gain, and the head and tail of it identify the message perfectly well.
+const chatHistoryMessageRunes = 200
+
+// clipChatHistoryMessageToRunes applies the per-message cap. Rune-based because
+// the cap is stated in characters and these transcripts are largely CJK, where
+// a byte count is three times the number a reader means.
+func clipChatHistoryMessageToRunes(content string, maxRunes int) string {
+	if utf8.RuneCountInString(content) <= maxRunes {
+		return content
+	}
+	head := maxRunes * 2 / 3
+	tail := maxRunes - head
+	runes := []rune(content)
+	return string(runes[:head]) + chatHistoryClipMarker + string(runes[len(runes)-tail:])
+}
+
 // clipChatHistoryMessage bounds ONE message to maxBytes so a single long paste
-// cannot spend the whole transcript budget on itself.
+// cannot spend the whole transcript budget on itself. It is the backstop below
+// the per-message rune cap, not the primary rule.
 //
 // Head and tail are both kept: the opening states what the message is about and
 // the closing usually carries the actual ask, so a head-only clip drops the
@@ -3526,13 +3553,17 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 // boundedChatHistoryTranscript renders the recoverable prefix of a chat session
 // for a claim that cannot resume a provider-local session.
 //
-// This is not a convenience copy. makeChatHistoryAuthoritative clears
-// PriorSessionID whenever this returns anything, so on a cloud chat the string
-// below becomes the run's ONLY memory of those turns, on this turn and every
-// later one. Content dropped here is recoverable from nowhere, which is why
-// nothing is discarded while the budget still has room: clipping applies to the
-// one message that does not fit, sized from what is left, and never to messages
-// that would have fitted whole.
+// Two bounds apply, in order: every message is clipped to
+// chatHistoryMessageRunes, and the assembled result is then held under maxBytes
+// by dropping the oldest turns. Both losses are declared — the clip inline, the
+// drop in a leading marker — because the block is consumed as an interaction
+// record and a silent gap in one reads as "this was never said".
+//
+// makeChatHistoryAuthoritative clears PriorSessionID whenever this returns
+// anything, so on a cloud chat this string replaces the provider session as the
+// run's Multica-side memory. What it clips is therefore gone from Multica for
+// good; it is not gone from the conversation, which still holds every word and
+// which the per-turn prompt tells the run how to go and read.
 func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	const (
 		maxMessages = 20
@@ -3563,6 +3594,7 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 		if content == "" {
 			continue
 		}
+		content = clipChatHistoryMessageToRunes(content, chatHistoryMessageRunes)
 		prefix := "User:\n"
 		if msgs[i].Role == "assistant" {
 			prefix = "Assistant:\n"

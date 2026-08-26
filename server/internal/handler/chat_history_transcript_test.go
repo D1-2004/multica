@@ -14,27 +14,54 @@ func chatMsg(role, content string) db.ChatMessage {
 	return db.ChatMessage{Role: role, Content: content}
 }
 
-// The transcript is the run's authoritative memory on a cloud chat
-// (makeChatHistoryAuthoritative drops the provider session in its favour), so
-// the rule this pins is not "bound the size" but "do not spend fidelity you did
-// not have to". A transcript well inside the budget must arrive verbatim.
-func TestBoundedChatHistoryKeepsEverythingThatFits(t *testing.T) {
+// Owner decision (2026-08-26): every message is clipped to 200 characters, not
+// only the one that would overrun the byte budget.
+//
+// The rule this replaces — clip nothing while the budget has room — rested on
+// the transcript being the run's only memory, so that anything discarded was
+// discarded for good. That stopped being the whole story once the block began
+// declaring itself an interaction record and the per-turn prompt started routing
+// a run that needs more to the conversation itself, which still holds every
+// word. Under that framing a long paste costs the entire window and buys
+// nothing the head and tail do not already give.
+//
+// What must not change: the clip is announced where it happens, short messages
+// are still verbatim, and the cap is counted in characters rather than bytes,
+// because a CJK transcript would otherwise be cut at a third of the stated
+// length.
+func TestBoundedChatHistoryClipsEveryLongMessage(t *testing.T) {
 	t.Parallel()
 
-	spec := strings.Repeat("规格说明", 750) // 3000 runes, ~9000 bytes, still under 12000
+	short := "收到，明天上午十点，会议室 A。"
+	spec := strings.Repeat("规格说明", 750) // 3000 runes, far over the cap
 	out := boundedChatHistoryTranscript([]db.ChatMessage{
 		chatMsg("user", spec),
-		chatMsg("assistant", "收到"),
+		chatMsg("assistant", short),
 	})
 
-	if !strings.Contains(out, spec) {
-		t.Fatalf("a message that fits the budget was clipped; transcript = %d bytes", len(out))
+	if !strings.Contains(out, short) {
+		t.Errorf("a message inside the cap must survive verbatim:\n%s", out)
+	}
+	if strings.Contains(out, spec) {
+		t.Error("a 3000-character message was not clipped")
+	}
+	if !strings.Contains(out, chatHistoryClipMarker) {
+		t.Error("the clip must be announced where it happened")
 	}
 	if strings.Contains(out, chatHistoryOmittedMarker) {
-		t.Errorf("nothing was dropped, so the transcript must not claim a loss:\n%s", out)
+		t.Errorf("clipping is not dropping; no message was lost:\n%s", out)
 	}
-	if strings.Contains(out, chatHistoryClipMarker) {
-		t.Error("no clip marker should appear when the whole transcript fits")
+
+	// The cap is characters, not bytes: 200 runes of CJK is ~600 bytes, and a
+	// byte-based cap would have kept a third of what was asked for.
+	body := strings.SplitN(out, "User:\n", 2)[1]
+	clipped := strings.SplitN(body, "\n\nAssistant:", 2)[0]
+	kept := utf8.RuneCountInString(strings.Replace(clipped, chatHistoryClipMarker, "", 1))
+	if kept != 200 {
+		t.Errorf("clipped message kept %d characters, want the 200-character cap", kept)
+	}
+	if !utf8.ValidString(out) {
+		t.Error("clip split a rune")
 	}
 }
 

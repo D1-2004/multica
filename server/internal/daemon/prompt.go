@@ -34,7 +34,32 @@ func chatHistoryRecoveryBlock(history string) string {
 	if history == "" {
 		return ""
 	}
-	return "Recovered conversation history from earlier turns. Use it as context for the latest user message; do not restate it unless the user asks:\n" + history + "\n\n"
+	// Delimited and headed rather than introduced by a sentence. The old copy
+	// ("Recovered conversation history from earlier turns…") had no boundary at
+	// its end, so a run could not tell where the record stopped and its own
+	// instructions resumed, and nothing in it said the record was partial — a
+	// run read a bounded, clipped window as the conversation and answered "you
+	// never told me" about something the user did tell it.
+	//
+	// The two losses this block can carry are named here, next to the markers
+	// that represent them, so a marker encountered mid-record is already
+	// explained rather than being mistaken for content.
+	//
+	// Stated as what a marker MEANS, never as what the record always is. The
+	// content is produced server-side (handler.boundedChatHistoryTranscript) and
+	// this frame is rendered by the daemon inside a Runtime image released on
+	// its own schedule, so the two versions routinely differ. "Every message is
+	// clipped" would be a claim this side cannot check, and false against any
+	// server that does not clip; keying the wording to the markers is true under
+	// every pairing.
+	return "<interaction-record>\n" +
+		"# What this is\n" +
+		"The messages exchanged with you earlier in this conversation, as Multica recorded them. Use it as context for the latest user message; do not restate it unless the user asks.\n\n" +
+		"# What it is not\n" +
+		"It is not the conversation, and it is not the whole of your context. Where `…[truncated]…` appears, the middle of that message was removed; a leading `[older turns were trimmed from this transcript]` means older turns are missing from the record entirely. Treat either marker as context you do not have, never as proof of what was said — when a decision turns on what is behind one, go and read the conversation instead of inferring it.\n\n" +
+		"# Record\n" +
+		history + "\n" +
+		"</interaction-record>\n\n"
 }
 
 // backendResumeRecoveryContext returns the context the backend should inject if
@@ -545,13 +570,15 @@ func buildChatPromptForProvider(task Task, provider string) string {
 			//     tool would bind a platform-agnostic file to one deployment's
 			//     skill set, so the copy points at the run's own tools without
 			//     naming them.
-			if carriesTranscript {
-				b.WriteString("The conversation context below is only the slice Multica recorded of this conversation — bounded in length, and trimmed at the start when it did not fit.\n")
-			} else {
+			// When a record is attached it introduces itself (see
+			// chatHistoryRecoveryBlock), and repeating that here was the same
+			// claim at full price twice. Without one, nothing else says the
+			// run is working from a partial view, so one line has to.
+			if !carriesTranscript {
 				b.WriteString("What you can see of this conversation is only the slice Multica recorded of it.\n")
 			}
 			if audience != execenv.ChatAudienceDirect {
-				b.WriteString("Messages other people exchanged, and anything said before you were brought in, never entered that record: treat a gap as missing context, never as proof nothing was said.\n")
+				b.WriteString("Messages other people exchanged, and anything said before you were brought in, never entered the Multica record at all: treat a gap as missing context, never as proof nothing was said.\n")
 			}
 			fmt.Fprintf(&b, "Multica ships no history reader for %s, so when you need more, read it with your own %s tools or skills if you have them, and otherwise ask the user rather than guessing.\n", platform, platform)
 		}
