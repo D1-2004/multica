@@ -28,6 +28,10 @@ const (
 	// one dispatch — conversation, message and sender locators, outbound
 	// ownership. Not authored policy, and therefore never overridable.
 	DispatchSegmentContext = "context"
+	// DispatchSegmentQuotedMessage is present only when the triggering window
+	// contains a quoted reply. It carries the quoted-message locators and the
+	// rule for reading them, which the visible conversation text cannot hold.
+	DispatchSegmentQuotedMessage = "quoted_message"
 	// DispatchSegmentReplyFormatting constrains Markdown that survives
 	// DingTalk delivery.
 	DispatchSegmentReplyFormatting = "reply_formatting"
@@ -78,12 +82,14 @@ var customizableDispatchSegments = map[string]bool{
 	DispatchSegmentReplyFormatting:    true,
 	DispatchSegmentEnterpriseIdentity: true,
 	DispatchSegmentContext:            false,
+	DispatchSegmentQuotedMessage:      false,
 }
 
 // dispatchSegmentOrder is the order the agent reads the segments in.
 var dispatchSegmentOrder = []string{
 	DispatchSegmentPolicy,
 	DispatchSegmentContext,
+	DispatchSegmentQuotedMessage,
 	DispatchSegmentReplyFormatting,
 	DispatchSegmentEnterpriseIdentity,
 }
@@ -155,6 +161,23 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 		ExcludedReason: dispatchExcludedReason(in.Present, "no_dispatch_context", "not_supplied"),
 		ManagedText:    in.Stored.ContextPrompt,
 		EffectiveText:  in.Stored.ContextPrompt,
+	})
+
+	// Facts, not policy: the locators come from the dispatch envelope, so this
+	// segment is composed here rather than configured, and cannot be overridden.
+	quotedMessage := ""
+	if in.Present {
+		quotedMessage = buildDispatchQuotedMessageInstruction(in.Stored)
+	}
+	segments = append(segments, DispatchPromptSegment{
+		ID:             DispatchSegmentQuotedMessage,
+		Source:         dispatchSegmentSourceBuiltin,
+		Customizable:   false,
+		Condition:      "message_quotes_another",
+		Included:       quotedMessage != "",
+		ExcludedReason: dispatchExcludedReason(in.Present, "no_dispatch_context", "no_quoted_message"),
+		ManagedText:    quotedMessage,
+		EffectiveText:  quotedMessage,
 	})
 
 	segments = append(segments, dispatchSegment(

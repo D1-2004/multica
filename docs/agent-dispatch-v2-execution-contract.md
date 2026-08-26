@@ -124,6 +124,17 @@ Multica builds prompt material from the structured source event:
 - fixed safety, delivery, response, and routing policy comes from Diamond
   `common.prompt` plus the prompt for the current `surface.type`.
 
+A message carrying `referencedMessage` is rendered as an attributed pair rather
+than two anonymous blocks. Display content leads with what the sender said this
+time, then names who wrote the quoted message — this Agent itself, the current
+sender, or somebody else in the conversation — and inlines at most 400
+characters of the original, reporting the full length when it truncates. The
+relationship is resolved from `referencedMessage.senderUid` against
+`externalIdentity.dws.uid` and the sender identifiers already in the envelope;
+none of those identifiers reach display content. The locator that makes the
+original re-readable travels in the private `quoted_message` instruction
+segment instead.
+
 The daemon claim task accepts an optional `instruction` string. When it is
 non-blank, the daemon prepends it to the generated per-task prompt for every
 task kind. It does not write the value into the built-in runtime brief. A
@@ -152,15 +163,23 @@ receives no task instruction. This does not switch it onto the legacy builder.
 Conversely, a daemon without `task-instruction-v1` always uses the legacy
 builder, even when Diamond common or Router context sections are available.
 
-The claim-time `instruction` is composed from four ordered segments, not one
+The claim-time `instruction` is composed from five ordered segments, not one
 blob:
 
 | # | Segment | Source | Overridable | Injected when |
 |---|---|---|---|---|
 | 1 | `policy` | Diamond `common` + `<surface>` | yes | the task carries a dispatch envelope this projection covers (`dingtalk_dispatch`) |
 | 2 | `context` | Router, per dispatch | no | the Router supplied a `contextPrompt` (`per_dispatch`) |
-| 3 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
-| 4 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
+| 3 | `quoted_message` | Multica, per dispatch | no | the dispatch window contains a message with `referencedMessage` (`message_quotes_another`) |
+| 4 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
+| 5 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
+
+`quoted_message` carries facts, not policy, so it is composed from the persisted
+dispatch envelope and is not overridable. It states that the quoted text is the
+antecedent rather than a new request, reports whether this Agent wrote the
+quoted message itself, and carries `quotedOpenMsgId` so the Agent can read the
+full original with `dws chat message list-by-ids` instead of guessing at a
+truncated excerpt.
 
 Each segment reports its gate as a stable `condition` key, present whether or
 not the segment is active in the previewed scenario. A preview that only
@@ -582,3 +601,20 @@ parsing or rewriting Router's context string.
   prevents ordinary final replies from being replaced or suppressed while
   keeping outbox immutability, rolling-worker visibility, update-before-terminal
   ordering, and one provider-output contract across compatibility inputs.
+
+## Change record: 2026-08-26 Attributed and re-readable quoted messages
+
+- History: Display content for a quoted DingTalk reply now leads with the
+  current message, names the quoted message's author relative to the dispatch,
+  and inlines a bounded excerpt of the original. A new non-overridable
+  `quoted_message` instruction segment carries `quotedOpenMsgId`,
+  `quotedSenderUid`, `quotedSenderIsSelf`, and the reading rule; the legacy
+  prompt builder emits the same block. `persistedDispatchContext` now reads the
+  private `external_identity.dws` descriptor already stored beside the envelope.
+- Reason: The previous rendering opened with the untruncated original under a
+  bare `引用消息：` label and gave the reply a bare `当前回复：` label, so an
+  Agent quoting its own completion report saw an unattributed wall of text ahead
+  of a one-line acknowledgement and could not tell whose message it was, nor
+  recover anything the Router had already trimmed. Attribution and the re-read
+  locator make the relationship explicit and the original recoverable without
+  putting message identifiers into user-visible content.

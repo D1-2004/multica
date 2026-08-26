@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -393,16 +394,202 @@ func TestBuildDispatchPromptRendersReferencedMessageContext(t *testing.T) {
 	}
 
 	display := mustBuildDispatchPrompt(t, c).DisplayContent
-	for _, visible := range []string{"李四", "引用消息：", "我是被引用消息的 AI 可读内容", "当前回复：", "@助手 继续处理"} {
+	for _, visible := range []string{
+		"李四 本次发言",
+		"@助手 继续处理",
+		"李四 这条发言引用了一条更早的消息",
+		"被引用消息由会话中的其他人（不是你本数字员工）发送",
+		"> 我是被引用消息的 AI 可读内容",
+	} {
 		if !strings.Contains(display, visible) {
 			t.Errorf("display content missing %q: %q", visible, display)
 		}
+	}
+	// The current message has to lead: a quoted antecedent that opens the text
+	// buries the request the sender actually made.
+	if strings.Index(display, "@助手 继续处理") > strings.Index(display, "我是被引用消息的 AI 可读内容") {
+		t.Errorf("quoted original precedes the current message: %q", display)
 	}
 	for _, private := range []string{"open-sender-secret", "current-open-secret", "referenced-message-secret", "referenced-open-secret", "referenced-sender-secret"} {
 		if strings.Contains(display, private) {
 			t.Errorf("display content leaked %q: %q", private, display)
 		}
 	}
+}
+
+func TestBuildDispatchPromptAttributesQuotedMessageToTheAgentItself(t *testing.T) {
+	c := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Sender: DispatchSender{DisplayName: "冬翔", OpenDingTalkID: "open-sender"},
+			Messages: []DispatchMessage{
+				{
+					OpenMsgID: "current-open",
+					Text:      "@菲迪-FDE教练(菲迪) 好的 没问题",
+					ReferencedMessage: &DispatchReferencedMessage{
+						OpenMsgID: "referenced-open",
+						Text:      "已完成：单聊消息已发给一栗。",
+						SenderUID: "25698887",
+					},
+				},
+			},
+		}},
+		ExternalIdentity: AgentDispatchExternalIdentity{
+			DWS: &AgentDispatchDWSIdentity{UID: "25698887", OrgID: "77"},
+		},
+	}
+
+	display := mustBuildDispatchPrompt(t, c).DisplayContent
+	if !strings.Contains(display, "被引用消息由你（本数字员工）自己发送") {
+		t.Fatalf("display content did not attribute the quote to the agent: %q", display)
+	}
+	if strings.Contains(display, "25698887") {
+		t.Fatalf("display content leaked the DWS uid: %q", display)
+	}
+}
+
+func TestBuildDispatchPromptAttributesQuotedMessageToTheCurrentSender(t *testing.T) {
+	c := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Sender: DispatchSender{DisplayName: "冬翔", OpenDingTalkID: "open-sender"},
+			Messages: []DispatchMessage{
+				{
+					OpenMsgID: "current-open",
+					Text:      "补充一点",
+					ReferencedMessage: &DispatchReferencedMessage{
+						OpenMsgID: "referenced-open",
+						Text:      "我刚才提的需求",
+						SenderUID: "open-sender",
+					},
+				},
+			},
+		}},
+	}
+
+	display := mustBuildDispatchPrompt(t, c).DisplayContent
+	if !strings.Contains(display, "被引用消息由冬翔 自己发送") {
+		t.Fatalf("display content did not attribute the quote to the sender: %q", display)
+	}
+}
+
+func TestBuildDispatchPromptBoundsQuotedOriginalAndReportsItsLength(t *testing.T) {
+	original := strings.Repeat("原", dispatchQuotedDisplayMaxRunes+37)
+	c := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Sender: DispatchSender{DisplayName: "冬翔"},
+			Messages: []DispatchMessage{
+				{
+					OpenMsgID: "current-open",
+					Text:      "按这个继续",
+					ReferencedMessage: &DispatchReferencedMessage{
+						OpenMsgID: "referenced-open",
+						Text:      original,
+						SenderUID: "someone-else",
+					},
+				},
+			},
+		}},
+	}
+
+	display := mustBuildDispatchPrompt(t, c).DisplayContent
+	if strings.Contains(display, original) {
+		t.Fatalf("display content inlined the untruncated original: %q", display)
+	}
+	if !strings.Contains(display, fmt.Sprintf("的前 %d 字（原文共 %d 字）", dispatchQuotedDisplayMaxRunes, dispatchQuotedDisplayMaxRunes+37)) {
+		t.Fatalf("display content did not report the truncation: %q", display)
+	}
+	if !strings.Contains(display, "按这个继续") {
+		t.Fatalf("display content dropped the current message: %q", display)
+	}
+}
+
+func TestQuotedMessageInstructionCarriesRereadLocatorAndSelfAttribution(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:   "channel",
+		Type:     "message.created",
+		Surface:  DispatchSurface{Type: "auto"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Sender:       DispatchSender{DisplayName: "冬翔", OpenDingTalkID: "open-sender"},
+			Messages: []DispatchMessage{
+				{
+					OpenMsgID: "current-open",
+					Text:      "好的 没问题",
+					ReferencedMessage: &DispatchReferencedMessage{
+						OpenMsgID: "referenced-open",
+						Text:      strings.Repeat("长", dispatchQuotedDisplayMaxRunes+1),
+						SenderUID: "25698887",
+					},
+				},
+			},
+		},
+		ExternalIdentity: &persistedDispatchExternalIdentity{
+			DWS: &AgentDispatchDWSIdentity{UID: "25698887", OrgID: "77"},
+		},
+	}
+
+	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored:          stored,
+		Present:         true,
+		DingTalkContext: true,
+	})
+	var quoted *DispatchPromptSegment
+	for i := range segments {
+		if segments[i].ID == DispatchSegmentQuotedMessage {
+			quoted = &segments[i]
+		}
+	}
+	if quoted == nil {
+		t.Fatal("quoted_message segment was not composed")
+	}
+	if !quoted.Included || quoted.Customizable {
+		t.Fatalf("quoted_message segment = %+v, want included and non-customizable", *quoted)
+	}
+	for _, want := range []string{
+		`"quotedOpenMsgId":"referenced-open"`,
+		`"quotedSenderUid":"25698887"`,
+		`"quotedSenderIsSelf":true`,
+		`"quotedTextTruncatedInDisplay":true`,
+		"dws chat message list-by-ids --msg-ids <quotedOpenMsgId>",
+	} {
+		if !strings.Contains(quoted.EffectiveText, want) {
+			t.Errorf("quoted_message instruction missing %q: %q", want, quoted.EffectiveText)
+		}
+	}
+	if !strings.Contains(instructionFromSegments(segments), "## Quoted DingTalk Message") {
+		t.Fatal("composed instruction dropped the quoted-message segment")
+	}
+}
+
+func TestQuotedMessageSegmentExcludedWithoutQuotedMessage(t *testing.T) {
+	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored: persistedDispatchContext{
+			Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+			Domain:   "channel",
+			Type:     "message.created",
+			Surface:  DispatchSurface{Type: "auto"},
+			Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+			EventData: DispatchEventData{
+				Messages: []DispatchMessage{{OpenMsgID: "current-open", Text: "普通消息"}},
+			},
+		},
+		Present:         true,
+		DingTalkContext: true,
+	})
+	for _, segment := range segments {
+		if segment.ID != DispatchSegmentQuotedMessage {
+			continue
+		}
+		if segment.Included || segment.ExcludedReason != "no_quoted_message" {
+			t.Fatalf("quoted_message segment = %+v, want excluded as no_quoted_message", segment)
+		}
+		return
+	}
+	t.Fatal("quoted_message segment was not composed")
 }
 
 func TestDispatchMessageReferencedMessageAcceptsRouterAliases(t *testing.T) {
