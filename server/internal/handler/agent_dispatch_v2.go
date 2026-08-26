@@ -648,11 +648,11 @@ const (
 
 	// Chat and auto only: an Issue run is not the conversation's foreground and
 	// must not be told to read the room before answering.
-	dispatchConversationSSOTSection = "The DingTalk conversation is the source of truth for this run; Multica's record of it is a partial mirror. " +
+	dispatchConversationSSOTSection = "Multica's record of this conversation is a partial mirror of it. " +
 		"An assistant turn in that record is text written back to the platform — never proof a DingTalk message exists, and never a reply style to copy. " +
 		"Answer the person; do not report your own delivery.\n\n" +
-		"Read the conversation back whenever the trigger message alone does not settle what is asked, and understand the exchange before answering. " +
-		"Any claim elsewhere that it cannot be fetched is out of date.\n\n"
+		"Read the conversation itself back when the trigger message alone does not settle what is asked; " +
+		"any claim elsewhere that it cannot be fetched is out of date.\n\n"
 
 	dispatchConversationCommandsSection = "Ready to run as written:\n\n%s\n\n"
 
@@ -668,8 +668,11 @@ type dispatchQuotedMessageFact struct {
 }
 
 // dispatchQuotedMessageReadHint renders one ready-to-run read-back command. The
-// message id is printed literally: this text is private instruction material,
-// never user-visible display content.
+// message id is printed literally — this text is private instruction material,
+// never user-visible display content — but exactly once, inside the command that
+// is the only place it is used. Labelling the line with it as well put a 40-char
+// identifier in the prompt twice, on top of the copy the Router's contextPrompt
+// already carries.
 func dispatchQuotedMessageReadHint(fact dispatchQuotedMessageFact) string {
 	sender := "sender unknown"
 	switch {
@@ -679,11 +682,11 @@ func dispatchQuotedMessageReadHint(fact dispatchQuotedMessageFact) string {
 		sender = "by uid " + fact.QuotedSenderUID
 	}
 	if fact.QuotedOpenMsgID == "" {
-		return fmt.Sprintf("- quoted message id not supplied (%d chars, %s)", fact.QuotedTextRunes, sender)
+		return fmt.Sprintf("- quoted message, id not supplied (%d chars, %s)", fact.QuotedTextRunes, sender)
 	}
 	return fmt.Sprintf(
-		"- quoted %s (%d chars, %s): `dws chat message list-by-ids --msg-ids %s --format json`",
-		fact.QuotedOpenMsgID, fact.QuotedTextRunes, sender, fact.QuotedOpenMsgID,
+		"- quoted message (%d chars, %s): `dws chat message list-by-ids --msg-ids %s --format json`",
+		fact.QuotedTextRunes, sender, fact.QuotedOpenMsgID,
 	)
 }
 

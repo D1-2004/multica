@@ -568,11 +568,11 @@ func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *tes
 	}
 	// Both read-back commands are printed with real ids so they run as written.
 	for _, want := range []string{
-		"- quoted referenced-open (501 chars, by you): " +
+		"- quoted message (501 chars, by you): " +
 			"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
 		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
-		// The conversation, not Multica's mirror of it, is what the run answers from.
-		"source of truth",
+		// The record is a mirror; the conversation itself is what the run answers from.
+		"partial mirror",
 		"never proof a DingTalk message exists",
 	} {
 		if !strings.Contains(conversation.EffectiveText, want) {
@@ -615,7 +615,7 @@ func TestDingTalkConversationInstructionNamesAMissingQuotedLocator(t *testing.T)
 
 	instruction := buildDispatchConversationInstruction(stored)
 	for _, want := range []string{
-		"- quoted message id not supplied (6 chars, by uid someone-else)",
+		"- quoted message, id not supplied (6 chars, by uid someone-else)",
 		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
 	} {
 		if !strings.Contains(instruction, want) {
@@ -648,10 +648,10 @@ func TestDingTalkConversationInstructionSkipsReadbackOnIssueSurface(t *testing.T
 	}
 
 	instruction := buildDispatchConversationInstruction(stored)
-	if !strings.Contains(instruction, "- quoted referenced-open") {
+	if !strings.Contains(instruction, "--msg-ids referenced-open") {
 		t.Fatalf("issue-surface instruction dropped the quoted locator: %q", instruction)
 	}
-	for _, unwanted := range []string{"source of truth", "- conversation: `dws chat message search-advanced"} {
+	for _, unwanted := range []string{"partial mirror", "- conversation: `dws chat message search-advanced"} {
 		if strings.Contains(instruction, unwanted) {
 			t.Fatalf("issue-surface instruction leaked the readback rule %q: %q", unwanted, instruction)
 		}
