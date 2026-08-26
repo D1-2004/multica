@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,123 @@ func TestParseManifestFingerprintsStrictAcceptsExactContract(t *testing.T) {
 	}
 }
 
+func TestManifestFingerprintHashMatchesDocumentedExampleKey(t *testing.T) {
+	got, err := manifestFingerprint(map[string]string{
+		"hermes":      "0.19.0",
+		"opencode":    "v1.18.19",
+		"opencode-v2": "0.0.0-beta-202608110357",
+		"dsh":         "0.1.0-rc.8",
+		"pi":          "0.84.2",
+		"dws":         "v1.0.59",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "0e70a766342698a9" {
+		t.Fatalf("local contract hash = %q, want 0e70a766342698a9", got)
+	}
+}
+
+func TestManifestProvidersForFingerprintAcceptsAnySupportedCardinality(t *testing.T) {
+	components := map[string]string{
+		"hermes":      "0.19.0",
+		"opencode":    "v1.18.19",
+		"opencode-v2": "0.0.0-beta-202608110357",
+		"dsh":         "0.1.0-rc.8",
+		"pi":          "0.84.2",
+		"dws":         "v1.0.60-beta.2",
+	}
+	for _, providers := range [][]string{
+		{"hermes"},
+		{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
+		{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
+	} {
+		fingerprint, err := manifestFingerprintForProviders(components, providers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved, matched, err := ManifestProvidersForFingerprint(fingerprint, components)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !matched || !reflect.DeepEqual(resolved, providers) {
+			t.Fatalf("fingerprint %s resolved providers %#v, want %#v", fingerprint, resolved, providers)
+		}
+	}
+	reversedFingerprint, err := manifestFingerprintForProviders(components, []string{"opencode", "hermes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved, matched, err := ManifestProvidersForFingerprint(reversedFingerprint, components); err != nil || matched || resolved != nil {
+		t.Fatalf("non-canonical provider order resolved=%#v matched=%v err=%v", resolved, matched, err)
+	}
+}
+
+func TestManifestCapabilitiesForProvidersDoesNotAdvertiseMissingRunners(t *testing.T) {
+	tests := []struct {
+		providers []string
+		want      []string
+	}{
+		{
+			providers: []string{"hermes"},
+			want: []string{
+				"dws", "dws.im_event", "mcp", "runtime_start_events_v1", "llm_trace_v1",
+				"a2a-invocation-v2", "a2a_inbound_hermes_v1",
+			},
+		},
+		{
+			providers: []string{"dsh"},
+			want: []string{
+				"dws", "dws.im_event", "mcp", "runtime_start_events_v1", "llm_trace_v1",
+				"a2a_inbound_opencode_v1", "a2a-invocation-v2", "dsh_trajectory_v1",
+			},
+		},
+		{
+			providers: []string{"opencode-v2"},
+			want: []string{
+				"dws", "dws.im_event", "mcp", "runtime_start_events_v1", "llm_trace_v1",
+				"a2a_inbound_opencode_v1", "a2a-invocation-v2",
+			},
+		},
+		{
+			providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
+			want: []string{
+				"dws", "dws.im_event", "mcp", "runtime_start_events_v1", "llm_trace_v1",
+				"a2a_inbound_opencode_v1", "a2a-invocation-v2", "a2a_inbound_hermes_v1",
+				"a2a_inbound_pi_v1", "dsh_trajectory_v1",
+			},
+		},
+	}
+	for _, test := range tests {
+		if got := ManifestCapabilitiesForProviders(test.providers); !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("providers %#v capabilities = %#v, want %#v", test.providers, got, test.want)
+		}
+	}
+}
+
+func TestParseManifestFingerprintsStrictAcceptsFiveProviderCatalogKey(t *testing.T) {
+	raw := `{
+  "version": 1,
+  "fingerprints": {
+    "baedb216407a5060": {
+      "hermes": "0.19.0",
+      "opencode": "v1.18.19",
+      "opencode-v2": "0.0.0-beta-202608110357",
+      "dsh": "0.1.0-rc.8",
+      "pi": "0.84.2",
+      "dws": "v1.0.59"
+    }
+  }
+}`
+	cfg, err := ParseManifestFingerprintsStrict([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseManifestFingerprintsStrict: %v", err)
+	}
+	if got := cfg.Fingerprints["baedb216407a5060"]["dws"]; got != "v1.0.59" {
+		t.Fatalf("catalog DWS version = %q", got)
+	}
+}
+
 func TestParseManifestFingerprintsStrictRejectsInvalidDocuments(t *testing.T) {
 	tests := []struct {
 		name string
@@ -61,7 +179,6 @@ func TestParseManifestFingerprintsStrictRejectsInvalidDocuments(t *testing.T) {
 		{name: "extra component", raw: strings.Replace(validManifestFingerprintsJSON(), `      "dws": "v1.0.59"`, `      "dws": "v1.0.59", "extra": "v1"`, 1)},
 		{name: "blank version", raw: strings.Replace(validManifestFingerprintsJSON(), `"dws": "v1.0.59"`, `"dws": " "`, 1)},
 		{name: "surrounding whitespace", raw: strings.Replace(validManifestFingerprintsJSON(), `"dws": "v1.0.59"`, `"dws": " v1.0.59"`, 1)},
-		{name: "fingerprint mismatch", raw: strings.Replace(validManifestFingerprintsJSON(), `"dws": "v1.0.59"`, `"dws": "v1.0.60-beta.1"`, 1)},
 		{name: "trailing value", raw: validManifestFingerprintsJSON() + ` {}`},
 	}
 	for _, test := range tests {
