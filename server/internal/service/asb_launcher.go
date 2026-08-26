@@ -2307,12 +2307,12 @@ func validateASBRuntimeManifest(manifest map[string]any) error {
 		return errors.New("ASB runtime manifest does not satisfy the enterprise sandbox contract")
 	}
 	if schemaVersion == 7 &&
-		(!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "dsh", "opencode-v2") ||
+		(!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "dsh", "opencode-v2", "claude", "codex") ||
 			!containsAllStrings(
 				manifestStringSliceForBackend(manifest, "capabilities_by_backend", "asb"),
 				DSHTrajectoryCapability,
 			)) {
-		return errors.New("ASB schema v7 runtime manifest does not satisfy the five-runner contract")
+		return errors.New("ASB schema v7 runtime manifest does not satisfy the seven-runner contract")
 	}
 	return nil
 }

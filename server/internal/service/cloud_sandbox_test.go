@@ -100,7 +100,7 @@ func TestParseCloudSandboxRuntimeProjectsStableM2TemplateMetadata(t *testing.T) 
 		"template alias only":       `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","template":"mutable-alias"}`,
 		"partial new artifact":      `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"opencode","artifact_kind":"e2b_template","template_id":"template-m2-id"}`,
 		"ASB legacy template":       `{"kind":"cloud-sandbox","sandbox_backend":"asb","provider":"opencode","template_id":"template-m2-id"}`,
-		"unsupported provider":      `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"codex","template_id":"template-m2-id"}`,
+		"unsupported provider":      `{"kind":"cloud-sandbox","sandbox_backend":"aliyun_fc","provider":"gemini","template_id":"template-m2-id"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			candidate := runtime

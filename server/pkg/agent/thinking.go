@@ -223,6 +223,61 @@ func parseClaudeEffortHelp(helpText string) []string {
 	return out
 }
 
+// StaticThinkingForModel returns a CLI-independent thinking catalog for
+// (provider, model). Cloud sandbox model pickers cannot shell out to a
+// daemon-local binary, so they use this instead of live discovery.
+// Unknown Claude models receive the full documented superset; unknown Codex
+// models receive the conservative subset that every current Codex flagship
+// accepts (no ultra). Other providers return nil — the UI hides the picker.
+func StaticThinkingForModel(providerType, model string) *ModelThinking {
+	target := modelIDForCapabilityLookup(providerType, model)
+	if target == "" {
+		return nil
+	}
+	switch providerType {
+	case "claude":
+		return staticClaudeThinking(target)
+	case "codex":
+		return staticCodexThinking(target)
+	default:
+		return nil
+	}
+}
+
+func staticClaudeThinking(modelID string) *ModelThinking {
+	allow := claudeModelEffortAllow[modelID]
+	if allow == nil {
+		for id, set := range claudeModelEffortAllow {
+			if strings.HasPrefix(modelID, id) {
+				allow = set
+				break
+			}
+		}
+	}
+	levels := projectClaudeLevels(claudeStaticEffortFullSuperset, allow)
+	if len(levels) == 0 {
+		return nil
+	}
+	return &ModelThinking{SupportedLevels: levels, DefaultLevel: "medium"}
+}
+
+func staticCodexThinking(modelID string) *ModelThinking {
+	for _, m := range codexStaticModels() {
+		if m.ID == modelID && m.Thinking != nil && len(m.Thinking.SupportedLevels) > 0 {
+			return m.Thinking
+		}
+	}
+	return &ModelThinking{
+		DefaultLevel: "medium",
+		SupportedLevels: []ThinkingLevel{
+			{Value: "low", Label: "Low", Description: "Fast responses with lighter reasoning"},
+			{Value: "medium", Label: "Medium", Description: "Balances speed and reasoning depth for everyday tasks"},
+			{Value: "high", Label: "High", Description: "Greater reasoning depth for complex problems"},
+			{Value: "xhigh", Label: "Extra high", Description: "Extra high reasoning depth for complex problems"},
+		},
+	}
+}
+
 func projectClaudeLevels(superset []string, allow map[string]bool) []ThinkingLevel {
 	out := make([]ThinkingLevel, 0, len(superset))
 	for _, value := range superset {

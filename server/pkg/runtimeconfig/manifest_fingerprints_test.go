@@ -22,7 +22,7 @@ func validManifestFingerprintsJSON() string {
 	return `{
   "version": 1,
   "fingerprints": {
-    "baedb216407a5060": {
+    "0e70a766342698a9": {
       "hermes": "0.19.0",
       "opencode": "v1.18.19",
       "opencode-v2": "0.0.0-beta-202608110357",
@@ -42,7 +42,7 @@ func TestParseManifestFingerprintsStrictAcceptsExactContract(t *testing.T) {
 	if cfg.Version != ManifestFingerprintsSchemaVersion || len(cfg.Fingerprints) != 1 {
 		t.Fatalf("config = %#v", cfg)
 	}
-	if got := cfg.Fingerprints["baedb216407a5060"]["dws"]; got != "v1.0.59" {
+	if got := cfg.Fingerprints["0e70a766342698a9"]["dws"]; got != "v1.0.59" {
 		t.Fatalf("DWS version = %q", got)
 	}
 }
@@ -55,8 +55,8 @@ func TestParseManifestFingerprintsStrictRejectsInvalidDocuments(t *testing.T) {
 		{name: "unknown field", raw: strings.Replace(validManifestFingerprintsJSON(), `"version": 1`, `"version": 1, "versoin": 1`, 1)},
 		{name: "wrong version", raw: strings.Replace(validManifestFingerprintsJSON(), `"version": 1`, `"version": 2`, 1)},
 		{name: "empty catalog", raw: `{"version":1,"fingerprints":{}}`},
-		{name: "uppercase fingerprint", raw: strings.Replace(validManifestFingerprintsJSON(), "baedb216407a5060", "BAEDB216407A5060", 1)},
-		{name: "short fingerprint", raw: strings.Replace(validManifestFingerprintsJSON(), "baedb216407a5060", "baedb216", 1)},
+		{name: "uppercase fingerprint", raw: strings.Replace(validManifestFingerprintsJSON(), "0e70a766342698a9", "BAEDB216407A5060", 1)},
+		{name: "short fingerprint", raw: strings.Replace(validManifestFingerprintsJSON(), "0e70a766342698a9", "baedb216", 1)},
 		{name: "missing component", raw: strings.Replace(validManifestFingerprintsJSON(), `      "dws": "v1.0.59"`, `      "unused": "v1.0.59"`, 1)},
 		{name: "extra component", raw: strings.Replace(validManifestFingerprintsJSON(), `      "dws": "v1.0.59"`, `      "dws": "v1.0.59", "extra": "v1"`, 1)},
 		{name: "blank version", raw: strings.Replace(validManifestFingerprintsJSON(), `"dws": "v1.0.59"`, `"dws": " "`, 1)},
@@ -82,9 +82,9 @@ func TestManifestFingerprintsUpdateIsAtomicAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyManifestFingerprintsJSON: %v", err)
 	}
-	first.Fingerprints["baedb216407a5060"]["dws"] = "mutated"
+	first.Fingerprints["0e70a766342698a9"]["dws"] = "mutated"
 	current := service.ManifestFingerprints()
-	if current.Generation != 1 || current.Fingerprints["baedb216407a5060"]["dws"] != "v1.0.59" {
+	if current.Generation != 1 || current.Fingerprints["0e70a766342698a9"]["dws"] != "v1.0.59" {
 		t.Fatalf("service-owned snapshot was mutated: %#v", current)
 	}
 
@@ -96,13 +96,13 @@ func TestManifestFingerprintsUpdateIsAtomicAndImmutable(t *testing.T) {
 		t.Fatalf("invalid update replaced snapshot: %#v", retained)
 	}
 
-	updated := strings.Replace(validManifestFingerprintsJSON(), `"baedb216407a5060"`, `"bc80cb4524f2bc75"`, 1)
+	updated := strings.Replace(validManifestFingerprintsJSON(), `"0e70a766342698a9"`, `"ac20d08b3a999731"`, 1)
 	updated = strings.Replace(updated, `"dws": "v1.0.59"`, `"dws": "v1.0.60-beta.1"`, 1)
 	next, err := service.ApplyManifestFingerprintsJSON([]byte(updated))
 	if err != nil {
 		t.Fatalf("apply valid update: %v", err)
 	}
-	if next.Generation != 2 || next.SHA256 == current.SHA256 || next.Fingerprints["bc80cb4524f2bc75"]["dws"] != "v1.0.60-beta.1" {
+	if next.Generation != 2 || next.SHA256 == current.SHA256 || next.Fingerprints["ac20d08b3a999731"]["dws"] != "v1.0.60-beta.1" {
 		t.Fatalf("updated snapshot = %#v", next)
 	}
 }
@@ -119,11 +119,11 @@ func TestDiamondServiceAppliesManifestFingerprintUpdates(t *testing.T) {
 		t.Fatalf("initial fingerprints = %#v, listener=%v", first, client.manifestFingerprintsOnChange != nil)
 	}
 
-	updated := strings.Replace(validManifestFingerprintsJSON(), `"baedb216407a5060"`, `"bc80cb4524f2bc75"`, 1)
+	updated := strings.Replace(validManifestFingerprintsJSON(), `"0e70a766342698a9"`, `"ac20d08b3a999731"`, 1)
 	updated = strings.Replace(updated, `"dws": "v1.0.59"`, `"dws": "v1.0.60-beta.1"`, 1)
 	client.manifestFingerprintsOnChange(updated)
 	second := service.ManifestFingerprints()
-	if second.Generation != 2 || second.Fingerprints["bc80cb4524f2bc75"]["dws"] != "v1.0.60-beta.1" {
+	if second.Generation != 2 || second.Fingerprints["ac20d08b3a999731"]["dws"] != "v1.0.60-beta.1" {
 		t.Fatalf("updated fingerprints = %#v", second)
 	}
 

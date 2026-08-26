@@ -48,6 +48,8 @@ export const FC_E2B_RUNTIME_PROVIDERS = [
   "pi",
   "dsh",
   "opencode-v2",
+  "claude",
+  "codex",
 ] as const;
 const MIN_PUBLISHED_FC_E2B_MANIFEST_VERSION = 2;
 const MAX_PUBLISHED_FC_E2B_MANIFEST_VERSION = 7;

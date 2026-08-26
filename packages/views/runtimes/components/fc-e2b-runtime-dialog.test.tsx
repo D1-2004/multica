@@ -50,6 +50,8 @@ vi.mock("@multica/core/runtimes", () => ({
     "pi",
     "dsh",
     "opencode-v2",
+    "claude",
+    "codex",
   ],
   fcE2BProviderForTemplate: () => "hermes",
   isReadyFCE2BTemplate: () => true,

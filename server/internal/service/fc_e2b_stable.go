@@ -2365,7 +2365,7 @@ func stableRuntimeProvider(provider string) string {
 		return "hermes"
 	}
 	switch provider {
-	case "hermes", "opencode", "pi", "dsh", "opencode-v2":
+	case "hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex":
 		return provider
 	default:
 		return ""

@@ -933,7 +933,7 @@ func TestValidateASBManifestVersionContract(t *testing.T) {
 	manifest := func(version int, capabilities ...string) map[string]any {
 		providers := []string{"hermes", "opencode", "pi"}
 		if version == 7 {
-			providers = append(providers, "dsh", "opencode-v2")
+			providers = append(providers, "dsh", "opencode-v2", "claude", "codex")
 		}
 		return map[string]any{
 			"schema_version":   version,
@@ -1029,7 +1029,7 @@ func TestASBVerifyStableArtifactUsesSandboxDefaultUser(t *testing.T) {
 	manifest := map[string]any{
 		"schema_version":   7,
 		"sandbox_backends": []string{"aliyun_fc", "asb"},
-		"providers":        []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
+		"providers":        []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
 		"capabilities_by_backend": map[string][]string{
 			"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInvocationV2Capability, DSHTrajectoryCapability},
 		},

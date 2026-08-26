@@ -251,6 +251,7 @@
     "thinking_tooltip": "Thinking · {{value}}",
     "thinking_clear": "Follow CLI config",
     "thinking_clear_title": "Clear the override and let the local CLI config (claude/codex) decide the reasoning level",
+    "thinking_in_model": "Thinking",
     "service_tier_default": "Runtime default",
     "service_tier_tooltip": "Speed · {{value}}",
     "service_tier_clear": "Runtime default",

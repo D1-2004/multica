@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { AgentRuntime, RuntimeModel } from "@multica/core/types";
-import { isFCE2BRuntime, runtimeModelsOptions } from "@multica/core/runtimes";
+import { runtimeModelsOptions } from "@multica/core/runtimes";
 import { PropRow } from "../../../common/prop-row";
 import { SettingsRow } from "../../../settings/components/settings-layout";
 import { useT } from "../../../i18n";
@@ -30,7 +30,6 @@ import { findModelCapabilityEntry } from "./model-capability";
  */
 export function ThinkingPropRow({
   runtimeId,
-  runtime,
   runtimeOnline,
   provider,
   model,
@@ -39,6 +38,7 @@ export function ThinkingPropRow({
   onChange,
 }: {
   runtimeId: string | null;
+  /** Accepted for call-site compatibility; cloud catalogs now advertise thinking. */
   runtime?: AgentRuntime | null;
   runtimeOnline: boolean;
   /** Runtime provider type (e.g. "codex", "claude"). Used to decide whether an
@@ -50,12 +50,10 @@ export function ThinkingPropRow({
   onChange: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
-  const managedByRuntime = isFCE2BRuntime(runtime);
   const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline && !managedByRuntime ? runtimeId : null),
+    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
   );
 
-  if (managedByRuntime && !value) return null;
   const models = modelsQuery.data?.models ?? [];
   const entry = pickModelEntry(models, model, provider);
   const levels = entry?.thinking?.supported_levels ?? [];

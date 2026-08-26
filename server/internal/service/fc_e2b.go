@@ -392,7 +392,7 @@ func IsFCE2BRuntime(rt db.AgentRuntime) bool {
 // can run. A template image may ship several of these CLIs side by side; the
 // runtime's provider is chosen at creation time. FCE2BProvider (hermes) is
 // the default when a request names none.
-var FCE2BSupportedProviders = []string{FCE2BProvider, "opencode", "pi", "dsh", "opencode-v2"}
+var FCE2BSupportedProviders = []string{FCE2BProvider, "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"}
 
 // IsFCE2BSupportedProvider reports whether provider can back an FC/E2B
 // sandbox runtime.
@@ -831,7 +831,7 @@ func applyFCE2BTemplateManifestAlias(
 		template.Name = alias
 		template.Template = alias
 		template.ManifestVersion = 7
-		template.Providers = []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+		template.Providers = append([]string(nil), FCE2BSupportedProviders...)
 		template.Capabilities = []string{
 			"dws",
 			"dws.im_event",

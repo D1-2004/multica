@@ -439,6 +439,39 @@ func hasThinkingLevel(mt *ModelThinking, value string) bool {
 	return false
 }
 
+func TestStaticThinkingForModel(t *testing.T) {
+	t.Parallel()
+
+	opus := StaticThinkingForModel("claude", "claude-opus-4-8")
+	if opus == nil || !hasThinkingLevel(opus, "xhigh") {
+		t.Fatalf("opus catalog must include xhigh, got %#v", opus)
+	}
+	sonnet := StaticThinkingForModel("claude", "claude-sonnet-4-6[1m]")
+	if sonnet == nil || hasThinkingLevel(sonnet, "xhigh") {
+		t.Fatalf("sonnet catalog must inherit base model and exclude xhigh, got %#v", sonnet)
+	}
+	unknownClaude := StaticThinkingForModel("claude", "claude-custom-local")
+	if unknownClaude == nil || !hasThinkingLevel(unknownClaude, "high") {
+		t.Fatalf("unknown claude model must still offer the documented superset, got %#v", unknownClaude)
+	}
+
+	sol := StaticThinkingForModel("codex", "gpt-5.6-sol")
+	if sol == nil || !hasThinkingLevel(sol, "ultra") {
+		t.Fatalf("codex flagship must advertise ultra, got %#v", sol)
+	}
+	unknownCodex := StaticThinkingForModel("codex", "gpt-unknown")
+	if unknownCodex == nil || hasThinkingLevel(unknownCodex, "ultra") {
+		t.Fatalf("unknown codex model must stay conservative (no ultra), got %#v", unknownCodex)
+	}
+
+	if got := StaticThinkingForModel("hermes", "claude-sonnet-4-6"); got != nil {
+		t.Fatalf("hermes has no thinking catalog, got %#v", got)
+	}
+	if got := StaticThinkingForModel("claude", ""); got != nil {
+		t.Fatalf("empty model must not preview a catalog, got %#v", got)
+	}
+}
+
 // ── IsKnownThinkingValue (server-side enum gate) ─────────────────────
 
 func TestIsKnownThinkingValue(t *testing.T) {

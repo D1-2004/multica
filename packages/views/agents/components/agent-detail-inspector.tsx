@@ -273,8 +273,12 @@ export function AgentDetailInspector({
               runtime={runtime}
               runtimeOnline={!!isOnline}
               value={agent.model ?? ""}
+              thinkingValue={agent.thinking_level ?? ""}
               canEdit={canEdit}
               onChange={handleModelChange}
+              onThinkingChange={(thinkingLevel) =>
+                update({ thinking_level: thinkingLevel })
+              }
             />
           </SettingsRow>
           <ThinkingSettingField

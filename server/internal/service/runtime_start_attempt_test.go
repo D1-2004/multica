@@ -182,7 +182,7 @@ func TestASBReleaseManifestRequiresSchemaSevenAndCurrentCapabilities(t *testing.
 		t.Fatal("new ASB release accepted with a legacy manifest schema")
 	}
 	manifest["schema_version"] = 7
-	manifest["providers"] = []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+	manifest["providers"] = []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"}
 	manifest["capabilities_by_backend"] = map[string][]string{
 		"asb": {"dws", "mcp", "a1", "mw", "buc", RuntimeStartCapabilityEventsV1, A2AInvocationV2Capability, DSHTrajectoryCapability},
 	}

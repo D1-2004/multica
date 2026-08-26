@@ -211,8 +211,12 @@ export function AgentConfigurationPanel({
               runtime={selectedRuntime}
               runtimeOnline={selectedRuntime?.status === "online"}
               value={draft.model}
+              thinkingValue={draft.thinkingLevel}
               onChange={(value) =>
                 onChange(applyDraftModelChange(draft, value))
+              }
+              onThinkingChange={(thinkingLevel) =>
+                onChange({ ...draft, thinkingLevel })
               }
               // A successful switch clears the model, so an edit made while the
               // rebind is in flight would be silently discarded.

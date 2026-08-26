@@ -54,6 +54,10 @@ function providerDisplayName(provider: string): string {
       return "DeepSeek Harness";
     case "opencode-v2":
       return "OpenCode 2.0 Preview";
+    case "claude":
+      return "Claude Code";
+    case "codex":
+      return "Codex";
     default:
       return provider;
   }

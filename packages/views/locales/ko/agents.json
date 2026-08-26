@@ -239,6 +239,7 @@
     "model_clear": "지우기(제공자 기본값 사용)",
     "model_clear_title": "선택을 지우고 런타임 제공자의 기본값으로 돌아갑니다",
     "thinking_default": "CLI 설정 따르기",
+    "thinking_in_model": "추론",
     "thinking_tooltip": "추론 · {{value}}",
     "thinking_clear": "CLI 설정 따르기",
     "thinking_clear_title": "재정의를 지우고 추론 수준을 로컬 CLI 설정(claude/codex)에 맡깁니다",

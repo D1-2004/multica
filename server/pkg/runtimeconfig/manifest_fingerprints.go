@@ -21,7 +21,7 @@ var (
 	manifestFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 	manifestComponentVersion   = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 	manifestComponentKeys      = [...]string{"hermes", "opencode", "opencode-v2", "dsh", "pi", "dws"}
-	manifestProviders          = [...]string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+	manifestProviders          = [...]string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"}
 	manifestCapabilities       = [...]string{
 		"dws",
 		"dws.im_event",

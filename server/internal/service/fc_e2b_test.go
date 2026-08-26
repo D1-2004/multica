@@ -143,6 +143,8 @@ func TestFCE2BProviderForTemplate(t *testing.T) {
 		{[]string{"hermes", "opencode", "pi"}, "hermes", true},
 		{[]string{"opencode", "pi"}, "opencode", true},
 		{[]string{"pi"}, "pi", true},
+		{[]string{"claude", "codex"}, "claude", true},
+		{[]string{"codex"}, "codex", true},
 		{[]string{"unknown"}, "", false},
 		{nil, "", false},
 	}
@@ -155,12 +157,12 @@ func TestFCE2BProviderForTemplate(t *testing.T) {
 }
 
 func TestIsFCE2BSupportedProvider(t *testing.T) {
-	for _, provider := range []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", " Hermes ", "OPENCODE", " PI ", " DSH ", " OPENCODE-V2 "} {
+	for _, provider := range []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex", " Hermes ", "OPENCODE", " PI ", " DSH ", " OPENCODE-V2 ", " Claude ", " CODEX "} {
 		if !IsFCE2BSupportedProvider(provider) {
 			t.Fatalf("IsFCE2BSupportedProvider(%q) = false, want true", provider)
 		}
 	}
-	for _, provider := range []string{"", "codex", "claude"} {
+	for _, provider := range []string{"", "cursor", "custom"} {
 		if IsFCE2BSupportedProvider(provider) {
 			t.Fatalf("IsFCE2BSupportedProvider(%q) = true, want false", provider)
 		}
@@ -177,6 +179,8 @@ func TestFCE2BRunnerCommandForProvider(t *testing.T) {
 		{"pi", "multica-fc-pi-container-log-entry"},
 		{"dsh", "multica-fc-dsh-container-log-entry"},
 		{"opencode-v2", "multica-fc-opencode-v2-container-log-entry"},
+		{"claude", "multica-fc-claude-container-log-entry"},
+		{"codex", "multica-fc-codex-container-log-entry"},
 		{" OpenCode ", "multica-fc-opencode-container-log-entry"},
 		{"", "multica-fc-hermes-container-log-entry"},
 	}
@@ -250,6 +254,16 @@ func TestFCE2BRunnerLaunchForRuntime(t *testing.T) {
 		Command: "/usr/local/libexec/multica-fc-pi-container-log-entry",
 		Home:    "/root",
 	}
+	rootClaude := fcE2BRunnerLaunch{
+		Mode:    fcE2BRunnerLaunchRootLog,
+		Command: "/usr/local/libexec/multica-fc-claude-container-log-entry",
+		Home:    "/root",
+	}
+	rootCodex := fcE2BRunnerLaunch{
+		Mode:    fcE2BRunnerLaunchRootLog,
+		Command: "/usr/local/libexec/multica-fc-codex-container-log-entry",
+		Home:    "/root",
+	}
 
 	cases := []struct {
 		name     string
@@ -264,7 +278,11 @@ func TestFCE2BRunnerLaunchForRuntime(t *testing.T) {
 		{name: "root Hermes", provider: "hermes", metadata: `{"runner":"multica-fc-hermes-container-log-entry"}`, want: rootHermes},
 		{name: "root OpenCode", provider: "opencode", metadata: `{"runner":"multica-fc-opencode-container-log-entry"}`, want: rootOpenCode},
 		{name: "root Pi", provider: "pi", metadata: `{"runner":"multica-fc-pi-container-log-entry"}`, want: rootPi},
+		{name: "root Claude", provider: "claude", metadata: `{"runner":"multica-fc-claude-container-log-entry"}`, want: rootClaude},
+		{name: "root Codex", provider: "codex", metadata: `{"runner":"multica-fc-codex-container-log-entry"}`, want: rootCodex},
 		{name: "Pi has no legacy runner", provider: "pi", metadata: `{}`, wantErr: true},
+		{name: "Claude has no legacy runner", provider: "claude", metadata: `{}`, wantErr: true},
+		{name: "Codex has no legacy runner", provider: "codex", metadata: `{}`, wantErr: true},
 		{name: "provider mismatch", provider: "hermes", metadata: `{"runner":"multica-fc-opencode-container-log-entry"}`, wantErr: true},
 		{name: "custom command", provider: "opencode", metadata: `{"runner":"/tmp/custom-runner"}`, wantErr: true},
 		{name: "shell command", provider: "hermes", metadata: `{"runner":"sh -c id"}`, wantErr: true},
@@ -592,19 +610,19 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 
 func testFCE2BManifestV7Catalog() map[string]map[string]string {
 	return map[string]map[string]string{
-		"da499f3161a007c0": {
+		"264ec868c072f710": {
 			"hermes": "0.19.0", "opencode": "v1.18.11", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.6", "pi": "0.83.0", "dws": "v1.0.58-beta.4",
 		},
-		"41edc34be759811a": {
+		"aebbceb1626f6f2c": {
 			"hermes": "0.19.0", "opencode": "v1.18.11", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.6", "pi": "0.83.0", "dws": "v1.0.59-beta.3",
 		},
-		"baedb216407a5060": {
+		"0e70a766342698a9": {
 			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.59",
 		},
-		"bc80cb4524f2bc75": {
+		"ac20d08b3a999731": {
 			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.1",
 		},
@@ -623,7 +641,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 	}{
 		{
 			name:               "original DWS runtime",
-			alias:              "multica-m7-vda499f3161a007c0-r1-9a6bfa",
+			alias:              "multica-m7-v264ec868c072f710-r1-9a6bfa",
 			wantDWS:            "v1.0.58-beta.4",
 			wantDSH:            "0.1.0-rc.6",
 			wantOpenCode:       "v1.18.11",
@@ -632,7 +650,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		},
 		{
 			name:               "DWS v1.0.59 runtime",
-			alias:              "multica-m7-v41edc34be759811a-r1-dcb7e7",
+			alias:              "multica-m7-vaebbceb1626f6f2c-r1-dcb7e7",
 			wantDWS:            "v1.0.59-beta.3",
 			wantDSH:            "0.1.0-rc.6",
 			wantOpenCode:       "v1.18.11",
@@ -641,7 +659,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		},
 		{
 			name:               "formal DWS and latest toolchain runtime",
-			alias:              "multica-m7-vbaedb216407a5060-r1-f24f2e",
+			alias:              "multica-m7-v0e70a766342698a9-r1-f24f2e",
 			wantDWS:            "v1.0.59",
 			wantDSH:            "0.1.0-rc.8",
 			wantOpenCode:       "v1.18.19",
@@ -650,7 +668,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		},
 		{
 			name:               "latest DWS beta runtime from Diamond catalog",
-			alias:              "multica-m7-vbc80cb4524f2bc75-r1-2c5ead",
+			alias:              "multica-m7-vac20d08b3a999731-r1-2c5ead",
 			wantDWS:            "v1.0.60-beta.1",
 			wantDSH:            "0.1.0-rc.8",
 			wantOpenCode:       "v1.18.19",
@@ -668,7 +686,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 			if !published || !IsFCE2BTemplatePublished(template) {
 				t.Fatalf("v7 alias was not published: %+v", template)
 			}
-			if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}; !reflect.DeepEqual(template.Providers, want) {
+			if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"}; !reflect.DeepEqual(template.Providers, want) {
 				t.Fatalf("providers = %#v, want %#v", template.Providers, want)
 			}
 			if want := []string{

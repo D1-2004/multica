@@ -231,6 +231,7 @@
     "model_clear": "クリア（プロバイダーのデフォルトを使用）",
     "model_clear_title": "選択をクリアし、ランタイムのプロバイダーのデフォルトに戻します",
     "thinking_default": "CLI 設定に従う",
+    "thinking_in_model": "思考",
     "thinking_tooltip": "思考 · {{value}}",
     "thinking_clear": "CLI 設定に従う",
     "thinking_clear_title": "上書きをクリアし、推論レベルをローカルの CLI 設定（claude/codex）に任せます",

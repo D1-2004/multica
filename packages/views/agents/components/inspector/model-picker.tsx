@@ -16,6 +16,7 @@ import {
 } from "../../../issues/components/pickers";
 import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
+import { findModelCapabilityEntry } from "./model-capability";
 
 /**
  * Inline model picker for the agent inspector. Lighter cousin of
@@ -35,20 +36,25 @@ export function ModelPicker({
   runtime,
   runtimeOnline,
   value,
+  thinkingValue = "",
   canEdit = true,
   variant = "chip",
   showLabel = true,
   onChange,
+  onThinkingChange,
 }: {
   runtimeId: string | null;
   runtime?: AgentRuntime | null;
   runtimeOnline: boolean;
   value: string;
+  /** Persisted thinking_level for the selected model. */
+  thinkingValue?: string;
   /** When false, render a static read-only display and skip the popover. */
   canEdit?: boolean;
   variant?: "chip" | "field";
   showLabel?: boolean;
   onChange: (next: string) => Promise<void> | void;
+  onThinkingChange?: (next: string) => Promise<void> | void;
 }) {
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
@@ -82,13 +88,39 @@ export function ModelPicker({
   );
   const canCreate = !fixedCatalog && trimmedSearch.length > 0 && !exactMatch;
 
-  const triggerLabel = value || t(($) => $.pickers.model_default);
+  const selectedEntry = findModelCapabilityEntry(
+    models,
+    value,
+    runtime?.provider ?? "",
+  );
+  const thinkingLevels = selectedEntry?.thinking?.supported_levels ?? [];
+  const thinkingLabel = thinkingValue
+    ? (thinkingLevels.find((level) => level.value === thinkingValue)?.label ??
+      thinkingValue)
+    : "";
+  const triggerLabel = value
+    ? thinkingLabel
+      ? `${value} · ${thinkingLabel}`
+      : value
+    : t(($) => $.pickers.model_default);
   const triggerTitle = t(($) => $.pickers.model_tooltip, { value: triggerLabel });
 
   const select = async (id: string) => {
-    setOpen(false);
+    const nextEntry = findModelCapabilityEntry(
+      models,
+      id,
+      runtime?.provider ?? "",
+    );
+    const hasThinking =
+      (nextEntry?.thinking?.supported_levels.length ?? 0) > 0;
+    if (!hasThinking || !onThinkingChange) setOpen(false);
     setSearch("");
     if (id !== value) await onChange(id);
+  };
+
+  const selectThinking = async (next: string) => {
+    setOpen(false);
+    if (onThinkingChange && next !== thinkingValue) await onThinkingChange(next);
   };
 
   if (!supported && !modelsQuery.isLoading) {
@@ -274,6 +306,42 @@ export function ModelPicker({
           {t(($) => $.pickers.model_clear)}
         </button>
       )}
+
+      {onThinkingChange && thinkingLevels.length > 0 ? (
+        <div className="border-t">
+          <p className="px-3 pt-2 pb-1 text-micro font-medium uppercase tracking-wide text-muted-foreground">
+            {t(($) => $.pickers.thinking_in_model)}
+          </p>
+          {thinkingLevels.map((level) => (
+            <PickerItem
+              key={level.value}
+              selected={level.value === thinkingValue}
+              onClick={() => void selectThinking(level.value)}
+            >
+              <span className="block min-w-0 flex-1 text-left">
+                <span className="truncate text-label font-medium">
+                  {level.label}
+                </span>
+                {level.description ? (
+                  <span className="mt-0.5 block text-micro leading-snug text-muted-foreground">
+                    {level.description}
+                  </span>
+                ) : null}
+              </span>
+            </PickerItem>
+          ))}
+          {thinkingValue ? (
+            <button
+              type="button"
+              onClick={() => void selectThinking("")}
+              className="flex w-full items-center px-3 py-2 text-left text-caption text-muted-foreground transition-colors hover:bg-accent/50"
+              title={t(($) => $.pickers.thinking_clear_title)}
+            >
+              {t(($) => $.pickers.thinking_clear)}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </PropertyPicker>
   );
 

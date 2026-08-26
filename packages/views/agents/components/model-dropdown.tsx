@@ -8,6 +8,7 @@ import {
   runtimeModelsOptions,
 } from "@multica/core/runtimes";
 import type { AgentRuntime, RuntimeModel } from "@multica/core/types";
+import { findModelCapabilityEntry } from "./inspector/model-capability";
 import {
   Popover,
   PopoverTrigger,
@@ -30,14 +31,18 @@ export function ModelDropdown({
   runtime,
   runtimeOnline,
   value,
+  thinkingValue = "",
   onChange,
+  onThinkingChange,
   disabled,
 }: {
   runtimeId: string | null;
   runtime: AgentRuntime | null;
   runtimeOnline: boolean;
   value: string;
+  thinkingValue?: string;
   onChange: (value: string) => void;
+  onThinkingChange?: (value: string) => void;
   disabled?: boolean;
 }) {
   const { t } = useT("agents");
@@ -88,10 +93,29 @@ export function ModelDropdown({
   );
   const canCreate = !fixedCatalog && trimmedSearch.length > 0 && !exactMatch;
 
+  const selectedEntry = findModelCapabilityEntry(
+    models,
+    value,
+    runtime?.provider ?? "",
+  );
+  const thinkingLevels = selectedEntry?.thinking?.supported_levels ?? [];
+
   const select = (id: string) => {
+    const nextEntry = findModelCapabilityEntry(
+      models,
+      id,
+      runtime?.provider ?? "",
+    );
+    const hasThinking =
+      (nextEntry?.thinking?.supported_levels.length ?? 0) > 0;
     onChange(id);
-    setOpen(false);
+    if (!hasThinking || !onThinkingChange) setOpen(false);
     setSearch("");
+  };
+
+  const selectThinking = (next: string) => {
+    onThinkingChange?.(next);
+    setOpen(false);
   };
 
   const triggerLabel =
@@ -236,6 +260,47 @@ export function ModelDropdown({
                 {t(($) => $.model_dropdown.clear_full)}
               </button>
             )}
+
+            {onThinkingChange && thinkingLevels.length > 0 ? (
+              <div className="mt-1 border-t border-border pt-1">
+                <div className="px-3 pt-1.5 pb-0.5 text-caption font-medium uppercase tracking-wide text-muted-foreground">
+                  {t(($) => $.pickers.thinking_in_model)}
+                </div>
+                {thinkingLevels.map((level) => (
+                  <button
+                    type="button"
+                    key={level.value}
+                    onClick={() => selectThinking(level.value)}
+                    className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-body transition-colors ${
+                      level.value === thinkingValue
+                        ? "bg-accent"
+                        : "hover:bg-accent/50"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">{level.label}</div>
+                      {level.description ? (
+                        <div className="truncate text-caption text-muted-foreground">
+                          {level.description}
+                        </div>
+                      ) : null}
+                    </div>
+                    {level.value === thinkingValue ? (
+                      <Check className="h-4 w-4 shrink-0 text-primary" />
+                    ) : null}
+                  </button>
+                ))}
+                {thinkingValue ? (
+                  <button
+                    type="button"
+                    onClick={() => selectThinking("")}
+                    className="flex w-full items-center px-3 py-2 text-left text-caption text-muted-foreground transition-colors hover:bg-accent/50"
+                  >
+                    {t(($) => $.pickers.thinking_clear)}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </PopoverContent>
       </Popover>

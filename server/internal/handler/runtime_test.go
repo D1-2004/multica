@@ -129,6 +129,68 @@ func TestInitiateListModelsReturnsConfiguredFCE2BModels(t *testing.T) {
 	if resp.Models[1].ID != "claude-sonnet-4-6" || resp.Models[1].Default {
 		t.Fatalf("second model must be selectable and non-default: %#v", resp.Models[1])
 	}
+	if resp.Models[1].Thinking != nil {
+		t.Fatalf("hermes cloud catalog must not advertise thinking: %#v", resp.Models[1].Thinking)
+	}
+}
+
+func TestInitiateListModelsAnnotatesClaudeCloudThinking(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	var runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider,
+			status, device_info, metadata, last_seen_at, visibility, owner_id
+		)
+		VALUES ($1, NULL, 'FC claude thinking catalog', 'cloud', 'claude',
+			'online', 'fc-e2b fixture', '{"kind":"fc-e2b"}'::jsonb, now(), 'private', $2)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create FC runtime: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+
+	original := testHandler.cfg.FCE2B
+	testHandler.cfg.FCE2B = service.FCE2BConfig{
+		LLMModels: []string{"claude-sonnet-4-6", "claude-opus-4-8"},
+	}
+	t.Cleanup(func() { testHandler.cfg.FCE2B = original })
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/runtimes/"+runtimeID+"/models", nil)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.InitiateListModels(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp ModelListRequest
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Models) != 2 || resp.Models[0].Thinking == nil || resp.Models[1].Thinking == nil {
+		t.Fatalf("claude cloud catalog must advertise thinking: %#v", resp.Models)
+	}
+	if hasCloudThinkingLevel(resp.Models[0].Thinking, "xhigh") {
+		t.Fatalf("sonnet must not advertise opus-only xhigh: %#v", resp.Models[0].Thinking)
+	}
+	if !hasCloudThinkingLevel(resp.Models[1].Thinking, "xhigh") {
+		t.Fatalf("opus must advertise xhigh: %#v", resp.Models[1].Thinking)
+	}
+}
+
+func hasCloudThinkingLevel(thinking *ModelThinking, value string) bool {
+	if thinking == nil {
+		return false
+	}
+	for _, level := range thinking.SupportedLevels {
+		if level.Value == value {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInitiateListModelsReturnsConfiguredASBModels(t *testing.T) {

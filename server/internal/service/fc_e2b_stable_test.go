@@ -135,7 +135,7 @@ func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
 		Manifest: map[string]any{
 			"schema_version": 7,
 			"providers": []string{
-				"hermes", "opencode", "pi", "dsh", "opencode-v2",
+				"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex",
 			},
 			"capabilities_by_backend": map[string][]string{
 				string(SandboxBackendAliyunFC): {
@@ -361,6 +361,8 @@ func TestStableRuntimeProviderPreservesLegacyHermesDefault(t *testing.T) {
 		" Hermes ":    "hermes",
 		"OpenCode":    "opencode",
 		"pi":          "pi",
+		"claude":      "claude",
+		"codex":       "codex",
 		"unsupported": "",
 	}
 	for input, want := range tests {

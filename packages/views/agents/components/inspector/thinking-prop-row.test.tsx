@@ -265,6 +265,32 @@ describe("ThinkingPropRow", () => {
     expect(onChange).toHaveBeenCalledWith("");
   });
 
+  it("still shows thinking for an FC/E2B runtime when the catalog advertises levels", async () => {
+    const { onChange } = renderRow({
+      runtime: {
+        id: "runtime-1",
+        workspace_id: "ws-1",
+        daemon_id: null,
+        name: "Cloud Claude",
+        runtime_mode: "cloud",
+        provider: "claude",
+        launch_header: "",
+        status: "online",
+        device_info: "",
+        metadata: { kind: "fc-e2b" },
+        owner_id: null,
+        visibility: "private",
+        last_seen_at: null,
+        created_at: "2026-05-20T00:00:00Z",
+        updated_at: "2026-05-20T00:00:00Z",
+      },
+      value: "",
+    });
+    await screen.findByText("Thinking");
+    expect((await screen.findAllByText("Follow CLI config")).length).toBeGreaterThan(0);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("still previews the Default model's levels for an empty non-codex model", async () => {
     // Non-codex providers keep the existing behavior: an empty model previews
     // the flagged Default entry's catalog. Only codex is fenced off, because

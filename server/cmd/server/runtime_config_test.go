@@ -24,7 +24,7 @@ func TestAppRuntimeConfigReadsCurrentManifestFingerprintSnapshot(t *testing.T) {
 	first, err := remote.ApplyManifestFingerprintsJSON([]byte(`{
   "version": 1,
   "fingerprints": {
-    "baedb216407a5060": {
+    "0e70a766342698a9": {
       "hermes": "0.19.0",
       "opencode": "v1.18.19",
       "opencode-v2": "0.0.0-beta-202608110357",
@@ -39,19 +39,19 @@ func TestAppRuntimeConfigReadsCurrentManifestFingerprintSnapshot(t *testing.T) {
 	}
 	app := &appRuntimeConfig{remote: remote}
 	initial := app.fce2b()
-	if got := initial.ManifestV7ComponentVersions["baedb216407a5060"]["dws"]; got != "v1.0.59" {
+	if got := initial.ManifestV7ComponentVersions["0e70a766342698a9"]["dws"]; got != "v1.0.59" {
 		t.Fatalf("initial DWS version = %q", got)
 	}
 
-	initial.ManifestV7ComponentVersions["baedb216407a5060"]["dws"] = "mutated"
-	if got := remote.ManifestFingerprints().Fingerprints["baedb216407a5060"]["dws"]; got != "v1.0.59" {
+	initial.ManifestV7ComponentVersions["0e70a766342698a9"]["dws"] = "mutated"
+	if got := remote.ManifestFingerprints().Fingerprints["0e70a766342698a9"]["dws"]; got != "v1.0.59" {
 		t.Fatalf("caller mutated service snapshot: %q", got)
 	}
 
 	second, err := remote.ApplyManifestFingerprintsJSON([]byte(`{
   "version": 1,
   "fingerprints": {
-    "bc80cb4524f2bc75": {
+    "ac20d08b3a999731": {
       "hermes": "0.19.0",
       "opencode": "v1.18.19",
       "opencode-v2": "0.0.0-beta-202608110357",
@@ -68,10 +68,10 @@ func TestAppRuntimeConfigReadsCurrentManifestFingerprintSnapshot(t *testing.T) {
 		t.Fatalf("generation = %d, want %d", second.Generation, first.Generation+1)
 	}
 	updated := app.fce2b()
-	if got := updated.ManifestV7ComponentVersions["bc80cb4524f2bc75"]["dws"]; got != "v1.0.60-beta.1" {
+	if got := updated.ManifestV7ComponentVersions["ac20d08b3a999731"]["dws"]; got != "v1.0.60-beta.1" {
 		t.Fatalf("updated DWS version = %q", got)
 	}
-	if _, ok := updated.ManifestV7ComponentVersions["baedb216407a5060"]; ok {
+	if _, ok := updated.ManifestV7ComponentVersions["0e70a766342698a9"]; ok {
 		t.Fatal("app runtime config retained removed fingerprint")
 	}
 }

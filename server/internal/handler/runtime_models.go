@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -117,6 +118,24 @@ type ThinkingLevel struct {
 	Value       string `json:"value"`
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+}
+
+func modelThinkingFromAgent(src *agent.ModelThinking) *ModelThinking {
+	if src == nil || len(src.SupportedLevels) == 0 {
+		return nil
+	}
+	levels := make([]ThinkingLevel, 0, len(src.SupportedLevels))
+	for _, level := range src.SupportedLevels {
+		levels = append(levels, ThinkingLevel{
+			Value:       level.Value,
+			Label:       level.Label,
+			Description: level.Description,
+		})
+	}
+	return &ModelThinking{
+		SupportedLevels: levels,
+		DefaultLevel:    src.DefaultLevel,
+	}
 }
 
 const (
@@ -380,6 +399,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 				Label:    model,
 				Provider: catalog.Provider,
 				Default:  index == 0,
+				Thinking: modelThinkingFromAgent(agent.StaticThinkingForModel(catalog.Provider, model)),
 			})
 		}
 		now := time.Now()
