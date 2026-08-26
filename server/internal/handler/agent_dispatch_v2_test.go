@@ -503,6 +503,9 @@ func TestBuildDispatchPromptBoundsQuotedOriginalAndReportsItsLength(t *testing.T
 	if !strings.Contains(display, "按这个继续") {
 		t.Fatalf("display content dropped the current message: %q", display)
 	}
+	if !strings.Contains(display, "先回读完整原文再下结论") {
+		t.Fatalf("display content did not point at the read-back path: %q", display)
+	}
 }
 
 func TestQuotedMessageInstructionCarriesRereadLocatorAndSelfAttribution(t *testing.T) {
@@ -554,7 +557,9 @@ func TestQuotedMessageInstructionCarriesRereadLocatorAndSelfAttribution(t *testi
 		`"quotedSenderUid":"25698887"`,
 		`"quotedSenderIsSelf":true`,
 		`"quotedTextTruncatedInDisplay":true`,
-		"dws chat message list-by-ids --msg-ids <quotedOpenMsgId>",
+		// The read-back command is printed with real ids so it runs as written.
+		"- conversation cid-trusted, quoted message referenced-open (501 characters, TRUNCATED in visible text): " +
+			"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
 	} {
 		if !strings.Contains(quoted.EffectiveText, want) {
 			t.Errorf("quoted_message instruction missing %q: %q", want, quoted.EffectiveText)
@@ -562,6 +567,37 @@ func TestQuotedMessageInstructionCarriesRereadLocatorAndSelfAttribution(t *testi
 	}
 	if !strings.Contains(instructionFromSegments(segments), "## Quoted DingTalk Message") {
 		t.Fatal("composed instruction dropped the quoted-message segment")
+	}
+}
+
+func TestQuotedMessageInstructionFallsBackToConversationListingWithoutLocator(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:   "channel",
+		Type:     "message.created",
+		Surface:  DispatchSurface{Type: "auto"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Sender:       DispatchSender{DisplayName: "冬翔"},
+			Messages: []DispatchMessage{
+				{
+					OpenMsgID: "current-open",
+					Text:      "按这个继续",
+					ReferencedMessage: &DispatchReferencedMessage{
+						Text:      "被引用的原文",
+						SenderUID: "someone-else",
+					},
+				},
+			},
+		},
+	}
+
+	instruction := buildDispatchQuotedMessageInstruction(stored)
+	want := "- conversation cid-trusted, quoted message id not supplied by this dispatch (6 characters, shown in full): " +
+		"`dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`"
+	if !strings.Contains(instruction, want) {
+		t.Fatalf("quoted_message instruction missing conversation fallback %q: %q", want, instruction)
 	}
 }
 

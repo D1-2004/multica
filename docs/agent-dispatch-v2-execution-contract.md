@@ -127,8 +127,9 @@ Multica builds prompt material from the structured source event:
 A message carrying `referencedMessage` is rendered as an attributed pair rather
 than two anonymous blocks. Display content leads with what the sender said this
 time, then names who wrote the quoted message — this Agent itself, the current
-sender, or somebody else in the conversation — and inlines at most 400
-characters of the original, reporting the full length when it truncates. The
+sender, or somebody else in the conversation — and inlines at most 500
+characters of the original, reporting the full length and telling the Agent to
+read the original back before drawing conclusions when it truncates. The
 relationship is resolved from `referencedMessage.senderUid` against
 `externalIdentity.dws.uid` and the sender identifiers already in the envelope;
 none of those identifiers reach display content. The locator that makes the
@@ -177,9 +178,20 @@ blob:
 `quoted_message` carries facts, not policy, so it is composed from the persisted
 dispatch envelope and is not overridable. It states that the quoted text is the
 antecedent rather than a new request, reports whether this Agent wrote the
-quoted message itself, and carries `quotedOpenMsgId` so the Agent can read the
-full original with `dws chat message list-by-ids` instead of guessing at a
-truncated excerpt.
+quoted message itself, and prints one ready-to-run read-back command per quoted
+message with the real `openConversationId` and `openMsgId` substituted in:
+
+```text
+- conversation cidXXX, quoted message msgYYY (1820 characters, TRUNCATED in visible text): `dws chat message list-by-ids --msg-ids msgYYY --format json`
+```
+
+A quote the display truncated is marked TRUNCATED and must be read back before
+the Agent relies on anything the excerpt does not show. When the dispatch supplies
+no quoted-message id, the hint falls back to
+`dws chat message search-advanced --conversation-ids <openConversationId>` so the
+conversation is still reachable. The commands are spelled out rather than left as
+placeholders because an Agent that has to assemble one from a JSON blob is an
+Agent that guesses.
 
 Each segment reports its gate as a stable `condition` key, present whether or
 not the segment is active in the previewed scenario. A preview that only
@@ -606,11 +618,13 @@ parsing or rewriting Router's context string.
 
 - History: Display content for a quoted DingTalk reply now leads with the
   current message, names the quoted message's author relative to the dispatch,
-  and inlines a bounded excerpt of the original. A new non-overridable
+  and inlines at most 500 characters of the original. A new non-overridable
   `quoted_message` instruction segment carries `quotedOpenMsgId`,
-  `quotedSenderUid`, `quotedSenderIsSelf`, and the reading rule; the legacy
-  prompt builder emits the same block. `persistedDispatchContext` now reads the
-  private `external_identity.dws` descriptor already stored beside the envelope.
+  `quotedSenderUid`, `quotedSenderIsSelf`, the reading rule, and one ready-to-run
+  read-back command per quote with the real conversation and message ids printed
+  in; the legacy prompt builder emits the same block.
+  `persistedDispatchContext` now reads the private `external_identity.dws`
+  descriptor already stored beside the envelope.
 - Reason: The previous rendering opened with the untruncated original under a
   bare `引用消息：` label and gave the reply a bare `当前回复：` label, so an
   Agent quoting its own completion report saw an unattributed wall of text ahead
