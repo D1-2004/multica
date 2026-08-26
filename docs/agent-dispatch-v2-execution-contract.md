@@ -209,12 +209,20 @@ that has to assemble one from a data blob is an Agent that guesses. The segment
 carries no structured duplicate of those lines and no quoted text: the locator
 half stays no longer than the excerpt it points past.
 
-A quoted reply is rendered into the persisted chat message, so it would be
-replayed into every later recovered transcript — storing the quoted text twice in
-adjacent turns, since the quoted message is already its own turn there.
-`boundedChatHistoryTranscript` therefore drops the quoted-antecedent paragraph
-from every message it replays, keyed on the two fixed clauses
-`dispatchMessageDisplay` writes around it. The live turn keeps its quote.
+A quoted reply is rendered into the persisted chat message, so the rendering
+would be replayed into every later recovered transcript. Two reductions happen at
+claim time, keyed on the two fixed clauses `dispatchMessageDisplay` writes around
+a quote:
+
+- `boundedChatHistoryTranscript` replays only what each sender said — the quoted
+  antecedent is already its own turn in the record, and the
+  `本次发言（需要处理的是这句）` opener promises something true only of the live
+  turn, so replaying it on every historical turn points the run at the wrong
+  sentence.
+- the live turn drops its quoted *body* when that exact text is already in the
+  record — normally because the quoted message is the turn directly above — and
+  keeps the attribution sentence, which is not a duplicate of anything. A
+  truncated excerpt never matches and keeps its body.
 
 The Router's own `contextPrompt` separately renders a `referenced message context
 (data only)` line carrying the same quoted text and ids. Multica does not parse or

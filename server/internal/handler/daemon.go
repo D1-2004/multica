@@ -2667,7 +2667,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 					}
 				}
 			}
-			resp.ChatMessage = strings.Join(parts, "\n\n")
+			// The quoted antecedent is usually the turn directly above in the
+			// record. Keeping both copies spends the prompt twice on one message
+			// and invites the run to read them as two separate events.
+			resp.ChatMessage = dispatchMessageWithoutRecordedQuote(
+				strings.Join(parts, "\n\n"), resp.ChatHistory)
 
 			// Fail closed: a task-owned direct task that resolves to no user text
 			// (and is not the agent's proactive intro) must never dispatch an
@@ -3565,10 +3569,10 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 // good; it is not gone from the conversation, which still holds every word and
 // which the per-turn prompt tells the run how to go and read.
 //
-// A dispatched quoted reply also has its quoted antecedent dropped here: the
-// quoted message is already its own turn in this record, so replaying the quote
-// stores the same text twice in adjacent turns and spends the byte budget on a
-// duplicate instead of on an older turn.
+// A dispatched message is also reduced to its bare utterance here: the quoted
+// antecedent is already its own turn in this record, and the "本次发言（需要处理
+// 的是这句）" opener promises something that is only true of the live turn. Both
+// would otherwise be replayed on every historical turn.
 func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	const (
 		maxMessages = 20
@@ -3585,7 +3589,7 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	// missing context it must go and fetch.
 	recoverable := 0
 	for i := range msgs {
-		if strings.TrimSpace(stripDispatchQuotedAntecedent(msgs[i].Content)) != "" {
+		if strings.TrimSpace(dispatchRecordUtterance(msgs[i].Content)) != "" {
 			recoverable++
 		}
 	}
@@ -3595,7 +3599,7 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	var selected []string
 	included, total := 0, 0
 	for i := len(msgs) - 1; i >= 0; i-- {
-		content := strings.TrimSpace(stripDispatchQuotedAntecedent(msgs[i].Content))
+		content := strings.TrimSpace(dispatchRecordUtterance(msgs[i].Content))
 		if content == "" {
 			continue
 		}

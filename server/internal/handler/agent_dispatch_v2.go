@@ -1158,30 +1158,86 @@ const (
 	dispatchQuotedAntecedentMarker = "更早的一条消息作为背景，不是新指令"
 )
 
-// stripDispatchQuotedAntecedent removes the quoted-antecedent paragraph from a
-// message that is being replayed as history. Inline in the turn it arrived on,
-// the quote is what makes the reply legible; in the record the quoted message is
-// already there as its own turn, so the copy is the same text at full price a
-// second time — and it compounds, because every long reply that gets quoted is
-// then stored twice in adjacent turns.
-//
-// Both clauses must be present, in order, before anything is cut. One of them
-// could plausibly be typed by a person; the pair, in that order, is only ever
-// produced by dispatchMessageDisplay.
-func stripDispatchQuotedAntecedent(content string) string {
+// dispatchQuotedAntecedentStart reports where the quoted-antecedent paragraph
+// begins, or -1 when this content is not a rendered quoted reply. Both clauses
+// must be present, in order: one of them could plausibly be typed by a person,
+// but the pair in that order is only ever produced by dispatchMessageDisplay.
+func dispatchQuotedAntecedentStart(content string) int {
 	opener := strings.Index(content, dispatchCurrentUtteranceMarker)
 	if opener < 0 {
-		return content
+		return -1
 	}
 	antecedent := strings.Index(content[opener:], dispatchQuotedAntecedentMarker)
 	if antecedent < 0 {
-		return content
+		return -1
 	}
 	cut := strings.LastIndex(content[:opener+antecedent], "\n\n")
 	if cut < 0 {
+		return -1
+	}
+	return cut
+}
+
+// dispatchRecordUtterance reduces a rendered dispatch message to what the sender
+// actually said, for replay inside the interaction record.
+//
+// Two things are dropped, and both are wrong specifically in the record rather
+// than wrong everywhere. The quoted antecedent is already its own turn there, so
+// the copy is the same text at full price a second time — and it compounds,
+// because every long reply that gets quoted is stored twice in adjacent turns.
+// The "本次发言（需要处理的是这句）" opener is worse than redundant: the record
+// already labels the turn `User:`, and a past turn is precisely NOT the sentence
+// this run has to act on, so replaying that promise on every historical turn
+// points the run at the wrong instruction.
+func dispatchRecordUtterance(content string) string {
+	if cut := dispatchQuotedAntecedentStart(content); cut >= 0 {
+		content = strings.TrimRight(content[:cut], " \n")
+	}
+	head, rest, found := strings.Cut(content, "\n")
+	if found && strings.HasSuffix(strings.TrimRight(head, " "), dispatchCurrentUtteranceMarker) {
+		return strings.TrimLeft(rest, "\n")
+	}
+	return content
+}
+
+// dispatchMessageWithoutRecordedQuote drops the quoted body from the live turn
+// when the record already carries that exact text — typically because the quoted
+// message is the turn immediately above. The attribution sentence stays: it is
+// what says whose message is being answered, and it is not a duplicate of
+// anything. A truncated excerpt never matches and therefore keeps its body.
+func dispatchMessageWithoutRecordedQuote(content, record string) string {
+	if strings.TrimSpace(record) == "" {
 		return content
 	}
-	return strings.TrimRight(content[:cut], " \n")
+	cut := dispatchQuotedAntecedentStart(content)
+	if cut < 0 {
+		return content
+	}
+	colon := strings.Index(content[cut:], "：\n> ")
+	if colon < 0 {
+		return content
+	}
+	colon += cut
+	body := dispatchUnquoteBlock(content[colon+len("：\n"):])
+	if body == "" || !strings.Contains(record, body) {
+		return content
+	}
+	return content[:colon] + "；原文已在上面的记录里，不再重复。"
+}
+
+// dispatchUnquoteBlock strips the blockquote prefix off the leading run of "> "
+// lines and returns their text, stopping at the first line that is not part of
+// the quote (the truncation notice, or anything appended later).
+func dispatchUnquoteBlock(s string) string {
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if !strings.HasPrefix(line, ">") {
+			break
+		}
+		out = append(out, strings.TrimPrefix(strings.TrimPrefix(line, ">"), " "))
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 // dispatchMessageDisplay renders one inbound message. A quoted reply leads with

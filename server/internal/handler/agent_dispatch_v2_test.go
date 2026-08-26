@@ -416,9 +416,9 @@ func TestBuildDispatchPromptRendersReferencedMessageContext(t *testing.T) {
 	}
 }
 
-// The quoted antecedent earns its place in the turn it arrives on and becomes a
-// duplicate in the record, where the quoted message is already its own turn.
-func TestStripDispatchQuotedAntecedentDropsOnlyTheQuotedParagraph(t *testing.T) {
+// In the turn it arrives on the rendered wrapper is what makes the reply legible;
+// in the record it is a duplicate plus a promise that is false for a past turn.
+func TestDispatchRecordUtteranceKeepsOnlyWhatWasSaid(t *testing.T) {
 	identities := dispatchDisplayIdentities{
 		SenderDisplayName: "冬翔",
 		AgentDWSUID:       "25698887",
@@ -432,30 +432,72 @@ func TestStripDispatchQuotedAntecedentDropsOnlyTheQuotedParagraph(t *testing.T) 
 			SenderUID: "25698887",
 		},
 	}, identities)
-	if !strings.Contains(rendered, "我可以帮你完成以下任务") {
-		t.Fatalf("live turn lost the quote: %q", rendered)
+	for _, want := range []string{"我可以帮你完成以下任务", dispatchCurrentUtteranceMarker} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("live turn lost %q: %q", want, rendered)
+		}
 	}
 
-	stripped := stripDispatchQuotedAntecedent(rendered)
-	if strings.Contains(stripped, "我可以帮你完成以下任务") || strings.Contains(stripped, dispatchQuotedAntecedentMarker) {
-		t.Fatalf("record kept the quoted antecedent: %q", stripped)
-	}
-	if !strings.Contains(stripped, "很好") {
-		t.Fatalf("record lost what the sender actually said: %q", stripped)
+	if got := dispatchRecordUtterance(rendered); got != "很好" {
+		t.Fatalf("record utterance = %q, want just what the sender said", got)
 	}
 }
 
-func TestStripDispatchQuotedAntecedentLeavesOrdinaryMessagesAlone(t *testing.T) {
+func TestDispatchRecordUtteranceLeavesOrdinaryMessagesAlone(t *testing.T) {
 	for _, content := range []string{
 		"普通消息",
 		"",
 		// One clause alone is something a person could plausibly type; only the
 		// pair, in order, is a rendered quote.
 		"我引用了你" + dispatchQuotedAntecedentMarker,
-		dispatchCurrentUtteranceMarker + "\n只有开头没有引用",
+		"多行\n普通消息",
 	} {
-		if got := stripDispatchQuotedAntecedent(content); got != content {
-			t.Errorf("stripDispatchQuotedAntecedent(%q) = %q, want unchanged", content, got)
+		if got := dispatchRecordUtterance(content); got != content {
+			t.Errorf("dispatchRecordUtterance(%q) = %q, want unchanged", content, got)
+		}
+	}
+}
+
+// The quoted message is normally the turn directly above in the record. Keeping
+// both copies spends the prompt twice on one message.
+func TestDispatchMessageWithoutRecordedQuoteDropsTheDuplicateBody(t *testing.T) {
+	identities := dispatchDisplayIdentities{SenderDisplayName: "冬翔", AgentDWSUID: "237396"}
+	rendered := dispatchMessageDisplay(DispatchMessage{
+		OpenMsgID: "current-open",
+		Text:      "hh",
+		ReferencedMessage: &DispatchReferencedMessage{
+			OpenMsgID: "referenced-open",
+			Text:      "你好！有什么可以帮你的吗？",
+			SenderUID: "237396",
+		},
+	}, identities)
+	record := "User:\nhi\n\nAssistant:\n你好！有什么可以帮你的吗？"
+
+	got := dispatchMessageWithoutRecordedQuote(rendered, record)
+	if strings.Contains(got, "> 你好！有什么可以帮你的吗？") {
+		t.Fatalf("live turn kept a body the record already carries: %q", got)
+	}
+	for _, want := range []string{"hh", "引用了你（本数字员工）自己", "原文已在上面的记录里"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("live turn lost %q: %q", want, got)
+		}
+	}
+}
+
+func TestDispatchMessageWithoutRecordedQuoteKeepsABodyTheRecordLacks(t *testing.T) {
+	identities := dispatchDisplayIdentities{SenderDisplayName: "冬翔", AgentDWSUID: "237396"}
+	rendered := dispatchMessageDisplay(DispatchMessage{
+		OpenMsgID: "current-open",
+		Text:      "hh",
+		ReferencedMessage: &DispatchReferencedMessage{
+			OpenMsgID: "referenced-open",
+			Text:      "一条记录里没有的更早消息",
+			SenderUID: "237396",
+		},
+	}, identities)
+	for _, record := range []string{"", "User:\nhi\n\nAssistant:\n别的内容"} {
+		if got := dispatchMessageWithoutRecordedQuote(rendered, record); got != rendered {
+			t.Errorf("live turn was rewritten against record %q: %q", record, got)
 		}
 	}
 }
