@@ -636,6 +636,7 @@
       "label_hint": "Saving creates a workspace label per entry (O: … and KR: …). Removing an OKR leaves its label in place, because issues may already carry it.",
       "spend_hint": "Cost of every agent task on Issues tagged with this entry.",
       "spend_partial_hint": "Cost of every agent task on Issues tagged with this entry. Some tasks ran on a model with no price attached, so this is a floor.",
+      "spend_unavailable": "Cost data is temporarily unavailable. The objectives are still available.",
       "spend_tasks_one": "{{count}} task",
       "spend_tasks_other": "{{count}} tasks"
     },

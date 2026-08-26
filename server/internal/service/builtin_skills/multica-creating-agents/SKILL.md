@@ -19,6 +19,7 @@ These commands read state and have no side effects:
 
 ```bash
 multica agent get <agent-id> --output json      # full persisted agent record
+multica agent okr list <agent-ref> --output json # objectives, label ids, and measured spend
 multica agent skills list <agent-id> --output json   # current skill bindings
 multica agent env get <agent-id> --output json  # plaintext env (agent owner or ws owner/admin; agents denied)
 ```
@@ -33,6 +34,14 @@ it again. Unbound is orthogonal to archived.
 `agent get` returns the persisted agent including `runtime_id`, `model`,
 `thinking_level`, `service_tier`, `custom_args`, `has_custom_env`,
 `custom_env_key_count`, and `skills`. It never returns plaintext `custom_env`.
+
+`agent okr list` returns the whole objective tree as
+`{"usage_available": ..., "okrs": [...]}`. Every objective and key result
+includes its stable materialized `label_id`, its `agent_okr` row `id`, and its
+authored `position`. `spend` is present only when `usage_available=true`; a
+false availability bit is a read failure, not measured zero. Spend is the
+current Issue-label combination cost and may include collaborating agents on
+the same labeled Issue.
 
 ## Core model
 
@@ -284,7 +293,7 @@ from `SKILL.md` plus sibling files. Capability belongs in a bound skill, not in
 
 ## Side effects needing approval
 
-Read-only (safe): `agent get`, `agent skills list`, `agent env get`.
+Read-only (safe): `agent get`, `agent okr list`, `agent skills list`, `agent env get`.
 
 State-changing (require an explicit instruction — do not run speculatively):
 

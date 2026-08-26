@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -85,11 +84,14 @@ func TestLabelUsageAggregatesAtTaskGrainAndPaginates(t *testing.T) {
 		if err := testPool.QueryRow(ctx, `
 			INSERT INTO agent_task_queue (
 				agent_id, runtime_id, issue_id, status, priority,
-				started_at, completed_at, created_at
+				started_at, completed_at, created_at,
+				originator_user_id, accountable_user_id, originator_source,
+				trigger_evidence_kind, trigger_evidence_ref_id
 			)
-			VALUES ($1, $2, $3, 'completed', 0, $4, $4, $4)
+			VALUES ($1, $2, $3, 'completed', 0, $4, $4, $4,
+			        $5, $5, 'direct_human', 'issue_assignment', $3)
 			RETURNING id
-		`, agentID, handlerTestRuntimeID(t), issueID, createdAt).Scan(&taskID); err != nil {
+		`, agentID, handlerTestRuntimeID(t), issueID, createdAt, testUserID).Scan(&taskID); err != nil {
 			t.Fatalf("insert task: %v", err)
 		}
 		t.Cleanup(func() {
@@ -169,9 +171,6 @@ func TestLabelUsageAggregatesAtTaskGrainAndPaginates(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("get label usage: status=%d body=%s", w.Code, w.Body.String())
 	}
-	if bytes.Contains(w.Body.Bytes(), []byte(`"agent_id"`)) || bytes.Contains(w.Body.Bytes(), []byte(`"agent_name"`)) {
-		t.Fatalf("label usage leaked agent identity: %s", w.Body.String())
-	}
 	var detail LabelUsageDetailResponse
 	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
 		t.Fatalf("decode detail: %v", err)
@@ -186,6 +185,14 @@ func TestLabelUsageAggregatesAtTaskGrainAndPaginates(t *testing.T) {
 	}
 	if len(detail.Tasks) != 1 || detail.Tasks[0].TaskID != recentTask {
 		t.Fatalf("page 1 tasks = %+v, want recent priced task %s", detail.Tasks, recentTask)
+	}
+	if detail.Tasks[0].AgentID != agentID || detail.Tasks[0].AgentName == "" {
+		t.Fatalf("task executor = %s/%q, want %s with name", detail.Tasks[0].AgentID, detail.Tasks[0].AgentName, agentID)
+	}
+	if detail.Tasks[0].Attribution == nil || detail.Tasks[0].Attribution.Source != "direct_human" ||
+		!detail.Tasks[0].Attribution.Precise || detail.Tasks[0].Attribution.Initiator == nil ||
+		detail.Tasks[0].Attribution.Initiator.ID != testUserID {
+		t.Fatalf("task attribution = %+v", detail.Tasks[0].Attribution)
 	}
 	if detail.Tasks[0].Provider != "" || detail.Tasks[0].Model != "" {
 		t.Fatalf("multi-model task must not claim one provider/model: %+v", detail.Tasks[0])

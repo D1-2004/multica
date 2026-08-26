@@ -1,3 +1,5 @@
+import type { TaskAttribution } from "./agent";
+
 /**
  * Issue labels — workspace-scoped, applied as many-to-many to issues.
  *
@@ -70,6 +72,8 @@ export interface LabelUsageTaskBreakdown {
 
 export interface LabelUsageTask {
   task_id: string;
+  agent_id: string;
+  agent_name: string;
   issue_id: string;
   issue_identifier: string;
   issue_title: string;
@@ -85,6 +89,7 @@ export interface LabelUsageTask {
   created_at: string;
   completed_at?: string | null;
   activity_at: string;
+  attribution?: TaskAttribution;
 }
 
 export interface LabelUsagePagination {

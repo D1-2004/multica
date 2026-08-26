@@ -1318,11 +1318,13 @@ export interface DispatchPromptPreview {
   runtime_sections: DispatchPromptRuntimeSection[];
 }
 
-/** What an objective or key result has cost so far, rolled up from the tasks on
- *  every Issue carrying its label. */
+/** What an objective or key result label combination has cost so far, rolled
+ *  up from every task on every Issue carrying its label. */
 export interface AgentOKRSpend {
   total_tokens: number;
   total_cost_usd_ticks: number;
+  /** Tokens belonging to usage rows that did not carry an authoritative cost. */
+  uncosted_tokens: number;
   task_count: number;
   /** Tasks that ran on a model with no price attached. When non-zero the cost
    *  is a floor, and the UI says so rather than showing a quietly partial
@@ -1331,6 +1333,9 @@ export interface AgentOKRSpend {
 }
 
 export interface AgentOKRKeyResult {
+  id: string;
+  label_id: string;
+  position: number;
   text: string;
   /** The workspace label name this key result materializes as. */
   label: string;
@@ -1339,6 +1344,9 @@ export interface AgentOKRKeyResult {
 }
 
 export interface AgentOKR {
+  id: string;
+  label_id: string;
+  position: number;
   objective: string;
   label: string;
   color: string;
@@ -1346,4 +1354,10 @@ export interface AgentOKR {
    *  would double-count an Issue carrying both. */
   spend?: AgentOKRSpend;
   key_results: AgentOKRKeyResult[];
+}
+
+export interface AgentOKRResponse {
+  okrs: AgentOKR[];
+  /** False means spend could not be loaded; omitted spend must not be read as zero. */
+  usage_available: boolean;
 }

@@ -90,6 +90,7 @@ export type {
   DispatchPromptRuntimeSection,
   DispatchPromptPreview,
   AgentOKR,
+  AgentOKRResponse,
   AgentOKRKeyResult,
   AgentOKRSpend,
 } from "./agent";
