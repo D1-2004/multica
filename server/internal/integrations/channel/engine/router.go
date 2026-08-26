@@ -613,9 +613,6 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	if !appendRes.DedupMarked {
 		postAppendFinalize = finalizeMark
 	}
-	if preparedTask != nil && preparedTask.DebounceSeconds <= 0 && appendRes.Task.ID.Valid {
-		r.tasks.NotifyChannelChatTaskEnqueued(ctx, appendRes.Task)
-	}
 
 	res := Result{
 		Outcome:        durableOutcome,

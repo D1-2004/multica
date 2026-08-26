@@ -55,8 +55,6 @@ type PreparedChannelChatTask struct {
 	OriginatorSource     pgtype.Text
 	TriggerEvidenceKind  pgtype.Text
 	TriggerEvidenceRefID pgtype.UUID
-	// DebounceSeconds <= 0 means the trusted upstream already sealed the batch
-	// and the append transaction must create an independent queued task.
 	DebounceSeconds      float64
 }
 
@@ -122,15 +120,6 @@ func (s *TaskService) PrepareChannelChatTask(
 		TriggerEvidenceRefID: attrEvidenceRef,
 		DebounceSeconds:      ChannelChatDebounceWindow.Seconds(),
 	}, nil
-}
-
-// NotifyChannelChatTaskEnqueued publishes and wakes an immediate durable chat
-// task after its message transaction commits. The queued event must precede the
-// daemon wake so clients cannot observe dispatch before queueing. fire_at stays
-// due so the promoter can recover this handoff after a process crash.
-func (s *TaskService) NotifyChannelChatTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
-	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
-	s.NotifyTaskEnqueued(ctx, task)
 }
 
 // RunDeferredChannelTaskPromoter owns the durable deferred->queued transition

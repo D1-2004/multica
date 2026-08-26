@@ -49,7 +49,6 @@ type SessionQueries interface {
 	CreateChannelChatSessionBinding(ctx context.Context, arg db.CreateChannelChatSessionBindingParams) (db.ChannelChatSessionBinding, error)
 	LockChatSessionForPendingFresh(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error)
 	PutChatSessionPendingFresh(ctx context.Context, chatSessionID pgtype.UUID) error
-	CreateImmediateChannelChatTask(ctx context.Context, arg db.CreateImmediateChannelChatTaskParams) (db.AgentTaskQueue, error)
 	UpsertDeferredChannelChatTask(ctx context.Context, arg db.UpsertDeferredChannelChatTaskParams) (db.AgentTaskQueue, error)
 	CreateChatMessage(ctx context.Context, arg db.CreateChatMessageParams) (db.ChatMessage, error)
 	ClearChatMessageChannelMediaPending(ctx context.Context, arg db.ClearChatMessageChannelMediaPendingParams) error
@@ -92,9 +91,6 @@ func (a dbSessionQueries) LockChatSessionForPendingFresh(ctx context.Context, id
 }
 func (a dbSessionQueries) PutChatSessionPendingFresh(ctx context.Context, chatSessionID pgtype.UUID) error {
 	return a.q.PutChatSessionPendingFresh(ctx, chatSessionID)
-}
-func (a dbSessionQueries) CreateImmediateChannelChatTask(ctx context.Context, arg db.CreateImmediateChannelChatTaskParams) (db.AgentTaskQueue, error) {
-	return a.q.CreateImmediateChannelChatTask(ctx, arg)
 }
 func (a dbSessionQueries) UpsertDeferredChannelChatTask(ctx context.Context, arg db.UpsertDeferredChannelChatTaskParams) (db.AgentTaskQueue, error) {
 	return a.q.UpsertDeferredChannelChatTask(ctx, arg)
@@ -478,55 +474,32 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 	var task db.AgentTaskQueue
 	if in.PreparedTask != nil && cmd == nil {
 		prepared := in.PreparedTask
-		if prepared.DebounceSeconds <= 0 {
-			task, err = qtx.CreateImmediateChannelChatTask(ctx, db.CreateImmediateChannelChatTaskParams{
-				ID:                   prepared.ID,
-				AgentID:              prepared.AgentID,
-				RuntimeID:            prepared.RuntimeID,
-				ChatSessionID:        in.SessionID,
-				InitiatorUserID:      prepared.InitiatorUserID,
-				OriginatorUserID:     prepared.OriginatorUserID,
-				AccountableUserID:    prepared.AccountableUserID,
-				ForceFreshSession:    pgtype.Bool{Bool: prepared.ForceFreshSession, Valid: true},
-				RuntimeMcpOverlay:    prepared.RuntimeMCPOverlay,
-				RuntimeConnectedApps: prepared.RuntimeConnectedApps,
-				TaskContext:          prepared.TaskContext,
-				OriginatorSource:     prepared.OriginatorSource,
-				TriggerEvidenceKind:  prepared.TriggerEvidenceKind,
-				TriggerEvidenceRefID: prepared.TriggerEvidenceRefID,
-			})
-		} else {
-			debounceSeconds := prepared.DebounceSeconds
-			if in.MediaPendingSeconds > debounceSeconds {
-				debounceSeconds = in.MediaPendingSeconds
-			}
-			task, err = qtx.UpsertDeferredChannelChatTask(ctx, db.UpsertDeferredChannelChatTaskParams{
-				ID:                   prepared.ID,
-				AgentID:              prepared.AgentID,
-				RuntimeID:            prepared.RuntimeID,
-				ChatSessionID:        in.SessionID,
-				InitiatorUserID:      prepared.InitiatorUserID,
-				OriginatorUserID:     prepared.OriginatorUserID,
-				AccountableUserID:    prepared.AccountableUserID,
-				ForceFreshSession:    pgtype.Bool{Bool: prepared.ForceFreshSession, Valid: true},
-				RuntimeMcpOverlay:    prepared.RuntimeMCPOverlay,
-				RuntimeConnectedApps: prepared.RuntimeConnectedApps,
-				TaskContext:          prepared.TaskContext,
-				OriginatorSource:     prepared.OriginatorSource,
-				TriggerEvidenceKind:  prepared.TriggerEvidenceKind,
-				TriggerEvidenceRefID: prepared.TriggerEvidenceRefID,
-				DebounceSeconds:      debounceSeconds,
-			})
+		debounceSeconds := prepared.DebounceSeconds
+		if in.MediaPendingSeconds > debounceSeconds {
+			debounceSeconds = in.MediaPendingSeconds
 		}
+		task, err = qtx.UpsertDeferredChannelChatTask(ctx, db.UpsertDeferredChannelChatTaskParams{
+			ID:                   prepared.ID,
+			AgentID:              prepared.AgentID,
+			RuntimeID:            prepared.RuntimeID,
+			ChatSessionID:        in.SessionID,
+			InitiatorUserID:      prepared.InitiatorUserID,
+			OriginatorUserID:     prepared.OriginatorUserID,
+			AccountableUserID:    prepared.AccountableUserID,
+			ForceFreshSession:    pgtype.Bool{Bool: prepared.ForceFreshSession, Valid: true},
+			RuntimeMcpOverlay:    prepared.RuntimeMCPOverlay,
+			RuntimeConnectedApps: prepared.RuntimeConnectedApps,
+			TaskContext:          prepared.TaskContext,
+			OriginatorSource:     prepared.OriginatorSource,
+			TriggerEvidenceKind:  prepared.TriggerEvidenceKind,
+			TriggerEvidenceRefID: prepared.TriggerEvidenceRefID,
+			DebounceSeconds:      debounceSeconds,
+		})
 		if err != nil {
-			return AppendResult{}, fmt.Errorf("persist channel task: %w", err)
+			return AppendResult{}, fmt.Errorf("upsert deferred channel task: %w", err)
 		}
-		expectedStatus := "deferred"
-		if prepared.DebounceSeconds <= 0 {
-			expectedStatus = "queued"
-		}
-		if !task.ID.Valid || !task.FireAt.Valid || task.ChatSessionID != in.SessionID || task.Status != expectedStatus {
-			return AppendResult{}, errors.New("persist channel task returned invalid state")
+		if !task.ID.Valid || !task.FireAt.Valid || task.ChatSessionID != in.SessionID || task.Status != "deferred" {
+			return AppendResult{}, errors.New("upsert deferred channel task returned invalid state")
 		}
 	}
 
@@ -605,7 +578,6 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 		MessageID:    msg.ID,
 		Content:      msg.Content,
 		CreatedAt:    msg.CreatedAt,
-		Task:         task,
 		TaskID:       task.ID,
 		TaskFireAt:   task.FireAt,
 	}, nil

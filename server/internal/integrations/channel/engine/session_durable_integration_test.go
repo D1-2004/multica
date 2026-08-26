@@ -108,7 +108,7 @@ func newDurableSessionFixture(t *testing.T) durableSessionFixture {
 		INSERT INTO channel_installation (
 			workspace_id, agent_id, channel_type, config, status, installer_user_id
 		)
-		VALUES ($1, $2, 'feishu', jsonb_build_object('app_id', $3::text), 'active', $4)
+		VALUES ($1, $2, 'feishu', jsonb_build_object('app_id', $3), 'active', $4)
 		RETURNING id
 	`, f.workspaceID, f.agentID, fmt.Sprintf("durable-session-app-%d", suffix), f.userID).Scan(&f.installationID); err != nil {
 		t.Fatalf("create channel installation: %v", err)
@@ -244,55 +244,6 @@ func TestAppendUserMessageDurableTransactionRollbackAndBatchSeal(t *testing.T) {
 	}
 	if thirdTaskID != third.TaskID {
 		t.Fatalf("post-seal message task = %v, want %v", thirdTaskID, third.TaskID)
-	}
-}
-
-func TestAppendUserMessageImmediateTasksNeverCoalesce(t *testing.T) {
-	f := newDurableSessionFixture(t)
-	ctx := context.Background()
-	session := NewChatSession(db.New(f.pool), f.pool, channel.TypeFeishu, SessionTitles{Direct: "direct"})
-
-	appendImmediate := func(messageID, body string) AppendResult {
-		claim := claimDurableSessionMessage(t, f, messageID)
-		prepared := newPreparedDurableSessionTask(f, body)
-		prepared.DebounceSeconds = 0
-		res, err := session.AppendUserMessage(ctx, AppendInput{
-			SessionID: f.sessionID, WorkspaceID: f.workspaceID, Sender: f.userID,
-			InstallationID: f.installationID, Body: body, MessageID: messageID,
-			ClaimToken: claim.ClaimToken, PreparedTask: prepared,
-		})
-		if err != nil {
-			t.Fatalf("append %s: %v", messageID, err)
-		}
-		return res
-	}
-
-	first := appendImmediate("router-one", "router one")
-	second := appendImmediate("router-two", "router two")
-	if first.TaskID == second.TaskID {
-		t.Fatalf("immediate Router deliveries coalesced into task %v", first.TaskID)
-	}
-
-	var taskCount, distinctMessageTasks int
-	if err := f.pool.QueryRow(ctx, `
-		SELECT count(*)
-		FROM agent_task_queue
-		WHERE chat_session_id = $1
-		  AND status = 'queued'
-		  AND chat_input_task_id = id
-		  AND fire_at <= now()
-	`, f.sessionID).Scan(&taskCount); err != nil {
-		t.Fatalf("inspect immediate tasks: %v", err)
-	}
-	if err := f.pool.QueryRow(ctx, `
-		SELECT count(DISTINCT task_id)
-		FROM chat_message
-		WHERE chat_session_id = $1 AND content IN ('router one', 'router two')
-	`, f.sessionID).Scan(&distinctMessageTasks); err != nil {
-		t.Fatalf("inspect immediate message ownership: %v", err)
-	}
-	if taskCount != 2 || distinctMessageTasks != 2 {
-		t.Fatalf("immediate Router tasks/messages = %d/%d, want 2/2", taskCount, distinctMessageTasks)
 	}
 }
 

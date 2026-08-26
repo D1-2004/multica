@@ -179,10 +179,8 @@ type InboundMessage struct {
 	// command; adapters may also set this flag for a native platform affordance.
 	ForceFresh bool
 
-	// DisableRunBatching tells the core that a trusted upstream has already
-	// sealed the message batch, so this envelope must create its own run instead
-	// of entering the channel silence window. Adapters set this from transport
-	// provenance; it must never be copied from user-controlled payload fields.
+	// DisableRunBatching is set only from trusted transport provenance when an
+	// upstream router has already sealed the message batch.
 	DisableRunBatching bool
 
 	// SourcePayload is a credential-free snapshot of the original callback that

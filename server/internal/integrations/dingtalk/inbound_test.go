@@ -14,8 +14,6 @@ func TestInboundFromHTTPCallbackDisablesRunBatching(t *testing.T) {
 		ConversationID:   "cid-router",
 		ConversationType: "single",
 		MessageID:        "msg-router",
-		SenderUID:        "123",
-		SenderOrgID:      "456",
 		SenderStaffID:    "staff-router",
 		Text:             "already aggregated upstream",
 	}, "client-router", "11111111-1111-1111-1111-111111111111")

@@ -329,7 +329,6 @@ type fakeTasks struct {
 	mu                  sync.Mutex
 	called              bool
 	callCount           int
-	notified            []pgtype.UUID
 	promotions          int
 	issueTaskPromotions []pgtype.UUID
 	forceFresh          bool
@@ -393,18 +392,6 @@ func (f *fakeTasks) PrepareChannelChatTask(_ context.Context, _ db.ChatSession, 
 }
 
 func (f *fakeTasks) wasPrepared() bool { f.mu.Lock(); defer f.mu.Unlock(); return f.prepared }
-
-func (f *fakeTasks) NotifyChannelChatTaskEnqueued(_ context.Context, task db.AgentTaskQueue) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.notified = append(f.notified, task.ID)
-}
-
-func (f *fakeTasks) notifiedTasks() []pgtype.UUID {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]pgtype.UUID(nil), f.notified...)
-}
 
 type fakeReader struct {
 	session     db.ChatSession
@@ -1088,32 +1075,6 @@ func TestRouter_DurableRunDisablesBatchingForSealedUpstreamMessage(t *testing.T)
 	}
 	if got := h.binder.lastAppend.PreparedTask.DebounceSeconds; got != 0 {
 		t.Fatalf("sealed upstream debounce seconds = %v, want 0", got)
-	}
-}
-
-func TestRouter_ImmediateDurableRunNotifiesQueuedTaskAfterAppend(t *testing.T) {
-	h := newHarness(t)
-	enableDurableRuns(h)
-	taskID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-	h.tasks.preparedTask = service.PreparedChannelChatTask{
-		ID: taskID, AgentID: h.inst.inst.AgentID, RuntimeID: uuidFromString(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
-		InitiatorUserID: h.ident.id.InitiatorUserID, OriginatorUserID: h.ident.id.PrincipalUserID, DebounceSeconds: 3,
-	}
-	h.binder.appendResult = AppendResult{
-		DedupMarked: true,
-		Task:         db.AgentTaskQueue{ID: taskID, Status: "queued"},
-		TaskID:       taskID,
-	}
-	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
-	msg := p2pMessage(t)
-	msg.DisableRunBatching = true
-
-	if err := h.router.Handle(context.Background(), msg); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	notified := h.tasks.notifiedTasks()
-	if len(notified) != 1 || notified[0] != taskID {
-		t.Fatalf("notified immediate tasks = %v, want [%v]", notified, taskID)
 	}
 }
 
