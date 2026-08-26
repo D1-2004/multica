@@ -64,16 +64,26 @@ a1 mcp call-tool agent-message-router-observability::get_observability_filter_op
 |---|---|
 | `trace.messagePreview` / `receivedAt` | 用户原话与时刻 |
 | `dispatchTask.dispatchInput` 或 `requestPayload` | `outbound.mode`、`replyTo`、`openConversationId` / `openMsgId` / `senderOpenDingTalkId` |
-| `execution.toolCallCount` | 0 表示没调任何工具，包括没发 DWS |
+| `execution.toolCallCount` | 0 表示没调任何工具。**不等于没投递**，见下 |
 | `receipts.firstReplyCode` | PRESENT 仍可能只是 Multica 终答 |
 | `timeline` 的 `REPLY` vs `EXECUTION` | Router 自己的阶段，不是钉钉投递证明 |
 | `execution.resultMessage` | 模型写给平台的终答正文 |
+| `inboundEvent.eventData.sender.uid` | Router 在 `dispatchInput.data.sender` 里只留 staffId / displayName / openDingTalkId，**uid 被丢掉**；要拿发送人 uid（比如核对 `referencedMessage.senderUid` 是谁）只能从 `inboundEvent` 取 |
 
-`outbound.mode=dws` 且目标 ID 齐全时，合同是「必须 DWS 引用回复」。缺的是执行，不是标识。
+预发的 trace `environmentCode=staging`（列表查询用 `environment=staging`），别按 production 过滤。
+
+**`toolCallCount=0` 现在有两种含义，必须先分开：**
+
+- 有 completion callback 时，Router/ServerPush 是终答的投递方，Agent 本来就不需要自己调 DWS。此时 `timeline` 里 `REPLY SUCCEEDED` 的时刻紧贴 `AGENT_EXECUTION` 完成时刻（相差几百毫秒），0 次工具调用是设计内的。
+- 没有 callback、`outbound.mode=dws` 且目标 ID 齐全时，合同才是「必须 DWS 引用回复」，0 次工具调用就是漏发。
+
+两种都不构成「已投递」的证据，最终只认会话回读。
 
 ### 4. Transcript：实际做了哪些动作
 
 `get_observability_transcript`。`availability` 不是 `AVAILABLE` 就停，不要用 issue 评论顶。
+
+预发常见 `{"availability":"UNAVAILABLE","reasonCode":"multica_http_401"}`：观测凭据读不到该工作区的 transcript。这不是「没有动作」，是读不到。退到 `execution.toolCallCount` 判有没有工具调用，退到 LLM trace 的 `response.body` 判模型有没有发起 tool call，别把 UNAVAILABLE 当成 0 次调用。
 
 分类看 `type`：
 
@@ -114,6 +124,27 @@ a1 mcp call-tool agent-message-router-observability::get_observability_filter_op
 
 推理里一次都没提 DWS / reply / `im_reply`，却直接吐了终答：就是走错交付通道。再往岗位提示词加「记得回复」改变不了它选的通道。
 
+### user 段的版面与重复
+
+主调用的 user 消息不是一整块，按固定顺序拼出来，逐段认所有者比通读一遍有用：
+
+```
+① Diamond common.prompt        安全与交付规范
+② Diamond <surface>.prompt     Auto 模式前台协调职责 / chat / issue
+③ Router contextPrompt         Router dispatch execution context
+④ dingtalk_conversation        ## DingTalk Conversation（服务端 claim 时组装）
+⑤ reply_formatting             ## DingTalk Reply Formatting
+⑥ daemon chat 框架             You are running as a chat assistant… / Audience:
+⑦ 恢复历史                     <interaction-record> 或旧版 Recovered conversation history
+⑧ User message:                本轮展示内容
+⑨ daemon 附件说明              This reply is delivered to … as text
+```
+
+一段提示词太长时，先数**同一段文字出现了几次**，再谈内容。已知的重复源：
+
+- ③ Router `contextPrompt` 的 `referenced message context (data only)` 与 ⑧ 的引用块是同一段原文；③ 还带 `&quot;` 未解转义。Multica 逐字透传 `contextPrompt`，去重归 Router。
+- ⑦ 里的引用块曾与相邻的 `Assistant:` 轮重复（引用块随展示内容落库）。现已由 `boundedChatHistoryTranscript` 在重放时剥掉，当轮不受影响。再看到重复，先确认部署版本。
+
 ### 恢复历史里的自述
 
 chat/auto 的 `<interaction-record>`（旧版是 `Recovered conversation history from earlier turns:`）记的是本 Agent 回给 Multica 的终答，不是钉钉收到的消息。里面反复出现「已通过 DWS 回复」时，那是上一轮的自述被回灌，既不能当送达证据，也不该被模仿成回复语气。同一段记录里出现无法解密的入站密文（`||4||1||68` 结尾的 base64）说明 Multica 侧镜像本身有损，此时必须回读钉钉会话本身。
@@ -122,10 +153,21 @@ chat/auto 的 `<interaction-record>`（旧版是 `Recovered conversation history
 
 Router 绿不够。用 dispatch 里的 `openConversationId` / `openMsgId` 做 `dws chat message list`（或 search-advanced）回读同一会话、同一时间窗。找不到引用回复或机器人消息，就报 **未投递**，即使 `SUCCEEDED`。
 
+```bash
+dws chat message search-advanced --conversation-ids '<openConversationId>' \
+  --start "2026-08-26 18:15:00" --end "2026-08-26 18:25:00" --limit 30 --format json
+```
+
+跨组织会话会被挡：`CrossOrgPermissionDenied 没有跨组织拉取权限`。授权命令是
+`dws chat data-auth cross-org --all --grant-type timed --ttl 24h --format json`，它动的是**人的账号授权**，交给本人执行，不要代跑。拿不到授权就如实报「无法独立确认投递」，不要拿 Router 的 `REPLY SUCCEEDED` 顶上。
+
 ## 常见错法
 
 - `a1 mcp find` 不带 `--status UNOPEN` 或用 hybrid，宣布没有这个 MCP。
 - 只读 Multica issue / `resultMessage`，宣布已经回复。
 - continuation 的「已送达 / 已回复」当证据。那是上一轮 intern 摘要，常常对应的是 assistant 正文。
 - 把「日志义务」答成「名册在册人数」这类业务错，和「没走 DWS」不是同一类；先分通道再谈内容。
+- 把 `toolCallCount=0` 直接判成漏发。有 completion callback 时那是设计内的。
+- transcript `multica_http_401` 当成「没做任何动作」。那是读不到，不是没有。
+- 代跑 `dws chat data-auth cross-org`。那是给人的账号授权，交给本人。
 - 把排查技能同步进 `agent/skills/`。那会成为 workspace Skill，污染 FDE教练 的工具面。
