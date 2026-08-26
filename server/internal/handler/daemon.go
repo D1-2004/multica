@@ -2600,7 +2600,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 						if cutoff < 0 {
 							inputLoadErr = errors.New("chat input message missing from visible transcript")
 						} else if cutoff > 0 {
-							resp.ChatHistory = boundedChatHistoryTranscript(msgs[:cutoff])
+							resp.ChatHistory = boundedChatHistoryTranscript(msgs[:cutoff], resp.ChatChannelType)
 						}
 					}
 				}
@@ -2611,7 +2611,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				if resp.ChatChannelType == "" && service.IsCloudSandboxRuntime(runtime) {
 					historyEnd := len(msgs) - len(unanswered)
 					if historyEnd > 0 {
-						resp.ChatHistory = boundedChatHistoryTranscript(msgs[:historyEnd])
+						resp.ChatHistory = boundedChatHistoryTranscript(msgs[:historyEnd], resp.ChatChannelType)
 					}
 				}
 			} else {
@@ -3443,6 +3443,24 @@ func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
 	return msgs
 }
 
+// chatHistoryOmittedMarker heads a transcript that lost whole turns to the
+// message or byte bound.
+//
+// Emitted for a Multica-native chat ONLY. There the transcript IS the run's
+// memory: nothing else can hand back a dropped turn, and a silent gap reads as
+// "this was never said". A channel-backed run is the opposite case — the
+// conversation still holds every word, and its per-turn instruction says how to
+// read it back (a DingTalk dispatch prints a ready-to-run command with the real
+// conversation id). There the marker fired on nearly every turn and pushed runs
+// to announce missing context instead of recovering it.
+//
+// It names TRIMMING specifically, not absence in general. On a group-room
+// channel the per-turn prompt separately warns that the Multica record never
+// contained messages between other people; a marker that said only "messages
+// are missing" would read as that second, larger claim and make a complete
+// transcript look partial.
+const chatHistoryOmittedMarker = "[older turns were trimmed from this transcript]"
+
 // chatHistoryClipMarker replaces the middle of one over-long message. Its width
 // is fixed so the clip arithmetic below cannot depend on the size of the number
 // it is about to print.
@@ -3542,10 +3560,8 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 //
 // Two bounds apply, in order: every message is clipped to
 // chatHistoryMessageRunes, and the assembled result is then held under maxBytes
-// by dropping the oldest turns. The clip is declared inline. The drop is not:
-// the leading marker that used to announce it read as an alarm on most turns,
-// and the run now carries a ready-to-run command for reading the conversation
-// itself back, which recovers a dropped turn instead of merely naming it.
+// by dropping the oldest turns. The clip is declared inline; whether the drop is
+// declared depends on the surface — see chatHistoryOmittedMarker.
 //
 // makeChatHistoryAuthoritative clears PriorSessionID whenever this returns
 // anything, so on a cloud chat this string replaces the provider session as the
@@ -3557,7 +3573,7 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 // attribution line dispatchMessageDisplay appends is a per-turn constant that
 // says nothing about a past turn, so replaying it on every historical turn is
 // noise the byte budget pays for.
-func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
+func boundedChatHistoryTranscript(msgs []db.ChatMessage, channelType string) string {
 	const (
 		maxMessages = 20
 		maxBytes    = 12000
@@ -3565,11 +3581,23 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 		// characters of head and tail says less than the omission marker alone.
 		minClipBytes = 400
 	)
+	// Counted over the FULL input, before any bound is applied. A message with
+	// no text contributes nothing to the transcript, so dropping one is not a
+	// loss and must not raise the marker.
+	announceDrops := strings.TrimSpace(channelType) == ""
+	recoverable := 0
+	if announceDrops {
+		for i := range msgs {
+			if strings.TrimSpace(dispatchRecordUtterance(msgs[i].Content)) != "" {
+				recoverable++
+			}
+		}
+	}
 	if len(msgs) > maxMessages {
 		msgs = msgs[len(msgs)-maxMessages:]
 	}
 	var selected []string
-	total := 0
+	included, total := 0, 0
 	for i := len(msgs) - 1; i >= 0; i-- {
 		content := strings.TrimSpace(dispatchRecordUtterance(msgs[i].Content))
 		if content == "" {
@@ -3591,10 +3619,12 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 			// budget either way, so this is the last part.
 			if budget >= minClipBytes {
 				selected = append(selected, prefix+clipChatHistoryMessage(content, budget))
+				included++
 			}
 			break
 		}
 		selected = append(selected, prefix+content)
+		included++
 		total += separator + len(prefix) + len(content)
 	}
 	if len(selected) == 0 {
@@ -3603,7 +3633,11 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	for i, j := 0, len(selected)-1; i < j; i, j = i+1, j-1 {
 		selected[i], selected[j] = selected[j], selected[i]
 	}
-	return strings.Join(selected, "\n\n")
+	joined := strings.Join(selected, "\n\n")
+	if announceDrops && included < recoverable {
+		return chatHistoryOmittedMarker + "\n\n" + joined
+	}
+	return joined
 }
 
 func makeChatHistoryAuthoritative(resp *AgentTaskResponse) {
