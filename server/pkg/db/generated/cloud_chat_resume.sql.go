@@ -26,6 +26,35 @@ func (q *Queries) UpdateAgentChatSessionResume(ctx context.Context, id pgtype.UU
 	return err
 }
 
+const listAgentChatSessionResumeByIDs = `-- name: ListAgentChatSessionResumeByIDs :many
+SELECT id, chat_session_resume FROM agent WHERE id = ANY($1::uuid[])
+`
+
+type ListAgentChatSessionResumeByIDsRow struct {
+	ID                pgtype.UUID `json:"id"`
+	ChatSessionResume bool        `json:"chat_session_resume"`
+}
+
+func (q *Queries) ListAgentChatSessionResumeByIDs(ctx context.Context, ids []pgtype.UUID) ([]ListAgentChatSessionResumeByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listAgentChatSessionResumeByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentChatSessionResumeByIDsRow{}
+	for rows.Next() {
+		var i ListAgentChatSessionResumeByIDsRow
+		if err := rows.Scan(&i.ID, &i.ChatSessionResume); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getChatSessionResumeIdentity = `-- name: GetChatSessionResumeIdentity :one
 SELECT resume_identity FROM chat_session WHERE id = $1
 `

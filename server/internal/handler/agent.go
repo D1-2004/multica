@@ -161,6 +161,35 @@ func (h *Handler) hydrateChatSessionResume(ctx context.Context, resp *AgentRespo
 	}
 }
 
+func (h *Handler) hydrateAgentsChatSessionResume(ctx context.Context, resps []AgentResponse) {
+	if len(resps) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(resps))
+	index := make(map[string]int, len(resps))
+	for i, resp := range resps {
+		id, err := util.ParseUUID(resp.ID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		index[resp.ID] = i
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListAgentChatSessionResumeByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("hydrate chat_session_resume for agent list failed", "error", err, "count", len(ids))
+		return
+	}
+	for _, row := range rows {
+		if i, ok := index[uuidToString(row.ID)]; ok {
+			resps[i].ChatSessionResume = row.ChatSessionResume
+		}
+	}
+}
+
 func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	var rc any
 	if a.RuntimeConfig != nil {
@@ -1083,6 +1112,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		visible = append(visible, resp)
 	}
+	h.hydrateAgentsChatSessionResume(r.Context(), visible)
 
 	writeJSON(w, http.StatusOK, visible)
 }

@@ -168,7 +168,10 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       ),
     );
     try {
-      await api.updateAgent(id, data as UpdateAgentRequest);
+      const updated = await api.updateAgent(id, data as UpdateAgentRequest);
+      qc.setQueryData<Agent[]>(queryKey, (old) =>
+        old?.map((a) => (a.id === id ? { ...a, ...updated } : a)),
+      );
       qc.invalidateQueries({ queryKey });
       toast.success(t(($) => $.detail.agent_updated_toast));
     } catch (e) {

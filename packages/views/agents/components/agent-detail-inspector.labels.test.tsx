@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentDetailInspector } from "./agent-detail-inspector";
@@ -84,9 +84,11 @@ describe("AgentDetailInspector labels", () => {
       />,
     );
 
-    screen.getByLabelText("Resume last session").click();
+    const toggle = screen.getByLabelText("Resume last session");
+    fireEvent.click(toggle);
     expect(onUpdate).toHaveBeenCalledWith("agent-1", {
       chat_session_resume: true,
     });
+    expect(toggle).toBeChecked();
   });
 });

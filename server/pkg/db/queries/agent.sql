@@ -128,6 +128,10 @@ RETURNING *;
 -- name: GetAgentChatSessionResume :one
 SELECT chat_session_resume FROM agent WHERE id = $1;
 
+-- name: ListAgentChatSessionResumeByIDs :many
+SELECT id, chat_session_resume FROM agent WHERE id = ANY(sqlc.arg('ids')::uuid[]);
+
+
 -- name: UpdateAgentChatSessionResume :exec
 UPDATE agent SET chat_session_resume = $2, updated_at = now() WHERE id = $1;
 
