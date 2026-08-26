@@ -266,6 +266,53 @@ func TestChatAvailableCommandsDropsIssueScopedSurface(t *testing.T) {
 	}
 }
 
+// The delegation section shares its context window with whatever surface policy
+// a deployment puts in the per-turn dispatch instruction, and that instruction
+// arrives later and more specific than this file. The DingTalk auto surface
+// ships one with hard thresholds and an explicit "do not run a business step and
+// then decide", so anything here that prescribes HOW to reach the decision is a
+// live contradiction rather than redundancy — and redundancy a deployment can
+// choose to pay for, while a contradiction it cannot.
+//
+// This pins the boundary as stated (what belongs in the room, what does not, and
+// what to do when work turns out larger than it looked) and pins OUT the
+// procedural advice that fought a stricter policy.
+func TestDelegationPolicyComposesWithAStricterSurfacePolicy(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{
+		ChatSessionID: "chat-1", AgentName: "Eve", AgentID: "eve-1",
+	})
+
+	for _, want := range []string{
+		// The boundary itself, which is what the section is for.
+		"Keep genuinely quick answers, small lookups and single atomic actions in this turn",
+		"Public information alone does not make a task light",
+		// Uncertainty resolves toward delegating, matching a stricter policy
+		// instead of licensing a probe.
+		"when the shape is genuinely unclear, delegate instead of probing",
+		// Mid-turn escalation still has to be allowed, or work started here has
+		// nowhere to go once it grows.
+		"stop and delegate what is left instead of finishing it here",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("delegation policy missing %q\n---\n%s", want, out)
+		}
+	}
+
+	// Telling the run to do a business step before deciding contradicts a
+	// surface policy that forbids exactly that, and it is how half the work ends
+	// up in the room and half in the background.
+	for _, banned := range []string{
+		"start with a cheap step",
+		"start with a cheap step when useful",
+	} {
+		if strings.Contains(out, banned) {
+			t.Errorf("delegation policy prescribes a probe (%q) that a stricter surface policy forbids", banned)
+		}
+	}
+}
+
 // An A2A invocation is a chat session by construction, so it lands on kindChat —
 // but it runs without a task-scoped token and every task-token endpoint refuses
 // it, `multica issue delegate` included. Emitting the delegation policy there

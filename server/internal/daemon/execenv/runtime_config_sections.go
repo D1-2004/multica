@@ -295,9 +295,25 @@ func writeAvailableCommands(b *strings.Builder, ctx TaskContextForEnv) {
 	}
 }
 
+// writeBackgroundIssueDelegation emits the chat/background boundary.
+//
+// Deliberately states the boundary and the reasons for it, and NOT a procedure
+// for arriving at the decision. A deployment may install a stricter surface
+// policy in the per-turn dispatch instruction — the DingTalk auto surface ships
+// one with hard thresholds and an explicit "do not run a business step and then
+// decide" — and that instruction lands in the same context window, later and
+// more specific than this file. Anything here that prescribes HOW to decide
+// therefore has to compose with it or it becomes a live contradiction the model
+// resolves by guessing.
+//
+// The earlier wording ("start with a cheap step when it helps") was exactly such
+// a prescription, and it was safe only while this section was unreachable. It is
+// replaced by advice that agrees with a stricter policy and stands on its own:
+// probing before deciding is how half the work ends up done in the room and the
+// other half in the background.
 func writeBackgroundIssueDelegation(b *strings.Builder) {
 	b.WriteString("## Background Issue Delegation\n\n")
-	b.WriteString("Keep genuinely quick answers, small lookups and single atomic actions in this turn. Delegate as soon as the work needs sustained execution, specialist domain work, code or repository changes, several dependent tool calls, external waiting, or coordinated side effects. Public information alone does not make a task light: collecting news, composing a card, sending it to people and creating a todo is a background delivery job. Do not burn a separate turn classifying — start with a cheap step when it helps, and delegate the moment the shape is clear. If work you kept turns out to be larger than it looked, stop and delegate what is left instead of finishing it here.\n\n")
+	b.WriteString("Keep genuinely quick answers, small lookups and single atomic actions in this turn. Delegate as soon as the work needs sustained execution, specialist domain work, code or repository changes, several dependent tool calls, external waiting, or coordinated side effects. Public information alone does not make a task light: collecting news, composing a card, sending it to people and creating a todo is a background delivery job. Route on what the request obviously needs rather than spending a separate turn classifying it, and when the shape is genuinely unclear, delegate instead of probing. If work you kept turns out to be larger than it looked, stop and delegate what is left instead of finishing it here.\n\n")
 	b.WriteString("Before creating an Issue, list this chat's prior delegations with `multica issue list --metadata \"multica.chat_session_id=$MULTICA_CHAT_SESSION_ID\" --limit 100 --output json`, and continue the one that shares the same subject and intended deliverable — corrections, follow-ups, scope cuts and \"stop sending it\" all belong to the existing Issue. Otherwise create one with a stable, self-contained title (subject + deliverable + scope), assigned to the agent whose domain matches the work.\n\n")
 	b.WriteString("`multica issue delegate --issue <id> --content-file <path> --output json` continues one; `multica issue delegate --title \"...\" --description-file <path> --assignee-id <agent-id> --output json` creates one. `multica issue create` and `multica issue comment add` are NOT substitutes: only delegation transfers completion responsibility, and only it keeps callback URLs and context tokens away from the model. Once the call returns `release_parent: true`, the server owns completion: this is a transfer of responsibility, not a background process you are waiting on, so ending the turn here is the correct finish and not the \"standing by\" that `## Background Task Safety` forbids. Say in one line that the work moved to the background and stop — never keep doing the delegated work here. If the call fails, responsibility never moved: report the failure and do not claim a background run started.\n\n")
 }
