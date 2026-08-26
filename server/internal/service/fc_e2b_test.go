@@ -610,21 +610,29 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 
 func testFCE2BManifestV7Catalog() map[string]map[string]string {
 	return map[string]map[string]string{
-		"264ec868c072f710": {
+		"da499f3161a007c0": {
 			"hermes": "0.19.0", "opencode": "v1.18.11", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.6", "pi": "0.83.0", "dws": "v1.0.58-beta.4",
 		},
-		"aebbceb1626f6f2c": {
+		"41edc34be759811a": {
 			"hermes": "0.19.0", "opencode": "v1.18.11", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.6", "pi": "0.83.0", "dws": "v1.0.59-beta.3",
 		},
-		"0e70a766342698a9": {
+		"baedb216407a5060": {
 			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.59",
+		},
+		"bc80cb4524f2bc75": {
+			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
+			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.1",
 		},
 		"ac20d08b3a999731": {
 			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
 			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.1",
+		},
+		"7fca1af6a513f618": {
+			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
+			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.2",
 		},
 	}
 }
@@ -638,10 +646,11 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		wantOpenCode       string
 		wantPi             string
 		wantSourceRevision string
+		wantProviders      []string
 	}{
 		{
 			name:               "original DWS runtime",
-			alias:              "multica-m7-v264ec868c072f710-r1-9a6bfa",
+			alias:              "multica-m7-vda499f3161a007c0-r1-9a6bfa",
 			wantDWS:            "v1.0.58-beta.4",
 			wantDSH:            "0.1.0-rc.6",
 			wantOpenCode:       "v1.18.11",
@@ -650,7 +659,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		},
 		{
 			name:               "DWS v1.0.59 runtime",
-			alias:              "multica-m7-vaebbceb1626f6f2c-r1-dcb7e7",
+			alias:              "multica-m7-v41edc34be759811a-r1-dcb7e7",
 			wantDWS:            "v1.0.59-beta.3",
 			wantDSH:            "0.1.0-rc.6",
 			wantOpenCode:       "v1.18.11",
@@ -659,7 +668,7 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		},
 		{
 			name:               "formal DWS and latest toolchain runtime",
-			alias:              "multica-m7-v0e70a766342698a9-r1-f24f2e",
+			alias:              "multica-m7-vbaedb216407a5060-r1-f24f2e",
 			wantDWS:            "v1.0.59",
 			wantDSH:            "0.1.0-rc.8",
 			wantOpenCode:       "v1.18.19",
@@ -668,12 +677,31 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 		},
 		{
 			name:               "latest DWS beta runtime from Diamond catalog",
-			alias:              "multica-m7-vac20d08b3a999731-r1-2c5ead",
+			alias:              "multica-m7-vbc80cb4524f2bc75-r1-2c5ead",
 			wantDWS:            "v1.0.60-beta.1",
 			wantDSH:            "0.1.0-rc.8",
 			wantOpenCode:       "v1.18.19",
 			wantPi:             "0.84.2",
 			wantSourceRevision: "2c5ead",
+		},
+		{
+			name:               "same components with seven providers",
+			alias:              "multica-m7-vac20d08b3a999731-r1-777777",
+			wantDWS:            "v1.0.60-beta.1",
+			wantDSH:            "0.1.0-rc.8",
+			wantOpenCode:       "v1.18.19",
+			wantPi:             "0.84.2",
+			wantSourceRevision: "777777",
+			wantProviders:      []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
+		},
+		{
+			name:               "five providers with current DWS beta",
+			alias:              "multica-m7-v7fca1af6a513f618-r1-dacbd3",
+			wantDWS:            "v1.0.60-beta.2",
+			wantDSH:            "0.1.0-rc.8",
+			wantOpenCode:       "v1.18.19",
+			wantPi:             "0.84.2",
+			wantSourceRevision: "dacbd3",
 		},
 	}
 	for _, test := range tests {
@@ -686,8 +714,12 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 			if !published || !IsFCE2BTemplatePublished(template) {
 				t.Fatalf("v7 alias was not published: %+v", template)
 			}
-			if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"}; !reflect.DeepEqual(template.Providers, want) {
-				t.Fatalf("providers = %#v, want %#v", template.Providers, want)
+			wantProviders := test.wantProviders
+			if wantProviders == nil {
+				wantProviders = []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+			}
+			if !reflect.DeepEqual(template.Providers, wantProviders) {
+				t.Fatalf("providers = %#v, want %#v", template.Providers, wantProviders)
 			}
 			if want := []string{
 				"dws",

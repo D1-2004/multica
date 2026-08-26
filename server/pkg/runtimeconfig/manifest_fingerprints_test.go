@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -64,7 +65,35 @@ func TestManifestFingerprintHashMatchesDocumentedExampleKey(t *testing.T) {
 	}
 }
 
-func TestParseManifestFingerprintsStrictAcceptsCatalogKeysThatDoNotMatchLocalHash(t *testing.T) {
+func TestManifestProvidersForFingerprintAcceptsAnySupportedCardinality(t *testing.T) {
+	components := map[string]string{
+		"hermes":      "0.19.0",
+		"opencode":    "v1.18.19",
+		"opencode-v2": "0.0.0-beta-202608110357",
+		"dsh":         "0.1.0-rc.8",
+		"pi":          "0.84.2",
+		"dws":         "v1.0.60-beta.2",
+	}
+	for _, providers := range [][]string{
+		{"hermes"},
+		{"hermes", "opencode", "pi", "dsh", "opencode-v2"},
+		{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
+	} {
+		fingerprint, err := manifestFingerprintForProviders(components, providers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved, matched, err := ManifestProvidersForFingerprint(fingerprint, components)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !matched || !reflect.DeepEqual(resolved, providers) {
+			t.Fatalf("fingerprint %s resolved providers %#v, want %#v", fingerprint, resolved, providers)
+		}
+	}
+}
+
+func TestParseManifestFingerprintsStrictAcceptsFiveProviderCatalogKey(t *testing.T) {
 	raw := `{
   "version": 1,
   "fingerprints": {

@@ -33,6 +33,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
+	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
 const (
@@ -828,10 +829,17 @@ func applyFCE2BTemplateManifestAlias(
 		if !ok {
 			return false, nil
 		}
+		providers, matched, err := runtimeconfig.ManifestProvidersForFingerprint(matches[1], componentVersions)
+		if err != nil {
+			return false, fmt.Errorf("resolve FC/E2B manifest providers: %w", err)
+		}
+		if !matched {
+			return false, nil
+		}
 		template.Name = alias
 		template.Template = alias
 		template.ManifestVersion = 7
-		template.Providers = append([]string(nil), FCE2BSupportedProviders...)
+		template.Providers = providers
 		template.Capabilities = []string{
 			"dws",
 			"dws.im_event",

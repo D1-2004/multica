@@ -2292,9 +2292,12 @@ func validateASBArtifact(artifact ASBArtifact) error {
 
 func validateASBRuntimeManifest(manifest map[string]any) error {
 	schemaVersion := intMetadataValue(manifest, "schema_version")
+	providers, err := cloudSandboxManifestProviders(manifest)
+	if err != nil {
+		return err
+	}
 	if (schemaVersion < 3 || schemaVersion > 7) ||
 		!containsAllStrings(stringSliceMetadataValue(manifest, "sandbox_backends"), "asb") ||
-		!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "hermes", "opencode", "pi") ||
 		!containsAllStrings(
 			manifestStringSliceForBackend(manifest, "capabilities_by_backend", "asb"),
 			"dws", "mcp", "a1", "mw", "buc",
@@ -2306,37 +2309,86 @@ func validateASBRuntimeManifest(manifest map[string]any) error {
 		stringMetadataValue(manifest, "runner_protocol") != string(fcE2BRunnerLaunchRootLog) {
 		return errors.New("ASB runtime manifest does not satisfy the enterprise sandbox contract")
 	}
-	if schemaVersion == 7 &&
-		(!containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "dsh", "opencode-v2", "claude", "codex") ||
-			!containsAllStrings(
-				manifestStringSliceForBackend(manifest, "capabilities_by_backend", "asb"),
-				DSHTrajectoryCapability,
-			)) {
-		return errors.New("ASB schema v7 runtime manifest does not satisfy the seven-runner contract")
+	if schemaVersion == 7 && containsAllStrings(providers, "dsh") && !containsAllStrings(
+		manifestStringSliceForBackend(manifest, "capabilities_by_backend", "asb"),
+		DSHTrajectoryCapability,
+	) {
+		return errors.New("ASB schema v7 Runtime with DSH must advertise native trajectory support")
 	}
 	return nil
 }
 
 // Existing schema-v3 through schema-v6 ASB images remain valid runtime bindings
-// during a rolling backend deployment. A newly promoted five-runner release
-// must use schema v7 and advertise every current enterprise capability.
+// during a rolling backend deployment. A newly promoted release must use schema
+// v7 and advertise every current enterprise capability, independent of how many
+// supported providers that image actually ships.
 func validateASBReleaseManifest(manifest map[string]any) error {
 	if err := validateASBRuntimeManifest(manifest); err != nil {
 		return err
 	}
 	if intMetadataValue(manifest, "schema_version") != 7 {
-		return errors.New("ASB five-runner release manifest must use schema version 7")
+		return errors.New("ASB release manifest must use schema version 7")
 	}
-	if !containsAllStrings(
-		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),
+	requiredCapabilities := []string{
 		RuntimeStartCapabilityEventsV1,
 		LLMTraceCapability,
 		A2AInvocationV2Capability,
-		DSHTrajectoryCapability,
+	}
+	if containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "dsh") {
+		requiredCapabilities = append(requiredCapabilities, DSHTrajectoryCapability)
+	}
+	if !containsAllStrings(
+		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),
+		requiredCapabilities...,
 	) {
 		return errors.New("ASB release manifest does not advertise current runtime capabilities")
 	}
 	return nil
+}
+
+func validateCloudSandboxManifestProviders(providers []string) error {
+	if len(providers) == 0 {
+		return errors.New("cloud sandbox runtime manifest must declare at least one provider")
+	}
+	seen := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		normalized := strings.ToLower(strings.TrimSpace(provider))
+		if !IsFCE2BSupportedProvider(normalized) {
+			return fmt.Errorf("cloud sandbox runtime manifest declares unsupported provider %q", provider)
+		}
+		if _, exists := seen[normalized]; exists {
+			return fmt.Errorf("cloud sandbox runtime manifest declares duplicate provider %q", provider)
+		}
+		seen[normalized] = struct{}{}
+	}
+	return nil
+}
+
+func cloudSandboxManifestProviders(manifest map[string]any) ([]string, error) {
+	raw, exists := manifest["providers"]
+	if !exists {
+		return nil, errors.New("cloud sandbox runtime manifest must declare providers")
+	}
+	var providers []string
+	switch values := raw.(type) {
+	case []string:
+		providers = append(providers, values...)
+	case []any:
+		providers = make([]string, 0, len(values))
+		for _, value := range values {
+			provider, ok := value.(string)
+			if !ok {
+				return nil, errors.New("cloud sandbox runtime manifest providers must be strings")
+			}
+			providers = append(providers, provider)
+		}
+	default:
+		return nil, errors.New("cloud sandbox runtime manifest providers must be an array")
+	}
+	if err := validateCloudSandboxManifestProviders(providers); err != nil {
+		return nil, err
+	}
+	return providers, nil
 }
 
 func stringMetadataValue(values map[string]any, key string) string {

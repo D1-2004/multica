@@ -126,6 +126,20 @@ func TestStableBatchCutoffs(t *testing.T) {
 	}
 }
 
+func TestStableTargetsForManifestExcludesProvidersMissingFromArtifact(t *testing.T) {
+	targets := []stableRuntimeTarget{
+		{RuntimeID: util.MustParseUUID("11111111-1111-4111-8111-111111111111"), WorkspaceID: util.MustParseUUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), Provider: "hermes"},
+		{RuntimeID: util.MustParseUUID("22222222-2222-4222-8222-222222222222"), WorkspaceID: util.MustParseUUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"), Provider: "codex"},
+		{RuntimeID: util.MustParseUUID("33333333-3333-4333-8333-333333333333"), WorkspaceID: util.MustParseUUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc"), Provider: "opencode"},
+	}
+	filtered := stableTargetsForManifest("release-provider-subset", targets, map[string]any{
+		"providers": []string{"hermes", "opencode"},
+	})
+	if len(filtered) != 2 || filtered[0].Provider != "hermes" || filtered[1].Provider != "opencode" {
+		t.Fatalf("filtered targets = %#v", filtered)
+	}
+}
+
 func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
 	release := FCE2BStableRelease{
 		TemplateID:      "template-five-runner",
@@ -135,7 +149,7 @@ func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
 		Manifest: map[string]any{
 			"schema_version": 7,
 			"providers": []string{
-				"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex",
+				"hermes", "opencode", "pi", "dsh", "opencode-v2",
 			},
 			"capabilities_by_backend": map[string][]string{
 				string(SandboxBackendAliyunFC): {
@@ -159,8 +173,9 @@ func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
 	if template.ManifestVersion != 7 || template.SourceRevision != release.SourceRevision {
 		t.Fatalf("release template identity = %#v", template)
 	}
-	if !reflect.DeepEqual(template.Providers, FCE2BSupportedProviders) {
-		t.Fatalf("release providers = %#v, want %#v", template.Providers, FCE2BSupportedProviders)
+	wantProviders := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+	if !reflect.DeepEqual(template.Providers, wantProviders) {
+		t.Fatalf("release providers = %#v, want %#v", template.Providers, wantProviders)
 	}
 	if !reflect.DeepEqual(
 		template.Capabilities,

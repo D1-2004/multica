@@ -1278,6 +1278,7 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
+	targets = stableTargetsForManifest(release.ID, targets, manifest)
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -1421,6 +1422,7 @@ func (s *FCE2BStableService) validateASBRelease(
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
+	targets = stableTargetsForManifest(release.ID, targets, manifest)
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -2126,6 +2128,7 @@ func (s *FCE2BStableService) reconcileTargets(ctx context.Context, release FCE2B
 	if err != nil {
 		return err
 	}
+	targets = stableTargetsForManifest(release.ID, targets, release.Manifest)
 	for _, target := range targets {
 		batchIndex := target.BatchIndex
 		if batchIndex < release.CurrentBatch {
@@ -2252,10 +2255,14 @@ func (s *FCE2BStableService) removeStaleStableTargets(
 			rows.Close()
 			return fmt.Errorf("scan stable release target for strict validation: %w", err)
 		}
-		if _, eligible := stableRuntimeMetadataForBackend(
+		metadata, eligible := stableRuntimeMetadataForBackend(
 			runtime,
 			SandboxBackendKind(release.SandboxBackend),
-		); !eligible {
+		)
+		if !eligible || !containsAllStrings(
+			stringSliceMetadataValue(release.Manifest, "providers"),
+			metadata.Provider,
+		) {
 			invalidRuntimeIDs = append(invalidRuntimeIDs, runtime.ID)
 		}
 	}
@@ -2349,6 +2356,26 @@ func (s *FCE2BStableService) listStableRuntimes(
 	}
 	assignStableBatches(releaseID, targets)
 	return targets, nil
+}
+
+func stableTargetsForManifest(
+	releaseID string,
+	targets []stableRuntimeTarget,
+	manifest map[string]any,
+) []stableRuntimeTarget {
+	providers := stringSliceMetadataValue(manifest, "providers")
+	allowed := make(map[string]struct{}, len(providers))
+	for _, provider := range providers {
+		allowed[strings.ToLower(strings.TrimSpace(provider))] = struct{}{}
+	}
+	filtered := make([]stableRuntimeTarget, 0, len(targets))
+	for _, target := range targets {
+		if _, ok := allowed[strings.ToLower(strings.TrimSpace(target.Provider))]; ok {
+			filtered = append(filtered, target)
+		}
+	}
+	assignStableBatches(releaseID, filtered)
+	return filtered
 }
 
 func stableRuntimeOwnedByDeveloper(ownerID pgtype.UUID, developerUserIDs map[string]struct{}) bool {

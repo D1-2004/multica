@@ -106,10 +106,14 @@ func (c ManifestFingerprintsConfig) Validate() error {
 }
 
 func manifestFingerprint(components map[string]string) (string, error) {
+	return manifestFingerprintForProviders(components, manifestProviders[:])
+}
+
+func manifestFingerprintForProviders(components map[string]string, providers []string) (string, error) {
 	contract := map[string]any{
 		"capabilities":       manifestCapabilities[:],
 		"component_versions": components,
-		"providers":          manifestProviders[:],
+		"providers":          providers,
 		"runner_protocol":    manifestRunnerProtocol,
 		"schema_version":     7,
 	}
@@ -119,6 +123,45 @@ func manifestFingerprint(components map[string]string) (string, error) {
 	}
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:8]), nil
+}
+
+// ManifestProvidersForFingerprint recovers the exact non-empty provider set
+// that minted one schema-v7 alias. Provider cardinality is part of the alias
+// hash, while Diamond deliberately stores only the six component versions.
+// Enumerating the bounded server-supported provider subsets lets older
+// five-provider images and newer images with additional providers coexist
+// without making the catalog claim a binary exists when it does not.
+func ManifestProvidersForFingerprint(
+	fingerprint string,
+	components map[string]string,
+) ([]string, bool, error) {
+	if !manifestFingerprintPattern.MatchString(fingerprint) {
+		return nil, false, errors.New("Runtime manifest fingerprint must be exactly 16 lowercase hexadecimal characters")
+	}
+	var matched []string
+	for mask := 1; mask < 1<<len(manifestProviders); mask++ {
+		providers := make([]string, 0, len(manifestProviders))
+		for index, provider := range manifestProviders {
+			if mask&(1<<index) != 0 {
+				providers = append(providers, provider)
+			}
+		}
+		candidate, err := manifestFingerprintForProviders(components, providers)
+		if err != nil {
+			return nil, false, err
+		}
+		if candidate != fingerprint {
+			continue
+		}
+		if matched != nil {
+			return nil, false, errors.New("Runtime manifest fingerprint matches multiple provider sets")
+		}
+		matched = providers
+	}
+	if matched == nil {
+		return nil, false, nil
+	}
+	return append([]string(nil), matched...), true, nil
 }
 
 // ManifestFingerprints returns a safe deep copy of the last valid snapshot.
