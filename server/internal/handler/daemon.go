@@ -3814,11 +3814,10 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 // CompleteTask marks a running task as completed.
 type TaskCompleteRequest struct {
-	PRURL         string `json:"pr_url"`
-	Output        string `json:"output"`
-	ResultMessage string `json:"result_message,omitempty"`
-	SessionID     string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir       string `json:"work_dir"`   // working directory used during execution
+	PRURL     string `json:"pr_url"`
+	Output    string `json:"output"`
+	SessionID string `json:"session_id"` // Claude session ID for future resumption
+	WorkDir   string `json:"work_dir"`   // working directory used during execution
 	// SessionRolloutMissing: the daemon withheld this task's Codex session
 	// because its rollout was missing (MUL-5305). Clear the resume pointer and
 	// flag the continuity gap for the next claim.
@@ -4508,7 +4507,6 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 // FailTask marks a running task as failed.
 type TaskFailRequest struct {
 	Error         string `json:"error"`
-	ResultMessage string `json:"result_message,omitempty"`
 	SessionID     string `json:"session_id,omitempty"`
 	WorkDir       string `json:"work_dir,omitempty"`
 	FailureReason string `json:"failure_reason,omitempty"`

@@ -200,7 +200,6 @@ const CostUSDTicksPerUSD = 10_000_000_000
 type Result struct {
 	Status        string // "completed", "failed", "aborted", "timeout", "cancelled"
 	Output        string // final user-facing output selected by the backend
-	ResultMessage string // last confirmed user-visible reply sent through DWS
 	Error         string // error message if failed
 	DurationMs    int64
 	SessionID     string

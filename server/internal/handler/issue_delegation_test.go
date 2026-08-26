@@ -281,7 +281,7 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 	if _, err := testHandler.TaskService.CompleteTask(
 		context.Background(),
 		sourceTaskUUID,
-		[]byte(`{"output":"已转入后台处理","result_message":"任务已转入后台"}`),
+		[]byte(`{"output":"任务已转入后台"}`),
 		"chat-session-runtime",
 		"",
 		false,

@@ -60,7 +60,7 @@ func TestBuildTaskCompletionUsesCanonicalFinalReply(t *testing.T) {
 	}
 }
 
-func TestBuildTaskCompletionPrefersExplicitResultMessage(t *testing.T) {
+func TestBuildTaskCompletionUsesProviderOutputOverLegacyResultMessage(t *testing.T) {
 	result, err := json.Marshal(map[string]any{
 		"output":         "agent execution summary",
 		"result_message": `在的！有什么需要帮忙的吗？ "原文"`,
@@ -86,7 +86,7 @@ func TestBuildTaskCompletionPrefersExplicitResultMessage(t *testing.T) {
 		"",
 	)
 
-	if completion.ResultMessage != `在的！有什么需要帮忙的吗？ "原文"` {
+	if completion.ResultMessage != "agent execution summary" {
 		t.Fatalf("result message = %q", completion.ResultMessage)
 	}
 }
@@ -113,7 +113,7 @@ func TestBuildTaskCompletionFailureKeepsLastReplyAndReason(t *testing.T) {
 	}
 }
 
-func TestBuildTaskCompletionFailurePrefersExplicitResultMessage(t *testing.T) {
+func TestBuildTaskCompletionFailureIgnoresLegacyResultMessage(t *testing.T) {
 	completion := buildTaskCompletion(
 		taskCompletionTarget{
 			RootTaskID:     pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
@@ -131,7 +131,7 @@ func TestBuildTaskCompletionFailurePrefersExplicitResultMessage(t *testing.T) {
 		"runtime_offline",
 	)
 
-	if completion.ResultMessage != "已向用户说明任务失败" {
+	if completion.ResultMessage != "legacy DB reply" {
 		t.Fatalf("result message = %q", completion.ResultMessage)
 	}
 }
@@ -177,7 +177,7 @@ func (s *lastTaskReplyReaderStub) GetLastTaskReplyText(
 	return s.reply, s.err
 }
 
-func TestResolveFailedCompletionReplySkipsDBForExplicitResultMessage(t *testing.T) {
+func TestResolveFailedCompletionReplyIgnoresLegacyResultMessage(t *testing.T) {
 	reader := &lastTaskReplyReaderStub{
 		reply: pgtype.Text{String: "legacy DB reply", Valid: true},
 	}
@@ -187,15 +187,14 @@ func TestResolveFailedCompletionReplySkipsDBForExplicitResultMessage(t *testing.
 		context.Background(),
 		reader,
 		taskID,
-		[]byte(`{"result_message":"已向用户说明任务失败"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reply != "已向用户说明任务失败" {
+	if reply != "legacy DB reply" {
 		t.Fatalf("reply = %q", reply)
 	}
-	if reader.calls != 0 {
+	if reader.calls != 1 {
 		t.Fatalf("DB reply query calls = %d", reader.calls)
 	}
 
@@ -203,7 +202,6 @@ func TestResolveFailedCompletionReplySkipsDBForExplicitResultMessage(t *testing.
 		context.Background(),
 		reader,
 		taskID,
-		[]byte(`{"result_message":""}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -211,27 +209,20 @@ func TestResolveFailedCompletionReplySkipsDBForExplicitResultMessage(t *testing.
 	if reply != "legacy DB reply" {
 		t.Fatalf("fallback reply = %q", reply)
 	}
-	if reader.calls != 1 {
+	if reader.calls != 2 {
 		t.Fatalf("DB reply query calls = %d", reader.calls)
 	}
 }
 
-func TestRetryEligibleForReportedFailureRejectsAlreadyRepliedTask(t *testing.T) {
+func TestRetryEligibleIgnoresLegacyResultMessage(t *testing.T) {
 	task := db.AgentTaskQueue{
 		Attempt:     0,
 		MaxAttempts: 2,
 		IssueID:     pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+		Result:      []byte(`{"result_message":"已向用户说明任务超时"}`),
 	}
-	if retryEligibleForReportedFailure("timeout", task, "已向用户说明任务超时") {
-		t.Fatal("already-replied task must not auto-retry")
-	}
-	if !retryEligibleForReportedFailure("timeout", task, "") {
-		t.Fatal("failure without explicit reply should keep existing retry semantics")
-	}
-
-	task.Result = []byte(`{"result_message":"已向用户说明任务超时"}`)
-	if retryEligible("timeout", task) {
-		t.Fatal("persisted explicit reply must prevent later reconciliation from auto-retrying")
+	if !retryEligible("timeout", task) {
+		t.Fatal("legacy DWS reply receipt must not change explicit failure retry semantics")
 	}
 }
 
@@ -289,7 +280,7 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	}
 	if rootTaskID != taskID || terminalTaskID != taskID ||
 		requestID != "multica-terminal:"+taskID || status != "completed" ||
-		message != "第一行\n第二行" || targetIdentity != taskCompletionTestTarget {
+		message != "agent execution summary" || targetIdentity != taskCompletionTestTarget {
 		t.Fatalf("completion = root:%s terminal:%s request:%s status:%s message:%q",
 			rootTaskID, terminalTaskID, requestID, status, message)
 	}
@@ -305,72 +296,6 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	}
 	if got, want := *summary.FirstEffectiveReplyAt, firstEffectiveReplyAt.Format(time.RFC3339Nano); got != want {
 		t.Fatalf("first effective reply at = %s, want %s", got, want)
-	}
-}
-
-func TestFailTaskWithResultMessageSkipsRetryAndEnqueuesExplicitReply(t *testing.T) {
-	ctx := context.Background()
-	pool := newTaskClaimRacePool(t)
-	agentID := createClaimCapacityFixture(t, ctx, pool)
-	var taskID string
-	if err := pool.QueryRow(ctx, `
-		UPDATE agent_task_queue
-		SET status = 'running',
-		    started_at = now(),
-		    attempt = 0,
-		    max_attempts = 2,
-		    context = '{"completion_callback":{"url":"/api/v1/dispatch-tasks/router-task-failed-reply/execution-result","target":"`+taskCompletionTestTarget+`"}}'::jsonb
-		WHERE id = (
-		    SELECT id FROM agent_task_queue WHERE agent_id = $1 ORDER BY created_at LIMIT 1
-		)
-		RETURNING id
-	`, agentID).Scan(&taskID); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE root_task_id = $1`, taskID)
-	})
-
-	svc := NewTaskService(db.New(pool), pool, nil, events.New())
-	if _, err := svc.FailTaskWithResultMessage(
-		ctx,
-		util.MustParseUUID(taskID),
-		"runtime timed out",
-		"已向用户说明任务超时",
-		"session-1",
-		"",
-		"timeout",
-		false,
-		"",
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	var childCount int
-	var status, resultMessage, persistedResultMessage string
-	if err := pool.QueryRow(ctx, `
-		SELECT
-			(SELECT count(*) FROM agent_task_queue WHERE parent_task_id = $1),
-			outbox.execution_status,
-			outbox.result_message,
-			task.result->>'result_message'
-		FROM agent_task_queue task
-		JOIN task_completion_outbox outbox ON outbox.root_task_id = task.id
-		WHERE task.id = $1
-	`, taskID).Scan(&childCount, &status, &resultMessage, &persistedResultMessage); err != nil {
-		t.Fatal(err)
-	}
-	if childCount != 0 {
-		t.Fatalf("auto-retry child count = %d", childCount)
-	}
-	if status != "failed" || resultMessage != "已向用户说明任务超时" ||
-		persistedResultMessage != "已向用户说明任务超时" {
-		t.Fatalf(
-			"completion = status:%s result_message:%q persisted:%q",
-			status,
-			resultMessage,
-			persistedResultMessage,
-		)
 	}
 }
 

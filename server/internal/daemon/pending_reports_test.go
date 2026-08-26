@@ -44,14 +44,13 @@ func TestPendingReportStoreRoundtrip(t *testing.T) {
 	}
 }
 
-func TestPendingReportStoreRoundtripPreservesResultMessage(t *testing.T) {
+func TestPendingReportStoreRoundtripPreservesProviderOutput(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pending_reports.json")
 	store := loadPendingReportStore(path, nil)
 	store.Enqueue(pendingTerminalReport{
-		Kind:          pendingReportKindComplete,
-		TaskID:        "task-result-message",
-		Output:        "agent execution summary",
-		ResultMessage: "最终回复正文",
+		Kind:   pendingReportKindComplete,
+		TaskID: "task-provider-output",
+		Output: "provider final output",
 	})
 
 	reloaded := loadPendingReportStore(path, nil)
@@ -59,8 +58,8 @@ func TestPendingReportStoreRoundtripPreservesResultMessage(t *testing.T) {
 	if len(snapshot) != 1 {
 		t.Fatalf("snapshot length = %d", len(snapshot))
 	}
-	if snapshot[0].ResultMessage != "最终回复正文" {
-		t.Fatalf("result message = %q", snapshot[0].ResultMessage)
+	if snapshot[0].Output != "provider final output" {
+		t.Fatalf("provider output = %q", snapshot[0].Output)
 	}
 }
 
@@ -90,8 +89,11 @@ func TestDrainPendingReportsRedelivers(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body["result_message"] != "最终回复正文" {
-				t.Fatalf("result_message = %#v", body["result_message"])
+			if body["output"] != "provider final output" {
+				t.Fatalf("output = %#v", body["output"])
+			}
+			if _, ok := body["result_message"]; ok {
+				t.Fatalf("legacy result_message was replayed: %#v", body)
 			}
 		case "/api/daemon/tasks/task-b/fail":
 			failCalls.Add(1)
@@ -99,8 +101,11 @@ func TestDrainPendingReportsRedelivers(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatal(err)
 			}
-			if body["result_message"] != "已向用户说明失败" {
-				t.Fatalf("failed result_message = %#v", body["result_message"])
+			if body["error"] != "boom" {
+				t.Fatalf("error = %#v", body["error"])
+			}
+			if _, ok := body["result_message"]; ok {
+				t.Fatalf("legacy failure result_message was replayed: %#v", body)
 			}
 		default:
 			t.Errorf("unexpected request path %s", r.URL.Path)
@@ -112,16 +117,14 @@ func TestDrainPendingReportsRedelivers(t *testing.T) {
 
 	store := loadPendingReportStore(filepath.Join(t.TempDir(), "q.json"), nil)
 	store.Enqueue(pendingTerminalReport{
-		Kind:          pendingReportKindComplete,
-		TaskID:        "task-a",
-		Output:        "done",
-		ResultMessage: "最终回复正文",
+		Kind:   pendingReportKindComplete,
+		TaskID: "task-a",
+		Output: "provider final output",
 	})
 	store.Enqueue(pendingTerminalReport{
 		Kind:          pendingReportKindFail,
 		TaskID:        "task-b",
 		Error:         "boom",
-		ResultMessage: "已向用户说明失败",
 		FailureReason: "cancelled",
 	})
 
@@ -189,10 +192,9 @@ func TestDrainPendingReportsConvertsPermanentComplete(t *testing.T) {
 
 	store := loadPendingReportStore(filepath.Join(t.TempDir(), "q.json"), nil)
 	store.Enqueue(pendingTerminalReport{
-		Kind:          pendingReportKindComplete,
-		TaskID:        "task-a",
-		Output:        "done",
-		ResultMessage: "已完成并回复用户",
+		Kind:   pendingReportKindComplete,
+		TaskID: "task-a",
+		Output: "provider final output",
 	})
 
 	d := testPendingDaemon(t, srv.URL, store)
@@ -209,8 +211,11 @@ func TestDrainPendingReportsConvertsPermanentComplete(t *testing.T) {
 	if got := store.Len(); got != 0 {
 		t.Fatalf("queue not drained after fail replay, %d entries left", got)
 	}
-	if failedBody["result_message"] != "已完成并回复用户" {
-		t.Fatalf("converted fail result_message = %#v", failedBody["result_message"])
+	if failedBody["error"] == "" {
+		t.Fatalf("converted fail lost explicit error contract: %#v", failedBody)
+	}
+	if _, ok := failedBody["result_message"]; ok {
+		t.Fatalf("converted fail retained legacy result_message: %#v", failedBody)
 	}
 }
 
