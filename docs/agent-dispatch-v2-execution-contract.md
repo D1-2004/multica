@@ -197,15 +197,26 @@ persisted dispatch envelope and is not overridable. It gates on `outbound.mode`
 being `dws`: every line in it is a DWS command, and a robot-SDK dispatch has no
 injected current-user capability to run them with.
 
-It has two halves. The source-of-truth half is injected for `chat` and `auto`
-only — an Issue run answers through its own surface and must not be told to read
-the room first. It states that the DingTalk conversation, not Multica's record of
+It has three halves, each with its own gate. The source-of-truth half is injected
+for `chat` and `auto` only — an Issue run answers through its own surface and must
+not be told to read the room first. It states that the DingTalk conversation, not Multica's record of
 it, is authoritative, and that an assistant turn in that record is text written
 back to the platform rather than proof a DingTalk message exists or a reply style
 to copy. That is the direct fix for runs that read their own "已通过 DWS 回复" out
 of a recovered transcript and treated it as delivery. The daemon-side
 `<interaction-record>` block states the same caveat next to the record itself
 whenever the session is backed by an IM channel.
+
+The Issue-delivery half is injected for `issue` when the dispatch carries a
+completion callback. It states that the platform delivers the run's final
+assistant output back into the DingTalk conversation as the reply the person is
+waiting for, and that the Issue comment is the Multica-side record they do not
+see. Without it the only statement an Issue run gets about delivery is the runtime
+brief's `## Output` line — "the user does NOT see your terminal output or run
+logs — only comments on the issue" — which is exactly backwards for this case. The
+sentence that used to carry the obligation required a `dws chat message reply`
+tool call and went away with the reply tracker; Router/ServerPush owns the
+delivery now, so the instruction says not to send it a second time.
 
 The locator half prints one runnable command per target, with the real ids
 substituted in:
@@ -717,3 +728,16 @@ parsing or rewriting Router's context string.
   Router's copy; a head does both jobs. The trimmed marker fired on almost every
   turn and pushed runs to announce missing context instead of reading the
   conversation back, which they can now do with a printed command.
+
+## Change record: 2026-08-26 Issue runs are told where their reply goes
+
+- History: `dingtalk_conversation` now carries an Issue-delivery paragraph for a
+  `surface=issue` dispatch that has a completion callback, naming the final
+  assistant output as the reply Router delivers into the conversation and the
+  Issue comment as the Multica-side record.
+- Reason: Removing the DWS reply tracker also removed the only sentence that told
+  an Issue run its result had two destinations, because that sentence required
+  the tool call being removed. What remained was the runtime brief's `## Output`
+  line, which tells an Issue run the user sees only issue comments — true for a
+  web-created Issue, backwards for a DingTalk-dispatched one whose final output
+  is what the person receives.

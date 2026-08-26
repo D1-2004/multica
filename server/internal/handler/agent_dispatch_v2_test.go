@@ -657,6 +657,43 @@ func TestDingTalkConversationInstructionNamesAMissingQuotedLocator(t *testing.T)
 	}
 }
 
+// The runtime brief tells an Issue run that the user sees only issue comments.
+// For a DingTalk-dispatched Issue the opposite is true of the reply the person
+// is waiting for, so the dispatch instruction has to say which is which.
+func TestDingTalkConversationInstructionNamesIssueDelivery(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:             DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:             "channel",
+		Type:               "message.created",
+		Surface:            DispatchSurface{Type: "issue"},
+		Outbound:           DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		CompletionCallback: &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/t/execution-result"},
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Messages:     []DispatchMessage{{OpenMsgID: "current-open", Text: "帮我查一下"}},
+		},
+	}
+
+	instruction := buildDispatchConversationInstruction(stored)
+	for _, want := range []string{
+		"delivers your final assistant output back into the DingTalk conversation",
+		"The Issue comment is the Multica-side record and does not reach them",
+		"Do not send it yourself with an outbound tool",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Errorf("issue-surface instruction missing %q: %q", want, instruction)
+		}
+	}
+
+	// Without a completion callback Router has no hook to deliver through, so
+	// the claim would be false.
+	noCallback := stored
+	noCallback.CompletionCallback = nil
+	if got := buildDispatchConversationInstruction(noCallback); got != "" {
+		t.Fatalf("instruction claimed platform delivery with no callback: %q", got)
+	}
+}
+
 // An Issue run answers through its own surface, so it gets the quote rule and
 // locators but never the instruction to read the room before replying.
 func TestDingTalkConversationInstructionSkipsReadbackOnIssueSurface(t *testing.T) {

@@ -654,6 +654,18 @@ const (
 		"Read the conversation itself back when the trigger message alone does not settle what is asked; " +
 		"any claim elsewhere that it cannot be fetched is out of date.\n\n"
 
+	// Issue surface only. The runtime brief's Output section tells an Issue run
+	// that "the user does NOT see your terminal output — only comments on the
+	// issue". For a DingTalk-dispatched Issue that is exactly backwards: the
+	// completion callback carries the provider's final output to Router, which
+	// delivers it into the conversation as the reply the person is waiting for,
+	// while the comment is the Multica-side record they never see. The sentence
+	// this replaces required a `dws chat message reply` tool call and was removed
+	// with the reply tracker; nothing restated the obligation without it.
+	dispatchConversationIssueDeliverySection = "This run answers into an Issue, and the platform delivers your final assistant output back into the DingTalk conversation as the reply the person is waiting for. " +
+		"The Issue comment is the Multica-side record and does not reach them. Write the user-facing result once and give it in both places. " +
+		"Do not send it yourself with an outbound tool: delivery is the platform's, and a second copy arrives twice.\n\n"
+
 	dispatchConversationCommandsSection = "Ready to run as written:\n\n%s\n\n"
 
 	dispatchConversationQuoteSection = "A quote is background, not a new request: act on the current message and never redo work it reports as done. " +
@@ -745,6 +757,14 @@ func dispatchConversationReadbackApplies(stored persistedDispatchContext) bool {
 	}
 }
 
+// dispatchConversationIssueDeliveryApplies reports whether this Issue run's
+// final output is the reply the person receives. Without a completion callback
+// Router has no hook to deliver it through, so the claim would be false.
+func dispatchConversationIssueDeliveryApplies(stored persistedDispatchContext) bool {
+	return stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
+		stored.CompletionCallback != nil
+}
+
 // buildDispatchConversationInstruction is empty unless this run can actually
 // reach DingTalk: every command in it is a DWS command, so a robot-SDK dispatch
 // with no injected current-user capability would be told to run what it cannot.
@@ -755,7 +775,8 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext) strin
 	conversationID := strings.TrimSpace(stored.EventData.Conversation.OpenConversationID)
 	facts := dispatchQuotedMessageFacts(stored)
 	readback := dispatchConversationReadbackApplies(stored)
-	if !readback && len(facts) == 0 {
+	issueDelivery := dispatchConversationIssueDeliveryApplies(stored)
+	if !readback && !issueDelivery && len(facts) == 0 {
 		return ""
 	}
 
@@ -763,6 +784,9 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext) strin
 	b.WriteString(dispatchConversationInstructionHeader)
 	if readback {
 		b.WriteString(dispatchConversationSSOTSection)
+	}
+	if issueDelivery {
+		b.WriteString(dispatchConversationIssueDeliverySection)
 	}
 	hints := make([]string, 0, len(facts)+1)
 	if readback {
