@@ -64,6 +64,30 @@ func (q *Queries) DeleteAgentOKRsByAgent(ctx context.Context, arg DeleteAgentOKR
 	return err
 }
 
+const isLabelReferencedByAgentOKR = `-- name: IsLabelReferencedByAgentOKR :one
+SELECT EXISTS (
+    SELECT 1
+    FROM agent_okr
+    WHERE label_id = $1::uuid
+      AND workspace_id = $2::uuid
+)::boolean
+`
+
+type IsLabelReferencedByAgentOKRParams struct {
+	LabelID     pgtype.UUID `json:"label_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Generic label update/delete must not mutate the live vocabulary injected
+// into an Agent prompt. Orphaned labels left by an OKR rewrite are deliberately
+// editable/deletable because no current agent_okr row references them.
+func (q *Queries) IsLabelReferencedByAgentOKR(ctx context.Context, arg IsLabelReferencedByAgentOKRParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isLabelReferencedByAgentOKR, arg.LabelID, arg.WorkspaceID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listAgentOKRLabelIDs = `-- name: ListAgentOKRLabelIDs :many
 SELECT DISTINCT mine.label_id
 FROM agent_okr mine
@@ -108,32 +132,36 @@ func (q *Queries) ListAgentOKRLabelIDs(ctx context.Context, arg ListAgentOKRLabe
 	return items, nil
 }
 
-const isLabelReferencedByAgentOKR = `-- name: IsLabelReferencedByAgentOKR :one
-SELECT EXISTS (
-    SELECT 1
-    FROM agent_okr
-    WHERE label_id = $1::uuid
-      AND workspace_id = $2::uuid
-)::boolean
-`
-
-type IsLabelReferencedByAgentOKRParams struct {
-	LabelID     pgtype.UUID `json:"label_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-// Generic label update/delete must not mutate the live vocabulary injected
-// into an Agent prompt. Orphaned labels left by an OKR rewrite are deliberately
-// editable/deletable because no current agent_okr row references them.
-func (q *Queries) IsLabelReferencedByAgentOKR(ctx context.Context, arg IsLabelReferencedByAgentOKRParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isLabelReferencedByAgentOKR, arg.LabelID, arg.WorkspaceID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const listAgentOKRUsage = `-- name: ListAgentOKRUsage :many
-WITH task_totals AS (
+WITH model_pricing AS (
+    SELECT $3::jsonb AS catalog
+), priced_task_usage AS (
+    SELECT
+        tu.id, tu.task_id, tu.provider, tu.model, tu.input_tokens, tu.output_tokens, tu.cache_read_tokens, tu.cache_write_tokens, tu.created_at, tu.updated_at, tu.cost_usd_ticks,
+        CASE
+            WHEN tu.cost_usd_ticks IS NOT NULL THEN tu.cost_usd_ticks
+            WHEN rate.value IS NOT NULL THEN ROUND((
+                tu.input_tokens * (rate.value->>'input')::numeric +
+                tu.output_tokens * (rate.value->>'output')::numeric +
+                tu.cache_read_tokens * (rate.value->>'cache_read')::numeric +
+                tu.cache_write_tokens * (rate.value->>'cache_write')::numeric
+            ) * 10000)::bigint
+        END AS effective_cost_usd_ticks
+    FROM task_usage tu
+    CROSS JOIN model_pricing pricing
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(
+            pricing.catalog -> LOWER(tu.model),
+            CASE
+                WHEN POSITION('/' IN LOWER(tu.model)) > 1
+                 AND POSITION('/' IN LOWER(tu.model)) < LENGTH(LOWER(tu.model))
+                THEN pricing.catalog -> SUBSTRING(
+                    LOWER(tu.model) FROM POSITION('/' IN LOWER(tu.model)) + 1
+                )
+            END
+        ) AS value
+    ) rate ON TRUE
+), task_totals AS (
     SELECT
         okr.label_id AS label_id,
         atq.id AS task_id,
@@ -141,20 +169,20 @@ WITH task_totals AS (
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
         ), 0)::bigint AS total_tokens,
-        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(tu.effective_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
         COALESCE(SUM(
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
-        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.effective_cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
         COALESCE(
-            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            BOOL_AND(tu.effective_cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
             FALSE
         ) AS is_priced
     FROM agent_okr okr
     JOIN issue_to_label il ON il.label_id = okr.label_id
     JOIN issue i ON i.id = il.issue_id AND i.workspace_id = okr.workspace_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
-    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    LEFT JOIN priced_task_usage tu ON tu.task_id = atq.id
     WHERE okr.agent_id = $1 AND okr.workspace_id = $2
     GROUP BY okr.label_id, atq.id
 )
@@ -170,8 +198,9 @@ GROUP BY label_id
 `
 
 type ListAgentOKRUsageParams struct {
-	AgentID     pgtype.UUID `json:"agent_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID      pgtype.UUID `json:"agent_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	ModelPricing []byte      `json:"model_pricing"`
 }
 
 type ListAgentOKRUsageRow struct {
@@ -192,11 +221,13 @@ type ListAgentOKRUsageRow struct {
 // round trip per label; an agent with 3 objectives and 9 key results would pay
 // 12 of them to render one settings page. Same shape, grouped by label instead.
 //
-// The inner grouping is per (label, task): task_usage fans out over a task's
-// LLM calls, and summing without collapsing that first would multiply a task's
-// cost by its row count.
+// The inner grouping is per (label, task). task_usage is unique per
+// (task, provider, model), so a task that used two models has two rows: summing
+// them is right for tokens and cost, but COUNT(*) over the raw join would report
+// models instead of tasks, and the priced/unpriced verdict has to be decided per
+// task rather than per row.
 func (q *Queries) ListAgentOKRUsage(ctx context.Context, arg ListAgentOKRUsageParams) ([]ListAgentOKRUsageRow, error) {
-	rows, err := q.db.Query(ctx, listAgentOKRUsage, arg.AgentID, arg.WorkspaceID)
+	rows, err := q.db.Query(ctx, listAgentOKRUsage, arg.AgentID, arg.WorkspaceID, arg.ModelPricing)
 	if err != nil {
 		return nil, err
 	}
@@ -324,8 +355,10 @@ type UpsertAgentOKRLabelParams struct {
 
 // OKR labels are server-managed and land in the 'issue' namespace so the agent
 // can attach them to issues through the ordinary labeling path. A rewrite may
-// reuse only labels referenced by that agent's previous OKR set; other
-// same-name labels make this query return no row.
+// reuse only labels referenced by that agent's previous OKR set. A same-name
+// ordinary label or another agent's OKR label makes the conflict return no row;
+// the handler turns that into an explicit 409 instead of silently taking over
+// somebody else's catalog entry.
 func (q *Queries) UpsertAgentOKRLabel(ctx context.Context, arg UpsertAgentOKRLabelParams) (IssueLabel, error) {
 	row := q.db.QueryRow(ctx, upsertAgentOKRLabel,
 		arg.WorkspaceID,

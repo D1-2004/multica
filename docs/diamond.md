@@ -1,10 +1,11 @@
 # Alibaba Diamond configuration
 
-Multica uses three independent Alibaba Diamond documents:
+Multica uses four independent Alibaba Diamond documents:
 
 - `dt-fde-multica.json` is the always-active, fail-open prompt/feature-rule source documented on this page. It does not replace process environment variables, the YAML rule file, or caller defaults.
 - `dt-fde-multica-runtime.json` is the opt-in, fail-closed managed runtime configuration. When `MULTICA_RUNTIME_CONFIG_SOURCE=diamond`, it is authoritative for the migrated non-secret settings and has no environment-variable fallback. See [Managed runtime configuration](runtime-config.md).
 - `dt-fde-multica-runtime-manifest-fingerprints.json` is the fail-closed catalog that resolves compact m7 Runtime image fingerprints to their exact component versions. It is loaded and watched together with the managed runtime document, so both Data IDs must exist before a Diamond-backed deployment starts. See [Runtime manifest fingerprint catalog](runtime-config.md#runtime-manifest-fingerprint-catalog).
+- `dt-fde-multica-model-pricing.json` is the fail-closed USD-per-million-token catalog for every deployment-managed model. It prices usage centrally and supplies rates to the model picker, so users do not configure each Runtime or browser. See [Managed model pricing](runtime-config.md#managed-model-pricing).
 
 For the prompt/feature-rule document, the effective precedence is:
 
@@ -113,7 +114,7 @@ Every continuation task recomposes the instruction at claim time from the latest
 
 ## Startup, updates, and shutdown
 
-This section describes the always-active prompt/feature-rule document. The two managed Runtime documents use the separate fail-closed lifecycle described in [Managed runtime configuration](runtime-config.md): both initial reads and both listeners are required when Diamond Runtime configuration is enabled.
+This section describes the always-active prompt/feature-rule document. The three managed Runtime documents use the separate fail-closed lifecycle described in [Managed runtime configuration](runtime-config.md): all initial reads and listeners are required when Diamond Runtime configuration is enabled.
 
 At startup the server:
 

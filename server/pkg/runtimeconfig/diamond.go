@@ -111,8 +111,17 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 	if err != nil {
 		return nil, fmt.Errorf("validate required Runtime manifest fingerprints Diamond config: %w", err)
 	}
+	modelPricingContent, err := client.GetConfig(ModelPricingDiamondDataID, DiamondGroup)
+	if err != nil {
+		return nil, fmt.Errorf("fetch required model pricing Diamond config: %w", err)
+	}
+	modelPricing, err := service.ApplyModelPricingJSON([]byte(modelPricingContent))
+	if err != nil {
+		return nil, fmt.Errorf("validate required model pricing Diamond config: %w", err)
+	}
 	logUpdate(logger, "runtime Diamond config loaded", snapshot)
 	logManifestFingerprintsUpdate(logger, "Runtime manifest fingerprints Diamond config loaded", manifestFingerprints)
+	logModelPricingUpdate(logger, "model pricing Diamond config loaded", modelPricing)
 
 	if err := client.ListenConfig(DiamondDataID, DiamondGroup, func(content string) {
 		next, applyErr := service.ApplyJSON([]byte(content))
@@ -151,14 +160,48 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 		_ = client.CancelListenConfig(DiamondDataID, DiamondGroup)
 		return nil, fmt.Errorf("listen to required Runtime manifest fingerprints Diamond config: %w", err)
 	}
+	if err := client.ListenConfig(ModelPricingDiamondDataID, DiamondGroup, func(content string) {
+		next, applyErr := service.ApplyModelPricingJSON([]byte(content))
+		if applyErr != nil {
+			current := service.ModelPricing()
+			if logger != nil {
+				logger.Error("model pricing Diamond update rejected; retaining previous snapshot",
+					slog.String("data_id", ModelPricingDiamondDataID),
+					slog.Uint64("generation", current.Generation),
+					slog.String("sha256", current.SHA256),
+					slog.Int("count", len(current.Models)),
+					slog.String("error", applyErr.Error()),
+				)
+			}
+			return
+		}
+		logModelPricingUpdate(logger, "model pricing Diamond config updated", next)
+	}); err != nil {
+		_ = client.CancelListenConfig(DiamondDataID, DiamondGroup)
+		_ = client.CancelListenConfig(ManifestFingerprintsDiamondDataID, DiamondGroup)
+		return nil, fmt.Errorf("listen to required model pricing Diamond config: %w", err)
+	}
 	service.setCloseFunc(func() error {
 		runtimeErr := client.CancelListenConfig(DiamondDataID, DiamondGroup)
 		fingerprintsErr := client.CancelListenConfig(ManifestFingerprintsDiamondDataID, DiamondGroup)
+		pricingErr := client.CancelListenConfig(ModelPricingDiamondDataID, DiamondGroup)
 		client.CloseClient()
-		return errors.Join(runtimeErr, fingerprintsErr)
+		return errors.Join(runtimeErr, fingerprintsErr, pricingErr)
 	})
 	closeClient = false
 	return service, nil
+}
+
+func logModelPricingUpdate(logger *slog.Logger, message string, snapshot ModelPricingSnapshot) {
+	if logger == nil {
+		return
+	}
+	logger.Info(message,
+		slog.String("data_id", ModelPricingDiamondDataID),
+		slog.Uint64("generation", snapshot.Generation),
+		slog.String("sha256", snapshot.SHA256),
+		slog.Int("count", len(snapshot.Models)),
+	)
 }
 
 func logManifestFingerprintsUpdate(logger *slog.Logger, message string, snapshot ManifestFingerprintsSnapshot) {

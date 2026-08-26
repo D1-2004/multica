@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "models": {
+    "qwen3.8-max": {
+      "input": 1.768842,
+      "output": 5.306526,
+      "cache_read": 0.221105,
+      "cache_write": 2.211052
+    },
+    "qwen3.7-plus": {
+      "input": 0.294807,
+      "output": 1.179228,
+      "cache_read": 0.058961,
+      "cache_write": 0.368509,
+      "base_tier_max_input_tokens": 256000
+    },
+    "qwen3.7-max": {
+      "input": 1.768842,
+      "output": 5.306526,
+      "cache_read": 0.353768,
+      "cache_write": 2.211052
+    },
+    "qwen3-coder-480b-a35b-instruct": {
+      "input": 0.884421,
+      "output": 3.537684,
+      "cache_read": 0.884421,
+      "cache_write": 0.884421,
+      "base_tier_max_input_tokens": 32000
+    },
+    "claude-sonnet-4-6": {
+      "input": 3,
+      "output": 15,
+      "cache_read": 0.3,
+      "cache_write": 3.75
+    },
+    "qwen3.5-plus": {
+      "input": 0.117923,
+      "output": 0.707537,
+      "cache_read": 0.011792,
+      "cache_write": 0.147403,
+      "base_tier_max_input_tokens": 128000
+    },
+    "kimi-k2.5": {
+      "input": 0.6,
+      "output": 3,
+      "cache_read": 0.1,
+      "cache_write": 0.6
+    },
+    "glm-5": {
+      "input": 1,
+      "output": 3.2,
+      "cache_read": 0.2,
+      "cache_write": 0
+    },
+    "qwen3-max-preview": {
+      "input": 0.884421,
+      "output": 3.537684,
+      "cache_read": 0.176884,
+      "cache_write": 0.884421,
+      "base_tier_max_input_tokens": 32000
+    }
+  }
+}

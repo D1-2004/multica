@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 )
 
 func TestRuntimeHandlersRejectMalformedRuntimeID(t *testing.T) {
@@ -104,10 +105,17 @@ func TestInitiateListModelsReturnsConfiguredFCE2BModels(t *testing.T) {
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
 
 	original := testHandler.cfg.FCE2B
+	originalPricing := testHandler.cfg.ModelPricing
 	testHandler.cfg.FCE2B = service.FCE2BConfig{
 		LLMModels: []string{"qwen3.7-plus", "claude-sonnet-4-6"},
 	}
-	t.Cleanup(func() { testHandler.cfg.FCE2B = original })
+	testHandler.cfg.ModelPricing = modelpricing.Catalog{
+		"qwen3.7-plus": {Input: 0.3, Output: 1.2, CacheRead: 0.06, CacheWrite: 0.375},
+	}
+	t.Cleanup(func() {
+		testHandler.cfg.FCE2B = original
+		testHandler.cfg.ModelPricing = originalPricing
+	})
 
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPost, "/api/runtimes/"+runtimeID+"/models", nil)
@@ -125,6 +133,9 @@ func TestInitiateListModelsReturnsConfiguredFCE2BModels(t *testing.T) {
 	}
 	if resp.Models[0].ID != "qwen3.7-plus" || !resp.Models[0].Default {
 		t.Fatalf("first model must be the configured default: %#v", resp.Models[0])
+	}
+	if resp.Models[0].Pricing == nil || resp.Models[0].Pricing.Input != 0.3 || resp.Models[0].Pricing.Output != 1.2 {
+		t.Fatalf("managed model price missing: %#v", resp.Models[0])
 	}
 	if resp.Models[1].ID != "claude-sonnet-4-6" || resp.Models[1].Default {
 		t.Fatalf("second model must be selectable and non-default: %#v", resp.Models[1])
@@ -257,6 +268,11 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
+	originalPricing := testHandler.cfg.ModelPricing
+	testHandler.cfg.ModelPricing = modelpricing.Catalog{
+		"claude-3-5-sonnet": {Input: 1, Output: 2, CacheRead: 0.1, CacheWrite: 1.25},
+	}
+	t.Cleanup(func() { testHandler.cfg.ModelPricing = originalPricing })
 
 	// Pick a runtime bound to the fixture workspace.
 	var runtimeID string
@@ -354,8 +370,13 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 	}
 
 	byDate := make(map[string]int64)
+	byDateCost := make(map[string]int64)
 	for _, r := range resp {
 		byDate[r.Date] += r.InputTokens
+		byDateCost[r.Date] += r.CostUSDTicks
+		if r.UncostedInputTokens != 0 {
+			t.Errorf("managed model retained uncosted input: %+v", r)
+		}
 	}
 
 	todayKey := today.Format("2006-01-02")
@@ -370,6 +391,9 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 	// when ?days=N is interpreted as a rolling window instead of calendar days.
 	if byDate[yesterdayKey] != 2000 {
 		t.Errorf("yesterday morning task: yesterday bucket expected 2000 input tokens, got %d (full map: %v)", byDate[yesterdayKey], byDate)
+	}
+	if byDateCost[todayKey] != 10_000_000 || byDateCost[yesterdayKey] != 20_000_000 {
+		t.Errorf("Diamond pricing did not reach runtime usage: %v", byDateCost)
 	}
 }
 

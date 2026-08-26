@@ -173,18 +173,16 @@ type ManifestFingerprintMismatch struct {
 	Expected    string
 }
 
-// FingerprintMismatches lists the keys this binary would have computed
-// differently. It is a disagreement, not a corruption — and which side is right
-// is not knowable from here.
+// FingerprintMismatches lists keys that no non-empty subset of this binary's
+// supported providers would compute. It is a disagreement, not a corruption —
+// and which side is right is not knowable from here.
 //
 // The key is minted when a Runtime sandbox image is built and travels to the
 // server inside the template alias (`multica-m7-v<16hex>-r1-<6hex>`), where
 // service.applyFCE2BTemplateManifestAlias looks it up. Recomputing it from
-// manifestProviders / manifestCapabilities asserts that the operator's document
-// agrees with THIS binary's compiled contract — so the moment the server's
-// contract moves ahead of the deployed images (adding a provider changes the
-// hash), a document that is still correct for every image in production reads
-// as invalid.
+// manifestProviders / manifestCapabilities must account for provider
+// cardinality: adding a provider changes the full-set hash without invalidating
+// older images that were built from a smaller supported subset.
 //
 // A miss costs one template not being published (applyFCE2BTemplateManifestAlias
 // returns false and the template is skipped). That is a degraded cloud-runtime
@@ -193,6 +191,14 @@ type ManifestFingerprintMismatch struct {
 func (c ManifestFingerprintsConfig) FingerprintMismatches() ([]ManifestFingerprintMismatch, error) {
 	var mismatches []ManifestFingerprintMismatch
 	for fingerprint, components := range c.Fingerprints {
+		_, matched, err := ManifestProvidersForFingerprint(fingerprint, components)
+		if err != nil {
+			return nil, err
+		}
+		if matched {
+			continue
+		}
+
 		expected, err := manifestFingerprint(components)
 		if err != nil {
 			return nil, err

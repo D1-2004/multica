@@ -7,7 +7,11 @@ import {
   isCloudSandboxRuntime,
   runtimeModelsOptions,
 } from "@multica/core/runtimes";
-import type { AgentRuntime, RuntimeModel } from "@multica/core/types";
+import type {
+  AgentRuntime,
+  RuntimeModel,
+  RuntimeModelPricing,
+} from "@multica/core/types";
 import { findModelCapabilityEntry } from "./inspector/model-capability";
 import {
   Popover,
@@ -125,6 +129,16 @@ export function ModelDropdown({
       : runtimeOnline
         ? t(($) => $.model_dropdown.default_provider)
         : t(($) => $.model_dropdown.runtime_offline_manual));
+  const selectedPricing = selectedEntry?.pricing;
+  const pricingLabel = (pricing: RuntimeModelPricing): string => {
+    const values = {
+      input: formatModelPrice(pricing.input),
+      output: formatModelPrice(pricing.output),
+    };
+    return pricing.base_tier_max_input_tokens
+      ? t(($) => $.model_dropdown.price_from, values)
+      : t(($) => $.model_dropdown.price, values);
+  };
 
   if (!supported && !modelsQuery.isLoading) {
     return (
@@ -169,6 +183,7 @@ export function ModelDropdown({
             {value && (
               <div className="truncate text-caption text-muted-foreground">
                 {modelLabel(models, value)}
+                {selectedPricing ? ` · ${pricingLabel(selectedPricing)}` : ""}
               </div>
             )}
           </div>
@@ -219,6 +234,11 @@ export function ModelDropdown({
                         {m.label !== m.id && (
                           <div className="truncate text-caption text-muted-foreground">
                             {m.id}
+                          </div>
+                        )}
+                        {m.pricing && (
+                          <div className="truncate text-caption text-muted-foreground">
+                            {pricingLabel(m.pricing)}
                           </div>
                         )}
                       </div>
@@ -322,4 +342,11 @@ function modelLabel(models: RuntimeModel[], id: string): string {
   const found = models.find((m) => m.id === id);
   if (!found) return "custom";
   return found.provider ? found.provider : "model";
+}
+
+function formatModelPrice(value: number): string {
+  return value.toLocaleString(undefined, {
+    minimumFractionDigits: value < 0.1 ? 2 : 0,
+    maximumFractionDigits: value < 0.1 ? 4 : 2,
+  });
 }

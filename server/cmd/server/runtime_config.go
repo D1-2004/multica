@@ -11,6 +11,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
@@ -187,6 +188,13 @@ func (c *appRuntimeConfig) enterpriseIdentity() service.EnterpriseIdentityConfig
 	}
 }
 
+func (c *appRuntimeConfig) modelPricing() modelpricing.Catalog {
+	if c == nil || c.remote == nil {
+		return nil
+	}
+	return c.remote.ModelPricing().Models
+}
+
 func (c *appRuntimeConfig) handlerConfig() handler.Config {
 	if c == nil {
 		return handler.Config{}
@@ -205,6 +213,7 @@ func (c *appRuntimeConfig) handlerConfig() handler.Config {
 	cfg.FCE2B = c.fce2b()
 	cfg.ASB = c.asb()
 	cfg.EnterpriseIdentity = c.enterpriseIdentity()
+	cfg.ModelPricing = c.modelPricing()
 	cfg.AttachmentDownloadMode = raw.Web.AttachmentDownloadMode
 	cfg.AttachmentFrameAncestors = append([]string(nil), raw.Web.CORSAllowedOrigins...)
 	return cfg

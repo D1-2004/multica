@@ -4465,7 +4465,23 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("upsert task usage failed", "task_id", taskID, "model", u.Model, "error", err)
 			continue
 		}
-		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.CostUSDTicks)
+		pricing := h.currentConfig().ModelPricing
+		managedModel, resolvedRate, centrallyPriced := pricing.ResolveModel(u.Model)
+		managedRate := &resolvedRate
+		if !centrallyPriced {
+			managedRate = nil
+		}
+		costForMetrics := u.CostUSDTicks
+		if costForMetrics <= 0 {
+			priced := applyModelPricing(pricing, u.Model, usageCostSplit{
+				UncostedInputTokens:      u.InputTokens,
+				UncostedOutputTokens:     u.OutputTokens,
+				UncostedCacheReadTokens:  u.CacheReadTokens,
+				UncostedCacheWriteTokens: u.CacheWriteTokens,
+			})
+			costForMetrics = priced.CostUSDTicks
+		}
+		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, costForMetrics, managedModel, managedRate)
 
 		// Surface prompt-cache effectiveness per run so cache hit rates are
 		// observable in logs, not just queryable from runtime_usage. The ratio
@@ -4848,12 +4864,27 @@ func (h *Handler) hydrateTaskUsage(ctx context.Context, issueID pgtype.UUID, res
 		return
 	}
 
+	pricing := h.currentConfig().ModelPricing
 	byTask := make(map[string][]TaskUsageData, len(resp))
 	for _, row := range rows {
-		var cost *int64
+		split := usageCostSplit{
+			UncostedInputTokens:      row.InputTokens,
+			UncostedOutputTokens:     row.OutputTokens,
+			UncostedCacheReadTokens:  row.CacheReadTokens,
+			UncostedCacheWriteTokens: row.CacheWriteTokens,
+		}
 		if row.CostUsdTicks.Valid {
-			v := row.CostUsdTicks.Int64
-			cost = &v
+			split.CostUSDTicks = row.CostUsdTicks.Int64
+			split.UncostedInputTokens = 0
+			split.UncostedOutputTokens = 0
+			split.UncostedCacheReadTokens = 0
+			split.UncostedCacheWriteTokens = 0
+		}
+		split = applyModelPricing(pricing, row.Model, split)
+		var cost *int64
+		if _, centrallyPriced := pricing.Resolve(row.Model); row.CostUsdTicks.Valid || centrallyPriced {
+			value := split.CostUSDTicks
+			cost = &value
 		}
 		taskID := uuidToString(row.TaskID)
 		byTask[taskID] = append(byTask[taskID], TaskUsageData{
@@ -4988,24 +5019,54 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := h.Queries.GetIssueUsageSummary(r.Context(), issue.ID)
+	rows, err := h.Queries.ListIssueTaskUsage(r.Context(), issue.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get issue usage")
 		return
 	}
+	pricing := h.currentConfig().ModelPricing
+	var totalInput, totalOutput, totalCacheRead, totalCacheWrite, totalCost int64
+	var uncostedInput, uncostedOutput, uncostedCacheRead, uncostedCacheWrite int64
+	taskIDs := make(map[string]struct{})
+	for _, row := range rows {
+		totalInput += row.InputTokens
+		totalOutput += row.OutputTokens
+		totalCacheRead += row.CacheReadTokens
+		totalCacheWrite += row.CacheWriteTokens
+		taskIDs[uuidToString(row.TaskID)] = struct{}{}
+		split := usageCostSplit{
+			UncostedInputTokens:      row.InputTokens,
+			UncostedOutputTokens:     row.OutputTokens,
+			UncostedCacheReadTokens:  row.CacheReadTokens,
+			UncostedCacheWriteTokens: row.CacheWriteTokens,
+		}
+		if row.CostUsdTicks.Valid {
+			split.CostUSDTicks = row.CostUsdTicks.Int64
+			split.UncostedInputTokens = 0
+			split.UncostedOutputTokens = 0
+			split.UncostedCacheReadTokens = 0
+			split.UncostedCacheWriteTokens = 0
+		}
+		split = applyModelPricing(pricing, row.Model, split)
+		totalCost += split.CostUSDTicks
+		uncostedInput += split.UncostedInputTokens
+		uncostedOutput += split.UncostedOutputTokens
+		uncostedCacheRead += split.UncostedCacheReadTokens
+		uncostedCacheWrite += split.UncostedCacheWriteTokens
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total_input_tokens":       row.TotalInputTokens,
-		"total_output_tokens":      row.TotalOutputTokens,
-		"total_cache_read_tokens":  row.TotalCacheReadTokens,
-		"total_cache_write_tokens": row.TotalCacheWriteTokens,
+		"total_input_tokens":       totalInput,
+		"total_output_tokens":      totalOutput,
+		"total_cache_read_tokens":  totalCacheRead,
+		"total_cache_write_tokens": totalCacheWrite,
 		// Cost split — see the note on DashboardUsageDailyResponse.
-		"cost_usd_ticks":              row.TotalCostUsdTicks,
-		"uncosted_input_tokens":       row.UncostedInputTokens,
-		"uncosted_output_tokens":      row.UncostedOutputTokens,
-		"uncosted_cache_read_tokens":  row.UncostedCacheReadTokens,
-		"uncosted_cache_write_tokens": row.UncostedCacheWriteTokens,
-		"task_count":                  row.TaskCount,
+		"cost_usd_ticks":              totalCost,
+		"uncosted_input_tokens":       uncostedInput,
+		"uncosted_output_tokens":      uncostedOutput,
+		"uncosted_cache_read_tokens":  uncostedCacheRead,
+		"uncosted_cache_write_tokens": uncostedCacheWrite,
+		"task_count":                  len(taskIDs),
 	})
 }
 

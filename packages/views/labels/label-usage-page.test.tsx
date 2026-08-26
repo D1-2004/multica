@@ -99,6 +99,8 @@ const DATA: LabelUsageResponse = {
   tasks: [
     {
       task_id: "task-1",
+      agent_id: "agent-1",
+      agent_name: "Pricing Agent",
       issue_id: "issue-1",
       issue_identifier: "MUL-1",
       issue_title: "Investigate spend",

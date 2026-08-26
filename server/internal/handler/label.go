@@ -161,8 +161,14 @@ func (h *Handler) ListLabels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeUsage := r.URL.Query().Get("include_usage") == "true"
+	pricingJSON, err := h.currentConfig().ModelPricing.SQLJSON()
+	if err != nil {
+		slog.Error("encode model pricing for label list", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to list labels")
+		return
+	}
 	labels, err := h.Queries.ListLabels(r.Context(), db.ListLabelsParams{
-		WorkspaceID: parseUUID(workspaceID), ResourceType: resourceType, IncludeUsage: includeUsage,
+		WorkspaceID: parseUUID(workspaceID), ResourceType: resourceType, IncludeUsage: includeUsage, ModelPricing: pricingJSON,
 	})
 	if err != nil {
 		slog.Warn("ListLabels failed", append(logger.RequestAttrs(r), "error", err)...)
