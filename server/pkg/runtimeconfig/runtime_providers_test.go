@@ -15,7 +15,7 @@ func validRuntimeProvidersJSON() string {
 }
 
 func TestDocumentedRuntimeProvidersExampleMatchesSchema(t *testing.T) {
-	raw, err := os.ReadFile("../../../docs/runtime-providers.example.json")
+	raw, err := os.ReadFile("../../../docs/runtime-manifest-fingerprints.example.json")
 	if err != nil {
 		t.Fatalf("read documented Runtime providers: %v", err)
 	}

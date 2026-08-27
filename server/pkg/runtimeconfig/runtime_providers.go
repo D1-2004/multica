@@ -14,7 +14,7 @@ import (
 
 const (
 	RuntimeProvidersSchemaVersion = 1
-	RuntimeProvidersDiamondDataID = "dt-fde-multica-runtime-providers.json"
+	RuntimeProvidersDiamondDataID = "dt-fde-multica-runtime-manifest-fingerprints.json"
 )
 
 var (

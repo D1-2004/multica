@@ -13,7 +13,7 @@ The coordinates are fixed so an application cannot accidentally point at another
 | Setting | Runtime settings | Runtime provider catalog | Model pricing |
 |---|---|---|---|
 | Application | `dt-fde-multica` | `dt-fde-multica` | `dt-fde-multica` |
-| Data ID | `dt-fde-multica-runtime.json` | `dt-fde-multica-runtime-providers.json` | `dt-fde-multica-model-pricing.json` |
+| Data ID | `dt-fde-multica-runtime.json` | `dt-fde-multica-runtime-manifest-fingerprints.json` | `dt-fde-multica-model-pricing.json` |
 | Group | `DEFAULT_GROUP` | `DEFAULT_GROUP` | `DEFAULT_GROUP` |
 | Type | `json` | `json` | `json` |
 
@@ -74,7 +74,7 @@ The document has one strict schema:
 - every ASB key is a full 40-character lowercase Runtime commit;
 - provider lists are duplicate-free; the schema does not require an exact count.
 
-See [the complete provider example](runtime-providers.example.json). A valid listener update atomically replaces the entire catalog. An invalid update keeps the previous generation. Application logs contain only the Data ID, generation, entry count, and document SHA-256.
+See [the complete provider example](runtime-manifest-fingerprints.example.json). A valid listener update atomically replaces the entire catalog. An invalid update keeps the previous generation. Application logs contain only the Data ID, generation, entry count, and document SHA-256. The existing Data ID name is retained for deployment compatibility; its content is no longer a fingerprint or component-version document.
 
 A compact m7 alias is display text only; it is not an execution identity, a provider lookup key, or a source of component versions.
 
