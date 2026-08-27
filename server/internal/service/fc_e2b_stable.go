@@ -276,6 +276,9 @@ func (s *FCE2BStableService) GetChannel(
 	)
 	switch {
 	case err == nil:
+		if SandboxBackendKind(current.SandboxBackend) == SandboxBackendAliyunFC {
+			current.ArtifactBuildID = ""
+		}
 		result.Current = &current
 	case errors.Is(err, pgx.ErrNoRows):
 	default:
@@ -402,6 +405,9 @@ func (s *FCE2BStableService) LockCurrentArtifactForRuntimeCreation(
 	}
 	if err != nil {
 		return FCE2BStableTemplateBinding{}, fmt.Errorf("load locked cloud sandbox stable channel: %w", err)
+	}
+	if SandboxBackendKind(current.SandboxBackend) == SandboxBackendAliyunFC {
+		current.ArtifactBuildID = ""
 	}
 	return current, nil
 }
@@ -3320,6 +3326,10 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 	}
 	if completedAt.Valid {
 		release.CompletedAt = &completedAt.Time
+	}
+	if SandboxBackendKind(release.SandboxBackend) == SandboxBackendAliyunFC {
+		release.ArtifactBuildID = ""
+		release.PreviousArtifactBuildID = ""
 	}
 	return release, nil
 }
