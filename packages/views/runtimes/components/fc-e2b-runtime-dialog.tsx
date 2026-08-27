@@ -123,6 +123,7 @@ export function FCE2BRuntimeDialog({
   const [artifactBuildId, setArtifactBuildId] = useState("");
   const [artifactAlias, setArtifactAlias] = useState("");
   const [artifactDigest, setArtifactDigest] = useState("");
+  const [runtimeCommit, setRuntimeCommit] = useState("");
   const [apiKey, setAPIKey] = useState("");
   const [validatedAPIKey, setValidatedAPIKey] = useState("");
   const apiKeyIsValidated =
@@ -146,7 +147,6 @@ export function FCE2BRuntimeDialog({
       template.status,
       template.updated_at,
       ...template.providers,
-      ...template.capabilities,
     ]
       .filter(Boolean)
       .join(" ")
@@ -205,7 +205,10 @@ export function FCE2BRuntimeDialog({
     if (
       sandboxBackend === "asb" &&
       templateChannel === "candidate" &&
-      (!artifactRef.trim() || !artifactBuildId.trim() || !artifactDigest.trim())
+      (!artifactRef.trim() ||
+        !artifactBuildId.trim() ||
+        !artifactDigest.trim() ||
+        !/^[0-9a-f]{40}$/.test(runtimeCommit.trim().toLowerCase()))
     ) {
       return;
     }
@@ -222,6 +225,7 @@ export function FCE2BRuntimeDialog({
               artifact_build_id: artifactBuildId.trim(),
               artifact_alias: artifactAlias.trim() || undefined,
               artifact_digest: artifactDigest.trim(),
+              runtime_commit: runtimeCommit.trim().toLowerCase(),
             }
           : {}),
         artifact_channel: templateChannel,
@@ -506,9 +510,6 @@ export function FCE2BRuntimeDialog({
                                   PROVIDER_LABELS[item as FCE2BRuntimeProvider],
                               )
                               .join(" · ")}
-                            {template.capabilities.length > 0
-                              ? ` · ${template.capabilities.join(" · ")}`
-                              : ""}
                           </span>
                         </span>
                         {selected && <Check className="mt-0.5 h-3.5 w-3.5" />}
@@ -530,6 +531,19 @@ export function FCE2BRuntimeDialog({
                   value={artifactRef}
                   onChange={(event) => setArtifactRef(event.target.value)}
                   placeholder="registry/repository@sha256:..."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-runtime-commit" className="text-caption">
+                  {t(($) => $.fc_e2b_stable.git_commit)}
+                </Label>
+                <Input
+                  id="asb-runtime-commit"
+                  value={runtimeCommit}
+                  onChange={(event) => setRuntimeCommit(event.target.value)}
+                  placeholder="40-character Runtime commit"
+                  autoComplete="off"
+                  spellCheck={false}
                 />
               </div>
               <div className="space-y-1.5">

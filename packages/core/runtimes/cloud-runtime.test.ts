@@ -37,18 +37,11 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 function makeTemplate(overrides: Partial<FCE2BTemplate> = {}): FCE2BTemplate {
   return {
     id: "tpl-v2",
-    build_id: "build-v2",
     template: "multica-fc-team-v2",
     status: "ready",
     manifest_version: 2,
     providers: ["hermes", "opencode", "pi"],
     capabilities: ["dws", "dws.im_event", "mcp"],
-    component_versions: {
-      hermes: "0.19.0",
-      opencode: "v1.18.4",
-      pi: "0.80.10",
-      dws: "v1.0.53-beta.4",
-    },
     runner_protocol: "root-log-v1",
     ...overrides,
   };
@@ -71,7 +64,6 @@ describe("parseFCE2BRuntimeMetadata", () => {
             kind: "fc-e2b",
             template: "multica-fc-team-v2",
             template_id: "tpl-v2",
-            template_build_id: "build-v2",
             template_name: "Team v2",
             template_status: "ready",
           },
@@ -81,7 +73,6 @@ describe("parseFCE2BRuntimeMetadata", () => {
       kind: "fc-e2b",
       template: "multica-fc-team-v2",
       templateId: "tpl-v2",
-      templateBuildId: "build-v2",
       templateName: "Team v2",
       templateStatus: "ready",
       templateChannel: "stable",
@@ -143,7 +134,6 @@ describe("parseCloudSandboxRuntimeMetadata", () => {
         kind: "fc-e2b",
         template: "multica-fc-team-v2",
         template_id: "tpl-v2",
-        template_build_id: "build-v2",
         template_channel: "candidate",
         capabilities: ["dws", "mcp"],
       },
@@ -154,7 +144,7 @@ describe("parseCloudSandboxRuntimeMetadata", () => {
       artifactKind: "e2b_template",
       artifactChannel: "candidate",
       artifactRef: "tpl-v2",
-      artifactBuildId: "build-v2",
+      artifactBuildId: null,
       capabilities: ["dws", "mcp"],
     });
     expect(isCloudSandboxRuntime(runtime)).toBe(true);
@@ -232,33 +222,6 @@ describe("filterRuntimesForSandboxBackend", () => {
 });
 
 describe("isReadyFCE2BTemplate", () => {
-  it("accepts published m2 through m7 manifests only", () => {
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 2 })),
-    ).toBe(true);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 3 })),
-    ).toBe(true);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 1 })),
-    ).toBe(false);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 4 })),
-    ).toBe(true);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 5 })),
-    ).toBe(true);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 6 })),
-    ).toBe(true);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 7 })),
-    ).toBe(true);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 8 })),
-    ).toBe(false);
-  });
-
   it("requires both a real template ID and ready status", () => {
     expect(
       isReadyFCE2BTemplate(makeTemplate({ status: "READY" })),
@@ -269,9 +232,7 @@ describe("isReadyFCE2BTemplate", () => {
     expect(
       isReadyFCE2BTemplate(makeTemplate({ status: "building" })),
     ).toBe(false);
-    expect(
-      isReadyFCE2BTemplate(makeTemplate({ manifest_version: 0 })),
-    ).toBe(false);
+    expect(isReadyFCE2BTemplate(makeTemplate({ providers: [] }))).toBe(false);
   });
 });
 

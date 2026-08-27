@@ -28,7 +28,6 @@ const mockChannelQuery = vi.hoisted(() => ({
       artifact_alias: string;
       artifact_digest: string;
       template_id: string;
-      template_build_id: string;
       template_alias: string;
       release_id: string;
     },
@@ -39,7 +38,6 @@ const mockChannelQuery = vi.hoisted(() => ({
 const mockTemplatesQuery = vi.hoisted(() => ({
   data: [] as Array<{
     id: string;
-    build_id: string;
     name: string;
     template: string;
     status: string;
@@ -63,10 +61,9 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 
 vi.mock("@multica/core/runtimes", () => ({
-  isReadyFCE2BTemplate: (template: { id?: string; build_id?: string; status?: string }) =>
+  isReadyFCE2BTemplate: (template: { id?: string; status?: string }) =>
     Boolean(
       template.id?.trim() &&
-        template.build_id?.trim() &&
         template.status?.toLowerCase() === "ready",
   ),
   useCloudSandboxStableChannel: () => mockChannelQuery,
@@ -104,13 +101,11 @@ function renderDialog(sandboxBackend: "aliyun_fc" | "asb" = "aliyun_fc") {
 
 function template(
   id: string,
-  buildId: string,
   name: string,
   updatedAt: string,
 ) {
   return {
     id,
-    build_id: buildId,
     name,
     template: name,
     status: "READY",
@@ -130,7 +125,7 @@ describe("StableFCE2BReleaseDialog", () => {
     mockChannelQuery.data.current = null;
     mockChannelQuery.data.active_release = null;
     mockTemplatesQuery.data = [
-      template("template-current", "build-current", "Current image", "2026-07-28T04:30:00Z"),
+      template("template-current", "Current image", "2026-07-28T04:30:00Z"),
     ];
     mockTemplatesQuery.isLoading = false;
     mockTemplatesQuery.isError = false;
@@ -165,27 +160,25 @@ describe("StableFCE2BReleaseDialog", () => {
         data: {
           sandbox_backend: "aliyun_fc",
           template_id: "template-current",
-          expected_build_id: "build-current",
           note: "",
         },
       }),
     );
   });
 
-  it("labels the current stable template even when its build changed", async () => {
+  it("labels and can select the current stable template by template ID", async () => {
     mockChannelQuery.data.current = {
       artifact_ref: "template-current",
       artifact_build_id: "build-current",
       artifact_alias: "Current image",
       artifact_digest: "",
       template_id: "template-current",
-      template_build_id: "build-current-before-log-config",
       template_alias: "Current image",
       release_id: "release-current",
     };
     mockTemplatesQuery.data = [
-      template("template-current", "build-current", "Current image", "2026-07-28T04:30:00Z"),
-      template("template-next", "build-next", "Next image", "2026-07-28T05:30:00Z"),
+      template("template-current", "Current image", "2026-07-28T04:30:00Z"),
+      template("template-next", "Next image", "2026-07-28T05:30:00Z"),
     ];
 
     renderDialog();
@@ -212,7 +205,6 @@ describe("StableFCE2BReleaseDialog", () => {
         data: {
           sandbox_backend: "aliyun_fc",
           template_id: "template-current",
-          expected_build_id: "build-current",
           note: "",
         },
       }),
@@ -226,7 +218,6 @@ describe("StableFCE2BReleaseDialog", () => {
       artifact_alias: "Current image",
       artifact_digest: "",
       template_id: "template-current",
-      template_build_id: "build-current",
       template_alias: "Current image",
       release_id: "release-current",
     };
@@ -266,7 +257,6 @@ describe("StableFCE2BReleaseDialog", () => {
       artifact_alias: "Current image",
       artifact_digest: "",
       template_id: "template-current",
-      template_build_id: "build-current",
       template_alias: "Current image",
       release_id: "release-current",
     };
@@ -372,7 +362,6 @@ describe("StableFCE2BReleaseDialog", () => {
       artifact_alias: "Current image",
       artifact_digest: "",
       template_id: "template-current",
-      template_build_id: "build-current",
       template_alias: "Current image",
       release_id: "release-current",
     };
@@ -464,7 +453,6 @@ describe("StableFCE2BReleaseDialog", () => {
       artifact_digest:
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       template_id: "",
-      template_build_id: "",
       template_alias: "multica-asb-runtime:56487728",
       release_id: "release-current",
     };

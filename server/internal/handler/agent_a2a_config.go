@@ -1034,7 +1034,7 @@ func validateAgentA2ARuntimeFamily(runtime db.AgentRuntime) error {
 	if isAgentA2ASupportedRuntimeFamily(runtime) {
 		return nil
 	}
-	return errors.New("A2A inbound requires a local Claude runtime or an FC/ASB Hermes, OpenCode, Pi, DSH, or OpenCode v2 runtime whose image manifest advertises the provider's inbound adapter and a2a-invocation-v2")
+	return errors.New("A2A inbound requires a local Claude runtime or an FC/ASB Hermes, OpenCode, Pi, DSH, or OpenCode v2 runtime configured with the provider's inbound adapter and a2a-invocation-v2")
 }
 
 func isAgentA2ASupportedRuntimeFamily(runtime db.AgentRuntime) bool {

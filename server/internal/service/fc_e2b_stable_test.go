@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -174,10 +173,9 @@ func TestStableRuntimeMissingForReleaseUsesMetadataProvider(t *testing.T) {
 
 func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
 	release := FCE2BStableRelease{
-		TemplateID:      "template-five-runner",
-		TemplateBuildID: "build-five-runner",
-		TemplateAlias:   "multica-m7-v3904c2e827d58ad7-r1-abcdef",
-		SourceRevision:  "abcdef",
+		TemplateID:     "template-five-runner",
+		TemplateAlias:  "multica-m7-v3904c2e827d58ad7-r1-abcdef",
+		SourceRevision: "abcdef",
 		Manifest: map[string]any{
 			"schema_version": 7,
 			"providers": []string{
@@ -189,13 +187,6 @@ func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
 					LLMTraceCapability, A2AInboundOpenCodeCapability,
 					A2AInvocationV2Capability, DSHTrajectoryCapability,
 				},
-			},
-			"component_versions": map[string]any{
-				"hermes":      "0.19.0",
-				"opencode":    "v1.18.11",
-				"pi":          "0.83.0",
-				"dsh":         "0.1.0-rc.6",
-				"opencode-v2": "0.0.0-beta-202608110357",
 			},
 			"runner_protocol": string(fcE2BRunnerLaunchRootLog),
 		},
@@ -214,10 +205,6 @@ func TestReleaseTemplateUsesPublishedFiveRunnerManifest(t *testing.T) {
 		release.Manifest["capabilities_by_backend"].(map[string][]string)[string(SandboxBackendAliyunFC)],
 	) {
 		t.Fatalf("release capabilities = %#v", template.Capabilities)
-	}
-	if template.ComponentVersions["dsh"] != "0.1.0-rc.6" ||
-		template.ComponentVersions["opencode-v2"] != "0.0.0-beta-202608110357" {
-		t.Fatalf("release component versions = %#v", template.ComponentVersions)
 	}
 	if template.RunnerProtocol != string(fcE2BRunnerLaunchRootLog) {
 		t.Fatalf("release runner protocol = %q", template.RunnerProtocol)
@@ -743,9 +730,8 @@ func TestStableSourceRevisionRequiresCanonicalAliasRevision(t *testing.T) {
 
 func TestStableReleaseFingerprintDoesNotDependOnDerivedBootstrapState(t *testing.T) {
 	input := CreateFCE2BStableReleaseInput{
-		TemplateID:      "template-1",
-		ExpectedBuildID: "build-1",
-		Note:            "release note",
+		TemplateID: "template-1",
+		Note:       "release note",
 	}
 	first := stableReleaseFingerprint(input)
 	input.Bootstrap = true
@@ -760,7 +746,7 @@ func TestStableReleaseFingerprintIncludesArtifactBuildTime(t *testing.T) {
 	input := CreateFCE2BStableReleaseInput{
 		SandboxBackend:  SandboxBackendASB,
 		ArtifactRef:     "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		ExpectedBuildID: "build-1",
+		ArtifactBuildID: "build-1",
 		ArtifactBuiltAt: &firstBuiltAt,
 		ArtifactDigest:  "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		GitCommit:       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -772,28 +758,27 @@ func TestStableReleaseFingerprintIncludesArtifactBuildTime(t *testing.T) {
 	}
 }
 
-func TestRuntimeUsesTemplateRequiresTemplateAndBuild(t *testing.T) {
+func TestRuntimeUsesTemplateRequiresTemplateID(t *testing.T) {
 	runtime := db.AgentRuntime{Metadata: []byte(`{
 		"template_id":"template-1",
 		"template_build_id":"build-1"
 	}`)}
-	if !runtimeUsesTemplate(runtime, "template-1", "build-1") {
+	if !runtimeUsesTemplate(runtime, "template-1") {
 		t.Fatal("exact template readback was rejected")
 	}
-	if runtimeUsesTemplate(runtime, "template-1", "build-2") {
-		t.Fatal("mismatched build readback was accepted")
+	if runtimeUsesTemplate(runtime, "template-2") {
+		t.Fatal("mismatched template readback was accepted")
 	}
-	if runtimeUsesTemplate(db.AgentRuntime{Metadata: []byte(`{`)}, "template-1", "build-1") {
+	if runtimeUsesTemplate(db.AgentRuntime{Metadata: []byte(`{`)}, "template-1") {
 		t.Fatal("invalid metadata readback was accepted")
 	}
 }
 
 func TestReleaseTemplatePreservesVerifiedFCManifest(t *testing.T) {
 	release := FCE2BStableRelease{
-		TemplateID:      "template-v6",
-		TemplateBuildID: "build-v6",
-		TemplateAlias:   "multica-m6",
-		SourceRevision:  "029b33",
+		TemplateID:     "template-v6",
+		TemplateAlias:  "multica-m6",
+		SourceRevision: "029b33",
 		Manifest: map[string]any{
 			"schema_version": float64(6),
 			"providers":      []any{"hermes", "opencode", "pi"},
@@ -807,10 +792,6 @@ func TestReleaseTemplatePreservesVerifiedFCManifest(t *testing.T) {
 					A2AInboundOpenCodeCapability,
 					A2AInvocationV2Capability,
 				},
-			},
-			"component_versions": map[string]any{
-				"opencode": "v1.18.11",
-				"dws":      "v1.0.58-beta.4",
 			},
 			"runner_protocol": "root-log-v1",
 		},
@@ -832,13 +813,9 @@ func TestReleaseTemplatePreservesVerifiedFCManifest(t *testing.T) {
 	if template.RunnerProtocol != "root-log-v1" {
 		t.Fatalf("runner protocol = %q, want root-log-v1", template.RunnerProtocol)
 	}
-	if template.ComponentVersions["opencode"] != "v1.18.11" ||
-		template.ComponentVersions["dws"] != "v1.0.58-beta.4" {
-		t.Fatalf("component versions = %#v", template.ComponentVersions)
-	}
 }
 
-func TestRuntimeUsesStableReleaseRequiresVerifiedManifestMetadata(t *testing.T) {
+func TestRuntimeUsesStableReleaseMatchesIdentityWithoutManifestValidation(t *testing.T) {
 	manifest := map[string]any{
 		"schema_version": float64(6),
 		"capabilities_by_backend": map[string]any{
@@ -848,10 +825,9 @@ func TestRuntimeUsesStableReleaseRequiresVerifiedManifestMetadata(t *testing.T) 
 		"runner_protocol": "root-log-v1",
 	}
 	fcRelease := FCE2BStableRelease{
-		SandboxBackend:  string(SandboxBackendAliyunFC),
-		TemplateID:      "template-v6",
-		TemplateBuildID: "build-v6",
-		Manifest:        manifest,
+		SandboxBackend: string(SandboxBackendAliyunFC),
+		TemplateID:     "template-v6",
+		Manifest:       manifest,
 	}
 	fcRuntime := db.AgentRuntime{
 		RuntimeMode: "cloud",
@@ -876,8 +852,8 @@ func TestRuntimeUsesStableReleaseRequiresVerifiedManifestMetadata(t *testing.T) 
 		"runner_protocol":"root-log-v1",
 		"capabilities":["opencode","dws","runtime_start_events_v1"]
 	}`)
-	if runtimeUsesStableRelease(fcRuntime, fcRelease) {
-		t.Fatal("FC Runtime missing a2a-invocation-v2 passed stable release readback")
+	if !runtimeUsesStableRelease(fcRuntime, fcRelease) {
+		t.Fatal("FC Runtime with the matching template ID was rejected because capability metadata differed")
 	}
 
 	fcRelease.Manifest = map[string]any{
@@ -931,151 +907,6 @@ func TestRuntimeUsesStableReleaseRequiresVerifiedManifestMetadata(t *testing.T) 
 	}
 	if !runtimeUsesStableRelease(asbRuntime, asbRelease) {
 		t.Fatal("ASB Runtime with the verified manifest metadata was rejected")
-	}
-}
-
-func TestStableReleaseCapabilitiesForProvider(t *testing.T) {
-	capabilities := []string{
-		"dws",
-		A2AInboundHermesCapability,
-		A2AInboundOpenCodeCapability,
-		A2AInboundPiCapability,
-		"dsh_trajectory_v1",
-	}
-	tests := []struct {
-		provider string
-		want     []string
-	}{
-		{"hermes", []string{"dws", A2AInboundHermesCapability}},
-		{"opencode", []string{"dws", A2AInboundOpenCodeCapability}},
-		{"pi", []string{"dws", A2AInboundPiCapability}},
-		{"dsh", []string{"dws", A2AInboundOpenCodeCapability, "dsh_trajectory_v1"}},
-		{"opencode-v2", []string{"dws", A2AInboundOpenCodeCapability}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.provider, func(t *testing.T) {
-			if got := stableReleaseCapabilitiesForProvider(tt.provider, capabilities); !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("capabilities = %#v, want %#v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestVerifyStableTemplateRunsNativeSmokeAndChecksManifest(t *testing.T) {
-	runner := &fakeCommandRunner{out: []string{
-		"Sandbox created with ID sbx_stable123 using template multica-stable\n",
-		"",
-		"",
-		`{
-			"schema_version":6,
-			"sandbox_backends":["aliyun_fc","asb"],
-			"providers":["hermes","opencode","pi"],
-			"capabilities":["dws","dws.im_event","mcp","runtime_start_events_v1","llm_trace_v1","a2a_inbound_opencode_v1","a2a-invocation-v2"],
-			"capabilities_by_backend":{
-				"aliyun_fc":["dws","dws.im_event","mcp","runtime_start_events_v1","llm_trace_v1","a2a_inbound_opencode_v1","a2a-invocation-v2"],
-				"asb":["dws","dws.im_event","mcp","runtime_start_events_v1","llm_trace_v1","a1","mw","buc","a2a-invocation-v2"]
-			},
-			"identity_modes_by_backend":{
-				"aliyun_fc":["agent_identity"],
-				"asb":["agent_identity","spiffe","buc_wireguard"]
-			},
-			"component_versions":{
-				"hermes":"0.19.0",
-				"opencode":"v1.18.4",
-				"pi":"0.80.10",
-				"dws":"v1.0.53-beta.4",
-				"multica_ref":"abcdef"
-			},
-			"runner_protocol":"root-log-v1"
-		}`,
-		"",
-	}}
-	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
-		APIKey:              "test-key",
-		APIURL:              "https://fc-e2b.test",
-		Domain:              "fc-e2b.test",
-		CLIPath:             "e2b-test",
-		TimeoutSeconds:      3600,
-		SandboxReadyTimeout: time.Second,
-	}, runner)
-	template := FCE2BTemplate{
-		ID:              "template-1",
-		BuildID:         "build-1",
-		Template:        "multica-stable",
-		Status:          "READY",
-		ManifestVersion: 6,
-		Providers:       []string{"hermes", "opencode", "pi"},
-		Capabilities: []string{
-			"dws",
-			"dws.im_event",
-			"mcp",
-			RuntimeStartCapabilityEventsV1,
-			LLMTraceCapability,
-			A2AInboundOpenCodeCapability,
-			A2AInvocationV2Capability,
-		},
-		ComponentVersions: map[string]string{
-			"hermes":   "0.19.0",
-			"opencode": "v1.18.4",
-			"pi":       "0.80.10",
-			"dws":      "v1.0.53-beta.4",
-		},
-		RunnerProtocol: "root-log-v1",
-	}
-	manifest, err := launcher.VerifyStableTemplate(context.Background(), template)
-	if err != nil {
-		t.Fatalf("VerifyStableTemplate() error = %v", err)
-	}
-	if manifest["runner_protocol"] != "root-log-v1" {
-		t.Fatalf("verified manifest = %#v", manifest)
-	}
-	if len(runner.calls) != 5 {
-		t.Fatalf("E2B call count = %d, want create, ready, smoke, manifest and kill", len(runner.calls))
-	}
-	if got := runner.calls[2].args; len(got) == 0 || got[len(got)-1] != "/usr/local/bin/runtime-smoke-test" {
-		t.Fatalf("smoke command = %#v", got)
-	}
-	if got := runner.timeouts[2]; got < fcE2BStableValidationTimeout-time.Second || got > fcE2BStableValidationTimeout {
-		t.Fatalf("smoke timeout = %s, want approximately %s", got, fcE2BStableValidationTimeout)
-	}
-	if got := runner.timeouts[1]; got <= 0 || got > time.Second {
-		t.Fatalf("ready probe timeout = %s, want configured sandbox-ready timeout", got)
-	}
-	if got := runner.calls[4].args; len(got) != 3 || got[0] != "sandbox" || got[1] != "kill" {
-		t.Fatalf("kill command = %#v", got)
-	}
-}
-
-func TestVerifyStableTemplateSmokeFailureRejectsCandidate(t *testing.T) {
-	runner := &fakeCommandRunner{
-		out: []string{
-			"Sandbox created with ID sbx_stable123 using template multica-stable\n",
-			"",
-			"",
-			"",
-		},
-		errs: []error{nil, nil, errors.New("smoke failed"), nil},
-	}
-	launcher := NewFCE2BLauncher(nil, nil, FCE2BConfig{
-		APIKey:              "test-key",
-		APIURL:              "https://fc-e2b.test",
-		Domain:              "fc-e2b.test",
-		CLIPath:             "e2b-test",
-		TimeoutSeconds:      3600,
-		SandboxReadyTimeout: time.Second,
-	}, runner)
-	_, err := launcher.VerifyStableTemplate(context.Background(), FCE2BTemplate{
-		ID:              "template-1",
-		BuildID:         "build-1",
-		Template:        "multica-stable",
-		Status:          "READY",
-		ManifestVersion: 3,
-		Providers:       []string{"hermes", "opencode", "pi"},
-		Capabilities:    []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
-		RunnerProtocol:  "root-log-v1",
-	})
-	if err == nil || !strings.Contains(err.Error(), "runtime-smoke-test failed") {
-		t.Fatalf("smoke failure error = %v", err)
 	}
 }
 

@@ -149,22 +149,22 @@ func TestProductionEnvironmentPrefersAoneEnvironmentType(t *testing.T) {
 }
 
 type fakeDiamondClient struct {
-	content                       string
-	manifestFingerprintsContent   string
-	modelPricingContent           string
-	getErr                        error
-	manifestFingerprintsGetErr    error
-	modelPricingGetErr            error
-	listenErr                     error
-	manifestFingerprintsListenErr error
-	modelPricingListenErr         error
-	onChange                      func(string)
-	manifestFingerprintsOnChange  func(string)
-	modelPricingOnChange          func(string)
-	cancelled                     bool
-	manifestFingerprintsCancelled bool
-	modelPricingCancelled         bool
-	closed                        bool
+	content                   string
+	runtimeProvidersContent   string
+	modelPricingContent       string
+	getErr                    error
+	runtimeProvidersGetErr    error
+	modelPricingGetErr        error
+	listenErr                 error
+	runtimeProvidersListenErr error
+	modelPricingListenErr     error
+	onChange                  func(string)
+	runtimeProvidersOnChange  func(string)
+	modelPricingOnChange      func(string)
+	cancelled                 bool
+	runtimeProvidersCancelled bool
+	modelPricingCancelled     bool
+	closed                    bool
 }
 
 func (c *fakeDiamondClient) GetConfig(dataID, group string) (string, error) {
@@ -174,12 +174,12 @@ func (c *fakeDiamondClient) GetConfig(dataID, group string) (string, error) {
 	switch dataID {
 	case DiamondDataID:
 		return c.content, c.getErr
-	case ManifestFingerprintsDiamondDataID:
-		content := c.manifestFingerprintsContent
+	case RuntimeProvidersDiamondDataID:
+		content := c.runtimeProvidersContent
 		if content == "" {
-			content = validManifestFingerprintsJSON()
+			content = validRuntimeProvidersJSON()
 		}
-		return content, c.manifestFingerprintsGetErr
+		return content, c.runtimeProvidersGetErr
 	case ModelPricingDiamondDataID:
 		content := c.modelPricingContent
 		if content == "" {
@@ -199,9 +199,9 @@ func (c *fakeDiamondClient) ListenConfig(dataID, group string, onChange func(str
 	case DiamondDataID:
 		c.onChange = onChange
 		return c.listenErr
-	case ManifestFingerprintsDiamondDataID:
-		c.manifestFingerprintsOnChange = onChange
-		return c.manifestFingerprintsListenErr
+	case RuntimeProvidersDiamondDataID:
+		c.runtimeProvidersOnChange = onChange
+		return c.runtimeProvidersListenErr
 	case ModelPricingDiamondDataID:
 		c.modelPricingOnChange = onChange
 		return c.modelPricingListenErr
@@ -218,8 +218,8 @@ func (c *fakeDiamondClient) CancelListenConfig(dataID, group string) error {
 	case DiamondDataID:
 		c.cancelled = true
 		return nil
-	case ManifestFingerprintsDiamondDataID:
-		c.manifestFingerprintsCancelled = true
+	case RuntimeProvidersDiamondDataID:
+		c.runtimeProvidersCancelled = true
 		return nil
 	case ModelPricingDiamondDataID:
 		c.modelPricingCancelled = true
@@ -239,9 +239,9 @@ func TestDiamondServiceAppliesValidUpdateAndRejectsInvalidUpdate(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = service.Close() })
 	first := service.Current()
-	if first.Generation != 1 || client.onChange == nil || client.manifestFingerprintsOnChange == nil || client.modelPricingOnChange == nil {
-		t.Fatalf("initial snapshot = %#v, runtime listener=%v, fingerprints listener=%v pricing listener=%v",
-			first, client.onChange != nil, client.manifestFingerprintsOnChange != nil, client.modelPricingOnChange != nil)
+	if first.Generation != 1 || client.onChange == nil || client.runtimeProvidersOnChange == nil || client.modelPricingOnChange == nil {
+		t.Fatalf("initial snapshot = %#v, runtime listener=%v, providers listener=%v pricing listener=%v",
+			first, client.onChange != nil, client.runtimeProvidersOnChange != nil, client.modelPricingOnChange != nil)
 	}
 
 	updated := strings.Replace(validJSON(), `"default_model": "qwen3.8-max"`, `"default_model": "qwen3-max"`, 1)
@@ -311,12 +311,9 @@ func TestDiamondServiceRequiresInitialFetchAndListener(t *testing.T) {
 		client *fakeDiamondClient
 	}{
 		{name: "fetch", client: &fakeDiamondClient{getErr: errors.New("unavailable")}},
-		{name: "fingerprints fetch", client: &fakeDiamondClient{content: validJSON(), manifestFingerprintsGetErr: errors.New("unavailable")}},
-		{name: "fingerprints validation", client: &fakeDiamondClient{content: validJSON(), manifestFingerprintsContent: `{"version":1,"fingerprints":{}}`}},
 		{name: "pricing fetch", client: &fakeDiamondClient{content: validJSON(), modelPricingGetErr: errors.New("unavailable")}},
 		{name: "pricing validation", client: &fakeDiamondClient{content: validJSON(), modelPricingContent: `{"version":1,"currency":"USD","unit":"per_million_tokens","models":{}}`}},
 		{name: "listener", client: &fakeDiamondClient{content: validJSON(), listenErr: errors.New("unavailable")}},
-		{name: "fingerprints listener", client: &fakeDiamondClient{content: validJSON(), manifestFingerprintsListenErr: errors.New("unavailable")}},
 		{name: "pricing listener", client: &fakeDiamondClient{content: validJSON(), modelPricingListenErr: errors.New("unavailable")}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -327,11 +324,29 @@ func TestDiamondServiceRequiresInitialFetchAndListener(t *testing.T) {
 			if !test.client.closed {
 				t.Fatal("failed startup must close client")
 			}
-			if test.name == "fingerprints listener" && !test.client.cancelled {
-				t.Fatal("failed fingerprints listener startup must cancel runtime config listener")
-			}
-			if test.name == "pricing listener" && (!test.client.cancelled || !test.client.manifestFingerprintsCancelled) {
+			if test.name == "pricing listener" && (!test.client.cancelled || !test.client.runtimeProvidersCancelled) {
 				t.Fatal("failed pricing listener startup must cancel earlier listeners")
+			}
+		})
+	}
+}
+
+func TestDiamondServiceRuntimeProviderFailuresDoNotBlockStartup(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		client *fakeDiamondClient
+	}{
+		{name: "fetch", client: &fakeDiamondClient{content: validJSON(), runtimeProvidersGetErr: errors.New("unavailable")}},
+		{name: "validation", client: &fakeDiamondClient{content: validJSON(), runtimeProvidersContent: `{"version":2,"providers":{}}`}},
+		{name: "listener", client: &fakeDiamondClient{content: validJSON(), runtimeProvidersListenErr: errors.New("unavailable")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, err := newDiamondService(nil, true, func() (diamondClient, error) { return test.client, nil })
+			if err != nil || service == nil {
+				t.Fatalf("service=%v error=%v, provider catalog must not block startup", service, err)
+			}
+			if err := service.Close(); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -346,8 +361,8 @@ func TestDiamondServiceCloseCancelsListener(t *testing.T) {
 	if err := service.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
-	if !client.cancelled || !client.manifestFingerprintsCancelled || !client.modelPricingCancelled || !client.closed {
-		t.Fatalf("runtime cancelled=%v fingerprints cancelled=%v pricing cancelled=%v closed=%v",
-			client.cancelled, client.manifestFingerprintsCancelled, client.modelPricingCancelled, client.closed)
+	if !client.cancelled || !client.runtimeProvidersCancelled || !client.modelPricingCancelled || !client.closed {
+		t.Fatalf("runtime cancelled=%v providers cancelled=%v pricing cancelled=%v closed=%v",
+			client.cancelled, client.runtimeProvidersCancelled, client.modelPricingCancelled, client.closed)
 	}
 }

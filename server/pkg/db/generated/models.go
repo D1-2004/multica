@@ -1008,7 +1008,6 @@ type FcE2bSandboxSession struct {
 type FcE2bStableChannel struct {
 	Channel                string             `json:"channel"`
 	CurrentTemplateID      string             `json:"current_template_id"`
-	CurrentTemplateBuildID string             `json:"current_template_build_id"`
 	CurrentTemplateAlias   string             `json:"current_template_alias"`
 	CurrentReleaseID       pgtype.UUID        `json:"current_release_id"`
 	ActiveReleaseID        pgtype.UUID        `json:"active_release_id"`
@@ -1025,7 +1024,6 @@ type FcE2bStableRelease struct {
 	IdempotencyKey              string             `json:"idempotency_key"`
 	RequestFingerprint          string             `json:"request_fingerprint"`
 	TemplateID                  string             `json:"template_id"`
-	TemplateBuildID             string             `json:"template_build_id"`
 	TemplateAlias               string             `json:"template_alias"`
 	GitCommit                   string             `json:"git_commit"`
 	AcrDigest                   string             `json:"acr_digest"`
@@ -1036,7 +1034,6 @@ type FcE2bStableRelease struct {
 	CurrentBatch                int16              `json:"current_batch"`
 	TargetPercentage            int16              `json:"target_percentage"`
 	PreviousTemplateID          string             `json:"previous_template_id"`
-	PreviousTemplateBuildID     string             `json:"previous_template_build_id"`
 	PreviousTemplateAlias       string             `json:"previous_template_alias"`
 	Manifest                    []byte             `json:"manifest"`
 	TotalTargets                int32              `json:"total_targets"`
@@ -1075,7 +1072,6 @@ type FcE2bStableReleaseTarget struct {
 	BatchIndex              int16              `json:"batch_index"`
 	Status                  string             `json:"status"`
 	PreviousTemplateID      string             `json:"previous_template_id"`
-	PreviousTemplateBuildID string             `json:"previous_template_build_id"`
 	PreviousTemplateAlias   string             `json:"previous_template_alias"`
 	AttemptCount            int32              `json:"attempt_count"`
 	LastError               string             `json:"last_error"`

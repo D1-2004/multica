@@ -273,11 +273,11 @@ func (identity ASBResolvedIdentity) sandboxExtensions(
 }
 
 type ASBArtifact struct {
-	Ref      string
-	BuildID  string
-	Alias    string
-	Digest   string
-	Manifest map[string]any
+	Ref          string
+	BuildID      string
+	Alias        string
+	Digest       string
+	ProviderData map[string]any
 }
 
 func BuildASBRuntimeMetadata(
@@ -288,15 +288,13 @@ func BuildASBRuntimeMetadata(
 	if err := validateASBArtifact(artifact); err != nil {
 		return nil, err
 	}
-	if err := validateASBRuntimeManifest(artifact.Manifest); err != nil {
-		return nil, err
-	}
+	providers := stringSliceMetadataValue(artifact.ProviderData, "providers")
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if provider == "" {
 		provider = FCE2BProvider
 	}
 	if !IsFCE2BSupportedProvider(provider) ||
-		!containsAllStrings(stringSliceMetadataValue(artifact.Manifest, "providers"), provider) {
+		!containsAllStrings(providers, provider) {
 		return nil, ErrFCE2BTemplateProviderUnsupported
 	}
 	channel = strings.ToLower(strings.TrimSpace(channel))
@@ -308,63 +306,21 @@ func BuildASBRuntimeMetadata(
 		alias = asbArtifactAlias(artifact.Ref, artifact.BuildID)
 	}
 	return map[string]any{
-		"kind":               CloudSandboxMetadataKind,
-		"sandbox_backend":    string(SandboxBackendASB),
-		"provider":           provider,
-		"artifact_kind":      CloudSandboxArtifactOCIImage,
-		"artifact_channel":   channel,
-		"artifact_ref":       artifact.Ref,
-		"artifact_build_id":  artifact.BuildID,
-		"artifact_alias":     alias,
-		"artifact_digest":    artifact.Digest,
-		"artifact_status":    "READY",
-		"manifest_version":   intMetadataValue(artifact.Manifest, "schema_version"),
-		"capabilities":       manifestStringSliceForBackend(artifact.Manifest, "capabilities_by_backend", "asb"),
-		"component_versions": artifact.Manifest["component_versions"],
-		"runner_protocol":    stringMetadataValue(artifact.Manifest, "runner_protocol"),
-		"runner":             FCE2BRunnerCommandForProvider(provider),
-	}, nil
-}
-
-// BuildASBCandidateBootstrapMetadata records an immutable candidate image and
-// its Runtime-scoped credential without running the full native ASB smoke test
-// on the request path. Candidate Runtimes stay offline and exist only to give
-// the asynchronous stable-release validator a credential. The stable release
-// still reads and validates the image's real manifest before it can publish.
-func BuildASBCandidateBootstrapMetadata(
-	artifact ASBArtifact,
-	provider string,
-) (map[string]any, error) {
-	if err := validateASBArtifact(artifact); err != nil {
-		return nil, err
-	}
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	if provider == "" {
-		provider = FCE2BProvider
-	}
-	if !IsFCE2BSupportedProvider(provider) {
-		return nil, ErrFCE2BTemplateProviderUnsupported
-	}
-	alias := strings.TrimSpace(artifact.Alias)
-	if alias == "" {
-		alias = asbArtifactAlias(artifact.Ref, artifact.BuildID)
-	}
-	return map[string]any{
-		"kind":               CloudSandboxMetadataKind,
-		"sandbox_backend":    string(SandboxBackendASB),
-		"provider":           provider,
-		"artifact_kind":      CloudSandboxArtifactOCIImage,
-		"artifact_channel":   CloudSandboxChannelCandidate,
-		"artifact_ref":       artifact.Ref,
-		"artifact_build_id":  artifact.BuildID,
-		"artifact_alias":     alias,
-		"artifact_digest":    artifact.Digest,
-		"artifact_status":    "PENDING_STABLE_VALIDATION",
-		"manifest_version":   0,
-		"capabilities":       []string{},
-		"component_versions": map[string]string{},
-		"runner_protocol":    string(fcE2BRunnerLaunchRootLog),
-		"runner":             FCE2BRunnerCommandForProvider(provider),
+		"kind":              CloudSandboxMetadataKind,
+		"sandbox_backend":   string(SandboxBackendASB),
+		"provider":          provider,
+		"artifact_kind":     CloudSandboxArtifactOCIImage,
+		"artifact_channel":  channel,
+		"artifact_ref":      artifact.Ref,
+		"artifact_build_id": artifact.BuildID,
+		"artifact_alias":    alias,
+		"artifact_digest":   artifact.Digest,
+		"artifact_status":   "READY",
+		"runtime_commit":    stringMetadataValue(artifact.ProviderData, "source_revision"),
+		"manifest_version":  7,
+		"capabilities":      ASBCapabilitiesForProviders(providers),
+		"runner_protocol":   string(fcE2BRunnerLaunchRootLog),
+		"runner":            FCE2BRunnerCommandForProvider(provider),
 	}, nil
 }
 
@@ -1699,175 +1655,6 @@ func (l *ASBLauncher) failLaunch(
 	return fmt.Errorf("ASB launch failed: %s (%s)", failure.Code, failure.InternalDetail)
 }
 
-func (l *ASBLauncher) VerifyStableArtifact(
-	ctx context.Context,
-	runtimeID pgtype.UUID,
-	artifact ASBArtifact,
-) (map[string]any, error) {
-	if configured := l.withCurrentConfig(); configured != l {
-		return configured.VerifyStableArtifact(ctx, runtimeID, artifact)
-	}
-	if l == nil || l.Credentials == nil {
-		return nil, errors.New("ASB Runtime credential service is unavailable")
-	}
-	if l.Capacity == nil {
-		return nil, errors.New("ASB stable validation capacity coordination is unavailable")
-	}
-	client, err := l.Credentials.ClientForRuntime(ctx, runtimeID)
-	if err != nil {
-		return nil, fmt.Errorf("resolve ASB stable validation Runtime credential: %w", err)
-	}
-	return l.verifyStableArtifact(
-		ctx,
-		client,
-		artifact,
-		func(ctx context.Context, input ASBCreateSandboxInput) (*ASBSandbox, error) {
-			return l.Capacity.Create(ctx, runtimeID, client, input)
-		},
-	)
-}
-
-func (l *ASBLauncher) VerifyArtifactWithAPIKey(
-	ctx context.Context,
-	artifact ASBArtifact,
-	apiKey string,
-) (map[string]any, error) {
-	if configured := l.withCurrentConfig(); configured != l {
-		return configured.VerifyArtifactWithAPIKey(ctx, artifact, apiKey)
-	}
-	if l == nil {
-		return nil, errors.New("ASB launcher is unavailable")
-	}
-	client, err := NewASBClientForAPIKey(l.Config, apiKey)
-	if err != nil {
-		return nil, err
-	}
-	return l.verifyStableArtifact(ctx, client, artifact, client.CreateSandbox)
-}
-
-func (l *ASBLauncher) verifyStableArtifact(
-	ctx context.Context,
-	client *ASBClient,
-	artifact ASBArtifact,
-	createSandbox func(context.Context, ASBCreateSandboxInput) (*ASBSandbox, error),
-) (map[string]any, error) {
-	if err := validateASBArtifact(artifact); err != nil {
-		return nil, err
-	}
-	if createSandbox == nil {
-		return nil, errors.New("ASB stable validation sandbox creator is unavailable")
-	}
-	sandbox, err := createSandbox(ctx, ASBCreateSandboxInput{
-		ImageURI:       artifact.Ref,
-		TimeoutSeconds: l.Config.TimeoutSeconds,
-		ResourceCPU:    l.Config.ResourceCPU,
-		ResourceMemory: l.Config.ResourceMemory,
-		Entrypoint:     []string{"sleep infinity"},
-		Metadata: map[string]string{
-			"multica.release_validation": "true",
-			"multica.backend":            string(SandboxBackendASB),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create ASB release validation sandbox: %w", err)
-	}
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if deleteErr := client.DeleteSandbox(cleanupCtx, sandbox.ID); deleteErr != nil {
-			slog.Warn("failed to delete ASB release validation sandbox",
-				"sandbox_id", sandbox.ID,
-				"error", deleteErr,
-			)
-		}
-	}()
-	if err := waitForASBSandboxRunning(ctx, client, sandbox.ID, l.Config.ReadyTimeout); err != nil {
-		return nil, err
-	}
-	endpoint, err := client.GetEndpoint(ctx, sandbox.ID, asbExecPort)
-	if err != nil {
-		return nil, fmt.Errorf("resolve ASB validation command endpoint: %w", err)
-	}
-	smoke, err := client.Exec(ctx, endpoint, ASBExecInput{
-		Command: "/usr/local/bin/runtime-smoke-test",
-		CWD:     "/home/user",
-		Timeout: 5 * time.Minute,
-		Envs: map[string]string{
-			"HOME":    asbRunnerHome,
-			"USER":    "user",
-			"LOGNAME": "user",
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("ASB runtime-smoke-test failed: %w", err)
-	}
-	if smoke.ExitCode == nil || *smoke.ExitCode != 0 || smoke.ErrorName != "" {
-		return nil, fmt.Errorf(
-			"ASB runtime-smoke-test failed: %s",
-			asbExecFailureDetail(smoke),
-		)
-	}
-	manifestResult, err := client.Exec(ctx, endpoint, ASBExecInput{
-		Command: "/bin/cat /usr/local/share/multica/runtime-manifest.json",
-		CWD:     "/",
-		Timeout: 15 * time.Second,
-		Envs: map[string]string{
-			"HOME":    asbRunnerHome,
-			"USER":    "user",
-			"LOGNAME": "user",
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("read ASB runtime manifest: %w", err)
-	}
-	if manifestResult.ExitCode == nil || *manifestResult.ExitCode != 0 {
-		return nil, errors.New("read ASB runtime manifest failed")
-	}
-	var manifest map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(manifestResult.Stdout)), &manifest); err != nil {
-		return nil, errors.New("decode ASB runtime manifest")
-	}
-	if err := validateASBReleaseManifest(manifest); err != nil {
-		return nil, err
-	}
-	return manifest, nil
-}
-
-func asbExecFailureDetail(result *ASBExecResult) string {
-	if result == nil {
-		return "execution result is missing"
-	}
-	const maxOutputRunes = 1024
-	parts := make([]string, 0, 5)
-	if result.ExitCode == nil {
-		parts = append(parts, "exit_code=missing")
-	} else {
-		parts = append(parts, fmt.Sprintf("exit_code=%d", *result.ExitCode))
-	}
-	if value := strings.TrimSpace(result.ErrorName); value != "" {
-		parts = append(parts, "error_name="+value)
-	}
-	for _, output := range []struct {
-		name  string
-		value string
-	}{
-		{name: "stderr_tail", value: result.Stderr},
-		{name: "stdout_tail", value: result.Stdout},
-		{name: "result_tail", value: result.Result},
-	} {
-		value := strings.TrimSpace(redact.Text(output.value))
-		if value == "" {
-			continue
-		}
-		runes := []rune(value)
-		if len(runes) > maxOutputRunes {
-			value = "…" + string(runes[len(runes)-maxOutputRunes:])
-		}
-		parts = append(parts, output.name+"="+strconv.Quote(value))
-	}
-	return strings.Join(parts, " ")
-}
-
 func (l *ASBLauncher) UpdateRuntimeArtifact(
 	ctx context.Context,
 	runtimeID pgtype.UUID,
@@ -2157,10 +1944,7 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	if err := validateASBArtifact(artifact); err != nil {
 		return ASBRuntimeArtifactUpdateResult{}, err
 	}
-	if err := validateASBRuntimeManifest(artifact.Manifest); err != nil {
-		return ASBRuntimeArtifactUpdateResult{}, err
-	}
-	providers, err := cloudSandboxManifestProviders(artifact.Manifest)
+	providers, err := cloudSandboxProviderList(artifact.ProviderData)
 	if err != nil {
 		return ASBRuntimeArtifactUpdateResult{}, err
 	}
@@ -2200,7 +1984,8 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 		PreviousArtifactBuildID: strings.TrimSpace(stringMetadataValue(metadata, "artifact_build_id")),
 		PreviousArtifactDigest:  strings.TrimSpace(stringMetadataValue(metadata, "artifact_digest")),
 	}
-	activateCandidate := needsCandidateASBArtifactActivation(runtime, metadata, managedMetadata)
+	activateCandidate := runtime.Status != "online" &&
+		strings.EqualFold(stringMetadataValue(managedMetadata, "artifact_channel"), CloudSandboxChannelCandidate)
 	managedChanged := false
 	for key, value := range managedMetadata {
 		if fmt.Sprint(metadata[key]) != fmt.Sprint(value) {
@@ -2226,10 +2011,7 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	metadata["artifact_alias"] = artifact.Alias
 	metadata["artifact_digest"] = artifact.Digest
 	metadata["artifact_status"] = "READY"
-	metadata["manifest_version"] = intMetadataValue(artifact.Manifest, "schema_version")
-	metadata["capabilities"] = manifestStringSliceForBackend(artifact.Manifest, "capabilities_by_backend", "asb")
-	metadata["component_versions"] = artifact.Manifest["component_versions"]
-	metadata["runner_protocol"] = stringMetadataValue(artifact.Manifest, "runner_protocol")
+	delete(metadata, "component_versions")
 	metadata["runner"] = FCE2BRunnerCommandForProvider(runtime.Provider)
 	for key, value := range managedMetadata {
 		metadata[key] = value
@@ -2248,7 +2030,7 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	if activateCandidate {
 		updated, err = qtx.MarkAgentRuntimeOnline(ctx, runtimeID)
 		if err != nil {
-			return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("activate validated ASB candidate runtime: %w", err)
+			return ASBRuntimeArtifactUpdateResult{}, fmt.Errorf("activate ASB candidate runtime: %w", err)
 		}
 	}
 	invalidated, err := qtx.MarkCloudSandboxSessionsStaleByRuntimeAndBackend(
@@ -2270,22 +2052,6 @@ func (l *ASBLauncher) updateRuntimeArtifact(
 	return result, nil
 }
 
-func needsCandidateASBArtifactActivation(
-	runtime db.AgentRuntime,
-	metadata map[string]any,
-	managedMetadata map[string]any,
-) bool {
-	if strings.ToLower(strings.TrimSpace(stringMetadataValue(
-		managedMetadata,
-		"artifact_channel",
-	))) != CloudSandboxChannelCandidate {
-		return false
-	}
-	return runtime.Status != "online" ||
-		strings.ToUpper(strings.TrimSpace(stringMetadataValue(metadata, "artifact_status"))) != "READY" ||
-		intMetadataValue(metadata, "manifest_version") <= 0
-}
-
 func validateASBArtifact(artifact ASBArtifact) error {
 	artifact.Ref = strings.TrimSpace(artifact.Ref)
 	artifact.BuildID = strings.TrimSpace(artifact.BuildID)
@@ -2295,62 +2061,6 @@ func validateASBArtifact(artifact ASBArtifact) error {
 		!isSHA256Digest(artifact.Digest) ||
 		!strings.HasSuffix(artifact.Ref, "@"+artifact.Digest) {
 		return errors.New("ASB artifact must use a matching immutable OCI ref, build ID, and sha256 digest")
-	}
-	return nil
-}
-
-func validateASBRuntimeManifest(manifest map[string]any) error {
-	schemaVersion := intMetadataValue(manifest, "schema_version")
-	providers, err := cloudSandboxManifestProviders(manifest)
-	if err != nil {
-		return err
-	}
-	if (schemaVersion < 3 || schemaVersion > 7) ||
-		!containsAllStrings(stringSliceMetadataValue(manifest, "sandbox_backends"), "asb") ||
-		!containsAllStrings(
-			manifestStringSliceForBackend(manifest, "capabilities_by_backend", "asb"),
-			"dws", "mcp", "a1", "mw", "buc",
-		) ||
-		!containsAllStrings(
-			manifestStringSliceForBackend(manifest, "identity_modes_by_backend", "asb"),
-			"agent_identity", "spiffe", "buc_wireguard",
-		) ||
-		stringMetadataValue(manifest, "runner_protocol") != string(fcE2BRunnerLaunchRootLog) {
-		return errors.New("ASB runtime manifest does not satisfy the enterprise sandbox contract")
-	}
-	if schemaVersion == 7 && containsAllStrings(providers, "dsh") && !containsAllStrings(
-		manifestStringSliceForBackend(manifest, "capabilities_by_backend", "asb"),
-		DSHTrajectoryCapability,
-	) {
-		return errors.New("ASB schema v7 Runtime with DSH must advertise native trajectory support")
-	}
-	return nil
-}
-
-// Existing schema-v3 through schema-v6 ASB images remain valid runtime bindings
-// during a rolling backend deployment. A newly promoted release must use schema
-// v7 and advertise every current enterprise capability, independent of how many
-// supported providers that image actually ships.
-func validateASBReleaseManifest(manifest map[string]any) error {
-	if err := validateASBRuntimeManifest(manifest); err != nil {
-		return err
-	}
-	if intMetadataValue(manifest, "schema_version") != 7 {
-		return errors.New("ASB release manifest must use schema version 7")
-	}
-	requiredCapabilities := []string{
-		RuntimeStartCapabilityEventsV1,
-		LLMTraceCapability,
-		A2AInvocationV2Capability,
-	}
-	if containsAllStrings(stringSliceMetadataValue(manifest, "providers"), "dsh") {
-		requiredCapabilities = append(requiredCapabilities, DSHTrajectoryCapability)
-	}
-	if !containsAllStrings(
-		manifestStringSliceForBackend(manifest, "capabilities_by_backend", string(SandboxBackendASB)),
-		requiredCapabilities...,
-	) {
-		return errors.New("ASB release manifest does not advertise current runtime capabilities")
 	}
 	return nil
 }
@@ -2396,8 +2106,8 @@ func validateCloudSandboxArtifactProvider(providers []string, provider string) e
 	return nil
 }
 
-func cloudSandboxManifestProviders(manifest map[string]any) ([]string, error) {
-	raw, exists := manifest["providers"]
+func cloudSandboxProviderList(providerData map[string]any) ([]string, error) {
+	raw, exists := providerData["providers"]
 	if !exists {
 		return nil, errors.New("cloud sandbox runtime manifest must declare providers")
 	}

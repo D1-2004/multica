@@ -90,8 +90,6 @@ export function UpdateFCE2BRuntimeTemplateDialog({
         template.template,
         template.status,
         template.updated_at,
-        ...template.providers,
-        ...template.capabilities,
       ]
         .filter(Boolean)
         .join(" ")
@@ -102,13 +100,7 @@ export function UpdateFCE2BRuntimeTemplateDialog({
 
   const isCurrentTemplate = (template: FCE2BTemplate): boolean => {
     const templateId = template.id?.trim();
-    const buildId = template.build_id?.trim();
-    return Boolean(
-      templateId &&
-        buildId &&
-        metadata?.templateId === templateId &&
-        metadata.templateBuildId === buildId,
-    );
+    return Boolean(templateId && metadata?.templateId === templateId);
   };
 
   const supportsRuntimeProvider = (template: FCE2BTemplate): boolean =>

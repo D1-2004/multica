@@ -103,13 +103,22 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 		return nil, fmt.Errorf("validate required runtime Diamond config: %w", err)
 	}
 
-	manifestFingerprintsContent, err := client.GetConfig(ManifestFingerprintsDiamondDataID, DiamondGroup)
-	if err != nil {
-		return nil, fmt.Errorf("fetch required Runtime manifest fingerprints Diamond config: %w", err)
-	}
-	manifestFingerprints, err := service.ApplyManifestFingerprintsJSON([]byte(manifestFingerprintsContent))
-	if err != nil {
-		return nil, fmt.Errorf("validate required Runtime manifest fingerprints Diamond config: %w", err)
+	if runtimeProvidersContent, providersErr := client.GetConfig(RuntimeProvidersDiamondDataID, DiamondGroup); providersErr != nil {
+		if logger != nil {
+			logger.Warn("Runtime provider catalog unavailable; application startup continues",
+				slog.String("data_id", RuntimeProvidersDiamondDataID),
+				slog.String("error", providersErr.Error()),
+			)
+		}
+	} else if runtimeProviders, applyErr := service.ApplyRuntimeProvidersJSON([]byte(runtimeProvidersContent)); applyErr != nil {
+		if logger != nil {
+			logger.Warn("Runtime provider catalog rejected; application startup continues",
+				slog.String("data_id", RuntimeProvidersDiamondDataID),
+				slog.String("error", applyErr.Error()),
+			)
+		}
+	} else {
+		logRuntimeProvidersUpdate(logger, "Runtime provider catalog loaded", runtimeProviders)
 	}
 	modelPricingContent, err := client.GetConfig(ModelPricingDiamondDataID, DiamondGroup)
 	if err != nil {
@@ -120,7 +129,6 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 		return nil, fmt.Errorf("validate required model pricing Diamond config: %w", err)
 	}
 	logUpdate(logger, "runtime Diamond config loaded", snapshot)
-	logManifestFingerprintsUpdate(logger, "Runtime manifest fingerprints Diamond config loaded", manifestFingerprints)
 	logModelPricingUpdate(logger, "model pricing Diamond config loaded", modelPricing)
 
 	if err := client.ListenConfig(DiamondDataID, DiamondGroup, func(content string) {
@@ -140,25 +148,32 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 	}); err != nil {
 		return nil, fmt.Errorf("listen to required runtime Diamond config: %w", err)
 	}
-	if err := client.ListenConfig(ManifestFingerprintsDiamondDataID, DiamondGroup, func(content string) {
-		next, applyErr := service.ApplyManifestFingerprintsJSON([]byte(content))
+	providersListening := false
+	if err := client.ListenConfig(RuntimeProvidersDiamondDataID, DiamondGroup, func(content string) {
+		next, applyErr := service.ApplyRuntimeProvidersJSON([]byte(content))
 		if applyErr != nil {
-			current := service.ManifestFingerprints()
+			current := service.RuntimeProviders()
 			if logger != nil {
-				logger.Error("Runtime manifest fingerprints Diamond update rejected; retaining previous snapshot",
-					slog.String("data_id", ManifestFingerprintsDiamondDataID),
+				logger.Error("Runtime provider catalog update rejected; retaining previous snapshot",
+					slog.String("data_id", RuntimeProvidersDiamondDataID),
 					slog.Uint64("generation", current.Generation),
 					slog.String("sha256", current.SHA256),
-					slog.Int("count", len(current.Fingerprints)),
+					slog.Int("count", len(current.FCTemplates)+len(current.ASBCommits)),
 					slog.String("error", applyErr.Error()),
 				)
 			}
 			return
 		}
-		logManifestFingerprintsUpdate(logger, "Runtime manifest fingerprints Diamond config updated", next)
+		logRuntimeProvidersUpdate(logger, "Runtime provider catalog updated", next)
 	}); err != nil {
-		_ = client.CancelListenConfig(DiamondDataID, DiamondGroup)
-		return nil, fmt.Errorf("listen to required Runtime manifest fingerprints Diamond config: %w", err)
+		if logger != nil {
+			logger.Warn("Runtime provider catalog listener unavailable; application startup continues",
+				slog.String("data_id", RuntimeProvidersDiamondDataID),
+				slog.String("error", err.Error()),
+			)
+		}
+	} else {
+		providersListening = true
 	}
 	if err := client.ListenConfig(ModelPricingDiamondDataID, DiamondGroup, func(content string) {
 		next, applyErr := service.ApplyModelPricingJSON([]byte(content))
@@ -178,15 +193,20 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 		logModelPricingUpdate(logger, "model pricing Diamond config updated", next)
 	}); err != nil {
 		_ = client.CancelListenConfig(DiamondDataID, DiamondGroup)
-		_ = client.CancelListenConfig(ManifestFingerprintsDiamondDataID, DiamondGroup)
+		if providersListening {
+			_ = client.CancelListenConfig(RuntimeProvidersDiamondDataID, DiamondGroup)
+		}
 		return nil, fmt.Errorf("listen to required model pricing Diamond config: %w", err)
 	}
 	service.setCloseFunc(func() error {
 		runtimeErr := client.CancelListenConfig(DiamondDataID, DiamondGroup)
-		fingerprintsErr := client.CancelListenConfig(ManifestFingerprintsDiamondDataID, DiamondGroup)
+		var providersErr error
+		if providersListening {
+			providersErr = client.CancelListenConfig(RuntimeProvidersDiamondDataID, DiamondGroup)
+		}
 		pricingErr := client.CancelListenConfig(ModelPricingDiamondDataID, DiamondGroup)
 		client.CloseClient()
-		return errors.Join(runtimeErr, fingerprintsErr, pricingErr)
+		return errors.Join(runtimeErr, providersErr, pricingErr)
 	})
 	closeClient = false
 	return service, nil
@@ -204,15 +224,15 @@ func logModelPricingUpdate(logger *slog.Logger, message string, snapshot ModelPr
 	)
 }
 
-func logManifestFingerprintsUpdate(logger *slog.Logger, message string, snapshot ManifestFingerprintsSnapshot) {
+func logRuntimeProvidersUpdate(logger *slog.Logger, message string, snapshot RuntimeProvidersSnapshot) {
 	if logger == nil {
 		return
 	}
 	logger.Info(message,
-		slog.String("data_id", ManifestFingerprintsDiamondDataID),
+		slog.String("data_id", RuntimeProvidersDiamondDataID),
 		slog.Uint64("generation", snapshot.Generation),
 		slog.String("sha256", snapshot.SHA256),
-		slog.Int("count", len(snapshot.Fingerprints)),
+		slog.Int("count", len(snapshot.FCTemplates)+len(snapshot.ASBCommits)),
 	)
 }
 

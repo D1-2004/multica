@@ -32,7 +32,6 @@ type createStableReleaseRequest struct {
 	ArtifactDigest  string `json:"artifact_digest"`
 	GitCommit       string `json:"git_commit"`
 	TemplateID      string `json:"template_id"`
-	ExpectedBuildID string `json:"expected_build_id"`
 	Note            string `json:"note"`
 }
 
@@ -167,7 +166,6 @@ func (h *Handler) createCloudSandboxStableRelease(
 	req.ArtifactDigest = strings.ToLower(strings.TrimSpace(req.ArtifactDigest))
 	req.GitCommit = strings.ToLower(strings.TrimSpace(req.GitCommit))
 	req.TemplateID = strings.TrimSpace(req.TemplateID)
-	req.ExpectedBuildID = strings.TrimSpace(req.ExpectedBuildID)
 	req.Note = strings.TrimSpace(req.Note)
 	backend := service.SandboxBackendKind(req.SandboxBackend)
 	if forcedBackend != "" {
@@ -184,10 +182,6 @@ func (h *Handler) createCloudSandboxStableRelease(
 	if len(req.Note) > 2000 {
 		writeError(w, http.StatusBadRequest, "note is too long")
 		return
-	}
-	expectedBuildID := req.ArtifactBuildID
-	if expectedBuildID == "" {
-		expectedBuildID = req.ExpectedBuildID
 	}
 	var artifactBuiltAt *time.Time
 	if backend == service.SandboxBackendASB {
@@ -207,7 +201,7 @@ func (h *Handler) createCloudSandboxStableRelease(
 		IdempotencyKey:  idempotencyKey,
 		SandboxBackend:  backend,
 		ArtifactRef:     req.ArtifactRef,
-		ExpectedBuildID: expectedBuildID,
+		ArtifactBuildID: req.ArtifactBuildID,
 		ArtifactBuiltAt: artifactBuiltAt,
 		ArtifactDigest:  req.ArtifactDigest,
 		GitCommit:       req.GitCommit,

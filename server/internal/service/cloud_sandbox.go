@@ -33,42 +33,39 @@ var (
 // CloudSandboxRuntimeMetadata is the normalized server model. Legacy
 // kind=fc-e2b rows are projected into this shape without rewriting them.
 type CloudSandboxRuntimeMetadata struct {
-	Kind              string
-	SandboxBackend    SandboxBackendKind
-	Provider          string
-	ArtifactKind      string
-	ArtifactChannel   string
-	ArtifactRef       string
-	ArtifactBuildID   string
-	ArtifactAlias     string
-	ArtifactDigest    string
-	ManifestVersion   int
-	RunnerProtocol    string
-	Runner            string
-	Capabilities      []string
-	ComponentVersions map[string]string
+	Kind            string
+	SandboxBackend  SandboxBackendKind
+	Provider        string
+	ArtifactKind    string
+	ArtifactChannel string
+	ArtifactRef     string
+	ArtifactBuildID string
+	ArtifactAlias   string
+	ArtifactDigest  string
+	ManifestVersion int
+	RunnerProtocol  string
+	Runner          string
+	Capabilities    []string
 }
 
 type cloudSandboxMetadataWire struct {
-	Kind              string            `json:"kind"`
-	SandboxBackend    string            `json:"sandbox_backend"`
-	Provider          string            `json:"provider"`
-	ArtifactKind      string            `json:"artifact_kind"`
-	ArtifactChannel   string            `json:"artifact_channel"`
-	ArtifactRef       string            `json:"artifact_ref"`
-	ArtifactBuildID   string            `json:"artifact_build_id"`
-	ArtifactAlias     string            `json:"artifact_alias"`
-	ArtifactDigest    string            `json:"artifact_digest"`
-	ManifestVersion   int               `json:"manifest_version"`
-	RunnerProtocol    string            `json:"runner_protocol"`
-	Runner            string            `json:"runner"`
-	Capabilities      []string          `json:"capabilities"`
-	ComponentVersions map[string]string `json:"component_versions"`
+	Kind            string   `json:"kind"`
+	SandboxBackend  string   `json:"sandbox_backend"`
+	Provider        string   `json:"provider"`
+	ArtifactKind    string   `json:"artifact_kind"`
+	ArtifactChannel string   `json:"artifact_channel"`
+	ArtifactRef     string   `json:"artifact_ref"`
+	ArtifactBuildID string   `json:"artifact_build_id"`
+	ArtifactAlias   string   `json:"artifact_alias"`
+	ArtifactDigest  string   `json:"artifact_digest"`
+	ManifestVersion int      `json:"manifest_version"`
+	RunnerProtocol  string   `json:"runner_protocol"`
+	Runner          string   `json:"runner"`
+	Capabilities    []string `json:"capabilities"`
 
 	// Legacy FC/E2B metadata.
 	Template        string `json:"template"`
 	TemplateID      string `json:"template_id"`
-	TemplateBuildID string `json:"template_build_id"`
 	TemplateAlias   string `json:"template_alias"`
 	TemplateChannel string `json:"template_channel"`
 }
@@ -91,19 +88,17 @@ func ParseCloudSandboxRuntime(rt db.AgentRuntime) (CloudSandboxRuntimeMetadata, 
 		artifactRef := firstNonEmptyString(wire.TemplateID, wire.Template)
 		channel := normalizeCloudSandboxChannel(wire.TemplateChannel)
 		return CloudSandboxRuntimeMetadata{
-			Kind:              FCE2BMetadataKind,
-			SandboxBackend:    SandboxBackendAliyunFC,
-			Provider:          provider,
-			ArtifactKind:      CloudSandboxArtifactE2BTemplate,
-			ArtifactChannel:   channel,
-			ArtifactRef:       artifactRef,
-			ArtifactBuildID:   strings.TrimSpace(wire.TemplateBuildID),
-			ArtifactAlias:     firstNonEmptyString(wire.TemplateAlias, wire.Template),
-			ManifestVersion:   wire.ManifestVersion,
-			RunnerProtocol:    strings.TrimSpace(wire.RunnerProtocol),
-			Runner:            strings.TrimSpace(wire.Runner),
-			Capabilities:      normalizeCloudSandboxCapabilities(wire.Capabilities),
-			ComponentVersions: cloneStringMap(wire.ComponentVersions),
+			Kind:            FCE2BMetadataKind,
+			SandboxBackend:  SandboxBackendAliyunFC,
+			Provider:        provider,
+			ArtifactKind:    CloudSandboxArtifactE2BTemplate,
+			ArtifactChannel: channel,
+			ArtifactRef:     artifactRef,
+			ArtifactAlias:   firstNonEmptyString(wire.TemplateAlias, wire.Template),
+			ManifestVersion: wire.ManifestVersion,
+			RunnerProtocol:  strings.TrimSpace(wire.RunnerProtocol),
+			Runner:          strings.TrimSpace(wire.Runner),
+			Capabilities:    normalizeCloudSandboxCapabilities(wire.Capabilities),
 		}, nil
 	case CloudSandboxMetadataKind:
 		backend := SandboxBackendKind(strings.ToLower(strings.TrimSpace(wire.SandboxBackend)))
@@ -131,7 +126,6 @@ func ParseCloudSandboxRuntime(rt db.AgentRuntime) (CloudSandboxRuntimeMetadata, 
 			// metadata stays invalid.
 			artifactKind = CloudSandboxArtifactE2BTemplate
 			artifactRef = strings.TrimSpace(wire.TemplateID)
-			artifactBuildID = strings.TrimSpace(wire.TemplateBuildID)
 			artifactAlias = firstNonEmptyString(wire.TemplateAlias, wire.Template)
 			artifactChannel = wire.TemplateChannel
 		}
@@ -152,20 +146,19 @@ func ParseCloudSandboxRuntime(rt db.AgentRuntime) (CloudSandboxRuntimeMetadata, 
 		}
 		channel := normalizeCloudSandboxChannel(artifactChannel)
 		return CloudSandboxRuntimeMetadata{
-			Kind:              CloudSandboxMetadataKind,
-			SandboxBackend:    backend,
-			Provider:          provider,
-			ArtifactKind:      artifactKind,
-			ArtifactChannel:   channel,
-			ArtifactRef:       artifactRef,
-			ArtifactBuildID:   artifactBuildID,
-			ArtifactAlias:     artifactAlias,
-			ArtifactDigest:    strings.TrimSpace(wire.ArtifactDigest),
-			ManifestVersion:   wire.ManifestVersion,
-			RunnerProtocol:    strings.TrimSpace(wire.RunnerProtocol),
-			Runner:            strings.TrimSpace(wire.Runner),
-			Capabilities:      normalizeCloudSandboxCapabilities(wire.Capabilities),
-			ComponentVersions: cloneStringMap(wire.ComponentVersions),
+			Kind:            CloudSandboxMetadataKind,
+			SandboxBackend:  backend,
+			Provider:        provider,
+			ArtifactKind:    artifactKind,
+			ArtifactChannel: channel,
+			ArtifactRef:     artifactRef,
+			ArtifactBuildID: artifactBuildID,
+			ArtifactAlias:   artifactAlias,
+			ArtifactDigest:  strings.TrimSpace(wire.ArtifactDigest),
+			ManifestVersion: wire.ManifestVersion,
+			RunnerProtocol:  strings.TrimSpace(wire.RunnerProtocol),
+			Runner:          strings.TrimSpace(wire.Runner),
+			Capabilities:    normalizeCloudSandboxCapabilities(wire.Capabilities),
 		}, nil
 	default:
 		return CloudSandboxRuntimeMetadata{}, ErrCloudSandboxRuntimeRequired

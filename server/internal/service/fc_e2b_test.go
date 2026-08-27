@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
+	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
 type fakeAgentIdentityContextCreator struct {
@@ -471,19 +472,19 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 	}
 }
 
-func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
-	const alias = "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"
+func TestParseFCE2BTemplatesUsesCommitProviderCatalog(t *testing.T) {
+	const alias = "multica-m7-vda499f3161a007c0-r1-9a6bfa"
 	got, err := parseFCE2BTemplates(`[
 		{
 			"templateID": "idt7f6on323gsyuqjt59",
 			"buildID": "a4aa129e-ef89-4fce-9fc9-605a1015e0e1",
-			"aliases": ["default", "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"],
-			"names": ["multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"],
+			"aliases": ["default", "multica-m7-vda499f3161a007c0-r1-9a6bfa"],
+			"names": ["multica-m7-vda499f3161a007c0-r1-9a6bfa"],
 			"buildStatus": "ready",
 			"createdAt": "2026-07-08T13:16:30.740524Z",
 			"updatedAt": "2026-07-08T13:19:01.365773Z"
 		}
-	]`, nil)
+	]`, testRuntimeProviderCatalog())
 	if err != nil {
 		t.Fatalf("parseFCE2BTemplates returned error: %v", err)
 	}
@@ -492,9 +493,6 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 	}
 	if got[0].ID != "idt7f6on323gsyuqjt59" {
 		t.Fatalf("id = %q", got[0].ID)
-	}
-	if got[0].BuildID != "a4aa129e-ef89-4fce-9fc9-605a1015e0e1" {
-		t.Fatalf("build_id = %q", got[0].BuildID)
 	}
 	if got[0].Name != alias {
 		t.Fatalf("name = %q", got[0].Name)
@@ -509,29 +507,20 @@ func TestParseFCE2BTemplatesUsesVersionedManifestAlias(t *testing.T) {
 		t.Fatalf("updated_at = %q", got[0].UpdatedAt)
 	}
 	if !IsFCE2BTemplatePublished(got[0]) {
-		t.Fatalf("template manifest was not published: %+v", got[0])
+		t.Fatalf("template provider catalog entry was not published: %+v", got[0])
 	}
-	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got[0].Providers, want) {
+	if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}; !reflect.DeepEqual(got[0].Providers, want) {
 		t.Fatalf("providers = %#v, want %#v", got[0].Providers, want)
 	}
-	if want := []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability, A2AInboundOpenCodeCapability}; !reflect.DeepEqual(got[0].Capabilities, want) {
-		t.Fatalf("capabilities = %#v, want %#v", got[0].Capabilities, want)
-	}
-	if want := map[string]string{
-		"hermes": "0.19.0", "opencode": "v1.18.4", "pi": "0.80.10", "dws": "v1.0.53-beta.4",
-	}; !reflect.DeepEqual(got[0].ComponentVersions, want) {
-		t.Fatalf("component versions = %#v, want %#v", got[0].ComponentVersions, want)
-	}
-	if got[0].SourceRevision != "9a6bfa" {
-		t.Fatalf("source revision = %q, want 9a6bfa", got[0].SourceRevision)
+	if got[0].SourceRevision != "da499f3161a007c0da499f3161a007c0da499f31" {
+		t.Fatalf("source revision = %q", got[0].SourceRevision)
 	}
 }
 
-func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
+func TestLegacyVersionAliasesAreNotUsedAsProviderCatalogs(t *testing.T) {
 	const validAlias = "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"
 	tests := []struct {
 		name             string
-		buildID          string
 		alias            string
 		wantApplied      bool
 		wantPublished    bool
@@ -539,7 +528,6 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 	}{
 		{
 			name:             "valid current",
-			buildID:          "build-current",
 			alias:            validAlias,
 			wantApplied:      true,
 			wantPublished:    true,
@@ -547,7 +535,6 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 		},
 		{
 			name:             "valid m6 A2A invocation v2",
-			buildID:          "build-v6",
 			alias:            "multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta2-r1-9a6bfa",
 			wantApplied:      true,
 			wantPublished:    true,
@@ -555,7 +542,6 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 		},
 		{
 			name:             "valid m6 provider-complete A2A invocation v2",
-			buildID:          "build-v6-provider-complete",
 			alias:            "multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta3-r1-9a6bfa",
 			wantApplied:      true,
 			wantPublished:    true,
@@ -563,159 +549,69 @@ func TestApplyFCE2BTemplateManifestAliasIsStrict(t *testing.T) {
 		},
 		{
 			name:             "valid m4 compatibility",
-			buildID:          "build-previous",
 			alias:            "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-bbbbbb",
 			wantApplied:      true,
 			wantPublished:    true,
 			wantCapabilities: []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1, LLMTraceCapability},
 		},
-		{name: "valid legacy", buildID: "build-legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
-		{name: "missing build ID", alias: validAlias},
-		{name: "old template name", buildID: "build-current", alias: "multica-fc-hermes-opencode-dws-v1"},
-		{name: "missing patch version", buildID: "build-current", alias: "multica-m3-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
-		{name: "leading zero", buildID: "build-current", alias: "multica-m3-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
-		{name: "current missing A2A marker", buildID: "build-current", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
-		{name: "m4 falsely claims A2A", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"},
-		{name: "m5 falsely claims provider-complete A2A", buildID: "build-current", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta3-r1-9a6bfa"},
-		{name: "m4 missing trace marker", buildID: "build-current", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
-		{name: "previous falsely claims trace", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
-		{name: "previous falsely claims startup events", buildID: "build-current", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
-		{name: "legacy falsely claims MCP", buildID: "build-current", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
-		{name: "wrong runner", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r2-9a6bfa"},
-		{name: "uppercase SHA", buildID: "build-current", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9A6BFA"},
-		{name: "suffix", buildID: "build-current", alias: validAlias + "-extra"},
+		{name: "valid legacy", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa", wantApplied: true},
+		{name: "old template name", alias: "multica-fc-hermes-opencode-dws-v1"},
+		{name: "missing patch version", alias: "multica-m3-h0_19-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "leading zero", alias: "multica-m3-h00_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "current missing A2A marker", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
+		{name: "m4 falsely claims A2A", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"},
+		{name: "m5 falsely claims provider-complete A2A", alias: "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta3-r1-9a6bfa"},
+		{name: "m4 missing trace marker", alias: "multica-m4-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "previous falsely claims trace", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimst-r1-9a6bfa"},
+		{name: "previous falsely claims startup events", alias: "multica-m2-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"},
+		{name: "legacy falsely claims MCP", alias: "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"},
+		{name: "wrong runner", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r2-9a6bfa"},
+		{name: "uppercase SHA", alias: "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9A6BFA"},
+		{name: "suffix", alias: validAlias + "-extra"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			template := FCE2BTemplate{BuildID: test.buildID}
-			published, err := applyFCE2BTemplateManifestAlias(&template, test.alias, nil)
-			if err != nil {
-				t.Fatalf("apply manifest alias: %v", err)
-			}
-			if published != test.wantApplied {
-				t.Fatalf("applied = %v, want %v", published, test.wantApplied)
-			}
-			if got := IsFCE2BTemplatePublished(template); got != test.wantPublished {
-				t.Fatalf("IsFCE2BTemplatePublished = %v, want %v: %+v", got, test.wantPublished, template)
-			}
-			if test.wantCapabilities != nil && !reflect.DeepEqual(template.Capabilities, test.wantCapabilities) {
-				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, test.wantCapabilities)
+			if _, found := RuntimeProvidersForTemplate(nil, test.alias); found {
+				t.Fatalf("display alias %q was used as a provider lookup key", test.alias)
 			}
 		})
 	}
-	if _, err := applyFCE2BTemplateManifestAlias(nil, validAlias, nil); err == nil {
-		t.Fatal("nil template was accepted")
+}
+
+func testRuntimeProviderCatalog() map[string]runtimeconfig.FCTemplateProviders {
+	return map[string]runtimeconfig.FCTemplateProviders{
+		"idt7f6on323gsyuqjt59": {RuntimeCommit: "da499f3161a007c0da499f3161a007c0da499f31", Providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}},
+		"tpl-current":          {RuntimeCommit: "da499f3161a007c0da499f3161a007c0da499f31", Providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}},
+		"tpl-no-build":         {RuntimeCommit: "ccb1492bfcb45e36ccb1492bfcb45e36ccb1492b", Providers: []string{"hermes"}},
+		"tpl-five":             {RuntimeCommit: "da499f3161a007c0da499f3161a007c0da499f31", Providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}},
+		"tpl-seven":            {RuntimeCommit: "ac20d08b3a999731ac20d08b3a999731ac20d08b", Providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"}},
+		"tpl-one":              {RuntimeCommit: "ccb1492bfcb45e36ccb1492bfcb45e36ccb1492b", Providers: []string{"hermes"}},
 	}
 }
 
-func testFCE2BManifestV7Catalog() map[string]map[string]string {
-	return map[string]map[string]string{
-		"da499f3161a007c0": {
-			"hermes": "0.19.0", "opencode": "v1.18.11", "opencode-v2": "0.0.0-beta-202608110357",
-			"dsh": "0.1.0-rc.6", "pi": "0.83.0", "dws": "v1.0.58-beta.4",
-		},
-		"41edc34be759811a": {
-			"hermes": "0.19.0", "opencode": "v1.18.11", "opencode-v2": "0.0.0-beta-202608110357",
-			"dsh": "0.1.0-rc.6", "pi": "0.83.0", "dws": "v1.0.59-beta.3",
-		},
-		"baedb216407a5060": {
-			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
-			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.59",
-		},
-		"bc80cb4524f2bc75": {
-			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
-			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.1",
-		},
-		"ac20d08b3a999731": {
-			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
-			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.1",
-		},
-		"7fca1af6a513f618": {
-			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
-			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.2",
-		},
-		"ccb1492bfcb45e36": {
-			"hermes": "0.19.0", "opencode": "v1.18.19", "opencode-v2": "0.0.0-beta-202608110357",
-			"dsh": "0.1.0-rc.8", "pi": "0.84.2", "dws": "v1.0.60-beta.2",
-		},
-	}
-}
-
-func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
+func TestRuntimeProvidersForTemplateUsesTemplateID(t *testing.T) {
 	tests := []struct {
 		name               string
-		alias              string
-		wantDWS            string
-		wantDSH            string
-		wantOpenCode       string
-		wantPi             string
+		templateID         string
 		wantSourceRevision string
 		wantProviders      []string
 		wantCapabilities   []string
 	}{
 		{
-			name:               "original DWS runtime",
-			alias:              "multica-m7-vda499f3161a007c0-r1-9a6bfa",
-			wantDWS:            "v1.0.58-beta.4",
-			wantDSH:            "0.1.0-rc.6",
-			wantOpenCode:       "v1.18.11",
-			wantPi:             "0.83.0",
-			wantSourceRevision: "9a6bfa",
+			name:               "five provider catalog entry",
+			templateID:         "tpl-five",
+			wantSourceRevision: "da499f3161a007c0da499f3161a007c0da499f31",
 		},
 		{
-			name:               "DWS v1.0.59 runtime",
-			alias:              "multica-m7-v41edc34be759811a-r1-dcb7e7",
-			wantDWS:            "v1.0.59-beta.3",
-			wantDSH:            "0.1.0-rc.6",
-			wantOpenCode:       "v1.18.11",
-			wantPi:             "0.83.0",
-			wantSourceRevision: "dcb7e7",
-		},
-		{
-			name:               "formal DWS and latest toolchain runtime",
-			alias:              "multica-m7-vbaedb216407a5060-r1-f24f2e",
-			wantDWS:            "v1.0.59",
-			wantDSH:            "0.1.0-rc.8",
-			wantOpenCode:       "v1.18.19",
-			wantPi:             "0.84.2",
-			wantSourceRevision: "f24f2e",
-		},
-		{
-			name:               "latest DWS beta runtime from Diamond catalog",
-			alias:              "multica-m7-vbc80cb4524f2bc75-r1-2c5ead",
-			wantDWS:            "v1.0.60-beta.1",
-			wantDSH:            "0.1.0-rc.8",
-			wantOpenCode:       "v1.18.19",
-			wantPi:             "0.84.2",
-			wantSourceRevision: "2c5ead",
-		},
-		{
-			name:               "same components with seven providers",
-			alias:              "multica-m7-vac20d08b3a999731-r1-777777",
-			wantDWS:            "v1.0.60-beta.1",
-			wantDSH:            "0.1.0-rc.8",
-			wantOpenCode:       "v1.18.19",
-			wantPi:             "0.84.2",
-			wantSourceRevision: "777777",
+			name:               "seven provider catalog entry",
+			templateID:         "tpl-seven",
+			wantSourceRevision: "ac20d08b3a999731ac20d08b3a999731ac20d08b",
 			wantProviders:      []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
 		},
 		{
-			name:               "five providers with current DWS beta",
-			alias:              "multica-m7-v7fca1af6a513f618-r1-dacbd3",
-			wantDWS:            "v1.0.60-beta.2",
-			wantDSH:            "0.1.0-rc.8",
-			wantOpenCode:       "v1.18.19",
-			wantPi:             "0.84.2",
-			wantSourceRevision: "dacbd3",
-		},
-		{
-			name:               "single provider does not inherit other runner capabilities",
-			alias:              "multica-m7-vccb1492bfcb45e36-r1-111111",
-			wantDWS:            "v1.0.60-beta.2",
-			wantDSH:            "0.1.0-rc.8",
-			wantOpenCode:       "v1.18.19",
-			wantPi:             "0.84.2",
-			wantSourceRevision: "111111",
+			name:               "single provider catalog entry",
+			templateID:         "tpl-one",
+			wantSourceRevision: "ccb1492bfcb45e36ccb1492bfcb45e36ccb1492b",
 			wantProviders:      []string{"hermes"},
 			wantCapabilities: []string{
 				"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1,
@@ -725,14 +621,11 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			template := FCE2BTemplate{BuildID: "build-v7"}
-			published, err := applyFCE2BTemplateManifestAlias(&template, test.alias, testFCE2BManifestV7Catalog())
-			if err != nil {
-				t.Fatal(err)
+			entry, found := RuntimeProvidersForTemplate(testRuntimeProviderCatalog(), test.templateID)
+			if !found {
+				t.Fatalf("template ID %q was not found", test.templateID)
 			}
-			if !published || !IsFCE2BTemplatePublished(template) {
-				t.Fatalf("v7 alias was not published: %+v", template)
-			}
+			template := FCE2BTemplate{ID: test.templateID, Template: "display alias", SourceRevision: entry.RuntimeCommit, Providers: entry.Providers, Capabilities: runtimeconfig.CapabilitiesForProviders(entry.Providers)}
 			wantProviders := test.wantProviders
 			if wantProviders == nil {
 				wantProviders = []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
@@ -752,41 +645,43 @@ func TestApplyFCE2BTemplateManifestV7Alias(t *testing.T) {
 			if !reflect.DeepEqual(template.Capabilities, wantCapabilities) {
 				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, wantCapabilities)
 			}
-			if template.ComponentVersions["dsh"] != test.wantDSH ||
-				template.ComponentVersions["opencode"] != test.wantOpenCode ||
-				template.ComponentVersions["pi"] != test.wantPi ||
-				template.ComponentVersions["opencode-v2"] != "0.0.0-beta-202608110357" ||
-				template.ComponentVersions["dws"] != test.wantDWS ||
-				template.SourceRevision != test.wantSourceRevision {
+			if template.SourceRevision != test.wantSourceRevision {
 				t.Fatalf("v7 contract = %+v", template)
 			}
 		})
 	}
 
-	wrong := FCE2BTemplate{BuildID: "build-v7-wrong"}
-	if applied, err := applyFCE2BTemplateManifestAlias(
-		&wrong,
-		"multica-m7-v0000000000000000-r1-9a6bfa",
-		testFCE2BManifestV7Catalog(),
-	); err != nil || applied {
-		t.Fatalf("wrong v7 fingerprint applied=%v err=%v", applied, err)
+	if _, found := RuntimeProvidersForTemplate(testRuntimeProviderCatalog(), "multica-m7-v0000000000000000-r1-9a6bfa"); found {
+		t.Fatal("display alias was accepted as a template ID lookup")
 	}
 }
 
-func TestListFCE2BTemplatesReadsOnlyManifestAliases(t *testing.T) {
+func TestRuntimeProvidersForCommitUsesFullCommit(t *testing.T) {
+	commit := "ac20d08b3a999731ac20d08b3a999731ac20d08b"
+	catalog := map[string][]string{commit: {"hermes", "pi"}}
+	providers, found := RuntimeProvidersForCommit(catalog, commit)
+	if !found || !reflect.DeepEqual(providers, []string{"hermes", "pi"}) {
+		t.Fatalf("providers=%#v found=%v", providers, found)
+	}
+	if _, found := RuntimeProvidersForCommit(catalog, commit[:16]); found {
+		t.Fatal("short commit was accepted")
+	}
+}
+
+func TestListFCE2BTemplatesUsesTemplateIDWithoutBuildID(t *testing.T) {
 	runner := &fakeCommandRunner{out: []string{`[
 		{"id":"tpl-older","buildID":"build-older","aliases":["multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa"],"status":"ready","updatedAt":"2026-07-20T01:00:00Z"},
-		{"id":"tpl-current","buildID":"build-current","aliases":["default","multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],"names":["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-9a6bfa"],"status":"ready","updatedAt":"2026-07-21T01:00:00Z"},
+		{"id":"tpl-current","buildID":"build-current","aliases":["default","multica-m7-vda499f3161a007c0-r1-9a6bfa"],"names":["multica-m7-vda499f3161a007c0-r1-9a6bfa"],"status":"ready","updatedAt":"2026-07-21T01:00:00Z"},
 		{"id":"tpl-old","buildID":"build-old","aliases":["multica-fc-hermes-opencode-dws-v1"],"status":"ready"},
 		{"id":"tpl-malformed","buildID":"build-malformed","aliases":["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdim-r1-9a6bfa"],"status":"ready"},
-		{"id":"tpl-no-build","aliases":["multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-bbbbbb"],"status":"ready"}
+		{"id":"tpl-no-build","aliases":["multica-m7-vccb1492bfcb45e36-r1-bbbbbb"],"status":"ready"}
 	]`}}
 	templates, err := ListFCE2BTemplates(context.Background(), FCE2BConfig{
-		APIKey:                      "test-key",
-		APIURL:                      "https://fc-e2b.test",
-		Domain:                      "fc-e2b.test",
-		CLIPath:                     "e2b-test",
-		ManifestV7ComponentVersions: testFCE2BManifestV7Catalog(),
+		APIKey:              "test-key",
+		APIURL:              "https://fc-e2b.test",
+		Domain:              "fc-e2b.test",
+		CLIPath:             "e2b-test",
+		FCTemplateProviders: testRuntimeProviderCatalog(),
 	}, runner)
 	if err != nil {
 		t.Fatalf("list templates: %v", err)
@@ -795,21 +690,18 @@ func TestListFCE2BTemplatesReadsOnlyManifestAliases(t *testing.T) {
 		t.Fatalf("templates = %#v", templates)
 	}
 	got := templates[0]
-	if got.ID != "tpl-current" || got.BuildID != "build-current" || got.ManifestVersion != 3 {
+	if got.ID != "tpl-current" || got.ManifestVersion != 7 {
 		t.Fatalf("verified template = %#v", got)
 	}
-	if want := []string{"hermes", "opencode", "pi"}; !reflect.DeepEqual(got.Providers, want) {
+	if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}; !reflect.DeepEqual(got.Providers, want) {
 		t.Fatalf("providers = %#v, want %#v", got.Providers, want)
-	}
-	if got.ComponentVersions["pi"] != "0.80.10" || got.ComponentVersions["dws"] != "v1.0.53-beta.4" {
-		t.Fatalf("component versions = %#v", got.ComponentVersions)
 	}
 	if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, []string{"template", "list", "--format", "json"}) {
 		t.Fatalf("template list calls = %#v", runner.calls)
 	}
 }
 
-func TestFCE2BTemplateAPIPreservesLegacyAliasesWithoutV7Catalog(t *testing.T) {
+func TestFCE2BTemplateAPIRejectsLegacyVersionAliasesWithoutProviderCatalog(t *testing.T) {
 	cfg := FCE2BConfig{
 		APIKey:  "test-key",
 		APIURL:  "https://fc-e2b.test",
@@ -819,14 +711,9 @@ func TestFCE2BTemplateAPIPreservesLegacyAliasesWithoutV7Catalog(t *testing.T) {
 	if err := cfg.ValidateTemplateAPI(); err != nil {
 		t.Fatalf("legacy template API config: %v", err)
 	}
-	template := FCE2BTemplate{BuildID: "legacy-build"}
-	applied, err := applyFCE2BTemplateManifestAlias(
-		&template,
-		"multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta3-r1-9a6bfa",
-		nil,
-	)
-	if err != nil || !applied {
-		t.Fatalf("legacy alias applied=%v err=%v", applied, err)
+	templates, err := parseFCE2BTemplates(`[{"id":"tpl-legacy","aliases":["multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta3-r1-9a6bfa"],"status":"ready"}]`, nil)
+	if err != nil || len(templates) != 0 {
+		t.Fatalf("legacy alias without template-ID catalog entry returned templates=%#v err=%v", templates, err)
 	}
 }
 

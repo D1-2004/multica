@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,32 +19,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
 type staticFCE2BTemplateRunner struct {
 	output string
 	err    error
 	calls  int
-}
-
-type informationalStatusWriter struct {
-	header http.Header
-	codes  []int
-}
-
-func (w *informationalStatusWriter) Header() http.Header {
-	if w.header == nil {
-		w.header = make(http.Header)
-	}
-	return w.header
-}
-
-func (w *informationalStatusWriter) WriteHeader(code int) {
-	w.codes = append(w.codes, code)
-}
-
-func (w *informationalStatusWriter) Write(body []byte) (int, error) {
-	return len(body), nil
 }
 
 func (r *staticFCE2BTemplateRunner) Run(context.Context, string, []string, []string) (string, error) {
@@ -79,34 +61,6 @@ func TestFCE2BTemplateCapabilities(t *testing.T) {
 				t.Fatalf("fcE2BTemplateCapabilities(%q) = %#v, want %#v", tc.template.Template, got, tc.want)
 			}
 		})
-	}
-}
-
-func TestValidateASBArtifactWithProgress(t *testing.T) {
-	w := &informationalStatusWriter{}
-	want := map[string]any{"schema_version": 7}
-	got, err := validateASBArtifactWithProgress(
-		context.Background(),
-		w,
-		time.Millisecond,
-		func(context.Context) (map[string]any, error) {
-			time.Sleep(5 * time.Millisecond)
-			return want, nil
-		},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("manifest = %#v, want %#v", got, want)
-	}
-	if len(w.codes) == 0 {
-		t.Fatal("slow validation emitted no informational response")
-	}
-	for _, code := range w.codes {
-		if code != http.StatusProcessing {
-			t.Fatalf("informational status = %d, want %d", code, http.StatusProcessing)
-		}
 	}
 }
 
@@ -168,13 +122,11 @@ func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 
 	suffix := randomID()[:8]
 	templateID := "tpl_stable_" + suffix
-	currentBuildID := "build_current_" + suffix
-	previousBuildID := "build_previous_" + suffix
 	alias := testNewFCE2BManifestAlias
 	catalog := fmt.Sprintf(
 		`[{"id":%q,"buildID":%q,"aliases":[%q],"status":"READY"}]`,
 		templateID,
-		currentBuildID,
+		"ignored-build-id",
 		alias,
 	)
 	cliPath := filepath.Join(t.TempDir(), "e2b-test")
@@ -182,16 +134,15 @@ func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 		t.Fatalf("write E2B template catalog fixture: %v", err)
 	}
 
-	var oldTemplateID, oldBuildID, oldAlias string
+	var oldTemplateID, oldAlias string
 	var oldCurrentReleaseID, oldActiveReleaseID pgtype.UUID
 	err := testPool.QueryRow(context.Background(), `
-		SELECT current_template_id, current_template_build_id, current_template_alias,
+		SELECT current_template_id, current_template_alias,
 		       current_release_id, active_release_id
 		FROM fc_e2b_stable_channel
 		WHERE channel = 'stable'
 	`).Scan(
 		&oldTemplateID,
-		&oldBuildID,
 		&oldAlias,
 		&oldCurrentReleaseID,
 		&oldActiveReleaseID,
@@ -204,28 +155,27 @@ func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 	var releaseID pgtype.UUID
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO fc_e2b_stable_release (
-			idempotency_key, request_fingerprint, template_id, template_build_id,
+			idempotency_key, request_fingerprint, template_id,
 			template_alias, git_commit, acr_digest, actor_user_id, status
 		) VALUES (
-			$1, $2, $3, $4, $5, repeat('0', 40),
-			'sha256:' || repeat('0', 64), $6, 'completed'
+			$1, $2, $3, $4, repeat('0', 40),
+			'sha256:' || repeat('0', 64), $5, 'completed'
 		)
 		RETURNING id
-	`, "stable-create-"+suffix, "stable-create-"+suffix, templateID, previousBuildID, alias, testUserID).Scan(&releaseID); err != nil {
+	`, "stable-create-"+suffix, "stable-create-"+suffix, templateID, alias, testUserID).Scan(&releaseID); err != nil {
 		t.Fatalf("create stable release fixture: %v", err)
 	}
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO fc_e2b_stable_channel (
-			channel, current_template_id, current_template_build_id,
+			channel, current_template_id,
 			current_template_alias, current_release_id, active_release_id
-		) VALUES ('stable', $1, $2, $3, $4, NULL)
+		) VALUES ('stable', $1, $2, $3, NULL)
 		ON CONFLICT (channel) DO UPDATE SET
 			current_template_id = EXCLUDED.current_template_id,
-			current_template_build_id = EXCLUDED.current_template_build_id,
 			current_template_alias = EXCLUDED.current_template_alias,
 			current_release_id = EXCLUDED.current_release_id,
 			active_release_id = NULL
-	`, templateID, previousBuildID, alias, releaseID); err != nil {
+	`, templateID, alias, releaseID); err != nil {
 		t.Fatalf("set stable channel fixture: %v", err)
 	}
 
@@ -254,12 +204,11 @@ func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 			_, _ = testPool.Exec(context.Background(), `
 				UPDATE fc_e2b_stable_channel
 				SET current_template_id = $1,
-				    current_template_build_id = $2,
-				    current_template_alias = $3,
-				    current_release_id = $4,
-				    active_release_id = $5
+				    current_template_alias = $2,
+				    current_release_id = $3,
+				    active_release_id = $4
 				WHERE channel = 'stable'
-			`, oldTemplateID, oldBuildID, oldAlias, oldCurrentReleaseID, oldActiveReleaseID)
+			`, oldTemplateID, oldAlias, oldCurrentReleaseID, oldActiveReleaseID)
 		} else {
 			_, _ = testPool.Exec(context.Background(), `DELETE FROM fc_e2b_stable_channel WHERE channel = 'stable'`)
 		}
@@ -276,6 +225,7 @@ func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 		LLMBaseURL:          "https://llm.test",
 		LLMAPIKey:           "test-llm-key",
 		LLMModels:           []string{"test-model"},
+		FCTemplateProviders: map[string]runtimeconfig.FCTemplateProviders{templateID: {RuntimeCommit: strings.Repeat("a", 40), Providers: []string{"hermes"}}},
 		CLIPath:             cliPath,
 		TimeoutSeconds:      60,
 		SandboxReadyTimeout: time.Minute,
@@ -308,8 +258,11 @@ func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 	if !ok {
 		t.Fatalf("runtime metadata = %#v", response.Metadata)
 	}
-	if metadata["template_id"] != templateID || metadata["template_build_id"] != currentBuildID {
+	if metadata["template_id"] != templateID {
 		t.Fatalf("runtime template metadata = %#v", metadata)
+	}
+	if _, exists := metadata["template_build_id"]; exists {
+		t.Fatalf("runtime metadata retained FC build ID: %#v", metadata)
 	}
 
 	candidate := httptest.NewRecorder()
@@ -383,6 +336,11 @@ func fce2bTemplateRotationHandler(t *testing.T) (*Handler, *staticFCE2BTemplateR
 		APIURL:  "https://fc-e2b.test",
 		Domain:  "fc-e2b.test",
 		CLIPath: "e2b-test",
+		FCTemplateProviders: map[string]runtimeconfig.FCTemplateProviders{
+			"tpl_old_id":     {RuntimeCommit: strings.Repeat("a", 40), Providers: []string{"hermes"}},
+			"tpl_new_id":     {RuntimeCommit: strings.Repeat("b", 40), Providers: []string{"hermes", "opencode", "pi"}},
+			"tpl_pending_id": {RuntimeCommit: strings.Repeat("c", 40), Providers: []string{"hermes"}},
+		},
 	}
 	h.cfg.StableRuntimePublisherUserIDs = map[string]struct{}{testUserID: {}}
 	return &h, runner
@@ -558,8 +516,11 @@ func TestUpdateFCE2BRuntimeTemplatePreservesRuntimeAndIsIdempotent(t *testing.T)
 	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
 		t.Fatalf("decode runtime metadata: %v", err)
 	}
-	if metadata["template"] != testNewFCE2BManifestAlias || metadata["template_id"] != "tpl_new_id" || metadata["template_build_id"] != "build_new" || metadata["template_name"] != testNewFCE2BManifestAlias || metadata["template_status"] != "READY" {
+	if metadata["template"] != "tpl_new_id" || metadata["template_id"] != "tpl_new_id" || metadata["template_name"] != testNewFCE2BManifestAlias || metadata["template_status"] != "READY" {
 		t.Fatalf("template metadata = %#v", metadata)
+	}
+	if _, exists := metadata["template_build_id"]; exists {
+		t.Fatalf("template build ID was retained: %#v", metadata)
 	}
 	if metadata["preserved"] != "yes" || metadata["runner"] != "multica-fc-hermes-container-log-entry" || metadata["runner_protocol"] != "root-log-v1" {
 		t.Fatalf("unrelated metadata was not preserved: %#v", metadata)
@@ -567,9 +528,8 @@ func TestUpdateFCE2BRuntimeTemplatePreservesRuntimeAndIsIdempotent(t *testing.T)
 	if got := metadata["capabilities"]; !reflect.DeepEqual(got, []any{"hermes", "dws", "dws.im_event", "mcp", service.RuntimeStartCapabilityEventsV1}) {
 		t.Fatalf("capabilities were not refreshed during template rotation: %#v", got)
 	}
-	versions, ok := metadata["component_versions"].(map[string]any)
-	if !ok || versions["hermes"] != "0.19.0" || versions["dws"] != "v1.0.53-beta.4" {
-		t.Fatalf("component versions were not refreshed: %#v", metadata["component_versions"])
+	if _, exists := metadata["component_versions"]; exists {
+		t.Fatalf("component versions were retained: %#v", metadata)
 	}
 	var boundRuntimeID string
 	if err := testPool.QueryRow(context.Background(), `SELECT runtime_id FROM agent WHERE id = $1`, agentID).Scan(&boundRuntimeID); err != nil {

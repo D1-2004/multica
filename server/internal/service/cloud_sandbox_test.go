@@ -51,7 +51,7 @@ func TestParseCloudSandboxRuntimeProjectsLegacyFCMetadata(t *testing.T) {
 	if metadata.SandboxBackend != SandboxBackendAliyunFC ||
 		metadata.ArtifactKind != CloudSandboxArtifactE2BTemplate ||
 		metadata.ArtifactRef != "template-id" ||
-		metadata.ArtifactBuildID != "build-id" ||
+		metadata.ArtifactBuildID != "" ||
 		metadata.ArtifactChannel != CloudSandboxChannelCandidate ||
 		metadata.Provider != "opencode" {
 		t.Fatalf("legacy metadata = %#v", metadata)
@@ -88,7 +88,7 @@ func TestParseCloudSandboxRuntimeProjectsStableM2TemplateMetadata(t *testing.T) 
 		metadata.Provider != "opencode" ||
 		metadata.ArtifactKind != CloudSandboxArtifactE2BTemplate ||
 		metadata.ArtifactRef != "template-m2-id" ||
-		metadata.ArtifactBuildID != "build-m2-id" ||
+		metadata.ArtifactBuildID != "" ||
 		metadata.ArtifactAlias != "multica-m2-stable" ||
 		metadata.ArtifactChannel != CloudSandboxChannelStable ||
 		metadata.ManifestVersion != 2 {
@@ -141,7 +141,7 @@ func TestParseCloudSandboxRuntimeProjectsLegacyTemplateForEverySupportedFCProvid
 				metadata.Provider != provider ||
 				metadata.ArtifactKind != CloudSandboxArtifactE2BTemplate ||
 				metadata.ArtifactRef != "template-id" ||
-				metadata.ArtifactBuildID != "build-id" ||
+				metadata.ArtifactBuildID != "" ||
 				metadata.ArtifactChannel != CloudSandboxChannelCandidate {
 				t.Fatalf("legacy %s metadata = %#v", provider, metadata)
 			}

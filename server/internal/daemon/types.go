@@ -150,8 +150,8 @@ type Task struct {
 	// a credentialless child process while keeping missing tokens fail-closed
 	// for every ordinary task.
 	A2AInvocation bool `json:"a2a_invocation,omitempty"`
-	// A2AManagedRuntimeV2 attests that both the managed Runtime image manifest
-	// and daemon implement the a2a-invocation-v2 isolation contract.
+	// A2AManagedRuntimeV2 attests that the managed Runtime configuration and
+	// daemon enable the a2a-invocation-v2 isolation contract.
 	A2AManagedRuntimeV2 bool `json:"a2a_managed_runtime_v2,omitempty"`
 	// AuthToken is the task-scoped credential the server mints at claim time.
 	// The daemon injects it into the spawned agent as MULTICA_TOKEN so the

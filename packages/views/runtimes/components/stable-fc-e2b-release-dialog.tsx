@@ -159,7 +159,7 @@ export function StableFCE2BReleaseDialog({
     normalizedArtifactBuildId.length > 0 &&
     normalizedArtifactBuiltAt.length > 0 &&
     normalizedArtifactRef.endsWith(`@${normalizedArtifactDigest}`);
-  const fcCandidateReady = Boolean(selected?.id && selected.build_id);
+  const fcCandidateReady = Boolean(selected?.id);
   const candidateReady =
     sandboxBackend === "asb" ? asbCandidateReady : fcCandidateReady;
   const developerProgress =
@@ -254,11 +254,10 @@ export function StableFCE2BReleaseDialog({
           note: note.trim(),
         };
       } else {
-        if (!selected?.id || !selected.build_id) return;
+        if (!selected?.id) return;
         data = {
           sandbox_backend: sandboxBackend,
           template_id: selected.id,
-          expected_build_id: selected.build_id,
           note: note.trim(),
         };
       }
@@ -332,9 +331,14 @@ export function StableFCE2BReleaseDialog({
             </p>
             <p
               className="break-all text-muted-foreground"
-              title={`${current.artifact_ref} · ${current.artifact_build_id}`}
+              title={
+                sandboxBackend === "asb"
+                  ? `${current.artifact_ref} · ${current.artifact_build_id}`
+                  : current.artifact_ref
+              }
             >
-              {current.artifact_ref} · {current.artifact_build_id}
+              {current.artifact_ref}
+              {sandboxBackend === "asb" && ` · ${current.artifact_build_id}`}
             </p>
             {current.artifact_digest && (
               <p
@@ -708,18 +712,14 @@ export function StableFCE2BReleaseDialog({
                     )}
                   {templates.map((template) => {
                     const isCurrent =
-                      current != null &&
-                      template.id === current.artifact_ref &&
-                      template.build_id === current.artifact_build_id;
-                    const isSelected =
-                      selected?.id === template.id &&
-                      selected?.build_id === template.build_id;
+                      current != null && template.id === current.artifact_ref;
+                    const isSelected = selected?.id === template.id;
                     const updatedAt = formatTemplateUpdatedAt(
                       template.updated_at,
                     );
                     return (
                       <button
-                        key={`${template.id}:${template.build_id}`}
+                        key={template.id}
                         type="button"
                         onClick={() => setSelected(template)}
                         className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 hover:bg-muted/50"
@@ -729,7 +729,7 @@ export function StableFCE2BReleaseDialog({
                             {displayTemplate(template)}
                           </span>
                           <span className="block truncate text-muted-foreground">
-                            {template.id} · {template.build_id}
+                            {template.id}
                           </span>
                           {updatedAt && (
                             <span className="block truncate text-muted-foreground">
