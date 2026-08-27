@@ -18,19 +18,20 @@ import (
 )
 
 type createFCE2BRuntimeRequest struct {
-	SandboxBackend  string `json:"sandbox_backend"`
-	APIKey          string `json:"api_key"`
-	Name            string `json:"name"`
-	ArtifactRef     string `json:"artifact_ref"`
-	ArtifactBuildID string `json:"artifact_build_id"`
-	ArtifactAlias   string `json:"artifact_alias"`
-	ArtifactDigest  string `json:"artifact_digest"`
-	RuntimeCommit   string `json:"runtime_commit"`
-	ArtifactChannel string `json:"artifact_channel"`
-	TemplateID      string `json:"template_id"`
-	TemplateChannel string `json:"template_channel"`
-	Provider        string `json:"provider"`
-	Visibility      string `json:"visibility"`
+	SandboxBackend      string `json:"sandbox_backend"`
+	APIKey              string `json:"api_key"`
+	Name                string `json:"name"`
+	ArtifactRef         string `json:"artifact_ref"`
+	ArtifactBuildID     string `json:"artifact_build_id"`
+	ArtifactAlias       string `json:"artifact_alias"`
+	ArtifactDigest      string `json:"artifact_digest"`
+	RuntimeCommit       string `json:"runtime_commit"`
+	ProviderFingerprint string `json:"provider_fingerprint"`
+	ArtifactChannel     string `json:"artifact_channel"`
+	TemplateID          string `json:"template_id"`
+	TemplateChannel     string `json:"template_channel"`
+	Provider            string `json:"provider"`
+	Visibility          string `json:"visibility"`
 }
 
 type updateFCE2BRuntimeTemplateRequest struct {
@@ -38,11 +39,12 @@ type updateFCE2BRuntimeTemplateRequest struct {
 }
 
 type updateCloudSandboxArtifactRequest struct {
-	ArtifactRef     string `json:"artifact_ref"`
-	ArtifactBuildID string `json:"artifact_build_id"`
-	ArtifactAlias   string `json:"artifact_alias"`
-	ArtifactDigest  string `json:"artifact_digest"`
-	RuntimeCommit   string `json:"runtime_commit"`
+	ArtifactRef         string `json:"artifact_ref"`
+	ArtifactBuildID     string `json:"artifact_build_id"`
+	ArtifactAlias       string `json:"artifact_alias"`
+	ArtifactDigest      string `json:"artifact_digest"`
+	RuntimeCommit       string `json:"runtime_commit"`
+	ProviderFingerprint string `json:"provider_fingerprint"`
 }
 
 type updateASBRuntimeCredentialRequest struct {
@@ -418,13 +420,6 @@ func (h *Handler) createASBRuntime(
 			return
 		}
 		artifact = current
-		if artifact.ProviderData == nil {
-			artifact.ProviderData = map[string]any{}
-		}
-		artifact.ProviderData["providers"] = append(
-			[]string(nil),
-			h.currentConfig().FCE2B.RuntimeProviders...,
-		)
 		runtimeQueries = h.Queries.WithTx(runtimeTx)
 	case service.CloudSandboxChannelCandidate:
 		if !h.canPublishFCE2BStable(r) {
@@ -439,19 +434,24 @@ func (h *Handler) createASBRuntime(
 		if candidateProvider == "" {
 			candidateProvider = service.FCE2BProvider
 		}
-		providers := h.currentConfig().FCE2B.RuntimeProviders
+		providerFingerprint := strings.ToLower(strings.TrimSpace(req.ProviderFingerprint))
+		providers, found := service.RuntimeProvidersForFingerprint(
+			h.currentConfig().FCE2B.RuntimeProviderFingerprints,
+			providerFingerprint,
+		)
 		if !service.IsRuntimeSourceCommit(runtimeCommit) {
 			writeError(w, http.StatusBadRequest, "runtime_commit must be a 40-character lowercase Git commit")
 			return
 		}
-		if !containsRuntimeProvider(providers, candidateProvider) {
-			writeError(w, http.StatusBadRequest, "provider is not enabled in the Runtime provider catalog")
+		if !found || !containsRuntimeProvider(providers, candidateProvider) {
+			writeError(w, http.StatusBadRequest, "provider_fingerprint does not resolve the requested provider")
 			return
 		}
 		var err error
 		artifact.ProviderData = map[string]any{
-			"providers":       providers,
-			"source_revision": runtimeCommit,
+			"provider_fingerprint": providerFingerprint,
+			"providers":            providers,
+			"source_revision":      runtimeCommit,
 		}
 		metadataValues, err = service.BuildASBRuntimeMetadata(
 			artifact,
@@ -855,25 +855,34 @@ func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *ht
 		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
 	}
 	var currentMetadata struct {
-		RuntimeCommit string `json:"runtime_commit"`
+		RuntimeCommit       string `json:"runtime_commit"`
+		ProviderFingerprint string `json:"provider_fingerprint"`
 	}
 	_ = json.Unmarshal(runtime.Metadata, &currentMetadata)
 	runtimeCommit := strings.ToLower(strings.TrimSpace(req.RuntimeCommit))
 	if runtimeCommit == "" {
 		runtimeCommit = strings.ToLower(strings.TrimSpace(currentMetadata.RuntimeCommit))
 	}
-	providers := h.currentConfig().FCE2B.RuntimeProviders
+	providerFingerprint := strings.ToLower(strings.TrimSpace(req.ProviderFingerprint))
+	if providerFingerprint == "" {
+		providerFingerprint = strings.ToLower(strings.TrimSpace(currentMetadata.ProviderFingerprint))
+	}
+	providers, found := service.RuntimeProvidersForFingerprint(
+		h.currentConfig().FCE2B.RuntimeProviderFingerprints,
+		providerFingerprint,
+	)
 	if !service.IsRuntimeSourceCommit(runtimeCommit) {
 		writeError(w, http.StatusBadRequest, "runtime_commit must be a 40-character lowercase Git commit")
 		return
 	}
-	if !containsRuntimeProvider(providers, runtime.Provider) {
-		writeError(w, http.StatusBadRequest, "provider is not enabled in the Runtime provider catalog")
+	if !found || !containsRuntimeProvider(providers, runtime.Provider) {
+		writeError(w, http.StatusBadRequest, "provider_fingerprint does not resolve the Runtime provider")
 		return
 	}
 	artifact.ProviderData = map[string]any{
-		"providers":       providers,
-		"source_revision": runtimeCommit,
+		"provider_fingerprint": providerFingerprint,
+		"providers":            providers,
+		"source_revision":      runtimeCommit,
 	}
 	result, err := h.ASBLauncher.UpdateRuntimeArtifact(r.Context(), runtimeUUID, artifact)
 	if err != nil {

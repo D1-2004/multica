@@ -582,8 +582,11 @@ func TestAliasesAreDisplayOnly(t *testing.T) {
 	}
 }
 
-func testRuntimeProviderCatalog() []string {
-	return []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
+func testRuntimeProviderCatalog() map[string][]string {
+	return map[string][]string{
+		"da499f3161a007c0": {"hermes", "opencode", "pi", "dsh", "opencode-v2"},
+		"a2eb67817f146ef4": {"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
+	}
 }
 
 func TestRuntimeProviderListAppliesToEveryTemplate(t *testing.T) {
@@ -618,9 +621,9 @@ func TestRuntimeProviderListAppliesToEveryTemplate(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			providers := testRuntimeProviderCatalog()
+			providers := testRuntimeProviderCatalog()["da499f3161a007c0"]
 			template := FCE2BTemplate{ID: test.templateID, Template: "display alias", Providers: providers, Capabilities: runtimeconfig.CapabilitiesForProviders(providers)}
-			wantProviders := testRuntimeProviderCatalog()
+			wantProviders := testRuntimeProviderCatalog()["da499f3161a007c0"]
 			if !reflect.DeepEqual(template.Providers, wantProviders) {
 				t.Fatalf("providers = %#v, want %#v", template.Providers, wantProviders)
 			}
@@ -654,11 +657,11 @@ func TestListFCE2BTemplatesUsesTemplateIDWithoutBuildID(t *testing.T) {
 		{"id":"tpl-no-build","aliases":["multica-m7-vccb1492bfcb45e36-r1-bbbbbb"],"status":"ready"}
 	]`}}
 	templates, err := ListFCE2BTemplates(context.Background(), FCE2BConfig{
-		APIKey:           "test-key",
-		APIURL:           "https://fc-e2b.test",
-		Domain:           "fc-e2b.test",
-		CLIPath:          "e2b-test",
-		RuntimeProviders: testRuntimeProviderCatalog(),
+		APIKey:                      "test-key",
+		APIURL:                      "https://fc-e2b.test",
+		Domain:                      "fc-e2b.test",
+		CLIPath:                     "e2b-test",
+		RuntimeProviderFingerprints: testRuntimeProviderCatalog(),
 	}, runner)
 	if err != nil {
 		t.Fatalf("list templates: %v", err)

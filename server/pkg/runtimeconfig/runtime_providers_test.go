@@ -2,7 +2,6 @@ package runtimeconfig
 
 import (
 	"bytes"
-	"encoding/json"
 	"log/slog"
 	"os"
 	"strings"
@@ -10,7 +9,7 @@ import (
 )
 
 func validRuntimeProvidersJSON() string {
-	return `{"version":1,"providers":["hermes","opencode","pi"]}`
+	return `{"version":1,"fingerprints":{"a2eb67817f146ef4":["hermes","opencode","pi","dsh","opencode-v2","claude","codex"]}}`
 }
 
 func TestDocumentedRuntimeProvidersExampleMatchesSchema(t *testing.T) {
@@ -23,34 +22,38 @@ func TestDocumentedRuntimeProvidersExampleMatchesSchema(t *testing.T) {
 	}
 }
 
-func TestParseRuntimeProvidersUsesAuthoredListWithoutCardinalityContract(t *testing.T) {
-	for _, providers := range [][]string{
-		{},
-		{"hermes"},
-		{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
+func TestParseRuntimeProvidersUsesOneFingerprintPerProviderCombination(t *testing.T) {
+	cfg, err := ParseRuntimeProviders([]byte(validRuntimeProvidersJSON()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers := cfg.Fingerprints["a2eb67817f146ef4"]
+	if len(cfg.Fingerprints) != 1 || len(providers) != 7 || providers[6] != "codex" {
+		t.Fatalf("fingerprints = %#v", cfg.Fingerprints)
+	}
+}
+
+func TestParseRuntimeProvidersDoesNotConstrainProviderCardinality(t *testing.T) {
+	for _, raw := range []string{
+		`{"version":1,"fingerprints":{}}`,
+		`{"version":1,"fingerprints":{"0000000000000000":[]}}`,
+		`{"version":1,"fingerprints":{"1111111111111111":["hermes"]}}`,
 	} {
-		encoded, err := json.Marshal(RuntimeProvidersConfig{Version: 1, Providers: providers})
-		if err != nil {
-			t.Fatal(err)
-		}
-		cfg, err := ParseRuntimeProviders(encoded)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(cfg.Providers) != len(providers) {
-			t.Fatalf("providers = %#v", cfg.Providers)
+		if _, err := ParseRuntimeProviders([]byte(raw)); err != nil {
+			t.Fatalf("parse %s: %v", raw, err)
 		}
 	}
 }
 
-func TestParseRuntimeProvidersRejectsOnlyMalformedProviderData(t *testing.T) {
+func TestParseRuntimeProvidersRejectsMalformedLookupData(t *testing.T) {
 	for name, raw := range map[string]string{
-		"unknown field": `{"version":1,"providers":[],"extra":true}`,
-		"wrong version": `{"version":2,"providers":[]}`,
-		"missing list":  `{"version":1}`,
-		"bad provider":  `{"version":1,"providers":["Hermes"]}`,
-		"duplicate":     `{"version":1,"providers":["hermes","hermes"]}`,
-		"trailing":      validRuntimeProvidersJSON() + ` {}`,
+		"unknown field":   `{"version":1,"fingerprints":{},"extra":true}`,
+		"wrong version":   `{"version":2,"fingerprints":{}}`,
+		"missing map":     `{"version":1}`,
+		"bad fingerprint": `{"version":1,"fingerprints":{"BAD":[]}}`,
+		"bad provider":    `{"version":1,"fingerprints":{"0000000000000000":["Hermes"]}}`,
+		"duplicate":       `{"version":1,"fingerprints":{"0000000000000000":["hermes","hermes"]}}`,
+		"trailing":        validRuntimeProvidersJSON() + ` {}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ParseRuntimeProviders([]byte(raw)); err == nil {
@@ -69,9 +72,9 @@ func TestRuntimeProvidersUpdateIsAtomicAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Providers[0] = "mutated"
+	first.Fingerprints["a2eb67817f146ef4"][0] = "mutated"
 	current := service.RuntimeProviders()
-	if current.Generation != 1 || current.Providers[0] != "hermes" {
+	if current.Generation != 1 || current.Fingerprints["a2eb67817f146ef4"][0] != "hermes" {
 		t.Fatalf("service snapshot was mutated: %#v", current)
 	}
 	retained, err := service.ApplyRuntimeProvidersJSON([]byte(`{"version":1}`))
@@ -84,13 +87,13 @@ func TestRuntimeProviderLogsContainOnlySnapshotMetadata(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
 	logRuntimeProvidersUpdate(logger, "updated", RuntimeProvidersSnapshot{
-		Version:    1,
-		Providers:  []string{"secret-provider"},
-		Generation: 7,
-		SHA256:     "safe-hash",
+		Version:      1,
+		Fingerprints: map[string][]string{"secretfingerprin": {"secret-provider"}},
+		Generation:   7,
+		SHA256:       "safe-hash",
 	})
 	logged := output.String()
-	for _, forbidden := range []string{"secret-provider", `"providers"`} {
+	for _, forbidden := range []string{"secretfingerprin", "secret-provider", `"fingerprints"`} {
 		if strings.Contains(logged, forbidden) {
 			t.Fatalf("log leaked config content %q: %s", forbidden, logged)
 		}

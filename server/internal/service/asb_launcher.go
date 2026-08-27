@@ -306,21 +306,22 @@ func BuildASBRuntimeMetadata(
 		alias = asbArtifactAlias(artifact.Ref, artifact.BuildID)
 	}
 	return map[string]any{
-		"kind":              CloudSandboxMetadataKind,
-		"sandbox_backend":   string(SandboxBackendASB),
-		"provider":          provider,
-		"artifact_kind":     CloudSandboxArtifactOCIImage,
-		"artifact_channel":  channel,
-		"artifact_ref":      artifact.Ref,
-		"artifact_build_id": artifact.BuildID,
-		"artifact_alias":    alias,
-		"artifact_digest":   artifact.Digest,
-		"artifact_status":   "READY",
-		"runtime_commit":    stringMetadataValue(artifact.ProviderData, "source_revision"),
-		"manifest_version":  7,
-		"capabilities":      ASBCapabilitiesForProviders(providers),
-		"runner_protocol":   string(fcE2BRunnerLaunchRootLog),
-		"runner":            FCE2BRunnerCommandForProvider(provider),
+		"kind":                 CloudSandboxMetadataKind,
+		"sandbox_backend":      string(SandboxBackendASB),
+		"provider":             provider,
+		"artifact_kind":        CloudSandboxArtifactOCIImage,
+		"artifact_channel":     channel,
+		"artifact_ref":         artifact.Ref,
+		"artifact_build_id":    artifact.BuildID,
+		"artifact_alias":       alias,
+		"artifact_digest":      artifact.Digest,
+		"artifact_status":      "READY",
+		"runtime_commit":       stringMetadataValue(artifact.ProviderData, "source_revision"),
+		"provider_fingerprint": stringMetadataValue(artifact.ProviderData, "provider_fingerprint"),
+		"manifest_version":     7,
+		"capabilities":         ASBCapabilitiesForProviders(providers),
+		"runner_protocol":      string(fcE2BRunnerLaunchRootLog),
+		"runner":               FCE2BRunnerCommandForProvider(provider),
 	}, nil
 }
 

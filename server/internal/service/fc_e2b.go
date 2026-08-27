@@ -110,7 +110,7 @@ type FCE2BConfig struct {
 	LLMBaseURL                        string
 	LLMAPIKey                         string
 	LLMModels                         []string
-	RuntimeProviders                  []string
+	RuntimeProviderFingerprints       map[string][]string
 	AgentIdentityControlBaseURL       string
 	AgentIdentitySandboxBaseURL       string
 	AgentIdentityBaseURL              string
@@ -404,6 +404,18 @@ func IsFCE2BSupportedProvider(provider string) bool {
 func IsRuntimeSourceCommit(commit string) bool {
 	commit = strings.ToLower(strings.TrimSpace(commit))
 	return len(commit) == 40 && isLowerHex(commit)
+}
+
+func RuntimeProvidersForFingerprint(catalog map[string][]string, fingerprint string) ([]string, bool) {
+	fingerprint = strings.ToLower(strings.TrimSpace(fingerprint))
+	if !runtimeProviderFingerprintPattern.MatchString(fingerprint) {
+		return nil, false
+	}
+	providers, found := catalog[fingerprint]
+	if !found || len(providers) == 0 {
+		return nil, false
+	}
+	return append([]string(nil), providers...), true
 }
 
 // FCE2BTemplateSupportsProvider reports whether provider is enabled in the
@@ -728,7 +740,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 	if err != nil {
 		return nil, fmt.Errorf("FC/E2B template list failed: %w", err)
 	}
-	templates, err := parseFCE2BTemplates(out, cfg.RuntimeProviders)
+	templates, err := parseFCE2BTemplates(out, cfg.RuntimeProviderFingerprints)
 	if err != nil {
 		return nil, err
 	}
@@ -740,7 +752,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 
 func parseFCE2BTemplates(
 	output string,
-	runtimeProviders []string,
+	providerFingerprints map[string][]string,
 ) ([]FCE2BTemplate, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
@@ -786,7 +798,8 @@ func parseFCE2BTemplates(
 			continue
 		}
 		displayAlias := t.ID
-		for _, alias := range stringValues(obj, "aliases", "names") {
+		aliases := stringValues(obj, "aliases", "names")
+		for _, alias := range aliases {
 			alias = strings.TrimSpace(alias)
 			if alias != "" && alias != "default" {
 				displayAlias = alias
@@ -795,14 +808,28 @@ func parseFCE2BTemplates(
 		}
 		t.Name = displayAlias
 		t.Template = displayAlias
-		t.ManifestVersion = 7
-		t.Providers = append([]string(nil), runtimeProviders...)
-		t.Capabilities = runtimeconfig.CapabilitiesForProviders(runtimeProviders)
+		for _, alias := range aliases {
+			matches := fcE2BTemplateProviderFingerprintAliasPattern.FindStringSubmatch(strings.TrimSpace(alias))
+			if matches == nil {
+				continue
+			}
+			providers, found := RuntimeProvidersForFingerprint(providerFingerprints, matches[1])
+			if !found {
+				continue
+			}
+			t.ManifestVersion = 7
+			t.Providers = append([]string(nil), providers...)
+			t.Capabilities = runtimeconfig.CapabilitiesForProviders(providers)
+			break
+		}
 		t.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
 		templates = append(templates, t)
 	}
 	return templates, nil
 }
+
+var fcE2BTemplateProviderFingerprintAliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r1-[0-9a-f]{6}$`)
+var runtimeProviderFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func stringValues(obj map[string]any, keys ...string) []string {
 	values := make([]string, 0)

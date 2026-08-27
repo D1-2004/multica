@@ -330,6 +330,7 @@
       "artifact_build_id": "Aone build ID",
       "artifact_digest": "Image digest",
       "artifact_alias": "Display alias (optional)",
+      "provider_fingerprint": "Provider-set fingerprint",
       "provider": "Runtime",
       "name": "Name",
       "visibility": "Visibility"
@@ -354,6 +355,7 @@
     "artifact_built_at": "Aone build time",
     "artifact_digest": "Image digest",
     "git_commit": "Source commit",
+    "provider_fingerprint": "Provider-set fingerprint",
     "artifact_hint_asb": "The image reference must end with the same sha256 digest. The build time must match the Aone build record. Use the full 40-character source commit.",
     "history_title": "Version history",
     "history_count": "Latest {{count}} versions",

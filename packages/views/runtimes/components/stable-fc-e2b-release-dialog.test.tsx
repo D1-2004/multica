@@ -61,6 +61,8 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 
 vi.mock("@multica/core/runtimes", () => ({
+  fcE2BProviderForTemplate: (template: { providers?: string[] }) =>
+    template.providers?.[0] ?? null,
   isReadyFCE2BTemplate: (template: { id?: string; status?: string }) =>
     Boolean(
       template.id?.trim() &&
@@ -420,6 +422,9 @@ describe("StableFCE2BReleaseDialog", () => {
     fireEvent.change(screen.getByLabelText("Source commit"), {
       target: { value: commit },
     });
+    fireEvent.change(screen.getByLabelText("Provider-set fingerprint"), {
+      target: { value: "a2eb67817f146ef4" },
+    });
 
     fireEvent.click(
       screen.getByRole("button", {
@@ -437,6 +442,7 @@ describe("StableFCE2BReleaseDialog", () => {
           artifact_built_at: "2026-07-30T20:34:18+08:00",
           artifact_digest: digest,
           git_commit: commit,
+          provider_fingerprint: "a2eb67817f146ef4",
           note: "",
         },
       }),

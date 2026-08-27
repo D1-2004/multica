@@ -128,7 +128,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		LLMBaseURL:                        raw.Runtime.LLM.BaseURL,
 		LLMAPIKey:                         c.secrets.LLMAPIKey,
 		LLMModels:                         defaultModelFirst(raw.Runtime.LLM.Models, raw.Runtime.LLM.DefaultModel),
-		RuntimeProviders:                  runtimeProviders.Providers,
+		RuntimeProviderFingerprints:       runtimeProviders.Fingerprints,
 		AgentIdentityControlBaseURL:       raw.AgentIdentity.ControlBaseURL,
 		AgentIdentitySandboxBaseURL:       raw.AgentIdentity.SandboxBaseURL,
 		AgentIdentityBaseURL:              raw.AgentIdentity.SandboxBaseURL,

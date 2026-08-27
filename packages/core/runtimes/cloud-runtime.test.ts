@@ -232,7 +232,7 @@ describe("isReadyFCE2BTemplate", () => {
     expect(
       isReadyFCE2BTemplate(makeTemplate({ status: "building" })),
     ).toBe(false);
-    expect(isReadyFCE2BTemplate(makeTemplate({ providers: [] }))).toBe(false);
+    expect(isReadyFCE2BTemplate(makeTemplate({ providers: [] }))).toBe(true);
   });
 });
 

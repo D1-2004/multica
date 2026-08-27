@@ -158,7 +158,7 @@ func newDiamondService(logger *slog.Logger, production bool, factory diamondClie
 					slog.String("data_id", RuntimeProvidersDiamondDataID),
 					slog.Uint64("generation", current.Generation),
 					slog.String("sha256", current.SHA256),
-					slog.Int("count", len(current.Providers)),
+					slog.Int("count", len(current.Fingerprints)),
 					slog.String("error", applyErr.Error()),
 				)
 			}
@@ -232,7 +232,7 @@ func logRuntimeProvidersUpdate(logger *slog.Logger, message string, snapshot Run
 		slog.String("data_id", RuntimeProvidersDiamondDataID),
 		slog.Uint64("generation", snapshot.Generation),
 		slog.String("sha256", snapshot.SHA256),
-		slog.Int("count", len(snapshot.Providers)),
+		slog.Int("count", len(snapshot.Fingerprints)),
 	)
 }
 

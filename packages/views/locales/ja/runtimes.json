@@ -318,6 +318,7 @@
       "artifact_build_id": "Aone build ID",
       "artifact_digest": "イメージ digest",
       "artifact_alias": "表示名（任意）",
+      "provider_fingerprint": "Provider 構成フィンガープリント",
       "provider": "ランタイム",
       "name": "名前",
       "visibility": "可視性"
@@ -342,6 +343,7 @@
     "artifact_built_at": "Aone ビルド時刻",
     "artifact_digest": "イメージダイジェスト",
     "git_commit": "ソースコミット",
+    "provider_fingerprint": "Provider 構成フィンガープリント",
     "artifact_hint_asb": "イメージ参照の末尾は同じ sha256 ダイジェストにし、ビルド時刻は Aone の記録と一致させ、ソースコミットは 40 文字の完全な SHA を入力してください。",
     "history_title": "バージョン履歴",
     "history_count": "最新 {{count}} バージョン",

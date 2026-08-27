@@ -23,25 +23,25 @@ func TestAppRuntimeConfigReadsCurrentRuntimeProviderSnapshot(t *testing.T) {
 
 	first, err := remote.ApplyRuntimeProvidersJSON([]byte(`{
 	  "version": 1,
-	  "providers": ["hermes", "opencode"]
+	  "fingerprints": {"0e70a766342698a9": ["hermes", "opencode"]}
 }`))
 	if err != nil {
 		t.Fatalf("apply initial Runtime providers: %v", err)
 	}
 	app := &appRuntimeConfig{remote: remote}
 	initial := app.fce2b()
-	if got := initial.RuntimeProviders; len(got) != 2 || got[1] != "opencode" {
+	if got := initial.RuntimeProviderFingerprints["0e70a766342698a9"]; len(got) != 2 || got[1] != "opencode" {
 		t.Fatalf("initial providers = %#v", got)
 	}
 
-	initial.RuntimeProviders[0] = "mutated"
-	if got := remote.RuntimeProviders().Providers[0]; got != "hermes" {
+	initial.RuntimeProviderFingerprints["0e70a766342698a9"][0] = "mutated"
+	if got := remote.RuntimeProviders().Fingerprints["0e70a766342698a9"][0]; got != "hermes" {
 		t.Fatalf("caller mutated service snapshot: %q", got)
 	}
 
 	second, err := remote.ApplyRuntimeProvidersJSON([]byte(`{
 	  "version": 1,
-	  "providers": ["pi"]
+	  "fingerprints": {"ac20d08b3a999731": ["pi"]}
 }`))
 	if err != nil {
 		t.Fatalf("apply updated Runtime providers: %v", err)
@@ -50,7 +50,7 @@ func TestAppRuntimeConfigReadsCurrentRuntimeProviderSnapshot(t *testing.T) {
 		t.Fatalf("generation = %d, want %d", second.Generation, first.Generation+1)
 	}
 	updated := app.fce2b()
-	if got := updated.RuntimeProviders; len(got) != 1 || got[0] != "pi" {
+	if got := updated.RuntimeProviderFingerprints["ac20d08b3a999731"]; len(got) != 1 || got[0] != "pi" {
 		t.Fatalf("updated providers = %#v", got)
 	}
 }

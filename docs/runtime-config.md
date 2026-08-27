@@ -64,18 +64,19 @@ See [the complete example](runtime-config.example.json) for schema version 1.
 
 ## Runtime provider catalog
 
-The second managed document contains one deployment-wide provider list used when creating or updating FC and ASB Runtimes. It changes only when a provider is added or removed; releasing a new template or image does not require a Diamond update. Alias text and Runtime commits are never provider lookup keys. Multica does not inspect image contents, compare component versions, or use this document as an image-integrity check.
+The second managed document maps one opaque 16-character fingerprint to one provider combination. FC reads the fingerprint from the display alias; ASB release inputs carry the same fingerprint explicitly. The key is never recomputed from component versions and is not an image-integrity check. Releasing another image with the same provider combination does not require a Diamond update. Adding a provider creates one new fingerprint entry while retaining old combinations.
 
 The document has one strict schema:
 
 - `version` must be `1`;
-- `providers` is a duplicate-free list and may be empty;
-- the schema does not require an exact count;
-- template IDs, image references, aliases, commits, versions, and capabilities are not stored in this document.
+- `fingerprints` is an object and may be empty;
+- every key is exactly 16 lowercase hexadecimal characters;
+- every value is a duplicate-free provider list with no exact-count constraint;
+- template IDs, image references, commits, component versions, and capabilities are not stored in this document.
 
 See [the complete provider example](runtime-manifest-fingerprints.example.json). A valid listener update atomically replaces the entire catalog. An invalid update keeps the previous generation. Application logs contain only the Data ID, generation, entry count, and document SHA-256. The existing Data ID name is retained for deployment compatibility; its content is no longer a fingerprint or component-version document.
 
-A compact m7 alias is display text only; it is not an execution identity, a provider lookup key, or a source of component versions. FC execution identity remains the template ID. Runtime commits remain optional source-trace evidence outside Diamond.
+A compact m7 alias is display text and carries the opaque provider-combination fingerprint. It is not the execution identity and does not encode component versions. FC execution identity remains the template ID. Templates whose fingerprint is not in Diamond stay visible with no selectable providers, so they cannot be used for new Runtime creation or stable publication.
 
 ## Managed model pricing
 
@@ -89,7 +90,7 @@ See [the complete pricing example](runtime-model-pricing.example.json) and [the 
 
 ## Release procedure
 
-1. Build the runtime-settings JSON from the current environment snapshot without placing secrets in it, update the provider list only when the supported provider set changes, and build the model-pricing JSON from authoritative provider price sheets.
+1. Build the runtime-settings JSON from the current environment snapshot without placing secrets in it, add a fingerprint entry only when a new provider combination is introduced, and build the model-pricing JSON from authoritative provider price sheets.
 2. Validate the runtime-settings document with the same strict parser used by the server: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for the production document). Run `go test ./pkg/runtimeconfig ./pkg/modelpricing` to validate both managed catalogs.
 3. Publish the model-pricing Data ID first, then the runtime settings and provider catalog, before releasing the binary.
 4. Add `MULTICA_RUNTIME_CONFIG_SOURCE=diamond` and `MULTICA_RUNTIME_LLM_API_KEY` to the target Aone environment trait while preserving the complete old trait snapshot.

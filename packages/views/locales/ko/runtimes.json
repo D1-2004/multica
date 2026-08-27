@@ -318,6 +318,7 @@
       "artifact_build_id": "Aone build ID",
       "artifact_digest": "이미지 digest",
       "artifact_alias": "표시 별칭(선택)",
+      "provider_fingerprint": "Provider 구성 지문",
       "provider": "런타임",
       "name": "이름",
       "visibility": "공개 범위"
@@ -342,6 +343,7 @@
     "artifact_built_at": "Aone 빌드 시간",
     "artifact_digest": "이미지 다이제스트",
     "git_commit": "소스 커밋",
+    "provider_fingerprint": "Provider 구성 지문",
     "artifact_hint_asb": "이미지 참조는 동일한 sha256 다이제스트로 끝나야 합니다. 빌드 시간은 Aone 빌드 기록과 일치해야 하며 소스 커밋은 전체 40자 SHA를 입력해야 합니다.",
     "history_title": "버전 기록",
     "history_count": "최근 {{count}}개 버전",

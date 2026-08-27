@@ -1,12 +1,14 @@
 {
   "version": 1,
-  "providers": [
-    "hermes",
-    "opencode",
-    "pi",
-    "dsh",
-    "opencode-v2",
-    "claude",
-    "codex"
-  ]
+  "fingerprints": {
+    "a2eb67817f146ef4": [
+      "hermes",
+      "opencode",
+      "pi",
+      "dsh",
+      "opencode-v2",
+      "claude",
+      "codex"
+    ]
+  }
 }

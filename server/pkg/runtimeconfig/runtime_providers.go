@@ -17,21 +17,24 @@ const (
 	RuntimeProvidersDiamondDataID = "dt-fde-multica-runtime-manifest-fingerprints.json"
 )
 
-var runtimeProviderNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+var (
+	runtimeProviderFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	runtimeProviderNamePattern        = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+)
 
-// RuntimeProvidersConfig is the deployment-wide provider selection list.
-// It changes only when a provider is added or removed; image/template releases
-// do not require a Diamond update.
+// RuntimeProvidersConfig maps one opaque image fingerprint to one provider
+// combination. The fingerprint is read from the display alias and is never
+// recomputed from image contents or component versions.
 type RuntimeProvidersConfig struct {
-	Version   int      `json:"version"`
-	Providers []string `json:"providers"`
+	Version      int                 `json:"version"`
+	Fingerprints map[string][]string `json:"fingerprints"`
 }
 
 type RuntimeProvidersSnapshot struct {
-	Version    int
-	Providers  []string
-	Generation uint64
-	SHA256     string
+	Version      int
+	Fingerprints map[string][]string
+	Generation   uint64
+	SHA256       string
 }
 
 func ParseRuntimeProviders(data []byte) (RuntimeProvidersConfig, error) {
@@ -58,18 +61,23 @@ func (c RuntimeProvidersConfig) Validate() error {
 	if c.Version != RuntimeProvidersSchemaVersion {
 		return fmt.Errorf("Runtime providers version must be %d", RuntimeProvidersSchemaVersion)
 	}
-	if c.Providers == nil {
-		return errors.New("Runtime providers list is required")
+	if c.Fingerprints == nil {
+		return errors.New("Runtime provider fingerprints map is required")
 	}
-	seen := make(map[string]struct{}, len(c.Providers))
-	for _, provider := range c.Providers {
-		if !runtimeProviderNamePattern.MatchString(provider) || strings.TrimSpace(provider) != provider {
-			return errors.New("Runtime provider names contain unsupported characters")
+	for fingerprint, providers := range c.Fingerprints {
+		if !runtimeProviderFingerprintPattern.MatchString(fingerprint) {
+			return errors.New("Runtime provider fingerprints must be 16 lowercase hexadecimal characters")
 		}
-		if _, exists := seen[provider]; exists {
-			return errors.New("Runtime provider list must not contain duplicates")
+		seen := make(map[string]struct{}, len(providers))
+		for _, provider := range providers {
+			if !runtimeProviderNamePattern.MatchString(provider) || strings.TrimSpace(provider) != provider {
+				return errors.New("Runtime provider names contain unsupported characters")
+			}
+			if _, exists := seen[provider]; exists {
+				return errors.New("Runtime provider lists must not contain duplicates")
+			}
+			seen[provider] = struct{}{}
 		}
-		seen[provider] = struct{}{}
 	}
 	return nil
 }
@@ -103,10 +111,10 @@ func (s *Service) ApplyRuntimeProvidersJSON(data []byte) (RuntimeProvidersSnapsh
 	}
 	sum := sha256.Sum256(data)
 	next := &RuntimeProvidersSnapshot{
-		Version:    cfg.Version,
-		Providers:  append([]string(nil), cfg.Providers...),
-		Generation: generation,
-		SHA256:     hex.EncodeToString(sum[:]),
+		Version:      cfg.Version,
+		Fingerprints: cloneRuntimeProviderFingerprints(cfg.Fingerprints),
+		Generation:   generation,
+		SHA256:       hex.EncodeToString(sum[:]),
 	}
 	s.runtimeProviders.Store(next)
 	return cloneRuntimeProvidersSnapshot(*next), nil
@@ -145,13 +153,24 @@ func CapabilitiesForProviders(providers []string) []string {
 
 func cloneRuntimeProvidersConfig(in RuntimeProvidersConfig) RuntimeProvidersConfig {
 	return RuntimeProvidersConfig{
-		Version:   in.Version,
-		Providers: append([]string(nil), in.Providers...),
+		Version:      in.Version,
+		Fingerprints: cloneRuntimeProviderFingerprints(in.Fingerprints),
 	}
 }
 
 func cloneRuntimeProvidersSnapshot(in RuntimeProvidersSnapshot) RuntimeProvidersSnapshot {
 	out := in
-	out.Providers = append([]string(nil), in.Providers...)
+	out.Fingerprints = cloneRuntimeProviderFingerprints(in.Fingerprints)
+	return out
+}
+
+func cloneRuntimeProviderFingerprints(in map[string][]string) map[string][]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string][]string, len(in))
+	for fingerprint, providers := range in {
+		out[fingerprint] = append([]string(nil), providers...)
+	}
 	return out
 }

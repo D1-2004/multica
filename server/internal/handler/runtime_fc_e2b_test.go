@@ -32,9 +32,9 @@ func (r *staticFCE2BTemplateRunner) Run(context.Context, string, []string, []str
 }
 
 const (
-	testOldFCE2BManifestAlias     = "multica-m1-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdi-r1-aaaaaa"
-	testNewFCE2BManifestAlias     = "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-bbbbbb"
-	testPendingFCE2BManifestAlias = "multica-m3-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdims-r1-cccccc"
+	testOldFCE2BManifestAlias     = "multica-m7-vda499f3161a007c0-r1-aaaaaa"
+	testNewFCE2BManifestAlias     = "multica-m7-vda499f3161a007c0-r1-bbbbbb"
+	testPendingFCE2BManifestAlias = "multica-m7-vda499f3161a007c0-r1-cccccc"
 )
 
 func TestFCE2BTemplateCapabilities(t *testing.T) {
@@ -215,15 +215,17 @@ func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 
 	h := *testHandler
 	h.cfg.FCE2B = service.FCE2BConfig{
-		Enabled:             true,
-		ServerURL:           "https://fc-e2b.test",
-		APIKey:              "test-api-key",
-		APIURL:              "https://fc-e2b.test",
-		Domain:              "fc-e2b.test",
-		LLMBaseURL:          "https://llm.test",
-		LLMAPIKey:           "test-llm-key",
-		LLMModels:           []string{"test-model"},
-		RuntimeProviders:    []string{"hermes"},
+		Enabled:    true,
+		ServerURL:  "https://fc-e2b.test",
+		APIKey:     "test-api-key",
+		APIURL:     "https://fc-e2b.test",
+		Domain:     "fc-e2b.test",
+		LLMBaseURL: "https://llm.test",
+		LLMAPIKey:  "test-llm-key",
+		LLMModels:  []string{"test-model"},
+		RuntimeProviderFingerprints: map[string][]string{
+			"da499f3161a007c0": {"hermes"},
+		},
 		CLIPath:             cliPath,
 		TimeoutSeconds:      60,
 		SandboxReadyTimeout: time.Minute,
@@ -329,12 +331,14 @@ func fce2bTemplateRotationHandler(t *testing.T) (*Handler, *staticFCE2BTemplateR
 	launcher.Runner = runner
 	h.FCE2BLauncher = &launcher
 	h.cfg.FCE2B = service.FCE2BConfig{
-		Enabled:          true,
-		APIKey:           "test-api-key",
-		APIURL:           "https://fc-e2b.test",
-		Domain:           "fc-e2b.test",
-		CLIPath:          "e2b-test",
-		RuntimeProviders: []string{"hermes", "opencode", "pi"},
+		Enabled: true,
+		APIKey:  "test-api-key",
+		APIURL:  "https://fc-e2b.test",
+		Domain:  "fc-e2b.test",
+		CLIPath: "e2b-test",
+		RuntimeProviderFingerprints: map[string][]string{
+			"da499f3161a007c0": {"hermes", "opencode", "pi"},
+		},
 	}
 	h.cfg.StableRuntimePublisherUserIDs = map[string]struct{}{testUserID: {}}
 	return &h, runner

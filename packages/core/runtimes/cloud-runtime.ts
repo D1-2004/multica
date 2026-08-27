@@ -72,6 +72,7 @@ export interface CreateCloudSandboxRuntimeRequest {
   artifact_alias?: string;
 	artifact_digest?: string;
 	runtime_commit?: string;
+	provider_fingerprint?: string;
   artifact_channel?: CloudSandboxArtifactChannel;
   template_id?: string;
   provider?: FCE2BRuntimeProvider;
@@ -88,6 +89,7 @@ export interface UpdateCloudSandboxRuntimeArtifactRequest {
   artifact_alias?: string;
 	artifact_digest: string;
 	runtime_commit?: string;
+	provider_fingerprint?: string;
 }
 
 export interface UpdateASBRuntimeCredentialRequest {
@@ -281,6 +283,7 @@ export interface CreateCloudSandboxStableReleaseRequest {
   artifact_built_at?: string;
   artifact_digest?: string;
 	git_commit?: string;
+	provider_fingerprint?: string;
 	template_id?: string;
   note?: string;
 }
@@ -404,10 +407,7 @@ export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
   return (
     typeof template.id === "string" &&
     template.id.trim().length > 0 &&
-		template.status?.trim().toLowerCase() === "ready" &&
-    template.providers.some((provider) =>
-      (FC_E2B_RUNTIME_PROVIDERS as readonly string[]).includes(provider),
-    )
+		template.status?.trim().toLowerCase() === "ready"
   );
 }
 

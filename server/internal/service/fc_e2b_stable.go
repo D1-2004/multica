@@ -122,17 +122,18 @@ type FCE2BStableRelease struct {
 }
 
 type CreateFCE2BStableReleaseInput struct {
-	IdempotencyKey  string
-	SandboxBackend  SandboxBackendKind
-	ArtifactRef     string
-	ArtifactBuildID string
-	ArtifactBuiltAt *time.Time
-	ArtifactDigest  string
-	GitCommit       string
-	TemplateID      string
-	Note            string
-	ActorUserID     pgtype.UUID
-	Bootstrap       bool
+	IdempotencyKey      string
+	SandboxBackend      SandboxBackendKind
+	ArtifactRef         string
+	ArtifactBuildID     string
+	ArtifactBuiltAt     *time.Time
+	ArtifactDigest      string
+	GitCommit           string
+	ProviderFingerprint string
+	TemplateID          string
+	Note                string
+	ActorUserID         pgtype.UUID
+	Bootstrap           bool
 }
 
 type stableRuntimeTarget struct {
@@ -589,6 +590,7 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 	input.ArtifactBuildID = strings.TrimSpace(input.ArtifactBuildID)
 	input.ArtifactDigest = strings.TrimSpace(input.ArtifactDigest)
 	input.GitCommit = strings.ToLower(strings.TrimSpace(input.GitCommit))
+	input.ProviderFingerprint = strings.ToLower(strings.TrimSpace(input.ProviderFingerprint))
 	input.Note = strings.TrimSpace(input.Note)
 	backend, err := stableSandboxBackend(input.SandboxBackend)
 	if err != nil {
@@ -616,8 +618,9 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 			input.ArtifactBuiltAt == nil ||
 			!isSHA256Digest(input.ArtifactDigest) ||
 			len(input.GitCommit) != 40 ||
-			!isLowerHex(input.GitCommit) {
-			return FCE2BStableRelease{}, false, errors.New("ASB release requires an immutable artifact_ref, artifact_build_id, artifact_built_at, artifact_digest, and 40-character git_commit")
+			!isLowerHex(input.GitCommit) ||
+			!runtimeProviderFingerprintPattern.MatchString(input.ProviderFingerprint) {
+			return FCE2BStableRelease{}, false, errors.New("ASB release requires an immutable artifact_ref, artifact_build_id, artifact_built_at, artifact_digest, 40-character git_commit, and provider_fingerprint")
 		}
 		if !strings.HasSuffix(input.ArtifactRef, "@"+input.ArtifactDigest) {
 			return FCE2BStableRelease{}, false, errors.New("ASB artifact_ref and artifact_digest do not match")
@@ -656,6 +659,14 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 		return existing, false, nil
 	}
 
+	initialManifest := map[string]any{}
+	if backend == SandboxBackendASB {
+		initialManifest["provider_fingerprint"] = input.ProviderFingerprint
+	}
+	initialManifestJSON, err := json.Marshal(initialManifest)
+	if err != nil {
+		return FCE2BStableRelease{}, false, err
+	}
 	var releaseID pgtype.UUID
 	err = tx.QueryRow(ctx, `
 		INSERT INTO fc_e2b_stable_release (
@@ -669,14 +680,15 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 			artifact_built_at,
 			artifact_digest,
 			git_commit,
+			manifest,
 			note,
 			actor_user_id,
 			bootstrap
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
 		RETURNING id
 	`, input.IdempotencyKey, fingerprint, input.TemplateID,
 		backend, artifactKind, input.ArtifactRef, input.ArtifactBuildID,
-		input.ArtifactBuiltAt, input.ArtifactDigest, input.GitCommit, input.Note,
+		input.ArtifactBuiltAt, input.ArtifactDigest, input.GitCommit, string(initialManifestJSON), input.Note,
 		input.ActorUserID, input.Bootstrap,
 	).Scan(&releaseID)
 	if err != nil {
@@ -1347,16 +1359,21 @@ func (s *FCE2BStableService) validateASBRelease(
 	}
 	sourceRevision := release.GitCommit[:6]
 	launcher := s.Launcher.withCurrentConfig()
-	providers := append([]string(nil), launcher.Config.RuntimeProviders...)
-	if len(providers) == 0 {
-		return s.failValidation(ctx, release.ID, token, errors.New("Runtime provider catalog is empty"))
+	providerFingerprint := stringMetadataValue(release.Manifest, "provider_fingerprint")
+	providers, found := RuntimeProvidersForFingerprint(
+		launcher.Config.RuntimeProviderFingerprints,
+		providerFingerprint,
+	)
+	if !found {
+		return s.failValidation(ctx, release.ID, token, errors.New("ASB provider_fingerprint has no provider catalog entry"))
 	}
 	manifest := map[string]any{
-		"schema_version":  7,
-		"providers":       providers,
-		"source_revision": release.GitCommit,
-		"artifact_digest": release.ArtifactDigest,
-		"runner_protocol": string(fcE2BRunnerLaunchRootLog),
+		"provider_fingerprint": providerFingerprint,
+		"schema_version":       7,
+		"providers":            providers,
+		"source_revision":      release.GitCommit,
+		"artifact_digest":      release.ArtifactDigest,
+		"runner_protocol":      string(fcE2BRunnerLaunchRootLog),
 		"capabilities_by_backend": map[string][]string{
 			string(SandboxBackendASB): ASBCapabilitiesForProviders(providers),
 		},
@@ -3344,6 +3361,7 @@ func stableReleaseFingerprint(input CreateFCE2BStableReleaseInput) string {
 		}(),
 		input.ArtifactDigest,
 		input.GitCommit,
+		input.ProviderFingerprint,
 		input.Note,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:])
