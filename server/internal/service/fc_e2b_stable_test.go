@@ -106,6 +106,15 @@ func TestClaimStableRolloutForAdvanceLoadsCanonicalReleaseProjection(t *testing.
 	}
 }
 
+func TestFCE2BStableValidationTransitionUsesTimestampForNextBatch(t *testing.T) {
+	if !strings.Contains(fcE2BStableValidationTransitionSQL, "next_batch_at = $10") {
+		t.Fatal("FC/E2B validation did not bind next_batch_at to the rollout timestamp")
+	}
+	if !strings.Contains(fcE2BStableValidationTransitionSQL, "WHERE id = $11 AND lease_token = $12") {
+		t.Fatal("FC/E2B validation release identity placeholders changed unexpectedly")
+	}
+}
+
 func TestStableBatchCutoffs(t *testing.T) {
 	tests := []struct {
 		total int

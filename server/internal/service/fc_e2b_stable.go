@@ -44,6 +44,30 @@ const (
 	asbStableChannelLockKey     int32 = 2
 )
 
+const fcE2BStableValidationTransitionSQL = `
+		UPDATE fc_e2b_stable_release
+		SET template_alias = $1,
+		    manifest = $2::jsonb,
+		    source_revision = $3,
+		    previous_template_id = $4,
+		    previous_template_alias = $5,
+		    previous_artifact_ref = $6,
+		    previous_artifact_build_id = $7,
+		    previous_artifact_digest = $8,
+		    status = 'developer_rollout',
+		    current_batch = 0,
+		    target_percentage = 0,
+		    total_targets = $9,
+		    developer_rollout_started_at = $10,
+		    rollout_started_at = NULL,
+		    batch_started_at = NULL,
+		    next_batch_at = $10,
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    updated_at = now()
+		WHERE id = $11 AND lease_token = $12
+	`
+
 var (
 	ErrFCE2BStableChannelUninitialized = errors.New("FC/E2B stable channel is not initialized")
 	ErrFCE2BStableReleaseConflict      = errors.New("another FC/E2B stable release is active")
@@ -1309,29 +1333,8 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 		}
 	}
 	startedAt := time.Now()
-	_, err = tx.Exec(ctx, `
-		UPDATE fc_e2b_stable_release
-		SET template_alias = $1,
-		    manifest = $2::jsonb,
-		    source_revision = $3,
-		    previous_template_id = $4,
-		    previous_template_alias = $5,
-		    previous_artifact_ref = $6,
-		    previous_artifact_build_id = $7,
-		    previous_artifact_digest = $8,
-		    status = 'developer_rollout',
-		    current_batch = 0,
-		    target_percentage = 0,
-		    total_targets = $9,
-		    developer_rollout_started_at = $10,
-		    rollout_started_at = NULL,
-		    batch_started_at = NULL,
-		    next_batch_at = $11,
-		    lease_token = NULL,
-		    lease_expires_at = NULL,
-		    updated_at = now()
-		WHERE id = $11 AND lease_token = $12
-	`, selected.Template, string(manifestJSON), selected.SourceRevision, current.TemplateID,
+	_, err = tx.Exec(ctx, fcE2BStableValidationTransitionSQL,
+		selected.Template, string(manifestJSON), selected.SourceRevision, current.TemplateID,
 		current.TemplateAlias, current.ArtifactRef,
 		current.ArtifactBuildID, current.ArtifactDigest, len(targets), startedAt,
 		release.ID, token)
