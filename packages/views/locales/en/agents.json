@@ -182,6 +182,8 @@
     "prop_speed": "Speed",
     "prop_visibility": "Visibility",
     "prop_concurrency": "Concurrency",
+    "prop_chat_session_resume": "Resume last session",
+    "prop_chat_session_resume_hint": "In 1:1 chat, reuse the previous Claude/Codex session when the sandbox is still warm, the last reply finished within 20 minutes, and this agent's instructions, skills, and runtime have not changed. Faster follow-ups; falls back to full history if resume is not possible.",
     "prop_owner": "Owner",
     "prop_created": "Created",
     "prop_updated": "Updated",

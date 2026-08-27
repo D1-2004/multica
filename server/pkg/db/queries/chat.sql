@@ -263,6 +263,31 @@ SET status = CASE WHEN @archived::bool THEN 'archived' ELSE 'active' END,
 WHERE id = $1
 RETURNING *;
 
+-- name: GetChatSessionResumeIdentity :one
+SELECT resume_identity FROM chat_session WHERE id = $1;
+
+-- name: SetChatSessionResumeIdentity :exec
+-- Records the agent identity (instructions + skills + runtime) this chat
+-- turn is about to run with, so the next claim can refuse --resume if the
+-- agent changed in between. Empty identity is a valid snapshot for a turn
+-- that loaded no agent payload; the next claim then fails closed.
+UPDATE chat_session
+SET resume_identity = sqlc.arg('resume_identity'),
+    updated_at = now()
+WHERE id = sqlc.arg('id');
+
+-- name: GetLastCompletedChatTaskAt :one
+-- The warm-resume window is measured from the last *completed* answer, not
+-- from last_used_at / cancelled / failed rows. No row means there is nothing
+-- to resume from.
+SELECT completed_at
+FROM agent_task_queue
+WHERE chat_session_id = $1
+  AND status = 'completed'
+  AND completed_at IS NOT NULL
+ORDER BY completed_at DESC
+LIMIT 1;
+
 -- name: UpdateChatSessionSession :exec
 -- Updates the resume pointer for a chat session. Empty/NULL inputs are
 -- ignored via COALESCE so a task that completes without a session_id (e.g.

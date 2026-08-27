@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen } from "@testing-library/react";
+import { cleanup, fireEvent, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentDetailInspector } from "./agent-detail-inspector";
@@ -68,5 +68,27 @@ describe("AgentDetailInspector labels", () => {
 
     expect(screen.queryByTestId("resource-label-picker")).toBeNull();
     expect(screen.queryByText("Labels")).toBeNull();
+  });
+
+  it("saves chat session resume independently of other execution fields", async () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={{ ...agent, chat_session_resume: false }}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const toggle = screen.getByLabelText("Resume last session");
+    fireEvent.click(toggle);
+    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+      chat_session_resume: true,
+    });
+    expect(toggle).toBeChecked();
   });
 });

@@ -1008,6 +1008,43 @@ func TestListAgents_ResponseHasNoCustomEnv(t *testing.T) {
 	}
 }
 
+func TestListAgents_IncludesChatSessionResume(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentName := "resume-list-agent"
+	agentID := createHandlerTestAgent(t, agentName, nil)
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET chat_session_resume = true WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("enable chat_session_resume: %v", err)
+	}
+
+	req := newRequest("GET", "/agents", nil)
+	w := httptest.NewRecorder()
+	testHandler.ListAgents(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var rawAgents []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rawAgents); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	var found map[string]any
+	for _, a := range rawAgents {
+		if name, _ := a["name"].(string); name == agentName {
+			found = a
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("agent not found in list response")
+	}
+	if got, _ := found["chat_session_resume"].(bool); !got {
+		t.Errorf("chat_session_resume expected true, got %v", found["chat_session_resume"])
+	}
+}
+
 // TestGetAgentEnv_OwnerSucceedsAndAudits exercises the happy path: an
 // agent owner reveals env, and the response carries the plaintext map.
 // The activity_log row is checked at the end so the audit trail is
