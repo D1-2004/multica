@@ -219,6 +219,10 @@ and `ps` can see it — avoid it for real secrets.
 
 Read-side facts (these are the wrong assumptions to avoid):
 
+- At claim time, blocklist-checked names and values are injected into the
+  provider process. Hermes additionally writes those exact names (never the
+  values) into its task-local `tools.env_passthrough`, because Hermes otherwise
+  removes credential-like variables from Python and terminal tool subprocesses.
 - Agent resources never expose plaintext `custom_env`. `agent
   list/get/create/update` and WS events return only `has_custom_env` (bool) and
   `custom_env_key_count` (int).

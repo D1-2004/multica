@@ -3,6 +3,7 @@ package execenv
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -115,6 +116,65 @@ func TestPrepareHermesHomeOverlay(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(hermesHome, "skills", "personal-notes")); !os.IsNotExist(err) {
 		t.Error("user global skill should be referenced via external_dirs, not copied into the task-local skills/")
+	}
+}
+
+func TestPrepareHermesHomeAuthorizesAgentCustomEnvForTools(t *testing.T) {
+	t.Parallel()
+	sharedHome := t.TempDir()
+	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "tools:\n  env_passthrough:\n    - EXISTING_TOOL_ENV\n")
+
+	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
+	env := map[string]string{
+		"DINGTALK_IMAGE_APP_CREDENTIAL": "secret-value",
+		"DINGTALK_IMAGE_APP_ID":         "app-id",
+		"EXISTING_TOOL_ENV":             "preserved",
+	}
+	if err := prepareHermesHome(
+		hermesHome,
+		sharedHome,
+		false,
+		[]SkillContextForEnv{{Name: "Image", Content: "Use image tools."}},
+		env,
+		"",
+		testLogger(),
+	); err != nil {
+		t.Fatalf("prepareHermesHome failed: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(hermesHome, "config.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed struct {
+		Tools struct {
+			EnvPassthrough []string `yaml:"env_passthrough"`
+		} `yaml:"tools"`
+	}
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"EXISTING_TOOL_ENV",
+		"DINGTALK_IMAGE_APP_CREDENTIAL",
+		"DINGTALK_IMAGE_APP_ID",
+	}
+	if !reflect.DeepEqual(parsed.Tools.EnvPassthrough, want) {
+		t.Fatalf("tools.env_passthrough = %v, want %v", parsed.Tools.EnvPassthrough, want)
+	}
+	if strings.Contains(string(data), "secret-value") || strings.Contains(string(data), "app-id") {
+		t.Fatal("derived Hermes config must contain environment names only")
+	}
+}
+
+func TestMergeHermesEnvPassthroughRejectsInvalidExistingShape(t *testing.T) {
+	t.Parallel()
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte("tools:\n  env_passthrough: API_KEY\n"), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := mergeHermesEnvPassthrough(&doc, map[string]string{"API_KEY": "secret"}); err == nil {
+		t.Fatal("expected invalid tools.env_passthrough shape to fail closed")
 	}
 }
 

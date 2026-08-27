@@ -139,6 +139,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Exact task Runtime passed to skill assembly | 1992, 1996 | Both ref and full claims pass the authorized Runtime plus persisted startup backend, not the Agent's current binding |
 | Workspace skill capability filter | `task.go` 5519–5524 | Runtime-compatible workspace skills first, then built-ins and capability-gated DWS |
 | Runtime payload | `daemon.go` `TaskAgentData` | Carries `Instructions`, `Skills`, `CustomEnv`, `CustomArgs`, `Model`, `ThinkingLevel`, `ServiceTier`, and `McpConfig`; metadata-only fields remain absent |
+| Hermes tool env policy | `execenv/hermes_home.go` `mergeHermesEnvPassthrough` | Adds blocklist-checked Agent custom-env names to task-local `tools.env_passthrough`; values remain process-only |
 
 ## Skill loading — `server/internal/service/task.go`
 

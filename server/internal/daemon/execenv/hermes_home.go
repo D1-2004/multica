@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -629,6 +630,9 @@ func writeDerivedHermesConfig(sharedHome, hermesHome string, env map[string]stri
 		if err := setHermesExternalDirs(doc, computeHermesExternalDirs(sharedHome, nil, env)); err != nil {
 			return err
 		}
+		if err := mergeHermesEnvPassthrough(doc, env); err != nil {
+			return err
+		}
 		return marshalYAMLToFile(doc, dstConfig)
 	}
 
@@ -642,11 +646,68 @@ func writeDerivedHermesConfig(sharedHome, hermesHome string, env map[string]stri
 		logger.Warn("execenv: hermes-home set external_dirs failed; copying verbatim", "error", err)
 		return writeFileAtomic(dstConfig, data, 0o600)
 	}
+	if err := mergeHermesEnvPassthrough(&doc, env); err != nil {
+		return err
+	}
 	// Disable any host-configured external memory backend (memory.provider) so a
 	// Supermemory/Hindsight/etc. bank isn't shared across managed tasks; the
 	// built-in per-task memories/ dir is already isolated above.
 	disableHermesMemoryProvider(&doc)
 	return marshalYAMLToFile(&doc, dstConfig)
+}
+
+// mergeHermesEnvPassthrough authorizes the exact agent custom_env names in
+// Hermes' own tool-sandbox policy. Hermes intentionally removes credential-like
+// variables from terminal and Python tool subprocesses unless they are listed
+// under tools.env_passthrough. The daemon already blocklist-checks the map
+// before it reaches this function, so only the names explicitly configured on
+// this Agent are added; values remain process-only and are never serialized.
+func mergeHermesEnvPassthrough(doc *yaml.Node, env map[string]string) error {
+	if len(env) == 0 {
+		return nil
+	}
+	top := yamlDocumentRoot(doc)
+	if top == nil {
+		return fmt.Errorf("hermes config: unexpected root node")
+	}
+	tools := yamlMapValue(top, "tools")
+	if tools == nil || tools.Kind != yaml.MappingNode {
+		tools = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		yamlSetMapValue(top, "tools", tools)
+	}
+
+	values := make([]string, 0, len(env))
+	seen := make(map[string]struct{}, len(env))
+	if existing := yamlMapValue(tools, "env_passthrough"); existing != nil {
+		if existing.Kind != yaml.SequenceNode {
+			return fmt.Errorf("hermes config: tools.env_passthrough must be a list")
+		}
+		for _, item := range existing.Content {
+			if item.Kind != yaml.ScalarNode || strings.TrimSpace(item.Value) == "" {
+				return fmt.Errorf("hermes config: tools.env_passthrough contains an invalid name")
+			}
+			if _, ok := seen[item.Value]; ok {
+				continue
+			}
+			seen[item.Value] = struct{}{}
+			values = append(values, item.Value)
+		}
+	}
+
+	names := make([]string, 0, len(env))
+	for name := range env {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		values = append(values, name)
+	}
+	yamlSetMapValue(tools, "env_passthrough", yamlStringSeq(values))
+	return nil
 }
 
 // disableHermesMemoryProvider forces skills-adjacent `memory.provider` to empty
