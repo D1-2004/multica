@@ -92,6 +92,7 @@ func init() {
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-built-at", "", "ASB artifact build time in RFC3339 format")
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-digest", "", "Artifact sha256 digest")
 	runtimeStableReleaseCreateCmd.Flags().String("git-commit", "", "Source Git commit")
+	runtimeStableReleaseCreateCmd.Flags().String("provider-fingerprint", "", "Runtime provider combination fingerprint")
 	runtimeStableReleaseCreateCmd.Flags().String("template-id", "", "FC/E2B template ID")
 	runtimeStableReleaseCreateCmd.Flags().String("note", "", "Operator note")
 	runtimeStableReleaseCreateCmd.Flags().String("idempotency-key", "", "Required retry-safe operation key")
@@ -287,13 +288,14 @@ func runRuntimeStableReleaseCreate(cmd *cobra.Command, _ []string) error {
 	}
 	body := map[string]any{"sandbox_backend": backend}
 	for flag, field := range map[string]string{
-		"artifact-ref":      "artifact_ref",
-		"artifact-build-id": "artifact_build_id",
-		"artifact-built-at": "artifact_built_at",
-		"artifact-digest":   "artifact_digest",
-		"git-commit":        "git_commit",
-		"template-id":       "template_id",
-		"note":              "note",
+		"artifact-ref":         "artifact_ref",
+		"artifact-build-id":    "artifact_build_id",
+		"artifact-built-at":    "artifact_built_at",
+		"artifact-digest":      "artifact_digest",
+		"git-commit":           "git_commit",
+		"provider-fingerprint": "provider_fingerprint",
+		"template-id":          "template_id",
+		"note":                 "note",
 	} {
 		value, _ := cmd.Flags().GetString(flag)
 		if value = strings.TrimSpace(value); value != "" {
@@ -301,7 +303,7 @@ func runRuntimeStableReleaseCreate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if backend == "asb" {
-		for _, field := range []string{"artifact_ref", "artifact_build_id", "artifact_built_at", "artifact_digest", "git_commit"} {
+		for _, field := range []string{"artifact_ref", "artifact_build_id", "artifact_built_at", "artifact_digest", "git_commit", "provider_fingerprint"} {
 			if _, ok := body[field]; !ok {
 				return fmt.Errorf("--%s is required for --backend asb", strings.ReplaceAll(field, "_", "-"))
 			}

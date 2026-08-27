@@ -52,12 +52,13 @@ func TestRunRuntimeStableReleaseCreateSendsIdempotencyKey(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		for key, want := range map[string]string{
-			"sandbox_backend":   "asb",
-			"artifact_ref":      "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"artifact_build_id": "42",
-			"artifact_built_at": "2026-07-30T20:34:18+08:00",
-			"artifact_digest":   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-			"git_commit":        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"sandbox_backend":      "asb",
+			"artifact_ref":         "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"artifact_build_id":    "42",
+			"artifact_built_at":    "2026-07-30T20:34:18+08:00",
+			"artifact_digest":      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"git_commit":           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			"provider_fingerprint": "a2eb67817f146ef4",
 		} {
 			if got := body[key]; got != want {
 				t.Fatalf("%s = %#v, want %q", key, got, want)
@@ -73,12 +74,13 @@ func TestRunRuntimeStableReleaseCreateSendsIdempotencyKey(t *testing.T) {
 
 	cmd := newRuntimeStableTestCmd(srv.URL)
 	for name, value := range map[string]string{
-		"artifact-ref":      "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"artifact-build-id": "42",
-		"artifact-built-at": "2026-07-30T20:34:18+08:00",
-		"artifact-digest":   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"git-commit":        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		"idempotency-key":   "release-build-42",
+		"artifact-ref":         "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"artifact-build-id":    "42",
+		"artifact-built-at":    "2026-07-30T20:34:18+08:00",
+		"artifact-digest":      "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"git-commit":           "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"provider-fingerprint": "a2eb67817f146ef4",
+		"idempotency-key":      "release-build-42",
 	} {
 		cmd.Flags().String(name, "", "")
 		_ = cmd.Flags().Set(name, value)
@@ -99,6 +101,29 @@ func TestRunRuntimeStableReleaseCreateSendsIdempotencyKey(t *testing.T) {
 	}
 	if got["id"] != "release-1" || got["status"] != "validating" {
 		t.Fatalf("output = %#v", got)
+	}
+}
+
+func TestRunRuntimeStableReleaseCreateRequiresProviderFingerprintForASB(t *testing.T) {
+	cmd := newRuntimeStableTestCmd("")
+	for name, value := range map[string]string{
+		"artifact-ref":      "registry.example/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"artifact-build-id": "42",
+		"artifact-built-at": "2026-07-30T20:34:18+08:00",
+		"artifact-digest":   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"git-commit":        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"idempotency-key":   "release-build-42",
+	} {
+		cmd.Flags().String(name, "", "")
+		_ = cmd.Flags().Set(name, value)
+	}
+	cmd.Flags().String("provider-fingerprint", "", "")
+	cmd.Flags().String("template-id", "", "")
+	cmd.Flags().String("note", "", "")
+
+	err := runRuntimeStableReleaseCreate(cmd, nil)
+	if err == nil || err.Error() != "--provider-fingerprint is required for --backend asb" {
+		t.Fatalf("error = %v, want missing provider fingerprint", err)
 	}
 }
 
