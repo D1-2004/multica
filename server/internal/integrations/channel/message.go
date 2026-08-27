@@ -179,6 +179,10 @@ type InboundMessage struct {
 	// command; adapters may also set this flag for a native platform affordance.
 	ForceFresh bool
 
+	// DisableRunBatching is set only from trusted transport provenance when an
+	// upstream router has already sealed the message batch.
+	DisableRunBatching bool
+
 	// SourcePayload is a credential-free snapshot of the original callback that
 	// is safe to persist with the user message and expose to the agent.
 	SourcePayload json.RawMessage

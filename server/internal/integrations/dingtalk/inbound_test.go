@@ -9,6 +9,52 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 )
 
+func TestInboundFromHTTPCallbackDisablesRunBatching(t *testing.T) {
+	msg, err := InboundFromHTTPCallback(HTTPCallbackMessage{
+		ConversationID:   "cid-router",
+		ConversationType: "single",
+		MessageID:        "msg-router",
+		SenderStaffID:    "staff-router",
+		Text:             "already aggregated upstream",
+	}, "client-router", "11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatalf("InboundFromHTTPCallback: %v", err)
+	}
+	if !msg.DisableRunBatching {
+		t.Fatal("Router HTTP callback must disable the Multica run batching window")
+	}
+
+	stream, ok := inboundFromBotCallback(botCallbackData{
+		ConversationID: "cid-stream", MsgID: "msg-stream", SenderStaffID: "staff-stream",
+		ConversationType: "1", Msgtype: "text",
+		Text: struct {
+			Content string `json:"content"`
+		}{Content: "batch this stream message"},
+	}, "client-stream")
+	if !ok {
+		t.Fatal("stream callback was rejected")
+	}
+	if stream.DisableRunBatching {
+		t.Fatal("DingTalk Stream callback must retain the default batching window")
+	}
+}
+
+func TestInboundFromAgentDispatchDisablesRunBatching(t *testing.T) {
+	msg, err := InboundFromAgentDispatch(AgentDispatchMessage{
+		ConversationID:   "cid-router",
+		ConversationType: "single",
+		MessageID:        "msg-router",
+		SenderStaffID:    "staff-router",
+		Text:             "already aggregated upstream",
+	})
+	if err != nil {
+		t.Fatalf("InboundFromAgentDispatch: %v", err)
+	}
+	if !msg.DisableRunBatching {
+		t.Fatal("authenticated Router dispatch must disable the Multica run batching window")
+	}
+}
+
 func TestInboundFromBotCallback(t *testing.T) {
 	cases := []struct {
 		name  string

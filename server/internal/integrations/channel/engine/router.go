@@ -575,6 +575,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 				return Result{}, finalizeRelease, fmt.Errorf("prepare durable chat task: %w", err)
 			}
 		} else {
+			if msg.DisableRunBatching {
+				prepared.DebounceSeconds = 0
+			}
 			preparedTask = &prepared
 		}
 	}
