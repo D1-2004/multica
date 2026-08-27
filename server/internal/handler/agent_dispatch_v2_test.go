@@ -674,6 +674,50 @@ func TestDingTalkConversationInstructionNamesAMissingQuotedLocator(t *testing.T)
 	}
 }
 
+// Production trace db6c6f7b5534d8dbb6972c6c70bb9a8246847095de4bc9c698e6bbe22f1f7666:
+// the run answered by calling `dws chat message send` itself, then wrote its
+// final output as a report of having done so — and the platform delivered that
+// report as a second message. Nothing in the prompt had named the delivery owner.
+func TestDingTalkConversationInstructionNamesChatDelivery(t *testing.T) {
+	base := persistedDispatchContext{
+		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:   "channel",
+		Type:     "message.created",
+		Surface:  DispatchSurface{Type: "auto"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Messages:     []DispatchMessage{{OpenMsgID: "current-open", Text: "后期选题方向可以修改吗"}},
+		},
+	}
+
+	withCallback := base
+	withCallback.CompletionCallback = &DispatchCompletionCallback{
+		URL: "/api/v1/dispatch-tasks/t/execution-result",
+	}
+	instruction := buildDispatchConversationInstruction(withCallback)
+	for _, want := range []string{
+		"Your final assistant output is the reply the person receives",
+		"Do not send it yourself with an outbound tool",
+		"arrive as two separate messages",
+		"never a report that you answered",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Errorf("chat delivery instruction missing %q: %q", want, instruction)
+		}
+	}
+
+	// Without a callback Router has no hook to deliver through: the run really
+	// does have to send its own reply, so the claim must not be made.
+	if got := buildDispatchConversationInstruction(base); strings.Contains(got, "Do not send it yourself") {
+		t.Fatalf("instruction forbade self-delivery with no callback to deliver through: %q", got)
+	}
+	// And it must still carry the read-back half in that case.
+	if !strings.Contains(buildDispatchConversationInstruction(base), "- conversation: `dws chat message search-advanced") {
+		t.Fatal("no-callback dispatch lost the read-back command")
+	}
+}
+
 // The runtime brief tells an Issue run that the user sees only issue comments.
 // For a DingTalk-dispatched Issue the opposite is true of the reply the person
 // is waiting for, so the dispatch instruction has to say which is which.

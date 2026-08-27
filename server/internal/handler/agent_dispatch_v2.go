@@ -661,6 +661,22 @@ const (
 		"What you do see of your own earlier turns, wherever it appears, is text written back to Multica — never proof a DingTalk message exists, and never a reply style to copy. " +
 		"Answer the person; do not report your own delivery.\n\n"
 
+	// Chat and auto, and only with a completion callback — without one Router has
+	// no hook to deliver through and the run really must send its own reply.
+	//
+	// Nothing else in the prompt says who performs the delivery. "Reply to
+	// DingTalk with the final outcome only" reads as an instruction to go and
+	// reply; "Your reply reaches DingTalk as text" says it arrives without saying
+	// who carried it. A production run therefore answered by calling
+	// `dws chat message send` itself and then wrote its final output as a report
+	// of having done so — and the platform delivered that report as a second
+	// message, so one question got two answers, the second of them addressed to
+	// nobody. Naming the delivery owner is what removes both halves at once: the
+	// output IS the reply, so there is nothing to send and nothing to report.
+	dispatchConversationChatDeliverySection = "Your final assistant output is the reply the person receives: the platform delivers it into this conversation for you. " +
+		"Do not send it yourself with an outbound tool — what you send and what the platform delivers arrive as two separate messages. " +
+		"Write the answer itself, never a report that you answered.\n\n"
+
 	// Issue surface only. The runtime brief's Output section tells an Issue run
 	// that "the user does NOT see your terminal output — only comments on the
 	// issue". For a DingTalk-dispatched Issue that is exactly backwards: the
@@ -788,6 +804,13 @@ func dispatchConversationIssueDeliveryApplies(stored persistedDispatchContext) b
 		stored.CompletionCallback != nil
 }
 
+// dispatchConversationChatDeliveryApplies reports the same fact for the run that
+// answers in the conversation itself. Same precondition, same reason.
+func dispatchConversationChatDeliveryApplies(stored persistedDispatchContext) bool {
+	return dispatchConversationReadbackApplies(stored) &&
+		stored.CompletionCallback != nil
+}
+
 // buildDispatchConversationInstruction is empty unless this run can actually
 // reach DingTalk: every command in it is a DWS command, so a robot-SDK dispatch
 // with no injected current-user capability would be told to run what it cannot.
@@ -798,6 +821,7 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext) strin
 	conversationID := strings.TrimSpace(stored.EventData.Conversation.OpenConversationID)
 	facts := dispatchQuotedMessageFacts(stored)
 	readback := dispatchConversationReadbackAvailable(stored)
+	chatDelivery := readback && dispatchConversationChatDeliveryApplies(stored)
 	issueDelivery := dispatchConversationIssueDeliveryApplies(stored)
 	if !readback && !issueDelivery && len(facts) == 0 {
 		return ""
@@ -807,6 +831,9 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext) strin
 	b.WriteString(dispatchConversationInstructionHeader)
 	if readback {
 		b.WriteString(dispatchConversationSSOTSection)
+	}
+	if chatDelivery {
+		b.WriteString(dispatchConversationChatDeliverySection)
 	}
 	if issueDelivery {
 		b.WriteString(dispatchConversationIssueDeliverySection)

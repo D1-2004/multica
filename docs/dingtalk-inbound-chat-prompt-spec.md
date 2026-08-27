@@ -91,6 +91,7 @@ user 段由谁写、写什么、以及每一条改动如何生效。
 | 半段 | 门槛 | 内容 |
 | --- | --- | --- |
 | 事实来源 | `surface ∈ {chat, auto}` 且有会话 ID | Multica 不携带本会话历史、prompt 里也没有复制品；**回答前先用下面的命令回读**；能看到的自己的旧轮次是回给平台的文本，不是送达证据，也不是可模仿的语气 |
+| 会话交付 | `surface ∈ {chat, auto}` 且带 completion callback | **终答就是回复，平台替你投递**；不要自己用出站工具发（自己发的 + 平台投的 = 两条）；写答案本身，不要写"我已回复"这种汇报 |
 | Issue 交付 | `surface=issue` 且带 completion callback | 终答会被平台投回钉钉会话，issue 评论是 Multica 侧记录；写一次、两处都给；不要自己再发一遍 |
 | 定位符 | 有会话 ID / 有引用 | 逐条打印可直接执行的回读命令 |
 
@@ -140,6 +141,29 @@ Slack / Feishu / 网页 Chat **保留**恢复历史：那里没有回读途径�
 | 「Multica 没有 history reader」那句 | 否——在 `ChatChannelType != ""` 分支内 |
 
 新增规则时按同样的表自查一遍。
+
+### 4.1 为什么必须点名投递方
+
+正式环境 trace `db6c6f7b5534d8dbb6972c6c70bb9a8246847095de4bc9c698e6bbe22f1f7666`：同一个问题
+收到了两条回复。
+
+1. `17:50:48` Agent 自己跑了 `dws chat message send --conversation-id … --text "思莱你好～…"`
+2. `17:51:12.6` Router ServerPush 投递终答 `已回复思莱，建议他找越川确认选题方向修改的事。`
+   （`dispatchTask.metadata.dwsReply.status=accepted`）
+
+第二条是一句写给平台看的自述，被投给了真人。
+
+推理里没有任何一处在权衡"该用什么渠道回复"——它只推理了答什么内容，然后直接 `dws … send`。
+因为 prompt 里**没有一句话说过终答由谁投递**：
+
+- `Reply to DingTalk with the final outcome only`（daemon）——读起来像"（你去）向钉钉回复"
+- `Your reply reaches DingTalk as text`（daemon）——说了会到，没说谁送的
+- `Answer the person; do not report your own delivery`（本段）——治的是症状
+
+而且第二条之所以那么难看，正是第一条的后果：Agent 以为自己已经回复过了，终答自然写成汇报。
+点名投递方一次解决两半——终答就是回复，于是既没有东西要发，也没有东西要汇报。
+
+没有 completion callback 时**不得**注入这段：那种情况下 Router 没有投递钩子，Agent 确实必须自己发。
 
 ## 7. 已知的跨系统缺口
 
