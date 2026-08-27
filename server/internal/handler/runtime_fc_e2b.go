@@ -418,6 +418,13 @@ func (h *Handler) createASBRuntime(
 			return
 		}
 		artifact = current
+		if artifact.ProviderData == nil {
+			artifact.ProviderData = map[string]any{}
+		}
+		artifact.ProviderData["providers"] = append(
+			[]string(nil),
+			h.currentConfig().FCE2B.RuntimeProviders...,
+		)
 		runtimeQueries = h.Queries.WithTx(runtimeTx)
 	case service.CloudSandboxChannelCandidate:
 		if !h.canPublishFCE2BStable(r) {
