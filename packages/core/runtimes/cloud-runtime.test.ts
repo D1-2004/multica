@@ -252,5 +252,10 @@ describe("fcE2BProviderForTemplate", () => {
     expect(
       fcE2BProviderForTemplate(makeTemplate({ providers: ["unknown"] })),
     ).toBeNull();
+    expect(
+      fcE2BProviderForTemplate(
+        makeTemplate({ providers: null as unknown as string[] }),
+      ),
+    ).toBeNull();
   });
 });

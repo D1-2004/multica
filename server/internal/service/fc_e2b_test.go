@@ -695,6 +695,14 @@ func TestFCE2BTemplateAPIUsesLegacyAliasAsDisplayOnly(t *testing.T) {
 	if err != nil || len(templates) != 1 || templates[0].ID != "tpl-legacy" {
 		t.Fatalf("display alias affected template selection: templates=%#v err=%v", templates, err)
 	}
+	encoded, err := json.Marshal(templates[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"providers":[]`) ||
+		!strings.Contains(string(encoded), `"capabilities":[]`) {
+		t.Fatalf("unresolved fingerprint serialized null arrays: %s", encoded)
+	}
 }
 
 func TestFCE2BLauncherBuildsCreateAndExecCommands(t *testing.T) {

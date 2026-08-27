@@ -789,10 +789,12 @@ func parseFCE2BTemplates(
 			continue
 		}
 		t := FCE2BTemplate{
-			ID:        firstString(obj, "id", "template_id", "templateID"),
-			Status:    firstString(obj, "status", "state", "buildStatus", "build_status"),
-			CreatedAt: firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
-			UpdatedAt: firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
+			ID:           firstString(obj, "id", "template_id", "templateID"),
+			Status:       firstString(obj, "status", "state", "buildStatus", "build_status"),
+			CreatedAt:    firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
+			UpdatedAt:    firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
+			Providers:    []string{},
+			Capabilities: []string{},
 		}
 		if strings.TrimSpace(t.ID) == "" {
 			continue

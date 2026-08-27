@@ -417,8 +417,9 @@ export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
 export function fcE2BProviderForTemplate(
   template: FCE2BTemplate,
 ): FCE2BRuntimeProvider | null {
+  const providers = Array.isArray(template.providers) ? template.providers : [];
   for (const provider of FC_E2B_RUNTIME_PROVIDERS) {
-    if (template.providers.includes(provider)) {
+    if (providers.includes(provider)) {
       return provider;
     }
   }
@@ -479,7 +480,16 @@ export function cloudRuntimeNodeListOptions(
 export function fcE2BTemplateListOptions(wsId: string) {
   return queryOptions({
     queryKey: cloudRuntimeKeys.fcE2BTemplates(wsId),
-    queryFn: () => api.listFCE2BTemplates(),
+    queryFn: async () => {
+      const templates = await api.listFCE2BTemplates();
+      return templates.map((template) => ({
+        ...template,
+        providers: Array.isArray(template.providers) ? template.providers : [],
+        capabilities: Array.isArray(template.capabilities)
+          ? template.capabilities
+          : [],
+      }));
+    },
     staleTime: 30 * 1000,
   });
 }
