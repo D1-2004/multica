@@ -28,6 +28,11 @@ const (
 	// one dispatch — conversation, message and sender locators, outbound
 	// ownership. Not authored policy, and therefore never overridable.
 	DispatchSegmentContext = "context"
+	// DispatchSegmentDingTalkConversation carries what the visible conversation
+	// text cannot hold: that the DingTalk conversation is the source of truth
+	// rather than Multica's mirror of it, and the identifiers that make the
+	// conversation and any quoted message re-readable.
+	DispatchSegmentDingTalkConversation = "dingtalk_conversation"
 	// DispatchSegmentReplyFormatting constrains Markdown that survives
 	// DingTalk delivery.
 	DispatchSegmentReplyFormatting = "reply_formatting"
@@ -74,16 +79,18 @@ type DispatchPromptSegment struct {
 // key is rejected at the API boundary rather than silently stored, so a typo
 // cannot look like a saved customization that never takes effect.
 var customizableDispatchSegments = map[string]bool{
-	DispatchSegmentPolicy:             true,
-	DispatchSegmentReplyFormatting:    true,
-	DispatchSegmentEnterpriseIdentity: true,
-	DispatchSegmentContext:            false,
+	DispatchSegmentPolicy:               true,
+	DispatchSegmentReplyFormatting:      true,
+	DispatchSegmentEnterpriseIdentity:   true,
+	DispatchSegmentContext:              false,
+	DispatchSegmentDingTalkConversation: false,
 }
 
 // dispatchSegmentOrder is the order the agent reads the segments in.
 var dispatchSegmentOrder = []string{
 	DispatchSegmentPolicy,
 	DispatchSegmentContext,
+	DispatchSegmentDingTalkConversation,
 	DispatchSegmentReplyFormatting,
 	DispatchSegmentEnterpriseIdentity,
 }
@@ -155,6 +162,23 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 		ExcludedReason: dispatchExcludedReason(in.Present, "no_dispatch_context", "not_supplied"),
 		ManagedText:    in.Stored.ContextPrompt,
 		EffectiveText:  in.Stored.ContextPrompt,
+	})
+
+	// Facts, not policy: the locators come from the dispatch envelope, so this
+	// segment is composed here rather than configured, and cannot be overridden.
+	conversation := ""
+	if in.Present {
+		conversation = buildDispatchConversationInstruction(in.Stored)
+	}
+	segments = append(segments, DispatchPromptSegment{
+		ID:             DispatchSegmentDingTalkConversation,
+		Source:         dispatchSegmentSourceBuiltin,
+		Customizable:   false,
+		Condition:      "dingtalk_conversation",
+		Included:       conversation != "",
+		ExcludedReason: dispatchExcludedReason(in.Present, "no_dispatch_context", "no_conversation_context"),
+		ManagedText:    conversation,
+		EffectiveText:  conversation,
 	})
 
 	segments = append(segments, dispatchSegment(
