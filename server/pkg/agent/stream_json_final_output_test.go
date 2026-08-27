@@ -102,6 +102,53 @@ func TestFinalizeStreamResultPreservesErrorResultWhenContextEnds(t *testing.T) {
 	}
 }
 
+func TestFinalizeStreamResultPrefersCompleteClaudeAssistantOverTerminalFragment(t *testing.T) {
+	t.Parallel()
+
+	status, output, errMsg := finalizeStreamResult(
+		"claude",
+		time.Second,
+		nil,
+		nil,
+		nil,
+		"session-1",
+		streamTerminalState{
+			lastAssistantText:   `{"manifest_ok":true,"env_ok":true}`,
+			finalResultText:     `"env_ok":true}`,
+			preferAssistantText: true,
+			sawToolUse:          true,
+			sawResult:           true,
+		},
+		"",
+	)
+	if status != "completed" || output != `{"manifest_ok":true,"env_ok":true}` || errMsg != "" {
+		t.Fatalf("finalizeStreamResult() = (%q, %q, %q), want complete assistant message", status, output, errMsg)
+	}
+}
+
+func TestFinalizeStreamResultDoesNotPublishClaudePreToolNarration(t *testing.T) {
+	t.Parallel()
+
+	status, output, errMsg := finalizeStreamResult(
+		"claude",
+		time.Second,
+		nil,
+		nil,
+		nil,
+		"session-1",
+		streamTerminalState{
+			finalResultText:     "I will check DWS now.",
+			preferAssistantText: true,
+			sawToolUse:          true,
+			sawResult:           true,
+		},
+		"",
+	)
+	if status != "completed" || output != "" || errMsg != "" {
+		t.Fatalf("finalizeStreamResult() = (%q, %q, %q), want completed no-response", status, output, errMsg)
+	}
+}
+
 func TestStreamProtocolObservationDoesNotLogContent(t *testing.T) {
 	t.Parallel()
 

@@ -304,6 +304,8 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			streamTerminalState{
 				lastAssistantText:   lastAssistantText,
 				finalResultText:     finalResultText,
+				preferAssistantText: true,
+				sawToolUse:          toolUseCount > 0,
 				sawResult:           sawResult,
 				resultIsError:       resultIsError,
 				scanErr:             scanErr,

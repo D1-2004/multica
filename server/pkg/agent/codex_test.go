@@ -1298,6 +1298,22 @@ func TestCodexDeliverableOutputExcludesNarration(t *testing.T) {
 	}
 }
 
+func TestCodexDeliverableFallbackClearsPreToolNarration(t *testing.T) {
+	t.Parallel()
+
+	fallback := updateCodexDeliverableFallback("", Message{Type: MessageText, Content: "I will inspect the runtime."})
+	fallback = updateCodexDeliverableFallback(fallback, Message{Type: MessageToolUse, Tool: "exec_command"})
+	if fallback != "" {
+		t.Fatalf("pre-tool narration survived as deliverable: %q", fallback)
+	}
+
+	fallback = updateCodexDeliverableFallback(fallback, Message{Type: MessageToolResult, Tool: "exec_command"})
+	fallback = updateCodexDeliverableFallback(fallback, Message{Type: MessageText, Content: "Runtime validation passed."})
+	if fallback != "Runtime validation passed." {
+		t.Fatalf("post-tool final answer was not retained: %q", fallback)
+	}
+}
+
 func TestCodexRawThreadStatusIdle(t *testing.T) {
 	t.Parallel()
 

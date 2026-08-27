@@ -54,9 +54,16 @@ func (t assistantTurn) resolveFallback(prior string) string {
 type streamTerminalState struct {
 	lastAssistantText string
 	finalResultText   string
-	sawResult         bool
-	resultIsError     bool
-	scanErr           error
+	// preferAssistantText selects the last complete, parsed assistant message
+	// over a provider CLI's terminal `result` string. Claude Code can reduce a
+	// multi-block Messages response to only the final text block in `result`,
+	// while the assistant event still carries the complete logical message.
+	// Other stream-json backends keep the historical terminal-result contract.
+	preferAssistantText bool
+	sawToolUse          bool
+	sawResult           bool
+	resultIsError       bool
+	scanErr             error
 	// terminalReasonError, when non-empty, is a failure the backend read out of
 	// a STRUCTURED field on the terminal result event.
 	//
@@ -154,6 +161,18 @@ func finalizeStreamResult(
 
 	if status != "completed" {
 		return status, "", errMsg
+	}
+	if state.preferAssistantText {
+		if state.lastAssistantText != "" {
+			return status, state.lastAssistantText, ""
+		}
+		if state.sawToolUse {
+			// A non-empty result after a tool-using turn can be pre-tool
+			// narration or the last fragment of a multi-block response. With no
+			// complete post-tool assistant message, fail closed to no-response
+			// instead of publishing that fragment as the answer.
+			return status, "", ""
+		}
 	}
 	if state.finalResultText != "" {
 		return status, state.finalResultText, ""

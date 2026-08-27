@@ -1081,11 +1081,9 @@ func (b *codexBackend) executeOnce(ctx context.Context, prompt string, opts Exec
 		},
 		onMessage: func(msg Message) {
 			logCodexAgentMessage(b.cfg.Logger, msg)
-			if msg.Type == MessageText {
-				outputMu.Lock()
-				lastAgentMessage = msg.Content
-				outputMu.Unlock()
-			}
+			outputMu.Lock()
+			lastAgentMessage = updateCodexDeliverableFallback(lastAgentMessage, msg)
+			outputMu.Unlock()
 			activity := describeCodexSemanticActivity(msg)
 			if activity == "status:running" {
 				firstItemWait.start(time.Now())
@@ -2024,6 +2022,21 @@ func codexDeliverableOutput(finalAnswer, lastAgentMessage string) string {
 		return finalAnswer
 	}
 	return lastAgentMessage
+}
+
+func updateCodexDeliverableFallback(current string, msg Message) string {
+	switch msg.Type {
+	case MessageText:
+		return msg.Content
+	case MessageToolUse:
+		// Text before a tool call is narration, not the turn's deliverable.
+		// Clear it so a tool-terminated raw turn becomes no-response instead
+		// of publishing "I will check..." into Chat. A later agent message
+		// (or a phase-labelled final_answer) establishes a new candidate.
+		return ""
+	default:
+		return current
+	}
 }
 
 func logCodexAgentMessage(logger *slog.Logger, msg Message) {

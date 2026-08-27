@@ -830,6 +830,7 @@ func writeOutput(b *strings.Builder, kind taskKind, ctx TaskContextForEnv) {
 		} else {
 			b.WriteString("This is a chat session. Your reply is delivered directly to the chat window the user is reading.\n\n")
 		}
+		b.WriteString("Return one complete user-facing reply for every turn. Do not end with a plan or progress update; after any tool calls, continue until you have a complete final outcome.\n\n")
 		// Two-layer channel policy (MUL-4899). This is the DELIVERY layer, and
 		// the brief answers only the half that is stable for the whole session.
 		//

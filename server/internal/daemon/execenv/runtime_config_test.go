@@ -492,6 +492,8 @@ func TestChatOutputDoesNotRequireIssueComment(t *testing.T) {
 	for _, want := range []string{
 		"This is a chat session",
 		"Your reply is delivered directly to the chat window the user is reading",
+		"Do not end with a plan or progress update",
+		"after any tool calls, continue until you have a complete final outcome",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("chat brief missing chat output guidance %q\n---\n%s", want, out)
