@@ -708,18 +708,17 @@ type CommandRunner interface {
 }
 
 type FCE2BTemplate struct {
-	ID              string         `json:"id,omitempty"`
-	SourceRevision  string         `json:"source_revision,omitempty"`
-	Name            string         `json:"name,omitempty"`
-	Template        string         `json:"template"`
-	Status          string         `json:"status,omitempty"`
-	CreatedAt       string         `json:"created_at,omitempty"`
-	UpdatedAt       string         `json:"updated_at,omitempty"`
-	ManifestVersion int            `json:"manifest_version"`
-	Providers       []string       `json:"providers"`
-	Capabilities    []string       `json:"capabilities"`
-	RunnerProtocol  string         `json:"runner_protocol"`
-	Metadata        map[string]any `json:"metadata,omitempty"`
+	ID              string   `json:"id,omitempty"`
+	SourceRevision  string   `json:"source_revision,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	Template        string   `json:"template"`
+	Status          string   `json:"status,omitempty"`
+	CreatedAt       string   `json:"created_at,omitempty"`
+	UpdatedAt       string   `json:"updated_at,omitempty"`
+	ManifestVersion int      `json:"manifest_version"`
+	Providers       []string `json:"providers"`
+	Capabilities    []string `json:"capabilities"`
+	RunnerProtocol  string   `json:"runner_protocol"`
 }
 
 type OSCommandRunner struct{}
@@ -800,7 +799,6 @@ func parseFCE2BTemplates(
 			Status:    firstString(obj, "status", "state", "buildStatus", "build_status"),
 			CreatedAt: firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
 			UpdatedAt: firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
-			Metadata:  obj,
 		}
 		entry, ok := RuntimeProvidersForTemplate(providerCatalog, t.ID)
 		if !ok {

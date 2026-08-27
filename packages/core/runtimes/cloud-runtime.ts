@@ -132,9 +132,8 @@ export interface FCE2BTemplate {
   source_revision?: string;
   manifest_version: number;
   providers: string[];
-	capabilities: string[];
+  capabilities: string[];
   runner_protocol: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface FCE2BRuntimeMetadata {
