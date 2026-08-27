@@ -659,7 +659,7 @@ func writeDerivedHermesConfig(sharedHome, hermesHome string, env map[string]stri
 // mergeHermesEnvPassthrough authorizes the exact agent custom_env names in
 // Hermes' own tool-sandbox policy. Hermes intentionally removes credential-like
 // variables from terminal and Python tool subprocesses unless they are listed
-// under tools.env_passthrough. The daemon already blocklist-checks the map
+// under terminal.env_passthrough. The daemon already blocklist-checks the map
 // before it reaches this function, so only the names explicitly configured on
 // this Agent are added; values remain process-only and are never serialized.
 func mergeHermesEnvPassthrough(doc *yaml.Node, env map[string]string) error {
@@ -670,21 +670,21 @@ func mergeHermesEnvPassthrough(doc *yaml.Node, env map[string]string) error {
 	if top == nil {
 		return fmt.Errorf("hermes config: unexpected root node")
 	}
-	tools := yamlMapValue(top, "tools")
-	if tools == nil || tools.Kind != yaml.MappingNode {
-		tools = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-		yamlSetMapValue(top, "tools", tools)
+	terminal := yamlMapValue(top, "terminal")
+	if terminal == nil || terminal.Kind != yaml.MappingNode {
+		terminal = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		yamlSetMapValue(top, "terminal", terminal)
 	}
 
 	values := make([]string, 0, len(env))
 	seen := make(map[string]struct{}, len(env))
-	if existing := yamlMapValue(tools, "env_passthrough"); existing != nil {
+	if existing := yamlMapValue(terminal, "env_passthrough"); existing != nil {
 		if existing.Kind != yaml.SequenceNode {
-			return fmt.Errorf("hermes config: tools.env_passthrough must be a list")
+			return fmt.Errorf("hermes config: terminal.env_passthrough must be a list")
 		}
 		for _, item := range existing.Content {
 			if item.Kind != yaml.ScalarNode || strings.TrimSpace(item.Value) == "" {
-				return fmt.Errorf("hermes config: tools.env_passthrough contains an invalid name")
+				return fmt.Errorf("hermes config: terminal.env_passthrough contains an invalid name")
 			}
 			if _, ok := seen[item.Value]; ok {
 				continue
@@ -706,7 +706,7 @@ func mergeHermesEnvPassthrough(doc *yaml.Node, env map[string]string) error {
 		seen[name] = struct{}{}
 		values = append(values, name)
 	}
-	yamlSetMapValue(tools, "env_passthrough", yamlStringSeq(values))
+	yamlSetMapValue(terminal, "env_passthrough", yamlStringSeq(values))
 	return nil
 }
 

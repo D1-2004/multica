@@ -2774,11 +2774,17 @@ export class ApiClient {
 
   async getDSHTrajectory(taskId: string): Promise<DSHTrajectoryArtifact> {
     const res = await this.fetchRaw(`/api/tasks/${taskId}/dsh-trajectory`);
+    const contentType = res.headers
+      .get("Content-Type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase();
     const sessionId = res.headers.get("X-DSH-Session-ID");
     const sha256 = res.headers.get("X-Content-SHA256");
     const rawEventCount = res.headers.get("X-DSH-Event-Count");
     const eventCount = rawEventCount === null ? Number.NaN : Number(rawEventCount);
     if (
+      contentType !== "application/x-ndjson" ||
       !sessionId ||
       !sha256?.match(/^[0-9a-f]{64}$/) ||
       !Number.isSafeInteger(eventCount) ||

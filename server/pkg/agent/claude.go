@@ -239,7 +239,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 				if !turn.understood {
 					unreadableAssistantCount++
 				}
-				lastAssistantText = turn.resolveFallback(lastAssistantText)
+				lastAssistantText = resolveClaudeAssistantFallback(lastAssistantText, turn)
 			case "user":
 				if b.handleUser(msg, msgCh) {
 					sawAsyncLaunch = true
@@ -366,6 +366,22 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
+}
+
+func resolveClaudeAssistantFallback(prior string, turn assistantTurn) string {
+	if turn.toolUses > 0 || !turn.understood {
+		return ""
+	}
+	if turn.text == "" {
+		return prior
+	}
+	if prior == "" || strings.HasPrefix(turn.text, prior) {
+		return turn.text
+	}
+	if strings.HasPrefix(prior, turn.text) {
+		return prior
+	}
+	return prior + turn.text
 }
 
 func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message, usage map[string]TokenUsage) assistantTurn {

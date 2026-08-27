@@ -149,6 +149,30 @@ func TestFinalizeStreamResultDoesNotPublishClaudePreToolNarration(t *testing.T) 
 	}
 }
 
+func TestResolveClaudeAssistantFallbackReassemblesPartialEventsAfterTools(t *testing.T) {
+	t.Parallel()
+
+	fallback := resolveClaudeAssistantFallback("", assistantTurn{text: "I will inspect it.", understood: true})
+	fallback = resolveClaudeAssistantFallback(fallback, assistantTurn{toolUses: 1, understood: true})
+	if fallback != "" {
+		t.Fatalf("pre-tool narration survived: %q", fallback)
+	}
+
+	for _, fragment := range []string{"```json\n{", `"manifest_ok":true,`, `"env_ok":true}`, "\n```"} {
+		fallback = resolveClaudeAssistantFallback(fallback, assistantTurn{text: fragment, understood: true})
+	}
+	if fallback != "```json\n{\"manifest_ok\":true,\"env_ok\":true}\n```" {
+		t.Fatalf("partial Claude assistant events were not reassembled: %q", fallback)
+	}
+
+	// Some Claude Code builds emit cumulative partial messages. A longer
+	// cumulative event replaces the prior prefix instead of duplicating it.
+	fallback = resolveClaudeAssistantFallback("hel", assistantTurn{text: "hello", understood: true})
+	if fallback != "hello" {
+		t.Fatalf("cumulative Claude assistant event duplicated its prefix: %q", fallback)
+	}
+}
+
 func TestStreamProtocolObservationDoesNotLogContent(t *testing.T) {
 	t.Parallel()
 

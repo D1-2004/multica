@@ -8,6 +8,64 @@ afterEach(() => {
   setSchemaLogger(noopLogger);
 });
 
+describe("ApiClient DSH trajectory", () => {
+  const taskId = "11111111-1111-4111-8111-111111111111";
+  const sessionId = "ses-test";
+  const sha256 = "a".repeat(64);
+  const jsonl = [
+    JSON.stringify({ type: "session", id: sessionId }),
+    JSON.stringify({ type: "turn/start", seq: 1, time: 1, data: {} }),
+    "",
+  ].join("\n");
+
+  it("accepts the authenticated NDJSON contract", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(jsonl, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "X-DSH-Session-ID": sessionId,
+            "X-Content-SHA256": sha256,
+            "X-DSH-Event-Count": "1",
+          },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getDSHTrajectory(taskId)).resolves.toEqual({
+      session_id: sessionId,
+      sha256,
+      event_count: 1,
+      jsonl,
+    });
+  });
+
+  it("rejects a trajectory served with the wrong media type", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(jsonl, {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "X-DSH-Session-ID": sessionId,
+            "X-Content-SHA256": sha256,
+            "X-DSH-Event-Count": "1",
+          },
+        }),
+      ),
+    );
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.getDSHTrajectory(taskId)).rejects.toThrow(
+      "Invalid DSH trajectory metadata",
+    );
+  });
+});
+
 describe("ApiClient Runner contracts", () => {
   const bindingId = "11111111-1111-4111-8111-111111111111";
   const machineId = "22222222-2222-4222-8222-222222222222";
