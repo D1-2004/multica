@@ -4,7 +4,7 @@ Multica uses four independent Alibaba Diamond documents:
 
 - `dt-fde-multica.json` is the always-active, fail-open prompt/feature-rule source documented on this page. It does not replace process environment variables, the YAML rule file, or caller defaults.
 - `dt-fde-multica-runtime.json` is the opt-in, fail-closed managed runtime configuration. When `MULTICA_RUNTIME_CONFIG_SOURCE=diamond`, it is authoritative for the migrated non-secret settings and has no environment-variable fallback. See [Managed runtime configuration](runtime-config.md).
-- `dt-fde-multica-runtime-manifest-fingerprints.json` keeps its historical Data ID but now contains only the provider-selection directory: FC template IDs and ASB Runtime commits map to the providers offered by Runtime creation and update flows. It is not an image-integrity check, and read/listener failures do not block application startup. See [Runtime provider catalog](runtime-config.md#runtime-provider-catalog).
+- `dt-fde-multica-runtime-manifest-fingerprints.json` keeps its historical Data ID but now contains only one deployment-wide provider list. It changes only when providers change, not when images or templates are released. It is not an image-integrity check, and read/listener failures do not block application startup. See [Runtime provider catalog](runtime-config.md#runtime-provider-catalog).
 - `dt-fde-multica-model-pricing.json` is the fail-closed USD-per-million-token catalog for every deployment-managed model. It prices usage centrally and supplies rates to the model picker, so users do not configure each Runtime or browser. See [Managed model pricing](runtime-config.md#managed-model-pricing).
 
 For the prompt/feature-rule document, the effective precedence is:

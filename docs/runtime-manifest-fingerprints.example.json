@@ -1,28 +1,12 @@
 {
   "version": 1,
-  "fc_templates": {
-    "idt7f6on323gsyuqjt59": {
-      "runtime_commit": "a2eb67817f146ef4a2eb67817f146ef4a2eb6781",
-      "providers": [
-        "hermes",
-        "opencode",
-        "pi",
-        "dsh",
-        "opencode-v2",
-        "claude",
-        "codex"
-      ]
-    }
-  },
-  "asb_commits": {
-    "a2eb67817f146ef4a2eb67817f146ef4a2eb6781": [
-      "hermes",
-      "opencode",
-      "pi",
-      "dsh",
-      "opencode-v2",
-      "claude",
-      "codex"
-    ]
-  }
+  "providers": [
+    "hermes",
+    "opencode",
+    "pi",
+    "dsh",
+    "opencode-v2",
+    "claude",
+    "codex"
+  ]
 }

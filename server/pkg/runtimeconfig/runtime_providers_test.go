@@ -2,16 +2,15 @@ package runtimeconfig
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"strings"
 	"testing"
 )
 
-const testRuntimeCommit = "a2eb67817f146ef4a2eb67817f146ef4a2eb6781"
-
 func validRuntimeProvidersJSON() string {
-	return `{"version":1,"fc_templates":{"tpl-1":{"runtime_commit":"` + testRuntimeCommit + `","providers":["hermes","opencode","pi"]}},"asb_commits":{"` + testRuntimeCommit + `":["hermes"]}}`
+	return `{"version":1,"providers":["hermes","opencode","pi"]}`
 }
 
 func TestDocumentedRuntimeProvidersExampleMatchesSchema(t *testing.T) {
@@ -24,35 +23,34 @@ func TestDocumentedRuntimeProvidersExampleMatchesSchema(t *testing.T) {
 	}
 }
 
-func TestParseRuntimeProvidersUsesAuthoredListsWithoutCardinalityContract(t *testing.T) {
-	cfg, err := ParseRuntimeProviders([]byte(`{
-  "version": 1,
-  "fc_templates": {
-    "tpl-empty": {"runtime_commit":"0000000000000000000000000000000000000000","providers":[]},
-    "tpl-one": {"runtime_commit":"1111111111111111111111111111111111111111","providers":["hermes"]},
-    "tpl-seven": {"runtime_commit":"2222222222222222222222222222222222222222","providers":["hermes","opencode","pi","dsh","opencode-v2","claude","codex"]}
-  },
-  "asb_commits": {}
-}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.FCTemplates) != 3 || len(cfg.FCTemplates["tpl-seven"].Providers) != 7 {
-		t.Fatalf("FC templates = %#v", cfg.FCTemplates)
+func TestParseRuntimeProvidersUsesAuthoredListWithoutCardinalityContract(t *testing.T) {
+	for _, providers := range [][]string{
+		{},
+		{"hermes"},
+		{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"},
+	} {
+		encoded, err := json.Marshal(RuntimeProvidersConfig{Version: 1, Providers: providers})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := ParseRuntimeProviders(encoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(cfg.Providers) != len(providers) {
+			t.Fatalf("providers = %#v", cfg.Providers)
+		}
 	}
 }
 
-func TestParseRuntimeProvidersRejectsOnlyMalformedLookupData(t *testing.T) {
+func TestParseRuntimeProvidersRejectsOnlyMalformedProviderData(t *testing.T) {
 	for name, raw := range map[string]string{
-		"unknown field":  `{"version":1,"fc_templates":{},"asb_commits":{},"extra":true}`,
-		"wrong version":  `{"version":2,"fc_templates":{},"asb_commits":{}}`,
-		"missing maps":   `{"version":1}`,
-		"empty template": `{"version":1,"fc_templates":{"":{"runtime_commit":"0000000000000000000000000000000000000000","providers":[]}},"asb_commits":{}}`,
-		"bad FC commit":  `{"version":1,"fc_templates":{"tpl":{"runtime_commit":"BAD","providers":[]}},"asb_commits":{}}`,
-		"bad ASB commit": `{"version":1,"fc_templates":{},"asb_commits":{"BAD":[]}}`,
-		"bad provider":   `{"version":1,"fc_templates":{"tpl":{"runtime_commit":"0000000000000000000000000000000000000000","providers":["Hermes"]}},"asb_commits":{}}`,
-		"duplicate":      `{"version":1,"fc_templates":{},"asb_commits":{"0000000000000000000000000000000000000000":["hermes","hermes"]}}`,
-		"trailing":       validRuntimeProvidersJSON() + ` {}`,
+		"unknown field": `{"version":1,"providers":[],"extra":true}`,
+		"wrong version": `{"version":2,"providers":[]}`,
+		"missing list":  `{"version":1}`,
+		"bad provider":  `{"version":1,"providers":["Hermes"]}`,
+		"duplicate":     `{"version":1,"providers":["hermes","hermes"]}`,
+		"trailing":      validRuntimeProvidersJSON() + ` {}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ParseRuntimeProviders([]byte(raw)); err == nil {
@@ -71,11 +69,9 @@ func TestRuntimeProvidersUpdateIsAtomicAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := first.FCTemplates["tpl-1"]
-	entry.Providers[0] = "mutated"
-	first.FCTemplates["tpl-1"] = entry
+	first.Providers[0] = "mutated"
 	current := service.RuntimeProviders()
-	if current.Generation != 1 || current.FCTemplates["tpl-1"].Providers[0] != "hermes" {
+	if current.Generation != 1 || current.Providers[0] != "hermes" {
 		t.Fatalf("service snapshot was mutated: %#v", current)
 	}
 	retained, err := service.ApplyRuntimeProvidersJSON([]byte(`{"version":1}`))
@@ -88,15 +84,13 @@ func TestRuntimeProviderLogsContainOnlySnapshotMetadata(t *testing.T) {
 	var output bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&output, nil))
 	logRuntimeProvidersUpdate(logger, "updated", RuntimeProvidersSnapshot{
-		Version: 1,
-		FCTemplates: map[string]FCTemplateProviders{
-			"secret-template": {RuntimeCommit: testRuntimeCommit, Providers: []string{"secret-provider"}},
-		},
+		Version:    1,
+		Providers:  []string{"secret-provider"},
 		Generation: 7,
 		SHA256:     "safe-hash",
 	})
 	logged := output.String()
-	for _, forbidden := range []string{"secret-template", "secret-provider", testRuntimeCommit, `"fc_templates"`} {
+	for _, forbidden := range []string{"secret-provider", `"providers"`} {
 		if strings.Contains(logged, forbidden) {
 			t.Fatalf("log leaked config content %q: %s", forbidden, logged)
 		}

@@ -472,7 +472,7 @@ func TestParseE2BSandboxIDStrictCreateOutput(t *testing.T) {
 	}
 }
 
-func TestParseFCE2BTemplatesUsesCommitProviderCatalog(t *testing.T) {
+func TestParseFCE2BTemplatesUsesGlobalProviderCatalog(t *testing.T) {
 	const alias = "multica-m7-vda499f3161a007c0-r1-9a6bfa"
 	got, err := parseFCE2BTemplates(`[
 		{
@@ -507,17 +507,17 @@ func TestParseFCE2BTemplatesUsesCommitProviderCatalog(t *testing.T) {
 		t.Fatalf("updated_at = %q", got[0].UpdatedAt)
 	}
 	if !IsFCE2BTemplatePublished(got[0]) {
-		t.Fatalf("template provider catalog entry was not published: %+v", got[0])
+		t.Fatalf("template did not receive the global provider list: %+v", got[0])
 	}
 	if want := []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}; !reflect.DeepEqual(got[0].Providers, want) {
 		t.Fatalf("providers = %#v, want %#v", got[0].Providers, want)
 	}
-	if got[0].SourceRevision != "da499f3161a007c0da499f3161a007c0da499f31" {
-		t.Fatalf("source revision = %q", got[0].SourceRevision)
+	if got[0].SourceRevision != "" {
+		t.Fatalf("source revision came from display alias: %q", got[0].SourceRevision)
 	}
 }
 
-func TestLegacyVersionAliasesAreNotUsedAsProviderCatalogs(t *testing.T) {
+func TestAliasesAreDisplayOnly(t *testing.T) {
 	const validAlias = "multica-m5-h0_19_0-o1_18_4-p0_80_10-d1_0_53b4-cdimsta-r1-9a6bfa"
 	tests := []struct {
 		name             string
@@ -571,25 +571,22 @@ func TestLegacyVersionAliasesAreNotUsedAsProviderCatalogs(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, found := RuntimeProvidersForTemplate(nil, test.alias); found {
-				t.Fatalf("display alias %q was used as a provider lookup key", test.alias)
+			templates, err := parseFCE2BTemplates(
+				fmt.Sprintf(`[{"id":"template-id","aliases":[%q],"status":"ready"}]`, test.alias),
+				testRuntimeProviderCatalog(),
+			)
+			if err != nil || len(templates) != 1 || templates[0].Template != test.alias {
+				t.Fatalf("display alias changed selection: templates=%#v err=%v", templates, err)
 			}
 		})
 	}
 }
 
-func testRuntimeProviderCatalog() map[string]runtimeconfig.FCTemplateProviders {
-	return map[string]runtimeconfig.FCTemplateProviders{
-		"idt7f6on323gsyuqjt59": {RuntimeCommit: "da499f3161a007c0da499f3161a007c0da499f31", Providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}},
-		"tpl-current":          {RuntimeCommit: "da499f3161a007c0da499f3161a007c0da499f31", Providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}},
-		"tpl-no-build":         {RuntimeCommit: "ccb1492bfcb45e36ccb1492bfcb45e36ccb1492b", Providers: []string{"hermes"}},
-		"tpl-five":             {RuntimeCommit: "da499f3161a007c0da499f3161a007c0da499f31", Providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}},
-		"tpl-seven":            {RuntimeCommit: "ac20d08b3a999731ac20d08b3a999731ac20d08b", Providers: []string{"hermes", "opencode", "pi", "dsh", "opencode-v2", "claude", "codex"}},
-		"tpl-one":              {RuntimeCommit: "ccb1492bfcb45e36ccb1492bfcb45e36ccb1492b", Providers: []string{"hermes"}},
-	}
+func testRuntimeProviderCatalog() []string {
+	return []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
 }
 
-func TestRuntimeProvidersForTemplateUsesTemplateID(t *testing.T) {
+func TestRuntimeProviderListAppliesToEveryTemplate(t *testing.T) {
 	tests := []struct {
 		name               string
 		templateID         string
@@ -621,49 +618,29 @@ func TestRuntimeProvidersForTemplateUsesTemplateID(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			entry, found := RuntimeProvidersForTemplate(testRuntimeProviderCatalog(), test.templateID)
-			if !found {
-				t.Fatalf("template ID %q was not found", test.templateID)
-			}
-			template := FCE2BTemplate{ID: test.templateID, Template: "display alias", SourceRevision: entry.RuntimeCommit, Providers: entry.Providers, Capabilities: runtimeconfig.CapabilitiesForProviders(entry.Providers)}
-			wantProviders := test.wantProviders
-			if wantProviders == nil {
-				wantProviders = []string{"hermes", "opencode", "pi", "dsh", "opencode-v2"}
-			}
+			providers := testRuntimeProviderCatalog()
+			template := FCE2BTemplate{ID: test.templateID, Template: "display alias", Providers: providers, Capabilities: runtimeconfig.CapabilitiesForProviders(providers)}
+			wantProviders := testRuntimeProviderCatalog()
 			if !reflect.DeepEqual(template.Providers, wantProviders) {
 				t.Fatalf("providers = %#v, want %#v", template.Providers, wantProviders)
 			}
-			wantCapabilities := test.wantCapabilities
-			if wantCapabilities == nil {
-				wantCapabilities = []string{
-					"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1,
-					LLMTraceCapability, A2AInboundOpenCodeCapability,
-					A2AInvocationV2Capability, A2AInboundHermesCapability,
-					A2AInboundPiCapability, DSHTrajectoryCapability,
-				}
-			}
+			wantCapabilities := runtimeconfig.CapabilitiesForProviders(wantProviders)
 			if !reflect.DeepEqual(template.Capabilities, wantCapabilities) {
 				t.Fatalf("capabilities = %#v, want %#v", template.Capabilities, wantCapabilities)
 			}
-			if template.SourceRevision != test.wantSourceRevision {
-				t.Fatalf("v7 contract = %+v", template)
+			if template.SourceRevision != "" {
+				t.Fatalf("template source revision = %q", template.SourceRevision)
 			}
 		})
 	}
-
-	if _, found := RuntimeProvidersForTemplate(testRuntimeProviderCatalog(), "multica-m7-v0000000000000000-r1-9a6bfa"); found {
-		t.Fatal("display alias was accepted as a template ID lookup")
-	}
 }
 
-func TestRuntimeProvidersForCommitUsesFullCommit(t *testing.T) {
+func TestRuntimeSourceCommitValidation(t *testing.T) {
 	commit := "ac20d08b3a999731ac20d08b3a999731ac20d08b"
-	catalog := map[string][]string{commit: {"hermes", "pi"}}
-	providers, found := RuntimeProvidersForCommit(catalog, commit)
-	if !found || !reflect.DeepEqual(providers, []string{"hermes", "pi"}) {
-		t.Fatalf("providers=%#v found=%v", providers, found)
+	if !IsRuntimeSourceCommit(commit) {
+		t.Fatal("full Runtime commit was rejected")
 	}
-	if _, found := RuntimeProvidersForCommit(catalog, commit[:16]); found {
+	if IsRuntimeSourceCommit(commit[:16]) {
 		t.Fatal("short commit was accepted")
 	}
 }
@@ -677,16 +654,16 @@ func TestListFCE2BTemplatesUsesTemplateIDWithoutBuildID(t *testing.T) {
 		{"id":"tpl-no-build","aliases":["multica-m7-vccb1492bfcb45e36-r1-bbbbbb"],"status":"ready"}
 	]`}}
 	templates, err := ListFCE2BTemplates(context.Background(), FCE2BConfig{
-		APIKey:              "test-key",
-		APIURL:              "https://fc-e2b.test",
-		Domain:              "fc-e2b.test",
-		CLIPath:             "e2b-test",
-		FCTemplateProviders: testRuntimeProviderCatalog(),
+		APIKey:           "test-key",
+		APIURL:           "https://fc-e2b.test",
+		Domain:           "fc-e2b.test",
+		CLIPath:          "e2b-test",
+		RuntimeProviders: testRuntimeProviderCatalog(),
 	}, runner)
 	if err != nil {
 		t.Fatalf("list templates: %v", err)
 	}
-	if len(templates) != 2 {
+	if len(templates) != 5 {
 		t.Fatalf("templates = %#v", templates)
 	}
 	got := templates[0]
@@ -701,7 +678,7 @@ func TestListFCE2BTemplatesUsesTemplateIDWithoutBuildID(t *testing.T) {
 	}
 }
 
-func TestFCE2BTemplateAPIRejectsLegacyVersionAliasesWithoutProviderCatalog(t *testing.T) {
+func TestFCE2BTemplateAPIUsesLegacyAliasAsDisplayOnly(t *testing.T) {
 	cfg := FCE2BConfig{
 		APIKey:  "test-key",
 		APIURL:  "https://fc-e2b.test",
@@ -711,9 +688,9 @@ func TestFCE2BTemplateAPIRejectsLegacyVersionAliasesWithoutProviderCatalog(t *te
 	if err := cfg.ValidateTemplateAPI(); err != nil {
 		t.Fatalf("legacy template API config: %v", err)
 	}
-	templates, err := parseFCE2BTemplates(`[{"id":"tpl-legacy","aliases":["multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta3-r1-9a6bfa"],"status":"ready"}]`, nil)
-	if err != nil || len(templates) != 0 {
-		t.Fatalf("legacy alias without template-ID catalog entry returned templates=%#v err=%v", templates, err)
+	templates, err := parseFCE2BTemplates(`[{"id":"tpl-legacy","aliases":["multica-m6-h0_19_0-o1_18_11-p0_83_0-d1_0_58b4-cdimsta3-r1-9a6bfa"],"status":"ready"}]`, testRuntimeProviderCatalog())
+	if err != nil || len(templates) != 1 || templates[0].ID != "tpl-legacy" {
+		t.Fatalf("display alias affected template selection: templates=%#v err=%v", templates, err)
 	}
 }
 

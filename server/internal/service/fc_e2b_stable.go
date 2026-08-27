@@ -1209,15 +1209,11 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 		return s.failValidation(ctx, release.ID, token, errors.New("template_id does not match a READY catalog entry"))
 	}
 	if !IsFCE2BTemplateReady(selected) || !IsFCE2BTemplatePublished(selected) {
-		return s.failValidation(ctx, release.ID, token, errors.New("candidate template is not READY with a published manifest"))
-	}
-	if !isStableSourceRevision(selected.SourceRevision) {
-		return s.failValidation(ctx, release.ID, token, errors.New("candidate template has no valid source revision"))
+		return s.failValidation(ctx, release.ID, token, errors.New("candidate template is not READY or the Runtime provider catalog is empty"))
 	}
 	manifest := map[string]any{
 		"schema_version":  selected.ManifestVersion,
 		"providers":       append([]string(nil), selected.Providers...),
-		"source_revision": selected.SourceRevision,
 		"runner_protocol": selected.RunnerProtocol,
 		"capabilities_by_backend": map[string][]string{
 			string(SandboxBackendAliyunFC): append([]string(nil), selected.Capabilities...),
@@ -1351,9 +1347,9 @@ func (s *FCE2BStableService) validateASBRelease(
 	}
 	sourceRevision := release.GitCommit[:6]
 	launcher := s.Launcher.withCurrentConfig()
-	providers, ok := RuntimeProvidersForCommit(launcher.Config.ASBCommitProviders, release.GitCommit)
-	if !ok {
-		return s.failValidation(ctx, release.ID, token, errors.New("ASB Runtime commit has no provider catalog entry"))
+	providers := append([]string(nil), launcher.Config.RuntimeProviders...)
+	if len(providers) == 0 {
+		return s.failValidation(ctx, release.ID, token, errors.New("Runtime provider catalog is empty"))
 	}
 	manifest := map[string]any{
 		"schema_version":  7,
@@ -3384,14 +3380,6 @@ func isSHA256Digest(value string) bool {
 	return strings.HasPrefix(value, "sha256:") &&
 		len(value) == len("sha256:")+64 &&
 		isLowerHex(strings.TrimPrefix(value, "sha256:"))
-}
-
-func isStableSourceRevision(value string) bool {
-	if len(value) != 6 || value != strings.ToLower(value) {
-		return false
-	}
-	_, err := hex.DecodeString(value)
-	return err == nil
 }
 
 func releaseTemplate(release FCE2BStableRelease) FCE2BTemplate {

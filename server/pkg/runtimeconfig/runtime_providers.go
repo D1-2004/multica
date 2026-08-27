@@ -17,31 +17,21 @@ const (
 	RuntimeProvidersDiamondDataID = "dt-fde-multica-runtime-manifest-fingerprints.json"
 )
 
-var (
-	runtimeCommitPattern       = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	runtimeProviderNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-)
+var runtimeProviderNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
-type FCTemplateProviders struct {
-	RuntimeCommit string   `json:"runtime_commit"`
-	Providers     []string `json:"providers"`
-}
-
-// RuntimeProvidersConfig is only a provider-selection directory. FC entries
-// are addressed by template ID, so aliases are display-only. ASB entries are
-// addressed by the full Runtime source commit supplied with the image.
+// RuntimeProvidersConfig is the deployment-wide provider selection list.
+// It changes only when a provider is added or removed; image/template releases
+// do not require a Diamond update.
 type RuntimeProvidersConfig struct {
-	Version     int                            `json:"version"`
-	FCTemplates map[string]FCTemplateProviders `json:"fc_templates"`
-	ASBCommits  map[string][]string            `json:"asb_commits"`
+	Version   int      `json:"version"`
+	Providers []string `json:"providers"`
 }
 
 type RuntimeProvidersSnapshot struct {
-	Version     int
-	FCTemplates map[string]FCTemplateProviders
-	ASBCommits  map[string][]string
-	Generation  uint64
-	SHA256      string
+	Version    int
+	Providers  []string
+	Generation uint64
+	SHA256     string
 }
 
 func ParseRuntimeProviders(data []byte) (RuntimeProvidersConfig, error) {
@@ -68,39 +58,16 @@ func (c RuntimeProvidersConfig) Validate() error {
 	if c.Version != RuntimeProvidersSchemaVersion {
 		return fmt.Errorf("Runtime providers version must be %d", RuntimeProvidersSchemaVersion)
 	}
-	if c.FCTemplates == nil || c.ASBCommits == nil {
-		return errors.New("Runtime providers fc_templates and asb_commits maps are required")
+	if c.Providers == nil {
+		return errors.New("Runtime providers list is required")
 	}
-	for templateID, entry := range c.FCTemplates {
-		if strings.TrimSpace(templateID) != templateID || templateID == "" {
-			return errors.New("FC Runtime provider template IDs must be non-empty and trimmed")
-		}
-		if !runtimeCommitPattern.MatchString(entry.RuntimeCommit) {
-			return errors.New("FC Runtime provider entries require a 40-character lowercase Runtime commit")
-		}
-		if err := validateRuntimeProviderList(entry.Providers); err != nil {
-			return err
-		}
-	}
-	for commit, providers := range c.ASBCommits {
-		if !runtimeCommitPattern.MatchString(commit) {
-			return errors.New("ASB Runtime provider keys must be 40-character lowercase Runtime commits")
-		}
-		if err := validateRuntimeProviderList(providers); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateRuntimeProviderList(providers []string) error {
-	seen := make(map[string]struct{}, len(providers))
-	for _, provider := range providers {
+	seen := make(map[string]struct{}, len(c.Providers))
+	for _, provider := range c.Providers {
 		if !runtimeProviderNamePattern.MatchString(provider) || strings.TrimSpace(provider) != provider {
 			return errors.New("Runtime provider names contain unsupported characters")
 		}
 		if _, exists := seen[provider]; exists {
-			return errors.New("Runtime provider lists must not contain duplicates")
+			return errors.New("Runtime provider list must not contain duplicates")
 		}
 		seen[provider] = struct{}{}
 	}
@@ -136,11 +103,10 @@ func (s *Service) ApplyRuntimeProvidersJSON(data []byte) (RuntimeProvidersSnapsh
 	}
 	sum := sha256.Sum256(data)
 	next := &RuntimeProvidersSnapshot{
-		Version:     cfg.Version,
-		FCTemplates: cloneFCTemplateProviders(cfg.FCTemplates),
-		ASBCommits:  cloneRuntimeProviderLists(cfg.ASBCommits),
-		Generation:  generation,
-		SHA256:      hex.EncodeToString(sum[:]),
+		Version:    cfg.Version,
+		Providers:  append([]string(nil), cfg.Providers...),
+		Generation: generation,
+		SHA256:     hex.EncodeToString(sum[:]),
 	}
 	s.runtimeProviders.Store(next)
 	return cloneRuntimeProvidersSnapshot(*next), nil
@@ -179,38 +145,13 @@ func CapabilitiesForProviders(providers []string) []string {
 
 func cloneRuntimeProvidersConfig(in RuntimeProvidersConfig) RuntimeProvidersConfig {
 	return RuntimeProvidersConfig{
-		Version:     in.Version,
-		FCTemplates: cloneFCTemplateProviders(in.FCTemplates),
-		ASBCommits:  cloneRuntimeProviderLists(in.ASBCommits),
+		Version:   in.Version,
+		Providers: append([]string(nil), in.Providers...),
 	}
 }
 
 func cloneRuntimeProvidersSnapshot(in RuntimeProvidersSnapshot) RuntimeProvidersSnapshot {
 	out := in
-	out.FCTemplates = cloneFCTemplateProviders(in.FCTemplates)
-	out.ASBCommits = cloneRuntimeProviderLists(in.ASBCommits)
-	return out
-}
-
-func cloneFCTemplateProviders(in map[string]FCTemplateProviders) map[string]FCTemplateProviders {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string]FCTemplateProviders, len(in))
-	for templateID, entry := range in {
-		entry.Providers = append([]string(nil), entry.Providers...)
-		out[templateID] = entry
-	}
-	return out
-}
-
-func cloneRuntimeProviderLists(in map[string][]string) map[string][]string {
-	if in == nil {
-		return nil
-	}
-	out := make(map[string][]string, len(in))
-	for key, providers := range in {
-		out[key] = append([]string(nil), providers...)
-	}
+	out.Providers = append([]string(nil), in.Providers...)
 	return out
 }

@@ -23,33 +23,25 @@ func TestAppRuntimeConfigReadsCurrentRuntimeProviderSnapshot(t *testing.T) {
 
 	first, err := remote.ApplyRuntimeProvidersJSON([]byte(`{
 	  "version": 1,
-	  "fc_templates": {
-	    "template-1": {"runtime_commit":"0e70a766342698a90e70a766342698a90e70a766","providers":["hermes","opencode"]}
-	  },
-	  "asb_commits": {}
+	  "providers": ["hermes", "opencode"]
 }`))
 	if err != nil {
 		t.Fatalf("apply initial Runtime providers: %v", err)
 	}
 	app := &appRuntimeConfig{remote: remote}
 	initial := app.fce2b()
-	if got := initial.FCTemplateProviders["template-1"].Providers; len(got) != 2 || got[1] != "opencode" {
+	if got := initial.RuntimeProviders; len(got) != 2 || got[1] != "opencode" {
 		t.Fatalf("initial providers = %#v", got)
 	}
 
-	entry := initial.FCTemplateProviders["template-1"]
-	entry.Providers[0] = "mutated"
-	initial.FCTemplateProviders["template-1"] = entry
-	if got := remote.RuntimeProviders().FCTemplates["template-1"].Providers[0]; got != "hermes" {
+	initial.RuntimeProviders[0] = "mutated"
+	if got := remote.RuntimeProviders().Providers[0]; got != "hermes" {
 		t.Fatalf("caller mutated service snapshot: %q", got)
 	}
 
 	second, err := remote.ApplyRuntimeProvidersJSON([]byte(`{
 	  "version": 1,
-	  "fc_templates": {},
-	  "asb_commits": {
-	    "ac20d08b3a999731ac20d08b3a999731ac20d08b": ["pi"]
-	  }
+	  "providers": ["pi"]
 }`))
 	if err != nil {
 		t.Fatalf("apply updated Runtime providers: %v", err)
@@ -58,10 +50,7 @@ func TestAppRuntimeConfigReadsCurrentRuntimeProviderSnapshot(t *testing.T) {
 		t.Fatalf("generation = %d, want %d", second.Generation, first.Generation+1)
 	}
 	updated := app.fce2b()
-	if got := updated.ASBCommitProviders["ac20d08b3a999731ac20d08b3a999731ac20d08b"]; len(got) != 1 || got[0] != "pi" {
+	if got := updated.RuntimeProviders; len(got) != 1 || got[0] != "pi" {
 		t.Fatalf("updated providers = %#v", got)
-	}
-	if _, ok := updated.FCTemplateProviders["template-1"]; ok {
-		t.Fatal("app runtime config retained removed provider key")
 	}
 }

@@ -242,7 +242,7 @@ func (h *Handler) createAliyunFCRuntime(
 		return
 	}
 	if !service.IsFCE2BTemplateReady(selected) || !service.IsFCE2BTemplatePublished(selected) {
-		writeError(w, http.StatusBadRequest, "FC/E2B template is not ready or has no Runtime provider catalog entry")
+		writeError(w, http.StatusBadRequest, "FC/E2B template is not ready or the Runtime provider catalog is empty")
 		return
 	}
 	provider, ok := resolveFCE2BProvider(req.Provider, selected)
@@ -432,12 +432,13 @@ func (h *Handler) createASBRuntime(
 		if candidateProvider == "" {
 			candidateProvider = service.FCE2BProvider
 		}
-		providers, found := service.RuntimeProvidersForCommit(
-			h.currentConfig().FCE2B.ASBCommitProviders,
-			runtimeCommit,
-		)
-		if !found || !containsRuntimeProvider(providers, candidateProvider) {
-			writeError(w, http.StatusBadRequest, "runtime_commit does not declare the requested provider in Diamond")
+		providers := h.currentConfig().FCE2B.RuntimeProviders
+		if !service.IsRuntimeSourceCommit(runtimeCommit) {
+			writeError(w, http.StatusBadRequest, "runtime_commit must be a 40-character lowercase Git commit")
+			return
+		}
+		if !containsRuntimeProvider(providers, candidateProvider) {
+			writeError(w, http.StatusBadRequest, "provider is not enabled in the Runtime provider catalog")
 			return
 		}
 		var err error
@@ -854,12 +855,13 @@ func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *ht
 	if runtimeCommit == "" {
 		runtimeCommit = strings.ToLower(strings.TrimSpace(currentMetadata.RuntimeCommit))
 	}
-	providers, found := service.RuntimeProvidersForCommit(
-		h.currentConfig().FCE2B.ASBCommitProviders,
-		runtimeCommit,
-	)
-	if !found || !containsRuntimeProvider(providers, runtime.Provider) {
-		writeError(w, http.StatusBadRequest, "runtime_commit does not declare the Runtime provider in Diamond")
+	providers := h.currentConfig().FCE2B.RuntimeProviders
+	if !service.IsRuntimeSourceCommit(runtimeCommit) {
+		writeError(w, http.StatusBadRequest, "runtime_commit must be a 40-character lowercase Git commit")
+		return
+	}
+	if !containsRuntimeProvider(providers, runtime.Provider) {
+		writeError(w, http.StatusBadRequest, "provider is not enabled in the Runtime provider catalog")
 		return
 	}
 	artifact.ProviderData = map[string]any{
@@ -1030,9 +1032,9 @@ func selectFCE2BTemplateByID(templates []service.FCE2BTemplate, id string) (serv
 	return service.FCE2BTemplate{}, false
 }
 
-// resolveFCE2BProvider picks an explicit provider only when the Diamond entry
-// for the template ID declares it. With no explicit value, the first supported
-// provider in that entry is selected.
+// resolveFCE2BProvider picks an explicit provider only when it is enabled in
+// the deployment-wide Diamond list. With no explicit value, the first enabled
+// provider is selected.
 func resolveFCE2BProvider(requested string, t service.FCE2BTemplate) (string, bool) {
 	requested = strings.ToLower(strings.TrimSpace(requested))
 	if requested == "" {

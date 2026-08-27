@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
 
 type staticFCE2BTemplateRunner struct {
@@ -225,7 +223,7 @@ func TestCreateStableFCE2BRuntimeAllowsMemberAndForcesPrivate(t *testing.T) {
 		LLMBaseURL:          "https://llm.test",
 		LLMAPIKey:           "test-llm-key",
 		LLMModels:           []string{"test-model"},
-		FCTemplateProviders: map[string]runtimeconfig.FCTemplateProviders{templateID: {RuntimeCommit: strings.Repeat("a", 40), Providers: []string{"hermes"}}},
+		RuntimeProviders:    []string{"hermes"},
 		CLIPath:             cliPath,
 		TimeoutSeconds:      60,
 		SandboxReadyTimeout: time.Minute,
@@ -331,16 +329,12 @@ func fce2bTemplateRotationHandler(t *testing.T) (*Handler, *staticFCE2BTemplateR
 	launcher.Runner = runner
 	h.FCE2BLauncher = &launcher
 	h.cfg.FCE2B = service.FCE2BConfig{
-		Enabled: true,
-		APIKey:  "test-api-key",
-		APIURL:  "https://fc-e2b.test",
-		Domain:  "fc-e2b.test",
-		CLIPath: "e2b-test",
-		FCTemplateProviders: map[string]runtimeconfig.FCTemplateProviders{
-			"tpl_old_id":     {RuntimeCommit: strings.Repeat("a", 40), Providers: []string{"hermes"}},
-			"tpl_new_id":     {RuntimeCommit: strings.Repeat("b", 40), Providers: []string{"hermes", "opencode", "pi"}},
-			"tpl_pending_id": {RuntimeCommit: strings.Repeat("c", 40), Providers: []string{"hermes"}},
-		},
+		Enabled:          true,
+		APIKey:           "test-api-key",
+		APIURL:           "https://fc-e2b.test",
+		Domain:           "fc-e2b.test",
+		CLIPath:          "e2b-test",
+		RuntimeProviders: []string{"hermes", "opencode", "pi"},
 	}
 	h.cfg.StableRuntimePublisherUserIDs = map[string]struct{}{testUserID: {}}
 	return &h, runner

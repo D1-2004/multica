@@ -715,19 +715,6 @@ func TestStableObservationRestartsFinalCatchUpForNewRuntimes(t *testing.T) {
 	}
 }
 
-func TestStableSourceRevisionRequiresCanonicalAliasRevision(t *testing.T) {
-	for _, valid := range []string{"000000", "b90849", "abcdef"} {
-		if !isStableSourceRevision(valid) {
-			t.Fatalf("valid source revision %q was rejected", valid)
-		}
-	}
-	for _, invalid := range []string{"", "b9084", "b908490", "B90849", "zzzzzz"} {
-		if isStableSourceRevision(invalid) {
-			t.Fatalf("invalid source revision %q was accepted", invalid)
-		}
-	}
-}
-
 func TestStableReleaseFingerprintDoesNotDependOnDerivedBootstrapState(t *testing.T) {
 	input := CreateFCE2BStableReleaseInput{
 		TemplateID: "template-1",

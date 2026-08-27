@@ -110,8 +110,7 @@ type FCE2BConfig struct {
 	LLMBaseURL                        string
 	LLMAPIKey                         string
 	LLMModels                         []string
-	FCTemplateProviders               map[string]runtimeconfig.FCTemplateProviders
-	ASBCommitProviders                map[string][]string
+	RuntimeProviders                  []string
 	AgentIdentityControlBaseURL       string
 	AgentIdentitySandboxBaseURL       string
 	AgentIdentityBaseURL              string
@@ -402,30 +401,13 @@ func IsFCE2BSupportedProvider(provider string) bool {
 	return false
 }
 
-func RuntimeProvidersForCommit(catalog map[string][]string, commit string) ([]string, bool) {
+func IsRuntimeSourceCommit(commit string) bool {
 	commit = strings.ToLower(strings.TrimSpace(commit))
-	if len(commit) != 40 || !isLowerHex(commit) {
-		return nil, false
-	}
-	providers, ok := catalog[commit]
-	if !ok || len(providers) == 0 {
-		return nil, false
-	}
-	return append([]string(nil), providers...), true
+	return len(commit) == 40 && isLowerHex(commit)
 }
 
-func RuntimeProvidersForTemplate(catalog map[string]runtimeconfig.FCTemplateProviders, templateID string) (runtimeconfig.FCTemplateProviders, bool) {
-	templateID = strings.TrimSpace(templateID)
-	entry, ok := catalog[templateID]
-	if !ok || templateID == "" || len(entry.Providers) == 0 {
-		return runtimeconfig.FCTemplateProviders{}, false
-	}
-	entry.Providers = append([]string(nil), entry.Providers...)
-	return entry, true
-}
-
-// FCE2BTemplateSupportsProvider reports whether the Diamond provider directory
-// declares provider for the selected template ID.
+// FCE2BTemplateSupportsProvider reports whether provider is enabled in the
+// deployment-wide Diamond provider list copied onto the template projection.
 func FCE2BTemplateSupportsProvider(template FCE2BTemplate, provider string) bool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if !IsFCE2BSupportedProvider(provider) {
@@ -746,7 +728,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 	if err != nil {
 		return nil, fmt.Errorf("FC/E2B template list failed: %w", err)
 	}
-	templates, err := parseFCE2BTemplates(out, cfg.FCTemplateProviders)
+	templates, err := parseFCE2BTemplates(out, cfg.RuntimeProviders)
 	if err != nil {
 		return nil, err
 	}
@@ -758,7 +740,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 
 func parseFCE2BTemplates(
 	output string,
-	providerCatalog map[string]runtimeconfig.FCTemplateProviders,
+	runtimeProviders []string,
 ) ([]FCE2BTemplate, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
@@ -800,8 +782,7 @@ func parseFCE2BTemplates(
 			CreatedAt: firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
 			UpdatedAt: firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
 		}
-		entry, ok := RuntimeProvidersForTemplate(providerCatalog, t.ID)
-		if !ok {
+		if strings.TrimSpace(t.ID) == "" {
 			continue
 		}
 		displayAlias := t.ID
@@ -815,10 +796,9 @@ func parseFCE2BTemplates(
 		t.Name = displayAlias
 		t.Template = displayAlias
 		t.ManifestVersion = 7
-		t.Providers = entry.Providers
-		t.Capabilities = runtimeconfig.CapabilitiesForProviders(entry.Providers)
+		t.Providers = append([]string(nil), runtimeProviders...)
+		t.Capabilities = runtimeconfig.CapabilitiesForProviders(runtimeProviders)
 		t.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
-		t.SourceRevision = entry.RuntimeCommit
 		templates = append(templates, t)
 	}
 	return templates, nil
