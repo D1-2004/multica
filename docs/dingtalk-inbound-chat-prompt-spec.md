@@ -90,7 +90,7 @@ user 段由谁写、写什么、以及每一条改动如何生效。
 
 | 半段 | 门槛 | 内容 |
 | --- | --- | --- |
-| 事实来源 | `surface ∈ {chat, auto}` | Multica 的记录是有损镜像；记录里的 assistant 轮是回给平台的文本，不是送达证据，也不是可模仿的语气；需要时回读会话本身 |
+| 事实来源 | `surface ∈ {chat, auto}` 且有会话 ID | Multica 不携带本会话历史、prompt 里也没有复制品；**回答前先用下面的命令回读**；能看到的自己的旧轮次是回给平台的文本，不是送达证据，也不是可模仿的语气 |
 | Issue 交付 | `surface=issue` 且带 completion callback | 终答会被平台投回钉钉会话，issue 评论是 Multica 侧记录；写一次、两处都给；不要自己再发一遍 |
 | 定位符 | 有会话 ID / 有引用 | 逐条打印可直接执行的回读命令 |
 
@@ -101,6 +101,22 @@ user 段由谁写、写什么、以及每一条改动如何生效。
 ## 5. 恢复历史（⑦ 内容，`boundedChatHistoryTranscript`）
 
 **在服务端 claim 时拼好**，随 claim 响应下发；daemon 只套 `<interaction-record>` 外壳。
+
+### 5.0 有回读命令的会话，不下发恢复历史
+
+`withholdChatHistoryForReadback` 与 `dispatchConversationReadbackAvailable` 是**同一个判据的两侧**：
+凡是指令段会打印会话回读命令的派发（dingtalk + channel + dws 出站 + chat/auto + 有会话 ID），
+claim 就不再下发 `ChatHistory`。两个门槛必须一致，否则会出现"记录停发了但命令没打印"，
+运行时两手空空。测试 `TestWithholdChatHistoryTracksTheReadbackCommand` 钉死这一点。
+
+理由不是"记录内容不好"，而是**它挤掉了权威来源**。线上 trace
+`25d5b267a1514628dbd71730dd82c8405d638856bfc97da79d1641f53933a9de` 的推理里，模型面对
+「必须用 dws 回拉」的强制指令，一次回读都没做——因为 `<interaction-record>` 已经把它需要的
+摆在眼前了。更糟的是它从记录里一条几小时前的旧消息抄走了「距离报名截止还有不到 3 小时」，
+写进了发给三个真人的新群消息。一个更便宜的次优来源，会稳定地赢过一个要花一次工具调用的
+权威来源。
+
+Slack / Feishu / 网页 Chat **保留**恢复历史：那里没有回读途径，砍掉只会让运行时什么都没有。
 
 - **归约**：重放每条消息前，剥掉引用归属段落和「本次发言（需要处理的是这句）：」开头。
   两个归约相互独立判断——一个 chat_session 里存着本代码每一版渲染写下的行，要求它们成对
@@ -120,6 +136,7 @@ user 段由谁写、写什么、以及每一条改动如何生效。
 | `dispatchRecordUtterance` 归约 | 否——锚点只由派发渲染产生 |
 | `<interaction-record>` 的渠道注意事项 | 否——`channelType != ""` 才发 |
 | 丢轮次标记 | 否——网页 Chat 保持原行为 |
+| 不下发恢复历史 | 否——判据要求 dingtalk + dws 出站，网页 Chat 永远不命中 |
 | 「Multica 没有 history reader」那句 | 否——在 `ChatChannelType != ""` 分支内 |
 
 新增规则时按同样的表自查一遍。

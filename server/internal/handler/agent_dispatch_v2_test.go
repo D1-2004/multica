@@ -620,8 +620,9 @@ func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *tes
 		"- quoted message (801 chars, by you): " +
 			"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
 		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
-		// The record is a mirror; the conversation itself is what the run answers from.
-		"partial mirror",
+		// The prompt carries no transcript, so the read-back is an instruction.
+		"Multica does not carry this conversation's history",
+		"BEFORE you answer",
 		"never proof a DingTalk message exists",
 	} {
 		if !strings.Contains(conversation.EffectiveText, want) {
@@ -710,6 +711,60 @@ func TestDingTalkConversationInstructionNamesIssueDelivery(t *testing.T) {
 	}
 }
 
+// The claim path stops shipping Multica's recovered transcript exactly where the
+// instruction prints a command for the conversation itself. If the two gates ever
+// disagreed a run would be left with neither, so they share one predicate.
+func TestWithholdChatHistoryTracksTheReadbackCommand(t *testing.T) {
+	dispatch := func(mutate func(*persistedDispatchContext)) []byte {
+		stored := persistedDispatchContext{
+			Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+			Domain:   "channel",
+			Type:     "message.created",
+			Surface:  DispatchSurface{Type: "auto"},
+			Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+			EventData: DispatchEventData{
+				Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+				Messages:     []DispatchMessage{{OpenMsgID: "current-open", Text: "继续"}},
+			},
+		}
+		if mutate != nil {
+			mutate(&stored)
+		}
+		raw, err := json.Marshal(stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+
+	for name, tc := range map[string]struct {
+		rawContext []byte
+		want       bool
+	}{
+		"dingtalk chat dispatch": {dispatch(nil), true},
+		"issue surface":          {dispatch(func(s *persistedDispatchContext) { s.Surface.Type = "issue" }), false},
+		"robot sdk outbound":     {dispatch(func(s *persistedDispatchContext) { s.Outbound.Mode = "robot_sdk" }), false},
+		"no conversation id":     {dispatch(func(s *persistedDispatchContext) { s.EventData.Conversation.OpenConversationID = "" }), false},
+		"not a dispatch at all":  {nil, false},
+		"web chat empty context": {[]byte("{}"), false},
+	} {
+		withheld := withholdChatHistoryForReadback(tc.rawContext)
+		if withheld != tc.want {
+			t.Errorf("%s: withholdChatHistoryForReadback = %v, want %v", name, withheld, tc.want)
+		}
+		// The instruction must print the command on exactly the same input.
+		if tc.rawContext != nil {
+			stored, present := parsePersistedDispatchContext(tc.rawContext)
+			printed := present && strings.Contains(
+				buildDispatchConversationInstruction(stored),
+				"- conversation: `dws chat message search-advanced")
+			if printed != withheld {
+				t.Errorf("%s: command printed = %v but transcript withheld = %v", name, printed, withheld)
+			}
+		}
+	}
+}
+
 // An Issue run answers through its own surface, so it gets the quote rule and
 // locators but never the instruction to read the room before replying.
 func TestDingTalkConversationInstructionSkipsReadbackOnIssueSurface(t *testing.T) {
@@ -737,7 +792,7 @@ func TestDingTalkConversationInstructionSkipsReadbackOnIssueSurface(t *testing.T
 	if !strings.Contains(instruction, "--msg-ids referenced-open") {
 		t.Fatalf("issue-surface instruction dropped the quoted locator: %q", instruction)
 	}
-	for _, unwanted := range []string{"partial mirror", "- conversation: `dws chat message search-advanced"} {
+	for _, unwanted := range []string{"BEFORE you answer", "- conversation: `dws chat message search-advanced"} {
 		if strings.Contains(instruction, unwanted) {
 			t.Fatalf("issue-surface instruction leaked the readback rule %q: %q", unwanted, instruction)
 		}

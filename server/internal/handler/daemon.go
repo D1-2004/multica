@@ -2599,7 +2599,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 						}
 						if cutoff < 0 {
 							inputLoadErr = errors.New("chat input message missing from visible transcript")
-						} else if cutoff > 0 {
+						} else if cutoff > 0 && !withholdChatHistoryForReadback(task.Context) {
 							resp.ChatHistory = boundedChatHistoryTranscript(msgs[:cutoff], resp.ChatChannelType)
 						}
 					}
@@ -3576,6 +3576,27 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 // by dropping the oldest turns. The clip is declared inline; whether the drop is
 // declared depends on the surface — see chatHistoryOmittedMarker.
 //
+// withholdChatHistoryForReadback reports whether this claim must NOT carry the
+// recovered transcript.
+//
+// Multica's record of a dispatched DingTalk conversation is a mirror, and a lossy
+// one: undecryptable inbound payloads stay unreadable in it, every recorded
+// assistant turn is text written back to the platform rather than what the room
+// received, and per-message clipping cuts the middle out of the long ones. It is
+// good enough to answer from and wrong often enough to answer wrongly from — a
+// pre-release run reproduced a self-report the user had already corrected, and
+// another skipped its mandatory read-back because the mirror had already put an
+// answer in front of it.
+//
+// Withheld ONLY where the run is handed a working replacement: the dispatch
+// instruction prints a ready-to-run command for the conversation itself. Slack,
+// Feishu and web chat keep their transcript — there is nothing else there, and a
+// silent gap would be strictly worse than a lossy record.
+func withholdChatHistoryForReadback(rawContext []byte) bool {
+	stored, present := parsePersistedDispatchContext(rawContext)
+	return present && dispatchConversationReadbackAvailable(stored)
+}
+
 // makeChatHistoryAuthoritative clears PriorSessionID whenever this returns
 // anything, so on a cloud chat this string replaces the provider session as the
 // run's Multica-side memory. What it clips is therefore gone from Multica for

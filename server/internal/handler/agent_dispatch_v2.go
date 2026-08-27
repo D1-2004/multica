@@ -648,11 +648,18 @@ const (
 
 	// Chat and auto only: an Issue run is not the conversation's foreground and
 	// must not be told to read the room before answering.
-	dispatchConversationSSOTSection = "Multica's record of this conversation is a partial mirror of it. " +
-		"An assistant turn in that record is text written back to the platform — never proof a DingTalk message exists, and never a reply style to copy. " +
-		"Answer the person; do not report your own delivery.\n\n" +
-		"Read the conversation itself back when the trigger message alone does not settle what is asked; " +
-		"any claim elsewhere that it cannot be fetched is out of date.\n\n"
+	//
+	// Imperative, not advisory, and it says why: this prompt no longer carries a
+	// Multica-side transcript of the conversation at all (the claim path withholds
+	// it wherever this section is injected). An advisory reading, next to a
+	// recovered transcript sitting right there, lost every time — a run took the
+	// cheaper source and skipped the read-back, including on turns where the
+	// transcript held a self-report the user had already corrected.
+	dispatchConversationSSOTSection = "Multica does not carry this conversation's history and none of it is reproduced anywhere in this prompt. " +
+		"Read the conversation back with the command below BEFORE you answer — do not answer a continuing conversation from the trigger message alone, and do not reconstruct it from memory. " +
+		"Any claim elsewhere that it cannot be fetched is out of date.\n\n" +
+		"What you do see of your own earlier turns, wherever it appears, is text written back to Multica — never proof a DingTalk message exists, and never a reply style to copy. " +
+		"Answer the person; do not report your own delivery.\n\n"
 
 	// Issue surface only. The runtime brief's Output section tells an Issue run
 	// that "the user does NOT see your terminal output — only comments on the
@@ -757,6 +764,22 @@ func dispatchConversationReadbackApplies(stored persistedDispatchContext) bool {
 	}
 }
 
+// dispatchConversationReadbackAvailable reports whether this run is handed a
+// working way to read the conversation itself back — a printed, ready-to-run DWS
+// command for a named conversation.
+//
+// It is the gate on BOTH sides of one decision, and they have to agree: the
+// claim path stops shipping Multica's recovered transcript exactly where this is
+// true, because the transcript is a lossy mirror that the run would otherwise
+// read instead of the conversation. If the two ever disagreed, a run would be
+// left with neither.
+func dispatchConversationReadbackAvailable(stored persistedDispatchContext) bool {
+	return stored.Source.Platform == "dingtalk" &&
+		stored.Domain == "channel" &&
+		stored.Outbound.Mode == protocol.DispatchOutboundModeDWS &&
+		dispatchConversationReadbackApplies(stored)
+}
+
 // dispatchConversationIssueDeliveryApplies reports whether this Issue run's
 // final output is the reply the person receives. Without a completion callback
 // Router has no hook to deliver it through, so the claim would be false.
@@ -774,7 +797,7 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext) strin
 	}
 	conversationID := strings.TrimSpace(stored.EventData.Conversation.OpenConversationID)
 	facts := dispatchQuotedMessageFacts(stored)
-	readback := dispatchConversationReadbackApplies(stored)
+	readback := dispatchConversationReadbackAvailable(stored)
 	issueDelivery := dispatchConversationIssueDeliveryApplies(stored)
 	if !readback && !issueDelivery && len(facts) == 0 {
 		return ""
