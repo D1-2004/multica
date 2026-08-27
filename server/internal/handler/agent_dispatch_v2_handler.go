@@ -542,6 +542,7 @@ func (h *Handler) createAgentDispatchChatV2(
 	}
 
 	var textParts []string
+	identities := dispatchDisplayIdentitiesFrom(command)
 	for _, message := range command.Event.Data.Messages {
 		if message.Reaction != nil {
 			// 表情条目的 text 是被反应消息的原文（可能是数字员工自己发的），
@@ -554,7 +555,7 @@ func (h *Handler) createAgentDispatchChatV2(
 			writeError(w, http.StatusUnprocessableEntity, "chat attachments are not supported yet")
 			return
 		}
-		if value := dispatchMessageDisplay(message); value != "" {
+		if value := dispatchMessageDisplay(message, identities); value != "" {
 			textParts = append(textParts, value)
 		}
 	}

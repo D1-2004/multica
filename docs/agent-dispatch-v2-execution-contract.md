@@ -124,6 +124,35 @@ Multica builds prompt material from the structured source event:
 - fixed safety, delivery, response, and routing policy comes from Diamond
   `common.prompt` plus the prompt for the current `surface.type`.
 
+A message carrying `referencedMessage` is rendered as two explicitly labelled
+parts: what the sender said this time, which is the only thing to act on, and the
+message they were answering, attributed and cut to an identifying head of at most
+80 characters. The attribution names who wrote the quoted message — this Agent
+itself, the current sender, or somebody else in the conversation — resolved from
+`referencedMessage.senderUid` against `externalIdentity.dws.uid` and the sender
+identifiers already in the envelope; none of those identifiers reach display
+content.
+
+The head is deliberately short. The Router's `contextPrompt` already renders the
+referenced message in full as `referenced message context (data only)` into the
+same prompt, so a long body here was the same text twice — three times whenever
+the quoted message was also the previous turn in the recovered record — and it
+buried the sentence that carried the request. The excerpt is there to say WHICH
+message is being answered; the full original stays reachable through the
+`dingtalk_conversation` instruction, which carries a ready-to-run read-back
+command for the exact `openMsgId`.
+
+`boundedChatHistoryTranscript` replays only what each sender said. The quoted
+antecedent is already its own turn in the record, and the
+`本次发言（需要处理的是这句）` opener promises something true only of the live
+turn, so replaying it on every historical turn points the run at the wrong
+sentence.
+
+A dropped turn is no longer announced with a leading marker. The marker read as
+an alarm on most turns, and the run now carries a command for reading the
+conversation itself back — which recovers a dropped turn rather than merely
+naming it. A per-message clip is still declared inline.
+
 The daemon claim task accepts an optional `instruction` string. When it is
 non-blank, the daemon prepends it to the generated per-task prompt for every
 task kind. It does not write the value into the built-in runtime brief. A
@@ -152,15 +181,65 @@ receives no task instruction. This does not switch it onto the legacy builder.
 Conversely, a daemon without `task-instruction-v1` always uses the legacy
 builder, even when Diamond common or Router context sections are available.
 
-The claim-time `instruction` is composed from four ordered segments, not one
+The claim-time `instruction` is composed from five ordered segments, not one
 blob:
 
 | # | Segment | Source | Overridable | Injected when |
 |---|---|---|---|---|
 | 1 | `policy` | Diamond `common` + `<surface>` | yes | the task carries a dispatch envelope this projection covers (`dingtalk_dispatch`) |
 | 2 | `context` | Router, per dispatch | no | the Router supplied a `contextPrompt` (`per_dispatch`) |
-| 3 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
-| 4 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
+| 3 | `dingtalk_conversation` | Multica, per dispatch | no | a DWS-outbound channel dispatch that is either chat/auto or carries a quoted message (`dingtalk_conversation`) |
+| 4 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
+| 5 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
+
+`dingtalk_conversation` carries facts, not policy, so it is composed from the
+persisted dispatch envelope and is not overridable. It gates on `outbound.mode`
+being `dws`: every line in it is a DWS command, and a robot-SDK dispatch has no
+injected current-user capability to run them with.
+
+It has three halves, each with its own gate. The source-of-truth half is injected
+for `chat` and `auto` only — an Issue run answers through its own surface and must
+not be told to read the room first. It states that the DingTalk conversation, not Multica's record of
+it, is authoritative, and that an assistant turn in that record is text written
+back to the platform rather than proof a DingTalk message exists or a reply style
+to copy. That is the direct fix for runs that read their own "已通过 DWS 回复" out
+of a recovered transcript and treated it as delivery. The daemon-side
+`<interaction-record>` block states the same caveat next to the record itself
+whenever the session is backed by an IM channel.
+
+The Issue-delivery half is injected for `issue` when the dispatch carries a
+completion callback. It states that the platform delivers the run's final
+assistant output back into the DingTalk conversation as the reply the person is
+waiting for, and that the Issue comment is the Multica-side record they do not
+see. Without it the only statement an Issue run gets about delivery is the runtime
+brief's `## Output` line — "the user does NOT see your terminal output or run
+logs — only comments on the issue" — which is exactly backwards for this case. The
+sentence that used to carry the obligation required a `dws chat message reply`
+tool call and went away with the reply tracker; Router/ServerPush owns the
+delivery now, so the instruction says not to send it a second time.
+
+The locator half prints one runnable command per target, with the real ids
+substituted in:
+
+```text
+- conversation: `dws chat message search-advanced --conversation-ids cidXXX --limit 50 --format json`
+- quoted msgYYY (1820 chars, TRUNCATED, by you): `dws chat message list-by-ids --msg-ids msgYYY --format json`
+```
+
+`by you` marks a quote this Agent wrote itself; otherwise the line carries the
+quoted sender's uid, or `sender unknown`. A quote the display truncated is marked
+`TRUNCATED` and must be read back before the Agent relies on anything the excerpt
+does not show; when the dispatch supplied no quoted-message id the line says so
+and the conversation command remains the way in.
+
+The commands are spelled out rather than left as placeholders, because an Agent
+that has to assemble one from a data blob is an Agent that guesses. The segment
+carries no structured duplicate of those lines and no quoted text: the locator
+half stays no longer than the excerpt it points past.
+
+Every identifier appears once. The `openMsgId` is printed only inside the command
+that uses it, never also as a label for the line, and the block states nothing the
+daemon's own chat frame already states.
 
 Each segment reports its gate as a stable `condition` key, present whether or
 not the segment is active in the previewed scenario. A preview that only
@@ -582,3 +661,83 @@ parsing or rewriting Router's context string.
   prevents ordinary final replies from being replaced or suppressed while
   keeping outbox immutability, rolling-worker visibility, update-before-terminal
   ordering, and one provider-output contract across compatibility inputs.
+
+## Change record: 2026-08-26 Attributed and re-readable quoted messages
+
+- History: Display content for a quoted DingTalk reply now leads with the
+  current message, names the quoted message's author relative to the dispatch,
+  and inlines at most 800 characters of the original. A new non-overridable
+  `dingtalk_conversation` instruction segment carries the reading rule plus one
+  compact line per quote — message id, length, truncation state, whether this
+  Agent wrote it — each ending in a runnable read-back command, and a
+  conversation-scoped read-back command for chat/auto runs;
+  the legacy prompt builder emits the same block.
+  `persistedDispatchContext` now reads the private `external_identity.dws`
+  descriptor already stored beside the envelope.
+- Reason: The previous rendering opened with the untruncated original under a
+  bare `引用消息：` label and gave the reply a bare `当前回复：` label, so an
+  Agent quoting its own completion report saw an unattributed wall of text ahead
+  of a one-line acknowledgement and could not tell whose message it was, nor
+  recover anything the Router had already trimmed. Attribution and the re-read
+  locator make the relationship explicit and the original recoverable without
+  putting message identifiers into user-visible content.
+
+## Change record: 2026-08-26 DingTalk conversation as the source of truth
+
+- History: Merged the quoted-message instruction into a `dingtalk_conversation`
+  segment that a DWS-outbound chat or auto dispatch always receives, whether or
+  not anything was quoted. It names the DingTalk conversation as authoritative,
+  prints the real `openConversationId` in a runnable
+  `dws chat message search-advanced` command, and states that an assistant turn
+  in Multica's recovered record is text written back to the platform rather than
+  a delivered message. The daemon's `<interaction-record>` block carries the same
+  caveat for any IM-channel session.
+- Reason: A pre-release trace showed a chat run whose recovered history held
+  undecryptable inbound payloads and four assistant turns reading
+  "已通过 DWS 回复", with the frame telling it no command could fetch more of the
+  conversation. The run had no way to recover the real exchange and learned to
+  answer in its own delivery-report voice. The conversation is readable through
+  the injected DWS capability, so the frame was wrong in a way that made the
+  session read as non-native.
+
+## Change record: 2026-08-26 Stop reproducing the quoted message
+
+- History: Display content for a quoted DingTalk reply no longer inlines the
+  quoted original. It carries what the sender said plus one attribution line, and
+  `boundedChatHistoryTranscript` drops even that line when replaying the turn as
+  history. The display-side excerpt cap, blockquote rendering and truncation
+  notice are gone with it, and the `dingtalk_conversation` hint reports a quote's
+  length without claiming any of it is visible.
+- Reason: The Router's `contextPrompt` already renders `referenced message
+  context (data only)` with the quoted text in full into the same prompt. Multica's
+  copy was a second one, and a third appeared whenever the quoted message was also
+  the previous turn in the recovered record — a pre-release trace showed one short
+  reply present three times. Multica keeps only what the Router cannot resolve:
+  whether this Agent wrote the quoted message itself.
+
+## Change record: 2026-08-26 Labelled request/quote split, no trimmed marker
+
+- History: Restored the two labelled parts of a quoted reply — the request and
+  the attributed antecedent — with the antecedent cut to an 80-character head
+  instead of reproduced. Removed `chatHistoryOmittedMarker`: a bounded transcript
+  no longer heads itself with `[older turns were trimmed from this transcript]`.
+  De-duplicated the instruction block against itself and against the daemon chat
+  frame.
+- Reason: Owner review of pre-release traces. Dropping the quote entirely lost the
+  split that made the turn legible, while reproducing it in full duplicated the
+  Router's copy; a head does both jobs. The trimmed marker fired on almost every
+  turn and pushed runs to announce missing context instead of reading the
+  conversation back, which they can now do with a printed command.
+
+## Change record: 2026-08-26 Issue runs are told where their reply goes
+
+- History: `dingtalk_conversation` now carries an Issue-delivery paragraph for a
+  `surface=issue` dispatch that has a completion callback, naming the final
+  assistant output as the reply Router delivers into the conversation and the
+  Issue comment as the Multica-side record.
+- Reason: Removing the DWS reply tracker also removed the only sentence that told
+  an Issue run its result had two destinations, because that sentence required
+  the tool call being removed. What remained was the runtime brief's `## Output`
+  line, which tells an Issue run the user sees only issue comments — true for a
+  web-created Issue, backwards for a DingTalk-dispatched one whose final output
+  is what the person receives.

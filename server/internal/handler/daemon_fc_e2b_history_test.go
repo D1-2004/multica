@@ -200,3 +200,347 @@ func TestClaimTaskByRuntime_CloudSandboxCarriesTaskOwnedChatHistory(t *testing.T
 		})
 	}
 }
+
+func TestClaimTaskByRuntime_CloudChatWarmResumeGates(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	const metadata = `{"kind":"fc-e2b"}`
+	tests := []struct {
+		name         string
+		enableResume bool
+		chatType     string // empty = first-party 1:1
+		identity     string
+		completedAgo string
+		coldStart    bool
+		wantPriorID  string
+		wantHistory  bool
+	}{
+		{
+			name:         "group never resumes",
+			enableResume: true,
+			chatType:     "group",
+			completedAgo: "2 minutes",
+			wantHistory:  true,
+		},
+		{
+			name:         "agent identity changed",
+			enableResume: true,
+			identity:     "stale-identity",
+			completedAgo: "2 minutes",
+			wantHistory:  true,
+		},
+		{
+			name:         "last answer older than 20 minutes",
+			enableResume: true,
+			completedAgo: "21 minutes",
+			wantHistory:  true,
+		},
+		{
+			name:         "switch off keeps transcript-only contract",
+			completedAgo: "2 minutes",
+			wantHistory:  true,
+		},
+		{
+			name:         "cold sandbox withholds provider session",
+			enableResume: true,
+			completedAgo: "2 minutes",
+			coldStart:    true,
+			wantHistory:  true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			var runtimeID string
+			if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider,
+			status, device_info, metadata, last_seen_at, visibility, owner_id
+		)
+		VALUES ($1, NULL, 'cloud resume runtime', 'cloud', 'handler_test_runtime',
+			'online', 'cloud resume fixture', $3::jsonb, now(), 'private', $2)
+		RETURNING id
+	`, testWorkspaceID, testUserID, metadata).Scan(&runtimeID); err != nil {
+				t.Fatalf("setup: create cloud runtime: %v", err)
+			}
+			t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+
+			agentID, _ := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "cloud resume agent")
+			if tc.enableResume {
+				if _, err := testPool.Exec(ctx, `UPDATE agent SET chat_session_resume = true WHERE id = $1`, agentID); err != nil {
+					t.Fatalf("enable chat_session_resume: %v", err)
+				}
+			}
+
+			identity := tc.identity
+			if identity == "" {
+				agentRow, err := testHandler.Queries.GetAgent(ctx, parseUUID(agentID))
+				if err != nil {
+					t.Fatalf("load agent for identity: %v", err)
+				}
+				runtimeRow, err := testHandler.Queries.GetAgentRuntime(ctx, parseUUID(runtimeID))
+				if err != nil {
+					t.Fatalf("load runtime for identity: %v", err)
+				}
+				identity = cloudChatResumeIdentityFromClaim(agentRow, runtimeRow, &TaskAgentData{})
+			}
+
+			var sessionID string
+			if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (
+			workspace_id, agent_id, creator_id, title, status,
+			runtime_id, session_id, work_dir, resume_identity
+		)
+		VALUES (
+			$1, $2, $3, 'cloud resume', 'active',
+			$4, 'provider-session-from-previous-turn', '/workspace/previous-turn/workdir', $5
+		)
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID, runtimeID, identity).Scan(&sessionID); err != nil {
+				t.Fatalf("setup: create chat session: %v", err)
+			}
+			t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+			if tc.chatType != "" {
+				seedChannelBindingOfChatType(t, ctx, agentID, sessionID, "dingtalk", tc.chatType, "message-previous", "message-previous")
+			}
+
+			if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, created_at)
+		VALUES ($1, 'user', 'what is the capital of France?', now() - interval '2 minutes'),
+		       ($1, 'assistant', 'Paris.', now() - interval '1 minute')
+	`, sessionID); err != nil {
+				t.Fatalf("setup: seed answered turn: %v", err)
+			}
+
+			if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, status, priority, chat_session_id, session_id, completed_at
+		)
+		VALUES ($1, $2, 'completed', 0, $3, 'provider-session-from-previous-turn', now() - ($4)::interval)
+	`, agentID, runtimeID, sessionID, tc.completedAgo); err != nil {
+				t.Fatalf("setup: seed completed prior task: %v", err)
+			}
+
+			var taskID string
+			if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, chat_session_id)
+		VALUES ($1, $2, 'queued', 0, $3)
+		RETURNING id
+	`, agentID, runtimeID, sessionID).Scan(&taskID); err != nil {
+				t.Fatalf("setup: seed queued chat task: %v", err)
+			}
+			t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE chat_session_id = $1`, sessionID) })
+
+			if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, task_id)
+		VALUES ($1, 'user', 'and its population?', $2)
+	`, sessionID, taskID); err != nil {
+				t.Fatalf("setup: seed input batch message: %v", err)
+			}
+			if _, err := testPool.Exec(ctx,
+				`UPDATE agent_task_queue SET chat_input_task_id = id WHERE id = $1`, taskID); err != nil {
+				t.Fatalf("setup: seal input batch: %v", err)
+			}
+
+			var attemptID string
+			if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_runtime_start_attempt (
+			id, task_id, runtime_id, backend, protocol, sandbox_id, cold_start, status
+		)
+		VALUES (gen_random_uuid(), $1, $2, 'aliyun_fc', 'http-json-v1', 'sbx-resume', $3, 'starting')
+		RETURNING id
+	`, taskID, runtimeID, tc.coldStart).Scan(&attemptID); err != nil {
+				t.Fatalf("setup: seed start attempt: %v", err)
+			}
+
+			w := httptest.NewRecorder()
+			req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim",
+				map[string]any{
+					"fc_e2b_cold_start":        tc.coldStart,
+					"target_task_id":           taskID,
+					"runtime_start_attempt_id": attemptID,
+					"startup_status_protocol":  "http-json-v1",
+				}, testWorkspaceID, "cloud-resume")
+			req = withURLParam(req, "runtimeId", runtimeID)
+			testHandler.ClaimTaskByRuntime(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+
+			var resp struct {
+				Task *struct {
+					ID             string `json:"id"`
+					ChatHistory    string `json:"chat_history"`
+					PriorSessionID string `json:"prior_session_id"`
+				} `json:"task"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("decode claim response: %v", err)
+			}
+			if resp.Task == nil {
+				t.Fatalf("expected a claimable task, got none: %s", w.Body.String())
+			}
+			if resp.Task.PriorSessionID != tc.wantPriorID {
+				t.Errorf("prior_session_id = %q, want %q", resp.Task.PriorSessionID, tc.wantPriorID)
+			}
+			if tc.wantHistory && resp.Task.ChatHistory == "" {
+				t.Fatal("expected chat_history to stay on the claim for resume fallback")
+			}
+		})
+	}
+}
+
+func TestClaimTaskByRuntime_CloudChatWarmResumeAfterPriorTurn(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	for _, tc := range []struct {
+		name     string
+		chatType string
+	}{
+		{name: "web direct"},
+		{name: "dingtalk p2p", chatType: "p2p"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			const metadata = `{"kind":"fc-e2b"}`
+
+			var runtimeID string
+			if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider,
+			status, device_info, metadata, last_seen_at, visibility, owner_id
+		)
+		VALUES ($1, NULL, 'cloud resume runtime', 'cloud', 'handler_test_runtime',
+			'online', 'cloud resume fixture', $3::jsonb, now(), 'private', $2)
+		RETURNING id
+	`, testWorkspaceID, testUserID, metadata).Scan(&runtimeID); err != nil {
+				t.Fatalf("setup: create cloud runtime: %v", err)
+			}
+			t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+
+			agentID, _ := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "cloud resume agent")
+			if _, err := testPool.Exec(ctx, `UPDATE agent SET chat_session_resume = true WHERE id = $1`, agentID); err != nil {
+				t.Fatalf("enable chat_session_resume: %v", err)
+			}
+
+			var sessionID string
+			if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (
+			workspace_id, agent_id, creator_id, title, status,
+			runtime_id, session_id, work_dir
+		)
+		VALUES (
+			$1, $2, $3, 'cloud resume', 'active',
+			$4, 'provider-session-from-previous-turn', '/workspace/previous-turn/workdir'
+		)
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID, runtimeID).Scan(&sessionID); err != nil {
+				t.Fatalf("setup: create chat session: %v", err)
+			}
+			t.Cleanup(func() {
+				testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE chat_session_id = $1`, sessionID)
+				testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID)
+			})
+			if tc.chatType != "" {
+				seedChannelBindingOfChatType(t, ctx, agentID, sessionID, "dingtalk", tc.chatType, "message-previous", "message-previous")
+			}
+
+			if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content, created_at)
+		VALUES ($1, 'user', 'what is the capital of France?', now() - interval '2 minutes'),
+		       ($1, 'assistant', 'Paris.', now() - interval '1 minute')
+	`, sessionID); err != nil {
+				t.Fatalf("setup: seed answered turn: %v", err)
+			}
+			if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, status, priority, chat_session_id, session_id, completed_at
+		)
+		VALUES ($1, $2, 'completed', 0, $3, 'provider-session-from-previous-turn', now() - interval '2 minutes')
+	`, agentID, runtimeID, sessionID); err != nil {
+				t.Fatalf("setup: seed completed prior task: %v", err)
+			}
+
+			claimFollowUp := func() string {
+				t.Helper()
+				var taskID string
+				if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, chat_session_id)
+			VALUES ($1, $2, 'queued', 0, $3)
+			RETURNING id
+		`, agentID, runtimeID, sessionID).Scan(&taskID); err != nil {
+					t.Fatalf("setup: seed queued chat task: %v", err)
+				}
+				if _, err := testPool.Exec(ctx, `
+			INSERT INTO chat_message (chat_session_id, role, content, task_id)
+			VALUES ($1, 'user', 'and its population?', $2)
+		`, sessionID, taskID); err != nil {
+					t.Fatalf("setup: seed input batch message: %v", err)
+				}
+				if _, err := testPool.Exec(ctx,
+					`UPDATE agent_task_queue SET chat_input_task_id = id WHERE id = $1`, taskID); err != nil {
+					t.Fatalf("setup: seal input batch: %v", err)
+				}
+				var attemptID string
+				if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_runtime_start_attempt (
+				id, task_id, runtime_id, backend, protocol, sandbox_id, cold_start, status
+			)
+			VALUES (gen_random_uuid(), $1, $2, 'aliyun_fc', 'http-json-v1', 'sbx-resume', false, 'starting')
+			RETURNING id
+		`, taskID, runtimeID).Scan(&attemptID); err != nil {
+					t.Fatalf("setup: seed start attempt: %v", err)
+				}
+				w := httptest.NewRecorder()
+				req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim",
+					map[string]any{
+						"fc_e2b_cold_start":        false,
+						"target_task_id":           taskID,
+						"runtime_start_attempt_id": attemptID,
+						"startup_status_protocol":  "http-json-v1",
+					}, testWorkspaceID, "cloud-resume")
+				req = withURLParam(req, "runtimeId", runtimeID)
+				testHandler.ClaimTaskByRuntime(w, req)
+				if w.Code != http.StatusOK {
+					t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+				}
+				var resp struct {
+					Task *struct {
+						PriorSessionID string `json:"prior_session_id"`
+						ChatHistory    string `json:"chat_history"`
+					} `json:"task"`
+				}
+				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("decode claim response: %v", err)
+				}
+				if resp.Task == nil {
+					t.Fatalf("expected a claimable task, got none: %s", w.Body.String())
+				}
+				if resp.Task.ChatHistory == "" {
+					t.Fatal("expected chat_history to stay on the claim for resume fallback")
+				}
+				return resp.Task.PriorSessionID
+			}
+
+			if prior := claimFollowUp(); prior != "" {
+				t.Fatalf("first follow-up must write identity before resuming, got prior_session_id %q", prior)
+			}
+			if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'completed', completed_at = now(), session_id = 'provider-session-from-previous-turn'
+		WHERE chat_session_id = $1 AND status = 'dispatched'
+	`, sessionID); err != nil {
+				t.Fatalf("complete first follow-up: %v", err)
+			}
+			if prior := claimFollowUp(); prior != "provider-session-from-previous-turn" {
+				t.Fatalf("second follow-up prior_session_id = %q, want provider-session-from-previous-turn", prior)
+			}
+		})
+	}
+}

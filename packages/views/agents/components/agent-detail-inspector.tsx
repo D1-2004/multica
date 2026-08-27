@@ -15,6 +15,7 @@ import {
 import { runtimeModelsOptions } from "@multica/core/runtimes";
 import { isImeComposing } from "@multica/core/utils";
 import { Input } from "@multica/ui/components/ui/input";
+import { Switch } from "@multica/ui/components/ui/switch";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { AvatarUploadControl } from "../../common/avatar-upload-control";
 import {
@@ -313,9 +314,56 @@ export function AgentDetailInspector({
               onSave={(next) => update({ max_concurrent_tasks: next })}
             />
           </SettingsRow>
+          <ChatSessionResumeField
+            agentId={agent.id}
+            enabled={agent.chat_session_resume === true}
+            canEdit={canEdit}
+            onSave={(next) => update({ chat_session_resume: next })}
+          />
         </SettingsCard>
       </SettingsSection>
     </div>
+  );
+}
+
+function ChatSessionResumeField({
+  agentId,
+  enabled,
+  canEdit,
+  onSave,
+}: {
+  agentId: string;
+  enabled: boolean;
+  canEdit: boolean;
+  onSave: (next: boolean) => Promise<void>;
+}) {
+  const { t } = useT("agents");
+  const [draft, setDraft] = useState(enabled);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft(enabled);
+  }, [agentId, enabled]);
+
+  return (
+    <SettingsRow
+      label={t(($) => $.inspector.prop_chat_session_resume)}
+      description={t(($) => $.inspector.prop_chat_session_resume_hint)}
+      align="start"
+    >
+      <Switch
+        checked={draft}
+        disabled={!canEdit || saving}
+        onCheckedChange={(checked) => {
+          setDraft(checked);
+          setSaving(true);
+          void onSave(checked)
+            .catch(() => setDraft(!checked))
+            .finally(() => setSaving(false));
+        }}
+        aria-label={t(($) => $.inspector.prop_chat_session_resume)}
+      />
+    </SettingsRow>
   );
 }
 

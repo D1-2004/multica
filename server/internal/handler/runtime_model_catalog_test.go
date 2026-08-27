@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 )
 
 func sampleCatalog() []ModelEntry {
@@ -93,6 +95,9 @@ func TestInMemoryModelCatalogCache_IsolatesNestedFields(t *testing.T) {
 	source := []ModelEntry{{
 		ID:    "gpt-5.6-sol",
 		Label: "GPT-5.6-Sol",
+		Pricing: &modelpricing.Rate{
+			Input: 5, Output: 30, CacheRead: 0.5, CacheWrite: 6.25,
+		},
 		Thinking: &ModelThinking{
 			DefaultLevel:    "low",
 			SupportedLevels: []ThinkingLevel{{Value: "low", Label: "Low"}},
@@ -105,6 +110,7 @@ func TestInMemoryModelCatalogCache_IsolatesNestedFields(t *testing.T) {
 
 	// Mutating the caller's own slice after Put must not reach the cache.
 	source[0].Thinking.DefaultLevel = "mutated-by-writer"
+	source[0].Pricing.Input = 99
 	source[0].Thinking.SupportedLevels[0].Label = "mutated-by-writer"
 	source[0].ServiceTiers[0].Name = "mutated-by-writer"
 
@@ -112,7 +118,8 @@ func TestInMemoryModelCatalogCache_IsolatesNestedFields(t *testing.T) {
 	if err != nil || first == nil {
 		t.Fatalf("get: %+v %v", first, err)
 	}
-	if first.Models[0].Thinking.DefaultLevel != "low" ||
+	if first.Models[0].Pricing.Input != 5 ||
+		first.Models[0].Thinking.DefaultLevel != "low" ||
 		first.Models[0].Thinking.SupportedLevels[0].Label != "Low" ||
 		first.Models[0].ServiceTiers[0].Name != "Fast" {
 		t.Fatalf("writer mutation leaked into the cache: %+v", first.Models[0])
@@ -120,6 +127,7 @@ func TestInMemoryModelCatalogCache_IsolatesNestedFields(t *testing.T) {
 
 	// Mutating a returned snapshot must not reach the cache either.
 	first.Models[0].Thinking.DefaultLevel = "mutated-by-reader"
+	first.Models[0].Pricing.Input = 77
 	first.Models[0].Thinking.SupportedLevels[0].Value = "mutated-by-reader"
 	first.Models[0].ServiceTiers[0].ID = "mutated-by-reader"
 
@@ -130,7 +138,11 @@ func TestInMemoryModelCatalogCache_IsolatesNestedFields(t *testing.T) {
 	if second.Models[0].Thinking == first.Models[0].Thinking {
 		t.Error("thinking pointer is shared between snapshots")
 	}
-	if second.Models[0].Thinking.DefaultLevel != "low" ||
+	if second.Models[0].Pricing == first.Models[0].Pricing {
+		t.Error("pricing pointer is shared between snapshots")
+	}
+	if second.Models[0].Pricing.Input != 5 ||
+		second.Models[0].Thinking.DefaultLevel != "low" ||
 		second.Models[0].Thinking.SupportedLevels[0].Value != "low" ||
 		second.Models[0].ServiceTiers[0].ID != "fast" {
 		t.Fatalf("reader mutation leaked into the cache: %+v", second.Models[0])

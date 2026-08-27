@@ -342,6 +342,7 @@ func inboundFromAgentDispatch(in AgentDispatchMessage, clientID, installationID 
 	if err != nil {
 		return channel.InboundMessage{}, &agentDispatchContextEncodingError{cause: err}
 	}
+	msg.DisableRunBatching = true
 	return msg, nil
 }
 

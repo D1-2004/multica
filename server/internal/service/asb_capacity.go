@@ -27,6 +27,7 @@ const (
 	asbCapacityUnavailableMessage = "Aone Sandbox 实例额度已满，当前 Runtime 没有可安全回收的空闲任务沙箱；请等待正在处理的任务结束后重试"
 	asbCapacityWaitingStage       = "sandbox_capacity_waiting"
 	asbCapacityWaitingErrorCode   = "ASB-CAPACITY-WAITING"
+	asbChatSandboxReclaimGrace    = 20 * time.Minute
 )
 
 var ErrASBCapacityUnavailable = withRuntimeStartUserDetail(
@@ -282,6 +283,9 @@ func reclaimASBSandboxForCredential(
 				candidate.ScopeType != fcE2BScopeTypeIssue) {
 			continue
 		}
+		if asbChatSandboxWithinReclaimGrace(candidate, time.Now()) {
+			continue
+		}
 		releaseCandidate, locked, err := tryLockASBSandboxScopeOnConnection(
 			ctx,
 			conn,
@@ -378,6 +382,14 @@ func reclaimASBSandboxForCredential(
 		excludedTaskID,
 		liveSandboxes,
 	)
+}
+
+func asbChatSandboxWithinReclaimGrace(candidate db.FcE2bSandboxSession, now time.Time) bool {
+	if candidate.ScopeType != fcE2BScopeTypeChat || !candidate.LastUsedAt.Valid {
+		return false
+	}
+	age := now.Sub(candidate.LastUsedAt.Time)
+	return age >= 0 && age < asbChatSandboxReclaimGrace
 }
 
 func reclaimUntrackedIdleASBSandbox(

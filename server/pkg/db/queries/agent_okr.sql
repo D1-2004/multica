@@ -93,7 +93,35 @@ SELECT EXISTS (
 -- them is right for tokens and cost, but COUNT(*) over the raw join would report
 -- models instead of tasks, and the priced/unpriced verdict has to be decided per
 -- task rather than per row.
-WITH task_totals AS (
+WITH model_pricing AS (
+    SELECT sqlc.arg('model_pricing')::jsonb AS catalog
+), priced_task_usage AS (
+    SELECT
+        tu.*,
+        CASE
+            WHEN tu.cost_usd_ticks IS NOT NULL THEN tu.cost_usd_ticks
+            WHEN rate.value IS NOT NULL THEN ROUND((
+                tu.input_tokens * (rate.value->>'input')::numeric +
+                tu.output_tokens * (rate.value->>'output')::numeric +
+                tu.cache_read_tokens * (rate.value->>'cache_read')::numeric +
+                tu.cache_write_tokens * (rate.value->>'cache_write')::numeric
+            ) * 10000)::bigint
+        END AS effective_cost_usd_ticks
+    FROM task_usage tu
+    CROSS JOIN model_pricing pricing
+    LEFT JOIN LATERAL (
+        SELECT COALESCE(
+            pricing.catalog -> LOWER(tu.model),
+            CASE
+                WHEN POSITION('/' IN LOWER(tu.model)) > 1
+                 AND POSITION('/' IN LOWER(tu.model)) < LENGTH(LOWER(tu.model))
+                THEN pricing.catalog -> SUBSTRING(
+                    LOWER(tu.model) FROM POSITION('/' IN LOWER(tu.model)) + 1
+                )
+            END
+        ) AS value
+    ) rate ON TRUE
+), task_totals AS (
     SELECT
         okr.label_id AS label_id,
         atq.id AS task_id,
@@ -101,20 +129,20 @@ WITH task_totals AS (
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
         ), 0)::bigint AS total_tokens,
-        COALESCE(SUM(tu.cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
+        COALESCE(SUM(tu.effective_cost_usd_ticks), 0)::bigint AS total_cost_usd_ticks,
         COALESCE(SUM(
             tu.input_tokens + tu.output_tokens +
             tu.cache_read_tokens + tu.cache_write_tokens
-        ) FILTER (WHERE tu.id IS NOT NULL AND tu.cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
+        ) FILTER (WHERE tu.id IS NOT NULL AND tu.effective_cost_usd_ticks IS NULL), 0)::bigint AS uncosted_tokens,
         COALESCE(
-            BOOL_AND(tu.cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
+            BOOL_AND(tu.effective_cost_usd_ticks IS NOT NULL) FILTER (WHERE tu.id IS NOT NULL),
             FALSE
         ) AS is_priced
     FROM agent_okr okr
     JOIN issue_to_label il ON il.label_id = okr.label_id
     JOIN issue i ON i.id = il.issue_id AND i.workspace_id = okr.workspace_id
     JOIN agent_task_queue atq ON atq.issue_id = i.id
-    LEFT JOIN task_usage tu ON tu.task_id = atq.id
+    LEFT JOIN priced_task_usage tu ON tu.task_id = atq.id
     WHERE okr.agent_id = $1 AND okr.workspace_id = $2
     GROUP BY okr.label_id, atq.id
 )

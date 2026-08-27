@@ -2600,7 +2600,7 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 						if cutoff < 0 {
 							inputLoadErr = errors.New("chat input message missing from visible transcript")
 						} else if cutoff > 0 {
-							resp.ChatHistory = boundedChatHistoryTranscript(msgs[:cutoff])
+							resp.ChatHistory = boundedChatHistoryTranscript(msgs[:cutoff], resp.ChatChannelType)
 						}
 					}
 				}
@@ -2611,21 +2611,34 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				if resp.ChatChannelType == "" && service.IsCloudSandboxRuntime(runtime) {
 					historyEnd := len(msgs) - len(unanswered)
 					if historyEnd > 0 {
-						resp.ChatHistory = boundedChatHistoryTranscript(msgs[:historyEnd])
+						resp.ChatHistory = boundedChatHistoryTranscript(msgs[:historyEnd], resp.ChatChannelType)
 					}
 				}
 			} else {
 				inputLoadErr = err
 			}
-			// The Multica transcript is the authoritative continuity source for a
-			// cloud chat. Do not also ask the sandbox daemon to resume a
-			// provider-local session: cloud Runtime images are released separately
-			// from the server, and older daemons turn a missing/incompatible session
-			// into an explicit "history is unrecoverable" notice even when this
-			// transcript is present. Starting one coherent provider session from the
-			// database copy makes the contract identical for FC/ASB and cold/warm
-			// sandboxes, without depending on the image's daemon version.
-			makeChatHistoryAuthoritative(&resp)
+			// Cloud Chat default: database history is the only continuity
+			// source (makeChatHistoryAuthoritative). An agent may opt into
+			// --resume on a warm 1:1 sandbox when the last completed answer
+			// is still inside the 20-minute window and the agent's
+			// instructions, skills, and runtime have not changed. ChatHistory
+			// stays on the payload either way so a failed provider resume can
+			// still rebuild from the transcript.
+			currentIdentity := ""
+			if agentLoadErr == nil {
+				currentIdentity = cloudChatResumeIdentityFromClaim(agent, runtime, resp.Agent)
+			}
+			warmResume := h.shouldWarmResumeCloudChat(r.Context(), agent, agentLoadErr, runtime, *task, cs, resp, currentIdentity)
+			if err := h.Queries.SetChatSessionResumeIdentity(r.Context(), db.SetChatSessionResumeIdentityParams{
+				ID:             cs.ID,
+				ResumeIdentity: currentIdentity,
+			}); err != nil {
+				slog.Warn("chat claim: persist resume identity failed",
+					"chat_session_id", uuidToString(cs.ID), "error", err)
+			}
+			if !warmResume {
+				makeChatHistoryAuthoritative(&resp)
+			}
 			// A read failure must NOT masquerade as "zero input". Preserve the
 			// just-dispatched task (the stale-dispatched reclaim redelivers it)
 			// and reject the claim with 5xx, rather than cancelling a valid direct
@@ -3444,10 +3457,15 @@ func trailingUserMessages(msgs []db.ChatMessage) []db.ChatMessage {
 }
 
 // chatHistoryOmittedMarker heads a transcript that lost whole turns to the
-// message or byte bound. Without it the agent reads a bounded window as the
-// whole conversation and answers "you never told me" about something the user
-// did tell it — the transcript is truthful about every message it shows and
-// silent about the ones it dropped, and silence is the failure mode.
+// message or byte bound.
+//
+// Emitted for a Multica-native chat ONLY. There the transcript IS the run's
+// memory: nothing else can hand back a dropped turn, and a silent gap reads as
+// "this was never said". A channel-backed run is the opposite case — the
+// conversation still holds every word, and its per-turn instruction says how to
+// read it back (a DingTalk dispatch prints a ready-to-run command with the real
+// conversation id). There the marker fired on nearly every turn and pushed runs
+// to announce missing context instead of recovering it.
 //
 // It names TRIMMING specifically, not absence in general. On a group-room
 // channel the per-turn prompt separately warns that the Multica record never
@@ -3555,16 +3573,20 @@ func tailBytesOnRuneBoundary(s string, n int) string {
 //
 // Two bounds apply, in order: every message is clipped to
 // chatHistoryMessageRunes, and the assembled result is then held under maxBytes
-// by dropping the oldest turns. Both losses are declared — the clip inline, the
-// drop in a leading marker — because the block is consumed as an interaction
-// record and a silent gap in one reads as "this was never said".
+// by dropping the oldest turns. The clip is declared inline; whether the drop is
+// declared depends on the surface — see chatHistoryOmittedMarker.
 //
 // makeChatHistoryAuthoritative clears PriorSessionID whenever this returns
 // anything, so on a cloud chat this string replaces the provider session as the
 // run's Multica-side memory. What it clips is therefore gone from Multica for
 // good; it is not gone from the conversation, which still holds every word and
 // which the per-turn prompt tells the run how to go and read.
-func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
+//
+// A dispatched message is also reduced to its bare utterance here: the quote
+// attribution line dispatchMessageDisplay appends is a per-turn constant that
+// says nothing about a past turn, so replaying it on every historical turn is
+// noise the byte budget pays for.
+func boundedChatHistoryTranscript(msgs []db.ChatMessage, channelType string) string {
 	const (
 		maxMessages = 20
 		maxBytes    = 12000
@@ -3574,14 +3596,14 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	)
 	// Counted over the FULL input, before any bound is applied. A message with
 	// no text contributes nothing to the transcript, so dropping one is not a
-	// loss and must not raise the omitted marker. Deciding this from
-	// `len(msgs) > maxMessages` instead would head a complete transcript with a
-	// warning, and the per-turn prompt tells the run to treat a declared gap as
-	// missing context it must go and fetch.
+	// loss and must not raise the marker.
+	announceDrops := strings.TrimSpace(channelType) == ""
 	recoverable := 0
-	for i := range msgs {
-		if strings.TrimSpace(msgs[i].Content) != "" {
-			recoverable++
+	if announceDrops {
+		for i := range msgs {
+			if strings.TrimSpace(dispatchRecordUtterance(msgs[i].Content)) != "" {
+				recoverable++
+			}
 		}
 	}
 	if len(msgs) > maxMessages {
@@ -3590,7 +3612,7 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 	var selected []string
 	included, total := 0, 0
 	for i := len(msgs) - 1; i >= 0; i-- {
-		content := strings.TrimSpace(msgs[i].Content)
+		content := strings.TrimSpace(dispatchRecordUtterance(msgs[i].Content))
 		if content == "" {
 			continue
 		}
@@ -3625,7 +3647,7 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage) string {
 		selected[i], selected[j] = selected[j], selected[i]
 	}
 	joined := strings.Join(selected, "\n\n")
-	if included < recoverable {
+	if announceDrops && included < recoverable {
 		return chatHistoryOmittedMarker + "\n\n" + joined
 	}
 	return joined
@@ -4465,7 +4487,23 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("upsert task usage failed", "task_id", taskID, "model", u.Model, "error", err)
 			continue
 		}
-		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, u.CostUSDTicks)
+		pricing := h.currentConfig().ModelPricing
+		managedModel, resolvedRate, centrallyPriced := pricing.ResolveModel(u.Model)
+		managedRate := &resolvedRate
+		if !centrallyPriced {
+			managedRate = nil
+		}
+		costForMetrics := u.CostUSDTicks
+		if costForMetrics <= 0 {
+			priced := applyModelPricing(pricing, u.Model, usageCostSplit{
+				UncostedInputTokens:      u.InputTokens,
+				UncostedOutputTokens:     u.OutputTokens,
+				UncostedCacheReadTokens:  u.CacheReadTokens,
+				UncostedCacheWriteTokens: u.CacheWriteTokens,
+			})
+			costForMetrics = priced.CostUSDTicks
+		}
+		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens, costForMetrics, managedModel, managedRate)
 
 		// Surface prompt-cache effectiveness per run so cache hit rates are
 		// observable in logs, not just queryable from runtime_usage. The ratio
@@ -4848,12 +4886,27 @@ func (h *Handler) hydrateTaskUsage(ctx context.Context, issueID pgtype.UUID, res
 		return
 	}
 
+	pricing := h.currentConfig().ModelPricing
 	byTask := make(map[string][]TaskUsageData, len(resp))
 	for _, row := range rows {
-		var cost *int64
+		split := usageCostSplit{
+			UncostedInputTokens:      row.InputTokens,
+			UncostedOutputTokens:     row.OutputTokens,
+			UncostedCacheReadTokens:  row.CacheReadTokens,
+			UncostedCacheWriteTokens: row.CacheWriteTokens,
+		}
 		if row.CostUsdTicks.Valid {
-			v := row.CostUsdTicks.Int64
-			cost = &v
+			split.CostUSDTicks = row.CostUsdTicks.Int64
+			split.UncostedInputTokens = 0
+			split.UncostedOutputTokens = 0
+			split.UncostedCacheReadTokens = 0
+			split.UncostedCacheWriteTokens = 0
+		}
+		split = applyModelPricing(pricing, row.Model, split)
+		var cost *int64
+		if _, centrallyPriced := pricing.Resolve(row.Model); row.CostUsdTicks.Valid || centrallyPriced {
+			value := split.CostUSDTicks
+			cost = &value
 		}
 		taskID := uuidToString(row.TaskID)
 		byTask[taskID] = append(byTask[taskID], TaskUsageData{
@@ -4988,24 +5041,54 @@ func (h *Handler) GetIssueUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := h.Queries.GetIssueUsageSummary(r.Context(), issue.ID)
+	rows, err := h.Queries.ListIssueTaskUsage(r.Context(), issue.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to get issue usage")
 		return
 	}
+	pricing := h.currentConfig().ModelPricing
+	var totalInput, totalOutput, totalCacheRead, totalCacheWrite, totalCost int64
+	var uncostedInput, uncostedOutput, uncostedCacheRead, uncostedCacheWrite int64
+	taskIDs := make(map[string]struct{})
+	for _, row := range rows {
+		totalInput += row.InputTokens
+		totalOutput += row.OutputTokens
+		totalCacheRead += row.CacheReadTokens
+		totalCacheWrite += row.CacheWriteTokens
+		taskIDs[uuidToString(row.TaskID)] = struct{}{}
+		split := usageCostSplit{
+			UncostedInputTokens:      row.InputTokens,
+			UncostedOutputTokens:     row.OutputTokens,
+			UncostedCacheReadTokens:  row.CacheReadTokens,
+			UncostedCacheWriteTokens: row.CacheWriteTokens,
+		}
+		if row.CostUsdTicks.Valid {
+			split.CostUSDTicks = row.CostUsdTicks.Int64
+			split.UncostedInputTokens = 0
+			split.UncostedOutputTokens = 0
+			split.UncostedCacheReadTokens = 0
+			split.UncostedCacheWriteTokens = 0
+		}
+		split = applyModelPricing(pricing, row.Model, split)
+		totalCost += split.CostUSDTicks
+		uncostedInput += split.UncostedInputTokens
+		uncostedOutput += split.UncostedOutputTokens
+		uncostedCacheRead += split.UncostedCacheReadTokens
+		uncostedCacheWrite += split.UncostedCacheWriteTokens
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"total_input_tokens":       row.TotalInputTokens,
-		"total_output_tokens":      row.TotalOutputTokens,
-		"total_cache_read_tokens":  row.TotalCacheReadTokens,
-		"total_cache_write_tokens": row.TotalCacheWriteTokens,
+		"total_input_tokens":       totalInput,
+		"total_output_tokens":      totalOutput,
+		"total_cache_read_tokens":  totalCacheRead,
+		"total_cache_write_tokens": totalCacheWrite,
 		// Cost split — see the note on DashboardUsageDailyResponse.
-		"cost_usd_ticks":              row.TotalCostUsdTicks,
-		"uncosted_input_tokens":       row.UncostedInputTokens,
-		"uncosted_output_tokens":      row.UncostedOutputTokens,
-		"uncosted_cache_read_tokens":  row.UncostedCacheReadTokens,
-		"uncosted_cache_write_tokens": row.UncostedCacheWriteTokens,
-		"task_count":                  row.TaskCount,
+		"cost_usd_ticks":              totalCost,
+		"uncosted_input_tokens":       uncostedInput,
+		"uncosted_output_tokens":      uncostedOutput,
+		"uncosted_cache_read_tokens":  uncostedCacheRead,
+		"uncosted_cache_write_tokens": uncostedCacheWrite,
+		"task_count":                  len(taskIDs),
 	})
 }
 

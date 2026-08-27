@@ -1054,6 +1054,30 @@ func TestRouter_DurableRunIsPreparedAndCommittedByAppend(t *testing.T) {
 	}
 }
 
+func TestRouter_DurableRunDisablesBatchingForSealedUpstreamMessage(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	taskID := uuidFromString(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	h.tasks.preparedTask = service.PreparedChannelChatTask{
+		ID: taskID, AgentID: h.inst.inst.AgentID, RuntimeID: uuidFromString(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+		InitiatorUserID: h.ident.id.InitiatorUserID, OriginatorUserID: h.ident.id.PrincipalUserID, DebounceSeconds: 3,
+	}
+	h.binder.appendResult = AppendResult{DedupMarked: true, TaskID: taskID}
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+	msg := p2pMessage(t)
+	msg.DisableRunBatching = true
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if h.binder.lastAppend.PreparedTask == nil {
+		t.Fatal("sealed upstream message did not carry a prepared task")
+	}
+	if got := h.binder.lastAppend.PreparedTask.DebounceSeconds; got != 0 {
+		t.Fatalf("sealed upstream debounce seconds = %v, want 0", got)
+	}
+}
+
 func TestRouter_DurablePrepareFailureReleasesWithoutAppend(t *testing.T) {
 	h := newHarness(t)
 	enableDurableRuns(h)

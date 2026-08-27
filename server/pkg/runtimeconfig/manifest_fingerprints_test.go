@@ -190,22 +190,9 @@ func TestParseManifestFingerprintsStrictRejectsInvalidDocuments(t *testing.T) {
 	}
 }
 
-// The pre-release outage of 2026-08-26, as a test.
-//
-// Adding "claude" and "codex" to manifestProviders changed the fingerprint this
-// binary computes for an unchanged set of component versions
-// (baedb216407a5060 -> 0e70a766342698a9). The Diamond document still held the
-// previous key — correct for every Runtime image in production, since the key is
-// minted when an image is built — and startup turned that disagreement into
-// os.Exit(1). Every replica crash-looped on
-//
-//	required runtime configuration failed to load
-//	  error="validate required Runtime manifest fingerprints Diamond config:
-//	         Runtime manifest fingerprint does not match its component versions"
-//
-// and Aone rolled the deploy back.
-//
-// The disagreement costs one unpublished FC/E2B template
+// A structurally valid document can still carry a fingerprint that no provider
+// subset supported by this binary would mint. That disagreement costs one
+// unpublished FC/E2B template
 // (service.applyFCE2BTemplateManifestAlias skips an alias it cannot resolve).
 // It must never cost the server. A structurally broken document still must.
 func TestStaleFingerprintDocumentLoadsInsteadOfKillingStartup(t *testing.T) {
@@ -214,9 +201,19 @@ func TestStaleFingerprintDocumentLoadsInsteadOfKillingStartup(t *testing.T) {
 		t.Fatalf("NewStatic: %v", err)
 	}
 
-	// Byte-for-byte the shape that was live in Diamond: a well-formed document
-	// whose key this binary would now compute differently.
-	stale := strings.Replace(validManifestFingerprintsJSON(), "0e70a766342698a9", "baedb216407a5060", 1)
+	// Keep the key well-shaped but ensure it matches no canonical non-empty
+	// provider subset. Five-provider keys such as baedb216407a5060 are valid and
+	// have their own strict regression above.
+	const authoredKey = "ffffffffffffffff"
+	stale := strings.Replace(validManifestFingerprintsJSON(), "0e70a766342698a9", authoredKey, 1)
+	components := map[string]string{
+		"hermes": "0.19.0", "opencode": "v1.18.19",
+		"opencode-v2": "0.0.0-beta-202608110357", "dsh": "0.1.0-rc.8",
+		"pi": "0.84.2", "dws": "v1.0.59",
+	}
+	if _, matched, err := ManifestProvidersForFingerprint(authoredKey, components); err != nil || matched {
+		t.Fatalf("foreign fingerprint unexpectedly resolved: matched=%v err=%v", matched, err)
+	}
 
 	if _, err := ParseManifestFingerprintsStrict([]byte(stale)); err == nil {
 		t.Fatal("the strict contract must still reject a disagreeing key — CI and the documented example rely on it")
@@ -228,7 +225,7 @@ func TestStaleFingerprintDocumentLoadsInsteadOfKillingStartup(t *testing.T) {
 	}
 	// Kept as authored, not re-keyed: which side is stale is not knowable here,
 	// and inventing a key breaks lookups whenever the images are the right ones.
-	if got := snapshot.Fingerprints["baedb216407a5060"]["dws"]; got != "v1.0.59" {
+	if got := snapshot.Fingerprints[authoredKey]["dws"]; got != "v1.0.59" {
 		t.Fatalf("entry was not stored under the key the document authored: %#v", snapshot.Fingerprints)
 	}
 	if _, rekeyed := snapshot.Fingerprints["0e70a766342698a9"]; rekeyed {
@@ -244,7 +241,7 @@ func TestStaleFingerprintDocumentLoadsInsteadOfKillingStartup(t *testing.T) {
 		t.Fatalf("FingerprintMismatches: %v", err)
 	}
 	if len(mismatches) != 1 ||
-		mismatches[0].Fingerprint != "baedb216407a5060" ||
+		mismatches[0].Fingerprint != authoredKey ||
 		mismatches[0].Expected != "0e70a766342698a9" {
 		t.Fatalf("mismatch report = %#v", mismatches)
 	}

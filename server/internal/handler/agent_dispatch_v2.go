@@ -607,20 +607,202 @@ func buildDingTalkPrompt(c DispatchCommand) DispatchPrompt {
 }
 
 type persistedDispatchContext struct {
-	SchemaVersion      string                      `json:"dispatch_schema_version"`
-	Source             DispatchSource              `json:"dispatch_source"`
-	Domain             string                      `json:"dispatch_domain"`
-	Type               string                      `json:"dispatch_type"`
-	EventData          DispatchEventData           `json:"dispatch_event_data"`
-	Surface            DispatchSurface             `json:"dispatch_surface"`
-	Outbound           DispatchOutbound            `json:"dispatch_outbound"`
-	CompletionCallback *DispatchCompletionCallback `json:"completion_callback,omitempty"`
-	ContextPrompt      string                      `json:"dispatch_context_prompt"`
+	SchemaVersion string            `json:"dispatch_schema_version"`
+	Source        DispatchSource    `json:"dispatch_source"`
+	Domain        string            `json:"dispatch_domain"`
+	Type          string            `json:"dispatch_type"`
+	EventData     DispatchEventData `json:"dispatch_event_data"`
+	Surface       DispatchSurface   `json:"dispatch_surface"`
+	Outbound      DispatchOutbound  `json:"dispatch_outbound"`
+	// ExternalIdentity is the private DWS descriptor the dispatch stored beside
+	// the envelope. The instruction projection reads it only to decide whether a
+	// quoted message was written by this Agent itself.
+	ExternalIdentity   *persistedDispatchExternalIdentity `json:"external_identity,omitempty"`
+	CompletionCallback *DispatchCompletionCallback        `json:"completion_callback,omitempty"`
+	ContextPrompt      string                             `json:"dispatch_context_prompt"`
+}
+
+type persistedDispatchExternalIdentity struct {
+	DWS *AgentDispatchDWSIdentity `json:"dws,omitempty"`
 }
 
 const dingTalkReplyFormattingInstruction = `## DingTalk Reply Formatting
 
 The final user-visible reply will be delivered through DingTalk Markdown. Do not use Markdown tables or raw HTML because result rows can disappear during delivery. Use plain numbered or bulleted lines instead. For search or list results, include actual items rather than only a count or summary. When an item has a URL, include its title and complete URL in the visible reply. Never refer to item numbers whose rows are absent.`
+
+// The DingTalk conversation block is the private half of a dispatched IM run.
+// Visible content carries the message text; the identifiers that make the rest
+// of the conversation re-readable can only travel here, and they travel as
+// commands that run as written — an Agent that has to assemble one from a data
+// blob is an Agent that guesses.
+//
+// The SSOT paragraph exists because of what a chat run is actually handed. Its
+// recovered history is a Multica-side mirror: undecryptable inbound payloads
+// stay unreadable in it, and every recorded assistant turn is the text the run
+// wrote back to the platform, not the message DingTalk delivered. Runs read
+// their own "已通过 DWS 回复" back out of that record, treated it as proof a
+// reply existed, and adopted it as a reply style. Naming the conversation as
+// the source of truth, and the record as a mirror, is what stops both.
+const (
+	dispatchConversationInstructionHeader = "## DingTalk Conversation\n\n"
+
+	// Chat and auto only: an Issue run is not the conversation's foreground and
+	// must not be told to read the room before answering.
+	dispatchConversationSSOTSection = "Multica's record of this conversation is a partial mirror of it. " +
+		"An assistant turn in that record is text written back to the platform — never proof a DingTalk message exists, and never a reply style to copy. " +
+		"Answer the person; do not report your own delivery.\n\n" +
+		"Read the conversation itself back when the trigger message alone does not settle what is asked; " +
+		"any claim elsewhere that it cannot be fetched is out of date.\n\n"
+
+	// Issue surface only. The runtime brief's Output section tells an Issue run
+	// that "the user does NOT see your terminal output — only comments on the
+	// issue". For a DingTalk-dispatched Issue that is exactly backwards: the
+	// completion callback carries the provider's final output to Router, which
+	// delivers it into the conversation as the reply the person is waiting for,
+	// while the comment is the Multica-side record they never see. The sentence
+	// this replaces required a `dws chat message reply` tool call and was removed
+	// with the reply tracker; nothing restated the obligation without it.
+	dispatchConversationIssueDeliverySection = "This run answers into an Issue, and the platform delivers your final assistant output back into the DingTalk conversation as the reply the person is waiting for. " +
+		"The Issue comment is the Multica-side record and does not reach them. Write the user-facing result once and give it in both places. " +
+		"Do not send it yourself with an outbound tool: delivery is the platform's, and a second copy arrives twice.\n\n"
+
+	dispatchConversationCommandsSection = "Ready to run as written:\n\n%s\n\n"
+
+	dispatchConversationQuoteSection = "A quote is background, not a new request: act on the current message and never redo work it reports as done. " +
+		"Visible text carries only an identifying head of a quote — read it back before relying on anything past that."
+)
+
+// dispatchQuotedMessageFact is one quoted message, in window order.
+type dispatchQuotedMessageFact struct {
+	QuotedOpenMsgID    string
+	QuotedSenderUID    string
+	QuotedSenderIsSelf bool
+	QuotedTextRunes    int
+}
+
+// dispatchQuotedMessageReadHint renders one ready-to-run read-back command. The
+// message id is printed literally — this text is private instruction material,
+// never user-visible display content — but exactly once, inside the command that
+// is the only place it is used. Labelling the line with it as well put a 40-char
+// identifier in the prompt twice, on top of the copy the Router's contextPrompt
+// already carries.
+func dispatchQuotedMessageReadHint(fact dispatchQuotedMessageFact) string {
+	sender := "sender unknown"
+	switch {
+	case fact.QuotedSenderIsSelf:
+		sender = "by you"
+	case fact.QuotedSenderUID != "":
+		sender = "by uid " + fact.QuotedSenderUID
+	}
+	if fact.QuotedOpenMsgID == "" {
+		return fmt.Sprintf("- quoted message, id not supplied (%d chars, %s)", fact.QuotedTextRunes, sender)
+	}
+	return fmt.Sprintf(
+		"- quoted message (%d chars, %s): `dws chat message list-by-ids --msg-ids %s --format json`",
+		fact.QuotedTextRunes, sender, fact.QuotedOpenMsgID,
+	)
+}
+
+func dispatchConversationReadHint(conversationID string) string {
+	return fmt.Sprintf(
+		"- conversation: `dws chat message search-advanced --conversation-ids %s --limit 50 --format json`",
+		conversationID,
+	)
+}
+
+func dispatchQuotedMessageFacts(stored persistedDispatchContext) []dispatchQuotedMessageFact {
+	agentUID := ""
+	if stored.ExternalIdentity != nil && stored.ExternalIdentity.DWS != nil {
+		agentUID = strings.TrimSpace(stored.ExternalIdentity.DWS.UID)
+	}
+	identities := dispatchDisplayIdentities{
+		SenderDisplayName: strings.TrimSpace(stored.EventData.Sender.DisplayName),
+		SenderIDs:         dispatchSenderIdentifiers(stored.EventData.Sender),
+		AgentDWSUID:       agentUID,
+	}
+	facts := make([]dispatchQuotedMessageFact, 0, len(stored.EventData.Messages))
+	for _, message := range stored.EventData.Messages {
+		if message.Reaction != nil {
+			continue
+		}
+		quoted := message.ReferencedMessage
+		if quoted == nil {
+			continue
+		}
+		text := dispatchReferencedMessageText(quoted)
+		locator := firstNonEmpty(strings.TrimSpace(quoted.OpenMsgID), strings.TrimSpace(quoted.MessageID))
+		if locator == "" && text == "" {
+			continue
+		}
+		facts = append(facts, dispatchQuotedMessageFact{
+			QuotedOpenMsgID:    locator,
+			QuotedSenderUID:    strings.TrimSpace(quoted.SenderUID),
+			QuotedSenderIsSelf: dispatchQuotedSenderRelationOf(quoted, identities) == dispatchQuotedSenderSelf,
+			QuotedTextRunes:    utf8.RuneCountInString(text),
+		})
+	}
+	return facts
+}
+
+// dispatchConversationReadbackApplies reports whether this run is the
+// conversation's foreground. Chat materializes the reply into the room, and
+// auto is chat until it delegates; an Issue run answers through its own surface
+// and is deliberately left out.
+func dispatchConversationReadbackApplies(stored persistedDispatchContext) bool {
+	switch stored.Surface.Type {
+	case protocol.DispatchSurfaceTypeChat, protocol.DispatchSurfaceTypeAuto:
+		return strings.TrimSpace(stored.EventData.Conversation.OpenConversationID) != ""
+	default:
+		return false
+	}
+}
+
+// dispatchConversationIssueDeliveryApplies reports whether this Issue run's
+// final output is the reply the person receives. Without a completion callback
+// Router has no hook to deliver it through, so the claim would be false.
+func dispatchConversationIssueDeliveryApplies(stored persistedDispatchContext) bool {
+	return stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
+		stored.CompletionCallback != nil
+}
+
+// buildDispatchConversationInstruction is empty unless this run can actually
+// reach DingTalk: every command in it is a DWS command, so a robot-SDK dispatch
+// with no injected current-user capability would be told to run what it cannot.
+func buildDispatchConversationInstruction(stored persistedDispatchContext) string {
+	if stored.Domain != "channel" || stored.Outbound.Mode != protocol.DispatchOutboundModeDWS {
+		return ""
+	}
+	conversationID := strings.TrimSpace(stored.EventData.Conversation.OpenConversationID)
+	facts := dispatchQuotedMessageFacts(stored)
+	readback := dispatchConversationReadbackApplies(stored)
+	issueDelivery := dispatchConversationIssueDeliveryApplies(stored)
+	if !readback && !issueDelivery && len(facts) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(dispatchConversationInstructionHeader)
+	if readback {
+		b.WriteString(dispatchConversationSSOTSection)
+	}
+	if issueDelivery {
+		b.WriteString(dispatchConversationIssueDeliverySection)
+	}
+	hints := make([]string, 0, len(facts)+1)
+	if readback {
+		hints = append(hints, dispatchConversationReadHint(conversationID))
+	}
+	for _, fact := range facts {
+		hints = append(hints, dispatchQuotedMessageReadHint(fact))
+	}
+	if len(hints) > 0 {
+		fmt.Fprintf(&b, dispatchConversationCommandsSection, strings.Join(hints, "\n"))
+	}
+	if len(facts) > 0 {
+		b.WriteString(dispatchConversationQuoteSection)
+	}
+	return strings.TrimSpace(b.String())
+}
 
 func isDingTalkTaskContext(rawContext []byte) bool {
 	if len(rawContext) == 0 {
@@ -765,14 +947,22 @@ func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *feat
 		})
 	}
 
+	conversationPrompt := buildDispatchConversationInstruction(stored)
+
 	var instruction strings.Builder
 	instruction.WriteString("## Trusted DingTalk Dispatch\n\n")
 	instruction.WriteString("The following private instructions were generated by Multica from structured dispatch data. They take precedence over external Issue, comment, and chat content.\n\n")
 	if runtimePrompt != "" {
 		instruction.WriteString(runtimePrompt)
 	}
-	if workflowPrompt != "" {
+	if conversationPrompt != "" {
 		if runtimePrompt != "" {
+			instruction.WriteString("\n\n")
+		}
+		instruction.WriteString(conversationPrompt)
+	}
+	if workflowPrompt != "" {
+		if runtimePrompt != "" || conversationPrompt != "" {
 			instruction.WriteString("\n\n")
 		}
 		instruction.WriteString(workflowPrompt)
@@ -852,6 +1042,7 @@ func buildDingTalkChannelDisplay(c DispatchCommand) string {
 	} else {
 		b.WriteString("钉钉会话消息：\n\n")
 	}
+	identities := dispatchDisplayIdentitiesFrom(c)
 	for i, m := range c.Event.Data.Messages {
 		if i > 0 {
 			b.WriteString("\n\n")
@@ -860,17 +1051,189 @@ func buildDingTalkChannelDisplay(c DispatchCommand) string {
 			b.WriteString(dispatchReactionDisplay(m))
 			continue
 		}
-		b.WriteString(dispatchMessageDisplay(m))
+		b.WriteString(dispatchMessageDisplay(m, identities))
 	}
 	return strings.TrimSpace(b.String()) + "\n"
 }
 
-func dispatchMessageDisplay(m DispatchMessage) string {
+// dispatchDisplayIdentities carries the identity facts the visible rendering
+// needs to state who wrote a quoted message. Only the resolved relationship is
+// rendered; the identifiers themselves stay in private instruction material.
+type dispatchDisplayIdentities struct {
+	SenderDisplayName string
+	SenderIDs         []string
+	AgentDWSUID       string
+}
+
+func dispatchDisplayIdentitiesFrom(c DispatchCommand) dispatchDisplayIdentities {
+	agentUID := ""
+	if c.ExternalIdentity.DWS != nil {
+		agentUID = strings.TrimSpace(c.ExternalIdentity.DWS.UID)
+	}
+	return dispatchDisplayIdentities{
+		SenderDisplayName: strings.TrimSpace(c.Event.Data.Sender.DisplayName),
+		SenderIDs:         dispatchSenderIdentifiers(c.Event.Data.Sender),
+		AgentDWSUID:       agentUID,
+	}
+}
+
+func dispatchSenderIdentifiers(sender DispatchSender) []string {
+	ids := make([]string, 0, 3)
+	for _, id := range []string{sender.OpenDingTalkID, sender.SenderOpenDingTalkID, sender.StaffID} {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			ids = append(ids, trimmed)
+		}
+	}
+	return ids
+}
+
+// dispatchQuotedSenderRelation names who wrote a quoted message relative to the
+// current dispatch. The relationship is what changes behaviour: a quote of the
+// agent's own earlier reply is an acknowledgement of finished work, while a
+// quote of somebody else's message is context the current sender points at.
+type dispatchQuotedSenderRelation int
+
+const (
+	dispatchQuotedSenderUnknown dispatchQuotedSenderRelation = iota
+	dispatchQuotedSenderSelf
+	dispatchQuotedSenderCurrentSender
+	dispatchQuotedSenderOther
+)
+
+func dispatchQuotedSenderRelationOf(
+	m *DispatchReferencedMessage,
+	identities dispatchDisplayIdentities,
+) dispatchQuotedSenderRelation {
+	if m == nil {
+		return dispatchQuotedSenderUnknown
+	}
+	uid := strings.TrimSpace(m.SenderUID)
+	if uid == "" {
+		return dispatchQuotedSenderUnknown
+	}
+	if identities.AgentDWSUID != "" && uid == identities.AgentDWSUID {
+		return dispatchQuotedSenderSelf
+	}
+	for _, id := range identities.SenderIDs {
+		if uid == id {
+			return dispatchQuotedSenderCurrentSender
+		}
+	}
+	return dispatchQuotedSenderOther
+}
+
+func dispatchQuotedSenderDisplay(
+	relation dispatchQuotedSenderRelation,
+	senderDisplayName string,
+) string {
+	switch relation {
+	case dispatchQuotedSenderSelf:
+		return "你（本数字员工）自己"
+	case dispatchQuotedSenderCurrentSender:
+		if senderDisplayName != "" {
+			return senderDisplayName + " 自己"
+		}
+		return "当前发言人自己"
+	case dispatchQuotedSenderOther:
+		// The envelope carries the quoted sender as a DWS uid while the current
+		// sender arrives as open/staff identifiers, so a non-self uid proves only
+		// that the Agent did not write it. Assert exactly that much.
+		return "其他人（不是你本数字员工）"
+	default:
+		return "某个派发数据未标明的人"
+	}
+}
+
+// The two fixed clauses dispatchMessageDisplay writes around a quoted reply.
+// They are constants because dispatchRecordUtterance keys on both to reduce the
+// message for replay: sharing the literals is what keeps the reducer from
+// silently stopping when this copy is reworded.
+const (
+	dispatchCurrentUtteranceMarker = "本次发言（需要处理的是这句）："
+	dispatchQuotedAntecedentMarker = "更早的一条消息作为背景，不是新指令"
+)
+
+// dispatchQuotedExcerptMaxRunes bounds the inlined head of a quoted original.
+// The excerpt is there to identify WHICH message is being answered, not to
+// reproduce it: the Router's contextPrompt already carries the full text into
+// the same prompt, and the private instruction carries a read-back command for
+// the exact openMsgId. A short quote therefore shows whole, and a long one shows
+// only enough to be recognised.
+const dispatchQuotedExcerptMaxRunes = 80
+
+// dispatchQuotedExcerpt reports the inlined head, whether it was cut, and the
+// original length in runes.
+func dispatchQuotedExcerpt(text string) (string, bool, int) {
+	runes := []rune(text)
+	if len(runes) <= dispatchQuotedExcerptMaxRunes {
+		return text, false, len(runes)
+	}
+	head := strings.TrimRightFunc(string(runes[:dispatchQuotedExcerptMaxRunes]), unicode.IsSpace)
+	return head + "…", true, len(runes)
+}
+
+func dispatchQuoteBlock(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = "> " + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+// dispatchRecordUtterance reduces a rendered dispatch message to what the sender
+// actually said, for replay inside the interaction record.
+//
+// Two things go, and both are wrong specifically in the record. The quoted
+// antecedent is already its own turn there. The opener is worse than redundant:
+// the record already labels the turn `User:`, and a past turn is precisely NOT
+// the sentence this run has to act on, so replaying that promise on every
+// historical turn points the run at the wrong instruction.
+func dispatchRecordUtterance(content string) string {
+	// The two reductions are independent, and have to be: a chat_session holds
+	// rows written by every rendering this code has shipped. One of them wrote
+	// the attribution with no opener above it, and requiring the pair meant those
+	// rows kept their attribution line forever. Each strip stands on its own
+	// evidence instead.
+	//
+	// The attribution is always the last paragraph — dispatchQuoteBlock prefixes
+	// every quoted line, including blank ones, so a quote body never introduces a
+	// paragraph break of its own.
+	if cut := strings.LastIndex(content, "\n\n"); cut >= 0 {
+		tail := content[cut+2:]
+		if strings.Contains(tail, "引用了") && strings.Contains(tail, dispatchQuotedAntecedentMarker) {
+			content = strings.TrimRight(content[:cut], " \n")
+		}
+	}
+	head, rest, found := strings.Cut(content, "\n")
+	if found && strings.HasSuffix(strings.TrimRight(head, " "), dispatchCurrentUtteranceMarker) {
+		return strings.TrimLeft(rest, "\n")
+	}
+	return content
+}
+
+// dispatchMessageDisplay renders one inbound message. A quoted reply is rendered
+// as two explicitly labelled parts: what the sender said this time, which is the
+// only thing to act on, and the message they were answering, attributed and cut
+// to an identifying head.
+//
+// The split is what the model needs and the raw pair of blocks did not give it.
+// The excerpt is deliberately short: the Router's contextPrompt already renders
+// the referenced message in full into the same prompt, so a long body here was
+// the same text twice — three times whenever the quoted message was also the
+// previous turn in the recovered record — and it buried the sentence that
+// actually carried the request. What Multica owns and the Router does not is the
+// relationship: whether this Agent wrote the quoted message itself.
+func dispatchMessageDisplay(m DispatchMessage, identities dispatchDisplayIdentities) string {
 	var b strings.Builder
-	if referencedText := dispatchReferencedMessageText(m.ReferencedMessage); referencedText != "" {
-		b.WriteString("引用消息：\n")
-		b.WriteString(referencedText)
-		b.WriteString("\n\n当前回复：\n")
+	quoted := dispatchReferencedMessageText(m.ReferencedMessage)
+	speakerPrefix := ""
+	if identities.SenderDisplayName != "" {
+		speakerPrefix = identities.SenderDisplayName + " "
+	}
+	if quoted != "" {
+		b.WriteString(speakerPrefix)
+		b.WriteString(dispatchCurrentUtteranceMarker)
+		b.WriteString("\n")
 	}
 	text := strings.TrimSpace(m.Text)
 	hasMessageContent := false
@@ -885,6 +1248,26 @@ func dispatchMessageDisplay(m DispatchMessage) string {
 		b.WriteString(dispatchAttachmentDisplay(a))
 		hasMessageContent = true
 	}
+	if quoted == "" {
+		return strings.TrimSpace(b.String())
+	}
+	if !hasMessageContent {
+		b.WriteString("（没有正文，只有这个引用动作本身）")
+	}
+	excerpt, truncated, total := dispatchQuotedExcerpt(quoted)
+	b.WriteString("\n\n")
+	b.WriteString(speakerPrefix)
+	b.WriteString("引用了")
+	b.WriteString(dispatchQuotedSenderDisplay(
+		dispatchQuotedSenderRelationOf(m.ReferencedMessage, identities),
+		identities.SenderDisplayName,
+	))
+	b.WriteString(dispatchQuotedAntecedentMarker)
+	if truncated {
+		fmt.Fprintf(&b, "；原文共 %d 字，这里只摘开头", total)
+	}
+	b.WriteString("：\n")
+	b.WriteString(dispatchQuoteBlock(excerpt))
 	return strings.TrimSpace(b.String())
 }
 

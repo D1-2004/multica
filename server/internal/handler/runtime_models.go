@@ -12,6 +12,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/modelpricing"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -91,6 +92,7 @@ type ModelEntry struct {
 	Label        string             `json:"label"`
 	Provider     string             `json:"provider,omitempty"`
 	Default      bool               `json:"default,omitempty"`
+	Pricing      *modelpricing.Rate `json:"pricing,omitempty"`
 	Thinking     *ModelThinking     `json:"thinking,omitempty"`
 	ServiceTiers []ModelServiceTier `json:"service_tiers,omitempty"`
 }
@@ -319,6 +321,7 @@ func modelListRequestTerminal(status ModelListStatus) bool {
 
 type cloudSandboxModelCatalog struct {
 	Models          []string
+	Pricing         modelpricing.Catalog
 	Provider        string
 	ConfigKey       string
 	RequestIDPrefix string
@@ -335,6 +338,7 @@ func (h *Handler) configuredCloudSandboxModelCatalog(rt db.AgentRuntime) (cloudS
 
 	catalog := cloudSandboxModelCatalog{}
 	cfg := h.currentConfig()
+	catalog.Pricing = cfg.ModelPricing
 	switch metadata.SandboxBackend {
 	case service.SandboxBackendAliyunFC:
 		catalog.Models = cfg.FCE2B.LLMModels
@@ -394,11 +398,17 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		}
 		models := make([]ModelEntry, 0, len(catalog.Models))
 		for index, model := range catalog.Models {
+			var pricing *modelpricing.Rate
+			if rate, ok := catalog.Pricing.Resolve(model); ok {
+				rateCopy := rate
+				pricing = &rateCopy
+			}
 			models = append(models, ModelEntry{
 				ID:       model,
 				Label:    model,
 				Provider: catalog.Provider,
 				Default:  index == 0,
+				Pricing:  pricing,
 				Thinking: modelThinkingFromAgent(agent.StaticThinkingForModel(catalog.Provider, model)),
 			})
 		}

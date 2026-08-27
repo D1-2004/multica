@@ -37,7 +37,7 @@ func TestBoundedChatHistoryClipsEveryLongMessage(t *testing.T) {
 	out := boundedChatHistoryTranscript([]db.ChatMessage{
 		chatMsg("user", spec),
 		chatMsg("assistant", short),
-	})
+	}, "")
 
 	if !strings.Contains(out, short) {
 		t.Errorf("a message inside the cap must survive verbatim:\n%s", out)
@@ -47,9 +47,6 @@ func TestBoundedChatHistoryClipsEveryLongMessage(t *testing.T) {
 	}
 	if !strings.Contains(out, chatHistoryClipMarker) {
 		t.Error("the clip must be announced where it happened")
-	}
-	if strings.Contains(out, chatHistoryOmittedMarker) {
-		t.Errorf("clipping is not dropping; no message was lost:\n%s", out)
 	}
 
 	// The cap is characters, not bytes: 200 runes of CJK is ~600 bytes, and a
@@ -72,7 +69,7 @@ func TestBoundedChatHistoryClipsOnlyWhatCannotFit(t *testing.T) {
 	t.Parallel()
 
 	huge := strings.Repeat("甲", 20000) // 60000 bytes
-	out := boundedChatHistoryTranscript([]db.ChatMessage{chatMsg("user", huge)})
+	out := boundedChatHistoryTranscript([]db.ChatMessage{chatMsg("user", huge)}, "")
 
 	if len(out) > 12000+len(chatHistoryOmittedMarker)+2 {
 		t.Fatalf("clipped transcript overshoots the byte bound: %d bytes", len(out))
@@ -122,7 +119,22 @@ func TestClipChatHistoryMessageNeverGrows(t *testing.T) {
 // The omitted marker is a claim, and the per-turn chat prompt tells the run to
 // treat a declared gap as context it must go and fetch. Raising it for rows that
 // carried no text sends the run after a conversation it already has in full.
-func TestBoundedChatHistoryMarkerTracksRealLoss(t *testing.T) {
+func TestBoundedChatHistoryRendersOnlyMessagesWithText(t *testing.T) {
+	t.Parallel()
+
+	var padded []db.ChatMessage
+	for i := 0; i < 5; i++ {
+		padded = append(padded, chatMsg("assistant", "   "))
+	}
+	for i := 0; i < 20; i++ {
+		padded = append(padded, chatMsg("user", "有内容"))
+	}
+	if out := boundedChatHistoryTranscript(padded, ""); strings.Contains(out, chatHistoryOmittedMarker) {
+		t.Errorf("only blank rows fell outside the window; nothing was lost:\n%s", out)
+	}
+}
+
+func TestBoundedChatHistorySkipsBlankRows(t *testing.T) {
 	t.Parallel()
 
 	var blankPadded []db.ChatMessage
@@ -132,22 +144,14 @@ func TestBoundedChatHistoryMarkerTracksRealLoss(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		blankPadded = append(blankPadded, chatMsg("user", "有内容"))
 	}
-	if out := boundedChatHistoryTranscript(blankPadded); strings.Contains(out, chatHistoryOmittedMarker) {
-		t.Errorf("only blank rows fell outside the window; nothing was lost:\n%s", out)
+	if out := boundedChatHistoryTranscript(blankPadded, ""); strings.Contains(out, "Assistant:") {
+		t.Errorf("blank rows were rendered as turns:\n%s", out)
 	}
 
-	var overflowing []db.ChatMessage
-	for i := 0; i < 25; i++ {
-		overflowing = append(overflowing, chatMsg("user", "第 N 条真实内容"))
-	}
-	if out := boundedChatHistoryTranscript(overflowing); !strings.Contains(out, chatHistoryOmittedMarker) {
-		t.Errorf("five messages with text were dropped and the transcript did not say so:\n%s", out)
-	}
-
-	if out := boundedChatHistoryTranscript(nil); out != "" {
+	if out := boundedChatHistoryTranscript(nil, ""); out != "" {
 		t.Errorf("empty input must produce an empty transcript, got %q", out)
 	}
-	if out := boundedChatHistoryTranscript([]db.ChatMessage{chatMsg("user", "  ")}); out != "" {
+	if out := boundedChatHistoryTranscript([]db.ChatMessage{chatMsg("user", "  ")}, ""); out != "" {
 		t.Errorf("blank-only input must produce an empty transcript, got %q", out)
 	}
 }
@@ -203,14 +207,14 @@ func TestBoundedChatHistoryInvariants(t *testing.T) {
 	rng := rand.New(rand.NewSource(20260826))
 	for iteration := 0; iteration < 2000; iteration++ {
 		msgs := randomChatHistory(rng)
-		out := boundedChatHistoryTranscript(msgs)
+		out := boundedChatHistoryTranscript(msgs, "")
 
 		if !utf8.ValidString(out) {
 			t.Fatalf("iteration %d: clipping split a rune", iteration)
 		}
 
-		// The omission marker is allowed to push the result past the byte cap:
-		// it is a statement about the transcript, not part of it. Nothing else is.
+		// The marker is allowed to push the result past the byte cap: it is a
+		// statement about the transcript, not part of it. Nothing else is.
 		if limit := transcriptMaxBytes + len(chatHistoryOmittedMarker) + 2; len(out) > limit {
 			t.Fatalf("iteration %d: transcript is %d bytes, over the %d-byte bound", iteration, len(out), limit)
 		}
@@ -228,8 +232,6 @@ func TestBoundedChatHistoryInvariants(t *testing.T) {
 			}
 			continue
 		}
-
-		announced := strings.HasPrefix(out, chatHistoryOmittedMarker)
 
 		// Every message is identifiable by its "msg-<i>-" stem, so presence is
 		// decidable even after a head/tail clip: the stem survives in the head.
@@ -262,8 +264,9 @@ func TestBoundedChatHistoryInvariants(t *testing.T) {
 			t.Fatalf("iteration %d: transcript reordered the conversation:\n%s", iteration, out)
 		}
 
-		// The load-bearing invariant. Anything missing must be announced, and
-		// nothing may be announced that is not missing.
+		// The load-bearing invariant on a Multica-native chat: anything missing
+		// must be announced, and nothing may be announced that is not missing.
+		announced := strings.HasPrefix(out, chatHistoryOmittedMarker)
 		missing := present < len(recoverable)
 		if missing && !announced {
 			t.Fatalf("iteration %d: %d of %d messages with text are absent and the transcript does not say so:\n%s",
@@ -287,9 +290,9 @@ func TestBoundedChatHistoryInvariants(t *testing.T) {
 	}
 }
 
-// The message cap and the byte cap are separate reasons to drop a turn, and both
-// have to reach the same conclusion about announcing it.
-func TestBoundedChatHistoryAnnouncesBothKindsOfLoss(t *testing.T) {
+// The message cap and the byte cap are separate reasons to drop a turn, and on a
+// Multica-native chat both have to reach the same conclusion about announcing it.
+func TestBoundedChatHistoryKeepsTheRecentEndUnderBothCaps(t *testing.T) {
 	t.Parallel()
 
 	// Message cap: 25 short turns, nowhere near the byte cap.
@@ -297,9 +300,14 @@ func TestBoundedChatHistoryAnnouncesBothKindsOfLoss(t *testing.T) {
 	for i := 0; i < transcriptMaxMessages+5; i++ {
 		many = append(many, chatMsg("user", fmt.Sprintf("turn-%d", i)))
 	}
-	out := boundedChatHistoryTranscript(many)
+	out := boundedChatHistoryTranscript(many, "")
 	if !strings.HasPrefix(out, chatHistoryOmittedMarker) {
-		t.Errorf("message cap dropped 5 turns without announcing it:\n%s", out)
+		t.Errorf("message cap dropped 5 turns from a web chat without announcing it:\n%s", out)
+	}
+	// A channel-backed run can read the conversation back, so the same loss is
+	// not announced there.
+	if channel := boundedChatHistoryTranscript(many, "dingtalk"); strings.Contains(channel, chatHistoryOmittedMarker) {
+		t.Errorf("channel-backed transcript announced a loss it can recover:\n%s", channel)
 	}
 	if strings.Contains(out, "turn-0\n") {
 		t.Error("oldest turn survived the message cap")
@@ -314,7 +322,7 @@ func TestBoundedChatHistoryAnnouncesBothKindsOfLoss(t *testing.T) {
 		chatMsg("assistant", "middle-"+strings.Repeat("乙", 3000)),
 		chatMsg("user", "newest-"+strings.Repeat("丙", 3000)),
 	}
-	out = boundedChatHistoryTranscript(big)
+	out = boundedChatHistoryTranscript(big, "")
 	if !strings.Contains(out, "newest-") {
 		t.Error("byte cap dropped the newest turn")
 	}
