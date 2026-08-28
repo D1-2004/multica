@@ -12,15 +12,9 @@ import (
 	"testing"
 )
 
-const testDingTalkCardCallbackSecret = "test-callback-secret"
-
-func signedDingTalkCardCallbackRequest(t *testing.T, rawBody string, secret string) *http.Request {
-	t.Helper()
-	timestamp := "1787875200123"
+func dingTalkCardCallbackRequest(rawBody string) *http.Request {
 	request := httptest.NewRequest(http.MethodPost, dingTalkCardCallbackPath, strings.NewReader(rawBody))
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
-	request.Header.Set(dingTalkCardSignatureTimestampHeader, timestamp)
-	request.Header.Set(dingTalkCardSignatureHeader, computeDingTalkCardCallbackSignature(secret, timestamp))
 	return request
 }
 
@@ -42,10 +36,9 @@ func TestDingTalkCardCallbackForwardsRawBodyAndReturnsCardUpdate(t *testing.T) {
 
 	handler := dingTalkCardCallbackHandler(dingTalkCardCallbackConfig{
 		AITableWebhookURL: downstream.URL,
-		CallbackSecret:    testDingTalkCardCallbackSecret,
 	}, downstream.Client())
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, signedDingTalkCardCallbackRequest(t, rawBody, testDingTalkCardCallbackSecret))
+	handler.ServeHTTP(recorder, dingTalkCardCallbackRequest(rawBody))
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
@@ -82,30 +75,27 @@ func TestDingTalkCardCallbackForwardsRawBodyAndReturnsCardUpdate(t *testing.T) {
 	}
 }
 
-func TestDingTalkCardCallbackRejectsInvalidSignatureWithoutForwarding(t *testing.T) {
+func TestDingTalkCardCallbackDoesNotRequireAuthentication(t *testing.T) {
 	var calls atomic.Int32
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
-		w.WriteHeader(http.StatusOK)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"success":true}`)
 	}))
 	defer downstream.Close()
 
 	handler := dingTalkCardCallbackHandler(dingTalkCardCallbackConfig{
 		AITableWebhookURL: downstream.URL,
-		CallbackSecret:    testDingTalkCardCallbackSecret,
 	}, downstream.Client())
-	request := signedDingTalkCardCallbackRequest(t, `{"arbitrary":true}`, "wrong-secret")
+	request := httptest.NewRequest(http.MethodPost, dingTalkCardCallbackPath, strings.NewReader(`{"arbitrary":true}`))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
-	if calls.Load() != 0 {
-		t.Fatalf("downstream calls = %d, want 0", calls.Load())
-	}
-	if strings.Contains(recorder.Body.String(), "cardData") {
-		t.Fatalf("failure response marks card submitted: %s", recorder.Body.String())
+	if calls.Load() != 1 {
+		t.Fatalf("downstream calls = %d, want 1", calls.Load())
 	}
 }
 
@@ -130,10 +120,9 @@ func TestDingTalkCardCallbackDoesNotUpdateCardWhenWebhookRejects(t *testing.T) {
 
 			handler := dingTalkCardCallbackHandler(dingTalkCardCallbackConfig{
 				AITableWebhookURL: downstream.URL,
-				CallbackSecret:    testDingTalkCardCallbackSecret,
 			}, downstream.Client())
 			recorder := httptest.NewRecorder()
-			handler.ServeHTTP(recorder, signedDingTalkCardCallbackRequest(t, `{"arbitrary":true}`, testDingTalkCardCallbackSecret))
+			handler.ServeHTTP(recorder, dingTalkCardCallbackRequest(`{"arbitrary":true}`))
 
 			if recorder.Code != http.StatusBadGateway {
 				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
@@ -153,10 +142,9 @@ func TestDingTalkCardCallbackDoesNotUpdateCardOnNetworkFailure(t *testing.T) {
 
 	handler := dingTalkCardCallbackHandler(dingTalkCardCallbackConfig{
 		AITableWebhookURL: downstreamURL,
-		CallbackSecret:    testDingTalkCardCallbackSecret,
 	}, client)
 	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, signedDingTalkCardCallbackRequest(t, `{"arbitrary":true}`, testDingTalkCardCallbackSecret))
+	handler.ServeHTTP(recorder, dingTalkCardCallbackRequest(`{"arbitrary":true}`))
 
 	if recorder.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadGateway)
@@ -171,10 +159,11 @@ func TestDingTalkCardCallbackRuntimeConfigKeysAreWhitelisted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read src/main.sh: %v", err)
 	}
-	for _, key := range []string{dingTalkCardAITableWebhookURLEnv, dingTalkCardCallbackSecretEnv} {
-		if !strings.Contains(string(source), "  "+key+"\n") {
-			t.Errorf("runtime config key %s is not whitelisted", key)
-		}
+	if !strings.Contains(string(source), "  "+dingTalkCardAITableWebhookURLEnv+"\n") {
+		t.Errorf("runtime config key %s is not whitelisted", dingTalkCardAITableWebhookURLEnv)
+	}
+	if strings.Contains(string(source), "  DINGTALK_CARD_CALLBACK_SECRET\n") {
+		t.Error("unused callback secret remains whitelisted")
 	}
 }
 
