@@ -5,35 +5,27 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
-	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 const (
-	dingTalkCardCallbackPath        = "/api/dingtalk/card/customer-feedback"
-	dingTalkCardAITableWebhookURLEnv = "AITABLE_WEBHOOK_URL"
+	dingTalkCardCallbackPath        = "/api/dingtalk/card/customer-feedback/{flowId}"
+	dingTalkCardAITableWebhookBaseURL = "https://connector.dingtalk.com/webhook/flow/"
+	dingTalkCardFlowIDMaxLength     = 128
 	dingTalkCardAITableResponseLimit = 64 * 1024
 	dingTalkCardAITableTimeout       = 2 * time.Second
 )
 
-type dingTalkCardCallbackConfig struct {
-	AITableWebhookURL string
-}
-
-func dingTalkCardCallbackConfigFromEnv() dingTalkCardCallbackConfig {
-	return dingTalkCardCallbackConfig{
-		AITableWebhookURL: strings.TrimSpace(os.Getenv(dingTalkCardAITableWebhookURLEnv)),
-	}
-}
-
-func dingTalkCardCallbackHandler(config dingTalkCardCallbackConfig, client *http.Client) http.HandlerFunc {
+func dingTalkCardCallbackHandler(client *http.Client) http.HandlerFunc {
 	if client == nil {
 		client = &http.Client{Timeout: dingTalkCardAITableTimeout}
 	}
 	return func(writer http.ResponseWriter, request *http.Request) {
-		if config.AITableWebhookURL == "" {
-			writeDingTalkCardCallbackError(writer, http.StatusServiceUnavailable, "service_not_configured")
+		flowID := chi.URLParam(request, "flowId")
+		if !validDingTalkCardFlowID(flowID) {
+			writeDingTalkCardCallbackError(writer, http.StatusBadRequest, "invalid_flow_id")
 			return
 		}
 
@@ -45,7 +37,7 @@ func dingTalkCardCallbackHandler(config dingTalkCardCallbackConfig, client *http
 		downstreamRequest, err := http.NewRequestWithContext(
 			request.Context(),
 			http.MethodPost,
-			config.AITableWebhookURL,
+			dingTalkCardAITableWebhookBaseURL+flowID,
 			bytes.NewReader(rawBody),
 		)
 		if err != nil {
@@ -91,6 +83,23 @@ func dingTalkCardCallbackHandler(config dingTalkCardCallbackConfig, client *http
 			},
 		})
 	}
+}
+
+func validDingTalkCardFlowID(flowID string) bool {
+	if len(flowID) == 0 || len(flowID) > dingTalkCardFlowIDMaxLength {
+		return false
+	}
+	for index := 0; index < len(flowID); index++ {
+		character := flowID[index]
+		if (character >= 'a' && character <= 'z') ||
+			(character >= 'A' && character <= 'Z') ||
+			(character >= '0' && character <= '9') ||
+			character == '_' || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func writeDingTalkCardCallbackError(writer http.ResponseWriter, status int, code string) {
