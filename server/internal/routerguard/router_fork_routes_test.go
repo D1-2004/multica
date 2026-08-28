@@ -15,6 +15,7 @@ func TestForkRoutesRemainRegistered(t *testing.T) {
 	}
 	router := string(source)
 	registrations := []string{
+		`r.Post(dingTalkCardCallbackPath, dingTalkCardCallbackHandler(`,
 		`r.Post("/tasks/{taskId}/llm-traces", h.RelayTaskLLMTrace)`,
 		`r.Get("/api/runtimes/fc-e2b/stable-channel", h.GetFCE2BStableChannel)`,
 		`r.Post("/api/runtimes/fc-e2b/stable-releases", h.CreateFCE2BStableRelease)`,
