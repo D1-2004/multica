@@ -10,12 +10,111 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/go-chi/chi/v5"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
+}
+
 func dingTalkCardCallbackRequest(rawBody string) *http.Request {
-	request := httptest.NewRequest(http.MethodPost, dingTalkCardCallbackPath, strings.NewReader(rawBody))
+	request := httptest.NewRequest(http.MethodPost, "/api/dingtalk/card/customer-feedback/test-flow", strings.NewReader(rawBody))
 	request.Header.Set("Content-Type", "application/json; charset=utf-8")
 	return request
+}
+
+func dingTalkCardCallbackRouter(client *http.Client) http.Handler {
+	router := chi.NewRouter()
+	router.Post(dingTalkCardCallbackPath, dingTalkCardCallbackHandler(client))
+	return router
+}
+
+func dingTalkCardCallbackClientForServer(server *httptest.Server) *http.Client {
+	transport := server.Client().Transport
+	return &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		forwardedRequest := request.Clone(request.Context())
+		forwardedURL := *request.URL
+		forwardedURL.Scheme = "http"
+		forwardedURL.Host = strings.TrimPrefix(server.URL, "http://")
+		forwardedRequest.URL = &forwardedURL
+		return transport.RoundTrip(forwardedRequest)
+	})}
+}
+
+func TestDingTalkCardCallbackRoutesFlowAndForwardsRawBody(t *testing.T) {
+	const flowID = "103b082bde2f2107d5c80007"
+	rawBody := "{\n  \"type\": \"actionCallback\",\n  \"unknown\": [1, 2, 3]\n}\n"
+	var receivedURL string
+	var receivedBody []byte
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		var err error
+		receivedURL = request.URL.String()
+		receivedBody, err = io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatalf("read downstream body: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"success":true}`)),
+		}, nil
+	})}
+
+	router := dingTalkCardCallbackRouter(client)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/dingtalk/card/customer-feedback/"+flowID, strings.NewReader(rawBody))
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if receivedURL != "https://connector.dingtalk.com/webhook/flow/"+flowID {
+		t.Fatalf("downstream URL = %q", receivedURL)
+	}
+	if !bytes.Equal(receivedBody, []byte(rawBody)) {
+		t.Fatalf("forwarded body changed:\n got: %q\nwant: %q", receivedBody, rawBody)
+	}
+}
+
+func TestDingTalkCardCallbackRejectsMissingOrInvalidFlowIDWithoutDownstreamRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "missing", path: "/api/dingtalk/card/customer-feedback"},
+		{name: "dot", path: "/api/dingtalk/card/customer-feedback/abc.def"},
+		{name: "encoded dot", path: "/api/dingtalk/card/customer-feedback/abc%2Edef"},
+		{name: "slash", path: "/api/dingtalk/card/customer-feedback/abc/def"},
+		{name: "encoded slash", path: "/api/dingtalk/card/customer-feedback/abc%2Fdef"},
+		{name: "too long", path: "/api/dingtalk/card/customer-feedback/" + strings.Repeat("a", 129)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var calls atomic.Int32
+			client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(`{"success":true}`)),
+				}, nil
+			})}
+			router := dingTalkCardCallbackRouter(client)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(`{"arbitrary":true}`)))
+
+			if recorder.Code < http.StatusBadRequest {
+				t.Fatalf("status = %d, want rejection", recorder.Code)
+			}
+			if calls.Load() != 0 {
+				t.Fatalf("downstream calls = %d, want 0", calls.Load())
+			}
+		})
+	}
 }
 
 func TestDingTalkCardCallbackForwardsRawBodyAndReturnsCardUpdate(t *testing.T) {
@@ -34,9 +133,7 @@ func TestDingTalkCardCallbackForwardsRawBodyAndReturnsCardUpdate(t *testing.T) {
 	}))
 	defer downstream.Close()
 
-	handler := dingTalkCardCallbackHandler(dingTalkCardCallbackConfig{
-		AITableWebhookURL: downstream.URL,
-	}, downstream.Client())
+	handler := dingTalkCardCallbackRouter(dingTalkCardCallbackClientForServer(downstream))
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, dingTalkCardCallbackRequest(rawBody))
 
@@ -84,10 +181,8 @@ func TestDingTalkCardCallbackDoesNotRequireAuthentication(t *testing.T) {
 	}))
 	defer downstream.Close()
 
-	handler := dingTalkCardCallbackHandler(dingTalkCardCallbackConfig{
-		AITableWebhookURL: downstream.URL,
-	}, downstream.Client())
-	request := httptest.NewRequest(http.MethodPost, dingTalkCardCallbackPath, strings.NewReader(`{"arbitrary":true}`))
+	handler := dingTalkCardCallbackRouter(dingTalkCardCallbackClientForServer(downstream))
+	request := dingTalkCardCallbackRequest(`{"arbitrary":true}`)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 
@@ -118,9 +213,7 @@ func TestDingTalkCardCallbackDoesNotUpdateCardWhenWebhookRejects(t *testing.T) {
 			}))
 			defer downstream.Close()
 
-			handler := dingTalkCardCallbackHandler(dingTalkCardCallbackConfig{
-				AITableWebhookURL: downstream.URL,
-			}, downstream.Client())
+			handler := dingTalkCardCallbackRouter(dingTalkCardCallbackClientForServer(downstream))
 			recorder := httptest.NewRecorder()
 			handler.ServeHTTP(recorder, dingTalkCardCallbackRequest(`{"arbitrary":true}`))
 
@@ -136,13 +229,10 @@ func TestDingTalkCardCallbackDoesNotUpdateCardWhenWebhookRejects(t *testing.T) {
 
 func TestDingTalkCardCallbackDoesNotUpdateCardOnNetworkFailure(t *testing.T) {
 	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	client := downstream.Client()
-	downstreamURL := downstream.URL
+	client := dingTalkCardCallbackClientForServer(downstream)
 	downstream.Close()
 
-	handler := dingTalkCardCallbackHandler(dingTalkCardCallbackConfig{
-		AITableWebhookURL: downstreamURL,
-	}, client)
+	handler := dingTalkCardCallbackRouter(client)
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, dingTalkCardCallbackRequest(`{"arbitrary":true}`))
 
@@ -154,16 +244,15 @@ func TestDingTalkCardCallbackDoesNotUpdateCardOnNetworkFailure(t *testing.T) {
 	}
 }
 
-func TestDingTalkCardCallbackRuntimeConfigKeysAreWhitelisted(t *testing.T) {
-	source, err := os.ReadFile("../../../src/main.sh")
-	if err != nil {
-		t.Fatalf("read src/main.sh: %v", err)
-	}
-	if !strings.Contains(string(source), "  "+dingTalkCardAITableWebhookURLEnv+"\n") {
-		t.Errorf("runtime config key %s is not whitelisted", dingTalkCardAITableWebhookURLEnv)
-	}
-	if strings.Contains(string(source), "  DINGTALK_CARD_CALLBACK_SECRET\n") {
-		t.Error("unused callback secret remains whitelisted")
+func TestDingTalkCardCallbackDoesNotUseFixedRuntimeConfig(t *testing.T) {
+	for _, path := range []string{"../../../src/main.sh", "../../../.env.example"} {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(source), "AITABLE_WEBHOOK_URL") {
+			t.Errorf("%s still references AITABLE_WEBHOOK_URL", path)
+		}
 	}
 }
 
