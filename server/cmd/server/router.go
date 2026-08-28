@@ -1676,6 +1676,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Public API
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
+	// DingTalk interactive-card HTTP callback. The handler authenticates the
+	// transport signature, then forwards the original body bytes to AI Table.
+	r.Post(dingTalkCardCallbackPath, dingTalkCardCallbackHandler(
+		dingTalkCardCallbackConfigFromEnv(),
+		&http.Client{Timeout: dingTalkCardAITableTimeout},
+	))
 	// Per-Agent A2A discovery is public metadata; JSON-RPC uses an endpoint-
 	// specific Bearer credential and derives all tenant context server-side.
 	r.Get("/api/a2a/agents/{publicAgentId}/.well-known/agent-card.json", h.GetAgentA2ACard)
