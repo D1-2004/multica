@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -17,7 +18,7 @@ func prepareUploadedSite(t *testing.T, spaFallback bool) (*Service, PreparedDepl
 	t.Helper()
 	service := newTestService(&memoryStore{}, &memoryObjectStore{})
 	body := zipBytes(t, map[string]string{
-		"index.html": "<!doctype html><link rel=stylesheet href=assets/site.css>",
+		"index.html": "<!doctype html><link rel=stylesheet href=assets/site.css><script src=assets/app.js></script>",
 		"assets/site.css": "body{color:green}",
 		"assets/app.js": "console.log('site')",
 	})
@@ -150,6 +151,22 @@ func TestServePublicSiteReturnsInlineHTMLAndAssetsWithSecurityHeaders(t *testing
 	if got := rootResponse.Header().Get("Content-Disposition"); got != "inline" {
 		t.Fatalf("Content-Disposition=%q", got)
 	}
+	runtimeScript := `<script src="/api/sitehosting/runtime/fetch-proxy.js" data-public-site-id="` + prepared.PublicSiteIDForTest() + `"></script>`
+	runtimeOffset := strings.Index(rootResponse.Body.String(), runtimeScript)
+	businessOffset := strings.Index(rootResponse.Body.String(), "<script src=assets/app.js>")
+	if runtimeOffset < 0 || businessOffset < 0 || runtimeOffset >= businessOffset {
+		t.Fatalf("runtime must be injected before business scripts; body=%q", rootResponse.Body.String())
+	}
+	if got := rootResponse.Header().Get("Content-Length"); got != strconv.Itoa(rootResponse.Body.Len()) {
+		t.Fatalf("Content-Length=%q body length=%d", got, rootResponse.Body.Len())
+	}
+	rootConditional := httptest.NewRequest(http.MethodGet, prepared.SiteURL, nil)
+	rootConditional.Header.Set("If-None-Match", rootResponse.Header().Get("ETag"))
+	rootConditionalResponse := httptest.NewRecorder()
+	service.ServePublic(rootConditionalResponse, rootConditional, prepared.PublicSiteIDForTest(), "")
+	if rootConditionalResponse.Code != http.StatusNotModified || rootConditionalResponse.Body.Len() != 0 {
+		t.Fatalf("HTML conditional status=%d body=%q", rootConditionalResponse.Code, rootConditionalResponse.Body.String())
+	}
 	for _, header := range []string{"Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy", "Permissions-Policy"} {
 		if rootResponse.Header().Get(header) == "" {
 			t.Fatalf("missing security header %s", header)
@@ -231,6 +248,30 @@ func TestServePublicSiteUsesCurrentSafeConfiguredConnectSources(t *testing.T) {
 	second := request()
 	if !strings.Contains(second, "connect-src 'self' https://connector.dingtalk.com https://updated.example.test;") || strings.Contains(second, "feedback.example.test") {
 		t.Fatalf("CSP did not use the current provider value; got %q", second)
+	}
+}
+
+func TestServeFetchProxyRuntime(t *testing.T) {
+	service := newTestService(&memoryStore{}, &memoryObjectStore{})
+	response := httptest.NewRecorder()
+	service.ServeFetchProxyRuntime(response, httptest.NewRequest(http.MethodGet, "/api/sitehosting/runtime/fetch-proxy.js", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Content-Type"); got != "text/javascript; charset=utf-8" {
+		t.Fatalf("Content-Type=%q", got)
+	}
+	for _, required := range []string{"__MULTICA_FETCH_PROXY_ALLOWLIST__", "X-Multica-Fetch-Proxy-Result", "window.fetch"} {
+		if !strings.Contains(response.Body.String(), required) {
+			t.Fatalf("runtime is missing %q", required)
+		}
+	}
+	conditional := httptest.NewRequest(http.MethodGet, "/api/sitehosting/runtime/fetch-proxy.js", nil)
+	conditional.Header.Set("If-None-Match", response.Header().Get("ETag"))
+	conditionalResponse := httptest.NewRecorder()
+	service.ServeFetchProxyRuntime(conditionalResponse, conditional)
+	if conditionalResponse.Code != http.StatusNotModified || conditionalResponse.Body.Len() != 0 {
+		t.Fatalf("conditional status=%d body=%q", conditionalResponse.Code, conditionalResponse.Body.String())
 	}
 }
 

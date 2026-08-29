@@ -132,10 +132,52 @@ ZIP 校验拒绝绝对路径、`..`、反斜杠、百分号编码绕过、软链
 
 当前 Aone 各环境可暂时把 `MULTICA_SITE_PUBLIC_URL` 设置为对应 `MULTICA_PUBLIC_URL` 以做测试。但同源托管的 JavaScript 与已登录 Multica 应用共享 origin，响应头只能降低风险，不能形成完整隔离。正式对外开放前必须申请并迁移到不携带 Multica 登录 Cookie、与主应用隔离的独立域名；迁移只需更新配置，不改变公开路径和数据库模型。
 
+## 6. 托管页面 Fetch Proxy Runtime
+
+服务端读取 HTML 时会在首个业务 `<script>` 之前注入同源 Runtime：
+
+```html
+<script src="/api/sitehosting/runtime/fetch-proxy.js" data-public-site-id="<publicSiteId>"></script>
+```
+
+该注入不改变上传、MCP 工具或站点部署协议。Runtime 在业务脚本执行前保存原生 `window.fetch`，业务代码仍调用标准 `window.fetch(targetUrl, init)`。页面通过全局数组声明需要代理的精确 HTTPS URL；数组可在 Runtime 加载后、首次请求前设置：
+
+```js
+window.__MULTICA_FETCH_PROXY_ALLOWLIST__ = [
+  "https://connector.dingtalk.com/webhook/flow/<flowId>",
+];
+```
+
+Runtime 对 URL 做标准解析后执行完整 URL 精确匹配，scheme、host、port、path 和 query 都属于匹配内容；不接受带凭据或 fragment 的声明。同源 URL 和未命中的 URL 完全交给原生 `fetch`。命中后只向以下同源接口发送一次请求，代理网络错误或接口错误都会直接 reject，不会回退并重试原始 URL，避免重复 POST：
+
+```http
+POST /api/sitehosting/sites/<publicSiteId>/fetch-proxy
+Content-Type: application/json
+
+{
+  "version": 1,
+  "url": "https://connector.dingtalk.com/webhook/flow/<flowId>",
+  "method": "POST",
+  "headers": [["content-type", "application/json"]],
+  "body_base64": "eyJleGFtcGxlIjp0cnVlfQ=="
+}
+```
+
+代理成功时，接口直接返回上游 status、body 和允许透传的响应头，并增加 `X-Multica-Fetch-Proxy-Result: upstream`。Runtime 仅在存在该标记时重建标准 `Response`；Multica 自身产生的 JSON 错误没有该标记，因此不会被误当作上游响应。
+
+客户端声明只决定 Runtime 是否拦截，服务端不信任该白名单。服务端独立执行以下边界：
+
+- 目标必须为 HTTPS，origin 必须是默认 `https://connector.dingtalk.com` 或 Diamond `web.site_connect_src` 追加的精确 origin。
+- 解析目标全部 DNS 地址并固定本次连接地址；任一结果属于 loopback、私网、链路本地、metadata、文档保留地址或其他 reserved 网段时整体拒绝，防止 DNS rebinding。
+- 只允许 `GET`、`HEAD`、`POST`、`PUT`、`PATCH`、`DELETE`；请求体上限 1 MiB，响应体上限 2 MiB，上游总超时 10 秒，禁止重定向。
+- 请求仅保留 `Accept`、`Accept-Language`、`Content-Type`；不转发 Cookie、Authorization、Host、Origin、Referer、代理标识和 hop-by-hop 头。响应不转发 Set-Cookie、认证挑战、hop-by-hop 头及内部结果标记。
+- 错误与日志只暴露固定错误码，不记录完整目标 URL，避免 webhook 路径泄露。
+
 ## 变更历史
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-30 | 托管 HTML 自动注入精确 URL Fetch Proxy Runtime，并新增受 origin、DNS/IP、方法、大小、超时、重定向和敏感头约束的同源通用代理协议。 | 让业务继续使用标准 `window.fetch` 调用不支持浏览器 CORS 的 HTTPS webhook，同时由平台防止重复 POST、SSRF、DNS rebinding 与凭据泄露。 |
 | 2026-08-30 | 托管站点 CSP 的 `connect-src` 默认增加 `'self'`，并保留 connector 域名与 Diamond HTTPS origin 追加能力。 | 反馈提交改用 Multica 同源代理后，相对路径请求必须由 CSP 明确允许；同时保留既有 connector 默认值，避免 Diamond 配置移除安全基线。 |
 | 2026-08-30 | 托管站点 CSP 默认允许 `https://connector.dingtalk.com`，并支持 Diamond `web.site_connect_src` 追加 HTTPS origin。 | 允许反馈站点直接 POST 钉钉 AI 表格 webhook，同时只放宽 `connect-src`，保留其他 CSP 安全边界。 |
 | 2026-08-30 | 新增用户级 Site 列表与软删除管理接口，并在工作区设置中增加“网站”页签，支持打开、复制分享链接和确认删除。 | 托管能力此前只能通过 MCP 查询单个 Site，用户缺少统一可见、可分享和可撤销公网访问的管理入口；页签位置沿用工作区设置外壳，但不改变账号级所有权。 |

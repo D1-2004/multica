@@ -1,8 +1,11 @@
 package sitehosting
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"mime"
 	"net/http"
@@ -124,18 +127,27 @@ func (s *Service) ServePublic(w http.ResponseWriter, r *http.Request, publicSite
 		http.NotFound(w, r)
 		return
 	}
+	isHTML := strings.HasPrefix(metadata.ContentType, "text/html")
+	contentLength := metadata.Size
+	etag := metadata.ETag
+	var runtimeTag []byte
+	if isHTML {
+		runtimeTag = []byte(fetchProxyRuntimeTag(publicSiteID))
+		contentLength += int64(len(runtimeTag))
+		etag = injectedHTMLETag(metadata.ETag, runtimeTag)
+	}
 	w.Header().Set("Content-Type", metadata.ContentType)
 	w.Header().Set("Content-Disposition", "inline")
-	w.Header().Set("Content-Length", strconv.FormatInt(metadata.Size, 10))
-	if metadata.ETag != "" {
-		w.Header().Set("ETag", metadata.ETag)
+	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
+	if etag != "" {
+		w.Header().Set("ETag", etag)
 	}
-	if strings.HasPrefix(metadata.ContentType, "text/html") {
+	if isHTML {
 		w.Header().Set("Cache-Control", "no-cache")
 	} else {
 		w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
 	}
-	if metadata.ETag != "" && r.Header.Get("If-None-Match") == metadata.ETag {
+	if etag != "" && r.Header.Get("If-None-Match") == etag {
 		w.Header().Del("Content-Length")
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -150,7 +162,47 @@ func (s *Service) ServePublic(w http.ResponseWriter, r *http.Request, publicSite
 		return
 	}
 	defer reader.Close()
+	if isHTML {
+		body, err := io.ReadAll(io.LimitReader(reader, metadata.Size+1))
+		if err != nil || int64(len(body)) != metadata.Size {
+			return
+		}
+		_, _ = w.Write(injectBeforeBusinessScript(body, runtimeTag))
+		return
+	}
 	_, _ = ioCopyExact(w, reader, metadata.Size)
+}
+
+func fetchProxyRuntimeTag(publicSiteID string) string {
+	return `<script src="/api/sitehosting/runtime/fetch-proxy.js" data-public-site-id="` + html.EscapeString(strings.TrimSpace(publicSiteID)) + `"></script>`
+}
+
+func injectedHTMLETag(sourceETag string, runtimeTag []byte) string {
+	if sourceETag == "" {
+		return ""
+	}
+	digest := sha256.Sum256(append([]byte(sourceETag), runtimeTag...))
+	return fmt.Sprintf(`"%x"`, digest[:])
+}
+
+func injectBeforeBusinessScript(body, runtimeTag []byte) []byte {
+	lower := bytes.ToLower(body)
+	offset := bytes.Index(lower, []byte("<script"))
+	if offset < 0 {
+		offset = bytes.Index(lower, []byte("</head>"))
+	}
+	if offset < 0 {
+		if end := bytes.IndexByte(lower, '>'); bytes.HasPrefix(bytes.TrimSpace(lower), []byte("<!doctype")) && end >= 0 {
+			offset = end + 1
+		} else {
+			offset = 0
+		}
+	}
+	out := make([]byte, 0, len(body)+len(runtimeTag))
+	out = append(out, body[:offset]...)
+	out = append(out, runtimeTag...)
+	out = append(out, body[offset:]...)
+	return out
 }
 
 func publicObjectPath(raw, entrypoint string) (string, bool) {

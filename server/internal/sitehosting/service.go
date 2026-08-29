@@ -69,10 +69,12 @@ type LimitsDTO struct {
 }
 
 type Service struct {
-	store   Store
-	objects ObjectStore
-	config  Config
-	now     func() time.Time
+	store             Store
+	objects           ObjectStore
+	config            Config
+	now               func() time.Time
+	proxyLookup       proxyLookupFunc
+	proxyRoundTrip    proxyRoundTripFunc
 }
 
 func NewService(store Store, objects ObjectStore, config Config) *Service {
@@ -82,7 +84,14 @@ func NewService(store Store, objects ObjectStore, config Config) *Service {
 	if config.Limits.MaxArchiveBytes <= 0 {
 		config.Limits = DefaultLimits()
 	}
-	return &Service{store: store, objects: objects, config: config, now: time.Now}
+	return &Service{
+		store:          store,
+		objects:        objects,
+		config:         config,
+		now:            time.Now,
+		proxyLookup:    defaultProxyLookup,
+		proxyRoundTrip: defaultProxyRoundTrip,
+	}
 }
 
 func (s *Service) Available() bool {

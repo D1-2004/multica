@@ -1694,6 +1694,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// capability. Public reads are intentionally unlisted and do not use a
 	// Multica session. Neither route derives tenant context from the URL.
 	r.Put("/api/sitehosting/uploads/{uploadId}", h.UploadStaticSite)
+	r.Get("/api/sitehosting/runtime/fetch-proxy.js", h.ServeStaticSiteFetchProxyRuntime)
+	r.Head("/api/sitehosting/runtime/fetch-proxy.js", h.ServeStaticSiteFetchProxyRuntime)
+	r.Post("/api/sitehosting/sites/{publicSiteId}/fetch-proxy", h.ProxyStaticSiteFetch)
 	r.Get("/sites/{publicSiteId}", h.ServeStaticSite)
 	r.Get("/sites/{publicSiteId}/", h.ServeStaticSite)
 	r.Get("/sites/{publicSiteId}/*", h.ServeStaticSite)

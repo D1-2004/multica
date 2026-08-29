@@ -180,6 +180,8 @@ func (f *fakeSiteHostingService) DeleteSite(context.Context, string, string) err
 
 func (f *fakeSiteHostingService) HandleUpload(http.ResponseWriter, *http.Request, string) {}
 func (f *fakeSiteHostingService) ServePublic(http.ResponseWriter, *http.Request, string, string) {}
+func (f *fakeSiteHostingService) ServeFetchProxyRuntime(http.ResponseWriter, *http.Request) {}
+func (f *fakeSiteHostingService) HandleFetchProxy(http.ResponseWriter, *http.Request, string) {}
 
 func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 	service := &fakeSiteHostingService{}

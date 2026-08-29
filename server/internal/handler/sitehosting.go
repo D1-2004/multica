@@ -16,6 +16,8 @@ type StaticSiteHostingService interface {
 	DeleteSite(context.Context, string, string) error
 	HandleUpload(http.ResponseWriter, *http.Request, string)
 	ServePublic(http.ResponseWriter, *http.Request, string, string)
+	ServeFetchProxyRuntime(http.ResponseWriter, *http.Request)
+	HandleFetchProxy(http.ResponseWriter, *http.Request, string)
 }
 
 func (h *Handler) ListStaticSites(w http.ResponseWriter, r *http.Request) {
@@ -82,4 +84,20 @@ func (h *Handler) ServeStaticSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.SiteHosting.ServePublic(w, r, chi.URLParam(r, "publicSiteId"), chi.URLParam(r, "*"))
+}
+
+func (h *Handler) ServeStaticSiteFetchProxyRuntime(w http.ResponseWriter, r *http.Request) {
+	if h.SiteHosting == nil {
+		writeError(w, http.StatusServiceUnavailable, "static site hosting is unavailable")
+		return
+	}
+	h.SiteHosting.ServeFetchProxyRuntime(w, r)
+}
+
+func (h *Handler) ProxyStaticSiteFetch(w http.ResponseWriter, r *http.Request) {
+	if h.SiteHosting == nil {
+		writeError(w, http.StatusServiceUnavailable, "static site hosting is unavailable")
+		return
+	}
+	h.SiteHosting.HandleFetchProxy(w, r, chi.URLParam(r, "publicSiteId"))
 }
