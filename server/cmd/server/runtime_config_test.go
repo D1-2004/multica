@@ -2,10 +2,36 @@ package main
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
 )
+
+func TestAppRuntimeConfigReadsCurrentSiteConnectSrc(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/runtime-config.example.json")
+	if err != nil {
+		t.Fatalf("read runtime config example: %v", err)
+	}
+	cfg, err := runtimeconfig.ParseStrict(raw, true)
+	if err != nil {
+		t.Fatalf("parse runtime config example: %v", err)
+	}
+	remote, err := runtimeconfig.NewStatic(cfg)
+	if err != nil {
+		t.Fatalf("new static runtime config: %v", err)
+	}
+	app := &appRuntimeConfig{remote: remote}
+
+	updated := strings.Replace(string(raw), `"site_connect_src": []`, `"site_connect_src": ["https://feedback.example.com"]`, 1)
+	if _, err := remote.ApplyJSON([]byte(updated)); err != nil {
+		t.Fatalf("apply updated runtime config: %v", err)
+	}
+	got := app.siteConnectSrc()
+	if len(got) != 1 || got[0] != "https://feedback.example.com" {
+		t.Fatalf("siteConnectSrc = %#v", got)
+	}
+}
 
 func TestAppRuntimeConfigReadsCurrentManifestFingerprintSnapshot(t *testing.T) {
 	raw, err := os.ReadFile("../../../docs/runtime-config.example.json")

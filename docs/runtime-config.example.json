@@ -2,6 +2,7 @@
   "version": 1,
   "web": {
     "attachment_download_mode": "auto",
+    "site_connect_src": [],
     "cors_allowed_origins": [
       "https://app.example.com"
     ],

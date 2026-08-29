@@ -155,6 +155,10 @@ func TestServePublicSiteReturnsInlineHTMLAndAssetsWithSecurityHeaders(t *testing
 			t.Fatalf("missing security header %s", header)
 		}
 	}
+	csp := rootResponse.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "connect-src https://connector.dingtalk.com") || strings.Contains(csp, "connect-src 'none'") {
+		t.Fatalf("unexpected hosted-site CSP %q", csp)
+	}
 
 	assetResponse := httptest.NewRecorder()
 	service.ServePublic(assetResponse, httptest.NewRequest(http.MethodGet, prepared.SiteURL+"assets/app.js", nil), prepared.PublicSiteIDForTest(), "assets/app.js")
@@ -183,6 +187,50 @@ func TestServePublicSiteHasNoDirectoryListingAndOptionalSPAFallback(t *testing.T
 	service.ServePublic(spa, httptest.NewRequest(http.MethodGet, prepared.SiteURL+"dashboard/settings", nil), prepared.PublicSiteIDForTest(), "dashboard/settings")
 	if spa.Code != http.StatusOK || !strings.Contains(spa.Body.String(), "doctype html") {
 		t.Fatalf("spa status=%d body=%s", spa.Code, spa.Body.String())
+	}
+}
+
+func TestServePublicSiteUsesCurrentSafeConfiguredConnectSources(t *testing.T) {
+	service, prepared := prepareUploadedSite(t, false)
+	sources := []string{
+		"https://feedback.example.test",
+		" https://FEEDBACK.EXAMPLE.TEST/ ",
+		defaultConnectSrc,
+		"http://insecure.example.test",
+		"https://path.example.test/hook",
+		"https://evil.example.test;script-src",
+		"*",
+		"",
+	}
+	service.config.ConnectSrcProvider = func() []string { return sources }
+
+	request := func() string {
+		response := httptest.NewRecorder()
+		service.ServePublic(response, httptest.NewRequest(http.MethodGet, prepared.SiteURL, nil), prepared.PublicSiteIDForTest(), "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+		return response.Header().Get("Content-Security-Policy")
+	}
+
+	first := request()
+	want := "connect-src https://connector.dingtalk.com https://feedback.example.test;"
+	if !strings.Contains(first, want) {
+		t.Fatalf("CSP missing %q; got %q", want, first)
+	}
+	for _, rejected := range []string{"http://", "path.example.test", "evil.example.test", "*"} {
+		if strings.Contains(first, rejected) {
+			t.Fatalf("CSP includes rejected source %q; got %q", rejected, first)
+		}
+	}
+	if strings.Count(first, defaultConnectSrc) != 1 || strings.Count(first, "https://feedback.example.test") != 1 {
+		t.Fatalf("CSP must deduplicate sources; got %q", first)
+	}
+
+	sources = []string{"https://updated.example.test"}
+	second := request()
+	if !strings.Contains(second, "connect-src https://connector.dingtalk.com https://updated.example.test;") || strings.Contains(second, "feedback.example.test") {
+		t.Fatalf("CSP did not use the current provider value; got %q", second)
 	}
 }
 

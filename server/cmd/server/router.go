@@ -420,18 +420,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	var appURLProvider func() string
 	var publicURLProvider func() string
+	var siteConnectSrcProvider func() []string
 	if opts.RuntimeConfig != nil {
 		appURLProvider = opts.RuntimeConfig.appURL
 		publicURLProvider = opts.RuntimeConfig.publicURL
+		siteConnectSrcProvider = opts.RuntimeConfig.siteConnectSrc
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.SiteHosting = sitehosting.NewService(
 		sitehosting.NewPostgresStore(pool),
 		sitehosting.NewStorageObjectStore(store),
 		sitehosting.Config{
-			APIBaseURL:    signupConfig.PublicURL,
-			SitePublicURL: signupConfig.SitePublicURL,
-			Limits:        sitehosting.DefaultLimits(),
+			APIBaseURL:         signupConfig.PublicURL,
+			SitePublicURL:      signupConfig.SitePublicURL,
+			ConnectSrcProvider: siteConnectSrcProvider,
+			Limits:             sitehosting.DefaultLimits(),
 		},
 	)
 	if pushKey, pushKeyErr := secretbox.LoadKey("MULTICA_A2A_PUSH_SECRET_KEY"); pushKeyErr == nil {

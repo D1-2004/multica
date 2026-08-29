@@ -28,11 +28,12 @@ const (
 )
 
 type Config struct {
-	APIBaseURL    string
-	SitePublicURL string
-	TempDir       string
-	TokenTTL      time.Duration
-	Limits        Limits
+	APIBaseURL         string
+	SitePublicURL      string
+	ConnectSrcProvider func() []string
+	TempDir            string
+	TokenTTL           time.Duration
+	Limits             Limits
 }
 
 type PrepareInput struct {

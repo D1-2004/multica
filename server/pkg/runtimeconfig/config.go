@@ -51,6 +51,7 @@ type Config struct {
 
 type WebConfig struct {
 	AttachmentDownloadMode string   `json:"attachment_download_mode"`
+	SiteConnectSrc         []string `json:"site_connect_src"`
 	CORSAllowedOrigins     []string `json:"cors_allowed_origins"`
 	FrontendOrigin         string   `json:"frontend_origin"`
 	LoginProviders         []string `json:"login_providers"`
@@ -182,6 +183,7 @@ func (c Config) Validate(production bool) error {
 
 func (c Config) normalized() Config {
 	c.Web.AttachmentDownloadMode = strings.ToLower(strings.TrimSpace(c.Web.AttachmentDownloadMode))
+	c.Web.SiteConnectSrc = normalizedUnique(c.Web.SiteConnectSrc)
 	c.Web.CORSAllowedOrigins = normalizedUnique(c.Web.CORSAllowedOrigins)
 	c.Web.LoginProviders = normalizedLowerUnique(c.Web.LoginProviders)
 	c.Web.FrontendOrigin = trimURL(c.Web.FrontendOrigin)

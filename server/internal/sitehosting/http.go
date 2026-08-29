@@ -6,6 +6,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"path"
 	"strconv"
 	"strings"
@@ -94,7 +95,7 @@ func singleBearerValue(values []string) (string, bool) {
 }
 
 func (s *Service) ServePublic(w http.ResponseWriter, r *http.Request, publicSiteID, requestedPath string) {
-	setPublicSecurityHeaders(w.Header())
+	setPublicSecurityHeaders(w.Header(), s.connectSrc())
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -164,13 +165,58 @@ func publicObjectPath(raw, entrypoint string) (string, bool) {
 	return name, err == nil
 }
 
-func setPublicSecurityHeaders(header http.Header) {
-	header.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+const defaultConnectSrc = "https://connector.dingtalk.com"
+
+func (s *Service) connectSrc() []string {
+	if s == nil || s.config.ConnectSrcProvider == nil {
+		return nil
+	}
+	return s.config.ConnectSrcProvider()
+}
+
+func setPublicSecurityHeaders(header http.Header, configured []string) {
+	connectSources := []string{defaultConnectSrc}
+	seen := map[string]struct{}{defaultConnectSrc: {}}
+	for _, raw := range configured {
+		source, ok := normalizeConnectSource(raw)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[source]; exists {
+			continue
+		}
+		seen[source] = struct{}{}
+		connectSources = append(connectSources, source)
+	}
+	header.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src "+strings.Join(connectSources, " ")+"; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 	header.Set("X-Content-Type-Options", "nosniff")
 	header.Set("Referrer-Policy", "no-referrer")
 	header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
 	header.Set("X-Frame-Options", "DENY")
 	header.Set("Cross-Origin-Resource-Policy", "same-origin")
+}
+
+func normalizeConnectSource(raw string) (string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || parsed.Host == "" || parsed.User != nil ||
+		!validCSPHost(parsed.Host) || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Opaque != "" {
+		return "", false
+	}
+	return "https://" + strings.ToLower(parsed.Host), true
+}
+
+func validCSPHost(host string) bool {
+	for _, r := range host {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			continue
+		}
+		switch r {
+		case '.', '-', ':', '[', ']':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func ioCopyExact(destination http.ResponseWriter, source io.Reader, size int64) (int64, error) {
