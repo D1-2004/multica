@@ -36,6 +36,7 @@ import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/vie
 import { InboxPage } from "@multica/views/inbox";
 import { ChatPage } from "@multica/views/chat";
 import { SettingsPage } from "@multica/views/settings";
+import { HostedSitesPage } from "@multica/views/sitehosting";
 import { LabelUsagePage } from "@multica/views/labels";
 import { useT } from "@multica/views/i18n";
 import { Download, Server } from "lucide-react";
@@ -248,6 +249,11 @@ export const appRoutes: RouteObject[] = [
             path: "usage",
             element: <DashboardPage />,
             handle: { title: "Usage" },
+          },
+          {
+            path: "sites",
+            element: <HostedSitesPage />,
+            handle: { title: "Websites" },
           },
           {
             path: "settings",
