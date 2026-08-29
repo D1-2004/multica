@@ -40,6 +40,8 @@ ${MULTICA_SITE_PUBLIC_URL}/sites/<publicSiteId>/
 
 输出包括 `upload_path`、`upload_url`、`upload_method=PUT`、`upload_token_header=X-Multica-Site-Upload-Token`、短期单次 `upload_token`、`expires_at`、`archive=zip`、限制和候选 `site_url`。`upload_token` 只出现在工具结果中，不进入 URL。
 
+工具 description 同时告知站点生成方：页面可自行声明 `window.__MULTICA_FETCH_PROXY_ALLOWLIST__` 精确 HTTPS URL 数组，并继续使用普通 `window.fetch`；该说明不增加 MCP 工具、输入参数或 schema 字段。
+
 工具定义发布完整 `outputSchema`，覆盖上传标识、上传地址与方法、单次 capability、过期时间、候选站点地址和归档限制；支持结构化结果的 MCP Client 可以在调用前直接取得这份返回契约。
 
 - 沙箱内不能访问公网 `upload_url` 时，使用当前 task 已注入的 `MULTICA_SERVER_URL` 拼接 `upload_path`。`Authorization` 继续携带 `mat_` Task Token，`upload_token_header` 指定的专用头携带原始 `mhs_` capability。
@@ -140,7 +142,7 @@ ZIP 校验拒绝绝对路径、`..`、反斜杠、百分号编码绕过、软链
 <script src="/api/sitehosting/runtime/fetch-proxy.js" data-public-site-id="<publicSiteId>"></script>
 ```
 
-该注入不改变上传、MCP 工具或站点部署协议。Runtime 在业务脚本执行前保存原生 `window.fetch`，业务代码仍调用标准 `window.fetch(targetUrl, init)`。页面通过全局数组声明需要代理的精确 HTTPS URL；数组可在 Runtime 加载后、首次请求前设置：
+该注入不改变上传、MCP 工具或站点部署协议。服务端只注入通用 Runtime 和当前 `publicSiteId`，绝不写入或推断任何默认 `window.__MULTICA_FETCH_PROXY_ALLOWLIST__` 目标。Runtime 在业务脚本执行前保存原生 `window.fetch`，业务代码仍调用标准 `window.fetch(targetUrl, init)`。页面通过全局数组声明需要代理的精确 HTTPS URL；数组可在 Runtime 加载后、首次请求前设置：
 
 ```js
 window.__MULTICA_FETCH_PROXY_ALLOWLIST__ = [
@@ -177,6 +179,7 @@ Content-Type: application/json
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-30 | `prepare_static_site_deploy` description 增加页面自声明精确 HTTPS URL allowlist 的 Runtime 用法，并明确服务端不注入默认目标；工具和 schema 不变。 | 让站点生成方在发布时即可发现代理能力，同时保持目标选择属于页面、服务端只负责 origin 与 SSRF 安全边界的职责划分。 |
 | 2026-08-30 | 托管 HTML 自动注入精确 URL Fetch Proxy Runtime，并新增受 origin、DNS/IP、方法、大小、超时、重定向和敏感头约束的同源通用代理协议。 | 让业务继续使用标准 `window.fetch` 调用不支持浏览器 CORS 的 HTTPS webhook，同时由平台防止重复 POST、SSRF、DNS rebinding 与凭据泄露。 |
 | 2026-08-30 | 托管站点 CSP 的 `connect-src` 默认增加 `'self'`，并保留 connector 域名与 Diamond HTTPS origin 追加能力。 | 反馈提交改用 Multica 同源代理后，相对路径请求必须由 CSP 明确允许；同时保留既有 connector 默认值，避免 Diamond 配置移除安全基线。 |
 | 2026-08-30 | 托管站点 CSP 默认允许 `https://connector.dingtalk.com`，并支持 Diamond `web.site_connect_src` 追加 HTTPS origin。 | 允许反馈站点直接 POST 钉钉 AI 表格 webhook，同时只放宽 `connect-src`，保留其他 CSP 安全边界。 |

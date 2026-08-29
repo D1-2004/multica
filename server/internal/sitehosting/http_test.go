@@ -157,6 +157,9 @@ func TestServePublicSiteReturnsInlineHTMLAndAssetsWithSecurityHeaders(t *testing
 	if runtimeOffset < 0 || businessOffset < 0 || runtimeOffset >= businessOffset {
 		t.Fatalf("runtime must be injected before business scripts; body=%q", rootResponse.Body.String())
 	}
+	if strings.Contains(rootResponse.Body.String(), "__MULTICA_FETCH_PROXY_ALLOWLIST__") || strings.Contains(rootResponse.Body.String(), defaultConnectSrc) {
+		t.Fatalf("server must inject only the generic runtime, without a default proxy target; body=%q", rootResponse.Body.String())
+	}
 	if got := rootResponse.Header().Get("Content-Length"); got != strconv.Itoa(rootResponse.Body.Len()) {
 		t.Fatalf("Content-Length=%q body length=%d", got, rootResponse.Body.Len())
 	}

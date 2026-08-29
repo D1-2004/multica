@@ -28,6 +28,22 @@ function loadRuntime(nativeFetch, allowlist) {
   return window;
 }
 
+test("without a page allowlist the runtime defines no default target", async () => {
+  const calls = [];
+  const nativeFetch = async (...args) => {
+    calls.push(args);
+    return new Response("native");
+  };
+  const window = loadRuntime(nativeFetch, undefined);
+  const target = "https://connector.dingtalk.com/webhook/flow/not-declared";
+
+  await window.fetch(target, { method: "POST", body: "once" });
+
+  assert.equal(window.__MULTICA_FETCH_PROXY_ALLOWLIST__, undefined);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], target);
+});
+
 test("same-origin and unmatched requests use native fetch", async () => {
   const calls = [];
   const nativeFetch = async (...args) => {
