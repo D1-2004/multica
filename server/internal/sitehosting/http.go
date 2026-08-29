@@ -9,6 +9,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (s *Service) HandleUpload(w http.ResponseWriter, r *http.Request, uploadID string) {
@@ -26,13 +28,13 @@ func (s *Service) HandleUpload(w http.ResponseWriter, r *http.Request, uploadID 
 		http.Error(w, "Content-Length is required", http.StatusLengthRequired)
 		return
 	}
-	scheme, token, ok := strings.Cut(strings.TrimSpace(r.Header.Get("Authorization")), " ")
-	if !ok || !strings.EqualFold(scheme, "Bearer") || strings.TrimSpace(token) == "" {
+	token, ok := siteUploadCapability(r.Header)
+	if !ok {
 		http.Error(w, "invalid upload capability", http.StatusUnauthorized)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, s.config.Limits.MaxArchiveBytes+1)
-	err = s.Upload(r.Context(), uploadID, strings.TrimSpace(token), r.Body, r.ContentLength)
+	err = s.Upload(r.Context(), uploadID, token, r.Body, r.ContentLength)
 	if err == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -45,6 +47,50 @@ func (s *Service) HandleUpload(w http.ResponseWriter, r *http.Request, uploadID 
 	default:
 		http.Error(w, "static site upload was rejected", http.StatusBadRequest)
 	}
+}
+
+func siteUploadCapability(header http.Header) (string, bool) {
+	dedicated := header.Values(protocol.StaticSiteUploadTokenHeader)
+	if len(dedicated) > 0 {
+		token, ok := singleOpaqueToken(dedicated, uploadTokenPrefix)
+		if !ok {
+			return "", false
+		}
+		authorization := header.Values("Authorization")
+		if len(authorization) == 0 {
+			return token, true
+		}
+		relayToken, ok := singleBearerValue(authorization)
+		if !ok || !strings.HasPrefix(relayToken, "mat_") {
+			return "", false
+		}
+		return token, true
+	}
+	bearer, ok := singleBearerValue(header.Values("Authorization"))
+	if !ok || !strings.HasPrefix(bearer, uploadTokenPrefix) {
+		return "", false
+	}
+	return bearer, true
+}
+
+func singleOpaqueToken(values []string, requiredPrefix string) (string, bool) {
+	if len(values) != 1 || values[0] != strings.TrimSpace(values[0]) ||
+		!strings.HasPrefix(values[0], requiredPrefix) || strings.ContainsAny(values[0], " \t\r\n,") {
+		return "", false
+	}
+	return values[0], true
+}
+
+func singleBearerValue(values []string) (string, bool) {
+	if len(values) != 1 {
+		return "", false
+	}
+	scheme, token, found := strings.Cut(strings.TrimSpace(values[0]), " ")
+	token = strings.TrimSpace(token)
+	if !found || !strings.EqualFold(scheme, "Bearer") || token == "" || strings.ContainsAny(token, " \t\r\n,") {
+		return "", false
+	}
+	return token, true
 }
 
 func (s *Service) ServePublic(w http.ResponseWriter, r *http.Request, publicSiteID, requestedPath string) {

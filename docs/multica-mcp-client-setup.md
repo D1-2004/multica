@@ -5,6 +5,7 @@
 协议和业务约束分别见：
 
 - [Multica 自托管 MCP：Chat 续写协议](multica-mcp-chat-send.md)
+- [Agent 静态网站托管协议](static-site-hosting.md)
 - [DingTalk account binding Router contract](dingtalk-account-binding-router-contract.md#native-mcp-direct-binding-contract)
 
 ## 1. 接入参数
@@ -81,6 +82,8 @@ multica mcp call --method chat_send_message --arguments-file arguments.json --ou
 这两个命令采用 one-shot 模式：每次执行只发送当前操作对应的 `tools/list` 或 `tools/call`，输出结果后退出，不要求用户执行或理解 `initialize`。Multica 的 `/api/mcp` 明确支持这套无状态直接调用契约；CLI 当前携带服务端支持的 MCP 协议版本，协议适配不会暴露成命令。鉴权和 task 来源继续沿用现有 CLI 请求头。MCP endpoint 由 token 或目标资源解析工作区，因此这两个命令不会发送 `X-Workspace-ID`。
 
 `mcp call` 不自动重试。服务端返回 JSON-RPC error 或 tool result 的 `isError=true` 时，CLI 使用非零退出码；后者的完整 result 仍写入 stdout，方便调用方读取结构化错误。
+
+`prepare_static_site_deploy` 返回的公网 `upload_url` 在沙箱中可能不可达。此时使用 `${MULTICA_SERVER_URL}${upload_path}` 发起原始 ZIP `PUT`：`Authorization` 保持当前 `MULTICA_TOKEN` 的 `mat_` Task Token，并把返回的 `upload_token` 原样放入返回字段 `upload_token_header` 指定的头（当前为 `X-Multica-Site-Upload-Token`）。不要把 `mhs_` capability 替换进 `Authorization`，也不要把它放进 URL、日志或 MCP JSON。公网可达的客户端可以直接请求 `upload_url`，只发送 `Authorization: Bearer <upload_token>`。
 
 ## 4. 在 Codex 中配置
 
@@ -378,6 +381,7 @@ curl --fail-with-body --silent --show-error \
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-29 | 补充沙箱内静态 Site 上传的 `upload_path` 与专用 capability 头用法，并说明公网直连兼容形式。 | 本地 relay 使用 `mat_` Task Token 做路由鉴权，Site upload handler 使用 `mhs_` 单次能力；必须分离两个凭据，避免单个 `Authorization` 头冲突。 |
 | 2026-08-29 | 增加 `prepare_static_site_deploy` 和 `get_static_site_deploy`，并链接独立的 [Agent 静态网站托管协议](static-site-hosting.md)。 | 让运行中的 Agent 通过 Task Token 准备独立 Site revision，再用 MCP 之外的原始 ZIP PUT 流式发布静态产物，避免突破 MCP 1 MiB JSON 限制或复用附件协议。 |
 | 2026-08-20 | 增加独立的 **MCP 连接** 设置入口和四客户端一键配置说明，并补充 QoderWork 的 `streamable-http` JSON 导入方式。 | 将 MCP 接入与 API Token 管理解耦，同时明确连接必须提供 API Key，并为 Codex、Claude Code、Qoder、QoderWork 分别创建可独立吊销的短期凭证。 |
 | 2026-08-09 | 增加 `multica mcp tools` 和 `multica mcp call --method` 的沙箱调用方式、参数输入、透明分页、one-shot 生命周期和错误语义。 | 沙箱无法访问预发或正式公网 MCP endpoint 时，复用现有 CLI 服务地址和 task token 通道；工具定义完全由服务端动态发现，后续新增工具不再要求更新镜像，也不应让调用方承担 MCP 初始化细节。 |

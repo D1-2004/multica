@@ -151,6 +151,7 @@ func (f *fakeSiteHostingService) Prepare(_ context.Context, input sitehosting.Pr
 	f.prepareInput = input
 	return sitehosting.PreparedDeploy{
 		SiteID: "site-id", RevisionID: "revision-id", UploadID: "upload-id",
+		UploadPath: "/api/sitehosting/uploads/upload-id", UploadTokenHeader: "X-Multica-Site-Upload-Token",
 		UploadURL: "https://api.example.test/api/sitehosting/uploads/upload-id",
 		UploadMethod: "PUT", UploadToken: "mhs_secret", ExpiresAt: time.Unix(1_800_000_600, 0).UTC(),
 		Archive: "zip", Entrypoint: "index.html", SiteURL: "https://sites.example.test/sites/public-id/",
@@ -184,7 +185,9 @@ func TestMulticaMCPStaticSiteToolsUseTaskTokenAuthority(t *testing.T) {
 	}
 	result := decodeMCPResponse(t, response)["result"].(map[string]any)
 	structured := result["structuredContent"].(map[string]any)
-	if structured["upload_token"] != "mhs_secret" || structured["upload_method"] != "PUT" {
+	if structured["upload_token"] != "mhs_secret" || structured["upload_method"] != "PUT" ||
+		structured["upload_path"] != "/api/sitehosting/uploads/upload-id" ||
+		structured["upload_token_header"] != "X-Multica-Site-Upload-Token" {
 		t.Fatalf("structuredContent=%#v", structured)
 	}
 	statusResponse := httptest.NewRecorder()

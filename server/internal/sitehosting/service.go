@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -45,17 +46,19 @@ type PrepareInput struct {
 }
 
 type PreparedDeploy struct {
-	SiteID       string    `json:"site_id"`
-	RevisionID   string    `json:"revision_id"`
-	UploadID     string    `json:"upload_id"`
-	UploadURL    string    `json:"upload_url"`
-	UploadMethod string    `json:"upload_method"`
-	UploadToken  string    `json:"upload_token"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	Archive      string    `json:"archive"`
-	Entrypoint   string    `json:"entrypoint"`
-	SiteURL      string    `json:"site_url"`
-	Limits       LimitsDTO `json:"limits"`
+	SiteID            string    `json:"site_id"`
+	RevisionID        string    `json:"revision_id"`
+	UploadID          string    `json:"upload_id"`
+	UploadPath        string    `json:"upload_path"`
+	UploadURL         string    `json:"upload_url"`
+	UploadMethod      string    `json:"upload_method"`
+	UploadToken       string    `json:"upload_token"`
+	UploadTokenHeader string    `json:"upload_token_header"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	Archive           string    `json:"archive"`
+	Entrypoint        string    `json:"entrypoint"`
+	SiteURL           string    `json:"site_url"`
+	Limits            LimitsDTO `json:"limits"`
 }
 
 type LimitsDTO struct {
@@ -131,10 +134,12 @@ func (s *Service) Prepare(ctx context.Context, input PrepareInput) (PreparedDepl
 	if err != nil {
 		return PreparedDeploy{}, err
 	}
+	uploadPath := "/api/sitehosting/uploads/" + upload.ID
 	return PreparedDeploy{
 		SiteID: upload.SiteID, RevisionID: upload.RevisionID, UploadID: upload.ID,
-		UploadURL: strings.TrimRight(s.config.APIBaseURL, "/") + "/api/sitehosting/uploads/" + upload.ID,
+		UploadPath: uploadPath, UploadURL: strings.TrimRight(s.config.APIBaseURL, "/") + uploadPath,
 		UploadMethod: "PUT", UploadToken: token, ExpiresAt: upload.ExpiresAt,
+		UploadTokenHeader: protocol.StaticSiteUploadTokenHeader,
 		Archive: "zip", Entrypoint: upload.Entrypoint, SiteURL: s.siteURL(upload.PublicSiteID),
 		Limits: LimitsDTO{MaxArchiveBytes: s.config.Limits.MaxArchiveBytes, MaxExpandedBytes: s.config.Limits.MaxExpandedBytes, MaxFileBytes: s.config.Limits.MaxFileBytes, MaxFiles: s.config.Limits.MaxFiles},
 	}, nil

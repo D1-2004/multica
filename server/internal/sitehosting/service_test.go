@@ -200,6 +200,10 @@ func TestPrepareDoesNotExposeAuthorityInURL(t *testing.T) {
 	if strings.Contains(prepared.UploadURL, prepared.UploadToken) {
 		t.Fatal("upload token leaked into upload URL")
 	}
+	if prepared.UploadPath != "/api/sitehosting/uploads/"+prepared.UploadID ||
+		prepared.UploadTokenHeader != "X-Multica-Site-Upload-Token" {
+		t.Fatalf("upload protocol path=%q header=%q", prepared.UploadPath, prepared.UploadTokenHeader)
+	}
 }
 
 func TestUploadPublishesMultipleFilesAndRejectsTokenReuse(t *testing.T) {

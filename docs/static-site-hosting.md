@@ -35,7 +35,10 @@ ${MULTICA_SITE_PUBLIC_URL}/sites/<publicSiteId>/
 | `entrypoint` | 否 | 默认 `index.html` |
 | `spa_fallback` | 否 | 默认 `false` |
 
-输出包括 `upload_url`、`upload_method=PUT`、短期单次 `upload_token`、`expires_at`、`archive=zip`、限制和候选 `site_url`。`upload_token` 只出现在工具结果中，不进入 URL。
+输出包括 `upload_path`、`upload_url`、`upload_method=PUT`、`upload_token_header=X-Multica-Site-Upload-Token`、短期单次 `upload_token`、`expires_at`、`archive=zip`、限制和候选 `site_url`。`upload_token` 只出现在工具结果中，不进入 URL。
+
+- 沙箱内不能访问公网 `upload_url` 时，使用当前 task 已注入的 `MULTICA_SERVER_URL` 拼接 `upload_path`。`Authorization` 继续携带 `mat_` Task Token，`upload_token_header` 指定的专用头携带原始 `mhs_` capability。
+- 能直接访问公网 `upload_url` 时，可继续使用 `Authorization: Bearer <upload_token>`，此时不要再发送专用 capability 头。
 
 ### `get_static_site_deploy`
 
@@ -43,16 +46,32 @@ ${MULTICA_SITE_PUBLIC_URL}/sites/<publicSiteId>/
 
 ## 3. 上传与发布
 
-调用方对 `upload_url` 发送原始 ZIP：
+调用方对上传地址发送原始 ZIP。沙箱经本地 relay 上传时：
 
 ```http
 PUT /api/sitehosting/uploads/<uploadId>
+Authorization: Bearer mat_<current-task-token>
+X-Multica-Site-Upload-Token: mhs_<single-use-capability>
+Content-Type: application/zip
+Content-Length: <exact bytes>
+
+<raw zip bytes>
+```
+
+其中路径来自 `upload_path`，origin 来自当前 task 的 `MULTICA_SERVER_URL`。relay 只在无 query 的精确 `PUT /api/sitehosting/uploads/<uuid>` 上游请求中保留 `X-Multica-Site-Upload-Token`；其他方法、路径和目标都会剥离该头。
+
+公网直连兼容形式为：
+
+```http
+PUT <upload_url>
 Authorization: Bearer mhs_<single-use-capability>
 Content-Type: application/zip
 Content-Length: <exact bytes>
 
 <raw zip bytes>
 ```
+
+服务端拒绝多个或逗号拼接的 capability 头，也拒绝同时在专用头和 `Authorization` 中携带 `mhs_`，避免代理合并或双值歧义。
 
 不得使用 `multipart/form-data`，不得把 ZIP 或 base64 放进 MCP JSON。MCP 请求体原有 1 MiB 限制保持不变。
 
@@ -97,4 +116,5 @@ ZIP 校验拒绝绝对路径、`..`、反斜杠、百分号编码绕过、软链
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-29 | 增加 `upload_path`、`upload_token_header` 和沙箱 relay 专用 capability 头协议；保留公网直连 Bearer 兼容。 | 沙箱 relay 必须用 `mat_` 验证 task，请求上游又需 `mhs_` 上传能力，单个 `Authorization` 无法同时表达两种凭据；专用头将路由身份与一次性上传能力分离，并限制凭据只进入精确上传路由。 |
 | 2026-08-29 | 新增独立 Site/revision/upload 模型、Task Token MCP prepare/get、流式 ZIP capability 上传、OSS 发布和 public-unlisted 读取协议。 | Agent 需要发布多文件静态产物，同时必须与附件语义、Task 持久映射和主应用可信内容边界隔离。 |

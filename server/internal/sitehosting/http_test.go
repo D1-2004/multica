@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+const testSiteUploadTokenHeader = "X-Multica-Site-Upload-Token"
+
 func prepareUploadedSite(t *testing.T, spaFallback bool) (*Service, PreparedDeploy) {
 	t.Helper()
 	service := newTestService(&memoryStore{}, &memoryObjectStore{})
@@ -48,6 +50,90 @@ func TestHandleUploadRequiresRawZipCapability(t *testing.T) {
 	if response.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
+}
+
+func TestHandleUploadAcceptsRelayAuthorizationWithDedicatedCapability(t *testing.T) {
+	service := newTestService(&memoryStore{}, &memoryObjectStore{})
+	body := zipBytes(t, map[string]string{"index.html": "<!doctype html><title>relay upload</title>"})
+	sum := sha256.Sum256(body)
+	prepared, err := service.Prepare(context.Background(), PrepareInput{
+		WorkspaceID: "w", AgentID: "a", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPut, prepared.UploadURL, bytes.NewReader(body))
+	request.Header.Set("Authorization", "Bearer mat_task-token")
+	request.Header.Set(testSiteUploadTokenHeader, prepared.UploadToken)
+	request.Header.Set("Content-Type", "application/zip")
+	response := httptest.NewRecorder()
+
+	service.HandleUpload(response, request, prepared.UploadID)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("upload status=%d body=%s", response.Code, response.Body.String())
+	}
+	reuse := httptest.NewRequest(http.MethodPut, prepared.UploadURL, bytes.NewReader(body))
+	reuse.Header.Set("Authorization", "Bearer mat_task-token")
+	reuse.Header.Set(testSiteUploadTokenHeader, prepared.UploadToken)
+	reuse.Header.Set("Content-Type", "application/zip")
+	reuseResponse := httptest.NewRecorder()
+	service.HandleUpload(reuseResponse, reuse, prepared.UploadID)
+	if reuseResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("reused capability status=%d", reuseResponse.Code)
+	}
+}
+
+func TestHandleUploadRejectsAmbiguousCapabilityHeaders(t *testing.T) {
+	body := zipBytes(t, map[string]string{"index.html": "<!doctype html><title>ambiguous</title>"})
+	sum := sha256.Sum256(body)
+	newUpload := func(t *testing.T) (*Service, PreparedDeploy) {
+		t.Helper()
+		service := newTestService(&memoryStore{}, &memoryObjectStore{})
+		prepared, err := service.Prepare(context.Background(), PrepareInput{
+			WorkspaceID: "w", AgentID: "a", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return service, prepared
+	}
+	t.Run("capability also in authorization", func(t *testing.T) {
+		service, prepared := newUpload(t)
+		request := httptest.NewRequest(http.MethodPut, prepared.UploadURL, bytes.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+prepared.UploadToken)
+		request.Header.Set(testSiteUploadTokenHeader, prepared.UploadToken)
+		request.Header.Set("Content-Type", "application/zip")
+		response := httptest.NewRecorder()
+		service.HandleUpload(response, request, prepared.UploadID)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+	t.Run("multiple dedicated values", func(t *testing.T) {
+		service, prepared := newUpload(t)
+		request := httptest.NewRequest(http.MethodPut, prepared.UploadURL, bytes.NewReader(body))
+		request.Header.Set("Authorization", "Bearer mat_task-token")
+		request.Header[testSiteUploadTokenHeader] = []string{prepared.UploadToken, "mhs_second"}
+		request.Header.Set("Content-Type", "application/zip")
+		response := httptest.NewRecorder()
+		service.HandleUpload(response, request, prepared.UploadID)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
+	t.Run("comma joined dedicated values", func(t *testing.T) {
+		service, prepared := newUpload(t)
+		request := httptest.NewRequest(http.MethodPut, prepared.UploadURL, bytes.NewReader(body))
+		request.Header.Set("Authorization", "Bearer mat_task-token")
+		request.Header.Set(testSiteUploadTokenHeader, prepared.UploadToken+",mhs_second")
+		request.Header.Set("Content-Type", "application/zip")
+		response := httptest.NewRecorder()
+		service.HandleUpload(response, request, prepared.UploadID)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+		}
+	})
 }
 
 func TestServePublicSiteReturnsInlineHTMLAndAssetsWithSecurityHeaders(t *testing.T) {

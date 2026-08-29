@@ -26,7 +26,7 @@ func multicaMCPPrepareStaticSiteDefinition() map[string]any {
 	return map[string]any{
 		"name": multicaMCPPrepareStaticSiteTool,
 		"title": "Prepare a static site deployment",
-		"description": "Create a public-unlisted static Site or a new revision and return a short-lived, single-use raw ZIP upload capability. Workspace, Agent, and task identity come only from the authenticated task token. Send the ZIP with HTTP PUT and application/zip; never put ZIP or base64 data in MCP arguments.",
+		"description": "Create a public-unlisted static Site or a new revision and return a short-lived, single-use raw ZIP upload capability. Workspace, Agent, and task identity come only from the authenticated task token. In a sandbox, PUT upload_path through the current MULTICA_SERVER_URL with the task token in Authorization and the upload capability in the returned upload_token_header. For direct public upload_url access, Authorization: Bearer <upload_token> remains supported. Send application/zip; never put ZIP or base64 data in MCP arguments.",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
