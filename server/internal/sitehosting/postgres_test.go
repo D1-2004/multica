@@ -1,0 +1,138 @@
+package sitehosting
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestPostgresStoreKeepsTenantOwnershipAndSwitchesRevisionAtomically(t *testing.T) {
+	ctx := context.Background()
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = "postgres://multica:multica@localhost:5432/multica?sslmode=disable"
+	}
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil || admin.Ping(ctx) != nil {
+		t.Skip("PostgreSQL is unavailable")
+	}
+	defer admin.Close()
+	schema := "sitehosting_test_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Skipf("cannot create isolated test schema: %v", err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE") })
+
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	migration, err := os.ReadFile("../../migrations/9079_hosted_site_tables.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(migration)); err != nil {
+		t.Fatal(err)
+	}
+	for migrationNumber := 9080; migrationNumber <= 9087; migrationNumber++ {
+		matches, err := filepath.Glob(fmt.Sprintf("../../migrations/%d_hosted_site*_index.up.sql", migrationNumber))
+		if err != nil || len(matches) != 1 {
+			t.Fatalf("find index migration %d: matches=%v err=%v", migrationNumber, matches, err)
+		}
+		body, err := os.ReadFile(matches[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, string(body)); err != nil {
+			t.Fatalf("apply %s: %v", matches[0], err)
+		}
+	}
+
+	store := NewPostgresStore(pool)
+	workspaceID := uuid.NewString()
+	agentID := uuid.NewString()
+	now := time.Now().UTC()
+	first := Upload{
+		ID: uuid.NewString(), SiteID: uuid.NewString(), PublicSiteID: "public-opaque-id",
+		RevisionID: uuid.NewString(), WorkspaceID: workspaceID, OwnerAgentID: agentID,
+		TokenHash: []byte(strings.Repeat("a", 32)), ExpectedSHA256: strings.Repeat("1", 64),
+		ExpectedLength: 123, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute),
+	}
+	created, err := store.Prepare(ctx, PrepareRecord{Upload: first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Prepare(ctx, PrepareRecord{
+		ExistingSiteID: created.SiteID,
+		Upload: Upload{ID: uuid.NewString(), SiteID: created.SiteID, RevisionID: uuid.NewString(), WorkspaceID: uuid.NewString(), OwnerAgentID: agentID, TokenHash: []byte(strings.Repeat("b", 32)), ExpectedSHA256: strings.Repeat("2", 64), ExpectedLength: 1, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)},
+	}); !errors.Is(err, ErrSiteForbidden) {
+		t.Fatalf("cross-workspace prepare error=%v", err)
+	}
+	claimed, err := store.ClaimUpload(ctx, first.ID, first.TokenHash, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimUpload(ctx, first.ID, first.TokenHash, now); !errors.Is(err, ErrUploadCapabilityInvalid) {
+		t.Fatalf("reused capability error=%v", err)
+	}
+	manifest := Manifest{Entrypoint: "index.html", TotalBytes: 2, Files: map[string]ArchiveFile{"index.html": {Path: "index.html", Size: 2, ContentType: "text/html; charset=utf-8", ETag: `"etag"`}}}
+	if err := store.ActivateRevision(ctx, Activation{UploadID: first.ID, SiteID: first.SiteID, PublicSiteID: first.PublicSiteID, RevisionID: claimed.RevisionID, Manifest: manifest, ArchiveSHA: strings.Repeat("1", 64), ActivatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := store.ResolvePublic(ctx, first.PublicSiteID)
+	if err != nil || resolved.RevisionID != first.RevisionID {
+		t.Fatalf("first resolve=%#v err=%v", resolved, err)
+	}
+
+	second := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), WorkspaceID: workspaceID, OwnerAgentID: agentID, TokenHash: []byte(strings.Repeat("c", 32)), ExpectedSHA256: strings.Repeat("3", 64), ExpectedLength: 50, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
+	second, err = store.Prepare(ctx, PrepareRecord{ExistingSiteID: first.SiteID, Upload: second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.PublicSiteID != first.PublicSiteID {
+		t.Fatalf("public id changed: %q", second.PublicSiteID)
+	}
+	if err := store.FailRevision(ctx, second.RevisionID, "injected failure"); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = store.ResolvePublic(ctx, first.PublicSiteID)
+	if err != nil || resolved.RevisionID != first.RevisionID {
+		t.Fatalf("failed revision changed active resolve=%#v err=%v", resolved, err)
+	}
+	status, err := store.GetStatus(ctx, first.SiteID, workspaceID, agentID)
+	if err != nil || status.LatestRevisionID != second.RevisionID || status.LatestStatus != "failed" {
+		t.Fatalf("status=%#v err=%v", status, err)
+	}
+	if _, err := store.GetStatus(ctx, first.SiteID, workspaceID, uuid.NewString()); !errors.Is(err, ErrSiteForbidden) {
+		t.Fatalf("non-owner status error=%v", err)
+	}
+	third := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), WorkspaceID: workspaceID, OwnerAgentID: agentID, TokenHash: []byte(strings.Repeat("d", 32)), ExpectedSHA256: strings.Repeat("4", 64), ExpectedLength: 60, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
+	third, err = store.Prepare(ctx, PrepareRecord{ExistingSiteID: first.SiteID, Upload: third})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ClaimUpload(ctx, third.ID, third.TokenHash, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ActivateRevision(ctx, Activation{UploadID: third.ID, SiteID: third.SiteID, PublicSiteID: third.PublicSiteID, RevisionID: third.RevisionID, Manifest: manifest, ArchiveSHA: strings.Repeat("4", 64), ActivatedAt: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err = store.ResolvePublic(ctx, first.PublicSiteID)
+	if err != nil || resolved.RevisionID != third.RevisionID {
+		t.Fatalf("second successful revision did not replace active resolve=%#v err=%v", resolved, err)
+	}
+}

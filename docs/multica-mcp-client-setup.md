@@ -271,7 +271,7 @@ Claude Code 还支持 `headersHelper`。如果已有一个本机私有程序能�
 
 ## 8. 可用工具和使用示例
 
-当前 endpoint 暴露 6 个工具：
+当前 endpoint 暴露 8 个工具：
 
 | 工具 | 作用 | 关键输入 |
 | --- | --- | --- |
@@ -281,6 +281,8 @@ Claude Code 还支持 `headersHelper`。如果已有一个本机私有程序能�
 | `unbind_digital_employee` | 解绑数字员工 | PAT：`agent_id`；Task Token：无 |
 | `search_agents` | 按名称关键词查询可见 Agent 的非敏感详细信息 | `keyword` |
 | `list_agents` | 获取调用方当前可见的全部活跃 Agent | 无 |
+| `prepare_static_site_deploy` | 为当前 Task Agent 创建 Site 或新 revision，并返回一次性 ZIP upload capability | Task Token：`expected_sha256`、`content_length`；可选 `site_id`、`entrypoint`、`spa_fallback` |
+| `get_static_site_deploy` | 查询当前 Task Agent 拥有的 Site 发布状态 | Task Token：`site_id` |
 
 可以直接在 Codex、Claude Code、Qoder 或 QoderWork 中用自然语言指定工具和参数，例如：
 
@@ -323,7 +325,7 @@ PAT 调用 `chat_send_message` 时，目标必须是同一工作区内由 PAT �
 ## 9. 验证顺序
 
 1. 先在客户端确认 `multica` 状态为 connected。
-2. 确认能发现上述 6 个工具。
+2. 确认能发现上述 8 个工具。
 3. 先调用只读的 `list_agents`，再用 `search_agents` 验证名称包含匹配和 Agent 详情；这两个工具不需要 Workspace header。
 4. 调用只读的 `get_digital_employee_binding`；PAT 配置需传上一步返回的目标 `agent_id`。
 5. 再根据需要验证绑定、解绑或 Chat 续写，并在 Multica 中确认对应数据和后续 task 已创建。
@@ -376,6 +378,7 @@ curl --fail-with-body --silent --show-error \
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-29 | 增加 `prepare_static_site_deploy` 和 `get_static_site_deploy`，并链接独立的 [Agent 静态网站托管协议](static-site-hosting.md)。 | 让运行中的 Agent 通过 Task Token 准备独立 Site revision，再用 MCP 之外的原始 ZIP PUT 流式发布静态产物，避免突破 MCP 1 MiB JSON 限制或复用附件协议。 |
 | 2026-08-20 | 增加独立的 **MCP 连接** 设置入口和四客户端一键配置说明，并补充 QoderWork 的 `streamable-http` JSON 导入方式。 | 将 MCP 接入与 API Token 管理解耦，同时明确连接必须提供 API Key，并为 Codex、Claude Code、Qoder、QoderWork 分别创建可独立吊销的短期凭证。 |
 | 2026-08-09 | 增加 `multica mcp tools` 和 `multica mcp call --method` 的沙箱调用方式、参数输入、透明分页、one-shot 生命周期和错误语义。 | 沙箱无法访问预发或正式公网 MCP endpoint 时，复用现有 CLI 服务地址和 task token 通道；工具定义完全由服务端动态发现，后续新增工具不再要求更新镜像，也不应让调用方承担 MCP 初始化细节。 |
 | 2026-08-07 | 增加 `search_agents` 和 `list_agents` 的权限边界、用法及验收步骤。 | 让客户端无需预先取得 Workspace ID 或 Agent UUID，就能发现当前可见的 Agent 并继续调用其他 MCP 工具。 |

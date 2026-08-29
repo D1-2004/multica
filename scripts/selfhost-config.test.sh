@@ -69,6 +69,7 @@ local_env="$(
       "PORT=${PORT}" \
       "FRONTEND_PORT=${FRONTEND_PORT}" \
       "FRONTEND_ORIGIN=${FRONTEND_ORIGIN}" \
+      "MULTICA_SITE_PUBLIC_URL=${MULTICA_SITE_PUBLIC_URL}" \
       "MULTICA_APP_URL=${MULTICA_APP_URL}" \
       "GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}" \
       "MULTICA_SERVER_URL=${MULTICA_SERVER_URL}" \
@@ -80,6 +81,7 @@ local_env="$(
 require_env "$local_env" 'PORT=9100'
 require_env "$local_env" 'FRONTEND_PORT=3100'
 require_env "$local_env" 'FRONTEND_ORIGIN=http://localhost:3100'
+require_env "$local_env" 'MULTICA_SITE_PUBLIC_URL=http://localhost:9100'
 require_env "$local_env" 'MULTICA_APP_URL=http://localhost:3100'
 require_env "$local_env" 'GOOGLE_REDIRECT_URI=http://localhost:3100/auth/callback'
 require_env "$local_env" 'MULTICA_SERVER_URL=ws://localhost:9100/ws'
@@ -90,6 +92,7 @@ worktree_env="$tmp_dir/.env.worktree"
 WORKTREE_NAME=selfhost-config-test bash scripts/init-worktree-env.sh "$worktree_env" >/dev/null
 worktree_backend_port="$(sed -n 's/^PORT=//p' "$worktree_env")"
 require_env "$(cat "$worktree_env")" "MULTICA_PUBLIC_URL=http://localhost:${worktree_backend_port}"
+require_env "$(cat "$worktree_env")" "MULTICA_SITE_PUBLIC_URL=http://localhost:${worktree_backend_port}"
 
 resolve_local_public_url() {
   env -i PATH="$PATH" bash -c '

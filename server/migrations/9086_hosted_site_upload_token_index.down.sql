@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS hosted_site_upload_token_hash_idx;

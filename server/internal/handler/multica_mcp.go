@@ -28,6 +28,8 @@ const (
 	multicaMCPBindingUnbindTool              = "unbind_digital_employee"
 	multicaMCPAgentSearchTool                = "search_agents"
 	multicaMCPAgentListTool                  = "list_agents"
+	multicaMCPPrepareStaticSiteTool          = "prepare_static_site_deploy"
+	multicaMCPGetStaticSiteTool              = "get_static_site_deploy"
 	multicaMCPMaxRequestBytes                = 1 << 20
 	multicaMCPPersonalTokenPrefix            = "mul_"
 	multicaMCPForwardedFromTaskContextKey    = "mcp_forwarded_from_task_id"
@@ -284,6 +286,8 @@ func multicaMCPToolDefinitions() []any {
 		multicaMCPBindingUnbindDefinition(),
 		multicaMCPAgentSearchDefinition(),
 		multicaMCPAgentListDefinition(),
+		multicaMCPPrepareStaticSiteDefinition(),
+		multicaMCPGetStaticSiteDefinition(),
 	}
 }
 
@@ -515,6 +519,10 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 	}
 	if params.Name == multicaMCPAgentSearchTool || params.Name == multicaMCPAgentListTool {
 		h.handleMulticaMCPAgentCall(w, r, req.ID, params.Name, params.Arguments)
+		return
+	}
+	if params.Name == multicaMCPPrepareStaticSiteTool || params.Name == multicaMCPGetStaticSiteTool {
+		h.handleMulticaMCPStaticSiteCall(w, r, req.ID, params.Name, params.Arguments)
 		return
 	}
 	if params.Name != multicaMCPChatSendTool {
