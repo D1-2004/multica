@@ -86,6 +86,30 @@ func (m *memoryStore) GetStatus(_ context.Context, siteID, ownerUserID string) (
 	return status, nil
 }
 
+func (m *memoryStore) ListSites(_ context.Context, ownerUserID string) ([]SiteStatus, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var result []SiteStatus
+	for _, status := range m.sites {
+		if status.OwnerUserID == ownerUserID && status.Status == "active" {
+			result = append(result, status)
+		}
+	}
+	return result, nil
+}
+
+func (m *memoryStore) DeleteSite(_ context.Context, siteID, ownerUserID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	status, ok := m.sites[siteID]
+	if !ok || status.OwnerUserID != ownerUserID || status.Status != "active" {
+		return ErrSiteForbidden
+	}
+	status.Status = "deleted"
+	m.sites[siteID] = status
+	return nil
+}
+
 func (m *memoryStore) ResolvePublic(_ context.Context, publicSiteID string) (ResolvedSite, error) {
 	resolved, ok := m.active[publicSiteID]
 	if !ok {
@@ -187,6 +211,44 @@ func TestPrepareUsesUserOwnershipAcrossCallingClients(t *testing.T) {
 		SiteID: first.SiteID, ExpectedSHA256: strings.Repeat("c", 64), ExpectedLength: 1,
 	}); !errors.Is(err, ErrSiteForbidden) {
 		t.Fatalf("different user update error=%v", err)
+	}
+}
+
+func TestListAndDeleteSitesUseAuthenticatedUser(t *testing.T) {
+	ownerUserID := "11111111-1111-1111-1111-111111111111"
+	otherUserID := "22222222-2222-2222-2222-222222222222"
+	store := &memoryStore{sites: map[string]SiteStatus{
+		"site-a": {
+			SiteID: "site-a", PublicSiteID: "public-a", OwnerUserID: ownerUserID,
+			Status: "active", LatestRevisionID: "revision-a", LatestStatus: "active",
+		},
+		"site-b": {
+			SiteID: "site-b", PublicSiteID: "public-b", OwnerUserID: otherUserID,
+			Status: "active", LatestRevisionID: "revision-b", LatestStatus: "active",
+		},
+	}}
+	service := newTestService(store, &memoryObjectStore{})
+
+	sites, err := service.ListSites(context.Background(), ownerUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sites) != 1 || sites[0].SiteID != "site-a" ||
+		sites[0].SiteURL != "https://sites.example.test/sites/public-a/" {
+		t.Fatalf("sites=%#v", sites)
+	}
+	if err := service.DeleteSite(context.Background(), "site-a", otherUserID); !errors.Is(err, ErrSiteForbidden) {
+		t.Fatalf("cross-user delete error=%v", err)
+	}
+	if err := service.DeleteSite(context.Background(), "site-a", ownerUserID); err != nil {
+		t.Fatal(err)
+	}
+	sites, err = service.ListSites(context.Background(), ownerUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sites) != 0 {
+		t.Fatalf("deleted site still listed: %#v", sites)
 	}
 }
 

@@ -1852,6 +1852,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
 		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Get("/api/sitehosting/sites", h.ListStaticSites)
+		r.With(handler.RequireHumanActor).Delete("/api/sitehosting/sites/{siteId}", h.DeleteStaticSite)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.Get("/api/runtimes/fc-e2b/stable-channel", h.GetFCE2BStableChannel)

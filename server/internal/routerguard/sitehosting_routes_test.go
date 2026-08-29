@@ -15,6 +15,8 @@ func TestStaticSiteRoutesReachBackendInAoneContainer(t *testing.T) {
 	}
 	for _, route := range []string{
 		`r.Put("/api/sitehosting/uploads/{uploadId}", h.UploadStaticSite)`,
+		`r.With(handler.RequireHumanActor).Get("/api/sitehosting/sites", h.ListStaticSites)`,
+		`r.With(handler.RequireHumanActor).Delete("/api/sitehosting/sites/{siteId}", h.DeleteStaticSite)`,
 		`r.Get("/sites/{publicSiteId}/", h.ServeStaticSite)`,
 		`r.Get("/sites/{publicSiteId}/*", h.ServeStaticSite)`,
 		`r.Head("/sites/{publicSiteId}", h.ServeStaticSite)`,

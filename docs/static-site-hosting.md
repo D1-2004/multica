@@ -51,7 +51,20 @@ ${MULTICA_SITE_PUBLIC_URL}/sites/<publicSiteId>/
 
 工具定义发布完整 `outputSchema`。`active_revision_id` 和 `latest_error` 在没有对应值时可省略，其余 Site、最新 revision、时间和公开地址字段为必需输出。
 
-## 3. 上传与发布
+## 3. 账号管理接口
+
+Multica 设置页在“工作区”分组中提供“网站”页签，但 Site 所有权仍然归属于当前鉴权用户，不与当前 Workspace 建立关联。用户切换 Workspace 时看到的是同一份账号级列表。
+
+管理接口使用 Multica 登录会话并要求 Human Actor：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/api/sitehosting/sites` | 按更新时间倒序返回当前用户仍处于 active 状态的 Site，以及最新 revision 状态和 `site_url` |
+| `DELETE` | `/api/sitehosting/sites/<siteId>` | 将当前用户拥有的 Site 软删除；成功返回 `204 No Content` |
+
+删除成功后，Site 会立即从列表中消失，公开读取接口也不再解析该 Site，因此原 `site_url` 立即失效。数据库记录和对象存储文件暂时保留，用于审计与恢复；接口不会暴露其他用户的 Site 是否存在，越权或不存在统一返回 `404`。
+
+## 4. 上传与发布
 
 调用方对上传地址发送原始 ZIP。沙箱经本地 relay 上传时：
 
@@ -102,7 +115,7 @@ hosted-sites/<siteId>/revisions/<revisionId>/<path>
 
 ZIP 校验拒绝绝对路径、`..`、反斜杠、百分号编码绕过、软链接、非普通文件、重复规范化路径、大小写或 Unicode 归一化冲突、`.env`、`.git`、私钥/凭据文件、缺少入口文件以及超过上述限制的归档。
 
-## 4. 公开读取与安全
+## 5. 公开读取与安全
 
 `GET` / `HEAD /sites/<publicSiteId>/...` 只读取 active revision。服务端不提供目录列表；根路径读取 entrypoint，开启 `spa_fallback` 后，仅无扩展名的缺失路径回退到 entrypoint。
 
@@ -123,6 +136,7 @@ ZIP 校验拒绝绝对路径、`..`、反斜杠、百分号编码绕过、软链
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-30 | 新增用户级 Site 列表与软删除管理接口，并在工作区设置中增加“网站”页签，支持打开、复制分享链接和确认删除。 | 托管能力此前只能通过 MCP 查询单个 Site，用户缺少统一可见、可分享和可撤销公网访问的管理入口；页签位置沿用工作区设置外壳，但不改变账号级所有权。 |
 | 2026-08-29 | Site 所有权从 Workspace + Agent 调整为鉴权用户，并允许现有 `mul_` API Token 调用 prepare/get；endpoint 和 token 体系不变。 | Site Hosting 是独立资源能力，外部 Codex、OpenCode 等 MCP Client 应能以同一用户身份创建和更新网站，不应依赖某个 Multica Agent 或 Task。 |
 | 2026-08-29 | 为 Site Hosting 的 prepare/get MCP 工具补充正式 `outputSchema`。 | 现有 Chat 与 Agent 查询工具已对稳定结构化结果发布输出契约；Site Hosting 同样返回稳定 `structuredContent`，补充 schema 可避免通用 MCP Client 猜测字段。 |
 | 2026-08-29 | 增加 `upload_path`、`upload_token_header` 和沙箱 relay 专用 capability 头协议；保留公网直连 Bearer 兼容。 | 沙箱 relay 必须用 `mat_` 验证 task，请求上游又需 `mhs_` 上传能力，单个 `Authorization` 无法同时表达两种凭据；专用头将路由身份与一次性上传能力分离，并限制凭据只进入精确上传路由。 |

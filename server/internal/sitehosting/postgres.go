@@ -212,6 +212,77 @@ func (s *PostgresStore) GetStatus(ctx context.Context, siteID, ownerUserID strin
 	return status, nil
 }
 
+func (s *PostgresStore) ListSites(ctx context.Context, ownerUserID string) ([]SiteStatus, error) {
+	if s == nil || s.pool == nil {
+		return nil, ErrUnavailable
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT site.id::text, site.public_id, site.status,
+		       site.active_revision_id::text, latest.id::text,
+		       latest.status, latest.error, site.created_at, site.updated_at
+		FROM hosted_site site
+		JOIN LATERAL (
+			SELECT id, status, error
+			FROM hosted_site_revision
+			WHERE site_id = site.id
+			ORDER BY created_at DESC
+			LIMIT 1
+		) latest ON true
+		WHERE site.status = 'active'
+		  AND COALESCE(
+			site.owner_user_id,
+			(SELECT agent.owner_id FROM agent WHERE agent.id = site.owner_agent_id),
+			(SELECT member.user_id FROM member WHERE member.workspace_id = site.workspace_id AND member.role = 'owner' ORDER BY member.created_at LIMIT 1)
+		  ) = $1::uuid
+		ORDER BY site.updated_at DESC, site.id DESC
+	`, ownerUserID)
+	if err != nil {
+		return nil, fmt.Errorf("list static sites: %w", err)
+	}
+	defer rows.Close()
+	result := make([]SiteStatus, 0)
+	for rows.Next() {
+		var status SiteStatus
+		if err := rows.Scan(
+			&status.SiteID, &status.PublicSiteID, &status.Status,
+			&status.ActiveRevisionID, &status.LatestRevisionID,
+			&status.LatestStatus, &status.LatestError,
+			&status.CreatedAt, &status.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan static site: %w", err)
+		}
+		status.OwnerUserID = ownerUserID
+		result = append(result, status)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list static sites: %w", err)
+	}
+	return result, nil
+}
+
+func (s *PostgresStore) DeleteSite(ctx context.Context, siteID, ownerUserID string) error {
+	if s == nil || s.pool == nil {
+		return ErrUnavailable
+	}
+	result, err := s.pool.Exec(ctx, `
+		UPDATE hosted_site site
+		SET status = 'deleted', updated_at = now()
+		WHERE site.id = $1::uuid AND site.status = 'active'
+		  AND COALESCE(
+			site.owner_user_id,
+			(SELECT agent.owner_id FROM agent WHERE agent.id = site.owner_agent_id),
+			(SELECT member.user_id FROM member WHERE member.workspace_id = site.workspace_id AND member.role = 'owner' ORDER BY member.created_at LIMIT 1)
+		  ) = $2::uuid
+	`, siteID, ownerUserID)
+	if err != nil {
+		return fmt.Errorf("delete static site: %w", err)
+	}
+	if result.RowsAffected() != 1 {
+		return ErrSiteForbidden
+	}
+	return nil
+}
+
 func (s *PostgresStore) ResolvePublic(ctx context.Context, publicSiteID string) (ResolvedSite, error) {
 	if s == nil || s.pool == nil {
 		return ResolvedSite{}, ErrUnavailable

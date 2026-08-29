@@ -170,6 +170,14 @@ func (f *fakeSiteHostingService) GetStatus(_ context.Context, siteID, ownerUserI
 	return sitehosting.SiteStatus{SiteID: siteID, PublicSiteID: "public-id", Status: "active", LatestRevisionID: "revision-id", LatestStatus: "active", SiteURL: "https://sites.example.test/sites/public-id/"}, nil
 }
 
+func (f *fakeSiteHostingService) ListSites(context.Context, string) ([]sitehosting.SiteStatus, error) {
+	return nil, nil
+}
+
+func (f *fakeSiteHostingService) DeleteSite(context.Context, string, string) error {
+	return nil
+}
+
 func (f *fakeSiteHostingService) HandleUpload(http.ResponseWriter, *http.Request, string) {}
 func (f *fakeSiteHostingService) ServePublic(http.ResponseWriter, *http.Request, string, string) {}
 

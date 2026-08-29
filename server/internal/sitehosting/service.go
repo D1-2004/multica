@@ -272,6 +272,36 @@ func (s *Service) GetStatus(ctx context.Context, siteID, ownerUserID string) (Si
 	return status, nil
 }
 
+func (s *Service) ListSites(ctx context.Context, ownerUserID string) ([]SiteStatus, error) {
+	if !s.Available() {
+		return nil, ErrUnavailable
+	}
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if ownerUserID == "" {
+		return nil, ErrSiteForbidden
+	}
+	sites, err := s.store.ListSites(ctx, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range sites {
+		sites[i].SiteURL = s.siteURL(sites[i].PublicSiteID)
+	}
+	return sites, nil
+}
+
+func (s *Service) DeleteSite(ctx context.Context, siteID, ownerUserID string) error {
+	if !s.Available() {
+		return ErrUnavailable
+	}
+	siteID = strings.TrimSpace(siteID)
+	ownerUserID = strings.TrimSpace(ownerUserID)
+	if siteID == "" || ownerUserID == "" {
+		return ErrSiteForbidden
+	}
+	return s.store.DeleteSite(ctx, siteID, ownerUserID)
+}
+
 func (s *Service) ResolvePublic(ctx context.Context, publicSiteID string) (ResolvedSite, error) {
 	if !s.Available() {
 		return ResolvedSite{}, ErrUnavailable

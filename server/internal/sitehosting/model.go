@@ -73,6 +73,8 @@ type Store interface {
 	ActivateRevision(context.Context, Activation) error
 	FailRevision(context.Context, string, string) error
 	GetStatus(context.Context, string, string) (SiteStatus, error)
+	ListSites(context.Context, string) ([]SiteStatus, error)
+	DeleteSite(context.Context, string, string) error
 	ResolvePublic(context.Context, string) (ResolvedSite, error)
 }
 

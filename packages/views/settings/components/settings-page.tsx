@@ -19,6 +19,7 @@ import {
   ListTodo,
   Laptop,
   Zap,
+  Globe2,
 } from "lucide-react";
 import { GitHubMark } from "./github-mark";
 import {
@@ -52,6 +53,7 @@ import { QuickActionsTab } from "./quick-actions-tab";
 import { KeyboardShortcutsTab } from "./keyboard-shortcuts-tab";
 import { WorkspaceAccessTab } from "./workspace-access-tab";
 import { LocalRunnerTab } from "./local-runner-tab";
+import { HostedSitesTab } from "./hosted-sites-tab";
 import { CollapsedNavTrigger } from "../../layout/page-header";
 import { useT } from "../../i18n";
 
@@ -86,6 +88,7 @@ const WORKSPACE_TAB_KEYS = [
   "labs",
   "members",
   "labels",
+  "sites",
   "workspace_access",
   "properties",
   "quick_actions",
@@ -98,6 +101,7 @@ const WORKSPACE_TAB_VALUES = {
   labs: "labs",
   members: "members",
   labels: "labels",
+  sites: "sites",
   workspace_access: "workspace_access",
   properties: "properties",
   quick_actions: "quick-actions",
@@ -110,6 +114,7 @@ const WORKSPACE_TAB_ICONS = {
   labs: FlaskConical,
   members: Users,
   labels: Tags,
+  sites: Globe2,
   workspace_access: ShieldCheck,
   properties: SlidersHorizontal,
   quick_actions: Zap,
@@ -272,6 +277,7 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
         <div
           className={`mx-auto w-full p-4 sm:p-6 md:p-8 ${
             activeTab === "labels" ||
+            activeTab === "sites" ||
             activeTab === "properties" ||
             activeTab === "quick-actions" ||
             activeTab === "local_runner"
@@ -326,6 +332,9 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           </TabsContent>
           <TabsContent value="labels">
             <LabelsTab />
+          </TabsContent>
+          <TabsContent value="sites">
+            <HostedSitesTab />
           </TabsContent>
           {workspaceAccessEnabled && role === "owner" ? (
             <TabsContent value="workspace_access">
