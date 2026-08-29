@@ -175,7 +175,7 @@ func (s *Service) connectSrc() []string {
 }
 
 func setPublicSecurityHeaders(header http.Header, configured []string) {
-	connectSources := []string{defaultConnectSrc}
+	connectSources := []string{"'self'", defaultConnectSrc}
 	seen := map[string]struct{}{defaultConnectSrc: {}}
 	for _, raw := range configured {
 		source, ok := normalizeConnectSource(raw)

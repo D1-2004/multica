@@ -121,7 +121,7 @@ ZIP 校验拒绝绝对路径、`..`、反斜杠、百分号编码绕过、软链
 
 响应使用清单中的 MIME、`Content-Disposition: inline`、ETag 和短时 revalidation cache。所有响应设置：
 
-- `Content-Security-Policy`：禁止 object、base、frame 和 form；资源默认只能同源加载。`connect-src` 始终允许 `https://connector.dingtalk.com`，并可由 Diamond `web.site_connect_src` 追加 HTTPS origin。
+- `Content-Security-Policy`：禁止 object、base、frame 和 form；资源默认只能同源加载。`connect-src` 始终允许 `'self'` 和 `https://connector.dingtalk.com`，并可由 Diamond `web.site_connect_src` 追加 HTTPS origin。
 - `X-Content-Type-Options: nosniff`
 - `Referrer-Policy: no-referrer`
 - 严格 `Permissions-Policy`
@@ -136,6 +136,7 @@ ZIP 校验拒绝绝对路径、`..`、反斜杠、百分号编码绕过、软链
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-30 | 托管站点 CSP 的 `connect-src` 默认增加 `'self'`，并保留 connector 域名与 Diamond HTTPS origin 追加能力。 | 反馈提交改用 Multica 同源代理后，相对路径请求必须由 CSP 明确允许；同时保留既有 connector 默认值，避免 Diamond 配置移除安全基线。 |
 | 2026-08-30 | 托管站点 CSP 默认允许 `https://connector.dingtalk.com`，并支持 Diamond `web.site_connect_src` 追加 HTTPS origin。 | 允许反馈站点直接 POST 钉钉 AI 表格 webhook，同时只放宽 `connect-src`，保留其他 CSP 安全边界。 |
 | 2026-08-30 | 新增用户级 Site 列表与软删除管理接口，并在工作区设置中增加“网站”页签，支持打开、复制分享链接和确认删除。 | 托管能力此前只能通过 MCP 查询单个 Site，用户缺少统一可见、可分享和可撤销公网访问的管理入口；页签位置沿用工作区设置外壳，但不改变账号级所有权。 |
 | 2026-08-29 | Site 所有权从 Workspace + Agent 调整为鉴权用户，并允许现有 `mul_` API Token 调用 prepare/get；endpoint 和 token 体系不变。 | Site Hosting 是独立资源能力，外部 Codex、OpenCode 等 MCP Client 应能以同一用户身份创建和更新网站，不应依赖某个 Multica Agent 或 Task。 |

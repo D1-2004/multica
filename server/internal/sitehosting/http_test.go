@@ -156,7 +156,7 @@ func TestServePublicSiteReturnsInlineHTMLAndAssetsWithSecurityHeaders(t *testing
 		}
 	}
 	csp := rootResponse.Header().Get("Content-Security-Policy")
-	if !strings.Contains(csp, "connect-src https://connector.dingtalk.com") || strings.Contains(csp, "connect-src 'none'") {
+	if !strings.Contains(csp, "connect-src 'self' https://connector.dingtalk.com") || strings.Contains(csp, "connect-src 'none'") {
 		t.Fatalf("unexpected hosted-site CSP %q", csp)
 	}
 
@@ -214,7 +214,7 @@ func TestServePublicSiteUsesCurrentSafeConfiguredConnectSources(t *testing.T) {
 	}
 
 	first := request()
-	want := "connect-src https://connector.dingtalk.com https://feedback.example.test;"
+	want := "connect-src 'self' https://connector.dingtalk.com https://feedback.example.test;"
 	if !strings.Contains(first, want) {
 		t.Fatalf("CSP missing %q; got %q", want, first)
 	}
@@ -229,7 +229,7 @@ func TestServePublicSiteUsesCurrentSafeConfiguredConnectSources(t *testing.T) {
 
 	sources = []string{"https://updated.example.test"}
 	second := request()
-	if !strings.Contains(second, "connect-src https://connector.dingtalk.com https://updated.example.test;") || strings.Contains(second, "feedback.example.test") {
+	if !strings.Contains(second, "connect-src 'self' https://connector.dingtalk.com https://updated.example.test;") || strings.Contains(second, "feedback.example.test") {
 		t.Fatalf("CSP did not use the current provider value; got %q", second)
 	}
 }
