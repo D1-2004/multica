@@ -119,6 +119,12 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 		if tool["name"] != wantName {
 			t.Fatalf("tool[%d].name=%#v want %q", index, tool["name"], wantName)
 		}
+		if wantName == multicaMCPPrepareStaticSiteTool || wantName == multicaMCPGetStaticSiteTool {
+			outputSchema, ok := tool["outputSchema"].(map[string]any)
+			if !ok || outputSchema["type"] != "object" {
+				t.Fatalf("%s outputSchema=%#v", wantName, tool["outputSchema"])
+			}
+		}
 		if wantName == multicaMCPChatSendTool || wantName == multicaMCPAgentSearchTool || wantName == multicaMCPAgentListTool {
 			continue
 		}
@@ -144,7 +150,8 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 }
 
 type fakeSiteHostingService struct {
-	prepareInput sitehosting.PrepareInput
+	prepareInput      sitehosting.PrepareInput
+	statusOwnerUserID string
 }
 
 func (f *fakeSiteHostingService) Prepare(_ context.Context, input sitehosting.PrepareInput) (sitehosting.PreparedDeploy, error) {
@@ -158,14 +165,15 @@ func (f *fakeSiteHostingService) Prepare(_ context.Context, input sitehosting.Pr
 	}, nil
 }
 
-func (f *fakeSiteHostingService) GetStatus(_ context.Context, siteID, workspaceID, agentID string) (sitehosting.SiteStatus, error) {
+func (f *fakeSiteHostingService) GetStatus(_ context.Context, siteID, ownerUserID string) (sitehosting.SiteStatus, error) {
+	f.statusOwnerUserID = ownerUserID
 	return sitehosting.SiteStatus{SiteID: siteID, PublicSiteID: "public-id", Status: "active", LatestRevisionID: "revision-id", LatestStatus: "active", SiteURL: "https://sites.example.test/sites/public-id/"}, nil
 }
 
 func (f *fakeSiteHostingService) HandleUpload(http.ResponseWriter, *http.Request, string) {}
 func (f *fakeSiteHostingService) ServePublic(http.ResponseWriter, *http.Request, string, string) {}
 
-func TestMulticaMCPStaticSiteToolsUseTaskTokenAuthority(t *testing.T) {
+func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 	service := &fakeSiteHostingService{}
 	h := testMulticaMCPHandler(t)
 	h.SiteHosting = service
@@ -180,7 +188,7 @@ func TestMulticaMCPStaticSiteToolsUseTaskTokenAuthority(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("prepare status=%d body=%s", response.Code, response.Body.String())
 	}
-	if service.prepareInput.WorkspaceID != "00000000-0000-0000-0000-000000000004" || service.prepareInput.AgentID != "00000000-0000-0000-0000-000000000002" {
+	if service.prepareInput.OwnerUserID != "00000000-0000-0000-0000-000000000001" {
 		t.Fatalf("authority=%#v", service.prepareInput)
 	}
 	result := decodeMCPResponse(t, response)["result"].(map[string]any)
@@ -199,15 +207,21 @@ func TestMulticaMCPStaticSiteToolsUseTaskTokenAuthority(t *testing.T) {
 	if statusResult["site_id"] != "site-id" || statusResult["site_url"] != "https://sites.example.test/sites/public-id/" {
 		t.Fatalf("get status=%#v", statusResult)
 	}
+	if service.statusOwnerUserID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("status owner user=%q", service.statusOwnerUserID)
+	}
 
 	personalResponse := httptest.NewRecorder()
 	h.MulticaMCP(personalResponse, personalMCPRequest(t, "tools/call", "prepare-site-pat", map[string]any{
 		"name": "prepare_static_site_deploy",
 		"arguments": map[string]any{"expected_sha256": strings.Repeat("a", 64), "content_length": 1234},
 	}))
+	if personalResponse.Code != http.StatusOK {
+		t.Fatalf("PAT prepare status=%d body=%s", personalResponse.Code, personalResponse.Body.String())
+	}
 	personalResult := decodeMCPResponse(t, personalResponse)["result"].(map[string]any)
-	if personalResult["isError"] != true {
-		t.Fatalf("PAT prepare result=%#v", personalResult)
+	if personalResult["isError"] == true || service.prepareInput.OwnerUserID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("PAT prepare result=%#v authority=%#v", personalResult, service.prepareInput)
 	}
 }
 

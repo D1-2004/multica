@@ -1,15 +1,18 @@
-# Agent 静态网站托管协议
+# 静态网站托管协议
 
 ## 1. 能力边界
 
-`sitehosting` 是独立资源模块，用于托管 Agent 生成的静态网站。它不复用 `attachment` 表、`/api/upload-file`、附件下载或 HTML preview。
+`sitehosting` 是独立资源模块，用于托管调用方生成的静态网站。它不复用 `attachment` 表、`/api/upload-file`、附件下载或 HTML preview，也不以 Agent、Task 或 Workspace 作为 Site 所有权模型。
 
 - 支持单 HTML，以及包含 HTML、CSS、JavaScript、图片、字体和 JSON 等文件的 ZIP。
 - 默认入口是 `index.html`，可启用 `spa_fallback`。
 - Site 是 `public-unlisted`：知道 URL 的任何人都能读取，Workspace、Task 和 `publicSiteId` 都不是安全凭证。
-- Workspace 只用于租户和权限隔离；Task Token 只用于创建/更新时的权威身份和审计。
+- Site 归属于 API Token 或 Task Token 鉴权得到的用户；调用参数不能自行指定所有者。
+- `mul_` API Token 可供 Codex、OpenCode 等通用 MCP Client 使用；沙箱内的 `mat_` Task Token 只映射到其绑定用户，Agent、Task 和 Workspace 不写入新 Site，也不参与 Site 授权。
 - Site、revision、upload 表及公开 URL 都不保存或体现 `task_id`。
 - 一个 Site 有多个 revision；只有全部文件上传成功后，数据库事务才原子切换 `active_revision_id`。失败 revision 不影响旧站点。
+
+已发布旧版本创建的 Site 会在迁移时从原 Agent/Workspace 关系回填 `owner_user_id`；旧列仅为滚动升级兼容而暂时保留为可空字段，新版本不再写入，也不作为新 Site 的所有权依据。
 
 公开地址固定为：
 
@@ -23,7 +26,7 @@ ${MULTICA_SITE_PUBLIC_URL}/sites/<publicSiteId>/
 
 ### `prepare_static_site_deploy`
 
-仅接受 `mat_` Task Token。Workspace、Agent 和 Task 身份由鉴权中间件权威注入；参数不能携带 `workspace_id`、`agent_id` 或 `task_id`。
+接受 `mul_` API Token 和 `mat_` Task Token。Site 所有者由鉴权中间件注入的用户身份确定；参数不能携带 `owner_user_id`、`workspace_id`、`agent_id` 或 `task_id`。
 
 输入：
 
@@ -37,12 +40,16 @@ ${MULTICA_SITE_PUBLIC_URL}/sites/<publicSiteId>/
 
 输出包括 `upload_path`、`upload_url`、`upload_method=PUT`、`upload_token_header=X-Multica-Site-Upload-Token`、短期单次 `upload_token`、`expires_at`、`archive=zip`、限制和候选 `site_url`。`upload_token` 只出现在工具结果中，不进入 URL。
 
+工具定义发布完整 `outputSchema`，覆盖上传标识、上传地址与方法、单次 capability、过期时间、候选站点地址和归档限制；支持结构化结果的 MCP Client 可以在调用前直接取得这份返回契约。
+
 - 沙箱内不能访问公网 `upload_url` 时，使用当前 task 已注入的 `MULTICA_SERVER_URL` 拼接 `upload_path`。`Authorization` 继续携带 `mat_` Task Token，`upload_token_header` 指定的专用头携带原始 `mhs_` capability。
 - 能直接访问公网 `upload_url` 时，可继续使用 `Authorization: Bearer <upload_token>`，此时不要再发送专用 capability 头。
 
 ### `get_static_site_deploy`
 
-仅接受 `mat_` Task Token。输入 `site_id`，服务端按 token 固定的 Workspace 和 Agent 校验所有权，再返回 Site 和最新 revision 状态。
+接受 `mul_` API Token 和 `mat_` Task Token。输入 `site_id`，服务端按 token 对应的用户校验所有权，再返回 Site 和最新 revision 状态。
+
+工具定义发布完整 `outputSchema`。`active_revision_id` 和 `latest_error` 在没有对应值时可省略，其余 Site、最新 revision、时间和公开地址字段为必需输出。
 
 ## 3. 上传与发布
 
@@ -116,5 +123,7 @@ ZIP 校验拒绝绝对路径、`..`、反斜杠、百分号编码绕过、软链
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-29 | Site 所有权从 Workspace + Agent 调整为鉴权用户，并允许现有 `mul_` API Token 调用 prepare/get；endpoint 和 token 体系不变。 | Site Hosting 是独立资源能力，外部 Codex、OpenCode 等 MCP Client 应能以同一用户身份创建和更新网站，不应依赖某个 Multica Agent 或 Task。 |
+| 2026-08-29 | 为 Site Hosting 的 prepare/get MCP 工具补充正式 `outputSchema`。 | 现有 Chat 与 Agent 查询工具已对稳定结构化结果发布输出契约；Site Hosting 同样返回稳定 `structuredContent`，补充 schema 可避免通用 MCP Client 猜测字段。 |
 | 2026-08-29 | 增加 `upload_path`、`upload_token_header` 和沙箱 relay 专用 capability 头协议；保留公网直连 Bearer 兼容。 | 沙箱 relay 必须用 `mat_` 验证 task，请求上游又需 `mhs_` 上传能力，单个 `Authorization` 无法同时表达两种凭据；专用头将路由身份与一次性上传能力分离，并限制凭据只进入精确上传路由。 |
 | 2026-08-29 | 新增独立 Site/revision/upload 模型、Task Token MCP prepare/get、流式 ZIP capability 上传、OSS 发布和 public-unlisted 读取协议。 | Agent 需要发布多文件静态产物，同时必须与附件语义、Task 持久映射和主应用可信内容边界隔离。 |

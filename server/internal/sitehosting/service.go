@@ -36,8 +36,7 @@ type Config struct {
 }
 
 type PrepareInput struct {
-	WorkspaceID    string
-	AgentID        string
+	OwnerUserID    string
 	SiteID         string
 	Entrypoint     string
 	SPAFallback    bool
@@ -93,8 +92,7 @@ func (s *Service) Prepare(ctx context.Context, input PrepareInput) (PreparedDepl
 	if !s.Available() {
 		return PreparedDeploy{}, ErrUnavailable
 	}
-	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
-	input.AgentID = strings.TrimSpace(input.AgentID)
+	input.OwnerUserID = strings.TrimSpace(input.OwnerUserID)
 	input.SiteID = strings.TrimSpace(input.SiteID)
 	input.Entrypoint = strings.TrimSpace(input.Entrypoint)
 	if input.Entrypoint == "" {
@@ -104,7 +102,7 @@ func (s *Service) Prepare(ctx context.Context, input PrepareInput) (PreparedDepl
 	if err != nil {
 		return PreparedDeploy{}, fmt.Errorf("invalid entrypoint: %w", err)
 	}
-	if input.WorkspaceID == "" || input.AgentID == "" {
+	if input.OwnerUserID == "" {
 		return PreparedDeploy{}, ErrSiteForbidden
 	}
 	expectedSHA := strings.ToLower(strings.TrimSpace(input.ExpectedSHA256))
@@ -122,7 +120,7 @@ func (s *Service) Prepare(ctx context.Context, input PrepareInput) (PreparedDepl
 	now := s.now().UTC()
 	upload := Upload{
 		ID: uuid.NewString(), SiteID: uuid.NewString(), PublicSiteID: randomOpaqueID(),
-		RevisionID: uuid.NewString(), WorkspaceID: input.WorkspaceID, OwnerAgentID: input.AgentID,
+		RevisionID: uuid.NewString(), OwnerUserID: input.OwnerUserID,
 		TokenHash: tokenHash, ExpectedSHA256: expectedSHA, ExpectedLength: input.ExpectedLength,
 		Entrypoint: entrypoint, SPAFallback: input.SPAFallback, ExpiresAt: now.Add(s.config.TokenTTL),
 	}
@@ -262,11 +260,11 @@ func (s *Service) publishArchive(ctx context.Context, archivePath string, upload
 	return uploaded, nil
 }
 
-func (s *Service) GetStatus(ctx context.Context, siteID, workspaceID, agentID string) (SiteStatus, error) {
+func (s *Service) GetStatus(ctx context.Context, siteID, ownerUserID string) (SiteStatus, error) {
 	if !s.Available() {
 		return SiteStatus{}, ErrUnavailable
 	}
-	status, err := s.store.GetStatus(ctx, siteID, workspaceID, agentID)
+	status, err := s.store.GetStatus(ctx, siteID, ownerUserID)
 	if err != nil {
 		return SiteStatus{}, err
 	}

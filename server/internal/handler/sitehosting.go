@@ -10,7 +10,7 @@ import (
 
 type StaticSiteHostingService interface {
 	Prepare(context.Context, sitehosting.PrepareInput) (sitehosting.PreparedDeploy, error)
-	GetStatus(context.Context, string, string, string) (sitehosting.SiteStatus, error)
+	GetStatus(context.Context, string, string) (sitehosting.SiteStatus, error)
 	HandleUpload(http.ResponseWriter, *http.Request, string)
 	ServePublic(http.ResponseWriter, *http.Request, string, string)
 }

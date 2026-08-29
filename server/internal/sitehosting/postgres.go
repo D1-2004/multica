@@ -31,17 +31,24 @@ func (s *PostgresStore) Prepare(ctx context.Context, record PrepareRecord) (Uplo
 	upload := record.Upload
 	if record.ExistingSiteID == "" {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO hosted_site (id, public_id, workspace_id, owner_agent_id)
-			VALUES ($1::uuid, $2, $3::uuid, $4::uuid)
-		`, upload.SiteID, upload.PublicSiteID, upload.WorkspaceID, upload.OwnerAgentID)
+			INSERT INTO hosted_site (id, public_id, owner_user_id)
+			VALUES ($1::uuid, $2, $3::uuid)
+		`, upload.SiteID, upload.PublicSiteID, upload.OwnerUserID)
 	} else {
 		err = tx.QueryRow(ctx, `
+			-- The fallback only keeps Sites created by a pre-migration replica
+			-- reachable during a rolling deployment. New writes always persist
+			-- owner_user_id and do not use Agent or Workspace ownership.
 			SELECT public_id
-			FROM hosted_site
-			WHERE id = $1::uuid AND workspace_id = $2::uuid
-			  AND owner_agent_id = $3::uuid AND status = 'active'
+			FROM hosted_site site
+			WHERE site.id = $1::uuid AND site.status = 'active'
+			  AND COALESCE(
+				site.owner_user_id,
+				(SELECT agent.owner_id FROM agent WHERE agent.id = site.owner_agent_id),
+				(SELECT member.user_id FROM member WHERE member.workspace_id = site.workspace_id AND member.role = 'owner' ORDER BY member.created_at LIMIT 1)
+			  ) = $2::uuid
 			FOR UPDATE
-		`, record.ExistingSiteID, upload.WorkspaceID, upload.OwnerAgentID).Scan(&upload.PublicSiteID)
+		`, record.ExistingSiteID, upload.OwnerUserID).Scan(&upload.PublicSiteID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Upload{}, ErrSiteForbidden
 		}
@@ -91,15 +98,13 @@ func (s *PostgresStore) ClaimUpload(ctx context.Context, uploadID string, tokenH
 		  AND site.status = 'active'
 		RETURNING
 			upload.id::text, upload.site_id::text, site.public_id,
-			upload.revision_id::text, site.workspace_id::text,
-			site.owner_agent_id::text, upload.token_hash,
+			upload.revision_id::text, upload.token_hash,
 			upload.expected_sha256, upload.expected_length,
 			revision.entrypoint, revision.spa_fallback,
 			upload.expires_at, upload.used_at
 	`, uploadID, tokenHash, now).Scan(
 		&upload.ID, &upload.SiteID, &upload.PublicSiteID, &upload.RevisionID,
-		&upload.WorkspaceID, &upload.OwnerAgentID, &upload.TokenHash,
-		&upload.ExpectedSHA256, &upload.ExpectedLength, &upload.Entrypoint,
+		&upload.TokenHash, &upload.ExpectedSHA256, &upload.ExpectedLength, &upload.Entrypoint,
 		&upload.SPAFallback, &upload.ExpiresAt, &upload.UsedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -167,14 +172,15 @@ func (s *PostgresStore) FailRevision(ctx context.Context, revisionID, reason str
 	return nil
 }
 
-func (s *PostgresStore) GetStatus(ctx context.Context, siteID, workspaceID, agentID string) (SiteStatus, error) {
+func (s *PostgresStore) GetStatus(ctx context.Context, siteID, ownerUserID string) (SiteStatus, error) {
 	if s == nil || s.pool == nil {
 		return SiteStatus{}, ErrUnavailable
 	}
 	var status SiteStatus
 	err := s.pool.QueryRow(ctx, `
-		SELECT site.id::text, site.public_id, site.workspace_id::text,
-		       site.owner_agent_id::text, site.status,
+		-- The fallback only covers legacy rows without owner_user_id during
+		-- the rolling migration window; it is not the Site ownership model.
+		SELECT site.id::text, site.public_id, site.status,
 		       site.active_revision_id::text, latest.id::text,
 		       latest.status, latest.error, site.created_at, site.updated_at
 		FROM hosted_site site
@@ -185,11 +191,14 @@ func (s *PostgresStore) GetStatus(ctx context.Context, siteID, workspaceID, agen
 			ORDER BY created_at DESC
 			LIMIT 1
 		) latest ON true
-		WHERE site.id = $1::uuid AND site.workspace_id = $2::uuid
-		  AND site.owner_agent_id = $3::uuid AND site.status = 'active'
-	`, siteID, workspaceID, agentID).Scan(
-		&status.SiteID, &status.PublicSiteID, &status.WorkspaceID,
-		&status.OwnerAgentID, &status.Status, &status.ActiveRevisionID,
+		WHERE site.id = $1::uuid AND site.status = 'active'
+		  AND COALESCE(
+			site.owner_user_id,
+			(SELECT agent.owner_id FROM agent WHERE agent.id = site.owner_agent_id),
+			(SELECT member.user_id FROM member WHERE member.workspace_id = site.workspace_id AND member.role = 'owner' ORDER BY member.created_at LIMIT 1)
+		  ) = $2::uuid
+	`, siteID, ownerUserID).Scan(
+		&status.SiteID, &status.PublicSiteID, &status.Status, &status.ActiveRevisionID,
 		&status.LatestRevisionID, &status.LatestStatus, &status.LatestError,
 		&status.CreatedAt, &status.UpdatedAt,
 	)
@@ -199,6 +208,7 @@ func (s *PostgresStore) GetStatus(ctx context.Context, siteID, workspaceID, agen
 	if err != nil {
 		return SiteStatus{}, fmt.Errorf("get static site status: %w", err)
 	}
+	status.OwnerUserID = ownerUserID
 	return status, nil
 }
 

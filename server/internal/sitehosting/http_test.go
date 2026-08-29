@@ -23,7 +23,7 @@ func prepareUploadedSite(t *testing.T, spaFallback bool) (*Service, PreparedDepl
 	})
 	sum := sha256.Sum256(body)
 	prepared, err := service.Prepare(context.Background(), PrepareInput{
-		WorkspaceID: "w", AgentID: "a", SPAFallback: spaFallback,
+		OwnerUserID: "u", SPAFallback: spaFallback,
 		ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
 	})
 	if err != nil {
@@ -57,7 +57,7 @@ func TestHandleUploadAcceptsRelayAuthorizationWithDedicatedCapability(t *testing
 	body := zipBytes(t, map[string]string{"index.html": "<!doctype html><title>relay upload</title>"})
 	sum := sha256.Sum256(body)
 	prepared, err := service.Prepare(context.Background(), PrepareInput{
-		WorkspaceID: "w", AgentID: "a", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
+		OwnerUserID: "u", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +91,7 @@ func TestHandleUploadRejectsAmbiguousCapabilityHeaders(t *testing.T) {
 		t.Helper()
 		service := newTestService(&memoryStore{}, &memoryObjectStore{})
 		prepared, err := service.Prepare(context.Background(), PrepareInput{
-			WorkspaceID: "w", AgentID: "a", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
+			OwnerUserID: "u", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
 		})
 		if err != nil {
 			t.Fatal(err)

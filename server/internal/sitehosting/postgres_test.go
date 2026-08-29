@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func TestPostgresStoreKeepsTenantOwnershipAndSwitchesRevisionAtomically(t *testing.T) {
+func TestPostgresStoreKeepsUserOwnershipAndSwitchesRevisionAtomically(t *testing.T) {
 	ctx := context.Background()
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
@@ -48,6 +48,12 @@ func TestPostgresStoreKeepsTenantOwnershipAndSwitchesRevisionAtomically(t *testi
 	if _, err := pool.Exec(ctx, string(migration)); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE agent (id UUID PRIMARY KEY, owner_id UUID);
+		CREATE TABLE member (workspace_id UUID, user_id UUID, role TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+	`); err != nil {
+		t.Fatal(err)
+	}
 	for migrationNumber := 9080; migrationNumber <= 9087; migrationNumber++ {
 		matches, err := filepath.Glob(fmt.Sprintf("../../migrations/%d_hosted_site*_index.up.sql", migrationNumber))
 		if err != nil || len(matches) != 1 {
@@ -61,14 +67,26 @@ func TestPostgresStoreKeepsTenantOwnershipAndSwitchesRevisionAtomically(t *testi
 			t.Fatalf("apply %s: %v", matches[0], err)
 		}
 	}
+	for migrationNumber := 9088; migrationNumber <= 9089; migrationNumber++ {
+		matches, err := filepath.Glob(fmt.Sprintf("../../migrations/%d_hosted_site_user_owner*.up.sql", migrationNumber))
+		if err != nil || len(matches) != 1 {
+			t.Fatalf("find user owner migration %d: matches=%v err=%v", migrationNumber, matches, err)
+		}
+		body, err := os.ReadFile(matches[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, string(body)); err != nil {
+			t.Fatalf("apply %s: %v", matches[0], err)
+		}
+	}
 
 	store := NewPostgresStore(pool)
-	workspaceID := uuid.NewString()
-	agentID := uuid.NewString()
+	ownerUserID := uuid.NewString()
 	now := time.Now().UTC()
 	first := Upload{
 		ID: uuid.NewString(), SiteID: uuid.NewString(), PublicSiteID: "public-opaque-id",
-		RevisionID: uuid.NewString(), WorkspaceID: workspaceID, OwnerAgentID: agentID,
+		RevisionID: uuid.NewString(), OwnerUserID: ownerUserID,
 		TokenHash: []byte(strings.Repeat("a", 32)), ExpectedSHA256: strings.Repeat("1", 64),
 		ExpectedLength: 123, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute),
 	}
@@ -78,9 +96,9 @@ func TestPostgresStoreKeepsTenantOwnershipAndSwitchesRevisionAtomically(t *testi
 	}
 	if _, err := store.Prepare(ctx, PrepareRecord{
 		ExistingSiteID: created.SiteID,
-		Upload: Upload{ID: uuid.NewString(), SiteID: created.SiteID, RevisionID: uuid.NewString(), WorkspaceID: uuid.NewString(), OwnerAgentID: agentID, TokenHash: []byte(strings.Repeat("b", 32)), ExpectedSHA256: strings.Repeat("2", 64), ExpectedLength: 1, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)},
+		Upload: Upload{ID: uuid.NewString(), SiteID: created.SiteID, RevisionID: uuid.NewString(), OwnerUserID: uuid.NewString(), TokenHash: []byte(strings.Repeat("b", 32)), ExpectedSHA256: strings.Repeat("2", 64), ExpectedLength: 1, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)},
 	}); !errors.Is(err, ErrSiteForbidden) {
-		t.Fatalf("cross-workspace prepare error=%v", err)
+		t.Fatalf("cross-user prepare error=%v", err)
 	}
 	claimed, err := store.ClaimUpload(ctx, first.ID, first.TokenHash, now)
 	if err != nil {
@@ -98,7 +116,7 @@ func TestPostgresStoreKeepsTenantOwnershipAndSwitchesRevisionAtomically(t *testi
 		t.Fatalf("first resolve=%#v err=%v", resolved, err)
 	}
 
-	second := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), WorkspaceID: workspaceID, OwnerAgentID: agentID, TokenHash: []byte(strings.Repeat("c", 32)), ExpectedSHA256: strings.Repeat("3", 64), ExpectedLength: 50, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
+	second := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), OwnerUserID: ownerUserID, TokenHash: []byte(strings.Repeat("c", 32)), ExpectedSHA256: strings.Repeat("3", 64), ExpectedLength: 50, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
 	second, err = store.Prepare(ctx, PrepareRecord{ExistingSiteID: first.SiteID, Upload: second})
 	if err != nil {
 		t.Fatal(err)
@@ -113,14 +131,14 @@ func TestPostgresStoreKeepsTenantOwnershipAndSwitchesRevisionAtomically(t *testi
 	if err != nil || resolved.RevisionID != first.RevisionID {
 		t.Fatalf("failed revision changed active resolve=%#v err=%v", resolved, err)
 	}
-	status, err := store.GetStatus(ctx, first.SiteID, workspaceID, agentID)
+	status, err := store.GetStatus(ctx, first.SiteID, ownerUserID)
 	if err != nil || status.LatestRevisionID != second.RevisionID || status.LatestStatus != "failed" {
 		t.Fatalf("status=%#v err=%v", status, err)
 	}
-	if _, err := store.GetStatus(ctx, first.SiteID, workspaceID, uuid.NewString()); !errors.Is(err, ErrSiteForbidden) {
+	if _, err := store.GetStatus(ctx, first.SiteID, uuid.NewString()); !errors.Is(err, ErrSiteForbidden) {
 		t.Fatalf("non-owner status error=%v", err)
 	}
-	third := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), WorkspaceID: workspaceID, OwnerAgentID: agentID, TokenHash: []byte(strings.Repeat("d", 32)), ExpectedSHA256: strings.Repeat("4", 64), ExpectedLength: 60, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
+	third := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), OwnerUserID: ownerUserID, TokenHash: []byte(strings.Repeat("d", 32)), ExpectedSHA256: strings.Repeat("4", 64), ExpectedLength: 60, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
 	third, err = store.Prepare(ctx, PrepareRecord{ExistingSiteID: first.SiteID, Upload: third})
 	if err != nil {
 		t.Fatal(err)

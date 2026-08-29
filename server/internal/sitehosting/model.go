@@ -19,8 +19,7 @@ type Upload struct {
 	SiteID         string
 	PublicSiteID   string
 	RevisionID     string
-	WorkspaceID    string
-	OwnerAgentID   string
+	OwnerUserID    string
 	TokenHash      []byte
 	ExpectedSHA256 string
 	ExpectedLength int64
@@ -49,8 +48,7 @@ type Activation struct {
 type SiteStatus struct {
 	SiteID           string     `json:"site_id"`
 	PublicSiteID     string     `json:"public_site_id"`
-	WorkspaceID      string     `json:"-"`
-	OwnerAgentID     string     `json:"-"`
+	OwnerUserID      string     `json:"-"`
 	Status           string     `json:"status"`
 	ActiveRevisionID *string    `json:"active_revision_id,omitempty"`
 	LatestRevisionID string     `json:"latest_revision_id"`
@@ -74,7 +72,7 @@ type Store interface {
 	ClaimUpload(context.Context, string, []byte, time.Time) (Upload, error)
 	ActivateRevision(context.Context, Activation) error
 	FailRevision(context.Context, string, string) error
-	GetStatus(context.Context, string, string, string) (SiteStatus, error)
+	GetStatus(context.Context, string, string) (SiteStatus, error)
 	ResolvePublic(context.Context, string) (ResolvedSite, error)
 }
 

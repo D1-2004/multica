@@ -26,7 +26,7 @@ func multicaMCPPrepareStaticSiteDefinition() map[string]any {
 	return map[string]any{
 		"name": multicaMCPPrepareStaticSiteTool,
 		"title": "Prepare a static site deployment",
-		"description": "Create a public-unlisted static Site or a new revision and return a short-lived, single-use raw ZIP upload capability. Workspace, Agent, and task identity come only from the authenticated task token. In a sandbox, PUT upload_path through the current MULTICA_SERVER_URL with the task token in Authorization and the upload capability in the returned upload_token_header. For direct public upload_url access, Authorization: Bearer <upload_token> remains supported. Send application/zip; never put ZIP or base64 data in MCP arguments.",
+		"description": "Create a public-unlisted static Site or a new revision and return a short-lived, single-use raw ZIP upload capability. Site ownership comes only from the user authenticated by the API token or task token; ownership identifiers are never accepted as arguments. In a sandbox, PUT upload_path through the current MULTICA_SERVER_URL with the task token in Authorization and the upload capability in the returned upload_token_header. For direct public upload_url access, Authorization: Bearer <upload_token> remains supported. Send application/zip; never put ZIP or base64 data in MCP arguments.",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
@@ -38,6 +38,7 @@ func multicaMCPPrepareStaticSiteDefinition() map[string]any {
 			},
 			"required": []string{"expected_sha256", "content_length"},
 		},
+		"outputSchema": multicaMCPPrepareStaticSiteOutputSchema(),
 		"annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false},
 	}
 }
@@ -46,28 +47,82 @@ func multicaMCPGetStaticSiteDefinition() map[string]any {
 	return map[string]any{
 		"name": multicaMCPGetStaticSiteTool,
 		"title": "Get a static site deployment",
-		"description": "Get deployment status for a Site owned by the authenticated task Agent in the authenticated Workspace.",
+		"description": "Get deployment status for a Site owned by the user authenticated by the API token or task token.",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{"site_id": map[string]any{"type": "string"}},
 			"required": []string{"site_id"},
 		},
+		"outputSchema": multicaMCPGetStaticSiteOutputSchema(),
 		"annotations": map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
 	}
 }
 
-func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.Request, id json.RawMessage, toolName string, rawArguments json.RawMessage) {
-	if !multicaMCPTaskTokenAuthenticated(r) {
-		h.writeMulticaMCPToolError(w, id, "static site tools require a task token")
-		return
+func multicaMCPPrepareStaticSiteOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"site_id":             map[string]any{"type": "string"},
+			"revision_id":         map[string]any{"type": "string"},
+			"upload_id":           map[string]any{"type": "string"},
+			"upload_path":         map[string]any{"type": "string"},
+			"upload_url":          map[string]any{"type": "string"},
+			"upload_method":       map[string]any{"type": "string", "enum": []string{"PUT"}},
+			"upload_token":        map[string]any{"type": "string"},
+			"upload_token_header": map[string]any{"type": "string"},
+			"expires_at":           map[string]any{"type": "string", "format": "date-time"},
+			"archive":              map[string]any{"type": "string", "enum": []string{"zip"}},
+			"entrypoint":           map[string]any{"type": "string"},
+			"site_url":             map[string]any{"type": "string"},
+			"limits": map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]any{
+					"max_archive_bytes":  map[string]any{"type": "integer", "minimum": 1},
+					"max_expanded_bytes": map[string]any{"type": "integer", "minimum": 1},
+					"max_file_bytes":     map[string]any{"type": "integer", "minimum": 1},
+					"max_files":          map[string]any{"type": "integer", "minimum": 1},
+				},
+				"required": []string{"max_archive_bytes", "max_expanded_bytes", "max_file_bytes", "max_files"},
+			},
+		},
+		"required": []string{
+			"site_id", "revision_id", "upload_id", "upload_path", "upload_url", "upload_method",
+			"upload_token", "upload_token_header", "expires_at", "archive", "entrypoint", "site_url", "limits",
+		},
 	}
+}
+
+func multicaMCPGetStaticSiteOutputSchema() map[string]any {
+	return map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"properties": map[string]any{
+			"site_id":            map[string]any{"type": "string"},
+			"public_site_id":     map[string]any{"type": "string"},
+			"status":             map[string]any{"type": "string"},
+			"active_revision_id": map[string]any{"type": "string"},
+			"latest_revision_id": map[string]any{"type": "string"},
+			"latest_status":      map[string]any{"type": "string"},
+			"latest_error":       map[string]any{"type": "string"},
+			"created_at":         map[string]any{"type": "string", "format": "date-time"},
+			"updated_at":         map[string]any{"type": "string", "format": "date-time"},
+			"site_url":           map[string]any{"type": "string"},
+		},
+		"required": []string{
+			"site_id", "public_site_id", "status", "latest_revision_id", "latest_status", "created_at", "updated_at", "site_url",
+		},
+	}
+}
+
+func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.Request, id json.RawMessage, toolName string, rawArguments json.RawMessage) {
 	if h.SiteHosting == nil {
 		h.writeMulticaMCPToolError(w, id, "static site hosting is unavailable")
 		return
 	}
-	workspaceID := strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
-	agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
-	if workspaceID == "" || agentID == "" {
+	ownerUserID := strings.TrimSpace(r.Header.Get("X-User-ID"))
+	if ownerUserID == "" {
 		h.writeMulticaMCPToolError(w, id, "authenticated static site authority is invalid")
 		return
 	}
@@ -80,7 +135,8 @@ func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.
 			return
 		}
 		result, err = h.SiteHosting.Prepare(r.Context(), sitehosting.PrepareInput{
-			WorkspaceID: workspaceID, AgentID: agentID, SiteID: strings.TrimSpace(args.SiteID),
+			OwnerUserID: ownerUserID,
+			SiteID: strings.TrimSpace(args.SiteID),
 			ExpectedSHA256: args.ExpectedSHA256, ExpectedLength: args.ContentLength,
 			Entrypoint: args.Entrypoint, SPAFallback: args.SPAFallback,
 		})
@@ -90,7 +146,7 @@ func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.
 			h.writeMulticaMCPError(w, id, -32602, "invalid get_static_site_deploy arguments")
 			return
 		}
-		result, err = h.SiteHosting.GetStatus(r.Context(), strings.TrimSpace(args.SiteID), workspaceID, agentID)
+		result, err = h.SiteHosting.GetStatus(r.Context(), strings.TrimSpace(args.SiteID), ownerUserID)
 	}
 	if err != nil {
 		message := "static site operation failed"
@@ -98,7 +154,7 @@ func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.
 		case errors.Is(err, sitehosting.ErrUnavailable):
 			message = "static site hosting is unavailable"
 		case errors.Is(err, sitehosting.ErrSiteForbidden), errors.Is(err, sitehosting.ErrSiteNotFound):
-			message = "static Site was not found or is not owned by this Agent"
+			message = "static Site was not found or is not owned by this user"
 		default:
 			slog.Error("Multica MCP static site operation failed", "tool", toolName, "source_task_id", r.Header.Get("X-Task-ID"), "error", err)
 		}

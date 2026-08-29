@@ -5,7 +5,7 @@
 协议和业务约束分别见：
 
 - [Multica 自托管 MCP：Chat 续写协议](multica-mcp-chat-send.md)
-- [Agent 静态网站托管协议](static-site-hosting.md)
+- [静态网站托管协议](static-site-hosting.md)
 - [DingTalk account binding Router contract](dingtalk-account-binding-router-contract.md#native-mcp-direct-binding-contract)
 
 ## 1. 接入参数
@@ -35,6 +35,7 @@ Multica MCP 接受已有的 `mul_` Personal Access Token（PAT）和 `mat_` Task
 | Chat 发消息 | 只能向该用户创建的已有 Chat 发消息，并按 `member` 权限触发 Agent | 只能从活跃 Chat Task 转到该用户创建的另一个 Chat，按 `agent` 身份执行并记录来源 |
 | 数字员工工具 | 必须传 `agent_id`，且用户对该 Agent 同时具有 manage 和 invoke 权限 | 不传 `agent_id`；只能操作 token 绑定的 Agent |
 | Agent 查询 | 跨用户加入的全部 Workspace，返回该用户当前可见的活跃 Agent | 只返回 token 所在 Workspace 的活跃 Agent |
+| Site Hosting | Site 归属于 PAT 用户，可由该用户配置的任意 MCP Client 继续更新 | Site 归属于 token 绑定用户；Agent、Task、Workspace 不参与 Site 授权 |
 | 生命周期 | 由用户在 Multica 的 PAT 管理界面创建、续期和撤销 | 最长 24 小时，Task 完成、失败或取消后主动撤销 |
 
 PAT 代表用户本人，但不绕过业务权限：服务端仍校验 Workspace 成员关系、Chat 所有权、Agent invoke 权限以及数字员工 manage-plus-invoke 权限。客户端不能通过 `agent_id` 或请求头切换成另一个用户。
@@ -284,8 +285,8 @@ Claude Code 还支持 `headersHelper`。如果已有一个本机私有程序能�
 | `unbind_digital_employee` | 解绑数字员工 | PAT：`agent_id`；Task Token：无 |
 | `search_agents` | 按名称关键词查询可见 Agent 的非敏感详细信息 | `keyword` |
 | `list_agents` | 获取调用方当前可见的全部活跃 Agent | 无 |
-| `prepare_static_site_deploy` | 为当前 Task Agent 创建 Site 或新 revision，并返回一次性 ZIP upload capability | Task Token：`expected_sha256`、`content_length`；可选 `site_id`、`entrypoint`、`spa_fallback` |
-| `get_static_site_deploy` | 查询当前 Task Agent 拥有的 Site 发布状态 | Task Token：`site_id` |
+| `prepare_static_site_deploy` | 为鉴权用户创建 Site 或新 revision，并返回一次性 ZIP upload capability | API Token 或 Task Token：`expected_sha256`、`content_length`；可选 `site_id`、`entrypoint`、`spa_fallback` |
+| `get_static_site_deploy` | 查询鉴权用户拥有的 Site 发布状态 | API Token 或 Task Token：`site_id` |
 
 可以直接在 Codex、Claude Code、Qoder 或 QoderWork 中用自然语言指定工具和参数，例如：
 
@@ -381,6 +382,8 @@ curl --fail-with-body --silent --show-error \
 
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
+| 2026-08-29 | Site Hosting 工具改为按鉴权用户持有资源，并支持现有 `mul_` API Token；保留 `/api/mcp` 和 Task Token 沙箱调用。 | 解除网站资源与 Agent/Task/Workspace 所有权模型的架构耦合，同时继续复用已有 MCP endpoint 和认证体系。 |
+| 2026-08-29 | 为两个 Site Hosting 工具发布正式 `outputSchema`。 | 与已有稳定返回 `structuredContent` 的 MCP 工具保持一致，让 Codex、Claude Code、Qoder 等客户端能直接解析上传能力和部署状态。 |
 | 2026-08-29 | 补充沙箱内静态 Site 上传的 `upload_path` 与专用 capability 头用法，并说明公网直连兼容形式。 | 本地 relay 使用 `mat_` Task Token 做路由鉴权，Site upload handler 使用 `mhs_` 单次能力；必须分离两个凭据，避免单个 `Authorization` 头冲突。 |
 | 2026-08-29 | 增加 `prepare_static_site_deploy` 和 `get_static_site_deploy`，并链接独立的 [Agent 静态网站托管协议](static-site-hosting.md)。 | 让运行中的 Agent 通过 Task Token 准备独立 Site revision，再用 MCP 之外的原始 ZIP PUT 流式发布静态产物，避免突破 MCP 1 MiB JSON 限制或复用附件协议。 |
 | 2026-08-20 | 增加独立的 **MCP 连接** 设置入口和四客户端一键配置说明，并补充 QoderWork 的 `streamable-http` JSON 导入方式。 | 将 MCP 接入与 API Token 管理解耦，同时明确连接必须提供 API Key，并为 Codex、Claude Code、Qoder、QoderWork 分别创建可独立吊销的短期凭证。 |

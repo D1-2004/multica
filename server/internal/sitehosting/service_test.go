@@ -22,7 +22,7 @@ type memoryStore struct {
 	sites   map[string]SiteStatus
 	active  map[string]ResolvedSite
 	public  map[string]string
-	owner   map[string][2]string
+	owner   map[string]string
 }
 
 func (m *memoryStore) Prepare(_ context.Context, input PrepareRecord) (Upload, error) {
@@ -33,15 +33,15 @@ func (m *memoryStore) Prepare(_ context.Context, input PrepareRecord) (Upload, e
 	}
 	if m.public == nil {
 		m.public = map[string]string{}
-		m.owner = map[string][2]string{}
+		m.owner = map[string]string{}
 	}
 	upload := input.Upload
 	if input.ExistingSiteID == "" {
 		m.public[upload.SiteID] = upload.PublicSiteID
-		m.owner[upload.SiteID] = [2]string{upload.WorkspaceID, upload.OwnerAgentID}
+		m.owner[upload.SiteID] = upload.OwnerUserID
 	} else {
 		owner, ok := m.owner[input.ExistingSiteID]
-		if !ok || owner != [2]string{upload.WorkspaceID, upload.OwnerAgentID} {
+		if !ok || owner != upload.OwnerUserID {
 			return Upload{}, ErrSiteForbidden
 		}
 		upload.PublicSiteID = m.public[input.ExistingSiteID]
@@ -78,9 +78,9 @@ func (m *memoryStore) ActivateRevision(_ context.Context, activation Activation)
 
 func (m *memoryStore) FailRevision(context.Context, string, string) error { return nil }
 
-func (m *memoryStore) GetStatus(_ context.Context, siteID, workspaceID, agentID string) (SiteStatus, error) {
+func (m *memoryStore) GetStatus(_ context.Context, siteID, ownerUserID string) (SiteStatus, error) {
 	status, ok := m.sites[siteID]
-	if !ok || status.WorkspaceID != workspaceID || status.OwnerAgentID != agentID {
+	if !ok || status.OwnerUserID != ownerUserID {
 		return SiteStatus{}, ErrSiteForbidden
 	}
 	return status, nil
@@ -166,13 +166,37 @@ func newTestService(store Store, objects ObjectStore) *Service {
 	return service
 }
 
+func TestPrepareUsesUserOwnershipAcrossCallingClients(t *testing.T) {
+	store := &memoryStore{}
+	service := newTestService(store, &memoryObjectStore{})
+	first, err := service.Prepare(context.Background(), PrepareInput{
+		OwnerUserID: "11111111-1111-1111-1111-111111111111",
+		ExpectedSHA256: strings.Repeat("a", 64), ExpectedLength: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Prepare(context.Background(), PrepareInput{
+		OwnerUserID: "11111111-1111-1111-1111-111111111111",
+		SiteID: first.SiteID, ExpectedSHA256: strings.Repeat("b", 64), ExpectedLength: 1,
+	}); err != nil {
+		t.Fatalf("same user through another client cannot update Site: %v", err)
+	}
+	if _, err := service.Prepare(context.Background(), PrepareInput{
+		OwnerUserID: "44444444-4444-4444-4444-444444444444",
+		SiteID: first.SiteID, ExpectedSHA256: strings.Repeat("c", 64), ExpectedLength: 1,
+	}); !errors.Is(err, ErrSiteForbidden) {
+		t.Fatalf("different user update error=%v", err)
+	}
+}
+
 func TestPrepareRequiresConfiguredSitePublicURL(t *testing.T) {
 	service := NewService(&memoryStore{}, &memoryObjectStore{}, Config{
 		APIBaseURL: "https://api.example.test",
 		Limits:     DefaultLimits(),
 	})
 	_, err := service.Prepare(context.Background(), PrepareInput{
-		WorkspaceID: "w", AgentID: "a", ExpectedSHA256: strings.Repeat("a", 64), ExpectedLength: 1,
+		OwnerUserID: "u", ExpectedSHA256: strings.Repeat("a", 64), ExpectedLength: 1,
 	})
 	if !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("missing Site public URL error=%v", err)
@@ -185,14 +209,13 @@ func TestPrepareDoesNotExposeAuthorityInURL(t *testing.T) {
 	body := zipBytes(t, map[string]string{"index.html": "hello"})
 	sum := sha256.Sum256(body)
 	prepared, err := service.Prepare(context.Background(), PrepareInput{
-		WorkspaceID: "11111111-1111-1111-1111-111111111111",
-		AgentID: "22222222-2222-2222-2222-222222222222",
+		OwnerUserID: "11111111-1111-1111-1111-111111111111",
 		ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{prepared.SiteID, prepared.RevisionID, "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"} {
+	for _, forbidden := range []string{prepared.SiteID, prepared.RevisionID, "11111111-1111-1111-1111-111111111111"} {
 		if strings.Contains(prepared.SiteURL, forbidden) {
 			t.Fatalf("site URL leaks %q: %s", forbidden, prepared.SiteURL)
 		}
@@ -217,7 +240,7 @@ func TestUploadPublishesMultipleFilesAndRejectsTokenReuse(t *testing.T) {
 	})
 	sum := sha256.Sum256(body)
 	prepared, err := service.Prepare(context.Background(), PrepareInput{
-		WorkspaceID: "w", AgentID: "a", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
+		OwnerUserID: "u", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +262,7 @@ func TestUploadRejectsExpiredCapability(t *testing.T) {
 	body := zipBytes(t, map[string]string{"index.html": "hello"})
 	sum := sha256.Sum256(body)
 	prepared, err := service.Prepare(context.Background(), PrepareInput{
-		WorkspaceID: "w", AgentID: "a", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
+		OwnerUserID: "u", ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -274,7 +297,7 @@ func TestUploadRejectsLengthAndSHAWithoutActivation(t *testing.T) {
 				sum := sha256.Sum256(tc.body)
 				sha = hex.EncodeToString(sum[:])
 			}
-			prepared, err := service.Prepare(context.Background(), PrepareInput{WorkspaceID: "w", AgentID: "a", ExpectedSHA256: sha, ExpectedLength: length})
+			prepared, err := service.Prepare(context.Background(), PrepareInput{OwnerUserID: "u", ExpectedSHA256: sha, ExpectedLength: length})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -295,7 +318,7 @@ func TestUploadObjectFailureLeavesPreviousRevisionActive(t *testing.T) {
 	service := newTestService(store, objects)
 	oldBody := zipBytes(t, map[string]string{"index.html": "old"})
 	oldSum := sha256.Sum256(oldBody)
-	oldPrepared, err := service.Prepare(context.Background(), PrepareInput{WorkspaceID: "w", AgentID: "a", ExpectedSHA256: hex.EncodeToString(oldSum[:]), ExpectedLength: int64(len(oldBody))})
+	oldPrepared, err := service.Prepare(context.Background(), PrepareInput{OwnerUserID: "u", ExpectedSHA256: hex.EncodeToString(oldSum[:]), ExpectedLength: int64(len(oldBody))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +327,7 @@ func TestUploadObjectFailureLeavesPreviousRevisionActive(t *testing.T) {
 	}
 	body := zipBytes(t, map[string]string{"index.html": "new", "app.js": "broken"})
 	sum := sha256.Sum256(body)
-	prepared, err := service.Prepare(context.Background(), PrepareInput{WorkspaceID: "w", AgentID: "a", SiteID: oldPrepared.SiteID, ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body))})
+	prepared, err := service.Prepare(context.Background(), PrepareInput{OwnerUserID: "u", SiteID: oldPrepared.SiteID, ExpectedSHA256: hex.EncodeToString(sum[:]), ExpectedLength: int64(len(body))})
 	if err != nil {
 		t.Fatal(err)
 	}
