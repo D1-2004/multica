@@ -60,6 +60,14 @@ The following legacy environment settings are represented by the runtime documen
 
 `runtime.fc_e2b.stable_publisher_user_ids` is also live: both stable-release authorization and developer-first rollout classification read the current Diamond snapshot, so list changes do not require an application release.
 
+`web.site_connect_src` is an optional array of additional HTTPS origins for both the hosted-site CSP `connect-src` directive and the server-side hosted-site fetch proxy origin allowlist. The server always includes `'self'` in CSP and `https://connector.dingtalk.com` in both controls; Diamond can add HTTPS origins but cannot remove either default. At response or proxy-request time values are trimmed and normalized, duplicates are removed, and entries with a non-HTTPS scheme, user info, path, query, fragment, wildcard, or invalid CSP host characters are ignored. A missing, empty, or entirely invalid addition therefore leaves the safe same-origin and DingTalk connector defaults and never produces `*`. An invalid Diamond update retains the previous snapshot. Every hosted-site response and proxy request reads the current runtime snapshot, so accepted listener updates apply without a restart. This setting authorizes origins only: the proxy separately validates the exact HTTPS target, resolved addresses, method, body and response limits, timeout, redirects, and safe headers.
+
+```json
+"site_connect_src": [
+  "https://feedback-api.example.com"
+]
+```
+
 See [the complete example](runtime-config.example.json) for schema version 1.
 
 ## Runtime manifest fingerprint catalog
@@ -100,3 +108,11 @@ See [the complete pricing example](runtime-model-pricing.example.json) and [the 
 8. Publish one harmless, reversible runtime update and verify both replicas switch generation without a release, then restore it.
 
 Never reuse a pre-release document in production. Publish and verify each unit independently.
+
+## Change history
+
+| Date | Change | Reason |
+|---|---|---|
+| 2026-08-30 | Reused `web.site_connect_src` as the hosted-site fetch proxy server-side origin allowlist while retaining the connector default and CSP behavior. | Client exact-URL declarations are untrusted; a live Diamond origin boundary lets the server authorize destinations without adding a second configuration contract. |
+| 2026-08-30 | Added non-removable `'self'` to the hosted-site CSP `connect-src` defaults while retaining the connector domain and Diamond HTTPS origin additions. | Allow hosted feedback pages to use the Multica same-origin proxy without letting Diamond remove either default source. |
+| 2026-08-30 | Added `web.site_connect_src` and the non-removable `https://connector.dingtalk.com` hosted-site CSP default. | Allow hosted feedback pages to call DingTalk AI Table webhooks without relaxing other CSP directives. |

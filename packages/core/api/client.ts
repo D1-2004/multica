@@ -228,6 +228,7 @@ import type {
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
+import type { HostedSite } from "../sitehosting/types";
 import type {
   AccountRunnerBindingList,
   CreateRunnerPairingResponse,
@@ -271,6 +272,7 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
   AgentTaskListSchema,
+  HostedSiteListSchema,
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
@@ -831,6 +833,20 @@ export class ApiClient {
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
       endpoint: "GET /api/me",
     });
+  }
+
+  async listHostedSites(): Promise<HostedSite[]> {
+    const raw = await this.fetch<unknown>("/api/sitehosting/sites");
+    return parseWithFallback(raw, HostedSiteListSchema, [], {
+      endpoint: "GET /api/sitehosting/sites",
+    });
+  }
+
+  async deleteHostedSite(siteId: string): Promise<void> {
+    await this.fetch(
+      `/api/sitehosting/sites/${encodeURIComponent(siteId)}`,
+      { method: "DELETE" },
+    );
   }
 
   async markOnboardingComplete(payload?: {

@@ -102,6 +102,10 @@ type Config struct {
 	// the server into minting webhook URLs pointing at an attacker-controlled
 	// host.
 	PublicURL string
+	// SitePublicURL is the dedicated origin for public-unlisted static sites.
+	// It is never derived from Host or forwarding headers. Production should
+	// use an origin isolated from the authenticated Multica application.
+	SitePublicURL string
 	// FrontendOrigin and AppURL are browser-facing origins. They stay separate
 	// from PublicURL, which is the backend/API origin.
 	FrontendOrigin string
@@ -224,6 +228,7 @@ type Handler struct {
 	LivenessStore           LivenessStore
 	HeartbeatScheduler      HeartbeatScheduler
 	Storage                 storage.Storage
+	SiteHosting             StaticSiteHostingService
 	AgentDispatchHTTPClient *http.Client
 	AgentDispatchKeys       *agentmessagerouter.DispatchKeyring
 	CFSigner                *auth.CloudFrontSigner

@@ -188,6 +188,7 @@ Multica 只提供服务端 endpoint，不拥有 Client 的 MCP 配置：
 
 | 日期 | 变更 | 原因 |
 |---|---|---|
+| 2026-08-29 | `/api/mcp` 新增独立 Site Hosting prepare/get 工具；ZIP 上传继续走 MCP 之外的一次性 capability PUT。 | 静态网站产物可能远超 MCP JSON 限制，且必须与 Chat、附件和 Task 持久模型保持独立。 |
 | 2026-08-24 | 移除服务端 MCP 发布开关，`/api/mcp` 改为默认可用。 | Runtime 在所有环境都公开该命令；服务端可用性必须与能力声明一致，同时继续依赖鉴权、Origin 和业务权限保护。 |
 | 2026-08-07 | 新增 `search_agents` 和 `list_agents`，由服务端推导 Workspace，并按 PAT 用户可见性或 Task Token Workspace 返回非敏感 Agent 详情。 | 让通用 MCP Client 能先通过名称找到 Agent UUID、查看 Agent 元数据，再调用绑定或 Chat 等后续工具，同时避免重新引入客户端 Workspace header 或泄露 Agent 配置凭据。 |
 | 2026-08-07 | PAT 客户端不再传 Workspace header；服务端从目标 Chat 或 Agent 反查 Workspace 并校验成员关系。 | Streamable HTTP Client 的连接初始化不携带业务资源，要求全局 Workspace header 会阻断 Codex 等通用客户端；资源级解析同时避免多 Workspace 用户产生默认选择歧义。 |

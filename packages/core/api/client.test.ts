@@ -8,6 +8,71 @@ afterEach(() => {
   setSchemaLogger(noopLogger);
 });
 
+describe("ApiClient hosted websites", () => {
+  it("lists hosted websites through the validated user endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            site_id: "site-1",
+            public_site_id: "public-1",
+            status: "active",
+            latest_revision_id: "revision-1",
+            latest_status: "active",
+            created_at: "2026-08-29T10:00:00Z",
+            updated_at: "2026-08-29T11:00:00Z",
+            site_url: "https://sites.example.test/sites/public-1/",
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new ApiClient("https://api.example.test").listHostedSites(),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        siteId: "site-1",
+        siteUrl: "https://sites.example.test/sites/public-1/",
+      }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/sitehosting/sites",
+      expect.any(Object),
+    );
+  });
+
+  it("falls back to an empty list for a malformed response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify([{ site_id: "site-1" }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").listHostedSites(),
+    ).resolves.toEqual([]);
+  });
+
+  it("deletes the encoded site ID through the user endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new ApiClient("https://api.example.test").deleteHostedSite("site/id"),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/sitehosting/sites/site%2Fid",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+});
+
 describe("ApiClient DSH trajectory", () => {
   const taskId = "11111111-1111-4111-8111-111111111111";
   const sessionId = "ses-test";

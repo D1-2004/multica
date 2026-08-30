@@ -152,6 +152,47 @@ func TestRelayForwardsTaskScopedMulticaRequests(t *testing.T) {
 	}
 }
 
+func TestRelayOnlyForwardsSiteUploadCapabilityToExactUploadRoute(t *testing.T) {
+	const capabilityHeader = "X-Multica-Site-Upload-Token"
+	const uploadPath = "/api/sitehosting/uploads/3e5a6e52-e486-4f90-98d4-6ef2ee1649bc"
+	seen := make(chan string, 5)
+	upstream := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		seen <- req.Header.Get(capabilityHeader)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	relay, signer, _ := testRelay(t, upstream, nil)
+	token := mintTestToken(t, signer, "mdt_prepub-daemon", "")
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		wantHeader bool
+	}{
+		{name: "exact upload", method: http.MethodPut, path: uploadPath, wantHeader: true},
+		{name: "query", method: http.MethodPut, path: uploadPath + "?redirect=1"},
+		{name: "wrong method", method: http.MethodPost, path: uploadPath},
+		{name: "non uuid", method: http.MethodPut, path: "/api/sitehosting/uploads/not-a-uuid"},
+		{name: "other api", method: http.MethodGet, path: "/api/issues/issue-1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := httptest.NewRequest(test.method, test.path, nil)
+			req.Header.Set("Authorization", "Bearer mat_task-token")
+			req.Header.Set(capabilityHeader, "mhs_upload-capability")
+			req.Header.Set(protocol.SandboxRelayTokenHeader, token)
+			recorder := httptest.NewRecorder()
+			relay.Middleware(http.NotFoundHandler()).ServeHTTP(recorder, req)
+			if recorder.Code != http.StatusNoContent {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			got := <-seen
+			if (got != "") != test.wantHeader {
+				t.Fatalf("capability header present=%t, want %t", got != "", test.wantHeader)
+			}
+		})
+	}
+}
+
 func TestRelayRequiresDaemonAuthorizationForLLMTrace(t *testing.T) {
 	const daemonToken = "mdt_prepub-daemon"
 	var upstreamCalls atomic.Int32
