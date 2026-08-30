@@ -176,6 +176,9 @@ func TestServePublicSiteReturnsInlineHTMLAndAssetsWithSecurityHeaders(t *testing
 		}
 	}
 	csp := rootResponse.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
+		t.Fatalf("hosted-site CSP should allow inline scripts: %q", csp)
+	}
 	if !strings.Contains(csp, "connect-src 'self' https://connector.dingtalk.com") || strings.Contains(csp, "connect-src 'none'") {
 		t.Fatalf("unexpected hosted-site CSP %q", csp)
 	}
