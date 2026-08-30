@@ -240,7 +240,7 @@ func setPublicSecurityHeaders(header http.Header, configured []string) {
 		seen[source] = struct{}{}
 		connectSources = append(connectSources, source)
 	}
-	header.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src "+strings.Join(connectSources, " ")+"; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+	header.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src "+strings.Join(connectSources, " ")+"; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 	header.Set("X-Content-Type-Options", "nosniff")
 	header.Set("Referrer-Policy", "no-referrer")
 	header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
