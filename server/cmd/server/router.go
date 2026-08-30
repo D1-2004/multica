@@ -47,6 +47,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -392,6 +393,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		DisableWorkspaceCreation:      os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		VCSIntegrationEnabled:         os.Getenv("MULTICA_VCS_INTEGRATION_ENABLED") == "true",
 		PublicURL:                     strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
+		SitePublicURL:                 strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_SITE_PUBLIC_URL")), "/"),
 		FrontendOrigin:                strings.TrimRight(strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN")), "/"),
 		AppURL:                        appURLFromEnv(),
 		LoginProviders:                handler.LoginProviders(),
@@ -418,11 +420,23 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	var appURLProvider func() string
 	var publicURLProvider func() string
+	var siteConnectSrcProvider func() []string
 	if opts.RuntimeConfig != nil {
 		appURLProvider = opts.RuntimeConfig.appURL
 		publicURLProvider = opts.RuntimeConfig.publicURL
+		siteConnectSrcProvider = opts.RuntimeConfig.siteConnectSrc
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.SiteHosting = sitehosting.NewService(
+		sitehosting.NewPostgresStore(pool),
+		sitehosting.NewStorageObjectStore(store),
+		sitehosting.Config{
+			APIBaseURL:         signupConfig.PublicURL,
+			SitePublicURL:      signupConfig.SitePublicURL,
+			ConnectSrcProvider: siteConnectSrcProvider,
+			Limits:             sitehosting.DefaultLimits(),
+		},
+	)
 	if pushKey, pushKeyErr := secretbox.LoadKey("MULTICA_A2A_PUSH_SECRET_KEY"); pushKeyErr == nil {
 		pushSecrets, boxErr := secretbox.New(pushKey)
 		if boxErr != nil {
@@ -1676,6 +1690,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// Public API
 	r.Get("/api/config", h.GetConfig)
 	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
+	// Static Site uploads authenticate with their own short-lived, single-use
+	// capability. Public reads are intentionally unlisted and do not use a
+	// Multica session. Neither route derives tenant context from the URL.
+	r.Put("/api/sitehosting/uploads/{uploadId}", h.UploadStaticSite)
+	r.Get("/api/sitehosting/runtime/fetch-proxy.js", h.ServeStaticSiteFetchProxyRuntime)
+	r.Head("/api/sitehosting/runtime/fetch-proxy.js", h.ServeStaticSiteFetchProxyRuntime)
+	r.Post("/api/sitehosting/sites/{publicSiteId}/fetch-proxy", h.ProxyStaticSiteFetch)
+	r.Get("/sites/{publicSiteId}", h.ServeStaticSite)
+	r.Get("/sites/{publicSiteId}/", h.ServeStaticSite)
+	r.Get("/sites/{publicSiteId}/*", h.ServeStaticSite)
+	r.Head("/sites/{publicSiteId}", h.ServeStaticSite)
+	r.Head("/sites/{publicSiteId}/", h.ServeStaticSite)
+	r.Head("/sites/{publicSiteId}/*", h.ServeStaticSite)
 	// DingTalk interactive-card HTTP callback. The flow id selects the fixed
 	// DingTalk connector path while the original body bytes remain unchanged.
 	r.Post(dingTalkCardCallbackPath, dingTalkCardCallbackHandler(
@@ -1831,6 +1858,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
 		r.With(handler.RequireHumanActor).Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
 		r.With(handler.RequireHumanActor).Post("/api/cli-token", h.IssueCliToken)
+		r.With(handler.RequireHumanActor).Get("/api/sitehosting/sites", h.ListStaticSites)
+		r.With(handler.RequireHumanActor).Delete("/api/sitehosting/sites/{siteId}", h.DeleteStaticSite)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
 		r.Get("/api/runtimes/fc-e2b/stable-channel", h.GetFCE2BStableChannel)

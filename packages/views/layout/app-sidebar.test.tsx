@@ -131,6 +131,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     agents: () => "/acme/agents",
     squads: () => "/acme/squads",
     usage: () => "/acme/usage",
+    sites: () => "/acme/sites",
     runtimes: () => "/acme/runtimes",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
@@ -188,6 +189,15 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   },
   useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: vi.fn() }),
 }));
+
+describe("workspace nav — Websites", () => {
+  it("renders a Websites link in the primary workspace section", () => {
+    const { container } = render(<AppSidebar />);
+    expect(
+      container.querySelector('button[data-href="/acme/sites"]'),
+    ).not.toBeNull();
+  });
+});
 
 describe("PinRow", () => {
   beforeEach(() => {

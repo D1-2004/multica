@@ -206,6 +206,7 @@ API 返回的 `download_url` 在未配置 CloudFront 签名时会指向 `GET /ap
 | `FRONTEND_ORIGIN` | 空 | 前端地址。邀请邮件里的链接、CORS 白名单、cookie domain 都从这里推导。邮件链接在不设时会 fallback 到托管版域名 `https://multica.ai`——self-host 必须显式填 |
 | `MULTICA_APP_URL` | 空 | CLI 登录流程使用的前端 URL。Web UI 也会用它显示带你自己 app domain 的 self-host 守护进程 setup 命令；同源部署中，如果 `MULTICA_PUBLIC_URL` 未设置，它也会作为守护进程的 `server_url` |
 | `MULTICA_PUBLIC_URL` | 空 | 公开 API URL，不带结尾 slash。用于 autopilot webhook URL，也会被 Web UI 用作守护进程的 `server_url` |
+| `MULTICA_SITE_PUBLIC_URL` | 空 | Agent 静态 Site 的独立公开 origin；不设置时托管能力不可用。本地开发仅允许 loopback HTTP，外网环境必须使用 HTTPS，并与已登录的 Multica 主应用 origin 隔离 |
 | `CORS_ALLOWED_ORIGINS` | 空 | 额外的 CORS 允许来源（逗号分隔）|
 | `ALLOWED_ORIGINS` | 空 | WebSocket 专用的 origin 白名单（逗号分隔）；不设就按 `CORS_ALLOWED_ORIGINS` → `FRONTEND_ORIGIN` → `localhost:3000/5173/5174` 顺序回落 |
 
@@ -253,3 +254,9 @@ API 返回的 `download_url` 在未配置 CloudFront 签名时会指向 `GET /ap
 - [GitHub 集成](/github-integration) —— `GITHUB_APP_SLUG` / `GITHUB_WEBHOOK_SECRET` 背后的 GitHub App 怎么建
 - [故障排查](/troubleshooting) —— 配错了常见的症状和修复
 - [守护进程与运行时](/daemon-runtimes) —— `MULTICA_DAEMON_*` 参数的行为含义
+
+## 变更历史
+
+| 日期 | 变更 | 原因 |
+| --- | --- | --- |
+| 2026-08-29 | 增加 `MULTICA_SITE_PUBLIC_URL` 及独立 origin 要求。 | Agent 托管的 JavaScript 属于公开不可信内容，外网部署不能从请求 Host 猜测 URL，也不能长期与已登录主应用共享 origin。 |

@@ -7,11 +7,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
+	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -106,6 +108,8 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 		"unbind_digital_employee",
 		"search_agents",
 		"list_agents",
+		"prepare_static_site_deploy",
+		"get_static_site_deploy",
 	}
 	if len(tools) != len(wantNames) {
 		t.Fatalf("tools=%#v", tools)
@@ -115,6 +119,12 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 		if tool["name"] != wantName {
 			t.Fatalf("tool[%d].name=%#v want %q", index, tool["name"], wantName)
 		}
+		if wantName == multicaMCPPrepareStaticSiteTool || wantName == multicaMCPGetStaticSiteTool {
+			outputSchema, ok := tool["outputSchema"].(map[string]any)
+			if !ok || outputSchema["type"] != "object" {
+				t.Fatalf("%s outputSchema=%#v", wantName, tool["outputSchema"])
+			}
+		}
 		if wantName == multicaMCPChatSendTool || wantName == multicaMCPAgentSearchTool || wantName == multicaMCPAgentListTool {
 			continue
 		}
@@ -122,13 +132,106 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 		if _, exists := properties["workspace_id"]; exists {
 			t.Fatalf("%s exposes caller-controlled workspace_id", wantName)
 		}
-		if _, exists := properties["agent_id"]; !exists {
-			t.Fatalf("%s does not expose the PAT Agent selector", wantName)
+		if _, exists := properties["task_id"]; exists {
+			t.Fatalf("%s exposes caller-controlled task_id", wantName)
+		}
+		if strings.Contains(wantName, "digital_employee") {
+			if _, exists := properties["agent_id"]; !exists {
+				t.Fatalf("%s does not expose the PAT Agent selector", wantName)
+			}
+		} else if _, exists := properties["agent_id"]; exists {
+			t.Fatalf("%s exposes caller-controlled agent_id", wantName)
 		}
 	}
 	description, _ := tools[0].(map[string]any)["description"].(string)
 	if !strings.Contains(description, "Authorized server-provided Multica action") {
 		t.Fatalf("tool description does not identify the managed authorization boundary: %q", description)
+	}
+}
+
+type fakeSiteHostingService struct {
+	prepareInput      sitehosting.PrepareInput
+	statusOwnerUserID string
+}
+
+func (f *fakeSiteHostingService) Prepare(_ context.Context, input sitehosting.PrepareInput) (sitehosting.PreparedDeploy, error) {
+	f.prepareInput = input
+	return sitehosting.PreparedDeploy{
+		SiteID: "site-id", RevisionID: "revision-id", UploadID: "upload-id",
+		UploadPath: "/api/sitehosting/uploads/upload-id", UploadTokenHeader: "X-Multica-Site-Upload-Token",
+		UploadURL: "https://api.example.test/api/sitehosting/uploads/upload-id",
+		UploadMethod: "PUT", UploadToken: "mhs_secret", ExpiresAt: time.Unix(1_800_000_600, 0).UTC(),
+		Archive: "zip", Entrypoint: "index.html", SiteURL: "https://sites.example.test/sites/public-id/",
+	}, nil
+}
+
+func (f *fakeSiteHostingService) GetStatus(_ context.Context, siteID, ownerUserID string) (sitehosting.SiteStatus, error) {
+	f.statusOwnerUserID = ownerUserID
+	return sitehosting.SiteStatus{SiteID: siteID, PublicSiteID: "public-id", Status: "active", LatestRevisionID: "revision-id", LatestStatus: "active", SiteURL: "https://sites.example.test/sites/public-id/"}, nil
+}
+
+func (f *fakeSiteHostingService) ListSites(context.Context, string) ([]sitehosting.SiteStatus, error) {
+	return nil, nil
+}
+
+func (f *fakeSiteHostingService) DeleteSite(context.Context, string, string) error {
+	return nil
+}
+
+func (f *fakeSiteHostingService) HandleUpload(http.ResponseWriter, *http.Request, string) {}
+func (f *fakeSiteHostingService) ServePublic(http.ResponseWriter, *http.Request, string, string) {}
+func (f *fakeSiteHostingService) ServeFetchProxyRuntime(http.ResponseWriter, *http.Request) {}
+func (f *fakeSiteHostingService) HandleFetchProxy(http.ResponseWriter, *http.Request, string) {}
+
+func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
+	service := &fakeSiteHostingService{}
+	h := testMulticaMCPHandler(t)
+	h.SiteHosting = service
+	response := httptest.NewRecorder()
+	h.MulticaMCP(response, mcpRequest(t, "tools/call", "prepare-site", map[string]any{
+		"name": "prepare_static_site_deploy",
+		"arguments": map[string]any{
+			"expected_sha256": strings.Repeat("a", 64),
+			"content_length": 1234,
+		},
+	}))
+	if response.Code != http.StatusOK {
+		t.Fatalf("prepare status=%d body=%s", response.Code, response.Body.String())
+	}
+	if service.prepareInput.OwnerUserID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("authority=%#v", service.prepareInput)
+	}
+	result := decodeMCPResponse(t, response)["result"].(map[string]any)
+	structured := result["structuredContent"].(map[string]any)
+	if structured["upload_token"] != "mhs_secret" || structured["upload_method"] != "PUT" ||
+		structured["upload_path"] != "/api/sitehosting/uploads/upload-id" ||
+		structured["upload_token_header"] != "X-Multica-Site-Upload-Token" {
+		t.Fatalf("structuredContent=%#v", structured)
+	}
+	statusResponse := httptest.NewRecorder()
+	h.MulticaMCP(statusResponse, mcpRequest(t, "tools/call", "get-site", map[string]any{
+		"name": "get_static_site_deploy",
+		"arguments": map[string]any{"site_id": "site-id"},
+	}))
+	statusResult := decodeMCPResponse(t, statusResponse)["result"].(map[string]any)["structuredContent"].(map[string]any)
+	if statusResult["site_id"] != "site-id" || statusResult["site_url"] != "https://sites.example.test/sites/public-id/" {
+		t.Fatalf("get status=%#v", statusResult)
+	}
+	if service.statusOwnerUserID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("status owner user=%q", service.statusOwnerUserID)
+	}
+
+	personalResponse := httptest.NewRecorder()
+	h.MulticaMCP(personalResponse, personalMCPRequest(t, "tools/call", "prepare-site-pat", map[string]any{
+		"name": "prepare_static_site_deploy",
+		"arguments": map[string]any{"expected_sha256": strings.Repeat("a", 64), "content_length": 1234},
+	}))
+	if personalResponse.Code != http.StatusOK {
+		t.Fatalf("PAT prepare status=%d body=%s", personalResponse.Code, personalResponse.Body.String())
+	}
+	personalResult := decodeMCPResponse(t, personalResponse)["result"].(map[string]any)
+	if personalResult["isError"] == true || service.prepareInput.OwnerUserID != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("PAT prepare result=%#v authority=%#v", personalResult, service.prepareInput)
 	}
 }
 

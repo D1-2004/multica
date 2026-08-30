@@ -237,6 +237,13 @@ func (c *appRuntimeConfig) publicURL() string {
 	return c.current().Web.PublicURL
 }
 
+func (c *appRuntimeConfig) siteConnectSrc() []string {
+	if c == nil {
+		return nil
+	}
+	return append([]string(nil), c.current().Web.SiteConnectSrc...)
+}
+
 func (c *appRuntimeConfig) corsAllowedOrigins() []string {
 	if c == nil {
 		return nil
