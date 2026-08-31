@@ -80,13 +80,22 @@ func TestPostgresStoreKeepsUserOwnershipAndSwitchesRevisionAtomically(t *testing
 			t.Fatalf("apply %s: %v", matches[0], err)
 		}
 	}
+	workspaceIndexMigration, err := os.ReadFile("../../migrations/9093_hosted_site_workspace_user_index.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(workspaceIndexMigration)); err != nil {
+		t.Fatalf("apply workspace index migration: %v", err)
+	}
 
 	store := NewPostgresStore(pool)
 	ownerUserID := uuid.NewString()
+	workspaceID := uuid.NewString()
+	otherWorkspaceID := uuid.NewString()
 	now := time.Now().UTC()
 	first := Upload{
 		ID: uuid.NewString(), SiteID: uuid.NewString(), PublicSiteID: "public-opaque-id",
-		RevisionID: uuid.NewString(), OwnerUserID: ownerUserID,
+		RevisionID: uuid.NewString(), OwnerUserID: ownerUserID, WorkspaceID: workspaceID,
 		TokenHash: []byte(strings.Repeat("a", 32)), ExpectedSHA256: strings.Repeat("1", 64),
 		ExpectedLength: 123, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute),
 	}
@@ -96,7 +105,7 @@ func TestPostgresStoreKeepsUserOwnershipAndSwitchesRevisionAtomically(t *testing
 	}
 	if _, err := store.Prepare(ctx, PrepareRecord{
 		ExistingSiteID: created.SiteID,
-		Upload: Upload{ID: uuid.NewString(), SiteID: created.SiteID, RevisionID: uuid.NewString(), OwnerUserID: uuid.NewString(), TokenHash: []byte(strings.Repeat("b", 32)), ExpectedSHA256: strings.Repeat("2", 64), ExpectedLength: 1, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)},
+		Upload: Upload{ID: uuid.NewString(), SiteID: created.SiteID, RevisionID: uuid.NewString(), OwnerUserID: uuid.NewString(), WorkspaceID: workspaceID, TokenHash: []byte(strings.Repeat("b", 32)), ExpectedSHA256: strings.Repeat("2", 64), ExpectedLength: 1, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)},
 	}); !errors.Is(err, ErrSiteForbidden) {
 		t.Fatalf("cross-user prepare error=%v", err)
 	}
@@ -107,7 +116,7 @@ func TestPostgresStoreKeepsUserOwnershipAndSwitchesRevisionAtomically(t *testing
 	if _, err := store.ClaimUpload(ctx, first.ID, first.TokenHash, now); !errors.Is(err, ErrUploadCapabilityInvalid) {
 		t.Fatalf("reused capability error=%v", err)
 	}
-	manifest := Manifest{Entrypoint: "index.html", TotalBytes: 2, Files: map[string]ArchiveFile{"index.html": {Path: "index.html", Size: 2, ContentType: "text/html; charset=utf-8", ETag: `"etag"`}}}
+	manifest := Manifest{Entrypoint: "index.html", Title: "Weekly Review", TotalBytes: 2, Files: map[string]ArchiveFile{"index.html": {Path: "index.html", Size: 2, ContentType: "text/html; charset=utf-8", ETag: `"etag"`}}}
 	if err := store.ActivateRevision(ctx, Activation{UploadID: first.ID, SiteID: first.SiteID, PublicSiteID: first.PublicSiteID, RevisionID: claimed.RevisionID, Manifest: manifest, ArchiveSHA: strings.Repeat("1", 64), ActivatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +124,23 @@ func TestPostgresStoreKeepsUserOwnershipAndSwitchesRevisionAtomically(t *testing
 	if err != nil || resolved.RevisionID != first.RevisionID {
 		t.Fatalf("first resolve=%#v err=%v", resolved, err)
 	}
+	sites, err := store.ListSites(ctx, ownerUserID, workspaceID)
+	if err != nil || len(sites) != 1 || sites[0].SiteID != first.SiteID || sites[0].Title != "Weekly Review" {
+		t.Fatalf("workspace sites=%#v err=%v", sites, err)
+	}
+	sites, err = store.ListSites(ctx, ownerUserID, otherWorkspaceID)
+	if err != nil || len(sites) != 0 {
+		t.Fatalf("other workspace sites=%#v err=%v", sites, err)
+	}
 
-	second := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), OwnerUserID: ownerUserID, TokenHash: []byte(strings.Repeat("c", 32)), ExpectedSHA256: strings.Repeat("3", 64), ExpectedLength: 50, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
+	if _, err := store.Prepare(ctx, PrepareRecord{
+		ExistingSiteID: created.SiteID,
+		Upload: Upload{ID: uuid.NewString(), SiteID: created.SiteID, RevisionID: uuid.NewString(), OwnerUserID: ownerUserID, WorkspaceID: otherWorkspaceID, TokenHash: []byte(strings.Repeat("e", 32)), ExpectedSHA256: strings.Repeat("5", 64), ExpectedLength: 1, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)},
+	}); !errors.Is(err, ErrSiteForbidden) {
+		t.Fatalf("cross-workspace prepare error=%v", err)
+	}
+
+	second := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), OwnerUserID: ownerUserID, WorkspaceID: workspaceID, TokenHash: []byte(strings.Repeat("c", 32)), ExpectedSHA256: strings.Repeat("3", 64), ExpectedLength: 50, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
 	second, err = store.Prepare(ctx, PrepareRecord{ExistingSiteID: first.SiteID, Upload: second})
 	if err != nil {
 		t.Fatal(err)
@@ -131,14 +155,17 @@ func TestPostgresStoreKeepsUserOwnershipAndSwitchesRevisionAtomically(t *testing
 	if err != nil || resolved.RevisionID != first.RevisionID {
 		t.Fatalf("failed revision changed active resolve=%#v err=%v", resolved, err)
 	}
-	status, err := store.GetStatus(ctx, first.SiteID, ownerUserID)
-	if err != nil || status.LatestRevisionID != second.RevisionID || status.LatestStatus != "failed" {
+	status, err := store.GetStatus(ctx, first.SiteID, ownerUserID, workspaceID)
+	if err != nil || status.Title != "Weekly Review" || status.LatestRevisionID != second.RevisionID || status.LatestStatus != "failed" {
 		t.Fatalf("status=%#v err=%v", status, err)
 	}
-	if _, err := store.GetStatus(ctx, first.SiteID, uuid.NewString()); !errors.Is(err, ErrSiteForbidden) {
+	if _, err := store.GetStatus(ctx, first.SiteID, uuid.NewString(), workspaceID); !errors.Is(err, ErrSiteForbidden) {
 		t.Fatalf("non-owner status error=%v", err)
 	}
-	third := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), OwnerUserID: ownerUserID, TokenHash: []byte(strings.Repeat("d", 32)), ExpectedSHA256: strings.Repeat("4", 64), ExpectedLength: 60, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
+	if _, err := store.GetStatus(ctx, first.SiteID, ownerUserID, otherWorkspaceID); !errors.Is(err, ErrSiteForbidden) {
+		t.Fatalf("cross-workspace status error=%v", err)
+	}
+	third := Upload{ID: uuid.NewString(), SiteID: first.SiteID, RevisionID: uuid.NewString(), OwnerUserID: ownerUserID, WorkspaceID: workspaceID, TokenHash: []byte(strings.Repeat("d", 32)), ExpectedSHA256: strings.Repeat("4", 64), ExpectedLength: 60, Entrypoint: "index.html", ExpiresAt: now.Add(time.Minute)}
 	third, err = store.Prepare(ctx, PrepareRecord{ExistingSiteID: first.SiteID, Upload: third})
 	if err != nil {
 		t.Fatal(err)

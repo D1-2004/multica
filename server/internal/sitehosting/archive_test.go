@@ -3,6 +3,7 @@ package sitehosting
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,40 @@ func TestValidateArchiveAcceptsStaticSite(t *testing.T) {
 	}
 	if manifest.Files["index.html"].ContentType != "text/html; charset=utf-8" {
 		t.Fatalf("index content type=%q", manifest.Files["index.html"].ContentType)
+	}
+}
+
+func TestValidateArchiveExtractsEntrypointTitle(t *testing.T) {
+	archivePath := writeTestZIP(t, zipEntry{
+		name: "public/start.html",
+		body: "<!doctype html><html><head><title>  Weekly &amp; Review\n </title></head><body></body></html>",
+	})
+
+	manifest, err := ValidateArchive(archivePath, DefaultLimits(), "public/start.html")
+	if err != nil {
+		t.Fatalf("ValidateArchive: %v", err)
+	}
+	payload, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Title != "Weekly & Review" {
+		t.Fatalf("manifest does not contain normalized HTML title: %s", payload)
+	}
+}
+
+func TestValidateArchiveLimitsEntrypointTitle(t *testing.T) {
+	archivePath := writeTestZIP(t, zipEntry{
+		name: "index.html",
+		body: "<title>" + strings.Repeat("界", 600) + "</title>",
+	})
+
+	manifest, err := ValidateArchive(archivePath, DefaultLimits(), "index.html")
+	if err != nil {
+		t.Fatalf("ValidateArchive: %v", err)
+	}
+	if len([]rune(manifest.Title)) != 200 {
+		t.Fatalf("title rune count=%d", len([]rune(manifest.Title)))
 	}
 }
 
