@@ -322,6 +322,8 @@ func (h *Handler) executeAgentDispatchV2(
 	plan agentDispatchExecutionPlan,
 	dispatchContext agentDispatchContext,
 ) {
+	h.recordAssocInboundEvent(r.Context(), command, dispatchContext)
+
 	if plan.MaterializerType == protocol.DispatchSurfaceTypeChat {
 		if command.Continuation != nil &&
 			(command.Continuation.Kind != "chat" || strings.TrimSpace(command.Continuation.ChatSessionID) == "") {
@@ -913,6 +915,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	issueID := uuidToString(result.Issue.ID)
 	taskID := uuidToString(result.EnqueuedTask.ID)
 	issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
+	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueID, result.Issue.Title, taskID)
 	if decision.Action == inboundcoord.ActionIssue &&
 		h.TaskService != nil &&
 		c.CompletionCallback != nil &&
@@ -1107,6 +1110,7 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	issueIDString := uuidToString(issue.ID)
 	commentID := uuidToString(result.Comment.ID)
 	taskID := uuidToString(result.Task.ID)
+	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueIDString, issue.Title, taskID)
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "created_follow_up",
 		"protocol", "dispatch_command_v2",

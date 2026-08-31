@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS assoc_edge_id_idx;

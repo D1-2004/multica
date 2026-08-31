@@ -23,6 +23,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
@@ -428,6 +429,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		siteConnectSrcProvider = opts.RuntimeConfig.siteConnectSrc
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.Assoc = assoc.NewService(assoc.NewSQLStore(pool))
 	h.SiteHosting = sitehosting.NewService(
 		sitehosting.NewPostgresStore(pool),
 		sitehosting.NewStorageObjectStore(store),
@@ -2176,6 +2178,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
+			r.Get("/api/assoc/recall", h.RecallAssoc)
+			r.Post("/api/assoc/bind-outbound", h.BindAssocOutbound)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
