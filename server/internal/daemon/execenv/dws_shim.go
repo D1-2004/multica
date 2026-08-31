@@ -239,45 +239,93 @@ var evidenceIDKeys = []string{"openMsgId", "openMessageId", "open_msg_id", "evid
 func ExtractConversationFromTool(command, output string, input map[string]any) (conversationID, evidenceID string) {
 	conversationID, evidenceID = ExtractDWSReceipt(output)
 	if conversationID == "" {
+		conversationID, evidenceID = ExtractDWSReceipt(command)
+	}
+	if conversationID == "" || evidenceID == "" {
+		gotCID, gotEvidence := harvestJSONReceipt(input, 3)
+		if conversationID == "" {
+			conversationID = gotCID
+		}
+		if evidenceID == "" {
+			evidenceID = gotEvidence
+		}
+	}
+	if !plausibleConversationOrEvidenceID(conversationID) {
 		conversationID = lookupString(input, conversationIDKeys, 3)
 	}
+	if !plausibleConversationOrEvidenceID(conversationID) {
+		conversationID = ""
+	}
 	if conversationID == "" {
-		if parsed, _ := ParseDWSSendConversation(strings.Fields(command)); parsed != "" {
+		if parsed, _ := ParseDWSSendConversation(strings.Fields(command)); plausibleConversationOrEvidenceID(parsed) {
 			conversationID = parsed
 		}
 	}
-	if evidenceID == "" {
+	if !plausibleConversationOrEvidenceID(evidenceID) {
 		evidenceID = lookupString(input, evidenceIDKeys, 3)
 	}
+	if !plausibleConversationOrEvidenceID(evidenceID) {
+		evidenceID = ""
+	}
 	return conversationID, evidenceID
+}
+
+func harvestJSONReceipt(v any, depth int) (conversationID, evidenceID string) {
+	if v == nil || depth < 0 {
+		return "", ""
+	}
+	switch t := v.(type) {
+	case string:
+		return ExtractDWSReceipt(t)
+	case map[string]any:
+		for _, raw := range t {
+			cid, evid := harvestJSONReceipt(raw, depth-1)
+			if plausibleConversationOrEvidenceID(cid) {
+				return cid, evid
+			}
+		}
+	}
+	return "", ""
 }
 
 func lookupString(v any, keys []string, depth int) string {
 	if v == nil || depth < 0 {
 		return ""
 	}
-	switch t := v.(type) {
-	case string:
-		return strings.TrimSpace(t)
-	case map[string]any:
-		for _, key := range keys {
-			raw, ok := t[key]
-			if !ok {
-				continue
-			}
-			if s, ok := raw.(string); ok {
-				if s = strings.TrimSpace(s); s != "" {
-					return s
-				}
-			}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return ""
+	}
+	for _, key := range keys {
+		raw, ok := m[key]
+		if !ok {
+			continue
 		}
-		for _, raw := range t {
-			if got := lookupString(raw, keys, depth-1); got != "" {
-				return got
+		if s, ok := raw.(string); ok {
+			if s = strings.TrimSpace(s); plausibleConversationOrEvidenceID(s) {
+				return s
 			}
 		}
 	}
+	for _, raw := range m {
+		if got := lookupString(raw, keys, depth-1); got != "" {
+			return got
+		}
+	}
 	return ""
+}
+
+// plausibleConversationOrEvidenceID rejects tool command text that the
+// recursive JSON walk used to treat as a conversation id.
+func plausibleConversationOrEvidenceID(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.ContainsAny(s, " \t\n") {
+		return false
+	}
+	if strings.HasPrefix(s, "$") || strings.Contains(s, "dws") || strings.Contains(s, "--") {
+		return false
+	}
+	return true
 }
 
 func extractJSONString(body, key string) string {

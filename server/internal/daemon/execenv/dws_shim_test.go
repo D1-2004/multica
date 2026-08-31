@@ -86,6 +86,26 @@ func TestExtractConversationFromToolPrefersReceiptThenArgv(t *testing.T) {
 	}
 }
 
+func TestExtractConversationFromToolIgnoresCommandText(t *testing.T) {
+	t.Parallel()
+	cid, _ := ExtractConversationFromTool(
+		`Bash`,
+		`ok`,
+		map[string]any{"command": `dws chat message send --user 103262 --content 今晚吃什么`},
+	)
+	if cid != "" {
+		t.Fatalf("command text must not become cid, got %q", cid)
+	}
+	cid, mid := ExtractConversationFromTool(
+		`Bash`,
+		`{"openConversationId":"cid+live==","openMsgId":"msg-live"}`,
+		map[string]any{"command": `dws chat message send --user 103262 --content 今晚吃什么`},
+	)
+	if cid != "cid+live==" || mid != "msg-live" {
+		t.Fatalf("receipt cid=%q mid=%q", cid, mid)
+	}
+}
+
 func TestEnsureDWSShimWritesUnixScript(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix shim")

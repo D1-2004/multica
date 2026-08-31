@@ -115,6 +115,38 @@ func TestBindAssocOutboundFromToolLinksReceipt(t *testing.T) {
 	}
 }
 
+func TestBindAssocOutboundFromToolIgnoresCommandTextAsCID(t *testing.T) {
+	store := assoc.NewMemory()
+	h := &Handler{Assoc: assoc.NewService(store)}
+	ws := "22222222-2222-2222-2222-222222222222"
+	ag := parseUUID("11111111-1111-1111-1111-111111111111")
+	issue := parseUUID("33333333-3333-3333-3333-333333333333")
+	task := db.AgentTaskQueue{
+		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
+		AgentID: ag,
+		IssueID: issue,
+	}
+	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+		Type:    "tool",
+		Tool:    "Bash",
+		Content: "dws chat message send --user 103262 --content 今晚吃什么",
+		Input:   map[string]any{"command": "dws chat message send --user 103262 --content 今晚吃什么"},
+		Output:  "ok",
+	})
+	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
+		WorkspaceID: ws,
+		AgentID:     uuidToString(ag),
+		IssueID:     uuidToString(issue),
+		Since:       time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 0 {
+		t.Fatalf("command text must not bind: %+v", got.Items)
+	}
+}
+
 func TestBindAssocOutboundFromToolIgnoresList(t *testing.T) {
 	store := assoc.NewMemory()
 	h := &Handler{Assoc: assoc.NewService(store)}
