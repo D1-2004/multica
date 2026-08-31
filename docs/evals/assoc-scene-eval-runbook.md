@@ -78,3 +78,22 @@ Hard gates:
 
 Log tail is replica-local. Search both replicas for
 `assoc_outbound_bound` and `channel_issue_scene_associated`.
+
+## Live 2026-09-01 night (`ASSOC-RECALL-20260901-*`)
+
+Deploy `3106124116` then cid-fix `3106125466` (`63539acae`) to 预发 SUCCESS.
+
+### What recall now proves
+
+| Case | Result | Evidence |
+|---|---|---|
+| inbound-robot-cid-recall | pass (yufa 须莫v7) | `GET /api/assoc/recall?agent_id=167f831a-…&conversation_id=cidSm1NCubK/hXS0KZD5mcnyhnahD7EYWuOj9VNdQGJB9I=&since=48h` returns WS-177 and WS-179. origin.rel=`spawned_from`. Log `channel_issue_scene_associated` at 01:58:52 |
+| recency-ranks-waiting-matter-first | pass (same cid) | WS-179 (咖啡) ranks with WS-177 (后天中午) on the robot cid |
+| coordinator-issue-ack-not-delivery | pass | 02:20:18 ack `我先去问冬翔这周五下午想喝咖啡还是茶` has no receipt |
+| robot-outbound-dws-to-dongxiang | pass with identity caveat | 02:21:17 `冬翔，问一下：这周五下午想喝咖啡还是茶？` in `cid+VOvOesfvV1iiamAjNX9LgGnI308z0+dpCJE8TWFoUM=` (夏东翔 DWS), not `cid+bEFv7ngm9n79Q1vL9HYJw==` (东翔测试号) |
+| outbound-cid-recall-after-dws | fail | After refusing command-as-cid, bind skipped: `assoc_outbound_bind_skipped reason=missing_conversation_id`. Recall of the live outbound cid is empty |
+| FDE教练 → yufa 须莫v10 | fail / blocked | Robot `DiiD01p03EN0Nv2UWmMN7xXko7mbcr2vyo` is installation `556d2042`, not yufa 须莫v10 `247ed5dd` / `dinge2kjpwwzf2ljmxlf`. Issue `a7e2e5af` is not in 菲迪's yufa/pre-testing workspaces |
+
+### Remaining recall optimization
+
+Sandbox `dws chat message send --user …` often stores the argv, not `openConversationId`, in tool output. Bind must keep skipping that, and still recover the receipt JSON when it is present. Do not treat assistant `已通过钉钉给冬翔发出确认消息` as a hit.
