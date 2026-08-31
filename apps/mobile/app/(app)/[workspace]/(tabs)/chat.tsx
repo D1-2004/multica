@@ -317,22 +317,24 @@ export default function ChatTab() {
               ? {
                   ...message,
                   id: result.message_id,
-                  task_id: result.task_id,
+                  task_id: result.task_id ?? null,
                   created_at: result.created_at,
                 }
               : message,
           ),
         );
-        seedAcceptedPendingTask(qc, {
-          chat_session_id: sessionId,
-          task_id: result.task_id,
-          created_at: result.created_at,
-          message_id: result.message_id,
-          content,
-          optimistic_task_id: optimisticTaskId,
-          supports_queue: result.supports_queue,
-          queued: result.queued,
-        });
+        if (result.task_id) {
+          seedAcceptedPendingTask(qc, {
+            chat_session_id: sessionId,
+            task_id: result.task_id,
+            created_at: result.created_at,
+            message_id: result.message_id,
+            content,
+            optimistic_task_id: optimisticTaskId,
+            supports_queue: result.supports_queue,
+            queued: result.queued,
+          });
+        }
         qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
         if (options.clearDraft !== false) {
           clearDraft(sessionId);

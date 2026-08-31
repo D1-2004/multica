@@ -250,16 +250,33 @@ export function useBuilderSession(options: {
           chat_session_id: sessionId,
           role: "user",
           content: encodedContent,
-          task_id: result.task_id,
+          task_id: result.task_id ?? null,
           created_at: createdAt,
         },
         { seedIfMissing: true },
       );
-      qc.setQueryData(chatKeys.pendingTask(sessionId), {
-        task_id: result.task_id,
-        status: "queued",
-        created_at: createdAt,
-      });
+      if (result.assistant_message_id && result.assistant_content) {
+        upsertChatMessageToCaches(
+          qc,
+          sessionId,
+          {
+            id: result.assistant_message_id,
+            chat_session_id: sessionId,
+            role: "assistant",
+            content: result.assistant_content,
+            task_id: null,
+            created_at: result.assistant_created_at ?? createdAt,
+          },
+          { seedIfMissing: true },
+        );
+      }
+      if (result.task_id) {
+        qc.setQueryData(chatKeys.pendingTask(sessionId), {
+          task_id: result.task_id,
+          status: "queued",
+          created_at: createdAt,
+        });
+      }
       // Accepted and rendered — release the composer before reconciling.
       commitInput?.();
       void qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
