@@ -1,8 +1,9 @@
 // Package inboundcoord is the server-side short loop that decides whether an
 // inbound user turn can be answered immediately or must become an Issue that
 // starts a sandbox. Direct reply is the chat response; Issue is the only
-// sandbox path. Decide is one JSON LLM call with no tools. DWS is not a
-// coordinator tool; DingTalk history is loaded by the server before Decide.
+// sandbox path. Decide is a bounded tool loop (assoc_recall, assoc_bind,
+// finish). DWS is not a coordinator tool; DingTalk history is loaded by the
+// server before Decide.
 package inboundcoord
 
 import (
@@ -15,20 +16,22 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
-	decisionTimeout      = 10 * time.Second
+	decisionTimeout      = 15 * time.Second
 	coordinatorModel     = "qwen3.7-plus"
 	historyLimit         = 4
 	dingtalkHistoryLimit = 10
 	instructionsBudget   = 400
 	titleBudget          = 40
 	temperature          = 0.3
-	maxCompletionTokens  = 192
+	maxCompletionTokens  = 384
 )
 
 // Action is the short-loop verdict.
@@ -66,6 +69,11 @@ type Turn struct {
 	DingTalkHistory   []HistoryLine
 	IdentityNote      string
 	RelatedTasks      string
+	WorkspaceID       string
+	ConversationID    string
+	PersonID          string
+	EvidenceID        string
+	Kind              string
 }
 
 // HistoryLine is one already-persisted Multica chat message.
@@ -76,12 +84,14 @@ type HistoryLine struct {
 
 // Decision is what callers act on.
 type Decision struct {
-	Action    Action
-	UserText  string
-	LookInto  string
-	Reason    string
-	ElapsedMs int64
-	Source    Source
+	Action     Action
+	UserText   string
+	LookInto   string
+	Reason     string
+	ElapsedMs  int64
+	Source     Source
+	ToolRounds int
+	ToolsUsed  []string
 }
 
 type historyReader interface {
@@ -91,16 +101,31 @@ type historyReader interface {
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 }
 
-// Coordinator runs one bounded LLM JSON decision.
+// Coordinator runs a bounded LLM tool loop then a verdict.
 type Coordinator struct {
 	LLM     *llm.Client
 	Queries historyReader
+	Tools   Tools
+	Chat    Completer
+}
+
+// New wires the short loop. assocSvc may be nil; recall/bind then return a
+// tool error and the model still finishes with reply/issue/silence.
+func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) *Coordinator {
+	c := &Coordinator{LLM: llmClient, Queries: queries}
+	if assocSvc != nil {
+		c.Tools = &AssocTools{Service: assocSvc}
+	}
+	return c
 }
 
 // Decide returns a verdict. A disabled LLM or any failure continues the
 // existing sandbox enqueue so a missing model never silences users.
 func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
-	if c == nil || c.LLM == nil || !c.LLM.Enabled() {
+	if c == nil {
+		return Decision{Action: ActionContinue}
+	}
+	if c.Chat == nil && (c.LLM == nil || !c.LLM.Enabled()) {
 		return Decision{Action: ActionContinue}
 	}
 	if strings.TrimSpace(turn.Message) == "" {
@@ -127,14 +152,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	defer cancel()
 	started := time.Now()
 
-	raw, err := c.LLM.GenerateJSONFast(
-		loopCtx,
-		coordinatorModel,
-		systemPrompt,
-		buildUserPrompt(turn),
-		temperature,
-		maxCompletionTokens,
-	)
+	decision, err := c.runLoop(loopCtx, turn)
 	elapsed := time.Since(started)
 	if err != nil {
 		slog.Warn("inbound coordinator llm failed; continuing sandbox enqueue",
@@ -148,7 +166,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 		)
 		return Decision{Action: ActionContinue}
 	}
-	decision := parseDecision(raw, turn)
 	decision.ElapsedMs = elapsed.Milliseconds()
 	decision.Source = turn.Source
 	slog.Info("inbound coordinator decided",
@@ -159,6 +176,8 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 		"fail_open", decision.Action == ActionContinue,
 		"look_into_runes", utf8.RuneCountInString(decision.LookInto),
 		"reply_runes", utf8.RuneCountInString(decision.UserText),
+		"tool_rounds", decision.ToolRounds,
+		"tools", strings.Join(decision.ToolsUsed, ","),
 		"elapsed_ms", decision.ElapsedMs,
 	)
 	return decision
@@ -203,6 +222,7 @@ func (c *Coordinator) TurnFromChatSession(
 		SenderName:        senderName,
 		Message:           message,
 		AgentID:           session.AgentID,
+		WorkspaceID:       util.UUIDToString(session.WorkspaceID),
 	}
 	if c == nil || c.Queries == nil {
 		return turn

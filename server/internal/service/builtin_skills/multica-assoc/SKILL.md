@@ -13,6 +13,11 @@ The platform graph tags each send/reply with a DingTalk `openConversationId`
 Outreach to another person is not the reply the platform delivers back to the
 waiting sender.
 
+The inbound coordinator (web Chat and DingTalk `message.created`) is a short
+tool loop with `assoc_recall`, `assoc_bind`, and `finish`. It may bind this
+scene to an existing Issue before opening a sandbox. DWS still belongs to the
+sandbox, not the coordinator.
+
 ## Identity
 
 | Inbound source | conversation_id | uid |

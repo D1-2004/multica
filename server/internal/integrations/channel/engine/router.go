@@ -548,6 +548,11 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			msg.Source.SenderID,
 			msg.Text,
 		)
+		turn.ConversationID = strings.TrimSpace(msg.Source.ChatID)
+		turn.PersonID = strings.TrimSpace(msg.Source.SenderID)
+		turn.EvidenceID = strings.TrimSpace(msg.MessageID)
+		turn.Kind = string(msg.Source.ChatType)
+		turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
 		coordDecision = r.coordinator.Decide(ctx, turn)
 		switch coordDecision.Action {
 		case inboundcoord.ActionIssue:

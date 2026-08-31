@@ -754,7 +754,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 	}
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
-	channelRouter.SetInboundCoordinator(&inboundcoord.Coordinator{LLM: h.LLM, Queries: queries})
+	channelRouter.SetInboundCoordinator(inboundcoord.New(h.LLM, queries, h.Assoc))
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
 	// watching the same chat without a reload: the engine writes through the
 	// service layer and inherits no handler broadcast of its own.

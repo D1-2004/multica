@@ -1,0 +1,194 @@
+package inboundcoord
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	openai "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/shared"
+)
+
+const maxLoopRounds = 3
+
+// Completer is the one Chat Completions round the coordinator loop needs.
+type Completer interface {
+	Chat(ctx context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error)
+}
+
+func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) {
+	messages := []openai.ChatCompletionMessageParamUnion{
+		openai.SystemMessage(systemPrompt),
+		openai.UserMessage(buildUserPrompt(turn)),
+	}
+	var used []string
+	for round := 0; round < maxLoopRounds; round++ {
+		completion, err := c.complete(ctx, messages, toolsForRound(round))
+		if err != nil {
+			return Decision{}, err
+		}
+		if len(completion.Choices) == 0 {
+			return Decision{}, fmt.Errorf("coordinator loop: no choices")
+		}
+		msg := completion.Choices[0].Message
+		normalizeToolCallTypes(&msg)
+		calls := functionToolCalls(msg)
+		if len(calls) == 0 {
+			decision := parseDecision(msg.Content, turn)
+			decision.ToolRounds = round
+			decision.ToolsUsed = used
+			return decision, nil
+		}
+		messages = append(messages, msg.ToParam())
+		for _, call := range calls {
+			used = append(used, call.Name)
+			if call.Name == toolFinish {
+				decision := parseDecision(call.Arguments, turn)
+				decision.ToolRounds = round + 1
+				decision.ToolsUsed = used
+				return decision, nil
+			}
+			result, callErr := c.callTool(ctx, turn, call.Name, call.Arguments)
+			if callErr != nil {
+				result = `{"error":` + jsonQuote(callErr.Error()) + `}`
+			}
+			messages = append(messages, openai.ToolMessage(result, call.ID))
+			slog.Info("inbound coordinator tool",
+				"event", "inbound_coordinator_tool",
+				"tool", call.Name,
+				"round", round,
+				"error", callErr != nil,
+			)
+		}
+	}
+	return Decision{}, fmt.Errorf("coordinator loop: exceeded %d rounds", maxLoopRounds)
+}
+
+func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) (*openai.ChatCompletion, error) {
+	params := openai.ChatCompletionNewParams{
+		Messages:            messages,
+		Model:               shared.ChatModel(coordinatorModel),
+		Tools:               tools,
+		ReasoningEffort:     shared.ReasoningEffortNone,
+		MaxCompletionTokens: openai.Int(maxCompletionTokens),
+	}
+	params.SetExtraFields(map[string]any{"enable_thinking": false})
+	if temperature > 0 {
+		params.Temperature = openai.Float(temperature)
+	}
+	if c != nil && c.Chat != nil {
+		return c.Chat.Chat(ctx, params)
+	}
+	if c == nil || c.LLM == nil {
+		return nil, fmt.Errorf("coordinator loop: llm is not configured")
+	}
+	return c.LLM.Chat(ctx, params)
+}
+
+func (c *Coordinator) callTool(ctx context.Context, turn Turn, name, arguments string) (string, error) {
+	if c == nil || c.Tools == nil {
+		return "", fmt.Errorf("coordinator tools are not configured")
+	}
+	return c.Tools.Call(ctx, turn, name, arguments)
+}
+
+type functionCall struct {
+	ID, Name, Arguments string
+}
+
+func functionToolCalls(msg openai.ChatCompletionMessage) []functionCall {
+	out := make([]functionCall, 0, len(msg.ToolCalls))
+	for _, call := range msg.ToolCalls {
+		name := strings.TrimSpace(call.Function.Name)
+		if name == "" {
+			continue
+		}
+		id := strings.TrimSpace(call.ID)
+		if id == "" {
+			id = name
+		}
+		out = append(out, functionCall{ID: id, Name: name, Arguments: call.Function.Arguments})
+	}
+	return out
+}
+
+func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {
+	if round >= maxLoopRounds-1 {
+		return []openai.ChatCompletionToolUnionParam{coordinatorFinishTool()}
+	}
+	return coordinatorToolDefs()
+}
+
+func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
+	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+		Name:        toolFinish,
+		Description: openai.String("End the coordinator loop with the user-facing verdict."),
+		Parameters: shared.FunctionParameters{
+			"type": "object",
+			"properties": map[string]any{
+				"action":    map[string]any{"type": "string", "enum": []string{"reply", "issue", "silence"}},
+				"text":      map[string]any{"type": "string"},
+				"look_into": map[string]any{"type": "string"},
+				"reason":    map[string]any{"type": "string"},
+			},
+			"required": []string{"action"},
+		},
+	})
+}
+
+func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
+	return []openai.ChatCompletionToolUnionParam{
+		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        toolAssocRecall,
+			Description: openai.String("Recall Issue/Task associations for a DingTalk conversation_id or person_id. since defaults to 48h."),
+			Parameters: shared.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"since":           map[string]any{"type": "string", "description": "24h, 48h, 7d, or RFC3339. Defaults to 48h."},
+					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId. Defaults to this turn's conversation_id."},
+					"person_id":       map[string]any{"type": "string", "description": "DingTalk uid. Optional."},
+					"issue":           map[string]any{"type": "string", "description": "Issue UUID if already known."},
+					"q":               map[string]any{"type": "string", "description": "Keyword filter on purpose."},
+					"limit":           map[string]any{"type": "integer"},
+				},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        toolAssocBind,
+			Description: openai.String("Bind a DingTalk conversation_id to an Issue so later replies in that scene recall it. issue_id from assoc_recall links the scene to a matter; omit issue_id to tag the inbound event only."),
+			Parameters: shared.FunctionParameters{
+				"type": "object",
+				"properties": map[string]any{
+					"conversation_id": map[string]any{"type": "string"},
+					"issue_id":        map[string]any{"type": "string", "description": "Issue UUID from assoc_recall. Required to link the scene to a matter."},
+					"evidence_id":     map[string]any{"type": "string"},
+					"person_id":       map[string]any{"type": "string"},
+					"purpose":         map[string]any{"type": "string", "description": "Deliverable phrase such as 向冬翔确认今天吃什么. Needed when creating the Issue task node."},
+					"kind":            map[string]any{"type": "string"},
+				},
+			},
+		}),
+		coordinatorFinishTool(),
+	}
+}
+
+func normalizeToolCallTypes(msg *openai.ChatCompletionMessage) {
+	if msg == nil {
+		return
+	}
+	for i := range msg.ToolCalls {
+		if strings.TrimSpace(msg.ToolCalls[i].Type) == "" && strings.TrimSpace(msg.ToolCalls[i].Function.Name) != "" {
+			msg.ToolCalls[i].Type = "function"
+		}
+	}
+}
+
+func jsonQuote(s string) string {
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return `"tool error"`
+	}
+	return string(raw)
+}

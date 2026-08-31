@@ -9,18 +9,20 @@ import (
 )
 
 // TestRoutingContractKeepsLookupInSandbox locks the shipped prompt's routing
-// rules: this loop has no tools, so a live-info or do/track turn must become
-// an Issue, not a capability-refusal reply.
+// rules: this loop may recall/bind scenes, but DWS/search still live in the
+// sandbox, so a live-info or do/track turn must become an Issue.
 func TestRoutingContractKeepsLookupInSandbox(t *testing.T) {
 	for _, rule := range []string{
-		"You have no tools",
-		"A later sandbox does",
+		"You have tools",
+		"A later sandbox has DWS",
 		"Do not answer a question from your own knowledge",
 		"looked up, fetched, checked, written, or tracked",
-		"This loop's lack of tools is never a reason to reply",
-		"If the sandbox would act, action=issue",
+		"This loop's lack of DWS/search/files is never a reason to reply",
+		"if the sandbox would act, action=issue",
 		"They must not change the action or invent capability limits",
-		"You have no tools",
+		"assoc_recall",
+		"assoc_bind",
+		"finish",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)

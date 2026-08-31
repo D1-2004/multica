@@ -136,7 +136,11 @@ func TestIssueTitleAndDescription(t *testing.T) {
 }
 
 func testSession() db.ChatSession {
-	return db.ChatSession{ID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true}, AgentID: testAgentID()}
+	return db.ChatSession{
+		ID:          pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
+		WorkspaceID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
+		AgentID:     testAgentID(),
+	}
 }
 
 func newestFirstPage(n int) []db.ChatMessage {
@@ -146,6 +150,14 @@ func newestFirstPage(n int) []db.ChatMessage {
 		page[i] = db.ChatMessage{Role: "user", Content: "钉钉历史" + string(rune('A'+n-1-i))}
 	}
 	return page
+}
+
+func TestTurnFromChatSessionCopiesWorkspaceID(t *testing.T) {
+	c := &Coordinator{Queries: &coordQueriesStub{}}
+	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceWeb, true, "p2p", "网页", "", "你好")
+	if turn.WorkspaceID == "" {
+		t.Fatal("workspace_id should come from the chat session")
+	}
 }
 
 func TestTurnFromChatSessionRobotLoadsTenDingTalkMessages(t *testing.T) {

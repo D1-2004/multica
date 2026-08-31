@@ -38,5 +38,6 @@ tree before trusting any line number.
 | Fact | Source |
 | --- | --- |
 | Dispatch `scene_graph` segment | `server/internal/handler/agent_dispatch_v2.go` `dispatchSceneGraphInstruction` |
-| Coordinator identity note | `server/internal/handler/agent_dispatch_v2_handler.go` `dispatchAssocIdentityNote` |
-| Coordinator related_tasks recall | `server/internal/handler/agent_dispatch_v2_handler.go` `recallAssocRelatedBlock` |
+| Coordinator identity note | `server/internal/service/inboundcoord/prompt.go` `IdentityNote` |
+| Coordinator tool loop | `server/internal/service/inboundcoord/loop.go` `runLoop` |
+| Coordinator `assoc_recall` / `assoc_bind` | `server/internal/service/inboundcoord/tools.go` `AssocTools` |
