@@ -11,9 +11,9 @@ import (
 
 type StaticSiteHostingService interface {
 	Prepare(context.Context, sitehosting.PrepareInput) (sitehosting.PreparedDeploy, error)
-	GetStatus(context.Context, string, string) (sitehosting.SiteStatus, error)
-	ListSites(context.Context, string) ([]sitehosting.SiteStatus, error)
-	DeleteSite(context.Context, string, string) error
+	GetStatus(context.Context, string, string, string) (sitehosting.SiteStatus, error)
+	ListSites(context.Context, string, string) ([]sitehosting.SiteStatus, error)
+	DeleteSite(context.Context, string, string, string) error
 	HandleUpload(http.ResponseWriter, *http.Request, string)
 	ServePublic(http.ResponseWriter, *http.Request, string, string)
 	ServeFetchProxyRuntime(http.ResponseWriter, *http.Request)
@@ -29,7 +29,11 @@ func (h *Handler) ListStaticSites(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sites, err := h.SiteHosting.ListSites(r.Context(), userID)
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found"); !ok {
+		return
+	}
+	sites, err := h.SiteHosting.ListSites(r.Context(), userID, workspaceID)
 	if err != nil {
 		if errors.Is(err, sitehosting.ErrUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, "static site hosting is unavailable")
@@ -50,11 +54,15 @@ func (h *Handler) DeleteStaticSite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	workspaceID := h.resolveWorkspaceID(r)
+	if _, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found"); !ok {
+		return
+	}
 	siteUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "siteId"), "siteId")
 	if !ok {
 		return
 	}
-	err := h.SiteHosting.DeleteSite(r.Context(), uuidToString(siteUUID), userID)
+	err := h.SiteHosting.DeleteSite(r.Context(), uuidToString(siteUUID), userID, workspaceID)
 	if err == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return

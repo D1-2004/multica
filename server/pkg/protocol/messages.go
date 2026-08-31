@@ -175,10 +175,24 @@ type TaskProgressPayload struct {
 
 // TaskCompletedPayload is sent from daemon to server when a task finishes.
 type TaskCompletedPayload struct {
-	TaskID string `json:"task_id"`
-	PRURL  string `json:"pr_url,omitempty"`
-	Output string `json:"output,omitempty"`
+	TaskID        string         `json:"task_id"`
+	PRURL         string         `json:"pr_url,omitempty"`
+	Output        string         `json:"output,omitempty"`
+	ReplyDecision *ReplyDecision `json:"reply_decision,omitempty"`
 }
+
+// ReplyDecision is an optional Agent-authored terminal delivery decision.
+// A nil pointer means the Agent did not emit the protocol block; false must
+// therefore remain distinguishable from absence across every callback hop.
+type ReplyDecision struct {
+	ShouldReply bool   `json:"shouldReply"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+// TaskReplyDecisionSummaryKey stores the immutable decision inside the existing
+// completion summary JSONB. Reusing that column avoids changing SELECT */
+// RETURNING * row shapes while old and new workers overlap during a rollout.
+const TaskReplyDecisionSummaryKey = "_multica_reply_decision"
 
 // ChatQuickActionsPayload supplements one completed chat turn with the
 // sanitized follow-up actions from the daemon's suggestion pass. An empty

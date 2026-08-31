@@ -2500,6 +2500,10 @@ type CancelTaskOptions struct {
 	QueuedOnly          bool
 	ExpectedChatSession pgtype.UUID
 	QueueAction         string
+	// PreserveChatInput keeps an externally-ingested IM turn visible when a
+	// Router control cancels its execution. There is no local composer waiting
+	// for a draft restore in that flow.
+	PreserveChatInput bool
 }
 
 // CancelTask cancels a single task by ID. It broadcasts a task:cancelled event
@@ -2600,7 +2604,7 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 	if sourceTransitioned {
 		slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 		s.captureTaskCancelled(ctx, task)
-		if !opts.QueuedOnly {
+		if !opts.QueuedOnly && !opts.PreserveChatInput {
 			cancelledChatMessage = s.finalizeCancelledChatMessage(ctx, task, opts)
 		}
 
@@ -2610,7 +2614,10 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		// Broadcast cancellation as a task:failed event so frontends clear the live card
 		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
 		s.NotifyTaskFinished(task)
-		if executionUpdateReady && s.CompletionNotifier != nil {
+		// The cancellation trigger snapshots any configured dispatch callback in
+		// the outbox. Router-controlled IM cancellation must wake that durable
+		// delivery even when there is no separate execution-update callback.
+		if (executionUpdateReady || opts.PreserveChatInput) && s.CompletionNotifier != nil {
 			s.CompletionNotifier.NotifyTaskCompletion()
 		}
 	}
@@ -2641,6 +2648,96 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 		Task:                 task,
 		CancelledChatMessage: cancelledChatMessage,
 	}, nil
+}
+
+// SteerAgentDispatchChatTask atomically promotes an authenticated IM turn and
+// cancels the currently claimed turn in the same chat session. Holding the
+// session and agent locks prevents ClaimTask from selecting either row between
+// those state transitions.
+func (s *TaskService) SteerAgentDispatchChatTask(
+	ctx context.Context,
+	targetTaskID, chatSessionID, agentID pgtype.UUID,
+) (db.AgentTaskQueue, *db.AgentTaskQueue, error) {
+	var (
+		targetBefore db.AgentTaskQueue
+		cancelled    *db.AgentTaskQueue
+	)
+	err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		if _, err := qtx.LockChatSessionForDelete(ctx, chatSessionID); err != nil {
+			return fmt.Errorf("lock steer chat session: %w", err)
+		}
+		if _, err := qtx.GetAgentForClaimUpdate(ctx, agentID); err != nil {
+			return fmt.Errorf("lock steer agent: %w", err)
+		}
+		var err error
+		targetBefore, err = qtx.GetAgentTask(ctx, targetTaskID)
+		if err != nil {
+			return fmt.Errorf("load steer target: %w", err)
+		}
+		if targetBefore.ChatSessionID != chatSessionID || targetBefore.AgentID != agentID ||
+			(targetBefore.Status != "deferred" && targetBefore.Status != "queued") {
+			return errors.New("steer target is not a pending task in the IM chat")
+		}
+
+		activeID, activeErr := qtx.GetActiveAgentDispatchChatTaskForSteer(
+			ctx,
+			db.GetActiveAgentDispatchChatTaskForSteerParams{
+				ChatSessionID: chatSessionID,
+				AgentID:       agentID,
+			},
+		)
+		if activeErr != nil && !errors.Is(activeErr, pgx.ErrNoRows) {
+			return fmt.Errorf("load active IM task for steer: %w", activeErr)
+		}
+		if _, err := qtx.PromoteAgentDispatchChatTaskForSteer(
+			ctx,
+			db.PromoteAgentDispatchChatTaskForSteerParams{
+				ID:            targetTaskID,
+				ChatSessionID: chatSessionID,
+				AgentID:       agentID,
+			},
+		); err != nil {
+			return fmt.Errorf("promote steer target: %w", err)
+		}
+		if errors.Is(activeErr, pgx.ErrNoRows) {
+			return nil
+		}
+
+		active, err := qtx.CancelAgentTask(ctx, activeID)
+		if err != nil {
+			return fmt.Errorf("cancel active IM task for steer: %w", err)
+		}
+		cancelled = &active
+		_, err = freezeTaskExecutionUpdateResultMessage(ctx, qtx, active.ID, nil)
+		if err != nil {
+			return fmt.Errorf("freeze steered task execution update: %w", err)
+		}
+		return qtx.AdvanceCancelledChatSessionPointer(ctx, active.ID)
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, nil, err
+	}
+	target, err := s.Queries.GetAgentTask(ctx, targetTaskID)
+	if err != nil {
+		return db.AgentTaskQueue{}, cancelled, fmt.Errorf("load promoted steer target: %w", err)
+	}
+	if targetBefore.Status == "deferred" {
+		s.captureTaskQueued(ctx, target)
+	}
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, target)
+	s.notifyTaskAvailable(target)
+	if cancelled != nil {
+		s.captureTaskCancelled(ctx, *cancelled)
+		s.ReconcileAgentStatus(ctx, cancelled.AgentID)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, *cancelled)
+		s.NotifyTaskFinished(*cancelled)
+	}
+	// CancelAgentTask's database trigger owns durable canceled callback
+	// creation. Always wake the worker for an actual steer cancellation.
+	if cancelled != nil && s.CompletionNotifier != nil {
+		s.CompletionNotifier.NotifyTaskCompletion()
+	}
+	return target, cancelled, nil
 }
 
 // CancelQueuedChatTasks atomically cancels every queued follow-up in a chat
@@ -3893,6 +3990,7 @@ func isTerminalAgentTaskStatus(status string) bool {
 // flipping to 'completed' and chat_session.session_id being refreshed,
 // causing the new task to resume against a stale (or NULL) session.
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) (*db.AgentTaskQueue, error) {
+	result = normalizeTaskCompletionResult(result)
 	var task db.AgentTaskQueue
 	var completionQueued bool
 	var executionUpdateReady bool

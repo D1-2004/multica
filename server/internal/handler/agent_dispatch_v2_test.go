@@ -263,6 +263,87 @@ func TestDispatchCommandValidateSourceOutboundAndIdentity(t *testing.T) {
 	})
 }
 
+func TestDispatchCommandValidateIMControl(t *testing.T) {
+	valid := DispatchCommand{
+		SchemaVersion: "2.0", AgentID: "agent",
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid"},
+			Sender:       DispatchSender{StaffID: "staff"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg", Text: "hello"}},
+		}},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}
+
+	t.Run("dispatch defaults remain compatible", func(t *testing.T) {
+		if err := valid.validate(); err != nil {
+			t.Fatalf("command without control rejected: %v", err)
+		}
+	})
+
+	t.Run("new and steer are accepted for IM chat dispatch", func(t *testing.T) {
+		for _, control := range []DispatchControl{
+			{Action: "dispatch", SessionMode: "fresh", QueueMode: "enqueue"},
+			{Action: "dispatch", SessionMode: "continue", QueueMode: "steer"},
+		} {
+			command := valid
+			command.Control = &control
+			if err := command.validate(); err != nil {
+				t.Fatalf("control %+v rejected: %v", control, err)
+			}
+		}
+	})
+
+	t.Run("cancel requires an explicit external task", func(t *testing.T) {
+		command := valid
+		command.AgentID = ""
+		command.Continuation = &AgentDispatchContinuation{Kind: "chat", ChatSessionID: "chat-session"}
+		command.Control = &DispatchControl{Action: "cancel"}
+		if err := command.validate(); err == nil || !strings.Contains(err.Error(), "targetExternalTaskId") {
+			t.Fatalf("cancel without target error = %v", err)
+		}
+
+		command.Control.TargetExternalTaskID = "0f6cc8f4-bf1c-47cb-9035-67f3f74b51b2"
+		if err := command.validate(); err != nil {
+			t.Fatalf("cancel with target rejected: %v", err)
+		}
+	})
+
+	t.Run("control is limited to IM message created chat materialization", func(t *testing.T) {
+		for _, mutate := range []func(*DispatchCommand){
+			func(command *DispatchCommand) { command.Event.Type = "emotionReply" },
+			func(command *DispatchCommand) {
+				command.Event.Domain = "calendar"
+				command.Event.Type = "calendar.started"
+			},
+			func(command *DispatchCommand) { command.Surface.Type = "issue" },
+		} {
+			command := valid
+			command.Control = &DispatchControl{Action: "dispatch", SessionMode: "fresh", QueueMode: "enqueue"}
+			mutate(&command)
+			if err := command.validate(); err == nil || !strings.Contains(err.Error(), "IM chat") {
+				t.Fatalf("out-of-scope control error = %v", err)
+			}
+		}
+	})
+
+	t.Run("control values are closed", func(t *testing.T) {
+		for _, control := range []DispatchControl{
+			{Action: "stop"},
+			{Action: "dispatch", SessionMode: "reset", QueueMode: "enqueue"},
+			{Action: "dispatch", SessionMode: "continue", QueueMode: "replace"},
+			{Action: "cancel", TargetExternalTaskID: "not-a-uuid"},
+		} {
+			command := valid
+			command.Control = &control
+			if err := command.validate(); err == nil {
+				t.Fatalf("invalid control %+v was accepted", control)
+			}
+		}
+	})
+}
+
 func TestDispatchCommandValidatesAndPersistsExternalDWSIdentity(t *testing.T) {
 	valid := []byte(`{
 		"schemaVersion":"2.0",

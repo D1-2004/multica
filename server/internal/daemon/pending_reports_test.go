@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
 )
 
 func testPendingDaemon(t *testing.T, serverURL string, store *pendingReportStore) *Daemon {
@@ -94,6 +95,9 @@ func TestDrainPendingReportsRedelivers(t *testing.T) {
 			}
 			if _, ok := body["result_message"]; ok {
 				t.Fatalf("legacy result_message was replayed: %#v", body)
+			}
+			if _, ok := body["reply_decision"]; ok {
+				t.Fatalf("pending replay sent reply_decision: %#v", body)
 			}
 		case "/api/daemon/tasks/task-b/fail":
 			failCalls.Add(1)

@@ -31,24 +31,22 @@ func (s *PostgresStore) Prepare(ctx context.Context, record PrepareRecord) (Uplo
 	upload := record.Upload
 	if record.ExistingSiteID == "" {
 		_, err = tx.Exec(ctx, `
-			INSERT INTO hosted_site (id, public_id, owner_user_id)
-			VALUES ($1::uuid, $2, $3::uuid)
-		`, upload.SiteID, upload.PublicSiteID, upload.OwnerUserID)
+			INSERT INTO hosted_site (id, public_id, owner_user_id, workspace_id)
+			VALUES ($1::uuid, $2, $3::uuid, $4::uuid)
+		`, upload.SiteID, upload.PublicSiteID, upload.OwnerUserID, upload.WorkspaceID)
 	} else {
 		err = tx.QueryRow(ctx, `
-			-- The fallback only keeps Sites created by a pre-migration replica
-			-- reachable during a rolling deployment. New writes always persist
-			-- owner_user_id and do not use Agent or Workspace ownership.
-			SELECT public_id
-			FROM hosted_site site
+			UPDATE hosted_site site
+			SET workspace_id = COALESCE(site.workspace_id, $3::uuid)
 			WHERE site.id = $1::uuid AND site.status = 'active'
 			  AND COALESCE(
 				site.owner_user_id,
 				(SELECT agent.owner_id FROM agent WHERE agent.id = site.owner_agent_id),
 				(SELECT member.user_id FROM member WHERE member.workspace_id = site.workspace_id AND member.role = 'owner' ORDER BY member.created_at LIMIT 1)
 			  ) = $2::uuid
-			FOR UPDATE
-		`, record.ExistingSiteID, upload.OwnerUserID).Scan(&upload.PublicSiteID)
+			  AND (site.workspace_id = $3::uuid OR site.workspace_id IS NULL)
+			RETURNING public_id
+		`, record.ExistingSiteID, upload.OwnerUserID, upload.WorkspaceID).Scan(&upload.PublicSiteID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Upload{}, ErrSiteForbidden
 		}
@@ -172,7 +170,7 @@ func (s *PostgresStore) FailRevision(ctx context.Context, revisionID, reason str
 	return nil
 }
 
-func (s *PostgresStore) GetStatus(ctx context.Context, siteID, ownerUserID string) (SiteStatus, error) {
+func (s *PostgresStore) GetStatus(ctx context.Context, siteID, ownerUserID, workspaceID string) (SiteStatus, error) {
 	if s == nil || s.pool == nil {
 		return SiteStatus{}, ErrUnavailable
 	}
@@ -180,7 +178,8 @@ func (s *PostgresStore) GetStatus(ctx context.Context, siteID, ownerUserID strin
 	err := s.pool.QueryRow(ctx, `
 		-- The fallback only covers legacy rows without owner_user_id during
 		-- the rolling migration window; it is not the Site ownership model.
-		SELECT site.id::text, site.public_id, site.status,
+		SELECT site.id::text, site.public_id,
+		       COALESCE(active.manifest->>'title', ''), site.status,
 		       site.active_revision_id::text, latest.id::text,
 		       latest.status, latest.error, site.created_at, site.updated_at
 		FROM hosted_site site
@@ -191,14 +190,16 @@ func (s *PostgresStore) GetStatus(ctx context.Context, siteID, ownerUserID strin
 			ORDER BY created_at DESC
 			LIMIT 1
 		) latest ON true
+		LEFT JOIN hosted_site_revision active ON active.id = site.active_revision_id
 		WHERE site.id = $1::uuid AND site.status = 'active'
+		  AND site.workspace_id = $3::uuid
 		  AND COALESCE(
 			site.owner_user_id,
 			(SELECT agent.owner_id FROM agent WHERE agent.id = site.owner_agent_id),
 			(SELECT member.user_id FROM member WHERE member.workspace_id = site.workspace_id AND member.role = 'owner' ORDER BY member.created_at LIMIT 1)
 		  ) = $2::uuid
-	`, siteID, ownerUserID).Scan(
-		&status.SiteID, &status.PublicSiteID, &status.Status, &status.ActiveRevisionID,
+	`, siteID, ownerUserID, workspaceID).Scan(
+		&status.SiteID, &status.PublicSiteID, &status.Title, &status.Status, &status.ActiveRevisionID,
 		&status.LatestRevisionID, &status.LatestStatus, &status.LatestError,
 		&status.CreatedAt, &status.UpdatedAt,
 	)
@@ -209,15 +210,17 @@ func (s *PostgresStore) GetStatus(ctx context.Context, siteID, ownerUserID strin
 		return SiteStatus{}, fmt.Errorf("get static site status: %w", err)
 	}
 	status.OwnerUserID = ownerUserID
+	status.WorkspaceID = workspaceID
 	return status, nil
 }
 
-func (s *PostgresStore) ListSites(ctx context.Context, ownerUserID string) ([]SiteStatus, error) {
+func (s *PostgresStore) ListSites(ctx context.Context, ownerUserID, workspaceID string) ([]SiteStatus, error) {
 	if s == nil || s.pool == nil {
 		return nil, ErrUnavailable
 	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT site.id::text, site.public_id, site.status,
+		SELECT site.id::text, site.public_id,
+		       COALESCE(active.manifest->>'title', ''), site.status,
 		       site.active_revision_id::text, latest.id::text,
 		       latest.status, latest.error, site.created_at, site.updated_at
 		FROM hosted_site site
@@ -228,14 +231,16 @@ func (s *PostgresStore) ListSites(ctx context.Context, ownerUserID string) ([]Si
 			ORDER BY created_at DESC
 			LIMIT 1
 		) latest ON true
+		LEFT JOIN hosted_site_revision active ON active.id = site.active_revision_id
 		WHERE site.status = 'active'
+		  AND site.workspace_id = $2::uuid
 		  AND COALESCE(
 			site.owner_user_id,
 			(SELECT agent.owner_id FROM agent WHERE agent.id = site.owner_agent_id),
 			(SELECT member.user_id FROM member WHERE member.workspace_id = site.workspace_id AND member.role = 'owner' ORDER BY member.created_at LIMIT 1)
 		  ) = $1::uuid
 		ORDER BY site.updated_at DESC, site.id DESC
-	`, ownerUserID)
+	`, ownerUserID, workspaceID)
 	if err != nil {
 		return nil, fmt.Errorf("list static sites: %w", err)
 	}
@@ -244,7 +249,7 @@ func (s *PostgresStore) ListSites(ctx context.Context, ownerUserID string) ([]Si
 	for rows.Next() {
 		var status SiteStatus
 		if err := rows.Scan(
-			&status.SiteID, &status.PublicSiteID, &status.Status,
+			&status.SiteID, &status.PublicSiteID, &status.Title, &status.Status,
 			&status.ActiveRevisionID, &status.LatestRevisionID,
 			&status.LatestStatus, &status.LatestError,
 			&status.CreatedAt, &status.UpdatedAt,
@@ -252,6 +257,7 @@ func (s *PostgresStore) ListSites(ctx context.Context, ownerUserID string) ([]Si
 			return nil, fmt.Errorf("scan static site: %w", err)
 		}
 		status.OwnerUserID = ownerUserID
+		status.WorkspaceID = workspaceID
 		result = append(result, status)
 	}
 	if err := rows.Err(); err != nil {
@@ -260,7 +266,7 @@ func (s *PostgresStore) ListSites(ctx context.Context, ownerUserID string) ([]Si
 	return result, nil
 }
 
-func (s *PostgresStore) DeleteSite(ctx context.Context, siteID, ownerUserID string) error {
+func (s *PostgresStore) DeleteSite(ctx context.Context, siteID, ownerUserID, workspaceID string) error {
 	if s == nil || s.pool == nil {
 		return ErrUnavailable
 	}
@@ -268,12 +274,13 @@ func (s *PostgresStore) DeleteSite(ctx context.Context, siteID, ownerUserID stri
 		UPDATE hosted_site site
 		SET status = 'deleted', updated_at = now()
 		WHERE site.id = $1::uuid AND site.status = 'active'
+		  AND site.workspace_id = $3::uuid
 		  AND COALESCE(
 			site.owner_user_id,
 			(SELECT agent.owner_id FROM agent WHERE agent.id = site.owner_agent_id),
 			(SELECT member.user_id FROM member WHERE member.workspace_id = site.workspace_id AND member.role = 'owner' ORDER BY member.created_at LIMIT 1)
 		  ) = $2::uuid
-	`, siteID, ownerUserID)
+	`, siteID, ownerUserID, workspaceID)
 	if err != nil {
 		return fmt.Errorf("delete static site: %w", err)
 	}

@@ -4099,6 +4099,9 @@ func TestReportTaskResult_CompletedHitsCompleteEndpoint(t *testing.T) {
 	if rec.payload["session_id"] != "ses-1" {
 		t.Errorf("session_id: got %v", rec.payload["session_id"])
 	}
+	if _, ok := rec.payload["reply_decision"]; ok {
+		t.Errorf("daemon must not send reply_decision: %#v", rec.payload)
+	}
 }
 
 func TestReportTaskResult_CancelledParentStillReportsTerminalState(t *testing.T) {
