@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/net/html"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -47,6 +48,7 @@ type ArchiveFile struct {
 
 type Manifest struct {
 	Entrypoint string                 `json:"entrypoint"`
+	Title      string                 `json:"title,omitempty"`
 	Files      map[string]ArchiveFile `json:"files"`
 	TotalBytes int64                  `json:"total_bytes"`
 }
@@ -109,7 +111,56 @@ func ValidateArchive(archivePath string, limits Limits, entrypoint string) (Mani
 	if _, ok := manifest.Files[entrypoint]; !ok {
 		return Manifest{}, fmt.Errorf("archive entrypoint %q is missing", entrypoint)
 	}
+	for _, file := range reader.File {
+		if normArchiveName(file.Name) != entrypoint {
+			continue
+		}
+		manifest.Title = archiveHTMLTitle(file)
+		break
+	}
 	return manifest, nil
+}
+
+func archiveHTMLTitle(file *zip.File) string {
+	if !strings.EqualFold(path.Ext(file.Name), ".html") && !strings.EqualFold(path.Ext(file.Name), ".htm") {
+		return ""
+	}
+	reader, err := file.Open()
+	if err != nil {
+		return ""
+	}
+	defer reader.Close()
+	tokenizer := html.NewTokenizer(io.LimitReader(reader, 1<<20))
+	inTitle := false
+	var title strings.Builder
+	for {
+		switch tokenizer.Next() {
+		case html.ErrorToken:
+			return normalizeSiteTitle(title.String())
+		case html.StartTagToken:
+			token := tokenizer.Token()
+			if strings.EqualFold(token.Data, "title") {
+				inTitle = true
+			}
+		case html.TextToken:
+			if inTitle && title.Len() < 2048 {
+				title.WriteString(tokenizer.Token().Data)
+			}
+		case html.EndTagToken:
+			token := tokenizer.Token()
+			if inTitle && strings.EqualFold(token.Data, "title") {
+				return normalizeSiteTitle(title.String())
+			}
+		}
+	}
+}
+
+func normalizeSiteTitle(raw string) string {
+	title := []rune(strings.Join(strings.Fields(raw), " "))
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	return string(title)
 }
 
 func StreamArchiveFile(archivePath string, target ArchiveFile, destination io.Writer) error {

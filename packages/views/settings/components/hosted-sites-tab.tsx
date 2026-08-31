@@ -6,9 +6,11 @@ import { ExternalLink, Globe2, Loader2, Share2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   hostedSiteListOptions,
+  hostedSiteDisplayTitle,
   useDeleteHostedSite,
   type HostedSite,
 } from "@multica/core/sitehosting";
+import { useWorkspaceId } from "@multica/core";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -70,8 +72,8 @@ function HostedSiteCard({
           </div>
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-2">
-              <p className="font-mono text-body font-medium">
-                {site.publicSiteId}
+              <p className="truncate text-body font-medium">
+                {hostedSiteDisplayTitle(site)}
               </p>
               <Badge variant={statusVariant(status)}>
                 {siteStatusLabel(status, {
@@ -81,6 +83,11 @@ function HostedSiteCard({
                 })}
               </Badge>
             </div>
+            {site.title.trim() ? (
+              <p className="font-mono text-caption text-muted-foreground">
+                {site.publicSiteId}
+              </p>
+            ) : null}
             <p className="break-all text-caption text-muted-foreground">
               {site.siteUrl}
             </p>
@@ -121,8 +128,9 @@ function HostedSiteCard({
 
 export function HostedSitesTab() {
   const { t } = useT("settings");
-  const sitesQuery = useQuery(hostedSiteListOptions());
-  const deleteSite = useDeleteHostedSite();
+  const workspaceId = useWorkspaceId();
+  const sitesQuery = useQuery(hostedSiteListOptions(workspaceId));
+  const deleteSite = useDeleteHostedSite(workspaceId);
   const [deleteTarget, setDeleteTarget] = useState<HostedSite | null>(null);
 
   async function handleShare(site: HostedSite) {

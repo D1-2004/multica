@@ -84,6 +84,7 @@ describe("hosted site schemas", () => {
       {
         site_id: "site-1",
         public_site_id: "public-1",
+        title: "Weekly Review",
         status: "active",
         latest_revision_id: "revision-1",
         latest_status: "active",
@@ -97,6 +98,7 @@ describe("hosted site schemas", () => {
       {
         siteId: "site-1",
         publicSiteId: "public-1",
+        title: "Weekly Review",
         status: "active",
         activeRevisionId: null,
         latestRevisionId: "revision-1",

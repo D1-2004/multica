@@ -99,6 +99,7 @@ export const HostedSiteSchema = z
   .object({
     site_id: z.string(),
     public_site_id: z.string(),
+    title: z.string().optional(),
     status: z.string(),
     active_revision_id: z.string().nullable().optional(),
     latest_revision_id: z.string(),
@@ -113,6 +114,7 @@ export const HostedSiteSchema = z
     (site): HostedSite => ({
       siteId: site.site_id,
       publicSiteId: site.public_site_id,
+      title: site.title ?? "",
       status: site.status,
       activeRevisionId: site.active_revision_id ?? null,
       latestRevisionId: site.latest_revision_id,
