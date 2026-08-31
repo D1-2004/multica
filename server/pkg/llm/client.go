@@ -211,6 +211,17 @@ func (c *Client) GenerateText(ctx context.Context, model, systemPrompt, userProm
 // maxCompletionTokens apply only when positive; zero leaves the corresponding
 // upstream default in place. Model empty -> the configured default.
 func (c *Client) GenerateJSON(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64) (string, error) {
+	return c.generateJSON(ctx, model, systemPrompt, userPrompt, temperature, maxCompletionTokens, false)
+}
+
+// GenerateJSONFast is GenerateJSON for a hard wall-clock budget. It turns
+// reasoning/thinking off (OpenAI reasoning_effort=none and Qwen-compatible
+// enable_thinking=false) so the completion tokens go to the JSON object.
+func (c *Client) GenerateJSONFast(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64) (string, error) {
+	return c.generateJSON(ctx, model, systemPrompt, userPrompt, temperature, maxCompletionTokens, true)
+}
+
+func (c *Client) generateJSON(ctx context.Context, model, systemPrompt, userPrompt string, temperature float64, maxCompletionTokens int64, disableThinking bool) (string, error) {
 	if !c.Enabled() {
 		return "", ErrNotConfigured
 	}
@@ -232,12 +243,16 @@ func (c *Client) GenerateJSON(ctx context.Context, model, systemPrompt, userProm
 	if effectiveModel == "" {
 		effectiveModel = c.defaultModel
 	}
-	if isGPT56Family(effectiveModel) {
+	if disableThinking || isGPT56Family(effectiveModel) {
 		// GPT-5.6 defaults to medium reasoning. This path generates a tiny JSON
 		// object under a strict wall-clock budget, so reasoning would add latency
 		// and consume the completion-token limit without improving the contract.
 		params.ReasoningEffort = shared.ReasoningEffortNone
-	} else if temperature > 0 {
+	}
+	if disableThinking {
+		params.SetExtraFields(map[string]any{"enable_thinking": false})
+	}
+	if temperature > 0 && !isGPT56Family(effectiveModel) {
 		params.Temperature = openai.Float(temperature)
 	}
 	if maxCompletionTokens > 0 {
@@ -264,11 +279,13 @@ func (c *Client) GenerateJSON(ctx context.Context, model, systemPrompt, userProm
 		if err == nil {
 			break
 		}
-		if compatibilityRetries >= 2 {
+		if ctx.Err() != nil || compatibilityRetries >= 3 {
 			return "", err
 		}
 
 		switch {
+		case disableThinking && compatibilityRetries == 0:
+			params.SetExtraFields(map[string]any{})
 		case params.MaxCompletionTokens.Valid() && isUnsupportedParameter(err, "max_completion_tokens"):
 			params.MaxCompletionTokens = param.Opt[int64]{}
 			params.MaxTokens = openai.Int(maxCompletionTokens)

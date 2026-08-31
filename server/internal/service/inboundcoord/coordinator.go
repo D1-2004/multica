@@ -21,11 +21,11 @@ import (
 
 const (
 	decisionTimeout     = 8 * time.Second
-	historyLimit        = 8
-	instructionsBudget  = 1500
+	historyLimit        = 4
+	instructionsBudget  = 400
 	titleBudget         = 40
-	temperature         = 0.7
-	maxCompletionTokens = 320
+	temperature         = 0.3
+	maxCompletionTokens = 192
 )
 
 // Action is the short-loop verdict.
@@ -109,7 +109,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	defer cancel()
 	started := time.Now()
 
-	raw, err := c.LLM.GenerateJSON(
+	raw, err := c.LLM.GenerateJSONFast(
 		loopCtx,
 		"",
 		systemPrompt,
@@ -207,7 +207,7 @@ func (c *Coordinator) TurnFromChatSession(
 		}
 		turn.History = append(turn.History, HistoryLine{
 			Role:    page[i].Role,
-			Content: clipRunes(content, 400),
+			Content: clipRunes(content, 160),
 		})
 	}
 	return turn
