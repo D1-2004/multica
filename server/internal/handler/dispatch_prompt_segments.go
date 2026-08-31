@@ -55,6 +55,9 @@ const (
 type DispatchPromptSegment struct {
 	ID     string `json:"id"`
 	Source string `json:"source"`
+	// Delivery is where an included segment travels: the runtime brief (system
+	// prompt, once per session) or the per-turn message. See the constants.
+	Delivery string `json:"delivery"`
 	// Customizable is false for segments an agent must not replace. Today only
 	// the Router context, which carries facts rather than policy.
 	Customizable bool `json:"customizable"`
@@ -108,6 +111,51 @@ type dispatchInstructionInputs struct {
 	// EnterpriseAuthorizationURL is empty unless the run is on an ASB runtime
 	// with a resolvable workspace and agent.
 	EnterpriseAuthorizationURL string
+	// ResumedSession is true when the claim keeps a provider session for the
+	// daemon to resume — a warm 1:1 cloud chat the agent opted into. It only
+	// changes the wording of the conversation segment: the run already holds
+	// its earlier turns, so it is told which message is the unanswered one
+	// rather than to re-read a room it is looking at.
+	ResumedSession bool
+}
+
+// Where an included segment travels. The split is by how often the text
+// changes, and it is the whole reason the per-turn message got shorter.
+//
+// A segment whose text is the same on every turn of a session — the managed
+// policy, reply formatting, the BUC authorization rule — rides in the runtime
+// brief: it is appended to the agent instructions the claim carries, which the
+// daemon renders into AGENTS.md / the system prompt. The provider then sees it
+// once per request, ahead of the conversation, instead of once per turn inside
+// it — a resumed session used to accumulate a copy per turn (production trace
+// b60a1060… carried three), and the title-generation call was fed 3k tokens of
+// policy to name a "HI".
+//
+// A segment that changes per dispatch — the Router's delivery facts and the
+// conversation locators — stays in task.instruction, at the head of the
+// per-turn user message, where it is next to the message it is about.
+const (
+	dispatchDeliveryRuntimeBrief = "runtime_brief"
+	dispatchDeliveryPerTurn      = "per_turn"
+)
+
+// dispatchInstructionByDelivery splits what the agent receives into the text
+// that rides in the runtime brief and the text that heads the per-turn message.
+// Order within each half is dispatchSegmentOrder.
+func dispatchInstructionByDelivery(segments []DispatchPromptSegment) (brief, perTurn string) {
+	briefParts := make([]string, 0, len(segments))
+	turnParts := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if !segment.Included {
+			continue
+		}
+		if segment.Delivery == dispatchDeliveryRuntimeBrief {
+			briefParts = append(briefParts, segment.EffectiveText)
+		} else {
+			turnParts = append(turnParts, segment.EffectiveText)
+		}
+	}
+	return joinDispatchPromptSections(briefParts...), joinDispatchPromptSections(turnParts...)
 }
 
 func parseDispatchPromptOverrides(raw []byte) map[string]string {
@@ -148,7 +196,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 		)
 	}
 	segments = append(segments, dispatchSegment(
-		DispatchSegmentPolicy, dispatchSegmentSourceManaged,
+		DispatchSegmentPolicy, dispatchSegmentSourceManaged, dispatchDeliveryRuntimeBrief,
 		managedPolicy, in.Overrides,
 		in.Present, "dingtalk_dispatch", "no_dispatch_context",
 	))
@@ -156,6 +204,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	segments = append(segments, DispatchPromptSegment{
 		ID:             DispatchSegmentContext,
 		Source:         dispatchSegmentSourceRouter,
+		Delivery:       dispatchDeliveryPerTurn,
 		Customizable:   false,
 		Condition:      "per_dispatch",
 		Included:       in.Present && strings.TrimSpace(in.Stored.ContextPrompt) != "",
@@ -168,11 +217,12 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	// segment is composed here rather than configured, and cannot be overridden.
 	conversation := ""
 	if in.Present {
-		conversation = buildDispatchConversationInstruction(in.Stored)
+		conversation = buildDispatchConversationInstruction(in.Stored, in.ResumedSession)
 	}
 	segments = append(segments, DispatchPromptSegment{
 		ID:             DispatchSegmentDingTalkConversation,
 		Source:         dispatchSegmentSourceBuiltin,
+		Delivery:       dispatchDeliveryPerTurn,
 		Customizable:   false,
 		Condition:      "dingtalk_conversation",
 		Included:       conversation != "",
@@ -182,7 +232,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	})
 
 	segments = append(segments, dispatchSegment(
-		DispatchSegmentReplyFormatting, dispatchSegmentSourceBuiltin,
+		DispatchSegmentReplyFormatting, dispatchSegmentSourceBuiltin, dispatchDeliveryRuntimeBrief,
 		dingTalkReplyFormattingInstruction, in.Overrides,
 		in.DingTalkContext, "any_dingtalk_task", "not_a_dingtalk_task",
 	))
@@ -192,7 +242,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 		enterpriseManaged = strings.Replace(enterpriseIdentityAuthorizationInstruction, "%s", url, 1)
 	}
 	segments = append(segments, dispatchSegment(
-		DispatchSegmentEnterpriseIdentity, dispatchSegmentSourceBuiltin,
+		DispatchSegmentEnterpriseIdentity, dispatchSegmentSourceBuiltin, dispatchDeliveryRuntimeBrief,
 		enterpriseManaged, in.Overrides,
 		strings.TrimSpace(in.EnterpriseAuthorizationURL) != "", "enterprise_runtime", "not_an_enterprise_identity_runtime",
 	))
@@ -201,7 +251,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 }
 
 func dispatchSegment(
-	id, source, managed string,
+	id, source, delivery, managed string,
 	overrides map[string]string,
 	applies bool,
 	condition string,
@@ -227,6 +277,7 @@ func dispatchSegment(
 	return DispatchPromptSegment{
 		ID:             id,
 		Source:         source,
+		Delivery:       delivery,
 		Customizable:   true,
 		Condition:      condition,
 		Overridden:     overridden,

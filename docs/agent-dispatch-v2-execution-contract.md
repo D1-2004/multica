@@ -282,7 +282,7 @@ The locator half prints one runnable command per target, with the real ids
 substituted in:
 
 ```text
-- conversation: `dws chat message search-advanced --conversation-ids cidXXX --limit 50 --format json`
+- conversation, newest first: `dws chat message list --open-dingtalk-id <senderOpenDingTalkId> --limit 20 --jq '.messages[] | {createTime, sender, text, quoted: .quotedMessage.content}'`（单聊；群聊用 `--conversation-id cidXXX`）
 - quoted msgYYY (1820 chars, TRUNCATED, by you): `dws chat message list-by-ids --msg-ids msgYYY --format json`
 ```
 

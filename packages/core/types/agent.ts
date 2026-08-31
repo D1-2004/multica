@@ -1308,6 +1308,10 @@ export interface DispatchPromptSegment {
   /** "managed" = deployment configuration, "builtin" = product constant,
    *  "router" = resolved per dispatch. */
   source: string;
+  /** "runtime_brief" = appended to the agent instructions and rendered into
+   *  the system prompt, once per session; "per_turn" = task.instruction at
+   *  the head of every turn's message. */
+  delivery: string;
   customizable: boolean;
   overridden: boolean;
   /** The gate that decides whether this segment is injected at all. Always
