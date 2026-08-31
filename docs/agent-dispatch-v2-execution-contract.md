@@ -310,6 +310,47 @@ the same freeze transaction releases it. Delivery retries reuse the frozen
 outbox value. Rows created by older binaries remain `queued` with the default
 frozen value and send the old payload without `resultMessage`.
 
+### Optional AI reply decision
+
+A successful Agent may append one delivery decision block to the very end of
+its final provider output:
+
+````text
+```multica-reply-decision
+{"shouldReply":false,"reason":"echo"}
+```
+````
+
+The daemon transparently sends the provider output; it does not parse, remove,
+persist, or separately report this decision. At the server-side
+`/api/daemon/tasks/{taskId}/complete` boundary, before context-exhaustion
+classification or any persistence, Multica removes every complete fenced block
+whose info string is exactly `multica-reply-decision`, wherever it appears in
+the provider output. Ordinary Markdown fences are unchanged. Each removed block
+is independently parsed as one JSON object containing required boolean
+`shouldReply` plus optional string `reason`, with no other fields. Invalid JSON,
+missing or non-boolean `shouldReply`, unknown fields, and invalid `reason` values
+produce no decision but the internal control block remains removed from every
+user-visible `output`/`resultMessage`. When several blocks are present, the last
+strictly valid block in document order wins; if none are valid, the decision
+remains absent.
+
+For rolling compatibility, the complete request still accepts optional
+`reply_decision={shouldReply,reason?}` from an already-upgraded daemon. A strict
+valid decision embedded in `output` is authoritative and replaces that field;
+when no embedded decision is valid, the explicit structured field is retained.
+Malformed or missing embedded data never materializes `shouldReply=false`.
+
+The terminal Router `execution-result` request exposes the decision as optional
+top-level `shouldReply` and `replyReason`. Absence remains absence; it is never
+materialized as `shouldReply=false`. Failed and canceled terminal paths omit
+both fields. Multica freezes the decision inside the existing completion
+outbox `execution_summary` JSONB snapshot, removes its private storage key
+before sending `executionSummary`, and reuses the same top-level payload on
+delivery retry. It deliberately does not add an outbox table column: the
+current sqlc queries use `SELECT *` and `RETURNING *`, so changing the physical
+row shape would break old workers scanning rows during a rolling deployment.
+
 ## LLM telemetry and terminal summary
 
 `completionCallback` may carry a task-scoped telemetry capability in addition
@@ -741,3 +782,46 @@ parsing or rewriting Router's context string.
   line, which tells an Issue run the user sees only issue comments — true for a
   web-created Issue, backwards for a DingTalk-dispatched one whose final output
   is what the person receives.
+
+## Change record: 2026-08-31 AI reply decision propagation
+
+- History: Added strict parsing of a terminal `multica-reply-decision` fenced
+  block, removed a valid block from visible output, and propagated the optional
+  structured decision through daemon completion, durable pending replay, task
+  result persistence, completion outbox freezing, and Router top-level
+  `shouldReply`/`replyReason`. Missing decisions and all failed/canceled paths
+  omit the fields. The frozen value uses the existing `execution_summary` JSONB
+  rather than adding an outbox column.
+- Reason: Router echo suppression needs an explicit AI decision without leaking
+  its control block into the reply text or turning an absent decision into
+  false. Reusing the immutable JSONB snapshot keeps retry payloads stable and
+  avoids changing `SELECT *`/`RETURNING *` scan shapes while old and new
+  completion workers overlap.
+
+## Change record: 2026-08-31 AI reply decision visibility cleanup
+
+- History: Decoupled control-block removal from strict decision parsing. Every
+  complete `multica-reply-decision` fence is removed from visible output even
+  when it is non-terminal or contains an invalid payload. Strictly valid blocks
+  still produce the optional structured decision; with multiple blocks, the
+  last valid block wins. Other Markdown fences remain byte-for-byte visible.
+- Reason: Treating parse failure or an incorrect block position as visible text
+  leaked an internal delivery-control protocol through `output` and
+  `resultMessage`. Independent cleanup prevents that disclosure while retaining
+  the conservative nil fallback, so Router never interprets malformed or
+  missing control data as `shouldReply=false`.
+
+## Change record: 2026-08-31 Move reply decision authority to server complete
+
+- History: Moved reply-decision parsing and visible-output cleanup from the
+  sandbox daemon to the Multica server complete boundary. The daemon again
+  transparently sends raw provider output and no longer creates or persists a
+  separate decision in its client or pending-report queue. The server cleans
+  and normalizes the result before task, chat outcome, execution update, and
+  completion outbox writes. Embedded valid decisions override an explicit
+  compatibility field; otherwise that field is retained.
+- Reason: Daemon parsing tied correctness to the sandbox runtime image's pinned
+  Multica commit, so deploying the server could not repair existing runtimes.
+  Server-side authority makes one Multica backend deployment cover old daemons
+  while preserving rolling compatibility and the existing durable Router
+  delivery chain.

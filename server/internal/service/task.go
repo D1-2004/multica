@@ -3893,6 +3893,7 @@ func isTerminalAgentTaskStatus(status string) bool {
 // flipping to 'completed' and chat_session.session_id being refreshed,
 // causing the new task to resume against a stale (or NULL) session.
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) (*db.AgentTaskQueue, error) {
+	result = normalizeTaskCompletionResult(result)
 	var task db.AgentTaskQueue
 	var completionQueued bool
 	var executionUpdateReady bool

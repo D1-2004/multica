@@ -24,6 +24,8 @@ type ExecutionResultRequest struct {
 	ExecutionResult   map[string]any `json:"executionResult,omitempty"`
 	ExecutionSummary  map[string]any `json:"executionSummary,omitempty"`
 	RawPayload        map[string]any `json:"rawPayload,omitempty"`
+	ShouldReply       *bool          `json:"shouldReply,omitempty"`
+	ReplyReason       string         `json:"replyReason,omitempty"`
 }
 
 type ExecutionResultDeliveryError struct {

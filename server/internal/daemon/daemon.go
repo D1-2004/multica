@@ -6695,7 +6695,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				SessionID: result.SessionID,
 				WorkDir:   env.WorkDir,
 				EnvRoot:   env.RootDir,
-				Usage:     usageEntries,
+				Usage:         usageEntries,
 			}, nil
 		}
 		// Detect "poisoned" terminal output: the agent didn't reach a real
@@ -6725,7 +6725,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			SessionID: result.SessionID,
 			WorkDir:   env.WorkDir,
 			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Usage:         usageEntries,
 		}
 		return taskResult, nil
 	case "timeout":

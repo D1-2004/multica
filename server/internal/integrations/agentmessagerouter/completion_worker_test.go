@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -66,12 +67,12 @@ func enqueueWorkerTestCompletion(
 	t.Helper()
 	now := time.Now().UnixNano()
 	row, err := queries.EnqueueTaskCompletion(context.Background(), db.EnqueueTaskCompletionParams{
-		RootTaskID:        pgtype.UUID{Bytes: [16]byte{byte(now), 1}, Valid: true},
-		TerminalTaskID:    pgtype.UUID{Bytes: [16]byte{byte(now), 2}, Valid: true},
+		RootTaskID:        util.MustParseUUID(uuid.NewString()),
+		TerminalTaskID:    util.MustParseUUID(uuid.NewString()),
 		CallbackUrl:       "/api/v1/dispatch-tasks/router-" + suffix + "/execution-result",
 		TargetIdentity:    targetIdentity,
 		RequestID:         fmt.Sprintf("worker-test:%s:%d", suffix, now),
-		AgentID:           pgtype.UUID{Bytes: [16]byte{byte(now), 3}, Valid: true},
+		AgentID:           util.MustParseUUID(uuid.NewString()),
 		ExecutionStatus:   "completed",
 		ResultMessage:     "final reply",
 		ExternalSessionID: pgtype.Text{String: "session-1", Valid: true},
@@ -562,6 +563,79 @@ func TestCompletionWorkerDeliversAndAcknowledgesOutbox(t *testing.T) {
 	}
 	if status != "delivered" {
 		t.Fatalf("status = %q", status)
+	}
+}
+
+func TestCompletionWorkerRetriesIdenticalFrozenReplyDecision(t *testing.T) {
+	pool := taskCompletionTestPool(t)
+	queries := db.New(pool)
+	var received []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		received = append(received, body)
+		if len(received) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"code":    "success",
+			"data": map[string]string{
+				"dispatchTaskId":    "router-decision-retry",
+				"executionStatus":   "completed",
+				"executionReportId": "worker-report",
+			},
+		})
+	}))
+	defer server.Close()
+	client, err := NewClient(ClientConfig{BaseURL: server.URL, ServiceCredential: "service-secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completion := enqueueWorkerTestCompletion(t, queries, client.TargetIdentity(), "decision-retry")
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE task_completion_outbox
+		SET execution_summary = '{"task_id":"task-1","_multica_reply_decision":{"shouldReply":false,"reason":"echo"}}'::jsonb
+		WHERE id = $1
+	`, completion.ID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE id = $1`, completion.ID)
+	})
+
+	worker := NewCompletionWorker(queries, client, nil)
+	if worked, processErr := worker.ProcessNext(context.Background()); processErr != nil || !worked {
+		t.Fatalf("first delivery worked=%v error=%v", worked, processErr)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		UPDATE task_completion_outbox SET available_at = now() WHERE id = $1
+	`, completion.ID); err != nil {
+		t.Fatal(err)
+	}
+	if worked, processErr := worker.ProcessNext(context.Background()); processErr != nil || !worked {
+		t.Fatalf("second delivery worked=%v error=%v", worked, processErr)
+	}
+	if len(received) != 2 {
+		t.Fatalf("request count = %d, want 2", len(received))
+	}
+	first, _ := json.Marshal(received[0])
+	second, _ := json.Marshal(received[1])
+	if string(first) != string(second) {
+		t.Fatalf("retry payload changed:\nfirst=%s\nsecond=%s", first, second)
+	}
+	if received[0]["shouldReply"] != false || received[0]["replyReason"] != "echo" {
+		t.Fatalf("top-level reply decision = %#v", received[0])
+	}
+	summary, ok := received[0]["executionSummary"].(map[string]any)
+	if !ok {
+		t.Fatalf("executionSummary = %#v", received[0]["executionSummary"])
+	}
+	if _, leaked := summary["_multica_reply_decision"]; leaked {
+		t.Fatalf("internal decision key leaked into executionSummary: %#v", summary)
 	}
 }
 

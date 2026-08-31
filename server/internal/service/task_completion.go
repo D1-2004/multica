@@ -34,6 +34,7 @@ type TaskCompletion struct {
 	ExecutionSummary  []byte
 	Error             string
 	FailureReason     string
+	ReplyDecision     *protocol.ReplyDecision
 }
 
 type taskCompletionTarget struct {
@@ -107,11 +108,14 @@ func buildTaskCompletion(
 	errMessage string,
 	failureReason string,
 ) TaskCompletion {
+	result = normalizeTaskCompletionResult(result)
 	resultMessage := redact.Text(util.UnescapeBackslashEscapes(lastReply))
+	var replyDecision *protocol.ReplyDecision
 	if status == "completed" {
-		if strings.TrimSpace(resultMessage) == "" {
-			var payload protocol.TaskCompletedPayload
-			if json.Unmarshal(result, &payload) == nil {
+		var payload protocol.TaskCompletedPayload
+		if json.Unmarshal(result, &payload) == nil {
+			replyDecision = payload.ReplyDecision
+			if strings.TrimSpace(resultMessage) == "" {
 				resultMessage = redact.Text(util.UnescapeBackslashEscapes(payload.Output))
 			}
 		}
@@ -128,6 +132,7 @@ func buildTaskCompletion(
 		ResultMessage:     resultMessage,
 		Error:             redact.Text(errMessage),
 		FailureReason:     failureReason,
+		ReplyDecision:     replyDecision,
 	}
 }
 
@@ -219,7 +224,19 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 			errMessage,
 			failureReason,
 		)
-		completion.ExecutionSummary = executionSummaryJSON
+		if completion.ReplyDecision == nil {
+			completion.ExecutionSummary = executionSummaryJSON
+		} else {
+			var frozen map[string]any
+			if err := json.Unmarshal(executionSummaryJSON, &frozen); err != nil {
+				return false, err
+			}
+			frozen[protocol.TaskReplyDecisionSummaryKey] = completion.ReplyDecision
+			completion.ExecutionSummary, err = json.Marshal(frozen)
+			if err != nil {
+				return false, err
+			}
+		}
 		_, enqueueErr := qtx.EnqueueTaskCompletion(ctx, db.EnqueueTaskCompletionParams{
 			RootTaskID:        completion.RootTaskID,
 			TerminalTaskID:    completion.TerminalTaskID,
