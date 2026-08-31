@@ -1,0 +1,2 @@
+-- The compatibility columns must survive rollback while any previous binary
+-- can still run. A later post-rollout migration owns physical removal.

@@ -102,6 +102,77 @@ func TestFinalizeStreamResultPreservesErrorResultWhenContextEnds(t *testing.T) {
 	}
 }
 
+func TestFinalizeStreamResultPrefersCompleteClaudeAssistantOverTerminalFragment(t *testing.T) {
+	t.Parallel()
+
+	status, output, errMsg := finalizeStreamResult(
+		"claude",
+		time.Second,
+		nil,
+		nil,
+		nil,
+		"session-1",
+		streamTerminalState{
+			lastAssistantText:   `{"manifest_ok":true,"env_ok":true}`,
+			finalResultText:     `"env_ok":true}`,
+			preferAssistantText: true,
+			sawToolUse:          true,
+			sawResult:           true,
+		},
+		"",
+	)
+	if status != "completed" || output != `{"manifest_ok":true,"env_ok":true}` || errMsg != "" {
+		t.Fatalf("finalizeStreamResult() = (%q, %q, %q), want complete assistant message", status, output, errMsg)
+	}
+}
+
+func TestFinalizeStreamResultDoesNotPublishClaudePreToolNarration(t *testing.T) {
+	t.Parallel()
+
+	status, output, errMsg := finalizeStreamResult(
+		"claude",
+		time.Second,
+		nil,
+		nil,
+		nil,
+		"session-1",
+		streamTerminalState{
+			finalResultText:     "I will check DWS now.",
+			preferAssistantText: true,
+			sawToolUse:          true,
+			sawResult:           true,
+		},
+		"",
+	)
+	if status != "completed" || output != "" || errMsg != "" {
+		t.Fatalf("finalizeStreamResult() = (%q, %q, %q), want completed no-response", status, output, errMsg)
+	}
+}
+
+func TestResolveClaudeAssistantFallbackReassemblesPartialEventsAfterTools(t *testing.T) {
+	t.Parallel()
+
+	fallback := resolveClaudeAssistantFallback("", assistantTurn{text: "I will inspect it.", understood: true})
+	fallback = resolveClaudeAssistantFallback(fallback, assistantTurn{toolUses: 1, understood: true})
+	if fallback != "" {
+		t.Fatalf("pre-tool narration survived: %q", fallback)
+	}
+
+	for _, fragment := range []string{"```json\n{", `"manifest_ok":true,`, `"env_ok":true}`, "\n```"} {
+		fallback = resolveClaudeAssistantFallback(fallback, assistantTurn{text: fragment, understood: true})
+	}
+	if fallback != "```json\n{\"manifest_ok\":true,\"env_ok\":true}\n```" {
+		t.Fatalf("partial Claude assistant events were not reassembled: %q", fallback)
+	}
+
+	// Some Claude Code builds emit cumulative partial messages. A longer
+	// cumulative event replaces the prior prefix instead of duplicating it.
+	fallback = resolveClaudeAssistantFallback("hel", assistantTurn{text: "hello", understood: true})
+	if fallback != "hello" {
+		t.Fatalf("cumulative Claude assistant event duplicated its prefix: %q", fallback)
+	}
+}
+
 func TestStreamProtocolObservationDoesNotLogContent(t *testing.T) {
 	t.Parallel()
 

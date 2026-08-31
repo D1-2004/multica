@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -210,6 +211,9 @@ func (relay *Relay) newProxy(upstream *url.URL, target string) *httputil.Reverse
 		// from appending a new X-Forwarded-For value after Director returns.
 		req.Header["X-Forwarded-For"] = nil
 		req.Header.Del(protocol.SandboxRelayTokenHeader)
+		if target != TargetMultica || !validStaticSiteUploadCapabilityRequest(req) {
+			req.Header.Del(protocol.StaticSiteUploadTokenHeader)
+		}
 		req.Host = upstream.Host
 	}
 	proxy.Transport = relayTransport()
@@ -226,6 +230,27 @@ func (relay *Relay) newProxy(upstream *url.URL, target string) *httputil.Reverse
 		writeRelayError(w, http.StatusBadGateway, "sandbox relay upstream failed")
 	}
 	return proxy
+}
+
+func validStaticSiteUploadCapabilityRequest(req *http.Request) bool {
+	if req.Method != http.MethodPut || req.URL.RawQuery != "" {
+		return false
+	}
+	const prefix = "/api/sitehosting/uploads/"
+	rawID := strings.TrimPrefix(req.URL.Path, prefix)
+	if rawID == req.URL.Path || rawID == "" || strings.Contains(rawID, "/") {
+		return false
+	}
+	uploadID, err := uuid.Parse(rawID)
+	if err != nil || uploadID.String() != rawID {
+		return false
+	}
+	values := req.Header.Values(protocol.StaticSiteUploadTokenHeader)
+	if len(values) != 1 || values[0] != strings.TrimSpace(values[0]) ||
+		!strings.HasPrefix(values[0], "mhs_") || strings.ContainsAny(values[0], " \t\r\n,") {
+		return false
+	}
+	return true
 }
 
 func (relay *Relay) reject(w http.ResponseWriter, req *http.Request, status int, reason string) {

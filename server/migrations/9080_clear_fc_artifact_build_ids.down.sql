@@ -1,2 +1,0 @@
--- FC build IDs were redundant copies of the template build identity and cannot
--- be reconstructed after removal. ASB artifact build IDs are unchanged.

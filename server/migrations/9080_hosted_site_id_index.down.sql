@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS hosted_site_id_idx;

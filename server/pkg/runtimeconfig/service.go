@@ -215,6 +215,7 @@ func (s *Service) Close() error {
 
 func cloneSnapshot(in Snapshot) Snapshot {
 	out := in
+	out.Config.Web.SiteConnectSrc = append([]string(nil), in.Config.Web.SiteConnectSrc...)
 	out.Config.Web.CORSAllowedOrigins = append([]string(nil), in.Config.Web.CORSAllowedOrigins...)
 	out.Config.Web.LoginProviders = append([]string(nil), in.Config.Web.LoginProviders...)
 	out.Config.Runtime.LLM.Models = append([]string(nil), in.Config.Runtime.LLM.Models...)

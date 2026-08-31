@@ -73,9 +73,58 @@ import {
   LabelUsageResponseSchema,
   EMPTY_AGENT_A2A_CONFIG,
   EMPTY_AGENT_A2A_CREDENTIAL_SECRET_RESPONSE,
+  HostedSiteListSchema,
 } from "./schemas";
 import { IssueViewSchema, IssueViewListSchema } from "./schemas";
 import { parseWithFallback } from "./schema";
+
+describe("hosted site schemas", () => {
+  it("parses the user-owned site list into camelCase values", () => {
+    const parsed = HostedSiteListSchema.parse([
+      {
+        site_id: "site-1",
+        public_site_id: "public-1",
+        status: "active",
+        latest_revision_id: "revision-1",
+        latest_status: "active",
+        created_at: "2026-08-29T10:00:00Z",
+        updated_at: "2026-08-29T11:00:00Z",
+        site_url: "https://sites.example.test/sites/public-1/",
+      },
+    ]);
+
+    expect(parsed).toEqual([
+      {
+        siteId: "site-1",
+        publicSiteId: "public-1",
+        status: "active",
+        activeRevisionId: null,
+        latestRevisionId: "revision-1",
+        latestStatus: "active",
+        latestError: "",
+        createdAt: "2026-08-29T10:00:00Z",
+        updatedAt: "2026-08-29T11:00:00Z",
+        siteUrl: "https://sites.example.test/sites/public-1/",
+      },
+    ]);
+  });
+
+  it("rejects a site without a public URL", () => {
+    expect(
+      HostedSiteListSchema.safeParse([
+        {
+          site_id: "site-1",
+          public_site_id: "public-1",
+          status: "active",
+          latest_revision_id: "revision-1",
+          latest_status: "active",
+          created_at: "2026-08-29T10:00:00Z",
+          updated_at: "2026-08-29T11:00:00Z",
+        },
+      ]).success,
+    ).toBe(false);
+  });
+});
 
 describe("workspace access schemas", () => {
   it("parses service-member tokens without a configurable policy", () => {

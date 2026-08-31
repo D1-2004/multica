@@ -1,0 +1,1 @@
+-- Deferred compatibility migration; no data was changed.

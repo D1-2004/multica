@@ -93,6 +93,38 @@ import type {
   FCE2BStableRelease,
 } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
+import type { HostedSite } from "../sitehosting/types";
+
+export const HostedSiteSchema = z
+  .object({
+    site_id: z.string(),
+    public_site_id: z.string(),
+    status: z.string(),
+    active_revision_id: z.string().nullable().optional(),
+    latest_revision_id: z.string(),
+    latest_status: z.string(),
+    latest_error: z.string().optional(),
+    created_at: z.string(),
+    updated_at: z.string(),
+    site_url: z.url(),
+  })
+  .loose()
+  .transform(
+    (site): HostedSite => ({
+      siteId: site.site_id,
+      publicSiteId: site.public_site_id,
+      status: site.status,
+      activeRevisionId: site.active_revision_id ?? null,
+      latestRevisionId: site.latest_revision_id,
+      latestStatus: site.latest_status,
+      latestError: site.latest_error ?? "",
+      createdAt: site.created_at,
+      updatedAt: site.updated_at,
+      siteUrl: site.site_url,
+    }),
+  );
+
+export const HostedSiteListSchema = z.array(HostedSiteSchema);
 
 const DingTalkBindingErrorSchema = z
   .object({

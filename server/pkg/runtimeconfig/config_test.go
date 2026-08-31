@@ -109,6 +109,22 @@ func TestParseStrictAcceptsCompleteConfig(t *testing.T) {
 	}
 }
 
+func TestParseStrictAcceptsSiteConnectSrc(t *testing.T) {
+	raw := strings.Replace(
+		validJSON(),
+		`"attachment_download_mode": "auto",`,
+		`"attachment_download_mode": "auto", "site_connect_src": ["https://hooks.example.com"],`,
+		1,
+	)
+	cfg, err := ParseStrict([]byte(raw), true)
+	if err != nil {
+		t.Fatalf("ParseStrict: %v", err)
+	}
+	if len(cfg.Web.SiteConnectSrc) != 1 || cfg.Web.SiteConnectSrc[0] != "https://hooks.example.com" {
+		t.Fatalf("site_connect_src = %#v", cfg.Web.SiteConnectSrc)
+	}
+}
+
 func TestParseStrictRejectsUnknownField(t *testing.T) {
 	raw := strings.Replace(validJSON(), `"version": 1`, `"version": 1, "versoin": 1`, 1)
 	_, err := ParseStrict([]byte(raw), true)
@@ -290,8 +306,10 @@ func TestSnapshotCollectionsAreImmutableCopies(t *testing.T) {
 	first := service.Current()
 	first.Config.Runtime.FCE2B.StablePublisherUserIDs[0] = "mutated"
 	first.Config.Runtime.LLM.Models[0] = "mutated"
+	first.Config.Web.SiteConnectSrc = append(first.Config.Web.SiteConnectSrc, "https://mutated.example.com")
 	current := service.Current()
-	if current.Config.Runtime.FCE2B.StablePublisherUserIDs[0] == "mutated" || current.Config.Runtime.LLM.Models[0] == "mutated" {
+	if current.Config.Runtime.FCE2B.StablePublisherUserIDs[0] == "mutated" || current.Config.Runtime.LLM.Models[0] == "mutated" ||
+		len(current.Config.Web.SiteConnectSrc) != 0 {
 		t.Fatalf("Current returned mutable service-owned collections: %#v", current)
 	}
 }

@@ -26,6 +26,7 @@ vi.mock("./notifications-tab", stub("NotificationsTab"));
 vi.mock("./labels-tab", stub("LabelsTab"));
 vi.mock("./properties-tab", stub("PropertiesTab"));
 vi.mock("./quick-actions-tab", stub("QuickActionsTab"));
+vi.mock("./hosted-sites-tab", stub("HostedSitesTab"));
 vi.mock("./keyboard-shortcuts-tab", stub("KeyboardShortcutsTab"));
 
 vi.mock("@multica/core/paths", () => ({
@@ -129,5 +130,13 @@ describe("SettingsPage Local Runner tab", () => {
     expect(
       screen.getByRole("tab", { name: "Local Runner" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("SettingsPage hosted websites tab", () => {
+  it("exposes user-owned hosted websites in the workspace settings group", () => {
+    renderWithI18n(<SettingsPage />);
+
+    expect(screen.getByRole("tab", { name: "Websites" })).toBeInTheDocument();
   });
 });

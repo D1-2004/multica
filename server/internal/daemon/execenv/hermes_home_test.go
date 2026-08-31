@@ -122,7 +122,7 @@ func TestPrepareHermesHomeOverlay(t *testing.T) {
 func TestPrepareHermesHomeAuthorizesAgentCustomEnvForTools(t *testing.T) {
 	t.Parallel()
 	sharedHome := t.TempDir()
-	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "tools:\n  env_passthrough:\n    - EXISTING_TOOL_ENV\n")
+	mustWrite(t, filepath.Join(sharedHome, "config.yaml"), "terminal:\n  env_passthrough:\n    - EXISTING_TOOL_ENV\n")
 
 	hermesHome := filepath.Join(t.TempDir(), "hermes-home")
 	env := map[string]string{
@@ -147,9 +147,9 @@ func TestPrepareHermesHomeAuthorizesAgentCustomEnvForTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	var parsed struct {
-		Tools struct {
+		Terminal struct {
 			EnvPassthrough []string `yaml:"env_passthrough"`
-		} `yaml:"tools"`
+		} `yaml:"terminal"`
 	}
 	if err := yaml.Unmarshal(data, &parsed); err != nil {
 		t.Fatal(err)
@@ -159,8 +159,8 @@ func TestPrepareHermesHomeAuthorizesAgentCustomEnvForTools(t *testing.T) {
 		"DINGTALK_IMAGE_APP_CREDENTIAL",
 		"DINGTALK_IMAGE_APP_ID",
 	}
-	if !reflect.DeepEqual(parsed.Tools.EnvPassthrough, want) {
-		t.Fatalf("tools.env_passthrough = %v, want %v", parsed.Tools.EnvPassthrough, want)
+	if !reflect.DeepEqual(parsed.Terminal.EnvPassthrough, want) {
+		t.Fatalf("terminal.env_passthrough = %v, want %v", parsed.Terminal.EnvPassthrough, want)
 	}
 	if strings.Contains(string(data), "secret-value") || strings.Contains(string(data), "app-id") {
 		t.Fatal("derived Hermes config must contain environment names only")
@@ -170,11 +170,11 @@ func TestPrepareHermesHomeAuthorizesAgentCustomEnvForTools(t *testing.T) {
 func TestMergeHermesEnvPassthroughRejectsInvalidExistingShape(t *testing.T) {
 	t.Parallel()
 	var doc yaml.Node
-	if err := yaml.Unmarshal([]byte("tools:\n  env_passthrough: API_KEY\n"), &doc); err != nil {
+	if err := yaml.Unmarshal([]byte("terminal:\n  env_passthrough: API_KEY\n"), &doc); err != nil {
 		t.Fatal(err)
 	}
 	if err := mergeHermesEnvPassthrough(&doc, map[string]string{"API_KEY": "secret"}); err == nil {
-		t.Fatal("expected invalid tools.env_passthrough shape to fail closed")
+		t.Fatal("expected invalid terminal.env_passthrough shape to fail closed")
 	}
 }
 
