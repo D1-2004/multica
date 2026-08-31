@@ -29,6 +29,7 @@ type outboundQueries interface {
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error)
 	GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (string, error)
+	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
 	ListCommentsForIssue(ctx context.Context, arg db.ListCommentsForIssueParams) ([]db.Comment, error)
 }
 
@@ -290,6 +291,10 @@ type dispatchOutboundClaimStore interface {
 	ClaimDispatchOutbound(context.Context, pgtype.UUID) (bool, error)
 }
 
+type streamIssueOutboundClaimStore interface {
+	ClaimStreamIssueOutbound(context.Context, pgtype.UUID) (bool, error)
+}
+
 type dispatchProcessingReactionClaimStore interface {
 	ClaimDispatchProcessingReaction(context.Context, pgtype.UUID) (bool, error)
 }
@@ -431,13 +436,13 @@ func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bo
 	return true, lifecycleErr
 }
 
-func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID pgtype.UUID, payload map[string]any) string {
+func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID pgtype.UUID, _ map[string]any) string {
 	if !issueID.Valid {
 		return ""
 	}
-	workspaceID, err := util.ParseUUID(strings.TrimSpace(fmt.Sprint(payload["workspace_id"])))
+	issue, err := o.q.GetIssue(ctx, issueID)
 	if err != nil {
-		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: missing workspace id",
+		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: issue lookup failed",
 			"event", "dingtalk_stream_issue_outbound_lookup_failed",
 			"issue_id", util.UUIDToString(issueID),
 			"error", err,
@@ -445,15 +450,15 @@ func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID 
 		return ""
 	}
 	rows, err := o.q.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
-		IssueID:     issueID,
-		WorkspaceID: workspaceID,
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
 		Limit:       50,
 	})
 	if err != nil {
 		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: last agent comment lookup failed",
 			"event", "dingtalk_stream_issue_outbound_lookup_failed",
-			"issue_id", util.UUIDToString(issueID),
-			"workspace_id", util.UUIDToString(workspaceID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"workspace_id", util.UUIDToString(issue.WorkspaceID),
 			"error", err,
 		)
 		return ""
@@ -468,11 +473,22 @@ func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID 
 	}
 	o.logger.Info("dingtalk stream issue outbound skipped",
 		"event", "dingtalk_stream_issue_outbound_empty",
-		"issue_id", util.UUIDToString(issueID),
-		"workspace_id", util.UUIDToString(workspaceID),
+		"issue_id", util.UUIDToString(issue.ID),
+		"workspace_id", util.UUIDToString(issue.WorkspaceID),
 		"comment_rows", len(rows),
 	)
 	return ""
+}
+
+func (o *Outbound) claimStreamIssueOutbound(ctx context.Context, taskID pgtype.UUID, idempotencyKey string) (bool, error) {
+	if store, ok := o.q.(streamIssueOutboundClaimStore); ok {
+		claimed, err := store.ClaimStreamIssueOutbound(ctx, taskID)
+		if err != nil {
+			return false, fmt.Errorf("claim stream issue outbound: %w", err)
+		}
+		return claimed, nil
+	}
+	return o.claimDispatchPhase(ctx, taskID, idempotencyKey, dispatchPhaseOutbound)
 }
 
 func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.UUID, payload map[string]any) string {
@@ -558,19 +574,22 @@ func (o *Outbound) processStreamIssueEvent(ctx context.Context, e events.Event) 
 	}
 	wantReply := false
 	if strings.TrimSpace(content) != "" {
-		wantReply, err = o.claimDispatchPhase(ctx, taskUUID, taskID, dispatchPhaseOutbound)
+		wantReply, err = o.claimStreamIssueOutbound(ctx, taskUUID, taskID)
 		if err != nil {
 			return true, err
 		}
 	}
 	o.settleStreamProcessingEmotion(ctx, row)
-	if !wantReply {
+	if strings.TrimSpace(content) == "" {
 		o.logger.Info("dingtalk stream issue outbound skipped",
 			"event", "dingtalk_stream_issue_outbound_empty",
 			"task_id", util.UUIDToString(taskUUID),
 			"issue_id", strings.TrimSpace(issueID),
 			"open_msg_id_hash", dingtalkTraceHash(row.OpenMsgID),
 		)
+		return true, nil
+	}
+	if !wantReply {
 		return true, nil
 	}
 	// Stream chat:done posts through the callback session webhook when the

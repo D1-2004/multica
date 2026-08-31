@@ -108,6 +108,10 @@ func (f *fakeTypingQueries) ListCommentsForIssue(context.Context, db.ListComment
 	return nil, nil
 }
 
+func (f *fakeTypingQueries) GetIssue(_ context.Context, id pgtype.UUID) (db.Issue, error) {
+	return db.Issue{ID: id}, nil
+}
+
 func typingTestUUID(b byte) pgtype.UUID {
 	var raw [16]byte
 	raw[15] = b

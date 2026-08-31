@@ -26,8 +26,9 @@ type dispatchLifecycleQueries struct {
 	mu     sync.Mutex
 	claims map[string]bool
 
-	stream    *fakeStreamEmotionQueries
-	lastReply string
+	stream               *fakeStreamEmotionQueries
+	lastReply            string
+	dispatchClaimRefused bool
 }
 
 func (q *dispatchLifecycleQueries) GetChannelChatSessionBindingBySession(context.Context, db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error) {
@@ -64,7 +65,18 @@ func (q *dispatchLifecycleQueries) GetAgentTask(context.Context, pgtype.UUID) (d
 }
 
 func (q *dispatchLifecycleQueries) ClaimDispatchOutbound(context.Context, pgtype.UUID) (bool, error) {
+	if q.dispatchClaimRefused {
+		return false, nil
+	}
 	return q.claim("outbound"), nil
+}
+
+func (q *dispatchLifecycleQueries) ClaimStreamIssueOutbound(context.Context, pgtype.UUID) (bool, error) {
+	return q.claim("stream-outbound"), nil
+}
+
+func (q *dispatchLifecycleQueries) GetIssue(_ context.Context, id pgtype.UUID) (db.Issue, error) {
+	return db.Issue{ID: id, WorkspaceID: typingTestUUID(99)}, nil
 }
 
 func (q *dispatchLifecycleQueries) ClaimDispatchProcessingReaction(context.Context, pgtype.UUID) (bool, error) {
@@ -438,6 +450,50 @@ func TestStreamIssueCompletionPostsLastReplyAndRecallsEmotion(t *testing.T) {
 	msgParam, _ := reply["msgParam"].(string)
 	if !strings.Contains(msgParam, "今天要闻") {
 		t.Fatalf("stream issue reply = %q, want last agent comment", msgParam)
+	}
+}
+
+func TestStreamIssueCompletionPostsWhenDispatchClaimRefuses(t *testing.T) {
+	recorder, server := newDispatchRobotServer(t)
+	taskID := typingTestUUID(101)
+	sessionID := typingTestUUID(102)
+	inst := testInstallationRow(t, typingTestUUID(103), "client_stream_claim")
+	streamQ := newFakeStreamEmotionQueries(inst)
+	queries := &dispatchLifecycleQueries{
+		inst: inst,
+		binding: db.ChannelChatSessionBinding{
+			ChatSessionID: sessionID,
+			ChatType:      string(channel.ChatTypeP2P),
+			Config:        []byte(`{"sender_staff_id":"staff-1"}`),
+		},
+		task:                 db.AgentTaskQueue{ID: taskID},
+		stream:               streamQ,
+		lastReply:            "今天要闻：Dispatch 领取失败时仍应发出 Issue 评论。",
+		dispatchClaimRefused: true,
+	}
+	messenger := NewRobotMessenger(server.URL, server.URL, server.Client())
+	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, streamQ, nil)
+	mgr.beginStreamEmotion(context.Background(), inst.ID, "msg-claim", EmotionTarget{
+		OpenConversationID: "cid-dm", OpenMsgID: "msg-claim", RobotCode: "robot_client_stream_claim",
+	}, 0)
+	mgr.bindStreamEmotion(context.Background(), inst.ID, "msg-claim", sessionID, taskID)
+	outbound := NewOutbound(queries, plaintextDecrypter, messenger, mgr, nil)
+	payload := map[string]any{
+		"task_id":  util.UUIDToString(taskID),
+		"issue_id": "11111111-1111-1111-1111-111111111111",
+	}
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskCompleted, Payload: payload}); err != nil {
+		t.Fatalf("stream issue completed: %v", err)
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.sequence) < 2 || recorder.sequence[len(recorder.sequence)-1] != "/v1.0/robot/oToMessages/batchSend" {
+		t.Fatalf("stream issue DingTalk calls = %v, want oTo send after dispatch claim refuse", recorder.sequence)
+	}
+	reply := recorder.bodies["/v1.0/robot/oToMessages/batchSend"][0]
+	msgParam, _ := reply["msgParam"].(string)
+	if !strings.Contains(msgParam, "Dispatch 领取失败") {
+		t.Fatalf("stream issue reply = %q, want issue comment", msgParam)
 	}
 }
 
