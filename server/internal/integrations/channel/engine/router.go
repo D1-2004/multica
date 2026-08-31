@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -75,8 +76,15 @@ type Router struct {
 	busyNoticed  map[string]time.Time
 
 	coordinator *inboundcoord.Coordinator
+	associator  SceneAssociator
 
 	logger *slog.Logger
+}
+
+// SceneAssociator writes the inbound conversation onto the Issue graph so a
+// later recall by openConversationId can find the matter without the model.
+type SceneAssociator interface {
+	AssociateIssueConversation(ctx context.Context, in assoc.AssociateInput) error
 }
 
 // Config tunes the Router. Zero values default.
@@ -114,6 +122,12 @@ func (r *Router) SetEventBus(bus *events.Bus) {
 func (r *Router) SetInboundCoordinator(coordinator *inboundcoord.Coordinator) {
 	if r != nil {
 		r.coordinator = coordinator
+	}
+}
+
+func (r *Router) SetSceneAssociator(associator SceneAssociator) {
+	if r != nil {
+		r.associator = associator
 	}
 }
 
@@ -722,6 +736,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			res.IssueTitle = duplicate.Title
 			res.IssueIdentifier = service.IssueIdentifier(prefix, duplicate.Number)
 			res.IssueDuplicate = true
+			r.associateIssueConversation(ctx, inst, msg, duplicate, pgtype.UUID{})
 			// A duplicate is a terminal product outcome, not an infrastructure
 			// failure and not a chat prompt. Finalize the durable chat message's
 			// media state without resolving it. There is no new issue to consume
@@ -755,6 +770,13 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		if issueRes.EnqueuedTask != nil {
 			res.TaskID = issueRes.EnqueuedTask.ID
 		}
+		runID := issueRes.AssignedTaskID
+		if issueRes.EnqueuedTask != nil {
+			runID = issueRes.EnqueuedTask.ID
+		} else if res.TaskID.Valid {
+			runID = res.TaskID
+		}
+		r.associateIssueConversation(ctx, inst, msg, issueRes.Issue, runID)
 		if coordDecision.UserText != "" {
 			if persistErr := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision); persistErr != nil {
 				r.logger.Warn("channel router: persist coordinator issue ack failed",
@@ -1468,6 +1490,41 @@ func (r *Router) issuePrefix(ctx context.Context, workspaceID pgtype.UUID) strin
 var ErrEmptyIssueTitle = errors.New("issue title is empty")
 
 var _ channel.InboundHandler = (*Router)(nil).Handle
+
+func (r *Router) associateIssueConversation(ctx context.Context, inst ResolvedInstallation, msg channel.InboundMessage, issue db.Issue, runID pgtype.UUID) {
+	if r == nil || r.associator == nil || !issue.ID.Valid {
+		return
+	}
+	cid := strings.TrimSpace(msg.Source.ChatID)
+	if cid == "" {
+		return
+	}
+	if err := r.associator.AssociateIssueConversation(ctx, assoc.AssociateInput{
+		WorkspaceID:    uuidString(inst.WorkspaceID),
+		AgentID:        uuidString(inst.AgentID),
+		IssueID:        uuidString(issue.ID),
+		IssueTitle:     issue.Title,
+		Purpose:        issue.Title,
+		RunID:          uuidString(runID),
+		ConversationID: cid,
+		EvidenceID:     strings.TrimSpace(msg.MessageID),
+		PersonID:       strings.TrimSpace(msg.Source.SenderID),
+		Kind:           string(msg.Source.ChatType),
+	}); err != nil {
+		r.logger.Error("channel engine: associate issue conversation failed",
+			"event", "channel_issue_scene_associate_failed",
+			"issue_id", uuidString(issue.ID),
+			"conversation_id", cid,
+			"error", err,
+		)
+		return
+	}
+	r.logger.Info("channel engine: associated issue conversation",
+		"event", "channel_issue_scene_associated",
+		"issue_id", uuidString(issue.ID),
+		"conversation_id", cid,
+	)
+}
 
 func inboundTraceHash(value string) string {
 	if value == "" {

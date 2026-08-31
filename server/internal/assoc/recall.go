@@ -66,12 +66,20 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 			tasks = intersectTasks(tasks, cidTasks)
 		}
 	}
+	personHit := map[string]struct{}{}
 	if q.PersonID != "" {
 		personTasks, personErr := tasksForPerson(ctx, store, q)
 		if personErr != nil {
 			return Result{}, personErr
 		}
-		tasks = intersectTasks(tasks, personTasks)
+		for _, task := range personTasks {
+			personHit[task.ID] = struct{}{}
+		}
+		// A known scene is enough to recall. Person is a rank signal so a
+		// uid/staffId/openDingTalkId mismatch cannot hide an outreach cid.
+		if q.ConversationID == "" {
+			tasks = intersectTasks(tasks, personTasks)
+		}
 	}
 
 	items := make([]Item, 0, len(tasks))
@@ -91,6 +99,9 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 		item, hydErr := hydrateItem(ctx, store, q, task, now)
 		if hydErr != nil {
 			return Result{}, hydErr
+		}
+		if _, ok := personHit[task.ID]; ok {
+			item.Score *= 1.35
 		}
 		items = append(items, item)
 	}

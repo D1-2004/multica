@@ -142,13 +142,10 @@ func RunDWSWrap(deps DWSWrapDeps) int {
 	if err := deps.Run(real, args, io.MultiWriter(deps.Stdout, &captured), deps.Stderr); err != nil {
 		return exitCode(err)
 	}
+	gotCID, msgid := ExtractDWSReceipt(captured.String())
 	if cid == "" {
-		cid = extractJSONString(captured.String(), "openConversationId")
+		cid = gotCID
 	}
-	if cid == "" {
-		cid = extractJSONString(captured.String(), "conversationId")
-	}
-	msgid := extractJSONString(captured.String(), "openMsgId")
 	if cid == "" || deps.Bind == nil {
 		return 0
 	}
@@ -195,6 +192,92 @@ func lookPathExcept(name, exceptDir, pathEnv string) (string, error) {
 		lastErr = exec.ErrNotFound
 	}
 	return "", lastErr
+}
+
+// LooksLikeDWSChatSend reports whether a tool command/input is an outbound
+// DingTalk chat send (not list/search/help).
+func LooksLikeDWSChatSend(command string) bool {
+	s := strings.ToLower(command)
+	if strings.Contains(s, "message list") || strings.Contains(s, "query-send-status") ||
+		strings.Contains(s, "search") || strings.Contains(s, "--help") {
+		return false
+	}
+	hasSend := strings.Contains(s, "message send") || strings.Contains(s, "message_send") ||
+		strings.Contains(s, "+dm") || strings.Contains(s, "+send") ||
+		strings.Contains(s, "send-to-group") || strings.Contains(s, "send-by-bot")
+	if !hasSend {
+		return false
+	}
+	return strings.Contains(s, "dws") || strings.Contains(s, "chat") || strings.Contains(s, "dingtalk")
+}
+
+// ExtractDWSReceipt reads openConversationId / openMsgId from dws JSON output.
+func ExtractDWSReceipt(output string) (conversationID, evidenceID string) {
+	conversationID = extractJSONString(output, "openConversationId")
+	if conversationID == "" {
+		conversationID = extractJSONString(output, "conversationId")
+	}
+	if conversationID == "" {
+		conversationID = extractJSONString(output, "conversation_id")
+	}
+	evidenceID = extractJSONString(output, "openMsgId")
+	if evidenceID == "" {
+		evidenceID = extractJSONString(output, "openMessageId")
+	}
+	if evidenceID == "" {
+		evidenceID = extractJSONString(output, "open_msg_id")
+	}
+	return conversationID, evidenceID
+}
+
+var conversationIDKeys = []string{"openConversationId", "conversationId", "conversation_id", "conversation"}
+var evidenceIDKeys = []string{"openMsgId", "openMessageId", "open_msg_id", "evidence_id"}
+
+// ExtractConversationFromTool finds the outbound scene from tool output, MCP
+// input, or dws argv. Output receipts win over argv so a send that resolved a
+// different cid than the flag is bound to the real scene.
+func ExtractConversationFromTool(command, output string, input map[string]any) (conversationID, evidenceID string) {
+	conversationID, evidenceID = ExtractDWSReceipt(output)
+	if conversationID == "" {
+		conversationID = lookupString(input, conversationIDKeys, 3)
+	}
+	if conversationID == "" {
+		if parsed, _ := ParseDWSSendConversation(strings.Fields(command)); parsed != "" {
+			conversationID = parsed
+		}
+	}
+	if evidenceID == "" {
+		evidenceID = lookupString(input, evidenceIDKeys, 3)
+	}
+	return conversationID, evidenceID
+}
+
+func lookupString(v any, keys []string, depth int) string {
+	if v == nil || depth < 0 {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case map[string]any:
+		for _, key := range keys {
+			raw, ok := t[key]
+			if !ok {
+				continue
+			}
+			if s, ok := raw.(string); ok {
+				if s = strings.TrimSpace(s); s != "" {
+					return s
+				}
+			}
+		}
+		for _, raw := range t {
+			if got := lookupString(raw, keys, depth-1); got != "" {
+				return got
+			}
+		}
+	}
+	return ""
 }
 
 func extractJSONString(body, key string) string {

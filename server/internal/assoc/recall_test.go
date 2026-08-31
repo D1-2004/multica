@@ -349,6 +349,163 @@ func TestRecallRecentFirstAndExtraPersonIsNewEdge(t *testing.T) {
 	}
 }
 
+func TestRecallConversationHitsWhenPersonDoesNotMatch(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	task := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-eat",
+		Purpose:       "向冬翔确认今晚吃什么",
+		LastTouchedAt: now,
+	})
+	if _, err := store.InsertEdge(ctx, Edge{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		SrcType:     NodeTask,
+		SrcID:       task.ID,
+		DstType:     NodeScene,
+		DstID:       "cid-dongxiang",
+		Rel:         RelOutreach,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-dongxiang",
+		PersonID:       "25698887",
+		Since:          now.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Issue != "issue-eat" {
+		t.Fatalf("cid hit must survive person mismatch: %+v", result.Items)
+	}
+}
+
+func TestRecallPersonOnlyStillFilters(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	hit := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-hit",
+		Purpose:       "向冬翔确认今晚吃什么",
+		LastTouchedAt: now,
+	})
+	miss := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-miss",
+		Purpose:       "向李四确认今晚吃什么",
+		LastTouchedAt: now,
+	})
+	if _, err := store.InsertEdge(ctx, Edge{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		SrcType:     NodeTask,
+		SrcID:       hit.ID,
+		DstType:     NodePerson,
+		DstID:       "25698887",
+		Rel:         RelTaskPerson,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEdge(ctx, Edge{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		SrcType:     NodeTask,
+		SrcID:       miss.ID,
+		DstType:     NodeScene,
+		DstID:       "cid-other",
+		Rel:         RelTaskScene,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		PersonID:    "25698887",
+		Q:           "今晚吃什么",
+		Since:       now.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Issue != "issue-hit" {
+		t.Fatalf("person-only recall: %+v", result.Items)
+	}
+}
+
+func TestRecallPersonMatchRanksAboveSceneOnly(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	sceneOnly := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-news",
+		Purpose:       "搜索并整理今天的热点新闻",
+		Status:        StatusWaiting,
+		LastTouchedAt: now,
+	})
+	withPerson := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-eat",
+		Purpose:       "向冬翔确认今晚吃什么",
+		Status:        StatusWaiting,
+		LastTouchedAt: now,
+	})
+	for _, task := range []Task{sceneOnly, withPerson} {
+		if _, err := store.InsertEdge(ctx, Edge{
+			WorkspaceID: "ws",
+			AgentID:     "ag",
+			SrcType:     NodeTask,
+			SrcID:       task.ID,
+			DstType:     NodeScene,
+			DstID:       "cid-shared",
+			Rel:         RelOutreach,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.InsertEdge(ctx, Edge{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		SrcType:     NodeTask,
+		SrcID:       withPerson.ID,
+		DstType:     NodePerson,
+		DstID:       "25698887",
+		Rel:         RelTaskPerson,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-shared",
+		PersonID:       "25698887",
+		Since:          now.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("items=%d", len(result.Items))
+	}
+	if result.Items[0].Issue != "issue-eat" {
+		t.Fatalf("want person-matched first, got %+v", result.Items)
+	}
+}
+
 func TestInsertEventDedupsEvidence(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

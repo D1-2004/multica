@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -1281,6 +1282,65 @@ func TestRouter_IssueCommand_ActiveDuplicateIsTerminalProductOutcome(t *testing.
 	h.tasks.mu.Unlock()
 	if issuePromotions != 0 {
 		t.Fatalf("duplicate media promoted a non-existent issue task, calls=%d", issuePromotions)
+	}
+}
+
+type fakeSceneAssociator struct {
+	mu    sync.Mutex
+	calls int
+	last  assoc.AssociateInput
+}
+
+func (f *fakeSceneAssociator) AssociateIssueConversation(_ context.Context, in assoc.AssociateInput) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	f.last = in
+	return nil
+}
+
+func TestRouter_DurableIssueCommand_AssociatesConversation(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	associator := &fakeSceneAssociator{}
+	h.router.SetSceneAssociator(associator)
+	h.reader.originErr = pgx.ErrNoRows
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+	issueID := uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	taskID := uuidFromString(t, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	h.issues.result = service.IssueCreateResult{
+		Issue:        db.Issue{ID: issueID, Number: 7, Title: "向冬翔确认今晚吃什么"},
+		EnqueuedTask: &db.AgentTaskQueue{ID: taskID},
+	}
+	msg := p2pMessage(t)
+	msg.Source.ChatID = "cid-robot"
+	msg.MessageID = "om-issue-1"
+	msg.Source.SenderID = "ou_dongxiang"
+	msg.Text = "/issue 向冬翔确认今晚吃什么"
+	msg.CommandText = "/issue 向冬翔确认今晚吃什么"
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	associator.mu.Lock()
+	defer associator.mu.Unlock()
+	if associator.calls != 1 {
+		t.Fatalf("associate calls=%d in=%+v", associator.calls, associator.last)
+	}
+	if associator.last.ConversationID != "cid-robot" {
+		t.Fatalf("conversation=%q", associator.last.ConversationID)
+	}
+	if associator.last.IssueID != uuidString(issueID) {
+		t.Fatalf("issue=%q", associator.last.IssueID)
+	}
+	if associator.last.EvidenceID != "om-issue-1" {
+		t.Fatalf("evidence=%q", associator.last.EvidenceID)
+	}
+	if associator.last.PersonID != "ou_dongxiang" {
+		t.Fatalf("person=%q", associator.last.PersonID)
+	}
+	if associator.last.RunID != uuidString(taskID) {
+		t.Fatalf("run=%q", associator.last.RunID)
 	}
 }
 

@@ -76,6 +76,76 @@ func TestRecallAssocByConversation(t *testing.T) {
 	}
 }
 
+func TestBindAssocOutboundFromToolLinksReceipt(t *testing.T) {
+	store := assoc.NewMemory()
+	h := &Handler{Assoc: assoc.NewService(store)}
+	ws := "22222222-2222-2222-2222-222222222222"
+	ag := parseUUID("11111111-1111-1111-1111-111111111111")
+	issue := parseUUID("33333333-3333-3333-3333-333333333333")
+	taskID := parseUUID("44444444-4444-4444-4444-444444444444")
+	task := db.AgentTaskQueue{
+		ID:      taskID,
+		AgentID: ag,
+		IssueID: issue,
+	}
+	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+		Type:    "tool",
+		Tool:    "Bash",
+		Content: "dws chat message send --conversation-id cid-flag --content 今晚吃什么",
+		Output:  `{"openConversationId":"cid+bEFv7ngm9n79Q1vL9HYJw==","openMsgId":"msg-live"}`,
+	})
+	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
+		WorkspaceID:    ws,
+		AgentID:        uuidToString(ag),
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		Since:          time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Issue != uuidToString(issue) {
+		t.Fatalf("recall=%+v", got.Items)
+	}
+	ev, err := store.GetEventByEvidence(context.Background(), ws, uuidToString(ag), "msg-live")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.SceneKey != "cid+bEFv7ngm9n79Q1vL9HYJw==" {
+		t.Fatalf("event=%+v", ev)
+	}
+}
+
+func TestBindAssocOutboundFromToolIgnoresList(t *testing.T) {
+	store := assoc.NewMemory()
+	h := &Handler{Assoc: assoc.NewService(store)}
+	ws := "22222222-2222-2222-2222-222222222222"
+	ag := parseUUID("11111111-1111-1111-1111-111111111111")
+	issue := parseUUID("33333333-3333-3333-3333-333333333333")
+	task := db.AgentTaskQueue{
+		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
+		AgentID: ag,
+		IssueID: issue,
+	}
+	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+		Type:    "tool",
+		Tool:    "Bash",
+		Content: "dws chat message list --conversation-id cid+bEFv7ngm9n79Q1vL9HYJw==",
+		Output:  `{"openConversationId":"cid+bEFv7ngm9n79Q1vL9HYJw==","openMsgId":"msg-list"}`,
+	})
+	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
+		WorkspaceID:    ws,
+		AgentID:        uuidToString(ag),
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		Since:          time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 0 {
+		t.Fatalf("list must not bind: %+v", got.Items)
+	}
+}
+
 func TestBindAssocOutboundRequiresTaskToken(t *testing.T) {
 	h := &Handler{Assoc: assoc.NewService(assoc.NewMemory())}
 	req := httptest.NewRequest(http.MethodPost, "/api/assoc/bind-outbound", strings.NewReader(`{"conversation_id":"cid-a"}`))

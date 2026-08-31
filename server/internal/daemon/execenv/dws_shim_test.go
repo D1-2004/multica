@@ -31,6 +31,61 @@ func TestParseDWSSendConversation(t *testing.T) {
 	}
 }
 
+func TestLooksLikeDWSChatSend(t *testing.T) {
+	t.Parallel()
+	if !LooksLikeDWSChatSend(`dws chat message send --user 1 --content hi`) {
+		t.Fatal("send")
+	}
+	if !LooksLikeDWSChatSend(`{"command":"dws chat +dm --to 冬翔 --content 今晚吃什么"}`) {
+		t.Fatal("+dm")
+	}
+	if !LooksLikeDWSChatSend(`mcp__dingtalk-chat__message_send`) {
+		t.Fatal("mcp send")
+	}
+	if LooksLikeDWSChatSend(`dws chat message list --conversation-id cid`) {
+		t.Fatal("list")
+	}
+	if LooksLikeDWSChatSend(`dws chat message search-advanced`) {
+		t.Fatal("search")
+	}
+}
+
+func TestExtractDWSReceipt(t *testing.T) {
+	t.Parallel()
+	cid, mid := ExtractDWSReceipt(`{"result":{"openConversationId":"cid+abc==","openMessageId":"msg-9"}}`)
+	if cid != "cid+abc==" || mid != "msg-9" {
+		t.Fatalf("cid=%q mid=%q", cid, mid)
+	}
+}
+
+func TestExtractConversationFromToolPrefersReceiptThenArgv(t *testing.T) {
+	t.Parallel()
+	cid, mid := ExtractConversationFromTool(
+		`dws chat message send --conversation-id cid-flag --content hi`,
+		`{"openConversationId":"cid+live==","openMsgId":"msg-live"}`,
+		nil,
+	)
+	if cid != "cid+live==" || mid != "msg-live" {
+		t.Fatalf("receipt cid=%q mid=%q", cid, mid)
+	}
+	cid, mid = ExtractConversationFromTool(
+		`Bash dws chat message send --conversation-id cid-flag --content hi`,
+		`ok`,
+		map[string]any{"result": map[string]any{"conversation_id": "cid-nested"}},
+	)
+	if cid != "cid-nested" {
+		t.Fatalf("nested cid=%q mid=%q", cid, mid)
+	}
+	cid, _ = ExtractConversationFromTool(
+		`dws chat message send --conversation-id cid-flag --content hi`,
+		``,
+		nil,
+	)
+	if cid != "cid-flag" {
+		t.Fatalf("argv cid=%q", cid)
+	}
+}
+
 func TestEnsureDWSShimWritesUnixScript(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix shim")

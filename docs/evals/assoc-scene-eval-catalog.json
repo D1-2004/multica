@@ -1,46 +1,78 @@
 {
   "$schema": "dingtalk-agent/eval-catalog@1",
   "id": "assoc-scene-issue-task",
-  "description": "Verify Event/Scene/Issue-Task association on the FDE教练迁移验收 robot path: outbound dws to 冬翔, bind, and recall. Prompts and assertions live in the suite, not here.",
+  "description": "Optimize and gate Event/Scene/Issue recall. Delivery is a hard gate, not the scored capability. Pass means a later message in 冬翔's DM can retrieve the same Issue from assoc_task by conversation_id.",
   "scenarioGroups": [
     {
-      "id": "authority-and-egress",
-      "title": "Sandbox dws outbound is real delivery",
-      "why": "Assistant text in the robot chat is not delivery. Only an independent DingTalk readback of a message to 冬翔 proves egress.",
-      "risk": "safety",
-      "evidenceSurfaces": ["platform-trace", "remote-readback"],
-      "caseRefs": [
-        { "suite": "docs/evals/assoc-scene-eval-suite.json", "ids": ["robot-outbound-dws-to-dongxiang"] }
-      ]
-    },
-    {
       "id": "task-lifecycle",
-      "title": "Outbound scene binds to the Issue and later replies recall it",
-      "why": "A new DM cid must hang on the same Issue. Recall by conversation_id is the product contract, not chat history reconstruction.",
+      "title": "Scene graph recall of the same Issue",
+      "why": "The product is recall, not send. Robot inbound cid and outbound 冬翔 cid must both retrieve the Issue created for this marker. Assistant text is not a hit.",
       "risk": "reliability",
       "evidenceSurfaces": ["platform-trace", "remote-readback"],
       "caseRefs": [
-        { "suite": "docs/evals/assoc-scene-eval-suite.json", "ids": ["bind-outbound-cid-to-issue", "recall-from-dongxiang-dm"] }
+        {
+          "suite": "docs/evals/assoc-scene-eval-suite.json",
+          "ids": [
+            "inbound-robot-cid-recall",
+            "outbound-cid-recall-after-dws",
+            "reply-in-dongxiang-recalls-same-issue"
+          ]
+        }
       ]
     },
     {
-      "id": "conversation-contract",
-      "title": "Coordinator clarifies then assigns, does not fake DWS",
-      "why": "The short loop may ack and open an Issue. It must not claim the DM was sent.",
-      "risk": "quality",
-      "evidenceSurfaces": ["response", "platform-trace"],
+      "id": "context-sufficiency",
+      "title": "Recall ranking and alias robustness",
+      "why": "A uid/staffId/openDingTalkId mismatch must not hide a cid hit. Recency and person match are rank signals. Keyword q is a filter, not a substitute for the graph.",
+      "risk": "reliability",
+      "evidenceSurfaces": ["platform-trace"],
       "caseRefs": [
-        { "suite": "docs/evals/assoc-scene-eval-suite.json", "ids": ["coordinator-issue-ack-not-delivery"] }
+        {
+          "suite": "docs/evals/assoc-scene-eval-suite.json",
+          "ids": [
+            "person-mismatch-must-not-drop-cid-hit",
+            "recency-ranks-waiting-matter-first"
+          ]
+        }
       ]
     },
     {
       "id": "platform-reliability",
-      "title": "Robot inbound is a distinct scene from the 冬翔 DM",
-      "why": "Robot cid and digital-employee cid are different. Binding the wrong scene makes recall lie.",
+      "title": "Precision: wrong scene must not count as a hit",
+      "why": "Robot cid ≠ 冬翔 DM cid. A news Issue on the robot scene is not proof that 冬翔's conversation recalled the eat matter.",
       "risk": "reliability",
       "evidenceSurfaces": ["platform-trace", "remote-readback"],
       "caseRefs": [
-        { "suite": "docs/evals/assoc-scene-eval-suite.json", "ids": ["robot-cid-not-confused-with-de-cid"] }
+        {
+          "suite": "docs/evals/assoc-scene-eval-suite.json",
+          "ids": ["robot-cid-not-confused-with-de-cid"]
+        }
+      ]
+    },
+    {
+      "id": "authority-and-egress",
+      "title": "Delivery is a gate for outbound recall",
+      "why": "If 冬翔's DM has no DWS message, outbound recall cannot pass. Robot ack is not egress.",
+      "risk": "safety",
+      "evidenceSurfaces": ["platform-trace", "remote-readback"],
+      "caseRefs": [
+        {
+          "suite": "docs/evals/assoc-scene-eval-suite.json",
+          "ids": ["robot-outbound-dws-to-dongxiang"]
+        }
+      ]
+    },
+    {
+      "id": "conversation-contract",
+      "title": "Coordinator ack is not a recall hit",
+      "why": "The short loop may name the purpose and open an Issue. That sentence is not bind, send, or recall.",
+      "risk": "quality",
+      "evidenceSurfaces": ["response", "platform-trace"],
+      "caseRefs": [
+        {
+          "suite": "docs/evals/assoc-scene-eval-suite.json",
+          "ids": ["coordinator-issue-ack-not-delivery"]
+        }
       ]
     }
   ]

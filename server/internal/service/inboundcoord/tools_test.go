@@ -51,6 +51,44 @@ func TestAssocToolsRecallDefaultsConversationID(t *testing.T) {
 	}
 }
 
+func TestAssocToolsRecallDoesNotDefaultPersonID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := assoc.NewMemory()
+	svc := assoc.NewService(store)
+	agent := testAgentID()
+	agentID := util.UUIDToString(agent)
+	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        agentID,
+		IssueID:        "issue-eat",
+		IssueTitle:     "向冬翔确认今天吃什么",
+		Purpose:        "向冬翔确认今天吃什么",
+		ConversationID: "cid-dongxiang",
+		EvidenceID:     "msg-out-1",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tools := &AssocTools{Service: svc}
+	raw, err := tools.Call(ctx, Turn{
+		WorkspaceID:    "ws",
+		AgentID:        agent,
+		ConversationID: "cid-dongxiang",
+		PersonID:       "25698887",
+	}, toolAssocRecall, `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result assoc.Result
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Issue != "issue-eat" {
+		t.Fatalf("default person must not hide cid hit: %+v", result.Items)
+	}
+}
+
 func TestAssocToolsBindAssociatesIssue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

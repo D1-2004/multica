@@ -21,8 +21,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -4720,6 +4722,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
 				taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
 		}
+		h.bindAssocOutboundFromTool(r.Context(), task, workspaceID, msg)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -4737,6 +4740,84 @@ func (h *Handler) AckTaskCancelled(w http.ResponseWriter, r *http.Request) {
 	}
 	h.TaskService.FinalizeDeferredCancelledChat(r.Context(), task.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) bindAssocOutboundFromTool(ctx context.Context, task db.AgentTaskQueue, workspaceID string, msg TaskMessageRequest) {
+	if h == nil || h.Assoc == nil || workspaceID == "" || !task.IssueID.Valid {
+		return
+	}
+	hint := toolCommandHint(msg)
+	if !execenv.LooksLikeDWSChatSend(hint) {
+		return
+	}
+	cid, evidence := execenv.ExtractConversationFromTool(hint, msg.Output, msg.Input)
+	if cid == "" {
+		slog.Info("assoc outbound bind skipped; no conversation in tool output",
+			"event", "assoc_outbound_bind_skipped",
+			"task_id", uuidToString(task.ID),
+			"reason", "missing_conversation_id",
+		)
+		return
+	}
+	issueID := uuidToString(task.IssueID)
+	title := ""
+	if loadedID, loadedTitle, err := h.issueForTaskToken(ctx, workspaceID, uuidToString(task.ID)); err == nil && loadedID != "" {
+		issueID = loadedID
+		title = loadedTitle
+	}
+	if issueID == "" {
+		slog.Warn("assoc outbound bind skipped; issue not on task",
+			"event", "assoc_outbound_bind_skipped",
+			"task_id", uuidToString(task.ID),
+		)
+		return
+	}
+	purpose := strings.TrimSpace(title)
+	if purpose == "" {
+		purpose = "跟进外发钉钉会话"
+	}
+	result, bindErr := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
+		WorkspaceID:    workspaceID,
+		AgentID:        uuidToString(task.AgentID),
+		IssueID:        issueID,
+		IssueTitle:     title,
+		RunID:          uuidToString(task.ID),
+		ConversationID: cid,
+		EvidenceID:     evidence,
+		Kind:           "dm",
+		Purpose:        purpose,
+	})
+	if bindErr != nil {
+		slog.Error("assoc outbound bind from tool failed",
+			"event", "assoc_outbound_bind_failed",
+			"task_id", uuidToString(task.ID),
+			"conversation_id", cid,
+			"error", bindErr,
+		)
+		return
+	}
+	slog.Info("assoc outbound bound from tool",
+		"event", "assoc_outbound_bound",
+		"task_id", uuidToString(task.ID),
+		"issue_id", issueID,
+		"conversation_id", result.ConversationID,
+		"linked", result.Linked,
+	)
+}
+
+func toolCommandHint(msg TaskMessageRequest) string {
+	var b strings.Builder
+	b.WriteString(msg.Tool)
+	b.WriteByte(' ')
+	b.WriteString(msg.Content)
+	if msg.Input != nil {
+		raw, err := json.Marshal(msg.Input)
+		if err == nil {
+			b.WriteByte(' ')
+			b.Write(raw)
+		}
+	}
+	return b.String()
 }
 
 func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.TaskMessagePayload {
