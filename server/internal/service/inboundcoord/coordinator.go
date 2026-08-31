@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	decisionTimeout     = 4500 * time.Millisecond
+	decisionTimeout     = 8 * time.Second
 	historyLimit        = 8
 	instructionsBudget  = 1500
 	titleBudget         = 40
