@@ -355,6 +355,43 @@ WHERE workspace_id = $1 AND agent_id = $2 AND evidence_id = $3`,
 	return event, err
 }
 
+func (s *SQLStore) ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error) {
+	ws, err := requireUUID(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := requireUUID(agentID)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = DefaultLimit
+	}
+	if limit > MaxLimit {
+		limit = MaxLimit
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at
+FROM assoc_event
+WHERE workspace_id = $1 AND agent_id = $2 AND scene_key = $3 AND occurred_at >= $4
+ORDER BY occurred_at DESC
+LIMIT $5`,
+		ws, agent, sceneKey, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Event{}
+	for rows.Next() {
+		event, scanErr := scanEvent(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLStore) UpdateEventTask(ctx context.Context, workspaceID, agentID, evidenceID, taskID string) error {
 	ws, err := requireUUID(workspaceID)
 	if err != nil {

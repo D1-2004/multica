@@ -13,7 +13,7 @@ import (
 // an Issue, not a capability-refusal reply.
 func TestRoutingContractKeepsLookupInSandbox(t *testing.T) {
 	for _, rule := range []string{
-		"You have no tools and no live data",
+		"You have no tools",
 		"A later sandbox does",
 		"Do not answer a question from your own knowledge",
 		"looked up, fetched, checked, written, or tracked",

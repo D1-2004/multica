@@ -29,9 +29,16 @@ var assocBindCmd = &cobra.Command{
 	RunE:  runAssocBind,
 }
 
+var assocEventsCmd = &cobra.Command{
+	Use:   "events",
+	Short: "List scene-tagged events for a DingTalk conversation",
+	RunE:  runAssocEvents,
+}
+
 func init() {
 	assocCmd.AddCommand(assocRecallCmd)
 	assocCmd.AddCommand(assocBindCmd)
+	assocCmd.AddCommand(assocEventsCmd)
 	assocRecallCmd.Flags().String("since", "", "Required time window start (RFC3339 or 24h/48h/7d)")
 	assocRecallCmd.Flags().String("until", "", "Optional window end (RFC3339, default now)")
 	assocRecallCmd.Flags().String("conversation", "", "DingTalk openConversationId")
@@ -48,7 +55,14 @@ func init() {
 	assocBindCmd.Flags().String("evidence", "", "Optional message id for dedup")
 	assocBindCmd.Flags().String("person", "", "Optional DingTalk uid")
 	assocBindCmd.Flags().String("kind", "dm", "Conversation kind (dm or group)")
+	assocBindCmd.Flags().String("purpose", "", "Optional precise purpose when creating the Issue task node")
 	assocBindCmd.Flags().String("output", "json", "Output format: json")
+
+	assocEventsCmd.Flags().String("since", "", "Required time window start (RFC3339 or 24h/48h/7d)")
+	assocEventsCmd.Flags().String("conversation", "", "DingTalk openConversationId (required)")
+	assocEventsCmd.Flags().String("agent-id", "", "Agent UUID (required unless running inside a task)")
+	assocEventsCmd.Flags().Int("limit", 20, "Maximum results (max 50)")
+	assocEventsCmd.Flags().String("output", "json", "Output format: json")
 }
 
 func runAssocBind(cmd *cobra.Command, _ []string) error {
@@ -71,6 +85,9 @@ func runAssocBind(cmd *cobra.Command, _ []string) error {
 	}
 	if v, _ := cmd.Flags().GetString("kind"); strings.TrimSpace(v) != "" {
 		body["kind"] = strings.TrimSpace(v)
+	}
+	if v, _ := cmd.Flags().GetString("purpose"); strings.TrimSpace(v) != "" {
+		body["purpose"] = strings.TrimSpace(v)
 	}
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
@@ -145,6 +162,39 @@ func runAssocRecall(cmd *cobra.Command, _ []string) error {
 	path := "/api/assoc/recall?" + params.Encode()
 	var out map[string]any
 	if err := client.GetJSON(ctx, path, &out); err != nil {
+		return err
+	}
+	return cli.PrintJSON(cmd.OutOrStdout(), out)
+}
+
+func runAssocEvents(cmd *cobra.Command, _ []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	conversation, _ := cmd.Flags().GetString("conversation")
+	if strings.TrimSpace(conversation) == "" {
+		return fmt.Errorf("--conversation is required")
+	}
+	since, _ := cmd.Flags().GetString("since")
+	if strings.TrimSpace(since) == "" {
+		return fmt.Errorf("--since is required (for example 48h or an RFC3339 timestamp)")
+	}
+	params := url.Values{}
+	params.Set("conversation_id", strings.TrimSpace(conversation))
+	params.Set("since", since)
+	if v, _ := cmd.Flags().GetInt("limit"); v > 0 {
+		params.Set("limit", fmt.Sprintf("%d", v))
+	}
+	if agentID, _ := cmd.Flags().GetString("agent-id"); agentID != "" {
+		params.Set("agent_id", agentID)
+	} else if client.AgentID != "" {
+		params.Set("agent_id", client.AgentID)
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var out map[string]any
+	if err := client.GetJSON(ctx, "/api/assoc/events?"+params.Encode(), &out); err != nil {
 		return err
 	}
 	return cli.PrintJSON(cmd.OutOrStdout(), out)

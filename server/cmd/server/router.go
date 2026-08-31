@@ -2179,6 +2179,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
 			r.Get("/api/assoc/recall", h.RecallAssoc)
+			r.Get("/api/assoc/events", h.ListAssocEvents)
 			r.Post("/api/assoc/bind-outbound", h.BindAssocOutbound)
 
 			// Issues

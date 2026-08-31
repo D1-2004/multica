@@ -31,6 +31,40 @@ func ValidatePurpose(purpose string) error {
 	return nil
 }
 
+// ResolvePurpose picks the first candidate that satisfies ValidatePurpose.
+// Short coordinator look_into titles fall through to the original user message.
+func ResolvePurpose(candidates ...string) (string, error) {
+	seen := map[string]struct{}{}
+	var nonempty []string
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		nonempty = append(nonempty, trimmed)
+		if err := ValidatePurpose(trimmed); err == nil {
+			return trimmed, nil
+		}
+	}
+	if len(nonempty) > 1 {
+		joined := strings.Join(nonempty, " ")
+		if err := ValidatePurpose(joined); err == nil {
+			return joined, nil
+		}
+	}
+	if len(nonempty) > 0 {
+		padded := "跟进：" + nonempty[0]
+		if err := ValidatePurpose(padded); err == nil {
+			return padded, nil
+		}
+	}
+	return "", fmt.Errorf("%w: issue title is not a precise purpose", ErrInvalidTask)
+}
+
 func stripSpace(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) {

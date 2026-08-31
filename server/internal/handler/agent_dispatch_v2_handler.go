@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
@@ -928,7 +930,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	issueID := uuidToString(result.Issue.ID)
 	taskID := uuidToString(result.EnqueuedTask.ID)
 	issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
-	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueID, result.Issue.Title, taskID)
+	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueID, result.Issue.Title, taskID, prompt.DisplayContent)
 	if decision.Action == inboundcoord.ActionIssue &&
 		h.TaskService != nil &&
 		c.CompletionCallback != nil &&
@@ -991,11 +993,74 @@ func decideDispatchCoordinator(
 		AgentID:           agent.ID,
 		AgentName:         agent.Name,
 		Instructions:      agent.Instructions,
+		IdentityNote:      dispatchAssocIdentityNote(source, command),
+		RelatedTasks:      h.recallAssocRelatedBlock(ctx, command, dispatchContextForCoordinator(command, agent)),
 	}
 	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
 		turn.Busy = true
 	}
 	return coord.Decide(ctx, turn)
+}
+
+func dispatchContextForCoordinator(command DispatchCommand, agent db.Agent) agentDispatchContext {
+	return agentDispatchContext{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID}
+}
+
+func dispatchAssocIdentityNote(source inboundcoord.Source, command DispatchCommand) string {
+	ids := dispatchAssocIDs(command)
+	switch source {
+	case inboundcoord.SourceDigitalEmployee:
+		if ids.ConversationID != "" && ids.PersonID != "" {
+			return "digital-employee inbound: conversation_id and uid are complete"
+		}
+		if ids.ConversationID != "" {
+			return "digital-employee inbound: conversation_id is present; uid is missing"
+		}
+		return "digital-employee inbound: conversation_id missing; do not invent one"
+	case inboundcoord.SourceRobot:
+		return "robot inbound: conversation_id may exist but uid is often incomplete; do not invent person_id"
+	default:
+		return "web chat inbound: no DingTalk conversation_id or uid"
+	}
+}
+
+func (h *Handler) recallAssocRelatedBlock(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext) string {
+	if h == nil || h.Assoc == nil {
+		return ""
+	}
+	ids := dispatchAssocIDs(command)
+	if ids.ConversationID == "" {
+		return ""
+	}
+	workspaceID := uuidToString(dispatchContext.WorkspaceID)
+	agentID := uuidToString(dispatchContext.AgentID)
+	if workspaceID == "" || agentID == "" {
+		return ""
+	}
+	now := time.Now().UTC()
+	result, err := h.Assoc.Recall(ctx, assoc.Query{
+		WorkspaceID:    workspaceID,
+		AgentID:        agentID,
+		ConversationID: ids.ConversationID,
+		PersonID:       ids.PersonID,
+		Since:          now.Add(-48 * time.Hour),
+		Until:          now,
+		Limit:          5,
+	})
+	if err != nil || len(result.Items) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, item := range result.Items {
+		b.WriteString("- ")
+		b.WriteString(item.Issue)
+		b.WriteString(" ")
+		b.WriteString(item.Purpose)
+		b.WriteString(" (")
+		b.WriteString(item.Status)
+		b.WriteString(")\n")
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func writeDispatchCoordinatorTerminal(
@@ -1123,7 +1188,7 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	issueIDString := uuidToString(issue.ID)
 	commentID := uuidToString(result.Comment.ID)
 	taskID := uuidToString(result.Task.ID)
-	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueIDString, issue.Title, taskID)
+	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueIDString, issue.Title, taskID, prompt.DisplayContent)
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "created_follow_up",
 		"protocol", "dispatch_command_v2",

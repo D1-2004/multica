@@ -640,6 +640,41 @@ func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *tes
 	}
 }
 
+func TestSceneGraphInstructionIsInjectedForDingTalkChannel(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:   "channel",
+		Type:     "message.created",
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}
+	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored:          stored,
+		Present:         true,
+		DingTalkContext: true,
+	})
+	var scene *DispatchPromptSegment
+	for i := range segments {
+		if segments[i].ID == DispatchSegmentSceneGraph {
+			scene = &segments[i]
+		}
+	}
+	if scene == nil || !scene.Included {
+		t.Fatalf("scene_graph segment = %+v", scene)
+	}
+	for _, want := range []string{
+		"assoc_bind",
+		"assoc_recall",
+		"multica assoc bind",
+		"Digital-employee inbound",
+		"Web chat inbound",
+	} {
+		if !strings.Contains(scene.EffectiveText, want) {
+			t.Errorf("scene_graph missing %q", want)
+		}
+	}
+}
+
 func TestDingTalkConversationInstructionNamesAMissingQuotedLocator(t *testing.T) {
 	stored := persistedDispatchContext{
 		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},

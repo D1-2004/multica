@@ -390,6 +390,7 @@ func TestDispatchPromptPreviewReportsAnInjectionConditionForEverySegment(t *test
 		DispatchSegmentContext:            "per_dispatch",
 		DispatchSegmentReplyFormatting:    "any_dingtalk_task",
 		DispatchSegmentEnterpriseIdentity: "enterprise_runtime",
+		DispatchSegmentSceneGraph:         "dingtalk_channel",
 	}
 	seen := map[string]bool{}
 	for _, segment := range response.Segments {

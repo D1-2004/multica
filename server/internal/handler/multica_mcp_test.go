@@ -112,6 +112,7 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 		"prepare_static_site_deploy",
 		"get_static_site_deploy",
 		multicaMCPAssocRecallTool,
+		multicaMCPAssocBindTool,
 	}
 	if len(tools) != len(wantNames) {
 		t.Fatalf("tools=%#v", tools)
@@ -197,6 +198,60 @@ func TestMulticaMCPAssocRecall(t *testing.T) {
 	items := structured["items"].([]any)
 	if len(items) != 1 {
 		t.Fatalf("items=%#v", items)
+	}
+}
+
+func TestMulticaMCPAssocBindRequiresConversation(t *testing.T) {
+	h := testMulticaMCPHandler(t)
+	h.Assoc = assoc.NewService(assoc.NewMemory())
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+		"name":      multicaMCPAssocBindTool,
+		"arguments": map[string]any{"evidence_id": "msg-1"},
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeMCPResponse(t, w)
+	result := got["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("expected conversation_id error, got %#v", result)
+	}
+}
+
+func TestMulticaMCPAssocBindRecordsOutboundScene(t *testing.T) {
+	store := assoc.NewMemory()
+	h := testMulticaMCPHandler(t)
+	h.Assoc = assoc.NewService(store)
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+		"name": multicaMCPAssocBindTool,
+		"arguments": map[string]any{
+			"conversation_id": "cid-outbound",
+			"evidence_id":     "msg-out-1",
+		},
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeMCPResponse(t, w)
+	result := got["result"].(map[string]any)
+	if result["isError"] == true {
+		t.Fatalf("tool error: %#v", result)
+	}
+	structured := result["structuredContent"].(map[string]any)
+	if structured["conversation_id"] != "cid-outbound" {
+		t.Fatalf("structured=%#v", structured)
+	}
+	ev, err := store.GetEventByEvidence(context.Background(),
+		"00000000-0000-0000-0000-000000000004",
+		"00000000-0000-0000-0000-000000000002",
+		"msg-out-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.SceneKey != "cid-outbound" || ev.Direction != assoc.DirOutbound {
+		t.Fatalf("event=%+v", ev)
 	}
 }
 

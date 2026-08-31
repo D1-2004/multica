@@ -1,6 +1,11 @@
 package assoc
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+)
 
 type Service struct {
 	store Store
@@ -32,6 +37,19 @@ func (s *Service) BindOutbound(ctx context.Context, in BindOutboundInput) (BindO
 
 func (s *Service) AssociateIssueConversation(ctx context.Context, in AssociateInput) error {
 	return AssociateIssueConversation(ctx, s.store, in)
+}
+
+func (s *Service) ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error) {
+	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(agentID) == "" {
+		return nil, fmt.Errorf("%w: workspace_id and agent_id are required", ErrInvalidQuery)
+	}
+	if strings.TrimSpace(sceneKey) == "" {
+		return nil, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+	}
+	if since.IsZero() {
+		return nil, fmt.Errorf("%w: since is required", ErrInvalidQuery)
+	}
+	return s.store.ListEventsByScene(ctx, workspaceID, agentID, sceneKey, since, limit)
 }
 
 func (s *Service) Store() Store {

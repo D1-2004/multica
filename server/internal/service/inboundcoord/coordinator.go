@@ -61,6 +61,8 @@ type Turn struct {
 	Instructions      string
 	Busy              bool
 	History           []HistoryLine
+	IdentityNote      string
+	RelatedTasks      string
 }
 
 // HistoryLine is one already-persisted Multica chat message.
@@ -288,14 +290,21 @@ func issueAckFallback(look string) string {
 
 // IssueTitle is the Issue row title for a sandbox handoff.
 func IssueTitle(decision Decision, message string) string {
-	if strings.TrimSpace(decision.LookInto) != "" {
-		return clipRunes(decision.LookInto, titleBudget)
+	look := strings.TrimSpace(decision.LookInto)
+	msg := strings.TrimSpace(message)
+	if utf8.RuneCountInString(look) >= 8 {
+		return clipRunes(look, titleBudget)
 	}
-	title := clipRunes(strings.TrimSpace(message), titleBudget)
-	if title == "" {
-		return "跟进事项"
+	if utf8.RuneCountInString(msg) >= 8 {
+		return clipRunes(msg, titleBudget)
 	}
-	return title
+	if look != "" {
+		return clipRunes(look, titleBudget)
+	}
+	if msg != "" {
+		return clipRunes(msg, titleBudget)
+	}
+	return "跟进事项"
 }
 
 // IssueDescription is the Issue body the sandbox will see.

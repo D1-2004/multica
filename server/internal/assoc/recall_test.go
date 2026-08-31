@@ -20,6 +20,17 @@ func TestValidatePurpose(t *testing.T) {
 	}
 }
 
+func TestResolvePurposeFallsBackToUserMessage(t *testing.T) {
+	t.Parallel()
+	got, err := ResolvePurpose("报名表", "问一下冬翔，今天想吃什么")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "问一下冬翔，今天想吃什么" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestRecallRequiresSinceAndAnchor(t *testing.T) {
 	t.Parallel()
 	store := NewMemory()

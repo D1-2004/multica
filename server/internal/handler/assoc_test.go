@@ -143,7 +143,7 @@ func TestRecordAssocInboundThenAssociate(t *testing.T) {
 	if inbound.TaskID != "" {
 		t.Fatalf("ACK must not write task_id: %q", inbound.TaskID)
 	}
-	h.associateDispatchIssue(ctx, cmd, dc, issue, "预约A与B本周五下午30分钟", "44444444-4444-4444-4444-444444444444")
+	h.associateDispatchIssue(ctx, cmd, dc, issue, "预约A与B本周五下午30分钟", "44444444-4444-4444-4444-444444444444", "")
 
 	result, rerr := h.Assoc.Recall(ctx, assoc.Query{
 		WorkspaceID:    uuidToString(ws),
@@ -185,6 +185,55 @@ func TestRecordAssocInboundThenAssociate(t *testing.T) {
 	}
 	if len(edges) != 1 || edges[0].Rel != assoc.RelEventOf {
 		t.Fatalf("event_of=%+v", edges)
+	}
+}
+
+func TestListAssocEventsRequiresSinceAndConversation(t *testing.T) {
+	h := &Handler{Assoc: assoc.NewService(assoc.NewMemory())}
+	req := httptest.NewRequest(http.MethodGet, "/api/assoc/events?conversation_id=cid-a", nil)
+	req.Header.Set("X-Actor-Source", "task_token")
+	req.Header.Set("X-Agent-ID", "11111111-1111-1111-1111-111111111111")
+	req = req.WithContext(middleware.SetMemberContext(context.Background(), "22222222-2222-2222-2222-222222222222", db.Member{}))
+	rec := httptest.NewRecorder()
+	h.ListAssocEvents(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestListAssocEventsReturnsSceneTaggedRows(t *testing.T) {
+	store := assoc.NewMemory()
+	ws := "22222222-2222-2222-2222-222222222222"
+	ag := "11111111-1111-1111-1111-111111111111"
+	if _, err := store.InsertEvent(context.Background(), assoc.Event{
+		WorkspaceID: ws,
+		AgentID:     ag,
+		Source:      "outbound_im",
+		Direction:   assoc.DirOutbound,
+		EvidenceID:  "msg-out-1",
+		SceneKey:    "cid-a",
+		OccurredAt:  time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := &Handler{Assoc: assoc.NewService(store)}
+	req := httptest.NewRequest(http.MethodGet, "/api/assoc/events?conversation_id=cid-a&since=48h", nil)
+	req.Header.Set("X-Actor-Source", "task_token")
+	req.Header.Set("X-Agent-ID", ag)
+	req = req.WithContext(middleware.SetMemberContext(context.Background(), ws, db.Member{}))
+	rec := httptest.NewRecorder()
+	h.ListAssocEvents(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Items []assocEventResponse `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 1 || out.Items[0].ConversationID != "cid-a" {
+		t.Fatalf("items=%+v", out.Items)
 	}
 }
 

@@ -36,6 +36,13 @@ func testAgentID() pgtype.UUID {
 	return pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 }
 
+func TestIssueTitlePrefersUserMessageWhenLookIntoIsShort(t *testing.T) {
+	got := IssueTitle(Decision{LookInto: "报名表"}, "问一下冬翔，今天想吃什么")
+	if got != "问一下冬翔，今天想吃什么" {
+		t.Fatalf("title=%q", got)
+	}
+}
+
 func TestParseDecisionReply(t *testing.T) {
 	got := parseDecision(`{"action":"reply","text":"在的，今天想先对哪件事？","look_into":"","reason":"这是打招呼"}`, Turn{Source: SourceWeb})
 	if got.Action != ActionReply || got.UserText == "" || got.Reason != "这是打招呼" {

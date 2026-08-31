@@ -84,6 +84,88 @@ func (h *Handler) RecallAssoc(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) ListAssocEvents(w http.ResponseWriter, r *http.Request) {
+	if h.Assoc == nil {
+		writeError(w, http.StatusServiceUnavailable, "association store is not configured")
+		return
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusBadRequest, "workspace is required")
+		return
+	}
+	userID := requestUserID(r)
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	agentID := actorID
+	if actorType != "agent" {
+		agentID = strings.TrimSpace(r.URL.Query().Get("agent_id"))
+		if agentID == "" {
+			writeError(w, http.StatusBadRequest, "agent_id is required")
+			return
+		}
+		if _, err := util.ParseUUID(agentID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid agent_id")
+			return
+		}
+	}
+	cid := strings.TrimSpace(r.URL.Query().Get("conversation_id"))
+	if cid == "" {
+		writeError(w, http.StatusBadRequest, "conversation_id is required")
+		return
+	}
+	now := time.Now().UTC()
+	since, err := assoc.ParseSince(r.URL.Query().Get("since"), now)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	limit := 0
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		n, nerr := strconv.Atoi(rawLimit)
+		if nerr != nil {
+			writeError(w, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		limit = n
+	}
+	events, err := h.Assoc.ListEventsByScene(r.Context(), workspaceID, agentID, cid, since, limit)
+	if err != nil {
+		if errors.Is(err, assoc.ErrInvalidQuery) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to list association events")
+		return
+	}
+	items := make([]assocEventResponse, 0, len(events))
+	for _, event := range events {
+		items = append(items, assocEventResponse{
+			EvidenceID:     event.EvidenceID,
+			Direction:      event.Direction,
+			Source:         event.Source,
+			ConversationID: event.SceneKey,
+			PersonID:       event.PersonKey,
+			TaskID:         event.TaskID,
+			OccurredAt:     event.OccurredAt,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"since": since.UTC(),
+		"until": now,
+		"items": items,
+	})
+}
+
+type assocEventResponse struct {
+	EvidenceID     string    `json:"evidence_id"`
+	Direction      string    `json:"direction"`
+	Source         string    `json:"source"`
+	ConversationID string    `json:"conversation_id"`
+	PersonID       string    `json:"person_id,omitempty"`
+	TaskID         string    `json:"task_id,omitempty"`
+	OccurredAt     time.Time `json:"occurred_at"`
+}
+
 func (h *Handler) handleMulticaMCPAssocRecall(w http.ResponseWriter, r *http.Request, id json.RawMessage, rawArguments json.RawMessage) {
 	if h.Assoc == nil {
 		h.writeMulticaMCPToolError(w, id, "association store is not configured")
@@ -112,6 +194,56 @@ func (h *Handler) handleMulticaMCPAssocRecall(w http.ResponseWriter, r *http.Req
 		Limit:          args.Limit,
 		TaskID:         strings.TrimSpace(r.Header.Get("X-Task-ID")),
 	})
+	if err != nil {
+		h.writeMulticaMCPToolError(w, id, err.Error())
+		return
+	}
+	textResult, _ := json.Marshal(result)
+	h.writeMulticaMCPResult(w, id, multicaMCPToolResult{
+		Content:           []multicaMCPContent{{Type: "text", Text: string(textResult)}},
+		StructuredContent: result,
+	})
+}
+
+func (h *Handler) handleMulticaMCPAssocBind(w http.ResponseWriter, r *http.Request, id json.RawMessage, rawArguments json.RawMessage) {
+	if h.Assoc == nil {
+		h.writeMulticaMCPToolError(w, id, "association store is not configured")
+		return
+	}
+	if r.Header.Get("X-Actor-Source") != "task_token" {
+		h.writeMulticaMCPToolError(w, id, "assoc_bind requires a task token")
+		return
+	}
+	var args multicaMCPAssocBindArguments
+	if err := decodeMulticaMCPArguments(rawArguments, &args); err != nil {
+		h.writeMulticaMCPError(w, id, -32602, "invalid assoc_bind arguments")
+		return
+	}
+	workspaceID := strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
+	agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
+	taskID := strings.TrimSpace(r.Header.Get("X-Task-ID"))
+	if workspaceID == "" || agentID == "" || taskID == "" {
+		h.writeMulticaMCPToolError(w, id, "workspace, agent, and task identity are required")
+		return
+	}
+	in := assoc.BindOutboundInput{
+		WorkspaceID:    workspaceID,
+		AgentID:        agentID,
+		RunID:          taskID,
+		ConversationID: strings.TrimSpace(args.ConversationID),
+		EvidenceID:     strings.TrimSpace(args.EvidenceID),
+		PersonID:       strings.TrimSpace(args.PersonID),
+		Kind:           strings.TrimSpace(args.Kind),
+		Purpose:        strings.TrimSpace(args.Purpose),
+	}
+	issueID, title, err := h.issueForTaskToken(r.Context(), workspaceID, taskID)
+	if err != nil {
+		h.writeMulticaMCPToolError(w, id, err.Error())
+		return
+	}
+	in.IssueID = issueID
+	in.IssueTitle = title
+	result, err := h.Assoc.BindOutbound(r.Context(), in)
 	if err != nil {
 		h.writeMulticaMCPToolError(w, id, err.Error())
 		return
@@ -228,6 +360,7 @@ type assocBindOutboundRequest struct {
 	PersonID       string `json:"person_id,omitempty"`
 	Kind           string `json:"kind,omitempty"`
 	Intent         string `json:"intent,omitempty"`
+	Purpose        string `json:"purpose,omitempty"`
 }
 
 func (h *Handler) BindAssocOutbound(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +396,7 @@ func (h *Handler) BindAssocOutbound(w http.ResponseWriter, r *http.Request) {
 		PersonID:       strings.TrimSpace(body.PersonID),
 		Kind:           strings.TrimSpace(body.Kind),
 		Intent:         strings.TrimSpace(body.Intent),
+		Purpose:        strings.TrimSpace(body.Purpose),
 	}
 	issueID, title, err := h.issueForTaskToken(r.Context(), workspaceID, taskID)
 	if err != nil {
@@ -344,7 +478,7 @@ func (h *Handler) recordAssocInboundEvent(ctx context.Context, command DispatchC
 	}
 }
 
-func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext, issueID, issueTitle, runID string) {
+func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext, issueID, issueTitle, runID, purposeExtra string) {
 	if h.Assoc == nil || issueID == "" {
 		return
 	}
@@ -354,6 +488,7 @@ func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCo
 		AgentID:        uuidToString(dispatchContext.AgentID),
 		IssueID:        issueID,
 		IssueTitle:     issueTitle,
+		Purpose:        strings.TrimSpace(purposeExtra),
 		RunID:          runID,
 		ConversationID: ids.ConversationID,
 		EvidenceID:     ids.EvidenceID,

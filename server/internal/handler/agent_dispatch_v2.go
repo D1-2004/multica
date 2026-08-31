@@ -696,6 +696,30 @@ const (
 		"Visible text carries only an identifying head of a quote — read it back before relying on anything past that."
 )
 
+const dispatchSceneGraphInstruction = `## Scene graph (Issue ↔ DingTalk conversation)
+
+Outreach to another person is not the reply the platform delivers back to the waiting sender. After a successful ` + "`dws chat message send`" + ` or ` + "`send-by-bot`" + `, bind that outbound conversation to this Issue immediately.
+
+Use the managed MCP tools (task token, no workspace/agent args):
+- ` + "`assoc_bind`" + ` conversation_id=<openConversationId> optional evidence_id=<openMsgId> person_id=<uid>
+- ` + "`assoc_recall`" + ` since=48h current_issue=true — conversations already contacted
+- ` + "`assoc_recall`" + ` since=48h conversation_id=<openConversationId> — which Issue caused this chat
+
+CLI equivalents inside the sandbox:
+- ` + "`multica assoc bind --conversation <openConversationId> [--evidence <openMsgId>] [--person <uid>]`" + `
+- ` + "`multica assoc recall --current-issue --since 48h --output json`" + `
+- ` + "`multica assoc recall --conversation <openConversationId> --since 48h --output json`" + `
+- ` + "`multica assoc events --conversation <openConversationId> --since 48h --output json`" + `
+
+HTTP: GET /api/assoc/recall and GET /api/assoc/events (conversation_id + since).
+
+Identity:
+- Digital-employee inbound: conversation_id and uid are complete. Trust them.
+- Robot inbound: conversation_id may exist; uid is often missing. Do not invent person_id.
+- Web chat inbound: no DingTalk conversation_id. Do not bind a fake scene. Outbound DWS receipts still include openConversationId — bind those.
+
+Purpose must name the deliverable (example: 向冬翔确认今天吃什么), not 帮我看看. If several recall items match, inspect purpose and ask; do not guess.`
+
 // dispatchQuotedMessageFact is one quoted message, in window order.
 type dispatchQuotedMessageFact struct {
 	QuotedOpenMsgID    string

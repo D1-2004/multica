@@ -30,6 +30,7 @@ type Store interface {
 	ListEdgesBySrc(ctx context.Context, workspaceID, agentID, srcType, srcID string) ([]Edge, error)
 	InsertEvent(ctx context.Context, event Event) (Event, error)
 	GetEventByEvidence(ctx context.Context, workspaceID, agentID, evidenceID string) (Event, error)
+	ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error)
 	UpdateEventTask(ctx context.Context, workspaceID, agentID, evidenceID, taskID string) error
 	EnsureScene(ctx context.Context, workspaceID, agentID, sceneKey, kind string, at time.Time) error
 	EnsurePerson(ctx context.Context, workspaceID, agentID, personKey, displayName string, aliases []string) error
@@ -320,6 +321,37 @@ func (m *Memory) GetEventByEvidence(_ context.Context, workspaceID, agentID, evi
 		}
 	}
 	return Event{}, ErrNotFound
+}
+
+func (m *Memory) ListEventsByScene(_ context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Event, 0)
+	for _, existing := range m.events {
+		if existing.WorkspaceID != workspaceID || existing.AgentID != agentID {
+			continue
+		}
+		if existing.SceneKey != sceneKey {
+			continue
+		}
+		if !since.IsZero() && existing.OccurredAt.Before(since) {
+			continue
+		}
+		out = append(out, existing)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].OccurredAt.After(out[j].OccurredAt)
+	})
+	if limit <= 0 {
+		limit = DefaultLimit
+	}
+	if limit > MaxLimit {
+		limit = MaxLimit
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func catalogKey(workspaceID, agentID, id string) string {

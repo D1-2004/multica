@@ -928,7 +928,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	coord := &inboundcoord.Coordinator{LLM: h.LLM, Queries: h.Queries}
-	decision := coord.Decide(r.Context(), coord.TurnFromChatSession(
+	webTurn := coord.TurnFromChatSession(
 		r.Context(),
 		session,
 		inboundcoord.SourceWeb,
@@ -937,7 +937,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		session.Title,
 		"",
 		req.Content,
-	))
+	)
+	webTurn.IdentityNote = "web chat inbound: no DingTalk conversation_id or uid; outbound DWS receipts still include openConversationId"
+	decision := coord.Decide(r.Context(), webTurn)
 	if len(attachmentIDs) > 0 && decision.Action != inboundcoord.ActionContinue {
 		decision.Action = inboundcoord.ActionContinue
 	}

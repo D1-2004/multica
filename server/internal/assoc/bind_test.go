@@ -181,6 +181,55 @@ func TestBindOutboundWithoutIssueRecordsEventOnly(t *testing.T) {
 	}
 }
 
+func TestListEventsBySceneFiltersConversation(t *testing.T) {
+	t.Parallel()
+	store := NewMemory()
+	now := time.Now().UTC()
+	if _, err := store.InsertEvent(context.Background(), Event{
+		WorkspaceID: "ws", AgentID: "ag", Source: "outbound_im", Direction: DirOutbound,
+		EvidenceID: "out-1", SceneKey: "cid-a", OccurredAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEvent(context.Background(), Event{
+		WorkspaceID: "ws", AgentID: "ag", Source: "inbound_im", Direction: DirInbound,
+		EvidenceID: "in-other", SceneKey: "cid-b", OccurredAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.ListEventsByScene(context.Background(), "ws", "ag", "cid-a", now.Add(-time.Hour), 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].EvidenceID != "out-1" {
+		t.Fatalf("events=%+v", got)
+	}
+}
+
+func TestBindOutboundUsesPurposeWhenTitleShort(t *testing.T) {
+	t.Parallel()
+	store := NewMemory()
+	got, err := BindOutbound(context.Background(), store, BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		IssueID:        "issue-eat",
+		IssueTitle:     "报名表",
+		Purpose:        "向冬翔确认今天吃什么",
+		ConversationID: "cid-dongxiang",
+		EvidenceID:     "msg-out",
+	})
+	if err != nil || !got.Linked {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+	task, err := store.GetOpenTaskByIssue(context.Background(), "ws", "ag", "issue-eat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Purpose != "向冬翔确认今天吃什么" {
+		t.Fatalf("purpose=%q", task.Purpose)
+	}
+}
+
 func TestBindOutboundRejectsVaguePurpose(t *testing.T) {
 	t.Parallel()
 	_, err := BindOutbound(context.Background(), NewMemory(), BindOutboundInput{

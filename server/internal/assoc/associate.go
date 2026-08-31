@@ -20,6 +20,7 @@ type AssociateInput struct {
 	PersonAliases  []string
 	Intent         string
 	Kind           string
+	Purpose        string
 }
 
 func AssociateIssueConversation(ctx context.Context, store Store, in AssociateInput) error {
@@ -44,6 +45,7 @@ func associateIssueConversation(ctx context.Context, store Store, in AssociateIn
 		AgentID:        in.AgentID,
 		IssueID:        in.IssueID,
 		IssueTitle:     in.IssueTitle,
+		Purpose:        in.Purpose,
 		RunID:          in.RunID,
 		ConversationID: cid,
 		Intent:         in.Intent,

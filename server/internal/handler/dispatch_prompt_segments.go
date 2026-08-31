@@ -39,6 +39,9 @@ const (
 	// DispatchSegmentEnterpriseIdentity tells the agent how to surface a BUC
 	// authorization failure instead of retrying or asking for credentials.
 	DispatchSegmentEnterpriseIdentity = "enterprise_identity"
+	// DispatchSegmentSceneGraph tells the agent how to recall and bind DingTalk
+	// conversations to the current Issue.
+	DispatchSegmentSceneGraph = "scene_graph"
 )
 
 // Segment sources, as reported to the settings UI.
@@ -82,6 +85,7 @@ var customizableDispatchSegments = map[string]bool{
 	DispatchSegmentPolicy:               true,
 	DispatchSegmentReplyFormatting:      true,
 	DispatchSegmentEnterpriseIdentity:   true,
+	DispatchSegmentSceneGraph:           true,
 	DispatchSegmentContext:              false,
 	DispatchSegmentDingTalkConversation: false,
 }
@@ -91,6 +95,7 @@ var dispatchSegmentOrder = []string{
 	DispatchSegmentPolicy,
 	DispatchSegmentContext,
 	DispatchSegmentDingTalkConversation,
+	DispatchSegmentSceneGraph,
 	DispatchSegmentReplyFormatting,
 	DispatchSegmentEnterpriseIdentity,
 }
@@ -180,6 +185,13 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 		ManagedText:    conversation,
 		EffectiveText:  conversation,
 	})
+
+	assocApplies := in.Present && in.Stored.Source.Platform == "dingtalk" && in.Stored.Domain == "channel"
+	segments = append(segments, dispatchSegment(
+		DispatchSegmentSceneGraph, dispatchSegmentSourceBuiltin,
+		dispatchSceneGraphInstruction, in.Overrides,
+		assocApplies, "dingtalk_channel", "not_a_dingtalk_channel",
+	))
 
 	segments = append(segments, dispatchSegment(
 		DispatchSegmentReplyFormatting, dispatchSegmentSourceBuiltin,

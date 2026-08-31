@@ -23,7 +23,8 @@ remain Issue-only because neither has a foreground Chat session to release.
 
 Before a sandbox starts, Multica runs one bounded server-side JSON decision on
 web Chat and on DingTalk `channel/message.created` for digital employees and
-robots. The decisioner is a router: it has no tools and must not answer from
+robots. The decisioner is a router: it has no tools. Related Issue tasks for the
+current conversation may be injected from the scene graph. It must not answer from
 its own knowledge. Direct reply **is** the Chat response. Only work that needs
 tools, lookup, or tracking becomes an Issue and starts a sandbox. The loop
 does not call DWS, does not redeem a ContextToken, and is not behind a feature

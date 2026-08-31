@@ -20,6 +20,7 @@ type BindOutboundInput struct {
 	EvidenceID     string
 	Kind           string
 	Intent         string
+	Purpose        string
 }
 
 type BindOutboundResult struct {
@@ -140,7 +141,7 @@ func ensureIssueTask(ctx context.Context, store Store, in BindOutboundInput, now
 	if err != nil && !errors.Is(err, ErrNotFound) {
 		return Task{}, err
 	}
-	purpose, err := purposeForIssue(in.IssueTitle)
+	purpose, err := ResolvePurpose(in.Purpose, in.IssueTitle)
 	if err != nil {
 		return Task{}, err
 	}
@@ -154,13 +155,6 @@ func ensureIssueTask(ctx context.Context, store Store, in BindOutboundInput, now
 		RunID:         in.RunID,
 		LastTouchedAt: now,
 	})
-}
-
-func purposeForIssue(title string) (string, error) {
-	if err := ValidatePurpose(title); err != nil {
-		return "", fmt.Errorf("%w: issue title is not a precise purpose", ErrInvalidTask)
-	}
-	return strings.TrimSpace(title), nil
 }
 
 func bindEdge(ctx context.Context, store Store, actor graphActor, srcType, srcID, dstType, dstID, rel string, props map[string]any, now time.Time) error {

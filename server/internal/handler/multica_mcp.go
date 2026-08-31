@@ -31,6 +31,7 @@ const (
 	multicaMCPPrepareStaticSiteTool          = "prepare_static_site_deploy"
 	multicaMCPGetStaticSiteTool              = "get_static_site_deploy"
 	multicaMCPAssocRecallTool                = "assoc_recall"
+	multicaMCPAssocBindTool                  = "assoc_bind"
 	multicaMCPMaxRequestBytes                = 1 << 20
 	multicaMCPPersonalTokenPrefix            = "mul_"
 	multicaMCPForwardedFromTaskContextKey    = "mcp_forwarded_from_task_id"
@@ -72,7 +73,15 @@ const multicaMCPAssocRecallToolDescription = `Recall related Issue tasks for the
 
 Use this when a reply arrives in a new private chat and you need to know which ongoing task caused that outreach, or when executing an Issue and you need the conversations already contacted.
 
-since is required (24h/48h/7d or RFC3339). current_issue uses the authenticated task's Issue. conversation_id is a DingTalk openConversationId. Do not guess; inspect purpose and ask if multiple items match.`
+since is required (24h/48h/7d or RFC3339). current_issue uses the authenticated task's Issue. conversation_id is a DingTalk openConversationId. Do not guess; inspect purpose and ask if multiple items match.
+
+Digital-employee inbound has complete conversation_id and uid. Robot inbound may lack uid. Web chat has no DingTalk conversation_id — use current_issue after outbound bind.`
+
+const multicaMCPAssocBindToolDescription = `Bind an outbound DingTalk conversation to the current Issue after a successful dws chat message send.
+
+Requires a task token. conversation_id is the receipt openConversationId. Optional evidence_id (openMsgId) and person_id (DingTalk uid). Outbound receipts always include conversation_id; inbound uid is complete only on digital-employee routes.
+
+Do not bind a fake scene for web chat inbound. After bind, confirm with assoc_recall current_issue=true since=48h.`
 
 const multicaMCPAgentListToolDescription = `List all active Multica Agents available to the authenticated caller and return their detailed, non-secret metadata.
 
@@ -296,6 +305,7 @@ func multicaMCPToolDefinitions() []any {
 		multicaMCPPrepareStaticSiteDefinition(),
 		multicaMCPGetStaticSiteDefinition(),
 		multicaMCPAssocRecallDefinition(),
+		multicaMCPAssocBindDefinition(),
 	}
 }
 
@@ -331,6 +341,39 @@ func multicaMCPAssocRecallDefinition() map[string]any {
 		},
 		"annotations": map[string]any{
 			"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
+		},
+	}
+}
+
+func multicaMCPAssocBindDefinition() map[string]any {
+	return map[string]any{
+		"name":        multicaMCPAssocBindTool,
+		"title":       "Bind outbound DingTalk conversation",
+		"description": multicaMCPAssocBindToolDescription,
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"conversation_id": map[string]any{"type": "string", "minLength": 1, "description": "DingTalk openConversationId from the send receipt."},
+				"evidence_id":     map[string]any{"type": "string", "description": "Optional openMsgId for dedup."},
+				"person_id":       map[string]any{"type": "string", "description": "Optional DingTalk uid. Omit when inbound identity is incomplete."},
+				"kind":            map[string]any{"type": "string", "description": "dm or group. Defaults to dm."},
+				"purpose":         map[string]any{"type": "string", "description": "Optional precise purpose when creating the Issue task node."},
+			},
+			"required": []string{"conversation_id"},
+		},
+		"outputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"conversation_id": map[string]any{"type": "string"},
+				"task_id":         map[string]any{"type": "string"},
+				"issue_id":        map[string]any{"type": "string"},
+				"linked":          map[string]any{"type": "boolean"},
+			},
+			"required": []string{"conversation_id", "linked"},
+		},
+		"annotations": map[string]any{
+			"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
 		},
 	}
 }
@@ -573,6 +616,10 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 		h.handleMulticaMCPAssocRecall(w, r, req.ID, params.Arguments)
 		return
 	}
+	if params.Name == multicaMCPAssocBindTool {
+		h.handleMulticaMCPAssocBind(w, r, req.ID, params.Arguments)
+		return
+	}
 	if params.Name != multicaMCPChatSendTool {
 		h.writeMulticaMCPError(w, req.ID, -32602, "unknown tool")
 		return
@@ -624,6 +671,14 @@ type multicaMCPAssocRecallArguments struct {
 	Q              string `json:"q"`
 	Intent         string `json:"intent"`
 	Limit          int    `json:"limit"`
+}
+
+type multicaMCPAssocBindArguments struct {
+	ConversationID string `json:"conversation_id"`
+	EvidenceID     string `json:"evidence_id"`
+	PersonID       string `json:"person_id"`
+	Kind           string `json:"kind"`
+	Purpose        string `json:"purpose"`
 }
 
 func (h *Handler) handleMulticaMCPAgentCall(
