@@ -48,13 +48,13 @@ func TestDispatchClaimComposesInstructionWithoutChangingUserContent(t *testing.T
 		{
 			name:     "initial issue keeps handoff note",
 			context:  issueContext,
-			response: AgentTaskResponse{IssueID: "issue-1", HandoffNote: "原始交接内容"},
+			response: AgentTaskResponse{IssueID: "issue-1", HandoffNote: "原始交接内容", Agent: &TaskAgentData{Instructions: "PERSONA"}},
 			assertStable: func(t *testing.T, response AgentTaskResponse) {
 				if response.HandoffNote != "原始交接内容" {
 					t.Fatalf("handoff note changed: %q", response.HandoffNote)
 				}
 			},
-			want: "COMMON POLICY\n\nISSUE POLICY\n\nROUTER CONTEXT",
+			want: "PERSONA\n\nCOMMON POLICY\n\nISSUE POLICY",
 		},
 		{
 			name:    "issue comment keeps trigger content",
@@ -63,30 +63,31 @@ func TestDispatchClaimComposesInstructionWithoutChangingUserContent(t *testing.T
 				IssueID:               "issue-1",
 				TriggerCommentID:      &commentID,
 				TriggerCommentContent: "原始评论内容",
+				Agent:                 &TaskAgentData{Instructions: "PERSONA"},
 			},
 			assertStable: func(t *testing.T, response AgentTaskResponse) {
 				if response.TriggerCommentContent != "原始评论内容" {
 					t.Fatalf("trigger comment content changed: %q", response.TriggerCommentContent)
 				}
 			},
-			want: "COMMON POLICY\n\nISSUE POLICY\n\nROUTER CONTEXT",
+			want: "PERSONA\n\nCOMMON POLICY\n\nISSUE POLICY",
 		},
 		{
 			name:     "chat keeps chat message",
 			context:  chatContext,
-			response: AgentTaskResponse{ChatSessionID: "chat-1", ChatMessage: "原始聊天内容"},
+			response: AgentTaskResponse{ChatSessionID: "chat-1", ChatMessage: "原始聊天内容", Agent: &TaskAgentData{Instructions: "PERSONA"}},
 			assertStable: func(t *testing.T, response AgentTaskResponse) {
 				if response.ChatMessage != "原始聊天内容" {
 					t.Fatalf("chat message changed: %q", response.ChatMessage)
 				}
 			},
-			want: "COMMON POLICY\n\nCHAT POLICY\n\nROUTER CONTEXT",
+			want: "PERSONA\n\nCOMMON POLICY\n\nCHAT POLICY",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			applyTaskInstructionForClaim(&tc.response, tc.context, flags, nil, "")
+			applyTaskInstructionForClaim(&tc.response, tc.context, flags, nil, "", false)
 			tc.assertStable(t, tc.response)
 			encoded, err := json.Marshal(tc.response)
 			if err != nil {
@@ -102,14 +103,20 @@ func TestDispatchClaimComposesInstructionWithoutChangingUserContent(t *testing.T
 					t.Fatal(err)
 				}
 			}
-			// Reply formatting is part of the same composition for a DingTalk
-			// task, so compare the policy prefix and assert the segment order
-			// rather than restating the constant in every case.
-			if !strings.HasPrefix(instruction, tc.want) {
-				t.Fatalf("instruction = %q, want it to start with %q", instruction, tc.want)
+			// The session-constant half — policy, then reply formatting — rides
+			// in the agent instructions the brief renders; the per-turn
+			// instruction opens with the Router context and carries no policy.
+			if !strings.HasPrefix(tc.response.Agent.Instructions, tc.want) {
+				t.Fatalf("agent instructions = %q, want them to start with %q", tc.response.Agent.Instructions, tc.want)
 			}
-			if !strings.HasSuffix(instruction, dingTalkReplyFormattingInstruction) {
-				t.Fatalf("instruction did not end with the reply formatting segment: %q", instruction)
+			if !strings.HasSuffix(tc.response.Agent.Instructions, dingTalkReplyFormattingInstruction) {
+				t.Fatalf("agent instructions did not end with the reply formatting segment: %q", tc.response.Agent.Instructions)
+			}
+			if !strings.HasPrefix(instruction, "ROUTER CONTEXT") {
+				t.Fatalf("instruction = %q, want it to start with the Router context", instruction)
+			}
+			if strings.Contains(instruction, "POLICY") || strings.Contains(instruction, "## DingTalk Reply Formatting") {
+				t.Fatalf("per-turn instruction carries session-constant text: %q", instruction)
 			}
 		})
 	}
@@ -250,7 +257,7 @@ func TestDispatchClaimFallsBackToLegacyPromptWhenComposedInstructionIsEmpty(t *t
 
 	t.Run("instruction capable daemon does not fall back to legacy prompt", func(t *testing.T) {
 		response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "原始交接内容"}
-		applyTaskInstructionForClaim(&response, context, nil, nil, "")
+		applyTaskInstructionForClaim(&response, context, nil, nil, "", false)
 		// With no Diamond policy configured the composition contributes only the
 		// reply-formatting segment; the point is that no policy text appears and
 		// the legacy field is left alone.
@@ -326,7 +333,7 @@ func TestDispatchClaimSelectsPromptBuilderByDaemonCapability(t *testing.T) {
 	t.Run("instruction capable daemon only uses new builder", func(t *testing.T) {
 		response := AgentTaskResponse{IssueID: "issue-1", HandoffNote: "原始交接内容"}
 		context := dispatchTaskContextForTest(t, command)
-		applyTaskInstructionForClaim(&response, context, nil, nil, "")
+		applyTaskInstructionForClaim(&response, context, nil, nil, "", false)
 		// With no Diamond policy configured the composition contributes only the
 		// reply-formatting segment; the point is that no policy text appears and
 		// the legacy field is left alone.
@@ -384,23 +391,30 @@ func TestApplyDingTalkReplyFormattingInstructionForStreamChat(t *testing.T) {
 	}
 	// A DingTalk stream task carries no dispatch envelope, so it gets the reply
 	// formatting segment and nothing else — the policy and context segments are
-	// scoped to dispatch runs.
-	response := AgentTaskResponse{}
-	applyTaskInstructionForClaim(&response, context, nil, nil, "")
+	// scoped to dispatch runs. Formatting is session-constant, so it rides in
+	// the agent instructions and the per-turn instruction stays untouched.
+	response := AgentTaskResponse{Agent: &TaskAgentData{Instructions: "PERSONA"}}
+	applyTaskInstructionForClaim(&response, context, nil, nil, "", false)
 
 	for _, want := range []string{
 		"Do not use Markdown tables or raw HTML",
 		"include its title and complete URL",
 	} {
-		if !strings.Contains(response.Instruction, want) {
-			t.Fatalf("instruction missing %q: %q", want, response.Instruction)
+		if !strings.Contains(response.Agent.Instructions, want) {
+			t.Fatalf("agent instructions missing %q: %q", want, response.Agent.Instructions)
 		}
+	}
+	if !strings.HasPrefix(response.Agent.Instructions, "PERSONA\n\n") {
+		t.Fatalf("agent instructions lost the persona: %q", response.Agent.Instructions)
+	}
+	if response.Instruction != "" {
+		t.Fatalf("stream chat per-turn instruction = %q, want empty", response.Instruction)
 	}
 }
 
 func TestClaimInstructionIgnoresNonDingTalkTask(t *testing.T) {
 	response := AgentTaskResponse{Instruction: "unchanged"}
-	applyTaskInstructionForClaim(&response, []byte(`{"source":"web"}`), nil, nil, "")
+	applyTaskInstructionForClaim(&response, []byte(`{"source":"web"}`), nil, nil, "", false)
 	if response.Instruction != "unchanged" {
 		t.Fatalf("instruction = %q, want unchanged", response.Instruction)
 	}
@@ -416,11 +430,15 @@ func TestClaimInstructionHonorsReplyFormattingOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	response.Agent = &TaskAgentData{}
 	applyTaskInstructionForClaim(&response, context, nil, map[string]string{
 		DispatchSegmentReplyFormatting: "AGENT REPLY RULES",
-	}, "")
-	if response.Instruction != "AGENT REPLY RULES" {
-		t.Fatalf("instruction = %q, want the authored reply rules", response.Instruction)
+	}, "", false)
+	if response.Agent.Instructions != "AGENT REPLY RULES" {
+		t.Fatalf("agent instructions = %q, want the authored reply rules", response.Agent.Instructions)
+	}
+	if response.Instruction != "" {
+		t.Fatalf("per-turn instruction = %q, want empty", response.Instruction)
 	}
 }
 
@@ -433,7 +451,7 @@ func TestClaimInstructionAppendsEnterpriseIdentityWhenURLResolves(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyTaskInstructionForClaim(&response, context, nil, nil, "https://multica.example/login?next=%2Fws%2Fagents%2Fa")
+	applyTaskInstructionForClaim(&response, context, nil, nil, "https://multica.example/login?next=%2Fws%2Fagents%2Fa", false)
 	if !strings.Contains(response.Instruction, "BUC Identity Authorization") {
 		t.Fatalf("instruction missing the BUC segment: %q", response.Instruction)
 	}
@@ -442,7 +460,7 @@ func TestClaimInstructionAppendsEnterpriseIdentityWhenURLResolves(t *testing.T) 
 	}
 
 	var withoutURL AgentTaskResponse
-	applyTaskInstructionForClaim(&withoutURL, context, nil, nil, "")
+	applyTaskInstructionForClaim(&withoutURL, context, nil, nil, "", false)
 	if strings.Contains(withoutURL.Instruction, "BUC Identity Authorization") {
 		t.Fatalf("BUC segment leaked without a resolvable URL: %q", withoutURL.Instruction)
 	}
@@ -494,7 +512,7 @@ func applyClaimInstructionForTest(
 	supportsTaskInstruction bool,
 ) {
 	if supportsTaskInstruction {
-		applyTaskInstructionForClaim(response, rawContext, flags, overrides, "")
+		applyTaskInstructionForClaim(response, rawContext, flags, overrides, "", false)
 		return
 	}
 	applyLegacyDingTalkDispatchPrompt(response, rawContext, flags, overrides)

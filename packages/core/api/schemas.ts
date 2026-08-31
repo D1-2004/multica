@@ -2498,6 +2498,7 @@ export const EMPTY_AGENT_TEMPLATE_DETAIL: AgentTemplate = {
 export const DispatchPromptSegmentSchema = z.object({
   id: z.string(),
   source: z.string().default("builtin"),
+  delivery: z.string().default("per_turn"),
   customizable: z.boolean().default(false),
   overridden: z.boolean().default(false),
   condition: z.string().default(""),

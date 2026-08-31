@@ -53,6 +53,7 @@ function preview(overrides: Partial<DispatchPromptPreview> = {}): DispatchPrompt
       {
         id: "policy",
         source: "managed",
+        delivery: "runtime_brief",
         customizable: true,
         condition: "dingtalk_dispatch",
         overridden: false,
@@ -63,6 +64,7 @@ function preview(overrides: Partial<DispatchPromptPreview> = {}): DispatchPrompt
       {
         id: "context",
         source: "router",
+        delivery: "per_turn",
         customizable: false,
         condition: "per_dispatch",
         overridden: false,
@@ -74,6 +76,7 @@ function preview(overrides: Partial<DispatchPromptPreview> = {}): DispatchPrompt
       {
         id: "reply_formatting",
         source: "builtin",
+        delivery: "runtime_brief",
         customizable: true,
         condition: "any_dingtalk_task",
         overridden: false,
@@ -226,6 +229,7 @@ describe("DispatchPromptDialog", () => {
           {
             id: "policy",
             source: "managed",
+            delivery: "runtime_brief",
             customizable: true,
             condition: "dingtalk_dispatch",
             overridden: true,

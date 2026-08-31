@@ -9,21 +9,36 @@ import (
 	"testing"
 )
 
-func TestMakeChatHistoryAuthoritative(t *testing.T) {
+// The provider session is withheld whenever the warm-resume gate says no —
+// whether or not a database transcript rides on the claim. The second case is
+// every DingTalk dispatch with a printed read-back command, and it is the one
+// that used to slip through: the old gate keyed on the transcript's presence,
+// so a claim without one kept the pointer and resumed with the switch off.
+func TestWithholdCloudChatProviderSession(t *testing.T) {
 	t.Parallel()
 
-	resp := AgentTaskResponse{
-		ChatHistory:                   "User:\nremember the blue lantern",
-		PriorSessionID:                "provider-session-from-another-sandbox",
-		PriorSessionResumeUnavailable: true,
-	}
-	makeChatHistoryAuthoritative(&resp)
+	for name, history := range map[string]string{
+		"with database transcript":             "User:\nremember the blue lantern",
+		"transcript withheld for readback cmd": "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			resp := AgentTaskResponse{
+				ChatHistory:                   history,
+				PriorSessionID:                "provider-session-from-another-sandbox",
+				PriorSessionResumeUnavailable: true,
+			}
+			withholdCloudChatProviderSession(&resp)
 
-	if resp.PriorSessionID != "" {
-		t.Fatalf("PriorSessionID = %q, want empty", resp.PriorSessionID)
-	}
-	if resp.PriorSessionResumeUnavailable {
-		t.Fatal("database history is available; unrecoverable-session notice must be false")
+			if resp.PriorSessionID != "" {
+				t.Fatalf("PriorSessionID = %q, want empty", resp.PriorSessionID)
+			}
+			if resp.PriorSessionResumeUnavailable {
+				t.Fatal("a deliberately fresh turn has no failed resume to disclose; notice must be false")
+			}
+			if resp.ChatHistory != history {
+				t.Fatalf("ChatHistory changed: %q", resp.ChatHistory)
+			}
+		})
 	}
 }
 
@@ -207,6 +222,21 @@ func TestClaimTaskByRuntime_CloudChatWarmResumeGates(t *testing.T) {
 	}
 
 	const metadata = `{"kind":"fc-e2b"}`
+	// A DingTalk dispatch whose instruction prints a read-back command: the
+	// claim withholds the database transcript for it (withholdChatHistoryForReadback),
+	// which is exactly the claim shape the resume gate has to keep honoring.
+	readbackDispatch := dispatchTaskContextForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-resume"},
+			Sender:       DispatchSender{OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "msg-resume", Text: "and its population?"}},
+		}},
+		Surface:       DispatchSurface{Type: "auto"},
+		Outbound:      DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		ContextPrompt: "ROUTER CONTEXT",
+	})
 	tests := []struct {
 		name         string
 		enableResume bool
@@ -214,8 +244,15 @@ func TestClaimTaskByRuntime_CloudChatWarmResumeGates(t *testing.T) {
 		identity     string
 		completedAgo string
 		coldStart    bool
-		wantPriorID  string
-		wantHistory  bool
+		// taskContext is the queued task's context column; readbackDispatch
+		// makes the claim withhold chat_history.
+		taskContext string
+		// rolloutMissing marks the prior completed turn as having withheld
+		// its provider session, which makes the claim flag a continuity gap.
+		rolloutMissing bool
+		wantPriorID    string
+		wantHistory    bool
+		wantResumed    bool // resumed-turn wording in the instruction
 	}{
 		{
 			name:         "group never resumes",
@@ -248,6 +285,26 @@ func TestClaimTaskByRuntime_CloudChatWarmResumeGates(t *testing.T) {
 			completedAgo: "2 minutes",
 			coldStart:    true,
 			wantHistory:  true,
+		},
+		{
+			// Production shape of traces 50f6652d… / b60a1060…: switch off, no
+			// transcript on the claim, and the pointer used to survive anyway.
+			// The continuity-gap flag is cleared with it — a fresh-by-design turn
+			// must not tell the person its context was lost.
+			name:           "switch off withholds provider session even without transcript",
+			chatType:       "p2p",
+			completedAgo:   "2 minutes",
+			taskContext:    string(readbackDispatch),
+			rolloutMissing: true,
+		},
+		{
+			name:         "switch on resumes a warm dingtalk 1:1 without transcript",
+			enableResume: true,
+			chatType:     "p2p",
+			completedAgo: "2 minutes",
+			taskContext:  string(readbackDispatch),
+			wantPriorID:  "provider-session-from-previous-turn",
+			wantResumed:  true,
 		},
 	}
 
@@ -318,19 +375,19 @@ func TestClaimTaskByRuntime_CloudChatWarmResumeGates(t *testing.T) {
 
 			if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, status, priority, chat_session_id, session_id, completed_at
+			agent_id, runtime_id, status, priority, chat_session_id, session_id, completed_at, session_rollout_missing
 		)
-		VALUES ($1, $2, 'completed', 0, $3, 'provider-session-from-previous-turn', now() - ($4)::interval)
-	`, agentID, runtimeID, sessionID, tc.completedAgo); err != nil {
+		VALUES ($1, $2, 'completed', 0, $3, 'provider-session-from-previous-turn', now() - ($4)::interval, $5)
+	`, agentID, runtimeID, sessionID, tc.completedAgo, tc.rolloutMissing); err != nil {
 				t.Fatalf("setup: seed completed prior task: %v", err)
 			}
 
 			var taskID string
 			if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, chat_session_id)
-		VALUES ($1, $2, 'queued', 0, $3)
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, chat_session_id, context)
+		VALUES ($1, $2, 'queued', 0, $3, NULLIF($4, '')::jsonb)
 		RETURNING id
-	`, agentID, runtimeID, sessionID).Scan(&taskID); err != nil {
+	`, agentID, runtimeID, sessionID, tc.taskContext).Scan(&taskID); err != nil {
 				t.Fatalf("setup: seed queued chat task: %v", err)
 			}
 			t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE chat_session_id = $1`, sessionID) })
@@ -373,9 +430,11 @@ func TestClaimTaskByRuntime_CloudChatWarmResumeGates(t *testing.T) {
 
 			var resp struct {
 				Task *struct {
-					ID             string `json:"id"`
-					ChatHistory    string `json:"chat_history"`
-					PriorSessionID string `json:"prior_session_id"`
+					ID                            string `json:"id"`
+					ChatHistory                   string `json:"chat_history"`
+					PriorSessionID                string `json:"prior_session_id"`
+					PriorSessionResumeUnavailable bool   `json:"prior_session_resume_unavailable"`
+					Instruction                   string `json:"instruction"`
 				} `json:"task"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -389,6 +448,15 @@ func TestClaimTaskByRuntime_CloudChatWarmResumeGates(t *testing.T) {
 			}
 			if tc.wantHistory && resp.Task.ChatHistory == "" {
 				t.Fatal("expected chat_history to stay on the claim for resume fallback")
+			}
+			if tc.taskContext != "" && resp.Task.ChatHistory != "" {
+				t.Errorf("readback dispatch must not carry the Multica transcript, got %q", resp.Task.ChatHistory)
+			}
+			if tc.wantPriorID == "" && resp.Task.PriorSessionResumeUnavailable {
+				t.Error("a claim that withholds the provider session by design must not disclose a continuity gap")
+			}
+			if resumed := strings.Contains(resp.Task.Instruction, "You are continuing your own session"); resumed != tc.wantResumed {
+				t.Errorf("resumed-turn instruction = %v, want %v: %q", resumed, tc.wantResumed, resp.Task.Instruction)
 			}
 		})
 	}
