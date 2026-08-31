@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
@@ -1280,6 +1281,47 @@ func TestRouter_IssueCommand_ActiveDuplicateIsTerminalProductOutcome(t *testing.
 	h.tasks.mu.Unlock()
 	if issuePromotions != 0 {
 		t.Fatalf("duplicate media promoted a non-existent issue task, calls=%d", issuePromotions)
+	}
+}
+
+func TestRouter_DurableIssueCommand_ActiveDuplicateIsTerminalProductOutcome(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+	h.reader.originErr = pgx.ErrNoRows
+	h.binder.appendResult = AppendResult{
+		MessageID:   uuidFromString(t, "77777777-7777-4777-8777-777777777777"),
+		DedupMarked: true,
+	}
+	duplicate := db.Issue{
+		ID:     uuidFromString(t, "88888888-8888-4888-8888-888888888888"),
+		Number: 44,
+		Title:  "今日新闻",
+	}
+	h.issues.result = service.IssueCreateResult{DuplicateIssue: &duplicate}
+	h.issues.err = service.ErrActiveDuplicate
+	msg := p2pMessage(t)
+	msg.Text = "/issue 今日新闻"
+	msg.CommandText = "/issue 今日新闻"
+
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("durable duplicate issue must be a product outcome, got error: %v", err)
+	}
+	if !h.issues.called {
+		t.Fatal("durable issue command must call IssueService.Create")
+	}
+	if h.dedup.releases() != 0 {
+		t.Fatalf("durable duplicate must keep the claim marked; releases=%d", h.dedup.releases())
+	}
+	if !waitFor(time.Second, func() bool {
+		for _, result := range h.replier.calls() {
+			if result.IssueDuplicate && result.IssueID == duplicate.ID && result.IssueIdentifier == "MUL-44" && result.IssueTitle == duplicate.Title {
+				return true
+			}
+		}
+		return false
+	}) {
+		t.Fatalf("durable duplicate result was not delivered to replier: %+v", h.replier.calls())
 	}
 }
 

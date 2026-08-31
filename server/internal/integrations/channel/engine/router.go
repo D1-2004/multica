@@ -576,6 +576,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	durableOutcome := OutcomeIngested
 	durableFresh := false
 	var durableIssueResult *service.IssueCreateResult
+	var durableIssueErr error
 	if set.DurableRuns && issueCommandRequested {
 		resolvedCommand, err := r.resolveDurableIssueCommand(ctx, sessionID, *issueCommand)
 		if err != nil {
@@ -590,10 +591,11 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			ctx, inst, set.OriginType, identity.PrincipalUserID, msg.MessageID,
 			resolvedCommand, taskContext, prefix, assignedRunFireAt,
 		)
-		if err != nil {
+		if err != nil && !(errors.Is(err, service.ErrActiveDuplicate) && issueRes.DuplicateIssue != nil) {
 			return Result{}, finalizeRelease, fmt.Errorf("create durable issue command: %w", err)
 		}
 		durableIssueResult = &issueRes
+		durableIssueErr = err
 	}
 	if set.DurableRuns && !issueCommandRequested && !skipSandboxPrepare {
 		session, err := r.reader.GetChatSession(ctx, sessionID)
@@ -704,6 +706,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		var issueRes service.IssueCreateResult
 		if durableIssueResult != nil {
 			issueRes = *durableIssueResult
+			err = durableIssueErr
 		} else {
 			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *command, taskContext, prefix, assignedRunFireAt)
 		}

@@ -185,7 +185,9 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 		// message stays silent (the agent's own reply lands via EventChatDone).
 		if res.IssueID.Valid {
 			text := strings.TrimSpace(res.ReplyText)
-			if text == "" {
+			if res.IssueDuplicate {
+				text = issueDuplicateText(res)
+			} else if text == "" {
 				text = issueCreatedText(res)
 			}
 			if err := r.post(ctx, inst, msg, text); err != nil {
@@ -338,4 +340,16 @@ func issueCreatedText(res engine.Result) string {
 		return "✅ 已创建 " + id
 	}
 	return "✅ 已创建 " + id + " — " + title
+}
+
+func issueDuplicateText(res engine.Result) string {
+	id := res.IssueIdentifier
+	if id == "" {
+		id = fmt.Sprintf("#%d", res.IssueNumber)
+	}
+	title := strings.TrimSpace(res.IssueTitle)
+	if title == "" {
+		return "⚠️ 未创建 —— 已存在进行中的 " + id
+	}
+	return "⚠️ 未创建 —— 已存在进行中的 " + id + " — " + title
 }
