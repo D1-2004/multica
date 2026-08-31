@@ -559,6 +559,18 @@ func (r *sessionBinder) EnsureSession(ctx context.Context, p engine.EnsureSessio
 	})
 }
 
+func (r *sessionBinder) CreateUnboundSession(ctx context.Context, p engine.EnsureSessionParams) (pgtype.UUID, error) {
+	title, staleTitles := dingtalkSessionTitle(p.Message)
+	return r.session.CreateUnboundSession(ctx, engine.EnsureSessionInput{
+		WorkspaceID: p.Installation.WorkspaceID,
+		AgentID:     p.Installation.AgentID,
+		Sender:      p.Sender,
+		ChatType:    p.Message.Source.ChatType,
+		Title:       title,
+		StaleTitles: staleTitles,
+	})
+}
+
 func (r *sessionBinder) MarkPendingFresh(ctx context.Context, sessionID pgtype.UUID) error {
 	return r.session.MarkPendingFresh(ctx, sessionID)
 }
@@ -580,15 +592,16 @@ func (r *sessionBinder) AppendMessage(ctx context.Context, p engine.AppendParams
 		Body:           dingtalkMessageBody(p.Message),
 		// CommandText is the user's OWN typed text: the /issue parser must
 		// see the bare message, not the speaker-labelled body.
-		CommandText:         p.Message.Text,
-		MessageID:           p.Message.MessageID,
-		ThreadID:            p.Message.Source.ThreadID,
-		ClaimToken:          p.ClaimToken,
-		ForceFreshSession:   p.ForceFreshSession,
-		PreparedTask:        p.PreparedTask,
-		DisableIssueCommand: p.DisableIssueCommand,
-		AttachmentIDs:       attachmentIDs,
-		SourcePayload:       p.Message.SourcePayload,
+		CommandText:            p.Message.Text,
+		MessageID:              p.Message.MessageID,
+		ThreadID:               p.Message.Source.ThreadID,
+		ClaimToken:             p.ClaimToken,
+		ForceFreshSession:      p.ForceFreshSession,
+		PreparedTask:           p.PreparedTask,
+		DisableIssueCommand:    p.DisableIssueCommand,
+		AttachmentIDs:          attachmentIDs,
+		SourcePayload:          p.Message.SourcePayload,
+		SkipBindingReplyTarget: p.SkipBindingReplyTarget,
 	})
 	if err != nil {
 		r.attachments.DeleteImported(context.WithoutCancel(ctx), imported)

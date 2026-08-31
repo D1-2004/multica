@@ -1364,6 +1364,25 @@ SELECT
   )::uuid AS active_task_id
 FROM prioritized;
 
+-- name: GetActiveAgentDispatchChatTaskForSteer :one
+SELECT id FROM agent_task_queue
+WHERE chat_session_id = @chat_session_id
+  AND agent_id = @agent_id
+  AND status IN ('dispatched', 'running', 'waiting_local_directory')
+  AND regenerate_quick_actions_for IS NULL
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+FOR UPDATE;
+
+-- name: PromoteAgentDispatchChatTaskForSteer :one
+UPDATE agent_task_queue
+SET status = 'queued', fire_at = NULL, priority = 4
+WHERE id = @id
+  AND chat_session_id = @chat_session_id
+  AND agent_id = @agent_id
+  AND status IN ('deferred', 'queued')
+RETURNING id;
+
 -- name: ListPendingChatTasksByCreator :many
 -- Aggregate view of all in-flight chat tasks owned by a given creator in a
 -- workspace. Drives the FAB's "running" indicator when the chat window is

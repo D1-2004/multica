@@ -96,6 +96,27 @@ func TestBuildAgentDispatchExecutionPlanRejectsDigitalEmployeeChatWithoutEndpoin
 	}
 }
 
+func TestBuildAgentDispatchExecutionPlanCarriesExplicitFreshSessionWithoutEnablingSlashParsing(t *testing.T) {
+	command := dispatchCommandForPlanTest("digital_employee", "chat", "dws")
+	command.Control = &DispatchControl{Action: "dispatch", SessionMode: "fresh", QueueMode: "enqueue"}
+	plan, err := buildAgentDispatchExecutionPlan(command, agentDispatchContext{
+		EndpointNamespaceID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+		UserID:              pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
+		WorkspaceID:         pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
+		AgentID:             pgtype.UUID{Bytes: [16]byte{4}, Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := plan.channelHandleOptions()
+	if !options.ForceFreshSession {
+		t.Fatal("fresh dispatch control did not reach the channel execution boundary")
+	}
+	if !options.DisableControlCommands {
+		t.Fatal("structured control must not enable slash-command parsing")
+	}
+}
+
 func dispatchCommandForPlanTest(sourceType, surfaceType, outboundMode string) DispatchCommand {
 	return DispatchCommand{
 		SchemaVersion: "2.0",

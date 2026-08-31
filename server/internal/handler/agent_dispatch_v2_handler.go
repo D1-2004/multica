@@ -120,6 +120,9 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		protocol.DispatchOutboundJSONKey: c.Outbound,
 		"dispatch_idempotency_key":       idempotencyKey,
 	}
+	if c.Control != nil {
+		payload["dispatch_control"] = c.Control
+	}
 	if strings.TrimSpace(c.ContextPrompt) != "" {
 		payload[protocol.DispatchContextPromptJSONKey] = c.ContextPrompt
 	}
@@ -187,6 +190,10 @@ func (h *Handler) handleAgentDispatchV2(
 	command, err := bindDispatchCompletionTarget(command, h.TaskCompletionTargetIdentity)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
+		return
+	}
+	if command.Control != nil && command.Control.Action == "cancel" {
+		h.cancelAgentDispatchIMTask(w, r, command, dispatchContext)
 		return
 	}
 	if shouldSkipApprovalDispatch(command) {
@@ -469,6 +476,7 @@ type AgentDispatchV2Request struct {
 	Event              DispatchEvent                 `json:"event"`
 	Surface            DispatchSurface               `json:"surface"`
 	Outbound           DispatchOutbound              `json:"outbound"`
+	Control            *DispatchControl              `json:"control,omitempty"`
 	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
 	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
 	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
@@ -483,6 +491,7 @@ func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
 		Event:              r.Event,
 		Surface:            r.Surface,
 		Outbound:           r.Outbound,
+		Control:            r.Control,
 		ContextPrompt:      r.ContextPrompt,
 		ExternalIdentity:   r.ExternalIdentity,
 		CompletionCallback: r.CompletionCallback,
@@ -599,7 +608,41 @@ func (h *Handler) createAgentDispatchChatV2(
 	// it as /new, /reset, /issue, or /unbind.
 	message.Text = dispatchText
 	message.ForceFresh = false
-	result, err := h.ChannelRouter.HandleResultWithOptions(r.Context(), message, plan.channelHandleOptions())
+	options := plan.channelHandleOptions()
+	if command.Continuation == nil {
+		options.CreateUnboundSession = true
+	} else {
+		chatSessionID, ok := parseUUIDOrBadRequest(
+			w, strings.TrimSpace(command.Continuation.ChatSessionID), "continuation.chatSessionId")
+		if !ok {
+			return
+		}
+		session, loadErr := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+			ID: chatSessionID, WorkspaceID: dispatchContext.WorkspaceID,
+		})
+		if loadErr != nil {
+			if errors.Is(loadErr, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "chat continuation not found")
+			} else {
+				writeError(w, http.StatusInternalServerError, "failed to load chat continuation")
+			}
+			return
+		}
+		if session.AgentID != dispatchContext.AgentID {
+			writeError(w, http.StatusForbidden, "chat continuation belongs to another agent")
+			return
+		}
+		if session.CreatorID != dispatchContext.UserID {
+			writeError(w, http.StatusForbidden, "chat continuation belongs to another endpoint actor")
+			return
+		}
+		if session.Status != "active" {
+			writeError(w, http.StatusBadRequest, "chat continuation is archived")
+			return
+		}
+		options.ChatSessionOverride = &chatSessionID
+	}
+	result, err := h.ChannelRouter.HandleResultWithOptions(r.Context(), message, options)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
 		return
@@ -628,10 +671,90 @@ func (h *Handler) createAgentDispatchChatV2(
 	if chatSessionID == "" && command.Continuation != nil {
 		chatSessionID = command.Continuation.ChatSessionID
 	}
-	writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
+	response := AgentChatDispatchResponse{
 		Continuation: AgentDispatchContinuation{Kind: "chat", ChatSessionID: chatSessionID},
 		TaskID:       uuidToString(result.TaskID),
+	}
+	if command.Control != nil && command.Control.Action == "dispatch" && command.Control.QueueMode == "steer" {
+		if h.TaskService == nil {
+			writeError(w, http.StatusServiceUnavailable, "IM task control is not configured")
+			return
+		}
+		target, preempted, err := h.TaskService.SteerAgentDispatchChatTask(
+			r.Context(), result.TaskID, result.ChatSessionID, dispatchContext.AgentID,
+		)
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		response.TaskID = uuidToString(target.ID)
+		response.ControlResult = &AgentDispatchControlResult{
+			Action:               "steer",
+			Status:               "queued",
+			TargetExternalTaskID: response.TaskID,
+		}
+		if preempted != nil {
+			response.ControlResult.PreemptedExternalTaskID = uuidToString(preempted.ID)
+		}
+	}
+	writeJSON(w, http.StatusAccepted, response)
+}
+
+func (h *Handler) cancelAgentDispatchIMTask(
+	w http.ResponseWriter,
+	r *http.Request,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+) {
+	targetID := parseUUID(command.Control.TargetExternalTaskID)
+	task, err := h.Queries.GetAgentTask(r.Context(), targetID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "target IM task not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load target IM task")
+		}
+		return
+	}
+	if task.AgentID != dispatchContext.AgentID || !task.ChatSessionID.Valid ||
+		uuidToString(task.ChatSessionID) != command.Continuation.ChatSessionID {
+		writeError(w, http.StatusForbidden, "target task does not belong to the IM dispatch session")
+		return
+	}
+	switch task.Status {
+	case "completed", "failed", "cancelled":
+		writeJSON(w, http.StatusOK, AgentDispatchControlResponse{ControlResult: AgentDispatchControlResult{
+			Action:               "cancel",
+			Status:               "already_terminal",
+			TargetExternalTaskID: uuidToString(task.ID),
+		}})
+		return
+	case "dispatched", "running", "waiting_local_directory":
+	default:
+		writeError(w, http.StatusConflict, "target IM task is not active")
+		return
+	}
+	if h.TaskService == nil {
+		writeError(w, http.StatusServiceUnavailable, "IM task control is not configured")
+		return
+	}
+	cancelled, err := h.TaskService.CancelTaskWithResult(r.Context(), targetID, service.CancelTaskOptions{
+		ClientSupportsDraftRestore: true,
+		PreserveChatInput:          true,
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to cancel target IM task")
+		return
+	}
+	status := "already_terminal"
+	if cancelled.Task.Status == "cancelled" {
+		status = "cancelled"
+	}
+	writeJSON(w, http.StatusOK, AgentDispatchControlResponse{ControlResult: AgentDispatchControlResult{
+		Action:               "cancel",
+		Status:               status,
+		TargetExternalTaskID: uuidToString(cancelled.Task.ID),
+	}})
 }
 
 func (h *Handler) writeAgentChatNoTaskOutcomeV2(

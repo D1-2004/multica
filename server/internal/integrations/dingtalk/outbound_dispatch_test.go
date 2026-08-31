@@ -174,7 +174,7 @@ func TestDispatchRobotLifecycleAddsRecallsThenRepliesExactlyOnce(t *testing.T) {
 	}
 }
 
-func TestDispatchRobotLifecycleLeavesChatTasksToChatOutbound(t *testing.T) {
+func TestDispatchRobotLifecycleRoutesChatFromTaskSnapshotWithoutBinding(t *testing.T) {
 	recorder, server := newDispatchRobotServer(t)
 	taskID := typingTestUUID(31)
 	queries := &dispatchLifecycleQueries{
@@ -189,11 +189,25 @@ func TestDispatchRobotLifecycleLeavesChatTasksToChatOutbound(t *testing.T) {
 	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskQueued, Payload: payload}); err != nil {
 		t.Fatalf("queued chat lifecycle: %v", err)
 	}
+	payload["output"] = "chat done"
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskCompleted, Payload: payload}); err != nil {
+		t.Fatalf("completed chat lifecycle: %v", err)
+	}
 
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
-	if len(recorder.sequence) != 0 {
-		t.Fatalf("chat task used issue outbound lifecycle: %v", recorder.sequence)
+	wantSequence := []string{
+		"/v1.0/robot/emotion/reply",
+		"/v1.0/robot/emotion/recall",
+		"/v1.0/robot/groupMessages/send",
+	}
+	if len(recorder.sequence) != len(wantSequence) {
+		t.Fatalf("chat dispatch lifecycle calls = %v, want %v", recorder.sequence, wantSequence)
+	}
+	for i := range wantSequence {
+		if recorder.sequence[i] != wantSequence[i] {
+			t.Fatalf("chat dispatch lifecycle calls = %v, want %v", recorder.sequence, wantSequence)
+		}
 	}
 }
 

@@ -142,6 +142,9 @@ type AppendParams struct {
 	Installation   ResolvedInstallation
 	Message        channel.InboundMessage
 	ClaimToken     pgtype.UUID
+	// SkipBindingReplyTarget keeps Router-owned dispatches from mutating the
+	// direct-channel reverse-routing row.
+	SkipBindingReplyTarget bool
 	// ForceFreshSession persists an explicit fresh-session request in the
 	// append transaction. If no runnable task is available yet, the request
 	// remains pending for the next task instead of being lost with this process.
@@ -263,6 +266,12 @@ type SessionBinder interface {
 	MarkPendingFresh(ctx context.Context, sessionID pgtype.UUID) error
 	AppendMessage(ctx context.Context, p AppendParams) (AppendResult, error)
 	BindMedia(ctx context.Context, p BindMediaParams) error
+}
+
+// UnboundSessionCreator is implemented by adapters that can materialize a
+// Router-owned Chat without claiming the direct-channel routing key.
+type UnboundSessionCreator interface {
+	CreateUnboundSession(ctx context.Context, p EnsureSessionParams) (pgtype.UUID, error)
 }
 
 // MediaResolver resolves platform media after the user message and dedup mark

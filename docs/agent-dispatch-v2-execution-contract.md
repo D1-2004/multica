@@ -37,9 +37,10 @@ A side effect worth knowing: threading refuses a follow-up with `409` while the
 referenced Issue still has a pending agent task. `dispatch_always_new_issue`
 does not hit that guard, because each message gets its own Issue.
 
-Channel slash commands do not override this choice. In particular, text such as
-`/issue`, `/new`, `/reset`, or `/unbind` remains prompt content when delivered by
-Agent Dispatch V2.
+Multica does not parse slash commands from message text. Text such as `/issue`,
+`/new`, `/reset`, or `/unbind` remains prompt content unless the authenticated
+Router translates a supported IM command into the structured `control` object
+described below.
 
 The response always returns the latest continuation produced by the selected
 surface. A recreated missing Issue or chat therefore replaces a stale
@@ -48,6 +49,51 @@ continuation for the Router to persist.
 Continuation kind identifies the materialized locator, not the execution mode.
 Both `chat` and `auto` therefore return a `chat` continuation containing
 `chatSessionId`; `issue` returns an Issue continuation.
+
+## IM task control
+
+`control` is optional, so an omitted field preserves the existing enqueue and
+session-continuation behavior. It is accepted only for
+`event.domain=channel`, `event.type=message.created`, and a materialized
+`surface.type` of `chat` or `auto`. Issue, approval, calendar, and
+`emotionReply` dispatches reject it.
+
+The Router translates the supported IM commands into one of these closed
+structures; Multica never infers control from the message text:
+
+```json
+{
+  "control": {
+    "action": "dispatch",
+    "sessionMode": "continue",
+    "queueMode": "enqueue"
+  }
+}
+```
+
+- `/new <message>` sends `action=dispatch`, `sessionMode=fresh`, and
+  `queueMode=enqueue`, with no continuation. Multica creates a new Chat (or a
+  new Issue when the selected surface is Issue), rather than only resetting the
+  provider session inside the previous Chat. An already active task is not
+  canceled: it completes its normal callback and its reply can still be
+  delivered while the new conversation runs independently.
+- `/steer <message>` sends `action=dispatch`, `sessionMode=continue`, and
+  `queueMode=steer`. Multica atomically promotes the new turn and cancels the
+  currently claimed IM Chat task for the same Agent and chat session. Other
+  queued turns are retained. The canceled task produces the normal durable
+  terminal callback with `executionStatus=canceled`.
+- `/cancel` sends `action=cancel` plus the exact canonical UUID in
+  `targetExternalTaskId`. It also replays the target's chat continuation but
+  sends no completion callback for the command itself. Multica verifies that
+  the target belongs to that Agent and chat session, cancels only an active
+  task, preserves the ingested IM input, and creates no new task. Queued turns
+  are retained. Repeating cancellation for a terminal target is idempotent.
+
+A dispatch control returns the ordinary Chat continuation and task id. A steer
+also returns `controlResult` with the promoted task and, when present, the
+preempted task id. A cancel returns only `controlResult`; the Router owns the
+command acknowledgement so the canceled task's terminal callback must not be
+rendered as a second acknowledgement.
 
 For DingTalk channel messages, a newly created Chat title includes enough topic
 context to distinguish repeated conversations with the same sender. Private
@@ -112,6 +158,20 @@ sender binding on this authenticated path.
 
 Direct DingTalk Stream or callback ingestion outside Agent Dispatch V2 retains
 the existing sender-binding policy.
+
+### Chat continuation ownership
+
+For authenticated Agent Dispatch V2, `continuation.chatSessionId` is the sole
+Chat-thread locator. A request carrying a continuation appends to that active
+Chat after workspace, Agent, and endpoint-actor validation. A request without a
+continuation creates a new Chat.
+
+The Agent Dispatch V2 path does not create or update
+`channel_chat_session_binding`, including digital-employee and robot sources
+whose DingTalk installation uses HTTP callback transport. That binding remains
+owned by direct channel ingestion such as DingTalk Stream. Dispatch completion
+and robot-SDK delivery instead use the immutable routing snapshot persisted on
+the task; DWS delivery remains owned by Router through the completion callback.
 
 ## Prompt
 
@@ -825,3 +885,32 @@ parsing or rewriting Router's context string.
   Server-side authority makes one Multica backend deployment cover old daemons
   while preserving rolling compatibility and the existing durable Router
   delivery chain.
+
+## Change record: 2026-08-31 IM dispatch task controls
+
+- History: Added the optional structured `control` object for authenticated
+  `channel/message.created` Chat and Auto dispatches. The closed contract maps
+  `/new` to a fresh queued turn, `/steer` to promotion plus cancellation of the
+  active turn, and `/cancel` to an exact active-task cancellation without
+  creating another task. Canceled tasks retain their durable terminal callback,
+  and Multica continues to treat raw slash text as prompt content.
+- Reason: Ordinary Router messages previously had only enqueue semantics. IM
+  users need explicit session reset, priority redirection, and cancellation
+  without changing Issue, approval, calendar, or other dispatch behavior; a
+  structured authenticated field keeps those controls out of prompt parsing and
+  makes task targeting auditable.
+
+## Change record: 2026-08-31 Router-owned Chat continuation
+
+- History: Agent Dispatch V2 Chat materialization now uses an explicit
+  `continuation.chatSessionId` when continuing and creates an unbound Chat when
+  the continuation is absent. `/new` therefore creates a new business Chat (or
+  Issue), not merely a fresh provider session in the old Chat. Digital-employee
+  and HTTP-callback robot dispatches no longer write
+  `channel_chat_session_binding`; robot-SDK replies resolve their target from
+  the task's dispatch snapshot.
+- Reason: `(installation_id, channel_chat_id)` was introduced for direct IM
+  ingress, where later callbacks must recover a stable Chat. Reusing it for
+  Router-owned dispatch caused a correctly continuation-free `/new` request to
+  rediscover the previous Chat and made completion routing appear coupled to a
+  binding that Router does not use.

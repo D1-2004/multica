@@ -302,16 +302,12 @@ const (
 	dispatchPhaseOutbound   = "outbound"
 )
 
-// processDispatchEvent owns only issue-backed Dispatch Command 2.0 requests
-// whose binding selected robot_sdk. Source account type does not select the
-// outbound strategy.
+// processDispatchEvent owns Dispatch Command 2.0 requests whose task snapshot
+// selected robot_sdk. Both Chat and Issue materializers route from that
+// immutable snapshot; neither depends on channel_chat_session_binding.
 func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bool, error) {
 	payload, ok := e.Payload.(map[string]any)
 	if !ok {
-		return false, nil
-	}
-	issueID, _ := payload["issue_id"].(string)
-	if strings.TrimSpace(issueID) == "" {
 		return false, nil
 	}
 	source, _ := payload["dispatch_source"].(map[string]any)

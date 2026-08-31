@@ -293,6 +293,24 @@ func TestEnsureSession_CreateThenReuse(t *testing.T) {
 	}
 }
 
+func TestCreateUnboundSessionDoesNotClaimChannelRoutingKey(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	id, err := s.CreateUnboundSession(context.Background(), EnsureSessionInput{
+		WorkspaceID: uid(2), AgentID: uid(3), InstallationID: uid(1),
+		BindingKey: "chatA", ChatType: channel.ChatTypeP2P, Sender: uid(7),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !id.Valid || f.createdSessions != 1 {
+		t.Fatalf("created session=%+v count=%d", id, f.createdSessions)
+	}
+	if len(f.bindings) != 0 {
+		t.Fatalf("unbound session claimed channel routing keys: %+v", f.bindings)
+	}
+}
+
 func TestEnsureSession_TitleOverride(t *testing.T) {
 	f := newFake()
 	s := newTestSession(f)
@@ -672,6 +690,19 @@ func TestAppendUserMessage_NoReplyTargetWithoutMessageID(t *testing.T) {
 	}
 	if f.replyTargets != 0 {
 		t.Errorf("no MessageID → no reply-target update, got %d", f.replyTargets)
+	}
+}
+
+func TestAppendUserMessage_RouterOwnedChatSkipsBindingReplyTarget(t *testing.T) {
+	f := newFake()
+	s := newTestSession(f)
+	if _, err := s.AppendUserMessage(context.Background(), AppendInput{
+		SessionID: uid(1), Body: "hi", MessageID: "m1", SkipBindingReplyTarget: true,
+	}); err != nil {
+		t.Fatalf("AppendUserMessage: %v", err)
+	}
+	if f.replyTargets != 0 {
+		t.Errorf("Router-owned Chat updated binding reply target %d times", f.replyTargets)
 	}
 }
 

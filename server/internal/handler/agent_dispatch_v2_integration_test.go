@@ -995,20 +995,22 @@ func TestHandleAgentDispatchV2DigitalEmployeeChatDWSIgnoresRobotInstallation(t *
 		)
 	}
 
-	var namespaceID, workspaceID, sessionAgentID string
+	var workspaceID, sessionAgentID string
 	if err := testPool.QueryRow(context.Background(), `
-		SELECT binding.installation_id, session.workspace_id, session.agent_id
-		FROM channel_chat_session_binding binding
-		JOIN chat_session session ON session.id = binding.chat_session_id
-		WHERE binding.chat_session_id = $1
-	`, response.Continuation.ChatSessionID).Scan(&namespaceID, &workspaceID, &sessionAgentID); err != nil {
-		t.Fatalf("load digital employee chat namespace: %v", err)
+		SELECT workspace_id, agent_id
+		FROM chat_session
+		WHERE id = $1
+	`, response.Continuation.ChatSessionID).Scan(&workspaceID, &sessionAgentID); err != nil {
+		t.Fatalf("load digital employee chat: %v", err)
 	}
-	if namespaceID != uuidToString(endpoint.ID) {
-		t.Fatalf("chat namespace = %s, want authenticated endpoint %s", namespaceID, uuidToString(endpoint.ID))
+	var bindingCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM channel_chat_session_binding WHERE chat_session_id = $1
+	`, response.Continuation.ChatSessionID).Scan(&bindingCount); err != nil {
+		t.Fatal(err)
 	}
-	if namespaceID == uuidToString(robotInstallation.ID) {
-		t.Fatalf("digital employee chat reused robot installation namespace %s", namespaceID)
+	if bindingCount != 0 {
+		t.Fatalf("digital employee Router dispatch wrote %d channel bindings", bindingCount)
 	}
 	if workspaceID != testWorkspaceID || sessionAgentID != agentID {
 		t.Fatalf("chat scope = workspace %s agent %s, want %s/%s", workspaceID, sessionAgentID, testWorkspaceID, agentID)
@@ -1159,6 +1161,224 @@ func configureDingTalkChatDispatchForTest(t *testing.T) *dingtalk.InstallationSe
 		testHandler.DingTalkInstallations = previousInstallations
 	})
 	return installations
+}
+
+func TestHandleAgentDispatchV2ChatUsesContinuationWithoutChannelBinding(t *testing.T) {
+	configureDingTalkChatDispatchForTest(t)
+	agentID := createHandlerTestAgent(t, "test-v2-router-owned-chat", nil)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	post := func(body, key string) AgentChatDispatchResponse {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+deliverySecret)
+		req.Header.Set("Idempotency-Key", key)
+		req = withURLParams(req, "endpointId", endpointID)
+		w := httptest.NewRecorder()
+		testHandler.HandleAgentDispatch(w, req)
+		if w.Code != http.StatusAccepted {
+			t.Fatalf("dispatch %s: status=%d body=%s", key, w.Code, w.Body.String())
+		}
+		var response AgentChatDispatchResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+	body := func(key, sessionID, control string) string {
+		t.Helper()
+		identity := fmt.Sprintf(`"agentId":%q,"continuation":null`, agentID)
+		if sessionID != "" {
+			identity = fmt.Sprintf(`"continuation":{"kind":"chat","chatSessionId":%q}`, sessionID)
+		}
+		controlField := ""
+		if control != "" {
+			controlField = `,"control":` + control
+		}
+		return fmt.Sprintf(`{
+			"schemaVersion":"2.0",%s%s,
+			"completionCallback":{"url":"/api/v1/dispatch-tasks/%s/execution-result"},
+			"source":{"platform":"dingtalk","type":"digital_employee"},
+			"event":{"domain":"channel","type":"message.created","data":{
+				"conversation":{"openConversationId":"cid-router-owned","type":"single"},
+				"sender":{"displayName":"张三","openDingTalkId":"open-sender"},
+				"messages":[{"openMsgId":"msg-%s","occurredAt":1784512800000,"text":"%s"}]}},
+			"surface":{"type":"chat"},"outbound":{"mode":"dws","replyTo":"latest_message"},
+			"externalIdentity":{"contextToken":"sealed-router-owned-context","expiresAt":4102444800000}
+		}`, identity, controlField, key, key, key)
+	}
+
+	first := post(body("router-owned-first", "", ""), "router-owned-first")
+	continued := post(body("router-owned-continue", first.Continuation.ChatSessionID,
+		`{"action":"dispatch","sessionMode":"continue","queueMode":"enqueue"}`), "router-owned-continue")
+	if continued.Continuation.ChatSessionID != first.Continuation.ChatSessionID {
+		t.Fatalf("continuation created another chat: first=%s continued=%s",
+			first.Continuation.ChatSessionID, continued.Continuation.ChatSessionID)
+	}
+	fresh := post(body("router-owned-fresh", "",
+		`{"action":"dispatch","sessionMode":"fresh","queueMode":"enqueue"}`), "router-owned-fresh")
+	if fresh.Continuation.ChatSessionID == first.Continuation.ChatSessionID {
+		t.Fatalf("fresh dispatch reused chat %s", fresh.Continuation.ChatSessionID)
+	}
+
+	var bindingCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM channel_chat_session_binding
+		WHERE chat_session_id = ANY($1::uuid[])
+	`, []string{first.Continuation.ChatSessionID, fresh.Continuation.ChatSessionID}).Scan(&bindingCount); err != nil {
+		t.Fatal(err)
+	}
+	if bindingCount != 0 {
+		t.Fatalf("Router-owned chats wrote %d channel bindings, want 0", bindingCount)
+	}
+}
+
+func TestHandleAgentDispatchV2IMControls(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		control       string
+		wantStatus    int
+		wantOldStatus string
+		wantFresh     bool
+		wantSteered   bool
+		wantNoNewTask bool
+		wantNewChat   bool
+	}{
+		{name: "new keeps active task and creates a new Chat", control: `{"action":"dispatch","sessionMode":"fresh","queueMode":"enqueue"}`, wantStatus: http.StatusAccepted, wantOldStatus: "running", wantFresh: true, wantNewChat: true},
+		{name: "steer cancels active task and promotes the new turn", control: `{"action":"dispatch","sessionMode":"continue","queueMode":"steer"}`, wantStatus: http.StatusAccepted, wantOldStatus: "cancelled", wantSteered: true},
+		{name: "cancel targets the active task without creating a turn", control: `{"action":"cancel","targetExternalTaskId":%q}`, wantStatus: http.StatusOK, wantOldStatus: "cancelled", wantNoNewTask: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configureDingTalkChatDispatchForTest(t)
+			agentID := createHandlerTestAgent(t, "test-v2-im-control-"+strings.ReplaceAll(tc.name, " ", "-"), nil)
+			endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+			post := func(body, key string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+deliverySecret)
+				req.Header.Set("Idempotency-Key", key)
+				req = withURLParams(req, "endpointId", endpointID)
+				w := httptest.NewRecorder()
+				testHandler.HandleAgentDispatch(w, req)
+				return w
+			}
+
+			firstDispatchID := "im-control-first-" + strings.ReplaceAll(tc.name, " ", "-")
+			firstBody := fmt.Sprintf(`{
+				"schemaVersion":"2.0","agentId":%q,"continuation":null,
+				"completionCallback":{"url":"/api/v1/dispatch-tasks/%s/execution-result"},
+				"source":{"platform":"dingtalk","type":"digital_employee"},
+				"event":{"domain":"channel","type":"message.created","data":{
+					"conversation":{"openConversationId":"cid-%s","type":"single"},
+					"sender":{"displayName":"张三","openDingTalkId":"open-sender"},
+					"messages":[{"openMsgId":"msg-first-%s","occurredAt":1784512800000,"text":"先执行旧任务"}]}},
+				"surface":{"type":"chat"},"outbound":{"mode":"dws","replyTo":"latest_message"},
+				"externalIdentity":{"contextToken":"sealed-im-control-context","expiresAt":4102444800000}
+			}`, agentID, firstDispatchID, firstDispatchID, firstDispatchID)
+			first := post(firstBody, firstDispatchID)
+			if first.Code != http.StatusAccepted {
+				t.Fatalf("first dispatch: status=%d body=%s", first.Code, first.Body.String())
+			}
+			var firstResponse AgentChatDispatchResponse
+			if err := json.Unmarshal(first.Body.Bytes(), &firstResponse); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := testPool.Exec(context.Background(), `
+				UPDATE agent_task_queue SET status = 'running', started_at = now(), dispatched_at = now()
+				WHERE id = $1
+			`, firstResponse.TaskID); err != nil {
+				t.Fatal(err)
+			}
+
+			controlJSON := tc.control
+			if strings.Contains(controlJSON, "%q") {
+				controlJSON = fmt.Sprintf(controlJSON, firstResponse.TaskID)
+			}
+			secondDispatchID := "im-control-second-" + strings.ReplaceAll(tc.name, " ", "-")
+			secondIdentity := fmt.Sprintf(`"continuation":{"kind":"chat","chatSessionId":%q}`, firstResponse.Continuation.ChatSessionID)
+			if tc.wantNewChat {
+				secondIdentity = fmt.Sprintf(`"agentId":%q,"continuation":null`, agentID)
+			}
+			secondBody := fmt.Sprintf(`{
+				"schemaVersion":"2.0",%s,
+				"control":%s,
+				"source":{"platform":"dingtalk","type":"digital_employee"},
+				"event":{"domain":"channel","type":"message.created","data":{
+					"conversation":{"openConversationId":"cid-%s","type":"single"},
+					"sender":{"displayName":"张三","openDingTalkId":"open-sender"},
+					"messages":[{"openMsgId":"msg-second-%s","occurredAt":1784512801000,"text":"控制旧任务"}]}},
+				"surface":{"type":"chat"},"outbound":{"mode":"dws","replyTo":"latest_message"},
+				"externalIdentity":{"contextToken":"sealed-im-control-context","expiresAt":4102444800000}
+			}`, secondIdentity, controlJSON, firstDispatchID, secondDispatchID)
+			if !tc.wantNoNewTask {
+				secondBody = strings.Replace(secondBody, `"source":`, fmt.Sprintf(`"completionCallback":{"url":"/api/v1/dispatch-tasks/%s/execution-result"},"source":`, secondDispatchID), 1)
+			}
+			second := post(secondBody, secondDispatchID)
+			if second.Code != tc.wantStatus {
+				t.Fatalf("control dispatch: status=%d body=%s", second.Code, second.Body.String())
+			}
+
+			var oldStatus string
+			if err := testPool.QueryRow(context.Background(), `SELECT status FROM agent_task_queue WHERE id = $1`, firstResponse.TaskID).Scan(&oldStatus); err != nil {
+				t.Fatal(err)
+			}
+			if oldStatus != tc.wantOldStatus {
+				t.Fatalf("old task status=%q, want %q", oldStatus, tc.wantOldStatus)
+			}
+			if tc.wantOldStatus == "cancelled" {
+				var completionStatus string
+				if err := testPool.QueryRow(context.Background(), `
+					SELECT execution_status FROM task_completion_outbox WHERE root_task_id = $1
+				`, firstResponse.TaskID).Scan(&completionStatus); err != nil {
+					t.Fatal(err)
+				}
+				if completionStatus != "canceled" {
+					t.Fatalf("old task completion status=%q, want canceled", completionStatus)
+				}
+			}
+
+			if tc.wantNoNewTask {
+				var response AgentDispatchControlResponse
+				if err := json.Unmarshal(second.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if response.ControlResult.Action != "cancel" || response.ControlResult.Status != "cancelled" || response.ControlResult.TargetExternalTaskID != firstResponse.TaskID {
+					t.Fatalf("cancel response=%+v", response)
+				}
+				var taskCount int
+				if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_task_queue WHERE chat_session_id = $1`, firstResponse.Continuation.ChatSessionID).Scan(&taskCount); err != nil {
+					t.Fatal(err)
+				}
+				if taskCount != 1 {
+					t.Fatalf("cancel created a task: count=%d", taskCount)
+				}
+				return
+			}
+
+			var secondResponse AgentChatDispatchResponse
+			if err := json.Unmarshal(second.Body.Bytes(), &secondResponse); err != nil {
+				t.Fatal(err)
+			}
+			var status string
+			var priority int32
+			var fresh bool
+			if err := testPool.QueryRow(context.Background(), `
+				SELECT status, priority, force_fresh_session FROM agent_task_queue WHERE id = $1
+			`, secondResponse.TaskID).Scan(&status, &priority, &fresh); err != nil {
+				t.Fatal(err)
+			}
+			if fresh != tc.wantFresh {
+				t.Fatalf("force_fresh_session=%t, want %t", fresh, tc.wantFresh)
+			}
+			if tc.wantNewChat && secondResponse.Continuation.ChatSessionID == firstResponse.Continuation.ChatSessionID {
+				t.Fatalf("/new reused Chat %s", secondResponse.Continuation.ChatSessionID)
+			}
+			if tc.wantSteered && (status != "queued" || priority != 4 || secondResponse.ControlResult == nil || secondResponse.ControlResult.PreemptedExternalTaskID != firstResponse.TaskID) {
+				t.Fatalf("steered task status=%q priority=%d response=%+v", status, priority, secondResponse)
+			}
+		})
+	}
 }
 
 func TestHandleAgentDispatchV2RobotSDKCompletionDependsOnlyOnCallbackPresence(t *testing.T) {
@@ -1445,16 +1665,16 @@ func TestHandleAgentDispatchV2RobotSDKChatKeepsInstallationGuards(t *testing.T) 
 			if response.Continuation.Kind != "chat" || response.Continuation.ChatSessionID == "" || response.TaskID == "" {
 				t.Fatalf("unexpected robot chat response: %+v", response)
 			}
-			var namespaceID string
+			var bindingCount int
 			if err := testPool.QueryRow(context.Background(), `
-				SELECT installation_id
+				SELECT count(*)
 				FROM channel_chat_session_binding
 				WHERE chat_session_id = $1
-			`, response.Continuation.ChatSessionID).Scan(&namespaceID); err != nil {
-				t.Fatalf("load robot chat namespace: %v", err)
+			`, response.Continuation.ChatSessionID).Scan(&bindingCount); err != nil {
+				t.Fatalf("load robot chat bindings: %v", err)
 			}
-			if namespaceID != uuidToString(robotInstallation.ID) {
-				t.Fatalf("robot chat namespace = %s, want installation %s", namespaceID, uuidToString(robotInstallation.ID))
+			if bindingCount != 0 {
+				t.Fatalf("HTTP callback robot dispatch wrote %d channel bindings", bindingCount)
 			}
 			t.Cleanup(func() {
 				_, _ = testPool.Exec(context.Background(), `DELETE FROM channel_inbound_message_dedup WHERE installation_id = $1`, robotInstallation.ID)
