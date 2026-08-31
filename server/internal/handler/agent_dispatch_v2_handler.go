@@ -972,6 +972,7 @@ func decideDispatchCoordinator(
 		ConversationTitle: command.Event.Data.Conversation.Title,
 		SenderName:        command.Event.Data.Sender.DisplayName,
 		Message:           message,
+		AgentID:           agent.ID,
 		AgentName:         agent.Name,
 		Instructions:      agent.Instructions,
 	}

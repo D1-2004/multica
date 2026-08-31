@@ -168,6 +168,8 @@
     "prop_concurrency": "同時実行数",
     "prop_chat_session_resume": "前回セッションを再開",
     "prop_chat_session_resume_hint": "1対1チャットのみ。サンドボックスがまだ暖かく、直前の回答から20分以内で、指示・スキル・ランタイムが変わっていなければ、前回の Claude/Codex セッションを再開します。続かない場合は履歴からやり直します。",
+    "prop_inbound_coordinator": "受信時に先判断",
+    "prop_inbound_coordinator_hint": "オンのとき、DingTalk とウェブの発言は先に即答できるか判断します。ツール・調べもの・継続フォローが必要なときだけサンドボックスを起動します。オフにするとすべてのメッセージがサンドボックスに入ります。",
     "prop_owner": "オーナー",
     "prop_created": "作成日",
     "prop_updated": "更新日",

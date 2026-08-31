@@ -84,8 +84,12 @@ type AgentResponse struct {
 	// is still warm, the last completed answer is within 20 minutes, and the
 	// agent's instructions, skills, and runtime have not changed. Off by
 	// default; local chats and issue comments already resume without it.
-	ChatSessionResume bool            `json:"chat_session_resume"`
-	AvatarURL         *string         `json:"avatar_url"`
+	ChatSessionResume bool `json:"chat_session_resume"`
+	// InboundCoordinator runs the server-side short loop that replies
+	// immediately or opens an Issue. On by default for new and existing
+	// agents; only an explicit owner off switch skips it.
+	InboundCoordinator bool    `json:"inbound_coordinator"`
+	AvatarURL          *string `json:"avatar_url"`
 	RuntimeMode       string          `json:"runtime_mode"`
 	RuntimeConfig     any             `json:"runtime_config"`
 	CustomArgs        []string        `json:"custom_args"`
@@ -161,6 +165,16 @@ func (h *Handler) hydrateChatSessionResume(ctx context.Context, resp *AgentRespo
 	}
 }
 
+func (h *Handler) hydrateInboundCoordinator(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	if resp == nil {
+		return
+	}
+	enabled, err := h.Queries.GetAgentInboundCoordinator(ctx, agentID)
+	if err == nil {
+		resp.InboundCoordinator = enabled
+	}
+}
+
 func (h *Handler) hydrateAgentsChatSessionResume(ctx context.Context, resps []AgentResponse) {
 	if len(resps) == 0 {
 		return
@@ -186,6 +200,35 @@ func (h *Handler) hydrateAgentsChatSessionResume(ctx context.Context, resps []Ag
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].ChatSessionResume = row.ChatSessionResume
+		}
+	}
+}
+
+func (h *Handler) hydrateAgentsInboundCoordinator(ctx context.Context, resps []AgentResponse) {
+	if len(resps) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(resps))
+	index := make(map[string]int, len(resps))
+	for i, resp := range resps {
+		id, err := util.ParseUUID(resp.ID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		index[resp.ID] = i
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListAgentInboundCoordinatorByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("hydrate inbound_coordinator for agent list failed", "error", err, "count", len(ids))
+		return
+	}
+	for _, row := range rows {
+		if i, ok := index[uuidToString(row.ID)]; ok {
+			resps[i].InboundCoordinator = row.InboundCoordinator
 		}
 	}
 }
@@ -250,6 +293,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		SystemInstructions:       systemInstructionsFor(a),
 		DispatchPromptOverrides:  parseDispatchPromptOverrides(a.DispatchPromptOverrides),
 		DispatchAlwaysNewIssue:   a.DispatchAlwaysNewIssue,
+		InboundCoordinator:       true,
 		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
 		RuntimeMode:              a.RuntimeMode,
 		RuntimeConfig:            rc,
@@ -1113,6 +1157,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		visible = append(visible, resp)
 	}
 	h.hydrateAgentsChatSessionResume(r.Context(), visible)
+	h.hydrateAgentsInboundCoordinator(r.Context(), visible)
 
 	writeJSON(w, http.StatusOK, visible)
 }
@@ -1135,6 +1180,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := h.agentToResponse(agent)
 	h.hydrateChatSessionResume(r.Context(), &resp, agent.ID)
+	h.hydrateInboundCoordinator(r.Context(), &resp, agent.ID)
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
 		return
 	}
@@ -1522,6 +1568,7 @@ type UpdateAgentRequest struct {
 	DispatchPromptOverrides *map[string]string `json:"dispatch_prompt_overrides"`
 	DispatchAlwaysNewIssue  *bool              `json:"dispatch_always_new_issue"`
 	ChatSessionResume       *bool              `json:"chat_session_resume"`
+	InboundCoordinator      *bool              `json:"inbound_coordinator"`
 	AvatarURL               *string            `json:"avatar_url"`
 	RuntimeID               *string            `json:"runtime_id"`
 	RuntimeConfig           any                `json:"runtime_config"`
@@ -2145,9 +2192,17 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.InboundCoordinator != nil {
+		if err := h.Queries.UpdateAgentInboundCoordinator(r.Context(), updated.ID, *req.InboundCoordinator); err != nil {
+			slog.Warn("update agent inbound_coordinator failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update inbound coordinator")
+			return
+		}
+	}
 
 	resp := h.agentToResponse(updated)
 	h.hydrateChatSessionResume(r.Context(), &resp, updated.ID)
+	h.hydrateInboundCoordinator(r.Context(), &resp, updated.ID)
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, updated.ID); err != nil {
 		slog.Warn("update agent: load invocation targets for response failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent invocation targets")

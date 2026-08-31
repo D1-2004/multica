@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	decisionTimeout     = 8 * time.Second
+	decisionTimeout     = 10 * time.Second
+	coordinatorModel    = "qwen3.7-plus"
 	historyLimit        = 4
 	instructionsBudget  = 400
 	titleBudget         = 40
@@ -55,6 +56,7 @@ type Turn struct {
 	ConversationTitle string
 	SenderName        string
 	Message           string
+	AgentID           pgtype.UUID
 	AgentName         string
 	Instructions      string
 	Busy              bool
@@ -81,6 +83,7 @@ type historyReader interface {
 	ListChatMessagesPage(ctx context.Context, arg db.ListChatMessagesPageParams) ([]db.ChatMessage, error)
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 	CountRunningTasks(ctx context.Context, agentID pgtype.UUID) (int64, error)
+	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 }
 
 // Coordinator runs one bounded LLM JSON decision.
@@ -104,6 +107,16 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	if turn.Source != SourceWeb && !turn.Addressed && strings.EqualFold(turn.ChatType, "group") {
 		return Decision{Action: ActionSilence}
 	}
+	if c.coordinatorOff(ctx, turn) {
+		slog.Info("inbound coordinator skipped; agent switch off",
+			"event", "inbound_coordinator_decided",
+			"source", string(turn.Source),
+			"action", string(ActionContinue),
+			"fail_open", false,
+			"switch_off", true,
+		)
+		return Decision{Action: ActionContinue}
+	}
 
 	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
 	defer cancel()
@@ -111,7 +124,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 
 	raw, err := c.LLM.GenerateJSONFast(
 		loopCtx,
-		"",
+		coordinatorModel,
 		systemPrompt,
 		buildUserPrompt(turn),
 		temperature,
@@ -123,6 +136,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 			"event", "inbound_coordinator_decided",
 			"source", string(turn.Source),
 			"action", string(ActionContinue),
+			"model", coordinatorModel,
 			"fail_open", true,
 			"elapsed_ms", elapsed.Milliseconds(),
 			"error", err,
@@ -136,6 +150,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 		"event", "inbound_coordinator_decided",
 		"source", string(turn.Source),
 		"action", string(decision.Action),
+		"model", coordinatorModel,
 		"fail_open", decision.Action == ActionContinue,
 		"look_into_runes", utf8.RuneCountInString(decision.LookInto),
 		"reply_runes", utf8.RuneCountInString(decision.UserText),
@@ -182,6 +197,7 @@ func (c *Coordinator) TurnFromChatSession(
 		ConversationTitle: conversationTitle,
 		SenderName:        senderName,
 		Message:           message,
+		AgentID:           session.AgentID,
 	}
 	if c == nil || c.Queries == nil {
 		return turn
@@ -211,6 +227,17 @@ func (c *Coordinator) TurnFromChatSession(
 		})
 	}
 	return turn
+}
+
+func (c *Coordinator) coordinatorOff(ctx context.Context, turn Turn) bool {
+	if c == nil || c.Queries == nil || !turn.AgentID.Valid {
+		return false
+	}
+	on, err := c.Queries.GetAgentInboundCoordinator(ctx, turn.AgentID)
+	if err != nil {
+		return false
+	}
+	return !on
 }
 
 func parseDecision(raw string, turn Turn) Decision {

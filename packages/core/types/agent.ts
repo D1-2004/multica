@@ -471,6 +471,12 @@ export interface Agent {
    * because older backends omit it; treat `undefined` as false.
    */
   chat_session_resume?: boolean;
+  /**
+   * When true, DingTalk and web chat first decide whether to reply immediately
+   * or open an Issue. Optional because older backends omit it; treat
+   * `undefined` as true. Only an explicit false turns it off.
+   */
+  inbound_coordinator?: boolean;
   avatar_url: string | null;
   runtime_mode: AgentRuntimeMode;
   runtime_config: Record<string, unknown>;
@@ -758,6 +764,7 @@ export interface UpdateAgentRequest {
   dispatch_prompt_overrides?: Record<string, string>;
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
+  inbound_coordinator?: boolean;
   avatar_url?: string;
   runtime_id?: string;
   runtime_config?: Record<string, unknown>;

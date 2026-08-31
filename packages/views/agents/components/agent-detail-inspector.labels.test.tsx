@@ -91,4 +91,27 @@ describe("AgentDetailInspector labels", () => {
     });
     expect(toggle).toBeChecked();
   });
+
+  it("defaults inbound coordinator on and saves an explicit off", () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={agent}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const toggle = screen.getByLabelText("Judge before sandbox");
+    expect(toggle).toBeChecked();
+    fireEvent.click(toggle);
+    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+      inbound_coordinator: false,
+    });
+    expect(toggle).not.toBeChecked();
+  });
 });

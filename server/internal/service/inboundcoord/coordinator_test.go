@@ -4,9 +4,37 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
+
+type coordQueriesStub struct {
+	inbound bool
+}
+
+func (s coordQueriesStub) ListChatMessagesPage(context.Context, db.ListChatMessagesPageParams) ([]db.ChatMessage, error) {
+	return nil, nil
+}
+
+func (s coordQueriesStub) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
+	return db.Agent{}, nil
+}
+
+func (s coordQueriesStub) CountRunningTasks(context.Context, pgtype.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (s coordQueriesStub) GetAgentInboundCoordinator(context.Context, pgtype.UUID) (bool, error) {
+	return s.inbound, nil
+}
+
+func testAgentID() pgtype.UUID {
+	return pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+}
 
 func TestParseDecisionReply(t *testing.T) {
 	got := parseDecision(`{"action":"reply","text":"在的，今天想先对哪件事？","look_into":"","reason":"这是打招呼"}`, Turn{Source: SourceWeb})
@@ -57,6 +85,26 @@ func TestDecideContinueWhenLLMDisabled(t *testing.T) {
 	got := c.Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, Message: "你好"})
 	if got.Action != ActionContinue {
 		t.Fatalf("got %s", got.Action)
+	}
+}
+
+func TestDecideSkipsWhenAgentSwitchOff(t *testing.T) {
+	c := &Coordinator{
+		LLM:     llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
+		Queries: coordQueriesStub{inbound: false},
+	}
+	started := time.Now()
+	got := c.Decide(context.Background(), Turn{
+		Source:    SourceWeb,
+		Addressed: true,
+		Message:   "你好",
+		AgentID:   testAgentID(),
+	})
+	if got.Action != ActionContinue {
+		t.Fatalf("got %s", got.Action)
+	}
+	if time.Since(started) > 200*time.Millisecond {
+		t.Fatalf("switch-off should not call the LLM")
 	}
 }
 

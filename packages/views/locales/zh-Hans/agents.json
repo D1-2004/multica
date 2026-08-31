@@ -176,6 +176,8 @@
     "prop_concurrency": "并发",
     "prop_chat_session_resume": "续接上一轮会话",
     "prop_chat_session_resume_hint": "仅单聊生效：沙箱仍热、上次回答完成不超过 20 分钟，且提示词、Skill 和运行时都没变时，接着上一轮 Claude/Codex 会话继续。连续提问更快、更省 token；不满足条件时自动用完整历史重开。",
+    "prop_inbound_coordinator": "入站先判断",
+    "prop_inbound_coordinator_hint": "打开后，钉钉和网页消息会先判断能否直接回话；只有需要工具、查资料或持续跟进的事才开沙箱。关掉则每条都进沙箱。",
     "prop_owner": "所有者",
     "prop_created": "创建时间",
     "prop_updated": "更新时间",

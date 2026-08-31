@@ -23,9 +23,13 @@ remain Issue-only because neither has a foreground Chat session to release.
 
 Before a sandbox starts, Multica runs one bounded server-side JSON decision on
 web Chat and on DingTalk `channel/message.created` for digital employees and
-robots. Direct reply **is** the Chat response. Only real work becomes an Issue
-and starts a sandbox. The loop does not call DWS, does not redeem a
-ContextToken, and is not behind a feature flag.
+robots. The decisioner is a router: it has no tools and must not answer from
+its own knowledge. Direct reply **is** the Chat response. Only work that needs
+tools, lookup, or tracking becomes an Issue and starts a sandbox. The loop
+does not call DWS, does not redeem a ContextToken, and is not behind a feature
+flag. It uses `qwen3.7-plus` with thinking off and a 10s wall clock. Agent
+setting `inbound_coordinator` is on by default for new and existing agents;
+an explicit owner off switch skips the loop and enqueues the sandbox.
 
 | Action | User sees | Sandbox |
 | --- | --- | --- |
