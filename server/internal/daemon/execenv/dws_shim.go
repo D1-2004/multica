@@ -203,8 +203,9 @@ func LooksLikeDWSChatSend(command string) bool {
 		return false
 	}
 	hasSend := strings.Contains(s, "message send") || strings.Contains(s, "message_send") ||
-		strings.Contains(s, "+dm") || strings.Contains(s, "+send") ||
-		strings.Contains(s, "send-to-group") || strings.Contains(s, "send-by-bot")
+		strings.Contains(s, "chat send") || strings.Contains(s, "+dm") ||
+		strings.Contains(s, "+send") || strings.Contains(s, "send-to-group") ||
+		strings.Contains(s, "send-by-bot")
 	if !hasSend {
 		return false
 	}

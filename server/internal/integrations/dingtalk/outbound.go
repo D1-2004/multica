@@ -295,6 +295,10 @@ type streamIssueOutboundClaimStore interface {
 	ClaimStreamIssueOutbound(context.Context, pgtype.UUID) (bool, error)
 }
 
+type streamIssueOutboundReleaseStore interface {
+	ReleaseStreamIssueOutbound(context.Context, pgtype.UUID) error
+}
+
 type dispatchProcessingReactionClaimStore interface {
 	ClaimDispatchProcessingReaction(context.Context, pgtype.UUID) (bool, error)
 }
@@ -491,6 +495,21 @@ func (o *Outbound) claimStreamIssueOutbound(ctx context.Context, taskID pgtype.U
 	return o.claimDispatchPhase(ctx, taskID, idempotencyKey, dispatchPhaseOutbound)
 }
 
+func (o *Outbound) releaseStreamIssueOutbound(ctx context.Context, taskID pgtype.UUID) {
+	if o == nil {
+		return
+	}
+	if store, ok := o.q.(streamIssueOutboundReleaseStore); ok {
+		if err := store.ReleaseStreamIssueOutbound(ctx, taskID); err != nil {
+			o.logger.Error("dingtalk stream issue outbound claim release failed",
+				"event", "dingtalk_stream_issue_outbound_claim_release_failed",
+				"task_id", util.UUIDToString(taskID),
+				"error", err,
+			)
+		}
+	}
+}
+
 func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.UUID, payload map[string]any) string {
 	output, _ := payload["output"].(string)
 	if strings.TrimSpace(output) != "" {
@@ -598,14 +617,17 @@ func (o *Outbound) processStreamIssueEvent(ctx context.Context, e events.Event) 
 	// conversation the ACK already used.
 	if reply, ok := o.sessionReplyContext(ctx, taskUUID); ok {
 		if err := postSessionWebhook(ctx, o.messenger.httpClient, reply.Webhook, content); err != nil {
+			o.releaseStreamIssueOutbound(ctx, taskUUID)
 			return true, fmt.Errorf("post dingtalk stream issue reply: %w", err)
 		}
 	} else {
 		route, err := o.streamIssueRobotRoute(ctx, row)
 		if err != nil {
+			o.releaseStreamIssueOutbound(ctx, taskUUID)
 			return true, err
 		}
 		if err := o.messenger.SendMarkdown(ctx, route.credentials, route.reply, content); err != nil {
+			o.releaseStreamIssueOutbound(ctx, taskUUID)
 			return true, fmt.Errorf("post dingtalk stream issue reply: %w", err)
 		}
 	}

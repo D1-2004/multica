@@ -1465,6 +1465,18 @@ func (q *Queries) ClaimStreamIssueOutbound(ctx context.Context, id pgtype.UUID) 
 	return exists, err
 }
 
+const releaseStreamIssueOutbound = `-- name: ReleaseStreamIssueOutbound :exec
+UPDATE agent_task_queue
+SET context = context - 'dispatch_outbound_sent'
+WHERE id = $1
+  AND context ? 'dispatch_outbound_sent'
+`
+
+func (q *Queries) ReleaseStreamIssueOutbound(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, releaseStreamIssueOutbound, id)
+	return err
+}
+
 const claimDispatchProcessingReaction = `-- name: ClaimDispatchProcessingReaction :one
 WITH claimed AS (
     UPDATE agent_task_queue

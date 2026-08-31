@@ -8,6 +8,7 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -102,16 +103,18 @@ type historyReader interface {
 
 // Coordinator runs one JSON LLM decision with no tools. Tools and Chat remain
 // on the struct for the leftover assoc loop in loop.go; Decide does not call them.
+// Assoc is used before Decide to inject related_tasks into the prompt.
 type Coordinator struct {
 	LLM     *llm.Client
 	Queries historyReader
 	Tools   Tools
 	Chat    Completer
+	Assoc   *assoc.Service
 }
 
-// New wires the short loop. assocSvc may be nil; Decide does not call assoc tools.
+// New wires the short loop. assocSvc may be nil; Decide still fail-opens.
 func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) *Coordinator {
-	c := &Coordinator{LLM: llmClient, Queries: queries}
+	c := &Coordinator{LLM: llmClient, Queries: queries, Assoc: assocSvc}
 	if assocSvc != nil {
 		c.Tools = &AssocTools{Service: assocSvc}
 	}
@@ -150,6 +153,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
 	defer cancel()
 	started := time.Now()
+	turn = c.injectRelatedTasks(loopCtx, turn)
 
 	raw, err := c.LLM.GenerateJSONFast(
 		loopCtx,
@@ -206,6 +210,53 @@ func (d Decision) TraceJSON() []byte {
 		return nil
 	}
 	return raw
+}
+
+func (c *Coordinator) injectRelatedTasks(ctx context.Context, turn Turn) Turn {
+	if strings.TrimSpace(turn.RelatedTasks) != "" {
+		return turn
+	}
+	if c == nil || c.Assoc == nil || strings.TrimSpace(turn.WorkspaceID) == "" || !turn.AgentID.Valid {
+		return turn
+	}
+	cid := strings.TrimSpace(turn.ConversationID)
+	if cid == "" {
+		return turn
+	}
+	now := time.Now().UTC()
+	since, err := assoc.ParseSince("48h", now)
+	if err != nil {
+		return turn
+	}
+	result, err := c.Assoc.Recall(ctx, assoc.Query{
+		WorkspaceID:    turn.WorkspaceID,
+		AgentID:        util.UUIDToString(turn.AgentID),
+		ConversationID: cid,
+		Since:          since,
+		Until:          now,
+		Limit:          5,
+	})
+	if err != nil {
+		slog.Warn("inbound coordinator related_tasks recall failed",
+			"event", "inbound_coordinator_related_tasks_failed",
+			"conversation_id", cid,
+			"error", err,
+		)
+		return turn
+	}
+	if len(result.Items) == 0 {
+		return turn
+	}
+	var b strings.Builder
+	for _, item := range result.Items {
+		purpose := clipRunes(strings.TrimSpace(item.Purpose), 80)
+		if purpose == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "- issue=%s purpose=%s status=%s\n", item.Issue, purpose, item.Status)
+	}
+	turn.RelatedTasks = strings.TrimSpace(b.String())
+	return turn
 }
 
 // TurnFromChatSession loads agent voice, busy state, and recent history.

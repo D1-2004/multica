@@ -42,6 +42,12 @@ func TestLooksLikeDWSChatSend(t *testing.T) {
 	if !LooksLikeDWSChatSend(`mcp__dingtalk-chat__message_send`) {
 		t.Fatal("mcp send")
 	}
+	if !LooksLikeDWSChatSend(`dws chat send --user 1 --content hi`) {
+		t.Fatal("chat send")
+	}
+	if LooksLikeDWSChatSend(`dws calendar send --conversation-id cid-x`) {
+		t.Fatal("calendar send")
+	}
 	if LooksLikeDWSChatSend(`dws chat message list --conversation-id cid`) {
 		t.Fatal("list")
 	}

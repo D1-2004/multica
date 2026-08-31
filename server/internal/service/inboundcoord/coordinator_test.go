@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
@@ -150,6 +152,49 @@ func newestFirstPage(n int) []db.ChatMessage {
 		page[i] = db.ChatMessage{Role: "user", Content: "钉钉历史" + string(rune('A'+n-1-i))}
 	}
 	return page
+}
+
+func TestInjectRelatedTasksFormatsRecallHits(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := assoc.NewMemory()
+	agent := testAgentID()
+	agentID := util.UUIDToString(agent)
+	now := time.Now().UTC()
+	task, err := store.InsertTask(ctx, assoc.Task{
+		WorkspaceID:   "ws",
+		AgentID:       agentID,
+		IssueID:       "issue-eat",
+		Purpose:       "向冬翔确认今晚吃什么",
+		Status:        assoc.StatusWaiting,
+		LastTouchedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEdge(ctx, assoc.Edge{
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		SrcType:     assoc.NodeTask,
+		SrcID:       task.ID,
+		DstType:     assoc.NodeScene,
+		DstID:       "cid-dongxiang",
+		Rel:         assoc.RelOutreach,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := &Coordinator{Assoc: assoc.NewService(store)}
+	got := c.injectRelatedTasks(ctx, Turn{
+		WorkspaceID:    "ws",
+		AgentID:        agent,
+		ConversationID: "cid-dongxiang",
+	})
+	if !strings.Contains(got.RelatedTasks, "向冬翔确认今晚吃什么") {
+		t.Fatalf("related_tasks=%q", got.RelatedTasks)
+	}
+	if !strings.Contains(got.RelatedTasks, "issue-eat") {
+		t.Fatalf("related_tasks missing issue: %q", got.RelatedTasks)
+	}
 }
 
 func TestTurnFromChatSessionCopiesWorkspaceID(t *testing.T) {
