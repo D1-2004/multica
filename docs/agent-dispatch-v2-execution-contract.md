@@ -72,6 +72,14 @@ row exists: retries and child tasks would flap it. A retry-pending `task:failed`
 stays silent. Terminal complete or failed-without-retry settles the Stream row
 and posts the last agent comment through the Robot SDK when `output` is empty.
 
+Stream robot coordinator issues are not Dispatch Command 2.0: they have an
+`issue_id` and a Stream processing emotion, but no `dispatch_outbound.mode=
+robot_sdk`. Those completions must not wait for `chat:done` (issue tasks do
+not publish it) and must not look up `dingtalk_account`. They settle the
+Stream row by task lineage and post the last agent comment through the Stream
+robot installation and the chat-session binding (DM: staff id; group:
+openConversationId).
+
 ### Issue threading
 
 Within `issue`, an Agent controls whether a conversation threads. `agent.dispatch_always_new_issue`

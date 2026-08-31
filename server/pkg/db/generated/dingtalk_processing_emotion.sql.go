@@ -202,6 +202,48 @@ func (q *Queries) GetDingTalkProcessingEmotionBySourceMessage(ctx context.Contex
 	return i, err
 }
 
+const getDingTalkProcessingEmotionByTask = `-- name: GetDingTalkProcessingEmotionByTask :one
+WITH RECURSIVE lineage AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = $1
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN lineage child ON parent.id = child.parent_task_id
+)
+SELECT emotion.id, emotion.installation_id, emotion.source_message_id, emotion.open_conversation_id, emotion.open_msg_id, emotion.robot_code, emotion.chat_session_id, emotion.task_id, emotion.state, emotion.add_completed, emotion.attempt_count, emotion.next_attempt_at, emotion.lease_until, emotion.created_at, emotion.updated_at
+FROM dingtalk_processing_emotion emotion
+JOIN lineage ON lineage.id = emotion.task_id
+ORDER BY emotion.created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetDingTalkProcessingEmotionByTask(ctx context.Context, taskID pgtype.UUID) (DingtalkProcessingEmotion, error) {
+	row := q.db.QueryRow(ctx, getDingTalkProcessingEmotionByTask, taskID)
+	var i DingtalkProcessingEmotion
+	err := row.Scan(
+		&i.ID,
+		&i.InstallationID,
+		&i.SourceMessageID,
+		&i.OpenConversationID,
+		&i.OpenMsgID,
+		&i.RobotCode,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.State,
+		&i.AddCompleted,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markDingTalkProcessingEmotionAdded = `-- name: MarkDingTalkProcessingEmotionAdded :one
 UPDATE dingtalk_processing_emotion
 SET state = CASE WHEN state = 'settled' THEN 'settled' ELSE 'active' END,

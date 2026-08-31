@@ -153,6 +153,20 @@ func (f *fakeStreamEmotionQueries) GetDingTalkProcessingEmotionBySourceMessage(_
 	return db.DingtalkProcessingEmotion{}, pgx.ErrNoRows
 }
 
+func (f *fakeStreamEmotionQueries) GetDingTalkProcessingEmotionByTask(_ context.Context, taskID pgtype.UUID) (db.DingtalkProcessingEmotion, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !taskID.Valid {
+		return db.DingtalkProcessingEmotion{}, pgx.ErrNoRows
+	}
+	for _, row := range f.rows {
+		if row.TaskID == taskID {
+			return row, nil
+		}
+	}
+	return db.DingtalkProcessingEmotion{}, pgx.ErrNoRows
+}
+
 func (f *fakeStreamEmotionQueries) DeleteDingTalkProcessingEmotion(_ context.Context, id pgtype.UUID) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

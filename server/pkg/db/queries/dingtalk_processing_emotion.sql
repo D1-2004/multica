@@ -104,3 +104,24 @@ FROM dingtalk_processing_emotion
 WHERE source_message_id = sqlc.arg(source_message_id)
 ORDER BY created_at DESC
 LIMIT 1;
+
+-- name: GetDingTalkProcessingEmotionByTask :one
+-- Stream inbox binds the processing emotion to the first issue task. A
+-- retry child completes under a new task id, so walk parent_task_id to
+-- the row the user can still see.
+WITH RECURSIVE lineage AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = sqlc.arg(task_id)
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN lineage child ON parent.id = child.parent_task_id
+)
+SELECT emotion.id, emotion.installation_id, emotion.source_message_id, emotion.open_conversation_id, emotion.open_msg_id, emotion.robot_code, emotion.chat_session_id, emotion.task_id, emotion.state, emotion.add_completed, emotion.attempt_count, emotion.next_attempt_at, emotion.lease_until, emotion.created_at, emotion.updated_at
+FROM dingtalk_processing_emotion emotion
+JOIN lineage ON lineage.id = emotion.task_id
+ORDER BY emotion.created_at DESC
+LIMIT 1;

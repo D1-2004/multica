@@ -12,14 +12,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type dispatchLifecycleQueries struct {
-	inst db.ChannelInstallation
-	task db.AgentTaskQueue
+	inst    db.ChannelInstallation
+	binding db.ChannelChatSessionBinding
+	task    db.AgentTaskQueue
 
 	mu     sync.Mutex
 	claims map[string]bool
@@ -29,11 +31,24 @@ type dispatchLifecycleQueries struct {
 }
 
 func (q *dispatchLifecycleQueries) GetChannelChatSessionBindingBySession(context.Context, db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error) {
+	if q.binding.ChatSessionID.Valid || len(q.binding.Config) > 0 || q.binding.ChannelChatID != "" {
+		return q.binding, nil
+	}
 	return db.ChannelChatSessionBinding{}, pgx.ErrNoRows
 }
 
 func (q *dispatchLifecycleQueries) GetChannelInstallation(context.Context, db.GetChannelInstallationParams) (db.ChannelInstallation, error) {
+	if q.inst.ID.Valid {
+		return q.inst, nil
+	}
 	return db.ChannelInstallation{}, pgx.ErrNoRows
+}
+
+func (q *dispatchLifecycleQueries) GetDingTalkProcessingEmotionByTask(ctx context.Context, taskID pgtype.UUID) (db.DingtalkProcessingEmotion, error) {
+	if q.stream == nil {
+		return db.DingtalkProcessingEmotion{}, pgx.ErrNoRows
+	}
+	return q.stream.GetDingTalkProcessingEmotionByTask(ctx, taskID)
 }
 
 func (q *dispatchLifecycleQueries) ListPendingChatMessagePreviewsAfterTask(context.Context, pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error) {
@@ -346,5 +361,105 @@ func TestDispatchRobotRetryPendingFailureStaysSilent(t *testing.T) {
 	defer recorder.mu.Unlock()
 	if len(recorder.sequence) != 1 || recorder.sequence[0] != "/v1.0/robot/emotion/reply" {
 		t.Fatalf("retry-pending DingTalk calls = %v, want one processing emotion", recorder.sequence)
+	}
+}
+
+func TestStreamIssueCompletionPostsLastReplyAndRecallsEmotion(t *testing.T) {
+	recorder, server := newDispatchRobotServer(t)
+	taskID := typingTestUUID(71)
+	sessionID := typingTestUUID(72)
+	inst := testInstallationRow(t, typingTestUUID(73), "client_stream_issue")
+	streamQ := newFakeStreamEmotionQueries(inst)
+	queries := &dispatchLifecycleQueries{
+		inst: inst,
+		binding: db.ChannelChatSessionBinding{
+			ChatSessionID: sessionID,
+			ChatType:      string(channel.ChatTypeP2P),
+			Config:        []byte(`{"sender_staff_id":"staff-1"}`),
+		},
+		task:      db.AgentTaskQueue{ID: taskID},
+		stream:    streamQ,
+		lastReply: "今天要闻：预发环境验证用的三条摘要。",
+	}
+	messenger := NewRobotMessenger(server.URL, server.URL, server.Client())
+	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, streamQ, nil)
+	mgr.beginStreamEmotion(context.Background(), inst.ID, "msg-stream", EmotionTarget{
+		OpenConversationID: "cid-dm", OpenMsgID: "msg-stream", RobotCode: "robot_client_stream_issue",
+	}, 0)
+	mgr.bindStreamEmotion(context.Background(), inst.ID, "msg-stream", sessionID, taskID)
+	outbound := NewOutbound(queries, plaintextDecrypter, messenger, mgr, nil)
+	payload := map[string]any{
+		"task_id":  util.UUIDToString(taskID),
+		"issue_id": "11111111-1111-1111-1111-111111111111",
+	}
+
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskQueued, Payload: payload}); err != nil {
+		t.Fatalf("stream issue queued: %v", err)
+	}
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskCompleted, Payload: payload}); err != nil {
+		t.Fatalf("stream issue completed: %v", err)
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	wantSequence := []string{
+		"/v1.0/robot/emotion/reply",
+		"/v1.0/robot/emotion/recall",
+		"/v1.0/robot/oToMessages/batchSend",
+	}
+	if len(recorder.sequence) != len(wantSequence) {
+		t.Fatalf("stream issue DingTalk calls = %v, want %v", recorder.sequence, wantSequence)
+	}
+	for i := range wantSequence {
+		if recorder.sequence[i] != wantSequence[i] {
+			t.Fatalf("stream issue DingTalk calls = %v, want %v", recorder.sequence, wantSequence)
+		}
+	}
+	reply := recorder.bodies["/v1.0/robot/oToMessages/batchSend"][0]
+	users, _ := reply["userIds"].([]any)
+	if len(users) != 1 || users[0] != "staff-1" {
+		t.Fatalf("stream issue reply target = %#v, want staff-1", reply)
+	}
+	msgParam, _ := reply["msgParam"].(string)
+	if !strings.Contains(msgParam, "今天要闻") {
+		t.Fatalf("stream issue reply = %q, want last agent comment", msgParam)
+	}
+}
+
+func TestStreamIssueRetryPendingFailureStaysSilent(t *testing.T) {
+	recorder, server := newDispatchRobotServer(t)
+	taskID := typingTestUUID(81)
+	sessionID := typingTestUUID(82)
+	inst := testInstallationRow(t, typingTestUUID(83), "client_stream_retry")
+	streamQ := newFakeStreamEmotionQueries(inst)
+	queries := &dispatchLifecycleQueries{
+		inst: inst,
+		binding: db.ChannelChatSessionBinding{
+			ChatSessionID: sessionID,
+			ChatType:      string(channel.ChatTypeP2P),
+			Config:        []byte(`{"sender_staff_id":"staff-1"}`),
+		},
+		task:   db.AgentTaskQueue{ID: taskID},
+		stream: streamQ,
+	}
+	messenger := NewRobotMessenger(server.URL, server.URL, server.Client())
+	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, streamQ, nil)
+	mgr.beginStreamEmotion(context.Background(), inst.ID, "msg-retry", EmotionTarget{
+		OpenConversationID: "cid-dm", OpenMsgID: "msg-retry", RobotCode: "robot_client_stream_retry",
+	}, 0)
+	mgr.bindStreamEmotion(context.Background(), inst.ID, "msg-retry", sessionID, taskID)
+	outbound := NewOutbound(queries, plaintextDecrypter, messenger, mgr, nil)
+	payload := map[string]any{
+		"task_id":       util.UUIDToString(taskID),
+		"issue_id":      "11111111-1111-1111-1111-111111111111",
+		"retry_pending": true,
+	}
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskFailed, Payload: payload}); err != nil {
+		t.Fatalf("stream issue retry-pending failed: %v", err)
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.sequence) != 1 || recorder.sequence[0] != "/v1.0/robot/emotion/reply" {
+		t.Fatalf("stream issue retry-pending calls = %v, want one processing emotion", recorder.sequence)
 	}
 }
