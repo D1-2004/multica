@@ -117,6 +117,10 @@ func TestClientCompleteTaskUsesOutputWithoutLegacyResultMessage(t *testing.T) {
 		if _, ok := body["result_message"]; ok {
 			t.Fatalf("legacy result_message was sent: %#v", body)
 		}
+		decision, ok := body["reply_decision"].(map[string]any)
+		if !ok || decision["shouldReply"] != false || decision["reason"] != "echo" {
+			t.Fatalf("reply_decision = %#v", body["reply_decision"])
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
 	}))
@@ -132,6 +136,7 @@ func TestClientCompleteTaskUsesOutputWithoutLegacyResultMessage(t *testing.T) {
 		"",
 		false,
 		"",
+		&protocol.ReplyDecision{ShouldReply: false, Reason: "echo"},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +529,7 @@ func TestTerminalReportsCarryRetiredSessionID(t *testing.T) {
 			name:     "complete",
 			endpoint: "/api/daemon/tasks/task-1/complete",
 			call: func(c *Client) error {
-				return c.CompleteTask(context.Background(), "task-1", "done", "", "", "/tmp/wd", false, "POISONED-S")
+				return c.CompleteTask(context.Background(), "task-1", "done", "", "", "/tmp/wd", false, "POISONED-S", nil)
 			},
 		},
 		{
@@ -567,7 +572,7 @@ func TestTerminalReportsOmitEmptyRetiredSessionID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := NewClient(srv.URL).CompleteTask(context.Background(), "task-1", "done", "", "sess-1", "/tmp/wd", false, ""); err != nil {
+	if err := NewClient(srv.URL).CompleteTask(context.Background(), "task-1", "done", "", "sess-1", "/tmp/wd", false, "", nil); err != nil {
 		t.Fatalf("CompleteTask: %v", err)
 	}
 	if _, present := body["retired_session_id"]; present {

@@ -91,6 +91,38 @@ func TestBuildTaskCompletionUsesProviderOutputOverLegacyResultMessage(t *testing
 	}
 }
 
+func TestBuildTaskCompletionCarriesSuccessfulReplyDecision(t *testing.T) {
+	result := []byte(`{"output":"可见回复","reply_decision":{"shouldReply":false,"reason":"echo"}}`)
+	completion := buildTaskCompletion(
+		taskCompletionTarget{RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		"",
+		"",
+		"",
+	)
+	if completion.ReplyDecision == nil || completion.ReplyDecision.ShouldReply || completion.ReplyDecision.Reason != "echo" {
+		t.Fatalf("reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
+func TestBuildTaskCompletionDoesNotCarryFailedReplyDecision(t *testing.T) {
+	result := []byte(`{"output":"partial","reply_decision":{"shouldReply":false,"reason":"echo"}}`)
+	completion := buildTaskCompletion(
+		taskCompletionTarget{RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"failed",
+		result,
+		"partial",
+		"failed",
+		"agent_error.unknown",
+	)
+	if completion.ReplyDecision != nil {
+		t.Fatalf("failed completion carried reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
 func TestBuildTaskCompletionFailureKeepsLastReplyAndReason(t *testing.T) {
 	completion := buildTaskCompletion(
 		taskCompletionTarget{
@@ -260,7 +292,7 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	if _, err := svc.CompleteTask(
 		ctx,
 		util.MustParseUUID(taskID),
-		[]byte(`{"output":"agent execution summary","result_message":"第一行\\n第二行"}`),
+		[]byte(`{"output":"agent execution summary","reply_decision":{"shouldReply":false,"reason":"echo"}}`),
 		"session-1",
 		"",
 		false,
@@ -296,6 +328,14 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	}
 	if got, want := *summary.FirstEffectiveReplyAt, firstEffectiveReplyAt.Format(time.RFC3339Nano); got != want {
 		t.Fatalf("first effective reply at = %s, want %s", got, want)
+	}
+	var frozen map[string]any
+	if err := json.Unmarshal(executionSummary, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	decision, ok := frozen["_multica_reply_decision"].(map[string]any)
+	if !ok || decision["shouldReply"] != false || decision["reason"] != "echo" {
+		t.Fatalf("frozen reply decision = %#v", frozen["_multica_reply_decision"])
 	}
 }
 

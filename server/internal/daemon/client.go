@@ -435,12 +435,15 @@ func (c *Client) DownloadA2AAttachment(ctx context.Context, taskID, attachmentID
 	return data, nil
 }
 
-func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string) error {
-	return c.completeTaskWithSchedule(ctx, taskID, output, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, defaultTerminalRetrySchedule)
+func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, replyDecision *protocol.ReplyDecision) error {
+	return c.completeTaskWithSchedule(ctx, taskID, output, branchName, sessionID, workDir, sessionRolloutMissing, retiredSessionID, replyDecision, defaultTerminalRetrySchedule)
 }
 
-func (c *Client) completeTaskWithSchedule(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, schedule []time.Duration) error {
+func (c *Client) completeTaskWithSchedule(ctx context.Context, taskID, output, branchName, sessionID, workDir string, sessionRolloutMissing bool, retiredSessionID string, replyDecision *protocol.ReplyDecision, schedule []time.Duration) error {
 	body := map[string]any{"output": output}
+	if replyDecision != nil {
+		body["reply_decision"] = replyDecision
+	}
 	if branchName != "" {
 		body["branch_name"] = branchName
 	}

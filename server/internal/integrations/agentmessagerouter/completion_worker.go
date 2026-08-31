@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
@@ -268,6 +269,19 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 			return true, err
 		}
 	}
+	var shouldReply *bool
+	replyReason := ""
+	if completion.ExecutionStatus == "completed" {
+		if frozen, ok := executionSummary[protocol.TaskReplyDecisionSummaryKey].(map[string]any); ok {
+			if value, exists := frozen["shouldReply"].(bool); exists {
+				shouldReply = &value
+				if reason, reasonOK := frozen["reason"].(string); reasonOK {
+					replyReason = reason
+				}
+			}
+		}
+	}
+	delete(executionSummary, protocol.TaskReplyDecisionSummaryKey)
 
 	result := ExecutionResultRequest{
 		RequestID:         completion.RequestID,
@@ -278,6 +292,8 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 		ExecutionStatus:   completion.ExecutionStatus,
 		ResultMessage:     redact.Text(util.UnescapeBackslashEscapes(completion.ResultMessage)),
 		ExecutionSummary:  executionSummary,
+		ShouldReply:       shouldReply,
+		ReplyReason:       replyReason,
 		ExecutionResult: map[string]any{
 			"terminalTaskId": util.UUIDToString(completion.TerminalTaskID),
 			"error":          completion.Error.String,

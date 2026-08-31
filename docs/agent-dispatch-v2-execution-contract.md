@@ -310,6 +310,36 @@ the same freeze transaction releases it. Delivery retries reuse the frozen
 outbox value. Rows created by older binaries remain `queued` with the default
 frozen value and send the old payload without `resultMessage`.
 
+### Optional AI reply decision
+
+A successful Agent may append one delivery decision block to the very end of
+its final provider output:
+
+````text
+```multica-reply-decision
+{"shouldReply":false,"reason":"echo"}
+```
+````
+
+Multica recognizes the block only when the fence is terminal and the JSON is
+one object containing required boolean `shouldReply` plus optional string
+`reason`, with no other fields. Invalid JSON, missing or non-boolean
+`shouldReply`, unknown fields, and a matching fence anywhere except the end are
+ordinary visible output and are not removed. On a valid match, Multica removes
+the entire fence from user-visible `output`/`resultMessage` and carries the
+decision separately through the daemon completion callback as
+`reply_decision={shouldReply,reason?}`.
+
+The terminal Router `execution-result` request exposes the decision as optional
+top-level `shouldReply` and `replyReason`. Absence remains absence; it is never
+materialized as `shouldReply=false`. Failed and canceled terminal paths omit
+both fields. Multica freezes the decision inside the existing completion
+outbox `execution_summary` JSONB snapshot, removes its private storage key
+before sending `executionSummary`, and reuses the same top-level payload on
+delivery retry. It deliberately does not add an outbox table column: the
+current sqlc queries use `SELECT *` and `RETURNING *`, so changing the physical
+row shape would break old workers scanning rows during a rolling deployment.
+
 ## LLM telemetry and terminal summary
 
 `completionCallback` may carry a task-scoped telemetry capability in addition
@@ -741,3 +771,18 @@ parsing or rewriting Router's context string.
   line, which tells an Issue run the user sees only issue comments — true for a
   web-created Issue, backwards for a DingTalk-dispatched one whose final output
   is what the person receives.
+
+## Change record: 2026-08-31 AI reply decision propagation
+
+- History: Added strict parsing of a terminal `multica-reply-decision` fenced
+  block, removed a valid block from visible output, and propagated the optional
+  structured decision through daemon completion, durable pending replay, task
+  result persistence, completion outbox freezing, and Router top-level
+  `shouldReply`/`replyReason`. Missing decisions and all failed/canceled paths
+  omit the fields. The frozen value uses the existing `execution_summary` JSONB
+  rather than adding an outbox column.
+- Reason: Router echo suppression needs an explicit AI decision without leaking
+  its control block into the reply text or turning an absent decision into
+  false. Reusing the immutable JSONB snapshot keeps retry payloads stable and
+  avoids changing `SELECT *`/`RETURNING *` scan shapes while old and new
+  completion workers overlap.

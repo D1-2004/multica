@@ -222,6 +222,7 @@ type terminalTaskReport struct {
 	// run on the issue or chat can select it again, however many clean rows
 	// still reference it.
 	retiredSessionID string
+	replyDecision    *protocol.ReplyDecision
 }
 
 type executionEnvironmentCommand func() ([]string, error)
@@ -5054,6 +5055,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			workDir:               result.WorkDir,
 			sessionRolloutMissing: result.SessionRolloutMissing,
 			retiredSessionID:      result.RetiredSessionID,
+			replyDecision:         result.ReplyDecision,
 		})
 		if err == nil {
 			taskLog.Info("complete callback acknowledged",
@@ -5086,6 +5088,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 				WorkDir:               result.WorkDir,
 				SessionRolloutMissing: result.SessionRolloutMissing,
 				RetiredSessionID:      result.RetiredSessionID,
+				ReplyDecision:         result.ReplyDecision,
 			}, taskLog)
 			return
 		}
@@ -5181,7 +5184,7 @@ func (d *Daemon) reportTerminalTask(parentCtx context.Context, report terminalTa
 
 	switch report.kind {
 	case terminalTaskReportComplete:
-		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID)
+		return d.client.CompleteTask(ctx, report.taskID, report.output, report.branchName, report.sessionID, report.workDir, report.sessionRolloutMissing, report.retiredSessionID, report.replyDecision)
 	case terminalTaskReportFail:
 		return d.client.FailTask(ctx, report.taskID, report.errorMessage, report.sessionID, report.workDir, report.failureReason, report.sessionRolloutMissing, report.retiredSessionID)
 	default:
@@ -6683,6 +6686,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	switch result.Status {
 	case "completed":
+		result.Output, taskResult.ReplyDecision = parseReplyDecision(result.Output)
 		if result.Output == "" {
 			// The agent completed successfully but produced no text output.
 			// This is valid — the agent may have done all its work via tool
@@ -6695,7 +6699,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				SessionID: result.SessionID,
 				WorkDir:   env.WorkDir,
 				EnvRoot:   env.RootDir,
-				Usage:     usageEntries,
+				Usage:         usageEntries,
+				ReplyDecision: taskResult.ReplyDecision,
 			}, nil
 		}
 		// Detect "poisoned" terminal output: the agent didn't reach a real
@@ -6725,7 +6730,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			SessionID: result.SessionID,
 			WorkDir:   env.WorkDir,
 			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Usage:         usageEntries,
+			ReplyDecision: taskResult.ReplyDecision,
 		}
 		return taskResult, nil
 	case "timeout":

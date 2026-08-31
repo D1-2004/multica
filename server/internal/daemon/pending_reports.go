@@ -10,6 +10,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -64,6 +66,7 @@ type pendingTerminalReport struct {
 	WorkDir               string    `json:"work_dir,omitempty"`
 	SessionRolloutMissing bool      `json:"session_rollout_missing,omitempty"`
 	RetiredSessionID      string    `json:"retired_session_id,omitempty"`
+	ReplyDecision         *protocol.ReplyDecision `json:"reply_decision,omitempty"`
 	CreatedAt             time.Time `json:"created_at"`
 	Attempts              int       `json:"attempts"`
 }
@@ -247,7 +250,7 @@ func (d *Daemon) drainPendingReports(ctx context.Context) {
 		var err error
 		switch r.Kind {
 		case pendingReportKindComplete:
-			err = d.client.completeTaskWithSchedule(ctx, r.TaskID, r.Output, r.BranchName, r.SessionID, r.WorkDir, r.SessionRolloutMissing, r.RetiredSessionID, nil)
+			err = d.client.completeTaskWithSchedule(ctx, r.TaskID, r.Output, r.BranchName, r.SessionID, r.WorkDir, r.SessionRolloutMissing, r.RetiredSessionID, r.ReplyDecision, nil)
 		case pendingReportKindFail:
 			err = d.client.failTaskWithSchedule(
 				ctx,
@@ -283,6 +286,7 @@ func (d *Daemon) drainPendingReports(ctx context.Context) {
 			r.Kind = pendingReportKindFail
 			r.Error = fmt.Sprintf("complete task failed: %s", err.Error())
 			r.FailureReason = "agent_error.unknown"
+			r.ReplyDecision = nil
 			r.Attempts++
 			d.pendingReports.Update(r)
 		default:
