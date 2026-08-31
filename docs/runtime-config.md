@@ -10,7 +10,7 @@ MULTICA_RUNTIME_CONFIG_SOURCE=diamond
 
 The coordinates are fixed so an application cannot accidentally point at another team's documents:
 
-| Setting | Runtime settings | Runtime manifest fingerprints | Model pricing |
+| Setting | Runtime settings | Runtime provider catalog | Model pricing |
 |---|---|---|---|
 | Application | `dt-fde-multica` | `dt-fde-multica` | `dt-fde-multica` |
 | Data ID | `dt-fde-multica-runtime.json` | `dt-fde-multica-runtime-manifest-fingerprints.json` | `dt-fde-multica-model-pricing.json` |
@@ -24,7 +24,7 @@ This document is separate from `dt-fde-multica.json`, whose strict schema contai
 There are two explicit deployment modes:
 
 - An empty `MULTICA_RUNTIME_CONFIG_SOURCE` keeps the existing environment-only/self-hosted path.
-- The exact value `diamond` makes the runtime settings, manifest-fingerprint, and model-pricing documents authoritative. The server requires the initial fetch and listener registration for all three Data IDs. It does not read a moved legacy environment value as a second source.
+- The exact value `diamond` makes the runtime settings and model-pricing documents authoritative. The provider catalog is loaded and watched independently; an unavailable or invalid provider catalog does not block application startup.
 
 The document is decoded with unknown-field rejection and validated as a complete snapshot. A valid listener update atomically replaces the previous snapshot. An invalid later update is rejected and the last valid snapshot remains active. Logs contain only the Data ID, group, schema version, generation, model count, and SHA-256 digest; the document body is not logged.
 
@@ -70,21 +70,21 @@ The following legacy environment settings are represented by the runtime documen
 
 See [the complete example](runtime-config.example.json) for schema version 1.
 
-## Runtime manifest fingerprint catalog
+## Runtime provider catalog
 
-An m7 Runtime template alias contains a 16-character fingerprint instead of embedding every component version. The second managed document maps that fingerprint to the exact six-component contract used by the Runtime image builder. This keeps the existing alias and verification mechanism while allowing a newly built candidate image to become recognizable through a Diamond update rather than a Multica code change.
+The second managed document maps one opaque 16-character fingerprint to one provider combination. FC reads the fingerprint from the display alias; ASB release inputs carry the same fingerprint explicitly. The key is never recomputed from component versions and is not an image-integrity check. Releasing another image with the same provider combination does not require a Diamond update. Adding a provider creates one new fingerprint entry while retaining old combinations.
 
 The document has one strict schema:
 
 - `version` must be `1`;
-- `fingerprints` must be non-empty;
-- every key must be exactly 16 lowercase hexadecimal characters;
-- every value must contain exactly `hermes`, `opencode`, `opencode-v2`, `dsh`, `pi`, and `dws`;
-- the server independently recomputes `sha256(canonical m7 contract)[:16]` and rejects a key that does not match its component versions.
+- `fingerprints` is an object and may be empty;
+- every key is exactly 16 lowercase hexadecimal characters;
+- every value is a duplicate-free provider list with no exact-count constraint;
+- template IDs, image references, commits, component versions, and capabilities are not stored in this document.
 
-See [the complete fingerprint example](runtime-manifest-fingerprints.example.json). A valid listener update atomically replaces the entire catalog. An invalid update keeps the previous generation. Application logs contain only the Data ID, generation, entry count, and document SHA-256.
+See [the complete provider example](runtime-manifest-fingerprints.example.json). A valid listener update atomically replaces the entire catalog. An invalid update keeps the previous generation. Application logs contain only the Data ID, generation, entry count, and document SHA-256. The existing Data ID name is retained for deployment compatibility; its content is no longer a fingerprint or component-version document.
 
-The environment-only/self-hosted path can still parse the explicit m1-m6 aliases. With no managed fingerprint catalog, unknown compact m7 aliases are deliberately ignored rather than guessed.
+A compact m7 alias is display text and carries the opaque provider-combination fingerprint. It is not the execution identity and does not encode component versions. FC execution identity remains the template ID. Templates whose fingerprint is not in Diamond stay visible with no selectable providers, so they cannot be used for new Runtime creation or stable publication.
 
 ## Managed model pricing
 
@@ -98,9 +98,9 @@ See [the complete pricing example](runtime-model-pricing.example.json) and [the 
 
 ## Release procedure
 
-1. Build the runtime-settings JSON from the current environment snapshot without placing secrets in it, build the manifest-fingerprint JSON from verified Runtime image contracts, and build the model-pricing JSON from authoritative provider price sheets.
+1. Build the runtime-settings JSON from the current environment snapshot without placing secrets in it, add a fingerprint entry only when a new provider combination is introduced, and build the model-pricing JSON from authoritative provider price sheets.
 2. Validate the runtime-settings document with the same strict parser used by the server: `cd server && go run ./cmd/runtimeconfig -file /path/to/runtime.json` (add `-production` for the production document). Run `go test ./pkg/runtimeconfig ./pkg/modelpricing` to validate both managed catalogs.
-3. Publish the model-pricing Data ID first, then the runtime settings and manifest fingerprints, before releasing the binary.
+3. Publish the model-pricing Data ID first, then the runtime settings and provider catalog, before releasing the binary.
 4. Add `MULTICA_RUNTIME_CONFIG_SOURCE=diamond` and `MULTICA_RUNTIME_LLM_API_KEY` to the target Aone environment trait while preserving the complete old trait snapshot.
 5. Release the binary to that environment.
 6. Verify every replica loaded the same Diamond digest and registered a listener.

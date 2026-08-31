@@ -123,6 +123,8 @@ export function FCE2BRuntimeDialog({
   const [artifactBuildId, setArtifactBuildId] = useState("");
   const [artifactAlias, setArtifactAlias] = useState("");
   const [artifactDigest, setArtifactDigest] = useState("");
+  const [runtimeCommit, setRuntimeCommit] = useState("");
+  const [providerFingerprint, setProviderFingerprint] = useState("");
   const [apiKey, setAPIKey] = useState("");
   const [validatedAPIKey, setValidatedAPIKey] = useState("");
   const apiKeyIsValidated =
@@ -146,7 +148,6 @@ export function FCE2BRuntimeDialog({
       template.status,
       template.updated_at,
       ...template.providers,
-      ...template.capabilities,
     ]
       .filter(Boolean)
       .join(" ")
@@ -205,7 +206,11 @@ export function FCE2BRuntimeDialog({
     if (
       sandboxBackend === "asb" &&
       templateChannel === "candidate" &&
-      (!artifactRef.trim() || !artifactBuildId.trim() || !artifactDigest.trim())
+      (!artifactRef.trim() ||
+        !artifactBuildId.trim() ||
+        !artifactDigest.trim() ||
+        !/^[0-9a-f]{16}$/.test(providerFingerprint.trim().toLowerCase()) ||
+        !/^[0-9a-f]{40}$/.test(runtimeCommit.trim().toLowerCase()))
     ) {
       return;
     }
@@ -222,6 +227,8 @@ export function FCE2BRuntimeDialog({
               artifact_build_id: artifactBuildId.trim(),
               artifact_alias: artifactAlias.trim() || undefined,
               artifact_digest: artifactDigest.trim(),
+              runtime_commit: runtimeCommit.trim().toLowerCase(),
+              provider_fingerprint: providerFingerprint.trim().toLowerCase(),
             }
           : {}),
         artifact_channel: templateChannel,
@@ -456,6 +463,7 @@ export function FCE2BRuntimeDialog({
                       </div>
                     )}
                   {filteredTemplates.map((template) => {
+                    const selectable = fcE2BProviderForTemplate(template) != null;
                     const selected =
                       selectedTemplate?.template === template.template &&
                       selectedTemplate?.id === template.id;
@@ -468,8 +476,9 @@ export function FCE2BRuntimeDialog({
                       <button
                         key={`${template.template}:${template.id ?? ""}:${template.name ?? ""}`}
                         type="button"
+                        disabled={!selectable}
                         onClick={() => pickTemplate(template)}
-                        className="flex w-full min-w-0 items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 hover:bg-muted/50"
+                        className="flex w-full min-w-0 items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 enabled:hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-55"
                       >
                         <span className="min-w-0 space-y-1">
                           <span className="block break-all font-medium">
@@ -506,9 +515,6 @@ export function FCE2BRuntimeDialog({
                                   PROVIDER_LABELS[item as FCE2BRuntimeProvider],
                               )
                               .join(" · ")}
-                            {template.capabilities.length > 0
-                              ? ` · ${template.capabilities.join(" · ")}`
-                              : ""}
                           </span>
                         </span>
                         {selected && <Check className="mt-0.5 h-3.5 w-3.5" />}
@@ -530,6 +536,32 @@ export function FCE2BRuntimeDialog({
                   value={artifactRef}
                   onChange={(event) => setArtifactRef(event.target.value)}
                   placeholder="registry/repository@sha256:..."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-runtime-commit" className="text-caption">
+                  {t(($) => $.fc_e2b_stable.git_commit)}
+                </Label>
+                <Input
+                  id="asb-runtime-commit"
+                  value={runtimeCommit}
+                  onChange={(event) => setRuntimeCommit(event.target.value)}
+                  placeholder="40-character Runtime commit"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="asb-provider-fingerprint" className="text-caption">
+                  {t(($) => $.fc_e2b_runtime.fields.provider_fingerprint)}
+                </Label>
+                <Input
+                  id="asb-provider-fingerprint"
+                  value={providerFingerprint}
+                  onChange={(event) => setProviderFingerprint(event.target.value)}
+                  placeholder="16-character provider fingerprint"
+                  autoComplete="off"
+                  spellCheck={false}
                 />
               </div>
               <div className="space-y-1.5">

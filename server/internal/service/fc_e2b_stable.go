@@ -44,6 +44,30 @@ const (
 	asbStableChannelLockKey     int32 = 2
 )
 
+const fcE2BStableValidationTransitionSQL = `
+		UPDATE fc_e2b_stable_release
+		SET template_alias = $1,
+		    manifest = $2::jsonb,
+		    source_revision = $3,
+		    previous_template_id = $4,
+		    previous_template_alias = $5,
+		    previous_artifact_ref = $6,
+		    previous_artifact_build_id = $7,
+		    previous_artifact_digest = $8,
+		    status = 'developer_rollout',
+		    current_batch = 0,
+		    target_percentage = 0,
+		    total_targets = $9,
+		    developer_rollout_started_at = $10,
+		    rollout_started_at = NULL,
+		    batch_started_at = NULL,
+		    next_batch_at = $10,
+		    lease_token = NULL,
+		    lease_expires_at = NULL,
+		    updated_at = now()
+		WHERE id = $11 AND lease_token = $12
+	`
+
 var (
 	ErrFCE2BStableChannelUninitialized = errors.New("FC/E2B stable channel is not initialized")
 	ErrFCE2BStableReleaseConflict      = errors.New("another FC/E2B stable release is active")
@@ -61,7 +85,6 @@ type FCE2BStableTemplateBinding struct {
 	ArtifactAlias   string `json:"artifact_alias"`
 	ArtifactDigest  string `json:"artifact_digest"`
 	TemplateID      string `json:"template_id"`
-	TemplateBuildID string `json:"template_build_id"`
 	TemplateAlias   string `json:"template_alias"`
 	ReleaseID       string `json:"release_id"`
 }
@@ -88,7 +111,6 @@ type FCE2BStableRelease struct {
 	ArtifactDigest              string                        `json:"artifact_digest"`
 	ID                          string                        `json:"id"`
 	TemplateID                  string                        `json:"template_id"`
-	TemplateBuildID             string                        `json:"template_build_id"`
 	TemplateAlias               string                        `json:"template_alias"`
 	GitCommit                   string                        `json:"git_commit"`
 	ACRDigest                   string                        `json:"acr_digest"`
@@ -101,7 +123,6 @@ type FCE2BStableRelease struct {
 	TargetPercentage            int                           `json:"target_percentage"`
 	StageTargetCount            int                           `json:"stage_target_count"`
 	PreviousTemplateID          string                        `json:"previous_template_id"`
-	PreviousTemplateBuildID     string                        `json:"previous_template_build_id"`
 	PreviousTemplateAlias       string                        `json:"previous_template_alias"`
 	PreviousArtifactRef         string                        `json:"previous_artifact_ref"`
 	PreviousArtifactBuildID     string                        `json:"previous_artifact_build_id"`
@@ -125,17 +146,18 @@ type FCE2BStableRelease struct {
 }
 
 type CreateFCE2BStableReleaseInput struct {
-	IdempotencyKey  string
-	SandboxBackend  SandboxBackendKind
-	ArtifactRef     string
-	ExpectedBuildID string
-	ArtifactBuiltAt *time.Time
-	ArtifactDigest  string
-	GitCommit       string
-	TemplateID      string
-	Note            string
-	ActorUserID     pgtype.UUID
-	Bootstrap       bool
+	IdempotencyKey      string
+	SandboxBackend      SandboxBackendKind
+	ArtifactRef         string
+	ArtifactBuildID     string
+	ArtifactBuiltAt     *time.Time
+	ArtifactDigest      string
+	GitCommit           string
+	ProviderFingerprint string
+	TemplateID          string
+	Note                string
+	ActorUserID         pgtype.UUID
+	Bootstrap           bool
 }
 
 type stableRuntimeTarget struct {
@@ -145,7 +167,6 @@ type stableRuntimeTarget struct {
 	Provider                string
 	SandboxBackend          string
 	PreviousTemplateID      string
-	PreviousTemplateBuildID string
 	PreviousTemplateAlias   string
 	PreviousArtifactRef     string
 	PreviousArtifactBuildID string
@@ -170,7 +191,6 @@ type FCE2BStableRuntimeOverview struct {
 	TemplateChannel           string    `json:"template_channel"`
 	TemplateAlias             string    `json:"template_alias"`
 	TemplateID                string    `json:"template_id"`
-	TemplateBuildID           string    `json:"template_build_id"`
 	MatchesCurrentStable      bool      `json:"matches_current_stable"`
 	MatchesActiveRelease      bool      `json:"matches_active_release"`
 	ActiveReleaseTargetStatus string    `json:"active_release_target_status"`
@@ -264,7 +284,7 @@ func (s *FCE2BStableService) GetChannel(
 		SELECT sandbox_backend, artifact_kind, current_artifact_ref,
 		       current_artifact_build_id, current_template_alias,
 		       current_artifact_digest, current_template_id,
-		       current_template_build_id, current_template_alias,
+		       current_template_alias,
 		       current_release_id::text
 		FROM fc_e2b_stable_channel
 		WHERE sandbox_backend = $1 AND channel = 'stable'
@@ -276,12 +296,14 @@ func (s *FCE2BStableService) GetChannel(
 		&current.ArtifactAlias,
 		&current.ArtifactDigest,
 		&current.TemplateID,
-		&current.TemplateBuildID,
 		&current.TemplateAlias,
 		&current.ReleaseID,
 	)
 	switch {
 	case err == nil:
+		if SandboxBackendKind(current.SandboxBackend) == SandboxBackendAliyunFC {
+			current.ArtifactBuildID = ""
+		}
 		result.Current = &current
 	case errors.Is(err, pgx.ErrNoRows):
 	default:
@@ -388,7 +410,7 @@ func (s *FCE2BStableService) LockCurrentArtifactForRuntimeCreation(
 		SELECT sandbox_backend, artifact_kind, current_artifact_ref,
 		       current_artifact_build_id, current_template_alias,
 		       current_artifact_digest, current_template_id,
-		       current_template_build_id, current_template_alias,
+		       current_template_alias,
 		       current_release_id::text
 		FROM fc_e2b_stable_channel
 		WHERE sandbox_backend = $1 AND channel = 'stable'
@@ -400,7 +422,6 @@ func (s *FCE2BStableService) LockCurrentArtifactForRuntimeCreation(
 		&current.ArtifactAlias,
 		&current.ArtifactDigest,
 		&current.TemplateID,
-		&current.TemplateBuildID,
 		&current.TemplateAlias,
 		&current.ReleaseID,
 	)
@@ -409,6 +430,9 @@ func (s *FCE2BStableService) LockCurrentArtifactForRuntimeCreation(
 	}
 	if err != nil {
 		return FCE2BStableTemplateBinding{}, fmt.Errorf("load locked cloud sandbox stable channel: %w", err)
+	}
+	if SandboxBackendKind(current.SandboxBackend) == SandboxBackendAliyunFC {
+		current.ArtifactBuildID = ""
 	}
 	return current, nil
 }
@@ -481,11 +505,7 @@ func (s *FCE2BStableService) ListRuntimeOverview(
 			    runtime.metadata->>'template_id',
 			    ''
 			),
-			COALESCE(
-			    runtime.metadata->>'artifact_build_id',
-			    runtime.metadata->>'template_build_id',
-			    ''
-			),
+			COALESCE(runtime.metadata->>'artifact_build_id', ''),
 			COALESCE(runtime.metadata->>'artifact_digest', ''),
 			CASE WHEN COALESCE(
 			    runtime.metadata->>'template_channel',
@@ -497,19 +517,18 @@ func (s *FCE2BStableService) ListRuntimeOverview(
 			    ''
 			),
 			COALESCE(runtime.metadata->>'template_id', ''),
-			COALESCE(runtime.metadata->>'template_build_id', ''),
 			COALESCE(
 				COALESCE(runtime.metadata->>'artifact_ref', runtime.metadata->>'template_id') =
 				    channel.current_artifact_ref
-				AND COALESCE(runtime.metadata->>'artifact_build_id', runtime.metadata->>'template_build_id') =
-				    channel.current_artifact_build_id,
+				AND ($1 = 'aliyun_fc' OR COALESCE(runtime.metadata->>'artifact_build_id', '') =
+				    channel.current_artifact_build_id),
 				false
 			),
 			COALESCE(
 				COALESCE(runtime.metadata->>'artifact_ref', runtime.metadata->>'template_id') =
 				    active.artifact_ref
-				AND COALESCE(runtime.metadata->>'artifact_build_id', runtime.metadata->>'template_build_id') =
-				    active.artifact_build_id,
+				AND ($1 = 'aliyun_fc' OR COALESCE(runtime.metadata->>'artifact_build_id', '') =
+				    active.artifact_build_id),
 				false
 			),
 			COALESCE(target.status, ''),
@@ -556,7 +575,6 @@ func (s *FCE2BStableService) ListRuntimeOverview(
 			&item.TemplateChannel,
 			&item.TemplateAlias,
 			&item.TemplateID,
-			&item.TemplateBuildID,
 			&item.MatchesCurrentStable,
 			&item.MatchesActiveRelease,
 			&item.ActiveReleaseTargetStatus,
@@ -593,9 +611,10 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 	input.IdempotencyKey = strings.TrimSpace(input.IdempotencyKey)
 	input.TemplateID = strings.TrimSpace(input.TemplateID)
 	input.ArtifactRef = strings.TrimSpace(input.ArtifactRef)
-	input.ExpectedBuildID = strings.TrimSpace(input.ExpectedBuildID)
+	input.ArtifactBuildID = strings.TrimSpace(input.ArtifactBuildID)
 	input.ArtifactDigest = strings.TrimSpace(input.ArtifactDigest)
 	input.GitCommit = strings.ToLower(strings.TrimSpace(input.GitCommit))
+	input.ProviderFingerprint = strings.ToLower(strings.TrimSpace(input.ProviderFingerprint))
 	input.Note = strings.TrimSpace(input.Note)
 	backend, err := stableSandboxBackend(input.SandboxBackend)
 	if err != nil {
@@ -611,19 +630,21 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 		if input.TemplateID == "" {
 			input.TemplateID = input.ArtifactRef
 		}
-		if input.IdempotencyKey == "" || input.TemplateID == "" || input.ExpectedBuildID == "" {
-			return FCE2BStableRelease{}, false, errors.New("idempotency key, template_id and expected_build_id are required")
+		if input.IdempotencyKey == "" || input.TemplateID == "" {
+			return FCE2BStableRelease{}, false, errors.New("idempotency key and template_id are required")
 		}
+		input.ArtifactBuildID = ""
 	case SandboxBackendASB:
 		artifactKind = CloudSandboxArtifactOCIImage
 		if input.IdempotencyKey == "" ||
 			!cloudSandboxOCIDigestPattern.MatchString(input.ArtifactRef) ||
-			input.ExpectedBuildID == "" ||
+			input.ArtifactBuildID == "" ||
 			input.ArtifactBuiltAt == nil ||
 			!isSHA256Digest(input.ArtifactDigest) ||
 			len(input.GitCommit) != 40 ||
-			!isLowerHex(input.GitCommit) {
-			return FCE2BStableRelease{}, false, errors.New("ASB release requires an immutable artifact_ref, expected_build_id, artifact_built_at, artifact_digest, and 40-character git_commit")
+			!isLowerHex(input.GitCommit) ||
+			!runtimeProviderFingerprintPattern.MatchString(input.ProviderFingerprint) {
+			return FCE2BStableRelease{}, false, errors.New("ASB release requires an immutable artifact_ref, artifact_build_id, artifact_built_at, artifact_digest, 40-character git_commit, and provider_fingerprint")
 		}
 		if !strings.HasSuffix(input.ArtifactRef, "@"+input.ArtifactDigest) {
 			return FCE2BStableRelease{}, false, errors.New("ASB artifact_ref and artifact_digest do not match")
@@ -662,13 +683,20 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 		return existing, false, nil
 	}
 
+	initialManifest := map[string]any{}
+	if backend == SandboxBackendASB {
+		initialManifest["provider_fingerprint"] = input.ProviderFingerprint
+	}
+	initialManifestJSON, err := json.Marshal(initialManifest)
+	if err != nil {
+		return FCE2BStableRelease{}, false, err
+	}
 	var releaseID pgtype.UUID
 	err = tx.QueryRow(ctx, `
 		INSERT INTO fc_e2b_stable_release (
 			idempotency_key,
 			request_fingerprint,
 			template_id,
-			template_build_id,
 			sandbox_backend,
 			artifact_kind,
 			artifact_ref,
@@ -676,20 +704,15 @@ func (s *FCE2BStableService) CreateRelease(ctx context.Context, input CreateFCE2
 			artifact_built_at,
 			artifact_digest,
 			git_commit,
+			manifest,
 			note,
 			actor_user_id,
 			bootstrap
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14)
 		RETURNING id
 	`, input.IdempotencyKey, fingerprint, input.TemplateID,
-		func() string {
-			if backend == SandboxBackendAliyunFC {
-				return input.ExpectedBuildID
-			}
-			return ""
-		}(),
-		backend, artifactKind, input.ArtifactRef, input.ExpectedBuildID,
-		input.ArtifactBuiltAt, input.ArtifactDigest, input.GitCommit, input.Note,
+		backend, artifactKind, input.ArtifactRef, input.ArtifactBuildID,
+		input.ArtifactBuiltAt, input.ArtifactDigest, input.GitCommit, string(initialManifestJSON), input.Note,
 		input.ActorUserID, input.Bootstrap,
 	).Scan(&releaseID)
 	if err != nil {
@@ -1204,33 +1227,34 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 	if release.SandboxBackend == string(SandboxBackendASB) {
 		return s.validateASBRelease(ctx, release, token)
 	}
-	templates, err := ListFCE2BTemplates(ctx, s.Launcher.Config, s.Launcher.Runner)
+	launcher := s.Launcher.withCurrentConfig()
+	templates, err := ListFCE2BTemplates(ctx, launcher.Config, launcher.Runner)
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
 	var selected FCE2BTemplate
 	found := false
 	for _, template := range templates {
-		if template.ID == release.TemplateID && template.BuildID == release.TemplateBuildID {
+		if template.ID == release.TemplateID {
 			selected = template
 			found = true
 			break
 		}
 	}
 	if !found {
-		return s.failValidation(ctx, release.ID, token, errors.New("template_id and expected_build_id do not match a READY catalog entry"))
+		return s.failValidation(ctx, release.ID, token, errors.New("template_id does not match a READY catalog entry"))
 	}
 	if !IsFCE2BTemplateReady(selected) || !IsFCE2BTemplatePublished(selected) {
-		return s.failValidation(ctx, release.ID, token, errors.New("candidate template is not READY with a published manifest"))
+		return s.failValidation(ctx, release.ID, token, errors.New("candidate template is not READY or the Runtime provider catalog is empty"))
 	}
-	if !isStableSourceRevision(selected.SourceRevision) {
-		return s.failValidation(ctx, release.ID, token, errors.New("candidate template has no valid source revision"))
+	manifest := map[string]any{
+		"schema_version":  selected.ManifestVersion,
+		"providers":       append([]string(nil), selected.Providers...),
+		"runner_protocol": selected.RunnerProtocol,
+		"capabilities_by_backend": map[string][]string{
+			string(SandboxBackendAliyunFC): append([]string(nil), selected.Capabilities...),
+		},
 	}
-	manifest, err := s.Launcher.VerifyStableTemplate(ctx, selected)
-	if err != nil {
-		return s.failValidation(ctx, release.ID, token, err)
-	}
-	manifest["source_revision"] = selected.SourceRevision
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
@@ -1258,16 +1282,15 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 				current_artifact_build_id,
 				current_artifact_digest,
 				current_template_id,
-				current_template_build_id,
 				current_template_alias,
 				current_release_id,
 				active_release_id
 			)
 			SELECT 'aliyun_fc', 'stable', 'e2b_template',
-			       $6, $7, $8, $6, $7, $1, id, NULL
+			       $6, '', $7, $6, $1, id, NULL
 			FROM completed
 		`, selected.Template, string(manifestJSON), selected.SourceRevision,
-			release.ID, token, selected.ID, selected.BuildID, release.ArtifactDigest)
+			release.ID, token, selected.ID, release.ArtifactDigest)
 		return err
 	}
 	current, err := s.CurrentTemplate(ctx)
@@ -1294,16 +1317,15 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 				batch_index,
 				is_developer,
 				previous_template_id,
-				previous_template_build_id,
 				previous_template_alias,
 				sandbox_backend,
 				previous_artifact_ref,
 				previous_artifact_build_id,
 				previous_artifact_digest
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 			ON CONFLICT (release_id, runtime_id) DO NOTHING
 		`, release.ID, target.RuntimeID, target.WorkspaceID, target.Provider, target.BatchIndex, target.IsDeveloper,
-			target.PreviousTemplateID, target.PreviousTemplateBuildID, target.PreviousTemplateAlias,
+			target.PreviousTemplateID, target.PreviousTemplateAlias,
 			release.SandboxBackend, target.PreviousArtifactRef,
 			target.PreviousArtifactBuildID, target.PreviousArtifactDigest,
 		); err != nil {
@@ -1311,31 +1333,9 @@ func (s *FCE2BStableService) validateRelease(ctx context.Context, release FCE2BS
 		}
 	}
 	startedAt := time.Now()
-	_, err = tx.Exec(ctx, `
-		UPDATE fc_e2b_stable_release
-		SET template_alias = $1,
-		    manifest = $2::jsonb,
-		    source_revision = $3,
-		    previous_template_id = $4,
-		    previous_template_build_id = $5,
-		    previous_template_alias = $6,
-		    previous_artifact_ref = $7,
-		    previous_artifact_build_id = $8,
-		    previous_artifact_digest = $9,
-		    status = 'developer_rollout',
-		    current_batch = 0,
-		    target_percentage = 0,
-		    total_targets = $10,
-		    developer_rollout_started_at = $11,
-		    rollout_started_at = NULL,
-		    batch_started_at = NULL,
-		    next_batch_at = $11,
-		    lease_token = NULL,
-		    lease_expires_at = NULL,
-		    updated_at = now()
-		WHERE id = $12 AND lease_token = $13
-	`, selected.Template, string(manifestJSON), selected.SourceRevision, current.TemplateID,
-		current.TemplateBuildID, current.TemplateAlias, current.ArtifactRef,
+	_, err = tx.Exec(ctx, fcE2BStableValidationTransitionSQL,
+		selected.Template, string(manifestJSON), selected.SourceRevision, current.TemplateID,
+		current.TemplateAlias, current.ArtifactRef,
 		current.ArtifactBuildID, current.ArtifactDigest, len(targets), startedAt,
 		release.ID, token)
 	if err != nil {
@@ -1353,27 +1353,34 @@ func (s *FCE2BStableService) validateASBRelease(
 	release FCE2BStableRelease,
 	token uuid.UUID,
 ) error {
-	if s.ASBLauncher == nil {
-		return s.failValidation(ctx, release.ID, token, errors.New("ASB stable validation launcher is unavailable"))
-	}
 	artifact := releaseASBArtifact(release)
 	if err := validateASBArtifact(artifact); err != nil {
-		return s.failValidation(ctx, release.ID, token, err)
-	}
-	validationRuntimeID, err := s.asbValidationRuntimeForPublisher(ctx, release.ActorUserID)
-	if err != nil {
-		return s.failValidation(ctx, release.ID, token, err)
-	}
-	manifest, err := s.ASBLauncher.VerifyStableArtifact(ctx, validationRuntimeID, artifact)
-	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
 	}
 	if len(release.GitCommit) != 40 || !isLowerHex(release.GitCommit) {
 		return s.failValidation(ctx, release.ID, token, errors.New("ASB release has no valid source commit"))
 	}
 	sourceRevision := release.GitCommit[:6]
-	manifest["source_revision"] = release.GitCommit
-	manifest["artifact_digest"] = release.ArtifactDigest
+	launcher := s.Launcher.withCurrentConfig()
+	providerFingerprint := stringMetadataValue(release.Manifest, "provider_fingerprint")
+	providers, found := RuntimeProvidersForFingerprint(
+		launcher.Config.RuntimeProviderFingerprints,
+		providerFingerprint,
+	)
+	if !found {
+		return s.failValidation(ctx, release.ID, token, errors.New("ASB provider_fingerprint has no provider catalog entry"))
+	}
+	manifest := map[string]any{
+		"provider_fingerprint": providerFingerprint,
+		"schema_version":       7,
+		"providers":            providers,
+		"source_revision":      release.GitCommit,
+		"artifact_digest":      release.ArtifactDigest,
+		"runner_protocol":      string(fcE2BRunnerLaunchRootLog),
+		"capabilities_by_backend": map[string][]string{
+			string(SandboxBackendASB): ASBCapabilitiesForProviders(providers),
+		},
+	}
 	manifestJSON, err := json.Marshal(manifest)
 	if err != nil {
 		return s.failValidation(ctx, release.ID, token, err)
@@ -1402,13 +1409,12 @@ func (s *FCE2BStableService) validateASBRelease(
 				current_artifact_build_id,
 				current_artifact_digest,
 				current_template_id,
-				current_template_build_id,
 				current_template_alias,
 				current_release_id,
 				active_release_id
 			)
 			SELECT 'asb', 'stable', 'oci_image', $6, $7, $8,
-			       '', '', $1, id, NULL
+			       '', $1, id, NULL
 			FROM completed
 		`, alias, string(manifestJSON), sourceRevision, release.ID, token,
 			release.ArtifactRef, release.ArtifactBuildID, release.ArtifactDigest)
@@ -1438,13 +1444,12 @@ func (s *FCE2BStableService) validateASBRelease(
 				batch_index,
 				is_developer,
 				previous_template_id,
-				previous_template_build_id,
 				previous_template_alias,
 				sandbox_backend,
 				previous_artifact_ref,
 				previous_artifact_build_id,
 				previous_artifact_digest
-			) VALUES ($1, $2, $3, $4, $5, $6, '', '', $7, 'asb', $8, $9, $10)
+			) VALUES ($1, $2, $3, $4, $5, $6, '', $7, 'asb', $8, $9, $10)
 			ON CONFLICT (release_id, runtime_id) DO NOTHING
 		`, release.ID, target.RuntimeID, target.WorkspaceID, target.Provider,
 			target.BatchIndex, target.IsDeveloper, target.PreviousTemplateAlias,
@@ -1892,16 +1897,15 @@ func (s *FCE2BStableService) finalizeObservation(
 		    current_artifact_build_id = $3,
 		    current_artifact_digest = $4,
 		    current_template_id = $5,
-		    current_template_build_id = $6,
-		    current_template_alias = $7,
-		    current_release_id = $8,
+		    current_template_alias = $6,
+		    current_release_id = $7,
 		    active_release_id = NULL,
 		    updated_at = now()
-		WHERE sandbox_backend = $9
+		WHERE sandbox_backend = $8
 		  AND channel = 'stable'
-		  AND active_release_id = $8
+		  AND active_release_id = $7
 	`, release.ArtifactKind, release.ArtifactRef, release.ArtifactBuildID,
-		release.ArtifactDigest, release.TemplateID, release.TemplateBuildID,
+		release.ArtifactDigest, release.TemplateID,
 		release.ArtifactAlias, release.ID, release.SandboxBackend)
 	if err != nil {
 		return false, err
@@ -2042,23 +2046,22 @@ func (s *FCE2BStableService) rollbackRelease(ctx context.Context, release FCE2BS
 			return s.completeRollbackTarget(ctx, release.ID, target.RuntimeID, token)
 		}
 		previous := FCE2BTemplate{
-			ID:                release.PreviousTemplateID,
-			BuildID:           release.PreviousTemplateBuildID,
-			Name:              release.PreviousTemplateAlias,
-			Template:          release.PreviousTemplateAlias,
-			Status:            "READY",
-			ManifestVersion:   3,
-			Providers:         []string{"hermes", "opencode", "pi"},
-			Capabilities:      []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
-			ComponentVersions: releaseComponentVersions(release.Manifest),
-			RunnerProtocol:    string(fcE2BRunnerLaunchRootLog),
+			ID:              release.PreviousTemplateID,
+			Name:            release.PreviousTemplateAlias,
+			Template:        release.PreviousTemplateAlias,
+			Status:          "READY",
+			ManifestVersion: 3,
+			Providers:       []string{"hermes", "opencode", "pi"},
+			Capabilities:    []string{"dws", "dws.im_event", "mcp", RuntimeStartCapabilityEventsV1},
+			RunnerProtocol:  string(fcE2BRunnerLaunchRootLog),
 		}
-		templates, listErr := ListFCE2BTemplates(ctx, s.Launcher.Config, s.Launcher.Runner)
+		launcher := s.Launcher.withCurrentConfig()
+		templates, listErr := ListFCE2BTemplates(ctx, launcher.Config, launcher.Runner)
 		if listErr != nil {
 			return s.releaseLease(ctx, release.ID, token, listErr)
 		}
 		for _, candidate := range templates {
-			if candidate.ID == previous.ID && candidate.BuildID == previous.BuildID {
+			if candidate.ID == previous.ID {
 				previous = candidate
 				break
 			}
@@ -2070,7 +2073,7 @@ func (s *FCE2BStableService) rollbackRelease(ctx context.Context, release FCE2BS
 		if updateErr != nil {
 			return s.failTarget(ctx, release.ID, target.RuntimeID, token, updateErr)
 		}
-		if !runtimeUsesTemplate(result.Runtime, previous.ID, previous.BuildID) {
+		if !runtimeUsesTemplate(result.Runtime, previous.ID) {
 			return s.failTarget(
 				ctx,
 				release.ID,
@@ -2142,13 +2145,13 @@ func (s *FCE2BStableService) loadVerifiedASBArtifact(
 	if err != nil {
 		return ASBArtifact{}, fmt.Errorf("load previous stable ASB artifact: %w", err)
 	}
-	if err := json.Unmarshal(manifestJSON, &artifact.Manifest); err != nil {
+	if err := json.Unmarshal(manifestJSON, &artifact.ProviderData); err != nil {
 		return ASBArtifact{}, errors.New("decode previous stable ASB artifact manifest")
 	}
 	if err := validateASBArtifact(artifact); err != nil {
 		return ASBArtifact{}, err
 	}
-	if err := validateASBRuntimeManifest(artifact.Manifest); err != nil {
+	if _, err := cloudSandboxProviderList(artifact.ProviderData); err != nil {
 		return ASBArtifact{}, err
 	}
 	return artifact, nil
@@ -2193,15 +2196,15 @@ func (s *FCE2BStableService) reconcileTargets(ctx context.Context, release FCE2B
 		if _, err := s.Pool.Exec(ctx, `
 			INSERT INTO fc_e2b_stable_release_target (
 				release_id, runtime_id, workspace_id, provider, batch_index,
-				is_developer, previous_template_id, previous_template_build_id,
+				is_developer, previous_template_id,
 				previous_template_alias, sandbox_backend, previous_artifact_ref,
 				previous_artifact_build_id, previous_artifact_digest
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 			ON CONFLICT (release_id, runtime_id) DO UPDATE
 			SET is_developer = EXCLUDED.is_developer,
 			    updated_at = now()
 		`, release.ID, target.RuntimeID, target.WorkspaceID, target.Provider, batchIndex, target.IsDeveloper,
-			target.PreviousTemplateID, target.PreviousTemplateBuildID, target.PreviousTemplateAlias,
+			target.PreviousTemplateID, target.PreviousTemplateAlias,
 			release.SandboxBackend, target.PreviousArtifactRef,
 			target.PreviousArtifactBuildID, target.PreviousArtifactDigest,
 		); err != nil {
@@ -2402,7 +2405,6 @@ func (s *FCE2BStableService) listStableRuntimes(
 		target.PreviousArtifactDigest = metadata.ArtifactDigest
 		if backend == SandboxBackendAliyunFC {
 			target.PreviousTemplateID = metadata.ArtifactRef
-			target.PreviousTemplateBuildID = metadata.ArtifactBuildID
 			target.PreviousTemplateAlias = metadata.ArtifactAlias
 		}
 		targets = append(targets, target)
@@ -2790,9 +2792,9 @@ func (s *FCE2BStableService) claimTarget(
 		    updated_at = now()
 		FROM candidate
 		WHERE target.id = candidate.id
-		RETURNING target.runtime_id, target.workspace_id, target.provider,
-		          target.sandbox_backend,
-		          target.previous_template_id, target.previous_template_build_id,
+			RETURNING target.runtime_id, target.workspace_id, target.provider,
+			          target.sandbox_backend,
+			          target.previous_template_id,
 		          target.previous_template_alias, target.previous_artifact_ref,
 		          target.previous_artifact_build_id, target.previous_artifact_digest,
 		          target.batch_index
@@ -2802,7 +2804,6 @@ func (s *FCE2BStableService) claimTarget(
 		&target.Provider,
 		&target.SandboxBackend,
 		&target.PreviousTemplateID,
-		&target.PreviousTemplateBuildID,
 		&target.PreviousTemplateAlias,
 		&target.PreviousArtifactRef,
 		&target.PreviousArtifactBuildID,
@@ -3120,9 +3121,9 @@ func (s *FCE2BStableService) claimRollbackTarget(ctx context.Context, releaseID 
 		    updated_at = now()
 		FROM candidate
 		WHERE target.id = candidate.id
-		RETURNING target.runtime_id, target.workspace_id, target.provider,
-		          target.sandbox_backend,
-		          target.previous_template_id, target.previous_template_build_id,
+			RETURNING target.runtime_id, target.workspace_id, target.provider,
+			          target.sandbox_backend,
+			          target.previous_template_id,
 		          target.previous_template_alias, target.previous_artifact_ref,
 		          target.previous_artifact_build_id, target.previous_artifact_digest,
 		          target.batch_index
@@ -3132,7 +3133,6 @@ func (s *FCE2BStableService) claimRollbackTarget(ctx context.Context, releaseID 
 		&target.Provider,
 		&target.SandboxBackend,
 		&target.PreviousTemplateID,
-		&target.PreviousTemplateBuildID,
 		&target.PreviousTemplateAlias,
 		&target.PreviousArtifactRef,
 		&target.PreviousArtifactBuildID,
@@ -3283,7 +3283,6 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 		&release.ArtifactAlias,
 		&release.ArtifactDigest,
 		&release.TemplateID,
-		&release.TemplateBuildID,
 		&release.TemplateAlias,
 		&release.GitCommit,
 		&release.ACRDigest,
@@ -3295,7 +3294,6 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 		&release.CurrentBatch,
 		&release.TargetPercentage,
 		&release.PreviousTemplateID,
-		&release.PreviousTemplateBuildID,
 		&release.PreviousTemplateAlias,
 		&release.PreviousArtifactRef,
 		&release.PreviousArtifactBuildID,
@@ -3345,6 +3343,10 @@ func (s *FCE2BStableService) scanRelease(row rowScanner) (FCE2BStableRelease, er
 	if completedAt.Valid {
 		release.CompletedAt = &completedAt.Time
 	}
+	if SandboxBackendKind(release.SandboxBackend) == SandboxBackendAliyunFC {
+		release.ArtifactBuildID = ""
+		release.PreviousArtifactBuildID = ""
+	}
 	return release, nil
 }
 
@@ -3353,7 +3355,7 @@ func stableReleaseFingerprint(input CreateFCE2BStableReleaseInput) string {
 		string(input.SandboxBackend),
 		input.ArtifactRef,
 		input.TemplateID,
-		input.ExpectedBuildID,
+		input.ArtifactBuildID,
 		func() string {
 			if input.ArtifactBuiltAt == nil {
 				return ""
@@ -3362,6 +3364,7 @@ func stableReleaseFingerprint(input CreateFCE2BStableReleaseInput) string {
 		}(),
 		input.ArtifactDigest,
 		input.GitCommit,
+		input.ProviderFingerprint,
 		input.Note,
 	}, "\x00")))
 	return hex.EncodeToString(sum[:])
@@ -3400,18 +3403,9 @@ func isSHA256Digest(value string) bool {
 		isLowerHex(strings.TrimPrefix(value, "sha256:"))
 }
 
-func isStableSourceRevision(value string) bool {
-	if len(value) != 6 || value != strings.ToLower(value) {
-		return false
-	}
-	_, err := hex.DecodeString(value)
-	return err == nil
-}
-
 func releaseTemplate(release FCE2BStableRelease) FCE2BTemplate {
 	return FCE2BTemplate{
 		ID:              release.TemplateID,
-		BuildID:         release.TemplateBuildID,
 		SourceRevision:  release.SourceRevision,
 		Name:            release.TemplateAlias,
 		Template:        release.TemplateAlias,
@@ -3423,8 +3417,7 @@ func releaseTemplate(release FCE2BStableRelease) FCE2BTemplate {
 			"capabilities_by_backend",
 			string(SandboxBackendAliyunFC),
 		),
-		ComponentVersions: releaseComponentVersions(release.Manifest),
-		RunnerProtocol:    stringMetadataValue(release.Manifest, "runner_protocol"),
+		RunnerProtocol: stringMetadataValue(release.Manifest, "runner_protocol"),
 	}
 }
 
@@ -3435,11 +3428,11 @@ func releaseASBArtifact(release FCE2BStableRelease) ASBArtifact {
 		asbArtifactAlias(release.ArtifactRef, release.ArtifactBuildID),
 	)
 	return ASBArtifact{
-		Ref:      release.ArtifactRef,
-		BuildID:  release.ArtifactBuildID,
-		Alias:    alias,
-		Digest:   release.ArtifactDigest,
-		Manifest: release.Manifest,
+		Ref:          release.ArtifactRef,
+		BuildID:      release.ArtifactBuildID,
+		Alias:        alias,
+		Digest:       release.ArtifactDigest,
+		ProviderData: release.Manifest,
 	}
 }
 
@@ -3458,29 +3451,14 @@ func asbArtifactAlias(ref, buildID string) string {
 	return repository + ":" + buildID
 }
 
-func releaseComponentVersions(manifest map[string]any) map[string]string {
-	result := make(map[string]string)
-	raw, ok := manifest["component_versions"].(map[string]any)
-	if !ok {
-		return result
-	}
-	for key, value := range raw {
-		if text, ok := value.(string); ok {
-			result[key] = text
-		}
-	}
-	return result
-}
-
-func runtimeUsesTemplate(runtime db.AgentRuntime, templateID, buildID string) bool {
+func runtimeUsesTemplate(runtime db.AgentRuntime, templateID string) bool {
 	var metadata struct {
-		TemplateID      string `json:"template_id"`
-		TemplateBuildID string `json:"template_build_id"`
+		TemplateID string `json:"template_id"`
 	}
 	if err := json.Unmarshal(runtime.Metadata, &metadata); err != nil {
 		return false
 	}
-	return metadata.TemplateID == templateID && metadata.TemplateBuildID == buildID
+	return metadata.TemplateID == templateID
 }
 
 func runtimeUsesArtifact(runtime db.AgentRuntime, ref, buildID, digest string) bool {
@@ -3503,7 +3481,7 @@ func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableReleas
 	var bindingMatches bool
 	switch SandboxBackendKind(release.SandboxBackend) {
 	case SandboxBackendAliyunFC:
-		bindingMatches = runtimeUsesTemplate(runtime, release.TemplateID, release.TemplateBuildID)
+		bindingMatches = runtimeUsesTemplate(runtime, release.TemplateID)
 	case SandboxBackendASB:
 		bindingMatches = runtimeUsesArtifact(
 			runtime,
@@ -3517,58 +3495,7 @@ func runtimeUsesStableRelease(runtime db.AgentRuntime, release FCE2BStableReleas
 	if !bindingMatches {
 		return false
 	}
-	metadata, err := ParseCloudSandboxRuntime(runtime)
-	if err != nil {
-		return false
-	}
-	expectedManifestVersion := intMetadataValue(release.Manifest, "schema_version")
-	expectedRunnerProtocol := stringMetadataValue(release.Manifest, "runner_protocol")
-	expectedCapabilities := manifestStringSliceForBackend(
-		release.Manifest,
-		"capabilities_by_backend",
-		release.SandboxBackend,
-	)
-	if SandboxBackendKind(release.SandboxBackend) == SandboxBackendAliyunFC {
-		// FC persists the capabilities that the immutable Runtime provider can
-		// actually expose. A backend manifest may also advertise capabilities
-		// owned by sibling providers (for example OpenCode A2A on a Hermes
-		// Runtime), so comparing against the whole backend list rejects a
-		// successful template rotation even though its database readback is
-		// correct.
-		expectedCapabilities = stableReleaseCapabilitiesForProvider(metadata.Provider, expectedCapabilities)
-	}
-	return expectedManifestVersion > 0 &&
-		expectedRunnerProtocol != "" &&
-		len(expectedCapabilities) > 0 &&
-		metadata.ManifestVersion == expectedManifestVersion &&
-		metadata.RunnerProtocol == expectedRunnerProtocol &&
-		containsAllStrings(metadata.Capabilities, expectedCapabilities...)
-}
-
-func stableReleaseCapabilitiesForProvider(provider string, capabilities []string) []string {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	filtered := make([]string, 0, len(capabilities))
-	for _, capability := range capabilities {
-		capability = strings.ToLower(strings.TrimSpace(capability))
-		var owner string
-		switch capability {
-		case A2AInboundHermesCapability:
-			owner = "hermes"
-		case A2AInboundOpenCodeCapability:
-			if !usesOpenCodeA2AInboundAdapter(provider) {
-				continue
-			}
-		case A2AInboundPiCapability:
-			owner = "pi"
-		case "dsh_trajectory_v1":
-			owner = "dsh"
-		}
-		if owner != "" && owner != provider {
-			continue
-		}
-		filtered = append(filtered, capability)
-	}
-	return normalizeCloudSandboxCapabilities(filtered)
+	return true
 }
 
 func isUniqueViolation(err error) bool {
@@ -3586,7 +3513,6 @@ const stableReleaseColumns = `
 	release.template_alias,
 	release.artifact_digest,
 	release.template_id,
-	release.template_build_id,
 	release.template_alias,
 	release.git_commit,
 	release.acr_digest,
@@ -3598,7 +3524,6 @@ const stableReleaseColumns = `
 	release.current_batch,
 	release.target_percentage,
 	release.previous_template_id,
-	release.previous_template_build_id,
 	release.previous_template_alias,
 	release.previous_artifact_ref,
 	release.previous_artifact_build_id,

@@ -1,0 +1,2 @@
+-- FC artifact/template build-ID data cleanup is intentionally deferred until
+-- all production replicas run template-ID-only code.

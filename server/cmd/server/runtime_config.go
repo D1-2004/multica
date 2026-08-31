@@ -114,9 +114,9 @@ func (c *appRuntimeConfig) current() runtimeconfig.Config {
 
 func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 	raw := c.current()
-	manifestFingerprints := runtimeconfig.ManifestFingerprintsSnapshot{}
+	runtimeProviders := runtimeconfig.RuntimeProvidersSnapshot{}
 	if c != nil && c.remote != nil {
-		manifestFingerprints = c.remote.ManifestFingerprints()
+		runtimeProviders = c.remote.RuntimeProviders()
 	}
 	return service.FCE2BConfig{
 		Enabled:                           raw.Runtime.FCE2B.Enabled,
@@ -128,7 +128,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		LLMBaseURL:                        raw.Runtime.LLM.BaseURL,
 		LLMAPIKey:                         c.secrets.LLMAPIKey,
 		LLMModels:                         defaultModelFirst(raw.Runtime.LLM.Models, raw.Runtime.LLM.DefaultModel),
-		ManifestV7ComponentVersions:       manifestFingerprints.Fingerprints,
+		RuntimeProviderFingerprints:       runtimeProviders.Fingerprints,
 		AgentIdentityControlBaseURL:       raw.AgentIdentity.ControlBaseURL,
 		AgentIdentitySandboxBaseURL:       raw.AgentIdentity.SandboxBaseURL,
 		AgentIdentityBaseURL:              raw.AgentIdentity.SandboxBaseURL,

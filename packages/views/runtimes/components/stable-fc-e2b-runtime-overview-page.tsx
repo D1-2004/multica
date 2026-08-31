@@ -81,7 +81,9 @@ interface TemplateDistribution {
 }
 
 function templateKey(runtime: FCE2BStableRuntimeOverview): string {
-  return `${runtime.artifact_ref}:${runtime.artifact_build_id}`;
+  return runtime.sandbox_backend === "asb"
+    ? `${runtime.artifact_ref}:${runtime.artifact_build_id}`
+    : runtime.artifact_ref;
 }
 
 function runtimeAlignment(runtime: FCE2BStableRuntimeOverview): Alignment {
@@ -217,7 +219,8 @@ export function StableFCE2BRuntimeOverviewPage() {
         key,
         alias: runtime.artifact_alias,
         templateId: runtime.artifact_ref,
-        buildId: runtime.artifact_build_id,
+        buildId:
+          runtime.sandbox_backend === "asb" ? runtime.artifact_build_id : "",
         runtimeCount: 0,
         onlineCount: 0,
         workspaceCount: 0,
@@ -662,9 +665,15 @@ function CurrentStableCard({
               </p>
               <p
                 className="mt-1 truncate font-mono text-micro text-muted-foreground"
-                title={`${current.artifact_ref} · ${current.artifact_build_id}`}
+                title={
+                  current.sandbox_backend === "asb"
+                    ? `${current.artifact_ref} · ${current.artifact_build_id}`
+                    : current.artifact_ref
+                }
               >
-                {current.artifact_build_id}
+                {current.sandbox_backend === "asb"
+                  ? current.artifact_build_id
+                  : current.artifact_ref}
                 {current.artifact_digest
                   ? ` · ${current.artifact_digest.slice(0, 19)}…`
                   : ""}
@@ -728,9 +737,15 @@ function ActiveReleaseCard({
               </p>
               <p
                 className="mt-1 truncate font-mono text-micro text-muted-foreground"
-                title={`${release.artifact_ref} · ${release.artifact_build_id}`}
+                title={
+                  release.sandbox_backend === "asb"
+                    ? `${release.artifact_ref} · ${release.artifact_build_id}`
+                    : release.artifact_ref
+                }
               >
-                {release.artifact_build_id}
+                {release.sandbox_backend === "asb"
+                  ? release.artifact_build_id
+                  : release.artifact_ref}
                 {release.artifact_digest
                   ? ` · ${release.artifact_digest.slice(0, 19)}…`
                   : ""}
@@ -1212,9 +1227,15 @@ function RuntimeOverviewTable({
                     </p>
                     <p
                       className="mt-1 truncate font-mono text-micro text-muted-foreground"
-                      title={`${runtime.artifact_ref} · ${runtime.artifact_build_id}`}
+                      title={
+                        runtime.sandbox_backend === "asb"
+                          ? `${runtime.artifact_ref} · ${runtime.artifact_build_id}`
+                          : runtime.artifact_ref
+                      }
                     >
-                      {runtime.artifact_build_id}
+                      {runtime.sandbox_backend === "asb"
+                        ? runtime.artifact_build_id
+                        : runtime.artifact_ref}
                       {runtime.artifact_digest
                         ? ` · ${runtime.artifact_digest.slice(0, 19)}…`
                         : ""}

@@ -101,6 +101,8 @@ vi.mock("@multica/core/runtimes", () => ({
   deriveRuntimeHealth: () => "online",
   runtimeDisplayName: (rt: { name: string; custom_name?: string | null }) =>
     rt.custom_name?.trim() || rt.name,
+  providerDisplayName: (provider: string) =>
+    ({ hermes: "Hermes", opencode: "OpenCode" })[provider] ?? provider,
   runtimeProfileListOptions: (wsId: string) => ({
     queryKey: ["runtime-profiles", wsId],
   }),
@@ -119,7 +121,6 @@ vi.mock("@multica/core/runtimes", () => ({
       kind: "fc-e2b",
       template: stringValue("template"),
       templateId: stringValue("template_id"),
-      templateBuildId: stringValue("template_build_id"),
       templateName: stringValue("template_name"),
       templateStatus: stringValue("template_status"),
       templateChannel:
@@ -494,7 +495,6 @@ describe("RuntimeDetail visibility section", () => {
           kind: "fc-e2b",
           template: "multica-fc-team-v1",
           template_id: "tpl-current",
-          template_build_id: "build-current",
           template_name: "Team v1",
           template_status: "ready",
           template_channel: "candidate",

@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import { Check, ChevronsRight, Clock3, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import {
+  fcE2BProviderForTemplate,
   isReadyFCE2BTemplate,
   type CreateCloudSandboxStableReleaseRequest,
   type FCE2BTemplate,
@@ -143,6 +144,7 @@ export function StableFCE2BReleaseDialog({
   const [artifactBuiltAt, setArtifactBuiltAt] = useState("");
   const [artifactDigest, setArtifactDigest] = useState("");
   const [gitCommit, setGitCommit] = useState("");
+  const [providerFingerprint, setProviderFingerprint] = useState("");
   const [note, setNote] = useState("");
   const active = channelQuery.data?.active_release ?? null;
   const current = channelQuery.data?.current ?? null;
@@ -153,13 +155,17 @@ export function StableFCE2BReleaseDialog({
   const normalizedArtifactBuiltAt = toAoneBuildTimestamp(artifactBuiltAt);
   const normalizedArtifactDigest = artifactDigest.trim().toLowerCase();
   const normalizedGitCommit = gitCommit.trim().toLowerCase();
+  const normalizedProviderFingerprint = providerFingerprint.trim().toLowerCase();
   const asbCandidateReady =
     /^sha256:[0-9a-f]{64}$/.test(normalizedArtifactDigest) &&
     /^[0-9a-f]{40}$/.test(normalizedGitCommit) &&
+    /^[0-9a-f]{16}$/.test(normalizedProviderFingerprint) &&
     normalizedArtifactBuildId.length > 0 &&
     normalizedArtifactBuiltAt.length > 0 &&
     normalizedArtifactRef.endsWith(`@${normalizedArtifactDigest}`);
-  const fcCandidateReady = Boolean(selected?.id && selected.build_id);
+  const fcCandidateReady = Boolean(
+    selected?.id && fcE2BProviderForTemplate(selected),
+  );
   const candidateReady =
     sandboxBackend === "asb" ? asbCandidateReady : fcCandidateReady;
   const developerProgress =
@@ -251,14 +257,14 @@ export function StableFCE2BReleaseDialog({
           artifact_built_at: normalizedArtifactBuiltAt,
           artifact_digest: normalizedArtifactDigest,
           git_commit: normalizedGitCommit,
+          provider_fingerprint: normalizedProviderFingerprint,
           note: note.trim(),
         };
       } else {
-        if (!selected?.id || !selected.build_id) return;
+        if (!selected?.id) return;
         data = {
           sandbox_backend: sandboxBackend,
           template_id: selected.id,
-          expected_build_id: selected.build_id,
           note: note.trim(),
         };
       }
@@ -332,9 +338,14 @@ export function StableFCE2BReleaseDialog({
             </p>
             <p
               className="break-all text-muted-foreground"
-              title={`${current.artifact_ref} · ${current.artifact_build_id}`}
+              title={
+                sandboxBackend === "asb"
+                  ? `${current.artifact_ref} · ${current.artifact_build_id}`
+                  : current.artifact_ref
+              }
             >
-              {current.artifact_ref} · {current.artifact_build_id}
+              {current.artifact_ref}
+              {sandboxBackend === "asb" && ` · ${current.artifact_build_id}`}
             </p>
             {current.artifact_digest && (
               <p
@@ -707,29 +718,27 @@ export function StableFCE2BReleaseDialog({
                       </div>
                     )}
                   {templates.map((template) => {
+                    const selectable = fcE2BProviderForTemplate(template) != null;
                     const isCurrent =
-                      current != null &&
-                      template.id === current.artifact_ref &&
-                      template.build_id === current.artifact_build_id;
-                    const isSelected =
-                      selected?.id === template.id &&
-                      selected?.build_id === template.build_id;
+                      current != null && template.id === current.artifact_ref;
+                    const isSelected = selected?.id === template.id;
                     const updatedAt = formatTemplateUpdatedAt(
                       template.updated_at,
                     );
                     return (
                       <button
-                        key={`${template.id}:${template.build_id}`}
+                        key={template.id}
                         type="button"
-                        onClick={() => setSelected(template)}
-                        className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 hover:bg-muted/50"
+                        disabled={!selectable}
+                        onClick={() => selectable && setSelected(template)}
+                        className="flex w-full items-start justify-between gap-3 border-b p-3 text-left text-caption last:border-b-0 enabled:hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-55"
                       >
                         <span className="min-w-0 space-y-1">
                           <span className="block truncate font-medium">
                             {displayTemplate(template)}
                           </span>
                           <span className="block truncate text-muted-foreground">
-                            {template.id} · {template.build_id}
+                            {template.id}
                           </span>
                           {updatedAt && (
                             <span className="block truncate text-muted-foreground">
@@ -821,6 +830,22 @@ export function StableFCE2BReleaseDialog({
                     value={artifactDigest}
                     onChange={(event) => setArtifactDigest(event.target.value)}
                     placeholder="sha256:..."
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label
+                    htmlFor="stable-release-provider-fingerprint"
+                    className="text-caption"
+                  >
+                    {t(($) => $.fc_e2b_stable.provider_fingerprint)}
+                  </Label>
+                  <Input
+                    id="stable-release-provider-fingerprint"
+                    value={providerFingerprint}
+                    onChange={(event) => setProviderFingerprint(event.target.value)}
+                    placeholder="16-character provider fingerprint"
                     autoComplete="off"
                     spellCheck={false}
                   />

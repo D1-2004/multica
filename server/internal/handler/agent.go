@@ -488,8 +488,8 @@ type AgentTaskResponse struct {
 	// daemon's explicit authorization to run without a task token; an empty
 	// AuthToken remains fatal for every ordinary task.
 	A2AInvocation bool `json:"a2a_invocation,omitempty"`
-	// A2AManagedRuntimeV2 is emitted only after the server has verified both the
-	// managed image manifest and daemon's a2a-invocation-v2 capability.
+	// A2AManagedRuntimeV2 is emitted only after the server has verified the
+	// managed Runtime metadata and daemon's a2a-invocation-v2 capability.
 	A2AManagedRuntimeV2 bool `json:"a2a_managed_runtime_v2,omitempty"`
 	// Attribution is the resolved accountable-human provenance for this run
 	// (MUL-4302 §9): the source label + precise flag, the initiator (accountable)

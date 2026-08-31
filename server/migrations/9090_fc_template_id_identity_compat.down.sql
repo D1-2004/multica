@@ -1,0 +1,2 @@
+-- Compatibility rollback is intentionally a no-op. Restoring the historical
+-- provider check would reject providers added after the compatibility release.

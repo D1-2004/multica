@@ -51,8 +51,6 @@ export const FC_E2B_RUNTIME_PROVIDERS = [
   "claude",
   "codex",
 ] as const;
-const MIN_PUBLISHED_FC_E2B_MANIFEST_VERSION = 2;
-const MAX_PUBLISHED_FC_E2B_MANIFEST_VERSION = 7;
 export type FCE2BRuntimeProvider = (typeof FC_E2B_RUNTIME_PROVIDERS)[number];
 export type SandboxBackend = "aliyun_fc" | "asb";
 export type CloudSandboxArtifactChannel = "stable" | "candidate";
@@ -72,7 +70,9 @@ export interface CreateCloudSandboxRuntimeRequest {
   artifact_ref?: string;
   artifact_build_id?: string;
   artifact_alias?: string;
-  artifact_digest?: string;
+	artifact_digest?: string;
+	runtime_commit?: string;
+	provider_fingerprint?: string;
   artifact_channel?: CloudSandboxArtifactChannel;
   template_id?: string;
   provider?: FCE2BRuntimeProvider;
@@ -87,7 +87,9 @@ export interface UpdateCloudSandboxRuntimeArtifactRequest {
   artifact_ref: string;
   artifact_build_id: string;
   artifact_alias?: string;
-  artifact_digest: string;
+	artifact_digest: string;
+	runtime_commit?: string;
+	provider_fingerprint?: string;
 }
 
 export interface UpdateASBRuntimeCredentialRequest {
@@ -123,8 +125,7 @@ export interface ASBRuntimeCredentialResponse {
 }
 
 export interface FCE2BTemplate {
-  id?: string;
-  build_id?: string;
+	id?: string;
   name?: string;
   template: string;
   status?: string;
@@ -134,16 +135,13 @@ export interface FCE2BTemplate {
   manifest_version: number;
   providers: string[];
   capabilities: string[];
-  component_versions: Record<string, string>;
   runner_protocol: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface FCE2BRuntimeMetadata {
   kind: "fc-e2b" | "cloud-sandbox";
-  template: string | null;
-  templateId: string | null;
-  templateBuildId: string | null;
+	template: string | null;
+	templateId: string | null;
   templateName: string | null;
   templateStatus: string | null;
   templateChannel: "stable" | "candidate";
@@ -169,8 +167,7 @@ export interface FCE2BStableTemplateBinding {
   artifact_build_id: string;
   artifact_alias: string;
   artifact_digest: string;
-  template_id: string;
-  template_build_id: string;
+	template_id: string;
   template_alias: string;
   release_id: string;
 }
@@ -213,8 +210,7 @@ export interface FCE2BStableRelease {
   artifact_alias: string;
   artifact_digest: string;
   id: string;
-  template_id: string;
-  template_build_id: string;
+	template_id: string;
   template_alias: string;
   source_revision: string;
   note: string;
@@ -224,8 +220,7 @@ export interface FCE2BStableRelease {
   current_batch: number;
   target_percentage: number;
   stage_target_count?: number;
-  previous_template_id: string;
-  previous_template_build_id: string;
+	previous_template_id: string;
   previous_template_alias: string;
   previous_artifact_ref: string;
   previous_artifact_build_id: string;
@@ -268,9 +263,8 @@ export interface FCE2BStableRuntimeOverview {
   artifact_build_id: string;
   artifact_digest: string;
   template_channel: "stable" | "candidate";
-  template_alias: string;
-  template_id: string;
-  template_build_id: string;
+	template_alias: string;
+	template_id: string;
   matches_current_stable: boolean;
   matches_active_release: boolean;
   active_release_target_status: string;
@@ -278,9 +272,8 @@ export interface FCE2BStableRuntimeOverview {
 }
 
 export interface CreateFCE2BStableReleaseRequest {
-  template_id: string;
-  expected_build_id: string;
-  note?: string;
+	template_id: string;
+	note?: string;
 }
 
 export interface CreateCloudSandboxStableReleaseRequest {
@@ -289,9 +282,9 @@ export interface CreateCloudSandboxStableReleaseRequest {
   artifact_build_id?: string;
   artifact_built_at?: string;
   artifact_digest?: string;
-  git_commit?: string;
-  template_id?: string;
-  expected_build_id?: string;
+	git_commit?: string;
+	provider_fingerprint?: string;
+	template_id?: string;
   note?: string;
 }
 
@@ -323,7 +316,6 @@ export function parseFCE2BRuntimeMetadata(
     kind: cloudMetadata.kind,
     template: metadataString(metadata, "template"),
     templateId: metadataString(metadata, "template_id"),
-    templateBuildId: metadataString(metadata, "template_build_id"),
     templateName: metadataString(metadata, "template_name"),
     templateStatus: metadataString(metadata, "template_status"),
     templateChannel:
@@ -356,8 +348,10 @@ export function parseCloudSandboxRuntimeMetadata(
       artifactRef:
         metadataString(metadata, "template_id") ??
         metadataString(metadata, "template"),
-      artifactBuildId: metadataString(metadata, "template_build_id"),
-      artifactAlias: metadataString(metadata, "template"),
+		artifactBuildId: null,
+		artifactAlias:
+			metadataString(metadata, "template_alias") ??
+			metadataString(metadata, "template_name"),
       artifactDigest: null,
       capabilities: metadataStringArray(metadata, "capabilities"),
     };
@@ -388,7 +382,10 @@ export function parseCloudSandboxRuntimeMetadata(
         ? "candidate"
         : "stable",
     artifactRef: metadataString(metadata, "artifact_ref"),
-    artifactBuildId: metadataString(metadata, "artifact_build_id"),
+		artifactBuildId:
+			sandboxBackend === "asb"
+				? metadataString(metadata, "artifact_build_id")
+				: null,
     artifactAlias: metadataString(metadata, "artifact_alias"),
     artifactDigest: metadataString(metadata, "artifact_digest"),
     capabilities: metadataStringArray(metadata, "capabilities"),
@@ -410,15 +407,7 @@ export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
   return (
     typeof template.id === "string" &&
     template.id.trim().length > 0 &&
-    typeof template.build_id === "string" &&
-    template.build_id.trim().length > 0 &&
-    template.status?.trim().toLowerCase() === "ready" &&
-    template.manifest_version >= MIN_PUBLISHED_FC_E2B_MANIFEST_VERSION &&
-    template.manifest_version <= MAX_PUBLISHED_FC_E2B_MANIFEST_VERSION &&
-    template.runner_protocol === "root-log-v1" &&
-    template.providers.some((provider) =>
-      (FC_E2B_RUNTIME_PROVIDERS as readonly string[]).includes(provider),
-    )
+		template.status?.trim().toLowerCase() === "ready"
   );
 }
 
@@ -428,8 +417,9 @@ export function isReadyFCE2BTemplate(template: FCE2BTemplate): boolean {
 export function fcE2BProviderForTemplate(
   template: FCE2BTemplate,
 ): FCE2BRuntimeProvider | null {
+  const providers = Array.isArray(template.providers) ? template.providers : [];
   for (const provider of FC_E2B_RUNTIME_PROVIDERS) {
-    if (template.providers.includes(provider)) {
+    if (providers.includes(provider)) {
       return provider;
     }
   }
@@ -490,7 +480,16 @@ export function cloudRuntimeNodeListOptions(
 export function fcE2BTemplateListOptions(wsId: string) {
   return queryOptions({
     queryKey: cloudRuntimeKeys.fcE2BTemplates(wsId),
-    queryFn: () => api.listFCE2BTemplates(),
+    queryFn: async () => {
+      const templates = await api.listFCE2BTemplates();
+      return templates.map((template) => ({
+        ...template,
+        providers: Array.isArray(template.providers) ? template.providers : [],
+        capabilities: Array.isArray(template.capabilities)
+          ? template.capabilities
+          : [],
+      }));
+    },
     staleTime: 30 * 1000,
   });
 }
