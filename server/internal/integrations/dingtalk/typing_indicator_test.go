@@ -100,8 +100,8 @@ func (f *fakeTypingQueries) ListPendingChatMessagePreviewsAfterTask(_ context.Co
 	return append([]db.ListPendingChatMessagePreviewsAfterTaskRow(nil), f.pending...), nil
 }
 
-func (f *fakeTypingQueries) GetLastAgentCommentForIssue(context.Context, pgtype.UUID) (pgtype.Text, error) {
-	return pgtype.Text{}, nil
+func (f *fakeTypingQueries) GetLastAgentCommentForIssue(context.Context, pgtype.UUID) (string, error) {
+	return "", nil
 }
 
 func typingTestUUID(b byte) pgtype.UUID {

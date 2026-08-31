@@ -254,9 +254,9 @@ ORDER BY created_at DESC
 LIMIT 1
 `
 
-func (q *Queries) GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (pgtype.Text, error) {
+func (q *Queries) GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (string, error) {
 	row := q.db.QueryRow(ctx, getLastAgentCommentForIssue, issueID)
-	var content pgtype.Text
+	var content string
 	err := row.Scan(&content)
 	return content, err
 }

@@ -28,7 +28,7 @@ type outboundQueries interface {
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error)
-	GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (pgtype.Text, error)
+	GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (string, error)
 }
 
 // taskFailedText is the user-visible notice for a failed chat run. The
@@ -443,7 +443,7 @@ func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID 
 		)
 		return ""
 	}
-	return strings.TrimSpace(reply.String)
+	return strings.TrimSpace(reply)
 }
 
 func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.UUID, payload map[string]any) string {
