@@ -7,11 +7,14 @@ import (
 
 func TestEdgeTouchSQLMergesProps(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(edgeTouchSQL, "assoc_edge.props") || !strings.Contains(edgeTouchSQL, "||") {
-		t.Fatalf("edgeTouchSQL must shallow-merge jsonb, got %s", edgeTouchSQL)
+	if !strings.Contains(edgeUpsertSQL, "ON CONFLICT") {
+		t.Fatal("edge upsert must be one INSERT ON CONFLICT statement")
 	}
-	if strings.Contains(edgeTouchSQL, "props = COALESCE($2") {
-		t.Fatal("edgeTouchSQL must not overwrite props with COALESCE($2)")
+	if !strings.Contains(edgeUpsertSQL, "assoc_edge.props") || !strings.Contains(edgeUpsertSQL, "||") {
+		t.Fatalf("edgeUpsertSQL must shallow-merge jsonb, got %s", edgeUpsertSQL)
+	}
+	if !strings.Contains(eventUpsertSQL, "ON CONFLICT") {
+		t.Fatal("event upsert must be one INSERT ON CONFLICT statement")
 	}
 }
 

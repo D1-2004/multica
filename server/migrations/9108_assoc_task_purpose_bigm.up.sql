@@ -1,6 +1,6 @@
--- CJK keyword search on assoc_task.purpose. Same PolarDB-safe guard as issue search:
--- CREATE INDEX CONCURRENTLY cannot run inside DO, so this is a brief-lock GIN
--- on a new empty table. Skip if pg_bigm (then pg_trgm) is unavailable.
+-- CJK keyword search on assoc_task.purpose. Same PolarDB-safe guard as 032:
+-- CREATE INDEX CONCURRENTLY cannot run inside a DO block, and PolarDB refuses
+-- CREATE EXTENSION to the app role. Skip if pg_bigm (then pg_trgm) is unavailable.
 DO $$
 BEGIN
   CREATE INDEX IF NOT EXISTS assoc_task_purpose_bigm_idx

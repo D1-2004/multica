@@ -14,19 +14,25 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
-const edgeTouchSQL = `
-UPDATE assoc_edge
-SET last_touched_at = $1,
-    props = COALESCE(assoc_edge.props, '{}'::jsonb) || COALESCE($2::jsonb, '{}'::jsonb)
-WHERE agent_id = $3 AND src_type = $4 AND src_id = $5
-  AND dst_type = $6 AND dst_id = $7 AND rel = $8 AND status = 'open'
-RETURNING id, workspace_id, agent_id, src_type, src_id, dst_type, dst_id, rel, status, props, opened_at, last_touched_at, closed_at, opened_by_run_id`
-
-const edgeInsertSQL = `
+const edgeUpsertSQL = `
 INSERT INTO assoc_edge (
     workspace_id, agent_id, src_type, src_id, dst_type, dst_id, rel, status, props, last_touched_at, opened_by_run_id
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+ON CONFLICT (agent_id, src_type, src_id, dst_type, dst_id, rel) WHERE status = 'open'
+DO UPDATE SET
+    last_touched_at = EXCLUDED.last_touched_at,
+    props = COALESCE(assoc_edge.props, '{}'::jsonb) || COALESCE(EXCLUDED.props, '{}'::jsonb)
 RETURNING id, workspace_id, agent_id, src_type, src_id, dst_type, dst_id, rel, status, props, opened_at, last_touched_at, closed_at, opened_by_run_id`
+
+const eventUpsertSQL = `
+INSERT INTO assoc_event (
+    workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+ON CONFLICT (workspace_id, agent_id, evidence_id)
+DO UPDATE SET
+    direction = CASE WHEN assoc_event.direction = '' THEN EXCLUDED.direction ELSE assoc_event.direction END,
+    task_id = COALESCE(assoc_event.task_id, EXCLUDED.task_id)
+RETURNING id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at`
 
 type DBTX interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -226,8 +232,7 @@ SELECT id, workspace_id, agent_id, issue_id, purpose, status, intent, props, run
 FROM assoc_task
 WHERE workspace_id = $1 AND agent_id = $2
   AND last_touched_at >= $3 AND last_touched_at <= $4
-ORDER BY last_touched_at DESC
-LIMIT $5`, ws, agent, since, until, MaxLimit)
+ORDER BY last_touched_at DESC`, ws, agent, since, until)
 	if err != nil {
 		return nil, err
 	}
@@ -246,21 +251,11 @@ func (s *SQLStore) InsertEdge(ctx context.Context, edge Edge) (Edge, error) {
 	if err != nil {
 		return Edge{}, err
 	}
-	agent, err := requireUUID(edge.AgentID)
+	ws, err := requireUUID(edge.WorkspaceID)
 	if err != nil {
 		return Edge{}, err
 	}
-	updated, uerr := scanEdge(s.db.QueryRow(ctx, edgeTouchSQL,
-		edge.LastTouchedAt, props, agent,
-		edge.SrcType, edge.SrcID, edge.DstType, edge.DstID, edge.Rel,
-	))
-	if uerr == nil {
-		return updated, nil
-	}
-	if !errors.Is(uerr, pgx.ErrNoRows) {
-		return Edge{}, uerr
-	}
-	ws, err := requireUUID(edge.WorkspaceID)
+	agent, err := requireUUID(edge.AgentID)
 	if err != nil {
 		return Edge{}, err
 	}
@@ -268,21 +263,10 @@ func (s *SQLStore) InsertEdge(ctx context.Context, edge Edge) (Edge, error) {
 	if err != nil {
 		return Edge{}, err
 	}
-	out, ierr := scanEdge(s.db.QueryRow(ctx, edgeInsertSQL,
+	return scanEdge(s.db.QueryRow(ctx, edgeUpsertSQL,
 		ws, agent, edge.SrcType, edge.SrcID, edge.DstType, edge.DstID, edge.Rel, edge.Status,
 		props, edge.LastTouchedAt, runID,
 	))
-	if ierr == nil {
-		return out, nil
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(ierr, &pgErr) && pgErr.Code == "23505" {
-		return scanEdge(s.db.QueryRow(ctx, edgeTouchSQL,
-			edge.LastTouchedAt, props, agent,
-			edge.SrcType, edge.SrcID, edge.DstType, edge.DstID, edge.Rel,
-		))
-	}
-	return Edge{}, ierr
 }
 
 func (s *SQLStore) ListEdgesByDst(ctx context.Context, workspaceID, agentID, dstType, dstID string, since time.Time) ([]Edge, error) {
@@ -329,13 +313,6 @@ WHERE workspace_id = $1 AND agent_id = $2 AND src_type = $3 AND src_id = $4`,
 }
 
 func (s *SQLStore) InsertEvent(ctx context.Context, event Event) (Event, error) {
-	existing, err := s.GetEventByEvidence(ctx, event.WorkspaceID, event.AgentID, event.EvidenceID)
-	if err == nil {
-		return s.touchExistingEvent(ctx, existing, event)
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return Event{}, err
-	}
 	if event.OccurredAt.IsZero() {
 		event.OccurredAt = time.Now().UTC()
 	}
@@ -351,53 +328,10 @@ func (s *SQLStore) InsertEvent(ctx context.Context, event Event) (Event, error) 
 	if err != nil {
 		return Event{}, err
 	}
-	out, ierr := scanEvent(s.db.QueryRow(ctx, `
-INSERT INTO assoc_event (
-    workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-RETURNING id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at`,
+	return scanEvent(s.db.QueryRow(ctx, eventUpsertSQL,
 		ws, agent, event.Source, event.Direction, event.EvidenceID, event.OccurredAt,
 		event.SceneKey, event.PersonKey, taskID,
 	))
-	if ierr == nil {
-		return out, nil
-	}
-	var pgErr *pgconn.PgError
-	if errors.As(ierr, &pgErr) && pgErr.Code == "23505" {
-		existing, gerr := s.GetEventByEvidence(ctx, event.WorkspaceID, event.AgentID, event.EvidenceID)
-		if gerr != nil {
-			return Event{}, gerr
-		}
-		return s.touchExistingEvent(ctx, existing, event)
-	}
-	return Event{}, ierr
-}
-
-func (s *SQLStore) touchExistingEvent(ctx context.Context, existing, event Event) (Event, error) {
-	if existing.Direction == "" && event.Direction != "" {
-		ws, err := requireUUID(event.WorkspaceID)
-		if err != nil {
-			return Event{}, err
-		}
-		agent, err := requireUUID(event.AgentID)
-		if err != nil {
-			return Event{}, err
-		}
-		if _, err := s.db.Exec(ctx, `
-UPDATE assoc_event SET direction = $4
-WHERE workspace_id = $1 AND agent_id = $2 AND evidence_id = $3 AND direction = ''`,
-			ws, agent, event.EvidenceID, event.Direction); err != nil {
-			return Event{}, err
-		}
-		existing.Direction = event.Direction
-	}
-	if existing.TaskID == "" && event.TaskID != "" {
-		if err := s.UpdateEventTask(ctx, event.WorkspaceID, event.AgentID, event.EvidenceID, event.TaskID); err != nil {
-			return Event{}, err
-		}
-		existing.TaskID = event.TaskID
-	}
-	return existing, nil
 }
 
 func (s *SQLStore) GetEventByEvidence(ctx context.Context, workspaceID, agentID, evidenceID string) (Event, error) {
