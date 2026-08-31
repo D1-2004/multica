@@ -304,6 +304,10 @@ type dispatchLastReplyResolver interface {
 	GetLastTaskReplyText(context.Context, pgtype.UUID) (pgtype.Text, error)
 }
 
+type issueLastCommentResolver interface {
+	GetLastAgentCommentForIssue(context.Context, pgtype.UUID) (pgtype.Text, error)
+}
+
 type streamProcessingEmotionStore interface {
 	GetDingTalkProcessingEmotionBySourceMessage(context.Context, string) (db.DingtalkProcessingEmotion, error)
 }
@@ -429,6 +433,18 @@ func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bo
 	return true, lifecycleErr
 }
 
+func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID pgtype.UUID, _ map[string]any) string {
+	reader, ok := o.q.(issueLastCommentResolver)
+	if !ok || !issueID.Valid {
+		return ""
+	}
+	reply, err := reader.GetLastAgentCommentForIssue(ctx, issueID)
+	if err != nil || strings.TrimSpace(reply.String) == "" {
+		return ""
+	}
+	return reply.String
+}
+
 func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.UUID, payload map[string]any) string {
 	output, _ := payload["output"].(string)
 	if strings.TrimSpace(output) != "" {
@@ -507,7 +523,8 @@ func (o *Outbound) processStreamIssueEvent(ctx context.Context, e events.Event) 
 
 	content := taskFailedText
 	if e.Type == protocol.EventTaskCompleted {
-		content = o.dispatchCompletionContent(ctx, taskUUID, payload)
+		issueUUID, _ := util.ParseUUID(strings.TrimSpace(issueID))
+		content = o.streamIssueCompletionContent(ctx, taskUUID, issueUUID, payload)
 	}
 	wantReply := false
 	if strings.TrimSpace(content) != "" {

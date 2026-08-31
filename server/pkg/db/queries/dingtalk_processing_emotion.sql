@@ -125,3 +125,12 @@ FROM dingtalk_processing_emotion emotion
 JOIN lineage ON lineage.id = emotion.task_id
 ORDER BY emotion.created_at DESC
 LIMIT 1;
+
+-- name: GetLastAgentCommentForIssue :one
+SELECT content
+FROM comment
+WHERE issue_id = sqlc.arg(issue_id)
+  AND author_type = 'agent'
+  AND COALESCE(BTRIM(content), '') <> ''
+ORDER BY created_at DESC
+LIMIT 1;

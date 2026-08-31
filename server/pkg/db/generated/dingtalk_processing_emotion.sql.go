@@ -244,6 +244,23 @@ func (q *Queries) GetDingTalkProcessingEmotionByTask(ctx context.Context, taskID
 	return i, err
 }
 
+const getLastAgentCommentForIssue = `-- name: GetLastAgentCommentForIssue :one
+SELECT content
+FROM comment
+WHERE issue_id = $1
+  AND author_type = 'agent'
+  AND COALESCE(BTRIM(content), '') <> ''
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (pgtype.Text, error) {
+	row := q.db.QueryRow(ctx, getLastAgentCommentForIssue, issueID)
+	var content pgtype.Text
+	err := row.Scan(&content)
+	return content, err
+}
+
 const markDingTalkProcessingEmotionAdded = `-- name: MarkDingTalkProcessingEmotionAdded :one
 UPDATE dingtalk_processing_emotion
 SET state = CASE WHEN state = 'settled' THEN 'settled' ELSE 'active' END,

@@ -102,6 +102,10 @@ func (q *dispatchLifecycleQueries) GetLastTaskReplyText(context.Context, pgtype.
 	return pgtype.Text{String: q.lastReply, Valid: true}, nil
 }
 
+func (q *dispatchLifecycleQueries) GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (pgtype.Text, error) {
+	return q.GetLastTaskReplyText(ctx, issueID)
+}
+
 type dispatchRobotRecorder struct {
 	mu       sync.Mutex
 	sequence []string
