@@ -48,7 +48,7 @@ func TestEnterpriseIdentityAuthorizationSegmentCarriesTheFullPolicy(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	applyTaskInstructionForClaim(&response, context, nil, nil, authorizationURL)
+	applyTaskInstructionForClaim(&response, context, nil, nil, authorizationURL, false)
 
 	for _, expected := range []string{
 		"a1 command",

@@ -619,7 +619,7 @@ func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *tes
 	for _, want := range []string{
 		"- quoted message (801 chars, by you): " +
 			"`dws chat message list-by-ids --msg-ids referenced-open --format json`",
-		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
+		"- conversation, newest first: `dws chat message list --conversation-id cid-trusted --limit 20 --jq '.messages[] | {createTime, sender, text, quoted: .quotedMessage.content}'`",
 		// The prompt carries no transcript, so the read-back is an instruction.
 		"Multica does not carry this conversation's history",
 		"BEFORE you answer",
@@ -663,10 +663,10 @@ func TestDingTalkConversationInstructionNamesAMissingQuotedLocator(t *testing.T)
 		},
 	}
 
-	instruction := buildDispatchConversationInstruction(stored)
+	instruction := buildDispatchConversationInstruction(stored, false)
 	for _, want := range []string{
 		"- quoted message, id not supplied (6 chars, by uid someone-else)",
-		"- conversation: `dws chat message search-advanced --conversation-ids cid-trusted --limit 50 --format json`",
+		"- conversation, newest first: `dws chat message list --conversation-id cid-trusted --limit 20 --jq '.messages[] | {createTime, sender, text, quoted: .quotedMessage.content}'`",
 	} {
 		if !strings.Contains(instruction, want) {
 			t.Fatalf("dingtalk_conversation instruction missing %q: %q", want, instruction)
@@ -695,7 +695,7 @@ func TestDingTalkConversationInstructionNamesChatDelivery(t *testing.T) {
 	withCallback.CompletionCallback = &DispatchCompletionCallback{
 		URL: "/api/v1/dispatch-tasks/t/execution-result",
 	}
-	instruction := buildDispatchConversationInstruction(withCallback)
+	instruction := buildDispatchConversationInstruction(withCallback, false)
 	for _, want := range []string{
 		"Your final assistant output is the reply the person receives",
 		"Do not send it yourself with an outbound tool",
@@ -709,11 +709,11 @@ func TestDingTalkConversationInstructionNamesChatDelivery(t *testing.T) {
 
 	// Without a callback Router has no hook to deliver through: the run really
 	// does have to send its own reply, so the claim must not be made.
-	if got := buildDispatchConversationInstruction(base); strings.Contains(got, "Do not send it yourself") {
+	if got := buildDispatchConversationInstruction(base, false); strings.Contains(got, "Do not send it yourself") {
 		t.Fatalf("instruction forbade self-delivery with no callback to deliver through: %q", got)
 	}
 	// And it must still carry the read-back half in that case.
-	if !strings.Contains(buildDispatchConversationInstruction(base), "- conversation: `dws chat message search-advanced") {
+	if !strings.Contains(buildDispatchConversationInstruction(base, false), "- conversation, newest first: `dws chat message list") {
 		t.Fatal("no-callback dispatch lost the read-back command")
 	}
 }
@@ -735,7 +735,7 @@ func TestDingTalkConversationInstructionNamesIssueDelivery(t *testing.T) {
 		},
 	}
 
-	instruction := buildDispatchConversationInstruction(stored)
+	instruction := buildDispatchConversationInstruction(stored, false)
 	for _, want := range []string{
 		"delivers your final assistant output back into the DingTalk conversation",
 		"The Issue comment is the Multica-side record and does not reach them",
@@ -750,7 +750,7 @@ func TestDingTalkConversationInstructionNamesIssueDelivery(t *testing.T) {
 	// the claim would be false.
 	noCallback := stored
 	noCallback.CompletionCallback = nil
-	if got := buildDispatchConversationInstruction(noCallback); got != "" {
+	if got := buildDispatchConversationInstruction(noCallback, false); got != "" {
 		t.Fatalf("instruction claimed platform delivery with no callback: %q", got)
 	}
 }
@@ -800,8 +800,8 @@ func TestWithholdChatHistoryTracksTheReadbackCommand(t *testing.T) {
 		if tc.rawContext != nil {
 			stored, present := parsePersistedDispatchContext(tc.rawContext)
 			printed := present && strings.Contains(
-				buildDispatchConversationInstruction(stored),
-				"- conversation: `dws chat message search-advanced")
+				buildDispatchConversationInstruction(stored, false),
+				"- conversation, newest first: `dws chat message list")
 			if printed != withheld {
 				t.Errorf("%s: command printed = %v but transcript withheld = %v", name, printed, withheld)
 			}
@@ -832,11 +832,11 @@ func TestDingTalkConversationInstructionSkipsReadbackOnIssueSurface(t *testing.T
 		},
 	}
 
-	instruction := buildDispatchConversationInstruction(stored)
+	instruction := buildDispatchConversationInstruction(stored, false)
 	if !strings.Contains(instruction, "--msg-ids referenced-open") {
 		t.Fatalf("issue-surface instruction dropped the quoted locator: %q", instruction)
 	}
-	for _, unwanted := range []string{"BEFORE you answer", "- conversation: `dws chat message search-advanced"} {
+	for _, unwanted := range []string{"BEFORE you answer", "- conversation, newest first: `dws chat message list"} {
 		if strings.Contains(instruction, unwanted) {
 			t.Fatalf("issue-surface instruction leaked the readback rule %q: %q", unwanted, instruction)
 		}
@@ -2260,15 +2260,210 @@ func TestAgentDispatchPromptReplacesDiamondCompositionAtClaim(t *testing.T) {
 		"dispatch_context_prompt":"ROUTER CONTEXT"
 	}`)
 
-	var authored AgentTaskResponse
-	applyTaskInstructionForClaim(&authored, context, flags, map[string]string{DispatchSegmentPolicy: "AGENT AUTHORED POLICY"}, "")
-	if want := "AGENT AUTHORED POLICY\n\nROUTER CONTEXT"; !strings.HasPrefix(authored.Instruction, want) {
-		t.Fatalf("claim instruction = %q, want it to start with %q", authored.Instruction, want)
+	// Policy rides in the runtime brief (appended to the agent instructions);
+	// the per-turn instruction carries only the Router context.
+	authored := AgentTaskResponse{Agent: &TaskAgentData{Instructions: "PERSONA"}}
+	applyTaskInstructionForClaim(&authored, context, flags, map[string]string{DispatchSegmentPolicy: "AGENT AUTHORED POLICY"}, "", false)
+	if want := "PERSONA\n\nAGENT AUTHORED POLICY"; !strings.HasPrefix(authored.Agent.Instructions, want) {
+		t.Fatalf("claim agent instructions = %q, want them to start with %q", authored.Agent.Instructions, want)
+	}
+	if !strings.HasPrefix(authored.Instruction, "ROUTER CONTEXT") || strings.Contains(authored.Instruction, "POLICY") {
+		t.Fatalf("claim instruction = %q, want the Router context without policy", authored.Instruction)
 	}
 
-	var baseline AgentTaskResponse
-	applyTaskInstructionForClaim(&baseline, context, flags, nil, "")
-	if want := "COMMON POLICY\n\nCHAT MODE POLICY\n\nROUTER CONTEXT"; !strings.HasPrefix(baseline.Instruction, want) {
-		t.Fatalf("baseline claim instruction = %q, want it to start with %q", baseline.Instruction, want)
+	baseline := AgentTaskResponse{Agent: &TaskAgentData{Instructions: "PERSONA"}}
+	applyTaskInstructionForClaim(&baseline, context, flags, nil, "", false)
+	if want := "PERSONA\n\nCOMMON POLICY\n\nCHAT MODE POLICY"; !strings.HasPrefix(baseline.Agent.Instructions, want) {
+		t.Fatalf("baseline agent instructions = %q, want them to start with %q", baseline.Agent.Instructions, want)
+	}
+	if !strings.HasPrefix(baseline.Instruction, "ROUTER CONTEXT") {
+		t.Fatalf("baseline claim instruction = %q, want it to start with the Router context", baseline.Instruction)
+	}
+}
+
+// A direct room is read back by the other party's openDingTalkId — the form
+// the CLI documents for single chats — and a group room by its conversation
+// id. A direct room whose sender id the Router dropped falls back to the id.
+func TestDingTalkConversationReadHintAddressesTheRoomShape(t *testing.T) {
+	base := persistedDispatchContext{
+		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:   "channel",
+		Type:     "message.created",
+		Surface:  DispatchSurface{Type: "auto"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-room", Type: "single"},
+			Sender:       DispatchSender{DisplayName: "冬翔", OpenDingTalkID: "open-sender"},
+			Messages:     []DispatchMessage{{OpenMsgID: "current-open", Text: "在吗"}},
+		},
+	}
+	for name, tc := range map[string]struct {
+		mutate func(*persistedDispatchContext)
+		want   string
+	}{
+		"single chat": {func(*persistedDispatchContext) {}, "`dws chat message list --open-dingtalk-id open-sender --limit 20 --jq"},
+		"single chat via router alias": {func(s *persistedDispatchContext) {
+			s.EventData.Sender = DispatchSender{SenderOpenDingTalkID: "alias-sender"}
+		}, "`dws chat message list --open-dingtalk-id alias-sender --limit 20 --jq"},
+		"single chat without sender id": {func(s *persistedDispatchContext) {
+			s.EventData.Sender = DispatchSender{DisplayName: "冬翔"}
+		}, "`dws chat message list --conversation-id cid-room --limit 20 --jq"},
+		"group":        {func(s *persistedDispatchContext) { s.EventData.Conversation.Type = "group" }, "`dws chat message list --conversation-id cid-room --limit 20 --jq"},
+		"unknown type": {func(s *persistedDispatchContext) { s.EventData.Conversation.Type = "" }, "`dws chat message list --conversation-id cid-room --limit 20 --jq"},
+	} {
+		stored := base
+		tc.mutate(&stored)
+		instruction := buildDispatchConversationInstruction(stored, false)
+		if !strings.Contains(instruction, tc.want) {
+			t.Errorf("%s: read hint missing %q: %q", name, tc.want, instruction)
+		}
+		if strings.Contains(instruction, "search-advanced") {
+			t.Errorf("%s: read hint still uses search-advanced: %q", name, instruction)
+		}
+	}
+}
+
+// Without an agent on the claim there is no brief to ride in, so the whole
+// composition falls back to the per-turn instruction in its original order —
+// a turn with the policy in the wrong place beats a turn with no policy.
+func TestClaimInstructionFallsBackToPerTurnWithoutAgent(t *testing.T) {
+	provider := featureflag.NewDiamondProvider()
+	if _, _, err := provider.ApplyJSON([]byte(`{"common":{"prompt":"COMMON POLICY"},"chat":{"prompt":"CHAT MODE POLICY"}}`)); err != nil {
+		t.Fatalf("seed Diamond prompts: %v", err)
+	}
+	flags := featureflag.NewService(provider)
+	context := dispatchTaskContextWithPromptForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event:         DispatchEvent{Domain: "channel", Type: "message.created"},
+		Surface:       DispatchSurface{Type: "chat"},
+		Outbound:      DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}, "ROUTER CONTEXT")
+
+	var response AgentTaskResponse
+	applyTaskInstructionForClaim(&response, context, flags, nil, "", false)
+	if want := "COMMON POLICY\n\nCHAT MODE POLICY\n\nROUTER CONTEXT\n\n" + dingTalkReplyFormattingInstruction; response.Instruction != want {
+		t.Fatalf("fallback instruction = %q, want %q", response.Instruction, want)
+	}
+}
+
+// A turn that continues the provider session is handed only what changes from
+// turn to turn. The session-carried segments (policy, reply formatting) went out
+// on its first turn and sit in the provider transcript already; sending them
+// again put three copies of the same 3.5k characters into one request
+// (production trace b60a1060…). The conversation section is reworded for a
+// continuation — no "read back BEFORE you answer" against context the run
+// already holds — while still printing the read-back commands, because the
+// daemon may yet drop the resume after the claim.
+func TestDispatchInstructionOnResumedSessionSendsOnlyPerTurnFacts(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:   "channel",
+		Type:     "message.created",
+		Surface:  DispatchSurface{Type: "auto"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-trusted"},
+			Sender:       DispatchSender{DisplayName: "冬翔", OpenDingTalkID: "open-sender"},
+			Messages: []DispatchMessage{{
+				OpenMsgID: "current-open",
+				Text:      "好的",
+				ReferencedMessage: &DispatchReferencedMessage{
+					OpenMsgID: "referenced-open",
+					Text:      "我的 OKR 目标",
+					SenderUID: "6753994909",
+				},
+			}},
+		},
+		ExternalIdentity: &persistedDispatchExternalIdentity{
+			DWS: &AgentDispatchDWSIdentity{UID: "6753994909", OrgID: "77"},
+		},
+		CompletionCallback: &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/task-1/execution-result"},
+		ContextPrompt:      "ROUTER CONTEXT",
+	}
+	overrides := map[string]string{DispatchSegmentPolicy: "# 安全与交付规范\n\n本轮以 auto 模式运行。"}
+
+	byID := func(segments []DispatchPromptSegment) map[string]DispatchPromptSegment {
+		out := make(map[string]DispatchPromptSegment, len(segments))
+		for _, segment := range segments {
+			out[segment.ID] = segment
+		}
+		return out
+	}
+
+	fresh := byID(composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored: stored, Present: true, DingTalkContext: true, Overrides: overrides,
+		EnterpriseAuthorizationURL: "https://example.test/authorize",
+	}))
+	resumed := byID(composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored: stored, Present: true, DingTalkContext: true, Overrides: overrides,
+		EnterpriseAuthorizationURL: "https://example.test/authorize",
+		ResumedSession:             true,
+	}))
+
+	// Session-constant segments ride in the runtime brief on every turn shape;
+	// only the per-dispatch facts head the per-turn message. A resumed turn
+	// changes wording, never delivery or inclusion.
+	for _, id := range []string{DispatchSegmentPolicy, DispatchSegmentReplyFormatting, DispatchSegmentEnterpriseIdentity} {
+		for label, got := range map[string]DispatchPromptSegment{"fresh": fresh[id], "resumed": resumed[id]} {
+			if !got.Included || got.Delivery != "runtime_brief" {
+				t.Errorf("%s turn: %s = %+v, want included and delivered in the runtime brief", label, id, got)
+			}
+		}
+	}
+	for _, id := range []string{DispatchSegmentContext, DispatchSegmentDingTalkConversation} {
+		for label, got := range map[string]DispatchPromptSegment{"fresh": fresh[id], "resumed": resumed[id]} {
+			if !got.Included || got.Delivery != "per_turn" {
+				t.Errorf("%s turn: %s = %+v, want included and delivered per turn", label, id, got)
+			}
+		}
+	}
+
+	conversation := resumed[DispatchSegmentDingTalkConversation].EffectiveText
+	for _, want := range []string{
+		"You are continuing your own session with this person",
+		"Answer the newest `User message:` block",
+		"If your context holds no earlier turns after all, read the conversation back",
+		// Delivery ownership and the locators are the same on both variants.
+		"Your final assistant output is the reply the person receives",
+		"- conversation, newest first: `dws chat message list --conversation-id cid-trusted --limit 20 --jq '.messages[] | {createTime, sender, text, quoted: .quotedMessage.content}'`",
+		"- quoted message (8 chars, by you): `dws chat message list-by-ids --msg-ids referenced-open --format json`",
+		"A quote is background, not a new request",
+	} {
+		if !strings.Contains(conversation, want) {
+			t.Errorf("resumed conversation instruction missing %q: %q", want, conversation)
+		}
+	}
+	for _, forbidden := range []string{
+		"BEFORE you answer",
+		"none of it is reproduced anywhere in this prompt",
+	} {
+		if strings.Contains(conversation, forbidden) {
+			t.Errorf("resumed conversation instruction still demands a cold read-back (%q): %q", forbidden, conversation)
+		}
+	}
+	if strings.Contains(fresh[DispatchSegmentDingTalkConversation].EffectiveText, "continuing your own session") {
+		t.Errorf("fresh turn carried the resumed wording: %q", fresh[DispatchSegmentDingTalkConversation].EffectiveText)
+	}
+
+	// What heads the per-turn message, on either turn shape, is the Router
+	// context followed by the conversation section and nothing else; the
+	// session-constant text is in the brief half.
+	brief, perTurn := dispatchInstructionByDelivery(composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored: stored, Present: true, DingTalkContext: true, Overrides: overrides, ResumedSession: true,
+	}))
+	if !strings.HasPrefix(perTurn, "ROUTER CONTEXT\n\n## DingTalk Conversation") {
+		t.Fatalf("per-turn instruction = %q, want Router context then the conversation section", perTurn)
+	}
+	for _, forbidden := range []string{"安全与交付规范", "## DingTalk Reply Formatting"} {
+		if strings.Contains(perTurn, forbidden) {
+			t.Errorf("per-turn instruction carries a session-constant segment (%q): %q", forbidden, perTurn)
+		}
+		if !strings.Contains(brief, forbidden) {
+			t.Errorf("runtime brief half is missing %q: %q", forbidden, brief)
+		}
+	}
+	if strings.Contains(brief, "ROUTER CONTEXT") || strings.Contains(brief, "## DingTalk Conversation") {
+		t.Errorf("runtime brief half carries per-dispatch facts: %q", brief)
 	}
 }
