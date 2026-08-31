@@ -1058,6 +1058,7 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	if err := launcher.execRunOnce(context.Background(), "sbx_dws", rt, launch.Mode, taskID, "mdt_test_token", false, map[string]string{
 		"AGENT_IDENTITY_CONTEXT_TOKEN": "context_secret",
 		"MULTICA_CHAT_SESSION_ID":      "chat-session-1",
+		"MULTICA_ISSUE_ID":             "issue-uuid",
 		llmTraceEnabledEnvKey:          "true",
 		llmTraceSinkURLEnvKey:          "https://trace.example.test/ingest",
 	}); err != nil {
@@ -1066,6 +1067,7 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	args := runner.calls[len(runner.calls)-1].args
 	foundIdentityToken := false
 	foundChatSessionID := false
+	foundIssueID := false
 	foundTraceEnabled := false
 	foundTraceSinkURL := false
 	for i := 0; i < len(args)-1; i++ {
@@ -1074,6 +1076,9 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 		}
 		if args[i] == "-e" && args[i+1] == "MULTICA_CHAT_SESSION_ID=chat-session-1" {
 			foundChatSessionID = true
+		}
+		if args[i] == "-e" && args[i+1] == "MULTICA_ISSUE_ID=issue-uuid" {
+			foundIssueID = true
 		}
 		if args[i] == "-e" && args[i+1] == llmTraceEnabledEnvKey+"=true" {
 			foundTraceEnabled = true
@@ -1087,6 +1092,9 @@ func TestFCE2BExecRunOnceInjectsExtraEnv(t *testing.T) {
 	}
 	if !foundChatSessionID {
 		t.Fatal("exec args did not include Chat Session ID env")
+	}
+	if !foundIssueID {
+		t.Fatal("exec args did not include Issue ID env")
 	}
 	if !foundTraceEnabled || !foundTraceSinkURL {
 		t.Fatalf("exec args did not include LLM trace env: %#v", args)

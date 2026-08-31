@@ -58,6 +58,7 @@ func init() {
 	chatCmd.GroupID = groupCore
 	dingtalkCmd.GroupID = groupCore
 	mcpCmd.GroupID = groupCore
+	assocCmd.GroupID = groupCore
 
 	// Runtime commands
 	daemonCmd.GroupID = groupRuntime
@@ -87,6 +88,7 @@ func init() {
 	rootCmd.AddCommand(chatCmd)
 	rootCmd.AddCommand(dingtalkCmd)
 	rootCmd.AddCommand(mcpCmd)
+	rootCmd.AddCommand(assocCmd)
 	rootCmd.AddCommand(daemonCmd)
 	rootCmd.AddCommand(runtimeCmd)
 	rootCmd.AddCommand(runnerCmd)
@@ -111,6 +113,9 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == execenv.DWSWrapArg {
+		os.Exit(execenv.MainDWSWrap(os.Args[2:]))
 	}
 	cli.CleanupStaleUpdateArtifacts()
 	if err := rootCmd.Execute(); err != nil {

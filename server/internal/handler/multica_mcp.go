@@ -30,6 +30,7 @@ const (
 	multicaMCPAgentListTool                  = "list_agents"
 	multicaMCPPrepareStaticSiteTool          = "prepare_static_site_deploy"
 	multicaMCPGetStaticSiteTool              = "get_static_site_deploy"
+	multicaMCPAssocRecallTool                = "assoc_recall"
 	multicaMCPMaxRequestBytes                = 1 << 20
 	multicaMCPPersonalTokenPrefix            = "mul_"
 	multicaMCPForwardedFromTaskContextKey    = "mcp_forwarded_from_task_id"
@@ -66,6 +67,12 @@ const multicaMCPAgentSearchToolDescription = `Search active Multica Agents by a 
 With a personal access token, the search spans every Workspace of the authenticated user but only returns Agents that user may view. With a task token, the search is limited to the authenticated task Workspace.
 
 Workspace context is derived server-side. MCP configuration, environment values, runtime credentials, and other secret-bearing fields are never returned.`
+
+const multicaMCPAssocRecallToolDescription = `Recall related Issue tasks for the current DingTalk conversation or the current Issue.
+
+Use this when a reply arrives in a new private chat and you need to know which ongoing task caused that outreach, or when executing an Issue and you need the conversations already contacted.
+
+since is required (24h/48h/7d or RFC3339). current_issue uses the authenticated task's Issue. conversation_id is a DingTalk openConversationId. Do not guess; inspect purpose and ask if multiple items match.`
 
 const multicaMCPAgentListToolDescription = `List all active Multica Agents available to the authenticated caller and return their detailed, non-secret metadata.
 
@@ -288,6 +295,43 @@ func multicaMCPToolDefinitions() []any {
 		multicaMCPAgentListDefinition(),
 		multicaMCPPrepareStaticSiteDefinition(),
 		multicaMCPGetStaticSiteDefinition(),
+		multicaMCPAssocRecallDefinition(),
+	}
+}
+
+func multicaMCPAssocRecallDefinition() map[string]any {
+	return map[string]any{
+		"name":        multicaMCPAssocRecallTool,
+		"title":       "Recall related Issue tasks",
+		"description": multicaMCPAssocRecallToolDescription,
+		"inputSchema": map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"since":           map[string]any{"type": "string", "minLength": 1, "description": "Required window start: 24h, 48h, 7d, or RFC3339."},
+				"until":           map[string]any{"type": "string", "description": "Optional RFC3339 end; defaults to now."},
+				"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId."},
+				"person_id":       map[string]any{"type": "string", "description": "Optional DingTalk uid."},
+				"issue":           map[string]any{"type": "string", "description": "Issue identifier or UUID."},
+				"current_issue":   map[string]any{"type": "boolean", "description": "When true, use the authenticated task's Issue."},
+				"q":               map[string]any{"type": "string", "description": "Keyword filter on task purpose."},
+				"intent":          map[string]any{"type": "string"},
+				"limit":           map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+			},
+			"required": []string{"since"},
+		},
+		"outputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"since": map[string]any{"type": "string"},
+				"until": map[string]any{"type": "string"},
+				"items": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			},
+			"required": []string{"since", "until", "items"},
+		},
+		"annotations": map[string]any{
+			"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false,
+		},
 	}
 }
 
@@ -525,6 +569,10 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 		h.handleMulticaMCPStaticSiteCall(w, r, req.ID, params.Name, params.Arguments)
 		return
 	}
+	if params.Name == multicaMCPAssocRecallTool {
+		h.handleMulticaMCPAssocRecall(w, r, req.ID, params.Arguments)
+		return
+	}
 	if params.Name != multicaMCPChatSendTool {
 		h.writeMulticaMCPError(w, req.ID, -32602, "unknown tool")
 		return
@@ -564,6 +612,18 @@ func (h *Handler) handleMulticaMCPToolsCall(w http.ResponseWriter, r *http.Reque
 		Content:           []multicaMCPContent{{Type: "text", Text: string(textResult)}},
 		StructuredContent: result,
 	})
+}
+
+type multicaMCPAssocRecallArguments struct {
+	Since          string `json:"since"`
+	Until          string `json:"until"`
+	ConversationID string `json:"conversation_id"`
+	PersonID       string `json:"person_id"`
+	Issue          string `json:"issue"`
+	CurrentIssue   bool   `json:"current_issue"`
+	Q              string `json:"q"`
+	Intent         string `json:"intent"`
+	Limit          int    `json:"limit"`
 }
 
 func (h *Handler) handleMulticaMCPAgentCall(

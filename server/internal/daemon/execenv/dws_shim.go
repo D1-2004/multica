@@ -1,0 +1,229 @@
+package execenv
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+)
+
+const (
+	dwsShimDirName = "dws-shim"
+	// DWSWrapArg selects the private dws PATH wrapper in the multica binary.
+	DWSWrapArg = "__dws-wrap"
+	IssueIDEnv = "MULTICA_ISSUE_ID"
+)
+
+const dwsShimScript = `#!/bin/sh
+export MULTICA_DWS_SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec multica ` + DWSWrapArg + ` -- "$@"
+`
+
+// IssueEnv returns MULTICA_ISSUE_ID when the task is attached to an Issue.
+func IssueEnv(issueID string) map[string]string {
+	issueID = strings.TrimSpace(issueID)
+	if issueID == "" {
+		return nil
+	}
+	return map[string]string{IssueIDEnv: issueID}
+}
+
+// EnsureDWSShim writes a PATH wrapper that re-execs `multica __dws-wrap` so
+// chat send uses the same Go parser as tests, then binds the conversation.
+func EnsureDWSShim(envRoot string) (string, error) {
+	if envRoot == "" || runtime.GOOS == "windows" {
+		return "", nil
+	}
+	dir := filepath.Join(envRoot, dwsShimDirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create dws shim dir: %w", err)
+	}
+	path := filepath.Join(dir, "dws")
+	if err := os.WriteFile(path, []byte(dwsShimScript), 0o755); err != nil {
+		return "", fmt.Errorf("write dws shim: %w", err)
+	}
+	return dir, nil
+}
+
+// ParseDWSSendConversation reports whether args are a chat send and extracts
+// --conversation-id / --conversation when present.
+func ParseDWSSendConversation(args []string) (conversationID string, send bool) {
+	hasChat := false
+	hasSend := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "chat":
+			hasChat = true
+		case "send", "+send", "send-by-bot":
+			hasSend = true
+		case "--conversation-id", "--conversation":
+			if i+1 < len(args) {
+				conversationID = strings.TrimSpace(args[i+1])
+			}
+		}
+		if i+1 < len(args) && arg == "message" && (args[i+1] == "send" || args[i+1] == "send-by-bot") {
+			hasSend = true
+		}
+	}
+	return conversationID, hasChat && hasSend
+}
+
+// DWSWrapDeps is the testable surface for the dws PATH wrapper.
+type DWSWrapDeps struct {
+	Args     []string
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Getenv   func(string) string
+	LookPath func(string) (string, error)
+	Run      func(name string, args []string, stdout, stderr io.Writer) error
+	Bind     func(conversationID, evidenceID string) error
+}
+
+// MainDWSWrap is the CLI entrypoint for `multica __dws-wrap`.
+func MainDWSWrap(args []string) int {
+	return RunDWSWrap(DWSWrapDeps{
+		Args:   args,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+		Getenv: os.Getenv,
+		LookPath: func(name string) (string, error) {
+			return lookPathExcept(name, os.Getenv("MULTICA_DWS_SHIM_DIR"), os.Getenv("PATH"))
+		},
+		Run: func(name string, argv []string, stdout, stderr io.Writer) error {
+			cmd := exec.Command(name, argv...)
+			cmd.Stdout = stdout
+			cmd.Stderr = stderr
+			cmd.Stdin = os.Stdin
+			cmd.Env = os.Environ()
+			return cmd.Run()
+		},
+		Bind: func(conversationID, evidenceID string) error {
+			argv := []string{"assoc", "bind", "--conversation", conversationID}
+			if evidenceID != "" {
+				argv = append(argv, "--evidence", evidenceID)
+			}
+			cmd := exec.Command("multica", argv...)
+			cmd.Env = os.Environ()
+			var buf bytes.Buffer
+			cmd.Stderr = &buf
+			cmd.Stdout = &buf
+			if err := cmd.Run(); err != nil {
+				return fmt.Errorf("%w: %s", err, strings.TrimSpace(buf.String()))
+			}
+			return nil
+		},
+	})
+}
+
+// RunDWSWrap observes dws chat send and binds the conversation. Non-send
+// commands are passed through. Bind failures are written to stderr and do not
+// fail a successful send.
+func RunDWSWrap(deps DWSWrapDeps) int {
+	args := stripLeadingDashDash(deps.Args)
+	real, err := deps.LookPath("dws")
+	if err != nil {
+		fmt.Fprintln(deps.Stderr, "dws: real binary not found on PATH")
+		return 127
+	}
+	cid, send := ParseDWSSendConversation(args)
+	if !send {
+		if err := deps.Run(real, args, deps.Stdout, deps.Stderr); err != nil {
+			return exitCode(err)
+		}
+		return 0
+	}
+	var captured bytes.Buffer
+	if err := deps.Run(real, args, io.MultiWriter(deps.Stdout, &captured), deps.Stderr); err != nil {
+		return exitCode(err)
+	}
+	if cid == "" {
+		cid = extractJSONString(captured.String(), "openConversationId")
+	}
+	if cid == "" {
+		cid = extractJSONString(captured.String(), "conversationId")
+	}
+	msgid := extractJSONString(captured.String(), "openMsgId")
+	if cid == "" || deps.Bind == nil {
+		return 0
+	}
+	if err := deps.Bind(cid, msgid); err != nil {
+		fmt.Fprintf(deps.Stderr, "multica assoc bind failed: %v\n", err)
+	}
+	return 0
+}
+
+func stripLeadingDashDash(args []string) []string {
+	if len(args) > 0 && args[0] == "--" {
+		return args[1:]
+	}
+	return args
+}
+
+func lookPathExcept(name, exceptDir, pathEnv string) (string, error) {
+	exceptDir = strings.TrimRight(exceptDir, string(os.PathListSeparator))
+	var filtered []string
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" || (exceptDir != "" && dir == exceptDir) {
+			continue
+		}
+		filtered = append(filtered, dir)
+	}
+	search := strings.Join(filtered, string(os.PathListSeparator))
+	var lastErr error
+	for _, dir := range filepath.SplitList(search) {
+		candidate := filepath.Join(dir, name)
+		info, err := os.Stat(candidate)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if info.IsDir() {
+			continue
+		}
+		if info.Mode()&0o111 == 0 {
+			continue
+		}
+		return candidate, nil
+	}
+	if lastErr == nil {
+		lastErr = exec.ErrNotFound
+	}
+	return "", lastErr
+}
+
+func extractJSONString(body, key string) string {
+	needle := `"` + key + `"`
+	idx := strings.Index(body, needle)
+	if idx < 0 {
+		return ""
+	}
+	rest := body[idx+len(needle):]
+	colon := strings.Index(rest, ":")
+	if colon < 0 {
+		return ""
+	}
+	rest = strings.TrimSpace(rest[colon+1:])
+	if !strings.HasPrefix(rest, `"`) {
+		return ""
+	}
+	rest = rest[1:]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+func exitCode(err error) int {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode()
+	}
+	return 1
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
@@ -199,6 +200,7 @@ type enterpriseIdentityService interface {
 
 type Handler struct {
 	Queries                 *db.Queries
+	Assoc                   *assoc.Service
 	DB                      dbExecutor
 	TxStarter               txStarter
 	Hub                     *realtime.Hub
