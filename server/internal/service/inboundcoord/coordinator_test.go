@@ -13,22 +13,31 @@ import (
 )
 
 type coordQueriesStub struct {
-	inbound bool
+	inbound   bool
+	page      []db.ChatMessage
+	listErr   error
+	lastList  db.ListChatMessagesPageParams
+	listCalls int
 }
 
-func (s coordQueriesStub) ListChatMessagesPage(context.Context, db.ListChatMessagesPageParams) ([]db.ChatMessage, error) {
-	return nil, nil
+func (s *coordQueriesStub) ListChatMessagesPage(_ context.Context, arg db.ListChatMessagesPageParams) ([]db.ChatMessage, error) {
+	s.lastList = arg
+	s.listCalls++
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return s.page, nil
 }
 
-func (s coordQueriesStub) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
+func (s *coordQueriesStub) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
 	return db.Agent{}, nil
 }
 
-func (s coordQueriesStub) CountRunningTasks(context.Context, pgtype.UUID) (int64, error) {
+func (s *coordQueriesStub) CountRunningTasks(context.Context, pgtype.UUID) (int64, error) {
 	return 0, nil
 }
 
-func (s coordQueriesStub) GetAgentInboundCoordinator(context.Context, pgtype.UUID) (bool, error) {
+func (s *coordQueriesStub) GetAgentInboundCoordinator(context.Context, pgtype.UUID) (bool, error) {
 	return s.inbound, nil
 }
 
@@ -98,7 +107,7 @@ func TestDecideContinueWhenLLMDisabled(t *testing.T) {
 func TestDecideSkipsWhenAgentSwitchOff(t *testing.T) {
 	c := &Coordinator{
 		LLM:     llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
-		Queries: coordQueriesStub{inbound: false},
+		Queries: &coordQueriesStub{inbound: false},
 	}
 	started := time.Now()
 	got := c.Decide(context.Background(), Turn{
@@ -123,6 +132,121 @@ func TestIssueTitleAndDescription(t *testing.T) {
 	desc := IssueDescription(d, "帮我看截止时间")
 	if !strings.Contains(desc, "前台已对用户说") || !strings.Contains(desc, "帮我看截止时间") {
 		t.Fatalf("description = %q", desc)
+	}
+}
+
+func testSession() db.ChatSession {
+	return db.ChatSession{ID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true}, AgentID: testAgentID()}
+}
+
+func newestFirstPage(n int) []db.ChatMessage {
+	page := make([]db.ChatMessage, n)
+	for i := 0; i < n; i++ {
+		// ListChatMessagesPage is newest-first.
+		page[i] = db.ChatMessage{Role: "user", Content: "钉钉历史" + string(rune('A'+n-1-i))}
+	}
+	return page
+}
+
+func TestTurnFromChatSessionRobotLoadsTenDingTalkMessages(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(10)}
+	c := &Coordinator{Queries: q}
+	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceRobot, true, "p2p", "须莫", "须莫", "帮我看看今天有什么新闻")
+	if q.listCalls != 1 || q.lastList.Limit != dingtalkHistoryLimit {
+		t.Fatalf("robot history lookup = calls %d limit %d, want 1 call limit %d", q.listCalls, q.lastList.Limit, dingtalkHistoryLimit)
+	}
+	if len(turn.History) != 0 {
+		t.Fatalf("robot must not use web Multica history, got %d", len(turn.History))
+	}
+	if len(turn.DingTalkHistory) != 10 {
+		t.Fatalf("dingtalk history = %d, want 10", len(turn.DingTalkHistory))
+	}
+	if turn.DingTalkHistory[0].Content != "钉钉历史A" || turn.DingTalkHistory[9].Content != "钉钉历史J" {
+		t.Fatalf("history order = %#v", turn.DingTalkHistory)
+	}
+	prompt := buildUserPrompt(turn)
+	if !strings.Contains(prompt, "recent_dingtalk_history:") || strings.Contains(prompt, "recent_multica_history:") {
+		t.Fatalf("prompt = %q", prompt)
+	}
+	if !strings.Contains(prompt, "钉钉历史A") || !strings.Contains(prompt, "钉钉历史J") {
+		t.Fatalf("prompt missing loaded dingtalk rows: %q", prompt)
+	}
+}
+
+func TestTurnFromChatSessionDigitalEmployeeLoadsTenDingTalkMessages(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(10)}
+	c := &Coordinator{Queries: q}
+	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceDigitalEmployee, true, "group", "项目群", "同事", "帮我看看今天有什么新闻")
+	if q.lastList.Limit != dingtalkHistoryLimit || len(turn.DingTalkHistory) != 10 || len(turn.History) != 0 {
+		t.Fatalf("de history limit=%d dingtalk=%d web=%d", q.lastList.Limit, len(turn.DingTalkHistory), len(turn.History))
+	}
+}
+
+func TestTurnFromChatSessionWebDoesNotLoadDingTalkHistory(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(4)}
+	c := &Coordinator{Queries: q}
+	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceWeb, true, "p2p", "网页", "", "你好")
+	if q.listCalls != 1 || q.lastList.Limit != historyLimit {
+		t.Fatalf("web history lookup = calls %d limit %d, want 1 call limit %d", q.listCalls, q.lastList.Limit, historyLimit)
+	}
+	if len(turn.DingTalkHistory) != 0 {
+		t.Fatalf("web must not load dingtalk history, got %d", len(turn.DingTalkHistory))
+	}
+	if len(turn.History) != 4 {
+		t.Fatalf("web history = %d, want 4", len(turn.History))
+	}
+	prompt := buildUserPrompt(turn)
+	if strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "recent_multica_history:") {
+		t.Fatalf("web prompt = %q", prompt)
+	}
+}
+
+func TestAttachDingTalkConversationUsesWindowWhenSessionMissing(t *testing.T) {
+	window := make([]HistoryLine, 12)
+	for i := range window {
+		window[i] = HistoryLine{Role: "user", Content: "窗" + string(rune('A'+i))}
+	}
+	turn := AttachDingTalkConversation(context.Background(), nil, Turn{Source: SourceRobot, Message: "帮我看看今天有什么新闻"}, pgtype.UUID{}, window)
+	if len(turn.DingTalkHistory) != dingtalkHistoryLimit {
+		t.Fatalf("window history = %d, want %d", len(turn.DingTalkHistory), dingtalkHistoryLimit)
+	}
+	if turn.DingTalkHistory[0].Content != "窗C" || turn.DingTalkHistory[9].Content != "窗L" {
+		t.Fatalf("window clipped = %#v", turn.DingTalkHistory)
+	}
+}
+
+func TestAttachDingTalkConversationSkippedForWeb(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(10)}
+	c := &Coordinator{Queries: q}
+	turn := AttachDingTalkConversation(context.Background(), c, Turn{Source: SourceWeb, Message: "你好"}, testSession().ID, []HistoryLine{{Role: "user", Content: "钉钉不该出现"}})
+	if q.listCalls != 0 || len(turn.DingTalkHistory) != 0 {
+		t.Fatalf("web attach leaked dingtalk history calls=%d lines=%d", q.listCalls, len(turn.DingTalkHistory))
+	}
+}
+
+func TestFillDingTalkHistoryFailureLeavesEmptyAndDecideStillCallable(t *testing.T) {
+	q := &coordQueriesStub{listErr: context.DeadlineExceeded}
+	c := &Coordinator{Queries: q}
+	turn := c.FillDingTalkHistory(context.Background(), Turn{Source: SourceRobot, Message: "帮我看看今天有什么新闻"}, testSession().ID)
+	if len(turn.DingTalkHistory) != 0 {
+		t.Fatalf("failed lookup must leave empty history, got %#v", turn.DingTalkHistory)
+	}
+}
+
+func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:          SourceRobot,
+		Addressed:       true,
+		ChatType:        "p2p",
+		Message:         "帮我看看今天有什么新闻",
+		DingTalkHistory: []HistoryLine{{Role: "user", Content: "昨天那个表"}, {Role: "assistant", Content: "我去对一下"}},
+	})
+	if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "昨天那个表") {
+		t.Fatalf("prompt = %q", prompt)
+	}
+	got := parseDecision(`{"action":"issue","text":"我先去看今天新闻","look_into":"今天新闻","reason":"要查实时资讯"}`, Turn{Source: SourceRobot, Message: "帮我看看今天有什么新闻"})
+	if got.Action != ActionIssue {
+		t.Fatalf("news must stay issue, got %s", got.Action)
 	}
 }
 

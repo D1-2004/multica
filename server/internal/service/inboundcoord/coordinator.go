@@ -1,7 +1,8 @@
 // Package inboundcoord is the server-side short loop that decides whether an
 // inbound user turn can be answered immediately or must become an Issue that
 // starts a sandbox. Direct reply is the chat response; Issue is the only
-// sandbox path. The loop does not call DWS.
+// sandbox path. Decide is one JSON LLM call with no tools. DWS is not a
+// coordinator tool; DingTalk history is loaded by the server before Decide.
 package inboundcoord
 
 import (
@@ -20,13 +21,14 @@ import (
 )
 
 const (
-	decisionTimeout     = 10 * time.Second
-	coordinatorModel    = "qwen3.7-plus"
-	historyLimit        = 4
-	instructionsBudget  = 400
-	titleBudget         = 40
-	temperature         = 0.3
-	maxCompletionTokens = 192
+	decisionTimeout      = 10 * time.Second
+	coordinatorModel     = "qwen3.7-plus"
+	historyLimit         = 4
+	dingtalkHistoryLimit = 10
+	instructionsBudget   = 400
+	titleBudget          = 40
+	temperature          = 0.3
+	maxCompletionTokens  = 192
 )
 
 // Action is the short-loop verdict.
@@ -61,6 +63,7 @@ type Turn struct {
 	Instructions      string
 	Busy              bool
 	History           []HistoryLine
+	DingTalkHistory   []HistoryLine
 	IdentityNote      string
 	RelatedTasks      string
 }
@@ -211,24 +214,84 @@ func (c *Coordinator) TurnFromChatSession(
 	if n, err := c.Queries.CountRunningTasks(ctx, session.AgentID); err == nil && n > 0 {
 		turn.Busy = true
 	}
-	page, err := c.Queries.ListChatMessagesPage(ctx, db.ListChatMessagesPageParams{
-		ChatSessionID: session.ID,
-		Limit:         historyLimit,
-	})
-	if err != nil {
+	if turn.Source == SourceWeb {
+		turn.History = c.listHistory(ctx, session.ID, historyLimit)
+	} else {
+		turn.DingTalkHistory = c.listHistory(ctx, session.ID, dingtalkHistoryLimit)
+	}
+	return turn
+}
+
+// FillDingTalkHistory loads the current DingTalk conversation's recent
+// messages into the turn. Web Chat must not call this. A lookup failure
+// leaves DingTalkHistory empty and Decide still runs.
+func (c *Coordinator) FillDingTalkHistory(ctx context.Context, turn Turn, sessionID pgtype.UUID) Turn {
+	if turn.Source == SourceWeb {
 		return turn
 	}
+	turn.DingTalkHistory = c.listHistory(ctx, sessionID, dingtalkHistoryLimit)
+	return turn
+}
+
+// AttachDingTalkConversation is the robot/digital-employee pre-Decide hook:
+// prefer the bound session's last 10 rows, else the caller-supplied window.
+// Web Chat is a no-op. Empty history is not an error.
+func AttachDingTalkConversation(ctx context.Context, c *Coordinator, turn Turn, sessionID pgtype.UUID, window []HistoryLine) Turn {
+	if turn.Source == SourceWeb {
+		return turn
+	}
+	if c != nil && sessionID.Valid {
+		turn = c.FillDingTalkHistory(ctx, turn, sessionID)
+	}
+	if len(turn.DingTalkHistory) > 0 {
+		return turn
+	}
+	if len(window) == 0 {
+		return turn
+	}
+	start := 0
+	if len(window) > dingtalkHistoryLimit {
+		start = len(window) - dingtalkHistoryLimit
+	}
+	lines := make([]HistoryLine, 0, len(window)-start)
+	for _, line := range window[start:] {
+		content := clipRunes(strings.TrimSpace(line.Content), 160)
+		if content == "" {
+			continue
+		}
+		role := line.Role
+		if role == "" {
+			role = "user"
+		}
+		lines = append(lines, HistoryLine{Role: role, Content: content})
+	}
+	turn.DingTalkHistory = lines
+	return turn
+}
+
+func (c *Coordinator) listHistory(ctx context.Context, sessionID pgtype.UUID, limit int32) []HistoryLine {
+	if c == nil || c.Queries == nil || !sessionID.Valid || limit <= 0 {
+		return nil
+	}
+	page, err := c.Queries.ListChatMessagesPage(ctx, db.ListChatMessagesPageParams{
+		ChatSessionID: sessionID,
+		Limit:         limit,
+	})
+	if err != nil {
+		return nil
+	}
+	var lines []HistoryLine
 	for i := len(page) - 1; i >= 0; i-- {
 		content := strings.TrimSpace(page[i].Content)
 		if content == "" {
 			continue
 		}
-		turn.History = append(turn.History, HistoryLine{
+		lines = append(lines, HistoryLine{
 			Role:    page[i].Role,
 			Content: clipRunes(content, 160),
 		})
 	}
-	return turn
+	return lines
 }
 
 func (c *Coordinator) coordinatorOff(ctx context.Context, turn Turn) bool {

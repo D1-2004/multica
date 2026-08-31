@@ -20,6 +20,7 @@ func TestRoutingContractKeepsLookupInSandbox(t *testing.T) {
 		"This loop's lack of tools is never a reason to reply",
 		"If the sandbox would act, action=issue",
 		"They must not change the action or invent capability limits",
+		"You have no tools",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)
@@ -182,7 +183,7 @@ func TestJudgmentDecideDeterministic(t *testing.T) {
 		},
 		{
 			name: "switch_off_continue",
-			c:    &Coordinator{LLM: enabledLLM, Queries: coordQueriesStub{inbound: false}},
+			c:    &Coordinator{LLM: enabledLLM, Queries: &coordQueriesStub{inbound: false}},
 			turn: Turn{Source: SourceWeb, Addressed: true, Message: "帮我看看今天有什么新闻", AgentID: testAgentID()},
 			want: ActionContinue,
 		},

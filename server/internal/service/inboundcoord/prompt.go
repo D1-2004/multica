@@ -77,6 +77,16 @@ func buildUserPrompt(turn Turn) string {
 			b.WriteString("\n")
 		}
 	}
+	if len(turn.DingTalkHistory) > 0 {
+		b.WriteString("\nrecent_dingtalk_history:\n")
+		for _, line := range turn.DingTalkHistory {
+			b.WriteString("- ")
+			b.WriteString(line.Role)
+			b.WriteString(": ")
+			b.WriteString(line.Content)
+			b.WriteString("\n")
+		}
+	}
 	b.WriteString("\ncurrent_message:\n")
 	b.WriteString(strings.TrimSpace(turn.Message))
 	b.WriteString("\n")

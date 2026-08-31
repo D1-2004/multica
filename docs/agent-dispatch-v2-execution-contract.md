@@ -21,14 +21,21 @@ remain Issue-only because neither has a foreground Chat session to release.
 
 ### Inbound short loop (reply vs issue)
 
-Before a sandbox starts, Multica runs one bounded server-side JSON decision on
-web Chat and on DingTalk `channel/message.created` for digital employees and
-robots. The decisioner is a router: it has no tools. Related Issue tasks for the
-current conversation may be injected from the scene graph. It must not answer from
-its own knowledge. Direct reply **is** the Chat response. Only work that needs
-tools, lookup, or tracking becomes an Issue and starts a sandbox. The loop
-does not call DWS, does not redeem a ContextToken, and is not behind a feature
-flag. It uses `qwen3.7-plus` with thinking off and a 10s wall clock. Agent
+Before a sandbox starts, Multica runs **one** bounded server-side JSON decision
+(`GenerateJSONFast`, no thinking, no tool loop) on web Chat and on DingTalk
+`channel/message.created` for digital employees and robots. The decisioner is a
+router: it has no tools and must not answer from its own knowledge. Related
+Issue tasks for the current conversation may be injected from the scene graph.
+Direct reply **is** the Chat response. Only work that needs tools, lookup, or
+tracking becomes an Issue and starts a sandbox.
+
+The loop does not expose DWS, search, or news as model-callable tools, does not
+redeem a ContextToken, and is not behind a feature flag. On robot and digital
+employee turns, the server loads the current DingTalk conversation's last 10
+messages **before** that one JSON call (from the bound Multica session, or the
+dispatch window if the session is empty). A history lookup failure leaves
+history empty and still runs the decision. Web Chat does not load DingTalk
+history. It uses `qwen3.7-plus` with thinking off and a 10s wall clock. Agent
 setting `inbound_coordinator` is on by default for new and existing agents;
 an explicit owner off switch skips the loop and enqueues the sandbox.
 
