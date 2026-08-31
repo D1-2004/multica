@@ -301,6 +301,36 @@ func TestAttachDingTalkConversationPrefersBoundSessionOverWindow(t *testing.T) {
 	}
 }
 
+func TestWindowHistorySkipsCurrentAndAttachKeepsLastTenForDigitalEmployee(t *testing.T) {
+	texts := make([]string, 0, 13)
+	for i := 0; i < 12; i++ {
+		texts = append(texts, "窗"+string(rune('A'+i)))
+	}
+	current := "帮我看看今天有什么新闻"
+	texts = append(texts, current, "  ")
+	window := WindowHistory(texts, current)
+	turn := AttachDingTalkConversation(
+		context.Background(),
+		nil,
+		Turn{Source: SourceDigitalEmployee, Message: current},
+		pgtype.UUID{},
+		window,
+	)
+	if len(turn.DingTalkHistory) != dingtalkHistoryLimit {
+		t.Fatalf("digital-employee window history = %d, want %d", len(turn.DingTalkHistory), dingtalkHistoryLimit)
+	}
+	if turn.DingTalkHistory[0].Content != "窗C" || turn.DingTalkHistory[9].Content != "窗L" {
+		t.Fatalf("clipped window = %#v", turn.DingTalkHistory)
+	}
+	prompt := buildUserPrompt(turn)
+	if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "窗C") || !strings.Contains(prompt, "窗L") {
+		t.Fatalf("prompt missing clipped dingtalk window: %q", prompt)
+	}
+	if strings.Contains(prompt, "user: "+current) {
+		t.Fatalf("current message leaked into dingtalk history: %q", prompt)
+	}
+}
+
 func TestAttachDingTalkConversationDigitalEmployeeListsTenEvenWhenPageEmpty(t *testing.T) {
 	q := &coordQueriesStub{}
 	c := &Coordinator{Queries: q}

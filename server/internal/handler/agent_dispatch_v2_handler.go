@@ -1082,19 +1082,11 @@ func dispatchCoordinatorChatSessionID(
 }
 
 func dispatchWindowHistory(command DispatchCommand, current string) []inboundcoord.HistoryLine {
-	current = strings.TrimSpace(current)
-	lines := make([]inboundcoord.HistoryLine, 0, len(command.Event.Data.Messages))
+	texts := make([]string, 0, len(command.Event.Data.Messages))
 	for _, m := range command.Event.Data.Messages {
-		text := strings.TrimSpace(m.Text)
-		if text == "" || text == current {
-			continue
-		}
-		lines = append(lines, inboundcoord.HistoryLine{
-			Role:    "user",
-			Content: text,
-		})
+		texts = append(texts, m.Text)
 	}
-	return lines
+	return inboundcoord.WindowHistory(texts, current)
 }
 
 func writeDispatchCoordinatorTerminal(

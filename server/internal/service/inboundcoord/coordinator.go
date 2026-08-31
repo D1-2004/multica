@@ -260,6 +260,22 @@ func (c *Coordinator) FillDingTalkHistory(ctx context.Context, turn Turn, sessio
 	return turn
 }
 
+// WindowHistory copies prior conversation texts as user lines, skipping the
+// current message and blanks. Digital-employee dispatch uses this when the
+// bound session is empty.
+func WindowHistory(texts []string, current string) []HistoryLine {
+	current = strings.TrimSpace(current)
+	lines := make([]HistoryLine, 0, len(texts))
+	for _, text := range texts {
+		text = strings.TrimSpace(text)
+		if text == "" || text == current {
+			continue
+		}
+		lines = append(lines, HistoryLine{Role: "user", Content: text})
+	}
+	return lines
+}
+
 // AttachDingTalkConversation is the robot/digital-employee pre-Decide hook:
 // prefer the bound session's last 10 rows, else the caller-supplied window.
 // Web Chat is a no-op. Empty history is not an error.
