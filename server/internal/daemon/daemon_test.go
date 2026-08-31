@@ -4080,7 +4080,6 @@ func TestReportTaskResult_CompletedHitsCompleteEndpoint(t *testing.T) {
 		BranchName: "agent/foo",
 		SessionID:  "ses-1",
 		WorkDir:    "/tmp/foo",
-		ReplyDecision: &protocol.ReplyDecision{ShouldReply: false, Reason: "echo"},
 	}, slog.Default())
 
 	rec.mu.Lock()
@@ -4100,9 +4099,8 @@ func TestReportTaskResult_CompletedHitsCompleteEndpoint(t *testing.T) {
 	if rec.payload["session_id"] != "ses-1" {
 		t.Errorf("session_id: got %v", rec.payload["session_id"])
 	}
-	decision, ok := rec.payload["reply_decision"].(map[string]any)
-	if !ok || decision["shouldReply"] != false || decision["reason"] != "echo" {
-		t.Errorf("reply_decision: got %#v", rec.payload["reply_decision"])
+	if _, ok := rec.payload["reply_decision"]; ok {
+		t.Errorf("daemon must not send reply_decision: %#v", rec.payload)
 	}
 }
 

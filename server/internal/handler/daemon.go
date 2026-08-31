@@ -3887,6 +3887,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.Output, req.ReplyDecision = service.NormalizeReplyDecisionOutput(req.Output, req.ReplyDecision)
 
 	// GH #6402: a daemon whose backend does not (yet) read the provider's
 	// structured terminal reason reports a context-exhausted run as a clean

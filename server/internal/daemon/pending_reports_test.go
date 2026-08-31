@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func testPendingDaemon(t *testing.T, serverURL string, store *pendingReportStore) *Daemon {
@@ -53,7 +52,6 @@ func TestPendingReportStoreRoundtripPreservesProviderOutput(t *testing.T) {
 		Kind:   pendingReportKindComplete,
 		TaskID: "task-provider-output",
 		Output: "provider final output",
-		ReplyDecision: &protocol.ReplyDecision{ShouldReply: false, Reason: "echo"},
 	})
 
 	reloaded := loadPendingReportStore(path, nil)
@@ -63,9 +61,6 @@ func TestPendingReportStoreRoundtripPreservesProviderOutput(t *testing.T) {
 	}
 	if snapshot[0].Output != "provider final output" {
 		t.Fatalf("provider output = %q", snapshot[0].Output)
-	}
-	if snapshot[0].ReplyDecision == nil || snapshot[0].ReplyDecision.ShouldReply || snapshot[0].ReplyDecision.Reason != "echo" {
-		t.Fatalf("reply decision = %#v", snapshot[0].ReplyDecision)
 	}
 }
 
@@ -101,9 +96,8 @@ func TestDrainPendingReportsRedelivers(t *testing.T) {
 			if _, ok := body["result_message"]; ok {
 				t.Fatalf("legacy result_message was replayed: %#v", body)
 			}
-			decision, ok := body["reply_decision"].(map[string]any)
-			if !ok || decision["shouldReply"] != false || decision["reason"] != "echo" {
-				t.Fatalf("replayed reply_decision = %#v", body["reply_decision"])
+			if _, ok := body["reply_decision"]; ok {
+				t.Fatalf("pending replay sent reply_decision: %#v", body)
 			}
 		case "/api/daemon/tasks/task-b/fail":
 			failCalls.Add(1)
@@ -130,7 +124,6 @@ func TestDrainPendingReportsRedelivers(t *testing.T) {
 		Kind:   pendingReportKindComplete,
 		TaskID: "task-a",
 		Output: "provider final output",
-		ReplyDecision: &protocol.ReplyDecision{ShouldReply: false, Reason: "echo"},
 	})
 	store.Enqueue(pendingTerminalReport{
 		Kind:          pendingReportKindFail,
@@ -206,7 +199,6 @@ func TestDrainPendingReportsConvertsPermanentComplete(t *testing.T) {
 		Kind:   pendingReportKindComplete,
 		TaskID: "task-a",
 		Output: "provider final output",
-		ReplyDecision: &protocol.ReplyDecision{ShouldReply: false, Reason: "echo"},
 	})
 
 	d := testPendingDaemon(t, srv.URL, store)
@@ -216,9 +208,6 @@ func TestDrainPendingReportsConvertsPermanentComplete(t *testing.T) {
 	snap := store.Snapshot()
 	if len(snap) != 1 || snap[0].Kind != pendingReportKindFail {
 		t.Fatalf("expected converted fail entry, got %+v", snap)
-	}
-	if snap[0].ReplyDecision != nil {
-		t.Fatalf("converted fail retained reply decision: %#v", snap[0].ReplyDecision)
 	}
 
 	// Second pass: the fail replay succeeds → entry removed.

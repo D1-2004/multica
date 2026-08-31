@@ -108,6 +108,7 @@ func buildTaskCompletion(
 	errMessage string,
 	failureReason string,
 ) TaskCompletion {
+	result = normalizeTaskCompletionResult(result)
 	resultMessage := redact.Text(util.UnescapeBackslashEscapes(lastReply))
 	var replyDecision *protocol.ReplyDecision
 	if status == "completed" {

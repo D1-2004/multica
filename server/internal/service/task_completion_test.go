@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const taskCompletionTestTarget = "router-target:v1:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -102,6 +103,25 @@ func TestBuildTaskCompletionCarriesSuccessfulReplyDecision(t *testing.T) {
 		"",
 		"",
 	)
+	if completion.ReplyDecision == nil || completion.ReplyDecision.ShouldReply || completion.ReplyDecision.Reason != "echo" {
+		t.Fatalf("reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
+func TestBuildTaskCompletionNormalizesRawReplyDecisionOutput(t *testing.T) {
+	result := []byte("{\"output\":\"可见回复\\n\\n```multica-reply-decision\\n{\\\"shouldReply\\\":false,\\\"reason\\\":\\\"echo\\\"}\\n```\"}")
+	completion := buildTaskCompletion(
+		taskCompletionTarget{RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		"",
+		"",
+		"",
+	)
+	if completion.ResultMessage != "可见回复" {
+		t.Fatalf("result message = %q", completion.ResultMessage)
+	}
 	if completion.ReplyDecision == nil || completion.ReplyDecision.ShouldReply || completion.ReplyDecision.Reason != "echo" {
 		t.Fatalf("reply decision = %#v", completion.ReplyDecision)
 	}
@@ -292,13 +312,28 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	if _, err := svc.CompleteTask(
 		ctx,
 		util.MustParseUUID(taskID),
-		[]byte(`{"output":"agent execution summary","reply_decision":{"shouldReply":false,"reason":"echo"}}`),
+		[]byte("{\"output\":\"agent execution summary\\n\\n```multica-reply-decision\\n{\\\"shouldReply\\\":false,\\\"reason\\\":\\\"echo\\\"}\\n```\"}"),
 		"session-1",
 		"",
 		false,
 		"",
 	); err != nil {
 		t.Fatal(err)
+	}
+
+	var persistedResult []byte
+	if err := pool.QueryRow(ctx, `SELECT result FROM agent_task_queue WHERE id = $1`, taskID).Scan(&persistedResult); err != nil {
+		t.Fatal(err)
+	}
+	var persistedPayload protocol.TaskCompletedPayload
+	if err := json.Unmarshal(persistedResult, &persistedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if persistedPayload.Output != "agent execution summary" {
+		t.Fatalf("persisted output = %q", persistedPayload.Output)
+	}
+	if persistedPayload.ReplyDecision == nil || persistedPayload.ReplyDecision.ShouldReply || persistedPayload.ReplyDecision.Reason != "echo" {
+		t.Fatalf("persisted reply decision = %#v", persistedPayload.ReplyDecision)
 	}
 
 	var rootTaskID, terminalTaskID, requestID, status, message, targetIdentity string

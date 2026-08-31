@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // AgentEntry describes a single available agent CLI.
@@ -291,7 +290,6 @@ type TaskResult struct {
 	WorkDir       string `json:"work_dir,omitempty"`   // working directory used during execution
 	EnvRoot       string `json:"-"`                    // env root dir for writing GC metadata (not sent to server)
 	FailureReason string `json:"-"`                    // classifier forwarded to FailTask on the blocked path; empty falls back to 'agent_error'
-	ReplyDecision *protocol.ReplyDecision `json:"reply_decision,omitempty"`
 	// SessionRolloutMissing is set when the daemon withheld this task's Codex
 	// session because its rollout was not in the store (MUL-5305). Forwarded to
 	// the terminal report so the server clears the resume pointer and flags the

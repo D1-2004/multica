@@ -321,14 +321,25 @@ its final provider output:
 ```
 ````
 
-Multica recognizes the block only when the fence is terminal and the JSON is
-one object containing required boolean `shouldReply` plus optional string
-`reason`, with no other fields. Invalid JSON, missing or non-boolean
-`shouldReply`, unknown fields, and a matching fence anywhere except the end are
-ordinary visible output and are not removed. On a valid match, Multica removes
-the entire fence from user-visible `output`/`resultMessage` and carries the
-decision separately through the daemon completion callback as
-`reply_decision={shouldReply,reason?}`.
+The daemon transparently sends the provider output; it does not parse, remove,
+persist, or separately report this decision. At the server-side
+`/api/daemon/tasks/{taskId}/complete` boundary, before context-exhaustion
+classification or any persistence, Multica removes every complete fenced block
+whose info string is exactly `multica-reply-decision`, wherever it appears in
+the provider output. Ordinary Markdown fences are unchanged. Each removed block
+is independently parsed as one JSON object containing required boolean
+`shouldReply` plus optional string `reason`, with no other fields. Invalid JSON,
+missing or non-boolean `shouldReply`, unknown fields, and invalid `reason` values
+produce no decision but the internal control block remains removed from every
+user-visible `output`/`resultMessage`. When several blocks are present, the last
+strictly valid block in document order wins; if none are valid, the decision
+remains absent.
+
+For rolling compatibility, the complete request still accepts optional
+`reply_decision={shouldReply,reason?}` from an already-upgraded daemon. A strict
+valid decision embedded in `output` is authoritative and replaces that field;
+when no embedded decision is valid, the explicit structured field is retained.
+Malformed or missing embedded data never materializes `shouldReply=false`.
 
 The terminal Router `execution-result` request exposes the decision as optional
 top-level `shouldReply` and `replyReason`. Absence remains absence; it is never
@@ -786,3 +797,31 @@ parsing or rewriting Router's context string.
   false. Reusing the immutable JSONB snapshot keeps retry payloads stable and
   avoids changing `SELECT *`/`RETURNING *` scan shapes while old and new
   completion workers overlap.
+
+## Change record: 2026-08-31 AI reply decision visibility cleanup
+
+- History: Decoupled control-block removal from strict decision parsing. Every
+  complete `multica-reply-decision` fence is removed from visible output even
+  when it is non-terminal or contains an invalid payload. Strictly valid blocks
+  still produce the optional structured decision; with multiple blocks, the
+  last valid block wins. Other Markdown fences remain byte-for-byte visible.
+- Reason: Treating parse failure or an incorrect block position as visible text
+  leaked an internal delivery-control protocol through `output` and
+  `resultMessage`. Independent cleanup prevents that disclosure while retaining
+  the conservative nil fallback, so Router never interprets malformed or
+  missing control data as `shouldReply=false`.
+
+## Change record: 2026-08-31 Move reply decision authority to server complete
+
+- History: Moved reply-decision parsing and visible-output cleanup from the
+  sandbox daemon to the Multica server complete boundary. The daemon again
+  transparently sends raw provider output and no longer creates or persists a
+  separate decision in its client or pending-report queue. The server cleans
+  and normalizes the result before task, chat outcome, execution update, and
+  completion outbox writes. Embedded valid decisions override an explicit
+  compatibility field; otherwise that field is retained.
+- Reason: Daemon parsing tied correctness to the sandbox runtime image's pinned
+  Multica commit, so deploying the server could not repair existing runtimes.
+  Server-side authority makes one Multica backend deployment cover old daemons
+  while preserving rolling compatibility and the existing durable Router
+  delivery chain.
