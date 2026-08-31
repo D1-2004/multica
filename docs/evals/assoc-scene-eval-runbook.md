@@ -9,7 +9,7 @@ for outbound-cid cases. Do not treat assistant self-report as a hit.
 | Field | Value |
 |---|---|
 | Agent | 须莫v10 Pre FC Pi `21e465ff-5d08-4eb4-95f7-8e5ef1982de3` |
-| Workspace | 浴发空间 yufa `f26b4b03-7e4a-4da7-8330-ce04d25fa513` |
+| Workspace | 浴发空间 yufa `f26b4b03-7f10-4da7-8330-ce04d25fa513` |
 | Environment | staging / pre-fde-workbench |
 | Robot | FDE教练迁移验收 `botOpenDingTalkId=DiiD01p03EN0Nv2UWmMN7xXko7mbcr2vyo` |
 | Robot scene | `cidgHGkMo8/zFFExGEukusUo+2ztG4QNbeO5YhzdtRPka4=` |
@@ -24,7 +24,7 @@ Channel A (platform CLI) is blocked while the pre-fde human token returns 401.
 Do not fall through to production `~/.multica/config.json`.
 
 Auth for recall API: a2a-pre-e2e token as 菲迪, header
-`X-Workspace-ID: f26b4b03-7e4a-4da7-8330-ce04d25fa513`.
+`X-Workspace-ID: f26b4b03-7f10-4da7-8330-ce04d25fa513`.
 Member recall requires `agent_id=21e465ff-5d08-4eb4-95f7-8e5ef1982de3`.
 
 ## Recall contract (what to optimize)
