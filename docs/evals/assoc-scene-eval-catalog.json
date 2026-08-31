@@ -1,0 +1,47 @@
+{
+  "$schema": "dingtalk-agent/eval-catalog@1",
+  "id": "assoc-scene-issue-task",
+  "description": "Verify Event/Scene/Issue-Task association on the FDE教练迁移验收 robot path: outbound dws to 冬翔, bind, and recall. Prompts and assertions live in the suite, not here.",
+  "scenarioGroups": [
+    {
+      "id": "authority-and-egress",
+      "title": "Sandbox dws outbound is real delivery",
+      "why": "Assistant text in the robot chat is not delivery. Only an independent DingTalk readback of a message to 冬翔 proves egress.",
+      "risk": "safety",
+      "evidenceSurfaces": ["platform-trace", "remote-readback"],
+      "caseRefs": [
+        { "suite": "docs/evals/assoc-scene-eval-suite.json", "ids": ["robot-outbound-dws-to-dongxiang"] }
+      ]
+    },
+    {
+      "id": "task-lifecycle",
+      "title": "Outbound scene binds to the Issue and later replies recall it",
+      "why": "A new DM cid must hang on the same Issue. Recall by conversation_id is the product contract, not chat history reconstruction.",
+      "risk": "reliability",
+      "evidenceSurfaces": ["platform-trace", "remote-readback"],
+      "caseRefs": [
+        { "suite": "docs/evals/assoc-scene-eval-suite.json", "ids": ["bind-outbound-cid-to-issue", "recall-from-dongxiang-dm"] }
+      ]
+    },
+    {
+      "id": "conversation-contract",
+      "title": "Coordinator clarifies then assigns, does not fake DWS",
+      "why": "The short loop may ack and open an Issue. It must not claim the DM was sent.",
+      "risk": "quality",
+      "evidenceSurfaces": ["response", "platform-trace"],
+      "caseRefs": [
+        { "suite": "docs/evals/assoc-scene-eval-suite.json", "ids": ["coordinator-issue-ack-not-delivery"] }
+      ]
+    },
+    {
+      "id": "platform-reliability",
+      "title": "Robot inbound is a distinct scene from the 冬翔 DM",
+      "why": "Robot cid and digital-employee cid are different. Binding the wrong scene makes recall lie.",
+      "risk": "reliability",
+      "evidenceSurfaces": ["platform-trace", "remote-readback"],
+      "caseRefs": [
+        { "suite": "docs/evals/assoc-scene-eval-suite.json", "ids": ["robot-cid-not-confused-with-de-cid"] }
+      ]
+    }
+  ]
+}
