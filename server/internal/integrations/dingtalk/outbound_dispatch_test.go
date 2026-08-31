@@ -23,6 +23,9 @@ type dispatchLifecycleQueries struct {
 
 	mu     sync.Mutex
 	claims map[string]bool
+
+	stream    *fakeStreamEmotionQueries
+	lastReply string
 }
 
 func (q *dispatchLifecycleQueries) GetChannelChatSessionBindingBySession(context.Context, db.GetChannelChatSessionBindingBySessionParams) (db.ChannelChatSessionBinding, error) {
@@ -68,6 +71,20 @@ func (q *dispatchLifecycleQueries) claim(name string) bool {
 	}
 	q.claims[name] = true
 	return true
+}
+
+func (q *dispatchLifecycleQueries) GetDingTalkProcessingEmotionBySourceMessage(ctx context.Context, sourceMessageID string) (db.DingtalkProcessingEmotion, error) {
+	if q.stream == nil {
+		return db.DingtalkProcessingEmotion{}, pgx.ErrNoRows
+	}
+	return q.stream.GetDingTalkProcessingEmotionBySourceMessage(ctx, sourceMessageID)
+}
+
+func (q *dispatchLifecycleQueries) GetLastTaskReplyText(context.Context, pgtype.UUID) (pgtype.Text, error) {
+	if strings.TrimSpace(q.lastReply) == "" {
+		return pgtype.Text{}, pgx.ErrNoRows
+	}
+	return pgtype.Text{String: q.lastReply, Valid: true}, nil
 }
 
 type dispatchRobotRecorder struct {
@@ -245,5 +262,89 @@ func TestDispatchRobotFailureRecallsAndRepliesToPrivateSender(t *testing.T) {
 	msgParam, _ := reply["msgParam"].(string)
 	if !strings.Contains(msgParam, "处理失败") {
 		t.Fatalf("private failure reply = %q", msgParam)
+	}
+}
+
+func TestDispatchRobotStreamEmotionOwnsLifecycleAndPostsLastReply(t *testing.T) {
+	recorder, server := newDispatchRobotServer(t)
+	taskID := typingTestUUID(51)
+	workspaceID := typingTestUUID(52)
+	agentID := typingTestUUID(53)
+	inst := testInstallationRow(t, typingTestUUID(54), "client_stream")
+	streamQ := newFakeStreamEmotionQueries(inst)
+	queries := &dispatchLifecycleQueries{
+		inst:      inst,
+		task:      db.AgentTaskQueue{ID: taskID},
+		stream:    streamQ,
+		lastReply: "今日要闻：预发环境没有外网，查到的是本地摘要。",
+	}
+	messenger := NewRobotMessenger(server.URL, server.URL, server.Client())
+	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, streamQ, nil)
+	mgr.beginStreamEmotion(context.Background(), inst.ID, "msg-2", EmotionTarget{
+		OpenConversationID: "cid-1", OpenMsgID: "msg-2", RobotCode: "robot_client_stream",
+	}, 0)
+	outbound := NewOutbound(queries, plaintextDecrypter, messenger, mgr, nil)
+	parentPayload := dispatchLifecyclePayload(util.UUIDToString(taskID), util.UUIDToString(workspaceID), util.UUIDToString(agentID), "group")
+	childPayload := dispatchLifecyclePayload(util.UUIDToString(typingTestUUID(55)), util.UUIDToString(workspaceID), util.UUIDToString(agentID), "group")
+	childPayload["dispatch_idempotency_key"] = "dispatch-window:window-1:retry"
+
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskQueued, Payload: parentPayload}); err != nil {
+		t.Fatalf("parent queued: %v", err)
+	}
+	parentPayload["retry_pending"] = true
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskFailed, Payload: parentPayload}); err != nil {
+		t.Fatalf("parent retry-pending failed: %v", err)
+	}
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskQueued, Payload: childPayload}); err != nil {
+		t.Fatalf("child queued: %v", err)
+	}
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskCompleted, Payload: childPayload}); err != nil {
+		t.Fatalf("child completed: %v", err)
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	wantSequence := []string{
+		"/v1.0/robot/emotion/reply",
+		"/v1.0/robot/emotion/recall",
+		"/v1.0/robot/groupMessages/send",
+	}
+	if len(recorder.sequence) != len(wantSequence) {
+		t.Fatalf("stream-owned DingTalk calls = %v, want %v", recorder.sequence, wantSequence)
+	}
+	for i := range wantSequence {
+		if recorder.sequence[i] != wantSequence[i] {
+			t.Fatalf("stream-owned DingTalk calls = %v, want %v", recorder.sequence, wantSequence)
+		}
+	}
+	reply := recorder.bodies["/v1.0/robot/groupMessages/send"][0]
+	msgParam, _ := reply["msgParam"].(string)
+	if !strings.Contains(msgParam, "今日要闻") {
+		t.Fatalf("robot completion reply = %q, want last agent comment", msgParam)
+	}
+}
+
+func TestDispatchRobotRetryPendingFailureStaysSilent(t *testing.T) {
+	recorder, server := newDispatchRobotServer(t)
+	taskID := typingTestUUID(61)
+	queries := &dispatchLifecycleQueries{
+		inst: testInstallationRow(t, typingTestUUID(62), "client_retry"),
+		task: db.AgentTaskQueue{ID: taskID},
+	}
+	outbound := NewOutbound(queries, plaintextDecrypter, NewRobotMessenger(server.URL, server.URL, server.Client()), nil, nil)
+	payload := dispatchLifecyclePayload(util.UUIDToString(taskID), util.UUIDToString(typingTestUUID(63)), util.UUIDToString(typingTestUUID(64)), "group")
+
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskQueued, Payload: payload}); err != nil {
+		t.Fatalf("queued lifecycle: %v", err)
+	}
+	payload["retry_pending"] = true
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskFailed, Payload: payload}); err != nil {
+		t.Fatalf("retry-pending failed: %v", err)
+	}
+
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.sequence) != 1 || recorder.sequence[0] != "/v1.0/robot/emotion/reply" {
+		t.Fatalf("retry-pending DingTalk calls = %v, want one processing emotion", recorder.sequence)
 	}
 }

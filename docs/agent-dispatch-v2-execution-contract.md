@@ -50,7 +50,17 @@ or digital employee) persist as `message_kind=coordinator` with the short-loop
 reason on the assistant row, so the web Chat can label them and fold the
 decision process without a sandbox timeline.
 
-Calendar, approval, emotion-only, and A2A events skip this loop.
+Calendar, approval, emotion-only, and A2A events skip this loop. Digital-employee
+`emotionReply` events whose operator is the agent itself (Router 处理中/已完成
+indications, or the sandbox adding then removing an ack) are closed as silence
+and do not create Issue or comment work. A colleague sticking 赞 on the agent's
+message still dispatches.
+
+Robot Stream callbacks attach the processing emotion at inbox time. Issue-backed
+`robot_sdk` dispatch must not add or recall that same emotion while the Stream
+row exists: retries and child tasks would flap it. A retry-pending `task:failed`
+stays silent. Terminal complete or failed-without-retry settles the Stream row
+and posts the last agent comment through the Robot SDK when `output` is empty.
 
 ### Issue threading
 

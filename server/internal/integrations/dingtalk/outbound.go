@@ -64,8 +64,10 @@ func NewOutbound(q outboundQueries, decrypt Decrypter, messenger *RobotMessenger
 
 // Register covers both ingress generations. Legacy Stream sessions settle on
 // chat-done/task-failed through TypingIndicatorManager. Dispatch Command 2.0
-// issue tasks use task:queued for the processing emotion and terminal task
-// events for recall plus robot_sdk reply.
+// issue tasks that did not already attach a Stream processing emotion use
+// task:queued for that emotion and terminal task events for recall plus
+// robot_sdk reply. Stream-owned rows keep a single emotion for the whole
+// retry chain; dispatch only posts the terminal markdown.
 func (o *Outbound) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventChatDone, o.handleEvent)
 	bus.Subscribe(protocol.EventTaskQueued, o.handleEvent)
@@ -290,6 +292,14 @@ type dispatchTaskResultResolver interface {
 	GetAgentTask(context.Context, pgtype.UUID) (db.AgentTaskQueue, error)
 }
 
+type dispatchLastReplyResolver interface {
+	GetLastTaskReplyText(context.Context, pgtype.UUID) (pgtype.Text, error)
+}
+
+type streamProcessingEmotionStore interface {
+	GetDingTalkProcessingEmotionBySourceMessage(context.Context, string) (db.DingtalkProcessingEmotion, error)
+}
+
 type dispatchRobotRoute struct {
 	credentials channelCredentials
 	reply       RobotTarget
@@ -338,26 +348,47 @@ func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bo
 		return true, errors.New("dingtalk dispatch outbound: missing idempotency key")
 	}
 
+	retryPending := false
+	if e.Type == protocol.EventTaskFailed {
+		retryPending, _ = payload["retry_pending"].(bool)
+	}
+	if e.Type == protocol.EventTaskFailed && retryPending {
+		return true, nil
+	}
+
+	streamRow, streamOwned := o.streamProcessingEmotion(ctx, dispatchLatestOpenMsgID(payload))
 	wantProcessing := false
 	wantRecall := false
 	wantReply := false
+	wantStreamSettle := false
 	content := ""
 	switch e.Type {
 	case protocol.EventTaskQueued:
-		wantProcessing, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseProcessing)
+		if !streamOwned {
+			wantProcessing, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseProcessing)
+		}
 	case protocol.EventTaskCompleted:
-		wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		if !streamOwned {
+			wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		}
 		content = o.dispatchCompletionContent(ctx, taskUUID, payload)
 		if strings.TrimSpace(content) != "" {
 			wantReply, err = o.claimDispatchPhaseAfter(ctx, taskUUID, idempotencyKey, dispatchPhaseOutbound, err)
 		}
+		wantStreamSettle = streamOwned
 	case protocol.EventTaskFailed:
-		wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		if !streamOwned {
+			wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		}
 		content = taskFailedText
 		wantReply, err = o.claimDispatchPhaseAfter(ctx, taskUUID, idempotencyKey, dispatchPhaseOutbound, err)
+		wantStreamSettle = streamOwned
 	}
 	if err != nil {
 		return true, err
+	}
+	if wantStreamSettle {
+		o.settleStreamProcessingEmotion(ctx, streamRow)
 	}
 	if !wantProcessing && !wantRecall && !wantReply {
 		return true, nil
@@ -391,19 +422,52 @@ func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.
 	if strings.TrimSpace(output) != "" {
 		return output
 	}
-	resolver, ok := o.q.(dispatchTaskResultResolver)
-	if !ok {
-		return ""
+	if resolver, ok := o.q.(dispatchTaskResultResolver); ok {
+		task, err := resolver.GetAgentTask(ctx, taskID)
+		if err == nil {
+			var result protocol.TaskCompletedPayload
+			if json.Unmarshal(task.Result, &result) == nil && strings.TrimSpace(result.Output) != "" {
+				return result.Output
+			}
+		}
 	}
-	task, err := resolver.GetAgentTask(ctx, taskID)
+	if reader, ok := o.q.(dispatchLastReplyResolver); ok {
+		reply, err := reader.GetLastTaskReplyText(ctx, taskID)
+		if err == nil && strings.TrimSpace(reply.String) != "" {
+			return reply.String
+		}
+	}
+	return ""
+}
+
+func (o *Outbound) streamProcessingEmotion(ctx context.Context, sourceMessageID string) (db.DingtalkProcessingEmotion, bool) {
+	store, ok := o.q.(streamProcessingEmotionStore)
+	if !ok || strings.TrimSpace(sourceMessageID) == "" {
+		return db.DingtalkProcessingEmotion{}, false
+	}
+	row, err := store.GetDingTalkProcessingEmotionBySourceMessage(ctx, strings.TrimSpace(sourceMessageID))
 	if err != nil {
+		return db.DingtalkProcessingEmotion{}, false
+	}
+	return row, true
+}
+
+func (o *Outbound) settleStreamProcessingEmotion(ctx context.Context, row db.DingtalkProcessingEmotion) {
+	if o.typing == nil {
+		return
+	}
+	o.typing.settleStreamSource(ctx, row.InstallationID, row.SourceMessageID)
+}
+
+func dispatchLatestOpenMsgID(payload map[string]any) string {
+	data, _ := payload["dispatch_event_data"].(map[string]any)
+	messages, _ := data["messages"].([]any)
+	if len(messages) == 0 {
 		return ""
 	}
-	var result protocol.TaskCompletedPayload
-	if json.Unmarshal(task.Result, &result) != nil {
-		return ""
-	}
-	return result.Output
+	latest, _ := messages[len(messages)-1].(map[string]any)
+	id, _ := latest["openMsgId"].(string)
+	return strings.TrimSpace(id)
 }
 
 func (o *Outbound) resolveDispatchRobotRoute(ctx context.Context, payload map[string]any) (dispatchRobotRoute, error) {

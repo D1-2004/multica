@@ -46,6 +46,7 @@ type DispatchSender struct {
 	OpenDingTalkID       string `json:"openDingTalkId,omitempty"`
 	SenderOpenDingTalkID string `json:"senderOpenDingTalkId,omitempty"`
 	StaffID              string `json:"staffId,omitempty"`
+	UID                  string `json:"uid,omitempty"`
 }
 
 type DispatchAttachment struct {
@@ -1128,13 +1129,79 @@ func dispatchDisplayIdentitiesFrom(c DispatchCommand) dispatchDisplayIdentities 
 }
 
 func dispatchSenderIdentifiers(sender DispatchSender) []string {
-	ids := make([]string, 0, 3)
-	for _, id := range []string{sender.OpenDingTalkID, sender.SenderOpenDingTalkID, sender.StaffID} {
+	ids := make([]string, 0, 4)
+	for _, id := range []string{sender.UID, sender.OpenDingTalkID, sender.SenderOpenDingTalkID, sender.StaffID} {
 		if trimmed := strings.TrimSpace(id); trimmed != "" {
 			ids = append(ids, trimmed)
 		}
 	}
 	return ids
+}
+
+func dispatchAgentIdentityIDs(c DispatchCommand) map[string]struct{} {
+	ids := make(map[string]struct{}, 1)
+	if c.ExternalIdentity.DWS != nil {
+		if uid := strings.TrimSpace(c.ExternalIdentity.DWS.UID); uid != "" {
+			ids[uid] = struct{}{}
+		}
+	}
+	return ids
+}
+
+func dispatchWindowIsReactionOnly(c DispatchCommand) bool {
+	if len(c.Event.Data.Messages) == 0 {
+		return false
+	}
+	for _, m := range c.Event.Data.Messages {
+		if m.Reaction == nil {
+			return false
+		}
+	}
+	return true
+}
+
+func dispatchLifecycleEmotionName(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "处理中", "已排队", "投递中", "已完成", "排队中", "思考中":
+		return true
+	default:
+		return false
+	}
+}
+
+func dispatchWindowIsLifecycleEmotion(c DispatchCommand) bool {
+	if !dispatchWindowIsReactionOnly(c) {
+		return false
+	}
+	for _, m := range c.Event.Data.Messages {
+		if !dispatchLifecycleEmotionName(m.Reaction.EmotionName) {
+			return false
+		}
+	}
+	return true
+}
+
+// dispatchIsAgentSelfEmotion is true when this inbound window is the digital
+// employee's own bubble emotion (Router processing/complete indications, or
+// the sandbox adding then removing an ack). Those events must not create new
+// Issue/comment work: doing so re-enters processing emotions and loops.
+func dispatchIsAgentSelfEmotion(c DispatchCommand) bool {
+	if c.Event.Domain != "channel" {
+		return false
+	}
+	if c.Event.Type != "emotionReply" && !dispatchWindowIsReactionOnly(c) {
+		return false
+	}
+	agentIDs := dispatchAgentIdentityIDs(c)
+	if len(agentIDs) == 0 {
+		return dispatchWindowIsLifecycleEmotion(c)
+	}
+	for _, id := range dispatchSenderIdentifiers(c.Event.Data.Sender) {
+		if _, ok := agentIDs[id]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // dispatchQuotedSenderRelation names who wrote a quoted message relative to the

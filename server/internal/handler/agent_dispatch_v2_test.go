@@ -2042,6 +2042,35 @@ func TestEmotionReplyDispatchParsesNumericEmotionFields(t *testing.T) {
 	}
 }
 
+func TestDispatchIsAgentSelfEmotion(t *testing.T) {
+	user := emotionReplyDispatchCommand()
+	if dispatchIsAgentSelfEmotion(user) {
+		t.Fatal("user 赞 on an agent message must still dispatch")
+	}
+
+	self := emotionReplyDispatchCommand()
+	self.Event.Data.Sender.UID = "agent-uid-1"
+	self.ExternalIdentity.DWS = &AgentDispatchDWSIdentity{UID: "agent-uid-1"}
+	if !dispatchIsAgentSelfEmotion(self) {
+		t.Fatal("digital employee reacting to its own message must be ignored")
+	}
+
+	lifecycle := emotionReplyDispatchCommand()
+	lifecycle.Event.Data.Messages[0].Reaction.EmotionName = "处理中"
+	if !dispatchIsAgentSelfEmotion(lifecycle) {
+		t.Fatal("Router processing emotion without a DWS uid must be ignored")
+	}
+
+	created := emotionReplyDispatchCommand()
+	created.Event.Type = "message.created"
+	created.Event.Data.Messages[0].Reaction = nil
+	created.Event.Data.Messages[0].Text = "帮我看看今天有什么新闻"
+	created.ExternalIdentity.DWS = &AgentDispatchDWSIdentity{UID: "agent-uid-1"}
+	if dispatchIsAgentSelfEmotion(created) {
+		t.Fatal("ordinary inbound text must not be treated as a self emotion")
+	}
+}
+
 func TestEmotionReplyDispatchValidatesAndRendersReactionEntries(t *testing.T) {
 	c := emotionReplyDispatchCommand()
 	if err := c.validate(); err != nil {

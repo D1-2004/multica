@@ -324,6 +324,19 @@ func (h *Handler) executeAgentDispatchV2(
 ) {
 	h.recordAssocInboundEvent(r.Context(), command, dispatchContext)
 
+	if dispatchIsAgentSelfEmotion(command) {
+		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "skipped_self_emotion",
+			"protocol", "dispatch_command_v2",
+			"eventType", command.Event.Type,
+			"sourceType", command.Source.Type,
+		)
+		if writeDispatchCoordinatorTerminal(w, r.Context(), h, command, dispatchContext, inboundcoord.Decision{Action: inboundcoord.ActionSilence}) {
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	if plan.MaterializerType == protocol.DispatchSurfaceTypeChat {
 		if command.Continuation != nil &&
 			(command.Continuation.Kind != "chat" || strings.TrimSpace(command.Continuation.ChatSessionID) == "") {

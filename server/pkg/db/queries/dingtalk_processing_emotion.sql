@@ -97,3 +97,10 @@ WHERE id = sqlc.arg(id);
 
 -- name: DeleteDingTalkProcessingEmotion :exec
 DELETE FROM dingtalk_processing_emotion WHERE id = $1;
+
+-- name: GetDingTalkProcessingEmotionBySourceMessage :one
+SELECT id, installation_id, source_message_id, open_conversation_id, open_msg_id, robot_code, chat_session_id, task_id, state, add_completed, attempt_count, next_attempt_at, lease_until, created_at, updated_at
+FROM dingtalk_processing_emotion
+WHERE source_message_id = sqlc.arg(source_message_id)
+ORDER BY created_at DESC
+LIMIT 1;

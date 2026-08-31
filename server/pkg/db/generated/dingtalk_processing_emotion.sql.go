@@ -171,6 +171,37 @@ func (q *Queries) DeleteDingTalkProcessingEmotion(ctx context.Context, id pgtype
 	return err
 }
 
+const getDingTalkProcessingEmotionBySourceMessage = `-- name: GetDingTalkProcessingEmotionBySourceMessage :one
+SELECT id, installation_id, source_message_id, open_conversation_id, open_msg_id, robot_code, chat_session_id, task_id, state, add_completed, attempt_count, next_attempt_at, lease_until, created_at, updated_at
+FROM dingtalk_processing_emotion
+WHERE source_message_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetDingTalkProcessingEmotionBySourceMessage(ctx context.Context, sourceMessageID string) (DingtalkProcessingEmotion, error) {
+	row := q.db.QueryRow(ctx, getDingTalkProcessingEmotionBySourceMessage, sourceMessageID)
+	var i DingtalkProcessingEmotion
+	err := row.Scan(
+		&i.ID,
+		&i.InstallationID,
+		&i.SourceMessageID,
+		&i.OpenConversationID,
+		&i.OpenMsgID,
+		&i.RobotCode,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.State,
+		&i.AddCompleted,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markDingTalkProcessingEmotionAdded = `-- name: MarkDingTalkProcessingEmotionAdded :one
 UPDATE dingtalk_processing_emotion
 SET state = CASE WHEN state = 'settled' THEN 'settled' ELSE 'active' END,

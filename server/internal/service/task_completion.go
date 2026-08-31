@@ -190,7 +190,7 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 		return false, err
 	}
 	fallbackReply := ""
-	if status == "failed" || status == "canceled" {
+	if status == "failed" || status == "canceled" || status == "completed" {
 		var replyErr error
 		fallbackReply, replyErr = resolveFailedCompletionReply(ctx, qtx, task.ID)
 		if replyErr != nil {
