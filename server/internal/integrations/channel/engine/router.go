@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -73,6 +74,8 @@ type Router struct {
 	busyNoticeMu sync.Mutex
 	busyNoticed  map[string]time.Time
 
+	coordinator *inboundcoord.Coordinator
+
 	logger *slog.Logger
 }
 
@@ -105,6 +108,12 @@ type RouterConfig struct {
 func (r *Router) SetEventBus(bus *events.Bus) {
 	if r != nil {
 		r.bus = bus
+	}
+}
+
+func (r *Router) SetInboundCoordinator(coordinator *inboundcoord.Coordinator) {
+	if r != nil {
+		r.coordinator = coordinator
 	}
 }
 
@@ -520,6 +529,37 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	if !options.DisableControlCommands {
 		issueCommand, issueCommandRequested = ParseIssueCommand(msg.CommandText)
 	}
+	coordDecision := inboundcoord.Decision{Action: inboundcoord.ActionContinue}
+	skipSandboxPrepare := false
+	var coordAgentID pgtype.UUID
+	if r.coordinator != nil && !issueCommandRequested && msg.Source.ChannelType == "dingtalk" {
+		session, sessionErr := r.reader.GetChatSession(ctx, sessionID)
+		if sessionErr != nil {
+			return Result{}, finalizeRelease, fmt.Errorf("load chat session for coordinator: %w", sessionErr)
+		}
+		coordAgentID = session.AgentID
+		turn := r.coordinator.TurnFromChatSession(
+			ctx,
+			session,
+			coordinatorSource(options, taskContext, msg.Source.ChannelType),
+			msg.AddressedToBot || msg.Source.ChatType == channel.ChatTypeP2P,
+			string(msg.Source.ChatType),
+			session.Title,
+			msg.Source.SenderID,
+			msg.Text,
+		)
+		coordDecision = r.coordinator.Decide(ctx, turn)
+		switch coordDecision.Action {
+		case inboundcoord.ActionIssue:
+			issueCommand = &IssueCommand{
+				Title:       inboundcoord.IssueTitle(coordDecision, msg.Text),
+				Description: inboundcoord.IssueDescription(coordDecision, msg.Text),
+			}
+			issueCommandRequested = true
+		case inboundcoord.ActionReply, inboundcoord.ActionSilence:
+			skipSandboxPrepare = true
+		}
+	}
 	issueNeedsUsage := issueCommandRequested && issueCommand.Title == "" && !set.DurableRuns
 	hasMedia := set.Media != nil && set.Media.HasMedia(msg)
 	resolveMedia := !issueNeedsUsage && hasMedia
@@ -555,7 +595,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		}
 		durableIssueResult = &issueRes
 	}
-	if set.DurableRuns && !issueCommandRequested {
+	if set.DurableRuns && !issueCommandRequested && !skipSandboxPrepare {
 		session, err := r.reader.GetChatSession(ctx, sessionID)
 		if err != nil {
 			return Result{}, finalizeRelease, fmt.Errorf("load chat session for durable task: %w", err)
@@ -703,6 +743,18 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		// Same renderer the broadcast payload uses, so a degraded prefix can't
 		// show the chat "#42" while the realtime list shows "-42".
 		res.IssueIdentifier = service.IssueIdentifier(prefix, issueRes.Issue.Number)
+		res.ReplyText = coordDecision.UserText
+		if issueRes.EnqueuedTask != nil {
+			res.TaskID = issueRes.EnqueuedTask.ID
+		}
+		if coordDecision.UserText != "" {
+			if persistErr := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision.UserText); persistErr != nil {
+				r.logger.Warn("channel router: persist coordinator issue ack failed",
+					"chat_session_id", uuidString(sessionID),
+					"error", persistErr,
+				)
+			}
+		}
 		// IssueService.Create already enqueues the assigned agent's issue task.
 		// Scheduling the command as a chat run too makes the agent execute the
 		// same /issue input again. A synchronous issue command is terminal.
@@ -711,6 +763,30 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 				String: command.Description,
 				Valid:  true,
 			}, msg.CommandText, deferredIssueTaskID, localMediaDeadline)
+		}
+		return res, postAppendFinalize, nil
+	}
+
+	if skipSandboxPrepare && coordDecision.Action == inboundcoord.ActionReply {
+		if err := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision.UserText); err != nil {
+			r.logger.Warn("channel router: persist coordinator reply failed",
+				"chat_session_id", uuidString(sessionID),
+				"error", err,
+			)
+		}
+		res.Outcome = OutcomeCoordinatorReply
+		res.ReplyText = coordDecision.UserText
+		res.runScheduled = false
+		if resolveMedia {
+			r.enqueueMedia(set, inst, identity, appendRes.MessageID, msg, sessionID, mediaIssue, pgtype.Text{}, "", deferredIssueTaskID, localMediaDeadline)
+		}
+		return res, postAppendFinalize, nil
+	}
+	if skipSandboxPrepare && coordDecision.Action == inboundcoord.ActionSilence {
+		res.Outcome = OutcomeCoordinatorSilence
+		res.runScheduled = false
+		if resolveMedia {
+			r.enqueueMedia(set, inst, identity, appendRes.MessageID, msg, sessionID, mediaIssue, pgtype.Text{}, "", deferredIssueTaskID, localMediaDeadline)
 		}
 		return res, postAppendFinalize, nil
 	}
@@ -1113,6 +1189,78 @@ func (r *Router) scheduleReply(set ResolverSet, inst ResolvedInstallation, msg c
 // keyForSession is the batcher key. chat_session_id is globally unique.
 func keyForSession(sessionID pgtype.UUID) string {
 	return string(sessionID.Bytes[:])
+}
+
+type coordinatorChatWriter interface {
+	CreateChatMessage(context.Context, db.CreateChatMessageParams) (db.ChatMessage, error)
+	TouchChatSession(context.Context, pgtype.UUID) error
+}
+
+func (r *Router) persistCoordinatorAssistant(ctx context.Context, workspaceID, sessionID, agentID pgtype.UUID, text string) error {
+	writer, ok := r.reader.(coordinatorChatWriter)
+	if !ok || strings.TrimSpace(text) == "" || !sessionID.Valid {
+		return nil
+	}
+	msg, err := writer.CreateChatMessage(ctx, db.CreateChatMessageParams{
+		ChatSessionID: sessionID,
+		Role:          "assistant",
+		Content:       text,
+		MessageKind:   pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	if err := writer.TouchChatSession(ctx, sessionID); err != nil {
+		return err
+	}
+	if r.bus == nil || !workspaceID.Valid || !msg.ID.Valid {
+		return nil
+	}
+	session := util.UUIDToString(sessionID)
+	createdAt := ""
+	if msg.CreatedAt.Valid {
+		createdAt = msg.CreatedAt.Time.Format(time.RFC3339Nano)
+	}
+	r.bus.Publish(events.Event{
+		Type:          protocol.EventChatMessage,
+		WorkspaceID:   util.UUIDToString(workspaceID),
+		ActorType:     "agent",
+		ActorID:       util.UUIDToString(agentID),
+		ChatSessionID: session,
+		Payload: protocol.ChatMessagePayload{
+			ChatSessionID: session,
+			MessageID:     util.UUIDToString(msg.ID),
+			Role:          "assistant",
+			Content:       text,
+			CreatedAt:     createdAt,
+		},
+	})
+	return nil
+}
+
+func coordinatorSource(options HandleOptions, taskContext []byte, channelType channel.Type) inboundcoord.Source {
+	if len(taskContext) > 0 {
+		var payload struct {
+			DispatchSource struct {
+				Type string `json:"type"`
+			} `json:"dispatch_source"`
+		}
+		if json.Unmarshal(taskContext, &payload) == nil {
+			switch payload.DispatchSource.Type {
+			case "digital_employee":
+				return inboundcoord.SourceDigitalEmployee
+			case "robot":
+				return inboundcoord.SourceRobot
+			}
+		}
+	}
+	if options.IdentityOverride != nil {
+		return inboundcoord.SourceDigitalEmployee
+	}
+	if channelType == "dingtalk" {
+		return inboundcoord.SourceRobot
+	}
+	return inboundcoord.SourceRobot
 }
 
 // ErrDedupFinalize marks a failed post-pipeline dedup transition. Callers must

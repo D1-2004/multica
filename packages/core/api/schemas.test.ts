@@ -1400,6 +1400,17 @@ describe("SendChatMessageResponseSchema", () => {
   it("ignores a malformed additive queue position without losing the accepted send", () => {
     expect(SendChatMessageResponseSchema.parse({ ...base, queued: "no" }).queued).toBeUndefined();
   });
+
+  it("accepts a coordinator reply without a sandbox task id", () => {
+    const parsed = SendChatMessageResponseSchema.parse({
+      message_id: "message-1",
+      created_at: "2026-08-05T00:00:00Z",
+      assistant_message_id: "asst-1",
+      assistant_content: "在的，今天先对哪件事？",
+    });
+    expect(parsed.task_id).toBeUndefined();
+    expect(parsed.assistant_message_id).toBe("asst-1");
+  });
 });
 
 describe("PrioritizeQueuedChatTaskResponseSchema", () => {

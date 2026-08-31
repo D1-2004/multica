@@ -34,6 +34,39 @@ WHERE existing.target_task_id = EXCLUDED.target_task_id
   AND existing.update_type = EXCLUDED.update_type
 RETURNING *;
 
+-- name: EnqueueFrozenTaskExecutionUpdate :one
+INSERT INTO task_execution_update_outbox AS existing (
+    root_task_id,
+    target_task_id,
+    issue_id,
+    issue_identifier,
+    callback_url,
+    target_identity,
+    request_id,
+    agent_id,
+    target_agent_id,
+    update_type,
+    status,
+    result_message_frozen,
+    result_message
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued', TRUE, $11
+)
+ON CONFLICT (root_task_id) DO UPDATE
+SET updated_at = existing.updated_at
+WHERE existing.target_task_id = EXCLUDED.target_task_id
+  AND existing.issue_id = EXCLUDED.issue_id
+  AND existing.issue_identifier = EXCLUDED.issue_identifier
+  AND existing.callback_url = EXCLUDED.callback_url
+  AND existing.target_identity = EXCLUDED.target_identity
+  AND existing.request_id = EXCLUDED.request_id
+  AND existing.agent_id = EXCLUDED.agent_id
+  AND existing.target_agent_id = EXCLUDED.target_agent_id
+  AND existing.update_type = EXCLUDED.update_type
+  AND existing.result_message_frozen = TRUE
+  AND existing.result_message IS NOT DISTINCT FROM EXCLUDED.result_message
+RETURNING *;
+
 -- name: FreezeTaskExecutionUpdateResultMessage :one
 WITH RECURSIVE lineage AS (
     SELECT task.id, task.parent_task_id

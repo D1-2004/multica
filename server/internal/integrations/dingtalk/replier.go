@@ -169,11 +169,26 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 			r.logger.WarnContext(ctx, "dingtalk replier: fresh-session confirmation failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
+	case engine.OutcomeCoordinatorReply:
+		text := strings.TrimSpace(res.ReplyText)
+		if text == "" {
+			return
+		}
+		if err := r.post(ctx, inst, msg, text); err != nil {
+			r.logger.WarnContext(ctx, "dingtalk replier: coordinator reply failed",
+				"installation_id", util.UUIDToString(inst.ID), "error", err)
+		}
+	case engine.OutcomeCoordinatorSilence:
+		return
 	case engine.OutcomeIngested:
 		// Only a /issue-created message warrants a confirmation; a plain chat
 		// message stays silent (the agent's own reply lands via EventChatDone).
 		if res.IssueID.Valid {
-			if err := r.post(ctx, inst, msg, issueCreatedText(res)); err != nil {
+			text := strings.TrimSpace(res.ReplyText)
+			if text == "" {
+				text = issueCreatedText(res)
+			}
+			if err := r.post(ctx, inst, msg, text); err != nil {
 				r.logger.WarnContext(ctx, "dingtalk replier: issue-created confirmation failed",
 					"installation_id", util.UUIDToString(inst.ID), "error", err)
 			}

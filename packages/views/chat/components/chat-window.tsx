@@ -558,7 +558,7 @@ export function ChatWindow() {
         chat_session_id: sessionId,
         role: "user",
         content: finalContent,
-        task_id: result.task_id,
+        task_id: result.task_id ?? null,
         created_at: result.created_at,
         attachments: draftAttachments,
       };
@@ -567,14 +567,31 @@ export function ChatWindow() {
       // arrival order, and this richer row (it carries the draft attachments)
       // is never downgraded by the echo, which has no attachments field.
       upsertChatMessageToCaches(qc, sessionId, sent, { seedIfMissing: true });
-      seedAcceptedPendingTask(qc, sessionId, {
-        task_id: result.task_id,
-        created_at: result.created_at,
-        message_id: result.message_id,
-        content: finalContent,
-        supports_queue: result.supports_queue,
-        queued: result.queued,
-      });
+      if (result.assistant_message_id && result.assistant_content) {
+        upsertChatMessageToCaches(
+          qc,
+          sessionId,
+          {
+            id: result.assistant_message_id,
+            chat_session_id: sessionId,
+            role: "assistant",
+            content: result.assistant_content,
+            task_id: null,
+            created_at: result.assistant_created_at ?? result.created_at,
+          },
+          { seedIfMissing: true },
+        );
+      }
+      if (result.task_id) {
+        seedAcceptedPendingTask(qc, sessionId, {
+          task_id: result.task_id,
+          created_at: result.created_at,
+          message_id: result.message_id,
+          content: finalContent,
+          supports_queue: result.supports_queue,
+          queued: result.queued,
+        });
+      }
       // Cache primed → publish the new active session, but only if the user
       // hasn't navigated away mid-send. Compare the live store against the
       // closure-captured target; see isStillOnComposeTarget for the rule, which
@@ -596,10 +613,12 @@ export function ChatWindow() {
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
-        await cancelChatTask(result.task_id, sessionId, {
-          restoreDraftToInput: true,
-          source: "deferred-send",
-        });
+        if (result.task_id) {
+          await cancelChatTask(result.task_id, sessionId, {
+            restoreDraftToInput: true,
+            source: "deferred-send",
+          });
+        }
         return false;
       }
       // The server reports which attachment ids it actually bound. Diff

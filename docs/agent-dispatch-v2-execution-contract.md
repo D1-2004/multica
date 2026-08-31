@@ -19,6 +19,30 @@ mode has an explicit initial persistence materializer:
 `calendar/calendar.started` and `approval/approval.status_changed` contracts
 remain Issue-only because neither has a foreground Chat session to release.
 
+### Inbound short loop (reply vs issue)
+
+Before a sandbox starts, Multica runs one bounded server-side JSON decision on
+web Chat and on DingTalk `channel/message.created` for digital employees and
+robots. Direct reply **is** the Chat response. Only real work becomes an Issue
+and starts a sandbox. The loop does not call DWS, does not redeem a
+ContextToken, and is not behind a feature flag.
+
+| Action | User sees | Sandbox |
+| --- | --- | --- |
+| `reply` | One complete sentence in the current conversation | none |
+| `issue` | A living first sentence that names the concrete thing being checked, then an Issue | Issue task |
+| `silence` | Nothing. Web Chat never silences. Group chatter that is not for the agent may silence | none |
+| internal continue | Existing enqueue path when the decisioner is unavailable | existing |
+
+Digital-employee DWS outbound delivers `reply` through a completed
+`execution-result` row whose `resultMessage` is that sentence. An Issue
+acknowledgement is a frozen `execution-update` (`delegated_to_issue` +
+`resultMessage`) so the later Issue completion can still close the dispatch
+through `execution-result`. Robots post the same sentences through the Robot
+SDK replier; Router `resultMessage` does not send a second DWS copy.
+
+Calendar, approval, emotion-only, and A2A events skip this loop.
+
 ### Issue threading
 
 Within `issue`, an Agent controls whether a conversation threads. `agent.dispatch_always_new_issue`

@@ -19,6 +19,7 @@ import (
 
 var synchronousCompletionCallbackPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 var routerTargetIdentityPattern = regexp.MustCompile(`^router-target:v1:sha256:[a-f0-9]{64}$`)
+var routerExecutionUpdateCallbackPattern = regexp.MustCompile(`^/api/v1/dispatch-tasks/[A-Za-z0-9_-]{1,128}/execution-update$`)
 var ErrTaskCompletionConflict = errors.New("task completion conflicts with existing terminal result")
 
 type TaskCompletion struct {
@@ -471,6 +472,87 @@ func (s *TaskService) EnqueueSynchronousTaskCompletion(
 	})
 	if err != nil {
 		return fmt.Errorf("enqueue synchronous task completion: %w", err)
+	}
+	if s.CompletionNotifier != nil {
+		s.CompletionNotifier.NotifyTaskCompletion()
+	}
+	return nil
+}
+
+func (s *TaskService) EnqueueSynchronousCompleted(
+	ctx context.Context,
+	callbackURL string,
+	targetIdentity string,
+	agentID pgtype.UUID,
+	resultMessage string,
+) error {
+	const prefix = "/api/v1/dispatch-tasks/"
+	const suffix = "/execution-result"
+	dispatchTaskID := strings.TrimSuffix(strings.TrimPrefix(callbackURL, prefix), suffix)
+	if !strings.HasPrefix(callbackURL, prefix) ||
+		!strings.HasSuffix(callbackURL, suffix) ||
+		!synchronousCompletionCallbackPattern.MatchString(dispatchTaskID) ||
+		!routerTargetIdentityPattern.MatchString(targetIdentity) ||
+		!agentID.Valid {
+		return errors.New("synchronous completed task target is invalid")
+	}
+	message := strings.TrimSpace(resultMessage)
+	if message == "" {
+		return errors.New("synchronous completed result message is required")
+	}
+	_, err := s.Queries.EnqueueSynchronousCompletedTaskCompletion(ctx, db.EnqueueSynchronousCompletedTaskCompletionParams{
+		CallbackUrl:    callbackURL,
+		TargetIdentity: targetIdentity,
+		RequestID:      "multica-terminal:sync-completed:" + dispatchTaskID,
+		AgentID:        agentID,
+		ResultMessage:  redact.Text(message),
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue synchronous completed task: %w", err)
+	}
+	if s.CompletionNotifier != nil {
+		s.CompletionNotifier.NotifyTaskCompletion()
+	}
+	return nil
+}
+
+func (s *TaskService) EnqueueCoordinatorIssueAck(
+	ctx context.Context,
+	issueTask db.AgentTaskQueue,
+	issue db.Issue,
+	issueIdentifier string,
+	updateURL string,
+	targetIdentity string,
+	ackText string,
+) error {
+	if !issueTask.ID.Valid || !issue.ID.Valid || !issueTask.AgentID.Valid {
+		return errors.New("coordinator issue ack target is invalid")
+	}
+	if !routerExecutionUpdateCallbackPattern.MatchString(strings.TrimSpace(updateURL)) {
+		return errors.New("coordinator issue ack update url is invalid")
+	}
+	if !routerTargetIdentityPattern.MatchString(targetIdentity) {
+		return errors.New("coordinator issue ack target identity is invalid")
+	}
+	message := strings.TrimSpace(ackText)
+	if message == "" {
+		return errors.New("coordinator issue ack text is required")
+	}
+	_, err := s.Queries.EnqueueFrozenTaskExecutionUpdate(ctx, db.EnqueueFrozenTaskExecutionUpdateParams{
+		RootTaskID:      issueTask.ID,
+		TargetTaskID:    issueTask.ID,
+		IssueID:         issue.ID,
+		IssueIdentifier: issueIdentifier,
+		CallbackUrl:     updateURL,
+		TargetIdentity:  targetIdentity,
+		RequestID:       "multica-coord-issue:" + util.UUIDToString(issueTask.ID),
+		AgentID:         issueTask.AgentID,
+		TargetAgentID:   issueTask.AgentID,
+		UpdateType:      "delegated_to_issue",
+		ResultMessage:   redact.Text(message),
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue coordinator issue ack: %w", err)
 	}
 	if s.CompletionNotifier != nil {
 		s.CompletionNotifier.NotifyTaskCompletion()

@@ -19,6 +19,7 @@ import (
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -805,7 +806,7 @@ type SendChatMessageRequest struct {
 
 type SendChatMessageResponse struct {
 	MessageID     string `json:"message_id"`
-	TaskID        string `json:"task_id"`
+	TaskID        string `json:"task_id,omitempty"`
 	SupportsQueue bool   `json:"supports_queue"`
 	Queued        bool   `json:"queued"`
 	// AttachmentIDs are the attachment rows actually bound to this message by
@@ -823,7 +824,10 @@ type SendChatMessageResponse struct {
 	// and the timer "snaps backwards" later when WS events deliver the
 	// real created_at. Returning it here means the pill renders 0s from
 	// the start with a stable anchor.
-	CreatedAt string `json:"created_at"`
+	CreatedAt          string `json:"created_at"`
+	AssistantMessageID string `json:"assistant_message_id,omitempty"`
+	AssistantContent   string `json:"assistant_content,omitempty"`
+	AssistantCreatedAt string `json:"assistant_created_at,omitempty"`
 }
 
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
@@ -919,6 +923,84 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	hadUserMessage := true
 	if existed, err := h.Queries.ChatSessionHasUserMessage(r.Context(), session.ID); err == nil {
 		hadUserMessage = existed
+	}
+
+	coord := &inboundcoord.Coordinator{LLM: h.LLM, Queries: h.Queries}
+	decision := coord.Decide(r.Context(), coord.TurnFromChatSession(
+		r.Context(),
+		session,
+		inboundcoord.SourceWeb,
+		true,
+		"p2p",
+		session.Title,
+		"",
+		req.Content,
+	))
+	if len(attachmentIDs) > 0 && decision.Action != inboundcoord.ActionContinue {
+		decision.Action = inboundcoord.ActionContinue
+	}
+
+	if decision.Action == inboundcoord.ActionReply || decision.Action == inboundcoord.ActionIssue {
+		if decision.Action == inboundcoord.ActionIssue {
+			if h.IssueService == nil {
+				writeError(w, http.StatusInternalServerError, "issue service is not configured")
+				return
+			}
+			if _, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
+				WorkspaceID:    session.WorkspaceID,
+				Title:          inboundcoord.IssueTitle(decision, req.Content),
+				Description:    pgtype.Text{String: inboundcoord.IssueDescription(decision, req.Content), Valid: true},
+				Status:         "todo",
+				Priority:       "none",
+				AssigneeType:   pgtype.Text{String: "agent", Valid: true},
+				AssigneeID:     session.AgentID,
+				CreatorType:    "member",
+				CreatorID:      parseUUID(userID),
+				AllowDuplicate: true,
+			}, service.IssueCreateOpts{
+				ActorID:          userID,
+				AnalyticsAgentID: uuidToString(session.AgentID),
+				Platform:         "web",
+			}); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create issue: "+err.Error())
+				return
+			}
+		}
+		turn, persistErr := h.TaskService.PersistCoordinatorChatTurn(r.Context(), session, req.Content, decision.UserText)
+		if persistErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist chat reply: "+persistErr.Error())
+			return
+		}
+		resolvedSessionID := uuidToString(session.ID)
+		h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
+			ChatSessionID: resolvedSessionID,
+			MessageID:     uuidToString(turn.UserMessage.ID),
+			Role:          "user",
+			Content:       req.Content,
+			CreatedAt:     timestampToString(turn.UserMessage.CreatedAt),
+			TraceID:       trace.TraceID,
+		})
+		h.publishChat(protocol.EventChatMessage, workspaceID, "agent", uuidToString(session.AgentID), resolvedSessionID, protocol.ChatMessagePayload{
+			ChatSessionID: resolvedSessionID,
+			MessageID:     uuidToString(turn.AssistantMessage.ID),
+			Role:          "assistant",
+			Content:       decision.UserText,
+			CreatedAt:     timestampToString(turn.AssistantMessage.CreatedAt),
+			TraceID:       trace.TraceID,
+		})
+		if !hadUserMessage {
+			h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, session.Title, req.Content)
+		}
+		writeJSON(w, http.StatusCreated, SendChatMessageResponse{
+			MessageID:          uuidToString(turn.UserMessage.ID),
+			SupportsQueue:      true,
+			CreatedAt:          timestampToString(turn.UserMessage.CreatedAt),
+			AttachmentIDs:      nil,
+			AssistantMessageID: uuidToString(turn.AssistantMessage.ID),
+			AssistantContent:   decision.UserText,
+			AssistantCreatedAt: timestampToString(turn.AssistantMessage.CreatedAt),
+		})
+		return
 	}
 
 	// Persist the whole turn atomically (MUL-4351): the owning task, the user

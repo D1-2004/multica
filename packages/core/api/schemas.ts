@@ -2359,7 +2359,10 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
   z
     .object({
       message_id: z.string().min(1),
-      task_id: z.string().min(1),
+      task_id: z
+        .string()
+        .nullish()
+        .transform((id) => id || undefined),
       supports_queue: z.boolean().optional(),
       queued: z.boolean().optional().catch(undefined),
       created_at: z.string().min(1),
@@ -2367,6 +2370,18 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
         .array(z.string())
         .nullish()
         .transform((ids) => ids ?? undefined),
+      assistant_message_id: z
+        .string()
+        .nullish()
+        .transform((id) => id || undefined),
+      assistant_content: z
+        .string()
+        .nullish()
+        .transform((content) => content || undefined),
+      assistant_created_at: z
+        .string()
+        .nullish()
+        .transform((at) => at || undefined),
     })
     .loose();
 

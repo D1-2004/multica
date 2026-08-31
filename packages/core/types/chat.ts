@@ -179,7 +179,7 @@ export interface ChatMessagesPage {
 
 export interface SendChatMessageResponse {
   message_id: string;
-  task_id: string;
+  task_id?: string;
   /** True when the server supports queued follow-up sends. */
   supports_queue?: boolean;
   /**
@@ -201,6 +201,9 @@ export interface SendChatMessageResponse {
    * compat with servers that predate the field.
    */
   attachment_ids?: string[];
+  assistant_message_id?: string;
+  assistant_content?: string;
+  assistant_created_at?: string;
 }
 
 /** Browser acknowledgement emitted after a live assistant reply is rendered. */

@@ -47,6 +47,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -751,6 +752,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 	}
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
+	channelRouter.SetInboundCoordinator(&inboundcoord.Coordinator{LLM: h.LLM, Queries: queries})
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
 	// watching the same chat without a reload: the engine writes through the
 	// service layer and inherits no handler broadcast of its own.

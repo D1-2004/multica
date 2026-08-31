@@ -15,6 +15,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -621,6 +622,9 @@ func (h *Handler) createAgentDispatchChatV2(
 		writeJSON(w, http.StatusAccepted, response)
 		return
 	}
+	if h.writeAgentChatCoordinatorOutcomeV2(w, r.Context(), command, dispatchContext, result) {
+		return
+	}
 	if h.writeAgentChatNoTaskOutcomeV2(w, r.Context(), command, dispatchContext, result) {
 		return
 	}
@@ -632,6 +636,92 @@ func (h *Handler) createAgentDispatchChatV2(
 		Continuation: AgentDispatchContinuation{Kind: "chat", ChatSessionID: chatSessionID},
 		TaskID:       uuidToString(result.TaskID),
 	})
+}
+
+func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
+	w http.ResponseWriter,
+	ctx context.Context,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+	result engine.Result,
+) bool {
+	if command.CompletionCallback == nil {
+		if result.Outcome == engine.OutcomeCoordinatorReply || result.Outcome == engine.OutcomeCoordinatorSilence {
+			chatSessionID := uuidToString(result.ChatSessionID)
+			if chatSessionID == "" && command.Continuation != nil {
+				chatSessionID = command.Continuation.ChatSessionID
+			}
+			writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
+				Continuation: AgentDispatchContinuation{Kind: "chat", ChatSessionID: chatSessionID},
+				TaskID:       uuidToString(result.TaskID),
+			})
+			return true
+		}
+		return false
+	}
+	switch result.Outcome {
+	case engine.OutcomeCoordinatorReply:
+		if err := h.TaskService.EnqueueSynchronousCompleted(
+			ctx,
+			command.CompletionCallback.URL,
+			command.CompletionCallback.Target,
+			dispatchContext.AgentID,
+			result.ReplyText,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
+			return true
+		}
+		chatSessionID := uuidToString(result.ChatSessionID)
+		writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
+			Continuation: AgentDispatchContinuation{Kind: "chat", ChatSessionID: chatSessionID},
+		})
+		return true
+	case engine.OutcomeCoordinatorSilence:
+		if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+			ctx,
+			command.CompletionCallback.URL,
+			command.CompletionCallback.Target,
+			dispatchContext.AgentID,
+			"coordinator silence",
+			string(engine.OutcomeCoordinatorSilence),
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
+			return true
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return true
+	}
+	if result.IssueID.Valid && result.TaskID.Valid && result.ReplyText != "" &&
+		command.CompletionCallback.UpdateURL != "" {
+		issue, err := h.Queries.GetIssue(ctx, result.IssueID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load coordinator issue")
+			return true
+		}
+		task, err := h.Queries.GetAgentTask(ctx, result.TaskID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load coordinator issue task")
+			return true
+		}
+		if err := h.TaskService.EnqueueCoordinatorIssueAck(
+			ctx,
+			task,
+			issue,
+			result.IssueIdentifier,
+			command.CompletionCallback.UpdateURL,
+			command.CompletionCallback.Target,
+			result.ReplyText,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
+			return true
+		}
+		writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
+			Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: uuidToString(result.IssueID)},
+			TaskID:       uuidToString(result.TaskID),
+		})
+		return true
+	}
+	return false
 }
 
 func (h *Handler) writeAgentChatNoTaskOutcomeV2(
@@ -745,6 +835,21 @@ func recoverDuplicateAgentChatDispatch(
 }
 
 func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
+	decision := decideDispatchCoordinator(r.Context(), h, c, agent, prompt.DisplayContent)
+	if len(c.Event.Data.Messages) > 0 {
+		for _, m := range c.Event.Data.Messages {
+			if m.Reaction == nil && len(m.Attachments) > 0 && decision.Action != inboundcoord.ActionContinue {
+				decision.Action = inboundcoord.ActionContinue
+				break
+			}
+		}
+	}
+	if decision.Action == inboundcoord.ActionReply || decision.Action == inboundcoord.ActionSilence {
+		if writeDispatchCoordinatorTerminal(w, r.Context(), h, c, dispatchContext, decision) {
+			return
+		}
+	}
+
 	attachments := make([]AgentDispatchAttachment, 0)
 	for _, m := range c.Event.Data.Messages {
 		if m.Reaction != nil {
@@ -772,13 +877,18 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		}
 	}()
 
+	overrides := agentDispatchIssueCreateOverrides{}
+	if decision.Action == inboundcoord.ActionIssue {
+		overrides.Title = inboundcoord.IssueTitle(decision, prompt.DisplayContent)
+		overrides.DisplayContent = inboundcoord.IssueDescription(decision, prompt.DisplayContent)
+	}
 	createParams := buildAgentDispatchIssueCreateParams(
 		c,
 		prompt,
 		dispatchContext,
 		agent,
 		dispatchIdempotencyKey(r, c),
-		agentDispatchIssueCreateOverrides{},
+		overrides,
 	)
 	createParams.AttachmentIDs = attachmentIDs(imported)
 	result, err := h.IssueService.Create(r.Context(), createParams, service.IssueCreateOpts{
@@ -802,6 +912,25 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	prefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
 	issueID := uuidToString(result.Issue.ID)
 	taskID := uuidToString(result.EnqueuedTask.ID)
+	issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
+	if decision.Action == inboundcoord.ActionIssue &&
+		h.TaskService != nil &&
+		c.CompletionCallback != nil &&
+		c.CompletionCallback.UpdateURL != "" &&
+		strings.TrimSpace(decision.UserText) != "" {
+		if err := h.TaskService.EnqueueCoordinatorIssueAck(
+			r.Context(),
+			*result.EnqueuedTask,
+			result.Issue,
+			issueIdentifier,
+			c.CompletionCallback.UpdateURL,
+			c.CompletionCallback.Target,
+			decision.UserText,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
+			return
+		}
+	}
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "created_issue",
 		"protocol", "dispatch_command_v2",
@@ -812,9 +941,88 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	)
 	writeJSON(w, http.StatusCreated, AgentDispatchResponse{
 		Continuation:    AgentDispatchContinuation{Kind: "issue", IssueID: issueID},
-		IssueIdentifier: prefix + "-" + formatIssueNumber(result.Issue.Number),
+		IssueIdentifier: issueIdentifier,
 		TaskID:          taskID,
 	})
+}
+
+func decideDispatchCoordinator(
+	ctx context.Context,
+	h *Handler,
+	command DispatchCommand,
+	agent db.Agent,
+	message string,
+) inboundcoord.Decision {
+	if h == nil || h.Queries == nil || command.Event.Domain != "channel" || command.Event.Type != "message.created" {
+		return inboundcoord.Decision{Action: inboundcoord.ActionContinue}
+	}
+	source := inboundcoord.SourceRobot
+	if command.Source.Type == "digital_employee" {
+		source = inboundcoord.SourceDigitalEmployee
+	}
+	chatType := "p2p"
+	if strings.EqualFold(strings.TrimSpace(command.Event.Data.Conversation.Type), "group") {
+		chatType = "group"
+	}
+	coord := &inboundcoord.Coordinator{LLM: h.LLM, Queries: h.Queries}
+	turn := inboundcoord.Turn{
+		Source:            source,
+		Addressed:         true,
+		ChatType:          chatType,
+		ConversationTitle: command.Event.Data.Conversation.Title,
+		SenderName:        command.Event.Data.Sender.DisplayName,
+		Message:           message,
+		AgentName:         agent.Name,
+		Instructions:      agent.Instructions,
+	}
+	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
+		turn.Busy = true
+	}
+	return coord.Decide(ctx, turn)
+}
+
+func writeDispatchCoordinatorTerminal(
+	w http.ResponseWriter,
+	ctx context.Context,
+	h *Handler,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+	decision inboundcoord.Decision,
+) bool {
+	if h.TaskService == nil || command.CompletionCallback == nil {
+		return false
+	}
+	switch decision.Action {
+	case inboundcoord.ActionReply:
+		if err := h.TaskService.EnqueueSynchronousCompleted(
+			ctx,
+			command.CompletionCallback.URL,
+			command.CompletionCallback.Target,
+			dispatchContext.AgentID,
+			decision.UserText,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
+			return true
+		}
+		writeJSON(w, http.StatusAccepted, AgentDispatchResponse{})
+		return true
+	case inboundcoord.ActionSilence:
+		if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+			ctx,
+			command.CompletionCallback.URL,
+			command.CompletionCallback.Target,
+			dispatchContext.AgentID,
+			"coordinator silence",
+			string(engine.OutcomeCoordinatorSilence),
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
+			return true
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext) {
