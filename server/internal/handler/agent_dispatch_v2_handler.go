@@ -608,7 +608,41 @@ func (h *Handler) createAgentDispatchChatV2(
 	// it as /new, /reset, /issue, or /unbind.
 	message.Text = dispatchText
 	message.ForceFresh = false
-	result, err := h.ChannelRouter.HandleResultWithOptions(r.Context(), message, plan.channelHandleOptions())
+	options := plan.channelHandleOptions()
+	if command.Continuation == nil {
+		options.CreateUnboundSession = true
+	} else {
+		chatSessionID, ok := parseUUIDOrBadRequest(
+			w, strings.TrimSpace(command.Continuation.ChatSessionID), "continuation.chatSessionId")
+		if !ok {
+			return
+		}
+		session, loadErr := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+			ID: chatSessionID, WorkspaceID: dispatchContext.WorkspaceID,
+		})
+		if loadErr != nil {
+			if errors.Is(loadErr, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "chat continuation not found")
+			} else {
+				writeError(w, http.StatusInternalServerError, "failed to load chat continuation")
+			}
+			return
+		}
+		if session.AgentID != dispatchContext.AgentID {
+			writeError(w, http.StatusForbidden, "chat continuation belongs to another agent")
+			return
+		}
+		if session.CreatorID != dispatchContext.UserID {
+			writeError(w, http.StatusForbidden, "chat continuation belongs to another endpoint actor")
+			return
+		}
+		if session.Status != "active" {
+			writeError(w, http.StatusBadRequest, "chat continuation is archived")
+			return
+		}
+		options.ChatSessionOverride = &chatSessionID
+	}
+	result, err := h.ChannelRouter.HandleResultWithOptions(r.Context(), message, options)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
 		return

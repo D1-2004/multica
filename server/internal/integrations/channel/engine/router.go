@@ -220,6 +220,8 @@ func (r *Router) HandleResult(ctx context.Context, msg channel.InboundMessage) (
 type HandleOptions struct {
 	InstallationOverride   *ResolvedInstallation
 	IdentityOverride       *ResolvedIdentity
+	ChatSessionOverride    *pgtype.UUID
+	CreateUnboundSession   bool
 	SuppressServerOutbound bool
 	DisableControlCommands bool
 	ForceFreshSession      bool
@@ -460,11 +462,25 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	if options.IdentityOverride == nil && msg.Source.ChatType == channel.ChatTypeGroup && !set.GroupSessionsPerSender {
 		sessionCreator = inst.InstallerUserID
 	}
-	sessionID, err := set.Session.EnsureSession(ctx, EnsureSessionParams{
+	sessionParams := EnsureSessionParams{
 		Installation: inst,
 		Sender:       sessionCreator,
 		Message:      msg,
-	})
+	}
+	var sessionID pgtype.UUID
+	var err error
+	switch {
+	case options.ChatSessionOverride != nil:
+		sessionID = *options.ChatSessionOverride
+	case options.CreateUnboundSession:
+		creator, ok := set.Session.(UnboundSessionCreator)
+		if !ok {
+			return Result{}, finalizeRelease, errors.New("channel router: session binder cannot create an unbound session")
+		}
+		sessionID, err = creator.CreateUnboundSession(ctx, sessionParams)
+	default:
+		sessionID, err = set.Session.EnsureSession(ctx, sessionParams)
+	}
 	if err != nil {
 		// Single tx; an error rolled it back, nothing landed. Release.
 		return Result{}, finalizeRelease, fmt.Errorf("ensure chat session: %w", err)
@@ -585,17 +601,18 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 
 	// 6. Append message + task (for durable channels) + in-tx dedup Mark.
 	appendRes, err := set.Session.AppendMessage(ctx, AppendParams{
-		SessionID:           sessionID,
-		WorkspaceID:         inst.WorkspaceID,
-		Sender:              identity.PrincipalUserID,
-		InstallationID:      inst.ID,
-		Installation:        inst,
-		Message:             msg,
-		ClaimToken:          claimToken,
-		ForceFreshSession:   set.DurableRuns && durableFresh,
-		PreparedTask:        preparedTask,
-		DisableIssueCommand: options.DisableControlCommands,
-		MediaPendingSeconds: mediaPendingSeconds,
+		SessionID:              sessionID,
+		WorkspaceID:            inst.WorkspaceID,
+		Sender:                 identity.PrincipalUserID,
+		InstallationID:         inst.ID,
+		Installation:           inst,
+		Message:                msg,
+		ClaimToken:             claimToken,
+		SkipBindingReplyTarget: options.CreateUnboundSession || options.ChatSessionOverride != nil,
+		ForceFreshSession:      set.DurableRuns && durableFresh,
+		PreparedTask:           preparedTask,
+		DisableIssueCommand:    options.DisableControlCommands,
+		MediaPendingSeconds:    mediaPendingSeconds,
 	})
 	if err == nil {
 		r.publishInboundMessage(inst.WorkspaceID, sessionID, identity.PrincipalUserID, appendRes)
