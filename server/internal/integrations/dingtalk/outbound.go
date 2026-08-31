@@ -28,6 +28,7 @@ type outboundQueries interface {
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error)
+	GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (pgtype.Text, error)
 }
 
 // taskFailedText is the user-visible notice for a failed chat run. The
@@ -304,10 +305,6 @@ type dispatchLastReplyResolver interface {
 	GetLastTaskReplyText(context.Context, pgtype.UUID) (pgtype.Text, error)
 }
 
-type issueLastCommentResolver interface {
-	GetLastAgentCommentForIssue(context.Context, pgtype.UUID) (pgtype.Text, error)
-}
-
 type streamProcessingEmotionStore interface {
 	GetDingTalkProcessingEmotionBySourceMessage(context.Context, string) (db.DingtalkProcessingEmotion, error)
 }
@@ -434,15 +431,19 @@ func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bo
 }
 
 func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID pgtype.UUID, _ map[string]any) string {
-	reader, ok := o.q.(issueLastCommentResolver)
-	if !ok || !issueID.Valid {
+	if !issueID.Valid {
 		return ""
 	}
-	reply, err := reader.GetLastAgentCommentForIssue(ctx, issueID)
-	if err != nil || strings.TrimSpace(reply.String) == "" {
+	reply, err := o.q.GetLastAgentCommentForIssue(ctx, issueID)
+	if err != nil {
+		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: last agent comment lookup failed",
+			"event", "dingtalk_stream_issue_outbound_lookup_failed",
+			"issue_id", util.UUIDToString(issueID),
+			"error", err,
+		)
 		return ""
 	}
-	return reply.String
+	return strings.TrimSpace(reply.String)
 }
 
 func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.UUID, payload map[string]any) string {
