@@ -560,13 +560,14 @@ function AssistantMessage({
   showStarterCards?: boolean;
 }) {
   const canFetchTaskMessages = isTaskMessageTaskId(taskId);
+  const isCoordinator = message?.message_kind === "coordinator";
 
   // Use the shared taskMessagesOptions so this cache entry is the same one
   // seeded by useRealtimeSync during task execution — zero refetch when the
   // task finishes, since WS already populated it.
   const { data: taskMessages } = useQuery({
     ...taskMessagesOptions(taskId ?? ""),
-    enabled: canFetchTaskMessages,
+    enabled: canFetchTaskMessages && !isCoordinator,
   });
 
   // Memoized on the cache array identity: mergeTaskMessagesBySeq preserves the
@@ -574,8 +575,10 @@ function AssistantMessage({
   // when a genuinely new message lands.
   const timeline: ChatTimelineItem[] = useMemo(
     () =>
-      transformTimeline(buildTimeline(taskMessages ?? []), transformContent),
-    [taskMessages, transformContent],
+      isCoordinator
+        ? coordinatorTimeline(message)
+        : transformTimeline(buildTimeline(taskMessages ?? []), transformContent),
+    [isCoordinator, message, taskMessages, transformContent],
   );
 
   // Content is settled once the persisted message exists; until then text is
@@ -604,6 +607,7 @@ function AssistantMessage({
 
   return (
     <div className="w-full space-y-1.5">
+      {isCoordinator && <CoordinatorBadge source={message?.coordinator?.source} />}
       {timeline.length > 0 && (
         <TimelineView
           items={timeline}
@@ -845,6 +849,39 @@ function NoResponseNotice() {
       {t(($) => $.message_list.no_response)}
     </div>
   );
+}
+
+function CoordinatorBadge({ source }: { source?: string }) {
+  const { t } = useT("chat");
+  const sourceLabel =
+    source === "robot"
+      ? t(($) => $.message_list.coordinator_source_robot)
+      : source === "digital_employee"
+        ? t(($) => $.message_list.coordinator_source_digital_employee)
+        : source === "web"
+          ? t(($) => $.message_list.coordinator_source_web)
+          : null;
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-1.5 py-0.5 text-caption text-muted-foreground">
+        {t(($) => $.message_list.coordinator_badge)}
+      </span>
+      {sourceLabel ? (
+        <span className="text-caption text-muted-foreground">{sourceLabel}</span>
+      ) : null}
+    </div>
+  );
+}
+
+function coordinatorTimeline(message?: ChatMessage): ChatTimelineItem[] {
+  if (!message) return [];
+  const items: ChatTimelineItem[] = [];
+  const reason = message.coordinator?.reason?.trim();
+  if (reason) {
+    items.push({ seq: 1, type: "thinking", content: reason });
+  }
+  items.push({ seq: items.length + 1, type: "text", content: message.content });
+  return items;
 }
 
 // Inline footer row beneath the assistant reply: "Replied in 38s · [Copy]".

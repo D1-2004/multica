@@ -41,6 +41,11 @@ acknowledgement is a frozen `execution-update` (`delegated_to_issue` +
 through `execution-result`. Robots post the same sentences through the Robot
 SDK replier; Router `resultMessage` does not send a second DWS copy.
 
+The same Chat session is the web transcript. Coordinator replies (web, robot,
+or digital employee) persist as `message_kind=coordinator` with the short-loop
+reason on the assistant row, so the web Chat can label them and fold the
+decision process without a sandbox timeline.
+
 Calendar, approval, emotion-only, and A2A events skip this loop.
 
 ### Issue threading

@@ -748,7 +748,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			res.TaskID = issueRes.EnqueuedTask.ID
 		}
 		if coordDecision.UserText != "" {
-			if persistErr := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision.UserText); persistErr != nil {
+			if persistErr := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision); persistErr != nil {
 				r.logger.Warn("channel router: persist coordinator issue ack failed",
 					"chat_session_id", uuidString(sessionID),
 					"error", persistErr,
@@ -768,7 +768,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	}
 
 	if skipSandboxPrepare && coordDecision.Action == inboundcoord.ActionReply {
-		if err := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision.UserText); err != nil {
+		if err := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision); err != nil {
 			r.logger.Warn("channel router: persist coordinator reply failed",
 				"chat_session_id", uuidString(sessionID),
 				"error", err,
@@ -1196,16 +1196,20 @@ type coordinatorChatWriter interface {
 	TouchChatSession(context.Context, pgtype.UUID) error
 }
 
-func (r *Router) persistCoordinatorAssistant(ctx context.Context, workspaceID, sessionID, agentID pgtype.UUID, text string) error {
+func (r *Router) persistCoordinatorAssistant(ctx context.Context, workspaceID, sessionID, agentID pgtype.UUID, decision inboundcoord.Decision) error {
 	writer, ok := r.reader.(coordinatorChatWriter)
-	if !ok || strings.TrimSpace(text) == "" || !sessionID.Valid {
+	text := strings.TrimSpace(decision.UserText)
+	if !ok || text == "" || !sessionID.Valid {
 		return nil
 	}
+	trace := decision.Trace()
 	msg, err := writer.CreateChatMessage(ctx, db.CreateChatMessageParams{
 		ChatSessionID: sessionID,
 		Role:          "assistant",
 		Content:       text,
-		MessageKind:   pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true},
+		MessageKind:   pgtype.Text{String: protocol.ChatMessageKindCoordinator, Valid: true},
+		ElapsedMs:     pgtype.Int8{Int64: decision.ElapsedMs, Valid: decision.ElapsedMs > 0},
+		SourcePayload: decision.TraceJSON(),
 	})
 	if err != nil {
 		return err
@@ -1233,6 +1237,9 @@ func (r *Router) persistCoordinatorAssistant(ctx context.Context, workspaceID, s
 			Role:          "assistant",
 			Content:       text,
 			CreatedAt:     createdAt,
+			MessageKind:   protocol.ChatMessageKindCoordinator,
+			ElapsedMs:     decision.ElapsedMs,
+			Coordinator:   &trace,
 		},
 	})
 	return nil

@@ -9,8 +9,8 @@ import (
 )
 
 func TestParseDecisionReply(t *testing.T) {
-	got := parseDecision(`{"action":"reply","text":"在的，今天想先对哪件事？","look_into":""}`, Turn{Source: SourceWeb})
-	if got.Action != ActionReply || got.UserText == "" {
+	got := parseDecision(`{"action":"reply","text":"在的，今天想先对哪件事？","look_into":"","reason":"这是打招呼"}`, Turn{Source: SourceWeb})
+	if got.Action != ActionReply || got.UserText == "" || got.Reason != "这是打招呼" {
 		t.Fatalf("got %#v", got)
 	}
 }

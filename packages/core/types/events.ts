@@ -7,6 +7,7 @@ import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser, Invitation } from "./workspace";
 import type { Project } from "./project";
 import type { Label } from "./label";
+import type { ChatCoordinatorTrace, ChatMessageKind } from "./chat";
 
 // WebSocket event types (matching Go server protocol/events.go)
 export type WSEventType =
@@ -368,6 +369,9 @@ export interface ChatMessageEventPayload {
   content: string;
   task_id?: string;
   created_at: string;
+  message_kind?: ChatMessageKind;
+  elapsed_ms?: number;
+  coordinator?: ChatCoordinatorTrace;
 }
 
 export interface ChatDonePayload {

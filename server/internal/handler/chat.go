@@ -824,10 +824,12 @@ type SendChatMessageResponse struct {
 	// and the timer "snaps backwards" later when WS events deliver the
 	// real created_at. Returning it here means the pill renders 0s from
 	// the start with a stable anchor.
-	CreatedAt          string `json:"created_at"`
-	AssistantMessageID string `json:"assistant_message_id,omitempty"`
-	AssistantContent   string `json:"assistant_content,omitempty"`
-	AssistantCreatedAt string `json:"assistant_created_at,omitempty"`
+	CreatedAt            string                         `json:"created_at"`
+	AssistantMessageID   string                         `json:"assistant_message_id,omitempty"`
+	AssistantContent     string                         `json:"assistant_content,omitempty"`
+	AssistantCreatedAt   string                         `json:"assistant_created_at,omitempty"`
+	AssistantMessageKind string                         `json:"assistant_message_kind,omitempty"`
+	Coordinator          *protocol.ChatCoordinatorTrace `json:"coordinator,omitempty"`
 }
 
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
@@ -966,7 +968,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		turn, persistErr := h.TaskService.PersistCoordinatorChatTurn(r.Context(), session, req.Content, decision.UserText)
+		tracePayload := decision.Trace()
+		turn, persistErr := h.TaskService.PersistCoordinatorChatTurn(
+			r.Context(),
+			session,
+			req.Content,
+			decision.UserText,
+			decision.ElapsedMs,
+			decision.TraceJSON(),
+		)
 		if persistErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist chat reply: "+persistErr.Error())
 			return
@@ -987,18 +997,23 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 			Content:       decision.UserText,
 			CreatedAt:     timestampToString(turn.AssistantMessage.CreatedAt),
 			TraceID:       trace.TraceID,
+			MessageKind:   protocol.ChatMessageKindCoordinator,
+			ElapsedMs:     decision.ElapsedMs,
+			Coordinator:   &tracePayload,
 		})
 		if !hadUserMessage {
 			h.maybeGenerateChatTitleAsync(workspaceID, userID, session.ID, session.Title, req.Content)
 		}
 		writeJSON(w, http.StatusCreated, SendChatMessageResponse{
-			MessageID:          uuidToString(turn.UserMessage.ID),
-			SupportsQueue:      true,
-			CreatedAt:          timestampToString(turn.UserMessage.CreatedAt),
-			AttachmentIDs:      nil,
-			AssistantMessageID: uuidToString(turn.AssistantMessage.ID),
-			AssistantContent:   decision.UserText,
-			AssistantCreatedAt: timestampToString(turn.AssistantMessage.CreatedAt),
+			MessageID:            uuidToString(turn.UserMessage.ID),
+			SupportsQueue:        true,
+			CreatedAt:            timestampToString(turn.UserMessage.CreatedAt),
+			AttachmentIDs:        nil,
+			AssistantMessageID:   uuidToString(turn.AssistantMessage.ID),
+			AssistantContent:     decision.UserText,
+			AssistantCreatedAt:   timestampToString(turn.AssistantMessage.CreatedAt),
+			AssistantMessageKind: protocol.ChatMessageKindCoordinator,
+			Coordinator:          &tracePayload,
 		})
 		return
 	}
@@ -2215,7 +2230,8 @@ type ChatMessageResponse struct {
 	MessageKind string `json:"message_kind"`
 	// QuickActions are sanitized follow-ups generated with this assistant turn.
 	// Always an empty array for legacy rows and user messages.
-	QuickActions []protocol.ChatQuickAction `json:"quick_actions"`
+	QuickActions []protocol.ChatQuickAction     `json:"quick_actions"`
+	Coordinator  *protocol.ChatCoordinatorTrace `json:"coordinator,omitempty"`
 	// Attachments linked to this message via chat_message_id. The chat
 	// bubble renders file cards from these, and the daemon claim path
 	// (daemon.go) pulls structured metadata from the same source so the
@@ -2252,6 +2268,7 @@ func chatMessageToResponse(m db.ChatMessage, attachments []AttachmentResponse) C
 		ElapsedMs:     int8ToPtr(m.ElapsedMs),
 		MessageKind:   normalizeMessageKind(m.MessageKind),
 		QuickActions:  decodeChatQuickActions(m.QuickActions),
+		Coordinator:   decodeCoordinatorTrace(m.MessageKind, m.SourcePayload),
 		Attachments:   attachments,
 	}
 }
@@ -2301,7 +2318,20 @@ func normalizeMessageKind(kind string) string {
 		return protocol.ChatMessageKindOnboardingKickoff
 	case protocol.ChatMessageKindOnboardingOpening:
 		return protocol.ChatMessageKindOnboardingOpening
+	case protocol.ChatMessageKindCoordinator:
+		return protocol.ChatMessageKindCoordinator
 	default:
 		return protocol.ChatMessageKindMessage
 	}
+}
+
+func decodeCoordinatorTrace(kind string, raw []byte) *protocol.ChatCoordinatorTrace {
+	if kind != protocol.ChatMessageKindCoordinator || len(raw) == 0 {
+		return nil
+	}
+	var trace protocol.ChatCoordinatorTrace
+	if err := json.Unmarshal(raw, &trace); err != nil {
+		return nil
+	}
+	return &trace
 }

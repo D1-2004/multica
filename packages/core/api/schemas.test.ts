@@ -1407,9 +1407,13 @@ describe("SendChatMessageResponseSchema", () => {
       created_at: "2026-08-05T00:00:00Z",
       assistant_message_id: "asst-1",
       assistant_content: "在的，今天先对哪件事？",
+      assistant_message_kind: "coordinator",
+      coordinator: { action: "reply", reason: "这是打招呼", source: "web" },
     });
     expect(parsed.task_id).toBeUndefined();
     expect(parsed.assistant_message_id).toBe("asst-1");
+    expect(parsed.assistant_message_kind).toBe("coordinator");
+    expect(parsed.coordinator?.action).toBe("reply");
   });
 });
 

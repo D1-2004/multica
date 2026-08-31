@@ -266,6 +266,9 @@ export function useBuilderSession(options: {
             content: result.assistant_content,
             task_id: null,
             created_at: result.assistant_created_at ?? createdAt,
+            message_kind: result.assistant_message_kind ?? "coordinator",
+            elapsed_ms: result.coordinator?.elapsed_ms ?? null,
+            coordinator: result.coordinator,
           },
           { seedIfMissing: true },
         );

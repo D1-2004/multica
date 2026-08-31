@@ -227,13 +227,26 @@ type RuntimeInfo struct {
 
 // ChatMessagePayload is broadcast when a new chat message is created.
 type ChatMessagePayload struct {
-	ChatSessionID string `json:"chat_session_id"`
-	MessageID     string `json:"message_id"`
-	Role          string `json:"role"`
-	Content       string `json:"content"`
-	TaskID        string `json:"task_id,omitempty"`
-	CreatedAt     string `json:"created_at"`
-	TraceID       string `json:"trace_id,omitempty"`
+	ChatSessionID string                `json:"chat_session_id"`
+	MessageID     string                `json:"message_id"`
+	Role          string                `json:"role"`
+	Content       string                `json:"content"`
+	TaskID        string                `json:"task_id,omitempty"`
+	CreatedAt     string                `json:"created_at"`
+	TraceID       string                `json:"trace_id,omitempty"`
+	MessageKind   string                `json:"message_kind,omitempty"`
+	ElapsedMs     int64                 `json:"elapsed_ms,omitempty"`
+	Coordinator   *ChatCoordinatorTrace `json:"coordinator,omitempty"`
+}
+
+// ChatCoordinatorTrace is the short-loop decision shown next to a coordinator
+// Chat reply. Additive: older clients ignore the field.
+type ChatCoordinatorTrace struct {
+	Action    string `json:"action"`
+	LookInto  string `json:"look_into,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	ElapsedMs int64  `json:"elapsed_ms,omitempty"`
+	Source    string `json:"source,omitempty"`
 }
 
 // Chat message kinds (chat_message.message_kind). Additive: unknown values
@@ -255,6 +268,10 @@ const (
 	// the opening self-describes: chat renders the starter cards under this
 	// kind instead of quick-action chips (MUL-5765).
 	ChatMessageKindOnboardingOpening = "onboarding_opening"
+	// ChatMessageKindCoordinator marks an assistant row produced by the
+	// server inbound short loop. It is a real Chat reply (no sandbox) and
+	// carries the decision process on the same row.
+	ChatMessageKindCoordinator = "coordinator"
 )
 
 // ChatDonePayload is broadcast when an agent finishes responding to a chat

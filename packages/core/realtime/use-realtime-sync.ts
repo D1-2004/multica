@@ -160,10 +160,9 @@ export function refetchPendingChatAggregate(
  * chat:quick_actions cancel. Both caches are staleTime: Infinity, so nothing
  * re-fetched afterwards and the prompt stayed missing until a remount.
  *
- * Only `role: "user"` is written. SendChatMessage is the event's one producer,
- * and an assistant row fabricated from this payload would carry no elapsed_ms /
- * message_kind / quick_actions while still claiming the id that
- * applyChatDoneToCache is about to write properly.
+ * User rows are written here. Assistant rows are normally written by
+ * chat:done; coordinator short-loop replies have no task/done event, so this
+ * handler also inserts an assistant row when `message_kind` is coordinator.
  *
  * The invalidate stays: this payload has no `attachments`, so the reconciling
  * refetch is what fills them in for clients that did not send the message.
@@ -181,6 +180,23 @@ export function applyChatMessageToCache(
       content: payload.content ?? "",
       task_id: payload.task_id ?? null,
       created_at: payload.created_at ?? new Date().toISOString(),
+    });
+  }
+  if (
+    payload.role === "assistant" &&
+    payload.message_id &&
+    payload.message_kind === "coordinator"
+  ) {
+    upsertChatMessageToCaches(qc, sessionId, {
+      id: payload.message_id,
+      chat_session_id: sessionId,
+      role: "assistant",
+      content: payload.content ?? "",
+      task_id: payload.task_id ?? null,
+      created_at: payload.created_at ?? new Date().toISOString(),
+      message_kind: "coordinator",
+      elapsed_ms: payload.elapsed_ms ?? payload.coordinator?.elapsed_ms ?? null,
+      coordinator: payload.coordinator,
     });
   }
   invalidateChatMessageQueries(qc, sessionId);

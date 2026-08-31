@@ -16,6 +16,7 @@ import (
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -24,7 +25,7 @@ const (
 	instructionsBudget  = 1500
 	titleBudget         = 40
 	temperature         = 0.7
-	maxCompletionTokens = 256
+	maxCompletionTokens = 320
 )
 
 // Action is the short-loop verdict.
@@ -68,9 +69,12 @@ type HistoryLine struct {
 
 // Decision is what callers act on.
 type Decision struct {
-	Action   Action
-	UserText string
-	LookInto string
+	Action    Action
+	UserText  string
+	LookInto  string
+	Reason    string
+	ElapsedMs int64
+	Source    Source
 }
 
 type historyReader interface {
@@ -126,6 +130,8 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 		return Decision{Action: ActionContinue}
 	}
 	decision := parseDecision(raw, turn)
+	decision.ElapsedMs = elapsed.Milliseconds()
+	decision.Source = turn.Source
 	slog.Info("inbound coordinator decided",
 		"event", "inbound_coordinator_decided",
 		"source", string(turn.Source),
@@ -133,9 +139,29 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 		"fail_open", decision.Action == ActionContinue,
 		"look_into_runes", utf8.RuneCountInString(decision.LookInto),
 		"reply_runes", utf8.RuneCountInString(decision.UserText),
-		"elapsed_ms", elapsed.Milliseconds(),
+		"elapsed_ms", decision.ElapsedMs,
 	)
 	return decision
+}
+
+// Trace is the user-visible short-loop record persisted with the Chat reply.
+func (d Decision) Trace() protocol.ChatCoordinatorTrace {
+	return protocol.ChatCoordinatorTrace{
+		Action:    string(d.Action),
+		LookInto:  d.LookInto,
+		Reason:    d.Reason,
+		ElapsedMs: d.ElapsedMs,
+		Source:    string(d.Source),
+	}
+}
+
+// TraceJSON is stored on chat_message.source_payload for coordinator rows.
+func (d Decision) TraceJSON() []byte {
+	raw, err := json.Marshal(d.Trace())
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // TurnFromChatSession loads agent voice, busy state, and recent Multica history.
@@ -192,6 +218,7 @@ func parseDecision(raw string, turn Turn) Decision {
 		Action   string `json:"action"`
 		Text     string `json:"text"`
 		LookInto string `json:"look_into"`
+		Reason   string `json:"reason"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed); err != nil {
 		return Decision{Action: ActionContinue}
@@ -199,12 +226,13 @@ func parseDecision(raw string, turn Turn) Decision {
 	action := Action(strings.TrimSpace(parsed.Action))
 	text := strings.TrimSpace(parsed.Text)
 	look := strings.TrimSpace(parsed.LookInto)
+	reason := strings.TrimSpace(parsed.Reason)
 	switch action {
 	case ActionReply:
 		if text == "" {
 			return Decision{Action: ActionContinue}
 		}
-		return Decision{Action: ActionReply, UserText: text}
+		return Decision{Action: ActionReply, UserText: text, Reason: reason}
 	case ActionIssue:
 		if look == "" {
 			look = clipRunes(strings.TrimSpace(turn.Message), titleBudget)
@@ -212,12 +240,12 @@ func parseDecision(raw string, turn Turn) Decision {
 		if text == "" {
 			text = issueAckFallback(look)
 		}
-		return Decision{Action: ActionIssue, UserText: text, LookInto: look}
+		return Decision{Action: ActionIssue, UserText: text, LookInto: look, Reason: reason}
 	case ActionSilence:
 		if turn.Source == SourceWeb {
 			return Decision{Action: ActionContinue}
 		}
-		return Decision{Action: ActionSilence}
+		return Decision{Action: ActionSilence, Reason: reason}
 	default:
 		return Decision{Action: ActionContinue}
 	}

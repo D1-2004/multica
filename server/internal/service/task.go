@@ -2263,6 +2263,8 @@ func (s *TaskService) PersistCoordinatorChatTurn(
 	session db.ChatSession,
 	userContent string,
 	assistantContent string,
+	elapsedMs int64,
+	trace []byte,
 ) (*CoordinatorChatTurn, error) {
 	var out CoordinatorChatTurn
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
@@ -2280,7 +2282,9 @@ func (s *TaskService) PersistCoordinatorChatTurn(
 			ChatSessionID: session.ID,
 			Role:          "assistant",
 			Content:       assistantContent,
-			MessageKind:   pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true},
+			MessageKind:   pgtype.Text{String: protocol.ChatMessageKindCoordinator, Valid: true},
+			ElapsedMs:     pgtype.Int8{Int64: elapsedMs, Valid: elapsedMs > 0},
+			SourcePayload: trace,
 		})
 		if err != nil {
 			return fmt.Errorf("create coordinator assistant message: %w", err)

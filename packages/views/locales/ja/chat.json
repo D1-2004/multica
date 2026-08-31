@@ -50,6 +50,10 @@
     "failed_after": "{{elapsed}}後に失敗",
     "finished_in": "{{elapsed}}で完了",
     "no_response": "エージェントはテキストの返信なしでこのターンを終了しました。",
+    "coordinator_badge": "Coordinator",
+    "coordinator_source_web": "Webチャット",
+    "coordinator_source_robot": "DingTalkロボット",
+    "coordinator_source_digital_employee": "デジタル従業員",
     "failure": {
       "agent_error": "エージェントでエラーが発生し、返信を完了できませんでした。もう一度お試しください。",
       "timeout": "処理に時間がかかりすぎたため、完了前に停止しました。もう一度お試しいただくか、リクエストを分けてみてください。",

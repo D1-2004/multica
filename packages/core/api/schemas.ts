@@ -1202,8 +1202,18 @@ export const ChatMessageSchema = z
         "no_response",
         "onboarding_kickoff",
         "onboarding_opening",
+        "coordinator",
       ])
       .catch("message")
+      .optional(),
+    coordinator: z
+      .object({
+        action: z.string().optional(),
+        look_into: z.string().optional(),
+        reason: z.string().optional(),
+        elapsed_ms: z.number().optional(),
+        source: z.string().optional(),
+      })
       .optional(),
     // Optional additive data degrades independently: a malformed suggestion
     // must not hide the assistant reply that contains it.
@@ -2382,6 +2392,24 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
         .string()
         .nullish()
         .transform((at) => at || undefined),
+      assistant_message_kind: z
+        .enum([
+          "message",
+          "no_response",
+          "onboarding_kickoff",
+          "onboarding_opening",
+          "coordinator",
+        ])
+        .optional(),
+      coordinator: z
+        .object({
+          action: z.string().optional(),
+          look_into: z.string().optional(),
+          reason: z.string().optional(),
+          elapsed_ms: z.number().optional(),
+          source: z.string().optional(),
+        })
+        .optional(),
     })
     .loose();
 

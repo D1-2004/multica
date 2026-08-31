@@ -21,7 +21,16 @@ export type ChatMessageKind =
   | "message"
   | "no_response"
   | "onboarding_kickoff"
-  | "onboarding_opening";
+  | "onboarding_opening"
+  | "coordinator";
+
+export interface ChatCoordinatorTrace {
+  action?: string;
+  look_into?: string;
+  reason?: string;
+  elapsed_ms?: number;
+  source?: string;
+}
 
 /**
  * A concise follow-up offered by an assistant reply. `label` is rendered in
@@ -163,6 +172,7 @@ export interface ChatMessage {
   message_kind?: ChatMessageKind;
   /** Up to three server-validated follow-ups generated with this reply. */
   quick_actions?: ChatQuickAction[];
+  coordinator?: ChatCoordinatorTrace;
 }
 
 export interface ChatMessagesCursor {
@@ -204,6 +214,8 @@ export interface SendChatMessageResponse {
   assistant_message_id?: string;
   assistant_content?: string;
   assistant_created_at?: string;
+  assistant_message_kind?: ChatMessageKind;
+  coordinator?: ChatCoordinatorTrace;
 }
 
 /** Browser acknowledgement emitted after a live assistant reply is rendered. */
