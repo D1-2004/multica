@@ -1,9 +1,8 @@
 // Package inboundcoord is the server-side short loop that decides whether an
 // inbound user turn can be answered immediately or must become an Issue that
 // starts a sandbox. Direct reply is the chat response; Issue is the only
-// sandbox path. Decide is a bounded tool loop (assoc_recall, assoc_bind,
-// finish). DWS is not a coordinator tool; DingTalk history is loaded by the
-// server before Decide.
+// sandbox path. Decide is one JSON LLM call with no tools. DWS is not a
+// coordinator tool; DingTalk history is loaded by the server before Decide.
 package inboundcoord
 
 import (
@@ -24,14 +23,14 @@ import (
 )
 
 const (
-	decisionTimeout      = 15 * time.Second
+	decisionTimeout      = 10 * time.Second
 	coordinatorModel     = "qwen3.7-plus"
 	historyLimit         = 4
 	dingtalkHistoryLimit = 10
 	instructionsBudget   = 400
 	titleBudget          = 40
 	temperature          = 0.3
-	maxCompletionTokens  = 384
+	maxCompletionTokens  = 192
 )
 
 // Action is the short-loop verdict.
@@ -101,7 +100,8 @@ type historyReader interface {
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 }
 
-// Coordinator runs a bounded LLM tool loop then a verdict.
+// Coordinator runs one JSON LLM decision with no tools. Tools and Chat remain
+// on the struct for the leftover assoc loop in loop.go; Decide does not call them.
 type Coordinator struct {
 	LLM     *llm.Client
 	Queries historyReader
@@ -109,8 +109,7 @@ type Coordinator struct {
 	Chat    Completer
 }
 
-// New wires the short loop. assocSvc may be nil; recall/bind then return a
-// tool error and the model still finishes with reply/issue/silence.
+// New wires the short loop. assocSvc may be nil; Decide does not call assoc tools.
 func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) *Coordinator {
 	c := &Coordinator{LLM: llmClient, Queries: queries}
 	if assocSvc != nil {
@@ -125,7 +124,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	if c == nil {
 		return Decision{Action: ActionContinue}
 	}
-	if c.Chat == nil && (c.LLM == nil || !c.LLM.Enabled()) {
+	if c.LLM == nil || !c.LLM.Enabled() {
 		return Decision{Action: ActionContinue}
 	}
 	if strings.TrimSpace(turn.Message) == "" {
@@ -152,7 +151,14 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	defer cancel()
 	started := time.Now()
 
-	decision, err := c.runLoop(loopCtx, turn)
+	raw, err := c.LLM.GenerateJSONFast(
+		loopCtx,
+		coordinatorModel,
+		systemPrompt,
+		buildUserPrompt(turn),
+		temperature,
+		maxCompletionTokens,
+	)
 	elapsed := time.Since(started)
 	if err != nil {
 		slog.Warn("inbound coordinator llm failed; continuing sandbox enqueue",
@@ -166,6 +172,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 		)
 		return Decision{Action: ActionContinue}
 	}
+	decision := parseDecision(raw, turn)
 	decision.ElapsedMs = elapsed.Milliseconds()
 	decision.Source = turn.Source
 	slog.Info("inbound coordinator decided",
@@ -176,8 +183,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 		"fail_open", decision.Action == ActionContinue,
 		"look_into_runes", utf8.RuneCountInString(decision.LookInto),
 		"reply_runes", utf8.RuneCountInString(decision.UserText),
-		"tool_rounds", decision.ToolRounds,
-		"tools", strings.Join(decision.ToolsUsed, ","),
 		"elapsed_ms", decision.ElapsedMs,
 	)
 	return decision
@@ -203,7 +208,9 @@ func (d Decision) TraceJSON() []byte {
 	return raw
 }
 
-// TurnFromChatSession loads agent voice, busy state, and recent Multica history.
+// TurnFromChatSession loads agent voice, busy state, and recent history.
+// Web Chat reads the last 4 Multica rows into History. Robot and digital-employee
+// turns read the last 10 rows into DingTalkHistory before Decide.
 func (c *Coordinator) TurnFromChatSession(
 	ctx context.Context,
 	session db.ChatSession,

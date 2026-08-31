@@ -8,24 +8,29 @@ import (
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
-// TestRoutingContractKeepsLookupInSandbox locks the shipped prompt's routing
-// rules: this loop may recall/bind scenes, but DWS/search still live in the
-// sandbox, so a live-info or do/track turn must become an Issue.
+// TestRoutingContractKeepsLookupInSandbox locks the shipped prompt: Decide is a
+// no-tools JSON router. DWS/search live in the sandbox, so a live-info or
+// do/track turn must become an Issue.
 func TestRoutingContractKeepsLookupInSandbox(t *testing.T) {
 	for _, rule := range []string{
-		"You have tools",
-		"A later sandbox has DWS",
+		"You have no tools",
 		"Do not answer a question from your own knowledge",
 		"looked up, fetched, checked, written, or tracked",
-		"This loop's lack of DWS/search/files is never a reason to reply",
-		"if the sandbox would act, action=issue",
+		"This loop's lack of tools is never a reason to reply",
+		"If the sandbox would act, action=issue",
 		"They must not change the action or invent capability limits",
-		"assoc_recall",
-		"assoc_bind",
-		"finish",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)
+		}
+	}
+	for _, banned := range []string{
+		"assoc_recall",
+		"assoc_bind",
+		"You have tools",
+	} {
+		if strings.Contains(systemPrompt, banned) {
+			t.Errorf("systemPrompt must not expose coordinator tool %q", banned)
 		}
 	}
 }

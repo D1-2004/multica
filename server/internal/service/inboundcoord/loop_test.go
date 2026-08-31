@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	openai "github.com/openai/openai-go/v3"
+
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 type scriptedCompleter struct {
@@ -163,15 +165,21 @@ func TestLoopExceedsRounds(t *testing.T) {
 	}
 }
 
-func TestDecideUsesChatLoopWhenLLMDisabled(t *testing.T) {
+func TestDecideDoesNotCallChatLoop(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantJSON(`{"action":"reply","text":"在。","reason":"打招呼"}`),
 	}}
-	c := &Coordinator{Chat: chat}
+	c := &Coordinator{
+		LLM:  llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
+		Chat: chat,
+	}
 	got := c.Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, Message: "你好"})
-	if got.Action != ActionReply {
-		t.Fatalf("action=%s", got.Action)
+	if got.Action != ActionContinue {
+		t.Fatalf("unreachable LLM must fail open, action=%s", got.Action)
+	}
+	if chat.calls != 0 {
+		t.Fatalf("Decide must not run the leftover tool loop, chat.calls=%d", chat.calls)
 	}
 }
 

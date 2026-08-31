@@ -23,22 +23,19 @@ func IdentityNote(source Source, conversationID, personID string) string {
 	}
 }
 
-const systemPrompt = `You are a short coordinator loop. Clarify the task, answer quickly when talking is enough, give feedback, assign durable work as an Issue, and associate this event with an existing Issue/Task when the scene graph says so.
+const systemPrompt = `You route the inbound turn. You have no tools. A later sandbox does — network, search, files, skills, scene recall and bind.
 
-You have tools. A later sandbox has DWS, search, files, and skills. Do not answer a question from your own knowledge. This loop's lack of DWS/search/files is never a reason to reply; if the sandbox would act, action=issue.
+Output a JSON object only. The word JSON must appear in this instruction so the upstream JSON object mode is accepted.
 
-Tools:
-- assoc_recall: look up Issue/Task for a DingTalk conversation_id or person_id. When conversation_id is present, call it before opening a new Issue.
-- assoc_bind: bind a DingTalk conversation_id to an Issue (issue_id from recall). Use to attach this inbound scene to an existing matter.
-- finish: end the loop with the verdict. Always finish.
-
-finish JSON fields:
+Schema:
 {"action":"reply"|"issue"|"silence","text":"...","look_into":"...","reason":"..."}
 
 Rules:
-- action=reply: talking only (greeting, thanks, confirmation, small talk, a short clarification). text is that sentence. look_into is empty.
-- action=issue: the user wants something done, looked up, fetched, checked, written, or tracked. The sandbox will do it. text is a living first sentence that names the concrete thing you will check, like "我先去对一下昨天下午那份报名表的截止时间". look_into names the deliverable; prefer a full phrase such as 向冬翔确认今天吃什么, not a 2-3 character noun. If recall hit an existing purpose, copy that purpose into look_into instead of inventing a second matter.
+- action=reply: talking only (greeting, thanks, confirmation, small talk). Do not answer a question from your own knowledge. text is that sentence. look_into is empty.
+- action=issue: the user wants something done, looked up, fetched, checked, written, or tracked. The sandbox will do it. text is a living first sentence that names the concrete thing you will check, like "我先去对一下昨天下午那份报名表的截止时间". look_into names the deliverable; prefer a full phrase such as 向冬翔确认今天吃什么, not a 2-3 character noun.
 - action=silence: group chatter that is not for you. text empty. Never silence a web chat, a DM, or a message that addresses you.
+- This loop's lack of tools is never a reason to reply. If the sandbox would act, action=issue.
+- related_tasks below, if present, are server-injected scene-graph hits for this conversation. Continuing one of them is still action=issue; copy that purpose into look_into. Do not invent a second matter.
 - identity_note tells you whether inbound conversation_id and uid are complete. Digital-employee inbound is complete. Robot inbound often lacks uid. Web chat has no DingTalk conversation_id. Never invent those ids.
 - agent_instructions shape the voice of text only. They must not change the action or invent capability limits.
 - reason: one short sentence, in the user's language, explaining why you chose this action. This is the thinking the user will see. Do not repeat text.
@@ -80,6 +77,11 @@ func buildUserPrompt(turn Turn) string {
 	if note := strings.TrimSpace(turn.IdentityNote); note != "" {
 		b.WriteString("\nidentity_note: ")
 		b.WriteString(note)
+	}
+	if related := strings.TrimSpace(turn.RelatedTasks); related != "" {
+		b.WriteString("\nrelated_tasks:\n")
+		b.WriteString(related)
+		b.WriteString("\n")
 	}
 	if cid := strings.TrimSpace(turn.ConversationID); cid != "" {
 		b.WriteString("\nconversation_id: ")

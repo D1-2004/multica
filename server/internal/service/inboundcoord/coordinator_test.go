@@ -236,12 +236,87 @@ func TestAttachDingTalkConversationSkippedForWeb(t *testing.T) {
 	}
 }
 
+func TestFillDingTalkHistorySkippedForWeb(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(10)}
+	c := &Coordinator{Queries: q}
+	turn := c.FillDingTalkHistory(context.Background(), Turn{Source: SourceWeb, Message: "你好"}, testSession().ID)
+	if q.listCalls != 0 || len(turn.DingTalkHistory) != 0 {
+		t.Fatalf("web FillDingTalkHistory leaked dingtalk history calls=%d lines=%d", q.listCalls, len(turn.DingTalkHistory))
+	}
+}
+
 func TestFillDingTalkHistoryFailureLeavesEmptyAndDecideStillCallable(t *testing.T) {
 	q := &coordQueriesStub{listErr: context.DeadlineExceeded}
-	c := &Coordinator{Queries: q}
+	c := &Coordinator{Queries: q, LLM: llm.New(llm.Config{})}
 	turn := c.FillDingTalkHistory(context.Background(), Turn{Source: SourceRobot, Message: "帮我看看今天有什么新闻"}, testSession().ID)
+	if q.listCalls != 1 || q.lastList.Limit != dingtalkHistoryLimit {
+		t.Fatalf("failed lookup still requests last %d, calls=%d limit=%d", dingtalkHistoryLimit, q.listCalls, q.lastList.Limit)
+	}
 	if len(turn.DingTalkHistory) != 0 {
 		t.Fatalf("failed lookup must leave empty history, got %#v", turn.DingTalkHistory)
+	}
+	got := c.Decide(context.Background(), turn)
+	if got.Action != ActionContinue {
+		t.Fatalf("empty history must not block Decide, action=%s", got.Action)
+	}
+}
+
+func TestTurnFromChatSessionEmptyPageStillListsTenForRobotAndDigitalEmployee(t *testing.T) {
+	for _, src := range []Source{SourceRobot, SourceDigitalEmployee} {
+		q := &coordQueriesStub{}
+		c := &Coordinator{Queries: q}
+		turn := c.TurnFromChatSession(context.Background(), testSession(), src, true, "p2p", "须莫", "须莫", "帮我看看今天有什么新闻")
+		if q.listCalls != 1 || q.lastList.Limit != dingtalkHistoryLimit {
+			t.Fatalf("%s empty page lookup = calls %d limit %d, want 1 call limit %d", src, q.listCalls, q.lastList.Limit, dingtalkHistoryLimit)
+		}
+		if len(turn.DingTalkHistory) != 0 {
+			t.Fatalf("%s empty page must leave DingTalkHistory empty, got %#v", src, turn.DingTalkHistory)
+		}
+		if len(turn.History) != 0 {
+			t.Fatalf("%s must not load web Multica history, got %d", src, len(turn.History))
+		}
+	}
+}
+
+func TestAttachDingTalkConversationPrefersBoundSessionOverWindow(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(10)}
+	c := &Coordinator{Queries: q}
+	window := []HistoryLine{{Role: "user", Content: "窗口不该出现"}}
+	turn := AttachDingTalkConversation(
+		context.Background(),
+		c,
+		Turn{Source: SourceDigitalEmployee, Message: "帮我看看今天有什么新闻"},
+		testSession().ID,
+		window,
+	)
+	if q.listCalls != 1 || q.lastList.Limit != dingtalkHistoryLimit {
+		t.Fatalf("digital-employee attach lookup = calls %d limit %d, want 1 call limit %d", q.listCalls, q.lastList.Limit, dingtalkHistoryLimit)
+	}
+	prompt := buildUserPrompt(turn)
+	if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "钉钉历史A") || !strings.Contains(prompt, "钉钉历史J") {
+		t.Fatalf("prompt missing bound session history: %q", prompt)
+	}
+	if strings.Contains(prompt, "窗口不该出现") {
+		t.Fatalf("bound session must win over window: %q", prompt)
+	}
+}
+
+func TestAttachDingTalkConversationDigitalEmployeeListsTenEvenWhenPageEmpty(t *testing.T) {
+	q := &coordQueriesStub{}
+	c := &Coordinator{Queries: q}
+	window := []HistoryLine{{Role: "user", Content: "窗里旧话"}}
+	turn := AttachDingTalkConversation(
+		context.Background(),
+		c,
+		Turn{Source: SourceDigitalEmployee, Message: "帮我看看今天有什么新闻"},
+		testSession().ID,
+		window,
+	)
+	if q.listCalls != 1 || q.lastList.Limit != dingtalkHistoryLimit {
+		t.Fatalf("empty page still lists last %d, calls=%d limit=%d", dingtalkHistoryLimit, q.listCalls, q.lastList.Limit)
+	}
+	if len(turn.DingTalkHistory) != 1 || turn.DingTalkHistory[0].Content != "窗里旧话" {
+		t.Fatalf("empty session must fall back to window, got %#v", turn.DingTalkHistory)
 	}
 }
 

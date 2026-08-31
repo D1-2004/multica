@@ -21,25 +21,22 @@ remain Issue-only because neither has a foreground Chat session to release.
 
 ### Inbound short loop (reply vs issue)
 
-Before a sandbox starts, Multica runs a bounded server-side **tool loop** (at
-most 3 Chat Completions rounds, thinking off) on web Chat and on DingTalk
-`channel/message.created` for digital employees and robots. The coordinator
-clarifies the task, answers quickly when talking is enough, gives feedback,
-assigns durable work as an Issue, and associates this inbound scene with an
-existing Issue/Task. Direct reply **is** the Chat response. Only work that
-needs sandbox tools, lookup, or tracking becomes an Issue.
+Before a sandbox starts, Multica runs **one** bounded server-side JSON decision
+(`GenerateJSONFast`, thinking off, no tool loop) on web Chat and on DingTalk
+`channel/message.created` for digital employees and robots. The decisioner is a
+router: it has no tools and must not answer from its own knowledge. Direct
+reply **is** the Chat response. Only work that needs tools, lookup, or tracking
+becomes an Issue and starts a sandbox.
 
-Coordinator tools are `assoc_recall`, `assoc_bind`, and `finish`. The last
-round exposes only `finish`. The loop does not expose DWS, search, or news as
-model-callable tools, does not redeem a ContextToken, and is not behind a
-feature flag. On robot and digital employee turns, the server loads the current
-DingTalk conversation's last 10 messages **before** the first round (from the
-bound Multica session, or the dispatch window if the session is empty). A
-history lookup failure leaves history empty and still runs the loop. Web Chat
-does not load DingTalk history. It uses `qwen3.7-plus` with thinking off and a
-15s wall clock. Agent setting `inbound_coordinator` is on by default for new
-and existing agents; an explicit owner off switch skips the loop and enqueues
-the sandbox.
+The loop does not expose DWS, search, or news as model-callable tools, does not
+redeem a ContextToken, and is not behind a feature flag. On robot and digital
+employee turns, the server loads the current DingTalk conversation's last 10
+messages **before** that one JSON call (from the bound Multica session, or the
+dispatch window if the session is empty). A history lookup failure leaves
+history empty and still runs the decision. Web Chat does not load DingTalk
+history. It uses `qwen3.7-plus` with thinking off and a 10s wall clock. Agent
+setting `inbound_coordinator` is on by default for new and existing agents;
+an explicit owner off switch skips the loop and enqueues the sandbox.
 
 | Action | User sees | Sandbox |
 | --- | --- | --- |
