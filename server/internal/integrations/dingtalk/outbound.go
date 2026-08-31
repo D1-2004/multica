@@ -29,6 +29,7 @@ type outboundQueries interface {
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error)
 	GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (string, error)
+	ListCommentsForIssue(ctx context.Context, arg db.ListCommentsForIssueParams) ([]db.Comment, error)
 }
 
 // taskFailedText is the user-visible notice for a failed chat run. The
@@ -430,20 +431,48 @@ func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bo
 	return true, lifecycleErr
 }
 
-func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID pgtype.UUID, _ map[string]any) string {
+func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID pgtype.UUID, payload map[string]any) string {
 	if !issueID.Valid {
 		return ""
 	}
-	reply, err := o.q.GetLastAgentCommentForIssue(ctx, issueID)
+	workspaceID, err := util.ParseUUID(strings.TrimSpace(fmt.Sprint(payload["workspace_id"])))
 	if err != nil {
-		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: last agent comment lookup failed",
+		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: missing workspace id",
 			"event", "dingtalk_stream_issue_outbound_lookup_failed",
 			"issue_id", util.UUIDToString(issueID),
 			"error", err,
 		)
 		return ""
 	}
-	return strings.TrimSpace(reply)
+	rows, err := o.q.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issueID,
+		WorkspaceID: workspaceID,
+		Limit:       50,
+	})
+	if err != nil {
+		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: last agent comment lookup failed",
+			"event", "dingtalk_stream_issue_outbound_lookup_failed",
+			"issue_id", util.UUIDToString(issueID),
+			"workspace_id", util.UUIDToString(workspaceID),
+			"error", err,
+		)
+		return ""
+	}
+	for i := len(rows) - 1; i >= 0; i-- {
+		if rows[i].AuthorType != "agent" {
+			continue
+		}
+		if text := strings.TrimSpace(rows[i].Content); text != "" {
+			return text
+		}
+	}
+	o.logger.Info("dingtalk stream issue outbound skipped",
+		"event", "dingtalk_stream_issue_outbound_empty",
+		"issue_id", util.UUIDToString(issueID),
+		"workspace_id", util.UUIDToString(workspaceID),
+		"comment_rows", len(rows),
+	)
+	return ""
 }
 
 func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.UUID, payload map[string]any) string {

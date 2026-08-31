@@ -109,6 +109,13 @@ func (q *dispatchLifecycleQueries) GetLastAgentCommentForIssue(context.Context, 
 	return q.lastReply, nil
 }
 
+func (q *dispatchLifecycleQueries) ListCommentsForIssue(context.Context, db.ListCommentsForIssueParams) ([]db.Comment, error) {
+	if strings.TrimSpace(q.lastReply) == "" {
+		return nil, nil
+	}
+	return []db.Comment{{AuthorType: "agent", Content: q.lastReply}}, nil
+}
+
 type dispatchRobotRecorder struct {
 	mu       sync.Mutex
 	sequence []string
@@ -396,8 +403,9 @@ func TestStreamIssueCompletionPostsLastReplyAndRecallsEmotion(t *testing.T) {
 	mgr.bindStreamEmotion(context.Background(), inst.ID, "msg-stream", sessionID, taskID)
 	outbound := NewOutbound(queries, plaintextDecrypter, messenger, mgr, nil)
 	payload := map[string]any{
-		"task_id":  util.UUIDToString(taskID),
-		"issue_id": "11111111-1111-1111-1111-111111111111",
+		"task_id":      util.UUIDToString(taskID),
+		"issue_id":     "11111111-1111-1111-1111-111111111111",
+		"workspace_id": "22222222-2222-2222-2222-222222222222",
 	}
 
 	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskQueued, Payload: payload}); err != nil {
@@ -464,8 +472,9 @@ func TestStreamIssueCompletionPostsThroughSessionWebhook(t *testing.T) {
 	mgr.bindStreamEmotion(context.Background(), inst.ID, "msg-webhook", sessionID, taskID)
 	outbound := NewOutbound(queries, plaintextDecrypter, messenger, mgr, nil)
 	payload := map[string]any{
-		"task_id":  util.UUIDToString(taskID),
-		"issue_id": "11111111-1111-1111-1111-111111111111",
+		"task_id":      util.UUIDToString(taskID),
+		"issue_id":     "11111111-1111-1111-1111-111111111111",
+		"workspace_id": "22222222-2222-2222-2222-222222222222",
 	}
 	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskCompleted, Payload: payload}); err != nil {
 		t.Fatalf("stream issue webhook completed: %v", err)

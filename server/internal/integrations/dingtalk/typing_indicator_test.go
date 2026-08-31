@@ -104,6 +104,10 @@ func (f *fakeTypingQueries) GetLastAgentCommentForIssue(context.Context, pgtype.
 	return "", nil
 }
 
+func (f *fakeTypingQueries) ListCommentsForIssue(context.Context, db.ListCommentsForIssueParams) ([]db.Comment, error) {
+	return nil, nil
+}
+
 func typingTestUUID(b byte) pgtype.UUID {
 	var raw [16]byte
 	raw[15] = b
