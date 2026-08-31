@@ -175,7 +175,7 @@
     "prop_visibility": "공개 범위",
     "prop_concurrency": "동시 실행",
     "prop_chat_session_resume": "이전 세션 이어가기",
-    "prop_chat_session_resume_hint": "1:1 채팅에서만 동작합니다. 샌드박스가 아직 따뜻하고, 마지막 답변이 20분 이내이며, 지시문·스킬·런타임이 바뀌지 않았을 때 이전 Claude/Codex 세션을 이어갑니다. 조건이 안 되면 전체 기록으로 다시 시작합니다.",
+    "prop_chat_session_resume_hint": "꺼져 있으면 매 턴 새 세션을 시작하며 이어가지 않습니다. 켜면 1:1 채팅에서만 동작합니다. 샌드박스가 아직 따뜻하고, 마지막 답변이 20분 이내이며, 지시문·스킬·런타임이 바뀌지 않았을 때 이전 Claude/Codex 세션을 이어갑니다. 조건이 안 되면 전체 기록으로 다시 시작합니다.",
     "prop_inbound_coordinator": "수신 시 먼저 판단",
     "prop_inbound_coordinator_hint": "켜면 딩톡과 웹 메시지는 바로 답할 수 있는지 먼저 판단합니다. 도구·조회·지속 추적이 필요할 때만 샌드박스를 켭니다. 끄면 모든 메시지가 샌드박스로 갑니다.",
     "prop_owner": "소유자",

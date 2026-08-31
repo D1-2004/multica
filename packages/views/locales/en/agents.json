@@ -183,7 +183,7 @@
     "prop_visibility": "Visibility",
     "prop_concurrency": "Concurrency",
     "prop_chat_session_resume": "Resume last session",
-    "prop_chat_session_resume_hint": "In 1:1 chat, reuse the previous Claude/Codex session when the sandbox is still warm, the last reply finished within 20 minutes, and this agent's instructions, skills, and runtime have not changed. Faster follow-ups; falls back to full history if resume is not possible.",
+    "prop_chat_session_resume_hint": "Off: every turn starts a fresh provider session, never resumed. On: in 1:1 chat, reuse the previous Claude/Codex session when the sandbox is still warm, the last reply finished within 20 minutes, and this agent's instructions, skills, and runtime have not changed. Faster follow-ups; falls back to full history if resume is not possible.",
     "prop_inbound_coordinator": "Judge before sandbox",
     "prop_inbound_coordinator_hint": "When on, DingTalk and web chat first decide whether to reply immediately. Only work that needs tools, lookup, or tracking starts a sandbox. Turn off to send every message into the sandbox.",
     "prop_owner": "Owner",
