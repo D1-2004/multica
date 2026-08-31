@@ -426,6 +426,55 @@ func TestStreamIssueCompletionPostsLastReplyAndRecallsEmotion(t *testing.T) {
 	}
 }
 
+func TestStreamIssueCompletionPostsThroughSessionWebhook(t *testing.T) {
+	recorder, server := newDispatchRobotServer(t)
+	taskID := typingTestUUID(91)
+	sessionID := typingTestUUID(92)
+	inst := testInstallationRow(t, typingTestUUID(93), "client_stream_webhook")
+	streamQ := newFakeStreamEmotionQueries(inst)
+	taskContext, err := json.Marshal(map[string]any{
+		dingtalkSessionReplyContextKey: dingtalkSessionReplyContext{Webhook: server.URL + "/session-reply"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := &dispatchLifecycleQueries{
+		inst: inst,
+		binding: db.ChannelChatSessionBinding{
+			ChatSessionID: sessionID,
+			ChatType:      string(channel.ChatTypeP2P),
+			Config:        []byte(`{"sender_staff_id":"staff-1"}`),
+		},
+		task:      db.AgentTaskQueue{ID: taskID, Context: taskContext},
+		stream:    streamQ,
+		lastReply: "今天要闻：走会话 webhook 回传。",
+	}
+	messenger := NewRobotMessenger(server.URL, server.URL, server.Client())
+	mgr := NewTypingIndicatorManager(messenger, plaintextDecrypter, streamQ, nil)
+	mgr.beginStreamEmotion(context.Background(), inst.ID, "msg-webhook", EmotionTarget{
+		OpenConversationID: "cid-dm", OpenMsgID: "msg-webhook", RobotCode: "robot_client_stream_webhook",
+	}, 0)
+	mgr.bindStreamEmotion(context.Background(), inst.ID, "msg-webhook", sessionID, taskID)
+	outbound := NewOutbound(queries, plaintextDecrypter, messenger, mgr, nil)
+	payload := map[string]any{
+		"task_id":  util.UUIDToString(taskID),
+		"issue_id": "11111111-1111-1111-1111-111111111111",
+	}
+	if err := outbound.processEvent(context.Background(), events.Event{Type: protocol.EventTaskCompleted, Payload: payload}); err != nil {
+		t.Fatalf("stream issue webhook completed: %v", err)
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	if len(recorder.sequence) < 2 || recorder.sequence[len(recorder.sequence)-1] != "/session-reply" {
+		t.Fatalf("stream issue webhook calls = %v, want session-reply last", recorder.sequence)
+	}
+	for _, path := range recorder.sequence {
+		if path == "/v1.0/robot/oToMessages/batchSend" || path == "/v1.0/robot/groupMessages/send" {
+			t.Fatalf("stream issue webhook used robot SDK: %v", recorder.sequence)
+		}
+	}
+}
+
 func TestStreamIssueRetryPendingFailureStaysSilent(t *testing.T) {
 	recorder, server := newDispatchRobotServer(t)
 	taskID := typingTestUUID(81)

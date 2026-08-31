@@ -95,7 +95,9 @@ func (o *Outbound) handleEvent(e events.Event) {
 			)
 		}
 		o.logger.WarnContext(ctx, "dingtalk outbound: reply delivery failed",
-			"error", err, "chat_session_id", e.ChatSessionID)
+			"error", err,
+			"task_id", util.UUIDToString(taskIDFromEvent(e)),
+			"chat_session_id", e.ChatSessionID)
 	}
 }
 
@@ -516,14 +518,30 @@ func (o *Outbound) processStreamIssueEvent(ctx context.Context, e events.Event) 
 	}
 	o.settleStreamProcessingEmotion(ctx, row)
 	if !wantReply {
+		o.logger.Info("dingtalk stream issue outbound skipped",
+			"event", "dingtalk_stream_issue_outbound_empty",
+			"task_id", util.UUIDToString(taskUUID),
+			"issue_id", strings.TrimSpace(issueID),
+			"open_msg_id_hash", dingtalkTraceHash(row.OpenMsgID),
+		)
 		return true, nil
 	}
-	route, err := o.streamIssueRobotRoute(ctx, row)
-	if err != nil {
-		return true, err
-	}
-	if err := o.messenger.SendMarkdown(ctx, route.credentials, route.reply, content); err != nil {
-		return true, fmt.Errorf("post dingtalk stream issue reply: %w", err)
+	// Stream chat:done posts through the callback session webhook when the
+	// task still carries it. Coordinator issue tasks persist that webhook in
+	// dispatch context; using the robot SDK here would land outside the
+	// conversation the ACK already used.
+	if reply, ok := o.sessionReplyContext(ctx, taskUUID); ok {
+		if err := postSessionWebhook(ctx, o.messenger.httpClient, reply.Webhook, content); err != nil {
+			return true, fmt.Errorf("post dingtalk stream issue reply: %w", err)
+		}
+	} else {
+		route, err := o.streamIssueRobotRoute(ctx, row)
+		if err != nil {
+			return true, err
+		}
+		if err := o.messenger.SendMarkdown(ctx, route.credentials, route.reply, content); err != nil {
+			return true, fmt.Errorf("post dingtalk stream issue reply: %w", err)
+		}
 	}
 	o.logger.Info("dingtalk stream issue outbound",
 		"event", "dingtalk_stream_issue_outbound",
