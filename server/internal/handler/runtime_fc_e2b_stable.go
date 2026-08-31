@@ -25,15 +25,15 @@ type stableChannelResponse struct {
 }
 
 type createStableReleaseRequest struct {
-	SandboxBackend  string `json:"sandbox_backend"`
-	ArtifactRef     string `json:"artifact_ref"`
-	ArtifactBuildID string `json:"artifact_build_id"`
-	ArtifactBuiltAt string `json:"artifact_built_at"`
-	ArtifactDigest  string `json:"artifact_digest"`
-	GitCommit       string `json:"git_commit"`
-	TemplateID      string `json:"template_id"`
-	ExpectedBuildID string `json:"expected_build_id"`
-	Note            string `json:"note"`
+	SandboxBackend      string `json:"sandbox_backend"`
+	ArtifactRef         string `json:"artifact_ref"`
+	ArtifactBuildID     string `json:"artifact_build_id"`
+	ArtifactBuiltAt     string `json:"artifact_built_at"`
+	ArtifactDigest      string `json:"artifact_digest"`
+	GitCommit           string `json:"git_commit"`
+	ProviderFingerprint string `json:"provider_fingerprint"`
+	TemplateID          string `json:"template_id"`
+	Note                string `json:"note"`
 }
 
 func (h *Handler) canPublishFCE2BStable(r *http.Request) bool {
@@ -166,8 +166,8 @@ func (h *Handler) createCloudSandboxStableRelease(
 	req.ArtifactBuiltAt = strings.TrimSpace(req.ArtifactBuiltAt)
 	req.ArtifactDigest = strings.ToLower(strings.TrimSpace(req.ArtifactDigest))
 	req.GitCommit = strings.ToLower(strings.TrimSpace(req.GitCommit))
+	req.ProviderFingerprint = strings.ToLower(strings.TrimSpace(req.ProviderFingerprint))
 	req.TemplateID = strings.TrimSpace(req.TemplateID)
-	req.ExpectedBuildID = strings.TrimSpace(req.ExpectedBuildID)
 	req.Note = strings.TrimSpace(req.Note)
 	backend := service.SandboxBackendKind(req.SandboxBackend)
 	if forcedBackend != "" {
@@ -185,10 +185,6 @@ func (h *Handler) createCloudSandboxStableRelease(
 		writeError(w, http.StatusBadRequest, "note is too long")
 		return
 	}
-	expectedBuildID := req.ArtifactBuildID
-	if expectedBuildID == "" {
-		expectedBuildID = req.ExpectedBuildID
-	}
 	var artifactBuiltAt *time.Time
 	if backend == service.SandboxBackendASB {
 		parsed, parseErr := time.Parse(time.RFC3339, req.ArtifactBuiltAt)
@@ -204,16 +200,17 @@ func (h *Handler) createCloudSandboxStableRelease(
 		artifactBuiltAt = &parsed
 	}
 	release, _, err := h.FCE2BStable.CreateRelease(r.Context(), service.CreateFCE2BStableReleaseInput{
-		IdempotencyKey:  idempotencyKey,
-		SandboxBackend:  backend,
-		ArtifactRef:     req.ArtifactRef,
-		ExpectedBuildID: expectedBuildID,
-		ArtifactBuiltAt: artifactBuiltAt,
-		ArtifactDigest:  req.ArtifactDigest,
-		GitCommit:       req.GitCommit,
-		TemplateID:      req.TemplateID,
-		Note:            req.Note,
-		ActorUserID:     actor,
+		IdempotencyKey:      idempotencyKey,
+		SandboxBackend:      backend,
+		ArtifactRef:         req.ArtifactRef,
+		ArtifactBuildID:     req.ArtifactBuildID,
+		ArtifactBuiltAt:     artifactBuiltAt,
+		ArtifactDigest:      req.ArtifactDigest,
+		GitCommit:           req.GitCommit,
+		ProviderFingerprint: req.ProviderFingerprint,
+		TemplateID:          req.TemplateID,
+		Note:                req.Note,
+		ActorUserID:         actor,
 	})
 	if err != nil {
 		switch {

@@ -92,8 +92,8 @@ func init() {
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-built-at", "", "ASB artifact build time in RFC3339 format")
 	runtimeStableReleaseCreateCmd.Flags().String("artifact-digest", "", "Artifact sha256 digest")
 	runtimeStableReleaseCreateCmd.Flags().String("git-commit", "", "Source Git commit")
+	runtimeStableReleaseCreateCmd.Flags().String("provider-fingerprint", "", "Runtime provider combination fingerprint")
 	runtimeStableReleaseCreateCmd.Flags().String("template-id", "", "FC/E2B template ID")
-	runtimeStableReleaseCreateCmd.Flags().String("expected-build-id", "", "Expected FC/E2B template build ID")
 	runtimeStableReleaseCreateCmd.Flags().String("note", "", "Operator note")
 	runtimeStableReleaseCreateCmd.Flags().String("idempotency-key", "", "Required retry-safe operation key")
 	runtimeStableReleaseCreateCmd.Flags().String("output", "json", "Output format: table or json")
@@ -171,7 +171,6 @@ func runRuntimeStableChannel(cmd *cobra.Command, _ []string) error {
 		strVal(current, "release_id"),
 		"",
 		strVal(current, "artifact_ref"),
-		strVal(current, "artifact_build_id"),
 	}}
 	if active != nil {
 		rows = append(rows, []string{
@@ -179,10 +178,9 @@ func runRuntimeStableChannel(cmd *cobra.Command, _ []string) error {
 			strVal(active, "id"),
 			strVal(active, "status"),
 			strVal(active, "artifact_ref"),
-			strVal(active, "artifact_build_id"),
 		})
 	}
-	cli.PrintTable(os.Stdout, []string{"KIND", "RELEASE_ID", "STATUS", "ARTIFACT", "BUILD_ID"}, rows)
+	cli.PrintTable(os.Stdout, []string{"KIND", "RELEASE_ID", "STATUS", "ARTIFACT"}, rows)
 	return nil
 }
 
@@ -214,12 +212,12 @@ func runRuntimeStableRuntimes(cmd *cobra.Command, _ []string) error {
 			strVal(runtime, "runtime_name"),
 			strVal(runtime, "provider"),
 			strVal(runtime, "status"),
-			strVal(runtime, "artifact_build_id"),
+			strVal(runtime, "artifact_ref"),
 			strVal(runtime, "matches_current_stable"),
 			strVal(runtime, "active_release_target_status"),
 		})
 	}
-	cli.PrintTable(os.Stdout, []string{"ID", "NAME", "PROVIDER", "STATUS", "BUILD_ID", "CURRENT", "TARGET_STATUS"}, rows)
+	cli.PrintTable(os.Stdout, []string{"ID", "NAME", "PROVIDER", "STATUS", "ARTIFACT", "CURRENT", "TARGET_STATUS"}, rows)
 	return nil
 }
 
@@ -290,14 +288,14 @@ func runRuntimeStableReleaseCreate(cmd *cobra.Command, _ []string) error {
 	}
 	body := map[string]any{"sandbox_backend": backend}
 	for flag, field := range map[string]string{
-		"artifact-ref":      "artifact_ref",
-		"artifact-build-id": "artifact_build_id",
-		"artifact-built-at": "artifact_built_at",
-		"artifact-digest":   "artifact_digest",
-		"git-commit":        "git_commit",
-		"template-id":       "template_id",
-		"expected-build-id": "expected_build_id",
-		"note":              "note",
+		"artifact-ref":         "artifact_ref",
+		"artifact-build-id":    "artifact_build_id",
+		"artifact-built-at":    "artifact_built_at",
+		"artifact-digest":      "artifact_digest",
+		"git-commit":           "git_commit",
+		"provider-fingerprint": "provider_fingerprint",
+		"template-id":          "template_id",
+		"note":                 "note",
 	} {
 		value, _ := cmd.Flags().GetString(flag)
 		if value = strings.TrimSpace(value); value != "" {
@@ -305,14 +303,14 @@ func runRuntimeStableReleaseCreate(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	if backend == "asb" {
-		for _, field := range []string{"artifact_ref", "artifact_build_id", "artifact_built_at", "artifact_digest", "git_commit"} {
+		for _, field := range []string{"artifact_ref", "artifact_build_id", "artifact_built_at", "artifact_digest", "git_commit", "provider_fingerprint"} {
 			if _, ok := body[field]; !ok {
 				return fmt.Errorf("--%s is required for --backend asb", strings.ReplaceAll(field, "_", "-"))
 			}
 		}
 	}
 	if backend == "aliyun_fc" {
-		for _, field := range []string{"template_id", "expected_build_id"} {
+		for _, field := range []string{"template_id"} {
 			if _, ok := body[field]; !ok {
 				return fmt.Errorf("--%s is required for --backend aliyun_fc", strings.ReplaceAll(field, "_", "-"))
 			}
@@ -364,7 +362,7 @@ func printRuntimeStableRelease(cmd *cobra.Command, release map[string]any) error
 }
 
 func stableReleaseHeaders() []string {
-	return []string{"ID", "BACKEND", "STATUS", "BUILD_ID", "BUILT_AT", "BATCH", "UPDATED", "FAILED", "ERROR"}
+	return []string{"ID", "BACKEND", "STATUS", "ARTIFACT", "BUILT_AT", "BATCH", "UPDATED", "FAILED", "ERROR"}
 }
 
 func stableReleaseRow(release map[string]any) []string {
@@ -372,7 +370,7 @@ func stableReleaseRow(release map[string]any) []string {
 		strVal(release, "id"),
 		strVal(release, "sandbox_backend"),
 		strVal(release, "status"),
-		strVal(release, "artifact_build_id"),
+		strVal(release, "artifact_ref"),
 		strVal(release, "artifact_built_at"),
 		strVal(release, "current_batch"),
 		strVal(release, "updated_targets"),

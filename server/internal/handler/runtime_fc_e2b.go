@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -19,19 +18,20 @@ import (
 )
 
 type createFCE2BRuntimeRequest struct {
-	SandboxBackend  string `json:"sandbox_backend"`
-	APIKey          string `json:"api_key"`
-	Name            string `json:"name"`
-	ArtifactRef     string `json:"artifact_ref"`
-	ArtifactBuildID string `json:"artifact_build_id"`
-	ArtifactAlias   string `json:"artifact_alias"`
-	ArtifactDigest  string `json:"artifact_digest"`
-	ArtifactChannel string `json:"artifact_channel"`
-	TemplateID      string `json:"template_id"`
-	Template        string `json:"template"`
-	TemplateChannel string `json:"template_channel"`
-	Provider        string `json:"provider"`
-	Visibility      string `json:"visibility"`
+	SandboxBackend      string `json:"sandbox_backend"`
+	APIKey              string `json:"api_key"`
+	Name                string `json:"name"`
+	ArtifactRef         string `json:"artifact_ref"`
+	ArtifactBuildID     string `json:"artifact_build_id"`
+	ArtifactAlias       string `json:"artifact_alias"`
+	ArtifactDigest      string `json:"artifact_digest"`
+	RuntimeCommit       string `json:"runtime_commit"`
+	ProviderFingerprint string `json:"provider_fingerprint"`
+	ArtifactChannel     string `json:"artifact_channel"`
+	TemplateID          string `json:"template_id"`
+	TemplateChannel     string `json:"template_channel"`
+	Provider            string `json:"provider"`
+	Visibility          string `json:"visibility"`
 }
 
 type updateFCE2BRuntimeTemplateRequest struct {
@@ -39,51 +39,12 @@ type updateFCE2BRuntimeTemplateRequest struct {
 }
 
 type updateCloudSandboxArtifactRequest struct {
-	ArtifactRef     string `json:"artifact_ref"`
-	ArtifactBuildID string `json:"artifact_build_id"`
-	ArtifactAlias   string `json:"artifact_alias"`
-	ArtifactDigest  string `json:"artifact_digest"`
-}
-
-const asbArtifactValidationProgressInterval = 15 * time.Second
-
-type asbArtifactValidationOutcome struct {
-	manifest map[string]any
-	err      error
-}
-
-// validateASBArtifactWithProgress preserves the endpoint's final JSON status
-// while keeping long cold-image validation alive through gateways with a
-// shorter idle timeout. HTTP permits any number of informational 1xx responses
-// before the final response; 102 Processing therefore does not turn validation
-// failures into successful requests and does not require an in-memory job.
-func validateASBArtifactWithProgress(
-	ctx context.Context,
-	w http.ResponseWriter,
-	interval time.Duration,
-	validate func(context.Context) (map[string]any, error),
-) (map[string]any, error) {
-	if interval <= 0 {
-		return nil, errors.New("ASB artifact validation progress interval must be positive")
-	}
-	outcomeCh := make(chan asbArtifactValidationOutcome, 1)
-	go func() {
-		manifest, err := validate(ctx)
-		outcomeCh <- asbArtifactValidationOutcome{manifest: manifest, err: err}
-	}()
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case outcome := <-outcomeCh:
-			return outcome.manifest, outcome.err
-		case <-ticker.C:
-			w.WriteHeader(http.StatusProcessing)
-		case <-ctx.Done():
-			return nil, context.Cause(ctx)
-		}
-	}
+	ArtifactRef         string `json:"artifact_ref"`
+	ArtifactBuildID     string `json:"artifact_build_id"`
+	ArtifactAlias       string `json:"artifact_alias"`
+	ArtifactDigest      string `json:"artifact_digest"`
+	RuntimeCommit       string `json:"runtime_commit"`
+	ProviderFingerprint string `json:"provider_fingerprint"`
 }
 
 type updateASBRuntimeCredentialRequest struct {
@@ -222,9 +183,6 @@ func (h *Handler) createAliyunFCRuntime(
 	}
 	templateRef := strings.TrimSpace(req.TemplateID)
 	expectedStableDigest := ""
-	if templateRef == "" {
-		templateRef = strings.TrimSpace(req.Template)
-	}
 	if templateChannel == service.CloudSandboxChannelCandidate {
 		if !h.canPublishFCE2BStable(r) {
 			writeError(w, http.StatusForbidden, "candidate FC/E2B runtimes are restricted to stable publishers")
@@ -280,13 +238,13 @@ func (h *Handler) createAliyunFCRuntime(
 		templateRef = current.TemplateID
 		expectedStableDigest = current.ArtifactDigest
 	}
-	selected, ok := selectFCE2BTemplate(templates, templateRef)
+	selected, ok := selectFCE2BTemplateByID(templates, templateRef)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "template_id does not match an available FC/E2B template")
 		return
 	}
 	if !service.IsFCE2BTemplateReady(selected) || !service.IsFCE2BTemplatePublished(selected) {
-		writeError(w, http.StatusBadRequest, "FC/E2B template is not ready with a verified manifest")
+		writeError(w, http.StatusBadRequest, "FC/E2B template is not ready or the Runtime provider catalog is empty")
 		return
 	}
 	provider, ok := resolveFCE2BProvider(req.Provider, selected)
@@ -313,30 +271,27 @@ func (h *Handler) createAliyunFCRuntime(
 	}
 
 	metadata, err := json.Marshal(map[string]any{
-		"kind":               service.CloudSandboxMetadataKind,
-		"sandbox_backend":    string(service.SandboxBackendAliyunFC),
-		"provider":           provider,
-		"artifact_kind":      service.CloudSandboxArtifactE2BTemplate,
-		"artifact_channel":   templateChannel,
-		"artifact_ref":       selected.ID,
-		"artifact_build_id":  selected.BuildID,
-		"artifact_alias":     selected.Template,
-		"artifact_digest":    expectedStableDigest,
-		"artifact_status":    selected.Status,
-		"template":           selected.Template,
-		"template_id":        selected.ID,
-		"template_build_id":  selected.BuildID,
-		"template_alias":     selected.Template,
-		"template_name":      selected.Name,
-		"template_status":    selected.Status,
-		"manifest_version":   selected.ManifestVersion,
-		"capabilities":       fcE2BTemplateCapabilities(provider, selected),
-		"component_versions": selected.ComponentVersions,
-		"runner_protocol":    selected.RunnerProtocol,
-		"template_channel":   templateChannel,
-		"timeout_seconds":    h.currentConfig().FCE2B.TimeoutSeconds,
-		"created_by":         uuidToString(member.UserID),
-		"runner":             service.FCE2BRunnerCommandForProvider(provider),
+		"kind":             service.CloudSandboxMetadataKind,
+		"sandbox_backend":  string(service.SandboxBackendAliyunFC),
+		"provider":         provider,
+		"artifact_kind":    service.CloudSandboxArtifactE2BTemplate,
+		"artifact_channel": templateChannel,
+		"artifact_ref":     selected.ID,
+		"artifact_alias":   selected.Template,
+		"artifact_digest":  expectedStableDigest,
+		"artifact_status":  selected.Status,
+		"template":         selected.ID,
+		"template_id":      selected.ID,
+		"template_alias":   selected.Template,
+		"template_name":    selected.Name,
+		"template_status":  selected.Status,
+		"manifest_version": selected.ManifestVersion,
+		"capabilities":     fcE2BTemplateCapabilities(provider, selected),
+		"runner_protocol":  selected.RunnerProtocol,
+		"template_channel": templateChannel,
+		"timeout_seconds":  h.currentConfig().FCE2B.TimeoutSeconds,
+		"created_by":       uuidToString(member.UserID),
+		"runner":           service.FCE2BRunnerCommandForProvider(provider),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encode runtime metadata")
@@ -411,6 +366,7 @@ func (h *Handler) createASBRuntime(
 		Alias:   strings.TrimSpace(req.ArtifactAlias),
 		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
 	}
+	runtimeCommit := strings.ToLower(strings.TrimSpace(req.RuntimeCommit))
 	runtimeStatus := "online"
 	var metadataValues map[string]any
 	runtimeQueries := h.Queries
@@ -423,7 +379,7 @@ func (h *Handler) createASBRuntime(
 	switch artifactChannel {
 	case service.CloudSandboxChannelStable:
 		if artifact.Ref != "" || artifact.BuildID != "" || artifact.Digest != "" ||
-			strings.TrimSpace(req.TemplateID) != "" || strings.TrimSpace(req.Template) != "" {
+			strings.TrimSpace(req.TemplateID) != "" {
 			writeError(w, http.StatusBadRequest, "stable runtimes resolve their artifact from the ASB stable channel")
 			return
 		}
@@ -474,8 +430,34 @@ func (h *Handler) createASBRuntime(
 			writeError(w, http.StatusBadRequest, "artifact_ref, artifact_build_id and artifact_digest are required for a candidate runtime")
 			return
 		}
+		candidateProvider := strings.ToLower(strings.TrimSpace(req.Provider))
+		if candidateProvider == "" {
+			candidateProvider = service.FCE2BProvider
+		}
+		providerFingerprint := strings.ToLower(strings.TrimSpace(req.ProviderFingerprint))
+		providers, found := service.RuntimeProvidersForFingerprint(
+			h.currentConfig().FCE2B.RuntimeProviderFingerprints,
+			providerFingerprint,
+		)
+		if !service.IsRuntimeSourceCommit(runtimeCommit) {
+			writeError(w, http.StatusBadRequest, "runtime_commit must be a 40-character lowercase Git commit")
+			return
+		}
+		if !found || !containsRuntimeProvider(providers, candidateProvider) {
+			writeError(w, http.StatusBadRequest, "provider_fingerprint does not resolve the requested provider")
+			return
+		}
 		var err error
-		metadataValues, err = service.BuildASBCandidateBootstrapMetadata(artifact, req.Provider)
+		artifact.ProviderData = map[string]any{
+			"provider_fingerprint": providerFingerprint,
+			"providers":            providers,
+			"source_revision":      runtimeCommit,
+		}
+		metadataValues, err = service.BuildASBRuntimeMetadata(
+			artifact,
+			candidateProvider,
+			service.CloudSandboxChannelCandidate,
+		)
 		if err != nil {
 			if errors.Is(err, service.ErrFCE2BTemplateProviderUnsupported) {
 				writeError(w, http.StatusBadRequest, "unsupported ASB Runtime provider")
@@ -484,9 +466,6 @@ func (h *Handler) createASBRuntime(
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		// A candidate is a credential-bearing bootstrap record. It cannot run
-		// tasks until the asynchronous stable release validates the real image.
-		runtimeStatus = "offline"
 	}
 
 	if metadataValues == nil {
@@ -497,7 +476,7 @@ func (h *Handler) createASBRuntime(
 			artifactChannel,
 		)
 		if errors.Is(err, service.ErrFCE2BTemplateProviderUnsupported) {
-			writeError(w, http.StatusBadRequest, "provider is not declared by the ASB runtime manifest")
+			writeError(w, http.StatusBadRequest, "provider is not declared by the Runtime provider catalog")
 			return
 		}
 		if err != nil {
@@ -875,23 +854,36 @@ func (h *Handler) UpdateCloudSandboxRuntimeArtifact(w http.ResponseWriter, r *ht
 		Alias:   strings.TrimSpace(req.ArtifactAlias),
 		Digest:  strings.ToLower(strings.TrimSpace(req.ArtifactDigest)),
 	}
-	manifest, err := validateASBArtifactWithProgress(
-		r.Context(),
-		w,
-		asbArtifactValidationProgressInterval,
-		func(ctx context.Context) (map[string]any, error) {
-			return h.ASBLauncher.VerifyStableArtifact(ctx, runtimeUUID, artifact)
-		},
+	var currentMetadata struct {
+		RuntimeCommit       string `json:"runtime_commit"`
+		ProviderFingerprint string `json:"provider_fingerprint"`
+	}
+	_ = json.Unmarshal(runtime.Metadata, &currentMetadata)
+	runtimeCommit := strings.ToLower(strings.TrimSpace(req.RuntimeCommit))
+	if runtimeCommit == "" {
+		runtimeCommit = strings.ToLower(strings.TrimSpace(currentMetadata.RuntimeCommit))
+	}
+	providerFingerprint := strings.ToLower(strings.TrimSpace(req.ProviderFingerprint))
+	if providerFingerprint == "" {
+		providerFingerprint = strings.ToLower(strings.TrimSpace(currentMetadata.ProviderFingerprint))
+	}
+	providers, found := service.RuntimeProvidersForFingerprint(
+		h.currentConfig().FCE2B.RuntimeProviderFingerprints,
+		providerFingerprint,
 	)
-	if err != nil {
-		slog.Error("ASB candidate artifact update validation failed",
-			"error", err,
-			"runtime_id", runtimeID,
-		)
-		writeError(w, http.StatusBadRequest, "ASB candidate artifact validation failed")
+	if !service.IsRuntimeSourceCommit(runtimeCommit) {
+		writeError(w, http.StatusBadRequest, "runtime_commit must be a 40-character lowercase Git commit")
 		return
 	}
-	artifact.Manifest = manifest
+	if !found || !containsRuntimeProvider(providers, runtime.Provider) {
+		writeError(w, http.StatusBadRequest, "provider_fingerprint does not resolve the Runtime provider")
+		return
+	}
+	artifact.ProviderData = map[string]any{
+		"provider_fingerprint": providerFingerprint,
+		"providers":            providers,
+		"source_revision":      runtimeCommit,
+	}
 	result, err := h.ASBLauncher.UpdateRuntimeArtifact(r.Context(), runtimeUUID, artifact)
 	if err != nil {
 		switch {
@@ -1029,10 +1021,9 @@ func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Requ
 		"provider", result.Runtime.Provider,
 		"previous_template", result.PreviousTemplate,
 		"previous_template_id", result.PreviousTemplateID,
-		"previous_template_build_id", result.PreviousTemplateBuildID,
-		"template", selected.Template,
+		"template", selected.ID,
 		"template_id", selected.ID,
-		"template_build_id", selected.BuildID,
+		"template_alias", selected.Template,
 		"invalidated_sandbox_count", result.InvalidatedSandboxCount,
 		"changed", result.Changed,
 	)
@@ -1042,18 +1033,6 @@ func (h *Handler) UpdateFCE2BRuntimeTemplate(w http.ResponseWriter, r *http.Requ
 		})
 	}
 	writeJSON(w, http.StatusOK, runtimeToResponse(result.Runtime))
-}
-
-func selectFCE2BTemplate(templates []service.FCE2BTemplate, ref string) (service.FCE2BTemplate, bool) {
-	ref = strings.TrimSpace(ref)
-	for _, t := range templates {
-		for _, candidate := range []string{t.Template, t.ID, t.Name} {
-			if strings.TrimSpace(candidate) == ref {
-				return t, true
-			}
-		}
-	}
-	return service.FCE2BTemplate{}, false
 }
 
 func selectFCE2BTemplateByID(templates []service.FCE2BTemplate, id string) (service.FCE2BTemplate, bool) {
@@ -1069,9 +1048,9 @@ func selectFCE2BTemplateByID(templates []service.FCE2BTemplate, id string) (serv
 	return service.FCE2BTemplate{}, false
 }
 
-// resolveFCE2BProvider picks an explicit provider only when the verified
-// template manifest declares it. With no explicit value, the first supported
-// provider in the manifest is selected.
+// resolveFCE2BProvider picks an explicit provider only when it is enabled in
+// the deployment-wide Diamond list. With no explicit value, the first enabled
+// provider is selected.
 func resolveFCE2BProvider(requested string, t service.FCE2BTemplate) (string, bool) {
 	requested = strings.ToLower(strings.TrimSpace(requested))
 	if requested == "" {
@@ -1081,6 +1060,16 @@ func resolveFCE2BProvider(requested string, t service.FCE2BTemplate) (string, bo
 		return "", false
 	}
 	return requested, true
+}
+
+func containsRuntimeProvider(providers []string, requested string) bool {
+	requested = strings.ToLower(strings.TrimSpace(requested))
+	for _, provider := range providers {
+		if strings.ToLower(strings.TrimSpace(provider)) == requested {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultFCE2BRuntimeName derives a display name from the template, prefixing

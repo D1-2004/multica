@@ -203,6 +203,8 @@ var migrationVersionAliases = []migrationVersionAlias{
 	{Legacy: "271_channel_chat_pending_fresh", Current: "9063_channel_chat_pending_fresh"},
 	{Legacy: "9062_agent_task_dsh_trajectory", Current: "9064_agent_task_dsh_trajectory"},
 	{Legacy: "9063_fc_e2b_stable_release_target_five_providers", Current: "9065_fc_e2b_stable_release_target_five_providers"},
+	{Legacy: "9079_fc_template_id_identity", Current: "9090_fc_template_id_identity_compat"},
+	{Legacy: "9080_clear_fc_artifact_build_ids", Current: "9091_clear_fc_artifact_build_ids_deferred"},
 }
 
 func runTaskUsageHourlyHook(ctx context.Context, pool *pgxpool.Pool) error {

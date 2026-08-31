@@ -53,8 +53,8 @@ const (
 	// DSHTrajectoryCapability declares that a DSH runner persists its native
 	// JSONL event ledger through the authenticated task trajectory endpoint.
 	DSHTrajectoryCapability = "dsh_trajectory_v1"
-	// FCE2BProvider is the first provider selected when a verified template
-	// manifest declares Hermes support and the request omits a provider.
+	// FCE2BProvider is the first provider selected when the Diamond template
+	// directory declares Hermes support and the request omits a provider.
 	FCE2BProvider = "hermes"
 
 	fcE2BScopeTypeChat  = "chat"
@@ -72,15 +72,9 @@ const (
 	fcE2BRunOnceHealthPortSpan      = 30000
 	fcE2BRootRunnerInstallDir       = "/usr/local/libexec"
 	fcE2BLegacyRunnerInstallDir     = "/usr/local/bin"
-	fcE2BTemplateManifestVersion    = 7
 	fcE2BChatSessionIDEnvKey        = "MULTICA_CHAT_SESSION_ID"
 	fcE2BA2AIsolationRoot           = "/tmp/multica-dws"
 )
-
-// The native image smoke includes Chromium and LibreOffice probes. It is a
-// release-validation command, not a readiness probe, and must remain below
-// stableReleaseLeaseDuration while allowing cold filesystem caches to warm.
-const fcE2BStableValidationTimeout = 5 * time.Minute
 
 var errAgentIdentityContextTokenRefreshRequired = errors.New("Agent Identity ContextToken refresh required")
 
@@ -116,7 +110,7 @@ type FCE2BConfig struct {
 	LLMBaseURL                        string
 	LLMAPIKey                         string
 	LLMModels                         []string
-	ManifestV7ComponentVersions       map[string]map[string]string
+	RuntimeProviderFingerprints       map[string][]string
 	AgentIdentityControlBaseURL       string
 	AgentIdentitySandboxBaseURL       string
 	AgentIdentityBaseURL              string
@@ -407,8 +401,25 @@ func IsFCE2BSupportedProvider(provider string) bool {
 	return false
 }
 
-// FCE2BTemplateSupportsProvider reports whether the verified template manifest
-// declares provider. Template identifiers are deliberately ignored.
+func IsRuntimeSourceCommit(commit string) bool {
+	commit = strings.ToLower(strings.TrimSpace(commit))
+	return len(commit) == 40 && isLowerHex(commit)
+}
+
+func RuntimeProvidersForFingerprint(catalog map[string][]string, fingerprint string) ([]string, bool) {
+	fingerprint = strings.ToLower(strings.TrimSpace(fingerprint))
+	if !runtimeProviderFingerprintPattern.MatchString(fingerprint) {
+		return nil, false
+	}
+	providers, found := catalog[fingerprint]
+	if !found || len(providers) == 0 {
+		return nil, false
+	}
+	return append([]string(nil), providers...), true
+}
+
+// FCE2BTemplateSupportsProvider reports whether provider is enabled in the
+// deployment-wide Diamond provider list copied onto the template projection.
 func FCE2BTemplateSupportsProvider(template FCE2BTemplate, provider string) bool {
 	provider = strings.ToLower(strings.TrimSpace(provider))
 	if !IsFCE2BSupportedProvider(provider) {
@@ -423,7 +434,7 @@ func FCE2BTemplateSupportsProvider(template FCE2BTemplate, provider string) bool
 }
 
 // FCE2BProviderForTemplate returns the first server-supported provider from
-// the verified manifest. A template without one is not usable for creation.
+// the Runtime provider catalog. A template without one is not usable for creation.
 func FCE2BProviderForTemplate(template FCE2BTemplate) (string, bool) {
 	for _, provider := range FCE2BSupportedProviders {
 		if FCE2BTemplateSupportsProvider(template, provider) {
@@ -491,6 +502,16 @@ func FCE2BTemplateCapabilities(provider string, template FCE2BTemplate) []string
 	return capabilities
 }
 
+func ASBCapabilitiesForProviders(providers []string) []string {
+	base := runtimeconfig.CapabilitiesForProviders(providers)
+	if len(base) < 5 {
+		return base
+	}
+	result := append([]string(nil), base[:5]...)
+	result = append(result, "a1", "mw", "buc")
+	return append(result, base[5:]...)
+}
+
 // DSH and OpenCode v2 intentionally speak the daemon's verified OpenCode
 // JSON-event contract through their image-owned adapters. Their immutable
 // runner entrypoints rewrite only the daemon provider argument while retaining
@@ -511,15 +532,12 @@ func IsFCE2BTemplateReady(template FCE2BTemplate) bool {
 	return strings.EqualFold(strings.TrimSpace(template.Status), "ready")
 }
 
-// IsFCE2BTemplatePublished reports whether the current build carries a valid
-// supported manifest alias required for safe publication, runtime creation,
-// and rotation. m2 through the current manifest version are supported; m1 is
-// retired.
+// IsFCE2BTemplatePublished reports whether the template has an admitted alias
+// and at least one provider from the Diamond provider catalog. Template ID is
+// the only launch identity; manifest and component versions are not checked.
 func IsFCE2BTemplatePublished(template FCE2BTemplate) bool {
-	return template.ManifestVersion >= 2 &&
-		template.ManifestVersion <= fcE2BTemplateManifestVersion &&
-		strings.TrimSpace(template.BuildID) != "" &&
-		strings.TrimSpace(template.RunnerProtocol) == string(fcE2BRunnerLaunchRootLog) &&
+	return strings.TrimSpace(template.ID) != "" &&
+		strings.TrimSpace(template.Template) != "" &&
 		len(template.Providers) > 0
 }
 
@@ -684,20 +702,17 @@ type CommandRunner interface {
 }
 
 type FCE2BTemplate struct {
-	ID                string            `json:"id,omitempty"`
-	BuildID           string            `json:"build_id,omitempty"`
-	SourceRevision    string            `json:"source_revision,omitempty"`
-	Name              string            `json:"name,omitempty"`
-	Template          string            `json:"template"`
-	Status            string            `json:"status,omitempty"`
-	CreatedAt         string            `json:"created_at,omitempty"`
-	UpdatedAt         string            `json:"updated_at,omitempty"`
-	ManifestVersion   int               `json:"manifest_version"`
-	Providers         []string          `json:"providers"`
-	Capabilities      []string          `json:"capabilities"`
-	ComponentVersions map[string]string `json:"component_versions"`
-	RunnerProtocol    string            `json:"runner_protocol"`
-	Metadata          map[string]any    `json:"metadata,omitempty"`
+	ID              string   `json:"id,omitempty"`
+	SourceRevision  string   `json:"source_revision,omitempty"`
+	Name            string   `json:"name,omitempty"`
+	Template        string   `json:"template"`
+	Status          string   `json:"status,omitempty"`
+	CreatedAt       string   `json:"created_at,omitempty"`
+	UpdatedAt       string   `json:"updated_at,omitempty"`
+	ManifestVersion int      `json:"manifest_version"`
+	Providers       []string `json:"providers"`
+	Capabilities    []string `json:"capabilities"`
+	RunnerProtocol  string   `json:"runner_protocol"`
 }
 
 type OSCommandRunner struct{}
@@ -725,7 +740,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 	if err != nil {
 		return nil, fmt.Errorf("FC/E2B template list failed: %w", err)
 	}
-	templates, err := parseFCE2BTemplates(out, cfg.ManifestV7ComponentVersions)
+	templates, err := parseFCE2BTemplates(out, cfg.RuntimeProviderFingerprints)
 	if err != nil {
 		return nil, err
 	}
@@ -737,7 +752,7 @@ func ListFCE2BTemplates(ctx context.Context, cfg FCE2BConfig, runner CommandRunn
 
 func parseFCE2BTemplates(
 	output string,
-	manifestV7ComponentVersions map[string]map[string]string,
+	providerFingerprints map[string][]string,
 ) ([]FCE2BTemplate, error) {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
@@ -774,160 +789,49 @@ func parseFCE2BTemplates(
 			continue
 		}
 		t := FCE2BTemplate{
-			ID:        firstString(obj, "id", "template_id", "templateID"),
-			BuildID:   firstString(obj, "build_id", "buildID"),
-			Status:    firstString(obj, "status", "state", "buildStatus", "build_status"),
-			CreatedAt: firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
-			UpdatedAt: firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
-			Metadata:  obj,
+			ID:           firstString(obj, "id", "template_id", "templateID"),
+			Status:       firstString(obj, "status", "state", "buildStatus", "build_status"),
+			CreatedAt:    firstString(obj, "created_at", "createdAt", "create_time", "createTime"),
+			UpdatedAt:    firstString(obj, "updated_at", "updatedAt", "update_time", "updateTime"),
+			Providers:    []string{},
+			Capabilities: []string{},
 		}
-		var manifestAlias string
-		for _, alias := range stringValues(obj, "aliases", "names") {
-			candidate := t
-			published, err := applyFCE2BTemplateManifestAlias(
-				&candidate,
-				alias,
-				manifestV7ComponentVersions,
-			)
-			if err != nil {
-				return nil, err
-			}
-			if !published {
-				continue
-			}
-			if manifestAlias != "" && manifestAlias != alias {
-				return nil, fmt.Errorf("FC/E2B template %s has multiple manifest aliases", t.ID)
-			}
-			manifestAlias = alias
-			t = candidate
-		}
-		if manifestAlias == "" {
+		if strings.TrimSpace(t.ID) == "" {
 			continue
 		}
+		displayAlias := t.ID
+		aliases := stringValues(obj, "aliases", "names")
+		for _, alias := range aliases {
+			alias = strings.TrimSpace(alias)
+			if alias != "" && alias != "default" {
+				displayAlias = alias
+				break
+			}
+		}
+		t.Name = displayAlias
+		t.Template = displayAlias
+		for _, alias := range aliases {
+			matches := fcE2BTemplateProviderFingerprintAliasPattern.FindStringSubmatch(strings.TrimSpace(alias))
+			if matches == nil {
+				continue
+			}
+			providers, found := RuntimeProvidersForFingerprint(providerFingerprints, matches[1])
+			if !found {
+				continue
+			}
+			t.ManifestVersion = 7
+			t.Providers = append([]string(nil), providers...)
+			t.Capabilities = runtimeconfig.CapabilitiesForProviders(providers)
+			break
+		}
+		t.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
 		templates = append(templates, t)
 	}
 	return templates, nil
 }
 
-var fcE2BTemplateManifestAliasPattern = regexp.MustCompile(`^multica-m([123456])-h([0-9]+_[0-9]+_[0-9]+)-o([0-9]+_[0-9]+_[0-9]+)-p([0-9]+_[0-9]+_[0-9]+)-d([0-9]+_[0-9]+_[0-9]+)b([0-9]+)-c(dimsta3|dimsta2|dimsta|dimst|dims|dim|di)-r1-([0-9a-f]{6})$`)
-var fcE2BTemplateManifestV7AliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r1-([0-9a-f]{6})$`)
-
-func applyFCE2BTemplateManifestAlias(
-	template *FCE2BTemplate,
-	alias string,
-	manifestV7ComponentVersions map[string]map[string]string,
-) (bool, error) {
-	if template == nil {
-		return false, errors.New("FC/E2B template is nil")
-	}
-	if strings.TrimSpace(template.BuildID) == "" {
-		return false, nil
-	}
-	alias = strings.TrimSpace(alias)
-	if matches := fcE2BTemplateManifestV7AliasPattern.FindStringSubmatch(alias); matches != nil {
-		componentVersions, ok := manifestV7ComponentVersions[matches[1]]
-		if !ok {
-			return false, nil
-		}
-		providers, matched, err := runtimeconfig.ManifestProvidersForFingerprint(matches[1], componentVersions)
-		if err != nil {
-			return false, fmt.Errorf("resolve FC/E2B manifest providers: %w", err)
-		}
-		if !matched {
-			return false, nil
-		}
-		template.Name = alias
-		template.Template = alias
-		template.ManifestVersion = 7
-		template.Providers = providers
-		template.Capabilities = runtimeconfig.ManifestCapabilitiesForProviders(providers)
-		template.ComponentVersions = cloneStringMap(componentVersions)
-		template.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
-		template.SourceRevision = matches[2]
-		return true, nil
-	}
-	matches := fcE2BTemplateManifestAliasPattern.FindStringSubmatch(alias)
-	if matches == nil {
-		return false, nil
-	}
-	manifestVersion, err := strconv.Atoi(matches[1])
-	if err != nil {
-		return false, nil
-	}
-	capabilityCode := matches[7]
-	expectedCapabilityCode := map[int]string{1: "di", 2: "dim", 3: "dims", 4: "dimst", 5: "dimsta", 6: "dimsta2"}[manifestVersion]
-	providerCompleteA2A := manifestVersion == 6 && capabilityCode == "dimsta3"
-	if capabilityCode != expectedCapabilityCode && !providerCompleteA2A {
-		return false, nil
-	}
-	hermesVersion, hermesOK := parseFCE2BUnderscoreSemver(matches[2])
-	opencodeVersion, opencodeOK := parseFCE2BUnderscoreSemver(matches[3])
-	piVersion, piOK := parseFCE2BUnderscoreSemver(matches[4])
-	dwsVersion, dwsOK := parseFCE2BUnderscoreSemver(matches[5])
-	if !hermesOK || !opencodeOK || !piOK || !dwsOK || !isCanonicalNumericIdentifier(matches[6]) {
-		return false, nil
-	}
-	template.Name = alias
-	template.Template = alias
-	template.ManifestVersion = manifestVersion
-	template.Providers = []string{"hermes", "opencode", "pi"}
-	template.Capabilities = []string{"dws", "dws.im_event"}
-	if manifestVersion >= 2 {
-		template.Capabilities = append(template.Capabilities, "mcp")
-	}
-	if manifestVersion >= 3 {
-		template.Capabilities = append(template.Capabilities, RuntimeStartCapabilityEventsV1)
-	}
-	if manifestVersion >= 4 {
-		template.Capabilities = append(template.Capabilities, LLMTraceCapability)
-	}
-	if manifestVersion >= 5 {
-		template.Capabilities = append(template.Capabilities, A2AInboundOpenCodeCapability)
-	}
-	if manifestVersion >= 6 {
-		template.Capabilities = append(template.Capabilities, A2AInvocationV2Capability)
-	}
-	if providerCompleteA2A {
-		template.Capabilities = append(template.Capabilities, A2AInboundHermesCapability, A2AInboundPiCapability)
-	}
-	template.ComponentVersions = map[string]string{
-		"hermes":   hermesVersion,
-		"opencode": "v" + opencodeVersion,
-		"pi":       piVersion,
-		"dws":      "v" + dwsVersion + "-beta." + matches[6],
-	}
-	template.RunnerProtocol = string(fcE2BRunnerLaunchRootLog)
-	template.SourceRevision = matches[8]
-	return true, nil
-}
-
-func parseFCE2BUnderscoreSemver(value string) (string, bool) {
-	parts := strings.Split(value, "_")
-	if len(parts) != 3 {
-		return "", false
-	}
-	for _, part := range parts {
-		if !isCanonicalNumericIdentifier(part) {
-			return "", false
-		}
-	}
-	return strings.Join(parts, "."), true
-}
-
-func isCanonicalNumericIdentifier(value string) bool {
-	if value == "0" {
-		return true
-	}
-	if value == "" || value[0] < '1' || value[0] > '9' {
-		return false
-	}
-	for _, digit := range value[1:] {
-		if digit < '0' || digit > '9' {
-			return false
-		}
-	}
-	return true
-}
+var fcE2BTemplateProviderFingerprintAliasPattern = regexp.MustCompile(`^multica-m7-v([0-9a-f]{16})-r1-[0-9a-f]{6}$`)
+var runtimeProviderFingerprintPattern = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 func stringValues(obj map[string]any, keys ...string) []string {
 	values := make([]string, 0)
@@ -1029,7 +933,6 @@ type FCE2BRuntimeTemplateUpdateResult struct {
 	Runtime                 db.AgentRuntime
 	PreviousTemplate        string
 	PreviousTemplateID      string
-	PreviousTemplateBuildID string
 	InvalidatedSandboxCount int64
 	Changed                 bool
 }
@@ -1247,7 +1150,7 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template is not ready")
 	}
 	if !IsFCE2BTemplatePublished(selected) {
-		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template has no verified manifest")
+		return FCE2BRuntimeTemplateUpdateResult{}, errors.New("FC/E2B template is not present in the Runtime provider catalog")
 	}
 
 	conn, err := l.Pool.Acquire(ctx)
@@ -1287,12 +1190,10 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 	}
 	previousTemplate, _ := metadata["template"].(string)
 	previousTemplateID, _ := metadata["template_id"].(string)
-	previousTemplateBuildID, _ := metadata["template_build_id"].(string)
 	result := FCE2BRuntimeTemplateUpdateResult{
-		Runtime:                 runtime,
-		PreviousTemplate:        strings.TrimSpace(previousTemplate),
-		PreviousTemplateID:      strings.TrimSpace(previousTemplateID),
-		PreviousTemplateBuildID: strings.TrimSpace(previousTemplateBuildID),
+		Runtime:            runtime,
+		PreviousTemplate:   strings.TrimSpace(previousTemplate),
+		PreviousTemplateID: strings.TrimSpace(previousTemplateID),
 	}
 	managedMetadataChanged := false
 	for key, value := range managedMetadata {
@@ -1309,7 +1210,6 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 		}
 	}
 	if result.PreviousTemplateID == selected.ID &&
-		result.PreviousTemplateBuildID == selected.BuildID &&
 		!managedMetadataChanged &&
 		!legacyArtifactMetadataChanged {
 		if err := tx.Commit(ctx); err != nil {
@@ -1327,14 +1227,15 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 			delete(metadata, key)
 		}
 	}
-	metadata["template"] = selected.Template
+	metadata["template"] = selected.ID
 	metadata["template_id"] = selected.ID
-	metadata["template_build_id"] = selected.BuildID
+	delete(metadata, "template_build_id")
 	metadata["template_name"] = selected.Name
+	metadata["template_alias"] = selected.Template
 	metadata["template_status"] = selected.Status
 	metadata["manifest_version"] = selected.ManifestVersion
 	metadata["capabilities"] = FCE2BTemplateCapabilities(provider, selected)
-	metadata["component_versions"] = selected.ComponentVersions
+	delete(metadata, "component_versions")
 	metadata["runner_protocol"] = selected.RunnerProtocol
 	metadata["runner"] = FCE2BRunnerCommandForProvider(provider)
 	for key, value := range managedMetadata {
@@ -1361,95 +1262,6 @@ func (l *FCE2BLauncher) updateRuntimeTemplate(
 	result.Runtime = updated
 	result.InvalidatedSandboxCount = invalidated
 	result.Changed = true
-	return result, nil
-}
-
-// VerifyStableTemplate rebuilds trust in a catalog entry from a fresh native
-// sandbox. A READY catalog status is insufficient because the smoke test runs
-// after the E2B build becomes ready.
-func (l *FCE2BLauncher) VerifyStableTemplate(ctx context.Context, selected FCE2BTemplate) (map[string]any, error) {
-	if configured := l.withCurrentConfig(); configured != l {
-		return configured.VerifyStableTemplate(ctx, selected)
-	}
-	if l == nil {
-		return nil, errors.New("FC/E2B launcher is unavailable")
-	}
-	if !IsFCE2BTemplateReady(selected) || !IsFCE2BTemplatePublished(selected) {
-		return nil, errors.New("FC/E2B template is not ready with a verified manifest alias")
-	}
-	sandboxID, err := l.createSandbox(ctx, selected.Template)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		_, killErr := l.runE2BCommand(context.Background(), []string{"sandbox", "kill", sandboxID})
-		if killErr != nil {
-			slog.Warn("failed to kill FC/E2B stable validation sandbox", "sandbox_id", sandboxID, "error", killErr)
-		}
-	}()
-	if err := l.waitSandboxReady(ctx, sandboxID); err != nil {
-		return nil, err
-	}
-	if _, err := l.runE2BCommandWithTimeout(ctx, fcE2BStableValidationTimeout, []string{
-		"sandbox", "exec",
-		"--user", "user",
-		sandboxID,
-		"--",
-		"/usr/local/bin/runtime-smoke-test",
-	}); err != nil {
-		return nil, fmt.Errorf("runtime-smoke-test failed: %w", err)
-	}
-	out, err := l.runE2BCommand(ctx, []string{
-		"sandbox", "exec",
-		"--user", "user",
-		sandboxID,
-		"--",
-		"/bin/cat", "/usr/local/share/multica/runtime-manifest.json",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("read runtime manifest: %w", err)
-	}
-	var manifest struct {
-		SchemaVersion          int                 `json:"schema_version"`
-		SandboxBackends        []string            `json:"sandbox_backends"`
-		Providers              []string            `json:"providers"`
-		Capabilities           []string            `json:"capabilities"`
-		CapabilitiesByBackend  map[string][]string `json:"capabilities_by_backend"`
-		IdentityModesByBackend map[string][]string `json:"identity_modes_by_backend"`
-		ComponentVersions      map[string]string   `json:"component_versions"`
-		RunnerProtocol         string              `json:"runner_protocol"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &manifest); err != nil {
-		return nil, fmt.Errorf("decode runtime manifest: %w", err)
-	}
-	if manifest.SchemaVersion != selected.ManifestVersion ||
-		!containsAllStrings(manifest.SandboxBackends, string(SandboxBackendAliyunFC)) ||
-		!slices.Equal(manifest.Providers, selected.Providers) ||
-		!slices.Equal(manifest.Capabilities, selected.Capabilities) ||
-		!slices.Equal(
-			manifest.CapabilitiesByBackend[string(SandboxBackendAliyunFC)],
-			selected.Capabilities,
-		) ||
-		!slices.Equal(
-			manifest.IdentityModesByBackend[string(SandboxBackendAliyunFC)],
-			[]string{"agent_identity"},
-		) ||
-		manifest.RunnerProtocol != string(fcE2BRunnerLaunchRootLog) {
-		return nil, errors.New("runtime manifest does not satisfy the stable channel contract")
-	}
-	for component, expected := range selected.ComponentVersions {
-		if manifest.ComponentVersions[component] != expected {
-			return nil, fmt.Errorf("runtime manifest component %s does not match catalog alias", component)
-		}
-	}
-	encoded, err := json.Marshal(manifest)
-	if err != nil {
-		return nil, fmt.Errorf("encode verified runtime manifest: %w", err)
-	}
-	var result map[string]any
-	if err := json.Unmarshal(encoded, &result); err != nil {
-		return nil, fmt.Errorf("normalize verified runtime manifest: %w", err)
-	}
 	return result, nil
 }
 
@@ -1642,7 +1454,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if !runtime.OwnerID.Valid {
 		return fcE2BLaunchSubmission{}, false, errors.New("FC/E2B runtime has no owner_id")
 	}
-	template, err := fcE2BTemplateForRuntime(runtime, l.Config.Template)
+	template, err := fcE2BTemplateForRuntime(runtime)
 	if err != nil {
 		return fcE2BLaunchSubmission{}, false, err
 	}
@@ -2952,21 +2764,18 @@ func hardenCloudSandboxA2ARunnerEnv(task db.AgentTaskQueue, runtime db.AgentRunt
 	return env
 }
 
-func fcE2BTemplateForRuntime(rt db.AgentRuntime, configuredTemplate string) (string, error) {
+func fcE2BTemplateForRuntime(rt db.AgentRuntime) (string, error) {
 	var metadata struct {
-		Template string `json:"template"`
+		TemplateID string `json:"template_id"`
 	}
 	if len(rt.Metadata) > 0 {
 		_ = json.Unmarshal(rt.Metadata, &metadata)
 	}
-	template := strings.TrimSpace(metadata.Template)
-	if template == "" {
-		template = strings.TrimSpace(configuredTemplate)
+	templateID := strings.TrimSpace(metadata.TemplateID)
+	if templateID == "" {
+		return "", errors.New("FC/E2B runtime has no template_id")
 	}
-	if template == "" {
-		return "", errors.New("FC/E2B runtime has no template")
-	}
-	return template, nil
+	return templateID, nil
 }
 
 func (l *FCE2BLauncher) failLaunch(

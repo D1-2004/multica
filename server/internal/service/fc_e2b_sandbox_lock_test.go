@@ -295,20 +295,13 @@ func TestUpdateRuntimeTemplateWaitsForLaunchAndInvalidatesSessions(t *testing.T)
 	go func() {
 		result, err := launcher.UpdateRuntimeTemplate(context.Background(), runtimeID, FCE2BTemplate{
 			ID:              "tpl_new_id",
-			BuildID:         "build_new",
 			Template:        "tpl_new",
 			Name:            "New Template",
 			Status:          "READY",
 			ManifestVersion: 1,
 			Providers:       []string{"hermes", "opencode", "pi"},
 			Capabilities:    []string{"dws"},
-			ComponentVersions: map[string]string{
-				"hermes":   "0.19.0",
-				"opencode": "v1.18.4",
-				"pi":       "0.80.10",
-				"dws":      "v1.0.53-beta.4",
-			},
-			RunnerProtocol: "root-log-v1",
+			RunnerProtocol:  "root-log-v1",
 		})
 		done <- updateOutcome{result: result, err: err}
 	}()
@@ -336,7 +329,7 @@ func TestUpdateRuntimeTemplateWaitsForLaunchAndInvalidatesSessions(t *testing.T)
 	if err := json.Unmarshal(outcome.result.Runtime.Metadata, &metadata); err != nil {
 		t.Fatalf("decode updated metadata: %v", err)
 	}
-	if metadata["template_id"] != "tpl_new_id" || metadata["template"] != "tpl_new" {
+	if metadata["template_id"] != "tpl_new_id" || metadata["template"] != "tpl_new_id" {
 		t.Fatalf("updated metadata = %#v", metadata)
 	}
 	var status string
@@ -375,20 +368,13 @@ func TestUpdateRuntimeTemplateRemovesStaleArtifactAliases(t *testing.T) {
 	launcher.SetPool(pool)
 	result, err := launcher.UpdateRuntimeTemplate(context.Background(), runtimeID, FCE2BTemplate{
 		ID:              "tpl_current_id",
-		BuildID:         "build_current",
 		Template:        "tpl_current",
 		Name:            "Current Template",
 		Status:          "READY",
 		ManifestVersion: 1,
 		Providers:       []string{"hermes", "opencode", "pi"},
 		Capabilities:    []string{"dws"},
-		ComponentVersions: map[string]string{
-			"hermes":   "0.19.0",
-			"opencode": "v1.18.4",
-			"pi":       "0.80.10",
-			"dws":      "v1.0.53-beta.4",
-		},
-		RunnerProtocol: "root-log-v1",
+		RunnerProtocol:  "root-log-v1",
 	})
 	if err != nil {
 		t.Fatalf("repair stale artifact aliases: %v", err)
@@ -405,8 +391,7 @@ func TestUpdateRuntimeTemplateRemovesStaleArtifactAliases(t *testing.T) {
 			t.Fatalf("legacy artifact metadata %q remains after FC/E2B rotation", key)
 		}
 	}
-	if metadata["template_id"] != "tpl_current_id" ||
-		metadata["template_build_id"] != "build_current" {
+	if metadata["template_id"] != "tpl_current_id" || metadata["template"] != "tpl_current_id" {
 		t.Fatalf("template binding changed while repairing aliases: %#v", metadata)
 	}
 }
