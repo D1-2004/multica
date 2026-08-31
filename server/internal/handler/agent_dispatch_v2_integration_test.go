@@ -1161,6 +1161,145 @@ func configureDingTalkChatDispatchForTest(t *testing.T) *dingtalk.InstallationSe
 	return installations
 }
 
+func TestHandleAgentDispatchV2IMControls(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		control       string
+		wantStatus    int
+		wantOldStatus string
+		wantFresh     bool
+		wantSteered   bool
+		wantNoNewTask bool
+	}{
+		{name: "new keeps active task and queues a fresh session", control: `{"action":"dispatch","sessionMode":"fresh","queueMode":"enqueue"}`, wantStatus: http.StatusAccepted, wantOldStatus: "running", wantFresh: true},
+		{name: "steer cancels active task and promotes the new turn", control: `{"action":"dispatch","sessionMode":"continue","queueMode":"steer"}`, wantStatus: http.StatusAccepted, wantOldStatus: "cancelled", wantSteered: true},
+		{name: "cancel targets the active task without creating a turn", control: `{"action":"cancel","targetExternalTaskId":%q}`, wantStatus: http.StatusOK, wantOldStatus: "cancelled", wantNoNewTask: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configureDingTalkChatDispatchForTest(t)
+			agentID := createHandlerTestAgent(t, "test-v2-im-control-"+strings.ReplaceAll(tc.name, " ", "-"), nil)
+			endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+			post := func(body, key string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Authorization", "Bearer "+deliverySecret)
+				req.Header.Set("Idempotency-Key", key)
+				req = withURLParams(req, "endpointId", endpointID)
+				w := httptest.NewRecorder()
+				testHandler.HandleAgentDispatch(w, req)
+				return w
+			}
+
+			firstDispatchID := "im-control-first-" + strings.ReplaceAll(tc.name, " ", "-")
+			firstBody := fmt.Sprintf(`{
+				"schemaVersion":"2.0","agentId":%q,"continuation":null,
+				"completionCallback":{"url":"/api/v1/dispatch-tasks/%s/execution-result"},
+				"source":{"platform":"dingtalk","type":"digital_employee"},
+				"event":{"domain":"channel","type":"message.created","data":{
+					"conversation":{"openConversationId":"cid-%s","type":"single"},
+					"sender":{"displayName":"张三","openDingTalkId":"open-sender"},
+					"messages":[{"openMsgId":"msg-first-%s","occurredAt":1784512800000,"text":"先执行旧任务"}]}},
+				"surface":{"type":"chat"},"outbound":{"mode":"dws","replyTo":"latest_message"},
+				"externalIdentity":{"contextToken":"sealed-im-control-context","expiresAt":4102444800000}
+			}`, agentID, firstDispatchID, firstDispatchID, firstDispatchID)
+			first := post(firstBody, firstDispatchID)
+			if first.Code != http.StatusAccepted {
+				t.Fatalf("first dispatch: status=%d body=%s", first.Code, first.Body.String())
+			}
+			var firstResponse AgentChatDispatchResponse
+			if err := json.Unmarshal(first.Body.Bytes(), &firstResponse); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := testPool.Exec(context.Background(), `
+				UPDATE agent_task_queue SET status = 'running', started_at = now(), dispatched_at = now()
+				WHERE id = $1
+			`, firstResponse.TaskID); err != nil {
+				t.Fatal(err)
+			}
+
+			controlJSON := tc.control
+			if strings.Contains(controlJSON, "%q") {
+				controlJSON = fmt.Sprintf(controlJSON, firstResponse.TaskID)
+			}
+			secondDispatchID := "im-control-second-" + strings.ReplaceAll(tc.name, " ", "-")
+			secondBody := fmt.Sprintf(`{
+				"schemaVersion":"2.0","continuation":{"kind":"chat","chatSessionId":%q},
+				"control":%s,
+				"source":{"platform":"dingtalk","type":"digital_employee"},
+				"event":{"domain":"channel","type":"message.created","data":{
+					"conversation":{"openConversationId":"cid-%s","type":"single"},
+					"sender":{"displayName":"张三","openDingTalkId":"open-sender"},
+					"messages":[{"openMsgId":"msg-second-%s","occurredAt":1784512801000,"text":"控制旧任务"}]}},
+				"surface":{"type":"chat"},"outbound":{"mode":"dws","replyTo":"latest_message"},
+				"externalIdentity":{"contextToken":"sealed-im-control-context","expiresAt":4102444800000}
+			}`, firstResponse.Continuation.ChatSessionID, controlJSON, firstDispatchID, secondDispatchID)
+			if !tc.wantNoNewTask {
+				secondBody = strings.Replace(secondBody, `"source":`, fmt.Sprintf(`"completionCallback":{"url":"/api/v1/dispatch-tasks/%s/execution-result"},"source":`, secondDispatchID), 1)
+			}
+			second := post(secondBody, secondDispatchID)
+			if second.Code != tc.wantStatus {
+				t.Fatalf("control dispatch: status=%d body=%s", second.Code, second.Body.String())
+			}
+
+			var oldStatus string
+			if err := testPool.QueryRow(context.Background(), `SELECT status FROM agent_task_queue WHERE id = $1`, firstResponse.TaskID).Scan(&oldStatus); err != nil {
+				t.Fatal(err)
+			}
+			if oldStatus != tc.wantOldStatus {
+				t.Fatalf("old task status=%q, want %q", oldStatus, tc.wantOldStatus)
+			}
+			if tc.wantOldStatus == "cancelled" {
+				var completionStatus string
+				if err := testPool.QueryRow(context.Background(), `
+					SELECT execution_status FROM task_completion_outbox WHERE root_task_id = $1
+				`, firstResponse.TaskID).Scan(&completionStatus); err != nil {
+					t.Fatal(err)
+				}
+				if completionStatus != "canceled" {
+					t.Fatalf("old task completion status=%q, want canceled", completionStatus)
+				}
+			}
+
+			if tc.wantNoNewTask {
+				var response AgentDispatchControlResponse
+				if err := json.Unmarshal(second.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if response.ControlResult.Action != "cancel" || response.ControlResult.Status != "cancelled" || response.ControlResult.TargetExternalTaskID != firstResponse.TaskID {
+					t.Fatalf("cancel response=%+v", response)
+				}
+				var taskCount int
+				if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_task_queue WHERE chat_session_id = $1`, firstResponse.Continuation.ChatSessionID).Scan(&taskCount); err != nil {
+					t.Fatal(err)
+				}
+				if taskCount != 1 {
+					t.Fatalf("cancel created a task: count=%d", taskCount)
+				}
+				return
+			}
+
+			var secondResponse AgentChatDispatchResponse
+			if err := json.Unmarshal(second.Body.Bytes(), &secondResponse); err != nil {
+				t.Fatal(err)
+			}
+			var status string
+			var priority int32
+			var fresh bool
+			if err := testPool.QueryRow(context.Background(), `
+				SELECT status, priority, force_fresh_session FROM agent_task_queue WHERE id = $1
+			`, secondResponse.TaskID).Scan(&status, &priority, &fresh); err != nil {
+				t.Fatal(err)
+			}
+			if fresh != tc.wantFresh {
+				t.Fatalf("force_fresh_session=%t, want %t", fresh, tc.wantFresh)
+			}
+			if tc.wantSteered && (status != "queued" || priority != 4 || secondResponse.ControlResult == nil || secondResponse.ControlResult.PreemptedExternalTaskID != firstResponse.TaskID) {
+				t.Fatalf("steered task status=%q priority=%d response=%+v", status, priority, secondResponse)
+			}
+		})
+	}
+}
+
 func TestHandleAgentDispatchV2RobotSDKCompletionDependsOnlyOnCallbackPresence(t *testing.T) {
 	for _, tc := range []struct {
 		name         string

@@ -71,6 +71,7 @@ func dispatchRequestFingerprint(command DispatchCommand, idempotencyKey string) 
 		Event          DispatchEvent              `json:"event"`
 		Surface        DispatchSurface            `json:"surface"`
 		Outbound       DispatchOutbound           `json:"outbound"`
+		Control        *DispatchControl           `json:"control,omitempty"`
 		CallbackURL    string                     `json:"callbackUrl"`
 		UpdateURL      string                     `json:"updateUrl"`
 		TelemetryURL   string                     `json:"telemetryUrl"`
@@ -85,6 +86,7 @@ func dispatchRequestFingerprint(command DispatchCommand, idempotencyKey string) 
 		Event:          command.Event,
 		Surface:        command.Surface,
 		Outbound:       command.Outbound,
+		Control:        command.Control,
 		IdempotencyKey: idempotencyKey,
 		EndpointID:     command.DispatchEndpointID,
 	}

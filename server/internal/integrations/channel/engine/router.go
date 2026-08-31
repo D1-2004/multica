@@ -222,6 +222,7 @@ type HandleOptions struct {
 	IdentityOverride       *ResolvedIdentity
 	SuppressServerOutbound bool
 	DisableControlCommands bool
+	ForceFreshSession      bool
 }
 
 // HandleResultWithOptions runs the inbound pipeline with caller-selected
@@ -385,7 +386,7 @@ const (
 // lark.Dispatcher.processClaimed; see its boundary contract per step.
 func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channel.InboundMessage, inst ResolvedInstallation, claimToken pgtype.UUID, options HandleOptions) (Result, dedupFinalize, error) {
 	if options.DisableControlCommands {
-		msg.ForceFresh = false
+		msg.ForceFresh = options.ForceFreshSession
 	}
 	trace := chattrace.New(string(msg.Source.ChannelType))
 	if msg.TraceID != "" || msg.TraceChannel != "" || msg.TraceStartedAtUnixMS != 0 {

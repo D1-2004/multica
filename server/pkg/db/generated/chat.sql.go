@@ -2363,6 +2363,52 @@ func (q *Queries) ListPendingChatTasksForSession(ctx context.Context, chatSessio
 	return items, nil
 }
 
+const getActiveAgentDispatchChatTaskForSteer = `-- name: GetActiveAgentDispatchChatTaskForSteer :one
+SELECT id FROM agent_task_queue
+WHERE chat_session_id = $1
+  AND agent_id = $2
+  AND status IN ('dispatched', 'running', 'waiting_local_directory')
+  AND regenerate_quick_actions_for IS NULL
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+FOR UPDATE
+`
+
+type GetActiveAgentDispatchChatTaskForSteerParams struct {
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	AgentID       pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) GetActiveAgentDispatchChatTaskForSteer(ctx context.Context, arg GetActiveAgentDispatchChatTaskForSteerParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getActiveAgentDispatchChatTaskForSteer, arg.ChatSessionID, arg.AgentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
+const promoteAgentDispatchChatTaskForSteer = `-- name: PromoteAgentDispatchChatTaskForSteer :one
+UPDATE agent_task_queue
+SET status = 'queued', fire_at = NULL, priority = 4
+WHERE id = $1
+  AND chat_session_id = $2
+  AND agent_id = $3
+  AND status IN ('deferred', 'queued')
+RETURNING id
+`
+
+type PromoteAgentDispatchChatTaskForSteerParams struct {
+	ID            pgtype.UUID `json:"id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	AgentID       pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) PromoteAgentDispatchChatTaskForSteer(ctx context.Context, arg PromoteAgentDispatchChatTaskForSteerParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, promoteAgentDispatchChatTaskForSteer, arg.ID, arg.ChatSessionID, arg.AgentID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockChatSessionForDelete = `-- name: LockChatSessionForDelete :one
 SELECT id FROM chat_session
 WHERE id = $1

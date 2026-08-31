@@ -18,6 +18,7 @@ type agentDispatchExecutionPlan struct {
 	Prompt                 DispatchPrompt
 	SuppressServerOutbound bool
 	DisableControlCommands bool
+	ForceFreshSession      bool
 }
 
 func buildAgentDispatchExecutionPlan(
@@ -62,6 +63,8 @@ func buildAgentDispatchExecutionPlan(
 		Prompt:                 prompt,
 		SuppressServerOutbound: command.Outbound.Mode == protocol.DispatchOutboundModeDWS,
 		DisableControlCommands: true,
+		ForceFreshSession: command.Control != nil &&
+			command.Control.Action == "dispatch" && command.Control.SessionMode == "fresh",
 	}, nil
 }
 
@@ -77,5 +80,6 @@ func (p agentDispatchExecutionPlan) channelHandleOptions() engine.HandleOptions 
 		IdentityOverride:       &identity,
 		SuppressServerOutbound: p.SuppressServerOutbound,
 		DisableControlCommands: p.DisableControlCommands,
+		ForceFreshSession:      p.ForceFreshSession,
 	}
 }

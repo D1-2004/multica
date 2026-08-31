@@ -37,9 +37,10 @@ A side effect worth knowing: threading refuses a follow-up with `409` while the
 referenced Issue still has a pending agent task. `dispatch_always_new_issue`
 does not hit that guard, because each message gets its own Issue.
 
-Channel slash commands do not override this choice. In particular, text such as
-`/issue`, `/new`, `/reset`, or `/unbind` remains prompt content when delivered by
-Agent Dispatch V2.
+Multica does not parse slash commands from message text. Text such as `/issue`,
+`/new`, `/reset`, or `/unbind` remains prompt content unless the authenticated
+Router translates a supported IM command into the structured `control` object
+described below.
 
 The response always returns the latest continuation produced by the selected
 surface. A recreated missing Issue or chat therefore replaces a stale
@@ -48,6 +49,49 @@ continuation for the Router to persist.
 Continuation kind identifies the materialized locator, not the execution mode.
 Both `chat` and `auto` therefore return a `chat` continuation containing
 `chatSessionId`; `issue` returns an Issue continuation.
+
+## IM task control
+
+`control` is optional, so an omitted field preserves the existing enqueue and
+session-continuation behavior. It is accepted only for
+`event.domain=channel`, `event.type=message.created`, and a materialized
+`surface.type` of `chat` or `auto`. Issue, approval, calendar, and
+`emotionReply` dispatches reject it.
+
+The Router translates the supported IM commands into one of these closed
+structures; Multica never infers control from the message text:
+
+```json
+{
+  "control": {
+    "action": "dispatch",
+    "sessionMode": "continue",
+    "queueMode": "enqueue"
+  }
+}
+```
+
+- `/new <message>` sends `action=dispatch`, `sessionMode=fresh`, and
+  `queueMode=enqueue`. The new turn is queued with a fresh provider session.
+  An already active task is not canceled: it completes its normal callback and
+  its reply can still be delivered while the new turn runs independently.
+- `/steer <message>` sends `action=dispatch`, `sessionMode=continue`, and
+  `queueMode=steer`. Multica atomically promotes the new turn and cancels the
+  currently claimed IM Chat task for the same Agent and chat session. Other
+  queued turns are retained. The canceled task produces the normal durable
+  terminal callback with `executionStatus=canceled`.
+- `/cancel` sends `action=cancel` plus the exact canonical UUID in
+  `targetExternalTaskId`. It also replays the target's chat continuation but
+  sends no completion callback for the command itself. Multica verifies that
+  the target belongs to that Agent and chat session, cancels only an active
+  task, preserves the ingested IM input, and creates no new task. Queued turns
+  are retained. Repeating cancellation for a terminal target is idempotent.
+
+A dispatch control returns the ordinary Chat continuation and task id. A steer
+also returns `controlResult` with the promoted task and, when present, the
+preempted task id. A cancel returns only `controlResult`; the Router owns the
+command acknowledgement so the canceled task's terminal callback must not be
+rendered as a second acknowledgement.
 
 For DingTalk channel messages, a newly created Chat title includes enough topic
 context to distinguish repeated conversations with the same sender. Private
@@ -741,3 +785,17 @@ parsing or rewriting Router's context string.
   line, which tells an Issue run the user sees only issue comments — true for a
   web-created Issue, backwards for a DingTalk-dispatched one whose final output
   is what the person receives.
+
+## Change record: 2026-08-31 IM dispatch task controls
+
+- History: Added the optional structured `control` object for authenticated
+  `channel/message.created` Chat and Auto dispatches. The closed contract maps
+  `/new` to a fresh queued turn, `/steer` to promotion plus cancellation of the
+  active turn, and `/cancel` to an exact active-task cancellation without
+  creating another task. Canceled tasks retain their durable terminal callback,
+  and Multica continues to treat raw slash text as prompt content.
+- Reason: Ordinary Router messages previously had only enqueue semantics. IM
+  users need explicit session reset, priority redirection, and cancellation
+  without changing Issue, approval, calendar, or other dispatch behavior; a
+  structured authenticated field keeps those controls out of prompt parsing and
+  makes task targeting auditable.

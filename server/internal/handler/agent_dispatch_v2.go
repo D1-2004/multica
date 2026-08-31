@@ -19,6 +19,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"golang.org/x/text/unicode/norm"
@@ -161,6 +162,13 @@ type DispatchOutbound struct {
 	ReplyTo string `json:"replyTo,omitempty"`
 }
 
+type DispatchControl struct {
+	Action               string `json:"action"`
+	SessionMode          string `json:"sessionMode,omitempty"`
+	QueueMode            string `json:"queueMode,omitempty"`
+	TargetExternalTaskID string `json:"targetExternalTaskId,omitempty"`
+}
+
 type DispatchCompletionCallback struct {
 	URL                string `json:"url"`
 	UpdateURL          string `json:"updateUrl,omitempty"`
@@ -178,6 +186,7 @@ type DispatchCommand struct {
 	Event              DispatchEvent                 `json:"event"`
 	Surface            DispatchSurface               `json:"surface"`
 	Outbound           DispatchOutbound              `json:"outbound"`
+	Control            *DispatchControl              `json:"control,omitempty"`
 	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
 	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
 	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
@@ -327,6 +336,9 @@ func (c DispatchCommand) validate() error {
 	if c.Source.Platform != "dingtalk" || (c.Source.Type != "robot" && c.Source.Type != "digital_employee") {
 		return errors.New("source must be dingtalk robot or digital_employee")
 	}
+	if err := c.validateControl(); err != nil {
+		return err
+	}
 	if c.Event.Domain == "calendar" && c.Event.Type == "calendar.started" {
 		if err := c.validateCalendarStarted(); err != nil {
 			return err
@@ -391,6 +403,47 @@ func (c DispatchCommand) validate() error {
 	}
 	if c.Continuation != nil && strings.TrimSpace(c.AgentID) != "" {
 		return errors.New("agentId and continuation are mutually exclusive")
+	}
+	return nil
+}
+
+func (c DispatchCommand) validateControl() error {
+	if c.Control == nil {
+		return nil
+	}
+	if c.Event.Domain != "channel" || c.Event.Type != "message.created" ||
+		(c.Surface.Type != protocol.DispatchSurfaceTypeChat &&
+			c.Surface.Type != protocol.DispatchSurfaceTypeAuto) {
+		return errors.New("control is supported only for IM chat message.created dispatches")
+	}
+	switch c.Control.Action {
+	case "dispatch":
+		if c.Control.SessionMode != "continue" && c.Control.SessionMode != "fresh" {
+			return errors.New("control.sessionMode must be continue or fresh")
+		}
+		if c.Control.QueueMode != "enqueue" && c.Control.QueueMode != "steer" {
+			return errors.New("control.queueMode must be enqueue or steer")
+		}
+		if c.Control.TargetExternalTaskID != "" {
+			return errors.New("control.targetExternalTaskId is valid only for cancel")
+		}
+	case "cancel":
+		if c.Control.SessionMode != "" || c.Control.QueueMode != "" {
+			return errors.New("cancel control cannot set sessionMode or queueMode")
+		}
+		if c.CompletionCallback != nil {
+			return errors.New("cancel control cannot create a completion callback")
+		}
+		if c.Continuation == nil || c.Continuation.Kind != "chat" || strings.TrimSpace(c.Continuation.ChatSessionID) == "" {
+			return errors.New("cancel control requires an IM chat continuation")
+		}
+		target := strings.TrimSpace(c.Control.TargetExternalTaskID)
+		parsed, err := uuid.Parse(target)
+		if err != nil || parsed.String() != target {
+			return errors.New("control.targetExternalTaskId must be a canonical UUID")
+		}
+	default:
+		return errors.New("control.action must be dispatch or cancel")
 	}
 	return nil
 }
@@ -614,6 +667,7 @@ type persistedDispatchContext struct {
 	EventData     DispatchEventData `json:"dispatch_event_data"`
 	Surface       DispatchSurface   `json:"dispatch_surface"`
 	Outbound      DispatchOutbound  `json:"dispatch_outbound"`
+	Control       *DispatchControl  `json:"dispatch_control,omitempty"`
 	// ExternalIdentity is the private DWS descriptor the dispatch stored beside
 	// the envelope. The instruction projection reads it only to decide whether a
 	// quoted message was written by this Agent itself.
