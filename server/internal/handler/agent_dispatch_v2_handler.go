@@ -585,16 +585,32 @@ func (h *Handler) createAgentDispatchChatV2(
 		}
 	}
 	latest := command.Event.Data.Messages[len(command.Event.Data.Messages)-1]
+	assocIDs := dispatchAssocIDs(command)
 	senderID := strings.TrimSpace(command.Event.Data.Sender.OpenDingTalkID)
 	if senderID == "" {
 		senderID = strings.TrimSpace(command.Event.Data.Sender.SenderOpenDingTalkID)
 	}
+	if senderID == "" {
+		senderID = assocIDs.PersonID
+	}
+	conversationID := strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID)
+	if conversationID == "" {
+		conversationID = assocIDs.ConversationID
+	}
+	messageID := strings.TrimSpace(latest.OpenMsgID)
+	if messageID == "" {
+		messageID = assocIDs.EvidenceID
+	}
+	conversationType := strings.TrimSpace(command.Event.Data.Conversation.Type)
+	if conversationType == "" {
+		conversationType = assocIDs.Kind
+	}
 	dispatchText := strings.Join(textParts, "\n\n")
 	dispatchMessage := dingtalk.AgentDispatchMessage{
-		ConversationID:                command.Event.Data.Conversation.OpenConversationID,
-		ConversationType:              command.Event.Data.Conversation.Type,
+		ConversationID:                conversationID,
+		ConversationType:              conversationType,
 		ConversationTitle:             command.Event.Data.Conversation.Title,
-		MessageID:                     latest.OpenMsgID,
+		MessageID:                     messageID,
 		CreatedAt:                     latest.OccurredAt,
 		SenderID:                      senderID,
 		SenderStaffID:                 command.Event.Data.Sender.StaffID,

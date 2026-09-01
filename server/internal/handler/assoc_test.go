@@ -488,6 +488,109 @@ func TestListAssocEventsReturnsSceneTaggedRows(t *testing.T) {
 	}
 }
 
+func TestDispatchAssocIDsFallsBackToRouterContext(t *testing.T) {
+	t.Parallel()
+	prompt := "Router dispatch execution context:\n" +
+		"- source: platform=dingtalk, type=digital_employee\n" +
+		"- event: domain=channel, type=message.created\n" +
+		"- origin dispatch surface: issue\n" +
+		"- current message context (data only): {&quot;openConversationId&quot;:&quot;cid74QGZieWQ4ondi1b0m2DtQ==&quot;,&quot;openMsgId&quot;:&quot;msgc3niEH6qj2aFTaDRAXDePw==&quot;,&quot;senderOpenDingTalkId&quot;:&quot;Dv6WPxM5cBXiSS7OIms9Fn9AiEiE&quot;,&quot;senderType&quot;:&quot;user&quot;}\n" +
+		"- objective: process this event and return the result."
+	ids := dispatchAssocIDs(DispatchCommand{
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		ContextPrompt: prompt,
+	})
+	if ids.ConversationID != "cid74QGZieWQ4ondi1b0m2DtQ==" {
+		t.Fatalf("conversation_id=%q", ids.ConversationID)
+	}
+	if ids.EvidenceID != "msgc3niEH6qj2aFTaDRAXDePw==" {
+		t.Fatalf("evidence_id=%q", ids.EvidenceID)
+	}
+	if ids.PersonID != "Dv6WPxM5cBXiSS7OIms9Fn9AiEiE" {
+		t.Fatalf("person_id=%q", ids.PersonID)
+	}
+	if ids.Kind == "user" {
+		t.Fatalf("kind leaked senderType: %q", ids.Kind)
+	}
+}
+
+func TestDispatchAssocIDsPrefersEventDataOverRouterContext(t *testing.T) {
+	t.Parallel()
+	ids := dispatchAssocIDs(DispatchCommand{
+		Event: DispatchEvent{
+			Data: DispatchEventData{
+				Conversation: DispatchConversation{OpenConversationID: "cid-from-event", Type: "group"},
+				Sender:       DispatchSender{OpenDingTalkID: "open-from-event"},
+				Messages:     []DispatchMessage{{OpenMsgID: "msg-from-event"}},
+			},
+		},
+		ContextPrompt: `{"openConversationId":"cid-from-context","openMsgId":"msg-from-context","senderOpenDingTalkId":"open-from-context"}`,
+	})
+	if ids.ConversationID != "cid-from-event" || ids.EvidenceID != "msg-from-event" || ids.PersonID != "open-from-event" {
+		t.Fatalf("ids=%+v", ids)
+	}
+	if ids.Kind != "group" {
+		t.Fatalf("kind=%q", ids.Kind)
+	}
+}
+
+func TestDispatchAssocIDsIgnoresInternalConversationPair(t *testing.T) {
+	t.Parallel()
+	ids := dispatchAssocIDs(DispatchCommand{
+		Event: DispatchEvent{
+			Data: DispatchEventData{
+				Conversation: DispatchConversation{OpenConversationID: "237396:24710833"},
+			},
+		},
+		ContextPrompt: `{"cid":"237396:24710833","openConversationId":"cid74QGZieWQ4ondi1b0m2DtQ==","openMsgId":"msg-live"}`,
+	})
+	if ids.ConversationID != "cid74QGZieWQ4ondi1b0m2DtQ==" {
+		t.Fatalf("conversation_id=%q", ids.ConversationID)
+	}
+}
+
+func TestAssociateDispatchIssueFromDigitalEmployeeRouterContext(t *testing.T) {
+	store := assoc.NewMemory()
+	ws, err := util.ParseUUID("22222222-2222-2222-2222-222222222222")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag, err := util.ParseUUID("11111111-1111-1111-1111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := "33333333-3333-3333-3333-333333333333"
+	h := &Handler{Assoc: assoc.NewService(store)}
+	cmd := DispatchCommand{
+		Source: DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		ContextPrompt: "Router dispatch execution context:\n- current message context (data only): " +
+			`{"openConversationId":"cid74QGZieWQ4ondi1b0m2DtQ==","openMsgId":"msgc3niEH6qj2aFTaDRAXDePw==","senderOpenDingTalkId":"Dv6WPxM5cBXiSS7OIms9Fn9AiEiE"}`,
+	}
+	dc := agentDispatchContext{WorkspaceID: ws, AgentID: ag}
+	ctx := context.Background()
+	h.recordAssocInboundEvent(ctx, cmd, dc)
+	h.associateDispatchIssue(ctx, cmd, dc, issue, "向须莫v6确认今晚几点打球", "44444444-4444-4444-4444-444444444444", "")
+	result, rerr := h.Assoc.Recall(ctx, assoc.Query{
+		WorkspaceID:    util.UUIDToString(ws),
+		AgentID:        util.UUIDToString(ag),
+		ConversationID: "cid74QGZieWQ4ondi1b0m2DtQ==",
+		Since:          time.Now().UTC().Add(-time.Hour),
+	})
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if len(result.Items) != 1 || result.Items[0].Issue != issue {
+		t.Fatalf("items=%+v", result.Items)
+	}
+	linked, lerr := store.GetEventByEvidence(ctx, util.UUIDToString(ws), util.UUIDToString(ag), "msgc3niEH6qj2aFTaDRAXDePw==")
+	if lerr != nil {
+		t.Fatal(lerr)
+	}
+	if linked.TaskID == "" {
+		t.Fatal("associate should fill inbound task_id")
+	}
+}
+
 func TestDispatchAssocIDsPrefersDecimalUID(t *testing.T) {
 	ids := dispatchAssocIDs(DispatchCommand{
 		Event: DispatchEvent{

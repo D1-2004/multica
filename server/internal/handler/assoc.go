@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -558,8 +559,8 @@ type dispatchAssocIdentity struct {
 
 func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	ids := dispatchAssocIdentity{
-		ConversationID: strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID),
-		Kind:           command.Event.Data.Conversation.Type,
+		ConversationID: dingtalkOpenConversationID(command.Event.Data.Conversation.OpenConversationID),
+		Kind:           strings.TrimSpace(command.Event.Data.Conversation.Type),
 	}
 	if n := len(command.Event.Data.Messages); n > 0 {
 		ids.EvidenceID = strings.TrimSpace(command.Event.Data.Messages[n-1].OpenMsgID)
@@ -570,5 +571,163 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	}
 	staffID := strings.TrimSpace(command.Event.Data.Sender.StaffID)
 	ids.PersonID, ids.PersonAliases = assoc.CanonicalPersonKey(staffID, openID)
+	fillDispatchAssocIDsFromRouterContext(&ids, command.ContextPrompt)
 	return ids
+}
+
+func fillDispatchAssocIDsFromRouterContext(ids *dispatchAssocIdentity, contextPrompt string) {
+	if ids == nil {
+		return
+	}
+	fromCtx := parseRouterContextAssocIDs(contextPrompt)
+	if ids.ConversationID == "" {
+		ids.ConversationID = fromCtx.ConversationID
+	}
+	if ids.EvidenceID == "" {
+		ids.EvidenceID = fromCtx.EvidenceID
+	}
+	if ids.Kind == "" {
+		ids.Kind = fromCtx.Kind
+	}
+	if ids.PersonID == "" && fromCtx.PersonID != "" {
+		ids.PersonID, ids.PersonAliases = assoc.CanonicalPersonKey(fromCtx.PersonID)
+	}
+}
+
+func parseRouterContextAssocIDs(prompt string) dispatchAssocIdentity {
+	prompt = html.UnescapeString(prompt)
+	var ids dispatchAssocIdentity
+	for _, raw := range extractJSONObjects(prompt) {
+		var payload map[string]any
+		if json.Unmarshal([]byte(raw), &payload) != nil {
+			continue
+		}
+		fillDispatchAssocFromMap(&ids, payload)
+	}
+	return ids
+}
+
+func fillDispatchAssocFromMap(ids *dispatchAssocIdentity, payload map[string]any) {
+	if ids == nil || payload == nil {
+		return
+	}
+	if ids.ConversationID == "" {
+		ids.ConversationID = dingtalkOpenConversationID(stringFromAssocMap(payload, "openConversationId", "open_conversation_id"))
+	}
+	if ids.EvidenceID == "" {
+		ids.EvidenceID = strings.TrimSpace(stringFromAssocMap(payload, "openMsgId", "open_msg_id"))
+	}
+	if ids.Kind == "" {
+		kind := strings.ToLower(strings.TrimSpace(stringFromAssocMap(payload, "conversationType")))
+		switch kind {
+		case "single", "group", "dm", "p2p":
+			ids.Kind = kind
+		case "1":
+			ids.Kind = "single"
+		case "2":
+			ids.Kind = "group"
+		}
+	}
+	if ids.PersonID == "" {
+		staff := stringFromAssocMap(payload, "staffId", "uid")
+		openID := stringFromAssocMap(payload, "senderOpenDingTalkId", "openDingTalkId", "openId")
+		ids.PersonID, ids.PersonAliases = assoc.CanonicalPersonKey(staff, openID)
+	}
+	if nested, ok := payload["conversation"].(map[string]any); ok {
+		if ids.Kind == "" {
+			switch strings.ToLower(strings.TrimSpace(stringFromAssocMap(nested, "type"))) {
+			case "single", "group", "dm", "p2p":
+				ids.Kind = strings.ToLower(strings.TrimSpace(stringFromAssocMap(nested, "type")))
+			}
+		}
+		fillDispatchAssocFromMap(ids, nested)
+	}
+	if nested, ok := payload["sender"].(map[string]any); ok {
+		fillDispatchAssocFromMap(ids, nested)
+	}
+	if nested, ok := payload["message"].(map[string]any); ok {
+		fillDispatchAssocFromMap(ids, nested)
+	}
+}
+
+func dingtalkOpenConversationID(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" || !assoc.ValidSceneID(s) {
+		return ""
+	}
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "cid") {
+		return s
+	}
+	// Router inboundEvent also carries an internal pair like "237396:24710833".
+	// That is not a scene id.
+	return ""
+}
+
+func stringFromAssocMap(payload map[string]any, keys ...string) string {
+	for _, key := range keys {
+		v, ok := payload[key]
+		if !ok || v == nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if trimmed := strings.TrimSpace(s); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func extractJSONObjects(s string) []string {
+	out := make([]string, 0)
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' {
+			continue
+		}
+		end, ok := matchJSONObject(s, i)
+		if !ok {
+			continue
+		}
+		out = append(out, s[i:end])
+		i = end - 1
+	}
+	return out
+}
+
+func matchJSONObject(s string, start int) (int, bool) {
+	depth := 0
+	inString := false
+	escaped := false
+	for i := start; i < len(s); i++ {
+		ch := s[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i + 1, true
+			}
+		}
+	}
+	return 0, false
 }
