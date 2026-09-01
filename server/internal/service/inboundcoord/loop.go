@@ -148,7 +148,7 @@ func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {
 func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("End the coordinator loop with the user-facing verdict."),
+		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply only for a complete answer available now. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop. Never use reply to say you cannot complete the request."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{

@@ -53,6 +53,10 @@ explicit owner off switch skips the loop and enqueues the sandbox.
 | `silence` | Nothing. Web Chat never silences. Group chatter that is not for the agent may silence | none |
 | internal continue | Existing enqueue path when the decisioner is unavailable | existing |
 
+The routing contract forbids `reply` from terminating with a capability refusal such
+as “I cannot access contacts”. Requests that need an unavailable lookup or action must
+choose `issue` and use the normal concrete Issue acknowledgement.
+
 Digital-employee DWS outbound delivers `reply` through a completed
 `execution-result` row whose `resultMessage` is that sentence. An Issue
 acknowledgement is a frozen `execution-update` (`delegated_to_issue` +

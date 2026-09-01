@@ -258,6 +258,24 @@ func TestCoordinatorToolDefsIncludeAssocAndFinish(t *testing.T) {
 	}
 }
 
+func TestFinishToolRoutesUnavailableCapabilitiesToIssue(t *testing.T) {
+	t.Parallel()
+	fn := coordinatorFinishTool().GetFunction()
+	if fn == nil || !fn.Description.Valid() {
+		t.Fatal("finish tool description is missing")
+	}
+	description := fn.Description.Value
+	for _, rule := range []string{
+		"Use reply only for a complete answer available now",
+		"Use issue for contacts, DWS, search, files",
+		"Never use reply to say you cannot complete the request",
+	} {
+		if !strings.Contains(description, rule) {
+			t.Fatalf("finish tool description missing %q: %q", rule, description)
+		}
+	}
+}
+
 func toolDefNames(params openai.ChatCompletionNewParams) []string {
 	return toolDefNamesFromDefs(params.Tools)
 }

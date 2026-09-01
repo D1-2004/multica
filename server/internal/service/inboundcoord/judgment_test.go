@@ -18,8 +18,11 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"You MUST call tools",
 		"At most 8 model rounds",
 		"No DWS, no search, no files",
+		"Never finish action=reply with a capability refusal",
+		"你看看你联系人里有须莫 v6 吗",
+		"我无法查看联系人列表",
 		"pass that exact conversation_id",
-		"empty items means this conversation has no recorded matters",
+		"empty items only answers a question explicitly asking for recorded matters",
 		"Never invent conversation_id or person_id",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
