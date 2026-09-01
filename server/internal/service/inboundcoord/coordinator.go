@@ -272,11 +272,15 @@ func (c *Coordinator) TurnFromChatSession(
 	senderName string,
 	message string,
 ) Turn {
+	title := conversationTitle
+	if source != SourceWeb {
+		title = ""
+	}
 	turn := Turn{
 		Source:            source,
 		Addressed:         addressed,
 		ChatType:          chatType,
-		ConversationTitle: conversationTitle,
+		ConversationTitle: title,
 		SenderName:        senderName,
 		Message:           message,
 		AgentID:           session.AgentID,

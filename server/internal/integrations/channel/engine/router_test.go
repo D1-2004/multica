@@ -2437,12 +2437,24 @@ func TestRouter_DingTalkHistoryFailureDoesNotFailHandle(t *testing.T) {
 	}
 }
 
-func TestCoordinatorConversationTitleDropsRobotDMAutoTitle(t *testing.T) {
-	stale := "须莫🥥：你有阿里内外cli吗,有哪些功能"
-	if got := coordinatorConversationTitle(stale, channel.ChatTypeP2P); got != "" {
-		t.Fatalf("p2p auto title must not enter the coordinator, got %q", got)
+func TestRouter_DingTalkCoordinatorDoesNotPassSessionTitle(t *testing.T) {
+	h := newHarness(t)
+	registerDingTalk(h)
+	q := &routerCoordQueries{page: newestFirstDingTalkPage(10)}
+	h.reader.session = db.ChatSession{
+		ID:          uuidFromString(t, "66666666-6666-6666-6666-666666666666"),
+		WorkspaceID: uuidFromString(t, "22222222-2222-2222-2222-222222222222"),
+		AgentID:     uuidFromString(t, "33333333-3333-3333-3333-333333333333"),
+		Title:       "须莫🥥：你有阿里内外cli吗,有哪些功能",
 	}
-	if got := coordinatorConversationTitle("项目群", channel.ChatTypeGroup); got != "项目群" {
-		t.Fatalf("group title = %q", got)
+	h.router.SetInboundCoordinator(inboundcoord.New(nil, q, nil))
+	msg := p2pMessage(t)
+	msg.Text = "我们前面说啥来着，直接回复我不要去做issue"
+	msg.Source.ChannelType = channel.Type("dingtalk")
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if q.calls != 1 || q.last.Limit != 10 {
+		t.Fatalf("dingtalk coordinator history = calls %d limit %d, want 1 call limit 10", q.calls, q.last.Limit)
 	}
 }

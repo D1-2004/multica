@@ -60,7 +60,7 @@ func buildUserPrompt(turn Turn) string {
 		b.WriteString("\nchat_type: ")
 		b.WriteString(turn.ChatType)
 	}
-	if turn.ConversationTitle != "" {
+	if turn.Source == SourceWeb && turn.ConversationTitle != "" {
 		b.WriteString("\nsession_title: ")
 		b.WriteString(turn.ConversationTitle)
 	}

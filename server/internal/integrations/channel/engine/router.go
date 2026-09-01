@@ -558,7 +558,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			coordinatorSource(options, taskContext, msg.Source.ChannelType),
 			msg.AddressedToBot || msg.Source.ChatType == channel.ChatTypeP2P,
 			string(msg.Source.ChatType),
-			coordinatorConversationTitle(session.Title, msg.Source.ChatType),
+			"",
 			msg.Source.SenderID,
 			msg.Text,
 		)
@@ -1273,15 +1273,6 @@ func (r *Router) persistCoordinatorAssistant(ctx context.Context, workspaceID, s
 		},
 	})
 	return nil
-}
-
-// coordinatorConversationTitle drops Multica's first-message auto title on
-// robot DMs. That label can be weeks old and is not the recent topic.
-func coordinatorConversationTitle(sessionTitle string, chatType channel.ChatType) string {
-	if chatType == channel.ChatTypeP2P {
-		return ""
-	}
-	return sessionTitle
 }
 
 func coordinatorSource(options HandleOptions, taskContext []byte, channelType channel.Type) inboundcoord.Source {

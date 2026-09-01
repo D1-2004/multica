@@ -984,21 +984,20 @@ func decideDispatchCoordinator(
 	ids := dispatchAssocIDs(command)
 	coord := h.inboundCoordinator()
 	turn := inboundcoord.Turn{
-		Source:            source,
-		Addressed:         true,
-		ChatType:          chatType,
-		ConversationTitle: command.Event.Data.Conversation.Title,
-		SenderName:        command.Event.Data.Sender.DisplayName,
-		Message:           message,
-		AgentID:           agent.ID,
-		AgentName:         agent.Name,
-		Instructions:      agent.Instructions,
-		IdentityNote:      inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
-		WorkspaceID:       uuidToString(agent.WorkspaceID),
-		ConversationID:    ids.ConversationID,
-		PersonID:          ids.PersonID,
-		EvidenceID:        ids.EvidenceID,
-		Kind:              ids.Kind,
+		Source:         source,
+		Addressed:      true,
+		ChatType:       chatType,
+		SenderName:     command.Event.Data.Sender.DisplayName,
+		Message:        message,
+		AgentID:        agent.ID,
+		AgentName:      agent.Name,
+		Instructions:   agent.Instructions,
+		IdentityNote:   inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
+		WorkspaceID:    uuidToString(agent.WorkspaceID),
+		ConversationID: ids.ConversationID,
+		PersonID:       ids.PersonID,
+		EvidenceID:     ids.EvidenceID,
+		Kind:           ids.Kind,
 	}
 	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
 		turn.Busy = true

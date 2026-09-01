@@ -395,30 +395,52 @@ func TestAttachDingTalkConversationDigitalEmployeeListsTenEvenWhenPageEmpty(t *t
 	}
 }
 
-func TestBuildUserPromptStaleSessionTitleIsNotRecentTopic(t *testing.T) {
-	prompt := buildUserPrompt(Turn{
-		Source:            SourceRobot,
+func TestBuildUserPromptOmitsTitleForRobotAndDigitalEmployee(t *testing.T) {
+	stale := "须莫🥥：你有阿里内外cli吗,有哪些功能"
+	for _, src := range []Source{SourceRobot, SourceDigitalEmployee} {
+		prompt := buildUserPrompt(Turn{
+			Source:            src,
+			Addressed:         true,
+			ChatType:          "p2p",
+			ConversationTitle: stale,
+			Message:           "我们前面说啥来着，直接回复我不要去做issue",
+			DingTalkHistory: []HistoryLine{
+				{Role: "user", Content: "看看今天的新闻"},
+				{Role: "assistant", Content: "我先去搜一下今天的热点新闻。"},
+			},
+		})
+		if strings.Contains(prompt, "session_title:") || strings.Contains(prompt, stale) || strings.Contains(prompt, "\nconversation: ") {
+			t.Fatalf("%s prompt leaked dingTalk title: %q", src, prompt)
+		}
+		if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "看看今天的新闻") {
+			t.Fatalf("%s recent dingtalk history missing: %q", src, prompt)
+		}
+	}
+	web := buildUserPrompt(Turn{
+		Source:            SourceWeb,
 		Addressed:         true,
-		ChatType:          "p2p",
-		ConversationTitle: "须莫🥥：你有阿里内外cli吗,有哪些功能",
-		Message:           "我们前面说啥来着，直接回复我不要去做issue",
-		DingTalkHistory: []HistoryLine{
-			{Role: "user", Content: "你好"},
-			{Role: "assistant", Content: "哈喽，我在呢。"},
-			{Role: "user", Content: "看看今天的新闻"},
-			{Role: "assistant", Content: "我先去搜一下今天的热点新闻。"},
-			{Role: "user", Content: "我们前面说啥来着"},
-			{Role: "assistant", Content: "我去翻一下咱们刚才的聊天记录。"},
-		},
+		ConversationTitle: "网页会话标题",
+		Message:           "你好",
+		History:           []HistoryLine{{Role: "user", Content: "昨天那个表"}},
 	})
-	if !strings.Contains(prompt, "session_title:") || strings.Contains(prompt, "\nconversation: ") {
-		t.Fatalf("stale title must be labeled session_title, prompt=%q", prompt)
+	if !strings.Contains(web, "session_title: 网页会话标题") {
+		t.Fatalf("web may keep session title, prompt=%q", web)
 	}
-	if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "看看今天的新闻") {
-		t.Fatalf("recent dingtalk history missing: %q", prompt)
-	}
-	if !strings.Contains(systemPrompt, "Never invent a topic from session_title") {
-		t.Fatal("system prompt must forbid answering recency from session_title")
+}
+
+func TestTurnFromChatSessionRobotAndDigitalEmployeeDropTitle(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(2)}
+	c := &Coordinator{Queries: q}
+	stale := "须莫🥥：你有阿里内外cli吗,有哪些功能"
+	for _, src := range []Source{SourceRobot, SourceDigitalEmployee} {
+		turn := c.TurnFromChatSession(context.Background(), testSession(), src, true, "p2p", stale, "须莫", "我们前面说啥来着")
+		if turn.ConversationTitle != "" {
+			t.Fatalf("%s ConversationTitle = %q, want empty", src, turn.ConversationTitle)
+		}
+		prompt := buildUserPrompt(turn)
+		if strings.Contains(prompt, stale) || strings.Contains(prompt, "session_title:") {
+			t.Fatalf("%s loaded title into prompt: %q", src, prompt)
+		}
 	}
 }
 
