@@ -16,7 +16,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -999,93 +998,33 @@ func decideDispatchCoordinator(
 		EvidenceID:     ids.EvidenceID,
 		Kind:           ids.Kind,
 	}
+	turn.DWSUID, turn.DWSOrgID = dispatchCoordinatorDWSIdentity(command)
 	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
 		turn.Busy = true
 	}
-	turn = inboundcoord.AttachDingTalkConversation(
-		ctx,
-		coord,
-		turn,
-		dispatchCoordinatorChatSessionID(ctx, h, command, agent),
-		dispatchWindowHistory(command, message),
-	)
 	return coord.Decide(ctx, turn)
+}
+
+func dispatchCoordinatorDWSIdentity(command DispatchCommand) (string, string) {
+	if command.ExternalIdentity.DWS == nil {
+		return "", ""
+	}
+	uid := strings.TrimSpace(command.ExternalIdentity.DWS.UID)
+	orgID := strings.TrimSpace(command.ExternalIdentity.DWS.OrgID)
+	if uid == "" || orgID == "" {
+		return "", ""
+	}
+	return uid, orgID
 }
 
 func (h *Handler) inboundCoordinator() *inboundcoord.Coordinator {
 	if h == nil {
 		return inboundcoord.New(nil, nil, nil)
 	}
+	if h.InboundCoordinator != nil {
+		return h.InboundCoordinator
+	}
 	return inboundcoord.New(h.LLM, h.Queries, h.Assoc)
-}
-
-func dispatchCoordinatorChatSessionID(
-	ctx context.Context,
-	h *Handler,
-	command DispatchCommand,
-	agent db.Agent,
-) pgtype.UUID {
-	if command.Continuation != nil {
-		if id, err := util.ParseUUID(strings.TrimSpace(command.Continuation.ChatSessionID)); err == nil && id.Valid {
-			return id
-		}
-	}
-	if h == nil || h.Queries == nil {
-		return pgtype.UUID{}
-	}
-	chatType := channel.ChatTypeP2P
-	if strings.EqualFold(strings.TrimSpace(command.Event.Data.Conversation.Type), "group") {
-		chatType = channel.ChatTypeGroup
-	}
-	senderID := strings.TrimSpace(command.Event.Data.Sender.StaffID)
-	if senderID == "" {
-		senderID = strings.TrimSpace(command.Event.Data.Sender.OpenDingTalkID)
-	}
-	key := dingtalk.SessionBindingKey(channel.InboundMessage{
-		Source: channel.Source{
-			ChatID:   strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID),
-			ChatType: chatType,
-			SenderID: senderID,
-		},
-	})
-	try := func(installationID pgtype.UUID) pgtype.UUID {
-		if !installationID.Valid || strings.TrimSpace(key) == "" {
-			return pgtype.UUID{}
-		}
-		binding, err := h.Queries.GetChannelChatSessionBinding(ctx, db.GetChannelChatSessionBindingParams{
-			InstallationID: installationID,
-			ChannelChatID:  key,
-		})
-		if err != nil {
-			return pgtype.UUID{}
-		}
-		return binding.ChatSessionID
-	}
-	if row, err := h.Queries.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{
-		WorkspaceID: agent.WorkspaceID,
-		AgentID:     agent.ID,
-	}); err == nil {
-		if id := try(row.ID); id.Valid {
-			return id
-		}
-	}
-	if row, err := h.Queries.GetActiveDingTalkBotInstallationByAgent(ctx, db.GetActiveDingTalkBotInstallationByAgentParams{
-		WorkspaceID: agent.WorkspaceID,
-		AgentID:     agent.ID,
-	}); err == nil {
-		if id := try(row.ID); id.Valid {
-			return id
-		}
-	}
-	return pgtype.UUID{}
-}
-
-func dispatchWindowHistory(command DispatchCommand, current string) []inboundcoord.HistoryLine {
-	texts := make([]string, 0, len(command.Event.Data.Messages))
-	for _, m := range command.Event.Data.Messages {
-		texts = append(texts, m.Text)
-	}
-	return inboundcoord.WindowHistory(texts, current)
 }
 
 func writeDispatchCoordinatorTerminal(

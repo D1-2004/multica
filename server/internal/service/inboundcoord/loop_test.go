@@ -192,9 +192,10 @@ func TestDecideNamedConversationRecallThenReply(t *testing.T) {
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue":"WS-9","purpose":"向冬翔确认明天去上海是坐高铁还是开车","status":"waiting"}]}`}
 	c := &Coordinator{
-		LLM:   llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
-		Chat:  chat,
-		Tools: tools,
+		LLM:        llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
+		Chat:       chat,
+		Tools:      tools,
+		DWSHistory: &dwsHistoryStub{},
 	}
 	got := c.Decide(context.Background(), Turn{
 		Source:         SourceRobot,
@@ -202,6 +203,8 @@ func TestDecideNamedConversationRecallThenReply(t *testing.T) {
 		ChatType:       "p2p",
 		Message:        "cid+bEFv7ngm9n79Q1vL9HYJw== 里面聊了什么",
 		ConversationID: "cid-robot",
+		DWSUID:         "24710833",
+		DWSOrgID:       "439446171",
 	})
 	if got.Action != ActionReply {
 		t.Fatalf("action=%s", got.Action)

@@ -317,6 +317,21 @@ func TestDispatchCommandValidatesAndPersistsExternalDWSIdentity(t *testing.T) {
 	}
 }
 
+func TestDispatchCoordinatorDWSIdentityUsesStableDescriptor(t *testing.T) {
+	uid, orgID := dispatchCoordinatorDWSIdentity(DispatchCommand{
+		ExternalIdentity: AgentDispatchExternalIdentity{
+			DWS: &AgentDispatchDWSIdentity{UID: " 24710833 ", OrgID: " 439446171 "},
+		},
+	})
+	if uid != "24710833" || orgID != "439446171" {
+		t.Fatalf("DWS identity = %q/%q", uid, orgID)
+	}
+	uid, orgID = dispatchCoordinatorDWSIdentity(DispatchCommand{})
+	if uid != "" || orgID != "" {
+		t.Fatalf("missing DWS identity = %q/%q", uid, orgID)
+	}
+}
+
 func TestDispatchRuntimeContextCarriesIdentityExpiryWithoutDuplicatingToken(t *testing.T) {
 	contextJSON := dispatchRuntimeContext(DispatchCommand{
 		SchemaVersion: "2.0",

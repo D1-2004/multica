@@ -2,8 +2,8 @@
 // inbound user turn can be answered immediately or must become an Issue that
 // starts a sandbox. Direct reply is the chat response; Issue is the only
 // sandbox path. Decide runs a bounded tool loop (assoc_recall / assoc_bind /
-// finish). DWS is not a coordinator tool; DingTalk history is loaded by the
-// server before Decide.
+// finish). DWS is not model-callable; the server reads authoritative DingTalk
+// history through an isolated DWS identity before the first model round.
 package inboundcoord
 
 import (
@@ -73,6 +73,8 @@ type Turn struct {
 	WorkspaceID       string
 	ConversationID    string
 	PersonID          string
+	DWSUID            string
+	DWSOrgID          string
 	EvidenceID        string
 	Kind              string
 }
@@ -105,11 +107,12 @@ type historyReader interface {
 // Coordinator runs the bounded assoc tool loop in loop.go. Assoc also seeds
 // related_tasks for the inbound scene before the first model round.
 type Coordinator struct {
-	LLM     *llm.Client
-	Queries historyReader
-	Tools   Tools
-	Chat    Completer
-	Assoc   *assoc.Service
+	LLM        *llm.Client
+	Queries    historyReader
+	Tools      Tools
+	Chat       Completer
+	Assoc      *assoc.Service
+	DWSHistory DingTalkHistoryLoader
 }
 
 // New wires the loop. assocSvc may be nil; Decide still fail-opens.
@@ -153,6 +156,34 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
 	defer cancel()
 	started := time.Now()
+	if turn.Source != SourceWeb {
+		if c.DWSHistory == nil {
+			slog.Warn("inbound coordinator DWS history unavailable; continuing sandbox enqueue",
+				"event", "inbound_coordinator_dws_history_failed",
+				"source", string(turn.Source),
+				"error_class", "not_configured",
+			)
+			return Decision{Action: ActionContinue}
+		}
+		history, err := c.DWSHistory.Load(loopCtx, turn)
+		if err != nil {
+			slog.Warn("inbound coordinator DWS history failed; continuing sandbox enqueue",
+				"event", "inbound_coordinator_dws_history_failed",
+				"source", string(turn.Source),
+				"error_class", "read_failed",
+				"elapsed_ms", time.Since(started).Milliseconds(),
+				"error", err,
+			)
+			return Decision{Action: ActionContinue}
+		}
+		turn.DingTalkHistory = history
+		slog.Info("inbound coordinator DWS history loaded",
+			"event", "inbound_coordinator_dws_history_loaded",
+			"source", string(turn.Source),
+			"message_count", len(history),
+			"elapsed_ms", time.Since(started).Milliseconds(),
+		)
+	}
 	turn = c.injectRelatedTasks(loopCtx, turn)
 
 	decision, err := c.runLoop(loopCtx, turn)
@@ -253,9 +284,8 @@ func (c *Coordinator) injectRelatedTasks(ctx context.Context, turn Turn) Turn {
 	return turn
 }
 
-// TurnFromChatSession loads agent voice, busy state, and recent history.
-// Web Chat reads the last 4 Multica rows into History. Robot and digital-employee
-// turns read the last 10 rows into DingTalkHistory before Decide.
+// TurnFromChatSession loads agent voice and busy state. Web Chat also reads the
+// last 4 Multica rows. DingTalk turns load real conversation history in Decide.
 func (c *Coordinator) TurnFromChatSession(
 	ctx context.Context,
 	session db.ChatSession,
@@ -292,72 +322,7 @@ func (c *Coordinator) TurnFromChatSession(
 	}
 	if turn.Source == SourceWeb {
 		turn.History = c.listHistory(ctx, session.ID, historyLimit)
-	} else {
-		turn.DingTalkHistory = c.listHistory(ctx, session.ID, dingtalkHistoryLimit)
 	}
-	return turn
-}
-
-// FillDingTalkHistory loads the current DingTalk conversation's recent
-// messages into the turn. Web Chat must not call this. A lookup failure
-// leaves DingTalkHistory empty and Decide still runs.
-func (c *Coordinator) FillDingTalkHistory(ctx context.Context, turn Turn, sessionID pgtype.UUID) Turn {
-	if turn.Source == SourceWeb {
-		return turn
-	}
-	turn.DingTalkHistory = c.listHistory(ctx, sessionID, dingtalkHistoryLimit)
-	return turn
-}
-
-// WindowHistory copies prior conversation texts as user lines, skipping the
-// current message and blanks. Digital-employee dispatch uses this when the
-// bound session is empty.
-func WindowHistory(texts []string, current string) []HistoryLine {
-	current = strings.TrimSpace(current)
-	lines := make([]HistoryLine, 0, len(texts))
-	for _, text := range texts {
-		text = strings.TrimSpace(text)
-		if text == "" || text == current {
-			continue
-		}
-		lines = append(lines, HistoryLine{Role: "user", Content: text})
-	}
-	return lines
-}
-
-// AttachDingTalkConversation is the robot/digital-employee pre-Decide hook:
-// prefer the bound session's last 10 rows, else the caller-supplied window.
-// Web Chat is a no-op. Empty history is not an error.
-func AttachDingTalkConversation(ctx context.Context, c *Coordinator, turn Turn, sessionID pgtype.UUID, window []HistoryLine) Turn {
-	if turn.Source == SourceWeb {
-		return turn
-	}
-	if c != nil && sessionID.Valid {
-		turn = c.FillDingTalkHistory(ctx, turn, sessionID)
-	}
-	if len(turn.DingTalkHistory) > 0 {
-		return turn
-	}
-	if len(window) == 0 {
-		return turn
-	}
-	start := 0
-	if len(window) > dingtalkHistoryLimit {
-		start = len(window) - dingtalkHistoryLimit
-	}
-	lines := make([]HistoryLine, 0, len(window)-start)
-	for _, line := range window[start:] {
-		content := clipRunes(strings.TrimSpace(line.Content), 160)
-		if content == "" {
-			continue
-		}
-		role := line.Role
-		if role == "" {
-			role = "user"
-		}
-		lines = append(lines, HistoryLine{Role: role, Content: content})
-	}
-	turn.DingTalkHistory = lines
 	return turn
 }
 

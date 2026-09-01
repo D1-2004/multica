@@ -566,6 +566,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		turn.PersonID = strings.TrimSpace(msg.Source.SenderID)
 		turn.EvidenceID = strings.TrimSpace(msg.MessageID)
 		turn.Kind = string(msg.Source.ChatType)
+		turn.DWSUID, turn.DWSOrgID = coordinatorDWSIdentity(taskContext)
 		turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
 		coordDecision = r.coordinator.Decide(ctx, turn)
 		switch coordDecision.Action {
@@ -1298,6 +1299,29 @@ func coordinatorSource(options HandleOptions, taskContext []byte, channelType ch
 		return inboundcoord.SourceRobot
 	}
 	return inboundcoord.SourceRobot
+}
+
+func coordinatorDWSIdentity(taskContext []byte) (string, string) {
+	if len(taskContext) == 0 {
+		return "", ""
+	}
+	var payload struct {
+		ExternalIdentity struct {
+			DWS struct {
+				UID   string `json:"uid"`
+				OrgID string `json:"orgId"`
+			} `json:"dws"`
+		} `json:"external_identity"`
+	}
+	if json.Unmarshal(taskContext, &payload) != nil {
+		return "", ""
+	}
+	uid := strings.TrimSpace(payload.ExternalIdentity.DWS.UID)
+	orgID := strings.TrimSpace(payload.ExternalIdentity.DWS.OrgID)
+	if uid == "" || orgID == "" {
+		return "", ""
+	}
+	return uid, orgID
 }
 
 // ErrDedupFinalize marks a failed post-pipeline dedup transition. Callers must

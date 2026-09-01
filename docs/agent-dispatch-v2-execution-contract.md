@@ -29,15 +29,20 @@ the Chat response. Graph questions (what a `conversation_id` is following, which
 matters exist) are answered from `assoc_recall`. Only work that needs DWS,
 search, files, or tracking becomes an Issue and starts a sandbox.
 
-The loop does not expose DWS, search, or news as model-callable tools, does not
-redeem a ContextToken, and is not behind a feature flag. On robot and digital
-employee turns, the server loads the current DingTalk conversation's last 10
-messages **before** the loop (from the bound Multica session, or the
-dispatch window if the session is empty). A history lookup failure leaves
-history empty and still runs the decision. Web Chat does not load DingTalk
-history. It uses `qwen3.7-plus` with thinking off and a 15s wall clock. Agent
-setting `inbound_coordinator` is on by default for new and existing agents;
-an explicit owner off switch skips the loop and enqueues the sandbox.
+The loop does not expose DWS, search, or news as model-callable tools and is not
+behind a feature flag. On robot and digital-employee turns, the server resolves
+the inbound `uid/orgId`, mints a **separate** short-lived Agent Identity context,
+redeems it in a per-request `DWS_CONFIG_DIR`, and runs `dws chat message list`
+for the authoritative current DingTalk conversation before the JSON call. The
+task/sandbox ContextToken is never consumed. The current message is removed and
+the previous latest 10 messages are supplied chronologically. Each request owns
+and deletes its credential directory, so concurrent users cannot share a DWS
+profile. A DWS identity or read failure continues the existing sandbox enqueue;
+it never substitutes Multica's chat projection or the Router dispatch window.
+Web Chat does not load DingTalk history. It uses `qwen3.7-plus` with thinking off
+and a 15s wall clock shared by DWS history, scene recall, and all model rounds. Agent
+setting `inbound_coordinator` is on by default for new and existing agents; an
+explicit owner off switch skips the loop and enqueues the sandbox.
 
 | Action | User sees | Sandbox |
 | --- | --- | --- |

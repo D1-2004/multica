@@ -423,10 +423,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	var appURLProvider func() string
 	var publicURLProvider func() string
 	var siteConnectSrcProvider func() []string
+	var agentIdentityControlBaseURLProvider func() string
 	if opts.RuntimeConfig != nil {
 		appURLProvider = opts.RuntimeConfig.appURL
 		publicURLProvider = opts.RuntimeConfig.publicURL
 		siteConnectSrcProvider = opts.RuntimeConfig.siteConnectSrc
+		agentIdentityControlBaseURLProvider = opts.RuntimeConfig.agentIdentityControlBaseURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
 	h.Assoc = assoc.NewService(assoc.NewSQLStore(pool))
@@ -754,7 +756,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 	}
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
-	channelRouter.SetInboundCoordinator(inboundcoord.New(h.LLM, queries, h.Assoc))
+	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
+	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
+		AgentIdentity:   agentidentityhsf.NewClient(),
+		BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
+		BaseURLProvider: agentIdentityControlBaseURLProvider,
+		ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+	})
+	h.InboundCoordinator = coordinator
+	channelRouter.SetInboundCoordinator(coordinator)
 	channelRouter.SetSceneAssociator(h.Assoc)
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
 	// watching the same chat without a reload: the engine writes through the

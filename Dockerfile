@@ -32,7 +32,7 @@ RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_u
 # --- Runtime stage ---
 FROM alpine:3.21
 
-ARG DWS_VERSION=v1.0.50
+ARG DWS_VERSION=v1.0.61-beta.3
 ARG DWS_RELEASE_BASE=https://github.com/DingTalk-Real-AI/dingtalk-workspace-cli/releases/download
 
 RUN apk add --no-cache ca-certificates tzdata coreutils curl gcompat libc6-compat libstdc++ nodejs npm \

@@ -17,7 +17,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -2337,124 +2336,24 @@ func TestRouter_MediaDeadlineStartsBeforeAppend(t *testing.T) {
 	}
 }
 
-type routerCoordQueries struct {
-	page    []db.ChatMessage
-	listErr error
-	last    db.ListChatMessagesPageParams
-	calls   int
-}
-
-func (s *routerCoordQueries) ListChatMessagesPage(_ context.Context, arg db.ListChatMessagesPageParams) ([]db.ChatMessage, error) {
-	s.last = arg
-	s.calls++
-	if s.listErr != nil {
-		return nil, s.listErr
-	}
-	return s.page, nil
-}
-
-func (s *routerCoordQueries) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
-	return db.Agent{}, nil
-}
-
-func (s *routerCoordQueries) CountRunningTasks(context.Context, pgtype.UUID) (int64, error) {
-	return 0, nil
-}
-
-func (s *routerCoordQueries) GetAgentInboundCoordinator(context.Context, pgtype.UUID) (bool, error) {
-	return true, nil
-}
-
-func registerDingTalk(h *harness) {
-	h.router.mu.RLock()
-	set := h.router.sets[channel.TypeFeishu]
-	h.router.mu.RUnlock()
-	h.router.Register(channel.Type("dingtalk"), set)
-}
-
-func newestFirstDingTalkPage(n int) []db.ChatMessage {
-	page := make([]db.ChatMessage, n)
-	for i := 0; i < n; i++ {
-		page[i] = db.ChatMessage{Role: "user", Content: "钉钉历史" + string(rune('A'+n-1-i))}
-	}
-	return page
-}
-
-func TestRouter_DingTalkCoordinatorLoadsTenMessagesBeforeDecide(t *testing.T) {
-	h := newHarness(t)
-	registerDingTalk(h)
-	q := &routerCoordQueries{page: newestFirstDingTalkPage(10)}
-	h.reader.session = db.ChatSession{
-		ID:          uuidFromString(t, "66666666-6666-6666-6666-666666666666"),
-		WorkspaceID: uuidFromString(t, "22222222-2222-2222-2222-222222222222"),
-		AgentID:     uuidFromString(t, "33333333-3333-3333-3333-333333333333"),
-	}
-	h.router.SetInboundCoordinator(inboundcoord.New(nil, q, nil))
-	msg := p2pMessage(t)
-	msg.Text = "帮我看看今天有什么新闻"
-	msg.Source.ChannelType = channel.Type("dingtalk")
-	if err := h.router.Handle(context.Background(), msg); err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	if q.calls != 1 || q.last.Limit != 10 {
-		t.Fatalf("dingtalk coordinator history = calls %d limit %d, want 1 call limit 10", q.calls, q.last.Limit)
-	}
-	if q.last.ChatSessionID != h.reader.session.ID {
-		t.Fatalf("history session = %+v, want %+v", q.last.ChatSessionID, h.reader.session.ID)
+func TestCoordinatorDWSIdentityReadsPrivateTaskContext(t *testing.T) {
+	uid, orgID := coordinatorDWSIdentity([]byte(`{
+		"external_identity":{"dws":{"uid":"24710833","orgId":"439446171"}}
+	}`))
+	if uid != "24710833" || orgID != "439446171" {
+		t.Fatalf("DWS identity = %q/%q", uid, orgID)
 	}
 }
 
-func TestRouter_FeishuDoesNotLoadDingTalkHistory(t *testing.T) {
-	h := newHarness(t)
-	q := &routerCoordQueries{page: newestFirstDingTalkPage(10)}
-	h.router.SetInboundCoordinator(inboundcoord.New(nil, q, nil))
-	if err := h.router.Handle(context.Background(), p2pMessage(t)); err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	if q.calls != 0 {
-		t.Fatalf("non-dingtalk must not load dingtalk history, calls=%d", q.calls)
-	}
-}
-
-func TestRouter_DingTalkHistoryFailureDoesNotFailHandle(t *testing.T) {
-	h := newHarness(t)
-	registerDingTalk(h)
-	q := &routerCoordQueries{listErr: context.DeadlineExceeded}
-	h.reader.session = db.ChatSession{
-		ID:          uuidFromString(t, "66666666-6666-6666-6666-666666666666"),
-		WorkspaceID: uuidFromString(t, "22222222-2222-2222-2222-222222222222"),
-		AgentID:     uuidFromString(t, "33333333-3333-3333-3333-333333333333"),
-	}
-	h.router.SetInboundCoordinator(inboundcoord.New(nil, q, nil))
-	msg := p2pMessage(t)
-	msg.Text = "帮我看看今天有什么新闻"
-	msg.Source.ChannelType = channel.Type("dingtalk")
-	if err := h.router.Handle(context.Background(), msg); err != nil {
-		t.Fatalf("history failure must not fail handle: %v", err)
-	}
-	if q.calls != 1 || q.last.Limit != 10 {
-		t.Fatalf("failed lookup still requests last 10, calls=%d limit=%d", q.calls, q.last.Limit)
-	}
-}
-
-func TestRouter_DingTalkCoordinatorDoesNotPassSessionTitle(t *testing.T) {
-	h := newHarness(t)
-	registerDingTalk(h)
-	q := &routerCoordQueries{page: newestFirstDingTalkPage(10)}
-	h.reader.session = db.ChatSession{
-		ID:          uuidFromString(t, "66666666-6666-6666-6666-666666666666"),
-		WorkspaceID: uuidFromString(t, "22222222-2222-2222-2222-222222222222"),
-		AgentID:     uuidFromString(t, "33333333-3333-3333-3333-333333333333"),
-		Title:       "须莫🥥：你有阿里内外cli吗,有哪些功能",
-	}
-	h.router.SetInboundCoordinator(inboundcoord.New(nil, q, nil))
-	msg := p2pMessage(t)
-	msg.Text = "我们前面说啥来着，直接回复我不要去做issue"
-	msg.Source.ChannelType = channel.Type("dingtalk")
-	if err := h.router.Handle(context.Background(), msg); err != nil {
-		t.Fatalf("handle: %v", err)
-	}
-	if q.calls != 1 || q.last.Limit != 10 {
-		t.Fatalf("dingtalk coordinator history = calls %d limit %d, want 1 call limit 10", q.calls, q.last.Limit)
+func TestCoordinatorDWSIdentityRejectsIncompleteOrInvalidContext(t *testing.T) {
+	for _, raw := range [][]byte{
+		nil,
+		[]byte(`not-json`),
+		[]byte(`{"external_identity":{"dws":{"uid":"24710833"}}}`),
+	} {
+		uid, orgID := coordinatorDWSIdentity(raw)
+		if uid != "" || orgID != "" {
+			t.Fatalf("unexpected identity = %q/%q", uid, orgID)
+		}
 	}
 }

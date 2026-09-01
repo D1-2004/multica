@@ -42,6 +42,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -211,6 +212,7 @@ type Handler struct {
 	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
 	Bus                     *events.Bus
 	TaskService             *service.TaskService
+	InboundCoordinator      *inboundcoord.Coordinator
 	A2AService              *service.A2AService
 	A2AProtocol             http.Handler
 	A2APushWorker           *service.A2APushWorker
