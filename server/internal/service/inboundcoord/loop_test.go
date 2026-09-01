@@ -30,10 +30,14 @@ func (s *scriptedCompleter) Chat(_ context.Context, params openai.ChatCompletion
 type stubTools struct {
 	calls  []string
 	recall string
+	errors map[string]error
 }
 
 func (s *stubTools) Call(_ context.Context, _ Turn, name, arguments string) (string, error) {
 	s.calls = append(s.calls, name+" "+arguments)
+	if err := s.errors[name]; err != nil {
+		return "", err
+	}
 	switch name {
 	case toolAssocRecall:
 		if s.recall != "" {
@@ -42,8 +46,35 @@ func (s *stubTools) Call(_ context.Context, _ Turn, name, arguments string) (str
 		return `{"items":[]}`, nil
 	case toolAssocBind:
 		return `{"linked":true}`, nil
+	case toolIssueGet:
+		return `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","title":"向须莫v6确认今晚几点打球","status":"in_review"}`, nil
+	case toolIssueCommentList:
+		return `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","comments":[]}`, nil
+	case toolIssueCommentAdd:
+		return `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","issue_identifier":"WS-13","comment_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","task_id":"cccccccc-cccc-cccc-cccc-cccccccccccc"}`, nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
+	}
+}
+
+func TestLoopIssueCommentBusyRequestsDispatchRetry(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"须莫v6 在钉钉会话中的消息：\n\n番茄","reply_text":"我把番茄这个答复带回去了。"}`),
+	}}
+	tools := &stubTools{
+		recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认喜欢番茄还是菠萝","status":"waiting","conversations":[{"conversation_id":"cid-v6","rel":"outreach"}]}]}`,
+		errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy},
+	}
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "番茄", ConversationID: "cid-v6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionRetry || decision.IssueID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+		t.Fatalf("decision=%#v", decision)
 	}
 }
 
@@ -114,7 +145,7 @@ func TestLoopInboundOutreachReplyContinuesRecalledIssue(t *testing.T) {
 	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("finish", toolFinish, `{"action":"issue","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","text":"好的，我把7点这个答复带回去。","look_into":"须莫v6回复今晚7点打球，并通知原发起人","reason":"这是等待中的外呼回复"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"须莫v6 在钉钉会话中的消息：\n\n7点","reply_text":"我把7点这个答复带回去了。"}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认今晚几点打球","status":"waiting","conversations":[{"conversation_id":"cid-v6","rel":"outreach","rels":["outreach","waiting_on"]}]}]}`}
 	c := &Coordinator{Chat: chat, Tools: tools}
@@ -128,11 +159,11 @@ func TestLoopInboundOutreachReplyContinuesRecalledIssue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Action != ActionIssue || got.IssueID != issueID {
+	if got.Action != ActionReply || got.IssueID != issueID || got.IssueComment == nil {
 		t.Fatalf("decision = %#v", got)
 	}
-	if !strings.Contains(got.LookInto, "通知原发起人") {
-		t.Fatalf("look_into = %q", got.LookInto)
+	if got.IssueComment.CommentID != "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" {
+		t.Fatalf("issue comment = %#v", got.IssueComment)
 	}
 }
 
@@ -141,7 +172,7 @@ func TestLoopInboundOutreachReplyRejectsDirectReply(t *testing.T) {
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
 		assistantTool("wrong", toolFinish, `{"action":"reply","text":"好的，今晚7点打球。","reason":"直接确认"}`),
-		assistantTool("correct", toolFinish, `{"action":"issue","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","text":"好的，我把7点这个答复带回去。","look_into":"记录须莫v6回复今晚7点并通知原发起人","reason":"等待中的外呼回复"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"须莫v6 在钉钉会话中的消息：\n\n7点","reply_text":"我把7点这个答复带回去了。"}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认今晚几点打球","status":"waiting","conversations":[{"conversation_id":"cid-v6","rel":"outreach"}],"waiting_on":[{"conversation_id":"cid-v6"}]}]}`}
 	c := &Coordinator{Chat: chat, Tools: tools}
@@ -156,11 +187,11 @@ func TestLoopInboundOutreachReplyRejectsDirectReply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Action != ActionIssue || got.IssueID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+	if got.Action != ActionReply || got.IssueID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" || got.IssueComment == nil {
 		t.Fatalf("decision = %#v", got)
 	}
 	if chat.calls != 3 {
-		t.Fatalf("model rounds = %d, want rejected reply plus corrected issue", chat.calls)
+		t.Fatalf("model rounds = %d, want rejected reply plus member comment", chat.calls)
 	}
 }
 

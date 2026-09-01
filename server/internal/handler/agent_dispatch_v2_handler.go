@@ -986,7 +986,11 @@ func recoverDuplicateAgentChatDispatch(
 }
 
 func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
-	decision := decideDispatchCoordinator(r.Context(), h, c, agent, prompt.DisplayContent)
+	decision := decideDispatchCoordinator(
+		r.Context(), h, c, agent, prompt.DisplayContent,
+		dispatchContext.UserID,
+		dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
+	)
 	if len(c.Event.Data.Messages) > 0 {
 		for _, m := range c.Event.Data.Messages {
 			if m.Reaction == nil && len(m.Attachments) > 0 && decision.Action != inboundcoord.ActionContinue {
@@ -994,6 +998,10 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				break
 			}
 		}
+	}
+	if decision.Action == inboundcoord.ActionRetry {
+		writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
+		return
 	}
 	if continuedCommand, continuedPrompt, ok := coordinatorRecalledIssueContinuation(c, prompt, decision); ok {
 		h.createAgentDispatchCommentWithCoordinatorV2(w, r, continuedCommand, continuedPrompt, dispatchContext, &decision)
@@ -1134,6 +1142,8 @@ func decideDispatchCoordinator(
 	command DispatchCommand,
 	agent db.Agent,
 	message string,
+	userID pgtype.UUID,
+	issueDispatchContext []byte,
 ) inboundcoord.Decision {
 	if h == nil || h.Queries == nil || command.Event.Domain != "channel" || command.Event.Type != "message.created" {
 		return inboundcoord.Decision{Action: inboundcoord.ActionContinue}
@@ -1149,20 +1159,22 @@ func decideDispatchCoordinator(
 	ids := dispatchAssocIDs(command)
 	coord := h.inboundCoordinator()
 	turn := inboundcoord.Turn{
-		Source:         source,
-		Addressed:      true,
-		ChatType:       chatType,
-		SenderName:     command.Event.Data.Sender.DisplayName,
-		Message:        message,
-		AgentID:        agent.ID,
-		AgentName:      agent.Name,
-		Instructions:   agent.Instructions,
-		IdentityNote:   inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
-		WorkspaceID:    uuidToString(agent.WorkspaceID),
-		ConversationID: ids.ConversationID,
-		PersonID:       ids.PersonID,
-		EvidenceID:     ids.EvidenceID,
-		Kind:           ids.Kind,
+		Source:               source,
+		Addressed:            true,
+		ChatType:             chatType,
+		SenderName:           command.Event.Data.Sender.DisplayName,
+		Message:              message,
+		AgentID:              agent.ID,
+		UserID:               userID,
+		AgentName:            agent.Name,
+		Instructions:         agent.Instructions,
+		IdentityNote:         inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
+		WorkspaceID:          uuidToString(agent.WorkspaceID),
+		ConversationID:       ids.ConversationID,
+		PersonID:             ids.PersonID,
+		EvidenceID:           ids.EvidenceID,
+		Kind:                 ids.Kind,
+		IssueDispatchContext: issueDispatchContext,
 	}
 	turn.DWSUID, turn.DWSOrgID = dispatchCoordinatorDWSIdentity(command)
 	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
@@ -1217,7 +1229,13 @@ func writeDispatchCoordinatorTerminal(
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
 			return true
 		}
-		writeJSON(w, http.StatusAccepted, AgentDispatchResponse{})
+		response := AgentDispatchResponse{}
+		if decision.IssueComment != nil {
+			response.Continuation = AgentDispatchContinuation{Kind: "issue", IssueID: decision.IssueComment.IssueID}
+			response.IssueIdentifier = decision.IssueComment.IssueIdentifier
+			response.CommentID = decision.IssueComment.CommentID
+		}
+		writeJSON(w, http.StatusAccepted, response)
 		return true
 	case inboundcoord.ActionSilence:
 		if err := h.TaskService.EnqueueSynchronousTaskCompletion(

@@ -31,19 +31,21 @@ Before a sandbox starts, Multica runs a **bounded server-side tool loop**
 `issue_comment_add` / `finish`, thinking off, at most eight model
 rounds, last round finish-only, `tool_choice=required`) on web Chat and on
 DingTalk `channel/message.created` for digital employees and robots. A verdict
-is only accepted from the `finish` tool. Graph questions (what a
+is accepted from `finish`, or from a successful terminal `issue_comment_add`
+that already persisted the member comment and `reply_text`. Graph questions (what a
 `conversation_id` is following, which matters exist) must call `assoc_recall`
 with that exact id; empty items means unknown. Only work that needs DWS,
 search, files, or tracking becomes an Issue and starts a sandbox.
 
 For a digital-employee direct message, an `assoc_recall` hit on exactly one
 open or waiting Issue through `outreach` / `waiting_on` makes the inbound turn
-an Issue continuation. The loop must return `action=issue` with the recalled
-`issue_id`; Multica validates that identifier against the tool result, appends
-the message to the existing Issue, and starts its next task. It must not close
-the exchange with a direct acknowledgement to the contacted person. The task
-continues the original matter and finds and notifies its original requester;
-the immediate dispatch callback still addresses only the current respondent.
+an Issue continuation. The loop reads that Issue and calls `issue_comment_add`
+with the recalled `issue_id`, exact inbound answer, and a short `reply_text`.
+Multica writes a member comment through the normal Issue path, which starts the
+Issue-owned next task. The successful tool call ends the loop immediately; it
+must not create another Issue or wait for a separate `finish` round. The task
+continues the original matter and finds and notifies its original requester,
+while `reply_text` only acknowledges the current respondent.
 
 The loop does not expose DWS, search, or news as model-callable tools and is not
 behind a feature flag. On robot and digital-employee turns, the server resolves

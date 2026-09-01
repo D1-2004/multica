@@ -170,14 +170,15 @@ user    ← buildUserPrompt(turn)
 ```json
 {
   "issue_id": "UUID",
-  "content": "接待记录，人设语气，不是沙箱终答",
+  "content": "外呼回信原文和发送人上下文",
+  "reply_text": "给当前 IM 说话人的短确认",
   "parent": "可选，挂到已有评论"
 }
 ```
 
-用途：`action=issue` 时在事情下面留一句「我去核对 X」，或把外呼回信记到原 Issue，而不等沙箱第一轮。这不是用户 IM 里的 `finish.text`；IM 仍走 dispatch callback / Stream。
+用途：把外呼回信作为 **成员评论** 写回原 Issue，并立即走现有评论自驱机制排下一轮 Issue task。成功调用本身就是终点：`reply_text` 经当前 dispatch callback / Stream 回给正在说话的人，不再多跑一轮 `finish`，也不再 `action=issue` 二次入队。Issue 已有活动任务时不写评论，当前 dispatch 返回冲突并重试。
 
-`issue_id` 必须是 UUID，且该 Issue 在本 workspace、指派给本 Agent。`issue_comment_add` 只写接待记录，不入队沙箱任务。续旧仍可用 `finish(action=issue, issue_id)` 给该 Issue 排 follow-up。
+`issue_id` 必须来自本轮 `assoc_recall`，且该 Issue 在本 workspace、指派给本 Agent。Agent 评论只会留下记录，不能用于这条路径。
 
 DWS、搜索、文件、联系人目录继续 **不** 进 Loop。需要它们就 `action=issue`。
 
@@ -196,7 +197,7 @@ Scene = `openConversationId`，且必须 `cid` 前缀。内部 `uid:uid` pair、
   → reply     一句 IM，无沙箱
   → silence   群闲聊，网页 Chat 禁止
   → issue     无 issue_id：新建 Issue + Task，Associate 本 cid
-              有 issue_id：当 follow-up 评论任务续原 Issue
+              有 issue_id：普通续旧路径；外呼回信优先走 issue_comment_add
 ```
 
 出站（沙箱 `dws chat message send` 成功回执）`assoc_bind` / `BindOutbound`。回信进新 cid 时，靠出站边召回，不靠 Multica `chat_session` UUID。
@@ -308,7 +309,8 @@ Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 
 |---|---|---|
 | `reply` | `text` 经 dispatch callback / Stream 发出 | 无沙箱。网页 Chat 记 `message_kind=coordinator` |
 | `issue` 无 `issue_id` | 先回一句正在核对什么（`execution-update` 冻结 ack） | 新建 Issue + Task，Associate 本 cid |
-| `issue` 有 `issue_id` | 外呼回信：回应当前说话人，并让沙箱通知原发起人 | 原 Issue 上追加 follow-up 任务 |
+| `issue_comment_add` | `reply_text` 回当前说话人 | 成员评论写入原 Issue，并自驱下一轮 Issue task |
+| `issue` 有 `issue_id` | 非外呼回信的普通续旧 | 原 Issue 上追加 follow-up 任务 |
 | `silence` | 不回 | 无沙箱。网页禁止 |
 | 内部 `continue` | 走原入队 | LLM / DWS 历史 / 开关失败时的 fail-open |
 

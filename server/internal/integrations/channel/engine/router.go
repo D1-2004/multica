@@ -583,10 +583,14 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		turn.PersonID = strings.TrimSpace(msg.Source.SenderID)
 		turn.EvidenceID = strings.TrimSpace(msg.MessageID)
 		turn.Kind = string(msg.Source.ChatType)
+		turn.UserID = identity.PrincipalUserID
+		turn.IssueDispatchContext = taskContext
 		turn.DWSUID, turn.DWSOrgID = coordinatorDWSIdentity(taskContext)
 		turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
 		coordDecision = r.coordinator.Decide(ctx, turn)
 		switch coordDecision.Action {
+		case inboundcoord.ActionRetry:
+			return Result{}, finalizeRelease, service.ErrIssueDispatchPending
 		case inboundcoord.ActionIssue:
 			issueCommand = &IssueCommand{
 				Title:       inboundcoord.IssueTitle(coordDecision, msg.Text),

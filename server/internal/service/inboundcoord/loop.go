@@ -3,6 +3,7 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -73,11 +74,52 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			if call.Name == toolAssocRecall {
 				recalls = append(recalls, parseRecallCall(call.Arguments))
 			}
+			if reqErr := requireRecalledIssueForTool(call.Name, call.Arguments, recalledIssues); reqErr != nil {
+				messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
+				slog.Info("inbound coordinator tool",
+					"event", "inbound_coordinator_tool",
+					"tool", call.Name,
+					"round", round,
+					"error", true,
+					"reason", "issue_not_recalled",
+				)
+				continue
+			}
 			result, callErr := c.callTool(ctx, turn, call.Name, call.Arguments)
+			if errors.Is(callErr, ErrIssueBusy) {
+				return Decision{
+					Action: ActionRetry, IssueID: issueIDFromToolArguments(call.Arguments),
+					ToolRounds: round + 1, ToolsUsed: used,
+				}, nil
+			}
 			if callErr != nil {
 				result = `{"error":` + jsonQuote(callErr.Error()) + `}`
 			} else if call.Name == toolAssocRecall {
 				collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
+			} else if call.Name == toolIssueCommentAdd {
+				if effect, ok := parseIssueCommentEffect(result); ok {
+					replyText := issueCommentReplyText(call.Arguments)
+					if replyText == "" {
+						messages = append(messages, openai.ToolMessage(`{"error":"reply_text is required"}`, call.ID))
+						continue
+					}
+					slog.Info("inbound coordinator tool",
+						"event", "inbound_coordinator_tool",
+						"tool", call.Name,
+						"round", round,
+						"error", false,
+						"terminal", true,
+					)
+					return Decision{
+						Action:       ActionReply,
+						UserText:     replyText,
+						IssueID:      effect.IssueID,
+						Reason:       "issue_comment_added",
+						ToolRounds:   round + 1,
+						ToolsUsed:    used,
+						IssueComment: &effect,
+					}, nil
+				}
 			}
 			messages = append(messages, openai.ToolMessage(result, call.ID))
 			slog.Info("inbound coordinator tool",
@@ -224,14 +266,15 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolIssueCommentAdd,
-			Description: openai.String("Post a reception note on an Issue this agent owns. This is not the IM reply and does not start a sandbox. finish.text is still the user-facing sentence."),
+			Description: openai.String("Add the inbound message as a member comment on an Issue this agent owns. The normal Issue comment path starts its next task. This tool is terminal on success: reply_text closes the current IM turn, so do not call finish afterward."),
 			Parameters: shared.FunctionParameters{
 				"type":     "object",
-				"required": []string{"issue_id", "content"},
+				"required": []string{"issue_id", "content", "reply_text"},
 				"properties": map[string]any{
-					"issue_id": map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
-					"content":  map[string]any{"type": "string", "description": "Reception note in this agent's voice."},
-					"parent":   map[string]any{"type": "string", "description": "Optional parent comment UUID."},
+					"issue_id":   map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
+					"content":    map[string]any{"type": "string", "description": "Exact inbound answer with sender context, suitable as the Issue task trigger."},
+					"reply_text": map[string]any{"type": "string", "description": "Short user-facing acknowledgement sent to the current IM speaker after the comment is committed."},
+					"parent":     map[string]any{"type": "string", "description": "Optional parent comment UUID."},
 				},
 			},
 		}),
@@ -272,6 +315,66 @@ func parseRecallCall(raw string) recallCall {
 		Issue:          strings.TrimSpace(args.Issue),
 		Q:              strings.TrimSpace(args.Q),
 	}
+}
+
+func issueIDFromToolArguments(raw string) string {
+	var args issueIDArgs
+	_ = json.Unmarshal([]byte(strings.TrimSpace(raw)), &args)
+	return strings.TrimSpace(args.IssueID)
+}
+
+func requireRecalledIssueForTool(name, raw string, recalled map[string]struct{}) error {
+	switch name {
+	case toolIssueGet, toolIssueCommentList:
+		issueID := issueIDFromToolArguments(raw)
+		if issueID == "" {
+			return fmt.Errorf("issue_id is required")
+		}
+		if _, ok := recalled[issueID]; !ok {
+			return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+		}
+	case toolIssueCommentAdd:
+		var args issueIDArgs
+		if json.Unmarshal([]byte(strings.TrimSpace(raw)), &args) != nil {
+			return fmt.Errorf("invalid issue_comment_add arguments")
+		}
+		issueID := strings.TrimSpace(args.IssueID)
+		if issueID == "" {
+			return fmt.Errorf("issue_id is required")
+		}
+		if _, ok := recalled[issueID]; !ok {
+			return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+		}
+		if strings.TrimSpace(args.ReplyText) == "" {
+			return fmt.Errorf("reply_text is required")
+		}
+	case toolAssocBind:
+		var args bindArgs
+		_ = json.Unmarshal([]byte(strings.TrimSpace(raw)), &args)
+		issueID := strings.TrimSpace(args.IssueID)
+		if issueID != "" {
+			if _, ok := recalled[issueID]; !ok {
+				return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+			}
+		}
+	}
+	return nil
+}
+
+func issueCommentReplyText(raw string) string {
+	var args issueIDArgs
+	_ = json.Unmarshal([]byte(strings.TrimSpace(raw)), &args)
+	return strings.TrimSpace(args.ReplyText)
+}
+
+func parseIssueCommentEffect(raw string) (IssueCommentEffect, bool) {
+	var effect IssueCommentEffect
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &effect) != nil ||
+		strings.TrimSpace(effect.IssueID) == "" || strings.TrimSpace(effect.CommentID) == "" {
+		return IssueCommentEffect{}, false
+	}
+	effect.IssueID = strings.TrimSpace(effect.IssueID)
+	return effect, true
 }
 
 var conversationIDPattern = regexp.MustCompile(`cid[+A-Za-z0-9_/=-]{8,}`)
@@ -388,9 +491,7 @@ func requireRecallBeforeFinish(
 		for recalled := range continuationIssues {
 			continuationIssue = recalled
 		}
-		if action != ActionIssue || issueID != continuationIssue {
-			return fmt.Errorf("a reply on a waiting outreach scene must continue recalled issue_id %s", continuationIssue)
-		}
+		return fmt.Errorf("call issue_comment_add on recalled issue_id %s; that successful tool call ends the loop", continuationIssue)
 	}
 	if issueID != "" {
 		if action != ActionIssue {

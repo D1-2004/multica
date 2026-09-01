@@ -2,7 +2,7 @@
 // inbound user turn can be answered immediately or must become an Issue that
 // starts a sandbox. Direct reply is the chat response; Issue is the only
 // sandbox path. Decide runs a bounded tool loop (assoc_recall / assoc_bind /
-// finish). DWS is not model-callable; the server reads authoritative DingTalk
+// finish, with issue_comment_add terminal on success). DWS is not model-callable; the server reads authoritative DingTalk
 // history through an isolated DWS identity before the first model round.
 package inboundcoord
 
@@ -45,6 +45,7 @@ const (
 	ActionIssue    Action = "issue"
 	ActionContinue Action = "continue"
 	ActionSilence  Action = "silence"
+	ActionRetry    Action = "retry"
 )
 
 // Source names the inbound surface that asked for a decision.
@@ -58,29 +59,31 @@ const (
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
-	Source            Source
-	Addressed         bool
-	ChatType          string
-	ConversationTitle string
-	SenderName        string
-	Message           string
-	AgentID           pgtype.UUID
-	AgentName         string
-	Instructions      string
-	Persona           string
-	ReplyTone         string
-	Busy              bool
-	History           []HistoryLine
-	DingTalkHistory   []HistoryLine
-	IdentityNote      string
-	RelatedTasks      string
-	WorkspaceID       string
-	ConversationID    string
-	PersonID          string
-	DWSUID            string
-	DWSOrgID          string
-	EvidenceID        string
-	Kind              string
+	Source               Source
+	Addressed            bool
+	ChatType             string
+	ConversationTitle    string
+	SenderName           string
+	Message              string
+	AgentID              pgtype.UUID
+	UserID               pgtype.UUID
+	AgentName            string
+	Instructions         string
+	Persona              string
+	ReplyTone            string
+	Busy                 bool
+	History              []HistoryLine
+	DingTalkHistory      []HistoryLine
+	IdentityNote         string
+	RelatedTasks         string
+	WorkspaceID          string
+	ConversationID       string
+	PersonID             string
+	DWSUID               string
+	DWSOrgID             string
+	EvidenceID           string
+	Kind                 string
+	IssueDispatchContext []byte
 }
 
 // HistoryLine is one already-persisted Multica chat message or a DingTalk row.
@@ -92,15 +95,16 @@ type HistoryLine struct {
 
 // Decision is what callers act on.
 type Decision struct {
-	Action     Action
-	UserText   string
-	LookInto   string
-	IssueID    string
-	Reason     string
-	ElapsedMs  int64
-	Source     Source
-	ToolRounds int
-	ToolsUsed  []string
+	Action       Action
+	UserText     string
+	LookInto     string
+	IssueID      string
+	Reason       string
+	ElapsedMs    int64
+	Source       Source
+	ToolRounds   int
+	ToolsUsed    []string
+	IssueComment *IssueCommentEffect
 }
 
 type historyReader interface {
@@ -132,6 +136,17 @@ func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) 
 		c.Tools = tools
 	}
 	return c
+}
+
+// SetIssueCommentWriter wires the normal member-comment path before the
+// coordinator is shared by HTTP and channel routers.
+func (c *Coordinator) SetIssueCommentWriter(writer IssueCommentWriter) {
+	if c == nil {
+		return
+	}
+	if tools, ok := c.Tools.(*AssocTools); ok {
+		tools.CommentWriter = writer
+	}
 }
 
 // FillVoice copies Instructions-tab persona and reply tone onto the turn.

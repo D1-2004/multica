@@ -291,7 +291,23 @@ func TestAssocToolsRecallOverlaysEventText(t *testing.T) {
 type issueStub struct {
 	issue    db.Issue
 	comments []db.Comment
-	created  db.Comment
+}
+
+type issueCommentWriterStub struct {
+	effect  IssueCommentEffect
+	turn    Turn
+	issue   db.Issue
+	content string
+	parent  pgtype.UUID
+	err     error
+}
+
+func (s *issueCommentWriterStub) AddMemberComment(_ context.Context, turn Turn, issue db.Issue, content string, parentID pgtype.UUID) (IssueCommentEffect, error) {
+	s.turn = turn
+	s.issue = issue
+	s.content = content
+	s.parent = parentID
+	return s.effect, s.err
 }
 
 func (s *issueStub) GetIssueInWorkspace(context.Context, db.GetIssueInWorkspaceParams) (db.Issue, error) {
@@ -300,10 +316,6 @@ func (s *issueStub) GetIssueInWorkspace(context.Context, db.GetIssueInWorkspaceP
 
 func (s *issueStub) ListCommentsForIssue(context.Context, db.ListCommentsForIssueParams) ([]db.Comment, error) {
 	return s.comments, nil
-}
-
-func (s *issueStub) CreateComment(context.Context, db.CreateCommentParams) (db.Comment, error) {
-	return s.created, nil
 }
 
 func testOwnedIssue(t *testing.T, agent pgtype.UUID) (string, db.Issue) {
@@ -363,12 +375,19 @@ func TestIssueCommentListAndAdd(t *testing.T) {
 			Content:    "我去问须莫v6今晚几点",
 			CreatedAt:  pgtype.Timestamptz{Time: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), Valid: true},
 		}},
-		created: db.Comment{ID: commentID},
 	}
-	tools := &AssocTools{Issues: stub}
+	writer := &issueCommentWriterStub{effect: IssueCommentEffect{
+		IssueID: issueID, CommentID: "44444444-4444-4444-4444-444444444444", TaskID: "55555555-5555-5555-5555-555555555555",
+	}}
+	tools := &AssocTools{Issues: stub, CommentWriter: writer}
+	userID, err := util.ParseUUID("66666666-6666-6666-6666-666666666666")
+	if err != nil {
+		t.Fatal(err)
+	}
 	turn := Turn{
 		WorkspaceID: "22222222-2222-2222-2222-222222222222",
 		AgentID:     agent,
+		UserID:      userID,
 	}
 	listed, err := tools.Call(context.Background(), turn, toolIssueCommentList, `{"issue_id":"`+issueID+`"}`)
 	if err != nil {
@@ -381,8 +400,11 @@ func TestIssueCommentListAndAdd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(added, `"created":true`) {
+	if !strings.Contains(added, `"task_id":"55555555-5555-5555-5555-555555555555"`) {
 		t.Fatalf("add=%s", added)
+	}
+	if writer.content != "须莫v6回7点" || writer.turn.UserID != userID {
+		t.Fatalf("writer content=%q turn=%+v", writer.content, writer.turn)
 	}
 }
 

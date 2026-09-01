@@ -938,10 +938,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		"",
 		req.Content,
 	)
+	webTurn.UserID = parseUUID(userID)
 	webTurn.IdentityNote = inboundcoord.IdentityNote(inboundcoord.SourceWeb, "", "")
 	decision := coord.Decide(r.Context(), webTurn)
 	if len(attachmentIDs) > 0 && decision.Action != inboundcoord.ActionContinue {
 		decision.Action = inboundcoord.ActionContinue
+	}
+	if decision.Action == inboundcoord.ActionRetry {
+		writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
+		return
 	}
 
 	if decision.Action == inboundcoord.ActionReply || decision.Action == inboundcoord.ActionIssue {

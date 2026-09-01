@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -37,13 +38,34 @@ type Tools interface {
 type IssueAccess interface {
 	GetIssueInWorkspace(ctx context.Context, arg db.GetIssueInWorkspaceParams) (db.Issue, error)
 	ListCommentsForIssue(ctx context.Context, arg db.ListCommentsForIssueParams) ([]db.Comment, error)
-	CreateComment(ctx context.Context, arg db.CreateCommentParams) (db.Comment, error)
+}
+
+// ErrIssueBusy means a member comment could not trigger the next Issue task
+// until the current one settles. The dispatch caller should retry the same
+// inbound message instead of creating another Issue.
+var ErrIssueBusy = errors.New("issue already has an active task")
+
+// IssueCommentEffect is the durable member comment and its Issue-owned task.
+// TaskID is not returned to Router as its external task: Router is settled by
+// finish.text while this task continues independently on the Issue.
+type IssueCommentEffect struct {
+	IssueID         string `json:"issue_id"`
+	IssueIdentifier string `json:"issue_identifier,omitempty"`
+	CommentID       string `json:"comment_id"`
+	TaskID          string `json:"task_id"`
+}
+
+// IssueCommentWriter routes a short-loop comment through the normal member
+// comment service so the existing Issue self-drive mechanism enqueues work.
+type IssueCommentWriter interface {
+	AddMemberComment(ctx context.Context, turn Turn, issue db.Issue, content string, parentID pgtype.UUID) (IssueCommentEffect, error)
 }
 
 // AssocTools exposes scene-graph recall, bind, and Issue lookup to the loop.
 type AssocTools struct {
-	Service *assoc.Service
-	Issues  IssueAccess
+	Service       *assoc.Service
+	Issues        IssueAccess
+	CommentWriter IssueCommentWriter
 }
 
 type recallArgs struct {
@@ -65,12 +87,13 @@ type bindArgs struct {
 }
 
 type issueIDArgs struct {
-	IssueID string `json:"issue_id"`
-	Thread  string `json:"thread"`
-	Since   string `json:"since"`
-	Tail    int    `json:"tail"`
-	Content string `json:"content"`
-	Parent  string `json:"parent"`
+	IssueID   string `json:"issue_id"`
+	Thread    string `json:"thread"`
+	Since     string `json:"since"`
+	Tail      int    `json:"tail"`
+	Content   string `json:"content"`
+	Parent    string `json:"parent"`
+	ReplyText string `json:"reply_text"`
 }
 
 func (t *AssocTools) Call(ctx context.Context, turn Turn, name, arguments string) (string, error) {
@@ -295,33 +318,25 @@ func (t *AssocTools) issueCommentAdd(ctx context.Context, turn Turn, raw string)
 	if content == "" {
 		return "", fmt.Errorf("content is required")
 	}
-	params := db.CreateCommentParams{
-		AuthorType:  "agent",
-		AuthorID:    turn.AgentID,
-		Content:     content,
-		Type:        "comment",
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
+	if !turn.UserID.Valid {
+		return "", fmt.Errorf("member identity is required")
 	}
+	if t == nil || t.CommentWriter == nil {
+		return "", fmt.Errorf("issue comment writer is not configured")
+	}
+	var parentID pgtype.UUID
 	if parent := strings.TrimSpace(args.Parent); parent != "" {
 		parsed, parseErr := util.ParseUUID(parent)
 		if parseErr != nil {
 			return "", fmt.Errorf("parent must be a comment UUID")
 		}
-		params.ParentID = parsed
+		parentID = parsed
 	}
-	comment, err := t.Issues.CreateComment(ctx, params)
+	effect, err := t.CommentWriter.AddMemberComment(ctx, turn, issue, content, parentID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", fmt.Errorf("issue not found")
-		}
 		return "", err
 	}
-	body, err := json.Marshal(map[string]any{
-		"issue_id":   util.UUIDToString(issue.ID),
-		"comment_id": util.UUIDToString(comment.ID),
-		"created":    true,
-	})
+	body, err := json.Marshal(effect)
 	if err != nil {
 		return "", err
 	}
