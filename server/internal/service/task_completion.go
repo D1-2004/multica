@@ -108,14 +108,17 @@ func buildTaskCompletion(
 	errMessage string,
 	failureReason string,
 ) TaskCompletion {
-	resultMessage := redact.Text(util.UnescapeBackslashEscapes(lastReply))
-	if status == "completed" {
-		if strings.TrimSpace(resultMessage) == "" {
-			var payload protocol.TaskCompletedPayload
-			if json.Unmarshal(result, &payload) == nil {
-				resultMessage = redact.Text(util.UnescapeBackslashEscapes(payload.Output))
-			}
+	resultMessage := ""
+	// Root callbacks use the canonical provider output. Streamed task messages
+	// may be partial chunks or internal control frames; only comment callbacks
+	// intentionally select their thread-specific Agent reply.
+	if status == "completed" && !target.CommentID.Valid {
+		var payload protocol.TaskCompletedPayload
+		if json.Unmarshal(result, &payload) == nil {
+			resultMessage = redact.Text(util.UnescapeBackslashEscapes(payload.Output))
 		}
+	} else {
+		resultMessage = redact.Text(util.UnescapeBackslashEscapes(lastReply))
 	}
 	return TaskCompletion{
 		RequestID:         taskCompletionRequestID(target),
@@ -190,7 +193,7 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 		return false, err
 	}
 	fallbackReply := ""
-	if status == "failed" || status == "canceled" || status == "completed" {
+	if status == "failed" || status == "canceled" {
 		var replyErr error
 		fallbackReply, replyErr = resolveFailedCompletionReply(ctx, qtx, task.ID)
 		if replyErr != nil {

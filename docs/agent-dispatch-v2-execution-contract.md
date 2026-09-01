@@ -61,8 +61,10 @@ Digital-employee DWS outbound delivers `reply` through a completed
 `execution-result` row whose `resultMessage` is that sentence. An Issue
 acknowledgement is a frozen `execution-update` (`delegated_to_issue` +
 `resultMessage`) so the later Issue completion can still close the dispatch
-through `execution-result`. Robots post the same sentences through the Robot
-SDK replier; Router `resultMessage` does not send a second DWS copy.
+through `execution-result`. A root Issue completion uses the normalized provider
+`output`, never the last streamed task-message fragment; comment callbacks keep
+their thread-specific Agent reply. Robots post the same sentences through the
+Robot SDK replier; Router `resultMessage` does not send a second DWS copy.
 
 The same Chat session is the web transcript. Coordinator replies (web, robot,
 or digital employee) persist as `message_kind=coordinator` with the short-loop

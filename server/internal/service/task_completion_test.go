@@ -91,6 +91,52 @@ func TestBuildTaskCompletionUsesProviderOutputOverLegacyResultMessage(t *testing
 	}
 }
 
+func TestBuildTaskCompletionRootUsesCanonicalOutputOverLastTaskMessage(t *testing.T) {
+	result, err := json.Marshal(map[string]any{
+		"output":         "我在联系人里搜索了一下，没有找到\"须莫v6\"这个人。\n\n目前联系人里只有\"须莫🥥\"，没有名为\"须莫v6\"的联系人。",
+		"reply_decision": map[string]any{"shouldReply": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastTaskMessage := "名为\"须莫v6\"的联系人。\n\n```multica-reply-decision\n{\"shouldReply\":true}\n```"
+
+	completion := buildTaskCompletion(
+		taskCompletionTarget{RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		lastTaskMessage,
+		"",
+		"",
+	)
+
+	want := "我在联系人里搜索了一下，没有找到\"须莫v6\"这个人。\n\n目前联系人里只有\"须莫🥥\"，没有名为\"须莫v6\"的联系人。"
+	if completion.ResultMessage != want {
+		t.Fatalf("result message = %q, want %q", completion.ResultMessage, want)
+	}
+}
+
+func TestBuildTaskCompletionCommentKeepsThreadReply(t *testing.T) {
+	result := []byte(`{"output":"root task summary"}`)
+	completion := buildTaskCompletion(
+		taskCompletionTarget{
+			RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+			CommentID:  pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
+		},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		"该评论对应的完整回复",
+		"",
+		"",
+	)
+
+	if completion.ResultMessage != "该评论对应的完整回复" {
+		t.Fatalf("result message = %q", completion.ResultMessage)
+	}
+}
+
 func TestBuildTaskCompletionFailureKeepsLastReplyAndReason(t *testing.T) {
 	completion := buildTaskCompletion(
 		taskCompletionTarget{
