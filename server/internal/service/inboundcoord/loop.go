@@ -28,6 +28,8 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	}
 	var used []string
 	var recalls []recallCall
+	recalledIssues := map[string]struct{}{}
+	continuationIssues := map[string]struct{}{}
 	for round := 0; round < maxLoopRounds; round++ {
 		completion, err := c.complete(ctx, messages, toolsForRound(round))
 		if err != nil {
@@ -50,7 +52,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		messages = append(messages, msg.ToParam())
 		for _, call := range calls {
 			if call.Name == toolFinish {
-				if reqErr := requireRecallBeforeFinish(turn, recalls, call.Arguments); reqErr != nil {
+				if reqErr := requireRecallBeforeFinish(turn, recalls, recalledIssues, continuationIssues, call.Arguments); reqErr != nil {
 					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
 					slog.Info("inbound coordinator tool",
 						"event", "inbound_coordinator_tool",
@@ -74,6 +76,8 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			result, callErr := c.callTool(ctx, turn, call.Name, call.Arguments)
 			if callErr != nil {
 				result = `{"error":` + jsonQuote(callErr.Error()) + `}`
+			} else if call.Name == toolAssocRecall {
+				collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
 			}
 			messages = append(messages, openai.ToolMessage(result, call.ID))
 			slog.Info("inbound coordinator tool",
@@ -155,6 +159,7 @@ func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 				"action":    map[string]any{"type": "string", "enum": []string{"reply", "issue", "silence"}},
 				"text":      map[string]any{"type": "string"},
 				"look_into": map[string]any{"type": "string"},
+				"issue_id":  map[string]any{"type": "string", "description": "Existing Issue UUID copied exactly from assoc_recall when this message continues recalled work. Omit for a new Issue."},
 				"reason":    map[string]any{"type": "string"},
 			},
 			"required": []string{"action"},
@@ -265,12 +270,101 @@ func asksSceneQuestion(message string) bool {
 	return false
 }
 
-func requireRecallBeforeFinish(turn Turn, recalls []recallCall, finishRaw string) error {
+func collectRecalledIssues(issues, continuations map[string]struct{}, conversationID, raw string) {
+	var payload struct {
+		Items []struct {
+			Issue         string `json:"issue"`
+			Status        string `json:"status"`
+			Conversations []struct {
+				ConversationID string   `json:"conversation_id"`
+				Rel            string   `json:"rel"`
+				Rels           []string `json:"rels"`
+			} `json:"conversations"`
+			WaitingOn []struct {
+				ConversationID string `json:"conversation_id"`
+			} `json:"waiting_on"`
+		} `json:"items"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload) != nil {
+		return
+	}
+	for _, item := range payload.Items {
+		if issueID := strings.TrimSpace(item.Issue); issueID != "" {
+			issues[issueID] = struct{}{}
+			if recalledItemContinuesConversation(item.Status, item.Conversations, item.WaitingOn, conversationID) {
+				continuations[issueID] = struct{}{}
+			}
+		}
+	}
+}
+
+func recalledItemContinuesConversation(
+	status string,
+	conversations []struct {
+		ConversationID string   `json:"conversation_id"`
+		Rel            string   `json:"rel"`
+		Rels           []string `json:"rels"`
+	},
+	waitingOn []struct {
+		ConversationID string `json:"conversation_id"`
+	},
+	conversationID string,
+) bool {
+	cid := strings.TrimSpace(conversationID)
+	if cid == "" || (status != "open" && status != "waiting") {
+		return false
+	}
+	for _, waiting := range waitingOn {
+		if strings.TrimSpace(waiting.ConversationID) == cid {
+			return true
+		}
+	}
+	for _, conversation := range conversations {
+		if strings.TrimSpace(conversation.ConversationID) != cid {
+			continue
+		}
+		rels := append([]string{conversation.Rel}, conversation.Rels...)
+		for _, rel := range rels {
+			if rel == "outreach" || rel == "waiting_on" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func requireRecallBeforeFinish(
+	turn Turn,
+	recalls []recallCall,
+	recalledIssues map[string]struct{},
+	continuationIssues map[string]struct{},
+	finishRaw string,
+) error {
 	var parsed struct {
-		Action string `json:"action"`
+		Action  string `json:"action"`
+		IssueID string `json:"issue_id"`
 	}
 	_ = json.Unmarshal([]byte(strings.TrimSpace(finishRaw)), &parsed)
-	if Action(strings.TrimSpace(parsed.Action)) == ActionSilence {
+	action := Action(strings.TrimSpace(parsed.Action))
+	issueID := strings.TrimSpace(parsed.IssueID)
+	if turn.Source == SourceDigitalEmployee && len(continuationIssues) == 1 && !asksSceneQuestion(turn.Message) && (turn.ChatType != "group" || turn.Addressed) {
+		continuationIssue := ""
+		for recalled := range continuationIssues {
+			continuationIssue = recalled
+		}
+		if action != ActionIssue || issueID != continuationIssue {
+			return fmt.Errorf("a reply on a waiting outreach scene must continue recalled issue_id %s", continuationIssue)
+		}
+	}
+	if issueID != "" {
+		if action != ActionIssue {
+			return fmt.Errorf("issue_id is only valid with action=issue")
+		}
+		if _, ok := recalledIssues[issueID]; !ok {
+			return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+		}
+	}
+	if action == ActionSilence {
 		return nil
 	}
 	ids := extractConversationIDs(turn.Message)

@@ -126,6 +126,12 @@ func buildTaskCompletion(
 				resultMessage = redact.Text(util.UnescapeBackslashEscapes(payload.Output))
 			}
 		}
+		// A thread-specific Agent comment is already a concrete response to that
+		// delivered member input. A run-wide silence decision must not suppress
+		// the callback for this comment target.
+		if target.CommentID.Valid && strings.TrimSpace(resultMessage) != "" {
+			replyDecision = &protocol.ReplyDecision{ShouldReply: true, Reason: "comment_reply"}
+		}
 	}
 	return TaskCompletion{
 		RequestID:         taskCompletionRequestID(target),

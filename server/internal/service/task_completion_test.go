@@ -192,6 +192,26 @@ func TestBuildTaskCompletionCommentKeepsThreadReply(t *testing.T) {
 	}
 }
 
+func TestBuildTaskCompletionCommentReplyOverridesRunSilence(t *testing.T) {
+	result := []byte(`{"output":"任务已完成","reply_decision":{"shouldReply":false,"reason":"任务已完成，无新的用户输入"}}`)
+	completion := buildTaskCompletion(
+		taskCompletionTarget{
+			RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+			CommentID:  pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
+		},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		"已经找到须莫v6，并把结果发回来了。",
+		"",
+		"",
+	)
+
+	if completion.ReplyDecision == nil || !completion.ReplyDecision.ShouldReply {
+		t.Fatalf("comment completion reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
 func TestBuildTaskCompletionFailureKeepsLastReplyAndReason(t *testing.T) {
 	completion := buildTaskCompletion(
 		taskCompletionTarget{

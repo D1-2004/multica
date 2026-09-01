@@ -94,6 +94,7 @@ type Decision struct {
 	Action     Action
 	UserText   string
 	LookInto   string
+	IssueID    string
 	Reason     string
 	ElapsedMs  int64
 	Source     Source
@@ -373,6 +374,7 @@ func parseDecision(raw string, turn Turn) Decision {
 		Action   string `json:"action"`
 		Text     string `json:"text"`
 		LookInto string `json:"look_into"`
+		IssueID  string `json:"issue_id"`
 		Reason   string `json:"reason"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed); err != nil {
@@ -381,6 +383,7 @@ func parseDecision(raw string, turn Turn) Decision {
 	action := Action(strings.TrimSpace(parsed.Action))
 	text := strings.TrimSpace(parsed.Text)
 	look := strings.TrimSpace(parsed.LookInto)
+	issueID := strings.TrimSpace(parsed.IssueID)
 	reason := strings.TrimSpace(parsed.Reason)
 	switch action {
 	case ActionReply:
@@ -395,7 +398,7 @@ func parseDecision(raw string, turn Turn) Decision {
 		if text == "" {
 			text = issueAckFallback(look)
 		}
-		return Decision{Action: ActionIssue, UserText: text, LookInto: look, Reason: reason}
+		return Decision{Action: ActionIssue, UserText: text, LookInto: look, IssueID: issueID, Reason: reason}
 	case ActionSilence:
 		if turn.Source == SourceWeb {
 			return Decision{Action: ActionContinue}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -762,6 +763,8 @@ func TestSceneGraphInstructionIsInjectedForDingTalkChannel(t *testing.T) {
 		"assoc_bind",
 		"assoc_recall",
 		"multica assoc bind",
+		"Inbound replies to outreach",
+		"does not notify the origin for you",
 		"Digital-employee inbound",
 		"Web chat inbound",
 	} {
@@ -2625,5 +2628,28 @@ func TestDispatchInstructionOnResumedSessionSendsOnlyPerTurnFacts(t *testing.T) 
 	}
 	if strings.Contains(brief, "ROUTER CONTEXT") || strings.Contains(brief, "## DingTalk Conversation") {
 		t.Errorf("runtime brief half carries per-dispatch facts: %q", brief)
+	}
+}
+
+func TestCoordinatorRecalledIssueContinuation(t *testing.T) {
+	t.Parallel()
+	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	command, prompt, ok := coordinatorRecalledIssueContinuation(
+		DispatchCommand{AgentID: "agent-1"},
+		DispatchPrompt{DisplayContent: "7点"},
+		inboundcoord.Decision{
+			Action:   inboundcoord.ActionIssue,
+			IssueID:  issueID,
+			LookInto: "记录须莫v6回复今晚7点并通知原发起人",
+		},
+	)
+	if !ok || command.AgentID != "" || command.Continuation == nil ||
+		command.Continuation.Kind != "issue" || command.Continuation.IssueID != issueID {
+		t.Fatalf("command = %+v ok=%v", command, ok)
+	}
+	for _, want := range []string{"7点", "已关联外呼会话", "assoc_recall current_issue=true", "通知原发起人"} {
+		if !strings.Contains(prompt.DisplayContent, want) {
+			t.Fatalf("follow-up prompt missing %q: %q", want, prompt.DisplayContent)
+		}
 	}
 }

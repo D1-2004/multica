@@ -982,6 +982,10 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	}
+	if continuedCommand, continuedPrompt, ok := coordinatorRecalledIssueContinuation(c, prompt, decision); ok {
+		h.createAgentDispatchCommentWithCoordinatorV2(w, r, continuedCommand, continuedPrompt, dispatchContext, &decision)
+		return
+	}
 	if decision.Action == inboundcoord.ActionReply || decision.Action == inboundcoord.ActionSilence {
 		if writeDispatchCoordinatorTerminal(w, r.Context(), h, c, dispatchContext, decision) {
 			return
@@ -1083,6 +1087,32 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		IssueIdentifier: issueIdentifier,
 		TaskID:          taskID,
 	})
+}
+
+func coordinatorRecalledIssueContinuation(
+	command DispatchCommand,
+	prompt DispatchPrompt,
+	decision inboundcoord.Decision,
+) (DispatchCommand, DispatchPrompt, bool) {
+	issueID := strings.TrimSpace(decision.IssueID)
+	if decision.Action != inboundcoord.ActionIssue || issueID == "" {
+		return command, prompt, false
+	}
+	command.AgentID = ""
+	command.Continuation = &AgentDispatchContinuation{Kind: "issue", IssueID: issueID}
+	prompt.DisplayContent = recalledIssueFollowUpContent(prompt.DisplayContent, decision.LookInto)
+	return command, prompt, true
+}
+
+func recalledIssueFollowUpContent(message, lookInto string) string {
+	var b strings.Builder
+	b.WriteString(strings.TrimSpace(message))
+	b.WriteString("\n\n系统关联说明：这是已关联外呼会话的回信。请继续原事项，记录本回复；先用 assoc_recall current_issue=true since=48h 找到原发起会话，完成后把结果通知原发起人，不要只回复当前回信人。")
+	if lookInto = strings.TrimSpace(lookInto); lookInto != "" {
+		b.WriteString("\n本轮要继续处理：")
+		b.WriteString(lookInto)
+	}
+	return b.String()
 }
 
 func decideDispatchCoordinator(
@@ -1195,6 +1225,17 @@ func writeDispatchCoordinatorTerminal(
 }
 
 func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext) {
+	h.createAgentDispatchCommentWithCoordinatorV2(w, r, c, prompt, dispatchContext, nil)
+}
+
+func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
+	w http.ResponseWriter,
+	r *http.Request,
+	c DispatchCommand,
+	prompt DispatchPrompt,
+	dispatchContext agentDispatchContext,
+	coordinatorDecision *inboundcoord.Decision,
+) {
 	issueID, ok := parseUUIDOrBadRequest(w, strings.TrimSpace(c.Continuation.IssueID), "continuation.issueId")
 	if !ok {
 		return
@@ -1202,6 +1243,10 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: dispatchContext.WorkspaceID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if coordinatorDecision != nil {
+				writeError(w, http.StatusConflict, "recalled issue no longer exists")
+				return
+			}
 			slog.Warn("MULTICA_AGENT_DISPATCH_CONTINUATION",
 				"outcome", "recreated_missing_issue",
 				"previousIssueFingerprint", agentDispatchIdentifierFingerprint(c.Continuation.IssueID),
@@ -1276,6 +1321,25 @@ func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Re
 	commentID := uuidToString(result.Comment.ID)
 	taskID := uuidToString(result.Task.ID)
 	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueIDString, issue.Title, taskID, prompt.DisplayContent)
+	if coordinatorDecision != nil &&
+		h.TaskService != nil &&
+		c.CompletionCallback != nil &&
+		c.CompletionCallback.UpdateURL != "" &&
+		strings.TrimSpace(coordinatorDecision.UserText) != "" {
+		prefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
+		if err := h.TaskService.EnqueueCoordinatorIssueAck(
+			r.Context(),
+			result.Task,
+			issue,
+			prefix+"-"+formatIssueNumber(issue.Number),
+			c.CompletionCallback.UpdateURL,
+			c.CompletionCallback.Target,
+			coordinatorDecision.UserText,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue follow-up ack")
+			return
+		}
+	}
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "created_follow_up",
 		"protocol", "dispatch_command_v2",

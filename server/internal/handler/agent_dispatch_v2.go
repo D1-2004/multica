@@ -791,6 +791,11 @@ CLI equivalents inside the sandbox:
 
 HTTP: GET /api/assoc/recall and GET /api/assoc/events (conversation_id + since).
 
+Inbound replies to outreach:
+- If the current message came from a conversation recalled as ` + "`outreach`" + ` or ` + "`waiting_on`" + `, this run continues that existing Issue; it is not a standalone chat reply.
+- Record and act on the answer, then use ` + "`assoc_recall current_issue=true since=48h`" + ` to find the original requester conversation and notify it. The current dispatch callback replies only to the respondent and does not notify the origin for you.
+- Do not finish after merely acknowledging the respondent. Continue the original task until its requester has the result.
+
 Identity:
 - Digital-employee inbound: conversation_id and uid are complete. Trust them.
 - Robot inbound: conversation_id may exist; uid is often missing. Do not invent person_id.

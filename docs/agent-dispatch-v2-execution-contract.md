@@ -30,6 +30,15 @@ is only accepted from the `finish` tool. Graph questions (what a
 with that exact id; empty items means unknown. Only work that needs DWS,
 search, files, or tracking becomes an Issue and starts a sandbox.
 
+For a digital-employee direct message, an `assoc_recall` hit on exactly one
+open or waiting Issue through `outreach` / `waiting_on` makes the inbound turn
+an Issue continuation. The loop must return `action=issue` with the recalled
+`issue_id`; Multica validates that identifier against the tool result, appends
+the message to the existing Issue, and starts its next task. It must not close
+the exchange with a direct acknowledgement to the contacted person. The task
+continues the original matter and finds and notifies its original requester;
+the immediate dispatch callback still addresses only the current respondent.
+
 The loop does not expose DWS, search, or news as model-callable tools and is not
 behind a feature flag. On robot and digital-employee turns, the server resolves
 the inbound `uid/orgId`, mints a **separate** short-lived Agent Identity context,
@@ -63,7 +72,9 @@ acknowledgement is a frozen `execution-update` (`delegated_to_issue` +
 `resultMessage`) so the later Issue completion can still close the dispatch
 through `execution-result`. A root Issue completion uses the normalized provider
 `output`, never the last streamed task-message fragment; comment callbacks keep
-their thread-specific Agent reply. Robots post the same sentences through the
+their thread-specific Agent reply. A completed task that targets a concrete
+Agent comment therefore replies with that comment even when the run-wide
+`reply_decision` is silent. Robots post the same sentences through the
 Robot SDK replier; Router `resultMessage` does not send a second DWS copy.
 
 The same Chat session is the web transcript. Coordinator replies (web, robot,

@@ -109,6 +109,61 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	}
 }
 
+func TestLoopInboundOutreachReplyContinuesRecalledIssue(t *testing.T) {
+	t.Parallel()
+	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("finish", toolFinish, `{"action":"issue","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","text":"好的，我把7点这个答复带回去。","look_into":"须莫v6回复今晚7点打球，并通知原发起人","reason":"这是等待中的外呼回复"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认今晚几点打球","status":"waiting","conversations":[{"conversation_id":"cid-v6","rel":"outreach","rels":["outreach","waiting_on"]}]}]}`}
+	c := &Coordinator{Chat: chat, Tools: tools}
+
+	got, err := c.runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Message:        "7点",
+		ConversationID: "cid-v6",
+		PersonID:       "uid-v6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionIssue || got.IssueID != issueID {
+		t.Fatalf("decision = %#v", got)
+	}
+	if !strings.Contains(got.LookInto, "通知原发起人") {
+		t.Fatalf("look_into = %q", got.LookInto)
+	}
+}
+
+func TestLoopInboundOutreachReplyRejectsDirectReply(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("wrong", toolFinish, `{"action":"reply","text":"好的，今晚7点打球。","reason":"直接确认"}`),
+		assistantTool("correct", toolFinish, `{"action":"issue","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","text":"好的，我把7点这个答复带回去。","look_into":"记录须莫v6回复今晚7点并通知原发起人","reason":"等待中的外呼回复"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认今晚几点打球","status":"waiting","conversations":[{"conversation_id":"cid-v6","rel":"outreach"}],"waiting_on":[{"conversation_id":"cid-v6"}]}]}`}
+	c := &Coordinator{Chat: chat, Tools: tools}
+
+	got, err := c.runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "7点",
+		ConversationID: "cid-v6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionIssue || got.IssueID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+		t.Fatalf("decision = %#v", got)
+	}
+	if chat.calls != 3 {
+		t.Fatalf("model rounds = %d, want rejected reply plus corrected issue", chat.calls)
+	}
+}
+
 func TestLoopContentJSONWithoutToolCallsNudgeThenFinish(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
