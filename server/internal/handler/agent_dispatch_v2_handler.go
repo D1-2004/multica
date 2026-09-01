@@ -359,7 +359,7 @@ func (h *Handler) executeAgentDispatchV2(
 			"sourceType", command.Source.Type,
 		)
 		decision := inboundcoord.Decision{Action: inboundcoord.ActionSilence, Source: coordinatorSource(command)}
-		recordCoordinatorDecision(r.Context(), decision)
+		inboundcoord.RecordDecision(r.Context(), decision)
 		if writeDispatchCoordinatorTerminal(w, r.Context(), h, command, dispatchContext, decision) {
 			return
 		}
@@ -1204,9 +1204,7 @@ func decideDispatchCoordinator(
 		turn.Busy = true
 	}
 	coord.FillVoice(ctx, &turn)
-	decision := coord.Decide(ctx, turn)
-	recordCoordinatorDecision(ctx, decision)
-	return decision
+	return coord.Decide(ctx, turn)
 }
 
 func dispatchCoordinatorDWSIdentity(command DispatchCommand) (string, string) {

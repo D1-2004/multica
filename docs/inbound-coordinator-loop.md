@@ -31,7 +31,7 @@ Coordinator Loop 是入站消息进沙箱之前的短接待。它不是第二个
 ### 1.1 Router 接单与短循环执行分离
 
 Router 的 HTTP 请求不等待 DWS 或模型。对带 `completionCallback` 的
-`channel/message.created` Issue 入站，Multica 在一个数据库事务里写入：
+`channel/message.created` Chat / auto / Issue 入站，Multica 在一个数据库事务里写入：
 
 1. dispatch acceptance 的 `202 {"status":"accepted"}`；
 2. 一条持久化 `inbound_coordinator_job`；

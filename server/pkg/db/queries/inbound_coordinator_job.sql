@@ -1,10 +1,10 @@
 -- name: CreateInboundCoordinatorJob :one
 INSERT INTO inbound_coordinator_job (
     acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id,
-    idempotency_key, command, chat_session_id, user_message_id
+    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id
 ) VALUES (
     @acceptance_id, @workspace_id, @agent_id, @user_id, @endpoint_namespace_id,
-    @idempotency_key, @command, @chat_session_id, @user_message_id
+    @dispatch_endpoint_id, @idempotency_key, @command, @chat_session_id, @user_message_id
 )
 RETURNING *;
 

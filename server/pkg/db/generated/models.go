@@ -1198,6 +1198,7 @@ type InboundCoordinatorJob struct {
 	AgentID             pgtype.UUID        `json:"agent_id"`
 	UserID              pgtype.UUID        `json:"user_id"`
 	EndpointNamespaceID pgtype.UUID        `json:"endpoint_namespace_id"`
+	DispatchEndpointID  string             `json:"dispatch_endpoint_id"`
 	IdempotencyKey      string             `json:"idempotency_key"`
 	Command             []byte             `json:"command"`
 	ChatSessionID       pgtype.UUID        `json:"chat_session_id"`

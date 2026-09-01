@@ -109,6 +109,26 @@ type Decision struct {
 	Steps        []protocol.ChatCoordinatorStep
 }
 
+type decisionObserverKey struct{}
+
+// WithDecisionObserver attaches a request-scoped observer used by durable
+// dispatch workers to persist the same verdict regardless of which ingress
+// adapter invoked the Coordinator.
+func WithDecisionObserver(ctx context.Context, observer func(Decision)) context.Context {
+	if observer == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, decisionObserverKey{}, observer)
+}
+
+// RecordDecision publishes one verdict to the request-scoped observer.
+func RecordDecision(ctx context.Context, decision Decision) {
+	observer, _ := ctx.Value(decisionObserverKey{}).(func(Decision))
+	if observer != nil {
+		observer(decision)
+	}
+}
+
 type historyReader interface {
 	ListChatMessagesPage(ctx context.Context, arg db.ListChatMessagesPageParams) ([]db.ChatMessage, error)
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
@@ -166,7 +186,13 @@ func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 
 // Decide returns a verdict. A disabled LLM or any failure continues the
 // existing sandbox enqueue so a missing model never silences users.
-func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
+func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision) {
+	defer func() {
+		if decision.Source == "" {
+			decision.Source = turn.Source
+		}
+		RecordDecision(ctx, decision)
+	}()
 	if c == nil {
 		return Decision{Action: ActionContinue}
 	}

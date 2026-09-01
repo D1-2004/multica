@@ -414,7 +414,7 @@ func TestDispatchCoordinatorDWSIdentityUsesStableDescriptor(t *testing.T) {
 	}
 }
 
-func TestShouldDeferInboundCoordinatorOnlyForIssueMessageCallbacks(t *testing.T) {
+func TestShouldDeferInboundCoordinatorForRouterMessageCallbacks(t *testing.T) {
 	t.Parallel()
 	base := DispatchCommand{
 		Event:              DispatchEvent{Domain: "channel", Type: "message.created"},
@@ -428,8 +428,8 @@ func TestShouldDeferInboundCoordinatorOnlyForIssueMessageCallbacks(t *testing.T)
 	if shouldDeferInboundCoordinator(withoutCallback, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeIssue}) {
 		t.Fatal("non-Router dispatch must stay synchronous")
 	}
-	if shouldDeferInboundCoordinator(base, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}) {
-		t.Fatal("chat materialization must keep its existing execution path")
+	if !shouldDeferInboundCoordinator(base, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}) {
+		t.Fatal("chat materialization must use the same durable coordinator queue")
 	}
 }
 

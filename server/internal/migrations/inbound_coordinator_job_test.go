@@ -27,6 +27,7 @@ func TestInboundCoordinatorJobMigrationContract(t *testing.T) {
 	for _, required := range []string{
 		"CREATE TABLE IF NOT EXISTS inbound_coordinator_job",
 		"acceptance_id UUID NOT NULL",
+		"dispatch_endpoint_id TEXT NOT NULL",
 		"command JSONB NOT NULL",
 		"status IN ('pending', 'running', 'completed', 'failed')",
 		"lease_expires_at TIMESTAMPTZ",
@@ -49,5 +50,9 @@ func TestInboundCoordinatorJobMigrationContract(t *testing.T) {
 		if !strings.Contains(index, "INDEX CONCURRENTLY IF NOT EXISTS") {
 			t.Errorf("%s must build its index concurrently", name)
 		}
+	}
+	compat := read("9119_inbound_coordinator_job_dispatch_endpoint.up.sql")
+	if !strings.Contains(compat, "ADD COLUMN IF NOT EXISTS dispatch_endpoint_id") {
+		t.Fatal("dispatch endpoint compatibility migration must be replay-safe")
 	}
 }

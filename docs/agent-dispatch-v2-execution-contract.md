@@ -37,7 +37,7 @@ that already persisted the member comment and `reply_text`. Graph questions (wha
 with that exact id; empty items means unknown. Only work that needs DWS,
 search, files, or tracking becomes an Issue and starts a sandbox.
 
-For Router-backed `channel/message.created` commands that materialize an Issue,
+For Router-backed `channel/message.created` commands that materialize Chat or an Issue,
 HTTP acceptance and coordinator execution are separate durability boundaries.
 Multica atomically stores the accepted 202 response, a PostgreSQL coordinator
 job, and a read-only Coordinator Chat before replying to Router. The Router's

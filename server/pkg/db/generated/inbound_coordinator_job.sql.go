@@ -13,7 +13,7 @@ func scanInboundCoordinatorJob(row pgxRow) (InboundCoordinatorJob, error) {
 	var job InboundCoordinatorJob
 	err := row.Scan(
 		&job.ID, &job.AcceptanceID, &job.WorkspaceID, &job.AgentID, &job.UserID,
-		&job.EndpointNamespaceID, &job.IdempotencyKey, &job.Command,
+		&job.EndpointNamespaceID, &job.DispatchEndpointID, &job.IdempotencyKey, &job.Command,
 		&job.ChatSessionID, &job.UserMessageID, &job.Status, &job.AttemptCount,
 		&job.AvailableAt, &job.LeaseToken, &job.LeaseExpiresAt, &job.LastError,
 		&job.CreatedAt, &job.UpdatedAt,
@@ -25,7 +25,7 @@ type pgxRow interface {
 	Scan(dest ...any) error
 }
 
-const inboundCoordinatorJobColumns = `id, acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id, idempotency_key, command, chat_session_id, user_message_id, status, attempt_count, available_at, lease_token, lease_expires_at, last_error, created_at, updated_at`
+const inboundCoordinatorJobColumns = `id, acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id, dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id, status, attempt_count, available_at, lease_token, lease_expires_at, last_error, created_at, updated_at`
 
 type CreateInboundCoordinatorJobParams struct {
 	AcceptanceID        pgtype.UUID `json:"acceptance_id"`
@@ -33,6 +33,7 @@ type CreateInboundCoordinatorJobParams struct {
 	AgentID             pgtype.UUID `json:"agent_id"`
 	UserID              pgtype.UUID `json:"user_id"`
 	EndpointNamespaceID pgtype.UUID `json:"endpoint_namespace_id"`
+	DispatchEndpointID  string      `json:"dispatch_endpoint_id"`
 	IdempotencyKey      string      `json:"idempotency_key"`
 	Command             []byte      `json:"command"`
 	ChatSessionID       pgtype.UUID `json:"chat_session_id"`
@@ -43,11 +44,11 @@ func (q *Queries) CreateInboundCoordinatorJob(ctx context.Context, arg CreateInb
 	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
 INSERT INTO inbound_coordinator_job (
     acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id,
-    idempotency_key, command, chat_session_id, user_message_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 RETURNING `+inboundCoordinatorJobColumns,
 		arg.AcceptanceID, arg.WorkspaceID, arg.AgentID, arg.UserID, arg.EndpointNamespaceID,
-		arg.IdempotencyKey, arg.Command, arg.ChatSessionID, arg.UserMessageID))
+		arg.DispatchEndpointID, arg.IdempotencyKey, arg.Command, arg.ChatSessionID, arg.UserMessageID))
 }
 
 func (q *Queries) GetInboundCoordinatorJobByAcceptance(ctx context.Context, acceptanceID pgtype.UUID) (InboundCoordinatorJob, error) {
@@ -124,7 +125,7 @@ func (q *Queries) DeleteInboundCoordinatorJobByChatSession(ctx context.Context, 
 }
 
 func (q *Queries) CoordinatorChatMessageExists(ctx context.Context, chatSessionID pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM chat_message WHERE chat_session_id=$1 AND role='assistant' AND message_kind='coordinator')`)
+	row := q.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM chat_message WHERE chat_session_id=$1 AND role='assistant' AND message_kind='coordinator')`, chatSessionID)
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err

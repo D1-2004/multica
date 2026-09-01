@@ -112,6 +112,19 @@ func TestDecideContinueWhenLLMDisabled(t *testing.T) {
 	}
 }
 
+func TestDecisionObserverReceivesVerdictFromEveryIngress(t *testing.T) {
+	t.Parallel()
+	var observed Decision
+	ctx := WithDecisionObserver(context.Background(), func(decision Decision) {
+		observed = decision
+	})
+	c := &Coordinator{LLM: llm.New(llm.Config{})}
+	got := c.Decide(ctx, Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "你好"})
+	if observed.Action != got.Action || observed.Source != SourceDigitalEmployee {
+		t.Fatalf("observed=%#v got=%#v", observed, got)
+	}
+}
+
 func TestDecideSkipsWhenAgentSwitchOff(t *testing.T) {
 	c := &Coordinator{
 		LLM:     llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),

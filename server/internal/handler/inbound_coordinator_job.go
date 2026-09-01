@@ -26,21 +26,6 @@ const (
 	inboundCoordinatorWorkerMaxAttempts  = 6
 )
 
-type coordinatorDecisionRecorder struct {
-	decision *inboundcoord.Decision
-}
-
-type coordinatorDecisionRecorderKey struct{}
-
-func recordCoordinatorDecision(ctx context.Context, decision inboundcoord.Decision) {
-	recorder, _ := ctx.Value(coordinatorDecisionRecorderKey{}).(*coordinatorDecisionRecorder)
-	if recorder == nil {
-		return
-	}
-	copied := decision
-	recorder.decision = &copied
-}
-
 // InboundCoordinatorJobWorker executes accepted short loops from PostgreSQL.
 // Router acknowledgement never depends on model/DWS latency, and a replica
 // restart only releases a lease — it does not lose the inbound message.
@@ -141,7 +126,7 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 		return true, w.fail(ctx, job, command, "invalid persisted dispatch command")
 	}
 	dispatchContext := agentDispatchContext{
-		EndpointID:          command.DispatchEndpointID,
+		EndpointID:          job.DispatchEndpointID,
 		EndpointNamespaceID: job.EndpointNamespaceID,
 		UserID:              job.UserID,
 		WorkspaceID:         job.WorkspaceID,
@@ -175,8 +160,11 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	}
 	jobCtx, cancel := context.WithTimeout(ctx, 55*time.Second)
 	defer cancel()
-	recorder := &coordinatorDecisionRecorder{}
-	jobCtx = context.WithValue(jobCtx, coordinatorDecisionRecorderKey{}, recorder)
+	var recordedDecision *inboundcoord.Decision
+	jobCtx = inboundcoord.WithDecisionObserver(jobCtx, func(decision inboundcoord.Decision) {
+		copied := decision
+		recordedDecision = &copied
+	})
 	req, err := http.NewRequestWithContext(jobCtx, http.MethodPost, "/internal/inbound-coordinator", nil)
 	if err != nil {
 		return true, err
@@ -185,8 +173,8 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	response := newBufferedDispatchResponse()
 	w.handler.executeAgentDispatchV2(response, req, command, plan, dispatchContext)
 	if response.Status() >= http.StatusOK && response.Status() < http.StatusMultipleChoices {
-		if recorder.decision != nil {
-			if err := w.handler.persistCoordinatorJobChat(jobCtx, job, *recorder.decision); err != nil {
+		if recordedDecision != nil {
+			if err := w.handler.persistCoordinatorJobChat(jobCtx, job, *recordedDecision); err != nil {
 				return true, w.retry(ctx, job, fmt.Errorf("persist coordinator Chat: %w", err))
 			}
 		}
@@ -391,6 +379,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		AgentID:             dispatchContext.AgentID,
 		UserID:              dispatchContext.UserID,
 		EndpointNamespaceID: dispatchContext.EndpointNamespaceID,
+		DispatchEndpointID:  dispatchContext.EndpointID,
 		IdempotencyKey:      idempotencyKey,
 		Command:             rawCommand,
 		ChatSessionID:       session.ID,
@@ -490,5 +479,6 @@ func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundC
 func shouldDeferInboundCoordinator(command DispatchCommand, plan agentDispatchExecutionPlan) bool {
 	return command.CompletionCallback != nil &&
 		command.Event.Domain == "channel" && command.Event.Type == "message.created" &&
-		plan.MaterializerType == protocol.DispatchSurfaceTypeIssue
+		(plan.MaterializerType == protocol.DispatchSurfaceTypeIssue ||
+			plan.MaterializerType == protocol.DispatchSurfaceTypeChat)
 }

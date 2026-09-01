@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS inbound_coordinator_job (
     agent_id UUID NOT NULL,
     user_id UUID NOT NULL,
     endpoint_namespace_id UUID NOT NULL,
+    dispatch_endpoint_id TEXT NOT NULL DEFAULT '',
     idempotency_key TEXT NOT NULL,
     command JSONB NOT NULL CHECK (jsonb_typeof(command) = 'object'),
     chat_session_id UUID NOT NULL,
