@@ -228,6 +228,33 @@ func TestDWSHistoryLoaderIsolatesConcurrentCallsAndKeepsLatestTen(t *testing.T) 
 	}
 }
 
+func TestParseDWSHistoryIncludesQuotedMessage(t *testing.T) {
+	raw := []byte(`{
+		"success":true,
+		"result":{"messages":[{
+			"content":"那就按这个方案",
+			"openMessageId":"reply",
+			"sender":"冬翔",
+			"quotedMessage":{
+				"content":"周五先发预发，验证通过后再上线",
+				"openMessageId":"quoted",
+				"sender":"须莫"
+			}
+		}]}
+	}`)
+
+	history, err := parseDWSHistory(raw, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history length = %d", len(history))
+	}
+	if got := history[0].Content; got != "那就按这个方案\n  引用消息（须莫）：周五先发预发，验证通过后再上线" {
+		t.Fatalf("history content = %q", got)
+	}
+}
+
 func TestHTTPDWSCredentialRedeemerValidatesResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer context-token" {

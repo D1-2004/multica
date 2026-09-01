@@ -303,6 +303,10 @@ type dwsMessageListResponse struct {
 			CreateTime    string `json:"createTime"`
 			OpenMessageID string `json:"openMessageId"`
 			Sender        string `json:"sender"`
+			QuotedMessage *struct {
+				Content string `json:"content"`
+				Sender  string `json:"sender"`
+			} `json:"quotedMessage"`
 		} `json:"messages"`
 	} `json:"result"`
 }
@@ -328,6 +332,16 @@ func parseDWSHistory(raw []byte, currentMessageID string) ([]HistoryLine, error)
 		role := clipRunes(strings.Join(strings.Fields(message.Sender), " "), 40)
 		if role == "" {
 			role = "dingtalk"
+		}
+		if message.QuotedMessage != nil {
+			quotedContent := clipRunes(strings.TrimSpace(message.QuotedMessage.Content), 160)
+			if quotedContent != "" {
+				quotedSender := clipRunes(strings.Join(strings.Fields(message.QuotedMessage.Sender), " "), 40)
+				if quotedSender == "" {
+					quotedSender = "dingtalk"
+				}
+				content += "\n  引用消息（" + quotedSender + "）：" + quotedContent
+			}
 		}
 		newestFirst = append(newestFirst, HistoryLine{Role: role, Content: content})
 		if len(newestFirst) == dingtalkHistoryLimit {

@@ -36,7 +36,8 @@ the inbound `uid/orgId`, mints a **separate** short-lived Agent Identity context
 redeems it in a per-request `DWS_CONFIG_DIR`, and runs `dws chat message list`
 for the authoritative current DingTalk conversation before the first model round.
 The task/sandbox ContextToken is never consumed. The current message is removed and
-the previous latest 10 messages are supplied chronologically. Each request owns
+the previous latest 10 messages are supplied chronologically. A reply message keeps
+its `quotedMessage` sender and content inline with that history entry. Each request owns
 and deletes its credential directory, so concurrent users cannot share a DWS
 profile. A DWS identity or read failure continues the existing sandbox enqueue;
 it never substitutes Multica's chat projection or the Router dispatch window.
