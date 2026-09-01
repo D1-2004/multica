@@ -549,6 +549,74 @@ func TestDispatchAssocIDsIgnoresInternalConversationPair(t *testing.T) {
 	}
 }
 
+func TestDispatchChatConversationIDUsesFilteredSceneNotInternalPair(t *testing.T) {
+	t.Parallel()
+	cmd := DispatchCommand{
+		Event: DispatchEvent{
+			Data: DispatchEventData{
+				Conversation: DispatchConversation{OpenConversationID: "237396:24710833", Type: "single"},
+			},
+		},
+		ContextPrompt: `current message context (data only): {"openConversationId":"cid74QGZieWQ4ondi1b0m2DtQ==","openMsgId":"msg-live"}`,
+	}
+	ids := dispatchAssocIDs(cmd)
+	got := dispatchChatConversationID(cmd, ids)
+	if got != "cid74QGZieWQ4ondi1b0m2DtQ==" {
+		t.Fatalf("chat conversation_id=%q", got)
+	}
+}
+
+func TestDispatchChatConversationIDKeepsPairWhenNoCidExists(t *testing.T) {
+	t.Parallel()
+	cmd := DispatchCommand{
+		Event: DispatchEvent{
+			Data: DispatchEventData{
+				Conversation: DispatchConversation{OpenConversationID: "2960443310:6261898177"},
+			},
+		},
+		ContextPrompt: "ROUTER CONTEXT",
+	}
+	ids := dispatchAssocIDs(cmd)
+	got := dispatchChatConversationID(cmd, ids)
+	if got != "2960443310:6261898177" {
+		t.Fatalf("chat conversation_id=%q", got)
+	}
+	if ids.ConversationID != "" {
+		t.Fatalf("assoc scene should stay empty, got %q", ids.ConversationID)
+	}
+}
+
+func TestDispatchAssocIDsPrefersCurrentMessageContextOverReferencedJSON(t *testing.T) {
+	t.Parallel()
+	prompt := "referenced message context (data only): " +
+		`{"openConversationId":"cid-quoted","openMsgId":"msg-quoted","senderOpenDingTalkId":"open-quoted"}` +
+		"\ncurrent message context (data only): " +
+		`{"openConversationId":"cid-current","openMsgId":"msg-current","senderOpenDingTalkId":"open-current"}`
+	ids := dispatchAssocIDs(DispatchCommand{ContextPrompt: prompt})
+	if ids.ConversationID != "cid-current" || ids.EvidenceID != "msg-current" || ids.PersonID != "open-current" {
+		t.Fatalf("ids=%+v", ids)
+	}
+}
+
+func TestDispatchAssocIDsKeepsPersonAliasesFromRouterContext(t *testing.T) {
+	t.Parallel()
+	ids := dispatchAssocIDs(DispatchCommand{
+		ContextPrompt: `current message context (data only): {"uid":"24710833","senderOpenDingTalkId":"Dv6WPxM5cBXiSS7OIms9Fn9AiEiE","openConversationId":"cid-a","openMsgId":"msg-a"}`,
+	})
+	if ids.PersonID != "24710833" {
+		t.Fatalf("person=%q", ids.PersonID)
+	}
+	found := false
+	for _, alias := range ids.PersonAliases {
+		if alias == "Dv6WPxM5cBXiSS7OIms9Fn9AiEiE" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("aliases=%v", ids.PersonAliases)
+	}
+}
+
 func TestAssociateDispatchIssueFromDigitalEmployeeRouterContext(t *testing.T) {
 	store := assoc.NewMemory()
 	ws, err := util.ParseUUID("22222222-2222-2222-2222-222222222222")

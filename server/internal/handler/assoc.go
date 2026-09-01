@@ -575,6 +575,13 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	return ids
 }
 
+func dispatchChatConversationID(command DispatchCommand, assocIDs dispatchAssocIdentity) string {
+	if assocIDs.ConversationID != "" {
+		return assocIDs.ConversationID
+	}
+	return strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID)
+}
+
 func fillDispatchAssocIDsFromRouterContext(ids *dispatchAssocIdentity, contextPrompt string) {
 	if ids == nil {
 		return
@@ -590,14 +597,21 @@ func fillDispatchAssocIDsFromRouterContext(ids *dispatchAssocIdentity, contextPr
 		ids.Kind = fromCtx.Kind
 	}
 	if ids.PersonID == "" && fromCtx.PersonID != "" {
-		ids.PersonID, ids.PersonAliases = assoc.CanonicalPersonKey(fromCtx.PersonID)
+		ids.PersonID = fromCtx.PersonID
+		ids.PersonAliases = append([]string(nil), fromCtx.PersonAliases...)
 	}
 }
+
+const currentMessageContextMarker = "current message context (data only):"
 
 func parseRouterContextAssocIDs(prompt string) dispatchAssocIdentity {
 	prompt = html.UnescapeString(prompt)
 	var ids dispatchAssocIdentity
-	for _, raw := range extractJSONObjects(prompt) {
+	blobs := extractJSONObjects(prompt)
+	if preferred := jsonAfterMarker(prompt, currentMessageContextMarker); preferred != "" {
+		blobs = append([]string{preferred}, blobs...)
+	}
+	for _, raw := range blobs {
 		var payload map[string]any
 		if json.Unmarshal([]byte(raw), &payload) != nil {
 			continue
@@ -605,6 +619,23 @@ func parseRouterContextAssocIDs(prompt string) dispatchAssocIdentity {
 		fillDispatchAssocFromMap(&ids, payload)
 	}
 	return ids
+}
+
+func jsonAfterMarker(s, marker string) string {
+	idx := strings.Index(strings.ToLower(s), strings.ToLower(marker))
+	if idx < 0 {
+		return ""
+	}
+	rest := s[idx+len(marker):]
+	start := strings.Index(rest, "{")
+	if start < 0 {
+		return ""
+	}
+	end, ok := matchJSONObject(rest, start)
+	if !ok {
+		return ""
+	}
+	return rest[start:end]
 }
 
 func fillDispatchAssocFromMap(ids *dispatchAssocIdentity, payload map[string]any) {
@@ -659,8 +690,6 @@ func dingtalkOpenConversationID(raw string) string {
 	if strings.HasPrefix(lower, "cid") {
 		return s
 	}
-	// Router inboundEvent also carries an internal pair like "237396:24710833".
-	// That is not a scene id.
 	return ""
 }
 

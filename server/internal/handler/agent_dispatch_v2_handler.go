@@ -593,10 +593,7 @@ func (h *Handler) createAgentDispatchChatV2(
 	if senderID == "" {
 		senderID = assocIDs.PersonID
 	}
-	conversationID := strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID)
-	if conversationID == "" {
-		conversationID = assocIDs.ConversationID
-	}
+	conversationID := dispatchChatConversationID(command, assocIDs)
 	messageID := strings.TrimSpace(latest.OpenMsgID)
 	if messageID == "" {
 		messageID = assocIDs.EvidenceID
