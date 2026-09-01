@@ -151,6 +151,12 @@ type Result struct {
 	Events []EventRef `json:"events"`
 }
 
+// CloseSceneResult is how many graph links /reset-memory dropped for one cid.
+type CloseSceneResult struct {
+	ClosedEdges    int
+	UnlinkedEvents int
+}
+
 func cloneProps(in map[string]any) map[string]any {
 	if in == nil {
 		return map[string]any{}

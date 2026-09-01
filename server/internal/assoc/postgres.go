@@ -313,6 +313,53 @@ WHERE workspace_id = $1 AND agent_id = $2 AND src_type = $3 AND src_id = $4`,
 	return scanEdges(rows)
 }
 
+func (s *SQLStore) CloseSceneAssociations(ctx context.Context, workspaceID, agentID, sceneKey string) (CloseSceneResult, error) {
+	sceneKey = strings.TrimSpace(sceneKey)
+	if sceneKey == "" {
+		return CloseSceneResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+	}
+	ws, err := requireUUID(workspaceID)
+	if err != nil {
+		return CloseSceneResult{}, err
+	}
+	agent, err := requireUUID(agentID)
+	if err != nil {
+		return CloseSceneResult{}, err
+	}
+	now := time.Now().UTC()
+	edgeTag, err := s.db.Exec(ctx, `
+UPDATE assoc_edge
+SET status = 'closed',
+    closed_at = COALESCE(closed_at, $4),
+    last_touched_at = $4
+WHERE workspace_id = $1 AND agent_id = $2 AND status <> 'closed'
+  AND (
+    (dst_type = 'scene' AND dst_id = $3)
+    OR (src_type = 'scene' AND src_id = $3)
+    OR (
+      src_type = 'event' AND src_id IN (
+        SELECT id::text FROM assoc_event
+        WHERE workspace_id = $1 AND agent_id = $2 AND scene_key = $3
+      )
+    )
+  )`, ws, agent, sceneKey, now)
+	if err != nil {
+		return CloseSceneResult{}, err
+	}
+	eventTag, err := s.db.Exec(ctx, `
+UPDATE assoc_event
+SET task_id = NULL
+WHERE workspace_id = $1 AND agent_id = $2 AND scene_key = $3 AND task_id IS NOT NULL`,
+		ws, agent, sceneKey)
+	if err != nil {
+		return CloseSceneResult{}, err
+	}
+	return CloseSceneResult{
+		ClosedEdges:    int(edgeTag.RowsAffected()),
+		UnlinkedEvents: int(eventTag.RowsAffected()),
+	}, nil
+}
+
 func (s *SQLStore) InsertEvent(ctx context.Context, event Event) (Event, error) {
 	if event.OccurredAt.IsZero() {
 		event.OccurredAt = time.Now().UTC()

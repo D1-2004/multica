@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
@@ -330,6 +331,10 @@ func (h *Handler) executeAgentDispatchV2(
 	dispatchContext agentDispatchContext,
 ) {
 	h.recordAssocInboundEvent(r.Context(), command, dispatchContext)
+
+	if h.tryDispatchResetMemory(w, r, command, dispatchContext) {
+		return
+	}
 
 	if dispatchIsAgentSelfEmotion(command) {
 		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
@@ -1204,6 +1209,88 @@ func (h *Handler) inboundCoordinator() *inboundcoord.Coordinator {
 		return h.InboundCoordinator
 	}
 	return inboundcoord.New(h.LLM, h.Queries, h.Assoc)
+}
+
+const inboundResetMemoryCommand = "/reset-memory"
+
+func isInboundResetMemory(text string) bool {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return false
+	}
+	token := fields[0]
+	if strings.HasPrefix(token, "@") && len(fields) > 1 {
+		token = fields[1]
+	}
+	return strings.EqualFold(token, inboundResetMemoryCommand)
+}
+
+func resetMemoryReply(conversationID string, err error) string {
+	if err != nil {
+		return "清理事项关联失败，请稍后再试。"
+	}
+	if strings.TrimSpace(conversationID) == "" {
+		return "没法识别这个会话，事项关联没有改。"
+	}
+	return "已清理这个会话上的事项关联。之后不会再按旧事项接话。"
+}
+
+func (h *Handler) tryDispatchResetMemory(
+	w http.ResponseWriter,
+	r *http.Request,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+) bool {
+	if command.Event.Domain != "channel" || command.Event.Type != "message.created" {
+		return false
+	}
+	if !isInboundResetMemory(dispatchInboundEventBody(command)) {
+		return false
+	}
+	ids := dispatchAssocIDs(command)
+	conversationID := ids.ConversationID
+	if conversationID != "" && !assoc.ValidSceneID(conversationID) {
+		conversationID = ""
+	}
+	var closeErr error
+	closedEdges := 0
+	unlinkedEvents := 0
+	if h != nil && h.Assoc != nil && conversationID != "" {
+		result, err := h.Assoc.CloseSceneAssociations(
+			r.Context(),
+			uuidToString(dispatchContext.WorkspaceID),
+			uuidToString(dispatchContext.AgentID),
+			conversationID,
+		)
+		closeErr = err
+		closedEdges = result.ClosedEdges
+		unlinkedEvents = result.UnlinkedEvents
+	}
+	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+		"outcome", "reset_memory",
+		"event", "inbound_reset_memory",
+		"protocol", "dispatch_command_v2",
+		"conversation_id", conversationID,
+		"closed_edges", closedEdges,
+		"unlinked_events", unlinkedEvents,
+		"error", closeErr != nil,
+	)
+	if closeErr != nil {
+		slog.Error("assoc reset-memory failed",
+			"event", "inbound_reset_memory",
+			"conversation_id", conversationID,
+			"error", closeErr,
+		)
+	}
+	decision := inboundcoord.Decision{
+		Action:   inboundcoord.ActionReply,
+		UserText: resetMemoryReply(conversationID, closeErr),
+	}
+	if writeDispatchCoordinatorTerminal(w, r.Context(), h, command, dispatchContext, decision) {
+		return true
+	}
+	writeJSON(w, http.StatusAccepted, AgentDispatchResponse{})
+	return true
 }
 
 func writeDispatchCoordinatorTerminal(

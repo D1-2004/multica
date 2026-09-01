@@ -39,6 +39,23 @@ func (s *Service) AssociateIssueConversation(ctx context.Context, in AssociateIn
 	return AssociateIssueConversation(ctx, s.store, in)
 }
 
+func (s *Service) CloseSceneAssociations(ctx context.Context, workspaceID, agentID, conversationID string) (CloseSceneResult, error) {
+	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(agentID) == "" {
+		return CloseSceneResult{}, fmt.Errorf("%w: workspace_id and agent_id are required", ErrInvalidQuery)
+	}
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" || !ValidSceneID(conversationID) {
+		return CloseSceneResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+	}
+	var result CloseSceneResult
+	err := withStoreTx(ctx, s.store, func(store Store) error {
+		var closeErr error
+		result, closeErr = store.CloseSceneAssociations(ctx, workspaceID, agentID, conversationID)
+		return closeErr
+	})
+	return result, err
+}
+
 func (s *Service) ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error) {
 	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(agentID) == "" {
 		return nil, fmt.Errorf("%w: workspace_id and agent_id are required", ErrInvalidQuery)

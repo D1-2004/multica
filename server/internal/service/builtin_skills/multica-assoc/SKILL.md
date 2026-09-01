@@ -63,6 +63,10 @@ multica assoc events --conversation <openConversationId> --since 48h --output js
 `--since` is required. Inspect `purpose`; if several items match, ask. HTTP is
 `GET /api/assoc/recall` and `GET /api/assoc/events`.
 
+An inbound `/reset-memory` (first token, optional leading @mention) closes this
+conversation's Issue associations and does not start a sandbox. It is not
+`/reset`. After that, recall for the cid should be empty of items.
+
 ## Purpose
 
 Name the deliverable: `向冬翔确认今天吃什么`. Not `帮我看看`.

@@ -128,10 +128,15 @@ A side effect worth knowing: threading refuses a follow-up with `409` while the
 referenced Issue still has a pending agent task. `dispatch_always_new_issue`
 does not hit that guard, because each message gets its own Issue.
 
-Multica does not parse slash commands from message text. Text such as `/issue`,
-`/new`, `/reset`, or `/unbind` remains prompt content unless the authenticated
-Router translates a supported IM command into the structured `control` object
-described below.
+Multica does not parse Router `control` slash commands from message text. Text
+such as `/issue`, `/new`, `/reset`, or `/unbind` remains prompt content unless
+the authenticated Router translates a supported IM command into the structured
+`control` object described below.
+
+`/reset-memory` is the exception. If the inbound channel text's first token
+(optional leading `@mention`) is `/reset-memory`, Dispatch V2 closes this
+conversation's assoc edges, unlinks its events from Issues, and replies without
+a sandbox. It is not Router `/reset` (ForceFresh).
 
 The response always returns the latest continuation produced by the selected
 surface. A recreated missing Issue or chat therefore replaces a stale

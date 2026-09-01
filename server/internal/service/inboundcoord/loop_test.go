@@ -1,8 +1,10 @@
 package inboundcoord
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -98,6 +100,45 @@ func assistantTool(id, name, args string) openai.ChatCompletion {
 			}},
 		},
 	}}}
+}
+
+func TestLoopLogsLLMRequestAndFinish(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(prev)
+
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("call-1", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("call-2", toolFinish, `{"action":"issue","text":"我先去问冬翔今天想吃什么","look_into":"向冬翔确认今天吃什么","reason":"要向同事确认"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[{"issue":"issue-eat","purpose":"向冬翔确认今天吃什么","status":"waiting"}]}`}
+	c := &Coordinator{Chat: chat, Tools: tools}
+	if _, err := c.runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Message:        "问一下冬翔，今天想吃什么",
+		ConversationID: "cid-dongxiang",
+		WorkspaceID:    "ws-1",
+		PersonID:       "uid-dx",
+		Persona:        "靠谱同事",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	logs := buf.String()
+	for _, want := range []string{
+		`"event":"inbound_coordinator_llm_request"`,
+		`"conversation_id":"cid-dongxiang"`,
+		"问一下冬翔，今天想吃什么",
+		`"event":"inbound_coordinator_llm"`,
+		`"tool":"assoc_recall"`,
+		`"event":"inbound_coordinator_llm_finish"`,
+		`"action":"issue"`,
+		"向冬翔确认今天吃什么",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("logs missing %s\n%s", want, logs)
+		}
+	}
 }
 
 func TestLoopRecallThenFinish(t *testing.T) {

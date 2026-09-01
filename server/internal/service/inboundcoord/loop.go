@@ -23,9 +23,11 @@ type Completer interface {
 }
 
 func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) {
+	userPrompt := buildUserPrompt(turn)
+	logCoordinatorLLMRequest(turn, userPrompt)
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(systemPrompt),
-		openai.UserMessage(buildUserPrompt(turn)),
+		openai.UserMessage(userPrompt),
 	}
 	var used []string
 	var recalls []recallCall
@@ -43,6 +45,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		normalizeToolCallTypes(&msg)
 		calls := functionToolCalls(msg)
 		if len(calls) == 0 {
+			logCoordinatorLLMNudge(turn, round, msg.Content)
 			if round >= maxLoopRounds-1 {
 				return Decision{}, fmt.Errorf("coordinator loop: no finish")
 			}
@@ -55,19 +58,14 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			if call.Name == toolFinish {
 				if reqErr := requireRecallBeforeFinish(turn, recalls, recalledIssues, continuationIssues, call.Arguments); reqErr != nil {
 					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
-					slog.Info("inbound coordinator tool",
-						"event", "inbound_coordinator_tool",
-						"tool", call.Name,
-						"round", round,
-						"error", true,
-						"reason", "recall_required",
-					)
+					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "recall_required")
 					continue
 				}
 				used = append(used, call.Name)
 				decision := parseDecision(call.Arguments, turn)
 				decision.ToolRounds = round + 1
 				decision.ToolsUsed = used
+				logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
 				return decision, nil
 			}
 			used = append(used, call.Name)
@@ -122,12 +120,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				}
 			}
 			messages = append(messages, openai.ToolMessage(result, call.ID))
-			slog.Info("inbound coordinator tool",
-				"event", "inbound_coordinator_tool",
-				"tool", call.Name,
-				"round", round,
-				"error", callErr != nil,
-			)
+			logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, callErr != nil, "")
 		}
 	}
 	return Decision{}, fmt.Errorf("coordinator loop: exceeded %d rounds", maxLoopRounds)
@@ -299,6 +292,77 @@ func jsonQuote(s string) string {
 		return `"tool error"`
 	}
 	return string(raw)
+}
+
+const (
+	llmLogPromptBudget = 8000
+	llmLogToolBudget   = 4000
+	llmLogFieldBudget  = 400
+)
+
+func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
+	slog.Info("inbound coordinator llm request",
+		"event", "inbound_coordinator_llm_request",
+		"source", string(turn.Source),
+		"model", coordinatorModel,
+		"conversation_id", strings.TrimSpace(turn.ConversationID),
+		"person_id", strings.TrimSpace(turn.PersonID),
+		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
+		"evidence_id", strings.TrimSpace(turn.EvidenceID),
+		"chat_type", strings.TrimSpace(turn.ChatType),
+		"addressed", turn.Addressed,
+		"busy", turn.Busy,
+		"current_message", clipRunes(strings.TrimSpace(turn.Message), llmLogFieldBudget),
+		"persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
+		"reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget),
+		"dingtalk_history_count", len(turn.DingTalkHistory),
+		"multica_history_count", len(turn.History),
+		"system_prompt_runes", len([]rune(systemPrompt)),
+		"user_prompt", clipRunes(userPrompt, llmLogPromptBudget),
+		"user_prompt_runes", len([]rune(userPrompt)),
+	)
+}
+
+func logCoordinatorLLMTool(turn Turn, round int, name, arguments, result string, failed bool, reason string) {
+	attrs := []any{
+		"event", "inbound_coordinator_llm",
+		"tool", name,
+		"round", round,
+		"conversation_id", strings.TrimSpace(turn.ConversationID),
+		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
+		"arguments", clipRunes(strings.TrimSpace(arguments), llmLogToolBudget),
+		"result", clipRunes(strings.TrimSpace(result), llmLogToolBudget),
+		"error", failed,
+	}
+	if reason != "" {
+		attrs = append(attrs, "reason", reason)
+	}
+	slog.Info("inbound coordinator llm", attrs...)
+}
+
+func logCoordinatorLLMFinish(turn Turn, round int, arguments string, decision Decision) {
+	slog.Info("inbound coordinator llm finish",
+		"event", "inbound_coordinator_llm_finish",
+		"round", round,
+		"conversation_id", strings.TrimSpace(turn.ConversationID),
+		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
+		"arguments", clipRunes(strings.TrimSpace(arguments), llmLogToolBudget),
+		"action", string(decision.Action),
+		"issue_id", strings.TrimSpace(decision.IssueID),
+		"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
+		"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
+		"reason", clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
+	)
+}
+
+func logCoordinatorLLMNudge(turn Turn, round int, content string) {
+	slog.Info("inbound coordinator llm nudge",
+		"event", "inbound_coordinator_llm_nudge",
+		"round", round,
+		"conversation_id", strings.TrimSpace(turn.ConversationID),
+		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
+		"assistant_text", clipRunes(strings.TrimSpace(content), llmLogFieldBudget),
+	)
 }
 
 type recallCall struct {

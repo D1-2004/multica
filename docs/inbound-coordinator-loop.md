@@ -294,12 +294,27 @@ Scene = `openConversationId`，且必须 `cid` 前缀。内部 `uid:uid` pair、
 
 ### 6.3 观察时看什么
 
-排「没带上引用 / 没带上前文」时，两路都要看：
+排「没带上引用 / 没带上前文」或「为什么接到旧事项」时，两路都要看：
 
-1. Loop：`inbound_coordinator_dws_history_loaded` 的条数；tool 日志里的 `assoc_recall` 参数和返回。
+1. Loop（SLS `event` 字段）：
+   - `inbound_coordinator_llm_request`：拼给模型的 user 段（`user_prompt`）、`current_message`、`conversation_id`、人设、钉钉历史条数。system 段是常量，只记 `system_prompt_runes`。
+   - `inbound_coordinator_llm`：每一轮 tool 的 `arguments` 和 `result`（clip 4000）。`assoc_recall` 的返回就是它当时看见的图。
+   - `inbound_coordinator_llm_finish`：`action` / `issue_id` / `text` / `look_into`。
+   - `inbound_coordinator_decided`：最终裁决，带 `conversation_id` 和 `issue_id`。
 2. 沙箱：Router observability 的 `contextPrompt`；task instruction 里的 DWS 命令有没有被执行。
 
 Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 窗口 **不是** Loop 的召回依据。
+
+### 6.4 `/reset-memory`
+
+入站正文第一个 token（可带一个前导 `@提及`）是 `/reset-memory` 时，Dispatch V2 在 Chat / Issue / continuation 分流之前拦截：
+
+- 关掉这个 cid 上所有未关闭的事项边（outreach / waiting_on / task_scene / spawned_from，以及该场景 Event 的 `event_of`）。
+- 去掉该场景 Event 上的 `task_id`。Event 正文保留。
+- 不进 Coordinator，不进沙箱。回一句「已清理这个会话上的事项关联」。
+- 之后 `assoc_recall` 这个 cid 不应再召回旧事项。其它 cid 不受影响。
+
+这和 Router `/reset`（ForceFresh 沙箱会话）不是同一条命令。
 
 ---
 
@@ -327,7 +342,7 @@ Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 
 | Turn / Decide / DWS 历史接入 | `coordinator.go` |
 | `assoc_recall` / `assoc_bind` 实现 | `tools.go` → `server/internal/assoc` |
 | 钉钉历史 + 引用内联 | `dws_history.go` |
-| DE Dispatch 入站（人设未注入） | `handler/agent_dispatch_v2_handler.go` `decideDispatchCoordinator` |
+| DE Dispatch 入站 | `handler/agent_dispatch_v2_handler.go` `decideDispatchCoordinator`；`/reset-memory` 在 `tryDispatchResetMemory` |
 | 网页 / 机器人 Turn | `handler/chat.go`、`integrations/channel/engine/router.go` |
 | 人设 API / 页 | `handler/agent_voice.go`、`packages/views/agents/.../instructions-tab.tsx` |
 | 沙箱场景图指令 | `handler/agent_dispatch_v2.go` `dispatchSceneGraphInstruction` |

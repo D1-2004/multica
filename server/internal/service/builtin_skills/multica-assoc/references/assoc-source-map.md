@@ -30,6 +30,7 @@ tree before trusting any line number.
 | --- | --- |
 | Outbound bind writes outreach / waiting_on / task_scene | `server/internal/assoc/bind.go` `bindOutbound` |
 | Inbound Event tags `scene_key` | `server/internal/handler/assoc.go` `recordAssocInboundEvent` |
+| `/reset-memory` closes scene edges and unlinks events | `server/internal/handler/agent_dispatch_v2_handler.go` `tryDispatchResetMemory` → `assoc.Service.CloseSceneAssociations` |
 | Issue associate writes spawned_from | `server/internal/assoc/associate.go` |
 | Purpose fallback from user message | `server/internal/assoc/purpose.go` `ResolvePurpose` |
 
@@ -40,5 +41,6 @@ tree before trusting any line number.
 | Dispatch `scene_graph` segment | `server/internal/handler/agent_dispatch_v2.go` `dispatchSceneGraphInstruction` |
 | Coordinator identity note | `server/internal/service/inboundcoord/prompt.go` `IdentityNote` |
 | Coordinator tool loop | `server/internal/service/inboundcoord/loop.go` `runLoop` |
+| Coordinator LLM context logs | `inbound_coordinator_llm_request` / `inbound_coordinator_llm` / `inbound_coordinator_llm_finish` |
 | Coordinator `assoc_recall` / `assoc_bind` / `issue_get` / `issue_comment_*` | `server/internal/service/inboundcoord/tools.go` `AssocTools` |
 | Event clipped body | `assoc_event.body` via `Event.Body` / `EventRef.Text` |

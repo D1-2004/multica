@@ -3,6 +3,7 @@ package assoc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -28,6 +29,7 @@ type Store interface {
 	InsertEdge(ctx context.Context, edge Edge) (Edge, error)
 	ListEdgesByDst(ctx context.Context, workspaceID, agentID, dstType, dstID string, since time.Time) ([]Edge, error)
 	ListEdgesBySrc(ctx context.Context, workspaceID, agentID, srcType, srcID string) ([]Edge, error)
+	CloseSceneAssociations(ctx context.Context, workspaceID, agentID, sceneKey string) (CloseSceneResult, error)
 	InsertEvent(ctx context.Context, event Event) (Event, error)
 	GetEventByEvidence(ctx context.Context, workspaceID, agentID, evidenceID string) (Event, error)
 	ListEventsByScene(ctx context.Context, workspaceID, agentID, sceneKey string, since time.Time, limit int) ([]Event, error)
@@ -264,6 +266,50 @@ func (m *Memory) ListEdgesBySrc(_ context.Context, workspaceID, agentID, srcType
 		out = append(out, edge)
 	}
 	return out, nil
+}
+
+func (m *Memory) CloseSceneAssociations(_ context.Context, workspaceID, agentID, sceneKey string) (CloseSceneResult, error) {
+	sceneKey = strings.TrimSpace(sceneKey)
+	if sceneKey == "" {
+		return CloseSceneResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+	}
+	now := time.Now().UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	eventIDs := map[string]struct{}{}
+	var result CloseSceneResult
+	for id, event := range m.events {
+		if event.WorkspaceID != workspaceID || event.AgentID != agentID || event.SceneKey != sceneKey {
+			continue
+		}
+		eventIDs[event.ID] = struct{}{}
+		if event.TaskID == "" {
+			continue
+		}
+		event.TaskID = ""
+		m.events[id] = event
+		result.UnlinkedEvents++
+	}
+	for id, edge := range m.edges {
+		if edge.WorkspaceID != workspaceID || edge.AgentID != agentID || edge.Status == StatusClosed {
+			continue
+		}
+		closeIt := (edge.DstType == NodeScene && edge.DstID == sceneKey) ||
+			(edge.SrcType == NodeScene && edge.SrcID == sceneKey)
+		if !closeIt && edge.SrcType == NodeEvent {
+			_, closeIt = eventIDs[edge.SrcID]
+		}
+		if !closeIt {
+			continue
+		}
+		closedAt := now
+		edge.Status = StatusClosed
+		edge.ClosedAt = &closedAt
+		edge.LastTouchedAt = now
+		m.edges[id] = edge
+		result.ClosedEdges++
+	}
+	return result, nil
 }
 
 func (m *Memory) InsertEvent(_ context.Context, event Event) (Event, error) {
