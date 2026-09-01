@@ -3,18 +3,29 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const (
-	toolAssocRecall = "assoc_recall"
-	toolAssocBind   = "assoc_bind"
-	toolFinish      = "finish"
+	toolAssocRecall      = "assoc_recall"
+	toolAssocBind        = "assoc_bind"
+	toolIssueGet         = "issue_get"
+	toolIssueCommentList = "issue_comment_list"
+	toolIssueCommentAdd  = "issue_comment_add"
+	toolFinish           = "finish"
+	issueDescBudget      = 240
+	commentClipBudget    = 200
+	commentAddBudget     = 500
+	commentListDefault   = 20
 )
 
 // Tools runs coordinator loop function calls. The sandbox still owns DWS.
@@ -22,9 +33,17 @@ type Tools interface {
 	Call(ctx context.Context, turn Turn, name, arguments string) (string, error)
 }
 
-// AssocTools exposes scene-graph recall and bind to the coordinator loop.
+// IssueAccess is the Issue read/write surface the short loop is allowed to use.
+type IssueAccess interface {
+	GetIssueInWorkspace(ctx context.Context, arg db.GetIssueInWorkspaceParams) (db.Issue, error)
+	ListCommentsForIssue(ctx context.Context, arg db.ListCommentsForIssueParams) ([]db.Comment, error)
+	CreateComment(ctx context.Context, arg db.CreateCommentParams) (db.Comment, error)
+}
+
+// AssocTools exposes scene-graph recall, bind, and Issue lookup to the loop.
 type AssocTools struct {
 	Service *assoc.Service
+	Issues  IssueAccess
 }
 
 type recallArgs struct {
@@ -45,15 +64,33 @@ type bindArgs struct {
 	Kind           string `json:"kind"`
 }
 
+type issueIDArgs struct {
+	IssueID string `json:"issue_id"`
+	Thread  string `json:"thread"`
+	Since   string `json:"since"`
+	Tail    int    `json:"tail"`
+	Content string `json:"content"`
+	Parent  string `json:"parent"`
+}
+
 func (t *AssocTools) Call(ctx context.Context, turn Turn, name, arguments string) (string, error) {
-	if t == nil || t.Service == nil {
-		return "", fmt.Errorf("association store is not configured")
-	}
 	switch strings.TrimSpace(name) {
 	case toolAssocRecall:
+		if t == nil || t.Service == nil {
+			return "", fmt.Errorf("association store is not configured")
+		}
 		return t.recall(ctx, turn, arguments)
 	case toolAssocBind:
+		if t == nil || t.Service == nil {
+			return "", fmt.Errorf("association store is not configured")
+		}
 		return t.bind(ctx, turn, arguments)
+	case toolIssueGet:
+		return t.issueGet(ctx, turn, arguments)
+	case toolIssueCommentList:
+		return t.issueCommentList(ctx, turn, arguments)
+	case toolIssueCommentAdd:
+		return t.issueCommentAdd(ctx, turn, arguments)
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
@@ -94,11 +131,36 @@ func (t *AssocTools) recall(ctx context.Context, turn Turn, raw string) (string,
 	if err != nil {
 		return "", err
 	}
+	overlayEventBodies(result.Events, turn)
 	body, err := json.Marshal(result)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func overlayEventBodies(events []assoc.EventRef, turn Turn) {
+	byEvidence := map[string]string{}
+	if text := assoc.ClipBody(turn.Message, assoc.EventBodyMaxRunes); text != "" && strings.TrimSpace(turn.EvidenceID) != "" {
+		byEvidence[strings.TrimSpace(turn.EvidenceID)] = text
+	}
+	for _, line := range turn.DingTalkHistory {
+		id := strings.TrimSpace(line.EvidenceID)
+		if id == "" {
+			continue
+		}
+		if text := assoc.ClipBody(line.Content, assoc.EventBodyMaxRunes); text != "" {
+			byEvidence[id] = text
+		}
+	}
+	for i := range events {
+		if strings.TrimSpace(events[i].Text) != "" {
+			continue
+		}
+		if text := byEvidence[strings.TrimSpace(events[i].EvidenceID)]; text != "" {
+			events[i].Text = text
+		}
+	}
 }
 
 func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, error) {
@@ -152,6 +214,157 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 		return "", err
 	}
 	return string(body), nil
+}
+
+func (t *AssocTools) issueGet(ctx context.Context, turn Turn, raw string) (string, error) {
+	issue, err := t.loadAgentIssue(ctx, turn, raw)
+	if err != nil {
+		return "", err
+	}
+	payload := map[string]any{
+		"issue_id":    util.UUIDToString(issue.ID),
+		"title":       strings.TrimSpace(issue.Title),
+		"status":      strings.TrimSpace(issue.Status),
+		"description": assoc.ClipBody(issue.Description.String, issueDescBudget),
+	}
+	if issue.UpdatedAt.Valid {
+		payload["updated_at"] = issue.UpdatedAt.Time.UTC().Format(time.RFC3339)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func (t *AssocTools) issueCommentList(ctx context.Context, turn Turn, raw string) (string, error) {
+	issue, err := t.loadAgentIssue(ctx, turn, raw)
+	if err != nil {
+		return "", err
+	}
+	var args issueIDArgs
+	_ = json.Unmarshal([]byte(strings.TrimSpace(raw)), &args)
+	limit := args.Tail
+	if limit <= 0 {
+		limit = commentListDefault
+	}
+	if limit > assoc.MaxLimit {
+		limit = assoc.MaxLimit
+	}
+	rows, err := t.Issues.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       int32(limit),
+	})
+	if err != nil {
+		return "", err
+	}
+	comments := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		item := map[string]any{
+			"id":          util.UUIDToString(row.ID),
+			"author_type": row.AuthorType,
+			"content":     assoc.ClipBody(row.Content, commentClipBudget),
+			"created_at":  row.CreatedAt.Time.UTC().Format(time.RFC3339),
+		}
+		if row.ParentID.Valid {
+			item["parent_id"] = util.UUIDToString(row.ParentID)
+		}
+		comments = append(comments, item)
+	}
+	body, err := json.Marshal(map[string]any{
+		"issue_id": util.UUIDToString(issue.ID),
+		"comments": comments,
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func (t *AssocTools) issueCommentAdd(ctx context.Context, turn Turn, raw string) (string, error) {
+	issue, err := t.loadAgentIssue(ctx, turn, raw)
+	if err != nil {
+		return "", err
+	}
+	var args issueIDArgs
+	if strings.TrimSpace(raw) != "" && json.Unmarshal([]byte(raw), &args) != nil {
+		return "", fmt.Errorf("invalid issue_comment_add arguments")
+	}
+	content := assoc.ClipBody(args.Content, commentAddBudget)
+	if content == "" {
+		return "", fmt.Errorf("content is required")
+	}
+	params := db.CreateCommentParams{
+		AuthorType:  "agent",
+		AuthorID:    turn.AgentID,
+		Content:     content,
+		Type:        "comment",
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	}
+	if parent := strings.TrimSpace(args.Parent); parent != "" {
+		parsed, parseErr := util.ParseUUID(parent)
+		if parseErr != nil {
+			return "", fmt.Errorf("parent must be a comment UUID")
+		}
+		params.ParentID = parsed
+	}
+	comment, err := t.Issues.CreateComment(ctx, params)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", fmt.Errorf("issue not found")
+		}
+		return "", err
+	}
+	body, err := json.Marshal(map[string]any{
+		"issue_id":   util.UUIDToString(issue.ID),
+		"comment_id": util.UUIDToString(comment.ID),
+		"created":    true,
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func (t *AssocTools) loadAgentIssue(ctx context.Context, turn Turn, raw string) (db.Issue, error) {
+	if t == nil || t.Issues == nil {
+		return db.Issue{}, fmt.Errorf("issue store is not configured")
+	}
+	var args issueIDArgs
+	if strings.TrimSpace(raw) != "" && json.Unmarshal([]byte(raw), &args) != nil {
+		return db.Issue{}, fmt.Errorf("invalid issue arguments")
+	}
+	issueID := strings.TrimSpace(args.IssueID)
+	if issueID == "" {
+		return db.Issue{}, fmt.Errorf("issue_id is required")
+	}
+	parsedIssue, err := util.ParseUUID(issueID)
+	if err != nil {
+		return db.Issue{}, fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+	}
+	workspace, err := util.ParseUUID(strings.TrimSpace(turn.WorkspaceID))
+	if err != nil {
+		return db.Issue{}, fmt.Errorf("workspace_id is required")
+	}
+	if !turn.AgentID.Valid {
+		return db.Issue{}, fmt.Errorf("agent_id is required")
+	}
+	issue, err := t.Issues.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          parsedIssue,
+		WorkspaceID: workspace,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.Issue{}, fmt.Errorf("issue not found")
+		}
+		return db.Issue{}, err
+	}
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || issue.AssigneeID != turn.AgentID {
+		return db.Issue{}, fmt.Errorf("issue is not assigned to this agent")
+	}
+	return issue, nil
 }
 
 func firstNonEmpty(values ...string) string {

@@ -14,6 +14,9 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 	for _, rule := range []string{
 		"assoc_recall",
 		"assoc_bind",
+		"issue_get",
+		"issue_comment_list",
+		"issue_comment_add",
 		"finish",
 		"You MUST call tools",
 		"At most 8 model rounds",
@@ -23,7 +26,7 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"我无法查看联系人列表",
 		"pass that exact conversation_id",
 		"empty items only answers a question explicitly asking for recorded matters",
-		"Never invent conversation_id or person_id",
+		"Never invent conversation_id, person_id, or issue_id",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)

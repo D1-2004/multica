@@ -40,4 +40,5 @@ tree before trusting any line number.
 | Dispatch `scene_graph` segment | `server/internal/handler/agent_dispatch_v2.go` `dispatchSceneGraphInstruction` |
 | Coordinator identity note | `server/internal/service/inboundcoord/prompt.go` `IdentityNote` |
 | Coordinator tool loop | `server/internal/service/inboundcoord/loop.go` `runLoop` |
-| Coordinator `assoc_recall` / `assoc_bind` | `server/internal/service/inboundcoord/tools.go` `AssocTools` |
+| Coordinator `assoc_recall` / `assoc_bind` / `issue_get` / `issue_comment_*` | `server/internal/service/inboundcoord/tools.go` `AssocTools` |
+| Event clipped body | `assoc_event.body` via `Event.Body` / `EventRef.Text` |

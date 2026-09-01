@@ -65,6 +65,15 @@ func ResolvePurpose(candidates ...string) (string, error) {
 	return "", fmt.Errorf("%w: issue title is not a precise purpose", ErrInvalidTask)
 }
 
+// ClipBody bounds stored/recalled event text for LLM rerank.
+func ClipBody(s string, n int) string {
+	trimmed := strings.TrimSpace(s)
+	if n <= 0 || utf8.RuneCountInString(trimmed) <= n {
+		return trimmed
+	}
+	return string([]rune(trimmed)[:n])
+}
+
 func stripSpace(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) {

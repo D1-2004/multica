@@ -291,10 +291,14 @@ func (m *Memory) InsertEvent(_ context.Context, event Event) (Event, error) {
 			if existing.TaskID == "" && event.TaskID != "" {
 				existing.TaskID = event.TaskID
 			}
+			if existing.Body == "" && event.Body != "" {
+				existing.Body = ClipBody(event.Body, EventBodyMaxRunes)
+			}
 			m.events[existing.ID] = existing
 			return existing, nil
 		}
 	}
+	event.Body = ClipBody(event.Body, EventBodyMaxRunes)
 	m.events[event.ID] = event
 	return event, nil
 }

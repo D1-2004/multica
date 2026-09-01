@@ -537,6 +537,54 @@ func TestInsertEventDedupsEvidence(t *testing.T) {
 	}
 }
 
+func TestInsertEventKeepsBodyAndRecallExposesText(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	if _, err := BindOutbound(ctx, store, BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		IssueID:        "issue-1",
+		IssueTitle:     "向须莫v6确认今晚几点打球",
+		Purpose:        "向须莫v6确认今晚几点打球",
+		ConversationID: "cid-a",
+		EvidenceID:     "msg-out",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEvent(ctx, Event{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		Source:      "inbound_im",
+		Direction:   DirInbound,
+		EvidenceID:  "msg-in",
+		Body:        "7点",
+		SceneKey:    "cid-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-a",
+		Since:          time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, event := range result.Events {
+		got[event.EvidenceID] = event.Text
+	}
+	if got["msg-in"] != "7点" {
+		t.Fatalf("inbound text=%q events=%+v", got["msg-in"], result.Events)
+	}
+	if got["msg-out"] != "向须莫v6确认今晚几点打球" {
+		t.Fatalf("outbound text=%q events=%+v", got["msg-out"], result.Events)
+	}
+}
+
 func TestRecallInboundOnPreviousOutboundUnionsRelsAndEvents(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

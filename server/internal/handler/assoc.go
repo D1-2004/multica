@@ -519,6 +519,7 @@ func (h *Handler) recordAssocInboundEvent(ctx context.Context, command DispatchC
 		Source:      "inbound_im",
 		Direction:   assoc.DirInbound,
 		EvidenceID:  ids.EvidenceID,
+		Body:        assoc.ClipBody(dispatchInboundEventBody(command), assoc.EventBodyMaxRunes),
 		OccurredAt:  time.Now().UTC(),
 		SceneKey:    ids.ConversationID,
 		PersonKey:   ids.PersonID,
@@ -573,6 +574,18 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	ids.PersonID, ids.PersonAliases = assoc.CanonicalPersonKey(staffID, openID)
 	fillDispatchAssocIDsFromRouterContext(&ids, command.ContextPrompt)
 	return ids
+}
+
+func dispatchInboundEventBody(command DispatchCommand) string {
+	n := len(command.Event.Data.Messages)
+	if n == 0 {
+		return ""
+	}
+	latest := command.Event.Data.Messages[n-1]
+	if latest.Reaction != nil {
+		return ""
+	}
+	return strings.TrimSpace(latest.Text)
 }
 
 func dispatchChatConversationID(command DispatchCommand, assocIDs dispatchAssocIdentity) string {

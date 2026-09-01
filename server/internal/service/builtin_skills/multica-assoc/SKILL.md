@@ -14,9 +14,11 @@ Outreach to another person is not the reply the platform delivers back to the
 waiting sender.
 
 The inbound coordinator (web Chat and DingTalk `message.created`) is a short
-tool loop with `assoc_recall`, `assoc_bind`, and `finish`. It may bind this
-scene to an existing Issue before opening a sandbox. DWS still belongs to the
-sandbox, not the coordinator.
+tool loop with `assoc_recall`, `assoc_bind`, `issue_get`, `issue_comment_list`,
+`issue_comment_add`, and `finish`. It may bind this scene to an existing Issue
+and leave a reception note before opening a sandbox. DWS still belongs to the
+sandbox, not the coordinator. Sandbox CLI `multica issue comment *` remains
+for Issue tasks.
 
 ## Identity
 

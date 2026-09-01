@@ -26,13 +26,14 @@ RETURNING id, workspace_id, agent_id, src_type, src_id, dst_type, dst_id, rel, s
 
 const eventUpsertSQL = `
 INSERT INTO assoc_event (
-    workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, body
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT (workspace_id, agent_id, evidence_id)
 DO UPDATE SET
     direction = CASE WHEN assoc_event.direction = '' THEN EXCLUDED.direction ELSE assoc_event.direction END,
-    task_id = COALESCE(assoc_event.task_id, EXCLUDED.task_id)
-RETURNING id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at`
+    task_id = COALESCE(assoc_event.task_id, EXCLUDED.task_id),
+    body = CASE WHEN assoc_event.body = '' THEN EXCLUDED.body ELSE assoc_event.body END
+RETURNING id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at, body`
 
 type DBTX interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
@@ -330,7 +331,7 @@ func (s *SQLStore) InsertEvent(ctx context.Context, event Event) (Event, error) 
 	}
 	return scanEvent(s.db.QueryRow(ctx, eventUpsertSQL,
 		ws, agent, event.Source, event.Direction, event.EvidenceID, event.OccurredAt,
-		event.SceneKey, event.PersonKey, taskID,
+		event.SceneKey, event.PersonKey, taskID, ClipBody(event.Body, EventBodyMaxRunes),
 	))
 }
 
@@ -344,7 +345,7 @@ func (s *SQLStore) GetEventByEvidence(ctx context.Context, workspaceID, agentID,
 		return Event{}, err
 	}
 	row := s.db.QueryRow(ctx, `
-SELECT id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at
+SELECT id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at, body
 FROM assoc_event
 WHERE workspace_id = $1 AND agent_id = $2 AND evidence_id = $3`,
 		ws, agent, evidenceID)
@@ -371,7 +372,7 @@ func (s *SQLStore) ListEventsByScene(ctx context.Context, workspaceID, agentID, 
 		limit = MaxLimit
 	}
 	rows, err := s.db.Query(ctx, `
-SELECT id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at
+SELECT id, workspace_id, agent_id, source, direction, evidence_id, occurred_at, scene_key, person_key, task_id, created_at, body
 FROM assoc_event
 WHERE workspace_id = $1 AND agent_id = $2 AND scene_key = $3 AND occurred_at >= $4
 ORDER BY occurred_at DESC
@@ -617,8 +618,9 @@ func scanEvent(row rowScanner) (Event, error) {
 		source, direction, evidence, scene, person string
 		occurred, created                          time.Time
 		taskID                                     pgtype.UUID
+		body                                       string
 	)
-	if err := row.Scan(&id, &ws, &agent, &source, &direction, &evidence, &occurred, &scene, &person, &taskID, &created); err != nil {
+	if err := row.Scan(&id, &ws, &agent, &source, &direction, &evidence, &occurred, &scene, &person, &taskID, &created, &body); err != nil {
 		return Event{}, err
 	}
 	event := Event{
@@ -628,6 +630,7 @@ func scanEvent(row rowScanner) (Event, error) {
 		Source:      source,
 		Direction:   direction,
 		EvidenceID:  evidence,
+		Body:        body,
 		OccurredAt:  occurred,
 		SceneKey:    scene,
 		PersonKey:   person,

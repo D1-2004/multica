@@ -1168,6 +1168,7 @@ func decideDispatchCoordinator(
 	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
 		turn.Busy = true
 	}
+	coord.FillVoice(ctx, &turn)
 	return coord.Decide(ctx, turn)
 }
 

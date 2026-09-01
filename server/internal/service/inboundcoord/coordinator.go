@@ -30,8 +30,8 @@ const (
 	historyLimit         = 4
 	dingtalkHistoryLimit = 10
 	instructionsBudget   = 400
-	personaBudget        = 200
-	toneBudget           = 120
+	personaBudget        = 400
+	toneBudget           = 200
 	titleBudget          = 40
 	temperature          = 0.3
 	maxCompletionTokens  = 512
@@ -83,10 +83,11 @@ type Turn struct {
 	Kind              string
 }
 
-// HistoryLine is one already-persisted Multica chat message.
+// HistoryLine is one already-persisted Multica chat message or a DingTalk row.
 type HistoryLine struct {
-	Role    string
-	Content string
+	Role       string
+	Content    string
+	EvidenceID string
 }
 
 // Decision is what callers act on.
@@ -124,9 +125,26 @@ type Coordinator struct {
 func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) *Coordinator {
 	c := &Coordinator{LLM: llmClient, Queries: queries, Assoc: assocSvc}
 	if assocSvc != nil {
-		c.Tools = &AssocTools{Service: assocSvc}
+		tools := &AssocTools{Service: assocSvc}
+		if issues, ok := queries.(IssueAccess); ok {
+			tools.Issues = issues
+		}
+		c.Tools = tools
 	}
 	return c
+}
+
+// FillVoice copies Instructions-tab persona and reply tone onto the turn.
+func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
+	if c == nil || c.Queries == nil || turn == nil || !turn.AgentID.Valid {
+		return
+	}
+	voice, err := c.Queries.GetAgentVoice(ctx, turn.AgentID)
+	if err != nil {
+		return
+	}
+	turn.Persona = voice.Persona
+	turn.ReplyTone = voice.ReplyTone
 }
 
 // Decide returns a verdict. A disabled LLM or any failure continues the
@@ -320,10 +338,7 @@ func (c *Coordinator) TurnFromChatSession(
 		turn.AgentName = agent.Name
 		turn.Instructions = agent.Instructions
 	}
-	if voice, err := c.Queries.GetAgentVoice(ctx, session.AgentID); err == nil {
-		turn.Persona = voice.Persona
-		turn.ReplyTone = voice.ReplyTone
-	}
+	c.FillVoice(ctx, &turn)
 	if n, err := c.Queries.CountRunningTasks(ctx, session.AgentID); err == nil && n > 0 {
 		turn.Busy = true
 	}

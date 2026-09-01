@@ -380,7 +380,7 @@ func TestRecordAssocInboundThenAssociate(t *testing.T) {
 			Data: DispatchEventData{
 				Conversation: DispatchConversation{OpenConversationID: "cid-a"},
 				Sender:       DispatchSender{OpenDingTalkID: "uid-a"},
-				Messages:     []DispatchMessage{{OpenMsgID: "msg-in-a"}},
+				Messages:     []DispatchMessage{{OpenMsgID: "msg-in-a", Text: "7点"}},
 			},
 		},
 	}
@@ -393,6 +393,9 @@ func TestRecordAssocInboundThenAssociate(t *testing.T) {
 	}
 	if inbound.TaskID != "" {
 		t.Fatalf("ACK must not write task_id: %q", inbound.TaskID)
+	}
+	if inbound.Body != "7点" {
+		t.Fatalf("inbound body=%q", inbound.Body)
 	}
 	h.associateDispatchIssue(ctx, cmd, dc, issue, "预约A与B本周五下午30分钟", "44444444-4444-4444-4444-444444444444", "")
 

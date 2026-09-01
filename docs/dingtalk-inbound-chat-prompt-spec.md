@@ -1,5 +1,11 @@
 # 钉钉入站消息的 Chat 提示词规格
 
+本文只规定 **沙箱慢循环**（Chat / auto 落到 Chat）里模型看到的 user 段。
+入站先经过的 **Coordinator 快循环**（人设、assoc 工具、finish 裁决）见
+[Inbound Coordinator Loop](inbound-coordinator-loop.md)。两套提示词独立拼装，
+不要把 Coordinator 的 `agent_persona` 写进本文的 runtime brief，也不要把本文的
+`## DingTalk Conversation` 回读命令写进快循环。
+
 本文规定：一条钉钉消息派发进来、以 Chat（含 auto 落到 Chat）方式运行时，模型看到的
 user 段由谁写、写什么、以及每一条改动如何生效。
 

@@ -199,6 +199,42 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 				},
 			},
 		}),
+		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        toolIssueGet,
+			Description: openai.String("Read one Issue this agent owns. Copy issue_id from assoc_recall. Returns title, status, and a clipped description for rerank. Does not start a sandbox."),
+			Parameters: shared.FunctionParameters{
+				"type":     "object",
+				"required": []string{"issue_id"},
+				"properties": map[string]any{
+					"issue_id": map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
+				},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        toolIssueCommentList,
+			Description: openai.String("List recent comments on an Issue this agent owns. Copy issue_id from assoc_recall. Use before deciding whether the inbound turn continues that matter."),
+			Parameters: shared.FunctionParameters{
+				"type":     "object",
+				"required": []string{"issue_id"},
+				"properties": map[string]any{
+					"issue_id": map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
+					"tail":     map[string]any{"type": "integer", "description": "Newest comments to return, default 20, max 50."},
+				},
+			},
+		}),
+		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+			Name:        toolIssueCommentAdd,
+			Description: openai.String("Post a reception note on an Issue this agent owns. This is not the IM reply and does not start a sandbox. finish.text is still the user-facing sentence."),
+			Parameters: shared.FunctionParameters{
+				"type":     "object",
+				"required": []string{"issue_id", "content"},
+				"properties": map[string]any{
+					"issue_id": map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
+					"content":  map[string]any{"type": "string", "description": "Reception note in this agent's voice."},
+					"parent":   map[string]any{"type": "string", "description": "Optional parent comment UUID."},
+				},
+			},
+		}),
 		coordinatorFinishTool(),
 	}
 }

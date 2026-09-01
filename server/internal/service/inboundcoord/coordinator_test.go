@@ -203,6 +203,16 @@ func TestInjectRelatedTasksFormatsRecallHits(t *testing.T) {
 	}
 }
 
+func TestFillVoiceCopiesPersonaAndTone(t *testing.T) {
+	t.Parallel()
+	c := &Coordinator{Queries: &coordQueriesStub{persona: "靠谱同事", replyTone: "短句、不客套"}}
+	turn := Turn{AgentID: testAgentID()}
+	c.FillVoice(context.Background(), &turn)
+	if turn.Persona != "靠谱同事" || turn.ReplyTone != "短句、不客套" {
+		t.Fatalf("voice=%q / %q", turn.Persona, turn.ReplyTone)
+	}
+}
+
 func TestTurnFromChatSessionLoadsVoice(t *testing.T) {
 	q := &coordQueriesStub{persona: "靠谱同事", replyTone: "短句、不客套"}
 	c := &Coordinator{Queries: q}

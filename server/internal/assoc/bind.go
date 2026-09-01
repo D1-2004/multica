@@ -83,6 +83,7 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 		Source:      "outbound_im",
 		Direction:   DirOutbound,
 		EvidenceID:  evidenceID,
+		Body:        ClipBody(in.Purpose, EventBodyMaxRunes),
 		OccurredAt:  now,
 		SceneKey:    cid,
 		PersonKey:   personKey,

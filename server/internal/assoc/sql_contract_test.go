@@ -16,6 +16,9 @@ func TestEdgeTouchSQLMergesProps(t *testing.T) {
 	if !strings.Contains(eventUpsertSQL, "ON CONFLICT") {
 		t.Fatal("event upsert must be one INSERT ON CONFLICT statement")
 	}
+	if !strings.Contains(eventUpsertSQL, "body") {
+		t.Fatal("event upsert must persist clipped body")
+	}
 }
 
 func TestRequireUUIDRejectsEmpty(t *testing.T) {

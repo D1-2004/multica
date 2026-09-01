@@ -30,10 +30,11 @@ const (
 	DirInbound  = "inbound"
 	DirOutbound = "outbound"
 
-	DefaultLimit    = 20
-	MaxLimit        = 50
-	MinPurposeRunes = 8
-	RecencyTau      = 6 * time.Hour
+	DefaultLimit      = 20
+	MaxLimit          = 50
+	MinPurposeRunes   = 8
+	EventBodyMaxRunes = 160
+	RecencyTau        = 6 * time.Hour
 )
 
 type Task struct {
@@ -75,6 +76,7 @@ type Event struct {
 	Source      string
 	Direction   string
 	EvidenceID  string
+	Body        string
 	OccurredAt  time.Time
 	SceneKey    string
 	PersonKey   string
@@ -136,6 +138,7 @@ type EventRef struct {
 	Direction  string    `json:"direction"`
 	Source     string    `json:"source"`
 	EvidenceID string    `json:"evidence_id"`
+	Text       string    `json:"text,omitempty"`
 	TaskID     string    `json:"task_id,omitempty"`
 	PersonID   string    `json:"person_id,omitempty"`
 	OccurredAt time.Time `json:"occurred_at"`

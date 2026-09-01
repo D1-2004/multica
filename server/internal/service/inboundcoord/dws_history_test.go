@@ -253,6 +253,9 @@ func TestParseDWSHistoryIncludesQuotedMessage(t *testing.T) {
 	if got := history[0].Content; got != "那就按这个方案\n  引用消息（须莫）：周五先发预发，验证通过后再上线" {
 		t.Fatalf("history content = %q", got)
 	}
+	if history[0].EvidenceID != "reply" {
+		t.Fatalf("history evidence = %q", history[0].EvidenceID)
+	}
 }
 
 func TestHTTPDWSCredentialRedeemerValidatesResponse(t *testing.T) {

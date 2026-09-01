@@ -1,11 +1,10 @@
 # Event / Scene / Issue-Task 关联与拟人召回
 
 > 工作流：Plan
-> 状态：v1 已在工作树实现（表 + 召回 + bind + Associate + MCP/CLI + dws wrap）
+> 状态：v1 图 + 召回 + bind + Associate + MCP/CLI 已落地；Coordinator 快循环已存在，合同见 [Inbound Coordinator Loop](../inbound-coordinator-loop.md)
 > 创建日期：2026-08-31
 > 计划 ID：20260831-event-scene-issue-task-assoc
-> 当前分支：`feat/event-task-scene-assoc`
-> 目标执行分支：`feat/event-task-scene-assoc`
+> 当前分支：`feat/inbound-coordinator-reply-or-issue`
 
 
 ## 结论
@@ -45,7 +44,7 @@
 
 Coordinator 看的是一张图：当前场域里有哪些事、哪些对话是因为某个 purpose 主动找上门的。会话本身也可以是一个 purpose，会再派发出去一批事件。
 
-本方案提供图和召回查询。Coordinator 还没有：先在现有 Dispatch V2 + Issue + 沙箱链路上把关联跑通、可测。沙箱以 Issue 执行时，用同一套查询回答「这件 Issue 下面有哪些 Task、已经给哪个会话发过消息」。
+本方案提供图和召回查询。Coordinator 快循环已在 `inboundcoord` 落地（`assoc_recall` / `assoc_bind` / `finish`）。图仍只返回候选；「新事还是旧事」由 Coordinator 提示词判断。沙箱以 Issue 执行时，用同一套查询回答「这件 Issue 下面有哪些 Task、已经给哪个会话发过消息」。快循环要挂的 Issue 查询/评论工具、以及召回 JSON 如何给 LLM 精排，以 [Inbound Coordinator Loop](../inbound-coordinator-loop.md) 为准。
 
 ---
 
@@ -430,9 +429,9 @@ Chat→Issue delegate 仍用 `parent_task_id`：那是 run 的父子。事边描
 
 ---
 
-## 怎么测（Coordinator 还不存在）
+## 怎么测
 
-现有系统已经能测关联，不必等 Loop：
+图的召回/绑边可以不跑 Loop。Coordinator 提示词、人设注入、tool 协议见 Loop 文档的测试与缺口。图层单测仍如下：
 
 1. **纯 Go 单测（默认 CI）**  
    假 cid / 假 openMsgId，不调真实 dws。  
@@ -481,14 +480,15 @@ Fork 迁移 `9000+`。无 FK。每个索引单独 `CONCURRENTLY`。
 - 动态 props；Issue → Task 索引
 - 上述测试，不依赖 Coordinator
 
-**不做**
+**不做（图层）**
 
-- Coordinator / Quick Loop 本体（提示词里「新事还是旧事」归他们）
-- Embedding 精排（粗排时间，精排 LLM）
+- Embedding 精排（粗排时间窗 + cid/issue/q，精排交给 Coordinator LLM 读召回卡片）
 - 把 chat_session 当图主键
 - 入站 ACK 写关联
 - 复活 reply tracker
 - Apache AGE
+
+Coordinator 本体、人设落点、Loop 上的 Issue 查询/评论工具，不在本图层范围，见 [Inbound Coordinator Loop](../inbound-coordinator-loop.md)。
 
 ---
 

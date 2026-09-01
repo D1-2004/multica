@@ -104,7 +104,7 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	if len(chat.params) != 2 {
 		t.Fatalf("rounds=%d", len(chat.params))
 	}
-	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,assoc_bind,finish" {
+	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,assoc_bind,issue_get,issue_comment_list,issue_comment_add,finish" {
 		t.Fatalf("round0 tools=%v", names)
 	}
 }
@@ -193,7 +193,7 @@ func TestLoopLastRoundOnlyFinish(t *testing.T) {
 		t.Fatalf("last-round tools=%v, want only finish", last)
 	}
 	first := toolDefNamesFromDefs(toolsForRound(0))
-	if strings.Join(first, ",") != "assoc_recall,assoc_bind,finish" {
+	if strings.Join(first, ",") != "assoc_recall,assoc_bind,issue_get,issue_comment_list,issue_comment_add,finish" {
 		t.Fatalf("round0 tools=%v", first)
 	}
 }
@@ -308,7 +308,7 @@ func TestDecideNamedConversationRecallThenReply(t *testing.T) {
 func TestCoordinatorToolDefsIncludeAssocAndFinish(t *testing.T) {
 	t.Parallel()
 	names := toolDefNamesFromDefs(coordinatorToolDefs())
-	if strings.Join(names, ",") != "assoc_recall,assoc_bind,finish" {
+	if strings.Join(names, ",") != "assoc_recall,assoc_bind,issue_get,issue_comment_list,issue_comment_add,finish" {
 		t.Fatalf("tools=%v", names)
 	}
 }

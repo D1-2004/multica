@@ -295,6 +295,7 @@ func eventRefs(events []Event) []EventRef {
 			Direction:  event.Direction,
 			Source:     event.Source,
 			EvidenceID: event.EvidenceID,
+			Text:       event.Body,
 			TaskID:     event.TaskID,
 			PersonID:   event.PersonKey,
 			OccurredAt: event.OccurredAt,

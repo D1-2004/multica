@@ -343,7 +343,11 @@ func parseDWSHistory(raw []byte, currentMessageID string) ([]HistoryLine, error)
 				content += "\n  引用消息（" + quotedSender + "）：" + quotedContent
 			}
 		}
-		newestFirst = append(newestFirst, HistoryLine{Role: role, Content: content})
+		newestFirst = append(newestFirst, HistoryLine{
+			Role:       role,
+			Content:    content,
+			EvidenceID: strings.TrimSpace(message.OpenMessageID),
+		})
 		if len(newestFirst) == dingtalkHistoryLimit {
 			break
 		}

@@ -7,8 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestAssocToolsRecallDefaultsConversationID(t *testing.T) {
@@ -224,4 +227,175 @@ func mustSince48h(t *testing.T) time.Time {
 		t.Fatal(err)
 	}
 	return parsed
+}
+
+func TestAssocToolsRecallOverlaysEventText(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := assoc.NewMemory()
+	svc := assoc.NewService(store)
+	agent := testAgentID()
+	agentID := util.UUIDToString(agent)
+	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        agentID,
+		IssueID:        "issue-ball",
+		IssueTitle:     "向须莫v6确认今晚几点打球",
+		Purpose:        "向须莫v6确认今晚几点打球",
+		ConversationID: "cid-v6",
+		EvidenceID:     "msg-out-1",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEvent(ctx, assoc.Event{
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		Source:      "inbound_im",
+		Direction:   assoc.DirInbound,
+		EvidenceID:  "msg-in-7",
+		SceneKey:    "cid-v6",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tools := &AssocTools{Service: svc}
+	raw, err := tools.Call(ctx, Turn{
+		WorkspaceID:    "ws",
+		AgentID:        agent,
+		ConversationID: "cid-v6",
+		EvidenceID:     "msg-in-7",
+		Message:        "7点",
+		DingTalkHistory: []HistoryLine{
+			{Role: "须莫", Content: "今晚几点打球", EvidenceID: "msg-out-1"},
+		},
+	}, toolAssocRecall, `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result assoc.Result
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, event := range result.Events {
+		got[event.EvidenceID] = event.Text
+	}
+	if got["msg-in-7"] != "7点" {
+		t.Fatalf("inbound text=%q events=%+v", got["msg-in-7"], result.Events)
+	}
+	if got["msg-out-1"] != "今晚几点打球" && got["msg-out-1"] != "向须莫v6确认今晚几点打球" {
+		t.Fatalf("outbound text=%q events=%+v", got["msg-out-1"], result.Events)
+	}
+}
+
+type issueStub struct {
+	issue    db.Issue
+	comments []db.Comment
+	created  db.Comment
+}
+
+func (s *issueStub) GetIssueInWorkspace(context.Context, db.GetIssueInWorkspaceParams) (db.Issue, error) {
+	return s.issue, nil
+}
+
+func (s *issueStub) ListCommentsForIssue(context.Context, db.ListCommentsForIssueParams) ([]db.Comment, error) {
+	return s.comments, nil
+}
+
+func (s *issueStub) CreateComment(context.Context, db.CreateCommentParams) (db.Comment, error) {
+	return s.created, nil
+}
+
+func testOwnedIssue(t *testing.T, agent pgtype.UUID) (string, db.Issue) {
+	t.Helper()
+	ws := "22222222-2222-2222-2222-222222222222"
+	issueID := "33333333-3333-3333-3333-333333333333"
+	wsUUID, err := util.ParseUUID(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := util.ParseUUID(issueID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return issueID, db.Issue{
+		ID:           id,
+		WorkspaceID:  wsUUID,
+		Title:        "向须莫v6确认今晚几点打球",
+		Status:       "in_progress",
+		Description:  pgtype.Text{String: "确认今晚打球时间并回原发起人", Valid: true},
+		AssigneeType: pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:   agent,
+		UpdatedAt:    pgtype.Timestamptz{Time: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+	}
+}
+
+func TestIssueGetReturnsClippedCard(t *testing.T) {
+	t.Parallel()
+	agent := testAgentID()
+	issueID, issue := testOwnedIssue(t, agent)
+	tools := &AssocTools{Issues: &issueStub{issue: issue}}
+	raw, err := tools.Call(context.Background(), Turn{
+		WorkspaceID: "22222222-2222-2222-2222-222222222222",
+		AgentID:     agent,
+	}, toolIssueGet, `{"issue_id":"`+issueID+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"title":"向须莫v6确认今晚几点打球"`) || !strings.Contains(raw, "回原发起人") {
+		t.Fatalf("issue_get=%s", raw)
+	}
+}
+
+func TestIssueCommentListAndAdd(t *testing.T) {
+	t.Parallel()
+	agent := testAgentID()
+	issueID, issue := testOwnedIssue(t, agent)
+	commentID, err := util.ParseUUID("44444444-4444-4444-4444-444444444444")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &issueStub{
+		issue: issue,
+		comments: []db.Comment{{
+			ID:         commentID,
+			AuthorType: "agent",
+			Content:    "我去问须莫v6今晚几点",
+			CreatedAt:  pgtype.Timestamptz{Time: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+		}},
+		created: db.Comment{ID: commentID},
+	}
+	tools := &AssocTools{Issues: stub}
+	turn := Turn{
+		WorkspaceID: "22222222-2222-2222-2222-222222222222",
+		AgentID:     agent,
+	}
+	listed, err := tools.Call(context.Background(), turn, toolIssueCommentList, `{"issue_id":"`+issueID+`"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listed, "我去问须莫v6今晚几点") {
+		t.Fatalf("list=%s", listed)
+	}
+	added, err := tools.Call(context.Background(), turn, toolIssueCommentAdd, `{"issue_id":"`+issueID+`","content":"须莫v6回7点"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(added, `"created":true`) {
+		t.Fatalf("add=%s", added)
+	}
+}
+
+func TestIssueGetRejectsOtherAgent(t *testing.T) {
+	t.Parallel()
+	_, issue := testOwnedIssue(t, testAgentID())
+	tools := &AssocTools{Issues: &issueStub{issue: issue}}
+	other := pgtype.UUID{Bytes: [16]byte{9}, Valid: true}
+	_, err := tools.Call(context.Background(), Turn{
+		WorkspaceID: "22222222-2222-2222-2222-222222222222",
+		AgentID:     other,
+	}, toolIssueGet, `{"issue_id":"33333333-3333-3333-3333-333333333333"}`)
+	if err == nil || !strings.Contains(err.Error(), "not assigned") {
+		t.Fatalf("err=%v", err)
+	}
 }

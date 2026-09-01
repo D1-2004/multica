@@ -21,8 +21,14 @@ remain Issue-only because neither has a foreground Chat session to release.
 
 ### Inbound short loop (reply vs issue)
 
+The coordinator's purpose, prompt assembly, persona placement, tool-call
+schemas, AI-native recall, and dual IM-history paths are specified in
+[Inbound Coordinator Loop](inbound-coordinator-loop.md). This section is the
+execution contract those tools must obey.
+
 Before a sandbox starts, Multica runs a **bounded server-side tool loop**
-(`assoc_recall` / `assoc_bind` / `finish`, thinking off, at most eight model
+(`assoc_recall` / `assoc_bind` / `issue_get` / `issue_comment_list` /
+`issue_comment_add` / `finish`, thinking off, at most eight model
 rounds, last round finish-only, `tool_choice=required`) on web Chat and on
 DingTalk `channel/message.created` for digital employees and robots. A verdict
 is only accepted from the `finish` tool. Graph questions (what a
