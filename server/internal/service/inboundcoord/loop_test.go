@@ -165,21 +165,55 @@ func TestLoopExceedsRounds(t *testing.T) {
 	}
 }
 
-func TestDecideDoesNotCallChatLoop(t *testing.T) {
+func TestDecideRunsToolLoop(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantJSON(`{"action":"reply","text":"在。","reason":"打招呼"}`),
+		assistantJSON(`{"action":"reply","text":"在，有事直接说。","reason":"打招呼"}`),
 	}}
 	c := &Coordinator{
 		LLM:  llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
 		Chat: chat,
 	}
 	got := c.Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, Message: "你好"})
-	if got.Action != ActionContinue {
-		t.Fatalf("unreachable LLM must fail open, action=%s", got.Action)
+	if got.Action != ActionReply || got.UserText != "在，有事直接说。" {
+		t.Fatalf("got %#v", got)
 	}
-	if chat.calls != 0 {
-		t.Fatalf("Decide must not run the leftover tool loop, chat.calls=%d", chat.calls)
+	if chat.calls != 1 {
+		t.Fatalf("Decide must run the tool loop, chat.calls=%d", chat.calls)
+	}
+}
+
+func TestDecideNamedConversationRecallThenReply(t *testing.T) {
+	t.Parallel()
+	named := "cid+bEFv7ngm9n79Q1vL9HYJw=="
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("call-1", toolAssocRecall, `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJw==","since":"48h"}`),
+		assistantTool("call-2", toolFinish, `{"action":"reply","text":"这个单聊最近在跟「向冬翔确认明天去上海是坐高铁还是开车」。","look_into":"","reason":"图上已有这件事"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[{"issue":"WS-9","purpose":"向冬翔确认明天去上海是坐高铁还是开车","status":"waiting"}]}`}
+	c := &Coordinator{
+		LLM:   llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
+		Chat:  chat,
+		Tools: tools,
+	}
+	got := c.Decide(context.Background(), Turn{
+		Source:         SourceRobot,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "cid+bEFv7ngm9n79Q1vL9HYJw== 里面聊了什么",
+		ConversationID: "cid-robot",
+	})
+	if got.Action != ActionReply {
+		t.Fatalf("action=%s", got.Action)
+	}
+	if !strings.Contains(got.UserText, "高铁") {
+		t.Fatalf("text=%q", got.UserText)
+	}
+	if strings.Join(got.ToolsUsed, ",") != "assoc_recall,finish" {
+		t.Fatalf("tools=%v", got.ToolsUsed)
+	}
+	if len(tools.calls) != 1 || !strings.Contains(tools.calls[0], named) {
+		t.Fatalf("recall must use the named cid, calls=%v", tools.calls)
 	}
 }
 

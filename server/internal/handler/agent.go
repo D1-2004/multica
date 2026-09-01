@@ -85,15 +85,15 @@ type AgentResponse struct {
 	// agent's instructions, skills, and runtime have not changed. Off by
 	// default; local chats and issue comments already resume without it.
 	ChatSessionResume bool `json:"chat_session_resume"`
-	// InboundCoordinator runs the server-side short loop that replies
+	// InboundCoordinator runs the server-side assoc tool loop that replies
 	// immediately or opens an Issue. On by default for new and existing
 	// agents; only an explicit owner off switch skips it.
-	InboundCoordinator bool    `json:"inbound_coordinator"`
-	AvatarURL          *string `json:"avatar_url"`
-	RuntimeMode       string          `json:"runtime_mode"`
-	RuntimeConfig     any             `json:"runtime_config"`
-	CustomArgs        []string        `json:"custom_args"`
-	McpConfig         json.RawMessage `json:"mcp_config"`
+	InboundCoordinator bool            `json:"inbound_coordinator"`
+	AvatarURL          *string         `json:"avatar_url"`
+	RuntimeMode        string          `json:"runtime_mode"`
+	RuntimeConfig      any             `json:"runtime_config"`
+	CustomArgs         []string        `json:"custom_args"`
+	McpConfig          json.RawMessage `json:"mcp_config"`
 	// custom_env is intentionally NOT serialized on agent resources. The
 	// agent_list/get/create/update/archive/restore responses and WS events
 	// only expose coarse metadata (has_custom_env, custom_env_key_count) so

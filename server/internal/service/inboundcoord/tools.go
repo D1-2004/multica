@@ -73,15 +73,21 @@ func (t *AssocTools) recall(ctx context.Context, turn Turn, raw string) (string,
 	if err != nil {
 		return "", err
 	}
+	cid := strings.TrimSpace(args.ConversationID)
+	issue := strings.TrimSpace(args.Issue)
+	needle := strings.TrimSpace(args.Q)
+	if cid == "" && issue == "" && needle == "" {
+		cid = strings.TrimSpace(turn.ConversationID)
+	}
 	q := assoc.Query{
 		WorkspaceID:    strings.TrimSpace(turn.WorkspaceID),
 		AgentID:        util.UUIDToString(turn.AgentID),
 		Since:          since,
 		Until:          now,
-		ConversationID: firstNonEmpty(args.ConversationID, turn.ConversationID),
+		ConversationID: cid,
 		PersonID:       strings.TrimSpace(args.PersonID),
-		IssueID:        strings.TrimSpace(args.Issue),
-		Q:              strings.TrimSpace(args.Q),
+		IssueID:        issue,
+		Q:              needle,
 		Limit:          args.Limit,
 	}
 	result, err := t.Service.Recall(ctx, q)

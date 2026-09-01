@@ -142,16 +142,16 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 	return []openai.ChatCompletionToolUnionParam{
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocRecall,
-			Description: openai.String("Recall Issue/Task associations for a DingTalk conversation_id or person_id. since defaults to 48h."),
+			Description: openai.String("Recall Issue/Task matters on the scene graph. Pass the user's openConversationId when they name one. Omit conversation_id to use this inbound scene. Pass q without conversation_id to list this agent's matters in the window. since defaults to 48h."),
 			Parameters: shared.FunctionParameters{
 				"type": "object",
 				"properties": map[string]any{
 					"since":           map[string]any{"type": "string", "description": "24h, 48h, 7d, or RFC3339. Defaults to 48h."},
-					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId. Defaults to this turn's conversation_id."},
-					"person_id":       map[string]any{"type": "string", "description": "DingTalk uid. Optional."},
+					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId. If omitted and q/issue are empty, defaults to this inbound conversation_id."},
+					"person_id":       map[string]any{"type": "string", "description": "DingTalk uid. Optional rank signal; do not invent."},
 					"issue":           map[string]any{"type": "string", "description": "Issue UUID if already known."},
-					"q":               map[string]any{"type": "string", "description": "Keyword filter on purpose."},
-					"limit":           map[string]any{"type": "integer"},
+					"q":               map[string]any{"type": "string", "description": "Keyword filter on purpose. Omit conversation_id to search across this agent's matters."},
+					"limit":           map[string]any{"type": "integer", "description": "Max items, default 20, max 50."},
 				},
 			},
 		}),

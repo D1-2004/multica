@@ -8,31 +8,30 @@ import (
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
-// TestRoutingContractKeepsLookupInSandbox locks the shipped prompt: Decide is a
-// no-tools JSON router. DWS/search live in the sandbox, so a live-info or
-// do/track turn must become an Issue.
-func TestRoutingContractKeepsLookupInSandbox(t *testing.T) {
+// TestRoutingContractUsesToolLoop locks the shipped prompt: Decide is a
+// bounded assoc tool loop. DWS/search still live in the sandbox.
+func TestRoutingContractUsesToolLoop(t *testing.T) {
 	for _, rule := range []string{
-		"You have no tools",
-		"Do not answer a question from your own knowledge",
-		"looked up, fetched, checked, written, or tracked",
-		"This loop's lack of tools is never a reason to reply",
-		"If the sandbox would act, action=issue",
+		"assoc_recall",
+		"assoc_bind",
+		"finish",
+		"At most two tool rounds",
+		"No DWS, no search, no files",
+		"pass that exact conversation_id",
+		"Do not open a sandbox just to restate graph hits",
 		"They must not change the action or invent capability limits",
-		"Never invent a topic from session_title",
-		"answer only from recent_dingtalk_history or recent_multica_history",
+		"Never invent conversation_id or person_id",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)
 		}
 	}
 	for _, banned := range []string{
-		"assoc_recall",
-		"assoc_bind",
-		"You have tools",
+		"You have no tools",
+		"This loop's lack of tools is never a reason to reply",
 	} {
 		if strings.Contains(systemPrompt, banned) {
-			t.Errorf("systemPrompt must not expose coordinator tool %q", banned)
+			t.Errorf("systemPrompt must not keep short-router wording %q", banned)
 		}
 	}
 }

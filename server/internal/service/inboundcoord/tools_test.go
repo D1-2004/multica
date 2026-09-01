@@ -89,6 +89,80 @@ func TestAssocToolsRecallDoesNotDefaultPersonID(t *testing.T) {
 	}
 }
 
+func TestAssocToolsRecallUsesExplicitConversationID(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := assoc.NewMemory()
+	svc := assoc.NewService(store)
+	agent := testAgentID()
+	agentID := util.UUIDToString(agent)
+	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        agentID,
+		IssueID:        "issue-train",
+		IssueTitle:     "向冬翔确认明天去上海是坐高铁还是开车",
+		Purpose:        "向冬翔确认明天去上海是坐高铁还是开车",
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		EvidenceID:     "msg-out-9",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tools := &AssocTools{Service: svc}
+	raw, err := tools.Call(ctx, Turn{
+		WorkspaceID:    "ws",
+		AgentID:        agent,
+		ConversationID: "cid-robot",
+	}, toolAssocRecall, `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJw=="}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result assoc.Result
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Issue != "issue-train" {
+		t.Fatalf("items=%+v", result.Items)
+	}
+}
+
+func TestAssocToolsRecallQOmitsInboundConversation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := assoc.NewMemory()
+	svc := assoc.NewService(store)
+	agent := testAgentID()
+	agentID := util.UUIDToString(agent)
+	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        agentID,
+		IssueID:        "issue-train",
+		IssueTitle:     "向冬翔确认明天去上海是坐高铁还是开车",
+		Purpose:        "向冬翔确认明天去上海是坐高铁还是开车",
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		EvidenceID:     "msg-out-9",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tools := &AssocTools{Service: svc}
+	raw, err := tools.Call(ctx, Turn{
+		WorkspaceID:    "ws",
+		AgentID:        agent,
+		ConversationID: "cid-robot",
+	}, toolAssocRecall, `{"q":"高铁"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result assoc.Result
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].Issue != "issue-train" {
+		t.Fatalf("q without cid should list across agent matters, items=%+v", result.Items)
+	}
+}
+
 func TestAssocToolsBindAssociatesIssue(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
