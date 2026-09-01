@@ -1167,6 +1167,7 @@ func decideDispatchCoordinator(
 		Source:               source,
 		Addressed:            true,
 		ChatType:             chatType,
+		ConversationTitle:    strings.TrimSpace(command.Event.Data.Conversation.Title),
 		SenderName:           command.Event.Data.Sender.DisplayName,
 		Message:              message,
 		AgentID:              agent.ID,

@@ -102,6 +102,16 @@ func assistantTool(id, name, args string) openai.ChatCompletion {
 	}}}
 }
 
+func TestConversationNamePrefersTitleThenSender(t *testing.T) {
+	t.Parallel()
+	if got := conversationName(Turn{ConversationTitle: "项目群", SenderName: "冬翔"}); got != "项目群" {
+		t.Fatalf("title=%q", got)
+	}
+	if got := conversationName(Turn{SenderName: "冬翔"}); got != "冬翔" {
+		t.Fatalf("sender=%q", got)
+	}
+}
+
 func TestLoopLogsLLMRequestAndFinish(t *testing.T) {
 	var buf bytes.Buffer
 	prev := slog.Default()
@@ -118,6 +128,8 @@ func TestLoopLogsLLMRequestAndFinish(t *testing.T) {
 		Source:         SourceDigitalEmployee,
 		Message:        "问一下冬翔，今天想吃什么",
 		ConversationID: "cid-dongxiang",
+		SenderName:     "冬翔",
+		AgentName:      "预发测试智能体",
 		WorkspaceID:    "ws-1",
 		PersonID:       "uid-dx",
 		Persona:        "靠谱同事",
@@ -128,6 +140,10 @@ func TestLoopLogsLLMRequestAndFinish(t *testing.T) {
 	for _, want := range []string{
 		`"event":"inbound_coordinator_llm_request"`,
 		`"conversation_id":"cid-dongxiang"`,
+		`"conversation_name":"冬翔"`,
+		`"sender_name":"冬翔"`,
+		`"agent_name":"预发测试智能体"`,
+		`"coord_trace_id":"`,
 		"问一下冬翔，今天想吃什么",
 		`"event":"inbound_coordinator_llm"`,
 		`"tool":"assoc_recall"`,

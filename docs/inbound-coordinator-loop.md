@@ -296,11 +296,12 @@ Scene = `openConversationId`，且必须 `cid` 前缀。内部 `uid:uid` pair、
 
 排「没带上引用 / 没带上前文」或「为什么接到旧事项」时，两路都要看：
 
-1. Loop（SLS `event` 字段）：
-   - `inbound_coordinator_llm_request`：拼给模型的 user 段（`user_prompt`）、`current_message`、`conversation_id`、人设、钉钉历史条数。system 段是常量，只记 `system_prompt_runes`。
-   - `inbound_coordinator_llm`：每一轮 tool 的 `arguments` 和 `result`（clip 4000）。`assoc_recall` 的返回就是它当时看见的图。
-   - `inbound_coordinator_llm_finish`：`action` / `issue_id` / `text` / `look_into`。
-   - `inbound_coordinator_decided`：最终裁决，带 `conversation_id` 和 `issue_id`。
+1. Loop（SLS `dt-fde-multica-sls` / `application-log`，slog 文本在 `content`）：
+   - 索引：`coord_trace_id`、`conversation_name`（群名或单聊发送人）、`conversation_id`、`sender_name`、`agent_name`、`current_message`。
+   - `inbound_coordinator_llm_request`：`user_prompt`、人设、钉钉历史条数。
+   - `inbound_coordinator_llm`：每一轮 tool 的 `arguments` 和 `result`。
+   - `inbound_coordinator_llm_finish` / `inbound_coordinator_decided`：`action` / `issue_id` / `text`。
+   - 本地查：`scripts/query-coordinator-sls.sh --env pre --name 冬翔`（Normandy，不要走阿里云 AK）。
 2. 沙箱：Router observability 的 `contextPrompt`；task instruction 里的 DWS 命令有没有被执行。
 
 Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 窗口 **不是** Loop 的召回依据。

@@ -1,0 +1,21 @@
+# Normandy SLS scenes for Coordinator LLM reasoning.
+# Used by scripts/query-coordinator-sls.sh and:
+#   unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
+#   normandy log list --config scripts/normandy-coordinator-sls.yaml --scene dt-fde-multica-pre --source sls --query 'inbound_coordinator_llm_request AND conversation_name=冬翔' --size 20 --reverse -o json
+scenes:
+  dt-fde-multica-pre:
+    sources:
+      sls:
+        - project: dt-fde-multica-sls
+          logstores:
+            - name: application-log
+              query: "__tag__:__user_defined_id__: acni_ag_dt-fde-multica_default_prehost and (inbound_coordinator_llm_request or inbound_coordinator_llm or inbound_coordinator_llm_finish or inbound_coordinator_decided)"
+              size: 50
+  dt-fde-multica-prod:
+    sources:
+      sls:
+        - project: dt-fde-multica-sls
+          logstores:
+            - name: application-log
+              query: "__tag__:__user_defined_id__: acni_ag_dt-fde-multica_default_host and (inbound_coordinator_llm_request or inbound_coordinator_llm or inbound_coordinator_llm_finish or inbound_coordinator_decided)"
+              size: 50

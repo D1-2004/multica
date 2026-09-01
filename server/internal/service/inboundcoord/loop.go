@@ -9,8 +9,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
+
+	"github.com/multica-ai/multica/server/internal/util"
 )
 
 const maxLoopRounds = 8
@@ -23,6 +26,7 @@ type Completer interface {
 }
 
 func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) {
+	ensureTurnTraceID(&turn)
 	userPrompt := buildUserPrompt(turn)
 	logCoordinatorLLMRequest(turn, userPrompt)
 	messages := []openai.ChatCompletionMessageParamUnion{
@@ -290,42 +294,72 @@ const (
 	llmLogPromptBudget = 8000
 	llmLogToolBudget   = 4000
 	llmLogFieldBudget  = 400
+	llmLogNameBudget   = 80
 )
+
+func ensureTurnTraceID(turn *Turn) {
+	if turn == nil {
+		return
+	}
+	if strings.TrimSpace(turn.TraceID) == "" {
+		turn.TraceID = uuid.NewString()
+	}
+}
+
+func conversationName(turn Turn) string {
+	if name := strings.TrimSpace(turn.ConversationTitle); name != "" {
+		return clipRunes(name, llmLogNameBudget)
+	}
+	return clipRunes(strings.TrimSpace(turn.SenderName), llmLogNameBudget)
+}
+
+func coordinatorLogIndex(turn Turn) []any {
+	kind := strings.TrimSpace(turn.Kind)
+	if kind == "" {
+		kind = strings.TrimSpace(turn.ChatType)
+	}
+	return []any{
+		"coord_trace_id", strings.TrimSpace(turn.TraceID),
+		"conversation_id", strings.TrimSpace(turn.ConversationID),
+		"conversation_name", conversationName(turn),
+		"conversation_kind", kind,
+		"sender_name", clipRunes(strings.TrimSpace(turn.SenderName), llmLogNameBudget),
+		"person_id", strings.TrimSpace(turn.PersonID),
+		"agent_id", util.UUIDToString(turn.AgentID),
+		"agent_name", strings.TrimSpace(turn.AgentName),
+		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
+		"evidence_id", strings.TrimSpace(turn.EvidenceID),
+		"source", string(turn.Source),
+		"current_message", clipRunes(strings.TrimSpace(turn.Message), llmLogFieldBudget),
+	}
+}
 
 func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
 	slog.Info("inbound coordinator llm request",
-		"event", "inbound_coordinator_llm_request",
-		"source", string(turn.Source),
-		"model", coordinatorModel,
-		"conversation_id", strings.TrimSpace(turn.ConversationID),
-		"person_id", strings.TrimSpace(turn.PersonID),
-		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
-		"evidence_id", strings.TrimSpace(turn.EvidenceID),
-		"chat_type", strings.TrimSpace(turn.ChatType),
-		"addressed", turn.Addressed,
-		"busy", turn.Busy,
-		"current_message", clipRunes(strings.TrimSpace(turn.Message), llmLogFieldBudget),
-		"persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
-		"reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget),
-		"dingtalk_history_count", len(turn.DingTalkHistory),
-		"multica_history_count", len(turn.History),
-		"system_prompt_runes", len([]rune(systemPrompt)),
-		"user_prompt", clipRunes(userPrompt, llmLogPromptBudget),
-		"user_prompt_runes", len([]rune(userPrompt)),
-	)
+		append(coordinatorLogIndex(turn),
+			"event", "inbound_coordinator_llm_request",
+			"model", coordinatorModel,
+			"addressed", turn.Addressed,
+			"busy", turn.Busy,
+			"persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
+			"reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget),
+			"dingtalk_history_count", len(turn.DingTalkHistory),
+			"multica_history_count", len(turn.History),
+			"system_prompt_runes", len([]rune(systemPrompt)),
+			"user_prompt", clipRunes(userPrompt, llmLogPromptBudget),
+			"user_prompt_runes", len([]rune(userPrompt)),
+		)...)
 }
 
 func logCoordinatorLLMTool(turn Turn, round int, name, arguments, result string, failed bool, reason string) {
-	attrs := []any{
+	attrs := append(coordinatorLogIndex(turn),
 		"event", "inbound_coordinator_llm",
 		"tool", name,
 		"round", round,
-		"conversation_id", strings.TrimSpace(turn.ConversationID),
-		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
 		"arguments", clipRunes(strings.TrimSpace(arguments), llmLogToolBudget),
 		"result", clipRunes(strings.TrimSpace(result), llmLogToolBudget),
 		"error", failed,
-	}
+	)
 	if reason != "" {
 		attrs = append(attrs, "reason", reason)
 	}
@@ -334,27 +368,25 @@ func logCoordinatorLLMTool(turn Turn, round int, name, arguments, result string,
 
 func logCoordinatorLLMFinish(turn Turn, round int, arguments string, decision Decision) {
 	slog.Info("inbound coordinator llm finish",
-		"event", "inbound_coordinator_llm_finish",
-		"round", round,
-		"conversation_id", strings.TrimSpace(turn.ConversationID),
-		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
-		"arguments", clipRunes(strings.TrimSpace(arguments), llmLogToolBudget),
-		"action", string(decision.Action),
-		"issue_id", strings.TrimSpace(decision.IssueID),
-		"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
-		"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
-		"reason", clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
-	)
+		append(coordinatorLogIndex(turn),
+			"event", "inbound_coordinator_llm_finish",
+			"round", round,
+			"arguments", clipRunes(strings.TrimSpace(arguments), llmLogToolBudget),
+			"action", string(decision.Action),
+			"issue_id", strings.TrimSpace(decision.IssueID),
+			"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
+			"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
+			"reason", clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
+		)...)
 }
 
 func logCoordinatorLLMNudge(turn Turn, round int, content string) {
 	slog.Info("inbound coordinator llm nudge",
-		"event", "inbound_coordinator_llm_nudge",
-		"round", round,
-		"conversation_id", strings.TrimSpace(turn.ConversationID),
-		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
-		"assistant_text", clipRunes(strings.TrimSpace(content), llmLogFieldBudget),
-	)
+		append(coordinatorLogIndex(turn),
+			"event", "inbound_coordinator_llm_nudge",
+			"round", round,
+			"assistant_text", clipRunes(strings.TrimSpace(content), llmLogFieldBudget),
+		)...)
 }
 
 type recallCall struct {

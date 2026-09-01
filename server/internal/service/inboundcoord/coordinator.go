@@ -83,6 +83,7 @@ type Turn struct {
 	DWSOrgID             string
 	EvidenceID           string
 	Kind                 string
+	TraceID              string
 	IssueDispatchContext []byte
 }
 
@@ -180,14 +181,15 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	if turn.Source != SourceWeb && !turn.Addressed && strings.EqualFold(turn.ChatType, "group") {
 		return Decision{Action: ActionSilence}
 	}
+	ensureTurnTraceID(&turn)
 	if c.coordinatorOff(ctx, turn) {
 		slog.Info("inbound coordinator skipped; agent switch off",
-			"event", "inbound_coordinator_decided",
-			"source", string(turn.Source),
-			"action", string(ActionContinue),
-			"fail_open", false,
-			"switch_off", true,
-		)
+			append(coordinatorLogIndex(turn),
+				"event", "inbound_coordinator_decided",
+				"action", string(ActionContinue),
+				"fail_open", false,
+				"switch_off", true,
+			)...)
 		return Decision{Action: ActionContinue}
 	}
 
@@ -197,65 +199,62 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	if turn.Source != SourceWeb {
 		if c.DWSHistory == nil {
 			slog.Warn("inbound coordinator DWS history unavailable; continuing sandbox enqueue",
-				"event", "inbound_coordinator_dws_history_failed",
-				"source", string(turn.Source),
-				"error_class", "not_configured",
-			)
+				append(coordinatorLogIndex(turn),
+					"event", "inbound_coordinator_dws_history_failed",
+					"error_class", "not_configured",
+				)...)
 			return Decision{Action: ActionContinue}
 		}
 		history, err := c.DWSHistory.Load(loopCtx, turn)
 		if err != nil {
 			slog.Warn("inbound coordinator DWS history failed; continuing sandbox enqueue",
-				"event", "inbound_coordinator_dws_history_failed",
-				"source", string(turn.Source),
-				"error_class", "read_failed",
-				"elapsed_ms", time.Since(started).Milliseconds(),
-				"error", err,
-			)
+				append(coordinatorLogIndex(turn),
+					"event", "inbound_coordinator_dws_history_failed",
+					"error_class", "read_failed",
+					"elapsed_ms", time.Since(started).Milliseconds(),
+					"error", err,
+				)...)
 			return Decision{Action: ActionContinue}
 		}
 		turn.DingTalkHistory = history
 		slog.Info("inbound coordinator DWS history loaded",
-			"event", "inbound_coordinator_dws_history_loaded",
-			"source", string(turn.Source),
-			"message_count", len(history),
-			"elapsed_ms", time.Since(started).Milliseconds(),
-		)
+			append(coordinatorLogIndex(turn),
+				"event", "inbound_coordinator_dws_history_loaded",
+				"message_count", len(history),
+				"elapsed_ms", time.Since(started).Milliseconds(),
+			)...)
 	}
 	decision, err := c.runLoop(loopCtx, turn)
 	elapsed := time.Since(started)
 	if err != nil {
 		slog.Warn("inbound coordinator llm failed; continuing sandbox enqueue",
-			"event", "inbound_coordinator_decided",
-			"source", string(turn.Source),
-			"action", string(ActionContinue),
-			"model", coordinatorModel,
-			"fail_open", true,
-			"elapsed_ms", elapsed.Milliseconds(),
-			"error", err,
-		)
+			append(coordinatorLogIndex(turn),
+				"event", "inbound_coordinator_decided",
+				"action", string(ActionContinue),
+				"model", coordinatorModel,
+				"fail_open", true,
+				"elapsed_ms", elapsed.Milliseconds(),
+				"error", err,
+			)...)
 		return Decision{Action: ActionContinue, ElapsedMs: elapsed.Milliseconds(), Source: turn.Source}
 	}
 	decision.ElapsedMs = elapsed.Milliseconds()
 	decision.Source = turn.Source
 	slog.Info("inbound coordinator decided",
-		"event", "inbound_coordinator_decided",
-		"source", string(turn.Source),
-		"action", string(decision.Action),
-		"model", coordinatorModel,
-		"fail_open", decision.Action == ActionContinue,
-		"tool_rounds", decision.ToolRounds,
-		"tools_used", decision.ToolsUsed,
-		"conversation_id", strings.TrimSpace(turn.ConversationID),
-		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
-		"issue_id", strings.TrimSpace(decision.IssueID),
-		"current_message", clipRunes(strings.TrimSpace(turn.Message), llmLogFieldBudget),
-		"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
-		"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
-		"look_into_runes", utf8.RuneCountInString(decision.LookInto),
-		"reply_runes", utf8.RuneCountInString(decision.UserText),
-		"elapsed_ms", decision.ElapsedMs,
-	)
+		append(coordinatorLogIndex(turn),
+			"event", "inbound_coordinator_decided",
+			"action", string(decision.Action),
+			"model", coordinatorModel,
+			"fail_open", decision.Action == ActionContinue,
+			"tool_rounds", decision.ToolRounds,
+			"tools_used", decision.ToolsUsed,
+			"issue_id", strings.TrimSpace(decision.IssueID),
+			"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
+			"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
+			"look_into_runes", utf8.RuneCountInString(decision.LookInto),
+			"reply_runes", utf8.RuneCountInString(decision.UserText),
+			"elapsed_ms", decision.ElapsedMs,
+		)...)
 	return decision
 }
 

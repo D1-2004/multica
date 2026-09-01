@@ -41,6 +41,7 @@ tree before trusting any line number.
 | Dispatch `scene_graph` segment | `server/internal/handler/agent_dispatch_v2.go` `dispatchSceneGraphInstruction` |
 | Coordinator identity note | `server/internal/service/inboundcoord/prompt.go` `IdentityNote` |
 | Coordinator tool loop | `server/internal/service/inboundcoord/loop.go` `runLoop` |
-| Coordinator LLM context logs | `inbound_coordinator_llm_request` / `inbound_coordinator_llm` / `inbound_coordinator_llm_finish` |
+| Coordinator LLM context logs | `inbound_coordinator_llm_request` / `inbound_coordinator_llm` / `inbound_coordinator_llm_finish`；索引 `conversation_name` / `coord_trace_id` |
+| Coordinator SLS 查询 | `scripts/query-coordinator-sls.sh` → Normandy `log list --source sls` project `dt-fde-multica-sls` |
 | Coordinator `assoc_recall` / `assoc_bind` / `issue_get` / `issue_comment_*` | `server/internal/service/inboundcoord/tools.go` `AssocTools` |
 | Event clipped body | `assoc_event.body` via `Event.Body` / `EventRef.Text` |
