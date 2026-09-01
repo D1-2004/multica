@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS inbound_coordinator_job_acceptance_idx;

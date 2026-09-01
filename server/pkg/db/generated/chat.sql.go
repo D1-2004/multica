@@ -1640,7 +1640,10 @@ SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_
        COALESCE(lm.message_kind, '') AS last_message_kind,
        EXISTS (
          SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-       ) AS is_a2a
+       ) AS is_a2a,
+       EXISTS (
+         SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+       ) AS is_coordinator
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -1697,6 +1700,7 @@ type ListAllChatSessionsByCreatorRow struct {
 	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
 	LastMessageKind          string             `json:"last_message_kind"`
 	IsA2a                    bool               `json:"is_a2a"`
+	IsCoordinator            bool               `json:"is_coordinator"`
 }
 
 // Unlike ListChatSessionsByCreator this returns archived sessions too (for the
@@ -1739,6 +1743,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 			&i.LastMessageFailureReason,
 			&i.LastMessageKind,
 			&i.IsA2a,
+			&i.IsCoordinator,
 		); err != nil {
 			return nil, err
 		}
@@ -2081,7 +2086,10 @@ SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_
        COALESCE(lm.message_kind, '') AS last_message_kind,
        EXISTS (
          SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-       ) AS is_a2a
+       ) AS is_a2a,
+       EXISTS (
+         SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+       ) AS is_coordinator
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -2138,6 +2146,7 @@ type ListChatSessionsByCreatorRow struct {
 	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
 	LastMessageKind          string             `json:"last_message_kind"`
 	IsA2a                    bool               `json:"is_a2a"`
+	IsCoordinator            bool               `json:"is_coordinator"`
 }
 
 // IM-style list: each active session with its unread *count* (assistant
@@ -2176,6 +2185,7 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 			&i.LastMessageFailureReason,
 			&i.LastMessageKind,
 			&i.IsA2a,
+			&i.IsCoordinator,
 		); err != nil {
 			return nil, err
 		}

@@ -241,26 +241,40 @@ type RuntimeInfo struct {
 
 // ChatMessagePayload is broadcast when a new chat message is created.
 type ChatMessagePayload struct {
-	ChatSessionID string                `json:"chat_session_id"`
-	MessageID     string                `json:"message_id"`
-	Role          string                `json:"role"`
-	Content       string                `json:"content"`
-	TaskID        string                `json:"task_id,omitempty"`
-	CreatedAt     string                `json:"created_at"`
-	TraceID       string                `json:"trace_id,omitempty"`
-	MessageKind   string                `json:"message_kind,omitempty"`
-	ElapsedMs     int64                 `json:"elapsed_ms,omitempty"`
-	Coordinator   *ChatCoordinatorTrace `json:"coordinator,omitempty"`
+	ChatSessionID  string                `json:"chat_session_id"`
+	MessageID      string                `json:"message_id"`
+	Role           string                `json:"role"`
+	Content        string                `json:"content"`
+	TaskID         string                `json:"task_id,omitempty"`
+	CreatedAt      string                `json:"created_at"`
+	TraceID        string                `json:"trace_id,omitempty"`
+	MessageKind    string                `json:"message_kind,omitempty"`
+	ElapsedMs      int64                 `json:"elapsed_ms,omitempty"`
+	Coordinator    *ChatCoordinatorTrace `json:"coordinator,omitempty"`
+	SessionCreated bool                  `json:"session_created,omitempty"`
 }
 
 // ChatCoordinatorTrace is the short-loop decision shown next to a coordinator
 // Chat reply. Additive: older clients ignore the field.
 type ChatCoordinatorTrace struct {
-	Action    string `json:"action"`
-	LookInto  string `json:"look_into,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	ElapsedMs int64  `json:"elapsed_ms,omitempty"`
-	Source    string `json:"source,omitempty"`
+	Action    string                `json:"action"`
+	LookInto  string                `json:"look_into,omitempty"`
+	Reason    string                `json:"reason,omitempty"`
+	ElapsedMs int64                 `json:"elapsed_ms,omitempty"`
+	Source    string                `json:"source,omitempty"`
+	Steps     []ChatCoordinatorStep `json:"steps,omitempty"`
+}
+
+// ChatCoordinatorStep is one visible short-loop model/tool timeline item.
+// It intentionally mirrors the ordinary task-message timeline vocabulary.
+type ChatCoordinatorStep struct {
+	Seq     int    `json:"seq"`
+	Type    string `json:"type"`
+	Tool    string `json:"tool,omitempty"`
+	Content string `json:"content,omitempty"`
+	Input   string `json:"input,omitempty"`
+	Output  string `json:"output,omitempty"`
+	Error   bool   `json:"error,omitempty"`
 }
 
 // Chat message kinds (chat_message.message_kind). Additive: unknown values

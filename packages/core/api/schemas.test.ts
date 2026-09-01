@@ -1410,12 +1410,26 @@ describe("SendChatMessageResponseSchema", () => {
       assistant_message_id: "asst-1",
       assistant_content: "在的，今天先对哪件事？",
       assistant_message_kind: "coordinator",
-      coordinator: { action: "reply", reason: "这是打招呼", source: "web" },
+      coordinator: {
+        action: "reply",
+        reason: "这是打招呼",
+        source: "web",
+        steps: [
+          { seq: 1, type: "tool_use", tool: "assoc_recall", input: "{}" },
+          { seq: 2, type: "tool_result", tool: "assoc_recall", output: '{"items":[]}' },
+          { seq: 3, type: "text", content: "在的，今天先对哪件事？" },
+        ],
+      },
     });
     expect(parsed.task_id).toBeUndefined();
     expect(parsed.assistant_message_id).toBe("asst-1");
     expect(parsed.assistant_message_kind).toBe("coordinator");
     expect(parsed.coordinator?.action).toBe("reply");
+    expect(parsed.coordinator?.steps?.map((step) => step.type)).toEqual([
+      "tool_use",
+      "tool_result",
+      "text",
+    ]);
   });
 });
 

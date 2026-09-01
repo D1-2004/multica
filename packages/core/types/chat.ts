@@ -30,6 +30,17 @@ export interface ChatCoordinatorTrace {
   reason?: string;
   elapsed_ms?: number;
   source?: string;
+  steps?: ChatCoordinatorStep[];
+}
+
+export interface ChatCoordinatorStep {
+  seq: number;
+  type: "tool_use" | "tool_result" | "thinking" | "text" | "error";
+  tool?: string;
+  content?: string;
+  input?: string;
+  output?: string;
+  error?: boolean;
 }
 
 /**
@@ -106,6 +117,8 @@ export interface ChatSession {
   last_message?: ChatLastMessage | null;
   /** True when this conversation was created by an inbound A2A Context. */
   is_a2a?: boolean;
+  /** True when this session is the durable transcript of an inbound short loop. */
+  is_coordinator?: boolean;
   /** True when the user has pinned this chat to the top of the list.
    *  Optional so older clients / non-list payloads stay valid. */
   pinned?: boolean;

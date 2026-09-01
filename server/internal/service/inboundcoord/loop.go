@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const maxLoopRounds = 8
@@ -37,21 +38,33 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	var recalls []recallCall
 	recalledIssues := map[string]struct{}{}
 	continuationIssues := map[string]struct{}{}
+	steps := make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2)
+	appendStep := func(step protocol.ChatCoordinatorStep) {
+		step.Seq = len(steps) + 1
+		steps = append(steps, step)
+	}
+	fail := func(err error) (Decision, error) {
+		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
+		return Decision{Steps: append([]protocol.ChatCoordinatorStep{}, steps...)}, err
+	}
 	for round := 0; round < maxLoopRounds; round++ {
 		completion, err := c.complete(ctx, messages, toolsForRound(round))
 		if err != nil {
-			return Decision{}, err
+			return fail(err)
 		}
 		if len(completion.Choices) == 0 {
-			return Decision{}, fmt.Errorf("coordinator loop: no choices")
+			return fail(fmt.Errorf("coordinator loop: no choices"))
 		}
 		msg := completion.Choices[0].Message
+		if content := clipRunes(strings.TrimSpace(msg.Content), 800); content != "" {
+			appendStep(protocol.ChatCoordinatorStep{Type: "thinking", Content: content})
+		}
 		normalizeToolCallTypes(&msg)
 		calls := functionToolCalls(msg)
 		if len(calls) == 0 {
 			logCoordinatorLLMNudge(turn, round, msg.Content)
 			if round >= maxLoopRounds-1 {
-				return Decision{}, fmt.Errorf("coordinator loop: no finish")
+				return fail(fmt.Errorf("coordinator loop: no finish"))
 			}
 			messages = append(messages, msg.ToParam())
 			messages = append(messages, openai.UserMessage(toolRequiredNudge))
@@ -59,8 +72,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		}
 		messages = append(messages, msg.ToParam())
 		for _, call := range calls {
+			appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: clipRunes(call.Arguments, 1200)})
 			if call.Name == toolFinish {
 				if reqErr := requireRecallBeforeFinish(turn, recalls, recalledIssues, continuationIssues, call.Arguments); reqErr != nil {
+					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: reqErr.Error(), Error: true})
 					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
 					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "recall_required")
 					continue
@@ -70,6 +85,13 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				decision.ToolRounds = round + 1
 				decision.ToolsUsed = used
 				logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
+				if reason := clipRunes(strings.TrimSpace(decision.Reason), 800); reason != "" {
+					appendStep(protocol.ChatCoordinatorStep{Type: "thinking", Content: reason})
+				}
+				if text := strings.TrimSpace(decision.UserText); text != "" {
+					appendStep(protocol.ChatCoordinatorStep{Type: "text", Content: text})
+				}
+				decision.Steps = append([]protocol.ChatCoordinatorStep{}, steps...)
 				return decision, nil
 			}
 			used = append(used, call.Name)
@@ -77,16 +99,18 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				recalls = append(recalls, parseRecallCall(call.Arguments))
 			}
 			if reqErr := requireRecalledIssueForTool(call.Name, call.Arguments, recalledIssues); reqErr != nil {
+				appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: reqErr.Error(), Error: true})
 				messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
 				logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "issue_not_recalled")
 				continue
 			}
 			result, callErr := c.callTool(ctx, turn, call.Name, call.Arguments)
 			if errors.Is(callErr, ErrIssueBusy) {
+				appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: callErr.Error(), Error: true})
 				logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, callErr.Error(), true, "issue_busy")
 				return Decision{
 					Action: ActionRetry, IssueID: issueIDFromToolArguments(call.Arguments),
-					ToolRounds: round + 1, ToolsUsed: used,
+					ToolRounds: round + 1, ToolsUsed: used, Steps: append([]protocol.ChatCoordinatorStep{}, steps...),
 				}, nil
 			}
 			if callErr != nil {
@@ -95,8 +119,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
 			} else if call.Name == toolIssueCommentAdd {
 				if effect, ok := parseIssueCommentEffect(result); ok {
+					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 1600)})
 					replyText := issueCommentReplyText(call.Arguments)
 					if replyText == "" {
+						appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: "reply_text is required", Error: true})
 						messages = append(messages, openai.ToolMessage(`{"error":"reply_text is required"}`, call.ID))
 						logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, "reply_text is required", true, "reply_text_required")
 						continue
@@ -109,17 +135,21 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						ToolRounds:   round + 1,
 						ToolsUsed:    used,
 						IssueComment: &effect,
+						Steps: append(append([]protocol.ChatCoordinatorStep{}, steps...), protocol.ChatCoordinatorStep{
+							Seq: len(steps) + 1, Type: "text", Content: replyText,
+						}),
 					}
 					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, false, "terminal")
 					logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
 					return decision, nil
 				}
 			}
+			appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 1600), Error: callErr != nil})
 			messages = append(messages, openai.ToolMessage(result, call.ID))
 			logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, callErr != nil, "")
 		}
 	}
-	return Decision{}, fmt.Errorf("coordinator loop: exceeded %d rounds", maxLoopRounds)
+	return fail(fmt.Errorf("coordinator loop: exceeded %d rounds", maxLoopRounds))
 }
 
 func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) (*openai.ChatCompletion, error) {

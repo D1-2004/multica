@@ -308,6 +308,21 @@ func (h *Handler) handleAgentDispatchV2(
 		recovered.Forward(w)
 		return
 	}
+	if h.InboundCoordinatorWorker != nil && shouldDeferInboundCoordinator(command, plan) {
+		response, _, enqueueErr := h.enqueueInboundCoordinatorJob(
+			r.Context(), acceptance, command, dispatchContext, idempotencyKey, plan.Prompt.DisplayContent,
+		)
+		if enqueueErr != nil {
+			h.releaseAgentDispatchAcceptance(r.Context(), acceptance)
+			writeError(w, http.StatusInternalServerError, "failed to persist inbound coordinator job")
+			return
+		}
+		if h.InboundCoordinatorWorker != nil {
+			h.InboundCoordinatorWorker.Notify()
+		}
+		response.Forward(w)
+		return
+	}
 
 	buffered := newBufferedDispatchResponse()
 	h.executeAgentDispatchV2(buffered, r, command, plan, dispatchContext)
@@ -343,7 +358,9 @@ func (h *Handler) executeAgentDispatchV2(
 			"eventType", command.Event.Type,
 			"sourceType", command.Source.Type,
 		)
-		if writeDispatchCoordinatorTerminal(w, r.Context(), h, command, dispatchContext, inboundcoord.Decision{Action: inboundcoord.ActionSilence}) {
+		decision := inboundcoord.Decision{Action: inboundcoord.ActionSilence, Source: coordinatorSource(command)}
+		recordCoordinatorDecision(r.Context(), decision)
+		if writeDispatchCoordinatorTerminal(w, r.Context(), h, command, dispatchContext, decision) {
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
@@ -1187,7 +1204,9 @@ func decideDispatchCoordinator(
 		turn.Busy = true
 	}
 	coord.FillVoice(ctx, &turn)
-	return coord.Decide(ctx, turn)
+	decision := coord.Decide(ctx, turn)
+	recordCoordinatorDecision(ctx, decision)
+	return decision
 }
 
 func dispatchCoordinatorDWSIdentity(command DispatchCommand) (string, string) {

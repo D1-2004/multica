@@ -331,6 +331,11 @@ export function ChatThreadList({
                 {t(($) => $.a2a_label)}
               </Badge>
             )}
+            {session.is_coordinator === true && (
+              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[9px] leading-none">
+                {t(($) => $.message_list.coordinator_badge)}
+              </Badge>
+            )}
             <span className="ml-auto shrink-0 text-micro text-muted-foreground">{timeText}</span>
           </div>
 

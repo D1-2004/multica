@@ -765,6 +765,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
 	})
 	h.InboundCoordinator = coordinator
+	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
 	channelRouter.SetInboundCoordinator(coordinator)
 	channelRouter.SetSceneAssociator(h.Assoc)
 	// So an inbound DingTalk/Slack/Lark message appears in a web client

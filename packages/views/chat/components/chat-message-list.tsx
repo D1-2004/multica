@@ -875,6 +875,17 @@ function CoordinatorBadge({ source }: { source?: string }) {
 
 function coordinatorTimeline(message?: ChatMessage): ChatTimelineItem[] {
   if (!message) return [];
+  const persisted = message.coordinator?.steps ?? [];
+  if (persisted.length > 0) {
+    return persisted.map((step) => ({
+      seq: step.seq,
+      type: step.error ? "error" : step.type,
+      tool: step.tool,
+      content: step.error ? (step.content ?? step.output) : step.content,
+      input: parseCoordinatorInput(step.input),
+      output: step.output,
+    }));
+  }
   const items: ChatTimelineItem[] = [];
   const reason = message.coordinator?.reason?.trim();
   if (reason) {
@@ -882,6 +893,21 @@ function coordinatorTimeline(message?: ChatMessage): ChatTimelineItem[] {
   }
   items.push({ seq: items.length + 1, type: "text", content: message.content });
   return items;
+}
+
+function parseCoordinatorInput(
+  input?: string,
+): Record<string, unknown> | undefined {
+  if (!input) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(input);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    // Keep non-JSON tool input visible instead of hiding the step.
+  }
+  return { input };
 }
 
 // Inline footer row beneath the assistant reply: "Replied in 38s · [Copy]".

@@ -37,6 +37,16 @@ that already persisted the member comment and `reply_text`. Graph questions (wha
 with that exact id; empty items means unknown. Only work that needs DWS,
 search, files, or tracking becomes an Issue and starts a sandbox.
 
+For Router-backed `channel/message.created` commands that materialize an Issue,
+HTTP acceptance and coordinator execution are separate durability boundaries.
+Multica atomically stores the accepted 202 response, a PostgreSQL coordinator
+job, and a read-only Coordinator Chat before replying to Router. The Router's
+10-second read timeout therefore covers only validation and durable admission;
+it does not cover DWS history or model latency. Concurrent workers claim jobs
+with `FOR UPDATE SKIP LOCKED`, recover expired one-minute leases after a replica
+restart, and keep the existing execution-update/execution-result callbacks as
+the terminal delivery contract.
+
 For a digital-employee direct message, an `assoc_recall` hit on exactly one
 open or waiting Issue through `outreach` / `waiting_on` makes the inbound turn
 an Issue continuation. The loop reads that Issue and calls `issue_comment_add`
@@ -85,10 +95,14 @@ Agent comment therefore replies with that comment even when the run-wide
 `reply_decision` is silent. Robots post the same sentences through the
 Robot SDK replier; Router `resultMessage` does not send a second DWS copy.
 
-The same Chat session is the web transcript. Coordinator replies (web, robot,
-or digital employee) persist as `message_kind=coordinator` with the short-loop
-reason on the assistant row, so the web Chat can label them and fold the
-decision process without a sandbox timeline.
+Web Chat keeps its existing session. Router-backed robot and digital-employee
+short loops each create a dedicated read-only Chat session marked
+`is_coordinator=true`. The session is visible as soon as durable admission
+commits, and the completed assistant row persists as
+`message_kind=coordinator`. Its trace contains the DWS history read and every
+model/tool step, so the ordinary Chat timeline renders the complete decision
+process without a sandbox task. Coordinator sessions and message rows carry a
+`Coordinator` label; their composer is disabled.
 
 Calendar, approval, emotion-only, and A2A events skip this loop. Digital-employee
 `emotionReply` events whose operator is the agent itself (Router 处理中/已完成

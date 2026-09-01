@@ -1187,6 +1187,20 @@ const ChatQuickActionSchema = z
   })
   .loose();
 
+const ChatCoordinatorStepSchema = z
+  .object({
+    seq: z.number(),
+    type: z
+      .enum(["tool_use", "tool_result", "thinking", "text", "error"])
+      .catch("error"),
+    tool: z.string().optional(),
+    content: z.string().optional(),
+    input: z.string().optional(),
+    output: z.string().optional(),
+    error: z.boolean().optional(),
+  })
+  .loose();
+
 export const ChatMessageSchema = z
   .object({
     id: z.string(),
@@ -1215,6 +1229,7 @@ export const ChatMessageSchema = z
         reason: z.string().optional(),
         elapsed_ms: z.number().optional(),
         source: z.string().optional(),
+        steps: z.array(ChatCoordinatorStepSchema).catch([]).optional(),
       })
       .optional(),
     // Optional additive data degrades independently: a malformed suggestion
@@ -2410,6 +2425,7 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
           reason: z.string().optional(),
           elapsed_ms: z.number().optional(),
           source: z.string().optional(),
+          steps: z.array(ChatCoordinatorStepSchema).catch([]).optional(),
         })
         .optional(),
     })

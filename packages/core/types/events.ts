@@ -372,6 +372,8 @@ export interface ChatMessageEventPayload {
   message_kind?: ChatMessageKind;
   elapsed_ms?: number;
   coordinator?: ChatCoordinatorTrace;
+  /** True when this message also introduced a server-created Chat session. */
+  session_created?: boolean;
 }
 
 export interface ChatDonePayload {

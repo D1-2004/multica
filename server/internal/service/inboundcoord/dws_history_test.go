@@ -85,6 +85,12 @@ func TestDecideLoadsDWSHistoryForRobotAndDigitalEmployee(t *testing.T) {
 			if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "看看今天的新闻") {
 				t.Fatalf("DWS history missing from prompt: %q", prompt)
 			}
+			if len(got.Steps) < 2 || got.Steps[0].Tool != "dws_chat_history" || got.Steps[0].Type != "tool_use" || got.Steps[1].Type != "tool_result" {
+				t.Fatalf("DWS timeline missing: %#v", got.Steps)
+			}
+			if !strings.Contains(got.Steps[1].Output, "看看今天的新闻") {
+				t.Fatalf("DWS timeline omitted loaded content: %#v", got.Steps[1])
+			}
 		})
 	}
 }
@@ -106,6 +112,9 @@ func TestDecideDWSHistoryFailureContinuesWithoutLLM(t *testing.T) {
 	})
 	if got.Action != ActionContinue || calls.Load() != 0 || loader.calls != 1 {
 		t.Fatalf("decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	}
+	if len(got.Steps) != 2 || !got.Steps[1].Error || got.Steps[1].Tool != "dws_chat_history" {
+		t.Fatalf("DWS failure timeline=%#v", got.Steps)
 	}
 }
 

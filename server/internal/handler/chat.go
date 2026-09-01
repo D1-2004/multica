@@ -145,7 +145,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, chatSessionToResponse(session, false))
+	writeJSON(w, http.StatusCreated, chatSessionToResponse(session, false, false))
 }
 
 func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
@@ -192,20 +192,21 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			resp = append(resp, ChatSessionResponse{
-				ID:          uuidToString(s.ID),
-				WorkspaceID: uuidToString(s.WorkspaceID),
-				AgentID:     uuidToString(s.AgentID),
-				CreatorID:   uuidToString(s.CreatorID),
-				ProjectID:   uuidToPtr(s.ProjectID),
-				Title:       s.Title,
-				Status:      s.Status,
-				HasUnread:   s.UnreadCount > 0,
-				UnreadCount: int(s.UnreadCount),
-				LastMessage: buildChatLastMessage(s.LastMessageAt, s.LastMessageContent, s.LastMessageRole, s.LastMessageFailureReason, s.LastMessageKind),
-				IsA2A:       s.IsA2a,
-				Pinned:      s.PinnedAt.Valid,
-				CreatedAt:   timestampToString(s.CreatedAt),
-				UpdatedAt:   timestampToString(s.UpdatedAt),
+				ID:            uuidToString(s.ID),
+				WorkspaceID:   uuidToString(s.WorkspaceID),
+				AgentID:       uuidToString(s.AgentID),
+				CreatorID:     uuidToString(s.CreatorID),
+				ProjectID:     uuidToPtr(s.ProjectID),
+				Title:         s.Title,
+				Status:        s.Status,
+				HasUnread:     s.UnreadCount > 0,
+				UnreadCount:   int(s.UnreadCount),
+				LastMessage:   buildChatLastMessage(s.LastMessageAt, s.LastMessageContent, s.LastMessageRole, s.LastMessageFailureReason, s.LastMessageKind),
+				IsA2A:         s.IsA2a,
+				IsCoordinator: s.IsCoordinator,
+				Pinned:        s.PinnedAt.Valid,
+				CreatedAt:     timestampToString(s.CreatedAt),
+				UpdatedAt:     timestampToString(s.UpdatedAt),
 			})
 		}
 	} else {
@@ -223,20 +224,21 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			resp = append(resp, ChatSessionResponse{
-				ID:          uuidToString(s.ID),
-				WorkspaceID: uuidToString(s.WorkspaceID),
-				AgentID:     uuidToString(s.AgentID),
-				CreatorID:   uuidToString(s.CreatorID),
-				ProjectID:   uuidToPtr(s.ProjectID),
-				Title:       s.Title,
-				Status:      s.Status,
-				HasUnread:   s.UnreadCount > 0,
-				UnreadCount: int(s.UnreadCount),
-				LastMessage: buildChatLastMessage(s.LastMessageAt, s.LastMessageContent, s.LastMessageRole, s.LastMessageFailureReason, s.LastMessageKind),
-				IsA2A:       s.IsA2a,
-				Pinned:      s.PinnedAt.Valid,
-				CreatedAt:   timestampToString(s.CreatedAt),
-				UpdatedAt:   timestampToString(s.UpdatedAt),
+				ID:            uuidToString(s.ID),
+				WorkspaceID:   uuidToString(s.WorkspaceID),
+				AgentID:       uuidToString(s.AgentID),
+				CreatorID:     uuidToString(s.CreatorID),
+				ProjectID:     uuidToPtr(s.ProjectID),
+				Title:         s.Title,
+				Status:        s.Status,
+				HasUnread:     s.UnreadCount > 0,
+				UnreadCount:   int(s.UnreadCount),
+				LastMessage:   buildChatLastMessage(s.LastMessageAt, s.LastMessageContent, s.LastMessageRole, s.LastMessageFailureReason, s.LastMessageKind),
+				IsA2A:         s.IsA2a,
+				IsCoordinator: s.IsCoordinator,
+				Pinned:        s.PinnedAt.Valid,
+				CreatedAt:     timestampToString(s.CreatedAt),
+				UpdatedAt:     timestampToString(s.UpdatedAt),
 			})
 		}
 	}
@@ -329,8 +331,13 @@ func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to resolve chat session type")
 		return
 	}
+	isCoordinator, coordinatorErr := h.Queries.IsCoordinatorChatSession(r.Context(), session.ID)
+	if coordinatorErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve coordinator session type")
+		return
+	}
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(session, isA2A))
+	writeJSON(w, http.StatusOK, chatSessionToResponse(session, isA2A, isCoordinator))
 }
 
 type UpdateChatSessionRequest struct {
@@ -370,6 +377,11 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	isA2A, a2aErr := h.Queries.IsA2AChatSession(r.Context(), session.ID)
 	if a2aErr != nil {
 		writeError(w, http.StatusInternalServerError, "failed to resolve chat session type")
+		return
+	}
+	isCoordinator, coordinatorErr := h.Queries.IsCoordinatorChatSession(r.Context(), session.ID)
+	if coordinatorErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve coordinator session type")
 		return
 	}
 
@@ -460,7 +472,7 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 	h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, payload)
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A))
+	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A, isCoordinator))
 }
 
 type SetChatSessionPinnedRequest struct {
@@ -494,6 +506,11 @@ func (h *Handler) SetChatSessionPinned(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to resolve chat session type")
 		return
 	}
+	isCoordinator, coordinatorErr := h.Queries.IsCoordinatorChatSession(r.Context(), session.ID)
+	if coordinatorErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve coordinator session type")
+		return
+	}
 
 	updated, err := h.Queries.SetChatSessionPinned(r.Context(), db.SetChatSessionPinnedParams{
 		ID:     session.ID,
@@ -513,7 +530,7 @@ func (h *Handler) SetChatSessionPinned(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:     timestampToString(updated.UpdatedAt),
 	})
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A))
+	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A, isCoordinator))
 }
 
 type SetChatSessionArchivedRequest struct {
@@ -574,6 +591,11 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 	isA2A, err := qtx.IsA2AChatSession(r.Context(), session.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to resolve chat session type")
+		return
+	}
+	isCoordinator, coordinatorErr := qtx.IsCoordinatorChatSession(r.Context(), session.ID)
+	if coordinatorErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve coordinator session type")
 		return
 	}
 
@@ -668,7 +690,7 @@ func (h *Handler) SetChatSessionArchived(w http.ResponseWriter, r *http.Request)
 		UpdatedAt:     timestampToString(updated.UpdatedAt),
 	})
 
-	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A))
+	writeJSON(w, http.StatusOK, chatSessionToResponse(updated, isA2A, isCoordinator))
 }
 
 // DeleteChatSession hard-deletes a chat session owned by the caller. The
@@ -754,6 +776,21 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	// editing. A no-op for ordinary chats, which never have one.
 	if err := qtx.DeleteAgentBuilderDraft(r.Context(), session.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete agent builder draft")
+		return
+	}
+
+	coordinatorStatus, coordinatorErr := qtx.GetInboundCoordinatorJobStatusByChatSession(r.Context(), session.ID)
+	switch {
+	case coordinatorErr == nil && (coordinatorStatus == "pending" || coordinatorStatus == "running"):
+		writeError(w, http.StatusConflict, "coordinator session is still processing")
+		return
+	case coordinatorErr == nil:
+		if err := qtx.DeleteInboundCoordinatorJobByChatSession(r.Context(), session.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete coordinator session state")
+			return
+		}
+	case !errors.Is(coordinatorErr, pgx.ErrNoRows):
+		writeError(w, http.StatusInternalServerError, "failed to load coordinator session state")
 		return
 	}
 
@@ -878,6 +915,15 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// soft-archived rows from before the feature are covered by the same check.
 	if session.Status != "active" {
 		writeError(w, http.StatusBadRequest, "chat session is archived")
+		return
+	}
+	isCoordinator, err := h.Queries.IsCoordinatorChatSession(r.Context(), session.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve coordinator session type")
+		return
+	}
+	if isCoordinator {
+		writeError(w, http.StatusConflict, "coordinator session is read-only")
 		return
 	}
 
@@ -2184,6 +2230,8 @@ type ChatSessionResponse struct {
 	// IsA2A marks sessions created by an inbound A2A Context so clients can
 	// distinguish externally initiated conversations without parsing titles.
 	IsA2A bool `json:"is_a2a"`
+	// IsCoordinator marks durable inbound short-loop transcripts.
+	IsCoordinator bool `json:"is_coordinator"`
 	// Pinned marks a chat the user has stuck to the top of the list. Populated
 	// by list endpoints and by the pin/unpin + single-session responses.
 	Pinned    bool   `json:"pinned"`
@@ -2247,19 +2295,20 @@ type ChatMessageResponse struct {
 	Attachments []AttachmentResponse `json:"attachments,omitempty"`
 }
 
-func chatSessionToResponse(s db.ChatSession, isA2A bool) ChatSessionResponse {
+func chatSessionToResponse(s db.ChatSession, isA2A, isCoordinator bool) ChatSessionResponse {
 	return ChatSessionResponse{
-		ID:          uuidToString(s.ID),
-		WorkspaceID: uuidToString(s.WorkspaceID),
-		AgentID:     uuidToString(s.AgentID),
-		CreatorID:   uuidToString(s.CreatorID),
-		ProjectID:   uuidToPtr(s.ProjectID),
-		Title:       s.Title,
-		Status:      s.Status,
-		IsA2A:       isA2A,
-		Pinned:      s.PinnedAt.Valid,
-		CreatedAt:   timestampToString(s.CreatedAt),
-		UpdatedAt:   timestampToString(s.UpdatedAt),
+		ID:            uuidToString(s.ID),
+		WorkspaceID:   uuidToString(s.WorkspaceID),
+		AgentID:       uuidToString(s.AgentID),
+		CreatorID:     uuidToString(s.CreatorID),
+		ProjectID:     uuidToPtr(s.ProjectID),
+		Title:         s.Title,
+		Status:        s.Status,
+		IsA2A:         isA2A,
+		IsCoordinator: isCoordinator,
+		Pinned:        s.PinnedAt.Valid,
+		CreatedAt:     timestampToString(s.CreatedAt),
+		UpdatedAt:     timestampToString(s.UpdatedAt),
 	}
 }
 

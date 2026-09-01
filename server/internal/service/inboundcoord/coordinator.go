@@ -106,6 +106,7 @@ type Decision struct {
 	ToolRounds   int
 	ToolsUsed    []string
 	IssueComment *IssueCommentEffect
+	Steps        []protocol.ChatCoordinatorStep
 }
 
 type historyReader interface {
@@ -196,17 +197,23 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
 	defer cancel()
 	started := time.Now()
+	var preflightSteps []protocol.ChatCoordinatorStep
 	if turn.Source != SourceWeb {
 		if c.DWSHistory == nil {
+			preflightSteps = coordinatorDWSHistorySteps(turn, nil, fmt.Errorf("DWS history is not configured"))
 			slog.Warn("inbound coordinator DWS history unavailable; continuing sandbox enqueue",
 				append(coordinatorLogIndex(turn),
 					"event", "inbound_coordinator_dws_history_failed",
 					"error_class", "not_configured",
 				)...)
-			return Decision{Action: ActionContinue}
+			return Decision{
+				Action: ActionContinue, ElapsedMs: time.Since(started).Milliseconds(), Source: turn.Source,
+				Steps: preflightSteps,
+			}
 		}
 		history, err := c.DWSHistory.Load(loopCtx, turn)
 		if err != nil {
+			preflightSteps = coordinatorDWSHistorySteps(turn, nil, err)
 			slog.Warn("inbound coordinator DWS history failed; continuing sandbox enqueue",
 				append(coordinatorLogIndex(turn),
 					"event", "inbound_coordinator_dws_history_failed",
@@ -214,9 +221,13 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 					"elapsed_ms", time.Since(started).Milliseconds(),
 					"error", err,
 				)...)
-			return Decision{Action: ActionContinue}
+			return Decision{
+				Action: ActionContinue, ElapsedMs: time.Since(started).Milliseconds(), Source: turn.Source,
+				Steps: preflightSteps,
+			}
 		}
 		turn.DingTalkHistory = history
+		preflightSteps = coordinatorDWSHistorySteps(turn, history, nil)
 		slog.Info("inbound coordinator DWS history loaded",
 			append(coordinatorLogIndex(turn),
 				"event", "inbound_coordinator_dws_history_loaded",
@@ -226,6 +237,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	}
 	decision, err := c.runLoop(loopCtx, turn)
 	elapsed := time.Since(started)
+	decision.Steps = mergeCoordinatorSteps(preflightSteps, decision.Steps)
 	if err != nil {
 		slog.Warn("inbound coordinator llm failed; continuing sandbox enqueue",
 			append(coordinatorLogIndex(turn),
@@ -236,7 +248,10 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 				"elapsed_ms", elapsed.Milliseconds(),
 				"error", err,
 			)...)
-		return Decision{Action: ActionContinue, ElapsedMs: elapsed.Milliseconds(), Source: turn.Source}
+		decision.Action = ActionContinue
+		decision.ElapsedMs = elapsed.Milliseconds()
+		decision.Source = turn.Source
+		return decision
 	}
 	decision.ElapsedMs = elapsed.Milliseconds()
 	decision.Source = turn.Source
@@ -258,6 +273,53 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 	return decision
 }
 
+func coordinatorDWSHistorySteps(turn Turn, history []HistoryLine, loadErr error) []protocol.ChatCoordinatorStep {
+	input, _ := json.Marshal(map[string]any{
+		"conversation_id": strings.TrimSpace(turn.ConversationID),
+		"limit":           dingtalkHistoryLimit,
+	})
+	steps := []protocol.ChatCoordinatorStep{{
+		Seq: 1, Type: "tool_use", Tool: "dws_chat_history", Input: string(input),
+	}}
+	if loadErr != nil {
+		steps = append(steps, protocol.ChatCoordinatorStep{
+			Seq: 2, Type: "tool_result", Tool: "dws_chat_history",
+			Output: clipRunes(loadErr.Error(), 800), Error: true,
+		})
+		return steps
+	}
+	type visibleHistoryLine struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	visible := make([]visibleHistoryLine, 0, len(history))
+	for _, line := range history {
+		visible = append(visible, visibleHistoryLine{
+			Role: clipRunes(strings.TrimSpace(line.Role), 80), Content: clipRunes(strings.TrimSpace(line.Content), 800),
+		})
+	}
+	output, _ := json.Marshal(map[string]any{"message_count": len(history), "messages": visible})
+	steps = append(steps, protocol.ChatCoordinatorStep{
+		Seq: 2, Type: "tool_result", Tool: "dws_chat_history", Output: clipRunes(string(output), 4000),
+	})
+	return steps
+}
+
+func mergeCoordinatorSteps(groups ...[]protocol.ChatCoordinatorStep) []protocol.ChatCoordinatorStep {
+	count := 0
+	for _, group := range groups {
+		count += len(group)
+	}
+	steps := make([]protocol.ChatCoordinatorStep, 0, count)
+	for _, group := range groups {
+		for _, step := range group {
+			step.Seq = len(steps) + 1
+			steps = append(steps, step)
+		}
+	}
+	return steps
+}
+
 // Trace is the user-visible short-loop record persisted with the Chat reply.
 func (d Decision) Trace() protocol.ChatCoordinatorTrace {
 	return protocol.ChatCoordinatorTrace{
@@ -266,6 +328,7 @@ func (d Decision) Trace() protocol.ChatCoordinatorTrace {
 		Reason:    d.Reason,
 		ElapsedMs: d.ElapsedMs,
 		Source:    string(d.Source),
+		Steps:     d.Steps,
 	}
 }
 

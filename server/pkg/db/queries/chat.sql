@@ -69,7 +69,10 @@ SELECT cs.*,
        COALESCE(lm.message_kind, '') AS last_message_kind,
        EXISTS (
          SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-       ) AS is_a2a
+       ) AS is_a2a,
+       EXISTS (
+         SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+       ) AS is_coordinator
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -118,7 +121,10 @@ SELECT cs.*,
        COALESCE(lm.message_kind, '') AS last_message_kind,
        EXISTS (
          SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-       ) AS is_a2a
+       ) AS is_a2a,
+       EXISTS (
+         SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+       ) AS is_coordinator
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind

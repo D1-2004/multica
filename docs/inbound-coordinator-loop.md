@@ -28,6 +28,26 @@ Coordinator Loop 是入站消息进沙箱之前的短接待。它不是第二个
 
 快循环不暴露 DWS / 搜索 / 新闻给模型。服务端在第一轮模型之前自己拉当前 cid 的钉钉历史。沙箱 ContextToken 不用。
 
+### 1.1 Router 接单与短循环执行分离
+
+Router 的 HTTP 请求不等待 DWS 或模型。对带 `completionCallback` 的
+`channel/message.created` Issue 入站，Multica 在一个数据库事务里写入：
+
+1. dispatch acceptance 的 `202 {"status":"accepted"}`；
+2. 一条持久化 `inbound_coordinator_job`；
+3. 一个只读 Coordinator Chat 和本轮用户消息。
+
+事务提交后立即把 202 回给 Router，后台 worker 再执行 DWS 拉取、最多 8 轮工具调用、
+Issue/评论写入和原有 callback。每个副本有 8 个并发 worker；PostgreSQL
+`FOR UPDATE SKIP LOCKED` 让每条消息独立领取，1 分钟 lease 负责进程重启后的恢复，
+可重试错误最多 6 次。Router 的 10 秒读超时因此不再包住短循环，也不会因为
+acceptance 仍为 pending 而进入 409 重试。
+
+每个入站短循环对应一个 Multica Chat，会话级显示 `Coordinator` 标签。接单提交后
+会话立即出现在列表；执行完成后，assistant 行保存 `message_kind=coordinator`，并按普通
+Chat timeline 展示 DWS 历史拉取、模型判断、tool use、tool result 和最终文本。这个 Chat
+只展示短循环记录，不接受用户继续输入。
+
 ---
 
 ## 2. 人设放在哪里
@@ -344,6 +364,7 @@ Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 
 | `assoc_recall` / `assoc_bind` 实现 | `tools.go` → `server/internal/assoc` |
 | 钉钉历史 + 引用内联 | `dws_history.go` |
 | DE Dispatch 入站 | `handler/agent_dispatch_v2_handler.go` `decideDispatchCoordinator`；`/reset-memory` 在 `tryDispatchResetMemory` |
+| 持久化接单、并发 worker、Coordinator Chat | `handler/inbound_coordinator_job.go` |
 | 网页 / 机器人 Turn | `handler/chat.go`、`integrations/channel/engine/router.go` |
 | 人设 API / 页 | `handler/agent_voice.go`、`packages/views/agents/.../instructions-tab.tsx` |
 | 沙箱场景图指令 | `handler/agent_dispatch_v2.go` `dispatchSceneGraphInstruction` |
@@ -368,6 +389,7 @@ Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 
 ### 引用 / 历史
 
 - Loop 失败（DWS 身份不完整、list 失败）会 **整段跳过** Coordinator，用户失去人设接待。
+- Coordinator Chat 在短循环完成后一次性写入完整 timeline；当前不逐步流式刷新每个工具调用。
 - 两路历史不对齐：Loop 10×160 字；沙箱是 Router 窗口 + 按需 DWS。Agent 可能再拉一遍 Loop 已经看过的引用。
 - 数字员工 Event 里的 pair 与 Context 里的 cid 并存。场域必须用 cid；pair 只用于没有 cid 时的会话路由。
 

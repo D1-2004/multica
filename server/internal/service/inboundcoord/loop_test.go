@@ -192,6 +192,21 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	if len(chat.params) != 2 {
 		t.Fatalf("rounds=%d", len(chat.params))
 	}
+	wantStepTypes := []string{"tool_use", "tool_result", "tool_use", "thinking", "text"}
+	if len(got.Steps) != len(wantStepTypes) {
+		t.Fatalf("steps=%#v", got.Steps)
+	}
+	for i, wantType := range wantStepTypes {
+		if got.Steps[i].Seq != i+1 || got.Steps[i].Type != wantType {
+			t.Fatalf("step[%d]=%#v, want seq=%d type=%s", i, got.Steps[i], i+1, wantType)
+		}
+	}
+	if got.Steps[0].Tool != toolAssocRecall || got.Steps[1].Tool != toolAssocRecall || got.Steps[2].Tool != toolFinish {
+		t.Fatalf("tool timeline=%#v", got.Steps)
+	}
+	if got.Steps[3].Content != "要向同事确认" || got.Steps[4].Content != got.UserText {
+		t.Fatalf("decision timeline=%#v", got.Steps)
+	}
 	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,assoc_bind,issue_get,issue_comment_list,issue_comment_add,finish" {
 		t.Fatalf("round0 tools=%v", names)
 	}
@@ -294,9 +309,12 @@ func TestLoopExceedsRounds(t *testing.T) {
 	}
 	chat := &scriptedCompleter{rounds: rounds}
 	c := &Coordinator{Chat: chat, Tools: &stubTools{}}
-	_, err := c.runLoop(context.Background(), Turn{Source: SourceWeb, Message: "查一下"})
+	decision, err := c.runLoop(context.Background(), Turn{Source: SourceWeb, Message: "查一下"})
 	if err == nil || !strings.Contains(err.Error(), "exceeded") {
 		t.Fatalf("err=%v", err)
+	}
+	if len(decision.Steps) == 0 || decision.Steps[len(decision.Steps)-1].Type != "error" {
+		t.Fatalf("failed loop lost timeline: %#v", decision.Steps)
 	}
 }
 

@@ -26,6 +26,7 @@ import {
   Square,
 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { cn } from "@multica/ui/lib/utils";
 import {
   Tooltip,
@@ -1060,7 +1061,8 @@ export function ChatWindow() {
         isRunning={!!pendingTaskId}
         allowSubmitWhileRunning={pendingTask?.supports_queue === true}
         disabled={
-          isSessionArchived || isAgentArchived || !activeAgentRuntimeBound
+          isSessionArchived || isAgentArchived || !activeAgentRuntimeBound ||
+          currentSession?.is_coordinator === true
         }
         noAgent={noAgent}
         agentArchived={isAgentArchived}
@@ -1545,19 +1547,29 @@ function SessionDropdown({
               {t(($) => $.session_history.stop_dialog.title)}
             </div>
           ) : (
-            <div
-              className={cn(
-                "truncate text-body",
-                (showUnread || showCompleted) && !isRunning && "font-medium",
+            <div className="flex min-w-0 items-center gap-1">
+              <div
+                className={cn(
+                  "min-w-0 flex-1 truncate text-body",
+                  (showUnread || showCompleted) && !isRunning && "font-medium",
+                )}
+                style={{
+                  maskImage:
+                    "linear-gradient(to right, black calc(100% - 18px), transparent)",
+                  WebkitMaskImage:
+                    "linear-gradient(to right, black calc(100% - 18px), transparent)",
+                }}
+              >
+                {titleText}
+              </div>
+              {session.is_coordinator === true && (
+                <Badge
+                  variant="outline"
+                  className="h-4 shrink-0 px-1 text-[9px] leading-none"
+                >
+                  {t(($) => $.message_list.coordinator_badge)}
+                </Badge>
               )}
-              style={{
-                maskImage:
-                  "linear-gradient(to right, black calc(100% - 18px), transparent)",
-                WebkitMaskImage:
-                  "linear-gradient(to right, black calc(100% - 18px), transparent)",
-              }}
-            >
-              {titleText}
             </div>
           )}
         </div>
