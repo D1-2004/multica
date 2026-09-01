@@ -74,17 +74,12 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			}
 			if reqErr := requireRecalledIssueForTool(call.Name, call.Arguments, recalledIssues); reqErr != nil {
 				messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
-				slog.Info("inbound coordinator tool",
-					"event", "inbound_coordinator_tool",
-					"tool", call.Name,
-					"round", round,
-					"error", true,
-					"reason", "issue_not_recalled",
-				)
+				logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "issue_not_recalled")
 				continue
 			}
 			result, callErr := c.callTool(ctx, turn, call.Name, call.Arguments)
 			if errors.Is(callErr, ErrIssueBusy) {
+				logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, callErr.Error(), true, "issue_busy")
 				return Decision{
 					Action: ActionRetry, IssueID: issueIDFromToolArguments(call.Arguments),
 					ToolRounds: round + 1, ToolsUsed: used,
@@ -99,16 +94,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					replyText := issueCommentReplyText(call.Arguments)
 					if replyText == "" {
 						messages = append(messages, openai.ToolMessage(`{"error":"reply_text is required"}`, call.ID))
+						logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, "reply_text is required", true, "reply_text_required")
 						continue
 					}
-					slog.Info("inbound coordinator tool",
-						"event", "inbound_coordinator_tool",
-						"tool", call.Name,
-						"round", round,
-						"error", false,
-						"terminal", true,
-					)
-					return Decision{
+					decision := Decision{
 						Action:       ActionReply,
 						UserText:     replyText,
 						IssueID:      effect.IssueID,
@@ -116,7 +105,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						ToolRounds:   round + 1,
 						ToolsUsed:    used,
 						IssueComment: &effect,
-					}, nil
+					}
+					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, false, "terminal")
+					logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
+					return decision, nil
 				}
 			}
 			messages = append(messages, openai.ToolMessage(result, call.ID))
