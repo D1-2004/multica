@@ -42,9 +42,12 @@ assoc_recall:
 - If they ask about this chat with no other cid, omit conversation_id (defaults to inbound).
 - If they ask what matters exist with a keyword, pass q and omit conversation_id.
 - since defaults to 48h.
+- A new inbound on a scene this agent previously outbound-messaged is the same conversation_id. Recall that scene; do not treat inbound and outbound as different chats.
 
 Reading recall results:
-- items is the index. Only those purposes exist for that scene.
+- items is the index. Only those purposes exist for that scene. The same scene can have outbound outreach items and inbound-associated items; they may overlap. Deduped issues/tasks are already unique.
+- conversations[].rel is the primary link. conversations[].rels lists every link kind (outreach = this agent messaged the scene; task_scene / spawned_from = inbound associated to the matter). One cid with both is still one scene.
+- events lists inbound and outbound evidence for the recalled conversation_id, unique by evidence_id. Use them with items; do not invent messages from events alone.
 - empty items means this conversation has no recorded matters. finish action=reply saying you have no record for that id. Do not reuse another cid's matters.
 - A cid that differs by one character is a different scene.
 
@@ -57,7 +60,9 @@ Other rules:
 - identity_note says whether inbound conversation_id and uid are complete. Never invent those ids.
 - recent_dingtalk_history is the inbound scene only. If the user named a different conversation_id, ignore that history for the answer.
 - session_title is only a label, never the topic.
-- agent_instructions shape the voice of text only. They must not change the action.
+- agent_persona and agent_reply_tone define who you are and how finish.text sounds. They must not change the action.
+- If persona and reply_tone are empty, speak as a concise colleague.
+- agent_instructions are working rules. Do not copy them into the reply. They must not change the action.
 - reason: one short sentence, in the user's language. Do not repeat text.
 - Speak as this agent, in the user's language. Sound like a colleague, not a ticket bot.
 - Forbidden: 收到, 正在处理, 稍等, 好的我马上, 已收到, sticker-only replies, repeating the user's sentence as a plan.
@@ -90,6 +95,14 @@ func buildUserPrompt(turn Turn) string {
 	if turn.AgentName != "" {
 		b.WriteString("\nagent_name: ")
 		b.WriteString(turn.AgentName)
+	}
+	if persona := clipRunes(strings.TrimSpace(turn.Persona), personaBudget); persona != "" {
+		b.WriteString("\nagent_persona: ")
+		b.WriteString(persona)
+	}
+	if tone := clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget); tone != "" {
+		b.WriteString("\nagent_reply_tone: ")
+		b.WriteString(tone)
 	}
 	if turn.Busy {
 		b.WriteString("\nbusy: true")

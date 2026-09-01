@@ -96,9 +96,10 @@ type Query struct {
 }
 
 type ConversationRef struct {
-	ConversationID string `json:"conversation_id"`
-	Kind           string `json:"kind,omitempty"`
-	Rel            string `json:"rel"`
+	ConversationID string   `json:"conversation_id"`
+	Kind           string   `json:"kind,omitempty"`
+	Rel            string   `json:"rel"`
+	Rels           []string `json:"rels,omitempty"`
 }
 
 type PersonRef struct {
@@ -130,10 +131,21 @@ type Item struct {
 	Origin        *OriginRef        `json:"origin,omitempty"`
 }
 
+type EventRef struct {
+	ID         string    `json:"id"`
+	Direction  string    `json:"direction"`
+	Source     string    `json:"source"`
+	EvidenceID string    `json:"evidence_id"`
+	TaskID     string    `json:"task_id,omitempty"`
+	PersonID   string    `json:"person_id,omitempty"`
+	OccurredAt time.Time `json:"occurred_at"`
+}
+
 type Result struct {
-	Since time.Time `json:"since"`
-	Until time.Time `json:"until"`
-	Items []Item    `json:"items"`
+	Since  time.Time  `json:"since"`
+	Until  time.Time  `json:"until"`
+	Items  []Item     `json:"items"`
+	Events []EventRef `json:"events"`
 }
 
 func cloneProps(in map[string]any) map[string]any {

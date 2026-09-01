@@ -483,11 +483,10 @@ export function AgentOverviewPane({
                   {effectiveView === "instructions" && (
                     <InstructionsTab
                       agent={agent}
-                      onSave={(instructions) =>
-                        onUpdate(agent.id, { instructions })
-                      }
+                      onSave={(patch) => onUpdate(agent.id, patch)}
                       onDirtyChange={setActiveDirty}
-                      readOnly={source != null}
+                      readOnly={!canEdit}
+                      instructionsLocked={source != null}
                     />
                   )}
                   {effectiveView === "okr" && (

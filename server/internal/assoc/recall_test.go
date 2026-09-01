@@ -537,6 +537,208 @@ func TestInsertEventDedupsEvidence(t *testing.T) {
 	}
 }
 
+func TestRecallInboundOnPreviousOutboundUnionsRelsAndEvents(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	if _, err := BindOutbound(ctx, store, BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		IssueID:        "issue-1",
+		IssueTitle:     "预约A与B本周五下午30分钟",
+		ConversationID: "cid-a",
+		EvidenceID:     "msg-out-a",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEvent(ctx, Event{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		Source:      "inbound_im",
+		Direction:   DirInbound,
+		EvidenceID:  "msg-in-a",
+		SceneKey:    "cid-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AssociateIssueConversation(ctx, store, AssociateInput{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		IssueID:        "issue-1",
+		IssueTitle:     "预约A与B本周五下午30分钟",
+		ConversationID: "cid-a",
+		EvidenceID:     "msg-in-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-a",
+		Since:          time.Now().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items=%d want 1: %+v", len(result.Items), result.Items)
+	}
+	conv := result.Items[0].Conversations
+	if len(conv) != 1 || conv[0].ConversationID != "cid-a" {
+		t.Fatalf("conversations=%+v", conv)
+	}
+	if conv[0].Rel != RelOutreach {
+		t.Fatalf("primary rel=%q", conv[0].Rel)
+	}
+	for _, want := range []string{RelOutreach, RelTaskScene, RelSpawnedFrom} {
+		if !containsRel(conv[0].Rels, want) {
+			t.Fatalf("rels=%v missing %s", conv[0].Rels, want)
+		}
+	}
+	if result.Items[0].Origin == nil || result.Items[0].Origin.Rel != RelSpawnedFrom {
+		t.Fatalf("origin=%+v", result.Items[0].Origin)
+	}
+	if len(result.Events) != 2 {
+		t.Fatalf("events=%+v want outbound+inbound", result.Events)
+	}
+	seen := map[string]string{}
+	for _, event := range result.Events {
+		seen[event.EvidenceID] = event.Direction
+	}
+	if seen["msg-out-a"] != DirOutbound || seen["msg-in-a"] != DirInbound {
+		t.Fatalf("event directions=%v", seen)
+	}
+}
+
+func TestRecallInboundOnPreviousOutboundKeepsSeparateIssues(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	if _, err := BindOutbound(ctx, store, BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		IssueID:        "issue-out",
+		IssueTitle:     "向冬翔确认今晚高铁还是开车",
+		ConversationID: "cid-a",
+		EvidenceID:     "msg-out-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AssociateIssueConversation(ctx, store, AssociateInput{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		IssueID:        "issue-in",
+		IssueTitle:     "冬翔回复后跟进订票",
+		ConversationID: "cid-a",
+		EvidenceID:     "msg-in-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEvent(ctx, Event{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		Source:      "inbound_im",
+		Direction:   DirInbound,
+		EvidenceID:  "msg-in-a",
+		SceneKey:    "cid-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-a",
+		Since:          time.Now().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issues := map[string]Item{}
+	for _, item := range result.Items {
+		issues[item.Issue] = item
+	}
+	if len(issues) != 2 {
+		t.Fatalf("issues=%v want outbound+inbound matters", issues)
+	}
+	if !containsRel(issues["issue-out"].Conversations[0].Rels, RelOutreach) {
+		t.Fatalf("outbound rels=%v", issues["issue-out"].Conversations[0].Rels)
+	}
+	if !containsRel(issues["issue-in"].Conversations[0].Rels, RelSpawnedFrom) &&
+		!containsRel(issues["issue-in"].Conversations[0].Rels, RelTaskScene) {
+		t.Fatalf("inbound rels=%v", issues["issue-in"].Conversations[0].Rels)
+	}
+}
+
+func TestRecallDedupesEventEvidenceAndEventLinkedTasks(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	task := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-1",
+		Purpose:       "向冬翔确认今晚高铁还是开车",
+		LastTouchedAt: now,
+	})
+	first, err := store.InsertEvent(ctx, Event{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		Source:      "outbound_im",
+		Direction:   DirOutbound,
+		EvidenceID:  "msg-1",
+		SceneKey:    "cid-a",
+		TaskID:      task.ID,
+		OccurredAt:  now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.InsertEvent(ctx, Event{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		Source:      "inbound_im",
+		Direction:   DirInbound,
+		EvidenceID:  "msg-1",
+		SceneKey:    "cid-a",
+		OccurredAt:  now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("expected evidence dedup, got %s and %s", first.ID, second.ID)
+	}
+
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-a",
+		Since:          now.Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].TaskID != task.ID {
+		t.Fatalf("event-linked task missing: %+v", result.Items)
+	}
+	if len(result.Events) != 1 || result.Events[0].EvidenceID != "msg-1" {
+		t.Fatalf("events=%+v", result.Events)
+	}
+}
+
+func containsRel(rels []string, want string) bool {
+	for _, rel := range rels {
+		if rel == want {
+			return true
+		}
+	}
+	return false
+}
+
 func mustInsertTask(t *testing.T, store *Memory, task Task) Task {
 	t.Helper()
 	out, err := store.InsertTask(context.Background(), task)

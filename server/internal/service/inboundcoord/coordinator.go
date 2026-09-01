@@ -30,6 +30,8 @@ const (
 	historyLimit         = 4
 	dingtalkHistoryLimit = 10
 	instructionsBudget   = 400
+	personaBudget        = 200
+	toneBudget           = 120
 	titleBudget          = 40
 	temperature          = 0.3
 	maxCompletionTokens  = 512
@@ -65,6 +67,8 @@ type Turn struct {
 	AgentID           pgtype.UUID
 	AgentName         string
 	Instructions      string
+	Persona           string
+	ReplyTone         string
 	Busy              bool
 	History           []HistoryLine
 	DingTalkHistory   []HistoryLine
@@ -102,6 +106,7 @@ type historyReader interface {
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 	CountRunningTasks(ctx context.Context, agentID pgtype.UUID) (int64, error)
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
+	GetAgentVoice(ctx context.Context, id pgtype.UUID) (db.GetAgentVoiceRow, error)
 }
 
 // Coordinator runs the bounded assoc tool loop in loop.go.
@@ -313,6 +318,10 @@ func (c *Coordinator) TurnFromChatSession(
 	if agent, err := c.Queries.GetAgent(ctx, session.AgentID); err == nil {
 		turn.AgentName = agent.Name
 		turn.Instructions = agent.Instructions
+	}
+	if voice, err := c.Queries.GetAgentVoice(ctx, session.AgentID); err == nil {
+		turn.Persona = voice.Persona
+		turn.ReplyTone = voice.ReplyTone
 	}
 	if n, err := c.Queries.CountRunningTasks(ctx, session.AgentID); err == nil && n > 0 {
 		turn.Busy = true

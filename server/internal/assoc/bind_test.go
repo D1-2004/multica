@@ -286,8 +286,12 @@ func TestBindOutboundDedupesConversationsAndUsesEventID(t *testing.T) {
 	if len(result.Items) != 1 || len(result.Items[0].Conversations) != 1 {
 		t.Fatalf("expected one conversation, got %+v", result.Items)
 	}
-	if result.Items[0].Conversations[0].Rel != RelOutreach {
-		t.Fatalf("rel=%q", result.Items[0].Conversations[0].Rel)
+	conv := result.Items[0].Conversations[0]
+	if conv.Rel != RelOutreach {
+		t.Fatalf("rel=%q", conv.Rel)
+	}
+	if !containsRel(conv.Rels, RelOutreach) || !containsRel(conv.Rels, RelTaskScene) {
+		t.Fatalf("rels=%v want outreach and task_scene", conv.Rels)
 	}
 	ev, err := store.GetEventByEvidence(ctx, "ws", "ag", "msg-out-a")
 	if err != nil {

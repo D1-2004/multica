@@ -166,7 +166,7 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 	return []openai.ChatCompletionToolUnionParam{
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocRecall,
-			Description: openai.String("Recall Issue/Task matters on the scene graph. Pass the user's openConversationId when they name one. Omit conversation_id to use this inbound scene. Pass q without conversation_id to list this agent's matters in the window. since defaults to 48h."),
+			Description: openai.String("Recall Issue/Task matters and inbound/outbound events on the scene graph. A new inbound on a previously outbound DM is the same conversation_id. Pass the user's openConversationId when they name one. Omit conversation_id to use this inbound scene. Pass q without conversation_id to list this agent's matters in the window. since defaults to 48h."),
 			Parameters: shared.FunctionParameters{
 				"type": "object",
 				"properties": map[string]any{

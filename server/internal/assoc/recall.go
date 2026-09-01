@@ -55,11 +55,22 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 			return Result{}, err
 		}
 	}
+	var sceneEvents []Event
 	if q.ConversationID != "" {
 		cidTasks, cidErr := tasksForConversation(ctx, store, q)
 		if cidErr != nil {
 			return Result{}, cidErr
 		}
+		var evErr error
+		sceneEvents, evErr = store.ListEventsByScene(ctx, q.WorkspaceID, q.AgentID, q.ConversationID, q.Since, MaxLimit)
+		if evErr != nil {
+			return Result{}, evErr
+		}
+		eventTasks, eventErr := tasksFromEvents(ctx, store, q, sceneEvents)
+		if eventErr != nil {
+			return Result{}, eventErr
+		}
+		cidTasks = unionTasks(cidTasks, eventTasks)
 		if q.IssueID == "" {
 			tasks = cidTasks
 		} else {
@@ -117,7 +128,12 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 	if items == nil {
 		items = []Item{}
 	}
-	return Result{Since: q.Since, Until: until, Items: items}, nil
+	return Result{
+		Since:  q.Since,
+		Until:  until,
+		Items:  items,
+		Events: eventRefs(sceneEvents),
+	}, nil
 }
 
 func tasksForConversation(ctx context.Context, store Store, q Query) ([]Task, error) {
@@ -210,6 +226,83 @@ func intersectTasks(a, b []Task) []Task {
 	return out
 }
 
+func unionTasks(a, b []Task) []Task {
+	seen := map[string]struct{}{}
+	out := make([]Task, 0, len(a)+len(b))
+	for _, group := range [][]Task{a, b} {
+		for _, task := range group {
+			if task.ID == "" {
+				continue
+			}
+			if _, ok := seen[task.ID]; ok {
+				continue
+			}
+			seen[task.ID] = struct{}{}
+			out = append(out, task)
+		}
+	}
+	return out
+}
+
+func tasksFromEvents(ctx context.Context, store Store, q Query, events []Event) ([]Task, error) {
+	ids := make([]string, 0, len(events))
+	seen := map[string]struct{}{}
+	for _, event := range events {
+		taskID := strings.TrimSpace(event.TaskID)
+		if taskID == "" {
+			continue
+		}
+		if _, ok := seen[taskID]; ok {
+			continue
+		}
+		seen[taskID] = struct{}{}
+		ids = append(ids, taskID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	tasks, err := store.ListTasksByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Task, 0, len(tasks))
+	for _, task := range tasks {
+		if task.WorkspaceID != q.WorkspaceID || task.AgentID != q.AgentID {
+			continue
+		}
+		out = append(out, task)
+	}
+	return out, nil
+}
+
+func eventRefs(events []Event) []EventRef {
+	out := make([]EventRef, 0, len(events))
+	seen := map[string]struct{}{}
+	for _, event := range events {
+		key := strings.TrimSpace(event.EvidenceID)
+		if key == "" {
+			key = event.ID
+		}
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, EventRef{
+			ID:         event.ID,
+			Direction:  event.Direction,
+			Source:     event.Source,
+			EvidenceID: event.EvidenceID,
+			TaskID:     event.TaskID,
+			PersonID:   event.PersonKey,
+			OccurredAt: event.OccurredAt,
+		})
+	}
+	return out
+}
+
 func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.Time) (Item, error) {
 	edges, err := store.ListEdgesBySrc(ctx, q.WorkspaceID, q.AgentID, NodeTask, task.ID)
 	if err != nil {
@@ -228,33 +321,44 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 	}
 	bestRelBoost := 1.0
 	convIndex := map[string]int{}
+	personIndex := map[string]int{}
 	for _, edge := range edges {
 		if edge.Status == StatusClosed {
 			continue
 		}
 		switch edge.Rel {
-		case RelOutreach, RelTaskScene:
+		case RelOutreach, RelTaskScene, RelSpawnedFrom:
 			if edge.DstType == NodeScene {
 				ref := ConversationRef{
 					ConversationID: edge.DstID,
 					Kind:           kindFromProps(edge.Props),
 					Rel:            edge.Rel,
+					Rels:           []string{edge.Rel},
 				}
 				if i, ok := convIndex[edge.DstID]; ok {
-					if conversationRelRank(ref.Rel) > conversationRelRank(item.Conversations[i].Rel) {
-						item.Conversations[i] = ref
-					}
+					item.Conversations[i] = mergeConversationRef(item.Conversations[i], ref)
 				} else {
 					convIndex[edge.DstID] = len(item.Conversations)
 					item.Conversations = append(item.Conversations, ref)
 				}
+				if edge.Rel == RelSpawnedFrom && item.Origin == nil {
+					item.Origin = &OriginRef{ConversationID: edge.DstID, Rel: RelSpawnedFrom}
+				}
 			}
 		case RelTaskPerson:
 			if edge.DstType == NodePerson {
-				item.People = append(item.People, PersonRef{
+				person := PersonRef{
 					PersonID:    edge.DstID,
 					DisplayName: stringProp(edge.Props, "display_name"),
-				})
+				}
+				if i, ok := personIndex[edge.DstID]; ok {
+					if item.People[i].DisplayName == "" && person.DisplayName != "" {
+						item.People[i] = person
+					}
+				} else {
+					personIndex[edge.DstID] = len(item.People)
+					item.People = append(item.People, person)
+				}
 			}
 		case RelWaitingOn:
 			ref := WaitingRef{}
@@ -265,10 +369,6 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 				ref.PersonID = edge.DstID
 			}
 			item.WaitingOn = append(item.WaitingOn, ref)
-		case RelSpawnedFrom:
-			if item.Origin == nil && edge.DstType == NodeScene {
-				item.Origin = &OriginRef{ConversationID: edge.DstID, Rel: RelSpawnedFrom}
-			}
 		}
 		if boost := relBoost(edge.Rel); boost > bestRelBoost {
 			bestRelBoost = boost
@@ -299,12 +399,50 @@ func statusBoost(status string) float64 {
 func conversationRelRank(rel string) int {
 	switch rel {
 	case RelOutreach:
-		return 2
+		return 3
 	case RelTaskScene:
+		return 2
+	case RelSpawnedFrom:
 		return 1
 	default:
 		return 0
 	}
+}
+
+func mergeConversationRef(dst, src ConversationRef) ConversationRef {
+	if dst.Kind == "" && src.Kind != "" {
+		dst.Kind = src.Kind
+	}
+	dst.Rels = unionRels(dst.Rels, src.Rels)
+	if conversationRelRank(src.Rel) > conversationRelRank(dst.Rel) {
+		dst.Rel = src.Rel
+	}
+	return dst
+}
+
+func unionRels(a, b []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(a)+len(b))
+	for _, group := range [][]string{a, b} {
+		for _, rel := range group {
+			rel = strings.TrimSpace(rel)
+			if rel == "" {
+				continue
+			}
+			if _, ok := seen[rel]; ok {
+				continue
+			}
+			seen[rel] = struct{}{}
+			out = append(out, rel)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if conversationRelRank(out[i]) == conversationRelRank(out[j]) {
+			return out[i] < out[j]
+		}
+		return conversationRelRank(out[i]) > conversationRelRank(out[j])
+	})
+	return out
 }
 
 func relBoost(rel string) float64 {

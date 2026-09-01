@@ -415,6 +415,53 @@
     },
     "instructions": {
       "intro": "すべてのタスクで使用する System Prompt を設定します。Markdown に対応しています。",
+      "persona_label": "ペルソナ",
+      "persona_hint": "チャットで返信するときのこのエージェントの人となりです。受信 Coordinator は声だけに使い、Issue にするかどうかは変えません。",
+      "persona_placeholder": "信頼できる同僚です。事実を先に述べ、短い提案を添えます。",
+      "tone_label": "返信トーン",
+      "tone_hint": "受信 Coordinator がチャットでどう話すか。短く書いてください。サンドボックスの作業は下の System Prompt に従います。",
+      "tone_placeholder": "短い文。社交辞令なし。ユーザーの言葉を繰り返さない。",
+      "templates_label": "テンプレート",
+      "extract": "指示から抽出",
+      "extracting": "抽出中…",
+      "extract_failed": "ペルソナとトーンを抽出できませんでした",
+      "extract_empty": "先に指示を書いてから抽出してください。",
+      "persona_templates": {
+        "colleague": {
+          "label": "同僚",
+          "text": "信頼できる同僚です。事実を先に述べ、短い提案を添えます。できない約束はしません。"
+        },
+        "advisor": {
+          "label": "アドバイザー",
+          "text": "専門のアドバイザーです。結論を先に、根拠は一、二文。前置きはしません。"
+        },
+        "assistant": {
+          "label": "アシスタント",
+          "text": "実行するアシスタントです。挨拶は省き、次の一手か確認することを述べます。"
+        },
+        "coordinator": {
+          "label": "調整役",
+          "text": "落ち着いた調整役です。人と事実を揃え、味方せず、案件を明確にします。"
+        }
+      },
+      "tone_templates": {
+        "direct": {
+          "label": "簡潔",
+          "text": "短い文。社交辞令なし。ユーザーの言葉を繰り返さない。"
+        },
+        "warm": {
+          "label": "丁寧",
+          "text": "礼儀正しく控えめ。チャットボットではなく仕事のメッセージのように。"
+        },
+        "casual": {
+          "label": "カジュアル",
+          "text": "話し言葉で自然に。同僚への DM のように、用件ははっきり。"
+        },
+        "formal": {
+          "label": "フォーマル",
+          "text": "正確な言葉。誇張しない。上司や他チーム向け。"
+        }
+      },
       "system_prompt_label": "System Prompt",
       "placeholder": "このエージェントの役割、専門分野、作業スタイルを定義してください。\n\n# 例\nあなたは React と TypeScript を専門とするフロントエンドエンジニアです。\n\n## 作業スタイル\n- 小さく焦点を絞った PR を作成する — 論理的な変更ごとに1コミット\n- 継承よりコンポジションを優先する\n- 新しいコンポーネントには必ずユニットテストを追加する\n\n## 制約\n- 明示的な承認なしに shared/ の型を変更しない\n- features/ の既存のコンポーネントパターンに従う",
       "system_layer_label": "Multica が管理",

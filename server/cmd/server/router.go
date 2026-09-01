@@ -2428,6 +2428,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// deployment configuration, so it does not belong on the
 					// public /api/config.
 					r.Get("/dispatch-prompt-preview", h.GetAgentDispatchPromptPreview)
+					r.Post("/extract-voice", h.ExtractAgentVoice)
 					r.Post("/source/sync", h.SyncAgentSource)
 					r.Put("/", h.UpdateAgent)
 					r.Post("/archive", h.ArchiveAgent)

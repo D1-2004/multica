@@ -2565,6 +2565,16 @@ export type DispatchPromptPreviewPayload = z.infer<
   typeof DispatchPromptPreviewSchema
 >;
 
+export const ExtractAgentVoiceResponseSchema = z.object({
+  persona: z.string().default(""),
+  reply_tone: z.string().default(""),
+});
+export type ExtractAgentVoiceResponsePayload = z.infer<
+  typeof ExtractAgentVoiceResponseSchema
+>;
+export const EMPTY_EXTRACT_AGENT_VOICE_RESPONSE: ExtractAgentVoiceResponsePayload =
+  { persona: "", reply_tone: "" };
+
 const AgentOKRSpendSchema = z.object({
   total_tokens: z.number().default(0),
   total_cost_usd_ticks: z.number().default(0),

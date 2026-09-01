@@ -16,6 +16,8 @@ import (
 
 type coordQueriesStub struct {
 	inbound   bool
+	persona   string
+	replyTone string
 	page      []db.ChatMessage
 	listErr   error
 	lastList  db.ListChatMessagesPageParams
@@ -41,6 +43,10 @@ func (s *coordQueriesStub) CountRunningTasks(context.Context, pgtype.UUID) (int6
 
 func (s *coordQueriesStub) GetAgentInboundCoordinator(context.Context, pgtype.UUID) (bool, error) {
 	return s.inbound, nil
+}
+
+func (s *coordQueriesStub) GetAgentVoice(context.Context, pgtype.UUID) (db.GetAgentVoiceRow, error) {
+	return db.GetAgentVoiceRow{Persona: s.persona, ReplyTone: s.replyTone}, nil
 }
 
 func testAgentID() pgtype.UUID {
@@ -194,6 +200,19 @@ func TestInjectRelatedTasksFormatsRecallHits(t *testing.T) {
 	}
 	if !strings.Contains(got.RelatedTasks, "issue-eat") {
 		t.Fatalf("related_tasks missing issue: %q", got.RelatedTasks)
+	}
+}
+
+func TestTurnFromChatSessionLoadsVoice(t *testing.T) {
+	q := &coordQueriesStub{persona: "靠谱同事", replyTone: "短句、不客套"}
+	c := &Coordinator{Queries: q}
+	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceRobot, true, "p2p", "", "", "你好")
+	if turn.Persona != "靠谱同事" || turn.ReplyTone != "短句、不客套" {
+		t.Fatalf("voice=%q / %q", turn.Persona, turn.ReplyTone)
+	}
+	prompt := buildUserPrompt(turn)
+	if !strings.Contains(prompt, "agent_persona: 靠谱同事") || !strings.Contains(prompt, "agent_reply_tone: 短句、不客套") {
+		t.Fatalf("prompt=%q", prompt)
 	}
 }
 

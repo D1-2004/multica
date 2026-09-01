@@ -282,6 +282,29 @@ func TestIdentityNoteDigitalEmployeeComplete(t *testing.T) {
 	}
 }
 
+func TestBuildUserPromptIncludesPersonaAndTone(t *testing.T) {
+	t.Parallel()
+	prompt := buildUserPrompt(Turn{
+		Source:       SourceRobot,
+		Addressed:    true,
+		AgentName:    "菲迪",
+		Persona:      "你是靠谱的同事，先把事实说清楚。",
+		ReplyTone:    "短句、不客套。",
+		Instructions: "Always search the web first.",
+		Message:      "你好",
+	})
+	for _, want := range []string{
+		"agent_persona: 你是靠谱的同事，先把事实说清楚。",
+		"agent_reply_tone: 短句、不客套。",
+		"agent_instructions:",
+		"Always search the web first.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestBuildUserPromptIncludesConversationID(t *testing.T) {
 	t.Parallel()
 	prompt := buildUserPrompt(Turn{

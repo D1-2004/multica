@@ -559,6 +559,53 @@
     },
     "instructions": {
       "intro": "设置每个任务都会使用的 System Prompt，支持 Markdown。",
+      "persona_label": "基础人设",
+      "persona_hint": "这个智能体在聊天里是谁。入站 Coordinator 只用它来定回复的声音，不会改变一条消息是直接回复还是开 Issue。",
+      "persona_placeholder": "你是团队里靠谱的同事。先把事实说清楚，再给一句建议。",
+      "tone_label": "回复语气",
+      "tone_hint": "入站 Coordinator 在聊天里怎么说话。写短一点。沙箱任务仍按下面的 System Prompt 执行。",
+      "tone_placeholder": "短句、不客套、不重复用户的话。",
+      "templates_label": "模板",
+      "extract": "从指令抽取人设和语气",
+      "extracting": "正在抽取…",
+      "extract_failed": "无法从指令抽取人设和语气",
+      "extract_empty": "先写指令，再抽取人设和语气。",
+      "persona_templates": {
+        "colleague": {
+          "label": "靠谱同事",
+          "text": "你是团队里靠谱的同事。先把事实说清楚，再给一句建议。不承诺做不到的事。"
+        },
+        "advisor": {
+          "label": "专业顾问",
+          "text": "你是这个领域的专业顾问。结论先行，再补一两句依据。不铺垫。"
+        },
+        "assistant": {
+          "label": "做事助手",
+          "text": "你是做事的助手。少寒暄。直接说出下一步，或你要去核对的那件事。"
+        },
+        "coordinator": {
+          "label": "冷静协调人",
+          "text": "你是冷静的协调人。对齐各方和事实，不站队，把事项说清楚。"
+        }
+      },
+      "tone_templates": {
+        "direct": {
+          "label": "简洁直接",
+          "text": "短句、不客套、不重复用户的话。"
+        },
+        "warm": {
+          "label": "温和专业",
+          "text": "礼貌、克制、不卖萌，像工作消息。"
+        },
+        "casual": {
+          "label": "轻松同事",
+          "text": "口语、自然，像在钉钉里跟同事说话。仍然把事说清楚。"
+        },
+        "formal": {
+          "label": "严谨书面",
+          "text": "用词准确，不夸张，适合对领导或跨团队。"
+        }
+      },
       "system_prompt_label": "System Prompt",
       "placeholder": "定义这个智能体的角色、专长和工作风格。\n\n# 示例\n你是一名专注 React 和 TypeScript 的前端工程师。\n\n## 工作风格\n- 写小而聚焦的 PR —— 每个逻辑变更一个 commit\n- 优先组合而不是继承\n- 新组件总是配单元测试\n\n## 约束\n- 未经明确批准不要修改 shared/ 下的 type\n- 遵循 features/ 中现有的组件模式",
       "system_layer_label": "由 Multica 维护",
