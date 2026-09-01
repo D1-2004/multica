@@ -420,8 +420,10 @@ func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundC
 	content := strings.TrimSpace(decision.UserText)
 	if content == "" {
 		switch decision.Action {
-		case inboundcoord.ActionIssue, inboundcoord.ActionContinue:
+		case inboundcoord.ActionIssue:
 			content = "已转入 Issue 继续处理。"
+		case inboundcoord.ActionContinue:
+			content = "已交给 Agent 继续处理。"
 		case inboundcoord.ActionSilence:
 			content = "本轮无需回复。"
 		case inboundcoord.ActionRetry:
