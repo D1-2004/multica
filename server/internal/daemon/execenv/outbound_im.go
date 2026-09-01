@@ -87,6 +87,7 @@ func FilterOutboundChat(events []ToolEvent) []OutboundChat {
 	receipts := map[string]OutboundChat{}
 	var loose []OutboundChat
 	var out []OutboundChat
+	pendingAdjacent := -1
 	for _, event := range events {
 		hint := event.Command
 		if extra := flattenInput(event.Input); extra != "" {
@@ -111,6 +112,17 @@ func FilterOutboundChat(events []ToolEvent) []OutboundChat {
 			continue
 		}
 		if parsed.Action == "" {
+			// Hermes persists a terminal tool call and its result as adjacent
+			// messages. DWS beta returns the resolved conversation only in the
+			// result row, so join that receipt back to the immediately preceding
+			// send instead of requiring both halves on one TaskMessage.
+			if pendingAdjacent >= 0 && plausibleConversationOrEvidenceID(cid) {
+				out[pendingAdjacent].ConversationID = cid
+				if out[pendingAdjacent].EvidenceID == "" {
+					out[pendingAdjacent].EvidenceID = evid
+				}
+			}
+			pendingAdjacent = -1
 			continue
 		}
 		if parsed.ConversationID == "" && plausibleConversationOrEvidenceID(cid) {
@@ -120,6 +132,11 @@ func FilterOutboundChat(events []ToolEvent) []OutboundChat {
 			}
 		}
 		out = append(out, parsed)
+		if parsed.ConversationID == "" {
+			pendingAdjacent = len(out) - 1
+		} else {
+			pendingAdjacent = -1
+		}
 	}
 	for i := range out {
 		if out[i].ConversationID != "" {

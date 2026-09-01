@@ -62,6 +62,31 @@ func TestFilterOutboundChatPairsUserSendWithQuerySendStatus(t *testing.T) {
 	}
 }
 
+func TestFilterOutboundChatPairsAdjacentHermesToolResult(t *testing.T) {
+	t.Parallel()
+	got := FilterOutboundChat([]ToolEvent{
+		{
+			Command: `terminal {"text":"$ dws chat message send --open-dingtalk-id \"uid-v6\" --text \"今晚几点打球？\" -y -f json"}`,
+			Input:   map[string]any{"text": `$ dws chat message send --open-dingtalk-id "uid-v6" --text "今晚几点打球？" -y -f json`},
+		},
+		{
+			Command: "terminal",
+			Output: `terminal result
+- **output:** {"result":{"openTaskId":"task-1","openConversationId":"cid-v6","openMessageId":"msg-v6"},"success":true}
+- **exit_code:** 0`,
+		},
+	})
+	if len(got) != 1 {
+		t.Fatalf("n=%d", len(got))
+	}
+	if got[0].ConversationID != "cid-v6" || got[0].EvidenceID != "msg-v6" {
+		t.Fatalf("outbound=%+v", got[0])
+	}
+	if got[0].PersonID != "uid-v6" {
+		t.Fatalf("person=%q", got[0].PersonID)
+	}
+}
+
 func TestFilterOutboundChatDoesNotBindListAlone(t *testing.T) {
 	t.Parallel()
 	got := FilterOutboundChat([]ToolEvent{
