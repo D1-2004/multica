@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
 )
 
-const maxLoopRounds = 3
+const maxLoopRounds = 8
+
+const toolRequiredNudge = "You must call a tool. Do not answer from memory or related_tasks. If the user named a conversation_id, call assoc_recall with that exact id. Then call finish."
 
 // Completer is the one Chat Completions round the coordinator loop needs.
 type Completer interface {
@@ -24,6 +27,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		openai.UserMessage(buildUserPrompt(turn)),
 	}
 	var used []string
+	var recalls []recallCall
 	for round := 0; round < maxLoopRounds; round++ {
 		completion, err := c.complete(ctx, messages, toolsForRound(round))
 		if err != nil {
@@ -36,19 +40,36 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		normalizeToolCallTypes(&msg)
 		calls := functionToolCalls(msg)
 		if len(calls) == 0 {
-			decision := parseDecision(msg.Content, turn)
-			decision.ToolRounds = round
-			decision.ToolsUsed = used
-			return decision, nil
+			if round >= maxLoopRounds-1 {
+				return Decision{}, fmt.Errorf("coordinator loop: no finish")
+			}
+			messages = append(messages, msg.ToParam())
+			messages = append(messages, openai.UserMessage(toolRequiredNudge))
+			continue
 		}
 		messages = append(messages, msg.ToParam())
 		for _, call := range calls {
-			used = append(used, call.Name)
 			if call.Name == toolFinish {
+				if reqErr := requireRecallBeforeFinish(turn, recalls, call.Arguments); reqErr != nil {
+					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
+					slog.Info("inbound coordinator tool",
+						"event", "inbound_coordinator_tool",
+						"tool", call.Name,
+						"round", round,
+						"error", true,
+						"reason", "recall_required",
+					)
+					continue
+				}
+				used = append(used, call.Name)
 				decision := parseDecision(call.Arguments, turn)
 				decision.ToolRounds = round + 1
 				decision.ToolsUsed = used
 				return decision, nil
+			}
+			used = append(used, call.Name)
+			if call.Name == toolAssocRecall {
+				recalls = append(recalls, parseRecallCall(call.Arguments))
 			}
 			result, callErr := c.callTool(ctx, turn, call.Name, call.Arguments)
 			if callErr != nil {
@@ -74,7 +95,10 @@ func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatComple
 		ReasoningEffort:     shared.ReasoningEffortNone,
 		MaxCompletionTokens: openai.Int(maxCompletionTokens),
 	}
-	params.SetExtraFields(map[string]any{"enable_thinking": false})
+	params.SetExtraFields(map[string]any{
+		"enable_thinking": false,
+		"tool_choice":     "required",
+	})
 	if temperature > 0 {
 		params.Temperature = openai.Float(temperature)
 	}
@@ -191,4 +215,86 @@ func jsonQuote(s string) string {
 		return `"tool error"`
 	}
 	return string(raw)
+}
+
+type recallCall struct {
+	ConversationID string
+	Issue          string
+	Q              string
+}
+
+func parseRecallCall(raw string) recallCall {
+	var args recallArgs
+	_ = json.Unmarshal([]byte(strings.TrimSpace(raw)), &args)
+	return recallCall{
+		ConversationID: strings.TrimSpace(args.ConversationID),
+		Issue:          strings.TrimSpace(args.Issue),
+		Q:              strings.TrimSpace(args.Q),
+	}
+}
+
+var conversationIDPattern = regexp.MustCompile(`cid[+A-Za-z0-9_/=-]{8,}`)
+
+func extractConversationIDs(message string) []string {
+	found := conversationIDPattern.FindAllString(message, -1)
+	if len(found) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var out []string
+	for _, id := range found {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
+}
+
+func asksSceneQuestion(message string) bool {
+	s := strings.ToLower(message)
+	for _, needle := range []string{
+		"聊了什么", "有哪些事", "在跟什么", "跟什么事", "会话", "事情",
+		"conversation", "what happened", "what's going on",
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func requireRecallBeforeFinish(turn Turn, recalls []recallCall, finishRaw string) error {
+	var parsed struct {
+		Action string `json:"action"`
+	}
+	_ = json.Unmarshal([]byte(strings.TrimSpace(finishRaw)), &parsed)
+	if Action(strings.TrimSpace(parsed.Action)) == ActionSilence {
+		return nil
+	}
+	ids := extractConversationIDs(turn.Message)
+	if len(ids) == 0 && !asksSceneQuestion(turn.Message) {
+		return nil
+	}
+	if len(recalls) == 0 {
+		return fmt.Errorf("call assoc_recall before finish; do not answer from memory")
+	}
+	for _, id := range ids {
+		covered := false
+		for _, recall := range recalls {
+			got := recall.ConversationID
+			if got == "" {
+				got = strings.TrimSpace(turn.ConversationID)
+			}
+			if got == id {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return fmt.Errorf("assoc_recall must pass conversation_id %s exactly; empty items means unknown", id)
+		}
+	}
+	return nil
 }

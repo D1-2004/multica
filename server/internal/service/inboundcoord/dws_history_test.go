@@ -50,7 +50,7 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string) *llm.Client 
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"{\"action\":\"reply\",\"text\":\"刚才在聊新闻。\",\"look_into\":\"\",\"reason\":\"直接回答近期对话\"}"},"finish_reason":"stop"}]}`)
+		_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"r1","type":"function","function":{"name":"assoc_recall","arguments":"{}"}},{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"action\":\"reply\",\"text\":\"刚才在聊新闻。\",\"look_into\":\"\",\"reason\":\"直接回答近期对话\"}"}}]},"finish_reason":"tool_calls"}]}`)
 	}))
 	t.Cleanup(server.Close)
 	return llm.New(llm.Config{APIKey: "test", BaseURL: server.URL})

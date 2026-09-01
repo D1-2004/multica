@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	decisionTimeout      = 15 * time.Second
+	decisionTimeout      = 45 * time.Second
 	coordinatorModel     = "qwen3.7-plus"
 	historyLimit         = 4
 	dingtalkHistoryLimit = 10
@@ -104,8 +104,7 @@ type historyReader interface {
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 }
 
-// Coordinator runs the bounded assoc tool loop in loop.go. Assoc also seeds
-// related_tasks for the inbound scene before the first model round.
+// Coordinator runs the bounded assoc tool loop in loop.go.
 type Coordinator struct {
 	LLM        *llm.Client
 	Queries    historyReader
@@ -184,8 +183,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) Decision {
 			"elapsed_ms", time.Since(started).Milliseconds(),
 		)
 	}
-	turn = c.injectRelatedTasks(loopCtx, turn)
-
 	decision, err := c.runLoop(loopCtx, turn)
 	elapsed := time.Since(started)
 	if err != nil {

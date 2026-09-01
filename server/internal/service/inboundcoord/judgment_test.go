@@ -15,11 +15,11 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"assoc_recall",
 		"assoc_bind",
 		"finish",
-		"At most two tool rounds",
+		"You MUST call tools",
+		"At most 8 model rounds",
 		"No DWS, no search, no files",
 		"pass that exact conversation_id",
-		"Do not open a sandbox just to restate graph hits",
-		"They must not change the action or invent capability limits",
+		"empty items means this conversation has no recorded matters",
 		"Never invent conversation_id or person_id",
 	} {
 		if !strings.Contains(systemPrompt, rule) {

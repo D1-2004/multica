@@ -109,10 +109,11 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	}
 }
 
-func TestLoopContentJSONWithoutToolCalls(t *testing.T) {
+func TestLoopContentJSONWithoutToolCallsNudgeThenFinish(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantJSON(`{"action":"reply","text":"在，有事直接说。","look_into":"","reason":"打招呼"}`),
+		assistantJSON(`{"action":"reply","text":"这个单聊在跟高铁还是开车","look_into":"","reason":"猜的"}`),
+		assistantTool("f1", toolFinish, `{"action":"reply","text":"在，有事直接说。","look_into":"","reason":"打招呼"}`),
 	}}
 	c := &Coordinator{Chat: chat}
 	got, err := c.runLoop(context.Background(), Turn{Source: SourceWeb, Message: "你好"})
@@ -122,42 +123,33 @@ func TestLoopContentJSONWithoutToolCalls(t *testing.T) {
 	if got.Action != ActionReply || got.UserText != "在，有事直接说。" {
 		t.Fatalf("got %#v", got)
 	}
-	if got.ToolRounds != 0 || len(got.ToolsUsed) != 0 {
-		t.Fatalf("unexpected tools %#v", got)
+	if strings.Join(got.ToolsUsed, ",") != toolFinish {
+		t.Fatalf("tools=%v", got.ToolsUsed)
+	}
+	if chat.calls != 2 {
+		t.Fatalf("content JSON must not finish the loop, calls=%d", chat.calls)
 	}
 }
 
 func TestLoopLastRoundOnlyFinish(t *testing.T) {
 	t.Parallel()
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("c1", toolAssocRecall, `{}`),
-		assistantTool("c2", toolAssocRecall, `{}`),
-		assistantTool("c3", toolFinish, `{"action":"issue","text":"我先去核对报名表","look_into":"报名表截止时间","reason":"要查资料"}`),
-	}}
-	c := &Coordinator{Chat: chat, Tools: &stubTools{}}
-	got, err := c.runLoop(context.Background(), Turn{Source: SourceRobot, Message: "查一下截止时间"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Action != ActionIssue {
-		t.Fatalf("action=%s", got.Action)
-	}
-	if len(chat.params) != 3 {
-		t.Fatalf("rounds=%d", len(chat.params))
-	}
-	last := toolDefNames(chat.params[2])
+	last := toolDefNamesFromDefs(toolsForRound(maxLoopRounds - 1))
 	if strings.Join(last, ",") != toolFinish {
 		t.Fatalf("last-round tools=%v, want only finish", last)
+	}
+	first := toolDefNamesFromDefs(toolsForRound(0))
+	if strings.Join(first, ",") != "assoc_recall,assoc_bind,finish" {
+		t.Fatalf("round0 tools=%v", first)
 	}
 }
 
 func TestLoopExceedsRounds(t *testing.T) {
 	t.Parallel()
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("c1", toolAssocRecall, `{}`),
-		assistantTool("c2", toolAssocRecall, `{}`),
-		assistantTool("c3", toolAssocRecall, `{}`),
-	}}
+	rounds := make([]openai.ChatCompletion, maxLoopRounds)
+	for i := range rounds {
+		rounds[i] = assistantTool(fmt.Sprintf("c%d", i), toolAssocRecall, `{}`)
+	}
+	chat := &scriptedCompleter{rounds: rounds}
 	c := &Coordinator{Chat: chat, Tools: &stubTools{}}
 	_, err := c.runLoop(context.Background(), Turn{Source: SourceWeb, Message: "查一下"})
 	if err == nil || !strings.Contains(err.Error(), "exceeded") {
@@ -168,7 +160,7 @@ func TestLoopExceedsRounds(t *testing.T) {
 func TestDecideRunsToolLoop(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantJSON(`{"action":"reply","text":"在，有事直接说。","reason":"打招呼"}`),
+		assistantTool("f1", toolFinish, `{"action":"reply","text":"在，有事直接说。","reason":"打招呼"}`),
 	}}
 	c := &Coordinator{
 		LLM:  llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
@@ -180,6 +172,44 @@ func TestDecideRunsToolLoop(t *testing.T) {
 	}
 	if chat.calls != 1 {
 		t.Fatalf("Decide must run the tool loop, chat.calls=%d", chat.calls)
+	}
+}
+
+func TestLoopNamedCIDFinishWithoutRecallIsRejected(t *testing.T) {
+	t.Parallel()
+	fake := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("f0", toolFinish, `{"action":"reply","text":"这个单聊在跟高铁还是开车","reason":"猜的"}`),
+		assistantTool("r1", toolAssocRecall, `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJ1w==","since":"48h"}`),
+		assistantTool("f1", toolFinish, `{"action":"reply","text":"这个会话在图上没有记录。","reason":"recall 为空"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[]}`}
+	c := &Coordinator{Chat: chat, Tools: tools}
+	got, err := c.runLoop(context.Background(), Turn{
+		Source:         SourceRobot,
+		Addressed:      true,
+		Message:        fake + " 里面聊了什么",
+		ConversationID: "cid-robot",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionReply || !strings.Contains(got.UserText, "没有记录") {
+		t.Fatalf("got %#v", got)
+	}
+	if strings.Join(got.ToolsUsed, ",") != "assoc_recall,finish" {
+		t.Fatalf("tools=%v", got.ToolsUsed)
+	}
+	if len(tools.calls) != 1 || !strings.Contains(tools.calls[0], fake) {
+		t.Fatalf("must recall the fake cid, calls=%v", tools.calls)
+	}
+}
+
+func TestExtractConversationIDs(t *testing.T) {
+	t.Parallel()
+	got := extractConversationIDs("cid+bEFv7ngm9n79Q1vL9HYJ1w== 里面聊了什么")
+	if len(got) != 1 || got[0] != "cid+bEFv7ngm9n79Q1vL9HYJ1w==" {
+		t.Fatalf("got=%v", got)
 	}
 }
 
