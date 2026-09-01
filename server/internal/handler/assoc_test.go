@@ -147,6 +147,126 @@ func TestBindAssocOutboundFromToolIgnoresCommandTextAsCID(t *testing.T) {
 	}
 }
 
+func TestBindAssocOutboundFromUserSendAndQuerySendStatus(t *testing.T) {
+	store := assoc.NewMemory()
+	h := &Handler{Assoc: assoc.NewService(store)}
+	ws := "22222222-2222-2222-2222-222222222222"
+	ag := parseUUID("11111111-1111-1111-1111-111111111111")
+	issue := parseUUID("33333333-3333-3333-3333-333333333333")
+	task := db.AgentTaskQueue{
+		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
+		AgentID: ag,
+		IssueID: issue,
+	}
+	h.bindAssocOutboundFromTools(context.Background(), task, ws, []TaskMessageRequest{
+		{
+			Type:    "tool",
+			Tool:    "Bash",
+			Content: `dws chat message send --user 0104644667680872 --content "冬翔，今天下午想喝茶还是咖啡？" --format json --yes`,
+			Output:  `{"result":{"openTaskId":"task-1"},"success":true}`,
+		},
+		{
+			Type:    "tool",
+			Tool:    "Bash",
+			Content: `dws chat message query-send-status --open-task-id task-1 --format json`,
+			Output:  `{"openConversationId":"cid+bEFv7ngm9n79Q1vL9HYJw==","openMessageId":"msg-live"}`,
+		},
+	})
+	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
+		WorkspaceID:    ws,
+		AgentID:        uuidToString(ag),
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		Since:          time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Issue != uuidToString(issue) {
+		t.Fatalf("recall=%+v", got.Items)
+	}
+}
+
+func TestBindAssocOutboundFromUserSendReusesPersonScene(t *testing.T) {
+	store := assoc.NewMemory()
+	h := &Handler{Assoc: assoc.NewService(store)}
+	ws := "22222222-2222-2222-2222-222222222222"
+	ag := parseUUID("11111111-1111-1111-1111-111111111111")
+	_, err := h.Assoc.BindOutbound(context.Background(), assoc.BindOutboundInput{
+		WorkspaceID:    ws,
+		AgentID:        uuidToString(ag),
+		IssueID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		IssueTitle:     "向冬翔确认今晚想吃什么",
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		PersonID:       "0104644667680872",
+		EvidenceID:     "msg-old",
+		Kind:           "dm",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue := parseUUID("33333333-3333-3333-3333-333333333333")
+	task := db.AgentTaskQueue{
+		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
+		AgentID: ag,
+		IssueID: issue,
+	}
+	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+		Type:    "tool",
+		Tool:    "Bash",
+		Content: `dws chat message send --user 0104644667680872 --content hi --format json --yes`,
+		Output:  `{"result":{"openTaskId":"task-only"},"success":true}`,
+	})
+	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
+		WorkspaceID:    ws,
+		AgentID:        uuidToString(ag),
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		Since:          time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range got.Items {
+		if item.Issue == uuidToString(issue) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected new issue bound via person scene, recall=%+v", got.Items)
+	}
+}
+
+func TestBindAssocOutboundFromReply(t *testing.T) {
+	store := assoc.NewMemory()
+	h := &Handler{Assoc: assoc.NewService(store)}
+	ws := "22222222-2222-2222-2222-222222222222"
+	ag := parseUUID("11111111-1111-1111-1111-111111111111")
+	issue := parseUUID("33333333-3333-3333-3333-333333333333")
+	task := db.AgentTaskQueue{
+		ID:      parseUUID("44444444-4444-4444-4444-444444444444"),
+		AgentID: ag,
+		IssueID: issue,
+	}
+	h.bindAssocOutboundFromTool(context.Background(), task, ws, TaskMessageRequest{
+		Type:    "tool",
+		Tool:    "Bash",
+		Content: `dws chat message reply --conversation-id cid+reply== --content 收到`,
+		Output:  `{"openConversationId":"cid+reply==","openMsgId":"msg-reply"}`,
+	})
+	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
+		WorkspaceID:    ws,
+		AgentID:        uuidToString(ag),
+		ConversationID: "cid+reply==",
+		Since:          time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Issue != uuidToString(issue) {
+		t.Fatalf("recall=%+v", got.Items)
+	}
+}
+
 func TestBindAssocOutboundFromToolIgnoresList(t *testing.T) {
 	store := assoc.NewMemory()
 	h := &Handler{Assoc: assoc.NewService(store)}

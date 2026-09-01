@@ -179,6 +179,44 @@ func TestRunDWSWrapBindsChatSend(t *testing.T) {
 	}
 }
 
+func TestRunDWSWrapQueriesSendStatusForUserSend(t *testing.T) {
+	t.Parallel()
+	var boundCID, boundEvidence string
+	var calls [][]string
+	code := RunDWSWrap(DWSWrapDeps{
+		Args:   []string{"chat", "message", "send", "--user", "0104644667680872", "--content", "hi"},
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		LookPath: func(string) (string, error) {
+			return "/bin/dws", nil
+		},
+		Run: func(_ string, args []string, out, _ io.Writer) error {
+			copied := append([]string{}, args...)
+			calls = append(calls, copied)
+			if len(args) >= 3 && args[2] == "query-send-status" {
+				_, _ = out.Write([]byte(`{"openConversationId":"cid+bEFv==","openMessageId":"msg-9"}`))
+				return nil
+			}
+			_, _ = out.Write([]byte(`{"result":{"openTaskId":"task-1"},"success":true}`))
+			return nil
+		},
+		Bind: func(conversationID, evidenceID string) error {
+			boundCID = conversationID
+			boundEvidence = evidenceID
+			return nil
+		},
+	})
+	if code != 0 {
+		t.Fatalf("exit=%d", code)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("calls=%v", calls)
+	}
+	if boundCID != "cid+bEFv==" || boundEvidence != "msg-9" {
+		t.Fatalf("bind cid=%q evidence=%q", boundCID, boundEvidence)
+	}
+}
+
 func TestRunDWSWrapDoesNotBindList(t *testing.T) {
 	t.Parallel()
 	bound := false

@@ -60,14 +60,17 @@ func ParseDWSSendConversation(args []string) (conversationID string, send bool) 
 		switch arg {
 		case "chat":
 			hasChat = true
-		case "send", "+send", "send-by-bot":
+		case "send", "+send", "send-by-bot", "reply", "+messages-reply":
+			hasSend = true
+		case "+dm":
+			hasChat = true
 			hasSend = true
 		case "--conversation-id", "--conversation":
 			if i+1 < len(args) {
 				conversationID = strings.TrimSpace(args[i+1])
 			}
 		}
-		if i+1 < len(args) && arg == "message" && (args[i+1] == "send" || args[i+1] == "send-by-bot") {
+		if i+1 < len(args) && arg == "message" && (args[i+1] == "send" || args[i+1] == "send-by-bot" || args[i+1] == "reply") {
 			hasSend = true
 		}
 	}
@@ -145,6 +148,20 @@ func RunDWSWrap(deps DWSWrapDeps) int {
 	gotCID, msgid := ExtractDWSReceipt(captured.String())
 	if cid == "" {
 		cid = gotCID
+	}
+	if cid == "" {
+		if taskID := extractJSONString(captured.String(), "openTaskId"); plausibleConversationOrEvidenceID(taskID) {
+			var statusBuf bytes.Buffer
+			if err := deps.Run(real, []string{"chat", "message", "query-send-status", "--open-task-id", taskID, "--format", "json"}, &statusBuf, deps.Stderr); err == nil {
+				gotCID, gotMsg := ExtractDWSReceipt(statusBuf.String())
+				if gotCID != "" {
+					cid = gotCID
+				}
+				if msgid == "" {
+					msgid = gotMsg
+				}
+			}
+		}
 	}
 	if cid == "" || deps.Bind == nil {
 		return 0

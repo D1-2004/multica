@@ -4722,8 +4722,8 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
 				taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
 		}
-		h.bindAssocOutboundFromTool(r.Context(), task, workspaceID, msg)
 	}
+	h.bindAssocOutboundFromTools(r.Context(), task, workspaceID, req.Messages)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -4743,21 +4743,20 @@ func (h *Handler) AckTaskCancelled(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) bindAssocOutboundFromTool(ctx context.Context, task db.AgentTaskQueue, workspaceID string, msg TaskMessageRequest) {
-	if h == nil || h.Assoc == nil || workspaceID == "" || !task.IssueID.Valid {
+	h.bindAssocOutboundFromTools(ctx, task, workspaceID, []TaskMessageRequest{msg})
+}
+
+func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentTaskQueue, workspaceID string, msgs []TaskMessageRequest) {
+	if h == nil || h.Assoc == nil || workspaceID == "" || !task.IssueID.Valid || len(msgs) == 0 {
 		return
 	}
-	hint := toolCommandHint(msg)
-	if !execenv.LooksLikeDWSChatSend(hint) {
-		return
-	}
-	cid, evidence := execenv.ExtractConversationFromTool(hint, msg.Output, msg.Input)
-	if cid == "" {
-		slog.Info("assoc outbound bind skipped; no conversation in tool output",
-			"event", "assoc_outbound_bind_skipped",
-			"task_id", uuidToString(task.ID),
-			"reason", "missing_conversation_id",
-		)
-		return
+	events := make([]execenv.ToolEvent, 0, len(msgs))
+	for _, msg := range msgs {
+		events = append(events, execenv.ToolEvent{
+			Command: toolCommandHint(msg),
+			Output:  msg.Output,
+			Input:   msg.Input,
+		})
 	}
 	issueID := uuidToString(task.IssueID)
 	title := ""
@@ -4776,33 +4775,66 @@ func (h *Handler) bindAssocOutboundFromTool(ctx context.Context, task db.AgentTa
 	if purpose == "" {
 		purpose = "跟进外发钉钉会话"
 	}
-	result, bindErr := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
-		WorkspaceID:    workspaceID,
-		AgentID:        uuidToString(task.AgentID),
-		IssueID:        issueID,
-		IssueTitle:     title,
-		RunID:          uuidToString(task.ID),
-		ConversationID: cid,
-		EvidenceID:     evidence,
-		Kind:           "dm",
-		Purpose:        purpose,
-	})
-	if bindErr != nil {
-		slog.Error("assoc outbound bind from tool failed",
-			"event", "assoc_outbound_bind_failed",
+	agentID := uuidToString(task.AgentID)
+	for _, outbound := range execenv.FilterOutboundChat(events) {
+		cid := outbound.ConversationID
+		if cid == "" && outbound.PersonID != "" {
+			if resolved, err := h.Assoc.RecentPersonOutreachScene(ctx, workspaceID, agentID, outbound.PersonID); err != nil {
+				slog.Warn("assoc outbound person scene lookup failed",
+					"event", "assoc_outbound_bind_skipped",
+					"task_id", uuidToString(task.ID),
+					"person_id", outbound.PersonID,
+					"error", err,
+				)
+			} else {
+				cid = resolved
+			}
+		}
+		if cid == "" {
+			slog.Info("assoc outbound bind skipped; no conversation in tool output",
+				"event", "assoc_outbound_bind_skipped",
+				"task_id", uuidToString(task.ID),
+				"reason", "missing_conversation_id",
+				"action", outbound.Action,
+				"person_id", outbound.PersonID,
+				"open_task_id", outbound.OpenTaskID,
+			)
+			continue
+		}
+		evidence := outbound.EvidenceID
+		if evidence == "" {
+			evidence = outbound.OpenTaskID
+		}
+		result, bindErr := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
+			WorkspaceID:    workspaceID,
+			AgentID:        agentID,
+			IssueID:        issueID,
+			IssueTitle:     title,
+			RunID:          uuidToString(task.ID),
+			ConversationID: cid,
+			EvidenceID:     evidence,
+			PersonID:       outbound.PersonID,
+			Kind:           "dm",
+			Purpose:        purpose,
+		})
+		if bindErr != nil {
+			slog.Error("assoc outbound bind from tool failed",
+				"event", "assoc_outbound_bind_failed",
+				"task_id", uuidToString(task.ID),
+				"conversation_id", cid,
+				"error", bindErr,
+			)
+			continue
+		}
+		slog.Info("assoc outbound bound from tool",
+			"event", "assoc_outbound_bound",
 			"task_id", uuidToString(task.ID),
-			"conversation_id", cid,
-			"error", bindErr,
+			"issue_id", issueID,
+			"conversation_id", result.ConversationID,
+			"linked", result.Linked,
+			"action", outbound.Action,
 		)
-		return
 	}
-	slog.Info("assoc outbound bound from tool",
-		"event", "assoc_outbound_bound",
-		"task_id", uuidToString(task.ID),
-		"issue_id", issueID,
-		"conversation_id", result.ConversationID,
-		"linked", result.Linked,
-	)
 }
 
 func toolCommandHint(msg TaskMessageRequest) string {
