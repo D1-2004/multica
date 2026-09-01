@@ -280,6 +280,12 @@ func TestDispatchCommandValidateIMControl(t *testing.T) {
 		if err := valid.validate(); err != nil {
 			t.Fatalf("command without control rejected: %v", err)
 		}
+		withoutContent := valid
+		withoutContent.Event.Data.Messages = append([]DispatchMessage(nil), valid.Event.Data.Messages...)
+		withoutContent.Event.Data.Messages[0].Text = ""
+		if err := withoutContent.validate(); err == nil || !strings.Contains(err.Error(), "text or attachment") {
+			t.Fatalf("default dispatch without content error = %v", err)
+		}
 	})
 
 	t.Run("new and steer are accepted for IM chat dispatch", func(t *testing.T) {
@@ -305,8 +311,10 @@ func TestDispatchCommandValidateIMControl(t *testing.T) {
 		}
 
 		command.Control.TargetExternalTaskID = "0f6cc8f4-bf1c-47cb-9035-67f3f74b51b2"
+		command.Event.Data.Messages = append([]DispatchMessage(nil), valid.Event.Data.Messages...)
+		command.Event.Data.Messages[0].Text = ""
 		if err := command.validate(); err != nil {
-			t.Fatalf("cancel with target rejected: %v", err)
+			t.Fatalf("cancel with target and empty command text rejected: %v", err)
 		}
 	})
 
