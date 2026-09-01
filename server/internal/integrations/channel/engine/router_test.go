@@ -2436,3 +2436,13 @@ func TestRouter_DingTalkHistoryFailureDoesNotFailHandle(t *testing.T) {
 		t.Fatalf("failed lookup still requests last 10, calls=%d limit=%d", q.calls, q.last.Limit)
 	}
 }
+
+func TestCoordinatorConversationTitleDropsRobotDMAutoTitle(t *testing.T) {
+	stale := "须莫🥥：你有阿里内外cli吗,有哪些功能"
+	if got := coordinatorConversationTitle(stale, channel.ChatTypeP2P); got != "" {
+		t.Fatalf("p2p auto title must not enter the coordinator, got %q", got)
+	}
+	if got := coordinatorConversationTitle("项目群", channel.ChatTypeGroup); got != "项目群" {
+		t.Fatalf("group title = %q", got)
+	}
+}

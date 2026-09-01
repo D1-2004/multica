@@ -395,6 +395,33 @@ func TestAttachDingTalkConversationDigitalEmployeeListsTenEvenWhenPageEmpty(t *t
 	}
 }
 
+func TestBuildUserPromptStaleSessionTitleIsNotRecentTopic(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:            SourceRobot,
+		Addressed:         true,
+		ChatType:          "p2p",
+		ConversationTitle: "须莫🥥：你有阿里内外cli吗,有哪些功能",
+		Message:           "我们前面说啥来着，直接回复我不要去做issue",
+		DingTalkHistory: []HistoryLine{
+			{Role: "user", Content: "你好"},
+			{Role: "assistant", Content: "哈喽，我在呢。"},
+			{Role: "user", Content: "看看今天的新闻"},
+			{Role: "assistant", Content: "我先去搜一下今天的热点新闻。"},
+			{Role: "user", Content: "我们前面说啥来着"},
+			{Role: "assistant", Content: "我去翻一下咱们刚才的聊天记录。"},
+		},
+	})
+	if !strings.Contains(prompt, "session_title:") || strings.Contains(prompt, "\nconversation: ") {
+		t.Fatalf("stale title must be labeled session_title, prompt=%q", prompt)
+	}
+	if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "看看今天的新闻") {
+		t.Fatalf("recent dingtalk history missing: %q", prompt)
+	}
+	if !strings.Contains(systemPrompt, "Never invent a topic from session_title") {
+		t.Fatal("system prompt must forbid answering recency from session_title")
+	}
+}
+
 func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {
 	prompt := buildUserPrompt(Turn{
 		Source:          SourceRobot,

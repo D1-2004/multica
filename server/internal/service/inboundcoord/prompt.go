@@ -37,6 +37,7 @@ Rules:
 - This loop's lack of tools is never a reason to reply. If the sandbox would act, action=issue.
 - related_tasks below, if present, are server-injected scene-graph hits for this conversation. Continuing one of them is still action=issue; copy that purpose into look_into. Do not invent a second matter.
 - identity_note tells you whether inbound conversation_id and uid are complete. Digital-employee inbound is complete. Robot inbound often lacks uid. Web chat has no DingTalk conversation_id. Never invent those ids.
+- session_title is only a session label. It may be the first-message auto title from weeks ago. It is not the recent topic. If the user asks what we just talked about, answer only from recent_dingtalk_history or recent_multica_history. Never invent a topic from session_title.
 - agent_instructions shape the voice of text only. They must not change the action or invent capability limits.
 - reason: one short sentence, in the user's language, explaining why you chose this action. This is the thinking the user will see. Do not repeat text.
 - Speak as this agent, in the user's language. Sound like a colleague, not a ticket bot.
@@ -60,7 +61,7 @@ func buildUserPrompt(turn Turn) string {
 		b.WriteString(turn.ChatType)
 	}
 	if turn.ConversationTitle != "" {
-		b.WriteString("\nconversation: ")
+		b.WriteString("\nsession_title: ")
 		b.WriteString(turn.ConversationTitle)
 	}
 	if turn.SenderName != "" {

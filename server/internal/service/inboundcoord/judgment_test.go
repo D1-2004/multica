@@ -19,6 +19,8 @@ func TestRoutingContractKeepsLookupInSandbox(t *testing.T) {
 		"This loop's lack of tools is never a reason to reply",
 		"If the sandbox would act, action=issue",
 		"They must not change the action or invent capability limits",
+		"Never invent a topic from session_title",
+		"answer only from recent_dingtalk_history or recent_multica_history",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)
