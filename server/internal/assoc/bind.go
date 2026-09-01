@@ -46,10 +46,25 @@ func BindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 	return result, err
 }
 
+// ValidSceneID rejects tool command text that used to be stored as a conversation id.
+func ValidSceneID(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" || strings.ContainsAny(s, " \t\n") {
+		return false
+	}
+	if strings.HasPrefix(s, "$") || strings.Contains(s, "dws") || strings.Contains(s, "--") {
+		return false
+	}
+	return true
+}
+
 func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindOutboundResult, error) {
 	cid := strings.TrimSpace(in.ConversationID)
 	if cid == "" {
 		return BindOutboundResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
+	}
+	if !ValidSceneID(cid) {
+		return BindOutboundResult{}, fmt.Errorf("%w: conversation_id is not a scene id", ErrInvalidQuery)
 	}
 	if strings.TrimSpace(in.WorkspaceID) == "" || strings.TrimSpace(in.AgentID) == "" {
 		return BindOutboundResult{}, fmt.Errorf("%w: workspace_id and agent_id are required", ErrInvalidQuery)

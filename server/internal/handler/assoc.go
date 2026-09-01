@@ -361,6 +361,8 @@ type assocBindOutboundRequest struct {
 	Kind           string `json:"kind,omitempty"`
 	Intent         string `json:"intent,omitempty"`
 	Purpose        string `json:"purpose,omitempty"`
+	IssueID        string `json:"issue_id,omitempty"`
+	AgentID        string `json:"agent_id,omitempty"`
 }
 
 func (h *Handler) BindAssocOutbound(w http.ResponseWriter, r *http.Request) {
@@ -368,29 +370,17 @@ func (h *Handler) BindAssocOutbound(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "association store is not configured")
 		return
 	}
-	if r.Header.Get("X-Actor-Source") != "task_token" {
-		writeError(w, http.StatusForbidden, "bind-outbound requires a task token")
+	var body assocBindOutboundRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
 	if workspaceID == "" {
 		workspaceID = strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
 	}
-	agentID := strings.TrimSpace(r.Header.Get("X-Agent-ID"))
-	taskID := strings.TrimSpace(r.Header.Get("X-Task-ID"))
-	if workspaceID == "" || agentID == "" || taskID == "" {
-		writeError(w, http.StatusBadRequest, "workspace, agent, and task are required")
-		return
-	}
-	var body assocBindOutboundRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid json body")
-		return
-	}
 	in := assoc.BindOutboundInput{
 		WorkspaceID:    workspaceID,
-		AgentID:        agentID,
-		RunID:          taskID,
 		ConversationID: strings.TrimSpace(body.ConversationID),
 		EvidenceID:     strings.TrimSpace(body.EvidenceID),
 		PersonID:       strings.TrimSpace(body.PersonID),
@@ -398,17 +388,53 @@ func (h *Handler) BindAssocOutbound(w http.ResponseWriter, r *http.Request) {
 		Intent:         strings.TrimSpace(body.Intent),
 		Purpose:        strings.TrimSpace(body.Purpose),
 	}
-	issueID, title, err := h.issueForTaskToken(r.Context(), workspaceID, taskID)
-	if err != nil {
-		if errors.Is(err, assoc.ErrInvalidQuery) {
-			writeError(w, http.StatusBadRequest, err.Error())
+	if r.Header.Get("X-Actor-Source") == "task_token" {
+		in.AgentID = strings.TrimSpace(r.Header.Get("X-Agent-ID"))
+		in.RunID = strings.TrimSpace(r.Header.Get("X-Task-ID"))
+		if workspaceID == "" || in.AgentID == "" || in.RunID == "" {
+			writeError(w, http.StatusBadRequest, "workspace, agent, and task are required")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load task issue")
-		return
+		issueID, title, err := h.issueForTaskToken(r.Context(), workspaceID, in.RunID)
+		if err != nil {
+			if errors.Is(err, assoc.ErrInvalidQuery) {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to load task issue")
+			return
+		}
+		in.IssueID = issueID
+		in.IssueTitle = title
+	} else {
+		in.AgentID = firstNonEmpty(strings.TrimSpace(r.URL.Query().Get("agent_id")), strings.TrimSpace(body.AgentID), strings.TrimSpace(r.Header.Get("X-Agent-ID")))
+		in.IssueID = strings.TrimSpace(body.IssueID)
+		if workspaceID == "" || in.AgentID == "" {
+			writeError(w, http.StatusBadRequest, "workspace and agent_id are required")
+			return
+		}
+		if in.IssueID == "" {
+			writeError(w, http.StatusForbidden, "bind-outbound requires a task token or issue_id")
+			return
+		}
+		title, err := h.issueTitleInWorkspace(r.Context(), workspaceID, in.IssueID)
+		if err != nil {
+			if errors.Is(err, assoc.ErrInvalidQuery) {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusNotFound, "issue not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "failed to load issue")
+			return
+		}
+		in.IssueTitle = title
+		if in.Purpose == "" {
+			in.Purpose = title
+		}
 	}
-	in.IssueID = issueID
-	in.IssueTitle = title
 	result, err := h.Assoc.BindOutbound(r.Context(), in)
 	if err != nil {
 		if errors.Is(err, assoc.ErrInvalidQuery) || errors.Is(err, assoc.ErrInvalidTask) {
@@ -454,6 +480,28 @@ func (h *Handler) issueForTaskToken(ctx context.Context, workspaceID, taskID str
 		return "", "", err
 	}
 	return util.UUIDToString(task.IssueID), issue.Title, nil
+}
+
+func (h *Handler) issueTitleInWorkspace(ctx context.Context, workspaceID, issueID string) (string, error) {
+	if h.Queries == nil {
+		return "", nil
+	}
+	wsUUID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return "", fmtAssocQuery("invalid workspace")
+	}
+	issueUUID, err := util.ParseUUID(issueID)
+	if err != nil {
+		return "", fmtAssocQuery("invalid issue")
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+		ID:          issueUUID,
+		WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		return "", err
+	}
+	return issue.Title, nil
 }
 
 func (h *Handler) recordAssocInboundEvent(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext) {

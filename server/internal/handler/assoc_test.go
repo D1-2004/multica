@@ -214,6 +214,35 @@ func TestBindAssocOutboundWithoutIssueRecordsUnlinked(t *testing.T) {
 	}
 }
 
+func TestBindAssocOutboundMemberWithIssue(t *testing.T) {
+	store := assoc.NewMemory()
+	h := &Handler{Assoc: assoc.NewService(store)}
+	ws := "22222222-2222-2222-2222-222222222222"
+	ag := "11111111-1111-1111-1111-111111111111"
+	issue := "33333333-3333-3333-3333-333333333333"
+	body := `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJw==","evidence_id":"msg-live","issue_id":"` + issue + `","agent_id":"` + ag + `","purpose":"向冬翔确认今天下午喝茶还是咖啡","person_id":"0104644667680872"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/assoc/bind-outbound", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = req.WithContext(middleware.SetMemberContext(context.Background(), ws, db.Member{}))
+	rec := httptest.NewRecorder()
+	h.BindAssocOutbound(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	got, err := h.Assoc.Recall(context.Background(), assoc.Query{
+		WorkspaceID:    ws,
+		AgentID:        ag,
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		Since:          time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0].Issue != issue {
+		t.Fatalf("recall=%+v", got.Items)
+	}
+}
+
 func TestRecordAssocInboundThenAssociate(t *testing.T) {
 	store := assoc.NewMemory()
 	h := &Handler{Assoc: assoc.NewService(store)}

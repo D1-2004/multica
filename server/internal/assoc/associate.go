@@ -37,6 +37,9 @@ func associateIssueConversation(ctx context.Context, store Store, in AssociateIn
 		return fmt.Errorf("%w: issue_id is required", ErrInvalidQuery)
 	}
 	cid := strings.TrimSpace(in.ConversationID)
+	if cid != "" && !ValidSceneID(cid) {
+		return fmt.Errorf("%w: conversation_id is not a scene id", ErrInvalidQuery)
+	}
 	kind := normalizeSceneKind(in.Kind)
 	now := time.Now().UTC()
 	personKey, personAliases := CanonicalPersonKey(append([]string{in.PersonID}, in.PersonAliases...)...)

@@ -181,6 +181,20 @@ func TestBindOutboundWithoutIssueRecordsEventOnly(t *testing.T) {
 	}
 }
 
+func TestBindOutboundRejectsCommandTextAsCID(t *testing.T) {
+	t.Parallel()
+	_, err := BindOutbound(context.Background(), NewMemory(), BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		IssueID:        "issue-1",
+		IssueTitle:     "向冬翔确认今晚吃什么",
+		ConversationID: `$ dws chat message send --user 103262 --content "hi"`,
+	})
+	if err == nil {
+		t.Fatal("expected invalid conversation_id")
+	}
+}
+
 func TestListEventsBySceneFiltersConversation(t *testing.T) {
 	t.Parallel()
 	store := NewMemory()
