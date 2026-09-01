@@ -2411,6 +2411,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 		}
 	}
 
+	// warmResumedCloudChat records the one case in which a cloud chat claim
+	// keeps its provider session: the warm 1:1 resume the agent opted into.
+	// The instruction composer below reads it, because a turn that continues
+	// a provider session is prompted differently from one that starts fresh.
+	warmResumedCloudChat := false
+
 	// Chat task: populate workspace/session info from the chat_session table.
 	if task.ChatSessionID.Valid {
 		if cs, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID); err == nil {
@@ -2638,8 +2644,10 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				slog.Warn("chat claim: persist resume identity failed",
 					"chat_session_id", uuidToString(cs.ID), "error", err)
 			}
-			if !warmResume {
-				makeChatHistoryAuthoritative(&resp)
+			if warmResume {
+				warmResumedCloudChat = true
+			} else {
+				withholdCloudChatProviderSession(&resp)
 			}
 			// A read failure must NOT masquerade as "zero input". Preserve the
 			// just-dispatched task (the stale-dispatched reclaim redelivers it)
@@ -2959,6 +2967,29 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	if agentLoadErr == nil {
 		dispatchOverrides = parseDispatchPromptOverrides(agent.DispatchPromptOverrides)
 	}
+	// DSH headless deliberately creates one fresh native session per task and
+	// does not expose a supported resume flag. Never send an old DSH session id
+	// through the OpenCode-compatible adapter: doing so would claim continuity
+	// that the provider cannot honor. Cloud direct chats already carry bounded,
+	// database-authoritative history; issue tasks rebuild their platform context
+	// in the fresh runtime brief while retaining any reusable workdir.
+	//
+	// Applied before the instruction is composed: the resumed-turn variant of
+	// the dispatch instruction must only ever describe a session the daemon
+	// will actually be told to resume.
+	applyProviderSessionContract(&resp, service.CloudSandboxRuntimeProvider(runtime))
+	// The chat_session_resume switch, enforced once more at the end of the
+	// claim path regardless of how a pointer got here. A cloud chat claim
+	// carries a provider session only when the warm-resume gate granted it on
+	// THIS claim; every earlier fallback (the chat_session pointer, the last
+	// task row, legacy tasks) is a way for one to arrive without the gate, and
+	// "off" has to mean no resume — not "no resume unless a code path forgot to
+	// clear it", which is exactly how production resumed with the switch off.
+	if task.ChatSessionID.Valid && service.IsCloudSandboxRuntime(runtime) && !warmResumedCloudChat {
+		withholdCloudChatProviderSession(&resp)
+	}
+	resumedProviderSession := warmResumedCloudChat && strings.TrimSpace(resp.PriorSessionID) != ""
+
 	if supportsTaskInstruction {
 		// The BUC segment needs a resolvable link; an unresolvable one is a
 		// deployment misconfiguration worth logging, not a reason to drop the
@@ -2985,18 +3016,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			h.FeatureFlags,
 			dispatchOverrides,
 			enterpriseAuthorizationURL,
+			resumedProviderSession,
 		)
 	} else {
 		applyLegacyDingTalkDispatchPrompt(&resp, task.Context, h.FeatureFlags, dispatchOverrides)
 	}
-
-	// DSH headless deliberately creates one fresh native session per task and
-	// does not expose a supported resume flag. Never send an old DSH session id
-	// through the OpenCode-compatible adapter: doing so would claim continuity
-	// that the provider cannot honor. Cloud direct chats already carry bounded,
-	// database-authoritative history; issue tasks rebuild their platform context
-	// in the fresh runtime brief while retaining any reusable workdir.
-	applyProviderSessionContract(&resp, service.CloudSandboxRuntimeProvider(runtime))
 
 	return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, nil
 }
@@ -3676,8 +3700,29 @@ func boundedChatHistoryTranscript(msgs []db.ChatMessage, channelType string) str
 	return joined
 }
 
-func makeChatHistoryAuthoritative(resp *AgentTaskResponse) {
-	if resp == nil || strings.TrimSpace(resp.ChatHistory) == "" {
+// withholdCloudChatProviderSession is the "no --resume" half of the cloud chat
+// contract: when the warm-resume gate says no, the provider session pointer
+// must not reach the daemon, whatever else the claim carries.
+//
+// Its predecessor (makeChatHistoryAuthoritative) cleared the pointer only when
+// a database transcript was on the claim — which was fine while every cloud
+// chat claim carried one, and silently stopped being the gate once DingTalk
+// dispatches with a printed read-back command stopped carrying it
+// (withholdChatHistoryForReadback). On those claims the pointer survived, the
+// daemon passed it to the provider, and production ran three turns on one
+// OpenCode session for an agent whose chat_session_resume was off (traces
+// 59834ddb… / 50f6652d… / b60a1060…). The turn before them, after the sandbox
+// had been recycled in between, dropped the same pointer daemon-side and told
+// the person "之前的会话上下文没有恢复" — the daemon's continuity notice, leaking
+// out of a resume nobody had asked for.
+//
+// PriorSessionResumeUnavailable goes with it. That flag discloses a resume this
+// run was meant to make and could not; a run that is deliberately not resuming
+// has nothing to disclose. Its continuity is the transcript when one is
+// carried, or the read-back command the instruction prints, and the notice
+// would only make it announce a loss to the user.
+func withholdCloudChatProviderSession(resp *AgentTaskResponse) {
+	if resp == nil {
 		return
 	}
 	resp.PriorSessionID = ""
@@ -3872,6 +3917,7 @@ type TaskCompleteRequest struct {
 	// to report" — this says "never hand this id to a later run". Older
 	// daemons omit it, which is exactly the pre-fix behaviour.
 	RetiredSessionID string `json:"retired_session_id,omitempty"`
+	ReplyDecision *protocol.ReplyDecision `json:"reply_decision,omitempty"`
 }
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -3888,6 +3934,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	req.Output, req.ReplyDecision = service.NormalizeReplyDecisionOutput(req.Output, req.ReplyDecision)
 
 	// GH #6402: a daemon whose backend does not (yet) read the provider's
 	// structured terminal reason reports a context-exhausted run as a clean

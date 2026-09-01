@@ -37,6 +37,7 @@ func TestClientSubmitExecutionResultUsesTrustedBaseAndCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	shouldReply := false
 	request := ExecutionResultRequest{
 		RequestID:         "multica-terminal:root-task",
 		AgentID:           "agent-1",
@@ -45,6 +46,8 @@ func TestClientSubmitExecutionResultUsesTrustedBaseAndCredential(t *testing.T) {
 		ExternalSessionID: "session-1",
 		ExecutionStatus:   "completed",
 		ResultMessage:     "最后回复",
+		ShouldReply:       &shouldReply,
+		ReplyReason:       "echo",
 		ExecutionResult:   map[string]any{"failureReason": ""},
 		ExecutionSummary: map[string]any{
 			"task_id": "root-task",
@@ -58,8 +61,28 @@ func TestClientSubmitExecutionResultUsesTrustedBaseAndCredential(t *testing.T) {
 		body.ExternalTaskID != request.ExternalTaskID {
 		t.Fatalf("body = %#v", body)
 	}
+	if body.ShouldReply == nil || *body.ShouldReply || body.ReplyReason != "echo" {
+		t.Fatalf("reply decision = shouldReply:%v reason:%q", body.ShouldReply, body.ReplyReason)
+	}
 	if body.ExecutionSummary["task_id"] != "root-task" {
 		t.Fatalf("executionSummary = %#v", body.ExecutionSummary)
+	}
+}
+
+func TestExecutionResultOmitsMissingReplyDecision(t *testing.T) {
+	body, err := json.Marshal(ExecutionResultRequest{ExecutionStatus: "completed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := payload["shouldReply"]; ok {
+		t.Fatalf("missing decision serialized shouldReply: %s", body)
+	}
+	if _, ok := payload["replyReason"]; ok {
+		t.Fatalf("missing decision serialized replyReason: %s", body)
 	}
 }
 

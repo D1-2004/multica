@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 )
 
@@ -26,7 +27,7 @@ func multicaMCPPrepareStaticSiteDefinition() map[string]any {
 	return map[string]any{
 		"name": multicaMCPPrepareStaticSiteTool,
 		"title": "Prepare a static site deployment",
-		"description": "Create a public-unlisted static Site or a new revision and return a short-lived, single-use raw ZIP upload capability. Hosted pages may set window.__MULTICA_FETCH_PROXY_ALLOWLIST__ to an array of exact HTTPS URLs. When ordinary window.fetch calls an exact match, Multica sends the request through its same-origin proxy; same-origin and unmatched requests continue to use native fetch. The server independently enforces allowed target origins and SSRF protections; the page allowlist does not grant server-side access. Site ownership comes only from the user authenticated by the API token or task token; ownership identifiers are never accepted as arguments. In a sandbox, PUT upload_path through the current MULTICA_SERVER_URL with the task token in Authorization and the upload capability in the returned upload_token_header. For direct public upload_url access, Authorization: Bearer <upload_token> remains supported. Send application/zip; never put ZIP or base64 data in MCP arguments.",
+		"description": "Create a public-unlisted static Site or a new revision and return a short-lived, single-use raw ZIP upload capability. Hosted pages may set window.__MULTICA_FETCH_PROXY_ALLOWLIST__ to an array of exact HTTPS URLs. When ordinary window.fetch calls an exact match, Multica sends the request through its same-origin proxy; same-origin and unmatched requests continue to use native fetch. The server independently enforces allowed target origins and SSRF protections; the page allowlist does not grant server-side access. Site ownership and workspace scope come only from the authenticated workspace or task token; ownership identifiers are never accepted as arguments. The entrypoint HTML title becomes the Site display title. In a sandbox, PUT upload_path through the current MULTICA_SERVER_URL with the task token in Authorization and the upload capability in the returned upload_token_header. For direct public upload_url access, Authorization: Bearer <upload_token> remains supported. Send application/zip; never put ZIP or base64 data in MCP arguments.",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
@@ -47,7 +48,7 @@ func multicaMCPGetStaticSiteDefinition() map[string]any {
 	return map[string]any{
 		"name": multicaMCPGetStaticSiteTool,
 		"title": "Get a static site deployment",
-		"description": "Get deployment status for a Site owned by the user authenticated by the API token or task token.",
+		"description": "Get deployment status for a Site owned by the authenticated user in the authenticated workspace.",
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{"site_id": map[string]any{"type": "string"}},
@@ -101,6 +102,7 @@ func multicaMCPGetStaticSiteOutputSchema() map[string]any {
 		"properties": map[string]any{
 			"site_id":            map[string]any{"type": "string"},
 			"public_site_id":     map[string]any{"type": "string"},
+			"title":              map[string]any{"type": "string"},
 			"status":             map[string]any{"type": "string"},
 			"active_revision_id": map[string]any{"type": "string"},
 			"latest_revision_id": map[string]any{"type": "string"},
@@ -122,7 +124,10 @@ func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.
 		return
 	}
 	ownerUserID := strings.TrimSpace(r.Header.Get("X-User-ID"))
-	if ownerUserID == "" {
+	workspaceID := strings.TrimSpace(r.Header.Get("X-Workspace-ID"))
+	actorSource := strings.TrimSpace(r.Header.Get("X-Actor-Source"))
+	if ownerUserID == "" || workspaceID == "" ||
+		(actorSource != "task_token" && actorSource != middleware.WorkspaceAccessActorSource) {
 		h.writeMulticaMCPToolError(w, id, "authenticated static site authority is invalid")
 		return
 	}
@@ -136,6 +141,7 @@ func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.
 		}
 		result, err = h.SiteHosting.Prepare(r.Context(), sitehosting.PrepareInput{
 			OwnerUserID: ownerUserID,
+			WorkspaceID: workspaceID,
 			SiteID: strings.TrimSpace(args.SiteID),
 			ExpectedSHA256: args.ExpectedSHA256, ExpectedLength: args.ContentLength,
 			Entrypoint: args.Entrypoint, SPAFallback: args.SPAFallback,
@@ -146,7 +152,7 @@ func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.
 			h.writeMulticaMCPError(w, id, -32602, "invalid get_static_site_deploy arguments")
 			return
 		}
-		result, err = h.SiteHosting.GetStatus(r.Context(), strings.TrimSpace(args.SiteID), ownerUserID)
+		result, err = h.SiteHosting.GetStatus(r.Context(), strings.TrimSpace(args.SiteID), ownerUserID, workspaceID)
 	}
 	if err != nil {
 		message := "static site operation failed"
@@ -154,7 +160,7 @@ func (h *Handler) handleMulticaMCPStaticSiteCall(w http.ResponseWriter, r *http.
 		case errors.Is(err, sitehosting.ErrUnavailable):
 			message = "static site hosting is unavailable"
 		case errors.Is(err, sitehosting.ErrSiteForbidden), errors.Is(err, sitehosting.ErrSiteNotFound):
-			message = "static Site was not found or is not owned by this user"
+			message = "static Site was not found in this workspace or is not owned by this user"
 		default:
 			slog.Error("Multica MCP static site operation failed", "tool", toolName, "source_task_id", r.Header.Get("X-Task-ID"), "error", err)
 		}

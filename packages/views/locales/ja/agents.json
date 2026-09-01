@@ -504,6 +504,8 @@
       "excluded_not_supplied": "resolved per dispatch",
       "excluded_no_conversation_context": "only for DingTalk conversations",
       "excluded_not_a_dingtalk_channel": "DingTalk channel messages only",
+      "delivery_runtime_brief": "system prompt, once per session",
+      "delivery_per_turn": "with every turn",
       "excluded_empty": "empty",
       "runtime_sections_title": "Also assembled by the runtime",
       "runtime_sections_hint": "These sections are composed on the runtime, not by the server, so they cannot be customized here.",

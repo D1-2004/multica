@@ -38,6 +38,7 @@ type Config struct {
 
 type PrepareInput struct {
 	OwnerUserID    string
+	WorkspaceID    string
 	SiteID         string
 	Entrypoint     string
 	SPAFallback    bool
@@ -103,6 +104,7 @@ func (s *Service) Prepare(ctx context.Context, input PrepareInput) (PreparedDepl
 		return PreparedDeploy{}, ErrUnavailable
 	}
 	input.OwnerUserID = strings.TrimSpace(input.OwnerUserID)
+	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
 	input.SiteID = strings.TrimSpace(input.SiteID)
 	input.Entrypoint = strings.TrimSpace(input.Entrypoint)
 	if input.Entrypoint == "" {
@@ -112,7 +114,7 @@ func (s *Service) Prepare(ctx context.Context, input PrepareInput) (PreparedDepl
 	if err != nil {
 		return PreparedDeploy{}, fmt.Errorf("invalid entrypoint: %w", err)
 	}
-	if input.OwnerUserID == "" {
+	if input.OwnerUserID == "" || input.WorkspaceID == "" {
 		return PreparedDeploy{}, ErrSiteForbidden
 	}
 	expectedSHA := strings.ToLower(strings.TrimSpace(input.ExpectedSHA256))
@@ -130,7 +132,7 @@ func (s *Service) Prepare(ctx context.Context, input PrepareInput) (PreparedDepl
 	now := s.now().UTC()
 	upload := Upload{
 		ID: uuid.NewString(), SiteID: uuid.NewString(), PublicSiteID: randomOpaqueID(),
-		RevisionID: uuid.NewString(), OwnerUserID: input.OwnerUserID,
+		RevisionID: uuid.NewString(), OwnerUserID: input.OwnerUserID, WorkspaceID: input.WorkspaceID,
 		TokenHash: tokenHash, ExpectedSHA256: expectedSHA, ExpectedLength: input.ExpectedLength,
 		Entrypoint: entrypoint, SPAFallback: input.SPAFallback, ExpiresAt: now.Add(s.config.TokenTTL),
 	}
@@ -270,11 +272,11 @@ func (s *Service) publishArchive(ctx context.Context, archivePath string, upload
 	return uploaded, nil
 }
 
-func (s *Service) GetStatus(ctx context.Context, siteID, ownerUserID string) (SiteStatus, error) {
+func (s *Service) GetStatus(ctx context.Context, siteID, ownerUserID, workspaceID string) (SiteStatus, error) {
 	if !s.Available() {
 		return SiteStatus{}, ErrUnavailable
 	}
-	status, err := s.store.GetStatus(ctx, siteID, ownerUserID)
+	status, err := s.store.GetStatus(ctx, siteID, ownerUserID, workspaceID)
 	if err != nil {
 		return SiteStatus{}, err
 	}
@@ -282,15 +284,16 @@ func (s *Service) GetStatus(ctx context.Context, siteID, ownerUserID string) (Si
 	return status, nil
 }
 
-func (s *Service) ListSites(ctx context.Context, ownerUserID string) ([]SiteStatus, error) {
+func (s *Service) ListSites(ctx context.Context, ownerUserID, workspaceID string) ([]SiteStatus, error) {
 	if !s.Available() {
 		return nil, ErrUnavailable
 	}
 	ownerUserID = strings.TrimSpace(ownerUserID)
-	if ownerUserID == "" {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if ownerUserID == "" || workspaceID == "" {
 		return nil, ErrSiteForbidden
 	}
-	sites, err := s.store.ListSites(ctx, ownerUserID)
+	sites, err := s.store.ListSites(ctx, ownerUserID, workspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -300,16 +303,17 @@ func (s *Service) ListSites(ctx context.Context, ownerUserID string) ([]SiteStat
 	return sites, nil
 }
 
-func (s *Service) DeleteSite(ctx context.Context, siteID, ownerUserID string) error {
+func (s *Service) DeleteSite(ctx context.Context, siteID, ownerUserID, workspaceID string) error {
 	if !s.Available() {
 		return ErrUnavailable
 	}
 	siteID = strings.TrimSpace(siteID)
 	ownerUserID = strings.TrimSpace(ownerUserID)
-	if siteID == "" || ownerUserID == "" {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if siteID == "" || ownerUserID == "" || workspaceID == "" {
 		return ErrSiteForbidden
 	}
-	return s.store.DeleteSite(ctx, siteID, ownerUserID)
+	return s.store.DeleteSite(ctx, siteID, ownerUserID, workspaceID)
 }
 
 func (s *Service) ResolvePublic(ctx context.Context, publicSiteID string) (ResolvedSite, error) {

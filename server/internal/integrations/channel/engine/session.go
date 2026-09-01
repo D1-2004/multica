@@ -336,6 +336,37 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 	return session.ID, nil
 }
 
+// CreateUnboundSession creates a Chat owned by an authenticated dispatch
+// continuation. It deliberately does not claim a direct-channel binding key.
+func (s *ChatSession) CreateUnboundSession(ctx context.Context, in EnsureSessionInput) (pgtype.UUID, error) {
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.q.WithTx(tx)
+	if _, err := qtx.LockWorkspaceForChatSessionCreate(ctx, in.WorkspaceID); err != nil {
+		return pgtype.UUID{}, fmt.Errorf("lock workspace for chat session create: %w", err)
+	}
+	title := strings.TrimSpace(in.Title)
+	if title == "" {
+		title = s.titles.forType(in.ChatType)
+	}
+	session, err := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
+		WorkspaceID: in.WorkspaceID,
+		AgentID:     in.AgentID,
+		CreatorID:   in.Sender,
+		Title:       title,
+	})
+	if err != nil {
+		return pgtype.UUID{}, fmt.Errorf("create chat session: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return pgtype.UUID{}, fmt.Errorf("commit: %w", err)
+	}
+	return session.ID, nil
+}
+
 // AppendInput is the channel-agnostic input for AppendUserMessage. Body is the
 // full stored text (including any platform enrichment); CommandText is the
 // user's OWN typed text used for `/issue` parsing (empty falls back to Body) —
@@ -348,21 +379,22 @@ func (s *ChatSession) createSessionAndBinding(ctx context.Context, in EnsureSess
 // its own binding row, recording the real thread here per session does not clash
 // across sibling threads.
 type AppendInput struct {
-	SessionID           pgtype.UUID
-	WorkspaceID         pgtype.UUID
-	Sender              pgtype.UUID
-	InstallationID      pgtype.UUID
-	Body                string
-	CommandText         string
-	MessageID           string
-	ThreadID            string
-	ClaimToken          pgtype.UUID
-	ForceFreshSession   bool
-	PreparedTask        *service.PreparedChannelChatTask
-	DisableIssueCommand bool
-	AttachmentIDs       []pgtype.UUID
-	SourcePayload       []byte
-	MediaPendingSeconds float64
+	SessionID              pgtype.UUID
+	WorkspaceID            pgtype.UUID
+	Sender                 pgtype.UUID
+	InstallationID         pgtype.UUID
+	Body                   string
+	CommandText            string
+	MessageID              string
+	ThreadID               string
+	ClaimToken             pgtype.UUID
+	ForceFreshSession      bool
+	PreparedTask           *service.PreparedChannelChatTask
+	DisableIssueCommand    bool
+	AttachmentIDs          []pgtype.UUID
+	SourcePayload          []byte
+	MediaPendingSeconds    float64
+	SkipBindingReplyTarget bool
 }
 
 // PersistPendingFreshSession stores a bare fresh-session directive and, when
@@ -541,7 +573,7 @@ func (s *ChatSession) AppendUserMessage(ctx context.Context, in AppendInput) (Ap
 
 	// Record the latest trigger so the decoupled outbound patcher can thread
 	// its reply back into the originating topic.
-	if in.MessageID != "" {
+	if in.MessageID != "" && !in.SkipBindingReplyTarget {
 		if err := qtx.UpdateChannelChatSessionBindingReplyTarget(ctx, db.UpdateChannelChatSessionBindingReplyTargetParams{
 			ChatSessionID: in.SessionID,
 			LastMessageID: textOrNull(in.MessageID),

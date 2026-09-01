@@ -99,8 +99,20 @@ type AgentDispatchResponse struct {
 }
 
 type AgentChatDispatchResponse struct {
-	Continuation AgentDispatchContinuation `json:"continuation"`
-	TaskID       string                    `json:"taskId,omitempty"`
+	Continuation  AgentDispatchContinuation  `json:"continuation"`
+	TaskID        string                     `json:"taskId,omitempty"`
+	ControlResult *AgentDispatchControlResult `json:"controlResult,omitempty"`
+}
+
+type AgentDispatchControlResult struct {
+	Action                  string `json:"action"`
+	Status                  string `json:"status"`
+	TargetExternalTaskID    string `json:"targetExternalTaskId,omitempty"`
+	PreemptedExternalTaskID string `json:"preemptedExternalTaskId,omitempty"`
+}
+
+type AgentDispatchControlResponse struct {
+	ControlResult AgentDispatchControlResult `json:"controlResult"`
 }
 
 // HandleAgentDispatch consumes an authenticated message-router delivery. The

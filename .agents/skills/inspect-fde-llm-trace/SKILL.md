@@ -114,7 +114,7 @@ a1 mcp call-tool agent-message-router-observability::get_observability_filter_op
 | 文本特征 | 所有者 | 改哪里 |
 |---|---|---|
 | `outbound.mode=dws`、`普通 assistant final text 不能替代`、`dws chat message reply` | 服务端 `composeDispatchInstructionSegments` | Multica server，preview 可改 |
-| `## DingTalk Conversation`、`source of truth`、`dws chat message search-advanced --conversation-ids`、`- quoted <msgId>` | 服务端 `buildDispatchConversationInstruction`（`server/internal/handler/agent_dispatch_v2.go`） | 本仓库，claim 时组装，改完部署即生效 |
+| `## DingTalk Conversation`、`source of truth`、`dws chat message list --open-dingtalk-id/--conversation-id … --jq`（旧版是 `search-advanced --conversation-ids`）、`- quoted <msgId>`、`You are continuing your own session`（续接轮） | 服务端 `buildDispatchConversationInstruction`（`server/internal/handler/agent_dispatch_v2.go`） | 本仓库，claim 时组装，改完部署即生效 |
 | `冬翔 本次发言（需要处理的是这句）`、`引用了…更早的一条消息作为背景` | 服务端 `dispatchMessageDisplay`（同上文件），是用户可见展示内容 | 本仓库，改完部署即生效 |
 | `This reply is delivered to dingtalk as text`、`Reply to dingtalk with the final outcome only`、`<interaction-record>` | Daemon `buildChatPrompt` / `chatHistoryRecoveryBlock`（`server/internal/daemon/prompt.go`） | **runtime/daemon 二进制**；claim 只下发 `chat_channel_type` 与 `chat_channel_delivers_files`，不带这段英文。改了要等新 runtime template，服务端改动不会带上它 |
 | `You are opencode… Never use tools like Bash as means to communicate` | OpenCode system | runtime 模板，不是 `agent/AGENTS.md` |
@@ -129,11 +129,14 @@ a1 mcp call-tool agent-message-router-observability::get_observability_filter_op
 主调用的 user 消息不是一整块，按固定顺序拼出来，逐段认所有者比通读一遍有用：
 
 ```
-① Diamond common.prompt        安全与交付规范
-② Diamond <surface>.prompt     Auto 模式前台协调职责 / chat / issue
+（2026-08-31 起 ①②⑤ 不在 user 段：claim 时追加进 agent instructions，随简报进 system prompt，
+  每个会话一份。在 system 里 `## Agent Identity` 之后找。user 段里再看到整段 ①②⑤ = 旧服务端版本，
+  或 claim 没加载到 agent 的退路。）
+① Diamond common.prompt        安全与交付规范                → system
+② Diamond <surface>.prompt     Auto 模式前台协调职责 / chat / issue → system
+⑤ reply_formatting             ## DingTalk Reply Formatting  → system
 ③ Router contextPrompt         Router dispatch execution context
 ④ dingtalk_conversation        ## DingTalk Conversation（服务端 claim 时组装）
-⑤ reply_formatting             ## DingTalk Reply Formatting
 ⑥ daemon chat 框架             You are running as a chat assistant… / Audience:
 ⑦ 恢复历史                     <interaction-record> 或旧版 Recovered conversation history
 ⑧ User message:                本轮展示内容
@@ -148,6 +151,22 @@ a1 mcp call-tool agent-message-router-observability::get_observability_filter_op
 ### 恢复历史里的自述
 
 chat/auto 的 `<interaction-record>`（旧版是 `Recovered conversation history from earlier turns:`）记的是本 Agent 回给 Multica 的终答，不是钉钉收到的消息。里面反复出现「已通过 DWS 回复」时，那是上一轮的自述被回灌，既不能当送达证据，也不该被模仿成回复语气。同一段记录里出现无法解密的入站密文（`||4||1||68` 结尾的 base64）说明 Multica 侧镜像本身有损，此时必须回读钉钉会话本身。
+
+### resume 有没有生效
+
+「后台开关」不等于「线上行为」，两边都要看：
+
+- 连续几条 trace 的 `refs.externalSessionId` 相同（`ses_…`）= provider session 被续接了；每条都不同 = 每轮新起。
+- 续接轮的 LLM trace 主调用 `messages[]` 里直接带着前几轮的 user / assistant / tool 消息，**没有** `<interaction-record>`；`prompt_tokens` 随轮次线性涨、`cached_tokens=0`；`toolCallCount=0` 且推理里写 "answer directly" 是常态，不是漏发。
+- 服务端判据是 `shouldWarmResumeCloudChat`（agent `chat_session_resume` 开关 + 单聊 + 暖沙箱 + identity 未变 + 上次回答 ≤ 20 分钟）。开关用 `multica agent get <agentId> --output json` 看 `chat_session_resume`；注意本机 CLI 默认指向正式。
+- 开关是 false 却续接了：2026-08-31 之前的服务端 bug——钉钉回读派发不带 transcript，清指针的逻辑没跑。修法与判断依据见 `docs/dingtalk-inbound-chat-prompt-spec.md` §5.1。
+- 用户收到「之前的会话上下文没有恢复，不过对话记录还在」：这是 daemon 的 `Session Continuity Notice` 漏到了钉钉，说明 claim 带了 `PriorSessionID` 但 daemon 侧丢了它（沙箱回收 / 持久上下文变化）。看 LLM trace user 段里有没有 `## Session Continuity Notice`。
+- 任何一轮的 user 段都只应有 Router context + `## DingTalk Conversation` + daemon 框架 + 消息本身；续接轮的 `## DingTalk Conversation` 是 `You are continuing your own session` 文案。再看到整段 `# 安全与交付规范` / `## DingTalk Reply Formatting` 在 user 段，先确认服务端版本（它们现在在 system 里）。
+
+### 回读命令与截断
+
+- 现在打印的是 `dws chat message list --open-dingtalk-id <发言人>`（单聊）/ `--conversation-id <cid>`（群）`--limit 20 --jq '…'`，1 秒级。旧版打印 `search-advanced --conversation-ids <cid>`：扫全局流 40 页本地过滤，60 秒，`--limit` 再小也不会更快——冷启动轮 60–80 秒的大头就是它。看到 trace 里工具调用是 `search-advanced` 且 `durationMs` 上万，先确认服务端版本，不是模型选错。
+- OpenCode 工具输出超限后**从头截断**，而头部是最新消息：`be5ebcb8…` 想看房间最新状态，拿到的是截止到前一晚的。tool 消息以 `...output truncated...` 开头就是这种情况。`list` 不带 `--jq` 时 20 条约 54k 字符，必超限；投影后约 12k。
 
 ## 钉钉有没有回：独立回读
 

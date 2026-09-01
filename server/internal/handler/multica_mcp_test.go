@@ -301,6 +301,7 @@ func TestMulticaMCPAssocRecallCurrentIssueRequiresTask(t *testing.T) {
 type fakeSiteHostingService struct {
 	prepareInput      sitehosting.PrepareInput
 	statusOwnerUserID string
+	statusWorkspaceID string
 }
 
 func (f *fakeSiteHostingService) Prepare(_ context.Context, input sitehosting.PrepareInput) (sitehosting.PreparedDeploy, error) {
@@ -314,16 +315,17 @@ func (f *fakeSiteHostingService) Prepare(_ context.Context, input sitehosting.Pr
 	}, nil
 }
 
-func (f *fakeSiteHostingService) GetStatus(_ context.Context, siteID, ownerUserID string) (sitehosting.SiteStatus, error) {
+func (f *fakeSiteHostingService) GetStatus(_ context.Context, siteID, ownerUserID, workspaceID string) (sitehosting.SiteStatus, error) {
 	f.statusOwnerUserID = ownerUserID
+	f.statusWorkspaceID = workspaceID
 	return sitehosting.SiteStatus{SiteID: siteID, PublicSiteID: "public-id", Status: "active", LatestRevisionID: "revision-id", LatestStatus: "active", SiteURL: "https://sites.example.test/sites/public-id/"}, nil
 }
 
-func (f *fakeSiteHostingService) ListSites(context.Context, string) ([]sitehosting.SiteStatus, error) {
+func (f *fakeSiteHostingService) ListSites(context.Context, string, string) ([]sitehosting.SiteStatus, error) {
 	return nil, nil
 }
 
-func (f *fakeSiteHostingService) DeleteSite(context.Context, string, string) error {
+func (f *fakeSiteHostingService) DeleteSite(context.Context, string, string, string) error {
 	return nil
 }
 
@@ -350,6 +352,9 @@ func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 	if service.prepareInput.OwnerUserID != "00000000-0000-0000-0000-000000000001" {
 		t.Fatalf("authority=%#v", service.prepareInput)
 	}
+	if service.prepareInput.WorkspaceID != "00000000-0000-0000-0000-000000000004" {
+		t.Fatalf("workspace authority=%#v", service.prepareInput)
+	}
 	result := decodeMCPResponse(t, response)["result"].(map[string]any)
 	structured := result["structuredContent"].(map[string]any)
 	if structured["upload_token"] != "mhs_secret" || structured["upload_method"] != "PUT" ||
@@ -369,6 +374,9 @@ func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 	if service.statusOwnerUserID != "00000000-0000-0000-0000-000000000001" {
 		t.Fatalf("status owner user=%q", service.statusOwnerUserID)
 	}
+	if service.statusWorkspaceID != "00000000-0000-0000-0000-000000000004" {
+		t.Fatalf("status workspace=%q", service.statusWorkspaceID)
+	}
 
 	personalResponse := httptest.NewRecorder()
 	h.MulticaMCP(personalResponse, personalMCPRequest(t, "tools/call", "prepare-site-pat", map[string]any{
@@ -376,11 +384,22 @@ func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 		"arguments": map[string]any{"expected_sha256": strings.Repeat("a", 64), "content_length": 1234},
 	}))
 	if personalResponse.Code != http.StatusOK {
-		t.Fatalf("PAT prepare status=%d body=%s", personalResponse.Code, personalResponse.Body.String())
+		t.Fatalf("PAT prepare transport status=%d body=%s", personalResponse.Code, personalResponse.Body.String())
 	}
 	personalResult := decodeMCPResponse(t, personalResponse)["result"].(map[string]any)
-	if personalResult["isError"] == true || service.prepareInput.OwnerUserID != "00000000-0000-0000-0000-000000000001" {
-		t.Fatalf("PAT prepare result=%#v authority=%#v", personalResult, service.prepareInput)
+	if personalResult["isError"] != true {
+		t.Fatalf("workspace-less PAT prepare result=%#v", personalResult)
+	}
+	forgedWorkspaceRequest := personalMCPRequest(t, "tools/call", "prepare-site-forged-workspace", map[string]any{
+		"name": "prepare_static_site_deploy",
+		"arguments": map[string]any{"expected_sha256": strings.Repeat("a", 64), "content_length": 1234},
+	})
+	forgedWorkspaceRequest.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000004")
+	forgedWorkspaceResponse := httptest.NewRecorder()
+	h.MulticaMCP(forgedWorkspaceResponse, forgedWorkspaceRequest)
+	forgedWorkspaceResult := decodeMCPResponse(t, forgedWorkspaceResponse)["result"].(map[string]any)
+	if forgedWorkspaceResult["isError"] != true {
+		t.Fatalf("PAT with caller-controlled workspace result=%#v", forgedWorkspaceResult)
 	}
 }
 

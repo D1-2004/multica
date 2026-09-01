@@ -38,11 +38,13 @@ user 段由谁写、写什么、以及每一条改动如何生效。
 ## 2. user 段的构成与所有权
 
 ```
+—— 以下三段走运行时简报（AGENTS.md / system prompt），每个会话一份，不进 user 段 ——
 ① 安全与交付规范                        Diamond common.prompt        配置热更新
 ② <surface> 模式职责（auto/chat/issue） Diamond <surface>.prompt     配置热更新
+⑤ ## DingTalk Reply Formatting         handler                      部署即生效
+—— 以下才是 user 段（每轮） ——
 ③ Router dispatch execution context    Router（外部服务）            Router 发版
 ④ ## DingTalk Conversation             handler                      部署即生效
-⑤ ## DingTalk Reply Formatting         handler                      部署即生效
 ⑥ chat 框架 / Audience / 交付口径       daemon                       需重建镜像
 ⑦ <interaction-record>   外壳           daemon                       需重建镜像
                          内容           handler                      部署即生效
@@ -51,6 +53,27 @@ user 段由谁写、写什么、以及每一条改动如何生效。
 ```
 
 ③ 由 Router 逐字透传，Multica 不解析、不裁剪、不去重。
+
+### 2.1 按"多久变一次"决定走哪条路（`DispatchPromptSegment.delivery`）
+
+`composeDispatchInstructionSegments` 给每段标 `delivery`：
+
+- `runtime_brief`：整个会话逐字不变的段——①②、⑤、BUC 身份授权。claim 时
+  `applyTaskInstructionForClaim` 把它们**追加到 `resp.Agent.Instructions`**（与 OKR 目录同一条路），
+  daemon 渲染进 `## Agent Identity` 下的简报，也就是 system prompt。模型每次请求看到一份，
+  在对话前面；不再每轮一份堆进对话里。
+- `per_turn`：逐次派发才变的段——③ Router 交付事实、④ 会话定位符。仍走 `task.instruction`，
+  贴在本轮消息前面。
+
+这么分的原因见线上 trace `b60a1060…`：续接三轮后一次请求里有三份同样的 3.5k 字符；
+连标题生成那次调用（user 段整段喂进去）都花了 3k tokens 给一句「HI」起名。
+
+两条注意：
+
+- claim 加载不到 agent（`resp.Agent == nil`）时没有简报可搭，整段按原顺序退回 `task.instruction`。
+  宁可位置不对，不能没有。
+- daemon 的会话上下文摘要（`taskSessionContextSHA`）包含 `AgentInstructions`，所以 Diamond 改了策略，
+  下一轮简报变化 → daemon 自己丢掉旧 provider session 重开，不会拿着旧策略续接。
 
 ## 3. 展示内容（⑧，`dispatchMessageDisplay`）
 
@@ -94,10 +117,34 @@ user 段由谁写、写什么、以及每一条改动如何生效。
 | 会话交付 | `surface ∈ {chat, auto}` 且带 completion callback | **终答就是回复，平台替你投递**；不要自己用出站工具发（自己发的 + 平台投的 = 两条）；写答案本身，不要写"我已回复"这种汇报 |
 | Issue 交付 | `surface=issue` 且带 completion callback | 终答会被平台投回钉钉会话，issue 评论是 Multica 侧记录；写一次、两处都给；不要自己再发一遍 |
 | 定位符 | 有会话 ID / 有引用 | 逐条打印可直接执行的回读命令 |
+| 续接会话 | claim 保留了 provider session（见 5.1） | **替换**事实来源半段：上下文里已经有本会话的早先轮次和首轮回读；只回答最末一个 `User message:` 块，上面的都已回答过；仅当最新消息指向上下文里没有的内容、正文不可读、或需要引用全文时才回读，不再是例行步骤；命令照常打印，以防 daemon 事后丢了 session |
 
 命令一律**代入真实 ID、可原样执行**，不留 `<openMsgId>` 这类占位符——需要模型自己从数据块里
 拼命令的提示，就是会被猜出来的提示。同一个标识符在段里只出现一次（只在命令里），
 不再重复当行标签。
+
+会话回读用 `dws chat message list`，不用 `search-advanced`。这是 CLI 里"拉取指定群聊或单聊的会话
+消息内容"的正牌命令，是一个固化动作；`search-advanced` 是扫当前账号**全局消息流**再本地按 cid 过滤。
+正式单聊实测（2026-08-31）：
+
+| 命令 | 耗时 | 结果 |
+| --- | --- | --- |
+| `search-advanced --conversation-ids <cid> --limit 20` | 60 s（扫 40 页） | 10 条，`complete=false` |
+| `list --conversation-id <cid> --limit 20` | 1.1 s | 20 条 |
+
+每一轮冷启动都把那 60 秒当第一次工具调用付掉了——这就是冷启动轮 60–80 秒的大头。
+
+打印形式（`dispatchConversationReadHint`）：
+
+- 单聊（`conversation.type=single`）：`--open-dingtalk-id <发言人 openDingTalkId>`，即 CLI 文档写明的
+  单聊寻址；发言人 id 缺失时退回 `--conversation-id`
+- 群聊 / 类型未知：`--conversation-id <openConversationId>`
+- 一律带 `--limit 20 --jq '.messages[] | {createTime, sender, text, quoted: .quotedMessage.content}'`
+
+`--limit` 与 `--jq` 是为了不撞 runtime 的工具输出上限：OpenCode 超限后**从头截断**，而头部正是最新的
+消息——正式 trace `be5ebcb8…`（11:20「HI」）要看房间最新状态，拿到的却是截止到前一晚的内容。
+`list` 不投影时每条约 2.7k 字符（reactions、resourceRefs、每个 id 两份），20 条 54k；投影到四个字段后
+约 12k。`--jq` 是该命令自己文档里的输出整形方式，不是旁门。结果按时间倒序（最新在前）。
 
 ## 5. 恢复历史（⑦ 内容，`boundedChatHistoryTranscript`）
 
@@ -128,6 +175,46 @@ Slack / Feishu / 网页 Chat **保留**恢复历史：那里没有回读途径�
   取回来，标记只会让它去声明缺失而不是去恢复。
 - **逐条截断标记**（`…[truncated]…`）：两种会话都发，它是就地声明。
 
+### 5.1 Provider session 续接（resume）与本段的关系
+
+云沙箱 Chat 默认**每轮新起 provider session**，Multica 记录（或 5.0 的回读命令）是唯一的
+连续性来源。例外只有一个：`shouldWarmResumeCloudChat`（`cloud_chat_resume.go`）全部命中时
+claim 保留 `PriorSessionID`，daemon 以 `--session` 续上上一轮的 OpenCode 会话——
+
+1. agent 的 `chat_session_resume` 开关为 true（设置页「会话续接」/ `multica agent get <id>`）；
+2. 云沙箱 runtime，且任务没有 `ForceFreshSession`；
+3. 单聊（网页 Chat 或渠道 `chat_type=p2p`），群聊永不续接；
+4. 沙箱不是冷启动；
+5. resume identity（runtime、artifact、instructions、skills）与上一轮一致；
+6. 上一轮完成回答距今 ≤ 20 分钟。
+
+**判否时必须清指针**：`withholdCloudChatProviderSession` 清掉 `PriorSessionID` 与
+`PriorSessionResumeUnavailable`，**不管 claim 上有没有 ChatHistory**。它的前身
+`makeChatHistoryAuthoritative` 只在带 transcript 时才清——5.0 让钉钉回读派发不再带 transcript
+之后，这条门就形同虚设：钉钉派发的 claim 一直带着 `chat_session.session_id`，daemon 照样续接，
+开关关着也续。正式环境 2026-08-31 的三条 trace（`59834ddb…` 14:36、`50f6652d…` 14:38、
+`b60a1060…` 14:52）就是同一个 `ses_fa97756e…` 跑了三轮，而该 agent 的开关是 false；更早的
+`be5ebcb8…`（11:20）则因为沙箱在间隔里被回收，daemon 侧丢掉了这个指针、注入 continuity
+notice，用户收到了「之前的会话上下文没有恢复，不过对话记录还在」——那是 daemon 的内部提示
+漏了出去，不是 Multica 记录丢了。`PriorSessionResumeUnavailable` 一并清掉的理由相同：
+一轮**按设计**不续接的运行没有"想续没续上"可披露。
+
+**判是时指令走续接变体**（`dispatchInstructionInputs.ResumedSession`）：
+
+- `## DingTalk Conversation` 换成第 4 节表里的「续接会话」文案。
+- ③ Router context 和引用定位符每轮照发——它们才是逐轮变化的事实。
+- ①②⑤ 本来就不在 user 段里（见 2.1），续接与否都只在简报里有一份。
+
+daemon 侧（⑥⑦⑧⑨）对此无感：续接轮仍会打印 "What you can see of this conversation is only
+the slice Multica recorded of it"，与续接文案不冲突。若 daemon 在 claim 之后仍丢掉 session
+（workdir 未复用 / 持久上下文变化 / provider 拒绝续接），那一轮没有 policy 段，但 continuity
+notice 会让它按打印的命令回读——这是已接受的降级，不是 bug。
+
+线上怎么判断一轮是不是续接：观测 MCP 里连续几条 trace 的 `refs.externalSessionId` 相同；
+LLM trace 主调用的 `messages[]` 里带着前几轮的 user/assistant/tool 消息而没有
+`<interaction-record>`；`prompt_tokens` 随轮次线性上涨且 `cached_tokens=0`；续接轮
+`toolCallCount=0` 是常态。
+
 ## 6. 对普通 Multica Chat 的影响面
 
 | 改动 | 网页 Chat 是否受影响 |
@@ -139,6 +226,8 @@ Slack / Feishu / 网页 Chat **保留**恢复历史：那里没有回读途径�
 | 丢轮次标记 | 否——网页 Chat 保持原行为 |
 | 不下发恢复历史 | 否——判据要求 dingtalk + dws 出站，网页 Chat 永远不命中 |
 | 「Multica 没有 history reader」那句 | 否——在 `ChatChannelType != ""` 分支内 |
+| 判否续接时清指针（5.1） | 否——网页 Chat 一直带 transcript，旧逻辑本来就清；只有不带 transcript 的钉钉回读派发行为变了 |
+| 续接变体指令（5.1） | 否——需要 dispatch envelope；网页 Chat 续接时 claim 没有 instruction |
 
 新增规则时按同样的表自查一遍。
 
@@ -173,3 +262,6 @@ Slack / Feishu / 网页 Chat **保留**恢复历史：那里没有回读途径�
    而且 JSON 里的引号是 `&quot;`，未解转义。去重与转义归 Router。
 2. Router 在 `dispatchInput.data.sender` 里丢掉了 `uid`（`inboundEvent` 里有）。补上这一个
    字段，第 3 节的归属判定就能从「其他人」精确到具体的人。
+3. `dws chat message search-advanced --conversation-ids <cid>` 是**扫全局搜索流再本地过滤**
+   （`pagesFetched: 40`、`filterMode: client`），缩 `--limit` 也不会更快。本仓库已改用
+   `dws chat message list`（第 4 节）；搜索类命令只留给真正按关键词/时间跨会话找消息的场景。

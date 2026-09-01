@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const taskCompletionTestTarget = "router-target:v1:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -91,6 +92,57 @@ func TestBuildTaskCompletionUsesProviderOutputOverLegacyResultMessage(t *testing
 	}
 }
 
+func TestBuildTaskCompletionCarriesSuccessfulReplyDecision(t *testing.T) {
+	result := []byte(`{"output":"可见回复","reply_decision":{"shouldReply":false,"reason":"echo"}}`)
+	completion := buildTaskCompletion(
+		taskCompletionTarget{RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		"",
+		"",
+		"",
+	)
+	if completion.ReplyDecision == nil || completion.ReplyDecision.ShouldReply || completion.ReplyDecision.Reason != "echo" {
+		t.Fatalf("reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
+func TestBuildTaskCompletionNormalizesRawReplyDecisionOutput(t *testing.T) {
+	result := []byte("{\"output\":\"可见回复\\n\\n```multica-reply-decision\\n{\\\"shouldReply\\\":false,\\\"reason\\\":\\\"echo\\\"}\\n```\"}")
+	completion := buildTaskCompletion(
+		taskCompletionTarget{RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		"",
+		"",
+		"",
+	)
+	if completion.ResultMessage != "可见回复" {
+		t.Fatalf("result message = %q", completion.ResultMessage)
+	}
+	if completion.ReplyDecision == nil || completion.ReplyDecision.ShouldReply || completion.ReplyDecision.Reason != "echo" {
+		t.Fatalf("reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
+func TestBuildTaskCompletionDoesNotCarryFailedReplyDecision(t *testing.T) {
+	result := []byte(`{"output":"partial","reply_decision":{"shouldReply":false,"reason":"echo"}}`)
+	completion := buildTaskCompletion(
+		taskCompletionTarget{RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"failed",
+		result,
+		"partial",
+		"failed",
+		"agent_error.unknown",
+	)
+	if completion.ReplyDecision != nil {
+		t.Fatalf("failed completion carried reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
 func TestBuildTaskCompletionRootUsesCanonicalOutputOverLastTaskMessage(t *testing.T) {
 	result, err := json.Marshal(map[string]any{
 		"output":         "我在联系人里搜索了一下，没有找到\"须莫v6\"这个人。\n\n目前联系人里只有\"须莫🥥\"，没有名为\"须莫v6\"的联系人。",
@@ -114,6 +166,9 @@ func TestBuildTaskCompletionRootUsesCanonicalOutputOverLastTaskMessage(t *testin
 	want := "我在联系人里搜索了一下，没有找到\"须莫v6\"这个人。\n\n目前联系人里只有\"须莫🥥\"，没有名为\"须莫v6\"的联系人。"
 	if completion.ResultMessage != want {
 		t.Fatalf("result message = %q, want %q", completion.ResultMessage, want)
+	}
+	if completion.ReplyDecision == nil || !completion.ReplyDecision.ShouldReply {
+		t.Fatalf("reply decision = %#v", completion.ReplyDecision)
 	}
 }
 
@@ -306,13 +361,28 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	if _, err := svc.CompleteTask(
 		ctx,
 		util.MustParseUUID(taskID),
-		[]byte(`{"output":"agent execution summary","result_message":"第一行\\n第二行"}`),
+		[]byte("{\"output\":\"agent execution summary\\n\\n```multica-reply-decision\\n{\\\"shouldReply\\\":false,\\\"reason\\\":\\\"echo\\\"}\\n```\"}"),
 		"session-1",
 		"",
 		false,
 		"",
 	); err != nil {
 		t.Fatal(err)
+	}
+
+	var persistedResult []byte
+	if err := pool.QueryRow(ctx, `SELECT result FROM agent_task_queue WHERE id = $1`, taskID).Scan(&persistedResult); err != nil {
+		t.Fatal(err)
+	}
+	var persistedPayload protocol.TaskCompletedPayload
+	if err := json.Unmarshal(persistedResult, &persistedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if persistedPayload.Output != "agent execution summary" {
+		t.Fatalf("persisted output = %q", persistedPayload.Output)
+	}
+	if persistedPayload.ReplyDecision == nil || persistedPayload.ReplyDecision.ShouldReply || persistedPayload.ReplyDecision.Reason != "echo" {
+		t.Fatalf("persisted reply decision = %#v", persistedPayload.ReplyDecision)
 	}
 
 	var rootTaskID, terminalTaskID, requestID, status, message, targetIdentity string
@@ -342,6 +412,14 @@ func TestCompleteTaskEnqueuesRouterCompletionInTerminalTransaction(t *testing.T)
 	}
 	if got, want := *summary.FirstEffectiveReplyAt, firstEffectiveReplyAt.Format(time.RFC3339Nano); got != want {
 		t.Fatalf("first effective reply at = %s, want %s", got, want)
+	}
+	var frozen map[string]any
+	if err := json.Unmarshal(executionSummary, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	decision, ok := frozen["_multica_reply_decision"].(map[string]any)
+	if !ok || decision["shouldReply"] != false || decision["reason"] != "echo" {
+		t.Fatalf("frozen reply decision = %#v", frozen["_multica_reply_decision"])
 	}
 }
 

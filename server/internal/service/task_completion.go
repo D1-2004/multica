@@ -35,6 +35,7 @@ type TaskCompletion struct {
 	ExecutionSummary  []byte
 	Error             string
 	FailureReason     string
+	ReplyDecision     *protocol.ReplyDecision
 }
 
 type taskCompletionTarget struct {
@@ -108,17 +109,23 @@ func buildTaskCompletion(
 	errMessage string,
 	failureReason string,
 ) TaskCompletion {
+	result = normalizeTaskCompletionResult(result)
 	resultMessage := ""
 	// Root callbacks use the canonical provider output. Streamed task messages
 	// may be partial chunks or internal control frames; only comment callbacks
 	// intentionally select their thread-specific Agent reply.
-	if status == "completed" && !target.CommentID.Valid {
+	if status != "completed" || target.CommentID.Valid {
+		resultMessage = redact.Text(util.UnescapeBackslashEscapes(lastReply))
+	}
+	var replyDecision *protocol.ReplyDecision
+	if status == "completed" {
 		var payload protocol.TaskCompletedPayload
 		if json.Unmarshal(result, &payload) == nil {
-			resultMessage = redact.Text(util.UnescapeBackslashEscapes(payload.Output))
+			replyDecision = payload.ReplyDecision
+			if !target.CommentID.Valid {
+				resultMessage = redact.Text(util.UnescapeBackslashEscapes(payload.Output))
+			}
 		}
-	} else {
-		resultMessage = redact.Text(util.UnescapeBackslashEscapes(lastReply))
 	}
 	return TaskCompletion{
 		RequestID:         taskCompletionRequestID(target),
@@ -132,6 +139,7 @@ func buildTaskCompletion(
 		ResultMessage:     resultMessage,
 		Error:             redact.Text(errMessage),
 		FailureReason:     failureReason,
+		ReplyDecision:     replyDecision,
 	}
 }
 
@@ -223,7 +231,19 @@ func (s *TaskService) enqueueTaskCompletionInTx(
 			errMessage,
 			failureReason,
 		)
-		completion.ExecutionSummary = executionSummaryJSON
+		if completion.ReplyDecision == nil {
+			completion.ExecutionSummary = executionSummaryJSON
+		} else {
+			var frozen map[string]any
+			if err := json.Unmarshal(executionSummaryJSON, &frozen); err != nil {
+				return false, err
+			}
+			frozen[protocol.TaskReplyDecisionSummaryKey] = completion.ReplyDecision
+			completion.ExecutionSummary, err = json.Marshal(frozen)
+			if err != nil {
+				return false, err
+			}
+		}
 		_, enqueueErr := qtx.EnqueueTaskCompletion(ctx, db.EnqueueTaskCompletionParams{
 			RootTaskID:        completion.RootTaskID,
 			TerminalTaskID:    completion.TerminalTaskID,

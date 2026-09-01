@@ -19,6 +19,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 	"golang.org/x/text/unicode/norm"
@@ -162,6 +163,13 @@ type DispatchOutbound struct {
 	ReplyTo string `json:"replyTo,omitempty"`
 }
 
+type DispatchControl struct {
+	Action               string `json:"action"`
+	SessionMode          string `json:"sessionMode,omitempty"`
+	QueueMode            string `json:"queueMode,omitempty"`
+	TargetExternalTaskID string `json:"targetExternalTaskId,omitempty"`
+}
+
 type DispatchCompletionCallback struct {
 	URL                string `json:"url"`
 	UpdateURL          string `json:"updateUrl,omitempty"`
@@ -179,6 +187,7 @@ type DispatchCommand struct {
 	Event              DispatchEvent                 `json:"event"`
 	Surface            DispatchSurface               `json:"surface"`
 	Outbound           DispatchOutbound              `json:"outbound"`
+	Control            *DispatchControl              `json:"control,omitempty"`
 	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
 	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
 	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
@@ -328,6 +337,9 @@ func (c DispatchCommand) validate() error {
 	if c.Source.Platform != "dingtalk" || (c.Source.Type != "robot" && c.Source.Type != "digital_employee") {
 		return errors.New("source must be dingtalk robot or digital_employee")
 	}
+	if err := c.validateControl(); err != nil {
+		return err
+	}
 	if c.Event.Domain == "calendar" && c.Event.Type == "calendar.started" {
 		if err := c.validateCalendarStarted(); err != nil {
 			return err
@@ -392,6 +404,47 @@ func (c DispatchCommand) validate() error {
 	}
 	if c.Continuation != nil && strings.TrimSpace(c.AgentID) != "" {
 		return errors.New("agentId and continuation are mutually exclusive")
+	}
+	return nil
+}
+
+func (c DispatchCommand) validateControl() error {
+	if c.Control == nil {
+		return nil
+	}
+	if c.Event.Domain != "channel" || c.Event.Type != "message.created" ||
+		(c.Surface.Type != protocol.DispatchSurfaceTypeChat &&
+			c.Surface.Type != protocol.DispatchSurfaceTypeAuto) {
+		return errors.New("control is supported only for IM chat message.created dispatches")
+	}
+	switch c.Control.Action {
+	case "dispatch":
+		if c.Control.SessionMode != "continue" && c.Control.SessionMode != "fresh" {
+			return errors.New("control.sessionMode must be continue or fresh")
+		}
+		if c.Control.QueueMode != "enqueue" && c.Control.QueueMode != "steer" {
+			return errors.New("control.queueMode must be enqueue or steer")
+		}
+		if c.Control.TargetExternalTaskID != "" {
+			return errors.New("control.targetExternalTaskId is valid only for cancel")
+		}
+	case "cancel":
+		if c.Control.SessionMode != "" || c.Control.QueueMode != "" {
+			return errors.New("cancel control cannot set sessionMode or queueMode")
+		}
+		if c.CompletionCallback != nil {
+			return errors.New("cancel control cannot create a completion callback")
+		}
+		if c.Continuation == nil || c.Continuation.Kind != "chat" || strings.TrimSpace(c.Continuation.ChatSessionID) == "" {
+			return errors.New("cancel control requires an IM chat continuation")
+		}
+		target := strings.TrimSpace(c.Control.TargetExternalTaskID)
+		parsed, err := uuid.Parse(target)
+		if err != nil || parsed.String() != target {
+			return errors.New("control.targetExternalTaskId must be a canonical UUID")
+		}
+	default:
+		return errors.New("control.action must be dispatch or cancel")
 	}
 	return nil
 }
@@ -615,6 +668,7 @@ type persistedDispatchContext struct {
 	EventData     DispatchEventData `json:"dispatch_event_data"`
 	Surface       DispatchSurface   `json:"dispatch_surface"`
 	Outbound      DispatchOutbound  `json:"dispatch_outbound"`
+	Control       *DispatchControl  `json:"dispatch_control,omitempty"`
 	// ExternalIdentity is the private DWS descriptor the dispatch stored beside
 	// the envelope. The instruction projection reads it only to decide whether a
 	// quoted message was written by this Agent itself.
@@ -659,6 +713,30 @@ const (
 	dispatchConversationSSOTSection = "Multica does not carry this conversation's history and none of it is reproduced anywhere in this prompt. " +
 		"Read the conversation back with the command below BEFORE you answer — do not answer a continuing conversation from the trigger message alone, and do not reconstruct it from memory. " +
 		"Any claim elsewhere that it cannot be fetched is out of date.\n\n" +
+		"What you do see of your own earlier turns, wherever it appears, is text written back to Multica — never proof a DingTalk message exists, and never a reply style to copy. " +
+		"Answer the person; do not report your own delivery.\n\n"
+
+	// Replaces the SSOT section on a turn that continues the provider session
+	// (the claim kept PriorSessionID — cloud chat allows that only for a direct
+	// room on a warm sandbox inside the resume window, once the agent opted in).
+	//
+	// Such a run is not handed a prompt; it is handed one more user turn on top
+	// of everything it already has: its earlier turns of this conversation, the
+	// read-back it ran on the first of them, and one `User message:` block per
+	// turn since. Demanding a fresh read-back "BEFORE you answer" there is a
+	// demand to re-fetch what it is already looking at, and production runs
+	// answered it by ignoring the sentence (0 tool calls, traces 50f6652d… /
+	// b60a1060…) — so the instruction was both wrong and inert. What a resumed
+	// turn does need said is which of the accumulated `User message:` blocks is
+	// the unanswered one, and that the room is a direct one in which every
+	// message reached it as its own turn. Read-back stays a rule with named
+	// triggers rather than a routine step, and the full-conversation command is
+	// still printed below for the case where the daemon dropped the resume after
+	// the claim and the run really is starting cold.
+	dispatchConversationResumedSection = "You are continuing your own session with this person: your context already holds the earlier turns of this direct conversation, including any read-back you ran, and every message they sent since then reached you as its own turn. " +
+		"Answer the newest `User message:` block at the end of this turn; the `User message:` blocks above it were answered already. " +
+		"Read the conversation back only when the newest message refers to something your context does not hold, when its text is unreadable, or when you need the full text of a quoted message — not as a routine step. " +
+		"If your context holds no earlier turns after all, read the conversation back with the command below before you answer.\n\n" +
 		"What you do see of your own earlier turns, wherever it appears, is text written back to Multica — never proof a DingTalk message exists, and never a reply style to copy. " +
 		"Answer the person; do not report your own delivery.\n\n"
 
@@ -751,11 +829,46 @@ func dispatchQuotedMessageReadHint(fact dispatchQuotedMessageFact) string {
 	)
 }
 
-func dispatchConversationReadHint(conversationID string) string {
+// The printed read-back is `dws chat message list`, the CLI's command for
+// exactly this — "拉取指定群聊或单聊的会话消息内容" — and not `search-advanced`,
+// which the instruction used to print. Measured on the production 1:1 room:
+//
+//   - search-advanced --conversation-ids <cid> --limit 20: 60 s, 40 pages of
+//     the account's global message stream filtered client-side, 10 messages,
+//     complete=false. Every cold turn paid that as its first tool call.
+//   - list --conversation-id <cid> --limit 20: 1.1 s, 20 messages.
+//
+// Two bounds keep the result inside the runtime's tool-output cap, which
+// truncates from the head — the newest messages, the ones the read-back is
+// for (trace be5ebcb8…, 11:20 "HI", was handed the room up to the previous
+// night and nothing after): the limit, and a --jq projection down to the four
+// fields a conversation is made of. Unprojected, list returns ~2.7k characters
+// per message (reactions, resource refs, every id twice); projected, 20
+// messages are ~12k. --jq is the command's own documented output shaping.
+const (
+	dispatchConversationReadLimit = 20
+	dispatchConversationReadJQ    = `'.messages[] | {createTime, sender, text, quoted: .quotedMessage.content}'`
+)
+
+// dispatchConversationReadHint prints the read-back for the room this dispatch
+// came from. A direct room is addressed the way the CLI documents it — by the
+// other party's openDingTalkId — and a group room by its conversation id; a
+// direct room whose sender id is missing falls back to the conversation id.
+func dispatchConversationReadHint(stored persistedDispatchContext) string {
+	target := "--conversation-id " + strings.TrimSpace(stored.EventData.Conversation.OpenConversationID)
+	if strings.TrimSpace(stored.EventData.Conversation.Type) == "single" {
+		if sender := dispatchSenderOpenDingTalkID(stored.EventData.Sender); sender != "" {
+			target = "--open-dingtalk-id " + sender
+		}
+	}
 	return fmt.Sprintf(
-		"- conversation: `dws chat message search-advanced --conversation-ids %s --limit 50 --format json`",
-		conversationID,
+		"- conversation, newest first: `dws chat message list %s --limit %d --jq %s`",
+		target, dispatchConversationReadLimit, dispatchConversationReadJQ,
 	)
+}
+
+func dispatchSenderOpenDingTalkID(sender DispatchSender) string {
+	return firstNonEmpty(strings.TrimSpace(sender.OpenDingTalkID), strings.TrimSpace(sender.SenderOpenDingTalkID))
 }
 
 func dispatchQuotedMessageFacts(stored persistedDispatchContext) []dispatchQuotedMessageFact {
@@ -839,11 +952,14 @@ func dispatchConversationChatDeliveryApplies(stored persistedDispatchContext) bo
 // buildDispatchConversationInstruction is empty unless this run can actually
 // reach DingTalk: every command in it is a DWS command, so a robot-SDK dispatch
 // with no injected current-user capability would be told to run what it cannot.
-func buildDispatchConversationInstruction(stored persistedDispatchContext) string {
+//
+// resumedSession selects the wording for a turn that continues the provider
+// session (see dispatchConversationResumedSection); the locators and delivery
+// sections are the same either way.
+func buildDispatchConversationInstruction(stored persistedDispatchContext, resumedSession bool) string {
 	if stored.Domain != "channel" || stored.Outbound.Mode != protocol.DispatchOutboundModeDWS {
 		return ""
 	}
-	conversationID := strings.TrimSpace(stored.EventData.Conversation.OpenConversationID)
 	facts := dispatchQuotedMessageFacts(stored)
 	readback := dispatchConversationReadbackAvailable(stored)
 	chatDelivery := readback && dispatchConversationChatDeliveryApplies(stored)
@@ -854,7 +970,9 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext) strin
 
 	var b strings.Builder
 	b.WriteString(dispatchConversationInstructionHeader)
-	if readback {
+	if readback && resumedSession {
+		b.WriteString(dispatchConversationResumedSection)
+	} else if readback {
 		b.WriteString(dispatchConversationSSOTSection)
 	}
 	if chatDelivery {
@@ -865,7 +983,7 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext) strin
 	}
 	hints := make([]string, 0, len(facts)+1)
 	if readback {
-		hints = append(hints, dispatchConversationReadHint(conversationID))
+		hints = append(hints, dispatchConversationReadHint(stored))
 	}
 	for _, fact := range facts {
 		hints = append(hints, dispatchQuotedMessageReadHint(fact))
@@ -909,7 +1027,7 @@ func applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(
 	rawContext []byte,
 	flags *featureflag.Service,
 ) {
-	applyTaskInstructionForClaim(response, rawContext, flags, nil, "")
+	applyTaskInstructionForClaim(response, rawContext, flags, nil, "", false)
 }
 
 // applyTaskInstructionForClaim composes the entire instruction-capable
@@ -918,29 +1036,51 @@ func applyDingTalkDispatchPromptToExistingTaskFieldsWithFeatureFlags(
 // segment composer is what lets the settings preview show the real text rather
 // than a reconstruction, and removes the ordering coupling between three
 // call sites in the claim path.
+//
+// resumedSession is true only when the claim keeps a provider session for the
+// daemon to resume (a warm 1:1 cloud chat the agent opted into). The composer
+// then omits the segments the session already carries and prompts the turn as
+// a continuation; see dispatchInstructionInputs.ResumedSession.
 func applyTaskInstructionForClaim(
 	response *AgentTaskResponse,
 	rawContext []byte,
 	flags *featureflag.Service,
 	overrides map[string]string,
 	enterpriseAuthorizationURL string,
+	resumedSession bool,
 ) {
 	if response == nil {
 		return
 	}
 	stored, present := parsePersistedDispatchContext(rawContext)
-	instruction := instructionFromSegments(composeDispatchInstructionSegments(dispatchInstructionInputs{
+	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
 		Stored:                     stored,
 		Present:                    present,
 		DingTalkContext:            isDingTalkTaskContext(rawContext),
 		Flags:                      flags,
 		Overrides:                  overrides,
 		EnterpriseAuthorizationURL: enterpriseAuthorizationURL,
-	}))
-	if instruction == "" {
+		ResumedSession:             resumedSession,
+	})
+	brief, perTurn := dispatchInstructionByDelivery(segments)
+	if brief != "" {
+		if response.Agent != nil {
+			// Session-constant text rides in the runtime brief the daemon renders
+			// into the system prompt — the same road the OKR catalog takes — so
+			// the provider sees it once per request, ahead of the conversation,
+			// rather than once per turn inside it.
+			response.Agent.Instructions = joinDispatchPromptSections(response.Agent.Instructions, brief)
+		} else {
+			// No brief to ride on: the claim could not load the agent. The
+			// per-turn message is the only channel left, and a turn with the
+			// policy in the wrong place beats a turn with no policy at all.
+			perTurn = instructionFromSegments(segments)
+		}
+	}
+	if perTurn == "" {
 		return
 	}
-	response.Instruction = instruction
+	response.Instruction = perTurn
 }
 
 // parsePersistedDispatchContext reports the stored dispatch envelope and
@@ -1022,7 +1162,7 @@ func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *feat
 		})
 	}
 
-	conversationPrompt := buildDispatchConversationInstruction(stored)
+	conversationPrompt := buildDispatchConversationInstruction(stored, false)
 
 	var instruction strings.Builder
 	instruction.WriteString("## Trusted DingTalk Dispatch\n\n")

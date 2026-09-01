@@ -25,6 +25,7 @@ type Surface = (typeof SURFACES)[number];
 type SegmentCopy = {
   label: string;
   source: string;
+  delivery: string;
   condition: string;
   excluded: string;
 };
@@ -158,6 +159,10 @@ export function DispatchPromptDialog({
         : segment.source === "router"
           ? t(($) => $.tab_body.dispatch.source_router)
           : t(($) => $.tab_body.dispatch.source_builtin),
+    delivery:
+      segment.delivery === "runtime_brief"
+        ? t(($) => $.tab_body.dispatch.delivery_runtime_brief)
+        : t(($) => $.tab_body.dispatch.delivery_per_turn),
     condition: (() => {
       switch (segment.condition) {
         case "dingtalk_dispatch":
@@ -366,6 +371,9 @@ function SegmentCard({
             <span className="text-body font-medium">{copy.label}</span>
             <span className="rounded border px-1.5 py-0.5 text-caption text-muted-foreground">
               {copy.source}
+            </span>
+            <span className="rounded border px-1.5 py-0.5 text-caption text-muted-foreground">
+              {copy.delivery}
             </span>
             {segment.overridden && (
               <span className="rounded bg-primary/10 px-1.5 py-0.5 text-caption font-medium text-primary">

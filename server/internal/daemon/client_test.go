@@ -102,7 +102,7 @@ func TestClient_VersionOmittedWhenUnset(t *testing.T) {
 	}
 }
 
-func TestClientCompleteTaskUsesOutputWithoutLegacyResultMessage(t *testing.T) {
+func TestClientCompleteTaskTransparentlySendsRawOutput(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/daemon/tasks/task-1/complete" {
 			t.Fatalf("path = %q", r.URL.Path)
@@ -116,6 +116,9 @@ func TestClientCompleteTaskUsesOutputWithoutLegacyResultMessage(t *testing.T) {
 		}
 		if _, ok := body["result_message"]; ok {
 			t.Fatalf("legacy result_message was sent: %#v", body)
+		}
+		if _, ok := body["reply_decision"]; ok {
+			t.Fatalf("daemon must not send reply_decision: %#v", body)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))

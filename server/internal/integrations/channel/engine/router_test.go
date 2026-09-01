@@ -105,10 +105,16 @@ type fakeBinder struct {
 	lastBind     BindMediaParams
 	pendingFresh int
 	pendingErr   error
+	unboundCalls int
 }
 
 func (f *fakeBinder) EnsureSession(_ context.Context, p EnsureSessionParams) (pgtype.UUID, error) {
 	f.lastEnsure = p
+	return f.ensureID, f.ensureErr
+}
+func (f *fakeBinder) CreateUnboundSession(_ context.Context, p EnsureSessionParams) (pgtype.UUID, error) {
+	f.lastEnsure = p
+	f.unboundCalls++
 	return f.ensureID, f.ensureErr
 }
 func (f *fakeBinder) MarkPendingFresh(_ context.Context, _ pgtype.UUID) error {
@@ -590,6 +596,35 @@ func TestRouter_InstallationOverrideSkipsPlatformResolver(t *testing.T) {
 	}
 	if h.binder.lastEnsure.Installation != override {
 		t.Fatalf("session installation = %+v, want authenticated override %+v", h.binder.lastEnsure.Installation, override)
+	}
+}
+
+func TestRouter_RouterOwnedSessionSelectionSkipsChannelBinding(t *testing.T) {
+	h := newHarness(t)
+	identity := ResolvedIdentity{PrincipalUserID: h.inst.inst.InstallerUserID}
+	continuedID := uuidFromString(t, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+	result, err := h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+		IdentityOverride:    &identity,
+		ChatSessionOverride: &continuedID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ChatSessionID != continuedID || h.binder.lastEnsure.Installation.ID.Valid || !h.binder.lastAppend.SkipBindingReplyTarget {
+		t.Fatalf("continued session=%+v ensure=%+v append=%+v", result.ChatSessionID, h.binder.lastEnsure, h.binder.lastAppend)
+	}
+
+	h = newHarness(t)
+	identity = ResolvedIdentity{PrincipalUserID: h.inst.inst.InstallerUserID}
+	result, err = h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+		IdentityOverride:     &identity,
+		CreateUnboundSession: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ChatSessionID != h.binder.ensureID || h.binder.unboundCalls != 1 || !h.binder.lastAppend.SkipBindingReplyTarget {
+		t.Fatalf("new session=%+v unbound calls=%d append=%+v", result.ChatSessionID, h.binder.unboundCalls, h.binder.lastAppend)
 	}
 }
 

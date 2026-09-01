@@ -3,12 +3,13 @@ import { api } from "../api";
 
 export const hostedSiteKeys = {
   all: ["hosted-sites"] as const,
-  list: () => [...hostedSiteKeys.all, "list"] as const,
+  list: (workspaceId: string) =>
+    [...hostedSiteKeys.all, "list", workspaceId] as const,
 };
 
-export function hostedSiteListOptions() {
+export function hostedSiteListOptions(workspaceId: string) {
   return queryOptions({
-    queryKey: hostedSiteKeys.list(),
+    queryKey: hostedSiteKeys.list(workspaceId),
     queryFn: () => api.listHostedSites(),
   });
 }

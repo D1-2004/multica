@@ -15,6 +15,7 @@ vi.mock("@tanstack/react-query", () => ({
       {
         siteId: "site-1",
         publicSiteId: "public-1",
+        title: "Weekly Review",
         status: "active",
         activeRevisionId: "revision-1",
         latestRevisionId: "revision-1",
@@ -32,10 +33,16 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@multica/core/sitehosting", () => ({
   hostedSiteListOptions: () => ({}),
+  hostedSiteDisplayTitle: (site: { title: string; publicSiteId: string }) =>
+    site.title.trim() || site.publicSiteId,
   useDeleteHostedSite: () => ({
     mutateAsync: mocks.deleteSite,
     isPending: false,
   }),
+}));
+
+vi.mock("@multica/core", () => ({
+  useWorkspaceId: () => "workspace-1",
 }));
 
 vi.mock("@multica/ui/lib/clipboard", () => ({
@@ -55,6 +62,13 @@ beforeEach(() => {
 });
 
 describe("HostedSitesTab", () => {
+  it("shows the entrypoint HTML title as the website label", () => {
+    renderWithI18n(<HostedSitesTab />);
+
+    expect(screen.getByText("Weekly Review")).toBeInTheDocument();
+    expect(screen.getByText("public-1")).toBeInTheDocument();
+  });
+
   it("shares the public URL", async () => {
     renderWithI18n(<HostedSitesTab />);
 
