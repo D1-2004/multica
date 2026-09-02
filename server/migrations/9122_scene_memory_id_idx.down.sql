@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS scene_memory_id_idx;

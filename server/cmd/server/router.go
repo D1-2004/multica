@@ -49,6 +49,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -766,6 +767,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	h.SceneMemoryStore = scenememory.NewStore(queries)
+	h.SceneMemoryWorker = scenememory.NewWorker(h.SceneMemoryStore, nil, func() bool {
+		if opts.DeploymentFence == nil {
+			return true
+		}
+		return opts.DeploymentFence.Snapshot().State == deploymentfence.StateNormal
+	})
 	channelRouter.SetInboundCoordinator(coordinator)
 	channelRouter.SetSceneAssociator(h.Assoc)
 	// So an inbound DingTalk/Slack/Lark message appears in a web client

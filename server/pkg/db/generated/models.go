@@ -1191,6 +1191,45 @@ type GithubPullRequestCheckSuite struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SceneMemory struct {
+	ID                            pgtype.UUID        `json:"id"`
+	WorkspaceID                   pgtype.UUID        `json:"workspace_id"`
+	AgentID                       pgtype.UUID        `json:"agent_id"`
+	Platform                      string             `json:"platform"`
+	OrgID                         string             `json:"org_id"`
+	SceneKey                      string             `json:"scene_key"`
+	SceneKind                     string             `json:"scene_kind"`
+	SceneTitle                    string             `json:"scene_title"`
+	MemoryText                    string             `json:"memory_text"`
+	MemoryRevision                int64              `json:"memory_revision"`
+	BootstrappedAt                pgtype.Timestamptz `json:"bootstrapped_at"`
+	SourceCursorAt                pgtype.Timestamptz `json:"source_cursor_at"`
+	SourceCursorEvidenceID        string             `json:"source_cursor_evidence_id"`
+	DirtyRevision                 int64              `json:"dirty_revision"`
+	FlushedRevision               int64              `json:"flushed_revision"`
+	DirtySince                    pgtype.Timestamptz `json:"dirty_since"`
+	DirtyThroughAt                pgtype.Timestamptz `json:"dirty_through_at"`
+	DirtyThroughEvidenceID        string             `json:"dirty_through_evidence_id"`
+	AvailableAt                   pgtype.Timestamptz `json:"available_at"`
+	LeaseToken                    pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt                pgtype.Timestamptz `json:"lease_expires_at"`
+	LeaseTargetDirtyRevision      pgtype.Int8        `json:"lease_target_dirty_revision"`
+	LeaseTargetThroughAt          pgtype.Timestamptz `json:"lease_target_through_at"`
+	LeaseTargetThroughEvidenceID  string             `json:"lease_target_through_evidence_id"`
+	LeaseExpectedMemoryRevision   pgtype.Int8        `json:"lease_expected_memory_revision"`
+	AttemptCount                  int32              `json:"attempt_count"`
+	LastErrorCode                 string             `json:"last_error_code"`
+	LastError                     string             `json:"last_error"`
+	BlockedAt                     pgtype.Timestamptz `json:"blocked_at"`
+	LastTriggerJobID              pgtype.UUID        `json:"last_trigger_job_id"`
+	LastTriggerCoordTraceID       string             `json:"last_trigger_coord_trace_id"`
+	LastTriggerIdempotencyKey     string             `json:"last_trigger_idempotency_key"`
+	LastFlushMeta                 []byte             `json:"last_flush_meta"`
+	LastFlushedAt                 pgtype.Timestamptz `json:"last_flushed_at"`
+	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                     pgtype.Timestamptz `json:"updated_at"`
+}
+
 type InboundCoordinatorJob struct {
 	ID                  pgtype.UUID        `json:"id"`
 	AcceptanceID        pgtype.UUID        `json:"acceptance_id"`
