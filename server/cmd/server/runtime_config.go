@@ -216,6 +216,15 @@ func (c *appRuntimeConfig) handlerConfig() handler.Config {
 	cfg.ModelPricing = c.modelPricing()
 	cfg.AttachmentDownloadMode = raw.Web.AttachmentDownloadMode
 	cfg.AttachmentFrameAncestors = append([]string(nil), raw.Web.CORSAllowedOrigins...)
+	if u := strings.TrimSpace(raw.Runtime.LLM.BaseURL); u != "" {
+		cfg.LLMBaseURL = u
+	}
+	if k := strings.TrimSpace(c.secrets.LLMAPIKey); k != "" {
+		cfg.LLMAPIKey = k
+	}
+	if m := strings.TrimSpace(raw.Runtime.LLM.DefaultModel); m != "" {
+		cfg.LLMDefaultModel = m
+	}
 	return cfg
 }
 

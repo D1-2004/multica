@@ -3510,3 +3510,46 @@ describe("ApiClient startMikaOnboarding", () => {
     ).resolves.toEqual({ started: false });
   });
 });
+
+describe("ApiClient extractAgentVoice", () => {
+  it("parses persona and reply_tone", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            persona: "A reliable teammate.",
+            reply_tone: "Short sentences.",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").extractAgentVoice(
+        "agent-1",
+        "You are a teammate.",
+      ),
+    ).resolves.toEqual({
+      persona: "A reliable teammate.",
+      reply_tone: "Short sentences.",
+    });
+  });
+
+  it("falls back to empty strings when the response is malformed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ persona: 1 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").extractAgentVoice("agent-1"),
+    ).resolves.toEqual({ persona: "", reply_tone: "" });
+  });
+});

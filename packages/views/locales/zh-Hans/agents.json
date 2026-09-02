@@ -176,6 +176,8 @@
     "prop_concurrency": "并发",
     "prop_chat_session_resume": "续接上一轮会话",
     "prop_chat_session_resume_hint": "关闭时每一轮都新起 provider 会话，从不续接。开启后仅单聊生效：沙箱仍热、上次回答完成不超过 20 分钟，且提示词、Skill 和运行时都没变时，接着上一轮 Claude/Codex 会话继续。连续提问更快、更省 token；不满足条件时自动用完整历史重开。",
+    "prop_inbound_coordinator": "入站先判断",
+    "prop_inbound_coordinator_hint": "打开后，钉钉和网页消息会先判断能否直接回话；只有需要工具、查资料或持续跟进的事才开沙箱。关掉则每条都进沙箱。",
     "prop_owner": "所有者",
     "prop_created": "创建时间",
     "prop_updated": "更新时间",
@@ -265,6 +267,7 @@
   "tabs": {
     "overview": "概览",
     "work": "工作",
+    "inbound": "入站对话",
     "capabilities": "能力",
     "settings": "设置",
     "general": "通用",
@@ -557,6 +560,53 @@
     },
     "instructions": {
       "intro": "设置每个任务都会使用的 System Prompt，支持 Markdown。",
+      "persona_label": "基础人设",
+      "persona_hint": "这个智能体在聊天里是谁。入站 Coordinator 只用它来定回复的声音，不会改变一条消息是直接回复还是开 Issue。",
+      "persona_placeholder": "你是团队里靠谱的同事。先把事实说清楚，再给一句建议。",
+      "tone_label": "回复语气",
+      "tone_hint": "入站 Coordinator 在聊天里怎么说话。写短一点。沙箱任务仍按下面的 System Prompt 执行。",
+      "tone_placeholder": "短句、不客套、不重复用户的话。",
+      "templates_label": "模板",
+      "extract": "从指令抽取人设和语气",
+      "extracting": "正在抽取…",
+      "extract_failed": "无法从指令抽取人设和语气",
+      "extract_empty": "先写指令，再抽取人设和语气。",
+      "persona_templates": {
+        "colleague": {
+          "label": "靠谱同事",
+          "text": "你是团队里靠谱的同事。先把事实说清楚，再给一句建议。不承诺做不到的事。"
+        },
+        "advisor": {
+          "label": "专业顾问",
+          "text": "你是这个领域的专业顾问。结论先行，再补一两句依据。不铺垫。"
+        },
+        "assistant": {
+          "label": "做事助手",
+          "text": "你是做事的助手。少寒暄。直接说出下一步，或你要去核对的那件事。"
+        },
+        "coordinator": {
+          "label": "冷静协调人",
+          "text": "你是冷静的协调人。对齐各方和事实，不站队，把事项说清楚。"
+        }
+      },
+      "tone_templates": {
+        "direct": {
+          "label": "简洁直接",
+          "text": "短句、不客套、不重复用户的话。"
+        },
+        "warm": {
+          "label": "温和专业",
+          "text": "礼貌、克制、不卖萌，像工作消息。"
+        },
+        "casual": {
+          "label": "轻松同事",
+          "text": "口语、自然，像在钉钉里跟同事说话。仍然把事说清楚。"
+        },
+        "formal": {
+          "label": "严谨书面",
+          "text": "用词准确，不夸张，适合对领导或跨团队。"
+        }
+      },
       "system_prompt_label": "System Prompt",
       "placeholder": "定义这个智能体的角色、专长和工作风格。\n\n# 示例\n你是一名专注 React 和 TypeScript 的前端工程师。\n\n## 工作风格\n- 写小而聚焦的 PR —— 每个逻辑变更一个 commit\n- 优先组合而不是继承\n- 新组件总是配单元测试\n\n## 约束\n- 未经明确批准不要修改 shared/ 下的 type\n- 遵循 features/ 中现有的组件模式",
       "system_layer_label": "由 Multica 维护",
@@ -577,6 +627,7 @@
       "segment_policy": "托管策略",
       "segment_context": "交付上下文",
       "segment_dingtalk_conversation": "钉钉会话",
+      "segment_scene_graph": "事图场域",
       "segment_reply_formatting": "回复格式",
       "segment_enterprise_identity": "身份授权",
       "source_managed": "托管",
@@ -597,6 +648,7 @@
       "excluded_not_enterprise_runtime": "仅企业身份运行时",
       "excluded_not_supplied": "每次派发时解析",
       "excluded_no_conversation_context": "仅钉钉会话",
+      "excluded_not_a_dingtalk_channel": "仅钉钉频道消息",
       "delivery_runtime_brief": "拼入系统提示词，每个会话一次",
       "delivery_per_turn": "每轮随消息下发",
       "excluded_empty": "为空",
@@ -611,6 +663,7 @@
       "condition_dingtalk_dispatch": "派发到该智能体的钉钉消息、日程事件和审批事件会注入。",
       "condition_per_dispatch": "由 Router 在每次派发时解析——本次要回复的会话、消息和发送者。",
       "condition_dingtalk_conversation": "钉钉会话注入——说明会话本身是唯一事实来源，并给出回读会话和被引用消息的命令。",
+      "condition_dingtalk_channel": "钉钉频道消息注入——召回和绑定 Issue 与 openConversationId。",
       "condition_any_dingtalk_task": "所有钉钉任务都会注入，包括没有派发信封的那些。",
       "condition_enterprise_runtime": "仅当智能体运行在企业身份运行时上才注入。",
       "status_active": "本模式下生效",
@@ -1190,6 +1243,17 @@
       "sink_url_placeholder": "https://trace.example.com/ingest",
       "saved_toast": "LLM Trace 设置已保存",
       "save_failed_toast": "保存 LLM Trace 设置失败"
+    },
+    "inbound": {
+      "empty": "还没有入站对话。",
+      "loading": "正在加载入站对话…",
+      "load_failed": "无法加载入站对话。",
+      "retry": "重试",
+      "select_prompt": "选择一条对话查看记录。",
+      "untitled": "未命名对话",
+      "load_older": "加载更早消息",
+      "no_messages": "这条对话还没有消息。",
+      "back": "返回"
     }
   },
   "char_counter": {

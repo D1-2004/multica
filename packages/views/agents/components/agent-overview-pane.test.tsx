@@ -58,6 +58,9 @@ vi.mock("./tabs/a2a-tab", () => ({
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
+vi.mock("./tabs/coordinator-sessions-tab", () => ({
+  CoordinatorSessionsTab: () => <div>coordinator-sessions-tab</div>,
+}));
 
 // The pane now reads workspace context to decide whether the Integrations
 // tab is worth showing (it queries Lark installations to learn whether the
@@ -354,6 +357,7 @@ describe("AgentOverviewPane Identity tab", () => {
     expect(capabilityTabs.map((tab) => tab.textContent)).toEqual([
       "Overview",
       "Work",
+      "Inbound",
       "Capabilities",
       "Settings",
       "Instructions",

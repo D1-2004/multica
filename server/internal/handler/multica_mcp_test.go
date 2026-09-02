@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -110,6 +111,8 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 		"list_agents",
 		"prepare_static_site_deploy",
 		"get_static_site_deploy",
+		multicaMCPAssocRecallTool,
+		multicaMCPAssocBindTool,
 	}
 	if len(tools) != len(wantNames) {
 		t.Fatalf("tools=%#v", tools)
@@ -149,6 +152,152 @@ func TestMulticaMCPToolsListIsAlwaysAvailableAndPublishesAllActions(t *testing.T
 	}
 }
 
+func TestMulticaMCPAssocRecall(t *testing.T) {
+	store := assoc.NewMemory()
+	ws := "00000000-0000-0000-0000-000000000004"
+	ag := "00000000-0000-0000-0000-000000000002"
+	task, err := store.InsertTask(context.Background(), assoc.Task{
+		WorkspaceID: ws,
+		AgentID:     ag,
+		IssueID:     "00000000-0000-0000-0000-000000000099",
+		Purpose:     "预约A与B本周五下午30分钟",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEdge(context.Background(), assoc.Edge{
+		WorkspaceID: ws,
+		AgentID:     ag,
+		SrcType:     assoc.NodeTask,
+		SrcID:       task.ID,
+		DstType:     assoc.NodeScene,
+		DstID:       "cid-a",
+		Rel:         assoc.RelOutreach,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := testMulticaMCPHandler(t)
+	h.Assoc = assoc.NewService(store)
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+		"name": multicaMCPAssocRecallTool,
+		"arguments": map[string]any{
+			"since":           "48h",
+			"conversation_id": "cid-a",
+		},
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeMCPResponse(t, w)
+	result := got["result"].(map[string]any)
+	if result["isError"] == true {
+		t.Fatalf("tool error: %#v", result)
+	}
+	structured := result["structuredContent"].(map[string]any)
+	items := structured["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("items=%#v", items)
+	}
+}
+
+func TestMulticaMCPAssocBindRequiresConversation(t *testing.T) {
+	h := testMulticaMCPHandler(t)
+	h.Assoc = assoc.NewService(assoc.NewMemory())
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+		"name":      multicaMCPAssocBindTool,
+		"arguments": map[string]any{"evidence_id": "msg-1"},
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeMCPResponse(t, w)
+	result := got["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("expected conversation_id error, got %#v", result)
+	}
+}
+
+func TestMulticaMCPAssocBindRecordsOutboundScene(t *testing.T) {
+	store := assoc.NewMemory()
+	h := testMulticaMCPHandler(t)
+	h.Assoc = assoc.NewService(store)
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+		"name": multicaMCPAssocBindTool,
+		"arguments": map[string]any{
+			"conversation_id": "cid-outbound",
+			"evidence_id":     "msg-out-1",
+		},
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeMCPResponse(t, w)
+	result := got["result"].(map[string]any)
+	if result["isError"] == true {
+		t.Fatalf("tool error: %#v", result)
+	}
+	structured := result["structuredContent"].(map[string]any)
+	if structured["conversation_id"] != "cid-outbound" {
+		t.Fatalf("structured=%#v", structured)
+	}
+	ev, err := store.GetEventByEvidence(context.Background(),
+		"00000000-0000-0000-0000-000000000004",
+		"00000000-0000-0000-0000-000000000002",
+		"msg-out-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.SceneKey != "cid-outbound" || ev.Direction != assoc.DirOutbound {
+		t.Fatalf("event=%+v", ev)
+	}
+}
+
+func TestMulticaMCPAssocRecallRequiresSince(t *testing.T) {
+	h := testMulticaMCPHandler(t)
+	h.Assoc = assoc.NewService(assoc.NewMemory())
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+		"name":      multicaMCPAssocRecallTool,
+		"arguments": map[string]any{"conversation_id": "cid-a"},
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeMCPResponse(t, w)
+	result := got["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("expected since error, got %#v", result)
+	}
+}
+
+func TestMulticaMCPAssocRecallCurrentIssueRequiresTask(t *testing.T) {
+	h := testMulticaMCPHandler(t)
+	h.Assoc = assoc.NewService(assoc.NewMemory())
+	w := httptest.NewRecorder()
+	h.MulticaMCP(w, mcpRequest(t, "tools/call", 1, map[string]any{
+		"name": multicaMCPAssocRecallTool,
+		"arguments": map[string]any{
+			"since":         "48h",
+			"current_issue": true,
+		},
+	}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeMCPResponse(t, w)
+	result := got["result"].(map[string]any)
+	if result["isError"] != true {
+		t.Fatalf("expected current_issue error, got %#v", result)
+	}
+	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "current_issue") {
+		t.Fatalf("error text=%q", text)
+	}
+}
+
 type fakeSiteHostingService struct {
 	prepareInput      sitehosting.PrepareInput
 	statusOwnerUserID string
@@ -160,7 +309,7 @@ func (f *fakeSiteHostingService) Prepare(_ context.Context, input sitehosting.Pr
 	return sitehosting.PreparedDeploy{
 		SiteID: "site-id", RevisionID: "revision-id", UploadID: "upload-id",
 		UploadPath: "/api/sitehosting/uploads/upload-id", UploadTokenHeader: "X-Multica-Site-Upload-Token",
-		UploadURL: "https://api.example.test/api/sitehosting/uploads/upload-id",
+		UploadURL:    "https://api.example.test/api/sitehosting/uploads/upload-id",
 		UploadMethod: "PUT", UploadToken: "mhs_secret", ExpiresAt: time.Unix(1_800_000_600, 0).UTC(),
 		Archive: "zip", Entrypoint: "index.html", SiteURL: "https://sites.example.test/sites/public-id/",
 	}, nil
@@ -180,10 +329,10 @@ func (f *fakeSiteHostingService) DeleteSite(context.Context, string, string, str
 	return nil
 }
 
-func (f *fakeSiteHostingService) HandleUpload(http.ResponseWriter, *http.Request, string) {}
+func (f *fakeSiteHostingService) HandleUpload(http.ResponseWriter, *http.Request, string)        {}
 func (f *fakeSiteHostingService) ServePublic(http.ResponseWriter, *http.Request, string, string) {}
-func (f *fakeSiteHostingService) ServeFetchProxyRuntime(http.ResponseWriter, *http.Request) {}
-func (f *fakeSiteHostingService) HandleFetchProxy(http.ResponseWriter, *http.Request, string) {}
+func (f *fakeSiteHostingService) ServeFetchProxyRuntime(http.ResponseWriter, *http.Request)      {}
+func (f *fakeSiteHostingService) HandleFetchProxy(http.ResponseWriter, *http.Request, string)    {}
 
 func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 	service := &fakeSiteHostingService{}
@@ -194,7 +343,7 @@ func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 		"name": "prepare_static_site_deploy",
 		"arguments": map[string]any{
 			"expected_sha256": strings.Repeat("a", 64),
-			"content_length": 1234,
+			"content_length":  1234,
 		},
 	}))
 	if response.Code != http.StatusOK {
@@ -215,7 +364,7 @@ func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 	}
 	statusResponse := httptest.NewRecorder()
 	h.MulticaMCP(statusResponse, mcpRequest(t, "tools/call", "get-site", map[string]any{
-		"name": "get_static_site_deploy",
+		"name":      "get_static_site_deploy",
 		"arguments": map[string]any{"site_id": "site-id"},
 	}))
 	statusResult := decodeMCPResponse(t, statusResponse)["result"].(map[string]any)["structuredContent"].(map[string]any)
@@ -231,7 +380,7 @@ func TestMulticaMCPStaticSiteToolsUseAuthenticatedUserAuthority(t *testing.T) {
 
 	personalResponse := httptest.NewRecorder()
 	h.MulticaMCP(personalResponse, personalMCPRequest(t, "tools/call", "prepare-site-pat", map[string]any{
-		"name": "prepare_static_site_deploy",
+		"name":      "prepare_static_site_deploy",
 		"arguments": map[string]any{"expected_sha256": strings.Repeat("a", 64), "content_length": 1234},
 	}))
 	if personalResponse.Code != http.StatusOK {

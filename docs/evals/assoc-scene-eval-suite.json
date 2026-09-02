@@ -1,0 +1,192 @@
+{
+  "id": "assoc-scene-eval-suite",
+  "agentId": "21e465ff-5d08-4eb4-95f7-8e5ef1982de3",
+  "agentName": "须莫v10 Pre FC Pi",
+  "workspaceId": "f26b4b03-7f10-4da7-8330-ce04d25fa513",
+  "workspaceSlug": "yufa",
+  "environment": "staging",
+  "robot": {
+    "name": "FDE教练迁移验收",
+    "botOpenDingTalkId": "DiiD01p03EN0Nv2UWmMN7xXko7mbcr2vyo",
+    "conversationId": "cidgHGkMo8/zFFExGEukusUo+2ztG4QNbeO5YhzdtRPka4="
+  },
+  "identities": {
+    "sender": "冬翔 (staffId 103262, inbound uid 25698887, openDingTalkId Dv6WPxM5cBX83sOS9u0PAAwiEiE)",
+    "target": "冬翔",
+    "sandboxDwsOpenDingTalkId": "DIBwz3Bm4ugAGaaIaZvSXyAiEiE",
+    "sandboxDwsName": "东翔测试号",
+    "dongxiangDmConversationId": "cid+bEFv7ngm9n79Q1vL9HYJw=="
+  },
+  "hardGates": [
+    "fixture/context",
+    "load",
+    "authority/safety",
+    "isolation/integrity",
+    "declared postconditions"
+  ],
+  "optimizationTarget": "recall",
+  "cases": [
+    {
+      "id": "coordinator-issue-ack-not-delivery",
+      "primary": "conversation-contract",
+      "channel": "B-robot",
+      "prompt": "[ASSOC-RECALL-<ID>] 问一下冬翔，今晚想吃什么。请用 dws 给冬翔发一条确认消息。",
+      "expected": {
+        "coordinatorAction": "issue",
+        "robotAckNamesDeliverable": true,
+        "robotAckIsNotProofOfSend": true,
+        "robotAckIsNotRecallHit": true
+      },
+      "assertions": [
+        "Robot DM has a coordinator sentence naming 向冬翔确认今晚吃什么 or equivalent ≥8 runes",
+        "That sentence does not contain a send receipt (openConversationId / openMsgId)",
+        "GET /api/assoc/recall on the robot cid may later hit; the ack text itself is not that hit"
+      ],
+      "failIf": [
+        "Coordinator action=reply claiming the DM was sent",
+        "No Issue / sandbox task is created"
+      ]
+    },
+    {
+      "id": "inbound-robot-cid-recall",
+      "primary": "task-lifecycle",
+      "channel": "B-robot",
+      "expected": {
+        "associateOnIssueCreate": true,
+        "recallRobotCidReturnsMarkerIssue": true
+      },
+      "assertions": [
+        "Backend log event=channel_issue_scene_associated for this marker's Issue and robot openConversationId",
+        "GET /api/assoc/recall?agent_id=21e465ff-5d08-4eb4-95f7-8e5ef1982de3&conversation_id=<robot-cid>&since=48h returns that Issue",
+        "origin.conversation_id is the robot cid, not the 冬翔 DM cid"
+      ],
+      "failIf": [
+        "Recall of the robot cid is empty after Issue create",
+        "The only associated scene is invented or taken from another workspace"
+      ],
+      "evidence": ["platform-trace"]
+    },
+    {
+      "id": "robot-outbound-dws-to-dongxiang",
+      "primary": "authority-and-egress",
+      "channel": "B-robot",
+      "expected": {
+        "sandboxCallsDwsSend": true,
+        "recipientIsDongxiang": true
+      },
+      "assertions": [
+        "Independent dws list of cid+bEFv7ngm9n79Q1vL9HYJw== shows a new DWS message after the eval timestamp whose text asks 今晚吃什么",
+        "Sender is 东翔测试号 / messageAiSendFlag=DWS",
+        "Robot-chat assistant text is insufficient"
+      ],
+      "failIf": [
+        "No new DWS message in the 冬翔 DM",
+        "Recipient was reconstructed from the model instead of a DWS resolution result"
+      ],
+      "evidence": ["platform-trace", "remote-readback"]
+    },
+    {
+      "id": "outbound-cid-recall-after-dws",
+      "primary": "task-lifecycle",
+      "channel": "B-robot",
+      "expected": {
+        "assocBoundFromToolOutput": true,
+        "recallDongxiangCidReturnsSameIssue": true
+      },
+      "assertions": [
+        "Backend log event=assoc_outbound_bound with conversation_id=cid+bEFv7ngm9n79Q1vL9HYJw== and the marker Issue",
+        "GET /api/assoc/recall?agent_id=21e465ff-5d08-4eb4-95f7-8e5ef1982de3&conversation_id=cid+bEFv7ngm9n79Q1vL9HYJw==&since=48h returns the same Issue as inbound-robot-cid-recall",
+        "GET /api/assoc/events?conversation_id=cid+bEFv7ngm9n79Q1vL9HYJw==&since=48h contains the outbound openMsgId",
+        "Bind uses the send receipt cid, not the robot inbound cid"
+      ],
+      "failIf": [
+        "Delivery happened but recall of the 冬翔 cid is empty",
+        "Bind uses an invented cid",
+        "Purpose is a 2-3 character noun"
+      ],
+      "evidence": ["platform-trace", "remote-readback"]
+    },
+    {
+      "id": "person-mismatch-must-not-drop-cid-hit",
+      "primary": "context-sufficiency",
+      "channel": "unit+B-robot",
+      "expected": {
+        "cidHitSurvivesPersonAliasMismatch": true
+      },
+      "assertions": [
+        "Recall(conversation_id=冬翔 cid, person_id=staffId 103262) still returns the Issue even if the graph person_key is uid 25698887",
+        "Person match may raise score; it must not AND-filter away a scene hit",
+        "Covered by TestRecallConversationHitsWhenPersonDoesNotMatch"
+      ],
+      "failIf": [
+        "Coordinator assoc_recall with default person_id returns [] while cid-only recall would hit"
+      ],
+      "evidence": ["platform-trace"]
+    },
+    {
+      "id": "recency-ranks-waiting-matter-first",
+      "primary": "context-sufficiency",
+      "channel": "unit+B-robot",
+      "expected": {
+        "newerWaitingOutranksOlderOnSameCid": true
+      },
+      "assertions": [
+        "If robot cid also has an older news Issue, recall of the 冬翔 cid must not return that news Issue",
+        "If two matters share a cid, waiting + recency ranks the eat matter first",
+        "Covered by TestRecallPersonMatchRanksAboveSceneOnly and TestRecallRecentFirstAndExtraPersonIsNewEdge"
+      ],
+      "failIf": [
+        "Recall of cid+bEFv7ngm9n79Q1vL9HYJw== returns WS news Issue (搜索并整理今天的热点新闻) as the top hit for this marker"
+      ],
+      "evidence": ["platform-trace"]
+    },
+    {
+      "id": "reply-in-dongxiang-recalls-same-issue",
+      "primary": "task-lifecycle",
+      "channel": "B-robot-then-dongxiang-dm",
+      "expected": {
+        "replyInDongxiangDmRecallsSameIssue": true
+      },
+      "assertions": [
+        "A later message in cid+bEFv7ngm9n79Q1vL9HYJw== produces assoc_recall items whose issue id equals the Issue from outbound-cid-recall-after-dws",
+        "Coordinator look_into copies the existing purpose instead of opening a second matter when recall hits"
+      ],
+      "failIf": [
+        "New Issue is created for the same purpose in the same 48h window without human confirmation",
+        "Recall searches chat_session instead of assoc_task"
+      ],
+      "evidence": ["platform-trace", "remote-readback"]
+    },
+    {
+      "id": "robot-cid-not-confused-with-de-cid",
+      "primary": "platform-reliability",
+      "channel": "B-robot",
+      "expected": {
+        "robotCidDistinct": true
+      },
+      "assertions": [
+        "Robot inbound openConversationId is recorded as RelSpawnedFrom / RelTaskScene",
+        "Outbound 冬翔 DM openConversationId is recorded as RelOutreach",
+        "Live fixture: robot cidgHGkMo8/zFFExGEukusUo+2ztG4QNbeO5YhzdtRPka4= vs digital-employee cid+bEFv7ngm9n79Q1vL9HYJw== are distinct",
+        "Recall of the robot cid is not used as proof that 冬翔 was messaged"
+      ],
+      "failIf": [
+        "Recall of the robot cid is used as proof of outbound delivery",
+        "sourceType=digital_employee is reported as the robot path without checking botOpenDingTalkId"
+      ],
+      "evidence": ["platform-trace", "remote-readback"]
+    }
+  ],
+  "runbook": {
+    "channelA": "Blocked when pre-fde human token is 401. Do not fall back to production ~/.multica/config.json.",
+    "channelB": "dws as 夏东翔 → robot FDE教练迁移验收 → wait coordinator ack → wait sandbox DWS → independent list of 冬翔 DM → assoc recall/events on BOTH cids",
+    "observability": "log tail contains=assoc_outbound_bound|channel_issue_scene_associated|inbound coordinator decided. Agent e2293e9e is NOT this robot.",
+    "marker": "[ASSOC-RECALL-<YYYYMMDD>-<n>]",
+    "passRequires": [
+      "remote-readback of the 冬翔 DM",
+      "recall hit on the 冬翔 cid for the marker Issue",
+      "recall hit on the robot cid for the same Issue",
+      "platform-trace event=assoc_outbound_bound"
+    ]
+  }
+}

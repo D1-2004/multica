@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -398,6 +399,40 @@ func TestDispatchCommandValidatesAndPersistsExternalDWSIdentity(t *testing.T) {
 	}
 }
 
+func TestDispatchCoordinatorDWSIdentityUsesStableDescriptor(t *testing.T) {
+	uid, orgID := dispatchCoordinatorDWSIdentity(DispatchCommand{
+		ExternalIdentity: AgentDispatchExternalIdentity{
+			DWS: &AgentDispatchDWSIdentity{UID: " 24710833 ", OrgID: " 439446171 "},
+		},
+	})
+	if uid != "24710833" || orgID != "439446171" {
+		t.Fatalf("DWS identity = %q/%q", uid, orgID)
+	}
+	uid, orgID = dispatchCoordinatorDWSIdentity(DispatchCommand{})
+	if uid != "" || orgID != "" {
+		t.Fatalf("missing DWS identity = %q/%q", uid, orgID)
+	}
+}
+
+func TestShouldDeferInboundCoordinatorForRouterMessageCallbacks(t *testing.T) {
+	t.Parallel()
+	base := DispatchCommand{
+		Event:              DispatchEvent{Domain: "channel", Type: "message.created"},
+		CompletionCallback: &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/test/execution-result"},
+	}
+	if !shouldDeferInboundCoordinator(base, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeIssue}) {
+		t.Fatal("issue message callback must be accepted into the durable coordinator queue")
+	}
+	withoutCallback := base
+	withoutCallback.CompletionCallback = nil
+	if shouldDeferInboundCoordinator(withoutCallback, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeIssue}) {
+		t.Fatal("non-Router dispatch must stay synchronous")
+	}
+	if !shouldDeferInboundCoordinator(base, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}) {
+		t.Fatal("chat materialization must use the same durable coordinator queue")
+	}
+}
+
 func TestDispatchRuntimeContextCarriesIdentityExpiryWithoutDuplicatingToken(t *testing.T) {
 	contextJSON := dispatchRuntimeContext(DispatchCommand{
 		SchemaVersion: "2.0",
@@ -721,6 +756,106 @@ func TestDingTalkConversationInstructionCarriesReadbackAndSelfAttribution(t *tes
 	}
 }
 
+func TestSceneGraphInstructionIsInjectedForDingTalkChannel(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:   "channel",
+		Type:     "message.created",
+		Surface:  DispatchSurface{Type: "issue"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	}
+	segments := composeDispatchInstructionSegments(dispatchInstructionInputs{
+		Stored:          stored,
+		Present:         true,
+		DingTalkContext: true,
+	})
+	var scene *DispatchPromptSegment
+	for i := range segments {
+		if segments[i].ID == DispatchSegmentSceneGraph {
+			scene = &segments[i]
+		}
+	}
+	if scene == nil || !scene.Included {
+		t.Fatalf("scene_graph segment = %+v", scene)
+	}
+	for _, want := range []string{
+		"assoc_bind",
+		"assoc_recall",
+		"multica assoc bind",
+		"Inbound replies to outreach",
+		"does not notify the origin for you",
+		"Digital-employee inbound",
+		"Web chat inbound",
+		"You are the intermediary",
+		"<requester> asked me to ask you <question>",
+		"A blocker does not always go to the requester",
+		"Never stop after only commenting on the Issue",
+		"sender in the trusted DingTalk dispatch event is the authoritative speaker",
+		"Issue creator or member-comment author records which workspace principal executed the Issue tool",
+	} {
+		if !strings.Contains(scene.EffectiveText, want) {
+			t.Errorf("scene_graph missing %q", want)
+		}
+	}
+}
+
+func TestCoordinatorNewIssueIdentifiesDingTalkSenderAsDelegator(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:                   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:                   "channel",
+		Type:                     "message.created",
+		Surface:                  DispatchSurface{Type: "issue"},
+		Outbound:                 DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		CoordinatorIssueFollowUp: true,
+		CoordinatorIssueTrigger:  inboundcoord.CoordinatorIssueTriggerCreate,
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-delegator", Type: "single"},
+			Sender:       DispatchSender{DisplayName: "路由用户", OpenDingTalkID: "open-delegator"},
+		},
+	}
+	instruction := buildDispatchConversationInstruction(stored, false)
+	for _, want := range []string{
+		"dingtalk_sender_name\":\"路由用户",
+		"current DingTalk sender is the task delegator/requester",
+		"Multica Issue creator is only the tool executor and an assistant",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Errorf("new-Issue identity instruction missing %q: %q", want, instruction)
+		}
+	}
+}
+
+func TestCoordinatorIssueIdentityIsInjectedForRobotRoute(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:                   DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Domain:                   "channel",
+		Type:                     "message.created",
+		Surface:                  DispatchSurface{Type: "issue"},
+		Outbound:                 DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+		CoordinatorIssueFollowUp: true,
+		CoordinatorIssueTrigger:  inboundcoord.CoordinatorIssueTriggerComment,
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-robot", Type: "group"},
+			Sender:       DispatchSender{DisplayName: "机器人链路发信人"},
+		},
+	}
+	instruction := buildDispatchConversationInstruction(stored, false)
+	for _, want := range []string{
+		"dingtalk_source_type\":\"robot",
+		"dingtalk_sender_name\":\"机器人链路发信人",
+		"This is the robot route",
+		"Sender uid may be absent",
+		"never invent an identity or borrow the Multica Issue author",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Errorf("robot identity instruction missing %q: %q", want, instruction)
+		}
+	}
+	if strings.Contains(instruction, "Router sender") || strings.Contains(instruction, "Router delivery") {
+		t.Fatalf("robot instruction leaked an internal component name: %q", instruction)
+	}
+}
+
 func TestDingTalkConversationInstructionNamesAMissingQuotedLocator(t *testing.T) {
 	stored := persistedDispatchContext{
 		Source:   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
@@ -827,12 +962,70 @@ func TestDingTalkConversationInstructionNamesIssueDelivery(t *testing.T) {
 		}
 	}
 
-	// Without a completion callback Router has no hook to deliver through, so
-	// the claim would be false.
+	// Without a completion callback Router has no hook to deliver through. The
+	// role contract remains, but it must not claim automatic delivery.
 	noCallback := stored
 	noCallback.CompletionCallback = nil
-	if got := buildDispatchConversationInstruction(noCallback, false); got != "" {
+	got := buildDispatchConversationInstruction(noCallback, false)
+	if strings.Contains(got, "delivers your final assistant output back") {
 		t.Fatalf("instruction claimed platform delivery with no callback: %q", got)
+	}
+	for _, want := range []string{"Delegated communication roles", "current_conversation_id", "next person whose input or action is needed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("no-callback issue instruction missing %q: %q", want, got)
+		}
+	}
+}
+
+func TestCoordinatorIssueCommentTaskContextMakesIndependentRelay(t *testing.T) {
+	raw := dispatchTaskContextWithPromptForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-requester", Type: "single"},
+			Sender:       DispatchSender{DisplayName: "须莫", OpenDingTalkID: "open-requester"},
+		}},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		CompletionCallback: &DispatchCompletionCallback{
+			URL: "/api/v1/dispatch-tasks/router-task/execution-result",
+		},
+	}, "ROUTER CONTEXT")
+
+	encoded, err := inboundcoord.IndependentIssueTaskContext(raw, inboundcoord.CoordinatorIssueTriggerComment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, present := parsePersistedDispatchContext(encoded)
+	if !present {
+		t.Fatal("coordinator Issue context was not recognized")
+	}
+	if stored.Surface.Type != protocol.DispatchSurfaceTypeIssue ||
+		!stored.CoordinatorIssueFollowUp ||
+		stored.CoordinatorIssueTrigger != inboundcoord.CoordinatorIssueTriggerComment {
+		t.Fatalf("stored context = %+v", stored)
+	}
+	if stored.CompletionCallback != nil {
+		t.Fatalf("consumed Router callback survived: %+v", stored.CompletionCallback)
+	}
+	instruction := buildDispatchConversationInstruction(stored, false)
+	for _, want := range []string{
+		"dingtalk_sender_name\":\"须莫",
+		"dingtalk_sender_open_id\":\"open-requester",
+		"dingtalk_conversation_id\":\"cid-requester",
+		"current DingTalk event sender is the actual speaker",
+		"Multica comment author is only the Issue-tool executor and an assistant",
+		"Find the original delegator from the Issue's original DingTalk task scene",
+		"short loop already acknowledged",
+		"No callback will deliver this task's later progress, blocker, or result",
+		"MUST successfully send at least one DingTalk message to one concrete person",
+		"<recipient> replied: <answer>",
+		"Writing that summary only in the Issue does not count as delivery",
+		"Do not write or claim ‘task complete’ until the DingTalk send returns a successful receipt",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Errorf("coordinator follow-up instruction missing %q: %q", want, instruction)
+		}
 	}
 }
 
@@ -2123,6 +2316,35 @@ func TestEmotionReplyDispatchParsesNumericEmotionFields(t *testing.T) {
 	}
 }
 
+func TestDispatchIsAgentSelfEmotion(t *testing.T) {
+	user := emotionReplyDispatchCommand()
+	if dispatchIsAgentSelfEmotion(user) {
+		t.Fatal("user 赞 on an agent message must still dispatch")
+	}
+
+	self := emotionReplyDispatchCommand()
+	self.Event.Data.Sender.UID = "agent-uid-1"
+	self.ExternalIdentity.DWS = &AgentDispatchDWSIdentity{UID: "agent-uid-1"}
+	if !dispatchIsAgentSelfEmotion(self) {
+		t.Fatal("digital employee reacting to its own message must be ignored")
+	}
+
+	lifecycle := emotionReplyDispatchCommand()
+	lifecycle.Event.Data.Messages[0].Reaction.EmotionName = "处理中"
+	if !dispatchIsAgentSelfEmotion(lifecycle) {
+		t.Fatal("Router processing emotion without a DWS uid must be ignored")
+	}
+
+	created := emotionReplyDispatchCommand()
+	created.Event.Type = "message.created"
+	created.Event.Data.Messages[0].Reaction = nil
+	created.Event.Data.Messages[0].Text = "帮我看看今天有什么新闻"
+	created.ExternalIdentity.DWS = &AgentDispatchDWSIdentity{UID: "agent-uid-1"}
+	if dispatchIsAgentSelfEmotion(created) {
+		t.Fatal("ordinary inbound text must not be treated as a self emotion")
+	}
+}
+
 func TestEmotionReplyDispatchValidatesAndRendersReactionEntries(t *testing.T) {
 	c := emotionReplyDispatchCommand()
 	if err := c.validate(); err != nil {
@@ -2546,5 +2768,28 @@ func TestDispatchInstructionOnResumedSessionSendsOnlyPerTurnFacts(t *testing.T) 
 	}
 	if strings.Contains(brief, "ROUTER CONTEXT") || strings.Contains(brief, "## DingTalk Conversation") {
 		t.Errorf("runtime brief half carries per-dispatch facts: %q", brief)
+	}
+}
+
+func TestCoordinatorRecalledIssueContinuation(t *testing.T) {
+	t.Parallel()
+	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	command, prompt, ok := coordinatorRecalledIssueContinuation(
+		DispatchCommand{AgentID: "agent-1"},
+		DispatchPrompt{DisplayContent: "7点"},
+		inboundcoord.Decision{
+			Action:   inboundcoord.ActionIssue,
+			IssueID:  issueID,
+			LookInto: "记录须莫v6回复今晚7点并通知原发起人",
+		},
+	)
+	if !ok || command.AgentID != "" || command.Continuation == nil ||
+		command.Continuation.Kind != "issue" || command.Continuation.IssueID != issueID {
+		t.Fatalf("command = %+v ok=%v", command, ok)
+	}
+	for _, want := range []string{"7点", "已关联外呼会话", "当前可信钉钉派发事件中的发信人", "Issue 评论人只表示谁执行了 Issue 工具", "数字员工事件", "机器人事件", "assoc_recall current_issue=true", "原委托人", "下一位应答人", "不要固定发给委托人", "必须实际给一个明确的人发送", "不算钉钉送达", "不得写“任务完成”"} {
+		if !strings.Contains(prompt.DisplayContent, want) {
+			t.Fatalf("follow-up prompt missing %q: %q", want, prompt.DisplayContent)
+		}
 	}
 }

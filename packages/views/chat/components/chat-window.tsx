@@ -26,6 +26,7 @@ import {
   Square,
 } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
+import { Badge } from "@multica/ui/components/ui/badge";
 import { cn } from "@multica/ui/lib/utils";
 import {
   Tooltip,
@@ -558,7 +559,7 @@ export function ChatWindow() {
         chat_session_id: sessionId,
         role: "user",
         content: finalContent,
-        task_id: result.task_id,
+        task_id: result.task_id ?? null,
         created_at: result.created_at,
         attachments: draftAttachments,
       };
@@ -567,14 +568,34 @@ export function ChatWindow() {
       // arrival order, and this richer row (it carries the draft attachments)
       // is never downgraded by the echo, which has no attachments field.
       upsertChatMessageToCaches(qc, sessionId, sent, { seedIfMissing: true });
-      seedAcceptedPendingTask(qc, sessionId, {
-        task_id: result.task_id,
-        created_at: result.created_at,
-        message_id: result.message_id,
-        content: finalContent,
-        supports_queue: result.supports_queue,
-        queued: result.queued,
-      });
+      if (result.assistant_message_id && result.assistant_content) {
+        upsertChatMessageToCaches(
+          qc,
+          sessionId,
+          {
+            id: result.assistant_message_id,
+            chat_session_id: sessionId,
+            role: "assistant",
+            content: result.assistant_content,
+            task_id: null,
+            created_at: result.assistant_created_at ?? result.created_at,
+            message_kind: result.assistant_message_kind ?? "coordinator",
+            elapsed_ms: result.coordinator?.elapsed_ms ?? null,
+            coordinator: result.coordinator,
+          },
+          { seedIfMissing: true },
+        );
+      }
+      if (result.task_id) {
+        seedAcceptedPendingTask(qc, sessionId, {
+          task_id: result.task_id,
+          created_at: result.created_at,
+          message_id: result.message_id,
+          content: finalContent,
+          supports_queue: result.supports_queue,
+          queued: result.queued,
+        });
+      }
       // Cache primed → publish the new active session, but only if the user
       // hasn't navigated away mid-send. Compare the live store against the
       // closure-captured target; see isStillOnComposeTarget for the rule, which
@@ -596,10 +617,12 @@ export function ChatWindow() {
 
       if (stopRequestedBeforeTaskRef.current) {
         stopRequestedBeforeTaskRef.current = false;
-        await cancelChatTask(result.task_id, sessionId, {
-          restoreDraftToInput: true,
-          source: "deferred-send",
-        });
+        if (result.task_id) {
+          await cancelChatTask(result.task_id, sessionId, {
+            restoreDraftToInput: true,
+            source: "deferred-send",
+          });
+        }
         return false;
       }
       // The server reports which attachment ids it actually bound. Diff
@@ -1038,7 +1061,8 @@ export function ChatWindow() {
         isRunning={!!pendingTaskId}
         allowSubmitWhileRunning={pendingTask?.supports_queue === true}
         disabled={
-          isSessionArchived || isAgentArchived || !activeAgentRuntimeBound
+          isSessionArchived || isAgentArchived || !activeAgentRuntimeBound ||
+          currentSession?.is_coordinator === true
         }
         noAgent={noAgent}
         agentArchived={isAgentArchived}
@@ -1523,19 +1547,29 @@ function SessionDropdown({
               {t(($) => $.session_history.stop_dialog.title)}
             </div>
           ) : (
-            <div
-              className={cn(
-                "truncate text-body",
-                (showUnread || showCompleted) && !isRunning && "font-medium",
+            <div className="flex min-w-0 items-center gap-1">
+              <div
+                className={cn(
+                  "min-w-0 flex-1 truncate text-body",
+                  (showUnread || showCompleted) && !isRunning && "font-medium",
+                )}
+                style={{
+                  maskImage:
+                    "linear-gradient(to right, black calc(100% - 18px), transparent)",
+                  WebkitMaskImage:
+                    "linear-gradient(to right, black calc(100% - 18px), transparent)",
+                }}
+              >
+                {titleText}
+              </div>
+              {session.is_coordinator === true && (
+                <Badge
+                  variant="outline"
+                  className="h-4 shrink-0 px-1 text-[9px] leading-none"
+                >
+                  {t(($) => $.message_list.coordinator_badge)}
+                </Badge>
               )}
-              style={{
-                maskImage:
-                  "linear-gradient(to right, black calc(100% - 18px), transparent)",
-                WebkitMaskImage:
-                  "linear-gradient(to right, black calc(100% - 18px), transparent)",
-              }}
-            >
-              {titleText}
             </div>
           )}
         </div>

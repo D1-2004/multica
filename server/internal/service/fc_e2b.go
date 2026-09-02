@@ -1857,6 +1857,9 @@ func (l *FCE2BLauncher) extraEnvForTaskWithModel(
 	if chatSessionID, ok := fcE2BChatSessionID(task); ok {
 		env[fcE2BChatSessionIDEnvKey] = chatSessionID
 	}
+	if task.IssueID.Valid {
+		env["MULTICA_ISSUE_ID"] = util.UUIDToString(task.IssueID)
+	}
 	env["OPENAI_MODEL"] = model
 	for key, value := range llmTraceEnv(
 		runtime,
@@ -2713,6 +2716,7 @@ func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 		llmTraceTokenEnvKey,
 		llmTraceExpiresAtEnvKey,
 		fcE2BChatSessionIDEnvKey,
+		"MULTICA_ISSUE_ID",
 		chattrace.TraceIDEnvKey,
 		chattrace.TraceStartedAtUnixMSEnvKey,
 		protocol.SandboxSourceHostnameEnvKey,

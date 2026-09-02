@@ -79,6 +79,7 @@ export function ChatThreadList({
   activeSessionId,
   onSelectSession,
   onArchive,
+  readOnly = false,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
@@ -88,6 +89,8 @@ export function ChatThreadList({
   // aware (desktop advances to the next chat; mobile drops back to the list)
   // and routes through the shared controller — see ChatPage.handleArchive.
   onArchive: (session: ChatSession) => void;
+  /** Hide pin/archive/delete and do not deep-link into the Chat tab. */
+  readOnly?: boolean;
 }) {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
@@ -96,7 +99,9 @@ export function ChatThreadList({
   // affordance simply stays off.
   const slug = useWorkspaceSlug();
   const sessionHref = (sessionId: string) =>
-    slug ? `${paths.workspace(slug).chat()}?session=${sessionId}` : null;
+    readOnly || !slug
+      ? null
+      : `${paths.workspace(slug).chat()}?session=${sessionId}`;
   // Optional: the list renders bare in tests; without an adapter the web
   // modifier-click affordance stays off (desktop keeps selection anyway).
   const navigation = useOptionalNavigation();
@@ -331,6 +336,11 @@ export function ChatThreadList({
                 {t(($) => $.a2a_label)}
               </Badge>
             )}
+            {session.is_coordinator === true && (
+              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[9px] leading-none">
+                {t(($) => $.message_list.coordinator_badge)}
+              </Badge>
+            )}
             <span className="ml-auto shrink-0 text-micro text-muted-foreground">{timeText}</span>
           </div>
 
@@ -384,7 +394,7 @@ export function ChatThreadList({
             changes the row height (which was making the list jump). The archived
             view is the only place hard-delete lives; the history view offers the
             reversible archive instead. */}
-        {!isConfirmingAction && (
+        {!readOnly && !isConfirmingAction && (
           <div className="absolute inset-y-0 right-1 hidden items-center gap-0.5 rounded-md bg-gradient-to-l from-accent from-40% to-transparent pl-10 pr-1 group-hover/row:flex">
             {view === "archived" ? (
               <>

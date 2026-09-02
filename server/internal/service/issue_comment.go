@@ -33,6 +33,7 @@ type IssueCommentCreateParams struct {
 	AgentIdentityContextToken string
 	DispatchContext           []byte
 	ParentTaskID              pgtype.UUID
+	ParentID                  pgtype.UUID
 	// AgentMCPClaimID makes an external MCP follow-up recoverable across a
 	// process crash between comment creation and task binding.
 	AgentMCPClaimID pgtype.UUID
@@ -54,7 +55,7 @@ type IssueCommentCreateResult struct {
 	Task        db.AgentTaskQueue
 }
 
-// CreateExternalFollowUp persists a top-level member comment, binds imported
+// CreateExternalFollowUp persists a member comment, binds imported
 // attachments, and enqueues the issue's assigned agent through TaskService.
 // It intentionally does not run mention/chat routing: this service is the
 // issue-only continuation primitive used by external dispatch.
@@ -89,6 +90,7 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 		AuthorID:        params.AuthorID,
 		Content:         params.Content,
 		Type:            "comment",
+		ParentID:        params.ParentID,
 		AgentMcpClaimID: params.AgentMCPClaimID,
 	})
 	if err != nil {

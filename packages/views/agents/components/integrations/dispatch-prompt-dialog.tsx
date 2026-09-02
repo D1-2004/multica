@@ -140,6 +140,8 @@ export function DispatchPromptDialog({
         return t(($) => $.tab_body.dispatch.segment_context);
       case "dingtalk_conversation":
         return t(($) => $.tab_body.dispatch.segment_dingtalk_conversation);
+      case "scene_graph":
+        return t(($) => $.tab_body.dispatch.segment_scene_graph);
       case "reply_formatting":
         return t(($) => $.tab_body.dispatch.segment_reply_formatting);
       case "enterprise_identity":
@@ -169,6 +171,8 @@ export function DispatchPromptDialog({
           return t(($) => $.tab_body.dispatch.condition_per_dispatch);
         case "dingtalk_conversation":
           return t(($) => $.tab_body.dispatch.condition_dingtalk_conversation);
+        case "dingtalk_channel":
+          return t(($) => $.tab_body.dispatch.condition_dingtalk_channel);
         case "any_dingtalk_task":
           return t(($) => $.tab_body.dispatch.condition_any_dingtalk_task);
         case "enterprise_runtime":
@@ -189,6 +193,8 @@ export function DispatchPromptDialog({
           return t(($) => $.tab_body.dispatch.excluded_not_supplied);
         case "no_conversation_context":
           return t(($) => $.tab_body.dispatch.excluded_no_conversation_context);
+        case "not_a_dingtalk_channel":
+          return t(($) => $.tab_body.dispatch.excluded_not_a_dingtalk_channel);
         default:
           return t(($) => $.tab_body.dispatch.excluded_empty);
       }

@@ -168,6 +168,8 @@
     "prop_concurrency": "同時実行数",
     "prop_chat_session_resume": "前回セッションを再開",
     "prop_chat_session_resume_hint": "オフの間は毎ターン新しいセッションを開始し、再開しません。オン時は1対1チャットのみ。サンドボックスがまだ暖かく、直前の回答から20分以内で、指示・スキル・ランタイムが変わっていなければ、前回の Claude/Codex セッションを再開します。続かない場合は履歴からやり直します。",
+    "prop_inbound_coordinator": "受信時に先判断",
+    "prop_inbound_coordinator_hint": "オンのとき、DingTalk とウェブの発言は先に即答できるか判断します。ツール・調べもの・継続フォローが必要なときだけサンドボックスを起動します。オフにするとすべてのメッセージがサンドボックスに入ります。",
     "prop_owner": "オーナー",
     "prop_created": "作成日",
     "prop_updated": "更新日",
@@ -257,6 +259,7 @@
   "tabs": {
     "overview": "概要",
     "work": "作業",
+    "inbound": "着信会話",
     "capabilities": "機能",
     "settings": "設定",
     "general": "一般",
@@ -413,6 +416,53 @@
     },
     "instructions": {
       "intro": "すべてのタスクで使用する System Prompt を設定します。Markdown に対応しています。",
+      "persona_label": "ペルソナ",
+      "persona_hint": "チャットで返信するときのこのエージェントの人となりです。受信 Coordinator は声だけに使い、Issue にするかどうかは変えません。",
+      "persona_placeholder": "信頼できる同僚です。事実を先に述べ、短い提案を添えます。",
+      "tone_label": "返信トーン",
+      "tone_hint": "受信 Coordinator がチャットでどう話すか。短く書いてください。サンドボックスの作業は下の System Prompt に従います。",
+      "tone_placeholder": "短い文。社交辞令なし。ユーザーの言葉を繰り返さない。",
+      "templates_label": "テンプレート",
+      "extract": "指示から抽出",
+      "extracting": "抽出中…",
+      "extract_failed": "ペルソナとトーンを抽出できませんでした",
+      "extract_empty": "先に指示を書いてから抽出してください。",
+      "persona_templates": {
+        "colleague": {
+          "label": "同僚",
+          "text": "信頼できる同僚です。事実を先に述べ、短い提案を添えます。できない約束はしません。"
+        },
+        "advisor": {
+          "label": "アドバイザー",
+          "text": "専門のアドバイザーです。結論を先に、根拠は一、二文。前置きはしません。"
+        },
+        "assistant": {
+          "label": "アシスタント",
+          "text": "実行するアシスタントです。挨拶は省き、次の一手か確認することを述べます。"
+        },
+        "coordinator": {
+          "label": "調整役",
+          "text": "落ち着いた調整役です。人と事実を揃え、味方せず、案件を明確にします。"
+        }
+      },
+      "tone_templates": {
+        "direct": {
+          "label": "簡潔",
+          "text": "短い文。社交辞令なし。ユーザーの言葉を繰り返さない。"
+        },
+        "warm": {
+          "label": "丁寧",
+          "text": "礼儀正しく控えめ。チャットボットではなく仕事のメッセージのように。"
+        },
+        "casual": {
+          "label": "カジュアル",
+          "text": "話し言葉で自然に。同僚への DM のように、用件ははっきり。"
+        },
+        "formal": {
+          "label": "フォーマル",
+          "text": "正確な言葉。誇張しない。上司や他チーム向け。"
+        }
+      },
       "system_prompt_label": "System Prompt",
       "placeholder": "このエージェントの役割、専門分野、作業スタイルを定義してください。\n\n# 例\nあなたは React と TypeScript を専門とするフロントエンドエンジニアです。\n\n## 作業スタイル\n- 小さく焦点を絞った PR を作成する — 論理的な変更ごとに1コミット\n- 継承よりコンポジションを優先する\n- 新しいコンポーネントには必ずユニットテストを追加する\n\n## 制約\n- 明示的な承認なしに shared/ の型を変更しない\n- features/ の既存のコンポーネントパターンに従う",
       "system_layer_label": "Multica が管理",
@@ -433,6 +483,7 @@
       "segment_policy": "Managed policy",
       "segment_context": "Delivery context",
       "segment_dingtalk_conversation": "DingTalk conversation",
+      "segment_scene_graph": "Scene graph",
       "segment_reply_formatting": "Reply formatting",
       "segment_enterprise_identity": "Identity authorization",
       "source_managed": "Managed",
@@ -453,6 +504,7 @@
       "excluded_not_enterprise_runtime": "enterprise identity runtimes only",
       "excluded_not_supplied": "resolved per dispatch",
       "excluded_no_conversation_context": "only for DingTalk conversations",
+      "excluded_not_a_dingtalk_channel": "DingTalk channel messages only",
       "delivery_runtime_brief": "system prompt, once per session",
       "delivery_per_turn": "with every turn",
       "excluded_empty": "empty",
@@ -467,6 +519,7 @@
       "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent.",
       "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to.",
       "condition_dingtalk_conversation": "Injected for DingTalk conversations — the conversation is the source of truth, plus the commands that read it and any quoted message back.",
+      "condition_dingtalk_channel": "Injected for DingTalk channel messages — recall and bind the Issue to openConversationId.",
       "condition_any_dingtalk_task": "Injected for every DingTalk task, including ones that arrive without a dispatch envelope.",
       "condition_enterprise_runtime": "Injected only when the agent runs on an enterprise-identity runtime.",
       "status_active": "このモードで有効",
@@ -1046,6 +1099,17 @@
       "sink_url_placeholder": "https://trace.example.com/ingest",
       "saved_toast": "LLM トレース設定を保存しました",
       "save_failed_toast": "LLM トレース設定の保存に失敗しました"
+    },
+    "inbound": {
+      "empty": "着信会話はまだありません。",
+      "loading": "着信会話を読み込み中…",
+      "load_failed": "着信会話を読み込めませんでした。",
+      "retry": "再試行",
+      "select_prompt": "会話を選んで記録を表示します。",
+      "untitled": "無題の会話",
+      "load_older": "以前のメッセージを読み込む",
+      "no_messages": "この会話にはまだメッセージがありません。",
+      "back": "戻る"
     }
   },
   "char_counter": {

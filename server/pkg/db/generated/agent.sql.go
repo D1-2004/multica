@@ -1447,6 +1447,36 @@ func (q *Queries) ClaimDispatchOutbound(ctx context.Context, id pgtype.UUID) (bo
 	return exists, err
 }
 
+const claimStreamIssueOutbound = `-- name: ClaimStreamIssueOutbound :one
+WITH claimed AS (
+    UPDATE agent_task_queue
+    SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('dispatch_outbound_sent', true)
+    WHERE id = $1
+      AND NOT (context ? 'dispatch_outbound_sent')
+    RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM claimed)
+`
+
+func (q *Queries) ClaimStreamIssueOutbound(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, claimStreamIssueOutbound, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const releaseStreamIssueOutbound = `-- name: ReleaseStreamIssueOutbound :exec
+UPDATE agent_task_queue
+SET context = context - 'dispatch_outbound_sent'
+WHERE id = $1
+  AND context ? 'dispatch_outbound_sent'
+`
+
+func (q *Queries) ReleaseStreamIssueOutbound(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, releaseStreamIssueOutbound, id)
+	return err
+}
+
 const claimDispatchProcessingReaction = `-- name: ClaimDispatchProcessingReaction :one
 WITH claimed AS (
     UPDATE agent_task_queue

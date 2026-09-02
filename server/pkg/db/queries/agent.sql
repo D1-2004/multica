@@ -480,6 +480,27 @@ WITH claimed AS (
 )
 SELECT EXISTS(SELECT 1 FROM claimed);
 
+-- name: ClaimStreamIssueOutbound :one
+-- Stream coordinator issues never carry dispatch_idempotency_key. Reusing
+-- ClaimDispatchOutbound would refuse the send even when the agent comment
+-- is already on the issue.
+WITH claimed AS (
+    UPDATE agent_task_queue
+    SET context = COALESCE(context, '{}'::jsonb) || jsonb_build_object('dispatch_outbound_sent', true)
+    WHERE id = $1
+      AND NOT (context ? 'dispatch_outbound_sent')
+    RETURNING 1
+)
+SELECT EXISTS(SELECT 1 FROM claimed);
+
+-- name: ReleaseStreamIssueOutbound :exec
+-- Clears the one-shot send claim when the actual webhook/SDK post failed so
+-- a later task:completed / task:failed delivery can retry.
+UPDATE agent_task_queue
+SET context = context - 'dispatch_outbound_sent'
+WHERE id = $1
+  AND context ? 'dispatch_outbound_sent';
+
 -- name: ClaimDispatchProcessingReaction :one
 -- Durable one-shot claim for the Dispatch 2.0 "processing" emotion. Multiple
 -- event deliveries or server replicas must not attach the same emotion twice.

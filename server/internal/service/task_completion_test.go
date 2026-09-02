@@ -143,6 +143,75 @@ func TestBuildTaskCompletionDoesNotCarryFailedReplyDecision(t *testing.T) {
 	}
 }
 
+func TestBuildTaskCompletionRootUsesCanonicalOutputOverLastTaskMessage(t *testing.T) {
+	result, err := json.Marshal(map[string]any{
+		"output":         "我在联系人里搜索了一下，没有找到\"须莫v6\"这个人。\n\n目前联系人里只有\"须莫🥥\"，没有名为\"须莫v6\"的联系人。",
+		"reply_decision": map[string]any{"shouldReply": true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastTaskMessage := "名为\"须莫v6\"的联系人。\n\n```multica-reply-decision\n{\"shouldReply\":true}\n```"
+
+	completion := buildTaskCompletion(
+		taskCompletionTarget{RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true}},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		lastTaskMessage,
+		"",
+		"",
+	)
+
+	want := "我在联系人里搜索了一下，没有找到\"须莫v6\"这个人。\n\n目前联系人里只有\"须莫🥥\"，没有名为\"须莫v6\"的联系人。"
+	if completion.ResultMessage != want {
+		t.Fatalf("result message = %q, want %q", completion.ResultMessage, want)
+	}
+	if completion.ReplyDecision == nil || !completion.ReplyDecision.ShouldReply {
+		t.Fatalf("reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
+func TestBuildTaskCompletionCommentKeepsThreadReply(t *testing.T) {
+	result := []byte(`{"output":"root task summary"}`)
+	completion := buildTaskCompletion(
+		taskCompletionTarget{
+			RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+			CommentID:  pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
+		},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		"该评论对应的完整回复",
+		"",
+		"",
+	)
+
+	if completion.ResultMessage != "该评论对应的完整回复" {
+		t.Fatalf("result message = %q", completion.ResultMessage)
+	}
+}
+
+func TestBuildTaskCompletionCommentReplyOverridesRunSilence(t *testing.T) {
+	result := []byte(`{"output":"任务已完成","reply_decision":{"shouldReply":false,"reason":"任务已完成，无新的用户输入"}}`)
+	completion := buildTaskCompletion(
+		taskCompletionTarget{
+			RootTaskID: pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+			CommentID:  pgtype.UUID{Bytes: [16]byte{3}, Valid: true},
+		},
+		db.AgentTaskQueue{ID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true}},
+		"completed",
+		result,
+		"已经找到须莫v6，并把结果发回来了。",
+		"",
+		"",
+	)
+
+	if completion.ReplyDecision == nil || !completion.ReplyDecision.ShouldReply {
+		t.Fatalf("comment completion reply decision = %#v", completion.ReplyDecision)
+	}
+}
+
 func TestBuildTaskCompletionFailureKeepsLastReplyAndReason(t *testing.T) {
 	completion := buildTaskCompletion(
 		taskCompletionTarget{

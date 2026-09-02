@@ -23,6 +23,7 @@ import {
   agentRunCountsKeys,
   agentSourceKeys,
   agentTasksKeys,
+  agentCoordinatorSessionsKeys,
 } from "../agents/queries";
 import { githubKeys } from "../github/queries";
 import { larkKeys } from "../lark/queries";
@@ -160,10 +161,9 @@ export function refetchPendingChatAggregate(
  * chat:quick_actions cancel. Both caches are staleTime: Infinity, so nothing
  * re-fetched afterwards and the prompt stayed missing until a remount.
  *
- * Only `role: "user"` is written. SendChatMessage is the event's one producer,
- * and an assistant row fabricated from this payload would carry no elapsed_ms /
- * message_kind / quick_actions while still claiming the id that
- * applyChatDoneToCache is about to write properly.
+ * User rows are written here. Assistant rows are normally written by
+ * chat:done; coordinator short-loop replies have no task/done event, so this
+ * handler also inserts an assistant row when `message_kind` is coordinator.
  *
  * The invalidate stays: this payload has no `attachments`, so the reconciling
  * refetch is what fills them in for clients that did not send the message.
@@ -181,6 +181,23 @@ export function applyChatMessageToCache(
       content: payload.content ?? "",
       task_id: payload.task_id ?? null,
       created_at: payload.created_at ?? new Date().toISOString(),
+    });
+  }
+  if (
+    payload.role === "assistant" &&
+    payload.message_id &&
+    payload.message_kind === "coordinator"
+  ) {
+    upsertChatMessageToCaches(qc, sessionId, {
+      id: payload.message_id,
+      chat_session_id: sessionId,
+      role: "assistant",
+      content: payload.content ?? "",
+      task_id: payload.task_id ?? null,
+      created_at: payload.created_at ?? new Date().toISOString(),
+      message_kind: "coordinator",
+      elapsed_ms: payload.elapsed_ms ?? payload.coordinator?.elapsed_ms ?? null,
+      coordinator: payload.coordinator,
     });
   }
   invalidateChatMessageQueries(qc, sessionId);
@@ -1317,7 +1334,9 @@ export function useRealtimeSync(
     };
     const invalidateSessionLists = () => {
       const id = getCurrentWsId();
-      if (id) qc.invalidateQueries({ queryKey: chatKeys.sessions(id) });
+      if (!id) return;
+      qc.invalidateQueries({ queryKey: chatKeys.sessions(id) });
+      qc.invalidateQueries({ queryKey: agentCoordinatorSessionsKeys.all(id) });
     };
 
     const unsubChatMessage = ws.on("chat:message", (p) => {
@@ -1329,6 +1348,12 @@ export function useRealtimeSync(
       // Write the user turn before invalidating so the prompt does not depend
       // on the refetch surviving (MUL-5711) — same shape as chat:done.
       applyChatMessageToCache(qc, payload);
+      if (
+        payload.session_created === true ||
+        payload.message_kind === "coordinator"
+      ) {
+        invalidateSessionLists();
+      }
       // NOTE: intentionally does NOT touch the pending aggregate. chat:message
       // fires per streamed message with no status; the aggregate is maintained
       // by the task lifecycle handlers below (MUL-4159).

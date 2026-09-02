@@ -222,6 +222,31 @@ func TestReplierIssueCreatedConfirmation(t *testing.T) {
 	}
 }
 
+func TestReplierIssueDuplicateConfirmation(t *testing.T) {
+	rec, srv := newWebhookServer(t)
+	r := NewOutboundReplier(OutboundReplierConfig{AppURL: "https://app.example"})
+	msg := inboundWithWebhook(t, srv.URL)
+	r.Reply(context.Background(), engine.ResolvedInstallation{}, msg, engine.Result{
+		Outcome:         engine.OutcomeIngested,
+		IssueID:         pgtype.UUID{Bytes: [16]byte{1}, Valid: true},
+		IssueIdentifier: "MUL-44",
+		IssueTitle:      "今日新闻",
+		IssueDuplicate:  true,
+		ReplyText:       "我去查一下今天的新闻",
+	})
+	if len(rec.bodies) != 1 {
+		t.Fatalf("webhook posts = %d, want 1", len(rec.bodies))
+	}
+	md, _ := rec.bodies[0]["markdown"].(map[string]any)
+	text, _ := md["text"].(string)
+	if !strings.Contains(text, "未创建") || !strings.Contains(text, "MUL-44") || !strings.Contains(text, "今日新闻") {
+		t.Errorf("duplicate confirmation = %q", text)
+	}
+	if strings.Contains(text, "已创建") || strings.Contains(text, "我去查一下") {
+		t.Errorf("duplicate used created/coordinator copy = %q", text)
+	}
+}
+
 func TestReplierPlainIngestStaysSilent(t *testing.T) {
 	rec, srv := newWebhookServer(t)
 	r := NewOutboundReplier(OutboundReplierConfig{AppURL: "https://app.example"})

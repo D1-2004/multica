@@ -35,6 +35,8 @@ import (
 // in unicode code points (utf8.RuneCountInString), matching Postgres
 // char_length and the front-end's String.prototype.length-with-counter UX.
 const maxAgentDescriptionLength = 255
+const maxAgentPersonaLength = 400
+const maxAgentReplyToneLength = 200
 
 // maxAgentDispatchPromptLength bounds the authored dispatch prompt. It has to
 // hold a complete replacement for the Diamond common + surface policy, which
@@ -84,12 +86,23 @@ type AgentResponse struct {
 	// is still warm, the last completed answer is within 20 minutes, and the
 	// agent's instructions, skills, and runtime have not changed. Off by
 	// default; local chats and issue comments already resume without it.
-	ChatSessionResume bool            `json:"chat_session_resume"`
-	AvatarURL         *string         `json:"avatar_url"`
-	RuntimeMode       string          `json:"runtime_mode"`
-	RuntimeConfig     any             `json:"runtime_config"`
-	CustomArgs        []string        `json:"custom_args"`
-	McpConfig         json.RawMessage `json:"mcp_config"`
+	ChatSessionResume bool `json:"chat_session_resume"`
+	// InboundCoordinator runs the server-side assoc tool loop that replies
+	// immediately or opens an Issue. Off by default for new and existing
+	// agents; only an explicit owner on switch enables it.
+	InboundCoordinator bool `json:"inbound_coordinator"`
+	// Persona is the inbound coordinator's character. Empty uses a concise
+	// colleague default. Independent of Instructions, which remain sandbox
+	// working rules. Optional on older backends.
+	Persona string `json:"persona"`
+	// ReplyTone is how the inbound coordinator speaks. Empty uses a short
+	// work-chat default. Optional on older backends.
+	ReplyTone     string          `json:"reply_tone"`
+	AvatarURL     *string         `json:"avatar_url"`
+	RuntimeMode   string          `json:"runtime_mode"`
+	RuntimeConfig any             `json:"runtime_config"`
+	CustomArgs    []string        `json:"custom_args"`
+	McpConfig     json.RawMessage `json:"mcp_config"`
 	// custom_env is intentionally NOT serialized on agent resources. The
 	// agent_list/get/create/update/archive/restore responses and WS events
 	// only expose coarse metadata (has_custom_env, custom_env_key_count) so
@@ -161,6 +174,27 @@ func (h *Handler) hydrateChatSessionResume(ctx context.Context, resp *AgentRespo
 	}
 }
 
+func (h *Handler) hydrateInboundCoordinator(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	if resp == nil {
+		return
+	}
+	enabled, err := h.Queries.GetAgentInboundCoordinator(ctx, agentID)
+	if err == nil {
+		resp.InboundCoordinator = enabled
+	}
+}
+
+func (h *Handler) hydrateAgentVoice(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	if resp == nil {
+		return
+	}
+	voice, err := h.Queries.GetAgentVoice(ctx, agentID)
+	if err == nil {
+		resp.Persona = voice.Persona
+		resp.ReplyTone = voice.ReplyTone
+	}
+}
+
 func (h *Handler) hydrateAgentsChatSessionResume(ctx context.Context, resps []AgentResponse) {
 	if len(resps) == 0 {
 		return
@@ -186,6 +220,65 @@ func (h *Handler) hydrateAgentsChatSessionResume(ctx context.Context, resps []Ag
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].ChatSessionResume = row.ChatSessionResume
+		}
+	}
+}
+
+func (h *Handler) hydrateAgentsInboundCoordinator(ctx context.Context, resps []AgentResponse) {
+	if len(resps) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(resps))
+	index := make(map[string]int, len(resps))
+	for i, resp := range resps {
+		id, err := util.ParseUUID(resp.ID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		index[resp.ID] = i
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListAgentInboundCoordinatorByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("hydrate inbound_coordinator for agent list failed", "error", err, "count", len(ids))
+		return
+	}
+	for _, row := range rows {
+		if i, ok := index[uuidToString(row.ID)]; ok {
+			resps[i].InboundCoordinator = row.InboundCoordinator
+		}
+	}
+}
+
+func (h *Handler) hydrateAgentsVoice(ctx context.Context, resps []AgentResponse) {
+	if len(resps) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(resps))
+	index := make(map[string]int, len(resps))
+	for i, resp := range resps {
+		id, err := util.ParseUUID(resp.ID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		index[resp.ID] = i
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListAgentVoiceByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("hydrate persona and reply_tone for agent list failed", "error", err, "count", len(ids))
+		return
+	}
+	for _, row := range rows {
+		if i, ok := index[uuidToString(row.ID)]; ok {
+			resps[i].Persona = row.Persona
+			resps[i].ReplyTone = row.ReplyTone
 		}
 	}
 }
@@ -250,6 +343,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		SystemInstructions:       systemInstructionsFor(a),
 		DispatchPromptOverrides:  parseDispatchPromptOverrides(a.DispatchPromptOverrides),
 		DispatchAlwaysNewIssue:   a.DispatchAlwaysNewIssue,
+		InboundCoordinator:       false,
 		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
 		RuntimeMode:              a.RuntimeMode,
 		RuntimeConfig:            rc,
@@ -1113,6 +1207,8 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		visible = append(visible, resp)
 	}
 	h.hydrateAgentsChatSessionResume(r.Context(), visible)
+	h.hydrateAgentsInboundCoordinator(r.Context(), visible)
+	h.hydrateAgentsVoice(r.Context(), visible)
 
 	writeJSON(w, http.StatusOK, visible)
 }
@@ -1135,6 +1231,8 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := h.agentToResponse(agent)
 	h.hydrateChatSessionResume(r.Context(), &resp, agent.ID)
+	h.hydrateInboundCoordinator(r.Context(), &resp, agent.ID)
+	h.hydrateAgentVoice(r.Context(), &resp, agent.ID)
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
 		return
 	}
@@ -1522,6 +1620,9 @@ type UpdateAgentRequest struct {
 	DispatchPromptOverrides *map[string]string `json:"dispatch_prompt_overrides"`
 	DispatchAlwaysNewIssue  *bool              `json:"dispatch_always_new_issue"`
 	ChatSessionResume       *bool              `json:"chat_session_resume"`
+	InboundCoordinator      *bool              `json:"inbound_coordinator"`
+	Persona                 *string            `json:"persona"`
+	ReplyTone               *string            `json:"reply_tone"`
 	AvatarURL               *string            `json:"avatar_url"`
 	RuntimeID               *string            `json:"runtime_id"`
 	RuntimeConfig           any                `json:"runtime_config"`
@@ -1767,6 +1868,14 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to verify agent source ownership")
 			return
 		}
+	}
+	if req.Persona != nil && utf8.RuneCountInString(*req.Persona) > maxAgentPersonaLength {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("persona must be %d characters or fewer", maxAgentPersonaLength))
+		return
+	}
+	if req.ReplyTone != nil && utf8.RuneCountInString(*req.ReplyTone) > maxAgentReplyToneLength {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("reply_tone must be %d characters or fewer", maxAgentReplyToneLength))
+		return
 	}
 
 	// Hard-reject any attempt to write custom_env through the generic
@@ -2145,9 +2254,41 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.InboundCoordinator != nil {
+		if err := h.Queries.UpdateAgentInboundCoordinator(r.Context(), updated.ID, *req.InboundCoordinator); err != nil {
+			slog.Warn("update agent inbound_coordinator failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update inbound coordinator")
+			return
+		}
+	}
+	if req.Persona != nil || req.ReplyTone != nil {
+		persona := ""
+		tone := ""
+		if current, err := h.Queries.GetAgentVoice(r.Context(), updated.ID); err == nil {
+			persona = current.Persona
+			tone = current.ReplyTone
+		}
+		if req.Persona != nil {
+			persona = *req.Persona
+		}
+		if req.ReplyTone != nil {
+			tone = *req.ReplyTone
+		}
+		if err := h.Queries.UpdateAgentVoice(r.Context(), db.UpdateAgentVoiceParams{
+			ID:        updated.ID,
+			Persona:   persona,
+			ReplyTone: tone,
+		}); err != nil {
+			slog.Warn("update agent voice failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update persona and reply tone")
+			return
+		}
+	}
 
 	resp := h.agentToResponse(updated)
 	h.hydrateChatSessionResume(r.Context(), &resp, updated.ID)
+	h.hydrateInboundCoordinator(r.Context(), &resp, updated.ID)
+	h.hydrateAgentVoice(r.Context(), &resp, updated.ID)
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, updated.ID); err != nil {
 		slog.Warn("update agent: load invocation targets for response failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent invocation targets")

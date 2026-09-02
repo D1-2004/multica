@@ -184,6 +184,8 @@
     "prop_concurrency": "Concurrency",
     "prop_chat_session_resume": "Resume last session",
     "prop_chat_session_resume_hint": "Off: every turn starts a fresh provider session, never resumed. On: in 1:1 chat, reuse the previous Claude/Codex session when the sandbox is still warm, the last reply finished within 20 minutes, and this agent's instructions, skills, and runtime have not changed. Faster follow-ups; falls back to full history if resume is not possible.",
+    "prop_inbound_coordinator": "Judge before sandbox",
+    "prop_inbound_coordinator_hint": "When on, DingTalk and web chat first decide whether to reply immediately. Only work that needs tools, lookup, or tracking starts a sandbox. Turn off to send every message into the sandbox.",
     "prop_owner": "Owner",
     "prop_created": "Created",
     "prop_updated": "Updated",
@@ -274,6 +276,7 @@
   "tabs": {
     "overview": "Overview",
     "work": "Work",
+    "inbound": "Inbound",
     "capabilities": "Capabilities",
     "settings": "Settings",
     "general": "General",
@@ -567,6 +570,53 @@
     },
     "instructions": {
       "intro": "Set the system prompt used for every task. Markdown is supported.",
+      "persona_label": "Persona",
+      "persona_hint": "Who this agent is when it replies in chat. The inbound coordinator uses this for voice only; it does not change whether a message becomes an Issue.",
+      "persona_placeholder": "You are a reliable teammate. State the facts first, then a brief suggestion.",
+      "tone_label": "Reply tone",
+      "tone_hint": "How the inbound coordinator sounds in chat. Keep it short. Sandbox tasks still follow the system prompt below.",
+      "tone_placeholder": "Short sentences. No small talk. Do not repeat the user.",
+      "templates_label": "Templates",
+      "extract": "Extract from instructions",
+      "extracting": "Extracting…",
+      "extract_failed": "Couldn't extract persona and tone",
+      "extract_empty": "Write instructions first, then extract persona and tone.",
+      "persona_templates": {
+        "colleague": {
+          "label": "Teammate",
+          "text": "You are a reliable teammate. State facts first, then a brief suggestion. Do not over-promise."
+        },
+        "advisor": {
+          "label": "Advisor",
+          "text": "You are a specialist advisor. Lead with the conclusion, then one or two reasons. Skip ceremony."
+        },
+        "assistant": {
+          "label": "Assistant",
+          "text": "You are an action-taking assistant. Skip greetings. Name the next step or the thing you will check."
+        },
+        "coordinator": {
+          "label": "Coordinator",
+          "text": "You are a calm coordinator. Align people and facts. Do not take sides. Make the matter explicit."
+        }
+      },
+      "tone_templates": {
+        "direct": {
+          "label": "Direct",
+          "text": "Short sentences. No small talk. Do not repeat the user's words."
+        },
+        "warm": {
+          "label": "Warm professional",
+          "text": "Polite and restrained. Sound like a work message, not a chatbot."
+        },
+        "casual": {
+          "label": "Casual teammate",
+          "text": "Spoken and natural, like a DingTalk DM with a colleague. Stay useful."
+        },
+        "formal": {
+          "label": "Formal written",
+          "text": "Precise wording. No exaggeration. Suitable for a manager or another team."
+        }
+      },
       "system_prompt_label": "System prompt",
       "placeholder": "Define this agent's role, expertise, and working style.\n\n# Example\nYou are a frontend engineer specializing in React and TypeScript.\n\n## Working Style\n- Write small, focused PRs — one commit per logical change\n- Prefer composition over inheritance\n- Always add unit tests for new components\n\n## Constraints\n- Do not modify shared/ types without explicit approval\n- Follow the existing component patterns in features/",
       "system_layer_label": "Maintained by Multica",
@@ -587,6 +637,7 @@
       "segment_policy": "Managed policy",
       "segment_context": "Delivery context",
       "segment_dingtalk_conversation": "DingTalk conversation",
+      "segment_scene_graph": "Scene graph",
       "segment_reply_formatting": "Reply formatting",
       "segment_enterprise_identity": "Identity authorization",
       "source_managed": "Managed",
@@ -607,6 +658,7 @@
       "excluded_not_enterprise_runtime": "enterprise identity runtimes only",
       "excluded_not_supplied": "resolved per dispatch",
       "excluded_no_conversation_context": "only for DingTalk conversations",
+      "excluded_not_a_dingtalk_channel": "DingTalk channel messages only",
       "delivery_runtime_brief": "system prompt, once per session",
       "delivery_per_turn": "with every turn",
       "excluded_empty": "empty",
@@ -621,6 +673,7 @@
       "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent.",
       "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to.",
       "condition_dingtalk_conversation": "Injected for DingTalk conversations — the conversation is the source of truth, plus the commands that read it and any quoted message back.",
+      "condition_dingtalk_channel": "Injected for DingTalk channel messages — recall and bind the Issue to openConversationId.",
       "condition_any_dingtalk_task": "Injected for every DingTalk task, including ones that arrive without a dispatch envelope.",
       "condition_enterprise_runtime": "Injected only when the agent runs on an enterprise-identity runtime.",
       "status_active": "Active in this mode",
@@ -1211,6 +1264,17 @@
       "sink_url_placeholder": "https://trace.example.com/ingest",
       "saved_toast": "LLM trace settings saved",
       "save_failed_toast": "Failed to save LLM trace settings"
+    },
+    "inbound": {
+      "empty": "No inbound conversations yet.",
+      "loading": "Loading inbound conversations…",
+      "load_failed": "Couldn't load inbound conversations.",
+      "retry": "Try again",
+      "select_prompt": "Pick a conversation to read the transcript.",
+      "untitled": "Untitled conversation",
+      "load_older": "Load older messages",
+      "no_messages": "This conversation has no messages yet.",
+      "back": "Back"
     }
   },
   "char_counter": {

@@ -21,7 +21,27 @@ export type ChatMessageKind =
   | "message"
   | "no_response"
   | "onboarding_kickoff"
-  | "onboarding_opening";
+  | "onboarding_opening"
+  | "coordinator";
+
+export interface ChatCoordinatorTrace {
+  action?: string;
+  look_into?: string;
+  reason?: string;
+  elapsed_ms?: number;
+  source?: string;
+  steps?: ChatCoordinatorStep[];
+}
+
+export interface ChatCoordinatorStep {
+  seq: number;
+  type: "tool_use" | "tool_result" | "thinking" | "text" | "error";
+  tool?: string;
+  content?: string;
+  input?: string;
+  output?: string;
+  error?: boolean;
+}
 
 /**
  * A concise follow-up offered by an assistant reply. `label` is rendered in
@@ -97,6 +117,8 @@ export interface ChatSession {
   last_message?: ChatLastMessage | null;
   /** True when this conversation was created by an inbound A2A Context. */
   is_a2a?: boolean;
+  /** True when this session is the durable transcript of an inbound short loop. */
+  is_coordinator?: boolean;
   /** True when the user has pinned this chat to the top of the list.
    *  Optional so older clients / non-list payloads stay valid. */
   pinned?: boolean;
@@ -163,6 +185,7 @@ export interface ChatMessage {
   message_kind?: ChatMessageKind;
   /** Up to three server-validated follow-ups generated with this reply. */
   quick_actions?: ChatQuickAction[];
+  coordinator?: ChatCoordinatorTrace;
 }
 
 export interface ChatMessagesCursor {
@@ -179,7 +202,7 @@ export interface ChatMessagesPage {
 
 export interface SendChatMessageResponse {
   message_id: string;
-  task_id: string;
+  task_id?: string;
   /** True when the server supports queued follow-up sends. */
   supports_queue?: boolean;
   /**
@@ -201,6 +224,11 @@ export interface SendChatMessageResponse {
    * compat with servers that predate the field.
    */
   attachment_ids?: string[];
+  assistant_message_id?: string;
+  assistant_content?: string;
+  assistant_created_at?: string;
+  assistant_message_kind?: ChatMessageKind;
+  coordinator?: ChatCoordinatorTrace;
 }
 
 /** Browser acknowledgement emitted after a live assistant reply is rendered. */

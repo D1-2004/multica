@@ -1045,6 +1045,91 @@ func TestListAgents_IncludesChatSessionResume(t *testing.T) {
 	}
 }
 
+func TestListAgents_InboundCoordinatorDefaultsOff(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	agentName := "inbound-coord-list-agent"
+	createHandlerTestAgent(t, agentName, nil)
+
+	req := newRequest("GET", "/agents", nil)
+	w := httptest.NewRecorder()
+	testHandler.ListAgents(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var rawAgents []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rawAgents); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	var found map[string]any
+	for _, a := range rawAgents {
+		if name, _ := a["name"].(string); name == agentName {
+			found = a
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("agent not found in list response")
+	}
+	if got, _ := found["inbound_coordinator"].(bool); got {
+		t.Errorf("inbound_coordinator expected false, got %v", found["inbound_coordinator"])
+	}
+}
+
+func TestUpdateAgent_InboundCoordinatorOff(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "inbound-coord-off-agent", nil)
+	w := updateAgentForTest(t, agentID, map[string]any{"inbound_coordinator": false})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update: got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got, _ := resp["inbound_coordinator"].(bool); got {
+		t.Errorf("response inbound_coordinator expected false, got %v", resp["inbound_coordinator"])
+	}
+	var stored bool
+	if err := testPool.QueryRow(ctx, `SELECT inbound_coordinator FROM agent WHERE id = $1`, agentID).Scan(&stored); err != nil {
+		t.Fatalf("read inbound_coordinator: %v", err)
+	}
+	if stored {
+		t.Fatal("stored inbound_coordinator expected false")
+	}
+}
+
+func TestUpdateAgent_InboundCoordinatorOn(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "inbound-coord-on-agent", nil)
+	w := updateAgentForTest(t, agentID, map[string]any{"inbound_coordinator": true})
+	if w.Code != http.StatusOK {
+		t.Fatalf("update: got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got, _ := resp["inbound_coordinator"].(bool); !got {
+		t.Errorf("response inbound_coordinator expected true, got %v", resp["inbound_coordinator"])
+	}
+	var stored bool
+	if err := testPool.QueryRow(ctx, `SELECT inbound_coordinator FROM agent WHERE id = $1`, agentID).Scan(&stored); err != nil {
+		t.Fatalf("read inbound_coordinator: %v", err)
+	}
+	if !stored {
+		t.Fatal("stored inbound_coordinator expected true")
+	}
+}
+
 // TestGetAgentEnv_OwnerSucceedsAndAudits exercises the happy path: an
 // agent owner reveals env, and the response carries the plaintext map.
 // The activity_log row is checked at the end so the audit trail is

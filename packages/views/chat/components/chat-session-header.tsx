@@ -43,6 +43,7 @@ export function ChatSessionHeader({
   session,
   agent,
   onArchive,
+  readOnly = false,
 }: {
   session: ChatSession;
   agent: Agent | null;
@@ -50,6 +51,8 @@ export function ChatSessionHeader({
   // next chat on desktop, back to the list on mobile), so the parent owns it —
   // see ChatPage.handleArchive. Falls back to a plain status flip if unwired.
   onArchive?: (session: ChatSession) => void;
+  /** Title and menu stay display-only; used by inbound transcripts. */
+  readOnly?: boolean;
 }) {
   const { t } = useT("chat");
   const wsPaths = useWorkspacePaths();
@@ -127,6 +130,10 @@ export function ChatSessionHeader({
               }}
               className="min-w-0 flex-1 rounded-sm bg-background px-1 py-0.5 text-body font-semibold outline-none ring-1 ring-border focus-visible:ring-brand"
             />
+          ) : readOnly ? (
+            <div className="min-w-0 truncate text-body font-semibold text-foreground">
+              {title}
+            </div>
           ) : (
             <button
               type="button"
@@ -142,6 +149,11 @@ export function ChatSessionHeader({
               {t(($) => $.a2a_label)}
             </Badge>
           )}
+          {session.is_coordinator === true && (
+            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[9px] leading-none">
+              {t(($) => $.message_list.coordinator_badge)}
+            </Badge>
+          )}
         </div>
         {agent && (
           <div className="truncate text-caption text-muted-foreground">
@@ -151,6 +163,7 @@ export function ChatSessionHeader({
         )}
       </div>
 
+      {!readOnly && (
       <DropdownMenu>
         <DropdownMenuTrigger
           render={<Button variant="ghost" size="icon-sm" className="text-muted-foreground" />}
@@ -191,6 +204,7 @@ export function ChatSessionHeader({
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
 
       <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <AlertDialogContent>

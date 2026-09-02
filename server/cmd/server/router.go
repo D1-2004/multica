@@ -23,6 +23,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
@@ -47,6 +48,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -421,12 +423,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	var appURLProvider func() string
 	var publicURLProvider func() string
 	var siteConnectSrcProvider func() []string
+	var agentIdentityControlBaseURLProvider func() string
 	if opts.RuntimeConfig != nil {
 		appURLProvider = opts.RuntimeConfig.appURL
 		publicURLProvider = opts.RuntimeConfig.publicURL
 		siteConnectSrcProvider = opts.RuntimeConfig.siteConnectSrc
+		agentIdentityControlBaseURLProvider = opts.RuntimeConfig.agentIdentityControlBaseURL
 	}
 	h := handler.New(queries, pool, hub, bus, emailSvc, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h.Assoc = assoc.NewService(assoc.NewSQLStore(pool))
 	h.SiteHosting = sitehosting.NewService(
 		sitehosting.NewPostgresStore(pool),
 		sitehosting.NewStorageObjectStore(store),
@@ -751,6 +756,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 	}
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
+	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
+	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
+	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
+		AgentIdentity:   agentidentityhsf.NewClient(),
+		BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
+		BaseURLProvider: agentIdentityControlBaseURLProvider,
+		ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+	})
+	h.InboundCoordinator = coordinator
+	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	channelRouter.SetInboundCoordinator(coordinator)
+	channelRouter.SetSceneAssociator(h.Assoc)
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
 	// watching the same chat without a reload: the engine writes through the
 	// service layer and inherits no handler broadcast of its own.
@@ -2174,6 +2191,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Assignee frequency
 			r.Get("/api/assignee-frequency", h.GetAssigneeFrequency)
+			r.Get("/api/assoc/recall", h.RecallAssoc)
+			r.Get("/api/assoc/events", h.ListAssocEvents)
+			r.Post("/api/assoc/bind-outbound", h.BindAssocOutbound)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
@@ -2410,12 +2430,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// deployment configuration, so it does not belong on the
 					// public /api/config.
 					r.Get("/dispatch-prompt-preview", h.GetAgentDispatchPromptPreview)
+					r.Post("/extract-voice", h.ExtractAgentVoice)
 					r.Post("/source/sync", h.SyncAgentSource)
 					r.Put("/", h.UpdateAgent)
 					r.Post("/archive", h.ArchiveAgent)
 					r.Post("/restore", h.RestoreAgent)
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
 					r.Get("/tasks", h.ListAgentTasks)
+					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)
