@@ -1268,10 +1268,17 @@ func isInboundResetMemory(text string) bool {
 		return false
 	}
 	token := fields[0]
-	if strings.HasPrefix(token, "@") && len(fields) > 1 {
+	if isInboundMentionToken(token) && len(fields) > 1 {
 		token = fields[1]
 	}
 	return strings.EqualFold(token, inboundResetMemoryCommand)
+}
+
+func isInboundMentionToken(token string) bool {
+	if strings.HasPrefix(token, "@") {
+		return true
+	}
+	return strings.HasPrefix(token, "<@") && strings.HasSuffix(token, ">")
 }
 
 func resetMemoryReply(conversationID string, err error) string {

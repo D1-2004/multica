@@ -25,6 +25,7 @@ func TestIsInboundResetMemory(t *testing.T) {
 		{"/Reset-Memory", true},
 		{"/reset-memory 确认", true},
 		{"@菲迪 /reset-memory", true},
+		{"<@Dl2XMiS9sbxHgSb1GMrRWVz6DHXBFkLb6iP> /reset-memory", true},
 		{"reset-memory", false},
 		{"/reset", false},
 		{"请 /reset-memory", false},
