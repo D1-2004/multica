@@ -768,7 +768,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
 	h.SceneMemoryStore = scenememory.NewStore(queries)
-	h.SceneMemoryWorker = scenememory.NewWorker(h.SceneMemoryStore, nil, func() bool {
+	coordinator.SceneMemory = h.SceneMemoryStore
+	sceneFlusher := &scenememory.MemoryFlusher{
+		Store: h.SceneMemoryStore,
+		History: scenememory.NewDWSRangeReader(scenememory.DWSRangeConfig{
+			Queries:         queries,
+			AgentIdentity:   agentidentityhsf.NewClient(),
+			BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
+			BaseURLProvider: agentIdentityControlBaseURLProvider,
+			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+		}),
+		LLM: h.LLM,
+	}
+	h.SceneMemoryWorker = scenememory.NewWorker(h.SceneMemoryStore, sceneFlusher, func() bool {
 		if opts.DeploymentFence == nil {
 			return true
 		}
@@ -2446,6 +2458,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
+					r.Get("/scene-memory", h.ListAgentSceneMemory)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)

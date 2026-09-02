@@ -487,6 +487,7 @@ func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
 			"reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget),
 			"dingtalk_history_count", len(turn.DingTalkHistory),
 			"multica_history_count", len(turn.History),
+			"scene_memory_revision", turn.SceneMemoryRevision,
 			"system_prompt_runes", len([]rune(systemPrompt)),
 			"user_prompt", clipRunes(userPrompt, llmLogPromptBudget),
 			"user_prompt_runes", len([]rune(userPrompt)),

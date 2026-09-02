@@ -170,6 +170,14 @@
     "prop_chat_session_resume_hint": "オフの間は毎ターン新しいセッションを開始し、再開しません。オン時は1対1チャットのみ。サンドボックスがまだ暖かく、直前の回答から20分以内で、指示・スキル・ランタイムが変わっていなければ、前回の Claude/Codex セッションを再開します。続かない場合は履歴からやり直します。",
     "prop_inbound_coordinator": "受信時に先判断",
     "prop_inbound_coordinator_hint": "オンのとき、DingTalk とウェブの発言は先に即答できるか判断します。ツール・調べもの・継続フォローが必要なときだけサンドボックスを起動します。オフにするとすべてのメッセージがサンドボックスに入ります。",
+    "prop_scene_memory_write": "シーン記憶を書き込む",
+    "prop_scene_memory_write_hint": "オンのとき、このバインド済みデジタル社員の受信が当該グループ/DM を dirty にし、バックグラウンドでシーン本文を更新します。オフにすると書き込みを止めます。",
+    "prop_scene_memory_recall": "シーン記憶を召還する",
+    "prop_scene_memory_recall_hint": "オンのとき、受信判定に当該会話のシーン本文を載せます。オフにすると直ちに読みません。シーン本文から issue id は取りません。",
+    "prop_scene_memory_ui": "受信タブに記憶を表示",
+    "prop_scene_memory_ui_hint": "オンのとき、受信タブに各会話のシーン本文を出します。オフにすると表示しません。",
+    "prop_scene_memory_bootstrap": "シーン記憶をウォームアップ",
+    "prop_scene_memory_bootstrap_hint": "オンのとき、新しいグループや DM を先にウォームアップできます。オフのときは最初の受信を待ちます。",
     "prop_owner": "オーナー",
     "prop_created": "作成日",
     "prop_updated": "更新日",
@@ -1109,7 +1117,16 @@
       "untitled": "無題の会話",
       "load_older": "以前のメッセージを読み込む",
       "no_messages": "この会話にはまだメッセージがありません。",
-      "back": "戻る"
+      "back": "戻る",
+      "memory_title": "シーン記憶",
+      "memory_empty": "シーン記憶はまだありません。",
+      "memory_loading": "シーン記憶を読み込み中…",
+      "memory_load_failed": "シーン記憶を読み込めませんでした。",
+      "memory_revision": "リビジョン {{revision}}",
+      "memory_select_prompt": "会話を選んでシーン本文を表示します。",
+      "memory_kind_dm": "1対1",
+      "memory_kind_group": "グループ",
+      "memory_untitled": "無題のシーン"
     }
   },
   "char_counter": {

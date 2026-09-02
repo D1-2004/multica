@@ -1,6 +1,9 @@
 package inboundcoord
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // IdentityNote tells the loop whether this inbound turn has a complete
 // DingTalk conversation_id and uid. Never invent those ids.
@@ -25,7 +28,7 @@ func IdentityNote(source Source, conversationID, personID string) string {
 
 const systemPrompt = `You route the inbound turn with a tool loop.
 
-You MUST call tools. A verdict is valid through finish, or through a successful issue_comment_add whose reply_text ends the loop. Never answer from memory, similar-looking ids, or prompt hints.
+You MUST call tools. A verdict is valid through finish, or through a successful issue_comment_add whose reply_text ends the loop. Never answer from model memory, similar-looking ids, or prompt hints. Host-provided scene_memory is scoped facts for this exact conversation only. Never derive issue_id from it; assoc_recall remains the only Issue truth.
 If a tool result has "error" and "hint", follow the hint on the next call. Do not repeat the same invalid arguments.
 
 Tools (only these):
@@ -149,6 +152,17 @@ func buildUserPrompt(turn Turn) string {
 	if related := strings.TrimSpace(turn.RelatedTasks); related != "" {
 		b.WriteString("\nrelated_tasks:\n")
 		b.WriteString(related)
+		b.WriteString("\n")
+	}
+	if rev := turn.SceneMemoryRevision; rev > 0 || strings.TrimSpace(turn.SceneMemory) != "" {
+		b.WriteString("\nscene_memory_revision: ")
+		b.WriteString(fmt.Sprintf("%d", rev))
+		b.WriteString("\nscene_memory (Host-provided, this Scene only; never a source of issue_id):\n")
+		if text := strings.TrimSpace(turn.SceneMemory); text != "" {
+			b.WriteString(text)
+		} else {
+			b.WriteString("(empty)")
+		}
 		b.WriteString("\n")
 	}
 	if cid := strings.TrimSpace(turn.ConversationID); cid != "" {

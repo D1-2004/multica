@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   Agent,
+  AgentSceneMemory,
   AgentTemplate,
   AgentTemplateSummary,
   AgentBuilderRuntimeSwitch,
@@ -2305,6 +2306,29 @@ export const AgentTaskSchema = z
   .loose();
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
+
+const AgentSceneMemorySchema = z
+  .object({
+    id: z.string(),
+    workspace_id: z.string().default(""),
+    agent_id: z.string().default(""),
+    org_id: z.string().default(""),
+    scene_key: z.string(),
+    scene_kind: z.string().default(""),
+    scene_title: z.string().default(""),
+    memory_text: z.string().default(""),
+    memory_revision: z.number().default(0),
+    status: z.string().default(""),
+    last_error: z.string().default(""),
+    last_error_code: z.string().default(""),
+    updated_at: z.string().default(""),
+    bootstrapped_at: z.string().optional().default(""),
+    last_flushed_at: z.string().optional().default(""),
+  })
+  .loose();
+
+export const AgentSceneMemoryListSchema = z.array(AgentSceneMemorySchema);
+export const EMPTY_AGENT_SCENE_MEMORY_LIST: AgentSceneMemory[] = [];
 
 // Task cancellation (`POST /api/tasks/:id/cancel`) is consumed directly by
 // chat recovery. Its optional message payload must be well-formed before the

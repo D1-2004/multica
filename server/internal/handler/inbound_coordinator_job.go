@@ -14,7 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -398,8 +400,12 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if err != nil {
 		return nil, job, err
 	}
+	h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, job, err
+	}
+	if h.SceneMemoryWorker != nil {
+		h.SceneMemoryWorker.Notify()
 	}
 	slog.Info("inbound coordinator job accepted",
 		"event", "inbound_coordinator_job_accepted",
@@ -483,4 +489,79 @@ func shouldDeferInboundCoordinator(command DispatchCommand, plan agentDispatchEx
 		command.Event.Domain == "channel" && command.Event.Type == "message.created" &&
 		(plan.MaterializerType == protocol.DispatchSurfaceTypeIssue ||
 			plan.MaterializerType == protocol.DispatchSurfaceTypeChat)
+}
+
+func (h *Handler) markSceneMemoryDirty(
+	ctx context.Context,
+	qtx *db.Queries,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+	job db.InboundCoordinatorJob,
+) {
+	if h == nil || h.SceneMemoryStore == nil || qtx == nil {
+		return
+	}
+	if command.Source.Type != "digital_employee" {
+		return
+	}
+	body := dispatchInboundEventBody(command)
+	if body == "" {
+		return
+	}
+	flags, err := qtx.GetAgentSceneMemoryFlags(ctx, dispatchContext.AgentID)
+	if err != nil || !flags.WriteEnabled {
+		return
+	}
+	ids := dispatchAssocIDs(command)
+	if ids.ConversationID == "" || !assoc.ValidSceneID(ids.ConversationID) {
+		return
+	}
+	identity, err := qtx.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: dispatchContext.WorkspaceID,
+		AgentID:     dispatchContext.AgentID,
+	})
+	if err != nil {
+		slog.Warn("scene memory mark dirty skipped; no DWS identity",
+			"event", "scene_memory_mark_dirty",
+			"error", err,
+		)
+		return
+	}
+	kind := scenememory.KindDM
+	if strings.EqualFold(ids.Kind, "group") {
+		kind = scenememory.KindGroup
+	}
+	title := strings.TrimSpace(command.Event.Data.Conversation.Title)
+	store := scenememory.NewStore(qtx)
+	row, err := store.MarkDirty(ctx, scenememory.Identity{
+		WorkspaceID: dispatchContext.WorkspaceID,
+		AgentID:     dispatchContext.AgentID,
+		OrgID:       identity.OrgID,
+		SceneKey:    ids.ConversationID,
+		SceneKind:   kind,
+		SceneTitle:  title,
+	}, scenememory.DirtyTrigger{
+		OccurredAt:     time.Now().UTC(),
+		EvidenceID:     ids.EvidenceID,
+		JobID:          job.ID,
+		CoordTraceID:   util.UUIDToString(job.ID),
+		IdempotencyKey: job.IdempotencyKey,
+	})
+	if err != nil {
+		slog.Warn("scene memory mark dirty failed",
+			"event", "scene_memory_mark_dirty",
+			"conversation_id", ids.ConversationID,
+			"error", err,
+		)
+		return
+	}
+	slog.Info("scene memory marked dirty",
+		"event", "scene_memory_mark_dirty",
+		"workspace_id", util.UUIDToString(dispatchContext.WorkspaceID),
+		"agent_id", util.UUIDToString(dispatchContext.AgentID),
+		"scene_key", ids.ConversationID,
+		"dirty_revision", row.DirtyRevision,
+		"idempotency", job.IdempotencyKey,
+		"scene_memory_id", util.UUIDToString(row.ID),
+	)
 }

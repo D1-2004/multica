@@ -3553,3 +3553,62 @@ describe("ApiClient extractAgentVoice", () => {
     ).resolves.toEqual({ persona: "", reply_tone: "" });
   });
 });
+
+describe("ApiClient agent scene memory", () => {
+  it("lists scene memory rows through the validated endpoint", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify([
+          {
+            id: "mem-1",
+            workspace_id: "ws-1",
+            agent_id: "agent-1",
+            org_id: "org-1",
+            scene_key: "cid+abc",
+            scene_kind: "dm",
+            scene_title: "冬翔",
+            memory_text: "GoalMate 是工具",
+            memory_revision: 2,
+            status: "clean",
+            last_error: "",
+            last_error_code: "",
+            updated_at: "2026-09-01T12:00:00Z",
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new ApiClient("https://api.example.test").listAgentSceneMemory("agent-1"),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "mem-1",
+        scene_key: "cid+abc",
+        memory_text: "GoalMate 是工具",
+        memory_revision: 2,
+      }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.example.test/api/agents/agent-1/scene-memory",
+      expect.any(Object),
+    );
+  });
+
+  it("falls back to an empty list for a malformed response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ memory: "nope" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      new ApiClient("https://api.example.test").listAgentSceneMemory("agent-1"),
+    ).resolves.toEqual([]);
+  });
+});

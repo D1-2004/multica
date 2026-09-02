@@ -49,6 +49,10 @@ func (s *coordQueriesStub) GetAgentVoice(context.Context, pgtype.UUID) (db.GetAg
 	return db.GetAgentVoiceRow{Persona: s.persona, ReplyTone: s.replyTone}, nil
 }
 
+func (s *coordQueriesStub) GetAgentSceneMemoryFlags(context.Context, pgtype.UUID) (db.AgentSceneMemoryFlags, error) {
+	return db.AgentSceneMemoryFlags{}, nil
+}
+
 func testAgentID() pgtype.UUID {
 	return pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 }
@@ -330,6 +334,26 @@ func TestBuildUserPromptDingTalkHistoryNewestFirst(t *testing.T) {
 	newer := strings.Index(prompt, "较新的消息")
 	if older < 0 || newer < 0 || newer > older {
 		t.Fatalf("want newest-first dingtalk history, prompt=%q", prompt)
+	}
+}
+
+func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:              SourceDigitalEmployee,
+		Addressed:           true,
+		ChatType:            "p2p",
+		Message:             "GoalMate 是什么",
+		SceneMemory:         "## 稳定知识与约定\n- GoalMate 是工具，不是数字员工",
+		SceneMemoryRevision: 4,
+	})
+	if !strings.Contains(prompt, "scene_memory_revision: 4") {
+		t.Fatalf("missing revision: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Host-provided") || !strings.Contains(prompt, "GoalMate 是工具，不是数字员工") {
+		t.Fatalf("missing scene memory: %q", prompt)
+	}
+	if !strings.Contains(systemPrompt, "assoc_recall remains the only Issue truth") {
+		t.Fatal("system prompt must keep assoc as the only issue truth")
 	}
 }
 

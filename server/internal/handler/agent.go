@@ -91,6 +91,13 @@ type AgentResponse struct {
 	// immediately or opens an Issue. Off by default for new and existing
 	// agents; only an explicit owner on switch enables it.
 	InboundCoordinator bool `json:"inbound_coordinator"`
+	// Scene-memory flags are independent of InboundCoordinator and default
+	// false. Dedicated queries hydrate them so sqlc Agent SELECT * stays
+	// unchanged.
+	SceneMemoryWriteEnabled     bool `json:"scene_memory_write_enabled"`
+	SceneMemoryRecallEnabled    bool `json:"scene_memory_recall_enabled"`
+	SceneMemoryUIEnabled        bool `json:"scene_memory_ui_enabled"`
+	SceneMemoryBootstrapEnabled bool `json:"scene_memory_bootstrap_enabled"`
 	// Persona is the inbound coordinator's character. Empty uses a concise
 	// colleague default. Independent of Instructions, which remain sandbox
 	// working rules. Optional on older backends.
@@ -184,6 +191,20 @@ func (h *Handler) hydrateInboundCoordinator(ctx context.Context, resp *AgentResp
 	}
 }
 
+func (h *Handler) hydrateSceneMemoryFlags(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	if resp == nil {
+		return
+	}
+	flags, err := h.Queries.GetAgentSceneMemoryFlags(ctx, agentID)
+	if err != nil {
+		return
+	}
+	resp.SceneMemoryWriteEnabled = flags.WriteEnabled
+	resp.SceneMemoryRecallEnabled = flags.RecallEnabled
+	resp.SceneMemoryUIEnabled = flags.UIEnabled
+	resp.SceneMemoryBootstrapEnabled = flags.BootstrapEnabled
+}
+
 func (h *Handler) hydrateAgentVoice(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
 	if resp == nil {
 		return
@@ -249,6 +270,38 @@ func (h *Handler) hydrateAgentsInboundCoordinator(ctx context.Context, resps []A
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].InboundCoordinator = row.InboundCoordinator
+		}
+	}
+}
+
+func (h *Handler) hydrateAgentsSceneMemoryFlags(ctx context.Context, resps []AgentResponse) {
+	if len(resps) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(resps))
+	index := make(map[string]int, len(resps))
+	for i, resp := range resps {
+		id, err := util.ParseUUID(resp.ID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		index[resp.ID] = i
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListAgentSceneMemoryFlagsByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("hydrate scene memory flags for agent list failed", "error", err, "count", len(ids))
+		return
+	}
+	for _, row := range rows {
+		if i, ok := index[uuidToString(row.ID)]; ok {
+			resps[i].SceneMemoryWriteEnabled = row.WriteEnabled
+			resps[i].SceneMemoryRecallEnabled = row.RecallEnabled
+			resps[i].SceneMemoryUIEnabled = row.UIEnabled
+			resps[i].SceneMemoryBootstrapEnabled = row.BootstrapEnabled
 		}
 	}
 }
@@ -1208,6 +1261,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	h.hydrateAgentsChatSessionResume(r.Context(), visible)
 	h.hydrateAgentsInboundCoordinator(r.Context(), visible)
+	h.hydrateAgentsSceneMemoryFlags(r.Context(), visible)
 	h.hydrateAgentsVoice(r.Context(), visible)
 
 	writeJSON(w, http.StatusOK, visible)
@@ -1232,6 +1286,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	resp := h.agentToResponse(agent)
 	h.hydrateChatSessionResume(r.Context(), &resp, agent.ID)
 	h.hydrateInboundCoordinator(r.Context(), &resp, agent.ID)
+	h.hydrateSceneMemoryFlags(r.Context(), &resp, agent.ID)
 	h.hydrateAgentVoice(r.Context(), &resp, agent.ID)
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
 		return
@@ -1617,15 +1672,19 @@ type UpdateAgentRequest struct {
 	// DispatchPromptOverrides is a whole-map replacement, not a merge: the UI
 	// edits one segment at a time but always sends the complete map, so a
 	// removed key is an unambiguous "restore the managed text".
-	DispatchPromptOverrides *map[string]string `json:"dispatch_prompt_overrides"`
-	DispatchAlwaysNewIssue  *bool              `json:"dispatch_always_new_issue"`
-	ChatSessionResume       *bool              `json:"chat_session_resume"`
-	InboundCoordinator      *bool              `json:"inbound_coordinator"`
-	Persona                 *string            `json:"persona"`
-	ReplyTone               *string            `json:"reply_tone"`
-	AvatarURL               *string            `json:"avatar_url"`
-	RuntimeID               *string            `json:"runtime_id"`
-	RuntimeConfig           any                `json:"runtime_config"`
+	DispatchPromptOverrides     *map[string]string `json:"dispatch_prompt_overrides"`
+	DispatchAlwaysNewIssue      *bool              `json:"dispatch_always_new_issue"`
+	ChatSessionResume           *bool              `json:"chat_session_resume"`
+	InboundCoordinator          *bool              `json:"inbound_coordinator"`
+	SceneMemoryWriteEnabled     *bool              `json:"scene_memory_write_enabled"`
+	SceneMemoryRecallEnabled    *bool              `json:"scene_memory_recall_enabled"`
+	SceneMemoryUIEnabled        *bool              `json:"scene_memory_ui_enabled"`
+	SceneMemoryBootstrapEnabled *bool              `json:"scene_memory_bootstrap_enabled"`
+	Persona                     *string            `json:"persona"`
+	ReplyTone                   *string            `json:"reply_tone"`
+	AvatarURL                   *string            `json:"avatar_url"`
+	RuntimeID                   *string            `json:"runtime_id"`
+	RuntimeConfig               any                `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
 	// Use `PUT /api/agents/{id}/env` for env changes — that path admits
 	// the agent owner or a workspace owner/admin, denies agent actors,
@@ -2261,6 +2320,33 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.SceneMemoryWriteEnabled != nil || req.SceneMemoryRecallEnabled != nil ||
+		req.SceneMemoryUIEnabled != nil || req.SceneMemoryBootstrapEnabled != nil {
+		flags, err := h.Queries.GetAgentSceneMemoryFlags(r.Context(), updated.ID)
+		if err != nil {
+			flags = db.AgentSceneMemoryFlags{}
+		}
+		if req.SceneMemoryWriteEnabled != nil {
+			flags.WriteEnabled = *req.SceneMemoryWriteEnabled
+		}
+		if req.SceneMemoryRecallEnabled != nil {
+			flags.RecallEnabled = *req.SceneMemoryRecallEnabled
+		}
+		if req.SceneMemoryUIEnabled != nil {
+			flags.UIEnabled = *req.SceneMemoryUIEnabled
+		}
+		if req.SceneMemoryBootstrapEnabled != nil {
+			flags.BootstrapEnabled = *req.SceneMemoryBootstrapEnabled
+		}
+		if err := h.Queries.UpdateAgentSceneMemoryFlags(r.Context(), db.UpdateAgentSceneMemoryFlagsParams{
+			ID: updated.ID, WriteEnabled: flags.WriteEnabled, RecallEnabled: flags.RecallEnabled,
+			UIEnabled: flags.UIEnabled, BootstrapEnabled: flags.BootstrapEnabled,
+		}); err != nil {
+			slog.Warn("update agent scene memory flags failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update scene memory flags")
+			return
+		}
+	}
 	if req.Persona != nil || req.ReplyTone != nil {
 		persona := ""
 		tone := ""
@@ -2288,6 +2374,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	resp := h.agentToResponse(updated)
 	h.hydrateChatSessionResume(r.Context(), &resp, updated.ID)
 	h.hydrateInboundCoordinator(r.Context(), &resp, updated.ID)
+	h.hydrateSceneMemoryFlags(r.Context(), &resp, updated.ID)
 	h.hydrateAgentVoice(r.Context(), &resp, updated.ID)
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, updated.ID); err != nil {
 		slog.Warn("update agent: load invocation targets for response failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)

@@ -186,6 +186,14 @@
     "prop_chat_session_resume_hint": "Off: every turn starts a fresh provider session, never resumed. On: in 1:1 chat, reuse the previous Claude/Codex session when the sandbox is still warm, the last reply finished within 20 minutes, and this agent's instructions, skills, and runtime have not changed. Faster follow-ups; falls back to full history if resume is not possible.",
     "prop_inbound_coordinator": "Judge before sandbox",
     "prop_inbound_coordinator_hint": "When on, DingTalk and web chat first decide whether to reply immediately. Only work that needs tools, lookup, or tracking starts a sandbox. Turn off to send every message into the sandbox.",
+    "prop_scene_memory_write": "Write scene memory",
+    "prop_scene_memory_write_hint": "When on, inbound messages from this bound digital employee mark that group or DM dirty so background flush can update its scene text. Off stops writes.",
+    "prop_scene_memory_recall": "Recall scene memory",
+    "prop_scene_memory_recall_hint": "When on, the inbound judge loads this conversation's scene text. Off skips recall immediately. Scene text never supplies an issue id.",
+    "prop_scene_memory_ui": "Show scene memory in inbound",
+    "prop_scene_memory_ui_hint": "When on, the inbound tab lists each conversation's scene text. Off hides it.",
+    "prop_scene_memory_bootstrap": "Warm up scene memory",
+    "prop_scene_memory_bootstrap_hint": "When on, new groups or DMs can be warmed before the first inbound. Off waits for the first message.",
     "prop_owner": "Owner",
     "prop_created": "Created",
     "prop_updated": "Updated",
@@ -1274,7 +1282,16 @@
       "untitled": "Untitled conversation",
       "load_older": "Load older messages",
       "no_messages": "This conversation has no messages yet.",
-      "back": "Back"
+      "back": "Back",
+      "memory_title": "Scene memory",
+      "memory_empty": "No scene memory yet.",
+      "memory_loading": "Loading scene memory…",
+      "memory_load_failed": "Couldn't load scene memory.",
+      "memory_revision": "Revision {{revision}}",
+      "memory_select_prompt": "Pick a conversation to read its scene text.",
+      "memory_kind_dm": "Direct message",
+      "memory_kind_group": "Group",
+      "memory_untitled": "Untitled scene"
     }
   },
   "char_counter": {

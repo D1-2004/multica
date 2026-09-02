@@ -26,6 +26,7 @@ import type {
   IssueTableRowsRequest,
   IssueTableRowsResponse,
   Agent,
+  AgentSceneMemory,
   MikaBootstrapResponse,
   CreateAgentRequest,
   AgentTemplate,
@@ -272,6 +273,8 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
   AgentTaskListSchema,
+  AgentSceneMemoryListSchema,
+  EMPTY_AGENT_SCENE_MEMORY_LIST,
   HostedSiteListSchema,
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
@@ -2759,6 +2762,18 @@ export class ApiClient {
 
   async listAgentCoordinatorSessions(agentId: string): Promise<ChatSession[]> {
     return this.fetch(`/api/agents/${agentId}/coordinator-sessions`);
+  }
+
+  async listAgentSceneMemory(agentId: string): Promise<AgentSceneMemory[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentSceneMemoryListSchema,
+      EMPTY_AGENT_SCENE_MEMORY_LIST,
+      { endpoint: "GET /api/agents/{id}/scene-memory" },
+    );
   }
 
   // Workspace-scoped agent task snapshot: every active task

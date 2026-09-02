@@ -118,6 +118,7 @@ func (w *Worker) ProcessNext(ctx context.Context) (bool, error) {
 	slog.Info("scene memory claimed",
 		"event", "scene_memory_claimed",
 		"scene_memory_id", util.UUIDToString(row.ID),
+		"scene_key", row.SceneKey,
 		"attempt", row.AttemptCount,
 	)
 	if err := w.flusher.Flush(ctx, row); err != nil {

@@ -114,4 +114,33 @@ describe("AgentDetailInspector labels", () => {
     });
     expect(toggle).toBeChecked();
   });
+
+  it("defaults scene memory flags off and saves write independently", () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={agent}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const write = screen.getByLabelText("Write scene memory");
+    const recall = screen.getByLabelText("Recall scene memory");
+    const ui = screen.getByLabelText("Show scene memory in inbound");
+    const bootstrap = screen.getByLabelText("Warm up scene memory");
+    expect(write).not.toBeChecked();
+    expect(recall).not.toBeChecked();
+    expect(ui).not.toBeChecked();
+    expect(bootstrap).not.toBeChecked();
+    fireEvent.click(write);
+    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+      scene_memory_write_enabled: true,
+    });
+    expect(write).toBeChecked();
+  });
 });

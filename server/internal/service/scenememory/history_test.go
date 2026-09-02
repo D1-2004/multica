@@ -1,0 +1,49 @@
+package scenememory
+
+import (
+	"testing"
+	"time"
+)
+
+func TestFilterUntilDropsAfterCutoff(t *testing.T) {
+	cutoff := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	events := []HistoryEvent{
+		{EvidenceID: "a", OccurredAt: cutoff.Add(-time.Minute), Content: "before"},
+		{EvidenceID: "b", OccurredAt: cutoff, Content: "at"},
+		{EvidenceID: "c", OccurredAt: cutoff.Add(time.Minute), Content: "after"},
+	}
+	got := filterUntil(events, cutoff, "b")
+	if len(got) != 2 || got[0].EvidenceID != "a" || got[1].EvidenceID != "b" {
+		t.Fatalf("got %#v", got)
+	}
+	got = filterUntil(events, cutoff, "a")
+	if len(got) != 1 || got[0].EvidenceID != "a" {
+		t.Fatalf("same-time later evidence must drop, got %#v", got)
+	}
+}
+
+func TestAfterCursorIsExclusive(t *testing.T) {
+	cursor := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	events := []HistoryEvent{
+		{EvidenceID: "b", OccurredAt: cursor},
+		{EvidenceID: "a", OccurredAt: cursor.Add(-time.Second)},
+		{EvidenceID: "c", OccurredAt: cursor.Add(time.Second)},
+	}
+	got := afterCursor(events, cursor, "b")
+	if len(got) != 1 || got[0].EvidenceID != "c" {
+		t.Fatalf("got %#v", got)
+	}
+	got = afterCursor(events, time.Time{}, "")
+	if len(got) != 3 || got[0].EvidenceID != "a" {
+		t.Fatalf("empty cursor should sort oldest first, got %#v", got)
+	}
+}
+
+func TestClipRunes(t *testing.T) {
+	if got := clipRunes("  工具不是数字员工  ", 4); got != "工具不是" {
+		t.Fatalf("got %q", got)
+	}
+	if got := clipRunes("short", 40); got != "short" {
+		t.Fatalf("got %q", got)
+	}
+}

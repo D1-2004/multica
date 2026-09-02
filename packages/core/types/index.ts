@@ -43,6 +43,7 @@ export type {
   CreateAgentFromTemplateRequest,
   CreateAgentFromTemplateResponse,
   CreateAgentFromTemplateFailure,
+  AgentSceneMemory,
   UpdateAgentRequest,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
