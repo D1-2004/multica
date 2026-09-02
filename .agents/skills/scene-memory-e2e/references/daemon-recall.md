@@ -6,7 +6,7 @@ Coordinator 短循环已经精确读 Scene Text、用 `assoc_recall` 选事项�
 
 沙箱已有 `multica assoc recall --conversation <openConversationId> --since 48h` 和 MCP `assoc_recall`。builtin skill：`server/internal/service/builtin_skills/multica-assoc/SKILL.md`。
 
-过线（SKILL.md 的 P2 / P3 建出 Issue 之后）：
+过线（SKILL.md 的 P2 / P3 对 dxxh 建出 Issue 之后）：
 
 1. 该 Issue 的 Run 在沙箱里对 **入站 cid** 做 `assoc recall --conversation <cid>`
 2. 能看到刚绑定的 issue / purpose
