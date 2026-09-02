@@ -581,7 +581,7 @@ func unixMillis(raw int64) time.Time {
 		return time.Time{}
 	}
 	if raw < 1e12 {
-		return time.Unix(raw, 0).UTC()
+		return time.Unix(raw, 0).UTC().Truncate(time.Second)
 	}
-	return time.UnixMilli(raw).UTC()
+	return time.UnixMilli(raw).UTC().Truncate(time.Second)
 }

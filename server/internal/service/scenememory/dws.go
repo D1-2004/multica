@@ -170,7 +170,21 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 			Err:  fmt.Errorf("history page cap left a gap behind the cursor"),
 		}
 	}
-	return out, nil
+	return filterAfterLookback(out, lookback), nil
+}
+
+func filterAfterLookback(events []HistoryEvent, lookback time.Time) []HistoryEvent {
+	if lookback.IsZero() {
+		return events
+	}
+	out := make([]HistoryEvent, 0, len(events))
+	for _, event := range events {
+		if event.OccurredAt.Before(lookback) {
+			continue
+		}
+		out = append(out, event)
+	}
+	return out
 }
 
 func HistoryLookback(row db.SceneMemory, bootstrap bool, now time.Time) time.Time {
@@ -210,36 +224,48 @@ func parseDWSEvents(raw []byte) ([]HistoryEvent, error) {
 	return page.Events, nil
 }
 
+type dwsListMessage struct {
+	Content       string `json:"content"`
+	Text          string `json:"text"`
+	CreateTime    string `json:"createTime"`
+	OpenMessageID string `json:"openMessageId"`
+	MessageID     string `json:"messageId"`
+	Sender        string `json:"sender"`
+	SenderID      string `json:"senderId"`
+	SenderOpenID  string `json:"senderOpenId"`
+	IsSelf        *bool  `json:"isSelf"`
+	Self          bool   `json:"self"`
+}
+
 func parseDWSPage(raw []byte, agentUID string) (dwsPage, error) {
 	var payload struct {
-		Success   bool   `json:"success"`
-		ErrorCode string `json:"errorCode"`
+		Success   bool             `json:"success"`
+		ErrorCode string           `json:"errorCode"`
+		Messages  []dwsListMessage `json:"messages"`
 		Result    struct {
-			Messages []struct {
-				Content       string `json:"content"`
-				CreateTime    string `json:"createTime"`
-				OpenMessageID string `json:"openMessageId"`
-				Sender        string `json:"sender"`
-				SenderID      string `json:"senderId"`
-				SenderOpenID  string `json:"senderOpenId"`
-				IsSelf        *bool  `json:"isSelf"`
-				Self          bool   `json:"self"`
-			} `json:"messages"`
+			Messages []dwsListMessage `json:"messages"`
 		} `json:"result"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return dwsPage{}, errors.New("decode DWS conversation history response")
 	}
-	if !payload.Success {
+	messages := payload.Result.Messages
+	if len(messages) == 0 {
+		messages = payload.Messages
+	}
+	if !payload.Success && len(messages) == 0 {
 		return dwsPage{}, fmt.Errorf("DWS conversation history query rejected: %s", dwsclient.SafeCode(payload.ErrorCode))
 	}
-	page := dwsPage{RawCount: len(payload.Result.Messages)}
-	for _, message := range payload.Result.Messages {
+	page := dwsPage{RawCount: len(messages)}
+	for _, message := range messages {
 		occurred := parseDWSTime(message.CreateTime)
 		if page.Oldest.IsZero() || occurred.Before(page.Oldest) {
 			page.Oldest = occurred
 		}
 		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			content = strings.TrimSpace(message.Text)
+		}
 		if content == "" {
 			continue
 		}
@@ -247,8 +273,12 @@ func parseDWSPage(raw []byte, agentUID string) (dwsPage, error) {
 		if speaker == "" {
 			speaker = "dingtalk"
 		}
+		evidenceID := strings.TrimSpace(message.OpenMessageID)
+		if evidenceID == "" {
+			evidenceID = strings.TrimSpace(message.MessageID)
+		}
 		page.Events = append(page.Events, HistoryEvent{
-			EvidenceID: strings.TrimSpace(message.OpenMessageID),
+			EvidenceID: evidenceID,
 			OccurredAt: occurred,
 			Speaker:    speaker,
 			Content:    content,

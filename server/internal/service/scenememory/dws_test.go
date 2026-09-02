@@ -71,6 +71,32 @@ func TestParseDWSPageCountsEmptyMessages(t *testing.T) {
 	}
 }
 
+func TestParseDWSPageAcceptsTopLevelMessages(t *testing.T) {
+	raw := []byte(`{
+		"messages": [
+			{"text":"GoalMate 是工具","createTime":"2026-09-01 12:00:00","messageId":"m1","sender":"冬翔"}
+		]
+	}`)
+	page, err := parseDWSPage(raw, "")
+	if err != nil || len(page.Events) != 1 || page.Events[0].EvidenceID != "m1" {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	if page.Events[0].Content != "GoalMate 是工具" {
+		t.Fatalf("content=%q", page.Events[0].Content)
+	}
+}
+
+func TestFilterAfterLookbackDropsOlderEvents(t *testing.T) {
+	lookback := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	got := filterAfterLookback([]HistoryEvent{
+		{EvidenceID: "old", OccurredAt: lookback.Add(-time.Minute), Content: "old"},
+		{EvidenceID: "keep", OccurredAt: lookback, Content: "keep"},
+	}, lookback)
+	if len(got) != 1 || got[0].EvidenceID != "keep" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
 func TestParseDWSPageMarksSelfByUID(t *testing.T) {
 	raw := []byte(`{
 		"success": true,

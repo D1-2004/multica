@@ -57,6 +57,11 @@ func (h *Handler) ListAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	actorType, _ := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+	if actorType == "agent" {
+		writeError(w, http.StatusForbidden, "agents may not read scene memory")
+		return
+	}
 	if !h.canManageAgent(w, r, agent) {
 		return
 	}

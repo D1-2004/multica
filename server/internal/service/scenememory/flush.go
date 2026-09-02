@@ -153,7 +153,7 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 
 func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []HistoryEvent) (string, error) {
 	if f.LLM == nil || !f.LLM.Enabled() {
-		return fallbackMerge(row.MemoryText, batch), nil
+		return "", &FlushError{Code: ErrorConfig, Err: fmt.Errorf("memory flush LLM is not configured")}
 	}
 	user := buildFlushUserPrompt(row, batch)
 	messages := []openai.ChatCompletionMessageParamUnion{

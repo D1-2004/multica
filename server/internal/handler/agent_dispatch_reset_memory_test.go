@@ -42,9 +42,9 @@ func TestUnixMillisPrefersSourceTime(t *testing.T) {
 	if got.Unix() != 1000 {
 		t.Fatalf("seconds = %s", got)
 	}
-	got = unixMillis(1_780_000_000_000)
-	if got.UnixMilli() != 1_780_000_000_000 {
-		t.Fatalf("millis = %s", got)
+	got = unixMillis(1_780_000_000_123)
+	if got.Unix() != 1_780_000_000 || got.Nanosecond() != 0 {
+		t.Fatalf("millis must truncate to seconds = %s", got)
 	}
 	cmd := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
 		Messages: []DispatchMessage{{OccurredAt: 1_780_000_000_000, Text: "hi"}},
