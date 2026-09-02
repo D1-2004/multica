@@ -43,10 +43,46 @@ func IndependentIssueTaskContext(raw []byte, trigger CoordinatorIssueTrigger) ([
 		return nil, fmt.Errorf("encode coordinator issue trigger: %w", err)
 	}
 	payload[coordinatorIssueTriggerContextKey] = triggerJSON
+	if err := ensureCoordinatorIssueDispatchEnvelope(payload); err != nil {
+		return nil, err
+	}
 	delete(payload, "completion_callback")
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("encode coordinator issue dispatch context: %w", err)
 	}
 	return encoded, nil
+}
+
+// ensureCoordinatorIssueDispatchEnvelope fills the claim-time dispatch
+// keys a Stream robot callback omits. Digital-employee Router already
+// carries them; overwriting would drop that identity. Without them
+// dispatchInstructionAppliesTo rejects the context and the sandbox never
+// receives the same send-then-finish follow-up as digital employees.
+func ensureCoordinatorIssueDispatchEnvelope(payload map[string]json.RawMessage) error {
+	if _, ok := payload["dispatch_source"]; !ok {
+		sourceType := "robot"
+		raw, err := json.Marshal(map[string]string{"platform": "dingtalk", "type": sourceType})
+		if err != nil {
+			return fmt.Errorf("encode coordinator issue dispatch source: %w", err)
+		}
+		payload["dispatch_source"] = raw
+	}
+	if _, ok := payload["dispatch_domain"]; !ok {
+		payload["dispatch_domain"] = json.RawMessage(`"channel"`)
+	}
+	if _, ok := payload["dispatch_type"]; !ok {
+		payload["dispatch_type"] = json.RawMessage(`"message.created"`)
+	}
+	if _, ok := payload["dispatch_outbound"]; !ok {
+		raw, err := json.Marshal(map[string]string{
+			"mode":    protocol.DispatchOutboundModeDWS,
+			"replyTo": protocol.DispatchReplyToLatestMessage,
+		})
+		if err != nil {
+			return fmt.Errorf("encode coordinator issue dispatch outbound: %w", err)
+		}
+		payload[protocol.DispatchOutboundJSONKey] = raw
+	}
+	return nil
 }

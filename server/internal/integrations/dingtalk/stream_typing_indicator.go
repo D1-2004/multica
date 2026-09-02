@@ -144,7 +144,7 @@ func (m *TypingIndicatorManager) addStreamEmotionRow(
 		"open_msg_id_hash", dingtalkTraceHash(row.OpenMsgID),
 		"robot_code_source", "stream_callback")
 	if updated.State == "settled" {
-		m.recallStreamEmotionRow(ctx, q, updated)
+		m.finishStreamEmotionRow(ctx, q, updated, true)
 	}
 }
 
@@ -174,11 +174,19 @@ func (m *TypingIndicatorManager) bindStreamEmotion(
 		return
 	}
 	if row.State == "settled" && row.AddCompleted {
-		m.recallStreamEmotionRow(ctx, q, row)
+		m.finishStreamEmotionRow(ctx, q, row, true)
 	}
 }
 
 func (m *TypingIndicatorManager) settleStreamSource(ctx context.Context, installationID pgtype.UUID, sourceMessageID string) {
+	m.finishStreamSource(ctx, installationID, sourceMessageID, false)
+}
+
+func (m *TypingIndicatorManager) completeStreamSource(ctx context.Context, installationID pgtype.UUID, sourceMessageID string) {
+	m.finishStreamSource(ctx, installationID, sourceMessageID, true)
+}
+
+func (m *TypingIndicatorManager) finishStreamSource(ctx context.Context, installationID pgtype.UUID, sourceMessageID string, completed bool) {
 	q, ok := m.streamStore()
 	if !ok || !installationID.Valid || strings.TrimSpace(sourceMessageID) == "" {
 		return
@@ -194,12 +202,20 @@ func (m *TypingIndicatorManager) settleStreamSource(ctx context.Context, install
 	}
 	for _, row := range rows {
 		if row.AddCompleted {
-			m.recallStreamEmotionRow(ctx, q, row)
+			m.finishStreamEmotionRow(ctx, q, row, completed)
 		}
 	}
 }
 
 func (m *TypingIndicatorManager) settleStreamTask(ctx context.Context, chatSessionID, taskID pgtype.UUID) {
+	m.finishStreamTask(ctx, chatSessionID, taskID, false)
+}
+
+func (m *TypingIndicatorManager) completeStreamTask(ctx context.Context, chatSessionID, taskID pgtype.UUID) {
+	m.finishStreamTask(ctx, chatSessionID, taskID, true)
+}
+
+func (m *TypingIndicatorManager) finishStreamTask(ctx context.Context, chatSessionID, taskID pgtype.UUID, completed bool) {
 	q, ok := m.streamStore()
 	if !ok || !chatSessionID.Valid || !taskID.Valid {
 		return
@@ -216,12 +232,16 @@ func (m *TypingIndicatorManager) settleStreamTask(ctx context.Context, chatSessi
 	}
 	for _, row := range rows {
 		if row.AddCompleted {
-			m.recallStreamEmotionRow(ctx, q, row)
+			m.finishStreamEmotionRow(ctx, q, row, completed)
 		}
 	}
 }
 
 func (m *TypingIndicatorManager) recallStreamEmotionRow(ctx context.Context, q streamTypingQueries, row db.DingtalkProcessingEmotion) {
+	m.finishStreamEmotionRow(ctx, q, row, false)
+}
+
+func (m *TypingIndicatorManager) finishStreamEmotionRow(ctx context.Context, q streamTypingQueries, row db.DingtalkProcessingEmotion, completed bool) {
 	inst, err := m.q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{
 		ID: row.InstallationID, ChannelType: string(TypeDingtalk),
 	})
@@ -249,16 +269,36 @@ func (m *TypingIndicatorManager) recallStreamEmotionRow(ctx context.Context, q s
 		m.retryStreamEmotion(ctx, q, row, err)
 		return
 	}
+	if completed {
+		completeCtx, completeCancel := context.WithTimeout(ctx, streamEmotionAPITimeout)
+		completeErr := m.messenger.AddCompletedEmotionReply(completeCtx, creds, target)
+		completeCancel()
+		if completeErr != nil {
+			m.log.Warn("dingtalk stream emotion: completed indication failed",
+				"event", "dingtalk_typing_indicator_completed_failed",
+				"installation_id", util.UUIDToString(row.InstallationID),
+				"chat_session_id", util.UUIDToString(row.ChatSessionID),
+				"task_id", util.UUIDToString(row.TaskID),
+				"open_msg_id_hash", dingtalkTraceHash(row.OpenMsgID), "error", completeErr)
+			m.retryStreamEmotion(ctx, q, row, completeErr)
+			return
+		}
+	}
 	if err := q.DeleteDingTalkProcessingEmotion(ctx, row.ID); err != nil {
 		m.retryStreamEmotion(ctx, q, row, err)
 		return
 	}
-	m.log.Info("dingtalk typing indicator recalled",
-		"event", "dingtalk_typing_indicator_recalled",
+	event := "dingtalk_typing_indicator_recalled"
+	if completed {
+		event = "dingtalk_typing_indicator_completed"
+	}
+	m.log.Info("dingtalk typing indicator settled",
+		"event", event,
 		"installation_id", util.UUIDToString(row.InstallationID),
 		"chat_session_id", util.UUIDToString(row.ChatSessionID),
 		"task_id", util.UUIDToString(row.TaskID),
-		"open_msg_id_hash", dingtalkTraceHash(row.OpenMsgID))
+		"open_msg_id_hash", dingtalkTraceHash(row.OpenMsgID),
+		"completed", completed)
 }
 
 func (m *TypingIndicatorManager) retryStreamEmotion(ctx context.Context, q streamTypingQueries, row db.DingtalkProcessingEmotion, cause error) {
@@ -307,7 +347,7 @@ func (m *TypingIndicatorManager) reconcileStreamEmotions(ctx context.Context, q 
 	}
 	for _, row := range orphans {
 		if row.AddCompleted {
-			m.recallStreamEmotionRow(ctx, q, row)
+			m.finishStreamEmotionRow(ctx, q, row, true)
 		}
 	}
 	rows, err := q.ClaimDueDingTalkProcessingEmotions(ctx, streamEmotionReconcileBatch)
@@ -335,7 +375,7 @@ func (m *TypingIndicatorManager) reconcileStreamEmotions(ctx context.Context, q 
 			}
 			m.addStreamEmotionRow(ctx, q, row, creds)
 		case "settled":
-			m.recallStreamEmotionRow(ctx, q, row)
+			m.finishStreamEmotionRow(ctx, q, row, true)
 		default:
 			slog.Warn("dingtalk stream emotion: claimed unexpected state", "state", row.State)
 		}

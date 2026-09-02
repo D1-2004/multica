@@ -818,6 +818,8 @@ func TestCoordinatorNewIssueIdentifiesDingTalkSenderAsDelegator(t *testing.T) {
 		"dingtalk_sender_name\":\"路由用户",
 		"current DingTalk sender is the task delegator/requester",
 		"Multica Issue creator is only the tool executor and an assistant",
+		"finish this run immediately",
+		"Do not wait, listen, poll",
 	} {
 		if !strings.Contains(instruction, want) {
 			t.Errorf("new-Issue identity instruction missing %q: %q", want, instruction)
@@ -846,6 +848,8 @@ func TestCoordinatorIssueIdentityIsInjectedForRobotRoute(t *testing.T) {
 		"This is the robot route",
 		"Sender uid may be absent",
 		"never invent an identity or borrow the Multica Issue author",
+		"finish this run immediately",
+		"Do not wait, listen, poll",
 	} {
 		if !strings.Contains(instruction, want) {
 			t.Errorf("robot identity instruction missing %q: %q", want, instruction)

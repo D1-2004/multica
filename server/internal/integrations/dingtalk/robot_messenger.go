@@ -120,31 +120,49 @@ type EmotionTarget struct {
 	RobotCode          string
 }
 
-// Processing emotion payload. The emotionId/backgroundId pair is the
-// publicly shipped "🤔思考中" text emotion the official DingTalk OpenClaw
-// connector hardcodes for every org — proven to render without any
-// per-org emotion registration.
+// Text-emotion template. DingTalk's robot OpenAPI uses one public
+// emotionId (the OpenClaw "🤔思考中" template) for every org; the chip
+// text is emotionName/text. Digital-employee Router uses the same
+// visible labels (思考中 → 已完成) through HSF emotionSwitch.
 const (
-	processingEmotionType       = 2 // text emotion
-	processingEmotionID         = "2659900"
+	robotTextEmotionType        = 2
+	robotTextEmotionID          = "2659900"
 	processingEmotionName       = "🤔思考中"
 	processingEmotionBackground = "im_bg_1"
+	completedEmotionName        = "已完成"
+	completedEmotionBackground  = "im_bg_5"
+)
+
+type robotTextEmotion struct {
+	Name       string
+	Background string
+}
+
+var (
+	processingEmotion = robotTextEmotion{Name: processingEmotionName, Background: processingEmotionBackground}
+	completedEmotion  = robotTextEmotion{Name: completedEmotionName, Background: completedEmotionBackground}
 )
 
 // AddEmotionReply attaches the "processing" text emotion to an inbound
 // message (POST /v1.0/robot/emotion/reply).
 func (m *RobotMessenger) AddEmotionReply(ctx context.Context, creds channelCredentials, target EmotionTarget) error {
-	return m.postEmotion(ctx, creds, "/v1.0/robot/emotion/reply", target)
+	return m.postEmotion(ctx, creds, "/v1.0/robot/emotion/reply", target, processingEmotion)
+}
+
+// AddCompletedEmotionReply attaches the completed text emotion, matching
+// the digital-employee Router 已完成 indication.
+func (m *RobotMessenger) AddCompletedEmotionReply(ctx context.Context, creds channelCredentials, target EmotionTarget) error {
+	return m.postEmotion(ctx, creds, "/v1.0/robot/emotion/reply", target, completedEmotion)
 }
 
 // RecallEmotionReply removes the "processing" text emotion again
 // (POST /v1.0/robot/emotion/recall). Recall is addressed by the same
 // (conversation, message, emotion) triple — there is no reaction id.
 func (m *RobotMessenger) RecallEmotionReply(ctx context.Context, creds channelCredentials, target EmotionTarget) error {
-	return m.postEmotion(ctx, creds, "/v1.0/robot/emotion/recall", target)
+	return m.postEmotion(ctx, creds, "/v1.0/robot/emotion/recall", target, processingEmotion)
 }
 
-func (m *RobotMessenger) postEmotion(ctx context.Context, creds channelCredentials, path string, target EmotionTarget) error {
+func (m *RobotMessenger) postEmotion(ctx context.Context, creds channelCredentials, path string, target EmotionTarget, emotion robotTextEmotion) error {
 	if strings.TrimSpace(creds.RobotCode) == "" {
 		return fmt.Errorf("dingtalk robot: robot_code is required")
 	}
@@ -159,13 +177,13 @@ func (m *RobotMessenger) postEmotion(ctx context.Context, creds channelCredentia
 		"robotCode":          creds.RobotCode,
 		"openMsgId":          target.OpenMsgID,
 		"openConversationId": target.OpenConversationID,
-		"emotionType":        processingEmotionType,
-		"emotionName":        processingEmotionName,
+		"emotionType":        robotTextEmotionType,
+		"emotionName":        emotion.Name,
 		"textEmotion": map[string]string{
-			"emotionId":    processingEmotionID,
-			"emotionName":  processingEmotionName,
-			"text":         processingEmotionName,
-			"backgroundId": processingEmotionBackground,
+			"emotionId":    robotTextEmotionID,
+			"emotionName":  emotion.Name,
+			"text":         emotion.Name,
+			"backgroundId": emotion.Background,
 		},
 	})
 }

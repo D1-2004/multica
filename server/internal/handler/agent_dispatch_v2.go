@@ -775,7 +775,8 @@ const (
 		"This task's later progress, blocker, or result will not automatically reach any DingTalk participant. An Issue comment and terminal output are records only. " +
 		"Before this run may finish, you MUST successfully send at least one DingTalk message to one concrete person selected by the relay contract: progress or a blocker to the person who can act next, or the result to the person who needs it. " +
 		"If the triggering Issue comment contains a contacted person's answer, find the requester and send a natural summary such as ‘<recipient> replied: <answer>’. Writing that summary only in the Issue does not count as delivery. " +
-		"Do not write or claim ‘task complete’ until the DingTalk send returns a successful receipt.\n\n"
+		"Do not write or claim ‘task complete’ until the DingTalk send returns a successful receipt. " +
+		"After that successful send and assoc bind, finish this run immediately. Do not wait, listen, poll, or keep the sandbox open for the other party's reply. A later inbound message on that conversation continues this Issue automatically.\n\n"
 
 	dispatchConversationCommandsSection = "Ready to run as written:\n\n%s\n\n"
 
