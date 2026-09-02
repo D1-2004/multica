@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type inboundCoordinatorIssueCommentWriter struct {
@@ -42,7 +40,10 @@ func (w *inboundCoordinatorIssueCommentWriter) AddMemberComment(
 			return inboundcoord.IssueCommentEffect{}, fmt.Errorf("parent comment is not on the recalled Issue")
 		}
 	}
-	taskContext, err := coordinatorIssueCommentTaskContext(turn.IssueDispatchContext)
+	taskContext, err := inboundcoord.IndependentIssueTaskContext(
+		turn.IssueDispatchContext,
+		inboundcoord.CoordinatorIssueTriggerComment,
+	)
 	if err != nil {
 		return inboundcoord.IssueCommentEffect{}, err
 	}
@@ -66,26 +67,4 @@ func (w *inboundCoordinatorIssueCommentWriter) AddMemberComment(
 		CommentID:       util.UUIDToString(result.Comment.ID),
 		TaskID:          util.UUIDToString(result.Task.ID),
 	}, nil
-}
-
-func coordinatorIssueCommentTaskContext(raw []byte) ([]byte, error) {
-	if len(raw) == 0 {
-		return nil, errors.New("coordinator issue comment dispatch context is required")
-	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, fmt.Errorf("decode coordinator issue comment dispatch context: %w", err)
-	}
-	surface, err := json.Marshal(DispatchSurface{Type: protocol.DispatchSurfaceTypeIssue})
-	if err != nil {
-		return nil, fmt.Errorf("encode coordinator issue comment surface: %w", err)
-	}
-	payload[protocol.DispatchSurfaceJSONKey] = surface
-	payload[coordinatorIssueFollowUpJSONKey] = json.RawMessage("true")
-	delete(payload, "completion_callback")
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("encode coordinator issue comment dispatch context: %w", err)
-	}
-	return encoded, nil
 }

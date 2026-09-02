@@ -151,7 +151,7 @@ func TestIssueTitleAndDescription(t *testing.T) {
 		t.Fatalf("title = %q", IssueTitle(d, "长正文"))
 	}
 	desc := IssueDescription(d, "帮我看截止时间")
-	for _, want := range []string{"前台已对用户说", "帮我看截止时间", "委托人", "消息接收人", "当前能解除阻塞", "不要固定回复委托人"} {
+	for _, want := range []string{"前台已对用户说", "帮我看截止时间", "当前可信钉钉派发事件里的发信人", "Issue 创建人或评论人只表示谁执行了 Issue 工具", "协助者", "数字员工事件", "机器人事件", "消息接收人", "当前能解除阻塞", "不要固定回复委托人", "必须实际给一个明确的人发送", "不得写“任务完成”"} {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("description missing %q: %q", want, desc)
 		}

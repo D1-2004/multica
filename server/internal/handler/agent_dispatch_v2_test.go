@@ -790,10 +790,69 @@ func TestSceneGraphInstructionIsInjectedForDingTalkChannel(t *testing.T) {
 		"<requester> asked me to ask you <question>",
 		"A blocker does not always go to the requester",
 		"Never stop after only commenting on the Issue",
+		"sender in the trusted DingTalk dispatch event is the authoritative speaker",
+		"Issue creator or member-comment author records which workspace principal executed the Issue tool",
 	} {
 		if !strings.Contains(scene.EffectiveText, want) {
 			t.Errorf("scene_graph missing %q", want)
 		}
+	}
+}
+
+func TestCoordinatorNewIssueIdentifiesDingTalkSenderAsDelegator(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:                   DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Domain:                   "channel",
+		Type:                     "message.created",
+		Surface:                  DispatchSurface{Type: "issue"},
+		Outbound:                 DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		CoordinatorIssueFollowUp: true,
+		CoordinatorIssueTrigger:  inboundcoord.CoordinatorIssueTriggerCreate,
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-delegator", Type: "single"},
+			Sender:       DispatchSender{DisplayName: "路由用户", OpenDingTalkID: "open-delegator"},
+		},
+	}
+	instruction := buildDispatchConversationInstruction(stored, false)
+	for _, want := range []string{
+		"dingtalk_sender_name\":\"路由用户",
+		"current DingTalk sender is the task delegator/requester",
+		"Multica Issue creator is only the tool executor and an assistant",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Errorf("new-Issue identity instruction missing %q: %q", want, instruction)
+		}
+	}
+}
+
+func TestCoordinatorIssueIdentityIsInjectedForRobotRoute(t *testing.T) {
+	stored := persistedDispatchContext{
+		Source:                   DispatchSource{Platform: "dingtalk", Type: "robot"},
+		Domain:                   "channel",
+		Type:                     "message.created",
+		Surface:                  DispatchSurface{Type: "issue"},
+		Outbound:                 DispatchOutbound{Mode: "robot_sdk", ReplyTo: "latest_message"},
+		CoordinatorIssueFollowUp: true,
+		CoordinatorIssueTrigger:  inboundcoord.CoordinatorIssueTriggerComment,
+		EventData: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-robot", Type: "group"},
+			Sender:       DispatchSender{DisplayName: "机器人链路发信人"},
+		},
+	}
+	instruction := buildDispatchConversationInstruction(stored, false)
+	for _, want := range []string{
+		"dingtalk_source_type\":\"robot",
+		"dingtalk_sender_name\":\"机器人链路发信人",
+		"This is the robot route",
+		"Sender uid may be absent",
+		"never invent an identity or borrow the Multica Issue author",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Errorf("robot identity instruction missing %q: %q", want, instruction)
+		}
+	}
+	if strings.Contains(instruction, "Router sender") || strings.Contains(instruction, "Router delivery") {
+		t.Fatalf("robot instruction leaked an internal component name: %q", instruction)
 	}
 }
 
@@ -933,7 +992,7 @@ func TestCoordinatorIssueCommentTaskContextMakesIndependentRelay(t *testing.T) {
 		},
 	}, "ROUTER CONTEXT")
 
-	encoded, err := coordinatorIssueCommentTaskContext(raw)
+	encoded, err := inboundcoord.IndependentIssueTaskContext(raw, inboundcoord.CoordinatorIssueTriggerComment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -941,7 +1000,9 @@ func TestCoordinatorIssueCommentTaskContextMakesIndependentRelay(t *testing.T) {
 	if !present {
 		t.Fatal("coordinator Issue context was not recognized")
 	}
-	if stored.Surface.Type != protocol.DispatchSurfaceTypeIssue || !stored.CoordinatorIssueFollowUp {
+	if stored.Surface.Type != protocol.DispatchSurfaceTypeIssue ||
+		!stored.CoordinatorIssueFollowUp ||
+		stored.CoordinatorIssueTrigger != inboundcoord.CoordinatorIssueTriggerComment {
 		t.Fatalf("stored context = %+v", stored)
 	}
 	if stored.CompletionCallback != nil {
@@ -949,12 +1010,18 @@ func TestCoordinatorIssueCommentTaskContextMakesIndependentRelay(t *testing.T) {
 	}
 	instruction := buildDispatchConversationInstruction(stored, false)
 	for _, want := range []string{
-		"current_sender_name\":\"须莫",
-		"current_sender_open_dingtalk_id\":\"open-requester",
-		"current_conversation_id\":\"cid-requester",
+		"dingtalk_sender_name\":\"须莫",
+		"dingtalk_sender_open_id\":\"open-requester",
+		"dingtalk_conversation_id\":\"cid-requester",
+		"current DingTalk event sender is the actual speaker",
+		"Multica comment author is only the Issue-tool executor and an assistant",
+		"Find the original delegator from the Issue's original DingTalk task scene",
 		"short loop already acknowledged",
 		"No callback will deliver this task's later progress, blocker, or result",
-		"use the available DingTalk capability",
+		"MUST successfully send at least one DingTalk message to one concrete person",
+		"<recipient> replied: <answer>",
+		"Writing that summary only in the Issue does not count as delivery",
+		"Do not write or claim ‘task complete’ until the DingTalk send returns a successful receipt",
 	} {
 		if !strings.Contains(instruction, want) {
 			t.Errorf("coordinator follow-up instruction missing %q: %q", want, instruction)
@@ -2720,7 +2787,7 @@ func TestCoordinatorRecalledIssueContinuation(t *testing.T) {
 		command.Continuation.Kind != "issue" || command.Continuation.IssueID != issueID {
 		t.Fatalf("command = %+v ok=%v", command, ok)
 	}
-	for _, want := range []string{"7点", "已关联外呼会话", "assoc_recall current_issue=true", "委托人", "下一位应答人", "不要固定发给委托人", "必须实际发钉钉消息"} {
+	for _, want := range []string{"7点", "已关联外呼会话", "当前可信钉钉派发事件中的发信人", "Issue 评论人只表示谁执行了 Issue 工具", "数字员工事件", "机器人事件", "assoc_recall current_issue=true", "原委托人", "下一位应答人", "不要固定发给委托人", "必须实际给一个明确的人发送", "不算钉钉送达", "不得写“任务完成”"} {
 		if !strings.Contains(prompt.DisplayContent, want) {
 			t.Fatalf("follow-up prompt missing %q: %q", want, prompt.DisplayContent)
 		}

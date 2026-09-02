@@ -22,6 +22,22 @@ for Issue tasks.
 
 ## Identity
 
+The trusted DingTalk dispatch event is authoritative for business identity:
+
+- On a new Issue, the current DingTalk sender is the task delegator/requester.
+- On an inbound reply projected through `issue_comment_add`, the current sender
+  is the actual DingTalk speaker for that message. Find the original delegator
+  from the Issue's original DingTalk task scene and association graph.
+- The Multica Issue creator or member-comment author only identifies the
+  workspace principal that executed the Issue tool. That person is an
+  executor/assistant and must not be treated as the delegator, DingTalk
+  speaker, or contacted recipient merely because their name appears on the
+  Issue timeline.
+- This applies to both routes. Digital-employee events carry complete
+  conversation/user identity. Robot events may omit the sender uid; use only
+  the sender name, conversation, and message facts actually present, and never
+  replace the missing identity with the Multica Issue author.
+
 | Inbound source | conversation_id | uid |
 |---|---|---|
 | Digital employee | complete | complete |

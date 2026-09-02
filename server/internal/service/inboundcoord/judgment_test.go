@@ -29,6 +29,12 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"Never invent conversation_id, person_id, or issue_id",
 		"who is asking, who must be contacted",
 		"without guessing whether that sender is the requester or the contacted recipient",
+		"source=digital_employee or source=robot",
+		"A robot sender uid may be absent",
+		"Issue identity invariant",
+		"Issue creator or issue_comment_add comment author",
+		"tool executor/assistant",
+		"original DingTalk task scene and assoc graph",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)

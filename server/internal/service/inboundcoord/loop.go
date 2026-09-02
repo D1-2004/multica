@@ -285,13 +285,13 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolIssueCommentAdd,
-			Description: openai.String("Add the inbound message as a member comment on an Issue this agent owns. The normal Issue comment path starts its next task. This tool is terminal on success: reply_text closes the current IM turn, so do not call finish afterward."),
+			Description: openai.String("Add the trusted inbound DingTalk message as a member comment on an Issue this agent owns. The current DingTalk event sender is the actual speaker. The stored Multica comment author is only the workspace principal executing this Issue tool and is not evidence of the delegator, speaker, or recipient. This identity rule applies to both digital-employee and robot messages; a robot sender uid may be missing and must not be invented. The normal Issue comment path starts its next task. This tool is terminal on success: reply_text closes the current IM turn, so do not call finish afterward."),
 			Parameters: shared.FunctionParameters{
 				"type":     "object",
 				"required": []string{"issue_id", "content", "reply_text"},
 				"properties": map[string]any{
 					"issue_id":   map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
-					"content":    map[string]any{"type": "string", "description": "Exact inbound answer with sender context, suitable as the Issue task trigger."},
+					"content":    map[string]any{"type": "string", "description": "Exact inbound words prefixed with the actual sender from the current DingTalk event. Never derive that speaker or the original delegator from the Multica comment author."},
 					"reply_text": map[string]any{"type": "string", "description": "Short user-facing acknowledgement sent to the current IM speaker after the comment is committed."},
 					"parent":     map[string]any{"type": "string", "description": "Optional parent comment UUID."},
 				},

@@ -87,6 +87,9 @@ type Result struct {
 	IssueNumber     int32
 	IssueIdentifier string
 	IssueTitle      string
+	// CoordinatorIssue marks an Issue created by the short loop. The short-loop
+	// text completes Router immediately; TaskID continues independently.
+	CoordinatorIssue bool
 	// UnbindExisted qualifies OutcomeUnbound.
 	UnbindExisted bool
 	// IssueDuplicate marks an /issue command that did not create a new issue

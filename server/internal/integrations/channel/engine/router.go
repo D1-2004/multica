@@ -561,6 +561,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		issueCommand, issueCommandRequested = ParseIssueCommand(msg.CommandText)
 	}
 	coordDecision := inboundcoord.Decision{Action: inboundcoord.ActionContinue}
+	coordinatorIssue := false
 	skipSandboxPrepare := false
 	var coordAgentID pgtype.UUID
 	if r.coordinator != nil && !issueCommandRequested && msg.Source.ChannelType == "dingtalk" {
@@ -592,6 +593,14 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		case inboundcoord.ActionRetry:
 			return Result{}, finalizeRelease, service.ErrIssueDispatchPending
 		case inboundcoord.ActionIssue:
+			taskContext, err = inboundcoord.IndependentIssueTaskContext(
+				taskContext,
+				inboundcoord.CoordinatorIssueTriggerCreate,
+			)
+			if err != nil {
+				return Result{}, finalizeRelease, fmt.Errorf("prepare coordinator issue task context: %w", err)
+			}
+			coordinatorIssue = true
 			issueCommand = &IssueCommand{
 				Title:       inboundcoord.IssueTitle(coordDecision, msg.Text),
 				Description: inboundcoord.IssueDescription(coordDecision, msg.Text),
@@ -782,6 +791,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			return Result{}, postAppendFinalize, fmt.Errorf("create issue from command: %w", err)
 		}
 		res.IssueID = issueRes.Issue.ID
+		res.CoordinatorIssue = coordinatorIssue
 		mediaIssue = issueRes.Issue
 		deferredIssueTaskID = issueRes.AssignedTaskID
 		res.IssueNumber = issueRes.Issue.Number

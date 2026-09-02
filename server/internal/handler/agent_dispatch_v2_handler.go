@@ -818,6 +818,29 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 	dispatchContext agentDispatchContext,
 	result engine.Result,
 ) bool {
+	if result.CoordinatorIssue {
+		if !result.IssueID.Valid || !result.TaskID.Valid || strings.TrimSpace(result.ReplyText) == "" {
+			writeError(w, http.StatusInternalServerError, "coordinator issue result is incomplete")
+			return true
+		}
+		if command.CompletionCallback != nil {
+			if err := h.TaskService.EnqueueSynchronousCompleted(
+				ctx,
+				command.CompletionCallback.URL,
+				command.CompletionCallback.Target,
+				dispatchContext.AgentID,
+				result.ReplyText,
+			); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
+				return true
+			}
+		}
+		writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
+			Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: uuidToString(result.IssueID)},
+			TaskID:       uuidToString(result.TaskID),
+		})
+		return true
+	}
 	if command.CompletionCallback == nil {
 		if result.Outcome == engine.OutcomeCoordinatorReply || result.Outcome == engine.OutcomeCoordinatorSilence {
 			chatSessionID := uuidToString(result.ChatSessionID)
@@ -1062,17 +1085,27 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		}
 	}()
 
+	idempotencyKey := dispatchIdempotencyKey(r, c)
 	overrides := agentDispatchIssueCreateOverrides{}
 	if decision.Action == inboundcoord.ActionIssue {
 		overrides.Title = inboundcoord.IssueTitle(decision, prompt.DisplayContent)
 		overrides.DisplayContent = inboundcoord.IssueDescription(decision, prompt.DisplayContent)
+		independentContext, contextErr := inboundcoord.IndependentIssueTaskContext(
+			dispatchRuntimeContext(c, idempotencyKey),
+			inboundcoord.CoordinatorIssueTriggerCreate,
+		)
+		if contextErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
+			return
+		}
+		overrides.DispatchContext = independentContext
 	}
 	createParams := buildAgentDispatchIssueCreateParams(
 		c,
 		prompt,
 		dispatchContext,
 		agent,
-		dispatchIdempotencyKey(r, c),
+		idempotencyKey,
 		overrides,
 	)
 	createParams.AttachmentIDs = attachmentIDs(imported)
@@ -1102,18 +1135,15 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	if decision.Action == inboundcoord.ActionIssue &&
 		h.TaskService != nil &&
 		c.CompletionCallback != nil &&
-		c.CompletionCallback.UpdateURL != "" &&
 		strings.TrimSpace(decision.UserText) != "" {
-		if err := h.TaskService.EnqueueCoordinatorIssueAck(
+		if err := h.TaskService.EnqueueSynchronousCompleted(
 			r.Context(),
-			*result.EnqueuedTask,
-			result.Issue,
-			issueIdentifier,
-			c.CompletionCallback.UpdateURL,
+			c.CompletionCallback.URL,
 			c.CompletionCallback.Target,
+			dispatchContext.AgentID,
 			decision.UserText,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
 			return
 		}
 	}
@@ -1150,7 +1180,7 @@ func coordinatorRecalledIssueContinuation(
 func recalledIssueFollowUpContent(message, lookInto string) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(message))
-	b.WriteString("\n\n系统关联说明：这是已关联外呼会话的回信。请继续原事项并先用 assoc_recall current_issue=true since=48h 明确委托人、当前发信人、原消息接收人和下一位应答人。你是中间转达人：首次联系接收人时要说明是谁委托、具体问什么；得到答复后注明是谁说了什么，再通知需要结果的人。遇到阻塞时，把问题发给当前能解除阻塞、且正在处理其问题的人，不要固定发给委托人。Issue 评论只做记录；需要通知其他会话的人必须实际发钉钉消息，不能只回复当前回信人或只写评论。")
+	b.WriteString("\n\n系统关联说明：这是已关联外呼会话的回信。当前可信钉钉派发事件中的发信人才是这条消息的真实说话人；Multica 的 Issue 评论人只表示谁执行了 Issue 工具，是协助者，不能当作委托人、当前钉钉发信人或消息接收人。数字员工事件的身份字段完整；机器人事件的用户标识可能缺失，只能使用事件里已有的发信人名称、会话和原文，不能虚构身份或改用 Issue 署名。请继续原事项并先用 assoc_recall current_issue=true since=48h 从原始钉钉委托会话和关联图中明确原委托人、当前钉钉发信人、原消息接收人和下一位应答人。你是中间转达人：首次联系接收人时要说明是谁委托、具体问什么；得到答复后注明是谁说了什么，再通知需要结果的人。遇到阻塞时，把问题发给当前能解除阻塞、且正在处理其问题的人，不要固定发给委托人。每次 Issue 评论触发的任务结束前，必须实际给一个明确的人发送进度、阻塞或结果；Issue 评论和终端输出都只做记录，不算钉钉送达。未取得成功发送回执时，不得写“任务完成”。")
 	if lookInto = strings.TrimSpace(lookInto); lookInto != "" {
 		b.WriteString("\n本轮要继续处理：")
 		b.WriteString(lookInto)
@@ -1430,13 +1460,26 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 			attachmentService.DeleteImported(r.Context(), imported)
 		}
 	}()
+	idempotencyKey := dispatchIdempotencyKey(r, c)
+	var privateContext []byte
+	if coordinatorDecision != nil {
+		independentContext, contextErr := inboundcoord.IndependentIssueTaskContext(
+			dispatchRuntimeContext(c, idempotencyKey),
+			inboundcoord.CoordinatorIssueTriggerComment,
+		)
+		if contextErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue follow-up context")
+			return
+		}
+		privateContext = independentContext
+	}
 	followUpParams := buildAgentDispatchIssueFollowUpParams(
 		c,
 		prompt,
 		dispatchContext,
 		issue,
-		dispatchIdempotencyKey(r, c),
-		nil,
+		idempotencyKey,
+		privateContext,
 		pgtype.UUID{},
 	)
 	followUpParams.AttachmentIDs = attachmentIDs(imported)
@@ -1461,19 +1504,15 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 	if coordinatorDecision != nil &&
 		h.TaskService != nil &&
 		c.CompletionCallback != nil &&
-		c.CompletionCallback.UpdateURL != "" &&
 		strings.TrimSpace(coordinatorDecision.UserText) != "" {
-		prefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
-		if err := h.TaskService.EnqueueCoordinatorIssueAck(
+		if err := h.TaskService.EnqueueSynchronousCompleted(
 			r.Context(),
-			result.Task,
-			issue,
-			prefix+"-"+formatIssueNumber(issue.Number),
-			c.CompletionCallback.UpdateURL,
+			c.CompletionCallback.URL,
 			c.CompletionCallback.Target,
+			dispatchContext.AgentID,
 			coordinatorDecision.UserText,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue follow-up ack")
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue follow-up reply")
 			return
 		}
 	}

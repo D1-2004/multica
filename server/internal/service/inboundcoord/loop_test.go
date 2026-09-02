@@ -419,6 +419,28 @@ func TestCoordinatorToolDefsIncludeAssocAndFinish(t *testing.T) {
 	}
 }
 
+func TestIssueCommentToolSeparatesDingTalkSpeakerFromToolExecutor(t *testing.T) {
+	t.Parallel()
+	var description string
+	for _, tool := range coordinatorToolDefs() {
+		fn := tool.GetFunction()
+		if fn != nil && fn.Name == toolIssueCommentAdd && fn.Description.Valid() {
+			description = fn.Description.Value
+			break
+		}
+	}
+	for _, want := range []string{
+		"current DingTalk event sender is the actual speaker",
+		"comment author is only the workspace principal executing this Issue tool",
+		"not evidence of the delegator, speaker, or recipient",
+		"both digital-employee and robot messages",
+	} {
+		if !strings.Contains(description, want) {
+			t.Fatalf("issue_comment_add description missing %q: %q", want, description)
+		}
+	}
+}
+
 func TestFinishToolRoutesUnavailableCapabilitiesToIssue(t *testing.T) {
 	t.Parallel()
 	fn := coordinatorFinishTool().GetFunction()
