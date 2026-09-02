@@ -392,13 +392,15 @@ WHERE id = $3 AND lease_token = $4 AND lease_expires_at > now()`,
 }
 
 type ResetSceneMemoryParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	AgentID     pgtype.UUID `json:"agent_id"`
-	Platform    string      `json:"platform"`
-	OrgID       string      `json:"org_id"`
-	SceneKey    string      `json:"scene_key"`
-	SceneKind   string      `json:"scene_kind"`
-	SceneTitle  string      `json:"scene_title"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	AgentID                pgtype.UUID        `json:"agent_id"`
+	Platform               string             `json:"platform"`
+	OrgID                  string             `json:"org_id"`
+	SceneKey               string             `json:"scene_key"`
+	SceneKind              string             `json:"scene_kind"`
+	SceneTitle             string             `json:"scene_title"`
+	SourceCursorAt         pgtype.Timestamptz `json:"source_cursor_at"`
+	SourceCursorEvidenceID string             `json:"source_cursor_evidence_id"`
 }
 
 func (q *Queries) ResetSceneMemory(ctx context.Context, arg ResetSceneMemoryParams) (SceneMemory, error) {
@@ -410,7 +412,7 @@ INSERT INTO scene_memory (
     dirty_revision, flushed_revision
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7,
-    '', 0, now(), date_trunc('second', now()), '', 0, 0
+    '', 0, now(), COALESCE($8, date_trunc('second', now())), $9, 0, 0
 )
 ON CONFLICT (workspace_id, agent_id, platform, org_id, scene_key)
 DO UPDATE SET
@@ -418,18 +420,67 @@ DO UPDATE SET
     memory_revision = scene_memory.memory_revision + 1,
     last_flush_meta = '{}'::jsonb,
     last_flushed_at = NULL,
-    source_cursor_at = date_trunc('second', now()),
-    source_cursor_evidence_id = '',
+    source_cursor_at = COALESCE($8, date_trunc('second', now())),
+    source_cursor_evidence_id = $9,
     bootstrapped_at = COALESCE(scene_memory.bootstrapped_at, now()),
-    dirty_revision = scene_memory.flushed_revision,
-    dirty_since = NULL,
-    dirty_through_at = NULL,
-    dirty_through_evidence_id = '',
-    last_trigger_job_id = NULL,
-    last_trigger_coord_trace_id = '',
-    last_trigger_idempotency_key = '',
-    last_trigger_at = NULL,
-    last_trigger_evidence_id = '',
+    dirty_revision = CASE
+        WHEN (scene_memory.dirty_through_at, scene_memory.dirty_through_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+          OR (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.dirty_revision
+        ELSE scene_memory.flushed_revision
+    END,
+    dirty_since = CASE
+        WHEN (scene_memory.dirty_through_at, scene_memory.dirty_through_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+          OR (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.dirty_since
+        ELSE NULL
+    END,
+    dirty_through_at = CASE
+        WHEN (scene_memory.dirty_through_at, scene_memory.dirty_through_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.dirty_through_at
+        ELSE NULL
+    END,
+    dirty_through_evidence_id = CASE
+        WHEN (scene_memory.dirty_through_at, scene_memory.dirty_through_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.dirty_through_evidence_id
+        ELSE ''
+    END,
+    last_trigger_job_id = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.last_trigger_job_id
+        ELSE NULL
+    END,
+    last_trigger_coord_trace_id = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.last_trigger_coord_trace_id
+        ELSE ''
+    END,
+    last_trigger_idempotency_key = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.last_trigger_idempotency_key
+        ELSE ''
+    END,
+    last_trigger_at = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.last_trigger_at
+        ELSE NULL
+    END,
+    last_trigger_evidence_id = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.last_trigger_evidence_id
+        ELSE ''
+    END,
     lease_token = NULL,
     lease_expires_at = NULL,
     lease_target_dirty_revision = NULL,
@@ -442,7 +493,8 @@ DO UPDATE SET
     blocked_at = NULL,
     updated_at = now()
 RETURNING *`,
-		arg.WorkspaceID, arg.AgentID, arg.Platform, arg.OrgID, arg.SceneKey, arg.SceneKind, arg.SceneTitle))
+		arg.WorkspaceID, arg.AgentID, arg.Platform, arg.OrgID, arg.SceneKey, arg.SceneKind, arg.SceneTitle,
+		arg.SourceCursorAt, arg.SourceCursorEvidenceID))
 }
 
 func (q *Queries) CountValidSceneMemoryLeases(ctx context.Context) (int64, error) {

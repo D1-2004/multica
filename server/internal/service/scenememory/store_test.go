@@ -139,7 +139,7 @@ func TestEmptyInitializedDoesNotColdStartSignal(t *testing.T) {
 	store := NewStore(db.New(openPool(t)))
 	id := testIdentity(t)
 	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, id.WorkspaceID) })
-	row, err := store.Reset(ctx, id)
+	row, err := store.Reset(ctx, id, DirtyTrigger{})
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestGetIsolatesSceneKeys(t *testing.T) {
 		t.Fatalf("B=%q", gotB.MemoryText)
 	}
 
-	reset, err := store.Reset(ctx, a)
+	reset, err := store.Reset(ctx, a, DirtyTrigger{})
 	if err != nil {
 		t.Fatalf("reset A: %v", err)
 	}
@@ -442,7 +442,7 @@ func TestResetClearsTextKeepsBootstrap(t *testing.T) {
 	if err := store.FinishClaim(ctx, row); err != nil {
 		t.Fatalf("finish: %v", err)
 	}
-	reset, err := store.Reset(ctx, id)
+	reset, err := store.Reset(ctx, id, DirtyTrigger{})
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestResetMissingRowSucceeds(t *testing.T) {
 	store := NewStore(db.New(openPool(t)))
 	id := testIdentity(t)
 	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, id.WorkspaceID) })
-	row, err := store.Reset(ctx, id)
+	row, err := store.Reset(ctx, id, DirtyTrigger{})
 	if err != nil {
 		t.Fatalf("reset missing: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestWorkspaceCleanup(t *testing.T) {
 	ctx := context.Background()
 	store := NewStore(db.New(openPool(t)))
 	id := testIdentity(t)
-	if _, err := store.Reset(ctx, id); err != nil {
+	if _, err := store.Reset(ctx, id, DirtyTrigger{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if err := store.DeleteByWorkspace(ctx, id.WorkspaceID); err != nil {
@@ -609,10 +609,10 @@ func TestDeleteByAgent(t *testing.T) {
 	kept := testIdentity(t)
 	kept.WorkspaceID = id.WorkspaceID
 	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, id.WorkspaceID) })
-	if _, err := store.Reset(ctx, id); err != nil {
+	if _, err := store.Reset(ctx, id, DirtyTrigger{}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	if _, err := store.Reset(ctx, kept); err != nil {
+	if _, err := store.Reset(ctx, kept, DirtyTrigger{}); err != nil {
 		t.Fatalf("seed kept: %v", err)
 	}
 	if err := store.DeleteByAgent(ctx, id.WorkspaceID, id.AgentID); err != nil {
@@ -640,6 +640,60 @@ func TestReleasePendingDropsLeaseWithoutRetry(t *testing.T) {
 	}
 	if got.LeaseToken.Valid || StatusOf(got) != "pending" || got.LastError != "" {
 		t.Fatalf("released row = %+v status=%s", got, StatusOf(got))
+	}
+}
+
+func TestResetKeepsNewerTrigger(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(db.New(openPool(t)))
+	id := testIdentity(t)
+	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, id.WorkspaceID) })
+	resetAt := time.Now().UTC().Truncate(time.Microsecond).Add(-2 * time.Second)
+	later := resetAt.Add(3 * time.Second)
+	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: later, EvidenceID: "msg-later", IdempotencyKey: "k-later",
+	}); err != nil {
+		t.Fatalf("later dirty: %v", err)
+	}
+	row, err := store.Reset(ctx, id, DirtyTrigger{OccurredAt: resetAt, EvidenceID: "msg-reset"})
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if row.MemoryText != "" {
+		t.Fatalf("reset must clear text, got %q", row.MemoryText)
+	}
+	if row.LastTriggerEvidenceID != "msg-later" {
+		t.Fatalf("newer trigger must survive reset, got %q", row.LastTriggerEvidenceID)
+	}
+	if row.DirtyRevision <= row.FlushedRevision {
+		t.Fatalf("newer dirty must stay pending, dirty=%d flushed=%d", row.DirtyRevision, row.FlushedRevision)
+	}
+	if row.SourceCursorEvidenceID != "msg-reset" {
+		t.Fatalf("cursor must be the reset cutoff, got %q", row.SourceCursorEvidenceID)
+	}
+}
+
+func TestResetClearsOlderTrigger(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(db.New(openPool(t)))
+	id := testIdentity(t)
+	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, id.WorkspaceID) })
+	older := time.Now().UTC().Truncate(time.Microsecond).Add(-time.Minute)
+	resetAt := older.Add(30 * time.Second)
+	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: older, EvidenceID: "msg-old", IdempotencyKey: "k-old",
+	}); err != nil {
+		t.Fatalf("old dirty: %v", err)
+	}
+	row, err := store.Reset(ctx, id, DirtyTrigger{OccurredAt: resetAt, EvidenceID: "msg-reset"})
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if row.LastTriggerAt.Valid || row.LastTriggerEvidenceID != "" || row.DirtyThroughAt.Valid {
+		t.Fatalf("older trigger must clear, got %+v", row)
+	}
+	if row.DirtyRevision != row.FlushedRevision {
+		t.Fatalf("older dirty must catch up, dirty=%d flushed=%d", row.DirtyRevision, row.FlushedRevision)
 	}
 }
 

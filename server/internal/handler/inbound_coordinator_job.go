@@ -505,7 +505,7 @@ func (h *Handler) markSceneMemoryDirty(
 		return
 	}
 	body := dispatchInboundEventBody(command)
-	if body == "" {
+	if body == "" || isInboundResetMemory(body) {
 		return
 	}
 	flags, err := qtx.GetAgentSceneMemoryFlags(ctx, dispatchContext.AgentID)

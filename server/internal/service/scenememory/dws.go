@@ -198,11 +198,18 @@ func HistoryLookback(row db.SceneMemory, bootstrap bool, now time.Time) time.Tim
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	if bootstrap && !row.BootstrappedAt.Valid {
+		lookback := now.UTC().Add(-historyLookback)
+		if row.LastTriggerAt.Valid && !row.LastTriggerAt.Time.IsZero() {
+			at := row.LastTriggerAt.Time.UTC()
+			if at.Before(lookback) {
+				lookback = at
+			}
+		}
+		return lookback
+	}
 	if need := historyNeedReach(row); !need.IsZero() {
 		return need
-	}
-	if bootstrap {
-		return now.UTC().Add(-historyLookback)
 	}
 	if row.LeaseTargetThroughAt.Valid && !row.LeaseTargetThroughAt.Time.IsZero() {
 		return row.LeaseTargetThroughAt.Time.UTC().Add(-time.Minute)

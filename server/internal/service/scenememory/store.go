@@ -206,19 +206,24 @@ func (s *Store) Block(ctx context.Context, row db.SceneMemory, code, message str
 	return nil
 }
 
-func (s *Store) Reset(ctx context.Context, id Identity) (db.SceneMemory, error) {
+func (s *Store) Reset(ctx context.Context, id Identity, cutoff DirtyTrigger) (db.SceneMemory, error) {
 	id = id.normalized()
 	if !id.valid() {
 		return db.SceneMemory{}, ErrInvalidIdentity
 	}
+	if cutoff.OccurredAt.IsZero() {
+		cutoff.OccurredAt = time.Now().UTC()
+	}
 	return s.queries.ResetSceneMemory(ctx, db.ResetSceneMemoryParams{
-		WorkspaceID: id.WorkspaceID,
-		AgentID:     id.AgentID,
-		Platform:    id.Platform,
-		OrgID:       id.OrgID,
-		SceneKey:    id.SceneKey,
-		SceneKind:   id.SceneKind,
-		SceneTitle:  id.SceneTitle,
+		WorkspaceID:            id.WorkspaceID,
+		AgentID:                id.AgentID,
+		Platform:               id.Platform,
+		OrgID:                  id.OrgID,
+		SceneKey:               id.SceneKey,
+		SceneKind:              id.SceneKind,
+		SceneTitle:             id.SceneTitle,
+		SourceCursorAt:         timestamptz(cutoff.OccurredAt),
+		SourceCursorEvidenceID: strings.TrimSpace(cutoff.EvidenceID),
 	})
 }
 

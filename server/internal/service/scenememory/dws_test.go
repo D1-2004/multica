@@ -162,10 +162,30 @@ func TestHistoryLookbackRespectsBootstrap(t *testing.T) {
 	if on.After(now.Add(-13 * 24 * time.Hour)) {
 		t.Fatalf("bootstrap on lookback=%s", on)
 	}
-	row.SourceCursorAt = timestamptz(now.Add(-time.Hour))
+	row.LastTriggerAt = timestamptz(now.Add(-time.Minute))
+	row.LastTriggerEvidenceID = "msg-now"
 	got := HistoryLookback(row, true, now)
+	if got.After(now.Add(-13 * 24 * time.Hour)) {
+		t.Fatalf("first bootstrap must not collapse to the current trigger, lookback=%s", got)
+	}
+	row.BootstrappedAt = timestamptz(now.Add(-time.Hour))
+	row.SourceCursorAt = timestamptz(now.Add(-time.Hour))
+	got = HistoryLookback(row, true, now)
 	if !got.Equal(now.Add(-time.Hour)) {
-		t.Fatalf("cursor lookback=%s", got)
+		t.Fatalf("incremental lookback=%s", got)
+	}
+}
+
+func TestHistoryLookbackBootstrapIncludesOlderPendingTrigger(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	older := now.Add(-20 * 24 * time.Hour)
+	row := db.SceneMemory{
+		LastTriggerAt:         timestamptz(older),
+		LastTriggerEvidenceID: "msg-old",
+	}
+	got := HistoryLookback(row, true, now)
+	if !got.Equal(older) {
+		t.Fatalf("bootstrap lookback must reach an older pending trigger, got %s", got)
 	}
 }
 

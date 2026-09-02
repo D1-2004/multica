@@ -1357,7 +1357,10 @@ func (h *Handler) tryDispatchResetMemory(
 			if existing, err := h.SceneMemoryStore.Get(r.Context(), identity); err == nil {
 				oldRevision = existing.MemoryRevision
 			}
-			if _, err := h.SceneMemoryStore.Reset(r.Context(), identity); err != nil {
+			if _, err := h.SceneMemoryStore.Reset(r.Context(), identity, scenememory.DirtyTrigger{
+				OccurredAt: dispatchMessageOccurredAt(command),
+				EvidenceID: ids.EvidenceID,
+			}); err != nil {
 				slog.Warn("scene memory reset-memory failed",
 					"event", "scene_memory_reset",
 					"scene_key", conversationID,

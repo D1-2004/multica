@@ -217,7 +217,8 @@ INSERT INTO scene_memory (
     dirty_revision, flushed_revision
 ) VALUES (
     @workspace_id, @agent_id, @platform, @org_id, @scene_key, @scene_kind, @scene_title,
-    '', 0, now(), date_trunc('second', now()), '', 0, 0
+    '', 0, now(), COALESCE(@source_cursor_at, date_trunc('second', now())),
+    @source_cursor_evidence_id, 0, 0
 )
 ON CONFLICT (workspace_id, agent_id, platform, org_id, scene_key)
 DO UPDATE SET
@@ -225,18 +226,67 @@ DO UPDATE SET
     memory_revision = scene_memory.memory_revision + 1,
     last_flush_meta = '{}'::jsonb,
     last_flushed_at = NULL,
-    source_cursor_at = date_trunc('second', now()),
-    source_cursor_evidence_id = '',
+    source_cursor_at = COALESCE(@source_cursor_at, date_trunc('second', now())),
+    source_cursor_evidence_id = @source_cursor_evidence_id,
     bootstrapped_at = COALESCE(scene_memory.bootstrapped_at, now()),
-    dirty_revision = scene_memory.flushed_revision,
-    dirty_since = NULL,
-    dirty_through_at = NULL,
-    dirty_through_evidence_id = '',
-    last_trigger_job_id = NULL,
-    last_trigger_coord_trace_id = '',
-    last_trigger_idempotency_key = '',
-    last_trigger_at = NULL,
-    last_trigger_evidence_id = '',
+    dirty_revision = CASE
+        WHEN (scene_memory.dirty_through_at, scene_memory.dirty_through_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+          OR (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.dirty_revision
+        ELSE scene_memory.flushed_revision
+    END,
+    dirty_since = CASE
+        WHEN (scene_memory.dirty_through_at, scene_memory.dirty_through_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+          OR (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.dirty_since
+        ELSE NULL
+    END,
+    dirty_through_at = CASE
+        WHEN (scene_memory.dirty_through_at, scene_memory.dirty_through_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.dirty_through_at
+        ELSE NULL
+    END,
+    dirty_through_evidence_id = CASE
+        WHEN (scene_memory.dirty_through_at, scene_memory.dirty_through_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.dirty_through_evidence_id
+        ELSE ''
+    END,
+    last_trigger_job_id = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.last_trigger_job_id
+        ELSE NULL
+    END,
+    last_trigger_coord_trace_id = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.last_trigger_coord_trace_id
+        ELSE ''
+    END,
+    last_trigger_idempotency_key = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.last_trigger_idempotency_key
+        ELSE ''
+    END,
+    last_trigger_at = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.last_trigger_at
+        ELSE NULL
+    END,
+    last_trigger_evidence_id = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.last_trigger_evidence_id
+        ELSE ''
+    END,
     lease_token = NULL,
     lease_expires_at = NULL,
     lease_target_dirty_revision = NULL,
