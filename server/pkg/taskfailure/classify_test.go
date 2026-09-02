@@ -121,6 +121,17 @@ func TestClassifyRules(t *testing.T) {
 		{"opencode continuation never started", "opencode stream ended without a terminal signal (last step required a continuation that never started)", ReasonAgentProviderNetwork},
 		{"opencode empty final step", "opencode stream ended on an empty step (no text, no tool call, no reported usage) — the provider produced nothing", ReasonAgentProviderNetwork},
 		{"opencode empty step with process exit appended", "opencode stream ended on an empty step (no text, no tool call, no reported usage) — the provider produced nothing; opencode exited with error: exit status 1", ReasonAgentProviderNetwork},
+		// The OpenCode backend appends a request-size bracket to these messages
+		// (opencodeRequestSizeSuffix in pkg/agent/opencode.go) so a dead stream
+		// says how big the request was. Byte and token counts land on digit
+		// boundaries, so without the prefix witness checked ahead of the switch
+		// a 512-byte prompt matches the 5xx regex (rule 6) and a 429-token step
+		// matches the capacity regex (rule 5) — silently re-bucketing the
+		// failure off the retry allowlist because of how large the request
+		// happened to be. These three are the shapes that would break it.
+		{"opencode enriched with 5xx-shaped byte count", "opencode stream ended on an empty step (no text, no tool call, no reported usage) — the provider produced nothing [request: 512 prompt bytes on stdin]", ReasonAgentProviderNetwork},
+		{"opencode enriched with 429-shaped token count", "opencode stream ended on an empty step (no text, no tool call, no reported usage) — the provider produced nothing [request: 19563 prompt bytes on stdin; last accepted step reported 429 input tokens across 3 steps]", ReasonAgentProviderNetwork},
+		{"opencode enriched with process exit after the bracket", "opencode stream ended without a terminal signal (step still open at EOF) [request: 19563 prompt bytes on stdin; last accepted step reported 14585 input tokens across 2 steps]; opencode exited with error: exit status 1", ReasonAgentProviderNetwork},
 
 		// 8. Model not found / unavailable.
 		{"model not found", "Error: model claude-3-opus-99 not found", ReasonAgentModelNotFoundOrUnavailable},
