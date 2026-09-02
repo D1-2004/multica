@@ -100,6 +100,8 @@ type Decision struct {
 	UserText     string
 	LookInto     string
 	IssueID      string
+	Purpose      string
+	Intent       string
 	Reason       string
 	ElapsedMs    int64
 	Source       Source
@@ -543,6 +545,9 @@ func issueAckFallback(look string) string {
 
 // IssueTitle is the Issue row title for a sandbox handoff.
 func IssueTitle(decision Decision, message string) string {
+	if purpose := strings.TrimSpace(decision.Purpose); utf8.RuneCountInString(purpose) >= 8 {
+		return clipRunes(purpose, titleBudget)
+	}
 	look := strings.TrimSpace(decision.LookInto)
 	msg := strings.TrimSpace(message)
 	if utf8.RuneCountInString(look) >= 8 {

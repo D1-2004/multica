@@ -53,8 +53,9 @@ Bind those. Never invent a cid for web inbound.
 multica assoc bind --conversation <openConversationId> [--evidence <openMsgId>] [--person <uid>] --output json
 ```
 
-Or MCP tool `assoc_bind` with the same fields. Optional `--purpose` only when
-creating the Issue task node and the Issue title is too vague.
+Or MCP / coordinator tool `assoc_bind`. The coordinator must inject `purpose`
+(deliverable phrase) and `intent` (`ask` / `confirm` / `notify` / `lookup` /
+`wait` / `other`). Omit `issue_id` to declare a new matter.
 
 ## Recall before treating a chat as a new matter
 

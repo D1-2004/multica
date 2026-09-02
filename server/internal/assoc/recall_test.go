@@ -778,6 +778,55 @@ func TestRecallDedupesEventEvidenceAndEventLinkedTasks(t *testing.T) {
 	}
 }
 
+func TestRecallEventOnlyMarksMatchedViaEvent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	task := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-event",
+		Purpose:       "向须莫v6确认今天晚饭吃什么",
+		Status:        StatusWaiting,
+		LastTouchedAt: now.Add(-2 * time.Hour),
+	})
+	if _, err := store.InsertEvent(ctx, Event{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		Source:      "inbound_im",
+		Direction:   DirInbound,
+		EvidenceID:  "msg-in-event",
+		Body:        "晚饭想吃什么",
+		OccurredAt:  now.Add(-2 * time.Hour),
+		SceneKey:    "cid-a",
+		TaskID:      task.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-a",
+		Since:          now.Add(-48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items=%+v", result.Items)
+	}
+	if result.Items[0].MatchedVia != "event" {
+		t.Fatalf("matched_via=%q", result.Items[0].MatchedVia)
+	}
+	if result.Items[0].LastTouchedAge == "" || result.Items[0].AgeSeconds <= 0 {
+		t.Fatalf("age missing: %+v", result.Items[0])
+	}
+	if len(result.Events) != 1 || result.Events[0].Age == "" {
+		t.Fatalf("events=%+v", result.Events)
+	}
+}
+
 func containsRel(rels []string, want string) bool {
 	for _, rel := range rels {
 		if rel == want {

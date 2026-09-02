@@ -1131,7 +1131,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	issueID := uuidToString(result.Issue.ID)
 	taskID := uuidToString(result.EnqueuedTask.ID)
 	issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
-	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueID, result.Issue.Title, taskID, prompt.DisplayContent)
+	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueID, result.Issue.Title, taskID, prompt.DisplayContent, decision)
 	if decision.Action == inboundcoord.ActionIssue &&
 		h.TaskService != nil &&
 		c.CompletionCallback != nil &&
@@ -1500,7 +1500,11 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 	issueIDString := uuidToString(issue.ID)
 	commentID := uuidToString(result.Comment.ID)
 	taskID := uuidToString(result.Task.ID)
-	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueIDString, issue.Title, taskID, prompt.DisplayContent)
+	assocDecision := inboundcoord.Decision{}
+	if coordinatorDecision != nil {
+		assocDecision = *coordinatorDecision
+	}
+	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueIDString, issue.Title, taskID, prompt.DisplayContent, assocDecision)
 	if coordinatorDecision != nil &&
 		h.TaskService != nil &&
 		c.CompletionCallback != nil &&

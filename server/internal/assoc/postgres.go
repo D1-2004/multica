@@ -155,6 +155,33 @@ UPDATE assoc_task SET last_touched_at = $2, updated_at = $2 WHERE id = $1`, task
 	return nil
 }
 
+func (s *SQLStore) UpdateTaskCard(ctx context.Context, id, purpose, intent string, at time.Time) error {
+	if err := ValidatePurpose(purpose); err != nil {
+		return err
+	}
+	normalized, ok := NormalizeIntent(intent)
+	if !ok {
+		return fmt.Errorf("%w: intent is not a known value", ErrInvalidQuery)
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	taskID, err := requireUUID(id)
+	if err != nil {
+		return err
+	}
+	tag, err := s.db.Exec(ctx, `
+UPDATE assoc_task SET purpose = $2, intent = $3, last_touched_at = $4, updated_at = $4 WHERE id = $1`,
+		taskID, purpose, normalized, at)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *SQLStore) GetTask(ctx context.Context, id string) (Task, error) {
 	taskID, err := requireUUID(id)
 	if err != nil {

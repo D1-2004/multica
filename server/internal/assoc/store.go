@@ -23,6 +23,7 @@ type Store interface {
 	GetTask(ctx context.Context, id string) (Task, error)
 	GetOpenTaskByIssue(ctx context.Context, workspaceID, agentID, issueID string) (Task, error)
 	TouchTask(ctx context.Context, id string, at time.Time) error
+	UpdateTaskCard(ctx context.Context, id, purpose, intent string, at time.Time) error
 	ListTasksByIssue(ctx context.Context, workspaceID, agentID, issueID string, since, until time.Time) ([]Task, error)
 	ListTasksByIDs(ctx context.Context, ids []string) ([]Task, error)
 	ListTasksInWindow(ctx context.Context, workspaceID, agentID string, since, until time.Time) ([]Task, error)
@@ -134,6 +135,31 @@ func (m *Memory) TouchTask(_ context.Context, id string, at time.Time) error {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
+	task.LastTouchedAt = at
+	task.UpdatedAt = at
+	m.tasks[id] = task
+	return nil
+}
+
+func (m *Memory) UpdateTaskCard(_ context.Context, id, purpose, intent string, at time.Time) error {
+	if err := ValidatePurpose(purpose); err != nil {
+		return err
+	}
+	normalized, ok := NormalizeIntent(intent)
+	if !ok {
+		return fmt.Errorf("%w: intent is not a known value", ErrInvalidQuery)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	task, found := m.tasks[id]
+	if !found {
+		return ErrNotFound
+	}
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	task.Purpose = purpose
+	task.Intent = normalized
 	task.LastTouchedAt = at
 	task.UpdatedAt = at
 	m.tasks[id] = task

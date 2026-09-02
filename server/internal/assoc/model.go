@@ -120,17 +120,24 @@ type OriginRef struct {
 }
 
 type Item struct {
-	Issue         string            `json:"issue"`
-	TaskID        string            `json:"task_id"`
-	Purpose       string            `json:"purpose"`
-	Intent        string            `json:"intent"`
-	Status        string            `json:"status"`
-	LastTouchedAt time.Time         `json:"last_touched_at"`
-	Score         float64           `json:"score"`
-	Conversations []ConversationRef `json:"conversations"`
-	People        []PersonRef       `json:"people"`
-	WaitingOn     []WaitingRef      `json:"waiting_on"`
-	Origin        *OriginRef        `json:"origin,omitempty"`
+	Issue          string            `json:"issue"`
+	TaskID         string            `json:"task_id"`
+	Purpose        string            `json:"purpose"`
+	Intent         string            `json:"intent"`
+	IntentLabel    string            `json:"intent_label,omitempty"`
+	Status         string            `json:"status"`
+	LastTouchedAt  time.Time         `json:"last_touched_at"`
+	LastTouchedAge string            `json:"last_touched_age,omitempty"`
+	AgeSeconds     int64             `json:"age_seconds"`
+	MatchedVia     string            `json:"matched_via,omitempty"`
+	LastComment    string            `json:"last_comment,omitempty"`
+	LastCommentAge string            `json:"last_comment_age,omitempty"`
+	LastCommentAt  *time.Time        `json:"last_comment_at,omitempty"`
+	Score          float64           `json:"score"`
+	Conversations  []ConversationRef `json:"conversations"`
+	People         []PersonRef       `json:"people"`
+	WaitingOn      []WaitingRef      `json:"waiting_on"`
+	Origin         *OriginRef        `json:"origin,omitempty"`
 }
 
 type EventRef struct {
@@ -142,6 +149,8 @@ type EventRef struct {
 	TaskID     string    `json:"task_id,omitempty"`
 	PersonID   string    `json:"person_id,omitempty"`
 	OccurredAt time.Time `json:"occurred_at"`
+	Age        string    `json:"age,omitempty"`
+	AgeSeconds int64     `json:"age_seconds,omitempty"`
 }
 
 type Result struct {

@@ -16,7 +16,7 @@ Coordinator Loop 是入站消息进沙箱之前的短接待。它不是第二个
 三件事，按这个顺序：
 
 1. **按基础人设快速接待。** `finish.text` 要像同事在 IM 里说话，不像工单机器人。人设只定声音，不定路由。
-2. **把场域和事情连上。** 场域是钉钉 `openConversationId`（`cid…`），事情是 Issue。图查询是 `assoc_recall`；绑边是 `assoc_bind`。
+2. **把场域和事情连上。** 场域是钉钉 `openConversationId`（`cid…`），事情是 Issue。图查询是 `assoc_recall`；绑边是 `assoc_bind`，由模型注入 `purpose`（交付物短句）和 `intent`（ask/confirm/notify/lookup/wait/other）。新建事项先 bind（不带 issue_id）再 `finish action=issue`。event-stream 命中的卡片 `matched_via=event` 只是候选，要 bind 才算关联。时间用卡片上的 `last_touched_age` / `last_comment_age`，不要让模型自己算。
 3. **需要持续跟的，交给 Issue。** 联系人、DWS、搜索、文件、写入、评论线程、追踪，都不是这轮直接做完的事。`action=issue` 开新 Issue 或续已召回的 Issue，沙箱再跑慢循环。
 
 双循环：

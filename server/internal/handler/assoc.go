@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -528,22 +529,31 @@ func (h *Handler) recordAssocInboundEvent(ctx context.Context, command DispatchC
 	}
 }
 
-func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext, issueID, issueTitle, runID, purposeExtra string) {
+func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext, issueID, issueTitle, runID, purposeExtra string, decision inboundcoord.Decision) {
 	if h.Assoc == nil || issueID == "" {
 		return
 	}
 	ids := dispatchAssocIDs(command)
+	purpose := strings.TrimSpace(decision.Purpose)
+	if purpose == "" {
+		purpose = strings.TrimSpace(purposeExtra)
+	}
+	if purpose == "" {
+		purpose = strings.TrimSpace(issueTitle)
+	}
 	if err := h.Assoc.AssociateIssueConversation(ctx, assoc.AssociateInput{
 		WorkspaceID:    uuidToString(dispatchContext.WorkspaceID),
 		AgentID:        uuidToString(dispatchContext.AgentID),
 		IssueID:        issueID,
-		IssueTitle:     issueTitle,
-		Purpose:        strings.TrimSpace(purposeExtra),
+		IssueTitle:     purpose,
+		Purpose:        purpose,
+		Intent:         strings.TrimSpace(decision.Intent),
 		RunID:          runID,
 		ConversationID: ids.ConversationID,
 		EvidenceID:     ids.EvidenceID,
 		PersonID:       ids.PersonID,
 		PersonAliases:  ids.PersonAliases,
+		DisplayName:    strings.TrimSpace(command.Event.Data.Sender.DisplayName),
 		Kind:           ids.Kind,
 	}); err != nil {
 		slog.Error("assoc issue conversation not linked", "error", err, "issue_id", issueID)

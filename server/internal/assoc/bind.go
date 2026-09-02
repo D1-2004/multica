@@ -17,10 +17,12 @@ type BindOutboundInput struct {
 	ConversationID string
 	PersonID       string
 	PersonAliases  []string
+	DisplayName    string
 	EvidenceID     string
 	Kind           string
 	Intent         string
 	Purpose        string
+	WaitingOn      string
 }
 
 type BindOutboundResult struct {
@@ -93,7 +95,7 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 		return BindOutboundResult{}, err
 	}
 	if personKey != "" {
-		if err := store.EnsurePerson(ctx, in.WorkspaceID, in.AgentID, personKey, "", personAliases); err != nil {
+		if err := store.EnsurePerson(ctx, in.WorkspaceID, in.AgentID, personKey, strings.TrimSpace(in.DisplayName), personAliases); err != nil {
 			return BindOutboundResult{}, err
 		}
 	}
@@ -129,7 +131,20 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 		return BindOutboundResult{}, err
 	}
 	if personKey != "" {
-		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodePerson, personKey, RelTaskPerson, map[string]any{"delegated": true}, now); err != nil {
+		personProps := map[string]any{"delegated": true}
+		if name := strings.TrimSpace(in.DisplayName); name != "" {
+			personProps["display_name"] = name
+		}
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodePerson, personKey, RelTaskPerson, personProps, now); err != nil {
+			return BindOutboundResult{}, err
+		}
+	}
+	if wait := strings.TrimSpace(in.WaitingOn); wait != "" && wait != cid {
+		if err := store.EnsureScene(ctx, in.WorkspaceID, in.AgentID, wait, "dm", now); err != nil {
+			return BindOutboundResult{}, err
+		}
+		waitProps := map[string]any{"kind": "dm", "conversation_id": wait}
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, wait, RelWaitingOn, waitProps, now); err != nil {
 			return BindOutboundResult{}, err
 		}
 	}
@@ -150,8 +165,27 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 }
 
 func ensureIssueTask(ctx context.Context, store Store, in BindOutboundInput, now time.Time) (Task, error) {
+	intent, ok := NormalizeIntent(in.Intent)
+	if !ok {
+		return Task{}, fmt.Errorf("%w: intent is not a known value", ErrInvalidQuery)
+	}
 	task, err := store.GetOpenTaskByIssue(ctx, in.WorkspaceID, in.AgentID, in.IssueID)
 	if err == nil {
+		purpose, perr := ResolvePurpose(in.Purpose, in.IssueTitle, task.Purpose)
+		if perr != nil {
+			purpose = task.Purpose
+		}
+		if intent == "" {
+			intent = task.Intent
+		}
+		if purpose != task.Purpose || intent != task.Intent {
+			if err := store.UpdateTaskCard(ctx, task.ID, purpose, intent, now); err != nil {
+				return Task{}, err
+			}
+			task.Purpose = purpose
+			task.Intent = intent
+			task.LastTouchedAt = now
+		}
 		return task, nil
 	}
 	if err != nil && !errors.Is(err, ErrNotFound) {
@@ -167,7 +201,7 @@ func ensureIssueTask(ctx context.Context, store Store, in BindOutboundInput, now
 		IssueID:       in.IssueID,
 		Purpose:       purpose,
 		Status:        StatusWaiting,
-		Intent:        strings.TrimSpace(in.Intent),
+		Intent:        intent,
 		RunID:         in.RunID,
 		LastTouchedAt: now,
 	})
