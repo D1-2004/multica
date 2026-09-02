@@ -276,6 +276,7 @@
   "tabs": {
     "overview": "Overview",
     "work": "Work",
+    "inbound": "Inbound",
     "capabilities": "Capabilities",
     "settings": "Settings",
     "general": "General",
@@ -1263,6 +1264,17 @@
       "sink_url_placeholder": "https://trace.example.com/ingest",
       "saved_toast": "LLM trace settings saved",
       "save_failed_toast": "Failed to save LLM trace settings"
+    },
+    "inbound": {
+      "empty": "No inbound conversations yet.",
+      "loading": "Loading inbound conversations…",
+      "load_failed": "Couldn't load inbound conversations.",
+      "retry": "Try again",
+      "select_prompt": "Pick a conversation to read the transcript.",
+      "untitled": "Untitled conversation",
+      "load_older": "Load older messages",
+      "no_messages": "This conversation has no messages yet.",
+      "back": "Back"
     }
   },
   "char_counter": {

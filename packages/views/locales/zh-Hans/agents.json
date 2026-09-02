@@ -267,6 +267,7 @@
   "tabs": {
     "overview": "概览",
     "work": "工作",
+    "inbound": "入站对话",
     "capabilities": "能力",
     "settings": "设置",
     "general": "通用",
@@ -1242,6 +1243,17 @@
       "sink_url_placeholder": "https://trace.example.com/ingest",
       "saved_toast": "LLM Trace 设置已保存",
       "save_failed_toast": "保存 LLM Trace 设置失败"
+    },
+    "inbound": {
+      "empty": "还没有入站对话。",
+      "loading": "正在加载入站对话…",
+      "load_failed": "无法加载入站对话。",
+      "retry": "重试",
+      "select_prompt": "选择一条对话查看记录。",
+      "untitled": "未命名对话",
+      "load_older": "加载更早消息",
+      "no_messages": "这条对话还没有消息。",
+      "back": "返回"
     }
   },
   "char_counter": {

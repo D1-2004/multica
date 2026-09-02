@@ -23,6 +23,7 @@ import {
   agentRunCountsKeys,
   agentSourceKeys,
   agentTasksKeys,
+  agentCoordinatorSessionsKeys,
 } from "../agents/queries";
 import { githubKeys } from "../github/queries";
 import { larkKeys } from "../lark/queries";
@@ -1333,7 +1334,9 @@ export function useRealtimeSync(
     };
     const invalidateSessionLists = () => {
       const id = getCurrentWsId();
-      if (id) qc.invalidateQueries({ queryKey: chatKeys.sessions(id) });
+      if (!id) return;
+      qc.invalidateQueries({ queryKey: chatKeys.sessions(id) });
+      qc.invalidateQueries({ queryKey: agentCoordinatorSessionsKeys.all(id) });
     };
 
     const unsubChatMessage = ws.on("chat:message", (p) => {

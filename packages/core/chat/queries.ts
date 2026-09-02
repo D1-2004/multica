@@ -76,7 +76,10 @@ export function isTaskMessageTaskId(taskId: string | null | undefined): taskId i
 export function chatSessionsOptions(wsId: string) {
   return queryOptions({
     queryKey: chatKeys.sessions(wsId),
-    queryFn: () => api.listChatSessions({ status: "all" }),
+    queryFn: async () => {
+      const sessions = await api.listChatSessions({ status: "all" });
+      return sessions.filter((s) => s.is_coordinator !== true);
+    },
     staleTime: Infinity,
   });
 }
@@ -114,7 +117,9 @@ export function sortChatSessions(sessions: ChatSession[]): ChatSession[] {
  * half of that guarantee (MUL-4372).
  */
 export function countUnreadChatSessions(sessions: ChatSession[]): number {
-  return sessions.filter((s) => s.has_unread && s.status !== "archived").length;
+  return sessions.filter(
+    (s) => s.has_unread && s.status !== "archived" && s.is_coordinator !== true,
+  ).length;
 }
 
 export function chatPinnedAgentsOptions(wsId: string) {

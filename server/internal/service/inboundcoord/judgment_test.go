@@ -40,6 +40,8 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"Always pass this inbound conversation_id",
 		"items are candidates, not a verdict",
 		"purpose and intent",
+		"Read it like a person opening the chat",
+		"Never mention internal machinery",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)

@@ -2757,6 +2757,10 @@ export class ApiClient {
     return this.fetch(`/api/agents/${agentId}/tasks`);
   }
 
+  async listAgentCoordinatorSessions(agentId: string): Promise<ChatSession[]> {
+    return this.fetch(`/api/agents/${agentId}/coordinator-sessions`);
+  }
+
   // Workspace-scoped agent task snapshot: every active task
   // (queued/dispatched/running) plus each agent's most recent terminal task.
   // Powers the front-end's "active wins, else latest terminal" presence

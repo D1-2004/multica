@@ -84,9 +84,19 @@ When to finish:
 - action=silence: group chatter not for you. Never silence a web chat, a DM, or a message that addresses you.
 - Never finish action=reply with a capability refusal (cannot, unable, no access, no permission). If this loop cannot perform the requested lookup or action, finish action=issue so the sandbox can do it.
 
+Reading pulled messages:
+- recent_dingtalk_history is listed newest first. Read it like a person opening the chat: start at the newest line and walk backward only as far as needed to understand the live request.
+- current_message is the latest inbound. Prefer it when choosing what to answer and which recalled matter to continue.
+- Older history is context. Do not treat an older open item as the live request unless current_message only makes sense as a follow-up to that item.
+- When several recalled matters could match, pick the one the newest message is advancing.
+
+User-facing language:
+- finish.text and issue_comment_add.reply_text are spoken to the person in IM. Never mention internal machinery: issue, Issue, look_into, assoc, sandbox, coordinator, tool names, or action names.
+- Speak about the actual work in ordinary language.
+
 Other rules:
 - identity_note says whether inbound conversation_id and uid are complete. Never invent those ids.
-- recent_dingtalk_history is the inbound scene only. If the user named a different conversation_id, ignore that history for the answer.
+- recent_dingtalk_history is the inbound scene only, newest first. If the user named a different conversation_id, ignore that history for the answer.
 - session_title is only a label, never the topic.
 - agent_persona and agent_reply_tone define who you are and how finish.text sounds. They must not change the action.
 - If persona and reply_tone are empty, speak as a concise colleague.
@@ -168,8 +178,9 @@ func buildUserPrompt(turn Turn) string {
 		}
 	}
 	if len(turn.DingTalkHistory) > 0 {
-		b.WriteString("\nrecent_dingtalk_history:\n")
-		for _, line := range turn.DingTalkHistory {
+		b.WriteString("\nrecent_dingtalk_history (newest first):\n")
+		for i := len(turn.DingTalkHistory) - 1; i >= 0; i-- {
+			line := turn.DingTalkHistory[i]
 			b.WriteString("- ")
 			b.WriteString(line.Role)
 			b.WriteString(": ")

@@ -267,6 +267,7 @@
   "tabs": {
     "overview": "개요",
     "work": "작업",
+    "inbound": "수신 대화",
     "capabilities": "기능",
     "settings": "설정",
     "general": "일반",
@@ -1106,6 +1107,17 @@
       "sink_url_placeholder": "https://trace.example.com/ingest",
       "saved_toast": "LLM 추적 설정이 저장되었습니다",
       "save_failed_toast": "LLM 추적 설정 저장 실패"
+    },
+    "inbound": {
+      "empty": "아직 수신 대화가 없습니다.",
+      "loading": "수신 대화를 불러오는 중…",
+      "load_failed": "수신 대화를 불러오지 못했습니다.",
+      "retry": "다시 시도",
+      "select_prompt": "대화를 선택해 기록을 확인하세요.",
+      "untitled": "제목 없는 대화",
+      "load_older": "이전 메시지 불러오기",
+      "no_messages": "이 대화에는 아직 메시지가 없습니다.",
+      "back": "뒤로"
     }
   },
   "char_counter": {

@@ -47,14 +47,16 @@ import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
+import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
 
-type DetailSection = "overview" | "work" | "capabilities" | "settings";
+type DetailSection = "overview" | "work" | "inbound" | "capabilities" | "settings";
 
 export type DetailTab =
   | "overview"
   | "work"
+  | "inbound"
   | "instructions"
   | "okr"
   | "skills"
@@ -116,6 +118,7 @@ const SETTINGS_TABS: SecondaryTab[] = [
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "overview", labelKey: "overview" },
   { id: "work", labelKey: "work" },
+  { id: "inbound", labelKey: "inbound" },
   { id: "capabilities", labelKey: "capabilities" },
   { id: "settings", labelKey: "settings" },
 ];
@@ -125,6 +128,7 @@ const SETTINGS_IDS = new Set<DetailTab>(SETTINGS_TABS.map((tab) => tab.id));
 const DETAIL_VIEWS = new Set<DetailTab>([
   "overview",
   "work",
+  "inbound",
   ...CAPABILITY_TABS.map((tab) => tab.id),
   ...SETTINGS_TABS.map((tab) => tab.id),
 ]);
@@ -136,6 +140,7 @@ function isDetailTab(value: string | null): value is DetailTab {
 function sectionForView(view: DetailTab): DetailSection {
   if (view === "overview") return "overview";
   if (view === "work") return "work";
+  if (view === "inbound") return "inbound";
   if (CAPABILITY_IDS.has(view)) return "capabilities";
   return "settings";
 }
@@ -161,9 +166,10 @@ interface AgentOverviewPaneProps {
 /**
  * Agent workbench organised around user intent instead of backend fields.
  * Overview answers "what is happening now?", Work owns the issue surface,
- * Capabilities describes what the agent can do, and Settings describes how
- * it runs. The lower-level editors stay intact so the reorganisation does not
- * alter persistence or permission semantics.
+ * Inbound lists short-loop channel transcripts, Capabilities describes what
+ * the agent can do, and Settings describes how it runs. The lower-level
+ * editors stay intact so the reorganisation does not alter persistence or
+ * permission semantics.
  */
 export function AgentOverviewPane({
   agent,
@@ -289,6 +295,7 @@ export function AgentOverviewPane({
       new Set<DetailTab>([
         "overview",
         "work",
+        "inbound",
         ...visibleCapabilityTabs.map((tab) => tab.id),
         ...visibleSettingsTabs.map((tab) => tab.id),
       ]),
@@ -323,7 +330,7 @@ export function AgentOverviewPane({
   );
 
   const requestSection = (section: DetailSection) => {
-    if (section === "overview" || section === "work") {
+    if (section === "overview" || section === "work" || section === "inbound") {
       requestView(section);
       return;
     }
@@ -434,6 +441,12 @@ export function AgentOverviewPane({
         {effectiveView === "work" && (
           <div className="flex min-h-[620px] flex-col">
             <ActorIssuesPanel actorType="agent" actorId={agent.id} />
+          </div>
+        )}
+
+        {effectiveView === "inbound" && (
+          <div className="flex min-h-[620px] flex-col">
+            <CoordinatorSessionsTab agentId={agent.id} />
           </div>
         )}
 

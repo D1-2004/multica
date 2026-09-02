@@ -151,6 +151,24 @@ export function agentTasksOptions(wsId: string, agentId: string) {
     refetchOnWindowFocus: true,
   });
 }
+
+export const agentCoordinatorSessionsKeys = {
+  all: (wsId: string) =>
+    ["workspaces", wsId, "agent-coordinator-sessions"] as const,
+  list: (wsId: string, agentId: string) =>
+    [...agentCoordinatorSessionsKeys.all(wsId), agentId] as const,
+};
+
+export function agentCoordinatorSessionsOptions(wsId: string, agentId: string) {
+  return queryOptions({
+    queryKey: agentCoordinatorSessionsKeys.list(wsId, agentId),
+    queryFn: () => api.listAgentCoordinatorSessions(agentId),
+    enabled: !!wsId && !!agentId,
+    staleTime: 15 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
+}
 // Agent templates are workspace-independent: a static catalog served from
 // the server's embedded JSON. Cache effectively forever — the only way the
 // list / detail change is a server deploy, and a hard reload picks that up.

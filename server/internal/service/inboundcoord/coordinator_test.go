@@ -317,6 +317,22 @@ func TestTurnFromChatSessionRobotAndDigitalEmployeeDropTitle(t *testing.T) {
 	}
 }
 
+func TestBuildUserPromptDingTalkHistoryNewestFirst(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:  SourceRobot,
+		Message: "当前",
+		DingTalkHistory: []HistoryLine{
+			{Role: "user", Content: "更早的消息"},
+			{Role: "user", Content: "较新的消息"},
+		},
+	})
+	older := strings.Index(prompt, "更早的消息")
+	newer := strings.Index(prompt, "较新的消息")
+	if older < 0 || newer < 0 || newer > older {
+		t.Fatalf("want newest-first dingtalk history, prompt=%q", prompt)
+	}
+}
+
 func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {
 	prompt := buildUserPrompt(Turn{
 		Source:          SourceRobot,
