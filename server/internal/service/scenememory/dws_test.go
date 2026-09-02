@@ -183,6 +183,44 @@ func TestHistoryHasGap(t *testing.T) {
 	}
 }
 
+func TestHistoryLookbackIncludesPendingTriggerBeforeCursor(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	cursor := now.Add(-time.Hour)
+	trigger := now.Add(-2 * time.Hour)
+	row := db.SceneMemory{
+		SourceCursorAt:        timestamptz(cursor),
+		LastTriggerAt:         timestamptz(trigger),
+		LastTriggerEvidenceID: "msg-early",
+	}
+	lookback := HistoryLookback(row, false, now)
+	if !lookback.Equal(trigger) {
+		t.Fatalf("lookback=%s want pending trigger %s", lookback, trigger)
+	}
+	got := filterAfterLookback([]HistoryEvent{
+		{EvidenceID: "too-old", OccurredAt: trigger.Add(-time.Minute)},
+		{EvidenceID: "msg-early", OccurredAt: trigger, Content: "纠正"},
+		{EvidenceID: "after-cursor", OccurredAt: cursor},
+	}, lookback)
+	if len(got) != 2 || got[0].EvidenceID != "msg-early" || got[1].EvidenceID != "after-cursor" {
+		t.Fatalf("pending trigger must survive lookback filter: %#v", got)
+	}
+}
+
+func TestHistoryHasGapUsesPendingTrigger(t *testing.T) {
+	cursor := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	trigger := cursor.Add(-time.Hour)
+	row := db.SceneMemory{
+		SourceCursorAt: timestamptz(cursor),
+		LastTriggerAt:  timestamptz(trigger),
+	}
+	if !historyHasGap(row, cursor.Add(-time.Minute), true) {
+		t.Fatal("page cap above the pending trigger is a gap")
+	}
+	if historyHasGap(row, trigger.Add(-time.Minute), true) {
+		t.Fatal("reached pending trigger is not a gap")
+	}
+}
+
 func testFlushRow(text string) db.SceneMemory {
 	return db.SceneMemory{
 		SceneTitle:     "冬翔",

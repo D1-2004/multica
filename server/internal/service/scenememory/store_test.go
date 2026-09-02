@@ -39,6 +39,14 @@ func openPool(t *testing.T) *pgxpool.Pool {
 		pool.Close()
 		t.Skip("scene_memory table is not migrated")
 	}
+	var hasTriggerAt bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns
+		WHERE table_name = 'scene_memory' AND column_name = 'last_trigger_at'
+	)`).Scan(&hasTriggerAt); err != nil || !hasTriggerAt {
+		pool.Close()
+		t.Skip("scene_memory last_trigger_at is not migrated")
+	}
 	t.Cleanup(pool.Close)
 	return pool
 }
@@ -441,7 +449,8 @@ func TestResetClearsTextKeepsBootstrap(t *testing.T) {
 	if reset.MemoryText != "" || !reset.BootstrappedAt.Valid || reset.DirtyRevision != reset.FlushedRevision {
 		t.Fatalf("reset row = %+v", reset)
 	}
-	if reset.LastTriggerIdempotencyKey != "" || reset.DirtyThroughAt.Valid {
+	if reset.LastTriggerIdempotencyKey != "" || reset.DirtyThroughAt.Valid ||
+		reset.LastTriggerAt.Valid || reset.LastTriggerEvidenceID != "" {
 		t.Fatalf("reset left dirty trigger state: %+v", reset)
 	}
 	if reset.MemoryRevision <= row.MemoryRevision {
@@ -631,5 +640,111 @@ func TestReleasePendingDropsLeaseWithoutRetry(t *testing.T) {
 	}
 	if got.LeaseToken.Valid || StatusOf(got) != "pending" || got.LastError != "" {
 		t.Fatalf("released row = %+v status=%s", got, StatusOf(got))
+	}
+}
+
+func TestMarkDirtyKeepsHighWaterAndCurrentTrigger(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(db.New(openPool(t)))
+	id := testIdentity(t)
+	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, id.WorkspaceID) })
+	later := time.Now().UTC().Truncate(time.Microsecond)
+	earlier := later.Add(-time.Second)
+	first, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: later, EvidenceID: "msg-later", IdempotencyKey: "k-later",
+	})
+	if err != nil {
+		t.Fatalf("later dirty: %v", err)
+	}
+	second, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: earlier, EvidenceID: "msg-early", IdempotencyKey: "k-early",
+	})
+	if err != nil {
+		t.Fatalf("earlier dirty: %v", err)
+	}
+	if second.DirtyRevision <= first.DirtyRevision {
+		t.Fatalf("earlier trigger must still dirty, first=%d second=%d", first.DirtyRevision, second.DirtyRevision)
+	}
+	if second.DirtyThroughEvidenceID != "msg-later" {
+		t.Fatalf("high-water must stay later, dirty_through=%q", second.DirtyThroughEvidenceID)
+	}
+	if second.LastTriggerEvidenceID != "msg-early" {
+		t.Fatalf("last_trigger must be the current inbound, got %q", second.LastTriggerEvidenceID)
+	}
+	if !second.LastTriggerAt.Valid || second.LastTriggerAt.Time.UTC().Unix() != earlier.Unix() {
+		t.Fatalf("last_trigger_at=%v want %s", second.LastTriggerAt, earlier)
+	}
+}
+
+func TestMarkDirtyThenPlanFlushIncludesEarlierTrigger(t *testing.T) {
+	ctx := context.Background()
+	pool := openPool(t)
+	store := NewStore(db.New(pool))
+	id := testIdentity(t)
+	later := time.Now().UTC().Truncate(time.Microsecond)
+	earlier := later.Add(-time.Second)
+	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: later, EvidenceID: "msg-later", IdempotencyKey: "k-later",
+	}); err != nil {
+		t.Fatalf("later dirty: %v", err)
+	}
+	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: earlier, EvidenceID: "msg-early", IdempotencyKey: "k-early",
+	}); err != nil {
+		t.Fatalf("earlier dirty: %v", err)
+	}
+	seedAgentWrite(t, pool, id, true)
+	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
+		t.Fatalf("nudge: %v", err)
+	}
+	row, err := store.Claim(ctx)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if row.LeaseTargetThroughEvidenceID != "msg-later" {
+		t.Fatalf("lease cutoff must be the high-water, got %q", row.LeaseTargetThroughEvidenceID)
+	}
+	if row.LastTriggerEvidenceID != "msg-early" {
+		t.Fatalf("claimed last_trigger must stay the current inbound, got %q", row.LastTriggerEvidenceID)
+	}
+	row.SourceCursorAt = row.LeaseTargetThroughAt
+	row.SourceCursorEvidenceID = row.LeaseTargetThroughEvidenceID
+	plan, err := planFlush(row, []HistoryEvent{
+		{EvidenceID: "msg-early", OccurredAt: earlier, Content: "纠正：DELTA-5520 是排班表"},
+		{EvidenceID: "msg-later", OccurredAt: later, Content: "灌水"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsEvidence(plan.batch, "msg-early") {
+		t.Fatalf("MarkDirty→planFlush must merge the earlier trigger: %+v", plan)
+	}
+	if !plan.caughtUp {
+		t.Fatalf("visible trigger plus covered high-water must catch up: %+v", plan)
+	}
+}
+
+func TestMarkDirtySameSecondSmallerEvidence(t *testing.T) {
+	ctx := context.Background()
+	store := NewStore(db.New(openPool(t)))
+	id := testIdentity(t)
+	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, id.WorkspaceID) })
+	at := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: at, EvidenceID: "zzz", IdempotencyKey: "k-zzz",
+	}); err != nil {
+		t.Fatalf("later id: %v", err)
+	}
+	row, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: at, EvidenceID: "aaa", IdempotencyKey: "k-aaa",
+	})
+	if err != nil {
+		t.Fatalf("smaller id: %v", err)
+	}
+	if row.DirtyThroughEvidenceID != "zzz" {
+		t.Fatalf("high-water must stay zzz, got %q", row.DirtyThroughEvidenceID)
+	}
+	if row.LastTriggerEvidenceID != "aaa" {
+		t.Fatalf("last_trigger must be aaa, got %q", row.LastTriggerEvidenceID)
 	}
 }

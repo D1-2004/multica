@@ -47,12 +47,7 @@ func filterUntil(events []HistoryEvent, cutoffAt time.Time, cutoffEvidence strin
 }
 
 func afterCursor(events []HistoryEvent, cursorAt time.Time, cursorEvidence string) []HistoryEvent {
-	sort.Slice(events, func(i, j int) bool {
-		if !events[i].OccurredAt.Equal(events[j].OccurredAt) {
-			return events[i].OccurredAt.Before(events[j].OccurredAt)
-		}
-		return events[i].EvidenceID < events[j].EvidenceID
-	})
+	events = sortHistoryEvents(events)
 	out := make([]HistoryEvent, 0, len(events))
 	for _, event := range events {
 		if cursorAt.IsZero() {
@@ -64,6 +59,29 @@ func afterCursor(events []HistoryEvent, cursorAt time.Time, cursorEvidence strin
 		}
 	}
 	return out
+}
+
+func forceIncludeEvidence(delta, events []HistoryEvent, evidence string) []HistoryEvent {
+	evidence = strings.TrimSpace(evidence)
+	if evidence == "" || containsEvidence(delta, evidence) || !containsEvidence(events, evidence) {
+		return delta
+	}
+	for _, event := range events {
+		if event.EvidenceID == evidence {
+			return sortHistoryEvents(append([]HistoryEvent{event}, delta...))
+		}
+	}
+	return delta
+}
+
+func sortHistoryEvents(events []HistoryEvent) []HistoryEvent {
+	sort.SliceStable(events, func(i, j int) bool {
+		if !events[i].OccurredAt.Equal(events[j].OccurredAt) {
+			return events[i].OccurredAt.Before(events[j].OccurredAt)
+		}
+		return events[i].EvidenceID < events[j].EvidenceID
+	})
+	return events
 }
 
 func containsEvidence(events []HistoryEvent, evidence string) bool {

@@ -23,6 +23,22 @@ func TestFilterUntilDropsAfterCutoff(t *testing.T) {
 	}
 }
 
+func TestForceIncludeEvidenceRestoresDroppedTrigger(t *testing.T) {
+	cursor := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	events := []HistoryEvent{
+		{EvidenceID: "aaa", OccurredAt: cursor.Add(-time.Second), Content: "early"},
+		{EvidenceID: "zzz", OccurredAt: cursor, Content: "later"},
+	}
+	delta := afterCursor(events, cursor, "zzz")
+	if len(delta) != 0 {
+		t.Fatalf("afterCursor should drop both, got %#v", delta)
+	}
+	got := forceIncludeEvidence(delta, events, "aaa")
+	if len(got) != 1 || got[0].EvidenceID != "aaa" {
+		t.Fatalf("force-include must restore the pending trigger: %#v", got)
+	}
+}
+
 func TestAfterCursorIsExclusive(t *testing.T) {
 	cursor := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	events := []HistoryEvent{

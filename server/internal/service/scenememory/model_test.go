@@ -42,6 +42,23 @@ func TestCursorCovers(t *testing.T) {
 	}
 }
 
+func TestMaxCursorDoesNotRewind(t *testing.T) {
+	later := time.Date(2026, 9, 2, 12, 0, 1, 0, time.UTC)
+	earlier := later.Add(-time.Second)
+	at, ev := maxCursor(later, "zzz", earlier, "aaa")
+	if !at.Equal(later) || ev != "zzz" {
+		t.Fatalf("later cursor must win: %s %s", at, ev)
+	}
+	at, ev = maxCursor(earlier, "aaa", later, "zzz")
+	if !at.Equal(later) || ev != "zzz" {
+		t.Fatalf("later argument must win: %s %s", at, ev)
+	}
+	at, ev = maxCursor(later, "aaa", later, "zzz")
+	if ev != "zzz" {
+		t.Fatalf("same-second larger evidence must win: %s", ev)
+	}
+}
+
 func TestClipErrKeepsUTF8(t *testing.T) {
 	raw := strings.Repeat("错误", 200)
 	got := clipErr(raw, 500)

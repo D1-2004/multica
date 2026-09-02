@@ -141,3 +141,13 @@ func CursorCovers(cursorAt time.Time, cursorEvidence string, cutoffAt time.Time,
 	}
 	return cursorEvidence >= cutoffEvidence
 }
+
+func maxCursor(aAt time.Time, aEv string, bAt time.Time, bEv string) (time.Time, string) {
+	if aAt.IsZero() {
+		return bAt, bEv
+	}
+	if bAt.IsZero() || CursorCovers(aAt, aEv, bAt, bEv) {
+		return aAt, aEv
+	}
+	return bAt, bEv
+}

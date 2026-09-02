@@ -80,4 +80,17 @@ func TestSceneMemoryMigrationContract(t *testing.T) {
 			t.Errorf("agent scene memory flags missing %q", required)
 		}
 	}
+
+	trigger := read("9126_scene_memory_last_trigger.up.sql")
+	for _, required := range []string{
+		"ADD COLUMN IF NOT EXISTS last_trigger_at TIMESTAMPTZ",
+		"ADD COLUMN IF NOT EXISTS last_trigger_evidence_id TEXT NOT NULL DEFAULT ''",
+	} {
+		if !strings.Contains(trigger, required) {
+			t.Errorf("scene_memory last_trigger migration missing %q", required)
+		}
+	}
+	if strings.Contains(trigger, "REFERENCES ") || strings.Contains(trigger, "CREATE INDEX") {
+		t.Fatal("last_trigger migration must not add foreign keys or non-concurrent indexes")
+	}
 }

@@ -119,42 +119,52 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 		cutoffAt = row.LeaseTargetThroughAt.Time
 	}
 	cutoffEv := strings.TrimSpace(row.LeaseTargetThroughEvidenceID)
+	triggerEv := strings.TrimSpace(row.LastTriggerEvidenceID)
 	events = filterUntil(events, cutoffAt, cutoffEv)
 	cursorAt := time.Time{}
 	if row.SourceCursorAt.Valid {
 		cursorAt = row.SourceCursorAt.Time
 	}
-	delta := afterCursor(events, cursorAt, row.SourceCursorEvidenceID)
-	if cutoffEv != "" && containsEvidence(events, cutoffEv) && !containsEvidence(delta, cutoffEv) {
-		for _, event := range events {
-			if event.EvidenceID == cutoffEv {
-				delta = append([]HistoryEvent{event}, delta...)
-				break
-			}
-		}
-	}
-	covered := CursorCovers(cursorAt, row.SourceCursorEvidenceID, cutoffAt, cutoffEv)
+	cursorEv := row.SourceCursorEvidenceID
+	delta := afterCursor(events, cursorAt, cursorEv)
+	// dirty_through/lease_target never move backward, so the inbound that
+	// woke this claim may sit before the high-water cutoff. Force-include
+	// that trigger and do not treat a covered empty delta as caught-up
+	// while it is still missing from history.
+	delta = forceIncludeEvidence(delta, events, cutoffEv)
+	delta = forceIncludeEvidence(delta, events, triggerEv)
+	covered := CursorCovers(cursorAt, cursorEv, cutoffAt, cutoffEv)
 	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered {
 		return flushPlan{}, &FlushError{
 			Code: ErrorIncomplete,
 			Err:  fmt.Errorf("claimed evidence is not visible yet"),
 		}
 	}
-	plan := flushPlan{batch: delta, cursorAt: cutoffAt, cursorEv: cutoffEv}
+	if triggerEv != "" && !containsEvidence(events, triggerEv) {
+		return flushPlan{}, &FlushError{
+			Code: ErrorIncomplete,
+			Err:  fmt.Errorf("pending trigger evidence is not visible yet"),
+		}
+	}
+	plan := flushPlan{batch: delta, cursorAt: cursorAt, cursorEv: cursorEv}
+	if plan.cursorAt.IsZero() {
+		plan.cursorAt = cutoffAt
+		plan.cursorEv = cutoffEv
+	}
 	if len(plan.batch) > flushBatchEvents {
 		plan.batch = plan.batch[:flushBatchEvents]
 	}
 	if len(delta) == 0 {
 		plan.caughtUp = cutoffEv == "" || containsEvidence(events, cutoffEv) || covered
+		plan.cursorAt, plan.cursorEv = maxCursor(plan.cursorAt, plan.cursorEv, cutoffAt, cutoffEv)
 	} else {
 		last := plan.batch[len(plan.batch)-1]
+		plan.cursorAt, plan.cursorEv = maxCursor(plan.cursorAt, plan.cursorEv, last.OccurredAt, last.EvidenceID)
 		plan.caughtUp = len(plan.batch) == len(delta) &&
-			CursorCovers(last.OccurredAt, last.EvidenceID, cutoffAt, cutoffEv)
-		plan.cursorAt = last.OccurredAt
-		plan.cursorEv = last.EvidenceID
-		if plan.caughtUp && !cutoffAt.IsZero() && cutoffAt.After(plan.cursorAt) {
-			plan.cursorAt = cutoffAt
-			plan.cursorEv = cutoffEv
+			(cutoffEv == "" || containsEvidence(events, cutoffEv) || covered ||
+				CursorCovers(plan.cursorAt, plan.cursorEv, cutoffAt, cutoffEv))
+		if plan.caughtUp {
+			plan.cursorAt, plan.cursorEv = maxCursor(plan.cursorAt, plan.cursorEv, cutoffAt, cutoffEv)
 		}
 	}
 	return plan, nil

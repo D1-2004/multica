@@ -112,6 +112,77 @@ func TestPlanFlushIncludesTriggerBeforeCursor(t *testing.T) {
 	if len(plan.batch) != 1 || plan.batch[0].EvidenceID != "msg-new" {
 		t.Fatalf("trigger before cursor must still merge: %+v", plan)
 	}
+	if !plan.caughtUp {
+		t.Fatalf("cutoff already behind cursor must still catch up: %+v", plan)
+	}
+	if !CursorCovers(plan.cursorAt, plan.cursorEv, cutoff.Add(time.Second), "zzz") {
+		t.Fatalf("cursor must not rewind: %+v", plan)
+	}
+}
+
+func TestPlanFlushMergesEarlierTriggerWhenLeaseTargetIsLater(t *testing.T) {
+	later := time.Date(2026, 9, 2, 12, 0, 1, 0, time.UTC)
+	earlier := later.Add(-time.Second)
+	row := claimedAfterLaterThenEarlier(later, "msg-later", earlier, "msg-early")
+	plan, err := planFlush(row, []HistoryEvent{
+		{EvidenceID: "msg-early", OccurredAt: earlier, Content: "纠正：DELTA-5520 是排班表"},
+		{EvidenceID: "msg-later", OccurredAt: later, Content: "灌水"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsEvidence(plan.batch, "msg-early") {
+		t.Fatalf("MarkDirty high-water later must still merge the current trigger: %+v", plan)
+	}
+	if !plan.caughtUp {
+		t.Fatalf("covered lease target with visible trigger must catch up: %+v", plan)
+	}
+	if !CursorCovers(plan.cursorAt, plan.cursorEv, later, "msg-later") {
+		t.Fatalf("cursor must stay at the later high-water: %+v", plan)
+	}
+}
+
+func TestPlanFlushIncompleteWhenEarlierTriggerMissingEvenIfCovered(t *testing.T) {
+	later := time.Date(2026, 9, 2, 12, 0, 1, 0, time.UTC)
+	earlier := later.Add(-time.Second)
+	row := claimedAfterLaterThenEarlier(later, "msg-later", earlier, "msg-early")
+	_, err := planFlush(row, []HistoryEvent{{
+		EvidenceID: "msg-later",
+		OccurredAt: later,
+		Content:    "灌水",
+	}})
+	if FlushErrorCode(err) != ErrorIncomplete {
+		t.Fatalf("missing pending trigger must not finish via covered empty-delta, err=%v", err)
+	}
+}
+
+func TestPlanFlushSameSecondSmallerEvidence(t *testing.T) {
+	at := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	row := claimedAfterLaterThenEarlier(at, "zzz", at, "aaa")
+	plan, err := planFlush(row, []HistoryEvent{
+		{EvidenceID: "aaa", OccurredAt: at, Content: "纠正：同一秒更小 id"},
+		{EvidenceID: "zzz", OccurredAt: at, Content: "灌水"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsEvidence(plan.batch, "aaa") {
+		t.Fatalf("same-second smaller evidence must still merge: %+v", plan)
+	}
+	if !plan.caughtUp || plan.cursorEv != "zzz" {
+		t.Fatalf("cursor must stay on the high-water evidence: %+v", plan)
+	}
+}
+
+func claimedAfterLaterThenEarlier(laterAt time.Time, laterEv string, earlierAt time.Time, earlierEv string) db.SceneMemory {
+	return db.SceneMemory{
+		LeaseTargetThroughAt:         timestamptz(laterAt),
+		LeaseTargetThroughEvidenceID: laterEv,
+		LastTriggerAt:                timestamptz(earlierAt),
+		LastTriggerEvidenceID:        earlierEv,
+		SourceCursorAt:               timestamptz(laterAt),
+		SourceCursorEvidenceID:       laterEv,
+	}
 }
 
 func TestPlanFlushEmptyDeltaWithoutCutoffIsCaughtUp(t *testing.T) {

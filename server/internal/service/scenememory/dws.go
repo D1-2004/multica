@@ -198,8 +198,8 @@ func HistoryLookback(row db.SceneMemory, bootstrap bool, now time.Time) time.Tim
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	if row.SourceCursorAt.Valid && !row.SourceCursorAt.Time.IsZero() {
-		return row.SourceCursorAt.Time.UTC()
+	if need := historyNeedReach(row); !need.IsZero() {
+		return need
 	}
 	if bootstrap {
 		return now.UTC().Add(-historyLookback)
@@ -210,11 +210,29 @@ func HistoryLookback(row db.SceneMemory, bootstrap bool, now time.Time) time.Tim
 	return now.UTC().Add(-time.Hour)
 }
 
+func historyNeedReach(row db.SceneMemory) time.Time {
+	var need time.Time
+	if row.SourceCursorAt.Valid && !row.SourceCursorAt.Time.IsZero() {
+		need = row.SourceCursorAt.Time.UTC()
+	}
+	if row.LastTriggerAt.Valid && !row.LastTriggerAt.Time.IsZero() {
+		at := row.LastTriggerAt.Time.UTC()
+		if need.IsZero() || at.Before(need) {
+			need = at
+		}
+	}
+	return need
+}
+
 func historyHasGap(row db.SceneMemory, oldest time.Time, hitPageCap bool) bool {
-	if !hitPageCap || !row.SourceCursorAt.Valid || row.SourceCursorAt.Time.IsZero() {
+	if !hitPageCap {
 		return false
 	}
-	return oldest.After(row.SourceCursorAt.Time.UTC())
+	need := historyNeedReach(row)
+	if need.IsZero() {
+		return false
+	}
+	return oldest.After(need)
 }
 
 type dwsPage struct {

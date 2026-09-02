@@ -22,12 +22,14 @@ WITH upsert AS (
         workspace_id, agent_id, platform, org_id, scene_key, scene_kind, scene_title,
         dirty_revision, dirty_since, dirty_through_at, dirty_through_evidence_id,
         available_at, last_trigger_job_id, last_trigger_coord_trace_id,
-        last_trigger_idempotency_key, blocked_at, last_error_code, last_error
+        last_trigger_idempotency_key, last_trigger_at, last_trigger_evidence_id,
+        blocked_at, last_error_code, last_error
     ) VALUES (
         @workspace_id, @agent_id, @platform, @org_id, @scene_key, @scene_kind, @scene_title,
         1, now(), @dirty_through_at, @dirty_through_evidence_id,
         now() + interval '4 seconds', @last_trigger_job_id, @last_trigger_coord_trace_id,
-        @last_trigger_idempotency_key, NULL, '', ''
+        @last_trigger_idempotency_key, @dirty_through_at, @dirty_through_evidence_id,
+        NULL, '', ''
     )
     ON CONFLICT (workspace_id, agent_id, platform, org_id, scene_key)
     DO UPDATE SET
@@ -63,6 +65,8 @@ WITH upsert AS (
         last_trigger_job_id = EXCLUDED.last_trigger_job_id,
         last_trigger_coord_trace_id = EXCLUDED.last_trigger_coord_trace_id,
         last_trigger_idempotency_key = EXCLUDED.last_trigger_idempotency_key,
+        last_trigger_at = EXCLUDED.last_trigger_at,
+        last_trigger_evidence_id = EXCLUDED.last_trigger_evidence_id,
         blocked_at = NULL,
         last_error_code = '',
         last_error = '',
@@ -231,6 +235,8 @@ DO UPDATE SET
     last_trigger_job_id = NULL,
     last_trigger_coord_trace_id = '',
     last_trigger_idempotency_key = '',
+    last_trigger_at = NULL,
+    last_trigger_evidence_id = '',
     lease_token = NULL,
     lease_expires_at = NULL,
     lease_target_dirty_revision = NULL,
