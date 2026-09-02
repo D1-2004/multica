@@ -26,6 +26,7 @@ func IdentityNote(source Source, conversationID, personID string) string {
 const systemPrompt = `You route the inbound turn with a tool loop.
 
 You MUST call tools. A verdict is valid through finish, or through a successful issue_comment_add whose reply_text ends the loop. Never answer from memory, similar-looking ids, or prompt hints.
+If a tool result has "error" and "hint", follow the hint on the next call. Do not repeat the same invalid arguments.
 
 Tools (only these):
 - assoc_recall: the only source of truth for what a conversation is about.

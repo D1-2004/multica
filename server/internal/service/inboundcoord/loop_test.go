@@ -396,6 +396,9 @@ func TestLoopBindWithoutIssueIDIsRejected(t *testing.T) {
 	for _, step := range got.Steps {
 		if step.Tool == toolAssocBind && step.Error {
 			sawBindError = true
+			if !strings.Contains(step.Output, `"hint"`) || !strings.Contains(step.Output, "finish action=issue") {
+				t.Fatalf("bind error must include recovery hint, output=%s", step.Output)
+			}
 		}
 	}
 	if !sawBindError {
@@ -423,6 +426,15 @@ func TestLoopNewIssueFinishRequiresPurpose(t *testing.T) {
 	}
 	if got.Action != ActionIssue || got.Purpose != "须莫🥥委托：向须莫v6询问明早有没有会议" {
 		t.Fatalf("decision=%#v", got)
+	}
+	sawHint := false
+	for _, step := range got.Steps {
+		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, `"hint"`) && strings.Contains(step.Output, "delegator") {
+			sawHint = true
+		}
+	}
+	if !sawHint {
+		t.Fatalf("finish error must include recovery hint, steps=%#v", got.Steps)
 	}
 }
 
@@ -598,6 +610,76 @@ func TestIssueCommentToolSeparatesDingTalkSpeakerFromToolExecutor(t *testing.T) 
 			t.Fatalf("issue_comment_add description missing %q: %q", want, description)
 		}
 	}
+}
+
+func TestAssocBindSchemaRequiresIssueID(t *testing.T) {
+	t.Parallel()
+	params := coordinatorFunctionParams(toolAssocBind)
+	if params == nil {
+		t.Fatal("assoc_bind missing")
+	}
+	if params["additionalProperties"] != false {
+		t.Fatalf("assoc_bind must reject extra properties, additionalProperties=%v", params["additionalProperties"])
+	}
+	required := stringSlice(params["required"])
+	for _, want := range []string{"issue_id", "purpose", "intent", "delegator"} {
+		if !containsString(required, want) {
+			t.Fatalf("assoc_bind required missing %s: %v", want, required)
+		}
+	}
+	props, _ := params["properties"].(map[string]any)
+	issue, _ := props["issue_id"].(map[string]any)
+	if issue["minLength"] != 8 {
+		t.Fatalf("issue_id schema=%v", issue)
+	}
+	if !strings.Contains(fmt.Sprint(issue["description"]), "Required") {
+		t.Fatalf("issue_id description=%v", issue["description"])
+	}
+}
+
+func TestMarshalToolFailureIncludesHint(t *testing.T) {
+	t.Parallel()
+	raw := marshalToolFailure(hintErr("issue_id is required", hintBindNeedsIssue))
+	if !strings.Contains(raw, `"error":"issue_id is required"`) || !strings.Contains(raw, `"hint"`) || !strings.Contains(raw, "finish action=issue") {
+		t.Fatalf("failure=%s", raw)
+	}
+}
+
+func coordinatorFunctionParams(name string) map[string]any {
+	for _, tool := range coordinatorToolDefs() {
+		fn := tool.GetFunction()
+		if fn != nil && fn.Name == name {
+			return fn.Parameters
+		}
+	}
+	return nil
+}
+
+func stringSlice(raw any) []string {
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			s, _ := item.(string)
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestFinishToolRoutesUnavailableCapabilitiesToIssue(t *testing.T) {

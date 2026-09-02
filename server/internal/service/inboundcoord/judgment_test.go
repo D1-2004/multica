@@ -40,6 +40,7 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"items are candidates, not a verdict",
 		"The server will not pick a card for you",
 		"Never bind without an Issue",
+		`If a tool result has "error" and "hint"`,
 		"委托人",
 		"purpose",
 		"Read it like a person opening the chat",

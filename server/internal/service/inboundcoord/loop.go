@@ -49,6 +49,12 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
 		return Decision{Steps: append([]protocol.ChatCoordinatorStep{}, steps...)}, err
 	}
+	reject := func(turn Turn, round int, call functionCall, err error, reason string) {
+		out := marshalToolFailure(err)
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(out, 1600), Error: true})
+		messages = append(messages, openai.ToolMessage(out, call.ID))
+		logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, out, true, reason)
+	}
 	for round := 0; round < maxLoopRounds; round++ {
 		completion, err := c.complete(ctx, messages, toolsForRound(round))
 		if err != nil {
@@ -80,15 +86,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: clipRunes(call.Arguments, 1200)})
 			if call.Name == toolFinish {
 				if reqErr := requireRecallBeforeFinish(turn, recalls, recalledIssues, continuationIssues, bind, call.Arguments); reqErr != nil {
-					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: reqErr.Error(), Error: true})
-					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
-					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "recall_required")
+					reject(turn, round, call, reqErr, "recall_required")
 					continue
 				}
 				if reqErr := requirePurposeForNewIssue(turn, call.Arguments); reqErr != nil {
-					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: reqErr.Error(), Error: true})
-					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
-					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "purpose_required")
+					reject(turn, round, call, reqErr, "purpose_required")
 					continue
 				}
 				used = append(used, call.Name)
@@ -111,9 +113,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				recalls = append(recalls, parseRecallCall(call.Arguments))
 			}
 			if reqErr := requireRecalledIssueForTool(call.Name, call.Arguments, recalledIssues); reqErr != nil {
-				appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: reqErr.Error(), Error: true})
-				messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
-				logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "issue_not_recalled")
+				reject(turn, round, call, reqErr, "issue_not_recalled")
 				continue
 			}
 			result, callErr := c.callTool(ctx, turn, call.Name, call.Arguments)
@@ -126,7 +126,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				}, nil
 			}
 			if callErr != nil {
-				result = `{"error":` + jsonQuote(callErr.Error()) + `}`
+				result = marshalToolFailure(callErr)
 			} else if call.Name == toolAssocRecall {
 				collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
 			} else if call.Name == toolAssocBind {
@@ -138,9 +138,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 1600)})
 					replyText := issueCommentReplyText(call.Arguments)
 					if replyText == "" {
-						appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: "reply_text is required", Error: true})
-						messages = append(messages, openai.ToolMessage(`{"error":"reply_text is required"}`, call.ID))
-						logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, "reply_text is required", true, "reply_text_required")
+						reject(turn, round, call, hintErr("reply_text is required", hintReplyText), "reply_text_required")
 						continue
 					}
 					decision := Decision{
@@ -230,20 +228,21 @@ func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {
 func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply only for a complete answer available now. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop. Never use reply to say you cannot complete the request."),
+		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply only for a complete answer available now. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop. Never use reply to say you cannot complete the request. New Issue: omit issue_id and set delegator, purpose, intent. Continue: copy issue_id from assoc_recall items[].issue_id."),
 		Parameters: shared.FunctionParameters{
-			"type": "object",
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"action"},
 			"properties": map[string]any{
 				"action":    map[string]any{"type": "string", "enum": []string{"reply", "issue", "silence"}},
 				"text":      map[string]any{"type": "string"},
 				"look_into": map[string]any{"type": "string"},
-				"issue_id":  map[string]any{"type": "string", "description": "Existing Issue UUID copied exactly from assoc_recall when this message continues recalled work. Omit to create a new Issue."},
-				"delegator": map[string]any{"type": "string", "description": "Required for a new Issue. Who asked this agent to act. Copy the inbound sender name."},
-				"purpose":   map[string]any{"type": "string", "description": "Required for a new Issue. Event and goal, such as 向辰驷确认明天几点打球. No DWS or auth."},
-				"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}},
+				"issue_id":  recalledIssueIDSchema("Existing Issue UUID copied exactly from assoc_recall items[].issue_id when continuing. Omit for a new Issue. Never invent."),
+				"delegator": map[string]any{"type": "string", "minLength": 1, "description": "Required when action=issue and issue_id is omitted. Who asked this agent to act. Copy the inbound sender name."},
+				"purpose":   map[string]any{"type": "string", "minLength": 8, "description": "Required when action=issue and issue_id is omitted. Event and goal, such as 向辰驷确认明天几点打球. No DWS, data-auth, or openConversationId."},
+				"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "Required when action=issue and issue_id is omitted."},
 				"reason":    map[string]any{"type": "string"},
 			},
-			"required": []string{"action"},
 		},
 	})
 }
@@ -254,7 +253,8 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 			Name:        toolAssocRecall,
 			Description: openai.String("Recall Issue/Task matters and inbound/outbound events on the scene graph. Always include this inbound conversation_id; the server fills it if omitted. q filters purpose on that scene and must not drop the cid. Pass a different openConversationId only when the user named one. since defaults to 48h."),
 			Parameters: shared.FunctionParameters{
-				"type": "object",
+				"type":                 "object",
+				"additionalProperties": false,
 				"properties": map[string]any{
 					"since":           map[string]any{"type": "string", "description": "24h, 48h, 7d, or RFC3339. Defaults to 48h."},
 					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId of the scene. Defaults to this inbound conversation_id. Do not omit it when q is set."},
@@ -267,22 +267,23 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocBind,
-			Description: openai.String("Attach this conversation to an existing Issue from assoc_recall. issue_id is required. Rewrite purpose as {委托人}委托：{事件与目的}. Do not call this for a new matter — finish action=issue with purpose instead, which creates the Issue then binds it."),
+			Description: openai.String("Attach this conversation to an existing Issue. issue_id is required by schema and must be copied from assoc_recall items[].issue_id. Rewrite purpose as {委托人}委托：{事件与目的}. Never omit issue_id. Never invent issue_id. For a new matter do not call this tool — finish action=issue with delegator, purpose, intent, and omit issue_id."),
 			Parameters: shared.FunctionParameters{
-				"type":     "object",
-				"required": []string{"issue_id", "purpose", "intent", "delegator"},
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"issue_id", "purpose", "intent", "delegator"},
 				"properties": map[string]any{
 					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId. Defaults to this inbound scene."},
-					"issue_id":        map[string]any{"type": "string", "description": "Existing Issue UUID copied exactly from assoc_recall. Required."},
-					"delegator":       map[string]any{"type": "string", "description": "Who asked this agent to act, such as 冬翔. Copy the inbound sender name; do not invent."},
+					"issue_id":        recalledIssueIDSchema("Existing Issue UUID copied exactly from assoc_recall items[].issue_id. Required. Never omit. Never invent. For a new matter use finish action=issue instead."),
+					"delegator":       map[string]any{"type": "string", "minLength": 1, "description": "Who asked this agent to act, such as 冬翔. Copy the inbound sender name; do not invent."},
 					"place":           map[string]any{"type": "string", "description": "Optional. Where the event happens. Omit when unknown."},
-					"purpose":         map[string]any{"type": "string", "description": "Event and goal, such as 向辰驷确认明天几点打球. Never paste the raw inbound envelope."},
+					"purpose":         map[string]any{"type": "string", "minLength": 8, "description": "Event and goal, such as 向辰驷确认明天几点打球. Never paste the inbound envelope. No DWS, data-auth, or openConversationId."},
 					"intent":          map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "ask=向某人询问; confirm=确认时间或选择; notify=通知原发起人; lookup=查找人或记录; wait=等待回复; other=其他."},
 					"waiting_on":      map[string]any{"type": "string", "description": "openConversationId this matter is waiting on, if different from conversation_id."},
 					"display_name":    map[string]any{"type": "string", "description": "Human name of the person in this scene, such as 须莫. Do not invent."},
 					"person_id":       map[string]any{"type": "string"},
 					"evidence_id":     map[string]any{"type": "string"},
-					"kind":            map[string]any{"type": "string", "description": "dm or group. Copy from the inbound scene."},
+					"kind":            map[string]any{"type": "string", "enum": []string{"dm", "group", "single"}, "description": "dm or group. Copy from the inbound scene."},
 				},
 			},
 		}),
@@ -290,10 +291,11 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 			Name:        toolIssueGet,
 			Description: openai.String("Read one Issue this agent owns. Copy issue_id from assoc_recall. Returns title, status, and a clipped description for rerank. Does not start a sandbox."),
 			Parameters: shared.FunctionParameters{
-				"type":     "object",
-				"required": []string{"issue_id"},
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"issue_id"},
 				"properties": map[string]any{
-					"issue_id": map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
+					"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall items[].issue_id."),
 				},
 			},
 		}),
@@ -301,11 +303,12 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 			Name:        toolIssueCommentList,
 			Description: openai.String("List recent comments on an Issue this agent owns. Copy issue_id from assoc_recall. Use before deciding whether the inbound turn continues that matter."),
 			Parameters: shared.FunctionParameters{
-				"type":     "object",
-				"required": []string{"issue_id"},
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"issue_id"},
 				"properties": map[string]any{
-					"issue_id": map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
-					"tail":     map[string]any{"type": "integer", "description": "Newest comments to return, default 20, max 50."},
+					"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall items[].issue_id."),
+					"tail":     map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "description": "Newest comments to return, default 20, max 50."},
 				},
 			},
 		}),
@@ -313,12 +316,13 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 			Name:        toolIssueCommentAdd,
 			Description: openai.String("Add the trusted inbound DingTalk message as a member comment on an Issue this agent owns. The current DingTalk event sender is the actual speaker. The stored Multica comment author is only the workspace principal executing this Issue tool and is not evidence of the delegator, speaker, or recipient. This identity rule applies to both digital-employee and robot messages; a robot sender uid may be missing and must not be invented. The normal Issue comment path starts its next task. This tool is terminal on success: reply_text closes the current IM turn, so do not call finish afterward."),
 			Parameters: shared.FunctionParameters{
-				"type":     "object",
-				"required": []string{"issue_id", "content", "reply_text"},
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"issue_id", "content", "reply_text"},
 				"properties": map[string]any{
-					"issue_id":   map[string]any{"type": "string", "description": "Issue UUID copied exactly from assoc_recall."},
-					"content":    map[string]any{"type": "string", "description": "Exact inbound words prefixed with the actual sender from the current DingTalk event. Never derive that speaker or the original delegator from the Multica comment author."},
-					"reply_text": map[string]any{"type": "string", "description": "Short user-facing acknowledgement sent to the current IM speaker after the comment is committed."},
+					"issue_id":   recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall items[].issue_id."),
+					"content":    map[string]any{"type": "string", "minLength": 1, "description": "Exact inbound words prefixed with the actual sender from the current DingTalk event. Never derive that speaker or the original delegator from the Multica comment author."},
+					"reply_text": map[string]any{"type": "string", "minLength": 1, "description": "Short user-facing acknowledgement sent to the current IM speaker after the comment is committed."},
 					"parent":     map[string]any{"type": "string", "description": "Optional parent comment UUID."},
 				},
 			},
@@ -342,6 +346,88 @@ func jsonQuote(s string) string {
 	raw, err := json.Marshal(s)
 	if err != nil {
 		return `"tool error"`
+	}
+	return string(raw)
+}
+
+func recalledIssueIDSchema(description string) map[string]any {
+	return map[string]any{
+		"type":        "string",
+		"minLength":   8,
+		"description": description,
+	}
+}
+
+const (
+	hintBindNeedsIssue = "assoc_bind only attaches an existing Issue. Copy issue_id from assoc_recall items[].issue_id. If this is a new matter, do not bind; call finish action=issue with delegator, purpose, intent, and omit issue_id."
+	hintCopyIssueID    = "Call assoc_recall first, then copy items[].issue_id byte-for-byte. Do not invent an id. A new matter uses finish action=issue without issue_id."
+	hintNewIssueFinish = "finish action=issue without issue_id creates the Issue. Set delegator (inbound sender), purpose as {委托人}委托：{事件与目的} with no DWS/auth, and intent ask|confirm|notify|lookup|wait|other."
+	hintPurpose        = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, and openConversationId."
+	hintIntent         = "intent must be one of ask, confirm, notify, lookup, wait, other."
+	hintConversation   = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
+	hintReplyText      = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
+	hintRecallFirst    = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
+)
+
+type toolHintError struct {
+	msg  string
+	hint string
+	err  error
+}
+
+func (e *toolHintError) Error() string {
+	if e == nil {
+		return "tool error"
+	}
+	if e.err != nil {
+		if e.msg == "" {
+			return e.err.Error()
+		}
+		return e.msg + ": " + e.err.Error()
+	}
+	return e.msg
+}
+
+func (e *toolHintError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func (e *toolHintError) Hint() string {
+	if e == nil {
+		return ""
+	}
+	return e.hint
+}
+
+func hintErr(msg, hint string) error {
+	return &toolHintError{msg: msg, hint: hint}
+}
+
+func hintWrap(msg, hint string, err error) error {
+	return &toolHintError{msg: msg, hint: hint, err: err}
+}
+
+type hinter interface {
+	Hint() string
+}
+
+func marshalToolFailure(err error) string {
+	if err == nil {
+		return `{"error":"tool error"}`
+	}
+	payload := map[string]string{"error": err.Error()}
+	var h hinter
+	if errors.As(err, &h) {
+		if hint := strings.TrimSpace(h.Hint()); hint != "" {
+			payload["hint"] = hint
+		}
+	}
+	raw, marshalErr := json.Marshal(payload)
+	if marshalErr != nil {
+		return `{"error":` + jsonQuote(err.Error()) + `}`
 	}
 	return string(raw)
 }
@@ -472,35 +558,35 @@ func requireRecalledIssueForTool(name, raw string, recalled map[string]struct{})
 	case toolIssueGet, toolIssueCommentList:
 		issueID := issueIDFromToolArguments(raw)
 		if issueID == "" {
-			return fmt.Errorf("issue_id is required")
+			return hintErr("issue_id is required", hintCopyIssueID)
 		}
 		if _, ok := recalled[issueID]; !ok {
-			return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+			return hintErr("issue_id must be copied exactly from assoc_recall", hintCopyIssueID)
 		}
 	case toolIssueCommentAdd:
 		var args issueIDArgs
 		if json.Unmarshal([]byte(strings.TrimSpace(raw)), &args) != nil {
-			return fmt.Errorf("invalid issue_comment_add arguments")
+			return hintErr("invalid issue_comment_add arguments", hintCopyIssueID)
 		}
 		issueID := strings.TrimSpace(args.IssueID)
 		if issueID == "" {
-			return fmt.Errorf("issue_id is required")
+			return hintErr("issue_id is required", hintCopyIssueID)
 		}
 		if _, ok := recalled[issueID]; !ok {
-			return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+			return hintErr("issue_id must be copied exactly from assoc_recall", hintCopyIssueID)
 		}
 		if strings.TrimSpace(args.ReplyText) == "" {
-			return fmt.Errorf("reply_text is required")
+			return hintErr("reply_text is required", hintReplyText)
 		}
 	case toolAssocBind:
 		var args bindArgs
 		_ = json.Unmarshal([]byte(strings.TrimSpace(raw)), &args)
 		issueID := strings.TrimSpace(args.IssueID)
 		if issueID == "" {
-			return fmt.Errorf("issue_id is required; assoc_bind must attach an existing Issue from assoc_recall")
+			return hintErr("issue_id is required; assoc_bind must attach an existing Issue from assoc_recall", hintBindNeedsIssue)
 		}
 		if _, ok := recalled[issueID]; !ok {
-			return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+			return hintErr("issue_id must be copied exactly from assoc_recall", hintCopyIssueID)
 		}
 	}
 	return nil
@@ -692,10 +778,10 @@ func requirePurposeForNewIssue(turn Turn, finishRaw string) error {
 	}
 	delegator := firstNonEmpty(parsed.Delegator, turn.SenderName)
 	if _, err := assoc.ComposeCoordinatorPurpose(delegator, parsed.Place, parsed.Purpose); err != nil {
-		return fmt.Errorf("new Issue needs delegator, purpose, and intent on finish, such as 冬翔委托：向辰驷确认明天几点打球: %w", err)
+		return hintWrap("new Issue needs delegator, purpose, and intent on finish", hintNewIssueFinish, err)
 	}
 	if _, ok := assoc.CoordinatorIntent(parsed.Intent); !ok {
-		return fmt.Errorf("new Issue needs intent on finish: ask, confirm, notify, lookup, wait, or other")
+		return hintErr("new Issue needs intent on finish: ask, confirm, notify, lookup, wait, or other", hintNewIssueFinish)
 	}
 	return nil
 }
@@ -717,10 +803,10 @@ func requireRecallBeforeFinish(
 	issueID := strings.TrimSpace(parsed.IssueID)
 	if issueID != "" {
 		if action != ActionIssue {
-			return fmt.Errorf("issue_id is only valid with action=issue")
+			return hintErr("issue_id is only valid with action=issue", hintCopyIssueID)
 		}
 		if _, ok := recalledIssues[issueID]; !ok {
-			return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
+			return hintErr("issue_id must be copied exactly from assoc_recall", hintCopyIssueID)
 		}
 	}
 	if action == ActionSilence {
@@ -731,7 +817,7 @@ func requireRecallBeforeFinish(
 		return nil
 	}
 	if len(recalls) == 0 {
-		return fmt.Errorf("call assoc_recall before finish; do not answer from memory")
+		return hintErr("call assoc_recall before finish; do not answer from memory", hintRecallFirst)
 	}
 	for _, id := range ids {
 		covered := false
@@ -746,7 +832,10 @@ func requireRecallBeforeFinish(
 			}
 		}
 		if !covered {
-			return fmt.Errorf("assoc_recall must pass conversation_id %s exactly; empty items means unknown", id)
+			return hintErr(
+				fmt.Sprintf("assoc_recall must pass conversation_id %s exactly; empty items means unknown", id),
+				hintRecallFirst,
+			)
 		}
 	}
 	return nil

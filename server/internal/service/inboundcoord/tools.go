@@ -362,20 +362,20 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 	}
 	intent, ok := assoc.CoordinatorIntent(args.Intent)
 	if !ok {
-		return "", fmt.Errorf("intent must be one of ask, confirm, notify, lookup, wait, other")
+		return "", hintErr("intent must be one of ask, confirm, notify, lookup, wait, other", hintIntent)
 	}
 	cid := assoc.NormalizeConversationID(firstNonEmpty(args.ConversationID, turn.ConversationID))
 	if cid == "" {
-		return "", fmt.Errorf("conversation_id is required")
+		return "", hintErr("conversation_id is required", hintConversation)
 	}
 	issueID := strings.TrimSpace(args.IssueID)
 	if issueID == "" {
-		return "", fmt.Errorf("issue_id is required; assoc_bind attaches this scene to an existing Issue from assoc_recall")
+		return "", hintErr("issue_id is required; assoc_bind attaches this scene to an existing Issue from assoc_recall", hintBindNeedsIssue)
 	}
 	delegator := firstNonEmpty(args.Delegator, turn.SenderName)
 	purpose, err := assoc.ComposeCoordinatorPurpose(delegator, args.Place, args.Purpose)
 	if err != nil {
-		return "", fmt.Errorf("purpose must name 委托人, 事件, and 目的, such as 冬翔委托：向辰驷确认明天几点打球: %w", err)
+		return "", hintWrap("purpose must name 委托人, 事件, and 目的, such as 冬翔委托：向辰驷确认明天几点打球", hintPurpose, err)
 	}
 	kind := firstNonEmpty(args.Kind, turn.Kind)
 	display := firstNonEmpty(args.DisplayName, turn.SenderName)

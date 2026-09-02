@@ -160,7 +160,7 @@ user    ← buildUserPrompt(turn)
 }
 ```
 
-续旧：`issue_id` 必须出现在本轮 `assoc_recall` 结果里，且 purpose 对得上才 `issue_comment_add`。新建：省略 `issue_id`，在 `finish` 上带 `delegator` / `purpose` / `intent`；服务端创建 Issue 后 Associate 本 cid。一张 waiting 卡不是裁决。服务端不会因为「只有一张卡」替模型选定。
+续旧：`issue_id` 必须出现在本轮 `assoc_recall` 结果里，且 purpose 对得上才 `issue_comment_add`。新建：省略 `issue_id`，在 `finish` 上带 `delegator` / `purpose` / `intent`；服务端创建 Issue 后 Associate 本 cid。`assoc_bind` 的 JSON Schema 把 `issue_id` 列为必填（`minLength: 8`，`additionalProperties: false`）。工具失败时返回 `{"error","hint"}`，模型必须按 hint 改下一次调用。一张 waiting 卡不是裁决。服务端不会因为「只有一张卡」替模型选定。
 
 ### 3.2 Issue 查询与评论（已挂上 Loop）
 

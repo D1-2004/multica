@@ -3,6 +3,7 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -285,6 +286,10 @@ func TestAssocToolsBindRequiresIssueID(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "issue_id is required") {
 		t.Fatalf("err=%v", err)
 	}
+	var h hinter
+	if !errors.As(err, &h) || !strings.Contains(h.Hint(), "finish action=issue") {
+		t.Fatalf("missing bind hint: %v", err)
+	}
 }
 
 func TestAssocToolsBindRejectsToolingPurpose(t *testing.T) {
@@ -298,6 +303,10 @@ func TestAssocToolsBindRejectsToolingPurpose(t *testing.T) {
 	}, toolAssocBind, `{"issue_id":"issue-meet","delegator":"须莫🥥","intent":"ask","purpose":"向须莫v6询问明早有没有会议，dws要用dws chat data-auth cross-org去找须莫v6"}`)
 	if err == nil || !strings.Contains(err.Error(), "tooling") {
 		t.Fatalf("err=%v", err)
+	}
+	var h hinter
+	if !errors.As(err, &h) || !strings.Contains(h.Hint(), "dws") {
+		t.Fatalf("missing purpose hint: %v", err)
 	}
 }
 
