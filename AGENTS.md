@@ -61,5 +61,7 @@ This repo is the Aone-deployed fork of `multica-ai/multica`. Deploying, reading
 server logs, changing runtime config, and diagnosing a failed deploy are covered
 by the `aone-deploy` skill in `.agents/skills/`. The migration and upstream-sync
 rules that break production if missed are in CLAUDE.md ("Aone Fork").
+Coordinator Scene Memory goals, e2e plays, and post-deploy verification are in
+`.agents/skills/scene-memory-e2e/`.
 
 See CLAUDE.md for the authoritative rules and common commands.

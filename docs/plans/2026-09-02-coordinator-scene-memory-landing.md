@@ -33,10 +33,13 @@ A  scene_memory 表 + Store 状态机 + Worker 骨架 + fence + Reset
 B  dwsclient 模块 + range reader + MemoryFlush prompt/tool
 C  admission MarkDirty（仅数字员工）+ prefetch + prompt 修正 + /reset-memory
 D  Scene API + inbound Tab + 四个 UI 开关（默认关）
+E  （可选）Daemon 按场域读 Memory；事项召回复用已有 assoc_recall
 ```
 
 A 的并发/lease/reset 测试不过，不准接 LLM。
 
 ## 预发验收
 
-固定狗食用例：workspace `sombrero-galaxy-zleb`，agent `e2293e9e-1e79-4926-b0e6-da4cb693add0`（东翔测试号）。切 dws 预发后保持预发，按会话 ID 发单聊，不要搜通讯录名字。完整步骤见仓库 skill `verify-scene-memory-pre`。
+目标、验证标准、多身份剧本、每次部署后怎么验：仓库 skill `scene-memory-e2e`（`.agents/skills/scene-memory-e2e/`）。不要在本文件复制剧本。
+
+固定狗粮：workspace `sombrero-galaxy-zleb`，agent `e2293e9e-1e79-4926-b0e6-da4cb693add0`（东翔测试号）。dws 保持预发。
