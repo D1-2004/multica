@@ -1,0 +1,44 @@
+{
+  "skill_name": "fc-runtime-dev-loop",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我在 multica-fc-hermes-runtime 的 codex/fix-pi 分支改了 Pi 版本，已经 commit 并 push。请用预发构建一个 FC 候选镜像，然后把 workspace 里的候选 Hermes Runtime 8e87f624-e9c5-4f61-9c31-e4c4af760d10 切过去，给我完整证据。",
+      "expected_output": "Uses the candidate Aone pipeline, waits for SUCCESS, extracts the immutable E2B Template ID, switches only a candidate Runtime through the PAT API, reads it back, and reports run/template/runtime identities without exposing credentials.",
+      "files": [],
+      "expectations": [
+        "Uses the isolated FC candidate pipeline rather than the formal master release pipeline",
+        "Waits for CI SUCCESS and extracts the immutable E2B Template ID before any Runtime mutation",
+        "Validates that the target is an aliyun_fc candidate Runtime and that the Template declares its provider",
+        "Uses bearer Token API calls without placing the Token in commands or output",
+        "Requires a Runtime list read-back proving metadata.template_id equals the built Template ID"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "先不要真的发布。帮我检查 pre-fde 的权限和 FC Runtime 分支构建链路，并预演从 codex/runtime-probe + 当前 dt-fde commit 创建一个 private Hermes 候选 Runtime。",
+      "expected_output": "Runs the read-only doctor and dry-run path, showing the guarded pipeline and API actions while performing no CI submission or Runtime mutation.",
+      "files": [],
+      "expectations": [
+        "Performs only read-only doctor and dry-run operations",
+        "Checks the candidate pipeline repository/path binding and publisher permission",
+        "Shows a candidate Runtime create request with private visibility and Hermes provider",
+        "Explains that CI success, Template readiness, and read-back are required for real completion",
+        "Does not request or print a Token on the command line"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "上次候选构建已经成功，Aone run id 是 67802070，但切 Runtime 时 Token 失效了。不要重建镜像，直接恢复闭环。",
+      "expected_output": "Reuses inspect-build to recover the Template ID, refreshes or validates PAT authentication, performs switch/create as requested, and verifies the Runtime read-back without launching a redundant build.",
+      "files": [],
+      "expectations": [
+        "Reuses inspect-build with run 67802070 instead of starting another build",
+        "Treats 401 as a PAT refresh problem and does not expose the replacement Token",
+        "Recovers the immutable Template ID and build identity from the successful run",
+        "Runs candidate Runtime validation before switch/create",
+        "Requires post-mutation Runtime read-back evidence"
+      ]
+    }
+  ]
+}
