@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/dwsclient"
@@ -76,6 +77,12 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &FlushError{
+				Code: ErrorRouteInactive,
+				Err:  fmt.Errorf("DWS identity is not bound"),
+			}
+		}
 		return nil, fmt.Errorf("resolve DWS identity: %w", err)
 	}
 	if strings.TrimSpace(identity.OrgID) != strings.TrimSpace(row.OrgID) {
@@ -242,16 +249,19 @@ func parseDWSPage(raw []byte, agentUID string) (dwsPage, error) {
 		Success   bool             `json:"success"`
 		ErrorCode string           `json:"errorCode"`
 		Messages  []dwsListMessage `json:"messages"`
-		Result    struct {
-			Messages []dwsListMessage `json:"messages"`
-		} `json:"result"`
+		Result    json.RawMessage  `json:"result"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return dwsPage{}, errors.New("decode DWS conversation history response")
 	}
-	messages := payload.Result.Messages
-	if len(messages) == 0 {
-		messages = payload.Messages
+	messages := payload.Messages
+	if len(messages) == 0 && len(payload.Result) > 0 && payload.Result[0] == '{' {
+		var nested struct {
+			Messages []dwsListMessage `json:"messages"`
+		}
+		if json.Unmarshal(payload.Result, &nested) == nil {
+			messages = nested.Messages
+		}
 	}
 	if !payload.Success && len(messages) == 0 {
 		return dwsPage{}, fmt.Errorf("DWS conversation history query rejected: %s", dwsclient.SafeCode(payload.ErrorCode))
@@ -269,6 +279,7 @@ func parseDWSPage(raw []byte, agentUID string) (dwsPage, error) {
 		if content == "" {
 			continue
 		}
+		content = redactSecrets(content)
 		speaker := strings.Join(strings.Fields(message.Sender), " ")
 		if speaker == "" {
 			speaker = "dingtalk"

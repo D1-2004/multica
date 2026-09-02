@@ -71,6 +71,40 @@ func TestParseDWSPageCountsEmptyMessages(t *testing.T) {
 	}
 }
 
+func TestParseDWSPageAcceptsArrayResult(t *testing.T) {
+	raw := []byte(`{
+		"messages": [
+			{"text":"GoalMate 是工具","createTime":"2026-09-01 12:00:00","messageId":"m1","sender":"冬翔"}
+		],
+		"result": []
+	}`)
+	page, err := parseDWSPage(raw, "")
+	if err != nil || len(page.Events) != 1 || page.Events[0].EvidenceID != "m1" {
+		t.Fatalf("array result must not fail unmarshal: page=%+v err=%v", page, err)
+	}
+}
+
+func TestParseDWSPageRedactsSecrets(t *testing.T) {
+	raw := []byte(`{
+		"success": true,
+		"result": {
+			"messages": [
+				{"content":"password=hunter2 Bearer abcdefghijklmnop","createTime":"2026-09-01 12:00:00","openMessageId":"m1","sender":"冬翔"}
+			]
+		}
+	}`)
+	page, err := parseDWSPage(raw, "")
+	if err != nil || len(page.Events) != 1 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	if strings.Contains(page.Events[0].Content, "hunter2") || strings.Contains(page.Events[0].Content, "abcdefghijklmnop") {
+		t.Fatalf("secrets leaked: %q", page.Events[0].Content)
+	}
+	if !strings.Contains(page.Events[0].Content, "[REDACTED]") {
+		t.Fatalf("missing redaction: %q", page.Events[0].Content)
+	}
+}
+
 func TestParseDWSPageAcceptsTopLevelMessages(t *testing.T) {
 	raw := []byte(`{
 		"messages": [

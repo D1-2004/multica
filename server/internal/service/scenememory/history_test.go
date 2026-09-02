@@ -1,6 +1,7 @@
 package scenememory
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,6 +37,16 @@ func TestAfterCursorIsExclusive(t *testing.T) {
 	got = afterCursor(events, time.Time{}, "")
 	if len(got) != 3 || got[0].EvidenceID != "a" {
 		t.Fatalf("empty cursor should sort oldest first, got %#v", got)
+	}
+}
+
+func TestRedactSecrets(t *testing.T) {
+	got := redactSecrets("Authorization: Bearer abcdefghijklmnop password=secret https://x?token=abc&ok=1")
+	if strings.Contains(got, "abcdefghijklmnop") || strings.Contains(got, "password=secret") || strings.Contains(got, "token=abc") {
+		t.Fatalf("leaked: %q", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("missing redaction: %q", got)
 	}
 }
 

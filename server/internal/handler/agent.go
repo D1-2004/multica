@@ -2322,6 +2322,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SceneMemoryWriteEnabled != nil || req.SceneMemoryRecallEnabled != nil ||
 		req.SceneMemoryUIEnabled != nil || req.SceneMemoryBootstrapEnabled != nil {
+		actorType, _ := h.resolveActor(r, requestUserID(r), uuidToString(updated.WorkspaceID))
+		if actorType == "agent" {
+			writeError(w, http.StatusForbidden, "agents may not update scene memory flags")
+			return
+		}
 		params := db.UpdateAgentSceneMemoryFlagsParams{ID: updated.ID}
 		if req.SceneMemoryWriteEnabled != nil {
 			params.WriteEnabled = pgtype.Bool{Bool: *req.SceneMemoryWriteEnabled, Valid: true}

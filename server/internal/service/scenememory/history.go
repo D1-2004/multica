@@ -1,11 +1,25 @@
 package scenememory
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
+
+var (
+	secretBearer   = regexp.MustCompile(`(?i)\b(bearer\s+)[A-Za-z0-9._\-+=/]{8,}`)
+	secretPassword = regexp.MustCompile(`(?i)(password\s*[:=]\s*)\S+`)
+	secretURLParam = regexp.MustCompile(`(?i)([?&](?:token|access_token|signature|sig|secret|key)=)[^&\s]+`)
+)
+
+func redactSecrets(s string) string {
+	s = secretBearer.ReplaceAllString(s, "${1}[REDACTED]")
+	s = secretPassword.ReplaceAllString(s, "${1}[REDACTED]")
+	s = secretURLParam.ReplaceAllString(s, "${1}[REDACTED]")
+	return s
+}
 
 type HistoryEvent struct {
 	EvidenceID string

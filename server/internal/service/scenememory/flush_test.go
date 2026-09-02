@@ -26,6 +26,13 @@ func TestParseFlushCommit(t *testing.T) {
 	if _, err := parseFlushCommit(old, `{"decision":"maybe"}`); err == nil {
 		t.Fatal("unknown decision must fail")
 	}
+	if _, err := parseFlushCommit(old, `{"decision":"replace"}`); err == nil {
+		t.Fatal("replace without full_text must fail")
+	}
+	redacted, err := parseFlushCommit(old, `{"decision":"replace","full_text":"token Bearer abcdefghijklmnop"}`)
+	if err != nil || !strings.Contains(redacted, "[REDACTED]") || strings.Contains(redacted, "abcdefghijklmnop") {
+		t.Fatalf("replace must redact secrets: %q err=%v", redacted, err)
+	}
 }
 
 func TestFallbackMergeKeepsExistingText(t *testing.T) {

@@ -213,7 +213,7 @@ INSERT INTO scene_memory (
     dirty_revision, flushed_revision
 ) VALUES (
     @workspace_id, @agent_id, @platform, @org_id, @scene_key, @scene_kind, @scene_title,
-    '', 0, now(), now(), '', 0, 0
+    '', 0, now(), date_trunc('second', now()), '', 0, 0
 )
 ON CONFLICT (workspace_id, agent_id, platform, org_id, scene_key)
 DO UPDATE SET
@@ -221,7 +221,7 @@ DO UPDATE SET
     memory_revision = scene_memory.memory_revision + 1,
     last_flush_meta = '{}'::jsonb,
     last_flushed_at = NULL,
-    source_cursor_at = now(),
+    source_cursor_at = date_trunc('second', now()),
     source_cursor_evidence_id = '',
     bootstrapped_at = COALESCE(scene_memory.bootstrapped_at, now()),
     dirty_revision = scene_memory.flushed_revision,

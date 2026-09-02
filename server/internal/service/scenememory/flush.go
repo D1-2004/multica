@@ -62,6 +62,7 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 		if err != nil {
 			return err
 		}
+		merged = redactSecrets(merged)
 		if merged != row.MemoryText {
 			if !ValidateMemoryText(merged) {
 				return fmt.Errorf("flush text exceeds code-point budget")
@@ -287,6 +288,10 @@ func parseFlushCommit(old, raw string) (string, error) {
 		return old, nil
 	case "replace":
 		text := strings.TrimSpace(payload.FullText)
+		if text == "" {
+			return "", fmt.Errorf("replace requires non-empty full_text")
+		}
+		text = redactSecrets(text)
 		if !ValidateMemoryText(text) {
 			return "", fmt.Errorf("text exceeds 1600 code points")
 		}
