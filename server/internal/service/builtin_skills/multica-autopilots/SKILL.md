@@ -31,7 +31,7 @@ Execution modes:
 - `run_only` creates an agent task directly. No issue is created; any durable
   report location has to come from other task context or instructions.
 
-`issue-title-template` only supports `{{date}}`. Do not invent `{{trigger_id}}`, `{{branch}}`, or other variables.
+`issue-title-template` supports exactly two variables: `{{date}}` and `{{date_yesterday}}`. Do not invent `{{trigger_id}}`, `{{branch}}`, or other variables. Both render `YYYY-MM-DD` in the triggering schedule's timezone (runs with no schedule trigger — manual and webhook — render UTC). `{{date}}` is the day the run itself fires, not the day it reports on: an autopilot that fires after midnight to summarize the previous day must title itself with `{{date_yesterday}}`.
 
 ## CLI
 

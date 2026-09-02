@@ -1600,10 +1600,25 @@ func formatAutopilotRunTimestamp(run db.AutopilotRun, timezone string) string {
 	return triggeredAt.In(loc).Format("2006-01-02 15:04") + " " + label
 }
 
-func formatAutopilotRunDate(run db.AutopilotRun, timezone string) string {
-	triggeredAt := autopilotRunTriggeredAt(run)
+// autopilotRunLocalDay returns the run's trigger-local wall-clock day, i.e.
+// the instant the run fired projected into the triggering schedule's
+// timezone. Every date rendered into an issue title is derived from this so
+// they all agree on which calendar day the run belongs to.
+func autopilotRunLocalDay(run db.AutopilotRun, timezone string) time.Time {
 	loc, _ := autopilotTriggerLocation(timezone)
-	return triggeredAt.In(loc).Format("2006-01-02")
+	return autopilotRunTriggeredAt(run).In(loc)
+}
+
+func formatAutopilotRunDate(run db.AutopilotRun, timezone string) string {
+	return autopilotRunLocalDay(run, timezone).Format("2006-01-02")
+}
+
+// formatAutopilotRunDateYesterday returns the calendar day before the run's
+// trigger-local day. AddDate walks the wall clock by one calendar day, which
+// is what "yesterday" means to a user; subtracting 24h would skip or repeat a
+// day across a DST transition.
+func formatAutopilotRunDateYesterday(run db.AutopilotRun, timezone string) string {
+	return autopilotRunLocalDay(run, timezone).AddDate(0, 0, -1).Format("2006-01-02")
 }
 
 func autopilotRunTriggeredAt(run db.AutopilotRun) time.Time {
@@ -1685,8 +1700,8 @@ func prettifyJSON(raw []byte) ([]byte, error) {
 
 // issueTitleTemplateTokenRE matches any {{...}} token in an issue-title
 // template. We deliberately permit whitespace inside the braces ({{ date }})
-// so users can format templates either way; the canonical token is still
-// {{date}}.
+// so users can format templates either way; the canonical spelling is still
+// the unpadded one.
 var issueTitleTemplateTokenRE = regexp.MustCompile(`\{\{\s*([^{}]*?)\s*\}\}`)
 
 // interpolateTemplate substitutes supported {{name}} placeholders in the
@@ -1700,11 +1715,14 @@ func (s *AutopilotService) interpolateTemplate(ap db.Autopilot, run db.Autopilot
 		tmpl = ap.IssueTitleTemplate.String
 	}
 	triggerDate := formatAutopilotRunDate(run, triggerTimezone)
+	yesterdayDate := formatAutopilotRunDateYesterday(run, triggerTimezone)
 	return issueTitleTemplateTokenRE.ReplaceAllStringFunc(tmpl, func(match string) string {
 		name := strings.TrimSpace(match[2 : len(match)-2])
 		switch name {
 		case "date":
 			return triggerDate
+		case "date_yesterday":
+			return yesterdayDate
 		default:
 			return match
 		}
@@ -1712,10 +1730,15 @@ func (s *AutopilotService) interpolateTemplate(ap db.Autopilot, run db.Autopilot
 }
 
 // SupportedIssueTitleTemplateVariables enumerates the placeholders that
-// interpolateTemplate will substitute. Keep this in sync with the
-// substitution logic above and with the docs in autopilots.mdx /
-// autopilots.zh.mdx.
-var SupportedIssueTitleTemplateVariables = []string{"date"}
+// interpolateTemplate will substitute. Both render YYYY-MM-DD in the
+// triggering schedule's timezone, not UTC: {{date}} is the run's own local
+// day and {{date_yesterday}} the day before it, so an after-midnight run
+// reporting on the previous day must use {{date_yesterday}}. Runs with no
+// schedule trigger (manual, webhook) fall back to UTC. Keep this in sync with
+// the substitution logic above, the --issue-title-template help in
+// cmd/multica/cmd_autopilot.go, and the built-in skill
+// builtin_skills/multica-autopilots/SKILL.md.
+var SupportedIssueTitleTemplateVariables = []string{"date", "date_yesterday"}
 
 // ValidateIssueTitleTemplate rejects templates that contain any {{...}} token
 // other than the supported set. An empty template is valid (the autopilot

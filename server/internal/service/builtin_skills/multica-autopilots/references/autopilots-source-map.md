@@ -4,6 +4,7 @@
 - The CLI maps reads/writes to `/api/autopilots`, `/api/autopilots/{id}`, `/api/autopilots/{id}/trigger`, `/api/autopilots/{id}/runs`, and trigger subroutes.
 - `server/internal/service/autopilot.go` has `DispatchAutopilot`, synchronous delivery-idempotent `AdmitAutopilotWebhookDelivery`, and worker-side `DispatchAutopilotForWebhookDelivery`; it creates `autopilot_run` and switches on `execution_mode`.
 - `create_issue` calls `dispatchCreateIssue`; `run_only` calls `dispatchRunOnly`.
+- Issue-title templates: `SupportedIssueTitleTemplateVariables` (`date`, `date_yesterday`) and `ValidateIssueTitleTemplate` in `server/internal/service/autopilot.go` are the allowlist create/update enforce; `interpolateTemplate` substitutes them from `autopilotRunLocalDay`, which projects the run's trigger instant into the schedule trigger's timezone (`resolveAutopilotTriggerTimezone`, defaulting to UTC when the run has no schedule trigger — manual runs pass an invalid trigger id). `{{date_yesterday}}` steps back one calendar day with `AddDate`, so it stays correct across DST.
 - `resolveAutopilotLeader` resolves squad-assigned autopilots to the squad leader.
 - `AgentReadiness` blocks archived/runtime-unready agents before enqueue.
 - `server/cmd/server/router.go` exposes authenticated `/api/autopilots` routes and unauthenticated webhook ingress `/api/webhooks/autopilots/{token}`.
