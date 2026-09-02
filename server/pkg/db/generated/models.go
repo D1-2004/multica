@@ -1230,6 +1230,9 @@ type SceneMemory struct {
 	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
 	LastTriggerAt                pgtype.Timestamptz `json:"last_trigger_at"`
 	LastTriggerEvidenceID        string             `json:"last_trigger_evidence_id"`
+	PendingFromAt                pgtype.Timestamptz `json:"pending_from_at"`
+	PendingFromEvidenceID        string             `json:"pending_from_evidence_id"`
+	HistoryResumeBefore          pgtype.Timestamptz `json:"history_resume_before"`
 }
 
 type InboundCoordinatorJob struct {

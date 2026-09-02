@@ -23,12 +23,14 @@ WITH upsert AS (
         dirty_revision, dirty_since, dirty_through_at, dirty_through_evidence_id,
         available_at, last_trigger_job_id, last_trigger_coord_trace_id,
         last_trigger_idempotency_key, last_trigger_at, last_trigger_evidence_id,
+        pending_from_at, pending_from_evidence_id,
         blocked_at, last_error_code, last_error
     ) VALUES (
         @workspace_id, @agent_id, @platform, @org_id, @scene_key, @scene_kind, @scene_title,
         1, now(), @dirty_through_at, @dirty_through_evidence_id,
         now() + interval '4 seconds', @last_trigger_job_id, @last_trigger_coord_trace_id,
         @last_trigger_idempotency_key, @dirty_through_at, @dirty_through_evidence_id,
+        @dirty_through_at, @dirty_through_evidence_id,
         NULL, '', ''
     )
     ON CONFLICT (workspace_id, agent_id, platform, org_id, scene_key)
@@ -67,6 +69,22 @@ WITH upsert AS (
         last_trigger_idempotency_key = EXCLUDED.last_trigger_idempotency_key,
         last_trigger_at = EXCLUDED.last_trigger_at,
         last_trigger_evidence_id = EXCLUDED.last_trigger_evidence_id,
+        pending_from_at = CASE
+            WHEN scene_memory.pending_from_at IS NULL THEN EXCLUDED.pending_from_at
+            WHEN EXCLUDED.pending_from_at IS NULL THEN scene_memory.pending_from_at
+            WHEN (EXCLUDED.pending_from_at, EXCLUDED.pending_from_evidence_id)
+               < (scene_memory.pending_from_at, scene_memory.pending_from_evidence_id)
+            THEN EXCLUDED.pending_from_at
+            ELSE scene_memory.pending_from_at
+        END,
+        pending_from_evidence_id = CASE
+            WHEN scene_memory.pending_from_at IS NULL THEN EXCLUDED.pending_from_evidence_id
+            WHEN EXCLUDED.pending_from_at IS NULL THEN scene_memory.pending_from_evidence_id
+            WHEN (EXCLUDED.pending_from_at, EXCLUDED.pending_from_evidence_id)
+               < (scene_memory.pending_from_at, scene_memory.pending_from_evidence_id)
+            THEN EXCLUDED.pending_from_evidence_id
+            ELSE scene_memory.pending_from_evidence_id
+        END,
         blocked_at = NULL,
         last_error_code = '',
         last_error = '',
@@ -131,6 +149,7 @@ SET memory_text = CASE WHEN @replace_text::boolean THEN @memory_text ELSE memory
     bootstrapped_at = COALESCE(bootstrapped_at, now()),
     last_flush_meta = @last_flush_meta,
     last_flushed_at = now(),
+    history_resume_before = NULL,
     updated_at = now()
 WHERE id = @id
   AND lease_token = @lease_token
@@ -154,6 +173,15 @@ SET flushed_revision = lease_target_dirty_revision,
     last_error_code = '',
     last_error = '',
     attempt_count = 0,
+    pending_from_at = CASE
+        WHEN dirty_revision > lease_target_dirty_revision THEN pending_from_at
+        ELSE NULL
+    END,
+    pending_from_evidence_id = CASE
+        WHEN dirty_revision > lease_target_dirty_revision THEN pending_from_evidence_id
+        ELSE ''
+    END,
+    history_resume_before = NULL,
     updated_at = now()
 WHERE id = @id
   AND lease_token = @lease_token
@@ -287,6 +315,19 @@ DO UPDATE SET
         THEN scene_memory.last_trigger_evidence_id
         ELSE ''
     END,
+    pending_from_at = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.last_trigger_at
+        ELSE NULL
+    END,
+    pending_from_evidence_id = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE(@source_cursor_at, date_trunc('second', now())), @source_cursor_evidence_id)
+        THEN scene_memory.last_trigger_evidence_id
+        ELSE ''
+    END,
+    history_resume_before = NULL,
     lease_token = NULL,
     lease_expires_at = NULL,
     lease_target_dirty_revision = NULL,
@@ -299,6 +340,14 @@ DO UPDATE SET
     blocked_at = NULL,
     updated_at = now()
 RETURNING *;
+
+-- name: SetSceneMemoryHistoryResume :execrows
+UPDATE scene_memory
+SET history_resume_before = @history_resume_before,
+    updated_at = now()
+WHERE id = @id
+  AND lease_token = @lease_token
+  AND lease_expires_at > now();
 
 -- name: CountValidSceneMemoryLeases :one
 SELECT count(*)::bigint FROM scene_memory

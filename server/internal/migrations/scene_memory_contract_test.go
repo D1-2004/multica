@@ -93,4 +93,15 @@ func TestSceneMemoryMigrationContract(t *testing.T) {
 	if strings.Contains(trigger, "REFERENCES ") || strings.Contains(trigger, "CREATE INDEX") {
 		t.Fatal("last_trigger migration must not add foreign keys or non-concurrent indexes")
 	}
+
+	pending := read("9127_scene_memory_pending_from.up.sql")
+	for _, required := range []string{
+		"ADD COLUMN IF NOT EXISTS pending_from_at TIMESTAMPTZ",
+		"ADD COLUMN IF NOT EXISTS pending_from_evidence_id TEXT NOT NULL DEFAULT ''",
+		"ADD COLUMN IF NOT EXISTS history_resume_before TIMESTAMPTZ",
+	} {
+		if !strings.Contains(pending, required) {
+			t.Errorf("pending_from migration missing %q", required)
+		}
+	}
 }

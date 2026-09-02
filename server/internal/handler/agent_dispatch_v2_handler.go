@@ -1322,7 +1322,8 @@ func (h *Handler) tryDispatchResetMemory(
 		closedEdges = result.ClosedEdges
 		unlinkedEvents = result.UnlinkedEvents
 	}
-	if h != nil && h.SceneMemoryStore != nil && conversationID != "" {
+	if h != nil && h.SceneMemoryStore != nil && conversationID != "" &&
+		command.Source.Type == "digital_employee" {
 		kind := scenememory.KindFromChatType(command.Event.Data.Conversation.Type)
 		orgID := ""
 		var identityErr error

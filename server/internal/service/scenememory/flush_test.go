@@ -156,6 +156,33 @@ func TestPlanFlushIncompleteWhenEarlierTriggerMissingEvenIfCovered(t *testing.T)
 	}
 }
 
+func TestPlanFlushMergesAllLateTriggersInWindow(t *testing.T) {
+	later := time.Date(2026, 9, 2, 12, 0, 2, 0, time.UTC)
+	mid := later.Add(-time.Second)
+	early := later.Add(-2 * time.Second)
+	row := db.SceneMemory{
+		LeaseTargetThroughAt:         timestamptz(later),
+		LeaseTargetThroughEvidenceID: "msg-later",
+		LastTriggerAt:                timestamptz(mid),
+		LastTriggerEvidenceID:        "msg-mid",
+		PendingFromAt:                timestamptz(early),
+		PendingFromEvidenceID:        "msg-early",
+		SourceCursorAt:               timestamptz(later),
+		SourceCursorEvidenceID:       "msg-later",
+	}
+	plan, err := planFlush(row, []HistoryEvent{
+		{EvidenceID: "msg-early", OccurredAt: early, Content: "late A"},
+		{EvidenceID: "msg-mid", OccurredAt: mid, Content: "late B"},
+		{EvidenceID: "msg-later", OccurredAt: later, Content: "high-water"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsEvidence(plan.batch, "msg-early") || !containsEvidence(plan.batch, "msg-mid") {
+		t.Fatalf("debounce window must merge every late trigger, not only last_trigger: %+v", plan)
+	}
+}
+
 func TestPlanFlushSameSecondSmallerEvidence(t *testing.T) {
 	at := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	row := claimedAfterLaterThenEarlier(at, "zzz", at, "aaa")

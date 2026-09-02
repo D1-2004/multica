@@ -203,6 +203,19 @@ func TestHistoryHasGap(t *testing.T) {
 	}
 }
 
+func TestHistoryStartBeforeUsesResume(t *testing.T) {
+	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	resume := now.Add(-time.Hour)
+	got := historyStartBefore(db.SceneMemory{}, now)
+	if !got.Equal(now.Add(time.Minute)) {
+		t.Fatalf("fresh read starts near now, got %s", got)
+	}
+	got = historyStartBefore(db.SceneMemory{HistoryResumeBefore: timestamptz(resume)}, now)
+	if !got.Equal(resume) {
+		t.Fatalf("page-cap resume must continue older, got %s", got)
+	}
+}
+
 func TestHistoryLookbackIncludesPendingTriggerBeforeCursor(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	cursor := now.Add(-time.Hour)

@@ -42,10 +42,10 @@ func openPool(t *testing.T) *pgxpool.Pool {
 	var hasTriggerAt bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS (
 		SELECT 1 FROM information_schema.columns
-		WHERE table_name = 'scene_memory' AND column_name = 'last_trigger_at'
+		WHERE table_name = 'scene_memory' AND column_name = 'pending_from_at'
 	)`).Scan(&hasTriggerAt); err != nil || !hasTriggerAt {
 		pool.Close()
-		t.Skip("scene_memory last_trigger_at is not migrated")
+		t.Skip("scene_memory pending_from_at is not migrated")
 	}
 	t.Cleanup(pool.Close)
 	return pool

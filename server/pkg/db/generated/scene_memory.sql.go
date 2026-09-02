@@ -50,6 +50,9 @@ func scanSceneMemory(row pgxRow) (SceneMemory, error) {
 		&item.UpdatedAt,
 		&item.LastTriggerAt,
 		&item.LastTriggerEvidenceID,
+		&item.PendingFromAt,
+		&item.PendingFromEvidenceID,
+		&item.HistoryResumeBefore,
 	)
 	return item, err
 }
@@ -131,12 +134,14 @@ WITH upsert AS (
         dirty_revision, dirty_since, dirty_through_at, dirty_through_evidence_id,
         available_at, last_trigger_job_id, last_trigger_coord_trace_id,
         last_trigger_idempotency_key, last_trigger_at, last_trigger_evidence_id,
+        pending_from_at, pending_from_evidence_id,
         blocked_at, last_error_code, last_error
     ) VALUES (
         $1, $2, $3, $4, $5, $6, $7,
         1, now(), $8, $9,
         now() + interval '4 seconds', $10, $11,
         $12, $8, $9,
+        $8, $9,
         NULL, '', ''
     )
     ON CONFLICT (workspace_id, agent_id, platform, org_id, scene_key)
@@ -175,6 +180,22 @@ WITH upsert AS (
         last_trigger_idempotency_key = EXCLUDED.last_trigger_idempotency_key,
         last_trigger_at = EXCLUDED.last_trigger_at,
         last_trigger_evidence_id = EXCLUDED.last_trigger_evidence_id,
+        pending_from_at = CASE
+            WHEN scene_memory.pending_from_at IS NULL THEN EXCLUDED.pending_from_at
+            WHEN EXCLUDED.pending_from_at IS NULL THEN scene_memory.pending_from_at
+            WHEN (EXCLUDED.pending_from_at, EXCLUDED.pending_from_evidence_id)
+               < (scene_memory.pending_from_at, scene_memory.pending_from_evidence_id)
+            THEN EXCLUDED.pending_from_at
+            ELSE scene_memory.pending_from_at
+        END,
+        pending_from_evidence_id = CASE
+            WHEN scene_memory.pending_from_at IS NULL THEN EXCLUDED.pending_from_evidence_id
+            WHEN EXCLUDED.pending_from_at IS NULL THEN scene_memory.pending_from_evidence_id
+            WHEN (EXCLUDED.pending_from_at, EXCLUDED.pending_from_evidence_id)
+               < (scene_memory.pending_from_at, scene_memory.pending_from_evidence_id)
+            THEN EXCLUDED.pending_from_evidence_id
+            ELSE scene_memory.pending_from_evidence_id
+        END,
         blocked_at = NULL,
         last_error_code = '',
         last_error = '',
@@ -265,6 +286,7 @@ SET memory_text = CASE WHEN $1::boolean THEN $2 ELSE memory_text END,
     bootstrapped_at = COALESCE(bootstrapped_at, now()),
     last_flush_meta = $5,
     last_flushed_at = now(),
+    history_resume_before = NULL,
     updated_at = now()
 WHERE id = $6
   AND lease_token = $7
@@ -297,6 +319,15 @@ SET flushed_revision = lease_target_dirty_revision,
     last_error_code = '',
     last_error = '',
     attempt_count = 0,
+    pending_from_at = CASE
+        WHEN dirty_revision > lease_target_dirty_revision THEN pending_from_at
+        ELSE NULL
+    END,
+    pending_from_evidence_id = CASE
+        WHEN dirty_revision > lease_target_dirty_revision THEN pending_from_evidence_id
+        ELSE ''
+    END,
+    history_resume_before = NULL,
     updated_at = now()
 WHERE id = $1
   AND lease_token = $2
@@ -481,6 +512,19 @@ DO UPDATE SET
         THEN scene_memory.last_trigger_evidence_id
         ELSE ''
     END,
+    pending_from_at = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.last_trigger_at
+        ELSE NULL
+    END,
+    pending_from_evidence_id = CASE
+        WHEN (scene_memory.last_trigger_at, scene_memory.last_trigger_evidence_id)
+               > (COALESCE($8, date_trunc('second', now())), $9)
+        THEN scene_memory.last_trigger_evidence_id
+        ELSE ''
+    END,
+    history_resume_before = NULL,
     lease_token = NULL,
     lease_expires_at = NULL,
     lease_target_dirty_revision = NULL,
@@ -495,6 +539,24 @@ DO UPDATE SET
 RETURNING *`,
 		arg.WorkspaceID, arg.AgentID, arg.Platform, arg.OrgID, arg.SceneKey, arg.SceneKind, arg.SceneTitle,
 		arg.SourceCursorAt, arg.SourceCursorEvidenceID))
+}
+
+type SetSceneMemoryHistoryResumeParams struct {
+	HistoryResumeBefore pgtype.Timestamptz `json:"history_resume_before"`
+	ID                  pgtype.UUID        `json:"id"`
+	LeaseToken          pgtype.UUID        `json:"lease_token"`
+}
+
+func (q *Queries) SetSceneMemoryHistoryResume(ctx context.Context, arg SetSceneMemoryHistoryResumeParams) (int64, error) {
+	tag, err := q.db.Exec(ctx, `
+UPDATE scene_memory
+SET history_resume_before = $1, updated_at = now()
+WHERE id = $2 AND lease_token = $3 AND lease_expires_at > now()`,
+		arg.HistoryResumeBefore, arg.ID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (q *Queries) CountValidSceneMemoryLeases(ctx context.Context) (int64, error) {

@@ -120,6 +120,20 @@ func FlushErrorCode(err error) string {
 	return ""
 }
 
+// HistoryGapError is INCOMPLETE with the oldest page we did reach, so the
+// next claim can resume older instead of rereading the same newest pages.
+type HistoryGapError struct {
+	FlushError
+	Oldest time.Time
+}
+
+func (e *HistoryGapError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return &e.FlushError
+}
+
 func TerminalFlushCode(code string) bool {
 	switch code {
 	case ErrorAuth, ErrorRouteInactive, ErrorConfig:

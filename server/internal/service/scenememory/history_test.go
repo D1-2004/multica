@@ -23,6 +23,22 @@ func TestFilterUntilDropsAfterCutoff(t *testing.T) {
 	}
 }
 
+func TestIncludePendingWindowKeepsEveryLateEvent(t *testing.T) {
+	cursor := time.Date(2026, 9, 1, 12, 0, 2, 0, time.UTC)
+	early := cursor.Add(-2 * time.Second)
+	mid := cursor.Add(-time.Second)
+	events := []HistoryEvent{
+		{EvidenceID: "early", OccurredAt: early},
+		{EvidenceID: "mid", OccurredAt: mid},
+		{EvidenceID: "later", OccurredAt: cursor},
+	}
+	delta := afterCursor(events, cursor, "later")
+	got := includePendingWindow(delta, events, early, "early", cursor, "later")
+	if !containsEvidence(got, "early") || !containsEvidence(got, "mid") {
+		t.Fatalf("pending window must keep both late events: %#v", got)
+	}
+}
+
 func TestForceIncludeEvidenceRestoresDroppedTrigger(t *testing.T) {
 	cursor := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	events := []HistoryEvent{

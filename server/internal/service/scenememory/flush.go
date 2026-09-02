@@ -47,6 +47,10 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 	if f.History != nil {
 		got, err := f.History.Read(ctx, row)
 		if err != nil {
+			var gap *HistoryGapError
+			if errors.As(err, &gap) && !gap.Oldest.IsZero() {
+				_ = f.Store.SetHistoryResume(ctx, row, gap.Oldest)
+			}
 			return classifyHistory(err)
 		}
 		events = got
@@ -120,6 +124,7 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 	}
 	cutoffEv := strings.TrimSpace(row.LeaseTargetThroughEvidenceID)
 	triggerEv := strings.TrimSpace(row.LastTriggerEvidenceID)
+	pendingAt, pendingEv := pendingFrom(row)
 	events = filterUntil(events, cutoffAt, cutoffEv)
 	cursorAt := time.Time{}
 	if row.SourceCursorAt.Valid {
@@ -127,12 +132,12 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 	}
 	cursorEv := row.SourceCursorEvidenceID
 	delta := afterCursor(events, cursorAt, cursorEv)
-	// dirty_through/lease_target never move backward, so the inbound that
-	// woke this claim may sit before the high-water cutoff. Force-include
-	// that trigger and do not treat a covered empty delta as caught-up
-	// while it is still missing from history.
+	// dirty_through/lease_target never move backward. A debounce window can
+	// contain several late messages; pending_from is the oldest of them.
+	delta = includePendingWindow(delta, events, pendingAt, pendingEv, cursorAt, cursorEv)
 	delta = forceIncludeEvidence(delta, events, cutoffEv)
 	delta = forceIncludeEvidence(delta, events, triggerEv)
+	delta = forceIncludeEvidence(delta, events, pendingEv)
 	covered := CursorCovers(cursorAt, cursorEv, cutoffAt, cutoffEv)
 	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered {
 		return flushPlan{}, &FlushError{
@@ -144,6 +149,12 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 		return flushPlan{}, &FlushError{
 			Code: ErrorIncomplete,
 			Err:  fmt.Errorf("pending trigger evidence is not visible yet"),
+		}
+	}
+	if pendingEv != "" && !containsEvidence(events, pendingEv) {
+		return flushPlan{}, &FlushError{
+			Code: ErrorIncomplete,
+			Err:  fmt.Errorf("pending window evidence is not visible yet"),
 		}
 	}
 	plan := flushPlan{batch: delta, cursorAt: cursorAt, cursorEv: cursorEv}
@@ -168,6 +179,16 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 		}
 	}
 	return plan, nil
+}
+
+func pendingFrom(row db.SceneMemory) (time.Time, string) {
+	if row.PendingFromAt.Valid && !row.PendingFromAt.Time.IsZero() {
+		return row.PendingFromAt.Time, strings.TrimSpace(row.PendingFromEvidenceID)
+	}
+	if row.LastTriggerAt.Valid && !row.LastTriggerAt.Time.IsZero() {
+		return row.LastTriggerAt.Time, strings.TrimSpace(row.LastTriggerEvidenceID)
+	}
+	return time.Time{}, strings.TrimSpace(row.LastTriggerEvidenceID)
 }
 
 func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []HistoryEvent) (string, error) {

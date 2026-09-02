@@ -128,7 +128,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		bootstrap = flags.BootstrapEnabled
 	}
 	lookback := HistoryLookback(row, bootstrap, now)
-	before := now.Add(time.Minute)
+	before := historyStartBefore(row, now)
 	seen := make(map[string]struct{})
 	out := make([]HistoryEvent, 0, limit)
 	oldest := before
@@ -172,12 +172,25 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		before = oldest
 	}
 	if historyHasGap(row, oldest, hitPageCap) {
-		return nil, &FlushError{
-			Code: ErrorIncomplete,
-			Err:  fmt.Errorf("history page cap left a gap behind the cursor"),
+		return nil, &HistoryGapError{
+			FlushError: FlushError{
+				Code: ErrorIncomplete,
+				Err:  fmt.Errorf("history page cap left a gap behind the cursor"),
+			},
+			Oldest: oldest,
 		}
 	}
 	return filterAfterLookback(out, lookback), nil
+}
+
+func historyStartBefore(row db.SceneMemory, now time.Time) time.Time {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if row.HistoryResumeBefore.Valid && !row.HistoryResumeBefore.Time.IsZero() {
+		return row.HistoryResumeBefore.Time.UTC()
+	}
+	return now.UTC().Add(time.Minute)
 }
 
 func filterAfterLookback(events []HistoryEvent, lookback time.Time) []HistoryEvent {
@@ -206,6 +219,12 @@ func HistoryLookback(row db.SceneMemory, bootstrap bool, now time.Time) time.Tim
 				lookback = at
 			}
 		}
+		if row.PendingFromAt.Valid && !row.PendingFromAt.Time.IsZero() {
+			at := row.PendingFromAt.Time.UTC()
+			if at.Before(lookback) {
+				lookback = at
+			}
+		}
 		return lookback
 	}
 	if need := historyNeedReach(row); !need.IsZero() {
@@ -224,6 +243,12 @@ func historyNeedReach(row db.SceneMemory) time.Time {
 	}
 	if row.LastTriggerAt.Valid && !row.LastTriggerAt.Time.IsZero() {
 		at := row.LastTriggerAt.Time.UTC()
+		if need.IsZero() || at.Before(need) {
+			need = at
+		}
+	}
+	if row.PendingFromAt.Valid && !row.PendingFromAt.Time.IsZero() {
+		at := row.PendingFromAt.Time.UTC()
 		if need.IsZero() || at.Before(need) {
 			need = at
 		}
