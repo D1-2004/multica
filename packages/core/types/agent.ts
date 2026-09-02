@@ -474,7 +474,7 @@ export interface Agent {
   /**
    * When true, DingTalk and web chat first decide whether to reply immediately
    * or open an Issue. Optional because older backends omit it; treat
-   * `undefined` as true. Only an explicit false turns it off.
+   * `undefined` as false. Only an explicit true turns it on.
    */
   inbound_coordinator?: boolean;
   /**

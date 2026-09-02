@@ -88,8 +88,8 @@ type AgentResponse struct {
 	// default; local chats and issue comments already resume without it.
 	ChatSessionResume bool `json:"chat_session_resume"`
 	// InboundCoordinator runs the server-side assoc tool loop that replies
-	// immediately or opens an Issue. On by default for new and existing
-	// agents; only an explicit owner off switch skips it.
+	// immediately or opens an Issue. Off by default for new and existing
+	// agents; only an explicit owner on switch enables it.
 	InboundCoordinator bool `json:"inbound_coordinator"`
 	// Persona is the inbound coordinator's character. Empty uses a concise
 	// colleague default. Independent of Instructions, which remain sandbox
@@ -343,7 +343,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		SystemInstructions:       systemInstructionsFor(a),
 		DispatchPromptOverrides:  parseDispatchPromptOverrides(a.DispatchPromptOverrides),
 		DispatchAlwaysNewIssue:   a.DispatchAlwaysNewIssue,
-		InboundCoordinator:       true,
+		InboundCoordinator:       false,
 		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
 		RuntimeMode:              a.RuntimeMode,
 		RuntimeConfig:            rc,

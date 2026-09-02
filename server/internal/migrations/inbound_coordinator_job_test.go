@@ -56,3 +56,25 @@ func TestInboundCoordinatorJobMigrationContract(t *testing.T) {
 		t.Fatal("dispatch endpoint compatibility migration must be replay-safe")
 	}
 }
+
+func TestInboundCoordinatorDefaultOffMigration(t *testing.T) {
+	t.Parallel()
+	_, current, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve migration test path")
+	}
+	dir := filepath.Clean(filepath.Join(filepath.Dir(current), "..", "..", "migrations"))
+	up, err := os.ReadFile(filepath.Join(dir, "9120_agent_inbound_coordinator_default_off.up.sql"))
+	if err != nil {
+		t.Fatalf("read default-off migration: %v", err)
+	}
+	body := string(up)
+	for _, required := range []string{
+		"ALTER COLUMN inbound_coordinator SET DEFAULT false",
+		"UPDATE agent SET inbound_coordinator = false",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("default-off migration missing %q", required)
+		}
+	}
+}

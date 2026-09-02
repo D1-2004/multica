@@ -490,7 +490,7 @@ func (c *Coordinator) coordinatorOff(ctx context.Context, turn Turn) bool {
 	}
 	on, err := c.Queries.GetAgentInboundCoordinator(ctx, turn.AgentID)
 	if err != nil {
-		return false
+		return true
 	}
 	return !on
 }

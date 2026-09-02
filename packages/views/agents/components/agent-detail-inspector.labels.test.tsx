@@ -92,7 +92,7 @@ describe("AgentDetailInspector labels", () => {
     expect(toggle).toBeChecked();
   });
 
-  it("defaults inbound coordinator on and saves an explicit off", () => {
+  it("defaults inbound coordinator off and saves an explicit on", () => {
     const onUpdate = vi.fn(async () => {});
     renderWithI18n(
       <AgentDetailInspector
@@ -107,11 +107,11 @@ describe("AgentDetailInspector labels", () => {
     );
 
     const toggle = screen.getByLabelText("Judge before sandbox");
-    expect(toggle).toBeChecked();
+    expect(toggle).not.toBeChecked();
     fireEvent.click(toggle);
     expect(onUpdate).toHaveBeenCalledWith("agent-1", {
-      inbound_coordinator: false,
+      inbound_coordinator: true,
     });
-    expect(toggle).not.toBeChecked();
+    expect(toggle).toBeChecked();
   });
 });

@@ -322,7 +322,7 @@ export function AgentDetailInspector({
           />
           <InboundCoordinatorField
             agentId={agent.id}
-            enabled={agent.inbound_coordinator !== false}
+            enabled={agent.inbound_coordinator === true}
             canEdit={canEdit}
             onSave={(next) => update({ inbound_coordinator: next })}
           />
