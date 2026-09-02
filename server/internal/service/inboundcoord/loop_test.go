@@ -232,6 +232,35 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	}
 }
 
+func TestLoopRecallFillsInboundConversationID(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"q":"辰驷"}`),
+		assistantTool("finish", toolFinish, `{"action":"reply","text":"当前会话没有打球这件事。","reason":"场域无匹配"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[]}`}
+	inbound := "cid+bEFv7ngm9n79Q1vL9HYJw=="
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "和辰驷确认一下，明天几点有空去打球。",
+		ConversationID: inbound,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionReply {
+		t.Fatalf("action=%s", got.Action)
+	}
+	if len(tools.calls) == 0 || !strings.Contains(tools.calls[0], inbound) || !strings.Contains(tools.calls[0], "辰驷") {
+		t.Fatalf("recall must keep inbound cid with q, calls=%v", tools.calls)
+	}
+	if len(got.Steps) == 0 || !strings.Contains(got.Steps[0].Input, inbound) {
+		t.Fatalf("timeline must show inbound cid, steps=%#v", got.Steps)
+	}
+}
+
 func TestLoopNewDeliverableBindSkipsForcedComment(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
@@ -310,6 +339,32 @@ func TestLoopInboundOutreachReplyRejectsDirectReply(t *testing.T) {
 	}
 	if chat.calls != 3 {
 		t.Fatalf("model rounds = %d, want rejected reply plus member comment", chat.calls)
+	}
+}
+
+func TestLoopWindowKeywordHitDoesNotForceComment(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"q":"辰驷"}`),
+		assistantTool("bind", toolAssocBind, `{"purpose":"向辰驷确认明天几点有空去打球","intent":"ask"}`),
+		assistantTool("finish", toolFinish, `{"action":"issue","text":"我去问辰驷明天几点有空打球。","look_into":"向辰驷确认明天几点有空去打球","reason":"新的询问"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向辰驷确认明天什么时候去洗脚","status":"waiting","matched_via":"window","on_this_scene":false,"conversations":[{"conversation_id":"cid-other","rel":"outreach"}],"waiting_on":[{"conversation_id":"cid-inbound"}]}]}`}
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "和辰驷确认一下，明天几点有空去打球。",
+		ConversationID: "cid-inbound",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionIssue || got.IssueComment != nil {
+		t.Fatalf("window hit must not force comment-add, decision=%#v", got)
+	}
+	if got.Purpose != "向辰驷确认明天几点有空去打球" {
+		t.Fatalf("purpose=%q", got.Purpose)
 	}
 }
 

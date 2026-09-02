@@ -73,6 +73,9 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		}
 		messages = append(messages, msg.ToParam())
 		for _, call := range calls {
+			if call.Name == toolAssocRecall {
+				call.Arguments = defaultRecallConversationID(call.Arguments, turn.ConversationID)
+			}
 			appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: clipRunes(call.Arguments, 1200)})
 			if call.Name == toolFinish {
 				if reqErr := requireRecallBeforeFinish(turn, recalls, recalledIssues, continuationIssues, bind, call.Arguments); reqErr != nil {
@@ -249,15 +252,15 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 	return []openai.ChatCompletionToolUnionParam{
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocRecall,
-			Description: openai.String("Recall Issue/Task matters and inbound/outbound events on the scene graph. A new inbound on a previously outbound DM is the same conversation_id. Pass the user's openConversationId when they name one. Omit conversation_id to use this inbound scene. Pass q without conversation_id to list this agent's matters in the window. since defaults to 48h."),
+			Description: openai.String("Recall Issue/Task matters and inbound/outbound events on the scene graph. Always include this inbound conversation_id; the server fills it if omitted. q filters purpose on that scene and must not drop the cid. Pass a different openConversationId only when the user named one. since defaults to 48h."),
 			Parameters: shared.FunctionParameters{
 				"type": "object",
 				"properties": map[string]any{
 					"since":           map[string]any{"type": "string", "description": "24h, 48h, 7d, or RFC3339. Defaults to 48h."},
-					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId. If omitted and q/issue are empty, defaults to this inbound conversation_id."},
+					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId of the scene. Defaults to this inbound conversation_id. Do not omit it when q is set."},
 					"person_id":       map[string]any{"type": "string", "description": "DingTalk uid. Optional rank signal; do not invent."},
 					"issue":           map[string]any{"type": "string", "description": "Issue UUID if already known."},
-					"q":               map[string]any{"type": "string", "description": "Keyword filter on purpose. Omit conversation_id to search across this agent's matters."},
+					"q":               map[string]any{"type": "string", "description": "Keyword filter on purpose in the recalled scene. Does not replace conversation_id."},
 					"limit":           map[string]any{"type": "integer", "description": "Max items, default 20, max 50."},
 				},
 			},
@@ -552,7 +555,10 @@ func collectRecalledIssues(issues, continuations map[string]struct{}, conversati
 	var payload struct {
 		Items []struct {
 			Issue         string `json:"issue"`
+			IssueID       string `json:"issue_id"`
 			Status        string `json:"status"`
+			MatchedVia    string `json:"matched_via"`
+			OnThisScene   *bool  `json:"on_this_scene"`
 			Conversations []struct {
 				ConversationID string   `json:"conversation_id"`
 				Rel            string   `json:"rel"`
@@ -567,11 +573,22 @@ func collectRecalledIssues(issues, continuations map[string]struct{}, conversati
 		return
 	}
 	for _, item := range payload.Items {
-		if issueID := strings.TrimSpace(item.Issue); issueID != "" {
-			issues[issueID] = struct{}{}
-			if recalledItemContinuesConversation(item.Status, item.Conversations, item.WaitingOn, conversationID) {
-				continuations[issueID] = struct{}{}
-			}
+		issueID := strings.TrimSpace(item.Issue)
+		if issueID == "" {
+			issueID = strings.TrimSpace(item.IssueID)
+		}
+		if issueID == "" {
+			continue
+		}
+		issues[issueID] = struct{}{}
+		if strings.TrimSpace(item.MatchedVia) == "window" {
+			continue
+		}
+		if item.OnThisScene != nil && !*item.OnThisScene {
+			continue
+		}
+		if recalledItemContinuesConversation(item.Status, item.Conversations, item.WaitingOn, conversationID) {
+			continuations[issueID] = struct{}{}
 		}
 	}
 }

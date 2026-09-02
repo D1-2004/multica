@@ -124,6 +124,7 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 			item.Score *= 1.35
 		}
 		item.MatchedVia = matchedVia(task.ID, fromScene, fromEvent, fromWindow)
+		annotateItem(&item, q.ConversationID)
 		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -138,12 +139,86 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 	if items == nil {
 		items = []Item{}
 	}
+	events := eventCards(sceneEvents, now)
 	return Result{
-		Since:  q.Since,
-		Until:  until,
-		Items:  items,
-		Events: eventRefs(sceneEvents, now),
+		ReadThis:       RecallReadThis,
+		Since:          q.Since,
+		Until:          until,
+		ConversationID: strings.TrimSpace(q.ConversationID),
+		Q:              strings.TrimSpace(q.Q),
+		Items:          items,
+		Events:         events,
+		EventsNote:     eventsNote(q.ConversationID, items, events),
 	}, nil
+}
+
+func annotateItem(item *Item, sceneCID string) {
+	if item == nil {
+		return
+	}
+	item.IssueID = strings.TrimSpace(item.Issue)
+	item.OnThisScene = itemOnThisScene(*item, sceneCID)
+	item.WhyListed = whyListed(*item)
+	for i := range item.People {
+		if item.People[i].Name == "" {
+			item.People[i].Name = item.People[i].DisplayName
+		}
+	}
+}
+
+func itemOnThisScene(item Item, sceneCID string) bool {
+	cid := strings.TrimSpace(sceneCID)
+	if cid == "" {
+		return false
+	}
+	for _, conversation := range item.Conversations {
+		if strings.TrimSpace(conversation.ConversationID) == cid {
+			return true
+		}
+	}
+	for _, waiting := range item.WaitingOn {
+		if strings.TrimSpace(waiting.ConversationID) == cid {
+			return true
+		}
+	}
+	return false
+}
+
+func whyListed(item Item) string {
+	switch item.MatchedVia {
+	case "window":
+		return "keyword hit in this agent's 48h window, not a graph link to the inbound scene"
+	case "event":
+		return "found via this scene's event stream; candidate until assoc_bind"
+	case "both":
+		return "graph link on this scene and also in the event stream"
+	default:
+		if item.OnThisScene {
+			return "graph link on the inbound scene"
+		}
+		return "graph link, but not on the inbound scene"
+	}
+}
+
+func eventsNote(sceneCID string, items []Item, events []EventRef) string {
+	if strings.TrimSpace(sceneCID) == "" {
+		return ""
+	}
+	if len(items) == 0 {
+		return "scene IM evidence only. Empty items means no open graph link on this conversation."
+	}
+	if len(events) == 0 {
+		return ""
+	}
+	return "scene IM evidence, not the matter index. Decide from items[].purpose."
+}
+
+func eventCards(events []Event, now time.Time) []EventRef {
+	refs := eventRefs(events, now)
+	if len(refs) > EventCardLimit {
+		refs = refs[:EventCardLimit]
+	}
+	return refs
 }
 
 func tasksForConversation(ctx context.Context, store Store, q Query) ([]Task, error) {
@@ -310,6 +385,7 @@ func eventRefs(events []Event, now time.Time) []EventRef {
 			TaskID:     event.TaskID,
 			PersonID:   event.PersonKey,
 			OccurredAt: event.OccurredAt,
+			When:       age,
 			Age:        age,
 			AgeSeconds: secs,
 		})
@@ -324,6 +400,7 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 	}
 	item := Item{
 		Issue:         task.IssueID,
+		IssueID:       task.IssueID,
 		TaskID:        task.ID,
 		Purpose:       task.Purpose,
 		Intent:        task.Intent,
@@ -363,9 +440,11 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 			}
 		case RelTaskPerson:
 			if edge.DstType == NodePerson {
+				name := stringProp(edge.Props, "display_name")
 				person := PersonRef{
 					PersonID:    edge.DstID,
-					DisplayName: stringProp(edge.Props, "display_name"),
+					DisplayName: name,
+					Name:        name,
 				}
 				if i, ok := personIndex[edge.DstID]; ok {
 					if item.People[i].DisplayName == "" && person.DisplayName != "" {

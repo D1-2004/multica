@@ -2,6 +2,7 @@ package assoc
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +113,66 @@ func TestRecallByConversationFindsOutreach(t *testing.T) {
 	}
 	if len(item.Conversations) == 0 || item.Conversations[0].ConversationID != "cid-a" {
 		t.Fatalf("conversations = %+v", item.Conversations)
+	}
+	if !item.OnThisScene || item.IssueID != "issue-1" {
+		t.Fatalf("on_this_scene=%v issue_id=%q", item.OnThisScene, item.IssueID)
+	}
+	if result.ReadThis == "" || !strings.Contains(item.WhyListed, "inbound scene") {
+		t.Fatalf("read_this=%q why_listed=%q", result.ReadThis, item.WhyListed)
+	}
+}
+
+func TestRecallWindowKeywordIsNotOnThisScene(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	task := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-wash",
+		Purpose:       "向辰驷确认明天什么时候去洗脚",
+		Status:        StatusWaiting,
+		LastTouchedAt: now.Add(-time.Hour),
+	})
+	if _, err := store.InsertEdge(ctx, Edge{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		SrcType:       NodeTask,
+		SrcID:         task.ID,
+		DstType:       NodeScene,
+		DstID:         "cid-chenshi",
+		Rel:           RelOutreach,
+		LastTouchedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID: "ws",
+		AgentID:     "ag",
+		Q:           "辰驷",
+		Since:       now.Add(-48 * time.Hour),
+		Until:       now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items=%+v", result.Items)
+	}
+	item := result.Items[0]
+	if item.MatchedVia != "window" || item.OnThisScene {
+		t.Fatalf("matched_via=%q on_this_scene=%v", item.MatchedVia, item.OnThisScene)
+	}
+	if !strings.Contains(item.WhyListed, "keyword hit") {
+		t.Fatalf("why_listed=%q", item.WhyListed)
+	}
+	raw, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"score"`) {
+		t.Fatalf("score must not leak into recall JSON: %s", raw)
 	}
 }
 

@@ -122,7 +122,34 @@ func (t *AssocTools) Call(ctx context.Context, turn Turn, name, arguments string
 	}
 }
 
+// defaultRecallConversationID fills the inbound scene cid when the model
+// omitted it. q is a filter on that scene, not a substitute for dropping cid.
+func defaultRecallConversationID(raw, inbound string) string {
+	inbound = strings.TrimSpace(inbound)
+	if inbound == "" {
+		return raw
+	}
+	var args map[string]any
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		args = map[string]any{}
+	} else if err := json.Unmarshal([]byte(trimmed), &args); err != nil || args == nil {
+		return raw
+	}
+	cid, _ := args["conversation_id"].(string)
+	if strings.TrimSpace(cid) != "" {
+		return raw
+	}
+	args["conversation_id"] = inbound
+	out, err := json.Marshal(args)
+	if err != nil {
+		return raw
+	}
+	return string(out)
+}
+
 func (t *AssocTools) recall(ctx context.Context, turn Turn, raw string) (string, error) {
+	raw = defaultRecallConversationID(raw, turn.ConversationID)
 	var args recallArgs
 	if strings.TrimSpace(raw) != "" && json.Unmarshal([]byte(raw), &args) != nil {
 		return "", fmt.Errorf("invalid assoc_recall arguments")

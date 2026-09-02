@@ -24,7 +24,7 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"Never finish action=reply with a capability refusal",
 		"帮我约冬翔明天下午开半小时会对一下上海行程",
 		"我没法查日程或订会议室",
-		"pass that exact conversation_id",
+		"pass that exact id",
 		"empty items only answers a question explicitly asking for recorded matters",
 		"Never invent conversation_id, person_id, or issue_id",
 		"who is asking, who must be contacted",
@@ -36,6 +36,9 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"tool executor/assistant",
 		"original DingTalk task scene and assoc graph",
 		"matched_via=event",
+		"matched_via=window",
+		"Always pass this inbound conversation_id",
+		"items are candidates, not a verdict",
 		"purpose and intent",
 	} {
 		if !strings.Contains(systemPrompt, rule) {

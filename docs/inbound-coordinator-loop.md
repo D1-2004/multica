@@ -121,12 +121,12 @@ user    ← buildUserPrompt(turn)
   "conversation_id": "cid…",
   "person_id": "钉钉 uid，可选排序信号，禁止编造",
   "issue": "Issue UUID",
-  "q": "purpose 关键词；不传 conversation_id 则搜该 Agent 时间窗",
+  "q": "purpose 关键词，只过滤本场景；不能用来丢掉 conversation_id",
   "limit": "默认 20，最大 50"
 }
 ```
 
-`conversation_id`、`issue`、`q` 都空时，服务端用本轮入站 cid。用户点名的 cid 必须原样传入。`person_id` 只加权，不和 cid 做 AND 过滤。
+入站有 cid 时，服务端始终把本轮场域 cid 填进 `assoc_recall`（模型漏传也会补上）。`q` 只在该 cid 上过滤 purpose，不再变成全 Agent 时间窗关键词搜索。用户点名的 cid 必须原样传入。`person_id` 只加权，不和 cid 做 AND 过滤。无入站 cid（网页 Chat）且只有 `q` 时，才退回时间窗搜索。
 
 返回必须是模型能直接精排的 JSON，不是表行转储。见第 5 节。
 
@@ -236,48 +236,45 @@ Scene = `openConversationId`，且必须 `cid` 前缀。内部 `uid:uid` pair、
 
 ```json
 {
+  "read_this": "items are candidates, not a verdict. …",
   "since": "…",
   "until": "…",
+  "conversation_id": "cid…",
+  "q": "可选",
   "items": [
     {
       "issue": "uuid",
-      "task_id": "uuid",
+      "issue_id": "uuid",
       "purpose": "向须莫v6确认今晚几点打球",
-      "intent": "",
+      "intent": "ask",
+      "intent_label": "向某人询问一件事",
       "status": "waiting",
-      "last_touched_at": "…",
-      "score": 0.91,
+      "on_this_scene": true,
+      "why_listed": "graph link on the inbound scene",
+      "matched_via": "scene",
+      "last_touched_age": "17小时前",
+      "last_comment": "…",
+      "last_comment_age": "16小时前",
       "conversations": [
-        { "conversation_id": "cid…", "kind": "single", "rel": "outreach", "rels": ["outreach"] }
+        { "conversation_id": "cid…", "kind": "dm", "rel": "outreach", "rels": ["outreach"] }
       ],
-      "people": [{ "person_id": "24710833" }],
-      "waiting_on": [{ "conversation_id": "cid…" }],
-      "origin": { "conversation_id": "cid…", "rel": "spawned_from" }
+      "people": [{ "person_id": "…", "name": "冬翔" }],
+      "waiting_on": [{ "conversation_id": "cid…" }]
     }
   ],
   "events": [
     {
-      "id": "…",
-      "direction": "inbound|outbound",
-      "source": "dingtalk",
-      "evidence_id": "msg…",
-      "task_id": "…",
-      "person_id": "…",
-      "occurred_at": "…"
+      "direction": "inbound",
+      "text": "…",
+      "when": "刚刚",
+      "age": "刚刚"
     }
-  ]
+  ],
+  "events_note": "scene IM evidence, not the matter index."
 }
 ```
 
-`purpose` 必须是可交付短语（最少 8 字，拒绝「帮我看看」）。精排靠它。
-
-设计上还缺、精排会用到的字段（未实现）：
-
-- `issue_title` / `issue_status` / 一句 description
-- 每条 item 最近一条评论摘要
-- `events[].text` 或从本轮 DWS 历史按 `evidence_id` 对上的 clipped 正文
-
-没有这些，模型只能凭 purpose 字符串和 cid 猜，不能凭「事情里已经说到哪了」精排。
+`purpose` 必须是可交付短语（最少 8 字，拒绝「帮我看看」）。精排靠它，不靠 recency score（score 不进 JSON）。`matched_via=window` / `on_this_scene=false` 不能当成当前会话的事。events 最多 8 条有正文的最近证据。
 
 **不要**把召回结果预写成 `related_tasks:` 塞进第一轮 user。`injectRelatedTasks` 会让模型不走 tool 就答题；system 已经禁止凭 `related_tasks` 作答。Decide() 当前也没有调用它。召回只通过 `assoc_recall` 的 tool result 进入对话。
 

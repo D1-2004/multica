@@ -78,7 +78,10 @@ multica assoc events --conversation <openConversationId> --since 48h --output js
 ```
 
 `--since` is required. Inspect `purpose`; if several items match, ask. HTTP is
-`GET /api/assoc/recall` and `GET /api/assoc/events`.
+`GET /api/assoc/recall` and `GET /api/assoc/events`. Coordinator `assoc_recall`
+always keeps the inbound `openConversationId`; `q` filters that scene and must
+not drop the cid. Recall JSON `read_this` / `why_listed` / `on_this_scene`
+mark candidates; continue only after comparing purpose to the current message.
 
 An inbound `/reset-memory` (first token, optional leading @mention) closes this
 conversation's Issue associations and does not start a sandbox. It is not

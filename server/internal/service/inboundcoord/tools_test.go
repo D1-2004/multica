@@ -129,7 +129,59 @@ func TestAssocToolsRecallUsesExplicitConversationID(t *testing.T) {
 	}
 }
 
-func TestAssocToolsRecallQOmitsInboundConversation(t *testing.T) {
+func TestAssocToolsRecallQKeepsInboundConversation(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := assoc.NewMemory()
+	svc := assoc.NewService(store)
+	agent := testAgentID()
+	agentID := util.UUIDToString(agent)
+	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        agentID,
+		IssueID:        "issue-train",
+		IssueTitle:     "向冬翔确认明天去上海是坐高铁还是开车",
+		Purpose:        "向冬翔确认明天去上海是坐高铁还是开车",
+		ConversationID: "cid+bEFv7ngm9n79Q1vL9HYJw==",
+		EvidenceID:     "msg-out-9",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        agentID,
+		IssueID:        "issue-eat",
+		IssueTitle:     "向冬翔确认今天吃什么",
+		Purpose:        "向冬翔确认今天吃什么",
+		ConversationID: "cid-robot",
+		EvidenceID:     "msg-out-eat",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tools := &AssocTools{Service: svc}
+	raw, err := tools.Call(ctx, Turn{
+		WorkspaceID:    "ws",
+		AgentID:        agent,
+		ConversationID: "cid-robot",
+	}, toolAssocRecall, `{"q":"高铁"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result assoc.Result
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.ConversationID != "cid-robot" {
+		t.Fatalf("conversation_id=%q", result.ConversationID)
+	}
+	if len(result.Items) != 0 {
+		t.Fatalf("q must not drop inbound cid and hit another scene, items=%+v", result.Items)
+	}
+}
+
+func TestAssocToolsRecallQWithoutInboundSceneStillSearchesWindow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store := assoc.NewMemory()
@@ -150,9 +202,8 @@ func TestAssocToolsRecallQOmitsInboundConversation(t *testing.T) {
 	}
 	tools := &AssocTools{Service: svc}
 	raw, err := tools.Call(ctx, Turn{
-		WorkspaceID:    "ws",
-		AgentID:        agent,
-		ConversationID: "cid-robot",
+		WorkspaceID: "ws",
+		AgentID:     agent,
 	}, toolAssocRecall, `{"q":"高铁"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +213,26 @@ func TestAssocToolsRecallQOmitsInboundConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(result.Items) != 1 || result.Items[0].Issue != "issue-train" {
-		t.Fatalf("q without cid should list across agent matters, items=%+v", result.Items)
+		t.Fatalf("web q without inbound cid still searches the window, items=%+v", result.Items)
+	}
+}
+
+func TestDefaultRecallConversationIDFillsInbound(t *testing.T) {
+	t.Parallel()
+	got := defaultRecallConversationID(`{"q":"辰驷"}`, "cid+bEFv7ngm9n79Q1vL9HYJw==")
+	var args recallArgs
+	if err := json.Unmarshal([]byte(got), &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.ConversationID != "cid+bEFv7ngm9n79Q1vL9HYJw==" || args.Q != "辰驷" {
+		t.Fatalf("got %+v from %s", args, got)
+	}
+	kept := defaultRecallConversationID(`{"conversation_id":"cid-other","q":"辰驷"}`, "cid-inbound")
+	if err := json.Unmarshal([]byte(kept), &args); err != nil {
+		t.Fatal(err)
+	}
+	if args.ConversationID != "cid-other" {
+		t.Fatalf("explicit cid overwritten: %+v", args)
 	}
 }
 

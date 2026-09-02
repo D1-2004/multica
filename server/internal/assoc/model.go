@@ -34,7 +34,10 @@ const (
 	MaxLimit          = 50
 	MinPurposeRunes   = 8
 	EventBodyMaxRunes = 160
+	EventCardLimit    = 8
 	RecencyTau        = 6 * time.Hour
+
+	RecallReadThis = "items are candidates, not a verdict. Compare each purpose to the current message. Continue only if the deliverable is the same. on_this_scene=false or matched_via=window is not this conversation's matter."
 )
 
 type Task struct {
@@ -107,6 +110,7 @@ type ConversationRef struct {
 type PersonRef struct {
 	PersonID    string `json:"person_id"`
 	DisplayName string `json:"display_name,omitempty"`
+	Name        string `json:"name,omitempty"`
 }
 
 type WaitingRef struct {
@@ -121,11 +125,14 @@ type OriginRef struct {
 
 type Item struct {
 	Issue          string            `json:"issue"`
+	IssueID        string            `json:"issue_id,omitempty"`
 	TaskID         string            `json:"task_id"`
 	Purpose        string            `json:"purpose"`
-	Intent         string            `json:"intent"`
+	Intent         string            `json:"intent,omitempty"`
 	IntentLabel    string            `json:"intent_label,omitempty"`
 	Status         string            `json:"status"`
+	OnThisScene    bool              `json:"on_this_scene"`
+	WhyListed      string            `json:"why_listed,omitempty"`
 	LastTouchedAt  time.Time         `json:"last_touched_at"`
 	LastTouchedAge string            `json:"last_touched_age,omitempty"`
 	AgeSeconds     int64             `json:"age_seconds"`
@@ -133,7 +140,7 @@ type Item struct {
 	LastComment    string            `json:"last_comment,omitempty"`
 	LastCommentAge string            `json:"last_comment_age,omitempty"`
 	LastCommentAt  *time.Time        `json:"last_comment_at,omitempty"`
-	Score          float64           `json:"score"`
+	Score          float64           `json:"-"`
 	Conversations  []ConversationRef `json:"conversations"`
 	People         []PersonRef       `json:"people"`
 	WaitingOn      []WaitingRef      `json:"waiting_on"`
@@ -149,15 +156,20 @@ type EventRef struct {
 	TaskID     string    `json:"task_id,omitempty"`
 	PersonID   string    `json:"person_id,omitempty"`
 	OccurredAt time.Time `json:"occurred_at"`
+	When       string    `json:"when,omitempty"`
 	Age        string    `json:"age,omitempty"`
 	AgeSeconds int64     `json:"age_seconds,omitempty"`
 }
 
 type Result struct {
-	Since  time.Time  `json:"since"`
-	Until  time.Time  `json:"until"`
-	Items  []Item     `json:"items"`
-	Events []EventRef `json:"events"`
+	ReadThis       string     `json:"read_this"`
+	Since          time.Time  `json:"since"`
+	Until          time.Time  `json:"until"`
+	ConversationID string     `json:"conversation_id,omitempty"`
+	Q              string     `json:"q,omitempty"`
+	Items          []Item     `json:"items"`
+	Events         []EventRef `json:"events"`
+	EventsNote     string     `json:"events_note,omitempty"`
 }
 
 // CloseSceneResult is how many graph links /reset-memory dropped for one cid.
