@@ -10,7 +10,7 @@
 | --- | --- |
 | Task Card / Host 续接三态 | 不做。`issue_get` 保持现状。 |
 | 观察面 | 扩现有 inbound Tab，不新增顶栏。 |
-| `/reset-memory` | 清该 cid 的 assoc 边，并清该 Scene Text。cursor 推到 now，保留 `bootstrapped_at`，避免旧 14 天历史立刻把口径学回来。 |
+| `/reset-memory` | 清该 cid 的 assoc 边，并清该 Scene Text。cursor 推到 **reset 命令时间**，保留 `bootstrapped_at`，避免旧 14 天历史立刻把口径学回来。reset 之后已入队且更新的 dirty 要保留。怎么发、怎么验：skill `scene-memory-e2e`。 |
 | 开关 | **Agent 详情 UI 四开关，默认关闭。** 不是只靠 env/Diamond。 |
 | 谁用 | **只有绑定号数字员工** Dispatch V2 入站。网页 Chat / Robot / 日历 / 审批不接。 |
 | DWS | 后端 Identity + list 抽成独立模块，Coordinator last-10 与 MemoryFlush range reader 共用，不把凭证写入 `scene_memory`。 |

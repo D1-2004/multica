@@ -1,27 +1,53 @@
 ---
 name: scene-memory-e2e
 description: >
-  跑 Coordinator Scene Memory 预发 e2e：读文档里的剧本，用 dws-env 在冬翔/测试号/dxxh
-  之间发消息，用 SLS 看下一轮 Coordinator 上下文有没有召回。用户说「场域记忆 e2e」
-  「跑剧本」「验证 scene memory」或 /scene-memory-e2e 时必须用。
+  跑 Coordinator Scene Memory 预发 e2e：造单聊/群场景、发纠正、等 Flush、用
+  /reset-memory 清空本 cid、用下一轮 SLS 证明召回或隔离。用户说「场域记忆 e2e」
+  「造场景」「拉群隔离」「reset-memory」「跑剧本」「验证 scene memory」
+  或 /scene-memory-e2e 时必须用。
 compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
 ---
 
 # Scene Memory e2e
 
-剧本和验证标准只在：
+剧本过线标准只在 `docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`。
+本 skill 负责把场景造出来、把 `/reset-memory` 用对、把下一轮 SLS 读对。
+不要把整份剧本抄进本文件。Daemon 召回见 [references/daemon-recall.md](references/daemon-recall.md)。
 
-`docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`
+造群/单聊步骤：[references/create-scene.md](references/create-scene.md)。
+`/reset-memory`：[references/reset-memory.md](references/reset-memory.md)。
 
-不要在本 skill 里复制谁发给谁。Daemon 可选召回仍见 [references/daemon-recall.md](references/daemon-recall.md)。
+## 铁律
 
-## 怎么跑
+1. dws 保持预发。`python3 "$HOME/.agents/skills/dws-env/scripts/dws_env.py" status`
+2. 演员只有 冬翔 / 东翔测试号 / dxxh。每条 `dws` 都经 `as 主角|测试号|配角`。不用菲迪。
+3. 冬翔→测试号单聊禁止 `+dm --to 东翔测试号`。cid 以 e2e 文档为准。
+4. 召回只认 **下一轮** Coordinator SLS `user_prompt`，不是本轮 IM、不是 Router LLM trace。
+5. 探针用 ASCII id（如 `R7-ALPHA-4821`）。SLS 会把 CJK 弄乱；不要用中文当唯一证据。
+6. 证明 Host vs last-N：把 `user_prompt` 在 `current_message:` 处切开。Host = 切开前；`recent_dingtalk_history` = 切开后到 `current_message:` 之前。探针必须在 Host 且不在 history 段，才算记忆召回。
+7. 预发二进制以最近一次 Aone SUCCESS 为准。未部署的本地 commit 不能拿预发 SLS 当它已生效。
 
-1. 读文档，按切片选剧本。验证对象永远是 **下一轮** 的 SLS，不是本轮 IM 回复。
-2. dws 保持预发。`python3 "$HOME/.agents/skills/dws-env/scripts/dws_env.py" status`
-3. 发消息一律 `as 主角|测试号|配角`。冬翔→测试号用 cid `cid+bEFv7ngm9n79Q1vL9HYJw==`，禁止 `+dm --to 东翔测试号`。
-4. `sendStatus=SUCCESS` 后等 Flush（需要记忆的剧本），再发文档里的「下一轮」。
-5. 按文档「观察面」把钉钉回读、SLS、预发库、log tail、Issue/assoc、Router（仅事项）都走一遍。召回只认下一轮 SLS `user_prompt`。
-6. 预发部署 SUCCESS 即可跑。流水线走 `aone-deploy`。不用菲迪。
+发消息、查 SLS：`dws-env` + `inspect-coordinator-sls`。部署：`aone-deploy`。
 
-SLS 查法细节走 `inspect-coordinator-sls`。沙箱走 `inspect-fde-llm-trace`，不能顶 Coordinator 上下文。
+## 跑一条
+
+1. 读 e2e 文档，选剧本。需要新群就按 create-scene 建，记下 `openConversationId`。
+2. 本轮触发。`sendStatus=SUCCESS`。钉钉回读只证明话发出去了。
+3. 记忆类等 Flush：log `scene_memory_flush_commit`，或冷启动约 4s、增量约 30s、最长 2min。不要在 revision=0 时去打下一轮隔离。
+4. 发下一轮（问句或第二群）。
+5. 拉该 cid 的 `inbound_coordinator_llm_request`，按上面第 6 条切开 `user_prompt`。
+6. 事项类另看下一轮 `assoc_recall`，不要用记忆 Text 里的句子当 issue_id。
+
+## 回归优先
+
+新代码或新部署至少覆盖：
+
+| 要证什么 | 文档 |
+|---|---|
+| 口径进下一轮 Host | P1 |
+| 两群不串 | P4 / P7（P7 是从零建群） |
+| last-N 灌水后 Host 仍有探针 | P8 |
+| `/reset-memory` 清本 cid，其它 cid 还在 | P5 / P10 / P11 |
+| reset 后立刻新口径，旧口径不回 | P9 |
+
+隔离必须 **建群 + 跑证明** 一起做，不要只用旧群名口头说「应该隔离」。

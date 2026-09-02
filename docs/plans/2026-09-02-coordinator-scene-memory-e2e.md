@@ -2,7 +2,7 @@
 
 设计：`docs/plans/2026-09-02-coordinator-scene-memory-takeover.md`  
 落地约束：`docs/plans/2026-09-02-coordinator-scene-memory-landing.md`  
-dws 只负责拟人触发。闭环要自己把下面每一面都看完。怎么发消息：skill `dws-env`。怎么拉 Coordinator SLS：`inspect-coordinator-sls`。沙箱：`inspect-fde-llm-trace`。发布：`aone-deploy`。Multica Issue/任务：`dta-ops-multica`。
+dws 只负责拟人触发。闭环要自己把下面每一面都看完。怎么发消息：skill `dws-env`。怎么 **造群/单聊场景**、怎么发 `/reset-memory`、怎么切 `user_prompt` 证 Host vs last-N：skill `scene-memory-e2e`（`references/create-scene.md`、`references/reset-memory.md`）。怎么拉 Coordinator SLS：`inspect-coordinator-sls`。沙箱：`inspect-fde-llm-trace`。发布：`aone-deploy`。Multica Issue/任务：`dta-ops-multica`。
 
 只在本地能 `as` 的三张号之间演：冬翔、东翔测试号、dxxh。不要须莫、**不要菲迪/教练**、不要第四人。
 
@@ -192,15 +192,97 @@ Aone 预发部署 SUCCESS
 
 ---
 
+## 回归：造新场景 + reset（P7–P11）
+
+P1–P6 可以复用已有 cid。下面几条必须 **当场建场景** 或 **真的发 /reset-memory**，步骤走 skill `scene-memory-e2e`。探针一律 ASCII。SLS 把 `user_prompt` 在 `current_message:` 切开。
+
+### P7 从零建两个群：下一轮不串
+
+`as 配角` 新建群 A、群 B（名字带 unix，只拉测试号）。记下两个新 cid。不要复用旧「场域隔离A-GAMMA」。
+
+**本轮** 群 A @测试号：`R7-A-7749 in this group GoalMate is a report tool`。等 A Flush（`memory_revision>=1`）。
+
+**下一轮** 群 B @测试号：`what is GoalMate`（正文不要带 `R7-A-7749`）
+
+| 面 | 过线 |
+|---|---|
+| 群 B SLS `conversation_id` | 群 B 新 cid |
+| 群 B Host | **没有** `R7-A-7749` |
+| 群 B history 段 | 也没有（问句里本来就没有） |
+| 库 | 两个 `scene_key`；A 行有探针，B 行没有 |
+
+**再下一轮** 群 A 问 `what is GoalMate` → Host 仍有 `R7-A-7749`。
+
+### P8 last-N 灌水后 Host 仍有探针
+
+用 P1 或 P7 的 **同一个 cid**。口径已经 Flush。
+
+**本轮** 连发 12+ 条不含探针的短消息（`flood-1` … `flood-12`）。
+
+**下一轮** 问 `what is GoalMate`（正文无探针 id）
+
+| 面 | 过线 |
+|---|---|
+| 下一轮 Host | 有探针 |
+| 下一轮 history 段（到 `current_message:` 之前） | **没有** 探针 |
+| 下一轮 `current_message:` | 没有探针（否则假阳性） |
+
+### P9 reset 后立刻教新口径
+
+**本轮-1** 该 cid 已有旧探针（P1 或 P7）。  
+**本轮-2** `/reset-memory`（群里要 @）。库 Text 空。  
+**本轮-3** 马上发新探针 `R9-NEW-2201 …`。等 Flush。
+
+**下一轮** 问 `what is GoalMate`
+
+| 面 | 过线 |
+|---|---|
+| Host | 有 `R9-NEW-2201`，**没有** 旧探针 |
+| 库 | Text 含新探针；`bootstrapped_at` 仍是 reset 前那次 |
+| 对照 | 没 reset 的另一个 cid Host 旧探针还在 |
+
+若本轮-3 的 MarkDirty 抢在 reset 执行前入队：reset 必须 **保留** 新于 cutoff 的 dirty，不能把 `R9-NEW-2201` 吞掉。
+
+### P10 群里 `/reset-memory`
+
+对 P7 群 A：`as 配角` `@测试号 /reset-memory`。
+
+| 面 | 过线 |
+|---|---|
+| 本轮 | 拦截，不进 Coordinator；log `scene_memory_reset` |
+| 库群 A | Text 空，`bootstrapped_at` 在 |
+| 下一轮群 A Host | 没有 `R7-A-7749` |
+| 下一轮群 B Host | 若 B 没 reset，仍无 A 探针（隔离）；B 自己的口径还在 |
+
+### P11 reset 只清本 cid
+
+对冬翔单聊发 `/reset-memory`。下一轮单聊 Host 无 P1 探针。群 A（若没走 P10）再问一句，Host 仍有群 A 探针。
+
+---
+
 ## 切片和剧本
 
 | 切片 | 用哪条「下一轮 SLS」过线 |
 |---|---|
 | A | P1 问候链路活着即可；没有记忆注入 |
 | B | 还不能证召回；只能确认 Flush 后库里有 Text |
-| C | P1 下一轮 prompt 有口径；P2/P3 下一轮 assoc_recall 对卡；P4/P5 下一轮不串 / 清空 |
+| C | P1 下一轮 prompt 有口径；P2/P3 下一轮 assoc_recall 对卡；P4/P7 不串；P5/P10/P11 reset；P8 Host vs last-N；P9 reset 后新口径 |
 | D | P6 UI；开关对下一轮 prompt 的影响在 C 已验 |
 | E 可选 | 沙箱 Run 里 `assoc recall --conversation <cid>`；Memory GET 另议 |
+
+---
+
+## 本次造场景回归（2026-09-03）
+
+skill `scene-memory-e2e` 当场建群。dws 预发。配角/主角 profile 显示 expired 但仍发出。
+
+| 场景 | cid | 动作 | 结论 |
+|---|---|---|---|
+| 新群 A | `cide9bU4mpKlHOyo+pxHWpD3A==` | @测试号 `R7-A-7749 … report tool` | `sendStatus=SUCCESS`；本轮 SLS `current_message` 含探针 |
+| 新群 B | `cid7LMwDKnI1pSlhWhu7s5Wrg==` | @测试号 `what is GoalMate` | `sendStatus=SUCCESS`；SLS `conversation_id` 是 B；无 `R7-A-7749`、无群 A cid |
+| 冬翔单聊 | `cid+bEFv7ngm9n79Q1vL9HYJw==` | `/reset-memory` | `sendStatus=SUCCESS`；reset 拦截，不进 Coordinator LLM |
+
+群 B 这一轮是 **空记忆的新 cid**，证明造场景 + 不串 cid。群 A 的「下一轮 Host 仍有探针」要等 Flush 后再问，未在本轮打完。`<@id> /reset-memory` 解析修复（`isInboundMentionToken`）尚未上预发二进制。
 
 ---
 

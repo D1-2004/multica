@@ -8,4 +8,4 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
 
 # 已迁移
 
-读 `docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`。怎么发消息 / 拉 SLS 见 skill `scene-memory-e2e`。
+读 `docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`。造场景、`/reset-memory`、切 SLS 证召回：skill `scene-memory-e2e`。
