@@ -357,6 +357,41 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	}
 }
 
+func TestBuildUserPromptResetShowsEmptyHostBlock(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:              SourceDigitalEmployee,
+		Addressed:           true,
+		ChatType:            "p2p",
+		Message:             "ALPHA-7749 是什么",
+		SceneMemory:         "",
+		SceneMemoryRevision: 3,
+		DingTalkHistory: []HistoryLine{
+			{Role: "user", Content: "灌水12：食堂窗口12 今天供应番茄炒蛋，与探针无关。"},
+		},
+	})
+	if !strings.Contains(prompt, "scene_memory_revision: 3") {
+		t.Fatalf("reset still injects revision: %q", prompt)
+	}
+	if !strings.Contains(prompt, "(empty)") {
+		t.Fatalf("reset Host block must be empty: %q", prompt)
+	}
+	if strings.Contains(prompt, "ALPHA-7749 是会议室预约脚本") {
+		t.Fatalf("cleared text must not reappear in Host block: %q", prompt)
+	}
+}
+
+func TestBuildUserPromptOmitsSceneMemoryWhenUnset(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:    SourceDigitalEmployee,
+		Addressed: true,
+		ChatType:  "p2p",
+		Message:   "你好",
+	})
+	if strings.Contains(prompt, "scene_memory") {
+		t.Fatalf("unset memory must not appear: %q", prompt)
+	}
+}
+
 func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {
 	prompt := buildUserPrompt(Turn{
 		Source:          SourceRobot,
