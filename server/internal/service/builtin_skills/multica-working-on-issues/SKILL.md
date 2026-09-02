@@ -203,6 +203,14 @@ multica issue property unset <issue-id> --name Environment
 A status change is not cosmetic — the server enqueues or skips agent work based
 on it. These are the contracts, not advice:
 
+- **`--no-start`** on `multica issue update`, `issue status` and `issue assign`
+  applies the change but suppresses the run THAT ISSUE would otherwise enqueue.
+  Use it when you are recording state rather than handing work off — assigning a
+  child you intend to promote later, or moving one out of `backlog` without
+  waking its assignee yet. It cannot be combined with `--unassign` (unassigning
+  starts nothing to suppress), and it does **not** hold back the parent-assignee
+  wake a closed stage triggers — that is the barrier, not this issue's run.
+
 - **`backlog`** parks an agent-assigned issue: the assignee is set but no task
   fires. Moving `backlog → todo` (or any non-done/non-cancelled status) enqueues
   the assigned agent then.
@@ -214,7 +222,10 @@ on it. These are the contracts, not advice:
   members work, and only move to `in_review` when a later re-trigger confirms
   the overall goal is met.
 - **`in_review`** is an accepted issue status. Some workflows use it while a PR
-  is open and awaiting review; moving to it is an explicit mutation.
+  is open and awaiting review; moving to it is an explicit mutation. It is
+  **not terminal for the sub-issue stage barrier**: a child parked in
+  `in_review` holds its stage open — staged or unstaged — and never wakes the
+  parent. Only `done` or `cancelled` closes a stage.
 - **`done`** on a child issue posts a system comment on its parent. If a PR
   carries close intent (`Closes MUL-XXXX`), it advances the issue to `done`
   itself on merge — you do not also need to flip it manually.
@@ -256,6 +267,16 @@ status (`done`/`cancelled`). A completion that does not close a stage is silent
 (no comment, no wake). A sibling set with **no** stages is one implicit stage,
 so the parent is woken once when the *last* sub-issue finishes — not on every
 child.
+
+Only `done` and `cancelled` count, and that cuts against the default agent
+habit: the assignment brief asks ordinary (non-leader) agents to finish at
+`in_review`, so a staged child left there stalls its whole chain silently —
+no comment, no wake, no timeout, and the parent looks exactly like a stage
+whose turn has not come yet. Whoever owns the chain must move finished children
+to `done`. `multica issue children <parent-id> --output json` reads the barrier
+out directly: every stage carries `barrier_closed` plus `waiting_on` (the
+children holding it open, including ones in an *earlier* stage), and
+`next_stage` names the stage the chain is parked on.
 
 Advancement is agent-driven: the server only detects the closed barrier and
 wakes the parent assignee, who then decides whether to promote the next stage's

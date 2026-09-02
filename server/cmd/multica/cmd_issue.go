@@ -478,11 +478,11 @@ func init() {
 	issueCreateCmd.Flags().String("assignee", "", "Assignee name (member, agent, or squad; fuzzy match)")
 	issueCreateCmd.Flags().String("assignee-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --assignee)")
 	issueCreateCmd.Flags().String("parent", "", "Parent issue ID")
-	issueCreateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) grouping this sub-issue into an ordered barrier group under its parent; omit for unstaged. The parent assignee is woken only when every sub-issue in a stage finishes.")
+	issueCreateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) grouping this sub-issue into an ordered barrier group under its parent; omit for unstaged. The parent assignee is woken only when every sub-issue in the stage reaches `done` or `cancelled` (`in_review` does not close a stage).")
 	issueCreateCmd.Flags().String("project", "", "Project ID")
 	issueCreateCmd.Flags().String("start-date", "", "Start date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
-	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
+	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists. Active means any status except done and cancelled; a duplicate is an issue in the same project and under the same parent whose title matches case-insensitively with runs of whitespace collapsed.")
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
@@ -503,9 +503,11 @@ func init() {
 	issueUpdateCmd.Flags().String("parent", "", "Parent issue ID (use --parent \"\" to clear)")
 	issueUpdateCmd.Flags().Int("stage", 0, "Stage ordinal (>=1) for this sub-issue; see `issue create --stage`")
 	issueUpdateCmd.Flags().Float64("position", 0, "Ordering position within the board column (lower sorts first); prefer `issue reorder` for relative moves")
+	issueUpdateCmd.Flags().Bool("no-start", false, "Apply the change without starting an agent run for THIS issue. The write lands as usual, but the run it would enqueue for this issue's assignee is suppressed (sends suppress_run). It does not suppress the parent-assignee wake that finishing a sub-issue can trigger.")
 	issueUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue status
+	issueStatusCmd.Flags().Bool("no-start", false, "Apply the change without starting an agent run for THIS issue. The write lands as usual, but the run it would enqueue for this issue's assignee is suppressed (sends suppress_run). It does not suppress the parent-assignee wake that finishing a sub-issue can trigger.")
 	issueStatusCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue reorder
@@ -515,6 +517,7 @@ func init() {
 	issueAssignCmd.Flags().String("to", "", "Assignee name (member, agent, or squad; fuzzy match)")
 	issueAssignCmd.Flags().String("to-id", "", "Assignee UUID — member, agent, or squad (mutually exclusive with --to)")
 	issueAssignCmd.Flags().Bool("unassign", false, "Remove current assignee")
+	issueAssignCmd.Flags().Bool("no-start", false, "Apply the change without starting an agent run for THIS issue. The write lands as usual, but the run it would enqueue for this issue's assignee is suppressed (sends suppress_run). It does not suppress the parent-assignee wake that finishing a sub-issue can trigger.")
 	issueAssignCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue comment list
@@ -904,6 +907,11 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 		return si < sj
 	})
 
+	// Group by stage before branching on output format: both branches need the
+	// barrier state, and the table branch returns early.
+	stages, unstaged, nextStage := groupChildStages(children)
+	unstagedDone, unstagedClosed := unstagedBarrierState(unstaged, len(stages) > 0)
+
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
 		actors := loadActorDisplayLookup(ctx, client)
@@ -924,20 +932,86 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 			})
 		}
 		cli.PrintTable(os.Stdout, headers, rows)
+		if notice := childBarrierNotice(stages, nextStage, unstaged); notice != "" {
+			fmt.Fprintln(os.Stdout, notice)
+		}
 		return nil
 	}
 
-	// JSON: group by stage so an agent can see, at a glance, how many
-	// sub-issues there are and which stage each belongs to.
-	type stageGroup struct {
-		Stage  int              `json:"stage"`
-		Total  int              `json:"total"`
-		Done   int              `json:"done"`
-		Issues []map[string]any `json:"issues"`
-	}
-	stages := []stageGroup{}
-	unstaged := []map[string]any{}
+	// JSON: the per-stage grouping tells an agent how many sub-issues there are
+	// and where each belongs; the barrier fields tell it whether the chain is
+	// actually waiting on something, which the raw counts cannot express (see
+	// groupChildStages).
+	return cli.PrintJSON(os.Stdout, map[string]any{
+		"total":                   len(children),
+		"stages":                  stages,
+		"next_stage":              nextStage,
+		"unstaged":                unstaged,
+		"unstaged_total":          len(unstaged),
+		"unstaged_done":           unstagedDone,
+		"unstaged_barrier_closed": unstagedClosed,
+	})
+}
+
+// isTerminalChildStatus reports whether a child issue status counts as
+// "finished" for stage-barrier purposes.
+//
+// This MIRRORS handler.isTerminalChildStatus in
+// server/internal/handler/issue_child_done.go — the server-side rule that
+// decides when a closed stage wakes the parent assignee — and must be changed
+// together with it. `in_review` is deliberately not terminal even though the
+// assignment brief asks ordinary agents to finish there: a child parked in
+// `in_review` holds its stage open indefinitely.
+func isTerminalChildStatus(status string) bool {
+	return status == "done" || status == "cancelled"
+}
+
+// childStageGroup is one stage of a parent's sub-issues plus the barrier state
+// for that stage. The JSON keys are a CLI contract: `stage`/`total`/`done`/
+// `issues` predate the barrier fields and existing scripts read them.
+type childStageGroup struct {
+	Stage         int              `json:"stage"`
+	Total         int              `json:"total"`
+	Done          int              `json:"done"`
+	BarrierClosed bool             `json:"barrier_closed"`
+	WaitingOn     []childBlocker   `json:"waiting_on"`
+	Issues        []map[string]any `json:"issues"`
+}
+
+// childBlocker names one non-terminal sub-issue that is holding a stage open.
+// The stage is carried because a blocker frequently belongs to an EARLIER
+// stage than the one it blocks.
+type childBlocker struct {
+	Key    string `json:"key"`
+	Stage  int    `json:"stage"`
+	Status string `json:"status"`
+}
+
+// groupChildStages groups a parent's sub-issues into ascending stage groups and
+// computes each stage's barrier state.
+//
+// The barrier is frontier-shaped, exactly as the server computes it
+// (handler.stageBarrierClosed): stage S is closed only when every *staged*
+// child with stage <= S is terminal. Per-stage counts alone therefore cannot
+// tell an agent whether a stage is waiting — a stage can read 4/4 done and
+// still be blocked because stage 1 has an `in_review` child left in it. That
+// gap is what made a stalled chain unreadable from this command's output, so
+// each group carries both the verdict (barrier_closed) and the evidence
+// (waiting_on, which names blockers from earlier stages too).
+//
+// Unstaged children take part in no stage (migration 123: a NULL stage does not
+// participate in staged grouping), so they never appear in waiting_on and never
+// hold a stage open.
+//
+// nextStage is the lowest stage that still has a non-terminal child — the stage
+// the chain is currently parked on — or 0 when every staged child is terminal.
+// It mirrors the nextStage that handler.stageProgressSummary reports in the
+// parent's wake comment.
+func groupChildStages(children []map[string]any) (stages []childStageGroup, unstaged []map[string]any, nextStage int) {
+	stages = []childStageGroup{}
+	unstaged = []map[string]any{}
 	idxByStage := map[int]int{}
+	blockers := []childBlocker{}
 	for _, c := range children {
 		s, ok := childStage(c)
 		if !ok {
@@ -946,21 +1020,117 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 		}
 		gi, seen := idxByStage[s]
 		if !seen {
-			stages = append(stages, stageGroup{Stage: s})
+			stages = append(stages, childStageGroup{Stage: s, WaitingOn: []childBlocker{}})
 			gi = len(stages) - 1
 			idxByStage[s] = gi
 		}
 		stages[gi].Issues = append(stages[gi].Issues, c)
 		stages[gi].Total++
-		if st := strVal(c, "status"); st == "done" || st == "cancelled" {
+		if status := strVal(c, "status"); isTerminalChildStatus(status) {
 			stages[gi].Done++
+		} else {
+			blockers = append(blockers, childBlocker{Key: issueDisplayKey(c), Stage: s, Status: status})
 		}
 	}
-	return cli.PrintJSON(os.Stdout, map[string]any{
-		"total":    len(children),
-		"stages":   stages,
-		"unstaged": unstaged,
-	})
+
+	// Sort explicitly instead of inheriting the caller's ordering: the frontier
+	// rule is defined over stage ordinals, not over arrival order.
+	sort.SliceStable(stages, func(i, j int) bool { return stages[i].Stage < stages[j].Stage })
+	sort.SliceStable(blockers, func(i, j int) bool { return blockers[i].Stage < blockers[j].Stage })
+
+	for i := range stages {
+		for _, b := range blockers {
+			if b.Stage <= stages[i].Stage {
+				stages[i].WaitingOn = append(stages[i].WaitingOn, b)
+			}
+		}
+		stages[i].BarrierClosed = len(stages[i].WaitingOn) == 0
+	}
+	if len(blockers) > 0 {
+		nextStage = blockers[0].Stage
+	}
+	return stages, unstaged, nextStage
+}
+
+// unstagedBarrierState reports how many unstaged sub-issues are terminal and
+// whether the implicit single-stage barrier over them is closed.
+//
+// A sibling set carrying no stages at all IS that one implicit stage: the
+// parent wakes only when every child is terminal (the unstaged branch of
+// handler.stageBarrierClosed).
+//
+// `staged` mirrors handler.siblingsAreStaged and is what keeps the mixed case
+// honest. As soon as ANY sibling carries a stage the server switches to the
+// frontier rule, which skips unstaged children entirely: an unstaged child
+// neither closes a barrier nor holds one open. Reporting the implicit barrier
+// as OPEN there would claim a stall that cannot exist, so a staged set always
+// reports closed — the implicit barrier simply does not apply to it. `done`
+// stays a truthful count either way.
+func unstagedBarrierState(unstaged []map[string]any, staged bool) (done int, closed bool) {
+	for _, c := range unstaged {
+		if isTerminalChildStatus(strVal(c, "status")) {
+			done++
+		}
+	}
+	if staged {
+		return done, true
+	}
+	return done, done == len(unstaged)
+}
+
+// childBarrierNotice renders the single line printed under the table output
+// when the sub-issue chain is waiting on something. The table shows statuses
+// but not the rule, so a chain stalled on an `in_review` child looks identical
+// to ordinary in-flight work — this line names the stage the parent is parked
+// on and what is holding it. Returns "" when nothing is blocked.
+func childBarrierNotice(stages []childStageGroup, nextStage int, unstaged []map[string]any) string {
+	if nextStage > 0 {
+		for _, g := range stages {
+			if g.Stage != nextStage {
+				continue
+			}
+			return fmt.Sprintf(
+				"Stage %d is not closed: waiting on %s. A stage closes only at done/cancelled — in_review does not wake the parent.",
+				nextStage, formatChildBlockers(g.WaitingOn),
+			)
+		}
+		return ""
+	}
+	done, closed := unstagedBarrierState(unstaged, len(stages) > 0)
+	if closed {
+		return ""
+	}
+	pending := []childBlocker{}
+	for _, c := range unstaged {
+		if status := strVal(c, "status"); !isTerminalChildStatus(status) {
+			pending = append(pending, childBlocker{Key: issueDisplayKey(c), Status: status})
+		}
+	}
+	return fmt.Sprintf(
+		"Unstaged sub-issues: %d/%d finished, waiting on %s. The parent wakes only once every child reaches done/cancelled — in_review does not count.",
+		done, len(unstaged), formatChildBlockers(pending),
+	)
+}
+
+// formatChildBlockers renders blockers as "KEY (status)", capped so a wide
+// fan-out cannot turn the notice into a wall of text.
+func formatChildBlockers(blockers []childBlocker) string {
+	const maxNamed = 3
+	named := blockers
+	extra := 0
+	if len(named) > maxNamed {
+		extra = len(named) - maxNamed
+		named = named[:maxNamed]
+	}
+	parts := make([]string, 0, len(named))
+	for _, b := range named {
+		parts = append(parts, fmt.Sprintf("%s (%s)", b.Key, b.Status))
+	}
+	out := strings.Join(parts, ", ")
+	if extra > 0 {
+		out += fmt.Sprintf(", +%d more", extra)
+	}
+	return out
 }
 
 // isHTTPURL reports whether path is an http:// or https:// URL.
@@ -1238,6 +1408,7 @@ func activeDuplicateIssueCreateMessage(err error) (string, bool) {
 }
 
 func runIssueUpdate(cmd *cobra.Command, args []string) error {
+	noStart, _ := cmd.Flags().GetBool("no-start")
 	statusChanged := cmd.Flags().Changed("status")
 	statusFlag, _ := cmd.Flags().GetString("status")
 	if statusChanged {
@@ -1348,6 +1519,9 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc.")
 	}
+	if noStart {
+		body["suppress_run"] = true
+	}
 
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result); err != nil {
@@ -1373,6 +1547,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 func runIssueAssign(cmd *cobra.Command, args []string) error {
 	toName, _ := cmd.Flags().GetString("to")
 	unassign, _ := cmd.Flags().GetBool("unassign")
+	noStart, _ := cmd.Flags().GetBool("no-start")
 	toNameSet := cmd.Flags().Changed("to")
 	toIDSet := cmd.Flags().Changed("to-id")
 
@@ -1381,6 +1556,12 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 	}
 	if (toNameSet || toIDSet) && unassign {
 		return fmt.Errorf("--to/--to-id and --unassign are mutually exclusive")
+	}
+	// Unassigning never enqueues a run, so there is nothing for --no-start to
+	// suppress; accepting the combination would imply a guarantee the flag is
+	// not making.
+	if noStart && unassign {
+		return fmt.Errorf("--no-start cannot be used with --unassign")
 	}
 
 	client, err := newAPIClient(cmd)
@@ -1411,6 +1592,9 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 		if displayTarget == "" {
 			displayTarget = loadActorDisplayLookup(ctx, client).actor(aType, aID)
 		}
+		if noStart {
+			body["suppress_run"] = true
+		}
 	}
 
 	var result map[string]any
@@ -1434,6 +1618,7 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 func runIssueStatus(cmd *cobra.Command, args []string) error {
 	id := args[0]
 	status := args[1]
+	noStart, _ := cmd.Flags().GetBool("no-start")
 
 	if err := validateIssueStatus(status); err != nil {
 		return err
@@ -1453,6 +1638,9 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{"status": status}
+	if noStart {
+		body["suppress_run"] = true
+	}
 	var result map[string]any
 	if err := client.PutJSON(ctx, "/api/issues/"+issueRef.ID, body, &result); err != nil {
 		return fmt.Errorf("update status: %w", err)

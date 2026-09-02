@@ -10,9 +10,9 @@ at the bottom before relying on an exact line.
 
 | Behavior | File:line | Drifted from |
 |---|---|---|
-| CLI command `pull-requests <id>` (alias `prs`) | `server/cmd/multica/cmd_issue.go:105` | `:104` |
-| `runIssuePullRequests` handler | `server/cmd/multica/cmd_issue.go:507` | new citation |
-| Calls `GET /api/issues/<id>/pull-requests` | `server/cmd/multica/cmd_issue.go:522` | `:522` (unchanged) |
+| CLI command `pull-requests <id>` (alias `prs`) | `server/cmd/multica/cmd_issue.go:183` | `:104` |
+| `runIssuePullRequests` handler | `server/cmd/multica/cmd_issue.go:744` | new citation |
+| Calls `GET /api/issues/<id>/pull-requests` | `server/cmd/multica/cmd_issue.go:759` | `:522` (unchanged) |
 | API route registration | `server/cmd/server/router.go:480` | `:480` (unchanged) |
 | Handler `ListPullRequestsForIssue` → `Queries.ListPullRequestsByIssue` | `server/internal/handler/github.go:687,692` | `:466` |
 | Row → response mapper `issuePullRequestRowToResponse` | `server/internal/handler/github.go:205` | `:149` |
@@ -127,8 +127,9 @@ and is hidden from the PR list.
 | `shouldEnqueueAgentTask` returns false for `backlog` (parking lot) | `server/internal/handler/issue.go:2644-2648` | new citation |
 | Backlog → non-backlog (not done/cancelled) enqueues on update | `server/internal/handler/issue.go:2537-2540` | `:2523` |
 | Same contract in batch update | `server/internal/handler/issue.go:3021-3024` | new citation |
-| Child → `done` notifies + wakes the parent, gated by the stage barrier | `server/internal/handler/issue_child_done.go:66` (`notifyParentOfChildDone`; doc comment at `:15`; barrier gate at `:115`) | func def `:51` |
+| Child → `done` notifies + wakes the parent, gated by the stage barrier | `server/internal/handler/issue_child_done.go:68` (`notifyParentOfChildDone`; doc comment at `:16`; barrier gate at `:124`) | `:66` |
 | Status change (incl. → `cancelled`) does NOT cancel in-flight tasks; only issue deletion does (MUL-4465) | no-cancel note in `server/internal/handler/issue.go:2652-2658` (`UpdateIssue`) and `:3170-3171` (`BatchUpdateIssues`); deletion still cancels at `:2863` (`DeleteIssue`) / `:3239` (`BatchDeleteIssues`) via `CancelTasksForIssue` (`server/internal/service/task.go:1229`) | new citation |
+| `--no-start` suppresses the run a status/assignee change would enqueue | CLI flag on `issueUpdateCmd` / `issueStatusCmd` / `issueAssignCmd` in `server/cmd/multica/cmd_issue.go`, sending `suppress_run`; honored by `UpdateIssueRequest.SuppressRun` in `server/internal/handler/issue.go` (single update and batch paths) | new citation |
 | `StartTask` / `CompleteTask` do not write issue status (agent CLI owns progress) | `server/internal/service/task.go` (`StartTask` / `CompleteTask` comments) | new citation |
 | Assignment brief: ordinary agent `in_progress` then `in_review`; squad leader `in_progress` only on first dispatch | `server/internal/daemon/execenv/runtime_config_sections.go` (`writeWorkflowAssignment`) | new citation |
 | Failed task may roll `in_progress` → `todo` when no active task remains | `server/internal/service/task.go` (`HandleFailedTasks`) | new citation |
@@ -150,10 +151,15 @@ away, so no task is left orphaned.
 | Behavior | File:line |
 |---|---|
 | `issue.stage` column (nullable, `>= 1`) | `server/migrations/123_issue_stage.up.sql` |
-| Stage barrier: notify+wake fire only when the lowest unfinished stage is all-terminal; unstaged set = one implicit stage | `server/internal/handler/issue_child_done.go:231` (`stageBarrierClosed`) |
-| Per-stage summary + next stage for the wake comment | `server/internal/handler/issue_child_done.go:254` (`stageProgressSummary`) |
-| `--stage` on `issue create` / `issue update` | `server/cmd/multica/cmd_issue.go:328,350` |
-| `multica issue children <id>` (sub-issues grouped by stage) | `server/cmd/multica/cmd_issue.go:114,678`; route `GET /api/issues/{id}/children` → `ListChildIssues` |
+| Stage barrier: notify+wake fire only when the lowest unfinished stage is all-terminal; unstaged set = one implicit stage | `server/internal/handler/issue_child_done.go:370` (`stageBarrierClosed`) |
+| **Terminal = `done` or `cancelled` only** — `in_review` does NOT close a stage | `server/internal/handler/issue_child_done.go:340` (`isTerminalChildStatus`) |
+| Per-stage summary + next stage for the wake comment | `server/internal/handler/issue_child_done.go:402` (`stageProgressSummary`) |
+| Trailing "promote the next stage / decide whether to wrap up" instruction | `server/internal/handler/issue_child_done.go:452` (`stageAdvanceInstruction`) |
+| `--stage` on `issue create` / `issue update` | `server/cmd/multica/cmd_issue.go:481,504` |
+| `multica issue children <id>` (sub-issues grouped by stage) | `server/cmd/multica/cmd_issue.go:191,877`; route `GET /api/issues/{id}/children` → `ListChildIssues` |
+| CLI barrier projection: `barrier_closed` / `waiting_on` per stage, top-level `next_stage`, `unstaged_barrier_closed` | `server/cmd/multica/cmd_issue.go:1010` (`groupChildStages`), `:1069` (`unstagedBarrierState`), `:1086` (`childBarrierNotice`, the table one-liner) |
+| CLI copy of the terminal rule (must change with the handler's) | `server/cmd/multica/cmd_issue.go:965` (`isTerminalChildStatus`) |
+| Injected brief's one-line stage semantics (every agent reads this) | `server/internal/daemon/execenv/runtime_config_sections.go:711` (`writeSubIssueCreation`) |
 
 Advancement is agent-driven: the server only detects the closed barrier and
 wakes the parent assignee. Promoting the next stage's `backlog` sub-issues to
@@ -161,6 +167,19 @@ wakes the parent assignee. Promoting the next stage's `backlog` sub-issues to
 assignee (often a squad leader) decides the parent is complete, the system
 comment explicitly asks for `multica issue status <parent-id> in_review` —
 comment-triggered runs otherwise must not change status unless asked.
+
+The terminal set is the sharp edge here, and it is mirrored in four places that
+must stay in sync: `isTerminalChildStatus`
+(`server/internal/handler/issue_child_done.go:340`), the CLI copy
+(`server/cmd/multica/cmd_issue.go:965`), `ChildIssueProgress`'s
+`status IN ('done', 'cancelled')` filter
+(`server/pkg/db/queries/issue.sql:411`), and the sub-issue progress bar in
+`packages/views/issues/components/issue-detail.tsx:652`.
+`in_review` is not in it, while the assignment brief asks ordinary
+agents to finish there — so an agent-assigned child that "finishes" normally
+holds its stage open, with no timeout and no reconciler behind it. That is why
+both the brief (`writeSubIssueCreation`) and `multica issue children --output
+json` now state the rule and the barrier state explicitly.
 
 ## Metadata CLI
 
@@ -211,4 +230,6 @@ grep -n 'extractIdentifiers(\|extractClosingIdentifiers(\|derivePRState(' intern
 grep -n 'qualifyingIdents\|reference_only\|ReferenceOnly' internal/handler/github.go pkg/db/queries/github.sql
 grep -n 'prevIssue.Status == "backlog"\|func (h \*Handler) shouldEnqueueAgentTask' internal/handler/issue.go
 grep -n 'func notifyParentOfChildDone'       internal/handler/issue_child_done.go
+grep -n 'func isTerminalChildStatus\|func stageBarrierClosed\|func stageProgressSummary\|func stageAdvanceInstruction' internal/handler/issue_child_done.go
+grep -n 'func runIssueChildren\|func groupChildStages\|func unstagedBarrierState\|func childBarrierNotice\|func isTerminalChildStatus' cmd/multica/cmd_issue.go
 ```

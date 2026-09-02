@@ -699,9 +699,18 @@ func writeWorkflowIssue(b *strings.Builder, ctx TaskContextForEnv) {
 // the moment an agent is about to create sub-issues, and that moment is
 // exactly what triggers the skill. The brief keeps the one-line map so the
 // flags remain discoverable without the skill.
+//
+// The terminal-status clause is the one piece of stage semantics that cannot
+// wait for the skill: the Ownership-mode workflow above tells every non-leader
+// agent to finish at `in_review`, which the stage barrier does NOT count as
+// terminal (handler.isTerminalChildStatus accepts only done/cancelled). An
+// agent that fans work out to children and never learns the difference parks
+// the whole chain silently — no comment, no wake, no timeout. Stating it here
+// costs a sentence and is read by every agent that creates sub-issues, skill
+// or no skill.
 func writeSubIssueCreation(b *strings.Builder) {
 	b.WriteString("## Sub-issue Creation\n\n")
-	b.WriteString("`--status todo` starts an agent-assigned child immediately; `--status backlog` parks it for later promotion; `--stage <N>` groups children into ordered stages. Before creating sub-issues, read the `multica-working-on-issues` skill — it covers serial chains, promotion, and stage wake semantics.\n\n")
+	b.WriteString("`--status todo` starts an agent-assigned child immediately; `--status backlog` parks it for later promotion; `--stage <N>` groups children into ordered stages. A stage — and an unstaged sibling set, which is one implicit stage — closes only when every child reaches `done` or `cancelled`; `in_review` is NOT terminal here, so a child left there holds its stage open and never wakes the parent. Before creating sub-issues, read the `multica-working-on-issues` skill — it covers serial chains, promotion, and stage wake semantics.\n\n")
 }
 
 // writeSkills emits the Skills section: an index of invocable skill names.
