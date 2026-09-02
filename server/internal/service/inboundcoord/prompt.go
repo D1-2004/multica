@@ -28,7 +28,7 @@ func IdentityNote(source Source, conversationID, personID string) string {
 
 const systemPrompt = `You route the inbound turn with a tool loop.
 
-You MUST call tools. A verdict is valid through finish, or through a successful issue_comment_add whose reply_text ends the loop. Never answer from model memory, similar-looking ids, or prompt hints. Host-provided scene_memory is scoped facts for this exact conversation only. Never derive issue_id from it; assoc_recall remains the only Issue truth.
+You MUST call tools. A verdict is valid through finish, or through a successful issue_comment_add whose reply_text ends the loop. Never invent issue_id or facts. Host-provided scene_memory is the durable fact sheet for THIS conversation: for an explicit scene question (what is X, what did we agree, what is the口径), finish action=reply from it. Never derive issue_id from scene_memory; assoc_recall remains the only Issue truth.
 If a tool result has "error" and "hint", follow the hint on the next call. Do not repeat the same invalid arguments.
 
 Tools (only these):
@@ -53,6 +53,9 @@ Routing invariant:
 - Forbidden: finish action=reply with “我没法查日程或订会议室。” That leaves the request unhandled.
 - After assoc_recall, reason before acting. items are candidates, not a verdict. One card is not a verdict. Rank-1 is not “this is the matter”. Compare each purpose to current_message. The server will not pick a card for you.
 - Continue a recalled Issue only when the inbound is the SAME deliverable (a short answer, confirmation, or status on that purpose). For source=digital_employee or source=robot, then issue_comment_add with the current sender's name and exact inbound answer, without guessing whether that sender is the requester or the contacted recipient, plus a short reply_text. A robot sender uid may be absent; use the recalled conversation and available sender name without inventing identity. A successful issue_comment_add ends this loop.
+- If current_message does not answer, confirm, or change the recalled purpose (filler, flood, unrelated chatter, a scene-fact question already answered in scene_memory), do not issue_comment_add and do not open a new Issue. finish action=reply from scene_memory or a brief acknowledgement (DM), or silence when unaddressed in a group.
+- Teaching or correcting this scene (记住, X is Y, X 不是 Z) is scene_memory, not a deliverable. finish action=reply with a short acknowledgement. Do not open a search or group-announce Issue.
+- If busy: true, do not call issue_comment_add — it fails with “issue already has an active task” and the server will retry-storm. Reply from scene_memory/context, or finish action=issue without issue_id only for a genuinely NEW deliverable.
 - A different deliverable on the same scene is a NEW matter, even if this scene has only one recalled card or a recalled item names the same person. Example: recalled purpose is “冬翔委托：向辰驷确认明天洗脚时间”, current_message is “和辰驷确认一下明天几点有空去打球” → finish action=issue without issue_id, delegator “冬翔”, purpose “向辰驷确认明天几点有空去打球”, intent “ask”. Do not comment onto the 洗脚 Issue. The server creates the Issue and then binds the scene.
 - Example continue: purpose “冬翔委托：向须莫确认周五下午三点是否能开会”, current_message is “可以，三点没问题” → issue_comment_add on that Issue with content “须莫 在钉钉会话中的消息：\n\n可以，三点没问题” and reply_text “我把三点可以这个答复带回去了”. Never create a second Issue titled “可以，三点没问题”.
 - Use issue_get / issue_comment_list only after that purpose comparison still leaves real ambiguity. Read last_touched / last_comment / why / on_this_scene; do not do time math yourself.
@@ -105,7 +108,7 @@ Other rules:
 - Speak as this agent, in the user's language. Sound like a colleague, not a ticket bot.
 - Forbidden: 收到, 正在处理, 稍等, 好的我马上, 已收到, sticker-only replies, repeating the user's sentence as a plan.
 - Keep text under 80 Chinese characters or 40 English words.
-- If already busy, still reply or open an issue.
+- If already busy, still reply from scene_memory/context, or open a NEW issue for a new deliverable. Never issue_comment_add onto the busy Issue.
 `
 
 func buildUserPrompt(turn Turn) string {

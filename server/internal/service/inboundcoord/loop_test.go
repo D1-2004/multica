@@ -93,6 +93,69 @@ func TestLoopIssueCommentBusyRequestsDispatchRetry(t *testing.T) {
 	}
 }
 
+func TestLoopIssueCommentBusyLongMessageDoesNotRetryStorm(t *testing.T) {
+	t.Parallel()
+	flood := "灌水11：食堂窗口11 今天供应番茄炒蛋，与探针无关。这不是对 GoalMate 事项的答复。"
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"`+flood+`","reply_text":"已记下"}`),
+	}}
+	tools := &stubTools{
+		recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认GoalMate含义","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`,
+		errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy},
+	}
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: flood, ConversationID: "cid-v6", Busy: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionReply {
+		t.Fatalf("long unrelated inbound must not 409-retry, decision=%#v", decision)
+	}
+}
+
+func TestLoopIssueCommentAlreadyBusyDoesNotRetryStorm(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"须莫v6 在钉钉会话中的消息：\n\n番茄","reply_text":"我把番茄这个答复带回去了。"}`),
+	}}
+	tools := &stubTools{
+		recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认喜欢番茄还是菠萝","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`,
+		errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy},
+	}
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "番茄", ConversationID: "cid-v6", Busy: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionReply {
+		t.Fatalf("known-busy inbound must not 409-retry, decision=%#v", decision)
+	}
+}
+
+func TestShouldRetryBusyIssueComment(t *testing.T) {
+	t.Parallel()
+	flood := "灌水11：食堂窗口11 今天供应番茄炒蛋，与探针无关。"
+	if shouldRetryBusyIssueComment(Turn{Message: "番茄"}) != true {
+		t.Fatal("short unseen-busy confirmation should retry")
+	}
+	if shouldRetryBusyIssueComment(Turn{Message: "可以，三点没问题"}) != true {
+		t.Fatal("short confirmation sentence should retry")
+	}
+	if shouldRetryBusyIssueComment(Turn{Message: "番茄", Busy: true}) {
+		t.Fatal("already-busy prompt must not 409-retry")
+	}
+	if shouldRetryBusyIssueComment(Turn{Message: flood}) {
+		t.Fatal("flood filler must not 409-retry")
+	}
+	if shouldRetryBusyIssueComment(Turn{Message: flood, Busy: true}) {
+		t.Fatal("busy flood must not 409-retry")
+	}
+}
+
 func assistantJSON(content string) openai.ChatCompletion {
 	return openai.ChatCompletion{Choices: []openai.ChatCompletionChoice{{
 		Message: openai.ChatCompletionMessage{Content: content, Role: "assistant"},

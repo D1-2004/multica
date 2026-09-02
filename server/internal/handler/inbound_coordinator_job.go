@@ -183,9 +183,26 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 		return true, w.complete(ctx, job)
 	}
 	if response.Status() == http.StatusConflict || response.Status() >= http.StatusInternalServerError {
-		return true, w.retry(ctx, job, fmt.Errorf("dispatch returned HTTP %d", response.Status()))
+		return true, w.retry(ctx, job, fmt.Errorf("%s", dispatchRejectReason(response)))
 	}
-	return true, w.fail(ctx, job, command, fmt.Sprintf("dispatch rejected with HTTP %d", response.Status()))
+	return true, w.fail(ctx, job, command, dispatchRejectReason(response))
+}
+
+func dispatchRejectReason(response *bufferedDispatchResponse) string {
+	status := 0
+	body := ""
+	if response != nil {
+		status = response.Status()
+		body = strings.TrimSpace(response.body.String())
+		runes := []rune(body)
+		if len(runes) > 300 {
+			body = string(runes[:300])
+		}
+	}
+	if body == "" {
+		return fmt.Sprintf("dispatch rejected with HTTP %d", status)
+	}
+	return fmt.Sprintf("dispatch rejected with HTTP %d: %s", status, body)
 }
 
 func restoreInboundCoordinatorCommand(raw []byte, endpointID pgtype.UUID, targetIdentity string) (DispatchCommand, error) {
@@ -249,6 +266,7 @@ func (w *InboundCoordinatorJobWorker) retry(ctx context.Context, job db.InboundC
 		"job_id", util.UUIDToString(job.ID),
 		"attempt", job.AttemptCount,
 		"delay_ms", delay.Milliseconds(),
+		"error", cause.Error(),
 	)
 	rows, err := w.handler.Queries.RetryInboundCoordinatorJob(ctx, db.RetryInboundCoordinatorJobParams{
 		ID: job.ID, LeaseToken: job.LeaseToken,
@@ -294,6 +312,7 @@ func (w *InboundCoordinatorJobWorker) fail(ctx context.Context, job db.InboundCo
 		"event", "inbound_coordinator_job_failed",
 		"job_id", util.UUIDToString(job.ID),
 		"attempt", job.AttemptCount,
+		"reason", reason,
 	)
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/openai/openai-go/v3"
@@ -120,6 +121,14 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			if errors.Is(callErr, ErrIssueBusy) {
 				appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: callErr.Error(), Error: true})
 				logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, callErr.Error(), true, "issue_busy")
+				if !shouldRetryBusyIssueComment(turn) {
+					return Decision{
+						Action:     ActionReply,
+						UserText:   "这条先不并进正在处理的事项。",
+						Reason:     "issue_busy_unrelated",
+						ToolRounds: round + 1, ToolsUsed: used, Steps: append([]protocol.ChatCoordinatorStep{}, steps...),
+					}, nil
+				}
 				return Decision{
 					Action: ActionRetry, IssueID: issueIDFromToolArguments(call.Arguments),
 					ToolRounds: round + 1, ToolsUsed: used, Steps: append([]protocol.ChatCoordinatorStep{}, steps...),
@@ -216,6 +225,28 @@ func functionToolCalls(msg openai.ChatCompletionMessage) []functionCall {
 		out = append(out, functionCall{ID: id, Name: name, Arguments: call.Function.Arguments})
 	}
 	return out
+}
+
+// shortIssueContinuationRunes is the max inbound length we will 409-retry onto a
+// busy Issue. Real confirmations are a few words ("番茄", "可以，三点没问题").
+// Flood / filler is longer; retrying it HTTP-409 storms and surfaces 处理失败.
+const shortIssueContinuationRunes = 24
+
+func shouldRetryBusyIssueComment(turn Turn) bool {
+	// Prompt already showed busy: true. Re-queueing cannot succeed until the
+	// active task ends, and flood jobs then fail after max attempts.
+	if turn.Busy {
+		return false
+	}
+	return isShortIssueContinuation(turn.Message)
+}
+
+func isShortIssueContinuation(message string) bool {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return false
+	}
+	return utf8.RuneCountInString(message) <= shortIssueContinuationRunes
 }
 
 func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {

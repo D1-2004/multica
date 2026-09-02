@@ -371,6 +371,15 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	if !strings.Contains(systemPrompt, "assoc_recall remains the only Issue truth") {
 		t.Fatal("system prompt must keep assoc as the only issue truth")
 	}
+	if !strings.Contains(systemPrompt, "finish action=reply from it") {
+		t.Fatal("system prompt must allow scene_memory to answer scene questions")
+	}
+	if !strings.Contains(systemPrompt, "do not call issue_comment_add") {
+		t.Fatal("system prompt must not comment onto a busy Issue")
+	}
+	if !strings.Contains(systemPrompt, "Teaching or correcting this scene") {
+		t.Fatal("system prompt must not open an Issue for scene teaching")
+	}
 }
 
 func TestBuildUserPromptResetShowsEmptyHostBlock(t *testing.T) {
