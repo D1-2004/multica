@@ -417,8 +417,12 @@ export function AgentOverviewPane({
           below md the rail is a horizontal strip and the page scrolls whole. */}
       <div
         className={cn(
-          "min-h-0 flex-1 overflow-y-auto",
-          isSecondaryLayout && "md:overflow-hidden",
+          "min-h-0 flex-1",
+          isSecondaryLayout
+            ? "overflow-y-auto md:overflow-hidden"
+            : effectiveView === "inbound"
+              ? "overflow-hidden"
+              : "overflow-y-auto",
         )}
       >
         {effectiveView === "overview" && (
@@ -445,8 +449,8 @@ export function AgentOverviewPane({
         )}
 
         {effectiveView === "inbound" && (
-          <div className="flex min-h-[620px] flex-col">
-            <CoordinatorSessionsTab agentId={agent.id} />
+          <div className="flex h-full min-h-0 flex-1 flex-col">
+            <CoordinatorSessionsTab agent={agent} />
           </div>
         )}
 

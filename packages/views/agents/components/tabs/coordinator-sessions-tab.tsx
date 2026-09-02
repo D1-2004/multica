@@ -1,143 +1,107 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { ChevronLeft } from "lucide-react";
-import { cn } from "@multica/ui/lib/utils";
+import { ArrowLeft, MessageSquare } from "lucide-react";
+import { useDefaultLayout } from "react-resizable-panels";
 import { Button } from "@multica/ui/components/ui/button";
-import { agentCoordinatorSessionsOptions } from "@multica/core/agents";
-import { chatMessagesPageOptions } from "@multica/core/chat/queries";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@multica/ui/components/ui/resizable";
+import { useIsCompact } from "@multica/ui/hooks/use-mobile";
+import {
+  agentCoordinatorSessionsOptions,
+  useAgentPresenceDetail,
+} from "@multica/core/agents";
+import {
+  chatMessagesPageOptions,
+  pendingChatTaskOptions,
+} from "@multica/core/chat/queries";
+import { hideQueuedChatMessages } from "@multica/core/chat/pending";
 import { useWorkspaceId } from "@multica/core/hooks";
-import type { ChatMessage, ChatSession } from "@multica/core/types";
-import { RichContent } from "../../../rich-content";
+import type { Agent, ChatSession } from "@multica/core/types";
+import { PageHeader } from "../../../layout/page-header";
+import {
+  ChatMessageList,
+  ChatMessageSkeleton,
+} from "../../../chat/components/chat-message-list";
+import { ChatSessionHeader } from "../../../chat/components/chat-session-header";
+import { ChatThreadList } from "../../../chat/components/chat-thread-list";
 import { useT } from "../../../i18n";
 
-function formatChatTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  const now = new Date();
-  if (d.toDateString() === now.toDateString()) {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  }
-  if (d.getFullYear() === now.getFullYear()) {
-    return d.toLocaleDateString([], { month: "numeric", day: "numeric" });
-  }
-  return d.toLocaleDateString();
-}
+const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
-function toPreview(content: string): string {
-  return content
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/[#*`>~]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function CoordinatorTranscript({
+function CoordinatorConversation({
   session,
-  onBack,
+  agent,
 }: {
   session: ChatSession;
-  onBack: () => void;
+  agent: Agent;
 }) {
-  const { t } = useT("agents");
   const {
     data: rawMessagePages,
-    isLoading,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
+    isLoading: messagesLoading,
+    fetchNextPage: fetchOlderMessages,
+    hasNextPage: hasOlderMessages,
+    isFetchingNextPage: isFetchingOlderMessages,
   } = useInfiniteQuery(chatMessagesPageOptions(session.id));
-  const messages = useMemo(() => {
-    const pages = rawMessagePages?.pages ?? [];
-    return [...pages].reverse().flatMap((page) => page.messages);
-  }, [rawMessagePages]);
+  const { data: pendingTask, isLoading: pendingTaskLoading } = useQuery(
+    pendingChatTaskOptions(session.id),
+  );
+  const wsId = useWorkspaceId();
+  const presenceDetail = useAgentPresenceDetail(wsId, agent.id);
+  const availability =
+    presenceDetail === "loading" ? undefined : presenceDetail.availability;
+
+  const messagePages = rawMessagePages?.pages ?? [];
+  const allMessages = [...messagePages]
+    .reverse()
+    .flatMap((page) => page.messages);
+  const messages = hideQueuedChatMessages(allMessages, pendingTask);
+  const olderMessageCount = messagePages
+    .slice(1)
+    .reduce((sum, page) => sum + page.messages.length, 0);
+  const firstItemIndex =
+    messages.length > 0
+      ? CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX - olderMessageCount
+      : 0;
+  const showSkeleton = messagesLoading || pendingTaskLoading;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="md:hidden"
-          onClick={onBack}
-        >
-          <ChevronLeft className="h-4 w-4" />
-          {t(($) => $.tab_body.inbound.back)}
-        </Button>
-        <div className="min-w-0 truncate text-body font-medium">
-          {session.title.trim() || t(($) => $.tab_body.inbound.untitled)}
-        </div>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {isLoading ? (
-          <p className="text-caption text-muted-foreground">
-            {t(($) => $.tab_body.inbound.loading)}
-          </p>
-        ) : messages.length === 0 ? (
-          <p className="text-caption text-muted-foreground">
-            {t(($) => $.tab_body.inbound.no_messages)}
-          </p>
-        ) : (
-          <div className="mx-auto flex max-w-2xl flex-col gap-3">
-            {hasNextPage ? (
-              <div className="flex justify-center">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={isFetchingNextPage}
-                  onClick={() => void fetchNextPage()}
-                >
-                  {t(($) => $.tab_body.inbound.load_older)}
-                </Button>
-              </div>
-            ) : null}
-            {messages.map((message) => (
-              <CoordinatorMessage key={message.id} message={message} />
-            ))}
-          </div>
-        )}
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col @container">
+      <ChatSessionHeader session={session} agent={agent} readOnly />
+      {showSkeleton ? (
+        <ChatMessageSkeleton />
+      ) : (
+        <ChatMessageList
+          key={session.id}
+          messages={messages}
+          pendingTask={pendingTask}
+          availability={availability}
+          firstItemIndex={firstItemIndex}
+          hasOlderMessages={hasOlderMessages}
+          isFetchingOlderMessages={isFetchingOlderMessages}
+          onLoadOlderMessages={() => void fetchOlderMessages()}
+          quickActionsDisabled
+        />
+      )}
     </div>
   );
 }
 
-function CoordinatorMessage({ message }: { message: ChatMessage }) {
-  const isUser = message.role === "user";
-  if (isUser) {
-    return (
-      <div className="flex justify-end">
-        <div className="max-w-[80%] break-words rounded-2xl bg-muted px-3.5 py-2 text-body">
-          <RichContent
-            content={message.content}
-            attachments={message.attachments}
-            density="compact"
-            phase="settled"
-          />
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="max-w-[90%] break-words text-body">
-      <RichContent
-        content={message.content}
-        attachments={message.attachments}
-        density="compact"
-        phase="settled"
-      />
-    </div>
-  );
-}
-
-export function CoordinatorSessionsTab({ agentId }: { agentId: string }) {
+export function CoordinatorSessionsTab({ agent }: { agent: Agent }) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
+  const isCompact = useIsCompact();
   const { data: sessions = [], isLoading, isError, refetch } = useQuery(
-    agentCoordinatorSessionsOptions(wsId, agentId),
+    agentCoordinatorSessionsOptions(wsId, agent.id),
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
+    id: "multica_agent_inbound_layout",
+  });
 
   useEffect(() => {
     if (selectedId && !sessions.some((session) => session.id === selectedId)) {
@@ -145,93 +109,104 @@ export function CoordinatorSessionsTab({ agentId }: { agentId: string }) {
     }
   }, [selectedId, sessions]);
 
-  const selected = sessions.find((session) => session.id === selectedId) ?? null;
-  const showTranscript = selected != null;
+  const selected =
+    sessions.find((session) => session.id === selectedId) ?? null;
 
-  return (
-    <div className="flex min-h-[620px] flex-1">
-      <aside
-        className={cn(
-          "w-full shrink-0 overflow-y-auto border-r md:w-72",
-          showTranscript && "hidden md:block",
-        )}
-      >
-        {isLoading ? (
-          <p className="p-4 text-caption text-muted-foreground">
-            {t(($) => $.tab_body.inbound.loading)}
-          </p>
-        ) : isError ? (
-          <div className="space-y-2 p-4">
-            <p className="text-caption text-muted-foreground">
-              {t(($) => $.tab_body.inbound.load_failed)}
-            </p>
-            <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
-              {t(($) => $.tab_body.inbound.retry)}
+  const listHeader = (
+    <PageHeader className="justify-between">
+      <h1 className="text-body font-semibold">{t(($) => $.tabs.inbound)}</h1>
+    </PageHeader>
+  );
+
+  const listBody = isLoading ? (
+    <p className="px-4 py-3 text-caption text-muted-foreground">
+      {t(($) => $.tab_body.inbound.loading)}
+    </p>
+  ) : isError ? (
+    <div className="space-y-2 px-4 py-3">
+      <p className="text-caption text-muted-foreground">
+        {t(($) => $.tab_body.inbound.load_failed)}
+      </p>
+      <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
+        {t(($) => $.tab_body.inbound.retry)}
+      </Button>
+    </div>
+  ) : sessions.length === 0 ? (
+    <p className="px-4 py-3 text-caption text-muted-foreground">
+      {t(($) => $.tab_body.inbound.empty)}
+    </p>
+  ) : (
+    <div className="px-2 py-1">
+      <ChatThreadList
+        sessions={sessions}
+        agents={[agent]}
+        activeSessionId={selectedId}
+        onSelectSession={(session) => setSelectedId(session.id)}
+        onArchive={() => undefined}
+        readOnly
+      />
+    </div>
+  );
+
+  const conversation = selected ? (
+    <CoordinatorConversation session={selected} agent={agent} />
+  ) : (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+      <MessageSquare className="h-10 w-10 text-faint-foreground" />
+      <p className="text-body">{t(($) => $.tab_body.inbound.select_prompt)}</p>
+    </div>
+  );
+
+  if (isCompact) {
+    if (selected) {
+      return (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex h-12 shrink-0 items-center border-b px-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedId(null)}
+              className="gap-1.5 text-muted-foreground"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              {t(($) => $.tabs.inbound)}
             </Button>
           </div>
-        ) : sessions.length === 0 ? (
-          <p className="p-4 text-caption text-muted-foreground">
-            {t(($) => $.tab_body.inbound.empty)}
-          </p>
-        ) : (
-          <ul className="divide-y">
-            {sessions.map((session) => {
-              const active = session.id === selectedId;
-              const preview = session.last_message?.content
-                ? toPreview(session.last_message.content)
-                : "";
-              const time = formatChatTime(
-                session.last_message?.created_at ?? session.updated_at,
-              );
-              return (
-                <li key={session.id}>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(session.id)}
-                    className={cn(
-                      "flex w-full flex-col gap-1 px-4 py-3 text-left hover:bg-surface-hover",
-                      active && "bg-surface-selected",
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate text-body font-medium">
-                        {session.title.trim() ||
-                          t(($) => $.tab_body.inbound.untitled)}
-                      </span>
-                      <span className="shrink-0 text-caption text-muted-foreground">
-                        {time}
-                      </span>
-                    </div>
-                    {preview ? (
-                      <span className="line-clamp-2 text-caption text-muted-foreground">
-                        {preview}
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </aside>
-      <section
-        className={cn(
-          "min-w-0 flex-1",
-          !showTranscript && "hidden md:flex md:items-center md:justify-center",
-          showTranscript && "flex",
-        )}
+          {conversation}
+        </div>
+      );
+    }
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        {listHeader}
+        <div className="min-h-0 flex-1 overflow-y-auto">{listBody}</div>
+      </div>
+    );
+  }
+
+  return (
+    <ResizablePanelGroup
+      orientation="horizontal"
+      className="min-h-0 flex-1"
+      defaultLayout={defaultLayout}
+      onLayoutChanged={onLayoutChanged}
+    >
+      <ResizablePanel
+        id="list"
+        defaultSize={320}
+        minSize={240}
+        maxSize={480}
+        groupResizeBehavior="preserve-pixel-size"
       >
-        {selected ? (
-          <CoordinatorTranscript
-            session={selected}
-            onBack={() => setSelectedId(null)}
-          />
-        ) : (
-          <p className="p-4 text-caption text-muted-foreground">
-            {t(($) => $.tab_body.inbound.select_prompt)}
-          </p>
-        )}
-      </section>
-    </div>
+        <div className="flex h-full flex-col border-r">
+          {listHeader}
+          <div className="min-h-0 flex-1 overflow-y-auto">{listBody}</div>
+        </div>
+      </ResizablePanel>
+      <ResizableHandle />
+      <ResizablePanel id="detail" minSize="40%">
+        <div className="flex h-full min-h-0 flex-col">{conversation}</div>
+      </ResizablePanel>
+    </ResizablePanelGroup>
   );
 }
