@@ -181,7 +181,7 @@ func TestAssocToolsBindAssociatesIssue(t *testing.T) {
 		PersonID:       "123456",
 		EvidenceID:     "msg-in-1",
 		Kind:           "dm",
-	}, toolAssocBind, `{"issue_id":"issue-eat","purpose":"向冬翔确认今天吃什么"}`)
+	}, toolAssocBind, `{"issue_id":"issue-eat","purpose":"向冬翔确认今天吃什么","intent":"ask"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,14 +200,34 @@ func TestAssocToolsBindAssociatesIssue(t *testing.T) {
 	if len(got.Items) != 1 || got.Items[0].Issue != "issue-eat" {
 		t.Fatalf("recall=%+v", got.Items)
 	}
+	if got.Items[0].Intent != assoc.IntentAsk {
+		t.Fatalf("intent=%q", got.Items[0].Intent)
+	}
 }
 
 func TestAssocToolsBindRequiresConversation(t *testing.T) {
 	t.Parallel()
 	tools := &AssocTools{Service: assoc.NewService(assoc.NewMemory())}
-	_, err := tools.Call(context.Background(), Turn{WorkspaceID: "ws", AgentID: testAgentID()}, toolAssocBind, `{"issue_id":"issue-eat"}`)
+	_, err := tools.Call(context.Background(), Turn{WorkspaceID: "ws", AgentID: testAgentID()}, toolAssocBind, `{"issue_id":"issue-eat","purpose":"向冬翔确认今天吃什么","intent":"ask"}`)
 	if err == nil || !strings.Contains(err.Error(), "conversation_id") {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestAssocToolsBindPendingNewMatter(t *testing.T) {
+	t.Parallel()
+	tools := &AssocTools{Service: assoc.NewService(assoc.NewMemory())}
+	raw, err := tools.Call(context.Background(), Turn{
+		WorkspaceID:    "ws",
+		AgentID:        testAgentID(),
+		ConversationID: "cid-dongxiang",
+		SenderName:     "冬翔",
+	}, toolAssocBind, `{"purpose":"向冬翔确认今天吃什么","intent":"ask"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"pending":true`) || !strings.Contains(raw, `"intent":"ask"`) {
+		t.Fatalf("bind=%s", raw)
 	}
 }
 

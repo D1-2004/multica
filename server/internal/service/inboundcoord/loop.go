@@ -36,6 +36,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	}
 	var used []string
 	var recalls []recallCall
+	var bind BindSpec
 	recalledIssues := map[string]struct{}{}
 	continuationIssues := map[string]struct{}{}
 	steps := make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2)
@@ -74,14 +75,20 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		for _, call := range calls {
 			appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: clipRunes(call.Arguments, 1200)})
 			if call.Name == toolFinish {
-				if reqErr := requireRecallBeforeFinish(turn, recalls, recalledIssues, continuationIssues, call.Arguments); reqErr != nil {
+				if reqErr := requireRecallBeforeFinish(turn, recalls, recalledIssues, continuationIssues, bind, call.Arguments); reqErr != nil {
 					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: reqErr.Error(), Error: true})
 					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
 					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "recall_required")
 					continue
 				}
+				if reqErr := requireBindForNewIssue(call.Arguments, bind); reqErr != nil {
+					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
+					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "bind_required")
+					continue
+				}
 				used = append(used, call.Name)
 				decision := parseDecision(call.Arguments, turn)
+				applyBindSpec(&decision, bind)
 				decision.ToolRounds = round + 1
 				decision.ToolsUsed = used
 				logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
@@ -117,6 +124,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				result = `{"error":` + jsonQuote(callErr.Error()) + `}`
 			} else if call.Name == toolAssocRecall {
 				collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
+			} else if call.Name == toolAssocBind {
+				if spec, ok := parseBindSpec(result); ok {
+					bind = spec
+				}
 			} else if call.Name == toolIssueCommentAdd {
 				if effect, ok := parseIssueCommentEffect(result); ok {
 					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 1600)})
@@ -125,6 +136,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: "reply_text is required", Error: true})
 						messages = append(messages, openai.ToolMessage(`{"error":"reply_text is required"}`, call.ID))
 						logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, "reply_text is required", true, "reply_text_required")
+						continue
+					}
+					if bind.Pending && strings.TrimSpace(bind.IssueID) == "" {
+						messages = append(messages, openai.ToolMessage(`{"error":"this turn declared a new matter; finish action=issue without issue_id"}`, call.ID))
+						logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, "new matter declared", true, "new_matter")
 						continue
 					}
 					decision := Decision{
@@ -139,6 +155,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 							Seq: len(steps) + 1, Type: "text", Content: replyText,
 						}),
 					}
+					applyBindSpec(&decision, bind)
 					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, false, "terminal")
 					logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
 					return decision, nil
@@ -247,16 +264,20 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocBind,
-			Description: openai.String("Bind a DingTalk conversation_id to an Issue so later replies in that scene recall it. issue_id from assoc_recall links the scene to a matter; omit issue_id to tag the inbound event only."),
+			Description: openai.String("Declare or rewrite the matter card for this conversation. The model must inject purpose (deliverable phrase) and intent. Omit issue_id to declare a NEW matter that finish action=issue will create. Copy issue_id from assoc_recall only to attach this scene to that existing matter. matched_via=event items are candidates, not confirmed links — bind them before continuing."),
 			Parameters: shared.FunctionParameters{
-				"type": "object",
+				"type":     "object",
+				"required": []string{"purpose", "intent"},
 				"properties": map[string]any{
-					"conversation_id": map[string]any{"type": "string"},
-					"issue_id":        map[string]any{"type": "string", "description": "Issue UUID from assoc_recall. Required to link the scene to a matter."},
-					"evidence_id":     map[string]any{"type": "string"},
+					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId. Defaults to this inbound scene."},
+					"issue_id":        map[string]any{"type": "string", "description": "Existing Issue UUID from assoc_recall. Omit to declare a new matter."},
+					"purpose":         map[string]any{"type": "string", "description": "Deliverable such as 向须莫v6确认今天晚饭吃什么. Never paste the raw inbound envelope."},
+					"intent":          map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "ask=向某人询问; confirm=确认时间或选择; notify=通知原发起人; lookup=查找人或记录; wait=等待回复; other=其他."},
+					"waiting_on":      map[string]any{"type": "string", "description": "openConversationId this matter is waiting on, if different from conversation_id."},
+					"display_name":    map[string]any{"type": "string", "description": "Human name of the person in this scene, such as 须莫. Do not invent."},
 					"person_id":       map[string]any{"type": "string"},
-					"purpose":         map[string]any{"type": "string", "description": "Deliverable phrase such as 向冬翔确认今天吃什么. Needed when creating the Issue task node."},
-					"kind":            map[string]any{"type": "string"},
+					"evidence_id":     map[string]any{"type": "string"},
+					"kind":            map[string]any{"type": "string", "description": "dm or group. Copy from the inbound scene."},
 				},
 			},
 		}),
@@ -590,11 +611,85 @@ func recalledItemContinuesConversation(
 	return false
 }
 
+type BindSpec struct {
+	Pending        bool
+	Linked         bool
+	Purpose        string
+	Intent         string
+	IssueID        string
+	ConversationID string
+	WaitingOn      string
+	DisplayName    string
+	Kind           string
+}
+
+func parseBindSpec(raw string) (BindSpec, bool) {
+	var parsed struct {
+		Pending        bool   `json:"pending"`
+		Linked         bool   `json:"linked"`
+		Purpose        string `json:"purpose"`
+		Intent         string `json:"intent"`
+		IssueID        string `json:"issue_id"`
+		ConversationID string `json:"conversation_id"`
+		WaitingOn      string `json:"waiting_on"`
+		DisplayName    string `json:"display_name"`
+		Kind           string `json:"kind"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed) != nil {
+		return BindSpec{}, false
+	}
+	if strings.TrimSpace(parsed.Purpose) == "" || strings.TrimSpace(parsed.Intent) == "" {
+		return BindSpec{}, false
+	}
+	return BindSpec{
+		Pending:        parsed.Pending,
+		Linked:         parsed.Linked,
+		Purpose:        strings.TrimSpace(parsed.Purpose),
+		Intent:         strings.TrimSpace(parsed.Intent),
+		IssueID:        strings.TrimSpace(parsed.IssueID),
+		ConversationID: strings.TrimSpace(parsed.ConversationID),
+		WaitingOn:      strings.TrimSpace(parsed.WaitingOn),
+		DisplayName:    strings.TrimSpace(parsed.DisplayName),
+		Kind:           strings.TrimSpace(parsed.Kind),
+	}, true
+}
+
+func applyBindSpec(decision *Decision, bind BindSpec) {
+	if decision == nil {
+		return
+	}
+	if bind.Purpose != "" {
+		decision.Purpose = bind.Purpose
+	}
+	if bind.Intent != "" {
+		decision.Intent = bind.Intent
+	}
+}
+
+func requireBindForNewIssue(finishRaw string, bind BindSpec) error {
+	var parsed struct {
+		Action  string `json:"action"`
+		IssueID string `json:"issue_id"`
+	}
+	_ = json.Unmarshal([]byte(strings.TrimSpace(finishRaw)), &parsed)
+	if Action(strings.TrimSpace(parsed.Action)) != ActionIssue {
+		return nil
+	}
+	if strings.TrimSpace(parsed.IssueID) != "" {
+		return nil
+	}
+	if strings.TrimSpace(bind.Purpose) == "" || strings.TrimSpace(bind.Intent) == "" || strings.TrimSpace(bind.IssueID) != "" {
+		return fmt.Errorf("call assoc_bind with purpose and intent and omit issue_id before finish action=issue for a new matter")
+	}
+	return nil
+}
+
 func requireRecallBeforeFinish(
 	turn Turn,
 	recalls []recallCall,
 	recalledIssues map[string]struct{},
 	continuationIssues map[string]struct{},
+	bind BindSpec,
 	finishRaw string,
 ) error {
 	var parsed struct {
@@ -604,7 +699,8 @@ func requireRecallBeforeFinish(
 	_ = json.Unmarshal([]byte(strings.TrimSpace(finishRaw)), &parsed)
 	action := Action(strings.TrimSpace(parsed.Action))
 	issueID := strings.TrimSpace(parsed.IssueID)
-	if turn.Source == SourceDigitalEmployee && len(continuationIssues) == 1 && !asksSceneQuestion(turn.Message) && (turn.ChatType != "group" || turn.Addressed) {
+	newMatter := bind.Pending && strings.TrimSpace(bind.IssueID) == "" && strings.TrimSpace(bind.Purpose) != ""
+	if !newMatter && turn.Source == SourceDigitalEmployee && len(continuationIssues) == 1 && !asksSceneQuestion(turn.Message) && (turn.ChatType != "group" || turn.Addressed) {
 		continuationIssue := ""
 		for recalled := range continuationIssues {
 			continuationIssue = recalled

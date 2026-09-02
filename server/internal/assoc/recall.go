@@ -55,11 +55,17 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 			return Result{}, err
 		}
 	}
+	fromScene := map[string]struct{}{}
+	fromEvent := map[string]struct{}{}
+	fromWindow := q.ConversationID == "" && strings.TrimSpace(q.Q) != ""
 	var sceneEvents []Event
 	if q.ConversationID != "" {
 		cidTasks, cidErr := tasksForConversation(ctx, store, q)
 		if cidErr != nil {
 			return Result{}, cidErr
+		}
+		for _, task := range cidTasks {
+			fromScene[task.ID] = struct{}{}
 		}
 		var evErr error
 		sceneEvents, evErr = store.ListEventsByScene(ctx, q.WorkspaceID, q.AgentID, q.ConversationID, q.Since, MaxLimit)
@@ -69,6 +75,9 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 		eventTasks, eventErr := tasksFromEvents(ctx, store, q, sceneEvents)
 		if eventErr != nil {
 			return Result{}, eventErr
+		}
+		for _, task := range eventTasks {
+			fromEvent[task.ID] = struct{}{}
 		}
 		cidTasks = unionTasks(cidTasks, eventTasks)
 		if q.IssueID == "" {
@@ -114,6 +123,7 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 		if _, ok := personHit[task.ID]; ok {
 			item.Score *= 1.35
 		}
+		item.MatchedVia = matchedVia(task.ID, fromScene, fromEvent, fromWindow)
 		items = append(items, item)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -132,7 +142,7 @@ func Recall(ctx context.Context, store Store, q Query) (Result, error) {
 		Since:  q.Since,
 		Until:  until,
 		Items:  items,
-		Events: eventRefs(sceneEvents),
+		Events: eventRefs(sceneEvents, now),
 	}, nil
 }
 
@@ -275,7 +285,7 @@ func tasksFromEvents(ctx context.Context, store Store, q Query, events []Event) 
 	return out, nil
 }
 
-func eventRefs(events []Event) []EventRef {
+func eventRefs(events []Event, now time.Time) []EventRef {
 	out := make([]EventRef, 0, len(events))
 	seen := map[string]struct{}{}
 	for _, event := range events {
@@ -290,6 +300,7 @@ func eventRefs(events []Event) []EventRef {
 			continue
 		}
 		seen[key] = struct{}{}
+		age, secs := AgeFrom(now.Sub(event.OccurredAt))
 		out = append(out, EventRef{
 			ID:         event.ID,
 			Direction:  event.Direction,
@@ -299,6 +310,8 @@ func eventRefs(events []Event) []EventRef {
 			TaskID:     event.TaskID,
 			PersonID:   event.PersonKey,
 			OccurredAt: event.OccurredAt,
+			Age:        age,
+			AgeSeconds: secs,
 		})
 	}
 	return out
@@ -316,10 +329,12 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 		Intent:        task.Intent,
 		Status:        task.Status,
 		LastTouchedAt: task.LastTouchedAt,
+		IntentLabel:   IntentLabel(task.Intent),
 		Conversations: []ConversationRef{},
 		People:        []PersonRef{},
 		WaitingOn:     []WaitingRef{},
 	}
+	item.LastTouchedAge, item.AgeSeconds = AgeFrom(now.Sub(task.LastTouchedAt))
 	bestRelBoost := 1.0
 	convIndex := map[string]int{}
 	personIndex := map[string]int{}

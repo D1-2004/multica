@@ -11,6 +11,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -397,7 +398,7 @@ func TestRecordAssocInboundThenAssociate(t *testing.T) {
 	if inbound.Body != "7点" {
 		t.Fatalf("inbound body=%q", inbound.Body)
 	}
-	h.associateDispatchIssue(ctx, cmd, dc, issue, "预约A与B本周五下午30分钟", "44444444-4444-4444-4444-444444444444", "")
+	h.associateDispatchIssue(ctx, cmd, dc, issue, "预约A与B本周五下午30分钟", "44444444-4444-4444-4444-444444444444", "", inboundcoord.Decision{})
 
 	result, rerr := h.Assoc.Recall(ctx, assoc.Query{
 		WorkspaceID:    uuidToString(ws),
@@ -640,7 +641,7 @@ func TestAssociateDispatchIssueFromDigitalEmployeeRouterContext(t *testing.T) {
 	dc := agentDispatchContext{WorkspaceID: ws, AgentID: ag}
 	ctx := context.Background()
 	h.recordAssocInboundEvent(ctx, cmd, dc)
-	h.associateDispatchIssue(ctx, cmd, dc, issue, "向须莫v6确认今晚几点打球", "44444444-4444-4444-4444-444444444444", "")
+	h.associateDispatchIssue(ctx, cmd, dc, issue, "向须莫v6确认今晚几点打球", "44444444-4444-4444-4444-444444444444", "", inboundcoord.Decision{})
 	result, rerr := h.Assoc.Recall(ctx, assoc.Query{
 		WorkspaceID:    util.UUIDToString(ws),
 		AgentID:        util.UUIDToString(ag),

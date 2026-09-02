@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -60,7 +61,7 @@ func TestExecuteAgentDispatchV2ResetMemoryClearsScene(t *testing.T) {
 	}
 	dc := agentDispatchContext{WorkspaceID: ws, AgentID: ag}
 	h.recordAssocInboundEvent(ctx, cmd, dc)
-	h.associateDispatchIssue(ctx, cmd, dc, issue, "向冬翔确认今天吃什么", "44444444-4444-4444-4444-444444444444", "")
+	h.associateDispatchIssue(ctx, cmd, dc, issue, "向冬翔确认今天吃什么", "44444444-4444-4444-4444-444444444444", "", inboundcoord.Decision{})
 
 	before, rerr := h.Assoc.Recall(ctx, assoc.Query{
 		WorkspaceID:    uuidToString(ws),

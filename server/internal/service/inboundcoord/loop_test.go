@@ -3,6 +3,7 @@ package inboundcoord
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -47,7 +48,19 @@ func (s *stubTools) Call(_ context.Context, _ Turn, name, arguments string) (str
 		}
 		return `{"items":[]}`, nil
 	case toolAssocBind:
-		return `{"linked":true}`, nil
+		var args bindArgs
+		_ = json.Unmarshal([]byte(arguments), &args)
+		payload := map[string]any{
+			"purpose": strings.TrimSpace(args.Purpose),
+			"intent":  strings.TrimSpace(args.Intent),
+			"pending": strings.TrimSpace(args.IssueID) == "",
+			"linked":  strings.TrimSpace(args.IssueID) != "",
+		}
+		if args.IssueID != "" {
+			payload["issue_id"] = args.IssueID
+		}
+		raw, _ := json.Marshal(payload)
+		return string(raw), nil
 	case toolIssueGet:
 		return `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","title":"向须莫v6确认今晚几点打球","status":"in_review"}`, nil
 	case toolIssueCommentList:
@@ -120,6 +133,7 @@ func TestLoopLogsLLMRequestAndFinish(t *testing.T) {
 
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("call-1", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("call-bind", toolAssocBind, `{"purpose":"向冬翔确认今天吃什么","intent":"ask"}`),
 		assistantTool("call-2", toolFinish, `{"action":"issue","text":"我先去问冬翔今天想吃什么","look_into":"向冬翔确认今天吃什么","reason":"要向同事确认"}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue":"issue-eat","purpose":"向冬翔确认今天吃什么","status":"waiting"}]}`}
@@ -161,6 +175,7 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("call-1", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("call-bind", toolAssocBind, `{"purpose":"向冬翔确认今天吃什么","intent":"ask"}`),
 		assistantTool("call-2", toolFinish, `{"action":"issue","text":"我先去问冬翔今天想吃什么","look_into":"向冬翔确认今天吃什么","reason":"要向同事确认"}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue":"issue-eat","purpose":"向冬翔确认今天吃什么","status":"waiting"}]}`}
@@ -180,16 +195,19 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	if got.LookInto != "向冬翔确认今天吃什么" {
 		t.Fatalf("look_into=%q", got.LookInto)
 	}
-	if got.ToolRounds != 2 {
+	if got.Purpose != "向冬翔确认今天吃什么" || got.Intent != "ask" {
+		t.Fatalf("bind spec purpose=%q intent=%q", got.Purpose, got.Intent)
+	}
+	if got.ToolRounds != 3 {
 		t.Fatalf("tool_rounds=%d", got.ToolRounds)
 	}
-	if strings.Join(got.ToolsUsed, ",") != "assoc_recall,finish" {
+	if strings.Join(got.ToolsUsed, ",") != "assoc_recall,assoc_bind,finish" {
 		t.Fatalf("tools=%v", got.ToolsUsed)
 	}
-	if len(tools.calls) != 1 || !strings.HasPrefix(tools.calls[0], toolAssocRecall) {
+	if len(tools.calls) != 2 {
 		t.Fatalf("tool calls=%v", tools.calls)
 	}
-	if len(chat.params) != 2 {
+	if len(chat.params) != 3 {
 		t.Fatalf("rounds=%d", len(chat.params))
 	}
 	wantStepTypes := []string{"tool_use", "tool_result", "tool_use", "thinking", "text"}
@@ -209,6 +227,32 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	}
 	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,assoc_bind,issue_get,issue_comment_list,issue_comment_add,finish" {
 		t.Fatalf("round0 tools=%v", names)
+	}
+}
+
+func TestLoopNewDeliverableBindSkipsForcedComment(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("bind", toolAssocBind, `{"purpose":"向须莫v6确认今天晚饭吃什么","intent":"ask"}`),
+		assistantTool("finish", toolFinish, `{"action":"issue","text":"我去问须莫v6今天晚饭想吃什么","look_into":"向须莫v6确认今天晚饭吃什么","reason":"新的询问"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"须莫🥥 在钉钉会话中的消息：你看看你联系人里有须莫v6吗","status":"waiting","conversations":[{"conversation_id":"cid-v6","rel":"outreach","rels":["outreach","waiting_on"]}]}]}`}
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "你去问下须莫v6，今天晚饭想吃什么",
+		ConversationID: "cid-v6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionIssue || got.IssueID != "" {
+		t.Fatalf("decision=%#v", got)
+	}
+	if got.Purpose != "向须莫v6确认今天晚饭吃什么" || got.Intent != "ask" {
+		t.Fatalf("purpose=%q intent=%q", got.Purpose, got.Intent)
 	}
 }
 

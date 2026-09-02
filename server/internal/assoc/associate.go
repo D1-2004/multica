@@ -18,9 +18,11 @@ type AssociateInput struct {
 	EvidenceID     string
 	PersonID       string
 	PersonAliases  []string
+	DisplayName    string
 	Intent         string
 	Kind           string
 	Purpose        string
+	WaitingOn      string
 }
 
 func AssociateIssueConversation(ctx context.Context, store Store, in AssociateInput) error {
@@ -52,6 +54,8 @@ func associateIssueConversation(ctx context.Context, store Store, in AssociateIn
 		RunID:          in.RunID,
 		ConversationID: cid,
 		Intent:         in.Intent,
+		DisplayName:    in.DisplayName,
+		WaitingOn:      in.WaitingOn,
 	}, now)
 	if err != nil {
 		return err
@@ -70,10 +74,23 @@ func associateIssueConversation(ctx context.Context, store Store, in AssociateIn
 		}
 	}
 	if personKey != "" {
-		if err := store.EnsurePerson(ctx, in.WorkspaceID, in.AgentID, personKey, "", personAliases); err != nil {
+		if err := store.EnsurePerson(ctx, in.WorkspaceID, in.AgentID, personKey, strings.TrimSpace(in.DisplayName), personAliases); err != nil {
 			return err
 		}
-		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodePerson, personKey, RelTaskPerson, map[string]any{}, now); err != nil {
+		personProps := map[string]any{}
+		if name := strings.TrimSpace(in.DisplayName); name != "" {
+			personProps["display_name"] = name
+		}
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodePerson, personKey, RelTaskPerson, personProps, now); err != nil {
+			return err
+		}
+	}
+	if wait := strings.TrimSpace(in.WaitingOn); wait != "" && wait != cid {
+		if err := store.EnsureScene(ctx, in.WorkspaceID, in.AgentID, wait, "dm", now); err != nil {
+			return err
+		}
+		waitProps := map[string]any{"kind": "dm", "conversation_id": wait}
+		if err := bindEdge(ctx, store, actor, NodeTask, task.ID, NodeScene, wait, RelWaitingOn, waitProps, now); err != nil {
 			return err
 		}
 	}

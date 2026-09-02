@@ -29,6 +29,8 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"Never invent conversation_id, person_id, or issue_id",
 		"who is asking, who must be contacted",
 		"without guessing whether that sender is the requester or the contacted recipient",
+		"matched_via=event",
+		"purpose and intent",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)

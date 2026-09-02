@@ -82,8 +82,11 @@ type bindArgs struct {
 	IssueID        string `json:"issue_id"`
 	EvidenceID     string `json:"evidence_id"`
 	PersonID       string `json:"person_id"`
+	DisplayName    string `json:"display_name"`
 	Purpose        string `json:"purpose"`
+	Intent         string `json:"intent"`
 	Kind           string `json:"kind"`
+	WaitingOn      string `json:"waiting_on"`
 }
 
 type issueIDArgs struct {
@@ -155,11 +158,44 @@ func (t *AssocTools) recall(ctx context.Context, turn Turn, raw string) (string,
 		return "", err
 	}
 	overlayEventBodies(result.Events, turn)
+	t.enrichRecallCards(ctx, turn, &result)
 	body, err := json.Marshal(result)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func (t *AssocTools) enrichRecallCards(ctx context.Context, turn Turn, result *assoc.Result) {
+	if result == nil || t == nil || t.Issues == nil {
+		return
+	}
+	ws, err := util.ParseUUID(strings.TrimSpace(turn.WorkspaceID))
+	if err != nil || !ws.Valid {
+		return
+	}
+	for i := range result.Items {
+		issueID, err := util.ParseUUID(strings.TrimSpace(result.Items[i].Issue))
+		if err != nil || !issueID.Valid {
+			continue
+		}
+		rows, err := t.Issues.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+			IssueID:     issueID,
+			WorkspaceID: ws,
+			Limit:       1,
+		})
+		if err != nil || len(rows) == 0 {
+			continue
+		}
+		latest := rows[len(rows)-1]
+		result.Items[i].LastComment = assoc.ClipBody(latest.Content, commentClipBudget)
+		if latest.CreatedAt.Valid {
+			at := latest.CreatedAt.Time.UTC()
+			result.Items[i].LastCommentAt = &at
+			age, _ := assoc.AgeFrom(time.Now().UTC().Sub(at))
+			result.Items[i].LastCommentAge = age
+		}
+	}
 }
 
 func overlayEventBodies(events []assoc.EventRef, turn Turn) {
@@ -191,25 +227,36 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 	if strings.TrimSpace(raw) != "" && json.Unmarshal([]byte(raw), &args) != nil {
 		return "", fmt.Errorf("invalid assoc_bind arguments")
 	}
+	purpose := strings.TrimSpace(args.Purpose)
+	if err := assoc.ValidatePurpose(purpose); err != nil {
+		return "", fmt.Errorf("purpose must name the deliverable, such as 向须莫v6确认今天晚饭吃什么")
+	}
+	intent, ok := assoc.CoordinatorIntent(args.Intent)
+	if !ok {
+		return "", fmt.Errorf("intent must be one of ask, confirm, notify, lookup, wait, other")
+	}
 	cid := firstNonEmpty(args.ConversationID, turn.ConversationID)
 	if cid == "" {
 		return "", fmt.Errorf("conversation_id is required")
 	}
 	issueID := strings.TrimSpace(args.IssueID)
+	kind := firstNonEmpty(args.Kind, turn.Kind)
+	display := firstNonEmpty(args.DisplayName, turn.SenderName)
+	waitingOn := strings.TrimSpace(args.WaitingOn)
+	payload := map[string]any{
+		"conversation_id": cid,
+		"purpose":         purpose,
+		"intent":          intent,
+		"intent_label":    assoc.IntentLabel(intent),
+		"kind":            kind,
+		"display_name":    display,
+		"waiting_on":      waitingOn,
+		"person_id":       firstNonEmpty(args.PersonID, turn.PersonID),
+	}
 	if issueID == "" {
-		got, err := t.Service.BindOutbound(ctx, assoc.BindOutboundInput{
-			WorkspaceID:    strings.TrimSpace(turn.WorkspaceID),
-			AgentID:        util.UUIDToString(turn.AgentID),
-			ConversationID: cid,
-			EvidenceID:     firstNonEmpty(args.EvidenceID, turn.EvidenceID),
-			PersonID:       firstNonEmpty(args.PersonID, turn.PersonID),
-			Kind:           firstNonEmpty(args.Kind, turn.Kind),
-			Purpose:        strings.TrimSpace(args.Purpose),
-		})
-		if err != nil {
-			return "", err
-		}
-		body, err := json.Marshal(got)
+		payload["pending"] = true
+		payload["linked"] = false
+		body, err := json.Marshal(payload)
 		if err != nil {
 			return "", err
 		}
@@ -219,20 +266,22 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 		WorkspaceID:    strings.TrimSpace(turn.WorkspaceID),
 		AgentID:        util.UUIDToString(turn.AgentID),
 		IssueID:        issueID,
-		IssueTitle:     strings.TrimSpace(args.Purpose),
-		Purpose:        strings.TrimSpace(args.Purpose),
+		IssueTitle:     purpose,
+		Purpose:        purpose,
+		Intent:         intent,
 		ConversationID: cid,
 		EvidenceID:     firstNonEmpty(args.EvidenceID, turn.EvidenceID),
 		PersonID:       firstNonEmpty(args.PersonID, turn.PersonID),
-		Kind:           firstNonEmpty(args.Kind, turn.Kind),
+		DisplayName:    display,
+		Kind:           kind,
+		WaitingOn:      waitingOn,
 	}); err != nil {
 		return "", err
 	}
-	body, err := json.Marshal(map[string]any{
-		"conversation_id": cid,
-		"issue_id":        issueID,
-		"linked":          true,
-	})
+	payload["issue_id"] = issueID
+	payload["pending"] = false
+	payload["linked"] = true
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}
