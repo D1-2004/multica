@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -818,6 +819,39 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 	dispatchContext agentDispatchContext,
 	result engine.Result,
 ) bool {
+	if result.IssueID.Valid && result.TaskID.Valid {
+		if command.CompletionCallback != nil &&
+			command.CompletionCallback.UpdateURL != "" &&
+			strings.TrimSpace(result.ReplyText) != "" {
+			issue, err := h.Queries.GetIssue(ctx, result.IssueID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load coordinator issue")
+				return true
+			}
+			task, err := h.Queries.GetAgentTask(ctx, result.TaskID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load coordinator issue task")
+				return true
+			}
+			if err := h.TaskService.EnqueueCoordinatorIssueAck(
+				ctx,
+				task,
+				issue,
+				result.IssueIdentifier,
+				command.CompletionCallback.UpdateURL,
+				command.CompletionCallback.Target,
+				result.ReplyText,
+			); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
+				return true
+			}
+		}
+		writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
+			Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: uuidToString(result.IssueID)},
+			TaskID:       uuidToString(result.TaskID),
+		})
+		return true
+	}
 	if command.CompletionCallback == nil {
 		if result.Outcome == engine.OutcomeCoordinatorReply || result.Outcome == engine.OutcomeCoordinatorSilence {
 			chatSessionID := uuidToString(result.ChatSessionID)
@@ -862,36 +896,6 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 			return true
 		}
 		w.WriteHeader(http.StatusAccepted)
-		return true
-	}
-	if result.IssueID.Valid && result.TaskID.Valid && result.ReplyText != "" &&
-		command.CompletionCallback.UpdateURL != "" {
-		issue, err := h.Queries.GetIssue(ctx, result.IssueID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load coordinator issue")
-			return true
-		}
-		task, err := h.Queries.GetAgentTask(ctx, result.TaskID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load coordinator issue task")
-			return true
-		}
-		if err := h.TaskService.EnqueueCoordinatorIssueAck(
-			ctx,
-			task,
-			issue,
-			result.IssueIdentifier,
-			command.CompletionCallback.UpdateURL,
-			command.CompletionCallback.Target,
-			result.ReplyText,
-		); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
-			return true
-		}
-		writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
-			Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: uuidToString(result.IssueID)},
-			TaskID:       uuidToString(result.TaskID),
-		})
 		return true
 	}
 	return false
@@ -1319,6 +1323,52 @@ func writeDispatchCoordinatorTerminal(
 	dispatchContext agentDispatchContext,
 	decision inboundcoord.Decision,
 ) bool {
+	if decision.Action == inboundcoord.ActionReply && decision.IssueComment != nil {
+		issueID, err := util.ParseUUID(strings.TrimSpace(decision.IssueComment.IssueID))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "invalid coordinator issue id")
+			return true
+		}
+		taskID, err := util.ParseUUID(strings.TrimSpace(decision.IssueComment.TaskID))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "invalid coordinator issue task id")
+			return true
+		}
+		if h.TaskService != nil &&
+			command.CompletionCallback != nil &&
+			command.CompletionCallback.UpdateURL != "" &&
+			strings.TrimSpace(decision.UserText) != "" {
+			issue, loadErr := h.Queries.GetIssue(ctx, issueID)
+			if loadErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load coordinator issue")
+				return true
+			}
+			task, loadErr := h.Queries.GetAgentTask(ctx, taskID)
+			if loadErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load coordinator issue task")
+				return true
+			}
+			if enqueueErr := h.TaskService.EnqueueCoordinatorIssueAck(
+				ctx,
+				task,
+				issue,
+				decision.IssueComment.IssueIdentifier,
+				command.CompletionCallback.UpdateURL,
+				command.CompletionCallback.Target,
+				decision.UserText,
+			); enqueueErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
+				return true
+			}
+		}
+		writeJSON(w, http.StatusAccepted, AgentDispatchResponse{
+			Continuation:    AgentDispatchContinuation{Kind: "issue", IssueID: decision.IssueComment.IssueID},
+			IssueIdentifier: decision.IssueComment.IssueIdentifier,
+			CommentID:       decision.IssueComment.CommentID,
+			TaskID:          decision.IssueComment.TaskID,
+		})
+		return true
+	}
 	if h.TaskService == nil || command.CompletionCallback == nil {
 		return false
 	}
@@ -1334,13 +1384,7 @@ func writeDispatchCoordinatorTerminal(
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
 			return true
 		}
-		response := AgentDispatchResponse{}
-		if decision.IssueComment != nil {
-			response.Continuation = AgentDispatchContinuation{Kind: "issue", IssueID: decision.IssueComment.IssueID}
-			response.IssueIdentifier = decision.IssueComment.IssueIdentifier
-			response.CommentID = decision.IssueComment.CommentID
-		}
-		writeJSON(w, http.StatusAccepted, response)
+		writeJSON(w, http.StatusAccepted, AgentDispatchResponse{})
 		return true
 	case inboundcoord.ActionSilence:
 		if err := h.TaskService.EnqueueSynchronousTaskCompletion(

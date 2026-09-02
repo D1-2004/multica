@@ -46,8 +46,8 @@ type IssueAccess interface {
 var ErrIssueBusy = errors.New("issue already has an active task")
 
 // IssueCommentEffect is the durable member comment and its Issue-owned task.
-// TaskID is not returned to Router as its external task: Router is settled by
-// finish.text while this task continues independently on the Issue.
+// The caller keeps the Router dispatch open on TaskID: finish.text is only a
+// non-terminal acknowledgement, while the Issue task owns the final result.
 type IssueCommentEffect struct {
 	IssueID         string `json:"issue_id"`
 	IssueIdentifier string `json:"issue_identifier,omitempty"`

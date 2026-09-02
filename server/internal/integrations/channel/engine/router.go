@@ -821,6 +821,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	}
 
 	if skipSandboxPrepare && coordDecision.Action == inboundcoord.ActionReply {
+		if err := applyCoordinatorIssueCommentEffect(&res, coordDecision.IssueComment); err != nil {
+			return Result{}, postAppendFinalize, err
+		}
 		if err := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision); err != nil {
 			r.logger.Warn("channel router: persist coordinator reply failed",
 				"chat_session_id", uuidString(sessionID),
@@ -877,6 +880,24 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		r.enqueueMedia(set, inst, identity, appendRes.MessageID, msg, sessionID, mediaIssue, pgtype.Text{}, "", deferredIssueTaskID, localMediaDeadline)
 	}
 	return res, postAppendFinalize, nil
+}
+
+func applyCoordinatorIssueCommentEffect(res *Result, effect *inboundcoord.IssueCommentEffect) error {
+	if effect == nil {
+		return nil
+	}
+	issueID, err := util.ParseUUID(strings.TrimSpace(effect.IssueID))
+	if err != nil {
+		return fmt.Errorf("parse coordinator issue comment issue id: %w", err)
+	}
+	taskID, err := util.ParseUUID(strings.TrimSpace(effect.TaskID))
+	if err != nil {
+		return fmt.Errorf("parse coordinator issue comment task id: %w", err)
+	}
+	res.IssueID = issueID
+	res.TaskID = taskID
+	res.IssueIdentifier = strings.TrimSpace(effect.IssueIdentifier)
+	return nil
 }
 
 // enqueueMedia detaches remote media I/O from Handle while preserving message

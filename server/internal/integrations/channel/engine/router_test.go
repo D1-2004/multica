@@ -17,8 +17,40 @@ import (
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestApplyCoordinatorIssueCommentEffect(t *testing.T) {
+	t.Parallel()
+	result := Result{}
+	err := applyCoordinatorIssueCommentEffect(&result, &inboundcoord.IssueCommentEffect{
+		IssueID:         "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		IssueIdentifier: "WS-13",
+		TaskID:          "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uuidString(result.IssueID) != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" ||
+		uuidString(result.TaskID) != "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" ||
+		result.IssueIdentifier != "WS-13" {
+		t.Fatalf("result = %+v", result)
+	}
+
+	if err := applyCoordinatorIssueCommentEffect(&Result{}, &inboundcoord.IssueCommentEffect{
+		IssueID: "not-a-uuid",
+		TaskID:  "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+	}); err == nil {
+		t.Fatal("invalid issue id was accepted")
+	}
+	if err := applyCoordinatorIssueCommentEffect(&Result{}, &inboundcoord.IssueCommentEffect{
+		IssueID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		TaskID:  "not-a-uuid",
+	}); err == nil {
+		t.Fatal("invalid task id was accepted")
+	}
+}
 
 // ---- fakes ----
 

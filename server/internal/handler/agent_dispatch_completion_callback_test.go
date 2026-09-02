@@ -11,10 +11,224 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel/engine"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/util"
 )
 
 const testRouterTargetIdentity = "router-target:v1:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func createCoordinatorIssueTerminalFixture(t *testing.T, name string) (string, string, string) {
+	t.Helper()
+	agentID := createHandlerTestAgent(t, name, nil)
+	var issueID, taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (
+			workspace_id, title, status, priority, assignee_type, assignee_id,
+			creator_type, creator_id, number, position
+		)
+		VALUES (
+			$1, $2, 'todo', 'none', 'agent', $3, 'member', $4,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1), 0
+		)
+		RETURNING id
+	`, testWorkspaceID, name, agentID, testUserID).Scan(&issueID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority,
+			initiator_user_id, originator_user_id, accountable_user_id, context
+		)
+		VALUES ($1, $2, $3, 'queued', 2, $4, $4, $4, '{}'::jsonb)
+		RETURNING id
+	`, agentID, handlerTestRuntimeID(t), issueID, testUserID).Scan(&taskID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_execution_update_outbox WHERE root_task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_completion_outbox WHERE root_task_id = $1 OR request_id LIKE $2`, taskID, "%"+name+"%")
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+	return agentID, issueID, taskID
+}
+
+func assertCoordinatorIssueOwnsTerminal(
+	t *testing.T,
+	w *httptest.ResponseRecorder,
+	issueID, taskID, dispatchTaskID string,
+) {
+	t.Helper()
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var updateType, resultMessage string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT update_type, result_message
+		FROM task_execution_update_outbox
+		WHERE root_task_id = $1 AND request_id = $2
+	`, taskID, "multica-coord-issue:"+taskID).Scan(&updateType, &resultMessage); err != nil {
+		t.Fatal(err)
+	}
+	if updateType != "delegated_to_issue" || resultMessage != "我去处理 WS-13" {
+		t.Fatalf("update_type=%q result_message=%q", updateType, resultMessage)
+	}
+	var terminalCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)
+		FROM task_completion_outbox
+		WHERE request_id = $1
+	`, "multica-terminal:sync-completed:"+dispatchTaskID).Scan(&terminalCount); err != nil {
+		t.Fatal(err)
+	}
+	if terminalCount != 0 {
+		t.Fatalf("coordinator wrote %d premature terminal completions for issue %s", terminalCount, issueID)
+	}
+}
+
+func TestCoordinatorIssueCommentKeepsRouterDispatchOpen(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	t.Run("chat materializer", func(t *testing.T) {
+		agentID, issueID, taskID := createCoordinatorIssueTerminalFixture(t, "coord-issue-chat")
+		const dispatchTaskID = "coord-issue-chat"
+		w := httptest.NewRecorder()
+		handled := testHandler.writeAgentChatCoordinatorOutcomeV2(
+			w,
+			context.Background(),
+			DispatchCommand{CompletionCallback: &DispatchCompletionCallback{
+				URL:       "/api/v1/dispatch-tasks/" + dispatchTaskID + "/execution-result",
+				UpdateURL: "/api/v1/dispatch-tasks/" + dispatchTaskID + "/execution-update",
+				Target:    testRouterTargetIdentity,
+			}},
+			agentDispatchContext{AgentID: util.MustParseUUID(agentID)},
+			engine.Result{
+				Outcome:         engine.OutcomeCoordinatorReply,
+				IssueID:         util.MustParseUUID(issueID),
+				TaskID:          util.MustParseUUID(taskID),
+				IssueIdentifier: "WS-13",
+				ReplyText:       "我去处理 WS-13",
+			},
+		)
+		if !handled {
+			t.Fatal("coordinator issue result was not handled")
+		}
+		var response AgentChatDispatchResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Continuation.Kind != "issue" || response.Continuation.IssueID != issueID || response.TaskID != taskID {
+			t.Fatalf("response = %+v", response)
+		}
+		assertCoordinatorIssueOwnsTerminal(t, w, issueID, taskID, dispatchTaskID)
+	})
+
+	t.Run("issue materializer", func(t *testing.T) {
+		agentID, issueID, taskID := createCoordinatorIssueTerminalFixture(t, "coord-issue-surface")
+		const dispatchTaskID = "coord-issue-surface"
+		w := httptest.NewRecorder()
+		handled := writeDispatchCoordinatorTerminal(
+			w,
+			context.Background(),
+			testHandler,
+			DispatchCommand{CompletionCallback: &DispatchCompletionCallback{
+				URL:       "/api/v1/dispatch-tasks/" + dispatchTaskID + "/execution-result",
+				UpdateURL: "/api/v1/dispatch-tasks/" + dispatchTaskID + "/execution-update",
+				Target:    testRouterTargetIdentity,
+			}},
+			agentDispatchContext{AgentID: util.MustParseUUID(agentID)},
+			inboundcoord.Decision{
+				Action:   inboundcoord.ActionReply,
+				UserText: "我去处理 WS-13",
+				IssueComment: &inboundcoord.IssueCommentEffect{
+					IssueID:         issueID,
+					IssueIdentifier: "WS-13",
+					CommentID:       "cccccccc-cccc-cccc-cccc-cccccccccccc",
+					TaskID:          taskID,
+				},
+			},
+		)
+		if !handled {
+			t.Fatal("coordinator issue decision was not handled")
+		}
+		var response AgentDispatchResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Continuation.Kind != "issue" || response.Continuation.IssueID != issueID || response.TaskID != taskID {
+			t.Fatalf("response = %+v", response)
+		}
+		assertCoordinatorIssueOwnsTerminal(t, w, issueID, taskID, dispatchTaskID)
+	})
+}
+
+func TestCoordinatorIssueCommentReturnsIssueBeforeTerminalCallback(t *testing.T) {
+	t.Parallel()
+	const (
+		agentID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		issueID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		taskID  = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	)
+
+	t.Run("chat materializer", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		handled := (&Handler{}).writeAgentChatCoordinatorOutcomeV2(
+			w,
+			context.Background(),
+			DispatchCommand{CompletionCallback: &DispatchCompletionCallback{
+				URL: "/api/v1/dispatch-tasks/router-chat/execution-result",
+			}},
+			agentDispatchContext{AgentID: util.MustParseUUID(agentID)},
+			engine.Result{
+				Outcome:   engine.OutcomeCoordinatorReply,
+				IssueID:   util.MustParseUUID(issueID),
+				TaskID:    util.MustParseUUID(taskID),
+				ReplyText: "处理中",
+			},
+		)
+		if !handled || w.Code != http.StatusAccepted {
+			t.Fatalf("handled=%v status=%d body=%s", handled, w.Code, w.Body.String())
+		}
+		var response AgentChatDispatchResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Continuation.Kind != "issue" || response.Continuation.IssueID != issueID || response.TaskID != taskID {
+			t.Fatalf("response = %+v", response)
+		}
+	})
+
+	t.Run("issue materializer", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		handled := writeDispatchCoordinatorTerminal(
+			w,
+			context.Background(),
+			&Handler{},
+			DispatchCommand{CompletionCallback: &DispatchCompletionCallback{
+				URL: "/api/v1/dispatch-tasks/router-issue/execution-result",
+			}},
+			agentDispatchContext{AgentID: util.MustParseUUID(agentID)},
+			inboundcoord.Decision{
+				Action: inboundcoord.ActionReply,
+				IssueComment: &inboundcoord.IssueCommentEffect{
+					IssueID: issueID,
+					TaskID:  taskID,
+				},
+			},
+		)
+		if !handled || w.Code != http.StatusAccepted {
+			t.Fatalf("handled=%v status=%d body=%s", handled, w.Code, w.Body.String())
+		}
+		var response AgentDispatchResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		if response.Continuation.Kind != "issue" || response.Continuation.IssueID != issueID || response.TaskID != taskID {
+			t.Fatalf("response = %+v", response)
+		}
+	})
+}
 
 func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 	valid := DispatchCommand{
