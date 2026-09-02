@@ -2,9 +2,9 @@
 
 设计：`docs/plans/2026-09-02-coordinator-scene-memory-takeover.md`  
 落地约束：`docs/plans/2026-09-02-coordinator-scene-memory-landing.md`  
-怎么发消息 / 怎么拉 SLS：skill `dws-env`、`inspect-coordinator-sls`。本文件只写 **演什么、下一轮看 SLS 的哪一段**。
+dws 只负责拟人触发。闭环要自己把下面每一面都看完。怎么发消息：skill `dws-env`。怎么拉 Coordinator SLS：`inspect-coordinator-sls`。沙箱：`inspect-fde-llm-trace`。发布：`aone-deploy`。Multica Issue/任务：`dta-ops-multica`。
 
-只在本地能 `as` 的三张号之间演：冬翔、东翔测试号、dxxh。不要须莫、菲迪、第四人。
+只在本地能 `as` 的三张号之间演：冬翔、东翔测试号、dxxh。不要须莫、**不要菲迪/教练**、不要第四人。
 
 | 角色 | 钉钉 | 扮演 |
 |---|---|---|
@@ -18,30 +18,58 @@ Agent：`e2293e9e-1e79-4926-b0e6-da4cb693add0`，workspace `sombrero-galaxy-zleb
 
 ---
 
-## 怎么验证（先看这个）
+## 观察面（dws 之外必须自己看）
 
-记忆、事项、隔离、reset **都不看这一轮员工口头回了什么当证据**。要再发一轮，用 **下一轮 Coordinator** 的 SLS 看上下文有没有召回。
+触发永远是 dws。证据永远在别的系统。每一面只回答它能回答的问题，不要互相顶替。
 
-一次 `Decide()` 用 `coord_trace_id` 串起来。预发：
+| 面 | 看什么 | 能证明 | 不能证明 |
+|---|---|---|---|
+| **1. 钉钉回读** | `as` 同一身份 `chat message list` 该 cid | 人有没有把话发出去；员工/对方有没有一条可见消息 | Coordinator 读了什么；记忆写没写 |
+| **2. Coordinator SLS** | 预发 tag `acni_ag_dt-fde-multica_default_prehost`；`inbound_coordinator_llm_request` / `_llm` / `_decided` | **下一轮** `user_prompt` 有没有召回记忆；`assoc_recall` 命中哪张卡；`decided` 的 action | 钉钉是否投递；沙箱工具是否真发 |
+| **3. 预发库 `scene_memory`** | PolarDB `multica_pre`，按 `agent_id + scene_key=cid` | Text、revision、dirty/flushed、lease、blocked、`bootstrapped_at`、cursor | 下一轮模型有没有读到（那是 SLS） |
+| **4. 预发库 `agent`** | 四开关列 | write/recall/ui/bootstrap 实际值 | UI 看起来开了但库没写 |
+| **5. 后端 log tail** | `GET /api/internal/logs/tail?file=backend&contains=scene_memory` | MarkDirty / claimed / retry / block / flush 有没有发生、耗时 | prompt 内容 |
+| **6. Multica Issue** | `issue-get` / `comment-list` / `issue-timeline` | 有没有建卡、评论打在哪张、有没有被纠正污染 | 记忆召回 |
+| **7. assoc HTTP** | `GET /api/assoc/recall?conversation=` / `events` | 该 cid 绑了哪些 Issue | 记忆 Text |
+| **8. Router 观测** | `environment=staging`，agentId=`e2293e9e-…` | 沙箱 Run 是否起来、dispatch 的 cid、工具有没有 `dws chat send` | Coordinator 上下文（禁止拿 LLM trace 顶 SLS） |
+| **9. 任务轨迹** | `agent-tasks` / `task-trace` | Run 状态、失败原因、有没有 `assoc recall --conversation` | IM 送达 |
+| **10. Workbench** | inbound Tab / 开关 | D 之后人看得见 | 召回（仍以 SLS 为准） |
+| **11. 流水线** | 预发部署 SUCCESS | 当前二进制/迁移已上去 | 功能正确 |
 
-```bash
-unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-scripts/query-coordinator-sls.sh --env pre --cid '<cid>'
-scripts/query-coordinator-sls.sh --env pre --trace '<coord_trace_id>'
+预发库从 env-vars 的 `DATABASE_URL` 来，先 unset 代理。log tail 用 `MULTICA_LOG_TAIL_TOKEN`。Router 预发是 `staging` 不是 production。
+
+### 实现必须打的点（B/C 合入时写进 slog，否则闭环看不全）
+
+SLS/log 里要能搜到（event 名写全称）：
+
+| event | 关键字段 |
+|---|---|
+| `scene_memory_mark_dirty` | workspace/agent/scene_key/dirty_revision/idempotency |
+| `scene_memory_claimed` | 已有 |
+| `scene_memory_flush_commit` | scene_key、memory_revision、cursor、耗时 |
+| `scene_memory_recall_injected` | scene_key、memory_revision、code_points；**不要**把 Text 打进 SLS |
+| `scene_memory_reset` | scene_key、旧 revision |
+
+`user_prompt` 仍是召回的主证据；上面这些用来证「写路径发生了」，和 prompt 对得上。
+
+### 闭环顺序（每一步剧本都走完）
+
+```text
+Aone 预发部署 SUCCESS
+  → 读库确认开关
+  → dws 触发（本轮）
+  → 钉钉回读 sendStatus + 会话 list
+  → 本轮 SLS decided（排除误伤）
+  → 库 dirty/flush（记忆类要等）
+  → log tail 有 claimed/commit
+  → dws 触发（下一轮）
+  → 下一轮 SLS user_prompt / assoc_recall   ← 召回证据在这里
+  → 若 decided=issue：Multica issue + assoc + Router trace + 钉钉回读员工是否真发给了 dxxh
 ```
 
-在结果里找到 `current_message` = **下一轮那句话** 的那次，不要拿本轮教口径那次的 trace 当召回证据。
-
-| 看哪条 event | 看什么 | 用来证 |
-|---|---|---|
-| `inbound_coordinator_llm_request` | `user_prompt` | 下一轮模型实际吃到的上下文：有没有场域记忆段、口径是不是上一轮教的 |
-| 同上 | `scene_memory_revision`（或 prompt 里同等字段） | 开了 recall 时应非空；关 recall / reset 后应没有或未注入 |
-| `inbound_coordinator_llm` | `assoc_recall` 的 arguments / result | 事项召回：cid 对不对、命中哪张 Issue、有没有被 Memory 污染 |
-| `inbound_coordinator_decided` | `action` / `issue_id` | 纠正不该 comment 旧卡；办事才 issue/bind |
-
-员工 IM 回复只证明链路活着，**不能**代替 `user_prompt` 召回。Router LLM trace 是沙箱，不是 Coordinator 上下文。
-
-教完后要等 Flush（约 30s–2min）再发下一轮，否则下一轮 prompt 里还没有新 Text。
+记忆类：本轮只证明「没当事项」+「库写上了」。**召回只认下一轮 `user_prompt`。**  
+事项类：本轮记下 `issue_id`。**续接只认下一轮 `assoc_recall` result。**  
+员工口头回复和 Issue 自述都不是送达、也不是召回。
 
 ---
 
@@ -51,18 +79,25 @@ scripts/query-coordinator-sls.sh --env pre --trace '<coord_trace_id>'
 
 **本轮（写入）** 冬翔 → 测试号：「GoalMate 是工具，不是数字员工。下次别搞错。」
 
-本轮 SLS 只用来排除误伤：`decided` **不得** `issue_comment_add` 到任何已有 Issue。本轮 `user_prompt` 可以还没有这条口径。
+| 面 | 过线 |
+|---|---|
+| 钉钉 | SUCCESS；测试号有回复（只证明活着） |
+| 本轮 SLS `decided` | **不得** `issue_comment_add` |
+| 库 | 该 `scene_key` dirty 上涨；Flush 后 `memory_text` 含「工具」，`memory_revision` +1 |
+| log | `mark_dirty` 然后 `flush_commit` |
+
+本轮 `user_prompt` 可以还没有这条口径。
 
 **下一轮（验证召回）** 冬翔 → 测试号：「GoalMate 是什么」
 
-下一轮 SLS（`current_message` 含「GoalMate 是什么」）：
+| 面 | 过线 |
+|---|---|
+| 下一轮 SLS `user_prompt` | 有场域记忆段，口径是「工具 / 不是数字员工」 |
+| 下一轮 `scene_memory_recall_injected` / revision | 非空，且对得上库里的 revision |
+| 下一轮 `assoc_recall` | cid 是这条单聊；没有因为这句纠正带上旧 Issue |
+| 下一轮 `decided` | 不是把「是什么」评到旧事项 |
 
-1. `user_prompt` 里出现场域记忆，且口径是「工具 / 不是数字员工」
-2. `scene_memory_revision` 非空
-3. `assoc_recall` 的 `conversation_id` 是这条单聊；result **没有**因为这句纠正就带上某张旧 Issue
-4. `decided` 不是把「是什么」评到旧事项上
-
-问候对照（可选）：冬翔 → 测试号「你好」。下一轮仍问候的话，`decided=reply` 且无 `issue_id`。不拿问候当记忆证据。
+问候对照：冬翔 → 测试号「你好」→ `decided=reply` 无 issue_id。不拿问候当记忆证据。
 
 ---
 
@@ -70,18 +105,24 @@ scripts/query-coordinator-sls.sh --env pre --trace '<coord_trace_id>'
 
 **本轮（下单）** 冬翔 → 测试号：「帮我私聊 dxxh，问他明天上午有没有空。就说是冬翔让你问的。」
 
-本轮 SLS：`decided action=issue`，新建事项，purpose 能看出来是问 dxxh 空闲。记下 `issue_id`。
+| 面 | 过线 |
+|---|---|
+| 本轮 SLS `decided` | `action=issue`，purpose 是问 dxxh 空闲。记下 `issue_id` |
+| Multica | `issue-get` 能拿到这张卡；评论里没有把 GoalMate 纠正写进去 |
+| assoc | 冬翔这条 cid 绑上这张卡 |
+| Router `staging` | 出现对应 BUSINESS_TASK；dispatch 带出站 cid |
+| 钉钉 `as 配角` | 测试号真的问了明天上午。记下 **测试号↔dxxh** cid |
+| 库 | 冬翔 cid 的 Text 不出现在 dxxh cid 那一行 |
 
-等 Agent 自己发给 dxxh（不是 `as 测试号`）。`as 配角` 能看见东翔测试号来问明天上午。记下 **测试号↔dxxh** 的 cid。
+**下一轮（事项召回）** dxxh → 测试号：「明天上午可以，十点吧」
 
-**下一轮（验证事项召回）** dxxh → 测试号（刚那条单聊）：「明天上午可以，十点吧」
-
-下一轮 SLS（这条 **测试号↔dxxh** cid，`current_message` 含「十点」）：
-
-1. `assoc_recall` arguments 的 conversation 是 dxxh 这条 cid，不是冬翔那条
-2. `assoc_recall` result 命中本轮记下的那张 Issue
-3. `decided` 是 `issue_comment_add` 到 **那张** Issue
-4. `user_prompt` **没有** 冬翔单聊里「GoalMate 是工具」那段记忆（场域不串）
+| 面 | 过线 |
+|---|---|
+| 下一轮 SLS `assoc_recall` | conversation = dxxh 这条 cid；result 命中记下的 `issue_id` |
+| 下一轮 `user_prompt` | **没有** 冬翔单聊的「GoalMate 是工具」 |
+| 下一轮 `decided` | `issue_comment_add` 到那张卡 |
+| Multica `comment-list` | 新评论在那张卡上，内容与「十点」对应 |
+| 任务轨迹 | 若又开 Run，`task-trace` 不是把记忆当 issue_id |
 
 ---
 
@@ -89,15 +130,16 @@ scripts/query-coordinator-sls.sh --env pre --trace '<coord_trace_id>'
 
 **本轮** 冬翔 → 测试号：「另开一个新 issue：让 dxxh 把 GoalMate 的使用说明发我。」
 
-本轮 SLS：新 `issue_id`，和 P2 不同。
+记下新 `issue_id`，必须 ≠ P2。
 
-**下一轮** dxxh → 测试号（员工为这件事联系他的那条单聊）：「说明今晚发你」
+**下一轮** dxxh → 测试号：「说明今晚发你」
 
-下一轮 SLS：
-
-1. `assoc_recall` result 是 P3 新卡，**不是** P2「问空闲」那张
-2. `decided` 的 `issue_id` 是新卡
-3. `user_prompt` 仍不串冬翔单聊的 GoalMate 记忆；P3 这句话也不该改写冬翔那条单聊的 Text
+| 面 | 过线 |
+|---|---|
+| 下一轮 `assoc_recall` | 新卡，不是 P2 问空闲 |
+| `decided.issue_id` | 新卡 |
+| Multica | 评论在新卡；P2 那张卡没有这条「说明」 |
+| 库 | 冬翔 cid 的 Text 不被 P3 改写 |
 
 ---
 
@@ -105,19 +147,17 @@ scripts/query-coordinator-sls.sh --env pre --trace '<coord_trace_id>'
 
 `as 配角` 建两个群，群主 dxxh，只拉测试号。消息必须 @ 测试号。
 
-**本轮** dxxh → 群 A @测试号：「这个群里 GoalMate 是报表工具。」等 Flush。
+**本轮** dxxh → 群 A @测试号：「这个群里 GoalMate 是报表工具。」等 Flush。库里群 A 行有「报表工具」。
 
-**下一轮（隔离）** dxxh → 群 B @测试号：「GoalMate 是什么」
+**下一轮** dxxh → 群 B @测试号：「GoalMate 是什么」
 
-群 B 这一轮 SLS：
+| 面 | 过线 |
+|---|---|
+| 群 B SLS `conversation_id` | 群 B |
+| 群 B `user_prompt` | **没有**「报表工具」 |
+| 库 | 群 B 行 ≠ 群 A 行（不同 `scene_key`） |
 
-1. `conversation_id` 是群 B
-2. `user_prompt` **没有**「报表工具」
-3. 若有记忆段，也不是群 A 那份 revision
-
-**再下一轮** 冬翔 → 测试号单聊：「GoalMate 是什么」
-
-冬翔单聊这一轮 SLS：`user_prompt` 仍是 P1「工具，不是数字员工」，不是群 A「报表工具」。
+**再下一轮** 冬翔 → 测试号单聊：「GoalMate 是什么」→ 冬翔 cid 的 `user_prompt` 仍是 P1「不是数字员工」，不是「报表工具」。
 
 ---
 
@@ -125,17 +165,16 @@ scripts/query-coordinator-sls.sh --env pre --trace '<coord_trace_id>'
 
 **本轮** 冬翔 → 测试号：「/reset-memory」
 
-本轮可以没有 Coordinator LLM（命令短路）。不要拿本轮当召回证据。
+| 面 | 过线 |
+|---|---|
+| 库 | 冬翔 cid：Text 空，`bootstrapped_at` 在，cursor≈now |
+| assoc | 冬翔 cid 无 waiting 卡 |
+| log | `scene_memory_reset` |
+| 本轮 SLS | 可以没有 LLM。不当召回证据 |
 
-**下一轮** 冬翔 → 测试号：「GoalMate 是什么」
+**下一轮** 冬翔 → 测试号：「GoalMate 是什么」→ `user_prompt` 没有「工具 / 不是数字员工」。
 
-下一轮 SLS：
-
-1. `user_prompt` **没有** P1 写入的「工具 / 不是数字员工」
-2. 没有仍指向旧 Text 的 `scene_memory_revision` 注入（空 Text 的空壳可以有，但不能带旧口径）
-3. `assoc_recall` 这条单聊上没有 P2/P3 的 waiting 卡
-
-对照：dxxh 单聊或群 A 再问一句，那些 cid 的下一轮 `user_prompt` **还在**，证明只清了冬翔这条。
+对照下一轮：dxxh 或群 A 再问一句，那些 cid 的 `user_prompt` 还在。
 
 ---
 

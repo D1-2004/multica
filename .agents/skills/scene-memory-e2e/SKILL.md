@@ -21,7 +21,7 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
 2. dws 保持预发。`python3 "$HOME/.agents/skills/dws-env/scripts/dws_env.py" status`
 3. 发消息一律 `as 主角|测试号|配角`。冬翔→测试号用 cid `cid+bEFv7ngm9n79Q1vL9HYJw==`，禁止 `+dm --to 东翔测试号`。
 4. `sendStatus=SUCCESS` 后等 Flush（需要记忆的剧本），再发文档里的「下一轮」。
-5. `scripts/query-coordinator-sls.sh --env pre --cid '<cid>'`，对准 `current_message` = 下一轮那句 的 `coord_trace_id`，按文档表格读 `user_prompt` / `assoc_recall` / `decided`。
-6. 预发部署 SUCCESS 即可跑（不等人工验证门）。流水线走 `aone-deploy`。
+5. 按文档「观察面」把钉钉回读、SLS、预发库、log tail、Issue/assoc、Router（仅事项）都走一遍。召回只认下一轮 SLS `user_prompt`。
+6. 预发部署 SUCCESS 即可跑。流水线走 `aone-deploy`。不用菲迪。
 
 SLS 查法细节走 `inspect-coordinator-sls`。沙箱走 `inspect-fde-llm-trace`，不能顶 Coordinator 上下文。
