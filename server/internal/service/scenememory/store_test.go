@@ -683,32 +683,50 @@ func TestMarkDirtyThenPlanFlushIncludesEarlierTrigger(t *testing.T) {
 	id := testIdentity(t)
 	later := time.Now().UTC().Truncate(time.Microsecond)
 	earlier := later.Add(-time.Second)
+	seedAgentWrite(t, pool, id, true)
 	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
 		OccurredAt: later, EvidenceID: "msg-later", IdempotencyKey: "k-later",
 	}); err != nil {
 		t.Fatalf("later dirty: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
+		t.Fatalf("nudge later: %v", err)
+	}
+	row, err := store.Claim(ctx)
+	if err != nil {
+		t.Fatalf("claim later: %v", err)
+	}
+	if _, err := store.CommitBatch(ctx, row, CommitBatch{
+		SourceCursorAt:         later,
+		SourceCursorEvidenceID: "msg-later",
+		ExpectedMemoryRevision: row.MemoryRevision,
+	}); err != nil {
+		t.Fatalf("commit later: %v", err)
+	}
+	if err := store.FinishClaim(ctx, row); err != nil {
+		t.Fatalf("finish later: %v", err)
 	}
 	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
 		OccurredAt: earlier, EvidenceID: "msg-early", IdempotencyKey: "k-early",
 	}); err != nil {
 		t.Fatalf("earlier dirty: %v", err)
 	}
-	seedAgentWrite(t, pool, id, true)
 	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
-		t.Fatalf("nudge: %v", err)
+		t.Fatalf("nudge early: %v", err)
 	}
-	row, err := store.Claim(ctx)
+	row, err = store.Claim(ctx)
 	if err != nil {
-		t.Fatalf("claim: %v", err)
+		t.Fatalf("claim early: %v", err)
 	}
 	if row.LeaseTargetThroughEvidenceID != "msg-later" {
-		t.Fatalf("lease cutoff must be the high-water, got %q", row.LeaseTargetThroughEvidenceID)
+		t.Fatalf("lease cutoff must stay the high-water, got %q", row.LeaseTargetThroughEvidenceID)
 	}
 	if row.LastTriggerEvidenceID != "msg-early" {
-		t.Fatalf("claimed last_trigger must stay the current inbound, got %q", row.LastTriggerEvidenceID)
+		t.Fatalf("claimed last_trigger must be the current inbound, got %q", row.LastTriggerEvidenceID)
 	}
-	row.SourceCursorAt = row.LeaseTargetThroughAt
-	row.SourceCursorEvidenceID = row.LeaseTargetThroughEvidenceID
+	if row.SourceCursorEvidenceID != "msg-later" {
+		t.Fatalf("cursor must still be the flushed high-water, got %q", row.SourceCursorEvidenceID)
+	}
 	plan, err := planFlush(row, []HistoryEvent{
 		{EvidenceID: "msg-early", OccurredAt: earlier, Content: "纠正：DELTA-5520 是排班表"},
 		{EvidenceID: "msg-later", OccurredAt: later, Content: "灌水"},
