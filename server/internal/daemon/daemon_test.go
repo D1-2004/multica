@@ -3341,7 +3341,7 @@ func TestExecuteAndDrain_IdleWatchdog_FiresOnInactivity(t *testing.T) {
 	if !strings.Contains(result.Error, "idle watchdog") {
 		t.Fatalf("expected error to mention idle watchdog, got %q", result.Error)
 	}
-	// The watchdog should fire within a few ticks (interval = window/2 with
+	// The watchdog should fire within a few ticks (interval = window/10 with
 	// no floor for sub-minute windows). 5× window is generous and keeps the
 	// test from racing in slow CI.
 	if elapsed := time.Since(start); elapsed > 5*d.cfg.AgentIdleWatchdog {

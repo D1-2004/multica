@@ -146,7 +146,7 @@ The numbers below reflect the server's default configuration, for quick cross-ch
 | `queued` | Waiting for a runtime to claim it | Fails after **2 hours** unclaimed; not retried automatically |
 | `dispatched` | Claimed; the tool is starting | Treated as failed after more than **5 minutes** in this state |
 | `waiting_local_directory` | Waiting for the local directory lock to release | No timeout of its own; returns to the startup flow once the directory is released |
-| `running` | The AI coding tool is executing | No fixed duration cap; liveness follows the runtime heartbeat — one every 15 seconds; a runtime that loses its heartbeat is marked offline within about 3 minutes at the latest, and its tasks fail with it |
+| `running` | The AI coding tool is executing | No fixed duration cap; liveness follows the runtime heartbeat — one every 15 seconds; a runtime that loses its heartbeat is marked offline within about 3 minutes at the latest, and its tasks fail with it. Separately, the runtime force-stops a run that produces no output at all for its idle window — **30 minutes** by default, or **2 hours** while a tool call is in flight — and it checks on a fixed cadence derived from the idle window — a tenth of it, so about every 3 minutes by default, and never more often than every 30 seconds — so a silent run ends within about one check past whichever budget applied |
 
 Automatic retry covers only the transient faults below, and only applies to tasks attached to an issue or a chat (excluding the Autopilot **run only** mode):
 
