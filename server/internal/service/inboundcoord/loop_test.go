@@ -210,7 +210,7 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	if len(chat.params) != 3 {
 		t.Fatalf("rounds=%d", len(chat.params))
 	}
-	wantStepTypes := []string{"tool_use", "tool_result", "tool_use", "thinking", "text"}
+	wantStepTypes := []string{"tool_use", "tool_result", "tool_use", "tool_result", "tool_use", "thinking", "text"}
 	if len(got.Steps) != len(wantStepTypes) {
 		t.Fatalf("steps=%#v", got.Steps)
 	}
@@ -219,10 +219,12 @@ func TestLoopRecallThenFinish(t *testing.T) {
 			t.Fatalf("step[%d]=%#v, want seq=%d type=%s", i, got.Steps[i], i+1, wantType)
 		}
 	}
-	if got.Steps[0].Tool != toolAssocRecall || got.Steps[1].Tool != toolAssocRecall || got.Steps[2].Tool != toolFinish {
+	if got.Steps[0].Tool != toolAssocRecall || got.Steps[1].Tool != toolAssocRecall ||
+		got.Steps[2].Tool != toolAssocBind || got.Steps[3].Tool != toolAssocBind ||
+		got.Steps[4].Tool != toolFinish {
 		t.Fatalf("tool timeline=%#v", got.Steps)
 	}
-	if got.Steps[3].Content != "要向同事确认" || got.Steps[4].Content != got.UserText {
+	if got.Steps[5].Content != "要向同事确认" || got.Steps[6].Content != got.UserText {
 		t.Fatalf("decision timeline=%#v", got.Steps)
 	}
 	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,assoc_bind,issue_get,issue_comment_list,issue_comment_add,finish" {
