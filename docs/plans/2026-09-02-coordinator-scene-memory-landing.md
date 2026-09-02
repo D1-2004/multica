@@ -40,6 +40,8 @@ A 的并发/lease/reset 测试不过，不准接 LLM。
 
 ## 预发验收
 
-目标、验证标准、多身份剧本、每次部署后怎么验：仓库 skill `scene-memory-e2e`（`.agents/skills/scene-memory-e2e/`）。不要在本文件复制剧本。
+剧本和验证标准：`docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`。
 
-固定狗粮：workspace `sombrero-galaxy-zleb`，agent `e2293e9e-1e79-4926-b0e6-da4cb693add0`（东翔测试号）。dws 保持预发。
+验证看 **下一轮** Coordinator SLS（`user_prompt` 有没有召回记忆，`assoc_recall` 命中哪张事项），不是看本轮员工口头回复。怎么发消息见 skill `scene-memory-e2e`。
+
+固定狗粮：workspace `sombrero-galaxy-zleb`，agent `e2293e9e-1e79-4926-b0e6-da4cb693add0`（东翔测试号）。dws 保持预发。只打冬翔、测试号、dxxh。
