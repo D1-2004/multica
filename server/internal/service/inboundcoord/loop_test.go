@@ -314,31 +314,30 @@ func TestLoopInboundOutreachReplyContinuesRecalledIssue(t *testing.T) {
 	}
 }
 
-func TestLoopInboundOutreachReplyRejectsDirectReply(t *testing.T) {
+func TestLoopOneSceneCardAllowsNewBindWhenPurposeDiffers(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("wrong", toolFinish, `{"action":"reply","text":"好的，今晚7点打球。","reason":"直接确认"}`),
-		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"须莫v6 在钉钉会话中的消息：\n\n7点","reply_text":"我把7点这个答复带回去了。"}`),
+		assistantTool("bind", toolAssocBind, `{"delegator":"冬翔","purpose":"向辰驷确认明天几点有空去打球","intent":"ask"}`),
+		assistantTool("finish", toolFinish, `{"action":"issue","text":"我去问辰驷明天几点有空打球。","look_into":"冬翔委托：向辰驷确认明天几点有空去打球","reason":"交付物不同"}`),
 	}}
-	tools := &stubTools{recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认今晚几点打球","status":"waiting","conversations":[{"conversation_id":"cid-v6","rel":"outreach"}],"waiting_on":[{"conversation_id":"cid-v6"}]}]}`}
-	c := &Coordinator{Chat: chat, Tools: tools}
-
-	got, err := c.runLoop(context.Background(), Turn{
+	tools := &stubTools{recall: `{"items":[{"issue":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"冬翔委托：向辰驷确认明天洗脚时间","status":"waiting","matched_via":"scene","on_this_scene":true,"conversations":[{"conversation_id":"cid-inbound","rel":"outreach"}],"waiting_on":[{"conversation_id":"cid-inbound"}]}]}`}
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
 		Source:         SourceDigitalEmployee,
 		Addressed:      true,
 		ChatType:       "p2p",
-		Message:        "7点",
-		ConversationID: "cid-v6",
+		Message:        "和辰驷确认一下，明天几点有空去打球。",
+		ConversationID: "cid-inbound",
+		SenderName:     "冬翔",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Action != ActionReply || got.IssueID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" || got.IssueComment == nil {
-		t.Fatalf("decision = %#v", got)
+	if got.Action != ActionIssue || got.IssueComment != nil {
+		t.Fatalf("one scene card must not force comment-add, decision=%#v", got)
 	}
-	if chat.calls != 3 {
-		t.Fatalf("model rounds = %d, want rejected reply plus member comment", chat.calls)
+	if got.Purpose != "向辰驷确认明天几点有空去打球" {
+		t.Fatalf("purpose=%q", got.Purpose)
 	}
 }
 

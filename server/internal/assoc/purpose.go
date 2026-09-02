@@ -31,6 +31,54 @@ func ValidatePurpose(purpose string) error {
 	return nil
 }
 
+// ValidateCoordinatorPurpose requires the bind card to name the task
+// elements: delegator (委托人), event (事件), and goal (目的). Place is optional.
+func ValidateCoordinatorPurpose(purpose string) error {
+	if err := ValidatePurpose(purpose); err != nil {
+		return err
+	}
+	if strings.Contains(purpose, "在钉钉会话中的消息") {
+		return fmt.Errorf("purpose must not paste the inbound envelope")
+	}
+	if !strings.Contains(purpose, "委托") {
+		return fmt.Errorf("purpose must name the delegator with 委托")
+	}
+	return nil
+}
+
+// ComposeCoordinatorPurpose builds the stored purpose from LLM bind fields.
+// Template: {委托人}委托：{事件与目的}. Place is appended only when known.
+func ComposeCoordinatorPurpose(delegator, place, purpose string) (string, error) {
+	purpose = strings.TrimSpace(purpose)
+	delegator = strings.TrimSpace(delegator)
+	place = strings.TrimSpace(place)
+	composed := purpose
+	if !strings.Contains(purpose, "委托") {
+		if delegator == "" {
+			return "", fmt.Errorf("delegator is required")
+		}
+		composed = delegator + "委托：" + purpose
+		if suffix := formatPlace(place); suffix != "" {
+			composed += "（" + suffix + "）"
+		}
+	}
+	if err := ValidateCoordinatorPurpose(composed); err != nil {
+		return "", err
+	}
+	return composed, nil
+}
+
+func formatPlace(place string) string {
+	place = strings.TrimSpace(place)
+	if place == "" || place == "地点未说明" {
+		return ""
+	}
+	if strings.Contains(place, "地点") {
+		return place
+	}
+	return "地点：" + place
+}
+
 // ResolvePurpose picks the first candidate that satisfies ValidatePurpose.
 // Short coordinator look_into titles fall through to the original user message.
 func ResolvePurpose(candidates ...string) (string, error) {

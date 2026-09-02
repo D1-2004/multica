@@ -138,7 +138,9 @@ user    ← buildUserPrompt(turn)
   "issue_id": "来自 assoc_recall 的 Issue UUID；省略则只给入站 Event 打标",
   "evidence_id": "openMsgId",
   "person_id": "uid",
-  "purpose": "可交付短语，例如 向冬翔确认今天吃什么",
+  "delegator": "冬翔",
+  "purpose": "向辰驷确认明天几点打球",
+  "intent": "ask",
   "kind": "single | group"
 }
 ```
@@ -155,7 +157,7 @@ user    ← buildUserPrompt(turn)
 }
 ```
 
-`issue_id` 必须出现在本轮 `assoc_recall` 结果里。数字员工单聊命中恰好一个 open/waiting 的 `outreach` / `waiting_on` 时，必须 `action=issue` 且带上该 `issue_id`，不能用一句「好的」收掉。
+`issue_id` 必须出现在本轮 `assoc_recall` 结果里。一张 waiting 卡不是裁决：purpose 对得上才 `issue_comment_add`，对不上就 `assoc_bind` 新事项。服务端不会因为「只有一张卡」替模型选定。
 
 ### 3.2 Issue 查询与评论（已挂上 Loop）
 

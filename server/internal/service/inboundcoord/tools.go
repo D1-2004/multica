@@ -83,6 +83,8 @@ type bindArgs struct {
 	EvidenceID     string `json:"evidence_id"`
 	PersonID       string `json:"person_id"`
 	DisplayName    string `json:"display_name"`
+	Delegator      string `json:"delegator"`
+	Place          string `json:"place"`
 	Purpose        string `json:"purpose"`
 	Intent         string `json:"intent"`
 	Kind           string `json:"kind"`
@@ -254,10 +256,6 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 	if strings.TrimSpace(raw) != "" && json.Unmarshal([]byte(raw), &args) != nil {
 		return "", fmt.Errorf("invalid assoc_bind arguments")
 	}
-	purpose := strings.TrimSpace(args.Purpose)
-	if err := assoc.ValidatePurpose(purpose); err != nil {
-		return "", fmt.Errorf("purpose must name the deliverable, such as 向须莫v6确认今天晚饭吃什么")
-	}
 	intent, ok := assoc.CoordinatorIntent(args.Intent)
 	if !ok {
 		return "", fmt.Errorf("intent must be one of ask, confirm, notify, lookup, wait, other")
@@ -266,6 +264,11 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 	if cid == "" {
 		return "", fmt.Errorf("conversation_id is required")
 	}
+	delegator := firstNonEmpty(args.Delegator, turn.SenderName)
+	purpose, err := assoc.ComposeCoordinatorPurpose(delegator, args.Place, args.Purpose)
+	if err != nil {
+		return "", fmt.Errorf("purpose must name 委托人, 事件, and 目的, such as 冬翔委托：向辰驷确认明天几点打球: %w", err)
+	}
 	issueID := strings.TrimSpace(args.IssueID)
 	kind := firstNonEmpty(args.Kind, turn.Kind)
 	display := firstNonEmpty(args.DisplayName, turn.SenderName)
@@ -273,12 +276,16 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 	payload := map[string]any{
 		"conversation_id": cid,
 		"purpose":         purpose,
+		"delegator":       delegator,
 		"intent":          intent,
 		"intent_label":    assoc.IntentLabel(intent),
 		"kind":            kind,
 		"display_name":    display,
 		"waiting_on":      waitingOn,
 		"person_id":       firstNonEmpty(args.PersonID, turn.PersonID),
+	}
+	if place := strings.TrimSpace(args.Place); place != "" && place != "地点未说明" {
+		payload["place"] = place
 	}
 	if issueID == "" {
 		payload["pending"] = true

@@ -53,9 +53,10 @@ Bind those. Never invent a cid for web inbound.
 multica assoc bind --conversation <openConversationId> [--evidence <openMsgId>] [--person <uid>] --output json
 ```
 
-Or MCP / coordinator tool `assoc_bind`. The coordinator must inject `purpose`
-(deliverable phrase) and `intent` (`ask` / `confirm` / `notify` / `lookup` /
-`wait` / `other`). Omit `issue_id` to declare a new matter.
+Or MCP / coordinator tool `assoc_bind`. The coordinator must inject `delegator`,
+`purpose` (event + goal), and `intent` (`ask` / `confirm` / `notify` /
+`lookup` / `wait` / `other`). Stored purpose is `{委托人}委托：{事件与目的}`.
+Place is optional. Omit `issue_id` to declare a new matter.
 
 ## Recall before treating a chat as a new matter
 
@@ -89,4 +90,6 @@ conversation's Issue associations and does not start a sandbox. It is not
 
 ## Purpose
 
-Name the deliverable: `向冬翔确认今天吃什么`. Not `帮我看看`.
+Name 委托人, 事件, and 目的: `冬翔委托：向辰驷确认明天几点打球`.
+Place is optional. Not the inbound envelope. Not `帮我看看`. One recalled card
+is not a verdict; continue only when purpose matches the current message.

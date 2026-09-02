@@ -251,7 +251,8 @@ func TestAssocToolsBindAssociatesIssue(t *testing.T) {
 		PersonID:       "123456",
 		EvidenceID:     "msg-in-1",
 		Kind:           "dm",
-	}, toolAssocBind, `{"issue_id":"issue-eat","purpose":"向冬翔确认今天吃什么","intent":"ask"}`)
+		SenderName:     "冬翔",
+	}, toolAssocBind, `{"issue_id":"issue-eat","purpose":"向冬翔确认今天吃什么","intent":"ask","delegator":"冬翔"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,6 +274,9 @@ func TestAssocToolsBindAssociatesIssue(t *testing.T) {
 	if got.Items[0].Intent != assoc.IntentAsk {
 		t.Fatalf("intent=%q", got.Items[0].Intent)
 	}
+	if got.Items[0].Purpose != "冬翔委托：向冬翔确认今天吃什么" {
+		t.Fatalf("purpose=%q", got.Items[0].Purpose)
+	}
 }
 
 func TestAssocToolsBindRequiresConversation(t *testing.T) {
@@ -292,12 +296,15 @@ func TestAssocToolsBindPendingNewMatter(t *testing.T) {
 		AgentID:        testAgentID(),
 		ConversationID: "cid-dongxiang",
 		SenderName:     "冬翔",
-	}, toolAssocBind, `{"purpose":"向冬翔确认今天吃什么","intent":"ask"}`)
+	}, toolAssocBind, `{"purpose":"向冬翔确认今天吃什么","intent":"ask","delegator":"冬翔"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(raw, `"pending":true`) || !strings.Contains(raw, `"intent":"ask"`) {
 		t.Fatalf("bind=%s", raw)
+	}
+	if !strings.Contains(raw, "冬翔委托：向冬翔确认今天吃什么") {
+		t.Fatalf("composed purpose missing: %s", raw)
 	}
 }
 

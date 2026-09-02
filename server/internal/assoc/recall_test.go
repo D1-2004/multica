@@ -21,6 +21,30 @@ func TestValidatePurpose(t *testing.T) {
 	}
 }
 
+func TestComposeCoordinatorPurposeRequiresDelegatorAndPlace(t *testing.T) {
+	t.Parallel()
+	got, err := ComposeCoordinatorPurpose("冬翔", "", "向辰驷确认明天几点打球")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "冬翔委托：向辰驷确认明天几点打球" {
+		t.Fatalf("got %q", got)
+	}
+	got, err = ComposeCoordinatorPurpose("冬翔", "公司楼下球场", "向辰驷确认明天几点打球")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "冬翔委托：向辰驷确认明天几点打球（地点：公司楼下球场）" {
+		t.Fatalf("got %q", got)
+	}
+	if _, err := ComposeCoordinatorPurpose("", "", "向辰驷确认明天几点打球"); err == nil {
+		t.Fatal("expected delegator required")
+	}
+	if err := ValidateCoordinatorPurpose("须莫🥥 在钉钉会话中的消息：你看看你联系人里有须莫v6吗"); err == nil {
+		t.Fatal("expected envelope purpose to fail")
+	}
+}
+
 func TestResolvePurposeFallsBackToUserMessage(t *testing.T) {
 	t.Parallel()
 	got, err := ResolvePurpose("报名表", "问一下冬翔，今天想吃什么")

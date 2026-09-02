@@ -82,7 +82,7 @@ func TestDecideLoadsDWSHistoryForRobotAndDigitalEmployee(t *testing.T) {
 			if got.Action != ActionReply || calls.Load() != 1 || loader.calls != 1 {
 				t.Fatalf("decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
 			}
-			if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "看看今天的新闻") {
+			if !strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "看看今天的新闻") {
 				t.Fatalf("DWS history missing from prompt: %q", prompt)
 			}
 			if len(got.Steps) < 2 || got.Steps[0].Tool != "dws_chat_history" || got.Steps[0].Type != "tool_use" || got.Steps[1].Type != "tool_result" {

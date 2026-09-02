@@ -267,14 +267,16 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocBind,
-			Description: openai.String("Declare or rewrite the matter card for this conversation. The model must inject purpose (deliverable phrase) and intent. Omit issue_id to declare a NEW matter that finish action=issue will create. Copy issue_id from assoc_recall only to attach this scene to that existing matter. matched_via=event items are candidates, not confirmed links — bind them before continuing."),
+			Description: openai.String("Declare or rewrite the matter card. Inject delegator, purpose (event+goal), and intent. Stored purpose is {委托人}委托：{事件与目的}. Place is optional. Omit issue_id for a NEW matter. Copy issue_id from assoc_recall only to attach this scene. matched_via=event items are candidates until bind."),
 			Parameters: shared.FunctionParameters{
 				"type":     "object",
-				"required": []string{"purpose", "intent"},
+				"required": []string{"purpose", "intent", "delegator"},
 				"properties": map[string]any{
 					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId. Defaults to this inbound scene."},
 					"issue_id":        map[string]any{"type": "string", "description": "Existing Issue UUID from assoc_recall. Omit to declare a new matter."},
-					"purpose":         map[string]any{"type": "string", "description": "Deliverable such as 向须莫v6确认今天晚饭吃什么. Never paste the raw inbound envelope."},
+					"delegator":       map[string]any{"type": "string", "description": "Who asked this agent to act, such as 冬翔. Copy the inbound sender name; do not invent."},
+					"place":           map[string]any{"type": "string", "description": "Optional. Where the event happens. Omit when unknown."},
+					"purpose":         map[string]any{"type": "string", "description": "Event and goal, such as 向辰驷确认明天几点打球. Never paste the raw inbound envelope."},
 					"intent":          map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "ask=向某人询问; confirm=确认时间或选择; notify=通知原发起人; lookup=查找人或记录; wait=等待回复; other=其他."},
 					"waiting_on":      map[string]any{"type": "string", "description": "openConversationId this matter is waiting on, if different from conversation_id."},
 					"display_name":    map[string]any{"type": "string", "description": "Human name of the person in this scene, such as 须莫. Do not invent."},
@@ -716,14 +718,6 @@ func requireRecallBeforeFinish(
 	_ = json.Unmarshal([]byte(strings.TrimSpace(finishRaw)), &parsed)
 	action := Action(strings.TrimSpace(parsed.Action))
 	issueID := strings.TrimSpace(parsed.IssueID)
-	newMatter := bind.Pending && strings.TrimSpace(bind.IssueID) == "" && strings.TrimSpace(bind.Purpose) != ""
-	if !newMatter && turn.Source == SourceDigitalEmployee && len(continuationIssues) == 1 && !asksSceneQuestion(turn.Message) && (turn.ChatType != "group" || turn.Addressed) {
-		continuationIssue := ""
-		for recalled := range continuationIssues {
-			continuationIssue = recalled
-		}
-		return fmt.Errorf("call issue_comment_add on recalled issue_id %s; that successful tool call ends the loop", continuationIssue)
-	}
 	if issueID != "" {
 		if action != ActionIssue {
 			return fmt.Errorf("issue_id is only valid with action=issue")

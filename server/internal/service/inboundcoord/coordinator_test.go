@@ -263,7 +263,7 @@ func TestTurnFromChatSessionWebDoesNotLoadDingTalkHistory(t *testing.T) {
 		t.Fatalf("web history = %d, want 4", len(turn.History))
 	}
 	prompt := buildUserPrompt(turn)
-	if strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "recent_multica_history:") {
+	if strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "recent_multica_history:") {
 		t.Fatalf("web prompt = %q", prompt)
 	}
 }
@@ -285,7 +285,7 @@ func TestBuildUserPromptOmitsTitleForRobotAndDigitalEmployee(t *testing.T) {
 		if strings.Contains(prompt, "session_title:") || strings.Contains(prompt, stale) || strings.Contains(prompt, "\nconversation: ") {
 			t.Fatalf("%s prompt leaked dingTalk title: %q", src, prompt)
 		}
-		if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "看看今天的新闻") {
+		if !strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "看看今天的新闻") {
 			t.Fatalf("%s recent dingtalk history missing: %q", src, prompt)
 		}
 	}
@@ -341,7 +341,7 @@ func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {
 		Message:         "帮我看看今天有什么新闻",
 		DingTalkHistory: []HistoryLine{{Role: "user", Content: "昨天那个表"}, {Role: "assistant", Content: "我去对一下"}},
 	})
-	if !strings.Contains(prompt, "recent_dingtalk_history:") || !strings.Contains(prompt, "昨天那个表") {
+	if !strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "昨天那个表") {
 		t.Fatalf("prompt = %q", prompt)
 	}
 	got := parseDecision(`{"action":"issue","text":"我先去看今天新闻","look_into":"今天新闻","reason":"要查实时资讯"}`, Turn{Source: SourceRobot, Message: "帮我看看今天有什么新闻"})
