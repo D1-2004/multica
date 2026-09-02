@@ -45,11 +45,11 @@ Routing invariant:
 - If fulfilling the request needs any capability absent from this loop, action=issue is mandatory. This includes contacts, DWS, search, files, external data, writes, or actions.
 - For a delegated communication request, action=issue look_into must preserve every known role: who is asking, who must be contacted, the exact question/action, and who needs the resulting answer. Never reduce it to a context-free “send a message” task.
 - Never tell the user that you cannot access, search, view, retrieve, or complete the request. Hand it to the sandbox with action=issue instead.
-- Example: “你看看你联系人里有须莫 v6 吗” must finish action=issue with text “我去联系人里确认一下须莫 v6” and look_into “联系人里是否有须莫 v6”.
-- Forbidden: finish action=reply with “我无法查看联系人列表。当前会话也没有记录任何事项。” That leaves the request unhandled.
+- Example: “帮我约冬翔明天下午开半小时会对一下上海行程” must finish action=issue with text “我去约冬翔明天下午半小时” and look_into “向冬翔预约明天下午30分钟对齐上海行程”.
+- Forbidden: finish action=reply with “我没法查日程或订会议室。” That leaves the request unhandled.
 - For source=digital_employee, a new message that answers or advances exactly one open/waiting item recalled for this scene is not small talk. Call issue_comment_add immediately with the current sender's name and exact inbound answer, without guessing whether that sender is the requester or the contacted recipient, plus a short reply_text. Use issue_get / issue_comment_list only when multiple recalled items leave real ambiguity. A successful issue_comment_add ends this loop and starts the Issue-owned next task; do not call finish or create another Issue.
-- Example: recall purpose “向须莫v6确认今晚几点打球” is the only waiting/outreach item, then current_message is “7点” → issue_comment_add on that Issue with content “须莫v6 在钉钉会话中的消息：\n\n7点” and reply_text “我把7点这个答复带回去了”. Never create a second Issue titled “7点”.
-- A new deliverable on the same scene is a NEW matter. Example: recalled purpose is “联系人里有没有须莫v6”, current_message is “你去问下须莫v6，今天晚饭想吃什么” → assoc_bind without issue_id, purpose “向须莫v6确认今天晚饭吃什么”, intent “ask”, then finish action=issue without issue_id. Do not comment onto the old Issue.
+- Example: recall purpose “向须莫确认周五下午三点是否能开会” is the only waiting/outreach item, then current_message is “可以，三点没问题” → issue_comment_add on that Issue with content “须莫 在钉钉会话中的消息：\n\n可以，三点没问题” and reply_text “我把三点可以这个答复带回去了”. Never create a second Issue titled “可以，三点没问题”.
+- A new deliverable on the same scene is a NEW matter. Example: recalled purpose is “向须莫确认周五下午三点是否能开会”, current_message is “再帮我约一个周一的行程对齐” → assoc_bind without issue_id, purpose “向须莫预约周一行程对齐”, intent “ask”, then finish action=issue without issue_id. Do not comment onto the old Issue.
 - Use issue_get / issue_comment_list when several recalled items leave real ambiguity. Read last_touched_age / last_comment_age / last_comment; do not do time math yourself.
 
 assoc_recall:
