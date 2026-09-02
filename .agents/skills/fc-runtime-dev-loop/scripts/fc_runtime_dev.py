@@ -9,6 +9,8 @@ command-line arguments.
 from __future__ import annotations
 
 import argparse
+import http.client
+import ipaddress
 import json
 import os
 import re
@@ -36,15 +38,23 @@ FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 TEMPLATE_FIELDS = {
     "template_id": re.compile(r"(?m)^template_id:\s*(\S+)\s*$"),
     "runtime_commit": re.compile(r"(?m)^runtime_commit:\s*([0-9a-f]{40})\s*$"),
+    "multica_commit": re.compile(r"(?m)^multica_commit:\s*([0-9a-f]{40})\s*$"),
     "provider_fingerprint": re.compile(
         r"(?m)^provider_fingerprint:\s*([0-9a-f]{16})\s*$"
     ),
     "display_alias": re.compile(r"(?m)^display_alias:\s*(\S+)\s*$"),
 }
+DEFAULT_COMMAND_TIMEOUT_SECONDS = 60.0
+PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+RUNTIME_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
 
 
 class DevLoopError(RuntimeError):
     """A user-actionable workflow failure."""
+
+
+class APITransportError(DevLoopError):
+    """The server may have committed a mutation before transport failed."""
 
 
 def compact_json(value: Any) -> str:
@@ -85,8 +95,13 @@ def require_list(value: Any, source: str) -> list[Any]:
     return value
 
 
-def run_command(command: Sequence[str]) -> str:
+def run_command(
+    command: Sequence[str], timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS
+) -> str:
     env = os.environ.copy()
+    for key in list(env):
+        if key.startswith("MULTICA_"):
+            env.pop(key, None)
     env.setdefault("A1_NO_UPDATE_CHECK", "1")
     try:
         completed = subprocess.run(
@@ -95,7 +110,13 @@ def run_command(command: Sequence[str]) -> str:
             capture_output=True,
             text=True,
             env=env,
+            timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise DevLoopError(
+            f"command timed out after {timeout_seconds:g}s: {command[0]} "
+            f"{command[1] if len(command) > 1 else ''}"
+        ) from exc
     except OSError as exc:
         raise DevLoopError(f"failed to execute {command[0]}: {exc}") from exc
     if completed.returncode != 0:
@@ -105,6 +126,45 @@ def run_command(command: Sequence[str]) -> str:
             f"{command[1] if len(command) > 1 else ''}: {detail}"
         )
     return completed.stdout
+
+
+def full_commit(value: str) -> str:
+    normalized = value.strip().lower()
+    if not FULL_COMMIT_RE.fullmatch(normalized):
+        raise argparse.ArgumentTypeError(
+            "must be an immutable 40-character lowercase Git commit"
+        )
+    return normalized
+
+
+def runtime_ref(value: str) -> str:
+    normalized = value.strip()
+    if not RUNTIME_REF_RE.fullmatch(normalized) or ".." in normalized:
+        raise argparse.ArgumentTypeError("must be a safe pushed branch name")
+    return normalized
+
+
+def profile_name(value: str) -> str:
+    normalized = value.strip()
+    if normalized != "default" and not PROFILE_RE.fullmatch(normalized):
+        raise argparse.ArgumentTypeError(
+            "must contain only letters, digits, dot, underscore, and hyphen"
+        )
+    return normalized
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
+
+
+def positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return parsed
 
 
 def parse_run_id(raw: str) -> int:
@@ -133,7 +193,7 @@ class BuildArtifact:
     run_url: str
     runtime_branch: str
     runtime_commit: str
-    multica_ref: str
+    multica_commit: str
     template_id: str
     display_alias: str
     provider_fingerprint: str
@@ -144,7 +204,7 @@ class BuildArtifact:
             "run_url": self.run_url,
             "runtime_branch": self.runtime_branch,
             "runtime_commit": self.runtime_commit,
-            "multica_ref": self.multica_ref,
+            "multica_commit": self.multica_commit,
             "template_id": self.template_id,
             "display_alias": self.display_alias,
             "provider_fingerprint": self.provider_fingerprint,
@@ -192,6 +252,22 @@ class AoneClient:
             raise DevLoopError(
                 f"pipeline {self.pipeline_id} points to {value.get('path')!r}; "
                 f"expected the isolated FC candidate path {self.pipeline_path!r}"
+            )
+        normalized_path = self.pipeline_path.lower()
+        pipeline_name = str(value.get("name", ""))
+        if (
+            not normalized_path.startswith(".aoneci/")
+            or "candidate" not in normalized_path
+            or "master" in normalized_path
+            or "asb" in normalized_path
+            or (
+                "candidate" not in pipeline_name.lower() and "候选" not in pipeline_name
+            )
+            or "asb" in pipeline_name.lower()
+        ):
+            raise DevLoopError(
+                f"pipeline {self.pipeline_id} is not an isolated FC candidate pipeline: "
+                f"name={pipeline_name!r}, path={self.pipeline_path!r}"
             )
         if str(value.get("status", "")).upper() not in {"NORMAL", "ACTIVE"}:
             raise DevLoopError(
@@ -289,7 +365,13 @@ class AoneClient:
             f"Aone run {run_id} has no log for {TEMPLATE_JOB}/{TEMPLATE_STEP}"
         )
 
-    def artifact_from_run(self, run: Mapping[str, Any]) -> BuildArtifact:
+    def artifact_from_run(
+        self,
+        run: Mapping[str, Any],
+        expected_runtime_ref: str,
+        expected_runtime_commit: str,
+        expected_multica_commit: str,
+    ) -> BuildArtifact:
         run_id = int(run.get("id", 0))
         if run_id <= 0:
             raise DevLoopError("Aone run has no valid id")
@@ -309,12 +391,17 @@ class AoneClient:
         log = self.get_template_log(run_id)
         fields: dict[str, str] = {}
         for name, pattern in TEMPLATE_FIELDS.items():
-            match = pattern.search(log)
-            if not match:
+            matches = pattern.findall(log)
+            values = set(matches)
+            if not values:
                 raise DevLoopError(
                     f"successful Aone run {run_id} did not emit required field {name}"
                 )
-            fields[name] = match.group(1)
+            if len(values) != 1:
+                raise DevLoopError(
+                    f"successful Aone run {run_id} emitted conflicting {name} values"
+                )
+            fields[name] = values.pop()
         run_commit = str(run.get("commit") or run.get("revision") or "").lower()
         if not FULL_COMMIT_RE.fullmatch(run_commit):
             raise DevLoopError(
@@ -325,16 +412,39 @@ class AoneClient:
                 f"Aone run commit {run_commit} does not match Template log commit "
                 f"{fields['runtime_commit']}"
             )
+        if run_commit != expected_runtime_commit:
+            raise DevLoopError(
+                f"Aone run commit {run_commit} does not match expected Runtime commit "
+                f"{expected_runtime_commit}"
+            )
+        run_branch = str(run.get("branch", ""))
+        if run_branch != expected_runtime_ref:
+            raise DevLoopError(
+                f"Aone built branch {run_branch!r}, expected {expected_runtime_ref!r}"
+            )
         params = run.get("params")
-        multica_ref = ""
-        if isinstance(params, dict):
-            multica_ref = str(params.get("multica_ref", ""))
+        if not isinstance(params, dict):
+            raise DevLoopError(f"Aone run {run_id} returned no parameter map")
+        multica_ref = str(params.get("multica_ref", "")).strip().lower()
+        if not FULL_COMMIT_RE.fullmatch(multica_ref):
+            raise DevLoopError(
+                f"Aone run {run_id} used mutable or missing multica_ref {multica_ref!r}"
+            )
+        if multica_ref != expected_multica_commit:
+            raise DevLoopError(
+                f"Aone used multica_ref {multica_ref}, expected {expected_multica_commit}"
+            )
+        if fields["multica_commit"] != expected_multica_commit:
+            raise DevLoopError(
+                f"Template log multica_commit {fields['multica_commit']} does not match "
+                f"expected {expected_multica_commit}"
+            )
         return BuildArtifact(
             run_id=run_id,
             run_url=str(run.get("url", "")),
-            runtime_branch=str(run.get("branch", "")),
+            runtime_branch=run_branch,
             runtime_commit=run_commit,
-            multica_ref=multica_ref,
+            multica_commit=fields["multica_commit"],
             template_id=fields["template_id"],
             display_alias=fields["display_alias"],
             provider_fingerprint=fields["provider_fingerprint"],
@@ -343,7 +453,8 @@ class AoneClient:
     def build(
         self,
         runtime_ref: str,
-        multica_ref: str,
+        runtime_commit: str,
+        multica_commit: str,
         timeout_seconds: int,
         poll_interval_seconds: float,
     ) -> BuildArtifact:
@@ -358,19 +469,15 @@ class AoneClient:
                 "--pipeline-id and --pipeline-path"
             )
         self.validate_pipeline()
-        run_id = self.submit(runtime_ref, multica_ref)
+        run_id = self.submit(runtime_ref, multica_commit)
         print(f"submitted Aone candidate run {run_id}", file=sys.stderr, flush=True)
         run = self.wait_for_run(run_id, timeout_seconds, poll_interval_seconds)
-        artifact = self.artifact_from_run(run)
-        if artifact.runtime_branch and artifact.runtime_branch != runtime_ref:
-            raise DevLoopError(
-                f"Aone built branch {artifact.runtime_branch!r}, expected {runtime_ref!r}"
-            )
-        if artifact.multica_ref and artifact.multica_ref != multica_ref:
-            raise DevLoopError(
-                f"Aone used multica_ref {artifact.multica_ref!r}, expected {multica_ref!r}"
-            )
-        return artifact
+        return self.artifact_from_run(
+            run,
+            expected_runtime_ref=runtime_ref,
+            expected_runtime_commit=runtime_commit,
+            expected_multica_commit=multica_commit,
+        )
 
 
 @dataclass(frozen=True)
@@ -402,19 +509,35 @@ def resolve_api_config(
     args: argparse.Namespace, require_token: bool = True
 ) -> APIConfig:
     profile, path = load_profile(args.profile)
-    server_url = (
-        (
-            args.server_url
-            or os.environ.get("MULTICA_SERVER_URL", "")
-            or str(profile.get("server_url", ""))
+    profile_server_url = str(profile.get("server_url", "")).strip().rstrip("/")
+    env_server_url = os.environ.get("MULTICA_SERVER_URL", "").strip().rstrip("/")
+    profile_workspace_id = str(profile.get("workspace_id", "")).strip()
+    env_workspace_id = os.environ.get("MULTICA_WORKSPACE_ID", "").strip()
+    if (
+        not args.server_url
+        and profile_server_url
+        and env_server_url
+        and profile_server_url != env_server_url
+    ):
+        raise DevLoopError(
+            "MULTICA_SERVER_URL conflicts with the selected profile; unset it or pass "
+            "--server-url explicitly"
         )
-        .strip()
-        .rstrip("/")
+    if (
+        not args.workspace_id
+        and profile_workspace_id
+        and env_workspace_id
+        and profile_workspace_id != env_workspace_id
+    ):
+        raise DevLoopError(
+            "MULTICA_WORKSPACE_ID conflicts with the selected profile; unset it or pass "
+            "--workspace-id explicitly"
+        )
+    server_url = (
+        (args.server_url or profile_server_url or env_server_url).strip().rstrip("/")
     )
     workspace_id = (
-        args.workspace_id
-        or os.environ.get("MULTICA_WORKSPACE_ID", "")
-        or str(profile.get("workspace_id", ""))
+        args.workspace_id or profile_workspace_id or env_workspace_id
     ).strip()
     token = (
         os.environ.get("MULTICA_TOKEN", "") or str(profile.get("token", ""))
@@ -425,8 +548,29 @@ def resolve_api_config(
             f"or profile {path}"
         )
     parsed = urllib.parse.urlparse(server_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
         raise DevLoopError(f"invalid Multica server URL: {server_url!r}")
+    if parsed.scheme == "http":
+        hostname = parsed.hostname or ""
+        is_loopback = hostname == "localhost"
+        if not is_loopback:
+            try:
+                is_loopback = ipaddress.ip_address(hostname).is_loopback
+            except ValueError:
+                is_loopback = False
+        if not is_loopback:
+            raise DevLoopError(
+                "Multica PATs require HTTPS; HTTP is allowed only for loopback testing"
+            )
     if not workspace_id:
         raise DevLoopError(
             "Multica workspace ID is required via --workspace-id, "
@@ -440,10 +584,30 @@ def resolve_api_config(
     return APIConfig(server_url, workspace_id, token, str(path))
 
 
+class RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        raise urllib.error.HTTPError(
+            req.full_url,
+            code,
+            f"redirect refused to protect Authorization header ({newurl})",
+            headers,
+            fp,
+        )
+
+
 class MulticaAPI:
     def __init__(self, config: APIConfig, timeout_seconds: float = 30.0) -> None:
         self.config = config
         self.timeout_seconds = timeout_seconds
+        self.opener = urllib.request.build_opener(RefuseRedirects())
 
     def request(self, method: str, path: str, body: Any | None = None) -> Any:
         url = self.config.server_url + path
@@ -458,9 +622,7 @@ class MulticaAPI:
             data = compact_json(body).encode("utf-8")
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(
-                request, timeout=self.timeout_seconds
-            ) as response:
+            with self.opener.open(request, timeout=self.timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
@@ -468,9 +630,16 @@ class MulticaAPI:
             raise DevLoopError(
                 f"Multica API {method} {path} returned HTTP {exc.code}: {safe}"
             ) from exc
-        except urllib.error.URLError as exc:
-            safe = redact(str(exc.reason), [self.config.token])
-            raise DevLoopError(f"Multica API {method} {path} failed: {safe}") from exc
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            ConnectionError,
+            http.client.HTTPException,
+        ) as exc:
+            safe = redact(str(getattr(exc, "reason", exc)), [self.config.token])
+            raise APITransportError(
+                f"Multica API {method} {path} transport failed: {safe}"
+            ) from exc
         if not raw.strip():
             return None
         try:
@@ -519,6 +688,7 @@ class MulticaAPI:
     def find_template(
         templates: Sequence[Mapping[str, Any]], template_id: str, provider: str
     ) -> Mapping[str, Any]:
+        provider = provider.strip().lower()
         selected = next(
             (item for item in templates if str(item.get("id", "")) == template_id),
             None,
@@ -573,7 +743,7 @@ class MulticaAPI:
                 "target Runtime is stable-managed; create a separate candidate Runtime "
                 "instead of changing it in place"
             )
-        provider = str(runtime.get("provider", "")).strip()
+        provider = str(runtime.get("provider", "")).strip().lower()
         if not provider:
             raise DevLoopError("target Runtime has no provider")
         return provider
@@ -586,11 +756,23 @@ class MulticaAPI:
         return str(metadata.get("template_id") or metadata.get("artifact_ref") or "")
 
     def verify_readback(
-        self, runtime_id: str, template_id: str, provider: str
+        self,
+        runtime_id: str,
+        template_id: str,
+        provider: str,
+        expected_name: str | None = None,
+        expected_visibility: str | None = None,
     ) -> dict[str, Any]:
         runtime = self.find_runtime(self.runtimes(), runtime_id)
-        actual_provider = str(runtime.get("provider", ""))
+        actual_provider = self.validate_candidate_runtime(runtime)
         actual_template_id = self.runtime_template_id(runtime)
+        metadata = require_mapping(
+            runtime.get("metadata"), "Runtime read-back metadata"
+        )
+        actual_status = str(runtime.get("status", "")).strip().lower()
+        actual_visibility = str(runtime.get("visibility", "")).strip().lower()
+        actual_name = str(runtime.get("name", ""))
+        template_status = str(metadata.get("template_status", "")).strip().lower()
         if actual_provider != provider:
             raise DevLoopError(
                 f"Runtime read-back provider {actual_provider!r} != expected {provider!r}"
@@ -600,12 +782,35 @@ class MulticaAPI:
                 f"Runtime read-back Template {actual_template_id!r} != expected "
                 f"{template_id!r}"
             )
+        if actual_status != "online":
+            raise DevLoopError(
+                f"Runtime read-back status {actual_status!r} != expected 'online'"
+            )
+        if template_status and template_status != "ready":
+            raise DevLoopError(
+                f"Runtime read-back Template status {template_status!r} != expected 'ready'"
+            )
+        if expected_name is not None and actual_name != expected_name:
+            raise DevLoopError(
+                f"Runtime read-back name {actual_name!r} != expected {expected_name!r}"
+            )
+        if expected_visibility is not None and actual_visibility != expected_visibility:
+            raise DevLoopError(
+                f"Runtime read-back visibility {actual_visibility!r} != expected "
+                f"{expected_visibility!r}"
+            )
         return {
             "runtime_id": runtime_id,
-            "runtime_name": runtime.get("name", ""),
+            "runtime_name": actual_name,
             "provider": actual_provider,
             "template_id": actual_template_id,
-            "verified": True,
+            "template_status": template_status or "ready-by-catalog",
+            "runtime_mode": "cloud",
+            "sandbox_backend": "aliyun_fc",
+            "template_channel": "candidate",
+            "status": actual_status,
+            "visibility": actual_visibility,
+            "configuration_verified": True,
         }
 
     def switch(self, runtime_id: str, template_id: str) -> dict[str, Any]:
@@ -614,6 +819,7 @@ class MulticaAPI:
             raise DevLoopError("candidate Runtime publisher permission is required")
         runtime = self.find_runtime(self.runtimes(), runtime_id)
         provider = self.validate_candidate_runtime(runtime)
+        previous_template_id = self.runtime_template_id(runtime)
         self.find_template(self.templates(), template_id, provider)
         self.request(
             "PATCH",
@@ -622,6 +828,7 @@ class MulticaAPI:
         )
         result = self.verify_readback(runtime_id, template_id, provider)
         result["mutation"] = "switched"
+        result["previous_template_id"] = previous_template_id
         return result
 
     def create(
@@ -630,13 +837,53 @@ class MulticaAPI:
         template_id: str,
         provider: str,
         visibility: str,
+        reconcile_only: bool = False,
     ) -> dict[str, Any]:
+        name = name.strip()
+        provider = provider.strip().lower()
+        visibility = visibility.strip().lower()
+        if not name:
+            raise DevLoopError("candidate Runtime name is required")
         channel = self.stable_channel()
         if channel.get("can_publish") is not True:
             raise DevLoopError("candidate Runtime publisher permission is required")
         self.find_template(self.templates(), template_id, provider)
-        created = require_mapping(
-            self.request(
+
+        def reconcile_existing(mutation: str) -> dict[str, Any] | None:
+            matches = [
+                runtime
+                for runtime in self.runtimes()
+                if str(runtime.get("name", "")) == name
+            ]
+            if len(matches) > 1:
+                raise DevLoopError(
+                    f"candidate Runtime name {name!r} is not unique; refusing to guess"
+                )
+            if not matches:
+                return None
+            runtime_id = str(matches[0].get("id", ""))
+            result = self.verify_readback(
+                runtime_id,
+                template_id,
+                provider,
+                expected_name=name,
+                expected_visibility=visibility,
+            )
+            result["mutation"] = mutation
+            return result
+
+        existing = reconcile_existing("reused")
+        if existing is not None:
+            return existing
+        if reconcile_only:
+            raise DevLoopError(
+                f"no Runtime named {name!r} is visible yet; reconcile-only mode "
+                "will not POST. Repeat this read-only reconciliation after the "
+                "visibility window, or obtain authoritative proof that the original "
+                "request did not commit before starting a new create operation"
+            )
+        try:
+            created_raw = self.request(
                 "POST",
                 "/api/runtimes/fc-e2b",
                 {
@@ -646,13 +893,28 @@ class MulticaAPI:
                     "provider": provider,
                     "visibility": visibility,
                 },
-            ),
-            "candidate Runtime create",
-        )
+            )
+        except APITransportError as exc:
+            reconciled = reconcile_existing("reconciled_after_transport_error")
+            if reconciled is not None:
+                return reconciled
+            raise DevLoopError(
+                "candidate Runtime create outcome is unknown and no matching row is "
+                "visible yet; do not rerun create normally. Re-run the same command "
+                "with --reconcile-only until the row appears, or obtain authoritative "
+                "proof that the request did not commit"
+            ) from exc
+        created = require_mapping(created_raw, "candidate Runtime create")
         runtime_id = str(created.get("id", ""))
         if not runtime_id:
             raise DevLoopError("candidate Runtime create returned no Runtime ID")
-        result = self.verify_readback(runtime_id, template_id, provider)
+        result = self.verify_readback(
+            runtime_id,
+            template_id,
+            provider,
+            expected_name=name,
+            expected_visibility=visibility,
+        )
         result["mutation"] = "created"
         return result
 
@@ -676,20 +938,31 @@ def add_aone_args(parser: argparse.ArgumentParser) -> None:
 
 def add_build_args(parser: argparse.ArgumentParser) -> None:
     add_aone_args(parser)
-    parser.add_argument("--runtime-ref", required=True, help="Pushed Runtime branch")
     parser.add_argument(
-        "--multica-ref", required=True, help="Multica branch, tag, or preferably commit"
+        "--runtime-ref", required=True, type=runtime_ref, help="Pushed Runtime branch"
     )
-    parser.add_argument("--timeout-seconds", type=int, default=7200)
-    parser.add_argument("--poll-interval-seconds", type=float, default=20.0)
+    parser.add_argument(
+        "--runtime-commit",
+        required=True,
+        type=full_commit,
+        help="Expected immutable Runtime repository commit",
+    )
+    parser.add_argument(
+        "--multica-ref",
+        required=True,
+        type=full_commit,
+        help="Immutable dt-fde-multica commit baked into the image",
+    )
+    parser.add_argument("--timeout-seconds", type=positive_int, default=7200)
+    parser.add_argument("--poll-interval-seconds", type=positive_float, default=20.0)
     parser.add_argument("--dry-run", action="store_true")
 
 
 def add_api_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--profile", default="pre-fde")
+    parser.add_argument("--profile", type=profile_name, default="pre-fde")
     parser.add_argument("--server-url")
     parser.add_argument("--workspace-id")
-    parser.add_argument("--api-timeout-seconds", type=float, default=30.0)
+    parser.add_argument("--api-timeout-seconds", type=positive_float, default=30.0)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -701,6 +974,10 @@ def create_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser("doctor", help="Read-only CI and API preflight")
     add_aone_args(doctor)
     add_api_args(doctor)
+    doctor.add_argument(
+        "--action", choices=("read", "create", "switch"), default="read"
+    )
+    doctor.add_argument("--runtime-id")
 
     build = subparsers.add_parser(
         "build", help="Build and inspect a candidate Template"
@@ -712,9 +989,14 @@ def create_parser() -> argparse.ArgumentParser:
     )
     add_aone_args(inspect_build)
     inspect_build.add_argument("--run-id", required=True, type=int)
+    inspect_build.add_argument("--runtime-ref", required=True, type=runtime_ref)
+    inspect_build.add_argument("--runtime-commit", required=True, type=full_commit)
+    inspect_build.add_argument("--multica-ref", required=True, type=full_commit)
     inspect_build.add_argument("--wait", action="store_true")
-    inspect_build.add_argument("--timeout-seconds", type=int, default=7200)
-    inspect_build.add_argument("--poll-interval-seconds", type=float, default=20.0)
+    inspect_build.add_argument("--timeout-seconds", type=positive_int, default=7200)
+    inspect_build.add_argument(
+        "--poll-interval-seconds", type=positive_float, default=20.0
+    )
 
     switch = subparsers.add_parser(
         "switch", help="Switch an existing candidate Runtime"
@@ -731,6 +1013,11 @@ def create_parser() -> argparse.ArgumentParser:
     create.add_argument("--provider", default="hermes")
     create.add_argument(
         "--visibility", choices=("private", "public"), default="private"
+    )
+    create.add_argument(
+        "--reconcile-only",
+        action="store_true",
+        help="Read by unique name without POST after an uncertain create response",
     )
     create.add_argument("--dry-run", action="store_true")
 
@@ -782,7 +1069,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
             "pipeline_path_guard": args.pipeline_path,
             "repository": args.repository,
             "runtime_ref": args.runtime_ref,
-            "multica_ref": args.multica_ref,
+            "runtime_commit": args.runtime_commit,
+            "multica_commit": args.multica_ref,
             "command": command,
             "wait_for": "SUCCESS",
             "extract": sorted(TEMPLATE_FIELDS),
@@ -810,16 +1098,20 @@ def api_plan(args: argparse.Namespace, template_id: str) -> dict[str, Any]:
             "read_back": "GET /api/runtimes",
         }
     name = getattr(args, "create_name", None) or getattr(args, "name", None)
+    reconcile_only = bool(getattr(args, "reconcile_only", False))
     return {
         "server_url": config.server_url,
         "workspace_id": config.workspace_id,
         "token_source": "environment-or-profile (value never printed)",
+        "reconcile_only": reconcile_only,
         "preflight": [
             "GET /api/runtimes/fc-e2b/stable-channel",
             "GET /api/runtimes/fc-e2b/templates",
             "GET /api/runtimes",
         ],
-        "mutation": {
+        "mutation": None
+        if reconcile_only
+        else {
             "method": "POST",
             "path": "/api/runtimes/fc-e2b",
             "body": {
@@ -849,7 +1141,18 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
         if shutil.which(os.environ.get("A1_BIN", "a1")) is None:
             raise DevLoopError("a1 CLI is not installed or not on PATH")
         pipeline = build_client(args).validate_pipeline()
-        api = api_client(args).doctor()
+        api_instance = api_client(args)
+        api = api_instance.doctor()
+        if args.action == "switch":
+            if not args.runtime_id:
+                raise DevLoopError("doctor --action switch requires --runtime-id")
+            target = api_instance.find_runtime(api_instance.runtimes(), args.runtime_id)
+            api["target_provider"] = api_instance.validate_candidate_runtime(target)
+            api["target_runtime_id"] = args.runtime_id
+        api["planned_action"] = args.action
+        api["mutation_authority"] = (
+            "enforced by the mutation endpoint, not proven by GET"
+        )
         return {
             "ok": True,
             "aone": {
@@ -870,13 +1173,21 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             )
         else:
             run = client.get_run(args.run_id)
-        return {"build": client.artifact_from_run(run).as_dict()}
+        return {
+            "build": client.artifact_from_run(
+                run,
+                expected_runtime_ref=args.runtime_ref,
+                expected_runtime_commit=args.runtime_commit,
+                expected_multica_commit=args.multica_ref,
+            ).as_dict()
+        }
 
     if args.command == "build":
         if args.dry_run:
             return build_plan(args)
         artifact = build_client(args).build(
             args.runtime_ref,
+            args.runtime_commit,
             args.multica_ref,
             args.timeout_seconds,
             args.poll_interval_seconds,
@@ -897,6 +1208,7 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
                 args.template_id,
                 args.provider,
                 args.visibility,
+                args.reconcile_only,
             )
         }
 
@@ -905,13 +1217,20 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
             plan = build_plan(args)
             plan["runtime"] = api_plan(args, "<template-id-from-successful-build>")
             return plan
+        api = api_client(args)
+        api.doctor()
+        if args.runtime_id:
+            # Fail before spending a CI build if the requested cutover target is
+            # not itself a mutable candidate FC Runtime in this workspace.
+            target = api.find_runtime(api.runtimes(), args.runtime_id)
+            api.validate_candidate_runtime(target)
         artifact = build_client(args).build(
             args.runtime_ref,
+            args.runtime_commit,
             args.multica_ref,
             args.timeout_seconds,
             args.poll_interval_seconds,
         )
-        api = api_client(args)
         if args.runtime_id:
             runtime = api.switch(args.runtime_id, artifact.template_id)
         else:
@@ -921,7 +1240,13 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
                 args.provider,
                 args.visibility,
             )
-        return {"build": artifact.as_dict(), "runtime": runtime, "complete": True}
+        return {
+            "build": artifact.as_dict(),
+            "runtime": runtime,
+            "runtime_configured": True,
+            "complete": False,
+            "required_next_gate": "multica_task_canary",
+        }
 
     raise DevLoopError(f"unsupported command: {args.command}")
 

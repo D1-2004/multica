@@ -27,22 +27,31 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
     runtime_channel = "candidate"
     mutations: list[dict[str, Any]] = []
     runtimes: list[dict[str, Any]] = []
+    create_visibility_override: str | None = None
+    drop_create_response = False
+    drop_create_without_commit = False
 
     @classmethod
     def reset(cls, channel: str = "candidate") -> None:
         cls.runtime_channel = channel
         cls.mutations = []
+        cls.create_visibility_override = None
+        cls.drop_create_response = False
+        cls.drop_create_without_commit = False
         cls.runtimes = [
             {
                 "id": "runtime-1",
                 "name": "FC candidate",
                 "runtime_mode": "cloud",
                 "provider": "hermes",
+                "status": "online",
+                "visibility": "private",
                 "metadata": {
                     "kind": "fc-e2b",
                     "sandbox_backend": "aliyun_fc",
                     "template_channel": channel,
                     "template_id": "template-old",
+                    "template_status": "ready",
                 },
             }
         ]
@@ -116,19 +125,28 @@ class RuntimeAPIHandler(BaseHTTPRequestHandler):
             return
         body = self._body()
         self.mutations.append({"method": "POST", "path": self.path, "body": body})
+        if self.drop_create_response and self.drop_create_without_commit:
+            self.close_connection = True
+            return
         runtime = {
             "id": "runtime-created",
             "name": body["name"],
             "runtime_mode": "cloud",
             "provider": body["provider"],
+            "status": "online",
+            "visibility": self.create_visibility_override or body["visibility"],
             "metadata": {
                 "kind": "fc-e2b",
                 "sandbox_backend": "aliyun_fc",
                 "template_channel": "candidate",
                 "template_id": body["template_id"],
+                "template_status": "ready",
             },
         }
         self.runtimes.append(runtime)
+        if self.drop_create_response:
+            self.close_connection = True
+            return
         self._json(201, runtime)
 
 
@@ -150,9 +168,13 @@ def write_fake_a1(directory: Path, status: str = "SUCCESS") -> Path:
     path = directory / "fake-a1"
     payload = f'''#!/usr/bin/env python3
 import json
+import os
 import sys
 
 args = sys.argv[1:]
+if os.environ.get("MULTICA_TOKEN"):
+    print("a1 child inherited MULTICA_TOKEN", file=sys.stderr)
+    raise SystemExit(4)
 if args[:3] == ["ci", "pipeline", "get"]:
     print(json.dumps({{
         "id": 295064,
@@ -179,6 +201,7 @@ elif args[:3] == ["ci", "run", "get"]:
 elif args[:3] == ["ci", "run", "log"]:
     log = """template_id: {TEMPLATE_ID}
 runtime_commit: {RUNTIME_COMMIT}
+multica_commit: {MULTICA_COMMIT}
 provider_fingerprint: a2eb67817f146ef4
 display_alias: candidate-test
 """
@@ -227,6 +250,8 @@ class FCRuntimeDevLoopTest(unittest.TestCase):
                     "cutover",
                     "--runtime-ref",
                     RUNTIME_BRANCH,
+                    "--runtime-commit",
+                    RUNTIME_COMMIT,
                     "--multica-ref",
                     MULTICA_COMMIT,
                     "--runtime-id",
@@ -243,10 +268,13 @@ class FCRuntimeDevLoopTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
-        self.assertTrue(output["complete"])
+        self.assertFalse(output["complete"])
+        self.assertTrue(output["runtime_configured"])
+        self.assertEqual(output["required_next_gate"], "multica_task_canary")
         self.assertEqual(output["build"]["template_id"], TEMPLATE_ID)
         self.assertEqual(output["runtime"]["template_id"], TEMPLATE_ID)
         self.assertEqual(output["runtime"]["mutation"], "switched")
+        self.assertEqual(output["runtime"]["previous_template_id"], "template-old")
         self.assertEqual(len(RuntimeAPIHandler.mutations), 1)
         self.assertEqual(RuntimeAPIHandler.mutations[0]["method"], "PATCH")
         self.assertNotIn(TOKEN, result.stdout + result.stderr)
@@ -259,6 +287,8 @@ class FCRuntimeDevLoopTest(unittest.TestCase):
                     "cutover",
                     "--runtime-ref",
                     RUNTIME_BRANCH,
+                    "--runtime-commit",
+                    RUNTIME_COMMIT,
                     "--multica-ref",
                     MULTICA_COMMIT,
                     "--runtime-id",
@@ -328,25 +358,255 @@ class FCRuntimeDevLoopTest(unittest.TestCase):
         )
         self.assertEqual(json.loads(result.stdout)["runtime"]["mutation"], "created")
 
+    def test_create_is_idempotent_by_unique_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, RuntimeServer() as server_url:
+            fake_a1 = write_fake_a1(Path(tmp))
+            args = [
+                "create",
+                "--template-id",
+                TEMPLATE_ID,
+                "--name",
+                "unique operation candidate",
+                "--server-url",
+                server_url,
+                "--workspace-id",
+                RuntimeAPIHandler.workspace_id,
+            ]
+            first = run_script(args, self.base_env(fake_a1))
+            second = run_script(args, self.base_env(fake_a1))
+
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(len(RuntimeAPIHandler.mutations), 1)
+        self.assertEqual(json.loads(second.stdout)["runtime"]["mutation"], "reused")
+
+    def test_create_reconciles_after_response_is_lost(self) -> None:
+        RuntimeAPIHandler.drop_create_response = True
+        with tempfile.TemporaryDirectory() as tmp, RuntimeServer() as server_url:
+            fake_a1 = write_fake_a1(Path(tmp))
+            result = run_script(
+                [
+                    "create",
+                    "--template-id",
+                    TEMPLATE_ID,
+                    "--name",
+                    "lost response candidate",
+                    "--server-url",
+                    server_url,
+                    "--workspace-id",
+                    RuntimeAPIHandler.workspace_id,
+                ],
+                self.base_env(fake_a1),
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(RuntimeAPIHandler.mutations), 1)
+        self.assertEqual(
+            json.loads(result.stdout)["runtime"]["mutation"],
+            "reconciled_after_transport_error",
+        )
+
+    def test_uncertain_create_uses_reconcile_only_without_second_post(self) -> None:
+        RuntimeAPIHandler.drop_create_response = True
+        RuntimeAPIHandler.drop_create_without_commit = True
+        with tempfile.TemporaryDirectory() as tmp, RuntimeServer() as server_url:
+            fake_a1 = write_fake_a1(Path(tmp))
+            args = [
+                "create",
+                "--template-id",
+                TEMPLATE_ID,
+                "--name",
+                "uncertain candidate",
+                "--server-url",
+                server_url,
+                "--workspace-id",
+                RuntimeAPIHandler.workspace_id,
+            ]
+            first = run_script(args, self.base_env(fake_a1))
+            reconcile = run_script(
+                [*args, "--reconcile-only"], self.base_env(fake_a1)
+            )
+
+        self.assertEqual(first.returncode, 1)
+        self.assertIn("outcome is unknown", first.stderr)
+        self.assertEqual(reconcile.returncode, 1)
+        self.assertIn("will not POST", reconcile.stderr)
+        self.assertEqual(len(RuntimeAPIHandler.mutations), 1)
+
+    def test_create_rejects_visibility_downgrade_on_readback(self) -> None:
+        RuntimeAPIHandler.create_visibility_override = "private"
+        with tempfile.TemporaryDirectory() as tmp, RuntimeServer() as server_url:
+            fake_a1 = write_fake_a1(Path(tmp))
+            result = run_script(
+                [
+                    "create",
+                    "--template-id",
+                    TEMPLATE_ID,
+                    "--name",
+                    "public candidate",
+                    "--visibility",
+                    "public",
+                    "--server-url",
+                    server_url,
+                    "--workspace-id",
+                    RuntimeAPIHandler.workspace_id,
+                ],
+                self.base_env(fake_a1),
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("read-back visibility", result.stderr)
+
+    def test_non_loopback_http_server_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_a1 = write_fake_a1(Path(tmp))
+            result = run_script(
+                [
+                    "create",
+                    "--template-id",
+                    TEMPLATE_ID,
+                    "--name",
+                    "unsafe transport",
+                    "--server-url",
+                    "http://pre.example.test",
+                    "--workspace-id",
+                    RuntimeAPIHandler.workspace_id,
+                    "--dry-run",
+                ],
+                self.base_env(fake_a1),
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HTTPS", result.stderr)
+
+    def test_api_redirect_is_refused_without_forwarding_authorization(self) -> None:
+        class Sink(BaseHTTPRequestHandler):
+            authorization: str | None = None
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+            def do_GET(self) -> None:
+                type(self).authorization = self.headers.get("Authorization")
+                self.send_response(200)
+                self.end_headers()
+
+        class Redirect(BaseHTTPRequestHandler):
+            location = ""
+
+            def log_message(self, *_args: Any) -> None:
+                return
+
+            def do_GET(self) -> None:
+                self.send_response(302)
+                self.send_header("Location", type(self).location)
+                self.end_headers()
+
+        sink = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
+        sink_thread = threading.Thread(target=sink.serve_forever, daemon=True)
+        sink_thread.start()
+        sink_host, sink_port = sink.server_address
+        Redirect.location = f"http://{sink_host}:{sink_port}/leak"
+        redirect = ThreadingHTTPServer(("127.0.0.1", 0), Redirect)
+        redirect_thread = threading.Thread(target=redirect.serve_forever, daemon=True)
+        redirect_thread.start()
+        redirect_host, redirect_port = redirect.server_address
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                fake_a1 = write_fake_a1(Path(tmp))
+                result = run_script(
+                    [
+                        "doctor",
+                        "--server-url",
+                        f"http://{redirect_host}:{redirect_port}",
+                        "--workspace-id",
+                        RuntimeAPIHandler.workspace_id,
+                    ],
+                    self.base_env(fake_a1),
+                )
+        finally:
+            redirect.shutdown()
+            redirect.server_close()
+            redirect_thread.join(timeout=5)
+            sink.shutdown()
+            sink.server_close()
+            sink_thread.join(timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("HTTP 302", result.stderr)
+        self.assertIsNone(Sink.authorization)
+
+    def test_mutable_multica_ref_is_rejected_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fake_a1 = write_fake_a1(Path(tmp))
+            result = run_script(
+                [
+                    "build",
+                    "--runtime-ref",
+                    RUNTIME_BRANCH,
+                    "--runtime-commit",
+                    RUNTIME_COMMIT,
+                    "--multica-ref",
+                    "develop",
+                    "--dry-run",
+                ],
+                self.base_env(fake_a1),
+            )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("immutable 40-character", result.stderr)
+
+    def test_profile_and_ambient_server_conflict_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile_dir = root / ".multica" / "profiles" / "smoke"
+            profile_dir.mkdir(parents=True)
+            (profile_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "server_url": "https://pre.example.test",
+                        "workspace_id": RuntimeAPIHandler.workspace_id,
+                        "token": TOKEN,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_a1 = write_fake_a1(root)
+            env = self.base_env(fake_a1)
+            env["HOME"] = str(root)
+            env["MULTICA_SERVER_URL"] = "https://production.example.test"
+            result = run_script(
+                [
+                    "create",
+                    "--profile",
+                    "smoke",
+                    "--template-id",
+                    TEMPLATE_ID,
+                    "--name",
+                    "conflict",
+                    "--dry-run",
+                ],
+                env,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("conflicts with the selected profile", result.stderr)
+
     def test_dry_run_never_prints_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fake_a1 = write_fake_a1(Path(tmp))
             env = self.base_env(fake_a1)
-            env.update(
-                {
-                    "MULTICA_SERVER_URL": "https://pre.example.test",
-                    "MULTICA_WORKSPACE_ID": RuntimeAPIHandler.workspace_id,
-                }
-            )
             result = run_script(
                 [
                     "cutover",
                     "--runtime-ref",
                     RUNTIME_BRANCH,
+                    "--runtime-commit",
+                    RUNTIME_COMMIT,
                     "--multica-ref",
                     MULTICA_COMMIT,
                     "--runtime-id",
                     "runtime-1",
+                    "--server-url",
+                    "https://pre.example.test",
+                    "--workspace-id",
+                    RuntimeAPIHandler.workspace_id,
                     "--dry-run",
                 ],
                 env,
@@ -365,6 +625,8 @@ class FCRuntimeDevLoopTest(unittest.TestCase):
                     "build",
                     "--runtime-ref",
                     "codex/someone-elses-branch",
+                    "--runtime-commit",
+                    RUNTIME_COMMIT,
                     "--multica-ref",
                     MULTICA_COMMIT,
                     "--dry-run",

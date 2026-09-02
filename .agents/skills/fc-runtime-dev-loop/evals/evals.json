@@ -39,6 +39,45 @@
         "Runs candidate Runtime validation before switch/create",
         "Requires post-mutation Runtime read-back evidence"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "我同时改了 daemon/run_once.go、handleTask 和 FC runner。请告诉我怎么验证这次改动，要求 FC 候选能跑，也要证明真实 Mac 本地设备接入预发后还能正常注册、心跳和完成任务。",
+      "expected_output": "Explains RunOnce versus persistent Run, locks both repository commits, requires an FC task canary plus a persistent local device task, and reports the rolling compatibility matrix rather than treating Template smoke as sufficient.",
+      "files": [],
+      "expectations": [
+        "Clearly distinguishes FC daemon run-once from the persistent local Daemon lifecycle",
+        "Requires immutable Runtime and Multica commits plus the Template and Runtime identities",
+        "Requires a real FC Multica task canary after Runtime configuration",
+        "Requires persistent local registration, WebSocket or HTTP heartbeat, batch claim, task completion, stop, and deregister evidence",
+        "Requires previous-release and candidate local Daemon compatibility when the server wire contract changed"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "先给我一份用 pre-fde profile 跑本地 daemon smoke 的执行方案，本题不要实际操作。机器上默认 daemon 没启动；我只想测 Codex，别污染别的 workspace 和 runtime，结束后要清干净。",
+      "expected_output": "Refuses the unsafe assumption that a profile scopes remote registration, uses a fresh daemon ID and restricted PATH, inventories every PAT-visible Workspace, verifies live/task/stop evidence, and performs strict identity-checked cleanup without cascade.",
+      "files": [],
+      "expectations": [
+        "The plan explains that profile.workspace_id does not limit Daemon registration and inventories all PAT-visible Workspaces",
+        "The plan uses a fresh explicit daemon ID and does not touch the default daemon identity",
+        "The plan restricts provider discovery to Codex and disables auto-update plus auto-reload",
+        "The plan uses an exact runtime ledger and a nonce task marker for verification",
+        "The plan archives/deletes only exact test resources, uses strict Runtime delete, and stops on any 409 instead of cascade"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "候选 Runtime 的 create 请求超时了，我不知道服务端到底创建成功没有；另一个已有 Runtime 切过去后 canary 又失败。先给我安全恢复方案，本题不要实际操作；不能重复创建，也不能留在坏模板上。",
+      "expected_output": "Reconciles create by a unique operation name before retrying, refuses ambiguous matches, uses the switch result's previous Template for rollback, reads all state back, and distinguishes configured from task-verified completion.",
+      "files": [],
+      "expectations": [
+        "The plan treats the unique Runtime name as an operation key and reads before any create retry",
+        "The plan reuses one exact matching Runtime and refuses zero-knowledge or ambiguous duplicate recovery",
+        "The plan records previous_template_id before switching",
+        "The plan rolls back to the previous Template and verifies read-back after canary failure",
+        "The plan does not report complete until a real task canary succeeds"
+      ]
     }
   ]
 }

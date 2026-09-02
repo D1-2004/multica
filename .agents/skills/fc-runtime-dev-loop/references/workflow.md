@@ -26,11 +26,12 @@ Only `SUCCESS` advances. The build step must yield all of:
 ```text
 template_id: <immutable E2B template ID>
 runtime_commit: <40 lowercase hex>
+multica_commit: <40 lowercase hex>
 provider_fingerprint: <16 lowercase hex>
 display_alias: <human-readable alias>
 ```
 
-The script additionally verifies `runtime_commit == Aone run.commit`. This prevents a stale log or a build from another revision from being cut over.
+The script verifies `runtime_commit == Aone run.commit == --runtime-commit` and `multica_commit == run.params.multica_ref == --multica-ref`. Branches and tags are rejected for both expected identities. Conflicting repeated markers also fail. This prevents a moved branch, stale log, or somebody else's successful run from being cut over.
 
 ## Aone calls
 
@@ -38,12 +39,12 @@ For the dedicated development-loop pipeline, the deterministic sequence is:
 
 ```bash
 a1 ci pipeline get 295064 --repo dingtalk-ai-lab/multica-fc-hermes-runtime -f json
-a1 ci pipeline run 295064 --repo dingtalk-ai-lab/multica-fc-hermes-runtime --branch codex/fc-runtime-dev-loop-20260903 --param multica_ref=<ref> -f json
+a1 ci pipeline run 295064 --repo dingtalk-ai-lab/multica-fc-hermes-runtime --branch codex/fc-runtime-dev-loop-20260903 --param multica_ref=<40-char-commit> -f json
 a1 ci run get <run-id> --repo dingtalk-ai-lab/multica-fc-hermes-runtime -f json
 a1 ci run log <run-id> --repo dingtalk-ai-lab/multica-fc-hermes-runtime --job build-publish-and-verify --step build-and-verify-e2b-template -f json
 ```
 
-The script invokes each `a1` command as a separate subprocess and parses JSON. It never scrapes terminal tables.
+The script invokes each `a1` command as a separate, time-bounded subprocess and parses JSON. It removes every `MULTICA_*` variable from the Aone child environment and never scrapes terminal tables.
 
 ## Multica HTTP calls
 
@@ -55,7 +56,7 @@ X-Workspace-ID: <workspace UUID>
 Content-Type: application/json     # mutation only
 ```
 
-The Token is loaded from the process environment or a local CLI profile. It is never an argument.
+The Token is loaded from the process environment or a local CLI profile. It is never an argument. The client allows HTTP only on loopback and rejects every redirect; endpoint/workspace conflicts between a profile and ambient environment fail closed.
 
 Preflight:
 
@@ -99,9 +100,16 @@ runtime.provider == requested provider
 runtime.metadata.sandbox_backend == aliyun_fc
 runtime.metadata.template_channel == candidate
 runtime.metadata.template_id == built template_id
+runtime.status == online
+runtime.visibility == requested visibility        # create
+runtime.metadata.template_status == ready         # when present
 ```
 
-The switch endpoint invalidates warm sandboxes for that Runtime. A later task creates a new sandbox from the selected Template; the workflow does not claim that an Agent task has run unless a separate task smoke is executed.
+The switch result also reports `previous_template_id`, which is the rollback target. The switch endpoint marks prior reusable sandbox rows stale; it does not prove a process was killed. A later task creates or reuses a sandbox from the selected Template.
+
+Runtime read-back is the `runtime_configured` gate, not the end of the workflow. Bind a private temporary Agent, create a nonce-marked Issue, and verify a completed run on the exact Runtime with the expected output. Only then report `fc_task_canary_verified`.
+
+When persistent Daemon code or server daemon protocol changed, run the separate matrix in [daemon-compatibility.md](daemon-compatibility.md). An FC task uses `Daemon.RunOnce`; it cannot prove `Daemon.Run` registration, heartbeat, update, or shutdown behavior.
 
 ## Recovery matrix
 
@@ -110,7 +118,10 @@ The switch endpoint invalidates warm sandboxes for that Runtime. A later task cr
 | unpushed Runtime change | commit and push the branch, then trigger build |
 | CI failed before Template | fix branch and build new commit |
 | CI succeeded, API failed | reuse run ID; inspect-build then switch/create |
+| create response lost | rerun the same unique name with `--reconcile-only`; reuse one exact row, but never POST while zero matches remain an unknown outcome |
 | PAT invalid | refresh profile; no rebuild |
 | publisher permission missing | update server allowlist through the normal config/deploy path; no bypass |
 | existing Runtime is stable | create a separate candidate Runtime |
 | wrong provider | use a provider declared in Template metadata or rebuild the image contract |
+| FC canary failed after switch | restore `previous_template_id`, read back, retain failed task evidence |
+| local task passed but provider/flag disappeared | report functional pass + compatibility fail; do not waive without review |
