@@ -8,6 +8,15 @@ import (
 	"unicode/utf8"
 )
 
+func TestKindFromChatType(t *testing.T) {
+	if KindFromChatType("group") != KindGroup || KindFromChatType("GROUP") != KindGroup {
+		t.Fatal("group")
+	}
+	if KindFromChatType("p2p") != KindDM || KindFromChatType("") != KindDM {
+		t.Fatal("dm")
+	}
+}
+
 func TestValidateMemoryText(t *testing.T) {
 	if !ValidateMemoryText("") || !ValidateMemoryText("短") {
 		t.Fatal("short text must be valid")
@@ -54,6 +63,9 @@ func TestFlushErrorCode(t *testing.T) {
 	}
 	if TerminalFlushCode("") || FlushErrorCode(errors.New("boom")) != "" {
 		t.Fatal("plain errors are retryable")
+	}
+	if TerminalFlushCode(ErrorIncomplete) {
+		t.Fatal("incomplete history must retry")
 	}
 }
 

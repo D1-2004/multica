@@ -332,6 +332,84 @@ func TestBlockedCanBeAwakened(t *testing.T) {
 	}
 }
 
+func TestGetIsolatesSceneKeys(t *testing.T) {
+	ctx := context.Background()
+	pool := openPool(t)
+	store := NewStore(db.New(pool))
+	a := testIdentity(t)
+	a.SceneKind = KindGroup
+	b := a
+	b.SceneKey = "cid-b-" + uuid.NewString()
+	b.SceneKind = KindGroup
+	seedAgentWrite(t, pool, a, true)
+	t.Cleanup(func() { _ = store.DeleteByWorkspace(ctx, a.WorkspaceID) })
+
+	commitSceneText(t, pool, store, a, "GAMMA-A-881 是报表工具")
+	commitSceneText(t, pool, store, b, "这个群还没有口径")
+
+	gotA, err := store.Get(ctx, a)
+	if err != nil {
+		t.Fatalf("get A: %v", err)
+	}
+	gotB, err := store.Get(ctx, b)
+	if err != nil {
+		t.Fatalf("get B: %v", err)
+	}
+	if !strings.Contains(gotA.MemoryText, "报表工具") || strings.Contains(gotA.MemoryText, "还没有口径") {
+		t.Fatalf("A=%q", gotA.MemoryText)
+	}
+	if !strings.Contains(gotB.MemoryText, "还没有口径") || strings.Contains(gotB.MemoryText, "报表工具") {
+		t.Fatalf("B=%q", gotB.MemoryText)
+	}
+
+	reset, err := store.Reset(ctx, a)
+	if err != nil {
+		t.Fatalf("reset A: %v", err)
+	}
+	if reset.MemoryText != "" {
+		t.Fatalf("A after reset=%q", reset.MemoryText)
+	}
+	kept, err := store.Get(ctx, b)
+	if err != nil {
+		t.Fatalf("get B after reset: %v", err)
+	}
+	if !strings.Contains(kept.MemoryText, "还没有口径") {
+		t.Fatalf("reset A cleared B: %q", kept.MemoryText)
+	}
+}
+
+func commitSceneText(t *testing.T, pool *pgxpool.Pool, store *Store, id Identity, text string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := store.MarkDirty(ctx, id, DirtyTrigger{
+		OccurredAt: time.Now().UTC(), EvidenceID: "m-" + id.SceneKey, IdempotencyKey: "k-" + id.SceneKey,
+	}); err != nil {
+		t.Fatalf("dirty %s: %v", id.SceneKey, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET available_at = now() - interval '1 second' WHERE scene_key = $1`, id.SceneKey); err != nil {
+		t.Fatalf("nudge %s: %v", id.SceneKey, err)
+	}
+	row, err := store.Claim(ctx)
+	if err != nil {
+		t.Fatalf("claim %s: %v", id.SceneKey, err)
+	}
+	if row.SceneKey != id.SceneKey {
+		t.Fatalf("claimed %s, want %s", row.SceneKey, id.SceneKey)
+	}
+	if _, err := store.CommitBatch(ctx, row, CommitBatch{
+		ReplaceText:            true,
+		MemoryText:             text,
+		SourceCursorAt:         row.LeaseTargetThroughAt.Time,
+		SourceCursorEvidenceID: row.LeaseTargetThroughEvidenceID,
+		ExpectedMemoryRevision: row.MemoryRevision,
+	}); err != nil {
+		t.Fatalf("commit %s: %v", id.SceneKey, err)
+	}
+	if err := store.FinishClaim(ctx, row); err != nil {
+		t.Fatalf("finish %s: %v", id.SceneKey, err)
+	}
+}
+
 func TestResetClearsTextKeepsBootstrap(t *testing.T) {
 	ctx := context.Background()
 	pool := openPool(t)

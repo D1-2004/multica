@@ -185,7 +185,7 @@
     "prop_scene_memory_ui": "在入站里显示记忆",
     "prop_scene_memory_ui_hint": "打开后，入站 Tab 展示各会话的场域记忆文本。关掉则不展示。",
     "prop_scene_memory_bootstrap": "预热场域记忆",
-    "prop_scene_memory_bootstrap_hint": "打开后，发现新群或单聊时可以预热记忆；关掉则只靠第一条入站建立。",
+    "prop_scene_memory_bootstrap_hint": "打开后，该会话第一次写入会回看最多 14 天历史来建立场域记忆。关掉则只从第一次入站当时的消息学习。",
     "prop_owner": "所有者",
     "prop_created": "创建时间",
     "prop_updated": "更新时间",

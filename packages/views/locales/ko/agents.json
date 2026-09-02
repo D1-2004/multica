@@ -185,7 +185,7 @@
     "prop_scene_memory_ui": "수신 탭에 기억 표시",
     "prop_scene_memory_ui_hint": "켜면 수신 탭에 각 대화의 장면 텍스트를 보여 줍니다. 끄면 숨깁니다.",
     "prop_scene_memory_bootstrap": "장면 기억 미리 준비",
-    "prop_scene_memory_bootstrap_hint": "켜면 새 그룹이나 1:1을 첫 수신 전에 미리 준비할 수 있습니다. 끄면 첫 메시지를 기다립니다.",
+    "prop_scene_memory_bootstrap_hint": "켜면 첫 쓰기가 이 대화의 최대 14일 이력을 되짚어 장면 기억을 만듭니다. 끄면 첫 수신 당시 메시지만 학습합니다.",
     "prop_owner": "소유자",
     "prop_created": "생성일",
     "prop_updated": "수정일",

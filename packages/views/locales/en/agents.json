@@ -193,7 +193,7 @@
     "prop_scene_memory_ui": "Show scene memory in inbound",
     "prop_scene_memory_ui_hint": "When on, the inbound tab lists each conversation's scene text. Off hides it.",
     "prop_scene_memory_bootstrap": "Warm up scene memory",
-    "prop_scene_memory_bootstrap_hint": "When on, new groups or DMs can be warmed before the first inbound. Off waits for the first message.",
+    "prop_scene_memory_bootstrap_hint": "When on, the first write backfills up to 14 days of this conversation. Off learns only from the first inbound turn.",
     "prop_owner": "Owner",
     "prop_created": "Created",
     "prop_updated": "Updated",

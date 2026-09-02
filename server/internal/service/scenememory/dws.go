@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
@@ -20,6 +21,7 @@ import (
 
 type identityLookup interface {
 	GetAgentDingTalkIdentity(ctx context.Context, arg db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
+	GetAgentSceneMemoryFlags(ctx context.Context, id pgtype.UUID) (db.AgentSceneMemoryFlags, error)
 }
 
 type DWSRangeConfig struct {
@@ -107,13 +109,17 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 	if row.SceneKind == KindGroup {
 		limit = 60
 	}
-	lookback := time.Now().UTC().Add(-historyLookback)
-	if row.SourceCursorAt.Valid && !row.SourceCursorAt.Time.IsZero() {
-		lookback = row.SourceCursorAt.Time.UTC()
+	now := time.Now().UTC()
+	bootstrap := false
+	if flags, flagErr := r.queries.GetAgentSceneMemoryFlags(ctx, row.AgentID); flagErr == nil {
+		bootstrap = flags.BootstrapEnabled
 	}
-	before := time.Now().Add(time.Minute)
+	lookback := HistoryLookback(row, bootstrap, now)
+	before := now.Add(time.Minute)
 	seen := make(map[string]struct{})
 	out := make([]HistoryEvent, 0, limit)
+	oldest := before
+	hitPageCap := false
 	for page := 0; page < maxHistoryPages; page++ {
 		raw, err := r.cli.List(ctx, dir, dwsclient.ListRequest{
 			ConversationID: row.SceneKey,
@@ -124,16 +130,14 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		if err != nil {
 			return nil, err
 		}
-		pageEvents, err := parseDWSEvents(raw)
+		parsed, err := parseDWSPage(raw)
 		if err != nil {
 			return nil, err
 		}
-		if len(pageEvents) == 0 {
+		if parsed.RawCount == 0 {
 			break
 		}
-		added := 0
-		oldest := before
-		for _, event := range pageEvents {
+		for _, event := range parsed.Events {
 			if event.EvidenceID != "" {
 				if _, ok := seen[event.EvidenceID]; ok {
 					continue
@@ -141,20 +145,66 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 				seen[event.EvidenceID] = struct{}{}
 			}
 			out = append(out, event)
-			added++
-			if event.OccurredAt.Before(oldest) {
-				oldest = event.OccurredAt
-			}
 		}
-		if added == 0 || !oldest.After(lookback) || len(pageEvents) < limit {
+		if !parsed.Oldest.IsZero() && parsed.Oldest.Before(oldest) {
+			oldest = parsed.Oldest
+		}
+		if parsed.RawCount < limit || !oldest.After(lookback) {
+			break
+		}
+		if page == maxHistoryPages-1 {
+			hitPageCap = true
 			break
 		}
 		before = oldest
 	}
+	if historyHasGap(row, oldest, hitPageCap) {
+		return nil, &FlushError{
+			Code: ErrorIncomplete,
+			Err:  fmt.Errorf("history page cap left a gap behind the cursor"),
+		}
+	}
 	return out, nil
 }
 
+func HistoryLookback(row db.SceneMemory, bootstrap bool, now time.Time) time.Time {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if row.SourceCursorAt.Valid && !row.SourceCursorAt.Time.IsZero() {
+		return row.SourceCursorAt.Time.UTC()
+	}
+	if bootstrap {
+		return now.UTC().Add(-historyLookback)
+	}
+	if row.LeaseTargetThroughAt.Valid && !row.LeaseTargetThroughAt.Time.IsZero() {
+		return row.LeaseTargetThroughAt.Time.UTC().Add(-time.Minute)
+	}
+	return now.UTC().Add(-time.Hour)
+}
+
+func historyHasGap(row db.SceneMemory, oldest time.Time, hitPageCap bool) bool {
+	if !hitPageCap || !row.SourceCursorAt.Valid || row.SourceCursorAt.Time.IsZero() {
+		return false
+	}
+	return oldest.After(row.SourceCursorAt.Time.UTC())
+}
+
+type dwsPage struct {
+	Events   []HistoryEvent
+	RawCount int
+	Oldest   time.Time
+}
+
 func parseDWSEvents(raw []byte) ([]HistoryEvent, error) {
+	page, err := parseDWSPage(raw)
+	if err != nil {
+		return nil, err
+	}
+	return page.Events, nil
+}
+
+func parseDWSPage(raw []byte) (dwsPage, error) {
 	var payload struct {
 		Success   bool   `json:"success"`
 		ErrorCode string `json:"errorCode"`
@@ -168,30 +218,33 @@ func parseDWSEvents(raw []byte) ([]HistoryEvent, error) {
 		} `json:"result"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
-		return nil, errors.New("decode DWS conversation history response")
+		return dwsPage{}, errors.New("decode DWS conversation history response")
 	}
 	if !payload.Success {
-		return nil, fmt.Errorf("DWS conversation history query rejected: %s", dwsclient.SafeCode(payload.ErrorCode))
+		return dwsPage{}, fmt.Errorf("DWS conversation history query rejected: %s", dwsclient.SafeCode(payload.ErrorCode))
 	}
-	out := make([]HistoryEvent, 0, len(payload.Result.Messages))
+	page := dwsPage{RawCount: len(payload.Result.Messages)}
 	for _, message := range payload.Result.Messages {
+		occurred := parseDWSTime(message.CreateTime)
+		if page.Oldest.IsZero() || occurred.Before(page.Oldest) {
+			page.Oldest = occurred
+		}
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
 			continue
 		}
-		occurred := parseDWSTime(message.CreateTime)
 		speaker := strings.Join(strings.Fields(message.Sender), " ")
 		if speaker == "" {
 			speaker = "dingtalk"
 		}
-		out = append(out, HistoryEvent{
+		page.Events = append(page.Events, HistoryEvent{
 			EvidenceID: strings.TrimSpace(message.OpenMessageID),
 			OccurredAt: occurred,
 			Speaker:    speaker,
 			Content:    content,
 		})
 	}
-	return out, nil
+	return page, nil
 }
 
 func parseDWSTime(raw string) time.Time {

@@ -2,8 +2,10 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +34,17 @@ func TestIsInboundResetMemory(t *testing.T) {
 		if got := isInboundResetMemory(tc.in); got != tc.want {
 			t.Fatalf("%q: got %v want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestResetMemoryReplyReportsMemoryFailure(t *testing.T) {
+	got := resetMemoryReply("cid-a", errors.New("reset failed"))
+	if !strings.Contains(got, "场域记忆") {
+		t.Fatalf("%q", got)
+	}
+	ok := resetMemoryReply("cid-a", nil)
+	if !strings.Contains(ok, "场域记忆") || strings.Contains(ok, "失败") {
+		t.Fatalf("%q", ok)
 	}
 }
 

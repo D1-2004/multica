@@ -3,7 +3,10 @@ package scenememory
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestParseFlushCommit(t *testing.T) {
@@ -43,6 +46,64 @@ func TestFallbackMergeSeedsEmptyMemory(t *testing.T) {
 	}
 	if utf8.RuneCountInString(got) > MaxMemoryCodePoints {
 		t.Fatal("fallback exceeded budget")
+	}
+}
+
+func TestPlanFlushRetriesWhenClaimedEvidenceMissing(t *testing.T) {
+	cutoff := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	row := db.SceneMemory{
+		LeaseTargetThroughAt:         timestamptz(cutoff),
+		LeaseTargetThroughEvidenceID: "msg-inbound",
+	}
+	_, err := planFlush(row, []HistoryEvent{{
+		EvidenceID: "older",
+		OccurredAt: cutoff.Add(-time.Minute),
+		Content:    "灌水",
+	}})
+	if FlushErrorCode(err) != ErrorIncomplete {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestPlanFlushCaughtUpWhenClaimedEvidenceVisible(t *testing.T) {
+	cutoff := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	row := db.SceneMemory{
+		LeaseTargetThroughAt:         timestamptz(cutoff),
+		LeaseTargetThroughEvidenceID: "msg-inbound",
+		SourceCursorAt:               timestamptz(cutoff.Add(-time.Hour)),
+		SourceCursorEvidenceID:       "old",
+	}
+	plan, err := planFlush(row, []HistoryEvent{{
+		EvidenceID: "msg-inbound",
+		OccurredAt: cutoff,
+		Content:    "记住：ALPHA-7749 是会议室预约脚本",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.caughtUp || len(plan.batch) != 1 || plan.batch[0].EvidenceID != "msg-inbound" {
+		t.Fatalf("plan=%+v", plan)
+	}
+}
+
+func TestPlanFlushEmptyDeltaWithoutCutoffIsCaughtUp(t *testing.T) {
+	plan, err := planFlush(db.SceneMemory{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.caughtUp || len(plan.batch) != 0 {
+		t.Fatalf("plan=%+v", plan)
+	}
+}
+
+func TestClassifyHistoryKeepsRedeemNetworkErrorsRetryable(t *testing.T) {
+	err := classifyHistory(errString("Agent Identity DWS redeem request failed"))
+	if FlushErrorCode(err) != "" {
+		t.Fatalf("network redeem must retry, code=%q", FlushErrorCode(err))
+	}
+	err = classifyHistory(errString("Agent Identity DWS redeem rejected: unauthorized"))
+	if FlushErrorCode(err) != ErrorAuth {
+		t.Fatalf("rejected redeem must be AUTH, code=%q", FlushErrorCode(err))
 	}
 }
 

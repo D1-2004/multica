@@ -2322,26 +2322,20 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SceneMemoryWriteEnabled != nil || req.SceneMemoryRecallEnabled != nil ||
 		req.SceneMemoryUIEnabled != nil || req.SceneMemoryBootstrapEnabled != nil {
-		flags, err := h.Queries.GetAgentSceneMemoryFlags(r.Context(), updated.ID)
-		if err != nil {
-			flags = db.AgentSceneMemoryFlags{}
-		}
+		params := db.UpdateAgentSceneMemoryFlagsParams{ID: updated.ID}
 		if req.SceneMemoryWriteEnabled != nil {
-			flags.WriteEnabled = *req.SceneMemoryWriteEnabled
+			params.WriteEnabled = pgtype.Bool{Bool: *req.SceneMemoryWriteEnabled, Valid: true}
 		}
 		if req.SceneMemoryRecallEnabled != nil {
-			flags.RecallEnabled = *req.SceneMemoryRecallEnabled
+			params.RecallEnabled = pgtype.Bool{Bool: *req.SceneMemoryRecallEnabled, Valid: true}
 		}
 		if req.SceneMemoryUIEnabled != nil {
-			flags.UIEnabled = *req.SceneMemoryUIEnabled
+			params.UIEnabled = pgtype.Bool{Bool: *req.SceneMemoryUIEnabled, Valid: true}
 		}
 		if req.SceneMemoryBootstrapEnabled != nil {
-			flags.BootstrapEnabled = *req.SceneMemoryBootstrapEnabled
+			params.BootstrapEnabled = pgtype.Bool{Bool: *req.SceneMemoryBootstrapEnabled, Valid: true}
 		}
-		if err := h.Queries.UpdateAgentSceneMemoryFlags(r.Context(), db.UpdateAgentSceneMemoryFlagsParams{
-			ID: updated.ID, WriteEnabled: flags.WriteEnabled, RecallEnabled: flags.RecallEnabled,
-			UIEnabled: flags.UIEnabled, BootstrapEnabled: flags.BootstrapEnabled,
-		}); err != nil {
+		if err := h.Queries.UpdateAgentSceneMemoryFlags(r.Context(), params); err != nil {
 			slog.Warn("update agent scene memory flags failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 			writeError(w, http.StatusInternalServerError, "failed to update scene memory flags")
 			return

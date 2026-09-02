@@ -3,6 +3,7 @@ package scenememory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -42,11 +43,6 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 	if err := f.Store.Renew(ctx, row); err != nil {
 		return err
 	}
-	cutoffAt := time.Time{}
-	if row.LeaseTargetThroughAt.Valid {
-		cutoffAt = row.LeaseTargetThroughAt.Time
-	}
-	cutoffEv := row.LeaseTargetThroughEvidenceID
 	var events []HistoryEvent
 	if f.History != nil {
 		got, err := f.History.Read(ctx, row)
@@ -55,26 +51,14 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 		}
 		events = got
 	}
-	events = filterUntil(events, cutoffAt, cutoffEv)
-	cursorAt := time.Time{}
-	if row.SourceCursorAt.Valid {
-		cursorAt = row.SourceCursorAt.Time
-	}
-	delta := afterCursor(events, cursorAt, row.SourceCursorEvidenceID)
-	caughtUp := len(delta) == 0
-	batch := delta
-	if len(batch) > flushBatchEvents {
-		batch = batch[:flushBatchEvents]
-		caughtUp = false
-	}
-	if len(delta) > 0 {
-		last := batch[len(batch)-1]
-		caughtUp = caughtUp || CursorCovers(last.OccurredAt, last.EvidenceID, cutoffAt, cutoffEv)
+	plan, err := planFlush(row, events)
+	if err != nil {
+		return err
 	}
 	newText := row.MemoryText
 	replace := false
-	if len(batch) > 0 {
-		merged, err := f.merge(ctx, row, batch)
+	if len(plan.batch) > 0 {
+		merged, err := f.merge(ctx, row, plan.batch)
 		if err != nil {
 			return err
 		}
@@ -86,27 +70,16 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 			replace = true
 		}
 	}
-	cursor := cutoffAt
-	cursorEv := cutoffEv
-	if len(batch) > 0 {
-		last := batch[len(batch)-1]
-		cursor = last.OccurredAt
-		cursorEv = last.EvidenceID
-		if caughtUp && !cutoffAt.IsZero() && cutoffAt.After(cursor) {
-			cursor = cutoffAt
-			cursorEv = cutoffEv
-		}
-	}
 	meta, _ := json.Marshal(map[string]any{
-		"event_count": len(batch),
-		"caught_up":   caughtUp,
+		"event_count": len(plan.batch),
+		"caught_up":   plan.caughtUp,
 		"replace":     replace,
 	})
 	committed, err := f.Store.CommitBatch(ctx, row, CommitBatch{
 		ReplaceText:            replace,
 		MemoryText:             newText,
-		SourceCursorAt:         cursor,
-		SourceCursorEvidenceID: cursorEv,
+		SourceCursorAt:         plan.cursorAt,
+		SourceCursorEvidenceID: plan.cursorEv,
 		FlushMeta:              meta,
 		ExpectedMemoryRevision: row.MemoryRevision,
 	})
@@ -114,8 +87,8 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 		return err
 	}
 	cursorLog := ""
-	if !cursor.IsZero() {
-		cursorLog = cursor.UTC().Format(time.RFC3339)
+	if !plan.cursorAt.IsZero() {
+		cursorLog = plan.cursorAt.UTC().Format(time.RFC3339)
 	}
 	slog.Info("scene memory flush committed",
 		"event", "scene_memory_flush_commit",
@@ -123,13 +96,59 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 		"scene_key", row.SceneKey,
 		"memory_revision", committed.MemoryRevision,
 		"cursor_at", cursorLog,
-		"event_count", len(batch),
-		"caught_up", caughtUp,
+		"event_count", len(plan.batch),
+		"caught_up", plan.caughtUp,
 	)
-	if caughtUp {
+	if plan.caughtUp {
 		return f.Store.FinishClaim(ctx, row)
 	}
 	return f.Store.ReleasePending(ctx, row)
+}
+
+type flushPlan struct {
+	batch    []HistoryEvent
+	caughtUp bool
+	cursorAt time.Time
+	cursorEv string
+}
+
+func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
+	cutoffAt := time.Time{}
+	if row.LeaseTargetThroughAt.Valid {
+		cutoffAt = row.LeaseTargetThroughAt.Time
+	}
+	cutoffEv := strings.TrimSpace(row.LeaseTargetThroughEvidenceID)
+	events = filterUntil(events, cutoffAt, cutoffEv)
+	cursorAt := time.Time{}
+	if row.SourceCursorAt.Valid {
+		cursorAt = row.SourceCursorAt.Time
+	}
+	delta := afterCursor(events, cursorAt, row.SourceCursorEvidenceID)
+	covered := CursorCovers(cursorAt, row.SourceCursorEvidenceID, cutoffAt, cutoffEv)
+	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered {
+		return flushPlan{}, &FlushError{
+			Code: ErrorIncomplete,
+			Err:  fmt.Errorf("claimed evidence is not visible yet"),
+		}
+	}
+	plan := flushPlan{batch: delta, cursorAt: cutoffAt, cursorEv: cutoffEv}
+	if len(plan.batch) > flushBatchEvents {
+		plan.batch = plan.batch[:flushBatchEvents]
+	}
+	if len(delta) == 0 {
+		plan.caughtUp = cutoffEv == "" || containsEvidence(events, cutoffEv) || covered
+	} else {
+		last := plan.batch[len(plan.batch)-1]
+		plan.caughtUp = len(plan.batch) == len(delta) &&
+			CursorCovers(last.OccurredAt, last.EvidenceID, cutoffAt, cutoffEv)
+		plan.cursorAt = last.OccurredAt
+		plan.cursorEv = last.EvidenceID
+		if plan.caughtUp && !cutoffAt.IsZero() && cutoffAt.After(plan.cursorAt) {
+			plan.cursorAt = cutoffAt
+			plan.cursorEv = cutoffEv
+		}
+	}
+	return plan, nil
 }
 
 func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []HistoryEvent) (string, error) {
@@ -202,11 +221,25 @@ func fallbackMerge(old string, batch []HistoryEvent) string {
 }
 
 func classifyHistory(err error) error {
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "auth") || strings.Contains(msg, "redeem") {
-		return &FlushError{Code: ErrorAuth, Err: err}
+	if err == nil {
+		return nil
 	}
-	return err
+	var fe *FlushError
+	if errors.As(err, &fe) {
+		return err
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "redeem rejected"),
+		strings.Contains(msg, "authcode exchange failed"),
+		strings.Contains(msg, "unexpected dws credential"),
+		strings.Contains(msg, "invalid dws uid"):
+		return &FlushError{Code: ErrorAuth, Err: err}
+	case strings.Contains(msg, "not configured"):
+		return &FlushError{Code: ErrorConfig, Err: err}
+	default:
+		return err
+	}
 }
 
 const flushSystemPrompt = `You maintain one exact Scene Memory for this DingTalk conversation.

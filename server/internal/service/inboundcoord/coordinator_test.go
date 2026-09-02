@@ -9,19 +9,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 type coordQueriesStub struct {
-	inbound   bool
-	persona   string
-	replyTone string
-	page      []db.ChatMessage
-	listErr   error
-	lastList  db.ListChatMessagesPageParams
-	listCalls int
+	inbound    bool
+	persona    string
+	replyTone  string
+	page       []db.ChatMessage
+	listErr    error
+	lastList   db.ListChatMessagesPageParams
+	listCalls  int
+	sceneFlags db.AgentSceneMemoryFlags
 }
 
 func (s *coordQueriesStub) ListChatMessagesPage(_ context.Context, arg db.ListChatMessagesPageParams) ([]db.ChatMessage, error) {
@@ -50,7 +52,21 @@ func (s *coordQueriesStub) GetAgentVoice(context.Context, pgtype.UUID) (db.GetAg
 }
 
 func (s *coordQueriesStub) GetAgentSceneMemoryFlags(context.Context, pgtype.UUID) (db.AgentSceneMemoryFlags, error) {
-	return db.AgentSceneMemoryFlags{}, nil
+	return s.sceneFlags, nil
+}
+
+type sceneMemoryStub struct {
+	rows map[string]db.SceneMemory
+	last scenememory.Identity
+}
+
+func (s *sceneMemoryStub) Get(_ context.Context, id scenememory.Identity) (db.SceneMemory, error) {
+	s.last = id
+	row, ok := s.rows[id.SceneKey]
+	if !ok {
+		return db.SceneMemory{}, context.Canceled
+	}
+	return row, nil
 }
 
 func testAgentID() pgtype.UUID {
@@ -378,6 +394,120 @@ func TestBuildUserPromptResetShowsEmptyHostBlock(t *testing.T) {
 	if strings.Contains(prompt, "ALPHA-7749 是会议室预约脚本") {
 		t.Fatalf("cleared text must not reappear in Host block: %q", prompt)
 	}
+}
+
+func TestBuildUserPromptHostFactOutsideLastNHistory(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:              SourceDigitalEmployee,
+		Addressed:           true,
+		ChatType:            "p2p",
+		Message:             "ALPHA-7749 是什么",
+		SceneMemory:         "蓝鲸探针 ALPHA-7749 是会议室预约脚本，不是数字员工。",
+		SceneMemoryRevision: 5,
+		DingTalkHistory: []HistoryLine{
+			{Role: "user", Content: "灌水12：食堂窗口12 今天供应番茄炒蛋，与探针无关。"},
+		},
+	})
+	host, history, current := splitCoordinatorPrompt(prompt)
+	if !strings.Contains(host, "ALPHA-7749") || !strings.Contains(host, "会议室预约脚本") {
+		t.Fatalf("host missing probe: %q", host)
+	}
+	if strings.Contains(history, "ALPHA-7749") {
+		t.Fatalf("last-N history leaked probe: %q", history)
+	}
+	if !strings.Contains(current, "ALPHA-7749 是什么") {
+		t.Fatalf("current message missing ask: %q", current)
+	}
+}
+
+func TestPrefetchSceneMemoryInjectsMatchingSceneOnly(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: "GAMMA-A-881 是报表工具", MemoryRevision: 2},
+		"cid-b": {SceneKey: "cid-b", MemoryText: "这个群还没有口径", MemoryRevision: 1},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
+		SceneMemory: mem,
+	}
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ChatType:       "group",
+		AgentID:        testAgentID(),
+		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		ConversationID: "cid-b",
+		DWSOrgID:       "org-1",
+	}
+	c.prefetchSceneMemory(context.Background(), &turn)
+	if turn.SceneMemory != "这个群还没有口径" || turn.SceneMemoryRevision != 1 {
+		t.Fatalf("got %q rev=%d", turn.SceneMemory, turn.SceneMemoryRevision)
+	}
+	if strings.Contains(turn.SceneMemory, "报表工具") {
+		t.Fatal("group A leaked into group B")
+	}
+	if mem.last.SceneKind != scenememory.KindGroup || mem.last.SceneKey != "cid-b" {
+		t.Fatalf("lookup identity=%+v", mem.last)
+	}
+}
+
+func TestPrefetchSceneMemorySkippedWhenRecallDisabled(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: "不该出现", MemoryRevision: 4},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{},
+		SceneMemory: mem,
+	}
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ChatType:       "p2p",
+		AgentID:        testAgentID(),
+		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		ConversationID: "cid-a",
+		DWSOrgID:       "org-1",
+	}
+	c.prefetchSceneMemory(context.Background(), &turn)
+	if turn.SceneMemory != "" || turn.SceneMemoryRevision != 0 {
+		t.Fatalf("recall-off injected %q rev=%d", turn.SceneMemory, turn.SceneMemoryRevision)
+	}
+}
+
+func TestPrefetchSceneMemorySkippedForWebAndRobot(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: "不该出现", MemoryRevision: 4},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
+		SceneMemory: mem,
+	}
+	for _, source := range []Source{SourceWeb, SourceRobot} {
+		turn := Turn{
+			Source:         source,
+			ChatType:       "p2p",
+			AgentID:        testAgentID(),
+			WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			ConversationID: "cid-a",
+			DWSOrgID:       "org-1",
+		}
+		c.prefetchSceneMemory(context.Background(), &turn)
+		if turn.SceneMemory != "" {
+			t.Fatalf("%s injected %q", source, turn.SceneMemory)
+		}
+	}
+}
+
+func splitCoordinatorPrompt(prompt string) (host, history, current string) {
+	const currentMark = "\ncurrent_message:\n"
+	const histMark = "\nrecent_dingtalk_history (newest first):\n"
+	if i := strings.Index(prompt, currentMark); i >= 0 {
+		current = prompt[i+len(currentMark):]
+		prompt = prompt[:i]
+	}
+	if i := strings.Index(prompt, histMark); i >= 0 {
+		history = prompt[i+len(histMark):]
+		prompt = prompt[:i]
+	}
+	host = prompt
+	return
 }
 
 func TestBuildUserPromptOmitsSceneMemoryWhenUnset(t *testing.T) {

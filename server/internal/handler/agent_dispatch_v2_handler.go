@@ -1276,7 +1276,7 @@ func isInboundResetMemory(text string) bool {
 
 func resetMemoryReply(conversationID string, err error) string {
 	if err != nil {
-		return "清理事项关联失败，请稍后再试。"
+		return "清理事项关联或场域记忆失败，请稍后再试。"
 	}
 	if strings.TrimSpace(conversationID) == "" {
 		return "没法识别这个会话，事项关联没有改。"
@@ -1316,10 +1316,7 @@ func (h *Handler) tryDispatchResetMemory(
 		unlinkedEvents = result.UnlinkedEvents
 	}
 	if h != nil && h.SceneMemoryStore != nil && conversationID != "" {
-		kind := scenememory.KindDM
-		if strings.EqualFold(command.Event.Data.Conversation.Type, "group") {
-			kind = scenememory.KindGroup
-		}
+		kind := scenememory.KindFromChatType(command.Event.Data.Conversation.Type)
 		orgID := ""
 		if identity, err := h.Queries.GetAgentDingTalkIdentity(r.Context(), db.GetAgentDingTalkIdentityParams{
 			WorkspaceID: dispatchContext.WorkspaceID,
@@ -1347,6 +1344,9 @@ func (h *Handler) tryDispatchResetMemory(
 					"old_revision", oldRevision,
 					"error", err,
 				)
+				if closeErr == nil {
+					closeErr = err
+				}
 			} else {
 				slog.Info("scene memory reset",
 					"event", "scene_memory_reset",

@@ -151,7 +151,11 @@ type Coordinator struct {
 	Chat        Completer
 	Assoc       *assoc.Service
 	DWSHistory  DingTalkHistoryLoader
-	SceneMemory *scenememory.Store
+	SceneMemory sceneMemoryReader
+}
+
+type sceneMemoryReader interface {
+	Get(ctx context.Context, id scenememory.Identity) (db.SceneMemory, error)
 }
 
 // New wires the loop. assocSvc may be nil; Decide still fail-opens.
@@ -508,10 +512,7 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	if err != nil {
 		return
 	}
-	kind := scenememory.KindDM
-	if strings.EqualFold(turn.ChatType, "group") {
-		kind = scenememory.KindGroup
-	}
+	kind := scenememory.KindFromChatType(turn.ChatType)
 	row, err := c.SceneMemory.Get(ctx, scenememory.Identity{
 		WorkspaceID: workspaceID,
 		AgentID:     turn.AgentID,

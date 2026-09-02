@@ -26,7 +26,16 @@ const (
 	ErrorAuth          = "AUTH"
 	ErrorRouteInactive = "ROUTE_INACTIVE"
 	ErrorConfig        = "CONFIG"
+	ErrorIncomplete    = "INCOMPLETE"
 )
+
+// KindFromChatType maps a DingTalk/dispatch chat type onto a Scene kind.
+func KindFromChatType(chatType string) string {
+	if strings.EqualFold(strings.TrimSpace(chatType), "group") {
+		return KindGroup
+	}
+	return KindDM
+}
 
 // Identity is the exact Scene key. chat_session_id is never part of it.
 type Identity struct {

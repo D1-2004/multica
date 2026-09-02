@@ -28,21 +28,21 @@ FROM agent WHERE id = $1`, id)
 
 type UpdateAgentSceneMemoryFlagsParams struct {
 	ID               pgtype.UUID `json:"id"`
-	WriteEnabled     bool        `json:"scene_memory_write_enabled"`
-	RecallEnabled    bool        `json:"scene_memory_recall_enabled"`
-	UIEnabled        bool        `json:"scene_memory_ui_enabled"`
-	BootstrapEnabled bool        `json:"scene_memory_bootstrap_enabled"`
+	WriteEnabled     pgtype.Bool `json:"write_enabled"`
+	RecallEnabled    pgtype.Bool `json:"recall_enabled"`
+	UIEnabled        pgtype.Bool `json:"ui_enabled"`
+	BootstrapEnabled pgtype.Bool `json:"bootstrap_enabled"`
 }
 
 func (q *Queries) UpdateAgentSceneMemoryFlags(ctx context.Context, arg UpdateAgentSceneMemoryFlagsParams) error {
 	_, err := q.db.Exec(ctx, `
 UPDATE agent SET
-    scene_memory_write_enabled = $2,
-    scene_memory_recall_enabled = $3,
-    scene_memory_ui_enabled = $4,
-    scene_memory_bootstrap_enabled = $5,
+    scene_memory_write_enabled = COALESCE($1, scene_memory_write_enabled),
+    scene_memory_recall_enabled = COALESCE($2, scene_memory_recall_enabled),
+    scene_memory_ui_enabled = COALESCE($3, scene_memory_ui_enabled),
+    scene_memory_bootstrap_enabled = COALESCE($4, scene_memory_bootstrap_enabled),
     updated_at = now()
-WHERE id = $1`, arg.ID, arg.WriteEnabled, arg.RecallEnabled, arg.UIEnabled, arg.BootstrapEnabled)
+WHERE id = $5`, arg.WriteEnabled, arg.RecallEnabled, arg.UIEnabled, arg.BootstrapEnabled, arg.ID)
 	return err
 }
 

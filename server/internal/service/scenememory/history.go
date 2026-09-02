@@ -51,6 +51,19 @@ func afterCursor(events []HistoryEvent, cursorAt time.Time, cursorEvidence strin
 	return out
 }
 
+func containsEvidence(events []HistoryEvent, evidence string) bool {
+	evidence = strings.TrimSpace(evidence)
+	if evidence == "" {
+		return false
+	}
+	for _, event := range events {
+		if event.EvidenceID == evidence {
+			return true
+		}
+	}
+	return false
+}
+
 func clipRunes(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if n <= 0 || utf8.RuneCountInString(s) <= n {

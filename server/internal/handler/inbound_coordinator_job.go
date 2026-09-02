@@ -527,10 +527,7 @@ func (h *Handler) markSceneMemoryDirty(
 		)
 		return
 	}
-	kind := scenememory.KindDM
-	if strings.EqualFold(ids.Kind, "group") {
-		kind = scenememory.KindGroup
-	}
+	kind := scenememory.KindFromChatType(ids.Kind)
 	title := strings.TrimSpace(command.Event.Data.Conversation.Title)
 	store := scenememory.NewStore(qtx)
 	row, err := store.MarkDirty(ctx, scenememory.Identity{

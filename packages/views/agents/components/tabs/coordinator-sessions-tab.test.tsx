@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, queryOptions } from "@tanstack/react-query";
 import type { Agent, AgentSceneMemory } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -111,5 +111,46 @@ describe("CoordinatorSessionsTab scene memory", () => {
     expect(await screen.findByText("冬翔")).toBeInTheDocument();
     expect(screen.getByText("Scene memory")).toBeInTheDocument();
     expect(screen.getByText(/Revision 2/)).toBeInTheDocument();
+  });
+
+  it("keeps two scenes distinct and shows the selected text", async () => {
+    memoriesRef.current = [
+      {
+        id: "mem-a",
+        workspace_id: "ws-1",
+        agent_id: "agent-1",
+        org_id: "org",
+        scene_key: "cid-a",
+        scene_kind: "group",
+        scene_title: "场域隔离A",
+        memory_text: "GAMMA-A-881 是报表工具",
+        memory_revision: 1,
+        status: "clean",
+        last_error: "",
+        last_error_code: "",
+        updated_at: "2026-09-01T00:00:00Z",
+      },
+      {
+        id: "mem-b",
+        workspace_id: "ws-1",
+        agent_id: "agent-1",
+        org_id: "org",
+        scene_key: "cid-b",
+        scene_kind: "group",
+        scene_title: "场域隔离B",
+        memory_text: "这个群还没有口径",
+        memory_revision: 1,
+        status: "clean",
+        last_error: "",
+        last_error_code: "",
+        updated_at: "2026-09-01T00:00:01Z",
+      },
+    ];
+    renderTab({ ...agent, scene_memory_ui_enabled: true });
+    expect(await screen.findByText("场域隔离A")).toBeInTheDocument();
+    expect(screen.getByText("场域隔离B")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /场域隔离A/ }));
+    expect(screen.getByText("GAMMA-A-881 是报表工具")).toBeInTheDocument();
+    expect(screen.queryByText("这个群还没有口径")).toBeNull();
   });
 });

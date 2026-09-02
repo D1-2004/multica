@@ -177,7 +177,7 @@
     "prop_scene_memory_ui": "受信タブに記憶を表示",
     "prop_scene_memory_ui_hint": "オンのとき、受信タブに各会話のシーン本文を出します。オフにすると表示しません。",
     "prop_scene_memory_bootstrap": "シーン記憶をウォームアップ",
-    "prop_scene_memory_bootstrap_hint": "オンのとき、新しいグループや DM を先にウォームアップできます。オフのときは最初の受信を待ちます。",
+    "prop_scene_memory_bootstrap_hint": "オンのとき、初回書き込みはこの会話の最大 14 日分を遡って記憶を作ります。オフのときは最初の受信時点のメッセージだけから学びます。",
     "prop_owner": "オーナー",
     "prop_created": "作成日",
     "prop_updated": "更新日",
