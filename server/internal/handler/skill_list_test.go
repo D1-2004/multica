@@ -42,6 +42,15 @@ func TestListSkills_OmitsContent(t *testing.T) {
 		if _, ok := row["content"]; ok {
 			t.Fatalf("ListSkills: response must not include `content` field, got: %v", row)
 		}
+		// The absent key alone is ambiguous: a script that coerces it to ""
+		// cannot tell "withheld here" from "the skill is empty". The two
+		// always-true markers are the positive signal that closes that gap.
+		if row["content_omitted"] != true {
+			t.Fatalf("ListSkills: expected content_omitted=true, got %v in: %v", row["content_omitted"], row)
+		}
+		if row["files_omitted"] != true {
+			t.Fatalf("ListSkills: expected files_omitted=true, got %v in: %v", row["files_omitted"], row)
+		}
 		// Other expected list fields should still be present.
 		for _, key := range []string{"id", "name", "description", "config", "created_at", "updated_at", "workspace_id"} {
 			if _, ok := row[key]; !ok {
@@ -109,6 +118,12 @@ func TestListAgentSkills_OmitsContent(t *testing.T) {
 	for _, row := range rows {
 		if _, ok := row["content"]; ok {
 			t.Fatalf("ListAgentSkills: response must not include `content` field, got: %v", row)
+		}
+		if row["content_omitted"] != true {
+			t.Fatalf("ListAgentSkills: expected content_omitted=true, got %v in: %v", row["content_omitted"], row)
+		}
+		if row["files_omitted"] != true {
+			t.Fatalf("ListAgentSkills: expected files_omitted=true, got %v in: %v", row["files_omitted"], row)
 		}
 	}
 }

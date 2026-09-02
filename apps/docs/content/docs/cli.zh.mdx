@@ -129,6 +129,8 @@ multica skill import --url <skill-url>
 multica agent skills add <agent-id> --skill-ids <skill-id>
 ```
 
+`multica skill list` 只返回元数据。每一行都带有 `content_omitted: true` 和 `files_omitted: true`，列表结果里不包含 SKILL.md 正文和 skill 的文件。没有 `content` 字段表示"这个接口不返回"，不是"内容为空"——把它当成空正文，同步脚本就会误判线上 skill 已被清空。和本地文件对比之前，用 `multica skill get <skill-id>` 取正文，用 `multica skill files list <skill-id> --output json` 取文件内容。
+
 导入时遇到同名 skill，默认会停止且不修改现有内容。按意图选择：
 
 ```bash

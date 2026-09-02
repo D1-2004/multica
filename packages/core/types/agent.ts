@@ -623,6 +623,12 @@ export interface AgentSkillSummary {
   description: string;
 	/** Older servers omit this field; consumers must treat that as enabled. */
 	enabled?: boolean;
+  /**
+   * Always `true` when present — see the same fields on `SkillSummary`.
+   * `undefined` means "unknown / older server", never "content was returned".
+   */
+  content_omitted?: boolean;
+  files_omitted?: boolean;
 }
 
 export interface CreateAgentRequest {
@@ -886,6 +892,16 @@ export interface SkillSummary {
   updated_at: string;
 	/** Present only when returned from an agent-scoped assignment endpoint. */
 	enabled?: boolean;
+  /**
+   * Always `true` when present: this endpoint deliberately withheld the
+   * SKILL.md body and the skill's files. They exist so a caller can tell
+   * "withheld here" apart from "the skill is empty" — an absent `content`
+   * key coerces to `""` in most scripting languages, and a diffing script
+   * reads that as a wiped body. `undefined` means "unknown / older server",
+   * never "content was returned".
+   */
+  content_omitted?: boolean;
+  files_omitted?: boolean;
 }
 
 export interface Skill extends SkillSummary {

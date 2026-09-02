@@ -85,15 +85,43 @@ archive path (below); a JSON body keeps the URL flow. Both converge on the share
 
 | Behavior | File:line |
 |---|---|
-| `SkillWithFilesResponse` = embedded `SkillResponse` + `Files []SkillFileResponse` | `server/internal/handler/skill.go:99-102` |
-| `SkillResponse` fields (`id, workspace_id, name, description, content, config, created_by, created_at, updated_at`) | `server/internal/handler/skill.go:41-51` |
-| `SkillFileResponse` fields | `server/internal/handler/skill.go:80-87` |
+| `SkillWithFilesResponse` = embedded `SkillResponse` + `Files []SkillFileResponse` | `server/internal/handler/skill.go:131-134` |
+| `SkillResponse` fields (`id, workspace_id, name, description, content, config, created_by, created_at, updated_at`) | `server/internal/handler/skill.go:43-53` |
+| `SkillFileResponse` fields | `server/internal/handler/skill.go:112-119` |
 | `createSkillWithFilesInTx` returns `SkillWithFilesResponse{SkillResponse, Files}` | `server/internal/handler/skill_create.go:66-69` |
 | `config.origin` set on import | `server/internal/handler/skill.go:1947` |
 
 For current CLI imports, `SkillWithFilesResponse` appears under
 `SkillImportResult.skill` when status is `created` or `updated`. Legacy clients
 that omit `on_conflict` still receive a bare `SkillWithFilesResponse`.
+
+## List shapes withhold content and files (and say so)
+
+List endpoints deliberately drop the SKILL.md body: bodies routinely run
+50-200KB and shipping them in list payloads tripped CLI timeouts
+(GH multica-ai/multica#2174). The two always-true markers exist so a caller can
+tell "withheld here" apart from "the skill is empty" — an absent `content` key
+coerces to `""` in most scripting languages, which reads as a wiped body.
+
+| Behavior | File:line |
+|---|---|
+| `SkillSummaryResponse` (list shape: no `content`, no files) | `server/internal/handler/skill.go:60-83` |
+| `content_omitted` / `files_omitted` fields + why they exist | `server/internal/handler/skill.go:72-82` |
+| Markers set for every list surface in `skillSummaryToResponse` | `server/internal/handler/skill.go:210`; assignment `:229-230` |
+| `ListSkills` (`GET /api/skills`) | `server/internal/handler/skill.go:318` |
+| `ListAgentSkills` (`GET /api/agents/{id}/skills`) | `server/internal/handler/skill.go:2472` |
+| `writeUpdatedAgentSkills` — same shape, also published on the `agent:status` realtime event | `server/internal/handler/skill.go:2753`; publish `:2769` |
+| `AgentSkillSummary` (narrower shape embedded in `GET /api/agents` and `GET /api/agents/{id}`) | `server/internal/handler/skill.go:90-95` |
+| `AgentSkillSummary.MarshalJSON` stamps the same markers (agent.go builds it with plain composite literals, so a bool field would default to `false`) | `server/internal/handler/skill.go:103-110` |
+| Where to get the real content: `GetSkill` returns `SkillWithFilesResponse` | `server/internal/handler/skill.go:357` |
+| Where to get file contents: `ListSkillFiles` (`GET /api/skills/{id}/files`) | `server/internal/handler/skill.go:2377` |
+| CLI `skill list` help documents the markers | `server/cmd/multica/cmd_skill.go:27-44` |
+| TS `SkillSummary` / `AgentSkillSummary` optional markers | `packages/core/types/agent.ts:884-905`, `:620-632` |
+| Handler tests asserting `content` absent and both markers true | `server/internal/handler/skill_list_test.go` |
+| CLI test asserting the client never synthesizes a `content` key | `server/cmd/multica/cmd_skill_test.go` |
+
+`undefined` on the TypeScript side means "unknown / older server", never
+"content was returned".
 
 ## URL source families (`detectImportSource`)
 
