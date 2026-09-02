@@ -252,6 +252,7 @@ Sections:
 ## 纠正信号
 ## 待确认
 Write durable facts, terms, and explicit corrections. Do not write tasks, issue ids, secrets, gossip, or another scene.
+Events tagged [self] are this digital employee's own messages. Do not treat them as human corrections or group consensus.
 unchanged must equal the old text exactly. Evidence-thin claims use [推断] or [待确认].
 `
 
@@ -314,7 +315,11 @@ func buildFlushUserPrompt(row db.SceneMemory, batch []HistoryEvent) string {
 	for _, event := range batch {
 		b.WriteString("- ")
 		b.WriteString(event.OccurredAt.UTC().Format(time.RFC3339))
-		b.WriteString(" ")
+		if event.Self {
+			b.WriteString(" [self] ")
+		} else {
+			b.WriteString(" [peer] ")
+		}
 		b.WriteString(event.Speaker)
 		b.WriteString(": ")
 		b.WriteString(clipRunes(event.Content, 200))

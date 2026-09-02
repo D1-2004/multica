@@ -12,6 +12,7 @@ type HistoryEvent struct {
 	OccurredAt time.Time
 	Speaker    string
 	Content    string
+	Self       bool
 }
 
 func filterUntil(events []HistoryEvent, cutoffAt time.Time, cutoffEvidence string) []HistoryEvent {

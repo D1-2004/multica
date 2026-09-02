@@ -92,11 +92,17 @@ function CoordinatorConversation({
   );
 }
 
-export function CoordinatorSessionsTab({ agent }: { agent: Agent }) {
+export function CoordinatorSessionsTab({
+  agent,
+  canEdit = false,
+}: {
+  agent: Agent;
+  canEdit?: boolean;
+}) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const isCompact = useIsCompact();
-  const showMemory = agent.scene_memory_ui_enabled === true;
+  const showMemory = canEdit && agent.scene_memory_ui_enabled === true;
   const { data: sessions = [], isLoading, isError, refetch } = useQuery(
     agentCoordinatorSessionsOptions(wsId, agent.id),
   );

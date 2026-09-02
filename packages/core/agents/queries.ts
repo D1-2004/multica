@@ -188,6 +188,7 @@ export function agentSceneMemoryOptions(
     enabled: enabled && !!wsId && !!agentId,
     staleTime: 15 * 1000,
     gcTime: 5 * 60 * 1000,
+    refetchInterval: enabled ? 15 * 1000 : false,
     refetchOnWindowFocus: true,
   });
 }

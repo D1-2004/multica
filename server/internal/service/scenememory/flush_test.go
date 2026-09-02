@@ -120,3 +120,22 @@ func TestBuildFlushUserPromptOmitsIssueIDs(t *testing.T) {
 		t.Fatal("flush prompt must not mention issue_id")
 	}
 }
+
+func TestBuildFlushUserPromptTagsSelfEvents(t *testing.T) {
+	prompt := buildFlushUserPrompt(testFlushRow("口径"), []HistoryEvent{{
+		OccurredAt: parseFlushTime(),
+		Speaker:    "测试号",
+		Content:    "我记下了",
+		Self:       true,
+	}, {
+		OccurredAt: parseFlushTime(),
+		Speaker:    "冬翔",
+		Content:    "GoalMate 是工具",
+	}})
+	if !strings.Contains(prompt, "[self] 测试号: 我记下了") {
+		t.Fatalf("missing self tag: %q", prompt)
+	}
+	if !strings.Contains(prompt, "[peer] 冬翔: GoalMate 是工具") {
+		t.Fatalf("missing peer tag: %q", prompt)
+	}
+}

@@ -1318,20 +1318,40 @@ func (h *Handler) tryDispatchResetMemory(
 	if h != nil && h.SceneMemoryStore != nil && conversationID != "" {
 		kind := scenememory.KindFromChatType(command.Event.Data.Conversation.Type)
 		orgID := ""
-		if identity, err := h.Queries.GetAgentDingTalkIdentity(r.Context(), db.GetAgentDingTalkIdentityParams{
-			WorkspaceID: dispatchContext.WorkspaceID,
-			AgentID:     dispatchContext.AgentID,
-		}); err == nil {
-			orgID = identity.OrgID
+		var identityErr error
+		if h.Queries != nil {
+			identity, err := h.Queries.GetAgentDingTalkIdentity(r.Context(), db.GetAgentDingTalkIdentityParams{
+				WorkspaceID: dispatchContext.WorkspaceID,
+				AgentID:     dispatchContext.AgentID,
+			})
+			if err == nil {
+				orgID = identity.OrgID
+			} else {
+				identityErr = err
+			}
+		}
+		if orgID == "" && command.ExternalIdentity.DWS != nil {
+			orgID = strings.TrimSpace(command.ExternalIdentity.DWS.OrgID)
+		}
+		if orgID == "" && closeErr == nil {
+			if identityErr != nil {
+				closeErr = identityErr
+			} else {
+				closeErr = errors.New("scene memory identity is unavailable")
+			}
 		}
 		if orgID != "" {
+			title := strings.TrimSpace(command.Event.Data.Conversation.Title)
+			if title == "" && kind == scenememory.KindDM {
+				title = strings.TrimSpace(command.Event.Data.Sender.DisplayName)
+			}
 			identity := scenememory.Identity{
 				WorkspaceID: dispatchContext.WorkspaceID,
 				AgentID:     dispatchContext.AgentID,
 				OrgID:       orgID,
 				SceneKey:    conversationID,
 				SceneKind:   kind,
-				SceneTitle:  strings.TrimSpace(command.Event.Data.Conversation.Title),
+				SceneTitle:  title,
 			}
 			oldRevision := int64(0)
 			if existing, err := h.SceneMemoryStore.Get(r.Context(), identity); err == nil {

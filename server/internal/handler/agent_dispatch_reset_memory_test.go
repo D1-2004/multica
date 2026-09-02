@@ -37,6 +37,23 @@ func TestIsInboundResetMemory(t *testing.T) {
 	}
 }
 
+func TestUnixMillisPrefersSourceTime(t *testing.T) {
+	got := unixMillis(1_000)
+	if got.Unix() != 1000 {
+		t.Fatalf("seconds = %s", got)
+	}
+	got = unixMillis(1_780_000_000_000)
+	if got.UnixMilli() != 1_780_000_000_000 {
+		t.Fatalf("millis = %s", got)
+	}
+	cmd := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		Messages: []DispatchMessage{{OccurredAt: 1_780_000_000_000, Text: "hi"}},
+	}}}
+	if dispatchMessageOccurredAt(cmd).UnixMilli() != 1_780_000_000_000 {
+		t.Fatalf("dispatch time = %s", dispatchMessageOccurredAt(cmd))
+	}
+}
+
 func TestResetMemoryReplyReportsMemoryFailure(t *testing.T) {
 	got := resetMemoryReply("cid-a", errors.New("reset failed"))
 	if !strings.Contains(got, "场域记忆") {

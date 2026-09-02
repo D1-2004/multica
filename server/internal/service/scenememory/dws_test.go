@@ -56,7 +56,7 @@ func TestParseDWSPageCountsEmptyMessages(t *testing.T) {
 			]
 		}
 	}`)
-	page, err := parseDWSPage(raw)
+	page, err := parseDWSPage(raw, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +68,25 @@ func TestParseDWSPageCountsEmptyMessages(t *testing.T) {
 	}
 	if page.Oldest.IsZero() {
 		t.Fatal("oldest must include empty-content messages")
+	}
+}
+
+func TestParseDWSPageMarksSelfByUID(t *testing.T) {
+	raw := []byte(`{
+		"success": true,
+		"result": {
+			"messages": [
+				{"content":"我记住了","createTime":"2026-09-01 12:00:00","openMessageId":"m1","sender":"测试号","senderId":"24710833"},
+				{"content":"GoalMate 是工具","createTime":"2026-09-01 12:01:00","openMessageId":"m2","sender":"冬翔","senderId":"103262"}
+			]
+		}
+	}`)
+	page, err := parseDWSPage(raw, "24710833")
+	if err != nil || len(page.Events) != 2 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	if !page.Events[0].Self || page.Events[1].Self {
+		t.Fatalf("self flags %+v %+v", page.Events[0], page.Events[1])
 	}
 }
 

@@ -450,7 +450,7 @@ export function AgentOverviewPane({
 
         {effectiveView === "inbound" && (
           <div className="flex h-full min-h-0 flex-1 flex-col">
-            <CoordinatorSessionsTab agent={agent} />
+            <CoordinatorSessionsTab agent={agent} canEdit={canEdit} />
           </div>
         )}
 

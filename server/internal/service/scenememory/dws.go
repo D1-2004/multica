@@ -78,6 +78,12 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 	if err != nil {
 		return nil, fmt.Errorf("resolve DWS identity: %w", err)
 	}
+	if strings.TrimSpace(identity.OrgID) != strings.TrimSpace(row.OrgID) {
+		return nil, &FlushError{
+			Code: ErrorRouteInactive,
+			Err:  fmt.Errorf("DWS identity org does not match scene"),
+		}
+	}
 	runID := "scene-memory-dws-" + uuid.NewString()
 	issued, err := r.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
 		RequestID: runID, TaskID: runID,
@@ -130,7 +136,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		if err != nil {
 			return nil, err
 		}
-		parsed, err := parseDWSPage(raw)
+		parsed, err := parseDWSPage(raw, identity.DwsUid)
 		if err != nil {
 			return nil, err
 		}
@@ -197,14 +203,14 @@ type dwsPage struct {
 }
 
 func parseDWSEvents(raw []byte) ([]HistoryEvent, error) {
-	page, err := parseDWSPage(raw)
+	page, err := parseDWSPage(raw, "")
 	if err != nil {
 		return nil, err
 	}
 	return page.Events, nil
 }
 
-func parseDWSPage(raw []byte) (dwsPage, error) {
+func parseDWSPage(raw []byte, agentUID string) (dwsPage, error) {
 	var payload struct {
 		Success   bool   `json:"success"`
 		ErrorCode string `json:"errorCode"`
@@ -214,6 +220,10 @@ func parseDWSPage(raw []byte) (dwsPage, error) {
 				CreateTime    string `json:"createTime"`
 				OpenMessageID string `json:"openMessageId"`
 				Sender        string `json:"sender"`
+				SenderID      string `json:"senderId"`
+				SenderOpenID  string `json:"senderOpenId"`
+				IsSelf        *bool  `json:"isSelf"`
+				Self          bool   `json:"self"`
 			} `json:"messages"`
 		} `json:"result"`
 	}
@@ -242,9 +252,24 @@ func parseDWSPage(raw []byte) (dwsPage, error) {
 			OccurredAt: occurred,
 			Speaker:    speaker,
 			Content:    content,
+			Self:       messageIsSelf(message.IsSelf, message.Self, agentUID, message.SenderID, message.SenderOpenID),
 		})
 	}
 	return page, nil
+}
+
+func messageIsSelf(flag *bool, self bool, agentUID, senderID, senderOpenID string) bool {
+	if flag != nil {
+		return *flag
+	}
+	if self {
+		return true
+	}
+	agentUID = strings.TrimSpace(agentUID)
+	if agentUID == "" {
+		return false
+	}
+	return strings.TrimSpace(senderID) == agentUID || strings.TrimSpace(senderOpenID) == agentUID
 }
 
 func parseDWSTime(raw string) time.Time {

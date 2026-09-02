@@ -52,14 +52,14 @@ const agent = {
   name: "测试号",
 } as Agent;
 
-function renderTab(next: Agent) {
+function renderTab(next: Agent, canEdit = false) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <QueryClientProvider client={client}>
-        <CoordinatorSessionsTab agent={next} />
+        <CoordinatorSessionsTab agent={next} canEdit={canEdit} />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -89,6 +89,29 @@ describe("CoordinatorSessionsTab scene memory", () => {
     expect(screen.queryByText("Scene memory")).toBeNull();
   });
 
+  it("hides scene memory from members who cannot edit the agent", async () => {
+    memoriesRef.current = [
+      {
+        id: "mem-1",
+        workspace_id: "ws-1",
+        agent_id: "agent-1",
+        org_id: "org",
+        scene_key: "cid+abc",
+        scene_kind: "dm",
+        scene_title: "冬翔",
+        memory_text: "GoalMate 是工具",
+        memory_revision: 1,
+        status: "clean",
+        last_error: "",
+        last_error_code: "",
+        updated_at: "2026-09-01T00:00:00Z",
+      },
+    ];
+    renderTab({ ...agent, scene_memory_ui_enabled: true }, false);
+    expect(await screen.findByText("No inbound conversations yet.")).toBeInTheDocument();
+    expect(screen.queryByText("Scene memory")).toBeNull();
+  });
+
   it("lists scene memory when the UI flag is on", async () => {
     memoriesRef.current = [
       {
@@ -107,7 +130,7 @@ describe("CoordinatorSessionsTab scene memory", () => {
         updated_at: "2026-09-01T00:00:00Z",
       },
     ];
-    renderTab({ ...agent, scene_memory_ui_enabled: true });
+    renderTab({ ...agent, scene_memory_ui_enabled: true }, true);
     expect(await screen.findByText("冬翔")).toBeInTheDocument();
     expect(screen.getByText("Scene memory")).toBeInTheDocument();
     expect(screen.getByText(/Revision 2/)).toBeInTheDocument();
@@ -146,7 +169,7 @@ describe("CoordinatorSessionsTab scene memory", () => {
         updated_at: "2026-09-01T00:00:01Z",
       },
     ];
-    renderTab({ ...agent, scene_memory_ui_enabled: true });
+    renderTab({ ...agent, scene_memory_ui_enabled: true }, true);
     expect(await screen.findByText("场域隔离A")).toBeInTheDocument();
     expect(screen.getByText("场域隔离B")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /场域隔离A/ }));

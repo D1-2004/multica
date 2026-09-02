@@ -529,6 +529,9 @@ func (h *Handler) markSceneMemoryDirty(
 	}
 	kind := scenememory.KindFromChatType(ids.Kind)
 	title := strings.TrimSpace(command.Event.Data.Conversation.Title)
+	if title == "" && kind == scenememory.KindDM {
+		title = strings.TrimSpace(command.Event.Data.Sender.DisplayName)
+	}
 	store := scenememory.NewStore(qtx)
 	row, err := store.MarkDirty(ctx, scenememory.Identity{
 		WorkspaceID: dispatchContext.WorkspaceID,
@@ -538,7 +541,7 @@ func (h *Handler) markSceneMemoryDirty(
 		SceneKind:   kind,
 		SceneTitle:  title,
 	}, scenememory.DirtyTrigger{
-		OccurredAt:     time.Now().UTC(),
+		OccurredAt:     dispatchMessageOccurredAt(command),
 		EvidenceID:     ids.EvidenceID,
 		JobID:          job.ID,
 		CoordTraceID:   util.UUIDToString(job.ID),
@@ -561,4 +564,24 @@ func (h *Handler) markSceneMemoryDirty(
 		"idempotency", job.IdempotencyKey,
 		"scene_memory_id", util.UUIDToString(row.ID),
 	)
+}
+
+func dispatchMessageOccurredAt(command DispatchCommand) time.Time {
+	messages := command.Event.Data.Messages
+	if n := len(messages); n > 0 {
+		if occurred := unixMillis(messages[n-1].OccurredAt); !occurred.IsZero() {
+			return occurred
+		}
+	}
+	return time.Now().UTC()
+}
+
+func unixMillis(raw int64) time.Time {
+	if raw <= 0 {
+		return time.Time{}
+	}
+	if raw < 1e12 {
+		return time.Unix(raw, 0).UTC()
+	}
+	return time.UnixMilli(raw).UTC()
 }
