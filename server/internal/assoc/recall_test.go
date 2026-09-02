@@ -8,6 +8,21 @@ import (
 	"time"
 )
 
+func TestNormalizeConversationID(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		`cid74QGZieWQ4ondi1b0m2DtQ==`:       `cid74QGZieWQ4ondi1b0m2DtQ==`,
+		`"cid74QGZieWQ4ondi1b0m2DtQ=="`:     `cid74QGZieWQ4ondi1b0m2DtQ==`,
+		`'cidviyliGA6bfBKZARuuy0RzA=='`:     `cidviyliGA6bfBKZARuuy0RzA==`,
+		`  "cid74QGZieWQ4ondi1b0m2DtQ=="  `: `cid74QGZieWQ4ondi1b0m2DtQ==`,
+	}
+	for in, want := range cases {
+		if got := NormalizeConversationID(in); got != want {
+			t.Fatalf("NormalizeConversationID(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
 func TestValidatePurpose(t *testing.T) {
 	t.Parallel()
 	if err := ValidatePurpose("帮我看看"); err == nil {
@@ -42,6 +57,9 @@ func TestComposeCoordinatorPurposeRequiresDelegatorAndPlace(t *testing.T) {
 	}
 	if err := ValidateCoordinatorPurpose("须莫🥥 在钉钉会话中的消息：你看看你联系人里有须莫v6吗"); err == nil {
 		t.Fatal("expected envelope purpose to fail")
+	}
+	if err := ValidateCoordinatorPurpose("冬翔委托：向须莫v6询问明早有没有会议，dws要用dws chat data-auth"); err == nil {
+		t.Fatal("expected tooling purpose to fail")
 	}
 }
 
@@ -141,8 +159,77 @@ func TestRecallByConversationFindsOutreach(t *testing.T) {
 	if !item.OnThisScene || item.IssueID != "issue-1" {
 		t.Fatalf("on_this_scene=%v issue_id=%q", item.OnThisScene, item.IssueID)
 	}
-	if result.ReadThis == "" || !strings.Contains(item.WhyListed, "inbound scene") {
+	if result.ReadThis == "" || item.WhyListed != "本会话事项" {
 		t.Fatalf("read_this=%q why_listed=%q", result.ReadThis, item.WhyListed)
+	}
+}
+
+func TestRecallMergesQuotedConversationIDs(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	task := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-meet",
+		Purpose:       "须莫🥥委托：向须莫v6询问晚上有没有会议",
+		Status:        StatusWaiting,
+		LastTouchedAt: now.Add(-30 * time.Minute),
+	})
+	for _, dst := range []string{`"cid74QGZieWQ4ondi1b0m2DtQ=="`, "cid74QGZieWQ4ondi1b0m2DtQ=="} {
+		if _, err := store.InsertEdge(ctx, Edge{
+			WorkspaceID:   "ws",
+			AgentID:       "ag",
+			SrcType:       NodeTask,
+			SrcID:         task.ID,
+			DstType:       NodeScene,
+			DstID:         dst,
+			Rel:           RelTaskScene,
+			LastTouchedAt: now.Add(-30 * time.Minute),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.InsertEdge(ctx, Edge{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		SrcType:       NodeTask,
+		SrcID:         task.ID,
+		DstType:       NodeScene,
+		DstID:         `"cidviyliGA6bfBKZARuuy0RzA=="`,
+		Rel:           RelOutreach,
+		LastTouchedAt: now.Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: `"cid74QGZieWQ4ondi1b0m2DtQ=="`,
+		Since:          now.Add(-48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ConversationID != "cid74QGZieWQ4ondi1b0m2DtQ==" {
+		t.Fatalf("conversation_id=%q", result.ConversationID)
+	}
+	if len(result.Items) != 1 {
+		t.Fatalf("items=%+v", result.Items)
+	}
+	ids := map[string]string{}
+	for _, conv := range result.Items[0].Conversations {
+		if strings.Contains(conv.ConversationID, `"`) {
+			t.Fatalf("quoted cid leaked: %+v", conv)
+		}
+		ids[conv.ConversationID] = conv.Rel
+	}
+	if ids["cid74QGZieWQ4ondi1b0m2DtQ=="] == "" || ids["cidviyliGA6bfBKZARuuy0RzA=="] != RelOutreach {
+		t.Fatalf("conversations=%+v", result.Items[0].Conversations)
+	}
+	if !result.Items[0].OnThisScene {
+		t.Fatal("expected on_this_scene")
 	}
 }
 
@@ -188,7 +275,7 @@ func TestRecallWindowKeywordIsNotOnThisScene(t *testing.T) {
 	if item.MatchedVia != "window" || item.OnThisScene {
 		t.Fatalf("matched_via=%q on_this_scene=%v", item.MatchedVia, item.OnThisScene)
 	}
-	if !strings.Contains(item.WhyListed, "keyword hit") {
+	if item.WhyListed != "关键词命中，不是本会话" {
 		t.Fatalf("why_listed=%q", item.WhyListed)
 	}
 	raw, err := json.Marshal(item)

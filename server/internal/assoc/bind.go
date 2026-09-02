@@ -61,7 +61,7 @@ func ValidSceneID(s string) bool {
 }
 
 func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindOutboundResult, error) {
-	cid := strings.TrimSpace(in.ConversationID)
+	cid := NormalizeConversationID(in.ConversationID)
 	if cid == "" {
 		return BindOutboundResult{}, fmt.Errorf("%w: conversation_id is required", ErrInvalidQuery)
 	}
@@ -139,7 +139,7 @@ func bindOutbound(ctx context.Context, store Store, in BindOutboundInput) (BindO
 			return BindOutboundResult{}, err
 		}
 	}
-	if wait := strings.TrimSpace(in.WaitingOn); wait != "" && wait != cid {
+	if wait := NormalizeConversationID(in.WaitingOn); wait != "" && wait != cid {
 		if err := store.EnsureScene(ctx, in.WorkspaceID, in.AgentID, wait, "dm", now); err != nil {
 			return BindOutboundResult{}, err
 		}

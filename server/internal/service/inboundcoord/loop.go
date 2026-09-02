@@ -13,6 +13,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
 
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -84,9 +85,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "recall_required")
 					continue
 				}
-				if reqErr := requireBindForNewIssue(call.Arguments, bind); reqErr != nil {
+				if reqErr := requirePurposeForNewIssue(turn, call.Arguments); reqErr != nil {
+					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: reqErr.Error(), Error: true})
 					messages = append(messages, openai.ToolMessage(`{"error":`+jsonQuote(reqErr.Error())+`}`, call.ID))
-					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "bind_required")
+					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, reqErr.Error(), true, "purpose_required")
 					continue
 				}
 				used = append(used, call.Name)
@@ -139,11 +141,6 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: "reply_text is required", Error: true})
 						messages = append(messages, openai.ToolMessage(`{"error":"reply_text is required"}`, call.ID))
 						logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, "reply_text is required", true, "reply_text_required")
-						continue
-					}
-					if bind.Pending && strings.TrimSpace(bind.IssueID) == "" {
-						messages = append(messages, openai.ToolMessage(`{"error":"this turn declared a new matter; finish action=issue without issue_id"}`, call.ID))
-						logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, "new matter declared", true, "new_matter")
 						continue
 					}
 					decision := Decision{
@@ -240,7 +237,10 @@ func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 				"action":    map[string]any{"type": "string", "enum": []string{"reply", "issue", "silence"}},
 				"text":      map[string]any{"type": "string"},
 				"look_into": map[string]any{"type": "string"},
-				"issue_id":  map[string]any{"type": "string", "description": "Existing Issue UUID copied exactly from assoc_recall when this message continues recalled work. Omit for a new Issue."},
+				"issue_id":  map[string]any{"type": "string", "description": "Existing Issue UUID copied exactly from assoc_recall when this message continues recalled work. Omit to create a new Issue."},
+				"delegator": map[string]any{"type": "string", "description": "Required for a new Issue. Who asked this agent to act. Copy the inbound sender name."},
+				"purpose":   map[string]any{"type": "string", "description": "Required for a new Issue. Event and goal, such as 向辰驷确认明天几点打球. No DWS or auth."},
+				"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}},
 				"reason":    map[string]any{"type": "string"},
 			},
 			"required": []string{"action"},
@@ -267,13 +267,13 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocBind,
-			Description: openai.String("Declare or rewrite the matter card. Inject delegator, purpose (event+goal), and intent. Stored purpose is {委托人}委托：{事件与目的}. Place is optional. Omit issue_id for a NEW matter. Copy issue_id from assoc_recall only to attach this scene. matched_via=event items are candidates until bind."),
+			Description: openai.String("Attach this conversation to an existing Issue from assoc_recall. issue_id is required. Rewrite purpose as {委托人}委托：{事件与目的}. Do not call this for a new matter — finish action=issue with purpose instead, which creates the Issue then binds it."),
 			Parameters: shared.FunctionParameters{
 				"type":     "object",
-				"required": []string{"purpose", "intent", "delegator"},
+				"required": []string{"issue_id", "purpose", "intent", "delegator"},
 				"properties": map[string]any{
 					"conversation_id": map[string]any{"type": "string", "description": "DingTalk openConversationId. Defaults to this inbound scene."},
-					"issue_id":        map[string]any{"type": "string", "description": "Existing Issue UUID from assoc_recall. Omit to declare a new matter."},
+					"issue_id":        map[string]any{"type": "string", "description": "Existing Issue UUID copied exactly from assoc_recall. Required."},
 					"delegator":       map[string]any{"type": "string", "description": "Who asked this agent to act, such as 冬翔. Copy the inbound sender name; do not invent."},
 					"place":           map[string]any{"type": "string", "description": "Optional. Where the event happens. Omit when unknown."},
 					"purpose":         map[string]any{"type": "string", "description": "Event and goal, such as 向辰驷确认明天几点打球. Never paste the raw inbound envelope."},
@@ -496,10 +496,11 @@ func requireRecalledIssueForTool(name, raw string, recalled map[string]struct{})
 		var args bindArgs
 		_ = json.Unmarshal([]byte(strings.TrimSpace(raw)), &args)
 		issueID := strings.TrimSpace(args.IssueID)
-		if issueID != "" {
-			if _, ok := recalled[issueID]; !ok {
-				return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
-			}
+		if issueID == "" {
+			return fmt.Errorf("issue_id is required; assoc_bind must attach an existing Issue from assoc_recall")
+		}
+		if _, ok := recalled[issueID]; !ok {
+			return fmt.Errorf("issue_id must be copied exactly from assoc_recall")
 		}
 	}
 	return nil
@@ -555,76 +556,64 @@ func asksSceneQuestion(message string) bool {
 
 func collectRecalledIssues(issues, continuations map[string]struct{}, conversationID, raw string) {
 	var payload struct {
-		Items []struct {
-			Issue         string `json:"issue"`
-			IssueID       string `json:"issue_id"`
-			Status        string `json:"status"`
-			MatchedVia    string `json:"matched_via"`
-			OnThisScene   *bool  `json:"on_this_scene"`
-			Conversations []struct {
-				ConversationID string   `json:"conversation_id"`
-				Rel            string   `json:"rel"`
-				Rels           []string `json:"rels"`
-			} `json:"conversations"`
-			WaitingOn []struct {
-				ConversationID string `json:"conversation_id"`
-			} `json:"waiting_on"`
-		} `json:"items"`
+		Items []json.RawMessage `json:"items"`
 	}
 	if json.Unmarshal([]byte(strings.TrimSpace(raw)), &payload) != nil {
 		return
 	}
-	for _, item := range payload.Items {
-		issueID := strings.TrimSpace(item.Issue)
-		if issueID == "" {
-			issueID = strings.TrimSpace(item.IssueID)
+	cid := assoc.NormalizeConversationID(conversationID)
+	for _, rawItem := range payload.Items {
+		var item struct {
+			Issue       string          `json:"issue"`
+			IssueID     string          `json:"issue_id"`
+			Status      string          `json:"status"`
+			MatchedVia  string          `json:"matched_via"`
+			OnThisScene *bool           `json:"on_this_scene"`
+			Why         string          `json:"why"`
+			WhyListed   string          `json:"why_listed"`
+			WaitingOn   json.RawMessage `json:"waiting_on"`
 		}
+		if json.Unmarshal(rawItem, &item) != nil {
+			continue
+		}
+		issueID := firstNonEmpty(item.IssueID, item.Issue)
 		if issueID == "" {
 			continue
 		}
 		issues[issueID] = struct{}{}
-		if strings.TrimSpace(item.MatchedVia) == "window" {
+		why := firstNonEmpty(item.Why, item.WhyListed)
+		if strings.TrimSpace(item.MatchedVia) == "window" || why == "关键词命中，不是本会话" {
 			continue
 		}
 		if item.OnThisScene != nil && !*item.OnThisScene {
 			continue
 		}
-		if recalledItemContinuesConversation(item.Status, item.Conversations, item.WaitingOn, conversationID) {
+		if recalledItemOnThisScene(item.OnThisScene, item.WaitingOn, cid) {
 			continuations[issueID] = struct{}{}
 		}
 	}
 }
 
-func recalledItemContinuesConversation(
-	status string,
-	conversations []struct {
-		ConversationID string   `json:"conversation_id"`
-		Rel            string   `json:"rel"`
-		Rels           []string `json:"rels"`
-	},
-	waitingOn []struct {
-		ConversationID string `json:"conversation_id"`
-	},
-	conversationID string,
-) bool {
-	cid := strings.TrimSpace(conversationID)
-	if cid == "" || (status != "open" && status != "waiting") {
+func recalledItemOnThisScene(onThisScene *bool, waitingOn json.RawMessage, cid string) bool {
+	if onThisScene != nil {
+		return *onThisScene
+	}
+	if cid == "" || len(waitingOn) == 0 {
 		return false
 	}
-	for _, waiting := range waitingOn {
-		if strings.TrimSpace(waiting.ConversationID) == cid {
-			return true
-		}
+	var asString string
+	if json.Unmarshal(waitingOn, &asString) == nil {
+		return assoc.NormalizeConversationID(asString) == cid
 	}
-	for _, conversation := range conversations {
-		if strings.TrimSpace(conversation.ConversationID) != cid {
-			continue
-		}
-		rels := append([]string{conversation.Rel}, conversation.Rels...)
-		for _, rel := range rels {
-			if rel == "outreach" || rel == "waiting_on" {
-				return true
-			}
+	var asList []struct {
+		ConversationID string `json:"conversation_id"`
+	}
+	if json.Unmarshal(waitingOn, &asList) != nil {
+		return false
+	}
+	for _, waiting := range asList {
+		if assoc.NormalizeConversationID(waiting.ConversationID) == cid {
+			return true
 		}
 	}
 	return false
@@ -685,10 +674,14 @@ func applyBindSpec(decision *Decision, bind BindSpec) {
 	}
 }
 
-func requireBindForNewIssue(finishRaw string, bind BindSpec) error {
+func requirePurposeForNewIssue(turn Turn, finishRaw string) error {
 	var parsed struct {
-		Action  string `json:"action"`
-		IssueID string `json:"issue_id"`
+		Action    string `json:"action"`
+		IssueID   string `json:"issue_id"`
+		Purpose   string `json:"purpose"`
+		Delegator string `json:"delegator"`
+		Intent    string `json:"intent"`
+		Place     string `json:"place"`
 	}
 	_ = json.Unmarshal([]byte(strings.TrimSpace(finishRaw)), &parsed)
 	if Action(strings.TrimSpace(parsed.Action)) != ActionIssue {
@@ -697,8 +690,12 @@ func requireBindForNewIssue(finishRaw string, bind BindSpec) error {
 	if strings.TrimSpace(parsed.IssueID) != "" {
 		return nil
 	}
-	if strings.TrimSpace(bind.Purpose) == "" || strings.TrimSpace(bind.Intent) == "" || strings.TrimSpace(bind.IssueID) != "" {
-		return fmt.Errorf("call assoc_bind with purpose and intent and omit issue_id before finish action=issue for a new matter")
+	delegator := firstNonEmpty(parsed.Delegator, turn.SenderName)
+	if _, err := assoc.ComposeCoordinatorPurpose(delegator, parsed.Place, parsed.Purpose); err != nil {
+		return fmt.Errorf("new Issue needs delegator, purpose, and intent on finish, such as 冬翔委托：向辰驷确认明天几点打球: %w", err)
+	}
+	if _, ok := assoc.CoordinatorIntent(parsed.Intent); !ok {
+		return fmt.Errorf("new Issue needs intent on finish: ask, confirm, notify, lookup, wait, or other")
 	}
 	return nil
 }

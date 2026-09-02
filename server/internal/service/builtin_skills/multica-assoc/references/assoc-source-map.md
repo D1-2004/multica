@@ -44,6 +44,6 @@ tree before trusting any line number.
 | Coordinator LLM context logs | `inbound_coordinator_llm_request` / `inbound_coordinator_llm` / `inbound_coordinator_llm_finish`；索引 `conversation_name` / `coord_trace_id` |
 | Coordinator SLS 查询 | `scripts/query-coordinator-sls.sh` → Normandy `log list --source sls` project `dt-fde-multica-sls` |
 | Coordinator `assoc_recall` / `assoc_bind` / `issue_get` / `issue_comment_*` | `server/internal/service/inboundcoord/tools.go` `AssocTools` |
-| Bind purpose+intent from the model | `assoc_bind` required `purpose`,`intent`; pending bind (no `issue_id`) applied after Issue create |
-| Recall time/intent cards | `Item.intent_label` `matched_via` `last_touched_age` `last_comment_age` |
+| Bind purpose+intent from the model | Coordinator `assoc_bind` requires recalled `issue_id` plus `purpose`,`intent`,`delegator`. New matter is `finish action=issue` without `issue_id`; server creates Issue then Associate |
+| Coordinator recall cards | slim `issue_id` `purpose` `why` `on_this_scene` `last_touched` `last_comment`; CLI/MCP still use full `assoc.Result` |
 | Event clipped body | `assoc_event.body` via `Event.Body` / `EventRef.Text` |

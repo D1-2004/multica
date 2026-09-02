@@ -43,7 +43,18 @@ func ValidateCoordinatorPurpose(purpose string) error {
 	if !strings.Contains(purpose, "委托") {
 		return fmt.Errorf("purpose must name the delegator with 委托")
 	}
+	lower := strings.ToLower(purpose)
+	if strings.Contains(lower, "dws") || strings.Contains(lower, "data-auth") || strings.Contains(purpose, "openConversationId") {
+		return fmt.Errorf("purpose must not include tooling or auth")
+	}
 	return nil
+}
+
+// NormalizeConversationID strips quotes/space so stored cid values compare.
+func NormalizeConversationID(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, `"'`)
+	return strings.TrimSpace(s)
 }
 
 // ComposeCoordinatorPurpose builds the stored purpose from LLM bind fields.

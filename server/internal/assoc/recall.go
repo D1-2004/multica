@@ -22,6 +22,15 @@ func (q Query) validate() error {
 	return nil
 }
 
+func (q Query) normalized() Query {
+	q.ConversationID = NormalizeConversationID(q.ConversationID)
+	q.IssueID = strings.TrimSpace(q.IssueID)
+	q.Q = strings.TrimSpace(q.Q)
+	q.PersonID = strings.TrimSpace(q.PersonID)
+	q.Intent = strings.TrimSpace(q.Intent)
+	return q
+}
+
 func normalizeLimit(n int) int {
 	if n <= 0 {
 		return DefaultLimit
@@ -33,6 +42,7 @@ func normalizeLimit(n int) int {
 }
 
 func Recall(ctx context.Context, store Store, q Query) (Result, error) {
+	q = q.normalized()
 	if err := q.validate(); err != nil {
 		return Result{}, err
 	}
@@ -167,17 +177,17 @@ func annotateItem(item *Item, sceneCID string) {
 }
 
 func itemOnThisScene(item Item, sceneCID string) bool {
-	cid := strings.TrimSpace(sceneCID)
+	cid := NormalizeConversationID(sceneCID)
 	if cid == "" {
 		return false
 	}
 	for _, conversation := range item.Conversations {
-		if strings.TrimSpace(conversation.ConversationID) == cid {
+		if NormalizeConversationID(conversation.ConversationID) == cid {
 			return true
 		}
 	}
 	for _, waiting := range item.WaitingOn {
-		if strings.TrimSpace(waiting.ConversationID) == cid {
+		if NormalizeConversationID(waiting.ConversationID) == cid {
 			return true
 		}
 	}
@@ -187,16 +197,16 @@ func itemOnThisScene(item Item, sceneCID string) bool {
 func whyListed(item Item) string {
 	switch item.MatchedVia {
 	case "window":
-		return "keyword hit in this agent's 48h window, not a graph link to the inbound scene"
+		return "关键词命中，不是本会话"
 	case "event":
-		return "found via this scene's event stream; candidate until assoc_bind"
+		return "本会话事件候选"
 	case "both":
-		return "graph link on this scene and also in the event stream"
+		return "本会话事项"
 	default:
 		if item.OnThisScene {
-			return "graph link on the inbound scene"
+			return "本会话事项"
 		}
-		return "graph link, but not on the inbound scene"
+		return "其他会话"
 	}
 }
 
@@ -422,20 +432,21 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 		switch edge.Rel {
 		case RelOutreach, RelTaskScene, RelSpawnedFrom:
 			if edge.DstType == NodeScene {
+				dstID := NormalizeConversationID(edge.DstID)
 				ref := ConversationRef{
-					ConversationID: edge.DstID,
+					ConversationID: dstID,
 					Kind:           kindFromProps(edge.Props),
 					Rel:            edge.Rel,
 					Rels:           []string{edge.Rel},
 				}
-				if i, ok := convIndex[edge.DstID]; ok {
+				if i, ok := convIndex[dstID]; ok {
 					item.Conversations[i] = mergeConversationRef(item.Conversations[i], ref)
 				} else {
-					convIndex[edge.DstID] = len(item.Conversations)
+					convIndex[dstID] = len(item.Conversations)
 					item.Conversations = append(item.Conversations, ref)
 				}
 				if edge.Rel == RelSpawnedFrom && item.Origin == nil {
-					item.Origin = &OriginRef{ConversationID: edge.DstID, Rel: RelSpawnedFrom}
+					item.Origin = &OriginRef{ConversationID: dstID, Rel: RelSpawnedFrom}
 				}
 			}
 		case RelTaskPerson:
@@ -458,7 +469,7 @@ func hydrateItem(ctx context.Context, store Store, q Query, task Task, now time.
 		case RelWaitingOn:
 			ref := WaitingRef{}
 			if edge.DstType == NodeScene {
-				ref.ConversationID = edge.DstID
+				ref.ConversationID = NormalizeConversationID(edge.DstID)
 			}
 			if edge.DstType == NodePerson {
 				ref.PersonID = edge.DstID

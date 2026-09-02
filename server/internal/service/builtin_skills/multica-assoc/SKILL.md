@@ -53,10 +53,13 @@ Bind those. Never invent a cid for web inbound.
 multica assoc bind --conversation <openConversationId> [--evidence <openMsgId>] [--person <uid>] --output json
 ```
 
-Or MCP / coordinator tool `assoc_bind`. The coordinator must inject `delegator`,
-`purpose` (event + goal), and `intent` (`ask` / `confirm` / `notify` /
-`lookup` / `wait` / `other`). Stored purpose is `{委托人}委托：{事件与目的}`.
-Place is optional. Omit `issue_id` to declare a new matter.
+Or MCP / coordinator tool `assoc_bind`. Coordinator `assoc_bind` must copy
+`issue_id` from `assoc_recall` and attach this scene to that existing Issue.
+It must also inject `delegator`, `purpose` (event + goal), and `intent`
+(`ask` / `confirm` / `notify` / `lookup` / `wait` / `other`). Stored purpose
+is `{委托人}委托：{事件与目的}`. Place is optional. Never bind without an
+Issue. A new matter is `finish action=issue` without `issue_id`, with
+`delegator` / `purpose` / `intent`; the server creates the Issue then binds.
 
 ## Recall before treating a chat as a new matter
 
@@ -81,8 +84,9 @@ multica assoc events --conversation <openConversationId> --since 48h --output js
 `--since` is required. Inspect `purpose`; if several items match, ask. HTTP is
 `GET /api/assoc/recall` and `GET /api/assoc/events`. Coordinator `assoc_recall`
 always keeps the inbound `openConversationId`; `q` filters that scene and must
-not drop the cid. Recall JSON `read_this` / `why_listed` / `on_this_scene`
-mark candidates; continue only after comparing purpose to the current message.
+not drop the cid. Coordinator recall JSON is a short card (`read_this` /
+`issue_id` / `purpose` / `why` / `on_this_scene`); continue only after
+comparing purpose to the current message.
 
 An inbound `/reset-memory` (first token, optional leading @mention) closes this
 conversation's Issue associations and does not start a sandbox. It is not

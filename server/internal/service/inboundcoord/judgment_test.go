@@ -35,14 +35,13 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"Issue creator or issue_comment_add comment author",
 		"tool executor/assistant",
 		"original DingTalk task scene and assoc graph",
-		"matched_via=event",
-		"matched_via=window",
 		"Always pass this inbound conversation_id",
 		"First recall this inbound conversation_id and omit q",
 		"items are candidates, not a verdict",
 		"The server will not pick a card for you",
+		"Never bind without an Issue",
 		"委托人",
-		"purpose and intent",
+		"purpose",
 		"Read it like a person opening the chat",
 		"Never mention internal machinery",
 	} {
@@ -233,6 +232,24 @@ func TestJudgmentDecideDeterministic(t *testing.T) {
 				t.Fatalf("action = %s, want %s", got.Action, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseDecisionNewIssueComposesPurpose(t *testing.T) {
+	t.Parallel()
+	got := parseDecision(`{"action":"issue","text":"我去问须莫v6明早有没有会议","delegator":"须莫🥥","purpose":"向须莫v6询问明早有没有会议","intent":"ask","reason":"新事项"}`, Turn{
+		Source:     SourceDigitalEmployee,
+		SenderName: "须莫🥥",
+		Message:    "问一下须莫v6明早有没有会议",
+	})
+	if got.Action != ActionIssue {
+		t.Fatalf("action=%s", got.Action)
+	}
+	if got.Purpose != "须莫🥥委托：向须莫v6询问明早有没有会议" || got.Intent != "ask" {
+		t.Fatalf("purpose=%q intent=%q", got.Purpose, got.Intent)
+	}
+	if got.LookInto != "须莫🥥委托：向须莫v6询问明早有没有会议" {
+		t.Fatalf("look_into=%q", got.LookInto)
 	}
 }
 

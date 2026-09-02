@@ -42,11 +42,8 @@ func TestAssocToolsRecallDefaultsConversationID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result assoc.Result
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Items) != 1 || result.Items[0].Issue != "issue-eat" {
+	result := mustCoordinatorRecall(t, raw)
+	if len(result.Items) != 1 || result.Items[0].IssueID != "issue-eat" {
 		t.Fatalf("items=%+v", result.Items)
 	}
 	if result.Items[0].Purpose != "向冬翔确认今天吃什么" {
@@ -83,11 +80,8 @@ func TestAssocToolsRecallDoesNotDefaultPersonID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result assoc.Result
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Items) != 1 || result.Items[0].Issue != "issue-eat" {
+	result := mustCoordinatorRecall(t, raw)
+	if len(result.Items) != 1 || result.Items[0].IssueID != "issue-eat" {
 		t.Fatalf("default person must not hide cid hit: %+v", result.Items)
 	}
 }
@@ -120,11 +114,8 @@ func TestAssocToolsRecallUsesExplicitConversationID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result assoc.Result
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Items) != 1 || result.Items[0].Issue != "issue-train" {
+	result := mustCoordinatorRecall(t, raw)
+	if len(result.Items) != 1 || result.Items[0].IssueID != "issue-train" {
 		t.Fatalf("items=%+v", result.Items)
 	}
 }
@@ -169,10 +160,7 @@ func TestAssocToolsRecallQKeepsInboundConversation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result assoc.Result
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
+	result := mustCoordinatorRecall(t, raw)
 	if result.ConversationID != "cid-robot" {
 		t.Fatalf("conversation_id=%q", result.ConversationID)
 	}
@@ -208,11 +196,8 @@ func TestAssocToolsRecallQWithoutInboundSceneStillSearchesWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result assoc.Result
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Items) != 1 || result.Items[0].Issue != "issue-train" {
+	result := mustCoordinatorRecall(t, raw)
+	if len(result.Items) != 1 || result.Items[0].IssueID != "issue-train" {
 		t.Fatalf("web q without inbound cid still searches the window, items=%+v", result.Items)
 	}
 }
@@ -288,23 +273,114 @@ func TestAssocToolsBindRequiresConversation(t *testing.T) {
 	}
 }
 
-func TestAssocToolsBindPendingNewMatter(t *testing.T) {
+func TestAssocToolsBindRequiresIssueID(t *testing.T) {
 	t.Parallel()
 	tools := &AssocTools{Service: assoc.NewService(assoc.NewMemory())}
-	raw, err := tools.Call(context.Background(), Turn{
+	_, err := tools.Call(context.Background(), Turn{
 		WorkspaceID:    "ws",
 		AgentID:        testAgentID(),
 		ConversationID: "cid-dongxiang",
 		SenderName:     "冬翔",
 	}, toolAssocBind, `{"purpose":"向冬翔确认今天吃什么","intent":"ask","delegator":"冬翔"}`)
+	if err == nil || !strings.Contains(err.Error(), "issue_id is required") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestAssocToolsBindRejectsToolingPurpose(t *testing.T) {
+	t.Parallel()
+	tools := &AssocTools{Service: assoc.NewService(assoc.NewMemory())}
+	_, err := tools.Call(context.Background(), Turn{
+		WorkspaceID:    "ws",
+		AgentID:        testAgentID(),
+		ConversationID: "cid-dongxiang",
+		SenderName:     "须莫🥥",
+	}, toolAssocBind, `{"issue_id":"issue-meet","delegator":"须莫🥥","intent":"ask","purpose":"向须莫v6询问明早有没有会议，dws要用dws chat data-auth cross-org去找须莫v6"}`)
+	if err == nil || !strings.Contains(err.Error(), "tooling") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestMarshalCoordinatorRecallIsSlim(t *testing.T) {
+	t.Parallel()
+	now := time.Now().UTC()
+	commentAt := now.Add(-32 * time.Minute)
+	raw, err := marshalCoordinatorRecall(assoc.Result{
+		ReadThis:       assoc.RecallReadThis,
+		Since:          now.Add(-48 * time.Hour),
+		Until:          now,
+		ConversationID: `"cid74QGZieWQ4ondi1b0m2DtQ=="`,
+		Items: []assoc.Item{{
+			Issue:          "0f45c389-d67c-4ebd-b524-97d95177b1c9",
+			IssueID:        "0f45c389-d67c-4ebd-b524-97d95177b1c9",
+			TaskID:         "12cf095d-abae-4a60-9f17-b15c0dc3cb9e",
+			Purpose:        "须莫🥥委托：向须莫v6询问晚上有没有会议",
+			Intent:         "ask",
+			IntentLabel:    "向某人询问一件事",
+			Status:         "waiting",
+			OnThisScene:    true,
+			WhyListed:      "本会话事项",
+			LastTouchedAt:  now.Add(-32 * time.Minute),
+			LastTouchedAge: "32分钟前",
+			AgeSeconds:     1924,
+			MatchedVia:     "both",
+			LastComment:    "已向须莫v6发送消息询问今晚是否有会议安排。\n\n发送详情：\n- 目标会话：须莫v6（openConversationId: cidviyliGA6bfBKZARuuy0RzA==）\n- 发送状态：成功（openTaskId: abc）\n等待须莫v6回复。",
+			LastCommentAge: "32分钟前",
+			LastCommentAt:  &commentAt,
+			Conversations: []assoc.ConversationRef{
+				{ConversationID: `"cidviyliGA6bfBKZARuuy0RzA=="`, Kind: "dm", Rel: "outreach", Rels: []string{"outreach", "task_scene"}},
+			},
+			People:    []assoc.PersonRef{{PersonID: "uid-v6", DisplayName: "须莫🥥", Name: "须莫🥥"}},
+			WaitingOn: []assoc.WaitingRef{{ConversationID: `"cidviyliGA6bfBKZARuuy0RzA=="`}},
+		}},
+		Events: []assoc.EventRef{{
+			ID: "evt-1", Direction: "inbound", Source: "inbound_im", EvidenceID: "msg-1",
+			Text: "问一下晚上有没有会议", When: "刚刚", Age: "刚刚", AgeSeconds: 12,
+		}},
+		EventsNote: "scene IM evidence, not the matter index.",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(raw, `"pending":true`) || !strings.Contains(raw, `"intent":"ask"`) {
-		t.Fatalf("bind=%s", raw)
+	var view coordinatorRecallView
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(raw, "冬翔委托：向冬翔确认今天吃什么") {
-		t.Fatalf("composed purpose missing: %s", raw)
+	if view.ConversationID != "cid74QGZieWQ4ondi1b0m2DtQ==" {
+		t.Fatalf("conversation_id=%q", view.ConversationID)
+	}
+	if len(view.Items) != 1 {
+		t.Fatalf("items=%+v", view.Items)
+	}
+	item := view.Items[0]
+	if item.IssueID != "0f45c389-d67c-4ebd-b524-97d95177b1c9" || item.Who != "须莫🥥" || item.WaitingOn != "cidviyliGA6bfBKZARuuy0RzA==" {
+		t.Fatalf("item=%+v", item)
+	}
+	if item.LastComment != "已向须莫v6发送消息询问今晚是否有会议安排。 等待须莫v6回复。" && !strings.Contains(item.LastComment, "已向须莫v6发送消息询问今晚是否有会议安排") {
+		t.Fatalf("last_comment=%q", item.LastComment)
+	}
+	if strings.Contains(item.LastComment, "openTaskId") || strings.Contains(item.LastComment, "发送详情") {
+		t.Fatalf("last_comment still has DWS dump: %q", item.LastComment)
+	}
+	for _, banned := range []string{
+		`"task_id"`, `"intent_label"`, `"matched_via"`, `"conversations"`,
+		`"last_touched_at"`, `"age_seconds"`, `"last_comment_at"`, `"events_note"`,
+		`"since"`, `"until"`, `"rels"`,
+	} {
+		if strings.Contains(raw, banned) {
+			t.Fatalf("slim recall leaked %s: %s", banned, raw)
+		}
+	}
+}
+
+func TestSanitizeRecallCommentDropsDWS(t *testing.T) {
+	t.Parallel()
+	got := sanitizeRecallComment("已向须莫v6发送消息询问今晚是否有会议安排。\n发送详情：\n- 目标会话：须莫v6（openConversationId: cidx）\n- 发送状态：成功（openTaskId: abc）\n等待回复。")
+	if strings.Contains(got, "openTaskId") || strings.Contains(got, "发送详情") || strings.Contains(strings.ToLower(got), "dws") {
+		t.Fatalf("got=%q", got)
+	}
+	if !strings.Contains(got, "已向须莫v6发送消息询问今晚是否有会议安排") {
+		t.Fatalf("got=%q", got)
 	}
 }
 
@@ -315,6 +391,15 @@ func TestAssocToolsUnknownName(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unknown tool") {
 		t.Fatalf("err=%v", err)
 	}
+}
+
+func mustCoordinatorRecall(t *testing.T, raw string) coordinatorRecallView {
+	t.Helper()
+	var view coordinatorRecallView
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
+	}
+	return view
 }
 
 func mustSince48h(t *testing.T) time.Time {
@@ -369,19 +454,21 @@ func TestAssocToolsRecallOverlaysEventText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result assoc.Result
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	var view coordinatorRecallView
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]string{}
-	for _, event := range result.Events {
-		got[event.EvidenceID] = event.Text
+	got := map[string]struct{}{}
+	for _, event := range view.Events {
+		got[event.Text] = struct{}{}
 	}
-	if got["msg-in-7"] != "7点" {
-		t.Fatalf("inbound text=%q events=%+v", got["msg-in-7"], result.Events)
+	if _, ok := got["7点"]; !ok {
+		t.Fatalf("inbound text missing events=%+v", view.Events)
 	}
-	if got["msg-out-1"] != "今晚几点打球" && got["msg-out-1"] != "向须莫v6确认今晚几点打球" {
-		t.Fatalf("outbound text=%q events=%+v", got["msg-out-1"], result.Events)
+	if _, ok := got["今晚几点打球"]; !ok {
+		if _, ok := got["向须莫v6确认今晚几点打球"]; !ok {
+			t.Fatalf("outbound text missing events=%+v", view.Events)
+		}
 	}
 }
 

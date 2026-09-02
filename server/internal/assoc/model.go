@@ -37,7 +37,7 @@ const (
 	EventCardLimit    = 8
 	RecencyTau        = 6 * time.Hour
 
-	RecallReadThis = "items are candidates, not a verdict. Compare each purpose to the current message. Continue only if the deliverable is the same. on_this_scene=false or matched_via=window is not this conversation's matter."
+	RecallReadThis = "候选。purpose 对得上才续，对不上就新建 Issue。"
 )
 
 type Task struct {

@@ -38,7 +38,7 @@ func associateIssueConversation(ctx context.Context, store Store, in AssociateIn
 	if strings.TrimSpace(in.IssueID) == "" {
 		return fmt.Errorf("%w: issue_id is required", ErrInvalidQuery)
 	}
-	cid := strings.TrimSpace(in.ConversationID)
+	cid := NormalizeConversationID(in.ConversationID)
 	if cid != "" && !ValidSceneID(cid) {
 		return fmt.Errorf("%w: conversation_id is not a scene id", ErrInvalidQuery)
 	}
@@ -85,7 +85,7 @@ func associateIssueConversation(ctx context.Context, store Store, in AssociateIn
 			return err
 		}
 	}
-	if wait := strings.TrimSpace(in.WaitingOn); wait != "" && wait != cid {
+	if wait := NormalizeConversationID(in.WaitingOn); wait != "" && wait != cid {
 		if err := store.EnsureScene(ctx, in.WorkspaceID, in.AgentID, wait, "dm", now); err != nil {
 			return err
 		}

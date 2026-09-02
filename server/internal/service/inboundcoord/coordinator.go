@@ -497,11 +497,15 @@ func (c *Coordinator) coordinatorOff(ctx context.Context, turn Turn) bool {
 
 func parseDecision(raw string, turn Turn) Decision {
 	var parsed struct {
-		Action   string `json:"action"`
-		Text     string `json:"text"`
-		LookInto string `json:"look_into"`
-		IssueID  string `json:"issue_id"`
-		Reason   string `json:"reason"`
+		Action    string `json:"action"`
+		Text      string `json:"text"`
+		LookInto  string `json:"look_into"`
+		IssueID   string `json:"issue_id"`
+		Purpose   string `json:"purpose"`
+		Delegator string `json:"delegator"`
+		Intent    string `json:"intent"`
+		Place     string `json:"place"`
+		Reason    string `json:"reason"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed); err != nil {
 		return Decision{Action: ActionContinue}
@@ -518,13 +522,18 @@ func parseDecision(raw string, turn Turn) Decision {
 		}
 		return Decision{Action: ActionReply, UserText: text, Reason: reason}
 	case ActionIssue:
+		purpose, _ := assoc.ComposeCoordinatorPurpose(firstNonEmpty(parsed.Delegator, turn.SenderName), parsed.Place, parsed.Purpose)
+		intent, _ := assoc.CoordinatorIntent(parsed.Intent)
+		if look == "" {
+			look = purpose
+		}
 		if look == "" {
 			look = clipRunes(strings.TrimSpace(turn.Message), titleBudget)
 		}
 		if text == "" {
 			text = issueAckFallback(look)
 		}
-		return Decision{Action: ActionIssue, UserText: text, LookInto: look, IssueID: issueID, Reason: reason}
+		return Decision{Action: ActionIssue, UserText: text, LookInto: look, IssueID: issueID, Purpose: purpose, Intent: intent, Reason: reason}
 	case ActionSilence:
 		if turn.Source == SourceWeb {
 			return Decision{Action: ActionContinue}

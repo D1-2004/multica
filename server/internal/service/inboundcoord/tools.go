@@ -188,11 +188,115 @@ func (t *AssocTools) recall(ctx context.Context, turn Turn, raw string) (string,
 	}
 	overlayEventBodies(result.Events, turn)
 	t.enrichRecallCards(ctx, turn, &result)
-	body, err := json.Marshal(result)
+	return marshalCoordinatorRecall(result)
+}
+
+type coordinatorRecallItem struct {
+	IssueID     string `json:"issue_id"`
+	Purpose     string `json:"purpose"`
+	Intent      string `json:"intent,omitempty"`
+	Status      string `json:"status,omitempty"`
+	OnThisScene bool   `json:"on_this_scene"`
+	Why         string `json:"why"`
+	Who         string `json:"who,omitempty"`
+	LastTouched string `json:"last_touched,omitempty"`
+	LastComment string `json:"last_comment,omitempty"`
+	WaitingOn   string `json:"waiting_on,omitempty"`
+}
+
+type coordinatorRecallEvent struct {
+	When      string `json:"when,omitempty"`
+	Direction string `json:"direction"`
+	Text      string `json:"text,omitempty"`
+}
+
+type coordinatorRecallView struct {
+	ReadThis       string                   `json:"read_this"`
+	ConversationID string                   `json:"conversation_id,omitempty"`
+	Items          []coordinatorRecallItem  `json:"items"`
+	Events         []coordinatorRecallEvent `json:"events"`
+}
+
+func marshalCoordinatorRecall(result assoc.Result) (string, error) {
+	view := coordinatorRecallView{
+		ReadThis:       assoc.RecallReadThis,
+		ConversationID: assoc.NormalizeConversationID(result.ConversationID),
+		Items:          make([]coordinatorRecallItem, 0, len(result.Items)),
+		Events:         make([]coordinatorRecallEvent, 0, len(result.Events)),
+	}
+	for _, item := range result.Items {
+		waiting := ""
+		if len(item.WaitingOn) > 0 {
+			waiting = assoc.NormalizeConversationID(item.WaitingOn[0].ConversationID)
+		}
+		view.Items = append(view.Items, coordinatorRecallItem{
+			IssueID:     firstNonEmpty(item.IssueID, item.Issue),
+			Purpose:     item.Purpose,
+			Intent:      item.Intent,
+			Status:      item.Status,
+			OnThisScene: item.OnThisScene,
+			Why:         item.WhyListed,
+			Who:         recallWho(item.People),
+			LastTouched: item.LastTouchedAge,
+			LastComment: sanitizeRecallComment(item.LastComment),
+			WaitingOn:   waiting,
+		})
+	}
+	for _, event := range result.Events {
+		if strings.TrimSpace(event.Text) == "" {
+			continue
+		}
+		view.Events = append(view.Events, coordinatorRecallEvent{
+			When:      firstNonEmpty(event.When, event.Age),
+			Direction: event.Direction,
+			Text:      event.Text,
+		})
+	}
+	body, err := json.Marshal(view)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func recallWho(people []assoc.PersonRef) string {
+	names := make([]string, 0, len(people))
+	seen := map[string]struct{}{}
+	for _, person := range people {
+		name := firstNonEmpty(person.Name, person.DisplayName)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return strings.Join(names, "、")
+}
+
+func sanitizeRecallComment(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	var kept []string
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "opentaskid") || strings.Contains(lower, "openconversationid") ||
+			strings.Contains(lower, "openmsgid") || strings.Contains(lower, "dws") ||
+			strings.Contains(lower, "data-auth") || strings.Contains(line, "发送状态") ||
+			strings.Contains(line, "发送详情") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return assoc.ClipBody(strings.Join(kept, " "), 80)
 }
 
 func (t *AssocTools) enrichRecallCards(ctx context.Context, turn Turn, result *assoc.Result) {
@@ -260,16 +364,19 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 	if !ok {
 		return "", fmt.Errorf("intent must be one of ask, confirm, notify, lookup, wait, other")
 	}
-	cid := firstNonEmpty(args.ConversationID, turn.ConversationID)
+	cid := assoc.NormalizeConversationID(firstNonEmpty(args.ConversationID, turn.ConversationID))
 	if cid == "" {
 		return "", fmt.Errorf("conversation_id is required")
+	}
+	issueID := strings.TrimSpace(args.IssueID)
+	if issueID == "" {
+		return "", fmt.Errorf("issue_id is required; assoc_bind attaches this scene to an existing Issue from assoc_recall")
 	}
 	delegator := firstNonEmpty(args.Delegator, turn.SenderName)
 	purpose, err := assoc.ComposeCoordinatorPurpose(delegator, args.Place, args.Purpose)
 	if err != nil {
 		return "", fmt.Errorf("purpose must name 委托人, 事件, and 目的, such as 冬翔委托：向辰驷确认明天几点打球: %w", err)
 	}
-	issueID := strings.TrimSpace(args.IssueID)
 	kind := firstNonEmpty(args.Kind, turn.Kind)
 	display := firstNonEmpty(args.DisplayName, turn.SenderName)
 	waitingOn := strings.TrimSpace(args.WaitingOn)
@@ -286,15 +393,6 @@ func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, e
 	}
 	if place := strings.TrimSpace(args.Place); place != "" && place != "地点未说明" {
 		payload["place"] = place
-	}
-	if issueID == "" {
-		payload["pending"] = true
-		payload["linked"] = false
-		body, err := json.Marshal(payload)
-		if err != nil {
-			return "", err
-		}
-		return string(body), nil
 	}
 	if err := t.Service.AssociateIssueConversation(ctx, assoc.AssociateInput{
 		WorkspaceID:    strings.TrimSpace(turn.WorkspaceID),

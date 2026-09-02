@@ -16,7 +16,7 @@ Coordinator Loop 是入站消息进沙箱之前的短接待。它不是第二个
 三件事，按这个顺序：
 
 1. **按基础人设快速接待。** `finish.text` 要像同事在 IM 里说话，不像工单机器人。人设只定声音，不定路由。
-2. **把场域和事情连上。** 场域是钉钉 `openConversationId`（`cid…`），事情是 Issue。图查询是 `assoc_recall`；绑边是 `assoc_bind`，由模型注入 `purpose`（交付物短句）和 `intent`（ask/confirm/notify/lookup/wait/other）。新建事项先 bind（不带 issue_id）再 `finish action=issue`。event-stream 命中的卡片 `matched_via=event` 只是候选，要 bind 才算关联。时间用卡片上的 `last_touched_age` / `last_comment_age`，不要让模型自己算。
+2. **把场域和事情连上。** 场域是钉钉 `openConversationId`（`cid…`），事情是 Issue。图查询是 `assoc_recall`；把已有 Issue 绑到本 cid 用 `assoc_bind`（必须带 `issue_id`）。新建事项不要悬空 bind：`finish action=issue` 且不带 `issue_id`，带上 `delegator` / `purpose` / `intent`，服务端先建 Issue 再 Associate。时间用卡片上的 `last_touched` / `last_comment`，不要让模型自己算。
 3. **需要持续跟的，交给 Issue。** 联系人、DWS、搜索、文件、写入、评论线程、追踪，都不是这轮直接做完的事。`action=issue` 开新 Issue 或续已召回的 Issue，沙箱再跑慢循环。
 
 双循环：
@@ -130,12 +130,12 @@ user    ← buildUserPrompt(turn)
 
 返回必须是模型能直接精排的 JSON，不是表行转储。见第 5 节。
 
-**`assoc_bind`** — 把 cid 绑到事情上。
+**`assoc_bind`** — 把本 cid 绑到**已有** Issue 上。`issue_id` 必填，必须从本轮 `assoc_recall` 原样拷贝。禁止不带 Issue 的悬空事项。
 
 ```json
 {
   "conversation_id": "cid…",
-  "issue_id": "来自 assoc_recall 的 Issue UUID；省略则只给入站 Event 打标",
+  "issue_id": "来自 assoc_recall 的 Issue UUID，必填",
   "evidence_id": "openMsgId",
   "person_id": "uid",
   "delegator": "冬翔",
@@ -153,11 +153,14 @@ user    ← buildUserPrompt(turn)
   "text": "用户看见的那一句",
   "look_into": "action=issue 时要核对的可交付短语",
   "issue_id": "续旧事时从 assoc_recall 原样拷贝的 UUID",
+  "delegator": "新建 Issue 必填，当前钉钉发信人",
+  "purpose": "新建 Issue 必填，事件与目的，禁止 DWS/鉴权",
+  "intent": "ask | confirm | notify | lookup | wait | other",
   "reason": "短理由，用户语言"
 }
 ```
 
-`issue_id` 必须出现在本轮 `assoc_recall` 结果里。一张 waiting 卡不是裁决：purpose 对得上才 `issue_comment_add`，对不上就 `assoc_bind` 新事项。服务端不会因为「只有一张卡」替模型选定。
+续旧：`issue_id` 必须出现在本轮 `assoc_recall` 结果里，且 purpose 对得上才 `issue_comment_add`。新建：省略 `issue_id`，在 `finish` 上带 `delegator` / `purpose` / `intent`；服务端创建 Issue 后 Associate 本 cid。一张 waiting 卡不是裁决。服务端不会因为「只有一张卡」替模型选定。
 
 ### 3.2 Issue 查询与评论（已挂上 Loop）
 
@@ -215,10 +218,10 @@ Scene = `openConversationId`，且必须 `cid` 前缀。内部 `uid:uid` pair、
 ```text
 入站 message.created
   → 记 Event(inbound, evidence_id=openMsgId)
-  → Coordinator：DWS 拉本 cid 历史 → assoc_recall → （可选）assoc_bind → finish
+  → Coordinator：DWS 拉本 cid 历史 → assoc_recall → （可选，已有 Issue）assoc_bind → finish
   → reply     一句 IM，无沙箱
   → silence   群闲聊，网页 Chat 禁止
-  → issue     无 issue_id：新建 Issue + Task，Associate 本 cid
+  → issue     无 issue_id：finish 带 delegator/purpose/intent → 新建 Issue + Task，Associate 本 cid
               有 issue_id：普通续旧路径；外呼回信优先走 issue_comment_add
 ```
 
@@ -232,51 +235,35 @@ Scene = `openConversationId`，且必须 `cid` 前缀。内部 `uid:uid` pair、
 
 图层做 **粗召回**：时间窗 + cid / issue / q。排序信号是 recency × status × rel × person 命中，给截断用，**不是**语义答案。
 
-精排是 Coordinator 读 tool result。所以 `assoc_recall` 的 JSON 必须是模型可消费的事情卡片，而不是行转储。
+精排是 Coordinator 读 tool result。所以 Coordinator 看到的 `assoc_recall` JSON 是短候选卡，不是图行转储。CLI / MCP 仍可读完整 `assoc.Result`。
 
-现行 `Result`：
+Coordinator tool result：
 
 ```json
 {
-  "read_this": "items are candidates, not a verdict. …",
-  "since": "…",
-  "until": "…",
+  "read_this": "候选。purpose 对得上才续，对不上就新建 Issue。",
   "conversation_id": "cid…",
-  "q": "可选",
   "items": [
     {
-      "issue": "uuid",
       "issue_id": "uuid",
-      "purpose": "向须莫v6确认今晚几点打球",
+      "purpose": "须莫🥥委托：向须莫v6询问晚上有没有会议",
       "intent": "ask",
-      "intent_label": "向某人询问一件事",
       "status": "waiting",
       "on_this_scene": true,
-      "why_listed": "graph link on the inbound scene",
-      "matched_via": "scene",
-      "last_touched_age": "17小时前",
-      "last_comment": "…",
-      "last_comment_age": "16小时前",
-      "conversations": [
-        { "conversation_id": "cid…", "kind": "dm", "rel": "outreach", "rels": ["outreach"] }
-      ],
-      "people": [{ "person_id": "…", "name": "冬翔" }],
-      "waiting_on": [{ "conversation_id": "cid…" }]
+      "why": "本会话事项",
+      "who": "须莫🥥",
+      "last_touched": "32分钟前",
+      "last_comment": "已向须莫v6发送消息询问今晚是否有会议安排。",
+      "waiting_on": "cid…"
     }
   ],
   "events": [
-    {
-      "direction": "inbound",
-      "text": "…",
-      "when": "刚刚",
-      "age": "刚刚"
-    }
-  ],
-  "events_note": "scene IM evidence, not the matter index."
+    { "when": "刚刚", "direction": "inbound", "text": "…" }
+  ]
 }
 ```
 
-`purpose` 必须是可交付短语（最少 8 字，拒绝「帮我看看」）。精排靠它，不靠 recency score（score 不进 JSON）。`matched_via=window` / `on_this_scene=false` 不能当成当前会话的事。events 最多 8 条有正文的最近证据。
+`purpose` 必须是可交付短语（最少 8 字，拒绝「帮我看看」、入站信封、DWS/鉴权）。精排靠它。`on_this_scene=false` 或 `why=关键词命中，不是本会话` 不能当成当前会话的事。`last_comment` 会去掉 DWS / openTaskId / 发送详情。events 最多 8 条有正文的最近证据。
 
 **不要**把召回结果预写成 `related_tasks:` 塞进第一轮 user。`injectRelatedTasks` 会让模型不走 tool 就答题；system 已经禁止凭 `related_tasks` 作答。Decide() 当前也没有调用它。召回只通过 `assoc_recall` 的 tool result 进入对话。
 
