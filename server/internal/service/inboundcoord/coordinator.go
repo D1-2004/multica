@@ -573,6 +573,7 @@ func IssueDescription(decision Decision, message string) string {
 		b.WriteString("\n要核对：")
 		b.WriteString(decision.LookInto)
 	}
+	b.WriteString("\n\n任务闭环要求：如涉及代问或转达，先从当前消息和关联会话中明确委托人、当前转达人、消息接收人和下一位应答人。联系接收人时要说明是谁委托、具体问什么；拿到答复后要注明是谁说了什么，再回给需要结果的人。遇到阻塞时，回复当前能解除阻塞、且正在处理其问题的人，不要固定回复委托人，也不要只在 Issue 中留下记录。")
 	return b.String()
 }
 

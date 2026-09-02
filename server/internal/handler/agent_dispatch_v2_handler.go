@@ -17,7 +17,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -819,39 +818,6 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 	dispatchContext agentDispatchContext,
 	result engine.Result,
 ) bool {
-	if result.IssueID.Valid && result.TaskID.Valid {
-		if command.CompletionCallback != nil &&
-			command.CompletionCallback.UpdateURL != "" &&
-			strings.TrimSpace(result.ReplyText) != "" {
-			issue, err := h.Queries.GetIssue(ctx, result.IssueID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to load coordinator issue")
-				return true
-			}
-			task, err := h.Queries.GetAgentTask(ctx, result.TaskID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to load coordinator issue task")
-				return true
-			}
-			if err := h.TaskService.EnqueueCoordinatorIssueAck(
-				ctx,
-				task,
-				issue,
-				result.IssueIdentifier,
-				command.CompletionCallback.UpdateURL,
-				command.CompletionCallback.Target,
-				result.ReplyText,
-			); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
-				return true
-			}
-		}
-		writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
-			Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: uuidToString(result.IssueID)},
-			TaskID:       uuidToString(result.TaskID),
-		})
-		return true
-	}
 	if command.CompletionCallback == nil {
 		if result.Outcome == engine.OutcomeCoordinatorReply || result.Outcome == engine.OutcomeCoordinatorSilence {
 			chatSessionID := uuidToString(result.ChatSessionID)
@@ -896,6 +862,36 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 			return true
 		}
 		w.WriteHeader(http.StatusAccepted)
+		return true
+	}
+	if result.IssueID.Valid && result.TaskID.Valid && result.ReplyText != "" &&
+		command.CompletionCallback.UpdateURL != "" {
+		issue, err := h.Queries.GetIssue(ctx, result.IssueID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load coordinator issue")
+			return true
+		}
+		task, err := h.Queries.GetAgentTask(ctx, result.TaskID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load coordinator issue task")
+			return true
+		}
+		if err := h.TaskService.EnqueueCoordinatorIssueAck(
+			ctx,
+			task,
+			issue,
+			result.IssueIdentifier,
+			command.CompletionCallback.UpdateURL,
+			command.CompletionCallback.Target,
+			result.ReplyText,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
+			return true
+		}
+		writeJSON(w, http.StatusAccepted, AgentChatDispatchResponse{
+			Continuation: AgentDispatchContinuation{Kind: "issue", IssueID: uuidToString(result.IssueID)},
+			TaskID:       uuidToString(result.TaskID),
+		})
 		return true
 	}
 	return false
@@ -1154,7 +1150,7 @@ func coordinatorRecalledIssueContinuation(
 func recalledIssueFollowUpContent(message, lookInto string) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(message))
-	b.WriteString("\n\n系统关联说明：这是已关联外呼会话的回信。请继续原事项，记录本回复；先用 assoc_recall current_issue=true since=48h 找到原发起会话，完成后把结果通知原发起人，不要只回复当前回信人。")
+	b.WriteString("\n\n系统关联说明：这是已关联外呼会话的回信。请继续原事项并先用 assoc_recall current_issue=true since=48h 明确委托人、当前发信人、原消息接收人和下一位应答人。你是中间转达人：首次联系接收人时要说明是谁委托、具体问什么；得到答复后注明是谁说了什么，再通知需要结果的人。遇到阻塞时，把问题发给当前能解除阻塞、且正在处理其问题的人，不要固定发给委托人。Issue 评论只做记录；需要通知其他会话的人必须实际发钉钉消息，不能只回复当前回信人或只写评论。")
 	if lookInto = strings.TrimSpace(lookInto); lookInto != "" {
 		b.WriteString("\n本轮要继续处理：")
 		b.WriteString(lookInto)
@@ -1323,52 +1319,6 @@ func writeDispatchCoordinatorTerminal(
 	dispatchContext agentDispatchContext,
 	decision inboundcoord.Decision,
 ) bool {
-	if decision.Action == inboundcoord.ActionReply && decision.IssueComment != nil {
-		issueID, err := util.ParseUUID(strings.TrimSpace(decision.IssueComment.IssueID))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "invalid coordinator issue id")
-			return true
-		}
-		taskID, err := util.ParseUUID(strings.TrimSpace(decision.IssueComment.TaskID))
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "invalid coordinator issue task id")
-			return true
-		}
-		if h.TaskService != nil &&
-			command.CompletionCallback != nil &&
-			command.CompletionCallback.UpdateURL != "" &&
-			strings.TrimSpace(decision.UserText) != "" {
-			issue, loadErr := h.Queries.GetIssue(ctx, issueID)
-			if loadErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to load coordinator issue")
-				return true
-			}
-			task, loadErr := h.Queries.GetAgentTask(ctx, taskID)
-			if loadErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to load coordinator issue task")
-				return true
-			}
-			if enqueueErr := h.TaskService.EnqueueCoordinatorIssueAck(
-				ctx,
-				task,
-				issue,
-				decision.IssueComment.IssueIdentifier,
-				command.CompletionCallback.UpdateURL,
-				command.CompletionCallback.Target,
-				decision.UserText,
-			); enqueueErr != nil {
-				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue ack")
-				return true
-			}
-		}
-		writeJSON(w, http.StatusAccepted, AgentDispatchResponse{
-			Continuation:    AgentDispatchContinuation{Kind: "issue", IssueID: decision.IssueComment.IssueID},
-			IssueIdentifier: decision.IssueComment.IssueIdentifier,
-			CommentID:       decision.IssueComment.CommentID,
-			TaskID:          decision.IssueComment.TaskID,
-		})
-		return true
-	}
 	if h.TaskService == nil || command.CompletionCallback == nil {
 		return false
 	}
@@ -1384,7 +1334,13 @@ func writeDispatchCoordinatorTerminal(
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
 			return true
 		}
-		writeJSON(w, http.StatusAccepted, AgentDispatchResponse{})
+		response := AgentDispatchResponse{}
+		if decision.IssueComment != nil {
+			response.Continuation = AgentDispatchContinuation{Kind: "issue", IssueID: decision.IssueComment.IssueID}
+			response.IssueIdentifier = decision.IssueComment.IssueIdentifier
+			response.CommentID = decision.IssueComment.CommentID
+		}
+		writeJSON(w, http.StatusAccepted, response)
 		return true
 	case inboundcoord.ActionSilence:
 		if err := h.TaskService.EnqueueSynchronousTaskCompletion(

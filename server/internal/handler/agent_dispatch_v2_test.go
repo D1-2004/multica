@@ -786,6 +786,10 @@ func TestSceneGraphInstructionIsInjectedForDingTalkChannel(t *testing.T) {
 		"does not notify the origin for you",
 		"Digital-employee inbound",
 		"Web chat inbound",
+		"You are the intermediary",
+		"<requester> asked me to ask you <question>",
+		"A blocker does not always go to the requester",
+		"Never stop after only commenting on the Issue",
 	} {
 		if !strings.Contains(scene.EffectiveText, want) {
 			t.Errorf("scene_graph missing %q", want)
@@ -899,12 +903,62 @@ func TestDingTalkConversationInstructionNamesIssueDelivery(t *testing.T) {
 		}
 	}
 
-	// Without a completion callback Router has no hook to deliver through, so
-	// the claim would be false.
+	// Without a completion callback Router has no hook to deliver through. The
+	// role contract remains, but it must not claim automatic delivery.
 	noCallback := stored
 	noCallback.CompletionCallback = nil
-	if got := buildDispatchConversationInstruction(noCallback, false); got != "" {
+	got := buildDispatchConversationInstruction(noCallback, false)
+	if strings.Contains(got, "delivers your final assistant output back") {
 		t.Fatalf("instruction claimed platform delivery with no callback: %q", got)
+	}
+	for _, want := range []string{"Delegated communication roles", "current_conversation_id", "next person whose input or action is needed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("no-callback issue instruction missing %q: %q", want, got)
+		}
+	}
+}
+
+func TestCoordinatorIssueCommentTaskContextMakesIndependentRelay(t *testing.T) {
+	raw := dispatchTaskContextWithPromptForTest(t, DispatchCommand{
+		SchemaVersion: "2.0",
+		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
+			Conversation: DispatchConversation{OpenConversationID: "cid-requester", Type: "single"},
+			Sender:       DispatchSender{DisplayName: "须莫", OpenDingTalkID: "open-requester"},
+		}},
+		Surface:  DispatchSurface{Type: "chat"},
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+		CompletionCallback: &DispatchCompletionCallback{
+			URL: "/api/v1/dispatch-tasks/router-task/execution-result",
+		},
+	}, "ROUTER CONTEXT")
+
+	encoded, err := coordinatorIssueCommentTaskContext(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, present := parsePersistedDispatchContext(encoded)
+	if !present {
+		t.Fatal("coordinator Issue context was not recognized")
+	}
+	if stored.Surface.Type != protocol.DispatchSurfaceTypeIssue || !stored.CoordinatorIssueFollowUp {
+		t.Fatalf("stored context = %+v", stored)
+	}
+	if stored.CompletionCallback != nil {
+		t.Fatalf("consumed Router callback survived: %+v", stored.CompletionCallback)
+	}
+	instruction := buildDispatchConversationInstruction(stored, false)
+	for _, want := range []string{
+		"current_sender_name\":\"须莫",
+		"current_sender_open_dingtalk_id\":\"open-requester",
+		"current_conversation_id\":\"cid-requester",
+		"short loop already acknowledged",
+		"No callback will deliver this task's later progress, blocker, or result",
+		"use the available DingTalk capability",
+	} {
+		if !strings.Contains(instruction, want) {
+			t.Errorf("coordinator follow-up instruction missing %q: %q", want, instruction)
+		}
 	}
 }
 
@@ -2666,7 +2720,7 @@ func TestCoordinatorRecalledIssueContinuation(t *testing.T) {
 		command.Continuation.Kind != "issue" || command.Continuation.IssueID != issueID {
 		t.Fatalf("command = %+v ok=%v", command, ok)
 	}
-	for _, want := range []string{"7点", "已关联外呼会话", "assoc_recall current_issue=true", "通知原发起人"} {
+	for _, want := range []string{"7点", "已关联外呼会话", "assoc_recall current_issue=true", "委托人", "下一位应答人", "不要固定发给委托人", "必须实际发钉钉消息"} {
 		if !strings.Contains(prompt.DisplayContent, want) {
 			t.Fatalf("follow-up prompt missing %q: %q", want, prompt.DisplayContent)
 		}

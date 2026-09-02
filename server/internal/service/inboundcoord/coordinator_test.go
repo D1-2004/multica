@@ -151,8 +151,10 @@ func TestIssueTitleAndDescription(t *testing.T) {
 		t.Fatalf("title = %q", IssueTitle(d, "长正文"))
 	}
 	desc := IssueDescription(d, "帮我看截止时间")
-	if !strings.Contains(desc, "前台已对用户说") || !strings.Contains(desc, "帮我看截止时间") {
-		t.Fatalf("description = %q", desc)
+	for _, want := range []string{"前台已对用户说", "帮我看截止时间", "委托人", "消息接收人", "当前能解除阻塞", "不要固定回复委托人"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("description missing %q: %q", want, desc)
+		}
 	}
 }
 
