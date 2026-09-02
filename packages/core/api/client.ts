@@ -371,6 +371,8 @@ import {
   TimelineEntriesSchema,
   UserSchema,
   DispatchPromptPreviewSchema,
+  ExtractAgentVoiceResponseSchema,
+  EMPTY_EXTRACT_AGENT_VOICE_RESPONSE,
   AgentOKRResponseSchema,
   WebhookDeliveryResponseSchema,
   BillingBalanceSchema,
@@ -1715,6 +1717,30 @@ export class ApiClient {
     );
   }
 
+  /**
+   * Draft persona and reply_tone from this agent's instructions. Does not
+   * persist; the Instructions tab fills the fields so the owner can edit
+   * and save. Falls back to empty strings when an older backend omits the
+   * endpoint shape.
+   */
+  async extractAgentVoice(
+    id: string,
+    instructions?: string,
+  ): Promise<{ persona: string; reply_tone: string }> {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/extract-voice`, {
+      method: "POST",
+      body: JSON.stringify(
+        instructions === undefined ? {} : { instructions },
+      ),
+    });
+    return parseWithFallback(
+      raw,
+      ExtractAgentVoiceResponseSchema,
+      EMPTY_EXTRACT_AGENT_VOICE_RESPONSE,
+      { endpoint: "POST /api/agents/{id}/extract-voice" },
+    );
+  }
+
   async listAgentOKRs(id: string): Promise<AgentOKRResponse> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/okrs`);
     return parseWithFallback(
@@ -2729,6 +2755,10 @@ export class ApiClient {
 
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {
     return this.fetch(`/api/agents/${agentId}/tasks`);
+  }
+
+  async listAgentCoordinatorSessions(agentId: string): Promise<ChatSession[]> {
+    return this.fetch(`/api/agents/${agentId}/coordinator-sessions`);
   }
 
   // Workspace-scoped agent task snapshot: every active task

@@ -73,6 +73,36 @@ submits it into pipeline 66, and triggers the run.
 Poll to completion with a Monitor loop on `预发部署` reaching `SUCCESS`; a
 deploy that fails leaves the stage `FAIL` and the pods in a crash loop.
 
+### Code-merge conflicts are expected — resolve, then publish
+
+Pipeline 66 frequently parks 代码合并 at `WAITING` with `CONFLICT` against the
+Aone release branch (locale JSON, `dispatchSegment` arity, coordinator vs
+assoc call sites). Do **not** stop to ask. Resolve and continue the same run:
+
+1. Read the merge task (`CODE_MERGE_RESOLVE_CONFLICT` in `supportedActions`)
+   for `sourceRevision` and `targetBranch`.
+2. Fetch that release branch from `origin` and `aone`, check it out, and
+   `git merge --no-ff <sourceRevision>`.
+3. Keep both sides when the conflict is additive (e.g. `prop_chat_session_resume`
+   and `prop_inbound_coordinator`; delivery labels and `excluded_not_a_dingtalk_channel`).
+4. After the merge, `gofmt` and compile-check `dispatch_prompt_segments.go`:
+   the live release often has an extra `delivery` argument on `dispatchSegment`
+   that inbound feature branches omit. Fix the call on the **release branch**
+   if the image build would fail.
+5. Push the release branch to `origin` and `aone`, then:
+
+   ```bash
+   a1 cd-pipeline run task <merge-task-id> CODE_MERGE_RESOLVE_CONFLICT --format json
+   ```
+
+6. Watch 构建 → 预发部署 → 预发集成测试. Exact `run rerun` of a failed
+   instance may rebuild an old merge SHA; if the compile fix is only on the
+   release tip, confirm the new run picked it up, or start a fresh
+   `a1 cd-pipeline run 66 --app 342160 --cr-id <cr-id>`.
+
+Do not include unrelated untracked files (`9077_*`, APP-META deletions) in
+these merge commits.
+
 ## Read runtime logs
 
 The backend serves its own log tail — no pod shell needed. It requires

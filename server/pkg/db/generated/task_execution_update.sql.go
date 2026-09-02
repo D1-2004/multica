@@ -259,6 +259,97 @@ func (q *Queries) EnqueueTaskExecutionUpdate(ctx context.Context, arg EnqueueTas
 	return i, err
 }
 
+const enqueueFrozenTaskExecutionUpdate = `-- name: EnqueueFrozenTaskExecutionUpdate :one
+INSERT INTO task_execution_update_outbox AS existing (
+    root_task_id,
+    target_task_id,
+    issue_id,
+    issue_identifier,
+    callback_url,
+    target_identity,
+    request_id,
+    agent_id,
+    target_agent_id,
+    update_type,
+    status,
+    result_message_frozen,
+    result_message
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'queued', TRUE, $11
+)
+ON CONFLICT (root_task_id) DO UPDATE
+SET updated_at = existing.updated_at
+WHERE existing.target_task_id = EXCLUDED.target_task_id
+  AND existing.issue_id = EXCLUDED.issue_id
+  AND existing.issue_identifier = EXCLUDED.issue_identifier
+  AND existing.callback_url = EXCLUDED.callback_url
+  AND existing.target_identity = EXCLUDED.target_identity
+  AND existing.request_id = EXCLUDED.request_id
+  AND existing.agent_id = EXCLUDED.agent_id
+  AND existing.target_agent_id = EXCLUDED.target_agent_id
+  AND existing.update_type = EXCLUDED.update_type
+  AND existing.result_message_frozen = TRUE
+  AND existing.result_message IS NOT DISTINCT FROM EXCLUDED.result_message
+RETURNING id, root_task_id, target_task_id, issue_id, issue_identifier, callback_url, target_identity, request_id, agent_id, target_agent_id, update_type, occurred_at, status, available_at, attempt_count, lease_token, lease_expires_at, last_error, delivered_at, created_at, updated_at, result_message, result_message_frozen
+`
+
+type EnqueueFrozenTaskExecutionUpdateParams struct {
+	RootTaskID      pgtype.UUID `json:"root_task_id"`
+	TargetTaskID    pgtype.UUID `json:"target_task_id"`
+	IssueID         pgtype.UUID `json:"issue_id"`
+	IssueIdentifier string      `json:"issue_identifier"`
+	CallbackUrl     string      `json:"callback_url"`
+	TargetIdentity  string      `json:"target_identity"`
+	RequestID       string      `json:"request_id"`
+	AgentID         pgtype.UUID `json:"agent_id"`
+	TargetAgentID   pgtype.UUID `json:"target_agent_id"`
+	UpdateType      string      `json:"update_type"`
+	ResultMessage   string      `json:"result_message"`
+}
+
+func (q *Queries) EnqueueFrozenTaskExecutionUpdate(ctx context.Context, arg EnqueueFrozenTaskExecutionUpdateParams) (TaskExecutionUpdateOutbox, error) {
+	row := q.db.QueryRow(ctx, enqueueFrozenTaskExecutionUpdate,
+		arg.RootTaskID,
+		arg.TargetTaskID,
+		arg.IssueID,
+		arg.IssueIdentifier,
+		arg.CallbackUrl,
+		arg.TargetIdentity,
+		arg.RequestID,
+		arg.AgentID,
+		arg.TargetAgentID,
+		arg.UpdateType,
+		arg.ResultMessage,
+	)
+	var i TaskExecutionUpdateOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.RootTaskID,
+		&i.TargetTaskID,
+		&i.IssueID,
+		&i.IssueIdentifier,
+		&i.CallbackUrl,
+		&i.TargetIdentity,
+		&i.RequestID,
+		&i.AgentID,
+		&i.TargetAgentID,
+		&i.UpdateType,
+		&i.OccurredAt,
+		&i.Status,
+		&i.AvailableAt,
+		&i.AttemptCount,
+		&i.LeaseToken,
+		&i.LeaseExpiresAt,
+		&i.LastError,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ResultMessage,
+		&i.ResultMessageFrozen,
+	)
+	return i, err
+}
+
 const freezeTaskExecutionUpdateResultMessage = `-- name: FreezeTaskExecutionUpdateResultMessage :one
 WITH RECURSIVE lineage AS (
     SELECT task.id, task.parent_task_id

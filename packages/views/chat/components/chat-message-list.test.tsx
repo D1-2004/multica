@@ -191,6 +191,75 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
   });
 });
 
+describe("ChatMessageList Coordinator timeline", () => {
+  it("renders persisted DWS and tool steps like an ordinary Chat run", async () => {
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <ChatMessageList
+            messages={[
+              {
+                id: "coordinator-input",
+                chat_session_id: "coordinator-session",
+                role: "user",
+                content: "问须莫 v6 今晚几点打球",
+                task_id: null,
+                created_at: new Date(0).toISOString(),
+              },
+              {
+                id: "coordinator-output",
+                chat_session_id: "coordinator-session",
+                role: "assistant",
+                content: "我已经转到原事项继续处理。",
+                task_id: null,
+                created_at: new Date(1).toISOString(),
+                message_kind: "coordinator",
+                coordinator: {
+                  action: "issue",
+                  source: "digital_employee",
+                  steps: [
+                    {
+                      seq: 1,
+                      type: "tool_use",
+                      tool: "dws_chat_history",
+                      input: '{"limit":10}',
+                    },
+                    {
+                      seq: 2,
+                      type: "tool_result",
+                      tool: "dws_chat_history",
+                      output: '{"message_count":10}',
+                    },
+                    {
+                      seq: 3,
+                      type: "thinking",
+                      content: "需要继续原事项",
+                    },
+                    {
+                      seq: 4,
+                      type: "text",
+                      content: "我已经转到原事项继续处理。",
+                    },
+                  ],
+                },
+              },
+            ]}
+            pendingTask={null}
+            availability="online"
+          />
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByText("Coordinator")).toBeInTheDocument();
+    expect(screen.getByText("我已经转到原事项继续处理。")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("3 steps"));
+    expect(screen.getByText("dws_chat_history")).toBeInTheDocument();
+    expect(screen.getByText(/message_count/)).toBeInTheDocument();
+    expect(screen.getByText("需要继续原事项")).toBeInTheDocument();
+  });
+});
+
 describe("ChatMessageList quick actions", () => {
   it("renders up to three suggestions and sends the hidden prompt", async () => {
     const qc = new QueryClient();

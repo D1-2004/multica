@@ -28,6 +28,9 @@ type outboundQueries interface {
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
 	ListPendingChatMessagePreviewsAfterTask(ctx context.Context, taskID pgtype.UUID) ([]db.ListPendingChatMessagePreviewsAfterTaskRow, error)
+	GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (string, error)
+	GetIssue(ctx context.Context, id pgtype.UUID) (db.Issue, error)
+	ListCommentsForIssue(ctx context.Context, arg db.ListCommentsForIssueParams) ([]db.Comment, error)
 }
 
 // taskFailedText is the user-visible notice for a failed chat run. The
@@ -62,10 +65,15 @@ func NewOutbound(q outboundQueries, decrypt Decrypter, messenger *RobotMessenger
 	return &Outbound{q: q, decrypt: decrypt, messenger: messenger, typing: typing, logger: logger, dispatched: make(map[string]struct{})}
 }
 
-// Register covers both ingress generations. Legacy Stream sessions settle on
-// chat-done/task-failed through TypingIndicatorManager. Dispatch Command 2.0
-// issue tasks use task:queued for the processing emotion and terminal task
-// events for recall plus robot_sdk reply.
+// Register covers both ingress generations. Legacy Stream chat sessions settle
+// on chat-done/task-failed through TypingIndicatorManager. Dispatch Command 2.0
+// issue tasks that did not already attach a Stream processing emotion use
+// task:queued for that emotion and terminal task events for recall plus
+// robot_sdk reply. Stream-owned rows keep a single emotion for the whole
+// retry chain. Coordinator issues created from a Stream robot callback have
+// no robot_sdk dispatch binding; their terminal task events settle that
+// Stream row and post the last agent comment through the Stream robot
+// installation.
 func (o *Outbound) Register(bus *events.Bus) {
 	bus.Subscribe(protocol.EventChatDone, o.handleEvent)
 	bus.Subscribe(protocol.EventTaskQueued, o.handleEvent)
@@ -90,12 +98,17 @@ func (o *Outbound) handleEvent(e events.Event) {
 			)
 		}
 		o.logger.WarnContext(ctx, "dingtalk outbound: reply delivery failed",
-			"error", err, "chat_session_id", e.ChatSessionID)
+			"error", err,
+			"task_id", util.UUIDToString(taskIDFromEvent(e)),
+			"chat_session_id", e.ChatSessionID)
 	}
 }
 
 func (o *Outbound) processEvent(ctx context.Context, e events.Event) error {
 	if handled, err := o.processDispatchEvent(ctx, e); handled {
+		return err
+	}
+	if handled, err := o.processStreamIssueEvent(ctx, e); handled {
 		return err
 	}
 	// Legacy Stream chats publish their reply on chat:done and their terminal
@@ -278,6 +291,14 @@ type dispatchOutboundClaimStore interface {
 	ClaimDispatchOutbound(context.Context, pgtype.UUID) (bool, error)
 }
 
+type streamIssueOutboundClaimStore interface {
+	ClaimStreamIssueOutbound(context.Context, pgtype.UUID) (bool, error)
+}
+
+type streamIssueOutboundReleaseStore interface {
+	ReleaseStreamIssueOutbound(context.Context, pgtype.UUID) error
+}
+
 type dispatchProcessingReactionClaimStore interface {
 	ClaimDispatchProcessingReaction(context.Context, pgtype.UUID) (bool, error)
 }
@@ -288,6 +309,18 @@ type dispatchProcessingRecallClaimStore interface {
 
 type dispatchTaskResultResolver interface {
 	GetAgentTask(context.Context, pgtype.UUID) (db.AgentTaskQueue, error)
+}
+
+type dispatchLastReplyResolver interface {
+	GetLastTaskReplyText(context.Context, pgtype.UUID) (pgtype.Text, error)
+}
+
+type streamProcessingEmotionStore interface {
+	GetDingTalkProcessingEmotionBySourceMessage(context.Context, string) (db.DingtalkProcessingEmotion, error)
+}
+
+type streamIssueEmotionStore interface {
+	GetDingTalkProcessingEmotionByTask(context.Context, pgtype.UUID) (db.DingtalkProcessingEmotion, error)
 }
 
 type dispatchRobotRoute struct {
@@ -334,26 +367,47 @@ func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bo
 		return true, errors.New("dingtalk dispatch outbound: missing idempotency key")
 	}
 
+	retryPending := false
+	if e.Type == protocol.EventTaskFailed {
+		retryPending, _ = payload["retry_pending"].(bool)
+	}
+	if e.Type == protocol.EventTaskFailed && retryPending {
+		return true, nil
+	}
+
+	streamRow, streamOwned := o.streamProcessingEmotion(ctx, dispatchLatestOpenMsgID(payload))
 	wantProcessing := false
 	wantRecall := false
 	wantReply := false
+	wantStreamSettle := false
 	content := ""
 	switch e.Type {
 	case protocol.EventTaskQueued:
-		wantProcessing, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseProcessing)
+		if !streamOwned {
+			wantProcessing, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseProcessing)
+		}
 	case protocol.EventTaskCompleted:
-		wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		if !streamOwned {
+			wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		}
 		content = o.dispatchCompletionContent(ctx, taskUUID, payload)
 		if strings.TrimSpace(content) != "" {
 			wantReply, err = o.claimDispatchPhaseAfter(ctx, taskUUID, idempotencyKey, dispatchPhaseOutbound, err)
 		}
+		wantStreamSettle = streamOwned
 	case protocol.EventTaskFailed:
-		wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		if !streamOwned {
+			wantRecall, err = o.claimDispatchPhase(ctx, taskUUID, idempotencyKey, dispatchPhaseRecall)
+		}
 		content = taskFailedText
 		wantReply, err = o.claimDispatchPhaseAfter(ctx, taskUUID, idempotencyKey, dispatchPhaseOutbound, err)
+		wantStreamSettle = streamOwned
 	}
 	if err != nil {
 		return true, err
+	}
+	if wantStreamSettle {
+		o.settleStreamProcessingEmotion(ctx, streamRow)
 	}
 	if !wantProcessing && !wantRecall && !wantReply {
 		return true, nil
@@ -382,24 +436,264 @@ func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bo
 	return true, lifecycleErr
 }
 
+func (o *Outbound) streamIssueCompletionContent(ctx context.Context, _, issueID pgtype.UUID, _ map[string]any) string {
+	if !issueID.Valid {
+		return ""
+	}
+	issue, err := o.q.GetIssue(ctx, issueID)
+	if err != nil {
+		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: issue lookup failed",
+			"event", "dingtalk_stream_issue_outbound_lookup_failed",
+			"issue_id", util.UUIDToString(issueID),
+			"error", err,
+		)
+		return ""
+	}
+	rows, err := o.q.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       50,
+	})
+	if err != nil {
+		o.logger.WarnContext(ctx, "dingtalk stream issue outbound: last agent comment lookup failed",
+			"event", "dingtalk_stream_issue_outbound_lookup_failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"workspace_id", util.UUIDToString(issue.WorkspaceID),
+			"error", err,
+		)
+		return ""
+	}
+	for i := len(rows) - 1; i >= 0; i-- {
+		if rows[i].AuthorType != "agent" {
+			continue
+		}
+		if text := strings.TrimSpace(rows[i].Content); text != "" {
+			return text
+		}
+	}
+	o.logger.Info("dingtalk stream issue outbound skipped",
+		"event", "dingtalk_stream_issue_outbound_empty",
+		"issue_id", util.UUIDToString(issue.ID),
+		"workspace_id", util.UUIDToString(issue.WorkspaceID),
+		"comment_rows", len(rows),
+	)
+	return ""
+}
+
+func (o *Outbound) claimStreamIssueOutbound(ctx context.Context, taskID pgtype.UUID, idempotencyKey string) (bool, error) {
+	if store, ok := o.q.(streamIssueOutboundClaimStore); ok {
+		claimed, err := store.ClaimStreamIssueOutbound(ctx, taskID)
+		if err != nil {
+			return false, fmt.Errorf("claim stream issue outbound: %w", err)
+		}
+		return claimed, nil
+	}
+	return o.claimDispatchPhase(ctx, taskID, idempotencyKey, dispatchPhaseOutbound)
+}
+
+func (o *Outbound) releaseStreamIssueOutbound(ctx context.Context, taskID pgtype.UUID) {
+	if o == nil {
+		return
+	}
+	if store, ok := o.q.(streamIssueOutboundReleaseStore); ok {
+		if err := store.ReleaseStreamIssueOutbound(ctx, taskID); err != nil {
+			o.logger.Error("dingtalk stream issue outbound claim release failed",
+				"event", "dingtalk_stream_issue_outbound_claim_release_failed",
+				"task_id", util.UUIDToString(taskID),
+				"error", err,
+			)
+		}
+	}
+}
+
 func (o *Outbound) dispatchCompletionContent(ctx context.Context, taskID pgtype.UUID, payload map[string]any) string {
 	output, _ := payload["output"].(string)
 	if strings.TrimSpace(output) != "" {
 		return output
 	}
-	resolver, ok := o.q.(dispatchTaskResultResolver)
-	if !ok {
-		return ""
+	if resolver, ok := o.q.(dispatchTaskResultResolver); ok {
+		task, err := resolver.GetAgentTask(ctx, taskID)
+		if err == nil {
+			var result protocol.TaskCompletedPayload
+			if json.Unmarshal(task.Result, &result) == nil && strings.TrimSpace(result.Output) != "" {
+				return result.Output
+			}
+		}
 	}
-	task, err := resolver.GetAgentTask(ctx, taskID)
+	if reader, ok := o.q.(dispatchLastReplyResolver); ok {
+		reply, err := reader.GetLastTaskReplyText(ctx, taskID)
+		if err == nil && strings.TrimSpace(reply.String) != "" {
+			return reply.String
+		}
+	}
+	return ""
+}
+
+func (o *Outbound) streamProcessingEmotion(ctx context.Context, sourceMessageID string) (db.DingtalkProcessingEmotion, bool) {
+	store, ok := o.q.(streamProcessingEmotionStore)
+	if !ok || strings.TrimSpace(sourceMessageID) == "" {
+		return db.DingtalkProcessingEmotion{}, false
+	}
+	row, err := store.GetDingTalkProcessingEmotionBySourceMessage(ctx, strings.TrimSpace(sourceMessageID))
 	if err != nil {
+		return db.DingtalkProcessingEmotion{}, false
+	}
+	return row, true
+}
+
+func (o *Outbound) settleStreamProcessingEmotion(ctx context.Context, row db.DingtalkProcessingEmotion) {
+	if o.typing == nil {
+		return
+	}
+	o.typing.settleStreamSource(ctx, row.InstallationID, row.SourceMessageID)
+}
+
+// processStreamIssueEvent owns Stream robot coordinator issues. Those tasks
+// carry an issue_id and a Stream processing emotion, but not
+// dispatch_outbound.mode=robot_sdk, so processDispatchEvent ignores them.
+// Chat Stream tasks stay on chat:done; Dispatch Command 2.0 stays on
+// processDispatchEvent.
+func (o *Outbound) processStreamIssueEvent(ctx context.Context, e events.Event) (bool, error) {
+	if e.Type != protocol.EventTaskCompleted && e.Type != protocol.EventTaskFailed {
+		return false, nil
+	}
+	payload, ok := e.Payload.(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	issueID, _ := payload["issue_id"].(string)
+	if _, err := util.ParseUUID(strings.TrimSpace(issueID)); err != nil {
+		return false, nil
+	}
+	taskID, _ := payload["task_id"].(string)
+	taskUUID, err := util.ParseUUID(taskID)
+	if err != nil {
+		return false, nil
+	}
+	row, ok := o.streamProcessingEmotionByTask(ctx, taskUUID)
+	if !ok {
+		return false, nil
+	}
+	retryPending := false
+	if e.Type == protocol.EventTaskFailed {
+		retryPending, _ = payload["retry_pending"].(bool)
+	}
+	if retryPending {
+		return true, nil
+	}
+
+	content := taskFailedText
+	if e.Type == protocol.EventTaskCompleted {
+		issueUUID, _ := util.ParseUUID(strings.TrimSpace(issueID))
+		content = o.streamIssueCompletionContent(ctx, taskUUID, issueUUID, payload)
+	}
+	wantReply := false
+	if strings.TrimSpace(content) != "" {
+		wantReply, err = o.claimStreamIssueOutbound(ctx, taskUUID, taskID)
+		if err != nil {
+			return true, err
+		}
+	}
+	o.settleStreamProcessingEmotion(ctx, row)
+	if strings.TrimSpace(content) == "" {
+		o.logger.Info("dingtalk stream issue outbound skipped",
+			"event", "dingtalk_stream_issue_outbound_empty",
+			"task_id", util.UUIDToString(taskUUID),
+			"issue_id", strings.TrimSpace(issueID),
+			"open_msg_id_hash", dingtalkTraceHash(row.OpenMsgID),
+		)
+		return true, nil
+	}
+	if !wantReply {
+		return true, nil
+	}
+	// Stream chat:done posts through the callback session webhook when the
+	// task still carries it. Coordinator issue tasks persist that webhook in
+	// dispatch context; using the robot SDK here would land outside the
+	// conversation the ACK already used.
+	if reply, ok := o.sessionReplyContext(ctx, taskUUID); ok {
+		if err := postSessionWebhook(ctx, o.messenger.httpClient, reply.Webhook, content); err != nil {
+			o.releaseStreamIssueOutbound(ctx, taskUUID)
+			return true, fmt.Errorf("post dingtalk stream issue reply: %w", err)
+		}
+	} else {
+		route, err := o.streamIssueRobotRoute(ctx, row)
+		if err != nil {
+			o.releaseStreamIssueOutbound(ctx, taskUUID)
+			return true, err
+		}
+		if err := o.messenger.SendMarkdown(ctx, route.credentials, route.reply, content); err != nil {
+			o.releaseStreamIssueOutbound(ctx, taskUUID)
+			return true, fmt.Errorf("post dingtalk stream issue reply: %w", err)
+		}
+	}
+	o.logger.Info("dingtalk stream issue outbound",
+		"event", "dingtalk_stream_issue_outbound",
+		"task_id", util.UUIDToString(taskUUID),
+		"issue_id", strings.TrimSpace(issueID),
+		"open_msg_id_hash", dingtalkTraceHash(row.OpenMsgID),
+	)
+	return true, nil
+}
+
+func (o *Outbound) streamProcessingEmotionByTask(ctx context.Context, taskID pgtype.UUID) (db.DingtalkProcessingEmotion, bool) {
+	store, ok := o.q.(streamIssueEmotionStore)
+	if !ok || !taskID.Valid {
+		return db.DingtalkProcessingEmotion{}, false
+	}
+	row, err := store.GetDingTalkProcessingEmotionByTask(ctx, taskID)
+	if err != nil {
+		return db.DingtalkProcessingEmotion{}, false
+	}
+	return row, true
+}
+
+func (o *Outbound) streamIssueRobotRoute(ctx context.Context, row db.DingtalkProcessingEmotion) (dispatchRobotRoute, error) {
+	if !row.ChatSessionID.Valid {
+		return dispatchRobotRoute{}, errors.New("dingtalk stream issue outbound: processing emotion has no chat session")
+	}
+	inst, err := o.q.GetChannelInstallation(ctx, db.GetChannelInstallationParams{
+		ID:          row.InstallationID,
+		ChannelType: string(TypeDingtalk),
+	})
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("load stream issue DingTalk installation: %w", err)
+	}
+	if inst.Status != "active" {
+		return dispatchRobotRoute{}, errors.New("dingtalk stream issue outbound: installation is not active")
+	}
+	creds, err := decodeChannelCredentials(inst.Config, o.decrypt)
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("decode stream issue DingTalk credentials: %w", err)
+	}
+	if callbackRobotCode := strings.TrimSpace(row.RobotCode); callbackRobotCode != "" {
+		creds.RobotCode = callbackRobotCode
+	}
+	binding, err := o.q.GetChannelChatSessionBindingBySession(ctx, db.GetChannelChatSessionBindingBySessionParams{
+		ChatSessionID: row.ChatSessionID,
+		ChannelType:   string(TypeDingtalk),
+	})
+	if err != nil {
+		return dispatchRobotRoute{}, fmt.Errorf("lookup stream issue DingTalk chat binding: %w", err)
+	}
+	reply := outboundTarget(binding)
+	reply.ReplyToOpenMsgID = row.OpenMsgID
+	return dispatchRobotRoute{
+		credentials: creds,
+		reply:       reply,
+		emotion:     EmotionTarget{OpenConversationID: row.OpenConversationID, OpenMsgID: row.OpenMsgID, RobotCode: row.RobotCode},
+	}, nil
+}
+
+func dispatchLatestOpenMsgID(payload map[string]any) string {
+	data, _ := payload["dispatch_event_data"].(map[string]any)
+	messages, _ := data["messages"].([]any)
+	if len(messages) == 0 {
 		return ""
 	}
-	var result protocol.TaskCompletedPayload
-	if json.Unmarshal(task.Result, &result) != nil {
-		return ""
-	}
-	return result.Output
+	latest, _ := messages[len(messages)-1].(map[string]any)
+	id, _ := latest["openMsgId"].(string)
+	return strings.TrimSpace(id)
 }
 
 func (o *Outbound) resolveDispatchRobotRoute(ctx context.Context, payload map[string]any) (dispatchRobotRoute, error) {

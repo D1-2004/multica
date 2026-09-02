@@ -50,6 +50,10 @@
     "failed_after": "{{elapsed}} 后失败",
     "finished_in": "{{elapsed}} 内结束",
     "no_response": "本轮已结束，Agent 没有返回文字回复。",
+    "coordinator_badge": "Coordinator",
+    "coordinator_source_web": "网页 Chat",
+    "coordinator_source_robot": "钉钉机器人",
+    "coordinator_source_digital_employee": "数字员工",
     "failure": {
       "agent_error": "智能体运行时出错，没能完成回复。请重试。",
       "timeout": "智能体处理超时，未能完成。可以重试，或把需求拆得更小一些。",

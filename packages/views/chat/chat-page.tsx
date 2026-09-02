@@ -324,7 +324,8 @@ export function ChatPage() {
         isRunning={!!c.pendingTaskId}
         allowSubmitWhileRunning={c.pendingTask?.supports_queue === true}
         disabled={
-          c.isSessionArchived || c.isAgentArchived || !c.isAgentRuntimeBound
+          c.isSessionArchived || c.isAgentArchived || !c.isAgentRuntimeBound ||
+          c.currentSession?.is_coordinator === true
         }
         noAgent={c.noAgent}
         agentArchived={c.isAgentArchived}

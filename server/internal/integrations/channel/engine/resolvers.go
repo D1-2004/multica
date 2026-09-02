@@ -47,6 +47,12 @@ const (
 	// run on nothing, and some providers reject empty input outright). The
 	// replier confirms so the user knows the reset took effect.
 	OutcomeFreshSession Outcome = "fresh_session"
+	// OutcomeCoordinatorReply: the server short loop answered in the room
+	// without enqueueing a sandbox task. ReplyText is the user-visible body.
+	OutcomeCoordinatorReply Outcome = "coordinator_reply"
+	// OutcomeCoordinatorSilence: the short loop stored the inbound message
+	// and chose not to speak or start a sandbox.
+	OutcomeCoordinatorSilence Outcome = "coordinator_silence"
 )
 
 // DropReason enumerates the drop-audit categories. Shared values retain the
@@ -81,6 +87,9 @@ type Result struct {
 	IssueNumber     int32
 	IssueIdentifier string
 	IssueTitle      string
+	// CoordinatorIssue marks an Issue created by the short loop. The short-loop
+	// text completes Router immediately; TaskID continues independently.
+	CoordinatorIssue bool
 	// UnbindExisted qualifies OutcomeUnbound.
 	UnbindExisted bool
 	// IssueDuplicate marks an /issue command that did not create a new issue
@@ -91,6 +100,9 @@ type Result struct {
 	// message also carried downloadable media. Repliers use it to tell the
 	// sender to include that media again with the corrected command.
 	IssueUsageHadMedia bool
+	// ReplyText is the short-loop first sentence for coordinator reply or
+	// issue acknowledgement. Empty means the replier should keep its stock copy.
+	ReplyText string
 	// runScheduled reports whether this ingest scheduled a normal chat run.
 	// It is Router-internal state: repliers must continue to use Outcome.
 	runScheduled bool

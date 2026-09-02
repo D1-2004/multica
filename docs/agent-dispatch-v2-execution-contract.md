@@ -19,6 +19,111 @@ mode has an explicit initial persistence materializer:
 `calendar/calendar.started` and `approval/approval.status_changed` contracts
 remain Issue-only because neither has a foreground Chat session to release.
 
+### Inbound short loop (reply vs issue)
+
+The coordinator's purpose, prompt assembly, persona placement, tool-call
+schemas, AI-native recall, and dual IM-history paths are specified in
+[Inbound Coordinator Loop](inbound-coordinator-loop.md). This section is the
+execution contract those tools must obey.
+
+Before a sandbox starts, Multica runs a **bounded server-side tool loop**
+(`assoc_recall` / `assoc_bind` / `issue_get` / `issue_comment_list` /
+`issue_comment_add` / `finish`, thinking off, at most eight model
+rounds, last round finish-only, `tool_choice=required`) on web Chat and on
+DingTalk `channel/message.created` for digital employees and robots. A verdict
+is accepted from `finish`, or from a successful terminal `issue_comment_add`
+that already persisted the member comment and `reply_text`. Graph questions (what a
+`conversation_id` is following, which matters exist) must call `assoc_recall`
+with that exact id; empty items means unknown. Only work that needs DWS,
+search, files, or tracking becomes an Issue and starts a sandbox.
+
+For Router-backed `channel/message.created` commands that materialize Chat or an Issue,
+HTTP acceptance and coordinator execution are separate durability boundaries.
+Multica atomically stores the accepted 202 response, a PostgreSQL coordinator
+job, and a read-only Coordinator Chat before replying to Router. The Router's
+10-second read timeout therefore covers only validation and durable admission;
+it does not cover DWS history or model latency. Concurrent workers claim jobs
+with `FOR UPDATE SKIP LOCKED`, recover expired one-minute leases after a replica
+restart, and keep the existing execution-update/execution-result callbacks as
+the terminal delivery contract.
+
+For a digital-employee direct message, an `assoc_recall` hit on exactly one
+open or waiting Issue through `outreach` / `waiting_on` makes the inbound turn
+an Issue continuation. The loop reads that Issue and calls `issue_comment_add`
+with the recalled `issue_id`, exact inbound answer, and a short `reply_text`.
+Multica writes a member comment through the normal Issue path, which starts the
+Issue-owned next task. The successful tool call ends the loop immediately; it
+must not create another Issue or wait for a separate `finish` round. The task
+continues the original matter and finds and notifies its original requester,
+while `reply_text` only acknowledges the current respondent.
+
+The loop does not expose DWS, search, or news as model-callable tools and is not
+behind a feature flag. On robot and digital-employee turns, the server resolves
+the inbound `uid/orgId`, mints a **separate** short-lived Agent Identity context,
+redeems it in a per-request `DWS_CONFIG_DIR`, and runs `dws chat message list`
+for the authoritative current DingTalk conversation before the first model round.
+The task/sandbox ContextToken is never consumed. The current message is removed and
+the previous latest 10 messages are supplied chronologically. A reply message keeps
+its `quotedMessage` sender and content inline with that history entry. Each request owns
+and deletes its credential directory, so concurrent users cannot share a DWS
+profile. A DWS identity or read failure continues the existing sandbox enqueue;
+it never substitutes Multica's chat projection or the Router dispatch window.
+Web Chat does not load DingTalk history. It uses `qwen3.7-plus` with thinking off
+and a 45s wall clock shared by DWS history and all model rounds. Agent
+setting `inbound_coordinator` is on by default for new and existing agents; an
+explicit owner off switch skips the loop and enqueues the sandbox.
+
+| Action | User sees | Sandbox |
+| --- | --- | --- |
+| `reply` | One complete sentence in the current conversation | none |
+| `issue` | A living first sentence that names the concrete thing being checked, then an Issue | Issue task |
+| `silence` | Nothing. Web Chat never silences. Group chatter that is not for the agent may silence | none |
+| internal continue | Existing enqueue path when the decisioner is unavailable | existing |
+
+The routing contract forbids `reply` from terminating with a capability refusal such
+as “I cannot access contacts”. Requests that need an unavailable lookup or action must
+choose `issue` and use the normal concrete Issue acknowledgement.
+
+Digital-employee DWS outbound delivers `reply` through a completed
+`execution-result` row whose `resultMessage` is that sentence. An Issue
+acknowledgement is a frozen `execution-update` (`delegated_to_issue` +
+`resultMessage`) so the later Issue completion can still close the dispatch
+through `execution-result`. A root Issue completion uses the normalized provider
+`output`, never the last streamed task-message fragment; comment callbacks keep
+their thread-specific Agent reply. A completed task that targets a concrete
+Agent comment therefore replies with that comment even when the run-wide
+`reply_decision` is silent. Robots post the same sentences through the
+Robot SDK replier; Router `resultMessage` does not send a second DWS copy.
+
+Web Chat keeps its existing session. Router-backed robot and digital-employee
+short loops each create a dedicated read-only Chat session marked
+`is_coordinator=true`. The session is visible as soon as durable admission
+commits, and the completed assistant row persists as
+`message_kind=coordinator`. Its trace contains the DWS history read and every
+model/tool step, so the ordinary Chat timeline renders the complete decision
+process without a sandbox task. Coordinator sessions and message rows carry a
+`Coordinator` label; their composer is disabled.
+
+Calendar, approval, emotion-only, and A2A events skip this loop. Digital-employee
+`emotionReply` events whose operator is the agent itself (Router 处理中/已完成
+indications, or the sandbox adding then removing an ack) are closed as silence
+and do not create Issue or comment work. A colleague sticking 赞 on the agent's
+message still dispatches.
+
+Robot Stream callbacks attach the processing emotion at inbox time. Issue-backed
+`robot_sdk` dispatch must not add or recall that same emotion while the Stream
+row exists: retries and child tasks would flap it. A retry-pending `task:failed`
+stays silent. Terminal complete or failed-without-retry settles the Stream row
+and posts the last agent comment through the Robot SDK when `output` is empty.
+
+Stream robot coordinator issues are not Dispatch Command 2.0: they have an
+`issue_id` and a Stream processing emotion, but no `dispatch_outbound.mode=
+robot_sdk`. Those completions must not wait for `chat:done` (issue tasks do
+not publish it) and must not look up `dingtalk_account`. They settle the
+Stream row by task lineage and post the last agent comment through the Stream
+robot installation and the chat-session binding (DM: staff id; group:
+openConversationId).
+
 ### Issue threading
 
 Within `issue`, an Agent controls whether a conversation threads. `agent.dispatch_always_new_issue`
@@ -37,10 +142,15 @@ A side effect worth knowing: threading refuses a follow-up with `409` while the
 referenced Issue still has a pending agent task. `dispatch_always_new_issue`
 does not hit that guard, because each message gets its own Issue.
 
-Multica does not parse slash commands from message text. Text such as `/issue`,
-`/new`, `/reset`, or `/unbind` remains prompt content unless the authenticated
-Router translates a supported IM command into the structured `control` object
-described below.
+Multica does not parse Router `control` slash commands from message text. Text
+such as `/issue`, `/new`, `/reset`, or `/unbind` remains prompt content unless
+the authenticated Router translates a supported IM command into the structured
+`control` object described below.
+
+`/reset-memory` is the exception. If the inbound channel text's first token
+(optional leading `@mention`) is `/reset-memory`, Dispatch V2 closes this
+conversation's assoc edges, unlinks its events from Issues, and replies without
+a sandbox. It is not Router `/reset` (ForceFresh).
 
 The response always returns the latest continuation produced by the selected
 surface. A recreated missing Issue or chat therefore replaces a stale
@@ -84,10 +194,12 @@ structures; Multica never infers control from the message text:
   terminal callback with `executionStatus=canceled`.
 - `/cancel` sends `action=cancel` plus the exact canonical UUID in
   `targetExternalTaskId`. It also replays the target's chat continuation but
-  sends no completion callback for the command itself. Multica verifies that
-  the target belongs to that Agent and chat session, cancels only an active
-  task, preserves the ingested IM input, and creates no new task. Queued turns
-  are retained. Repeating cancellation for a terminal target is idempotent.
+  sends no message text or completion callback for the command itself. Multica
+  still requires the message envelope and `openMsgId`, but does not require
+  text or an attachment for `action=cancel`. It verifies that the target belongs
+  to that Agent and chat session, cancels only an active task, preserves the
+  ingested IM input, and creates no new task. Queued turns are retained.
+  Repeating cancellation for a terminal target is idempotent.
 
 A dispatch control returns the ordinary Chat continuation and task id. A steer
 also returns `controlResult` with the promoted task and, when present, the
@@ -914,3 +1026,13 @@ parsing or rewriting Router's context string.
   Router-owned dispatch caused a correctly continuation-free `/new` request to
   rediscover the previous Chat and made completion routing appear coupled to a
   binding that Router does not use.
+
+## Change record: 2026-09-01 Action-specific IM control validation
+
+- History: Agent Dispatch V2 now validates message content according to
+  `control.action`. The default `dispatch` action still requires text or an
+  attachment, while `cancel` accepts the Router's command envelope with an
+  `openMsgId` and no remaining message content.
+- Reason: The Router removes the `/cancel` command before dispatch. Applying
+  ordinary dispatch-content validation before the cancel branch rejected a
+  valid cancellation before Multica could validate and cancel its target task.

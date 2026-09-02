@@ -320,9 +320,56 @@ export function AgentDetailInspector({
             canEdit={canEdit}
             onSave={(next) => update({ chat_session_resume: next })}
           />
+          <InboundCoordinatorField
+            agentId={agent.id}
+            enabled={agent.inbound_coordinator === true}
+            canEdit={canEdit}
+            onSave={(next) => update({ inbound_coordinator: next })}
+          />
         </SettingsCard>
       </SettingsSection>
     </div>
+  );
+}
+
+function InboundCoordinatorField({
+  agentId,
+  enabled,
+  canEdit,
+  onSave,
+}: {
+  agentId: string;
+  enabled: boolean;
+  canEdit: boolean;
+  onSave: (next: boolean) => Promise<void>;
+}) {
+  const { t } = useT("agents");
+  const [draft, setDraft] = useState(enabled);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft(enabled);
+  }, [agentId, enabled]);
+
+  return (
+    <SettingsRow
+      label={t(($) => $.inspector.prop_inbound_coordinator)}
+      description={t(($) => $.inspector.prop_inbound_coordinator_hint)}
+      align="start"
+    >
+      <Switch
+        checked={draft}
+        disabled={!canEdit || saving}
+        onCheckedChange={(checked) => {
+          setDraft(checked);
+          setSaving(true);
+          void onSave(checked)
+            .catch(() => setDraft(!checked))
+            .finally(() => setSaving(false));
+        }}
+        aria-label={t(($) => $.inspector.prop_inbound_coordinator)}
+      />
+    </SettingsRow>
   );
 }
 

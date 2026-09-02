@@ -1640,7 +1640,10 @@ SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_
        COALESCE(lm.message_kind, '') AS last_message_kind,
        EXISTS (
          SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-       ) AS is_a2a
+       ) AS is_a2a,
+       EXISTS (
+         SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+       ) AS is_coordinator
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -1651,6 +1654,9 @@ LEFT JOIN LATERAL (
    LIMIT 1
 ) lm ON true
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2
+  AND NOT EXISTS (
+    SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+  )
   AND (
     lm.created_at IS NOT NULL
     OR (
@@ -1697,6 +1703,7 @@ type ListAllChatSessionsByCreatorRow struct {
 	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
 	LastMessageKind          string             `json:"last_message_kind"`
 	IsA2a                    bool               `json:"is_a2a"`
+	IsCoordinator            bool               `json:"is_coordinator"`
 }
 
 // Unlike ListChatSessionsByCreator this returns archived sessions too (for the
@@ -1739,6 +1746,7 @@ func (q *Queries) ListAllChatSessionsByCreator(ctx context.Context, arg ListAllC
 			&i.LastMessageFailureReason,
 			&i.LastMessageKind,
 			&i.IsA2a,
+			&i.IsCoordinator,
 		); err != nil {
 			return nil, err
 		}
@@ -2081,7 +2089,10 @@ SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_
        COALESCE(lm.message_kind, '') AS last_message_kind,
        EXISTS (
          SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
-       ) AS is_a2a
+       ) AS is_a2a,
+       EXISTS (
+         SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+       ) AS is_coordinator
 FROM chat_session cs
 LEFT JOIN LATERAL (
   SELECT content, role, created_at, failure_reason, message_kind
@@ -2092,6 +2103,9 @@ LEFT JOIN LATERAL (
    LIMIT 1
 ) lm ON true
 WHERE cs.workspace_id = $1 AND cs.creator_id = $2 AND cs.status = 'active'
+  AND NOT EXISTS (
+    SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+  )
   AND (
     lm.created_at IS NOT NULL
     OR (
@@ -2138,6 +2152,7 @@ type ListChatSessionsByCreatorRow struct {
 	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
 	LastMessageKind          string             `json:"last_message_kind"`
 	IsA2a                    bool               `json:"is_a2a"`
+	IsCoordinator            bool               `json:"is_coordinator"`
 }
 
 // IM-style list: each active session with its unread *count* (assistant
@@ -2176,6 +2191,115 @@ func (q *Queries) ListChatSessionsByCreator(ctx context.Context, arg ListChatSes
 			&i.LastMessageFailureReason,
 			&i.LastMessageKind,
 			&i.IsA2a,
+			&i.IsCoordinator,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCoordinatorChatSessionsByAgent = `-- name: ListCoordinatorChatSessionsByAgent :many
+SELECT cs.id, cs.workspace_id, cs.agent_id, cs.creator_id, cs.title, cs.session_id, cs.work_dir, cs.status, cs.created_at, cs.updated_at, cs.unread_since, cs.runtime_id, cs.last_read_at, cs.is_agent_intro, cs.pinned_at, cs.project_id,
+       0::int AS unread_count,
+       COALESCE(lm.content, '') AS last_message_content,
+       COALESCE(lm.role, '') AS last_message_role,
+       lm.created_at AS last_message_at,
+       lm.failure_reason AS last_message_failure_reason,
+       COALESCE(lm.message_kind, '') AS last_message_kind,
+       EXISTS (
+         SELECT 1 FROM a2a_context ac WHERE ac.chat_session_id = cs.id
+       ) AS is_a2a,
+       TRUE AS is_coordinator
+FROM chat_session cs
+LEFT JOIN LATERAL (
+  SELECT content, role, created_at, failure_reason, message_kind
+    FROM chat_message m
+   WHERE m.chat_session_id = cs.id
+     AND m.message_kind != 'channel_command'
+   ORDER BY m.created_at DESC
+   LIMIT 1
+) lm ON true
+WHERE cs.workspace_id = $1 AND cs.agent_id = $2
+  AND EXISTS (
+    SELECT 1 FROM inbound_coordinator_job job WHERE job.chat_session_id = cs.id
+  )
+  AND lm.created_at IS NOT NULL
+ORDER BY COALESCE(lm.created_at, cs.updated_at) DESC
+`
+
+type ListCoordinatorChatSessionsByAgentParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+}
+
+type ListCoordinatorChatSessionsByAgentRow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	AgentID                  pgtype.UUID        `json:"agent_id"`
+	CreatorID                pgtype.UUID        `json:"creator_id"`
+	Title                    string             `json:"title"`
+	SessionID                pgtype.Text        `json:"session_id"`
+	WorkDir                  pgtype.Text        `json:"work_dir"`
+	Status                   string             `json:"status"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	UnreadSince              pgtype.Timestamptz `json:"unread_since"`
+	RuntimeID                pgtype.UUID        `json:"runtime_id"`
+	LastReadAt               pgtype.Timestamptz `json:"last_read_at"`
+	IsAgentIntro             bool               `json:"is_agent_intro"`
+	PinnedAt                 pgtype.Timestamptz `json:"pinned_at"`
+	ProjectID                pgtype.UUID        `json:"project_id"`
+	UnreadCount              int32              `json:"unread_count"`
+	LastMessageContent       string             `json:"last_message_content"`
+	LastMessageRole          string             `json:"last_message_role"`
+	LastMessageAt            pgtype.Timestamptz `json:"last_message_at"`
+	LastMessageFailureReason pgtype.Text        `json:"last_message_failure_reason"`
+	LastMessageKind          string             `json:"last_message_kind"`
+	IsA2a                    bool               `json:"is_a2a"`
+	IsCoordinator            bool               `json:"is_coordinator"`
+}
+
+// Inbound short-loop transcripts for one agent. Chat inbox lists exclude
+// these rows; anyone who can view the agent may read them here.
+func (q *Queries) ListCoordinatorChatSessionsByAgent(ctx context.Context, arg ListCoordinatorChatSessionsByAgentParams) ([]ListCoordinatorChatSessionsByAgentRow, error) {
+	rows, err := q.db.Query(ctx, listCoordinatorChatSessionsByAgent, arg.WorkspaceID, arg.AgentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCoordinatorChatSessionsByAgentRow{}
+	for rows.Next() {
+		var i ListCoordinatorChatSessionsByAgentRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.CreatorID,
+			&i.Title,
+			&i.SessionID,
+			&i.WorkDir,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.UnreadSince,
+			&i.RuntimeID,
+			&i.LastReadAt,
+			&i.IsAgentIntro,
+			&i.PinnedAt,
+			&i.ProjectID,
+			&i.UnreadCount,
+			&i.LastMessageContent,
+			&i.LastMessageRole,
+			&i.LastMessageAt,
+			&i.LastMessageFailureReason,
+			&i.LastMessageKind,
+			&i.IsA2a,
+			&i.IsCoordinator,
 		); err != nil {
 			return nil, err
 		}

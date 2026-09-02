@@ -156,6 +156,9 @@ func taskMulticaEnvironment(task Task, agentName, token, configRoot, workspacesR
 		"TMP":                  tempDir,
 		"TEMP":                 tempDir,
 	}
+	for k, v := range execenv.IssueEnv(task.IssueID) {
+		env[k] = v
+	}
 	// The chat session id is what `multica issue list --metadata
 	// "multica.chat_session_id=$MULTICA_CHAT_SESSION_ID"` filters on, and that
 	// lookup is how a chat run finds the Issue it already delegated to instead
@@ -6278,6 +6281,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if selfBin, err := resolveSelfExecutable(); err == nil {
 		binDir := filepath.Dir(selfBin)
 		agentEnv["PATH"] = binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	}
+	if shimDir, shimErr := execenv.EnsureDWSShim(env.RootDir); shimErr != nil {
+		taskLog.Warn("dws send shim not installed", "error", shimErr)
+	} else if shimDir != "" {
+		basePath := agentEnv["PATH"]
+		if basePath == "" {
+			basePath = os.Getenv("PATH")
+		}
+		agentEnv["PATH"] = shimDir + string(os.PathListSeparator) + basePath
 	}
 	// Point Codex to the per-task CODEX_HOME so it discovers skills natively
 	// without polluting the system ~/.codex/skills/.

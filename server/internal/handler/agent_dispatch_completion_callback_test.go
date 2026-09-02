@@ -16,6 +16,53 @@ import (
 
 const testRouterTargetIdentity = "router-target:v1:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+func TestWriteAgentChatCoordinatorIssueCompletesRouterWithReplyText(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler integration database is unavailable")
+	}
+	const dispatchTaskID = "router-coordinator-created-issue"
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM task_completion_outbox WHERE request_id = $1
+		`, "multica-terminal:sync-completed:"+dispatchTaskID)
+	})
+	w := httptest.NewRecorder()
+	handled := testHandler.writeAgentChatCoordinatorOutcomeV2(
+		w,
+		context.Background(),
+		DispatchCommand{CompletionCallback: &DispatchCompletionCallback{
+			URL:    "/api/v1/dispatch-tasks/" + dispatchTaskID + "/execution-result",
+			Target: testRouterTargetIdentity,
+		}},
+		agentDispatchContext{AgentID: util.MustParseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")},
+		engine.Result{
+			CoordinatorIssue: true,
+			IssueID:          util.MustParseUUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+			TaskID:           util.MustParseUUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+			ReplyText:        "我去创建新 Issue，通过 DWS 跨组织查询须莫 v6 喜欢的动物",
+		},
+	)
+	if !handled || w.Code != http.StatusAccepted {
+		t.Fatalf("handled=%v status=%d body=%s", handled, w.Code, w.Body.String())
+	}
+	var response AgentChatDispatchResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Continuation.Kind != "issue" || response.TaskID == "" {
+		t.Fatalf("response = %+v", response)
+	}
+	var resultMessage string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT result_message FROM task_completion_outbox WHERE request_id = $1
+	`, "multica-terminal:sync-completed:"+dispatchTaskID).Scan(&resultMessage); err != nil {
+		t.Fatal(err)
+	}
+	if resultMessage != "我去创建新 Issue，通过 DWS 跨组织查询须莫 v6 喜欢的动物" {
+		t.Fatalf("result message = %q", resultMessage)
+	}
+}
+
 func TestDispatchCommandValidateCompletionCallbackByPresence(t *testing.T) {
 	valid := DispatchCommand{
 		SchemaVersion: "2.0",

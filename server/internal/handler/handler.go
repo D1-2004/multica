@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
@@ -41,6 +42,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
@@ -198,41 +200,44 @@ type enterpriseIdentityService interface {
 }
 
 type Handler struct {
-	Queries                 *db.Queries
-	DB                      dbExecutor
-	TxStarter               txStarter
-	Hub                     *realtime.Hub
-	DaemonHub               *daemonws.Hub
-	RunnerHub               *runnerws.Hub
-	RunnerRelay             realtime.Broadcaster
-	DaemonProfileRefresh    RuntimeProfileRefreshNotifier
-	DaemonWorkspaceRefresh  WorkspaceSetRefreshNotifier
-	Bus                     *events.Bus
-	TaskService             *service.TaskService
-	A2AService              *service.A2AService
-	A2AProtocol             http.Handler
-	A2APushWorker           *service.A2APushWorker
-	FCE2BLauncher           *service.FCE2BLauncher
-	ASBLauncher             *service.ASBLauncher
-	EnterpriseIdentity      enterpriseIdentityService
-	FCE2BStable             *service.FCE2BStableService
-	IssueService            *service.IssueService
-	IssueCommentService     *service.IssueCommentService
-	AutopilotService        *service.AutopilotService
-	EmailService            *service.EmailService
-	UpdateStore             UpdateStore
-	ModelListStore          ModelListStore
-	LocalSkillListStore     LocalSkillListStore
-	LocalSkillImportStore   LocalSkillImportStore
-	FeatureFlags            *featureflag.Service
-	LivenessStore           LivenessStore
-	HeartbeatScheduler      HeartbeatScheduler
-	Storage                 storage.Storage
-	SiteHosting             StaticSiteHostingService
-	AgentDispatchHTTPClient *http.Client
-	AgentDispatchKeys       *agentmessagerouter.DispatchKeyring
-	CFSigner                *auth.CloudFrontSigner
-	Analytics               analytics.Client
+	Queries                  *db.Queries
+	Assoc                    *assoc.Service
+	DB                       dbExecutor
+	TxStarter                txStarter
+	Hub                      *realtime.Hub
+	DaemonHub                *daemonws.Hub
+	RunnerHub                *runnerws.Hub
+	RunnerRelay              realtime.Broadcaster
+	DaemonProfileRefresh     RuntimeProfileRefreshNotifier
+	DaemonWorkspaceRefresh   WorkspaceSetRefreshNotifier
+	Bus                      *events.Bus
+	TaskService              *service.TaskService
+	InboundCoordinator       *inboundcoord.Coordinator
+	InboundCoordinatorWorker *InboundCoordinatorJobWorker
+	A2AService               *service.A2AService
+	A2AProtocol              http.Handler
+	A2APushWorker            *service.A2APushWorker
+	FCE2BLauncher            *service.FCE2BLauncher
+	ASBLauncher              *service.ASBLauncher
+	EnterpriseIdentity       enterpriseIdentityService
+	FCE2BStable              *service.FCE2BStableService
+	IssueService             *service.IssueService
+	IssueCommentService      *service.IssueCommentService
+	AutopilotService         *service.AutopilotService
+	EmailService             *service.EmailService
+	UpdateStore              UpdateStore
+	ModelListStore           ModelListStore
+	LocalSkillListStore      LocalSkillListStore
+	LocalSkillImportStore    LocalSkillImportStore
+	FeatureFlags             *featureflag.Service
+	LivenessStore            LivenessStore
+	HeartbeatScheduler       HeartbeatScheduler
+	Storage                  storage.Storage
+	SiteHosting              StaticSiteHostingService
+	AgentDispatchHTTPClient  *http.Client
+	AgentDispatchKeys        *agentmessagerouter.DispatchKeyring
+	CFSigner                 *auth.CloudFrontSigner
+	Analytics                analytics.Client
 	// DaemonPendingWork pushes "heartbeat now" hints for queued
 	// heartbeat-carried requests (MUL-5444). Optional: when nil,
 	// requestDaemonPendingWork falls back to the local DaemonHub, which is the
@@ -812,6 +817,18 @@ func (h *Handler) publishChat(eventType, workspaceID, actorType, actorID, chatSe
 		ActorID:       actorID,
 		ChatSessionID: chatSessionID,
 		Payload:       payload,
+	})
+}
+
+func (h *Handler) publishChatToUser(eventType, workspaceID, recipientUserID, actorType, actorID, chatSessionID string, payload any) {
+	h.Bus.Publish(events.Event{
+		Type:            eventType,
+		WorkspaceID:     workspaceID,
+		RecipientUserID: recipientUserID,
+		ActorType:       actorType,
+		ActorID:         actorID,
+		ChatSessionID:   chatSessionID,
+		Payload:         payload,
 	})
 }
 

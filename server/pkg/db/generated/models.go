@@ -1191,6 +1191,28 @@ type GithubPullRequestCheckSuite struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
+type InboundCoordinatorJob struct {
+	ID                  pgtype.UUID        `json:"id"`
+	AcceptanceID        pgtype.UUID        `json:"acceptance_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	EndpointNamespaceID pgtype.UUID        `json:"endpoint_namespace_id"`
+	DispatchEndpointID  string             `json:"dispatch_endpoint_id"`
+	IdempotencyKey      string             `json:"idempotency_key"`
+	Command             []byte             `json:"command"`
+	ChatSessionID       pgtype.UUID        `json:"chat_session_id"`
+	UserMessageID       pgtype.UUID        `json:"user_message_id"`
+	Status              string             `json:"status"`
+	AttemptCount        int32              `json:"attempt_count"`
+	AvailableAt         pgtype.Timestamptz `json:"available_at"`
+	LeaseToken          pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt      pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError           pgtype.Text        `json:"last_error"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
 type InboxItem struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

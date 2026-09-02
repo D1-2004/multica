@@ -52,6 +52,10 @@
     "failed_after": "Failed after {{elapsed}}",
     "finished_in": "Finished in {{elapsed}}",
     "no_response": "The agent finished this turn without a text reply.",
+    "coordinator_badge": "Coordinator",
+    "coordinator_source_web": "Web chat",
+    "coordinator_source_robot": "DingTalk robot",
+    "coordinator_source_digital_employee": "Digital employee",
     "failure": {
       "agent_error": "The agent ran into an error and couldn't finish replying. Please try again.",
       "timeout": "The agent took too long and stopped before finishing. Try again, or break your request into smaller steps.",

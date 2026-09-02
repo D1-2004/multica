@@ -97,3 +97,40 @@ WHERE id = sqlc.arg(id);
 
 -- name: DeleteDingTalkProcessingEmotion :exec
 DELETE FROM dingtalk_processing_emotion WHERE id = $1;
+
+-- name: GetDingTalkProcessingEmotionBySourceMessage :one
+SELECT id, installation_id, source_message_id, open_conversation_id, open_msg_id, robot_code, chat_session_id, task_id, state, add_completed, attempt_count, next_attempt_at, lease_until, created_at, updated_at
+FROM dingtalk_processing_emotion
+WHERE source_message_id = sqlc.arg(source_message_id)
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: GetDingTalkProcessingEmotionByTask :one
+-- Stream inbox binds the processing emotion to the first issue task. A
+-- retry child completes under a new task id, so walk parent_task_id to
+-- the row the user can still see.
+WITH RECURSIVE lineage AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = sqlc.arg(task_id)
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN lineage child ON parent.id = child.parent_task_id
+)
+SELECT emotion.id, emotion.installation_id, emotion.source_message_id, emotion.open_conversation_id, emotion.open_msg_id, emotion.robot_code, emotion.chat_session_id, emotion.task_id, emotion.state, emotion.add_completed, emotion.attempt_count, emotion.next_attempt_at, emotion.lease_until, emotion.created_at, emotion.updated_at
+FROM dingtalk_processing_emotion emotion
+JOIN lineage ON lineage.id = emotion.task_id
+ORDER BY emotion.created_at DESC
+LIMIT 1;
+
+-- name: GetLastAgentCommentForIssue :one
+SELECT content
+FROM comment
+WHERE issue_id = sqlc.arg(issue_id)
+  AND author_type = 'agent'
+  AND COALESCE(BTRIM(content), '') <> ''
+ORDER BY created_at DESC
+LIMIT 1;

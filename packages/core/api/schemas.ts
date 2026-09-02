@@ -1187,6 +1187,20 @@ const ChatQuickActionSchema = z
   })
   .loose();
 
+const ChatCoordinatorStepSchema = z
+  .object({
+    seq: z.number(),
+    type: z
+      .enum(["tool_use", "tool_result", "thinking", "text", "error"])
+      .catch("error"),
+    tool: z.string().optional(),
+    content: z.string().optional(),
+    input: z.string().optional(),
+    output: z.string().optional(),
+    error: z.boolean().optional(),
+  })
+  .loose();
+
 export const ChatMessageSchema = z
   .object({
     id: z.string(),
@@ -1204,8 +1218,19 @@ export const ChatMessageSchema = z
         "no_response",
         "onboarding_kickoff",
         "onboarding_opening",
+        "coordinator",
       ])
       .catch("message")
+      .optional(),
+    coordinator: z
+      .object({
+        action: z.string().optional(),
+        look_into: z.string().optional(),
+        reason: z.string().optional(),
+        elapsed_ms: z.number().optional(),
+        source: z.string().optional(),
+        steps: z.array(ChatCoordinatorStepSchema).catch([]).optional(),
+      })
       .optional(),
     // Optional additive data degrades independently: a malformed suggestion
     // must not hide the assistant reply that contains it.
@@ -2361,7 +2386,10 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
   z
     .object({
       message_id: z.string().min(1),
-      task_id: z.string().min(1),
+      task_id: z
+        .string()
+        .nullish()
+        .transform((id) => id || undefined),
       supports_queue: z.boolean().optional(),
       queued: z.boolean().optional().catch(undefined),
       created_at: z.string().min(1),
@@ -2369,6 +2397,37 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
         .array(z.string())
         .nullish()
         .transform((ids) => ids ?? undefined),
+      assistant_message_id: z
+        .string()
+        .nullish()
+        .transform((id) => id || undefined),
+      assistant_content: z
+        .string()
+        .nullish()
+        .transform((content) => content || undefined),
+      assistant_created_at: z
+        .string()
+        .nullish()
+        .transform((at) => at || undefined),
+      assistant_message_kind: z
+        .enum([
+          "message",
+          "no_response",
+          "onboarding_kickoff",
+          "onboarding_opening",
+          "coordinator",
+        ])
+        .optional(),
+      coordinator: z
+        .object({
+          action: z.string().optional(),
+          look_into: z.string().optional(),
+          reason: z.string().optional(),
+          elapsed_ms: z.number().optional(),
+          source: z.string().optional(),
+          steps: z.array(ChatCoordinatorStepSchema).catch([]).optional(),
+        })
+        .optional(),
     })
     .loose();
 
@@ -2524,6 +2583,16 @@ export const DispatchPromptPreviewSchema = z.object({
 export type DispatchPromptPreviewPayload = z.infer<
   typeof DispatchPromptPreviewSchema
 >;
+
+export const ExtractAgentVoiceResponseSchema = z.object({
+  persona: z.string().default(""),
+  reply_tone: z.string().default(""),
+});
+export type ExtractAgentVoiceResponsePayload = z.infer<
+  typeof ExtractAgentVoiceResponseSchema
+>;
+export const EMPTY_EXTRACT_AGENT_VOICE_RESPONSE: ExtractAgentVoiceResponsePayload =
+  { persona: "", reply_tone: "" };
 
 const AgentOKRSpendSchema = z.object({
   total_tokens: z.number().default(0),

@@ -21,8 +21,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -4768,6 +4770,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 				taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
 		}
 	}
+	h.bindAssocOutboundFromTools(r.Context(), task, workspaceID, req.Messages)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
@@ -4784,6 +4787,116 @@ func (h *Handler) AckTaskCancelled(w http.ResponseWriter, r *http.Request) {
 	}
 	h.TaskService.FinalizeDeferredCancelledChat(r.Context(), task.ID)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) bindAssocOutboundFromTool(ctx context.Context, task db.AgentTaskQueue, workspaceID string, msg TaskMessageRequest) {
+	h.bindAssocOutboundFromTools(ctx, task, workspaceID, []TaskMessageRequest{msg})
+}
+
+func (h *Handler) bindAssocOutboundFromTools(ctx context.Context, task db.AgentTaskQueue, workspaceID string, msgs []TaskMessageRequest) {
+	if h == nil || h.Assoc == nil || workspaceID == "" || !task.IssueID.Valid || len(msgs) == 0 {
+		return
+	}
+	events := make([]execenv.ToolEvent, 0, len(msgs))
+	for _, msg := range msgs {
+		events = append(events, execenv.ToolEvent{
+			Command: toolCommandHint(msg),
+			Output:  msg.Output,
+			Input:   msg.Input,
+		})
+	}
+	issueID := uuidToString(task.IssueID)
+	title := ""
+	if loadedID, loadedTitle, err := h.issueForTaskToken(ctx, workspaceID, uuidToString(task.ID)); err == nil && loadedID != "" {
+		issueID = loadedID
+		title = loadedTitle
+	}
+	if issueID == "" {
+		slog.Warn("assoc outbound bind skipped; issue not on task",
+			"event", "assoc_outbound_bind_skipped",
+			"task_id", uuidToString(task.ID),
+		)
+		return
+	}
+	purpose := strings.TrimSpace(title)
+	if purpose == "" {
+		purpose = "跟进外发钉钉会话"
+	}
+	agentID := uuidToString(task.AgentID)
+	for _, outbound := range execenv.FilterOutboundChat(events) {
+		cid := outbound.ConversationID
+		if cid == "" && outbound.PersonID != "" {
+			if resolved, err := h.Assoc.RecentPersonOutreachScene(ctx, workspaceID, agentID, outbound.PersonID); err != nil {
+				slog.Warn("assoc outbound person scene lookup failed",
+					"event", "assoc_outbound_bind_skipped",
+					"task_id", uuidToString(task.ID),
+					"person_id", outbound.PersonID,
+					"error", err,
+				)
+			} else {
+				cid = resolved
+			}
+		}
+		if cid == "" {
+			slog.Info("assoc outbound bind skipped; no conversation in tool output",
+				"event", "assoc_outbound_bind_skipped",
+				"task_id", uuidToString(task.ID),
+				"reason", "missing_conversation_id",
+				"action", outbound.Action,
+				"person_id", outbound.PersonID,
+				"open_task_id", outbound.OpenTaskID,
+			)
+			continue
+		}
+		evidence := outbound.EvidenceID
+		if evidence == "" {
+			evidence = outbound.OpenTaskID
+		}
+		result, bindErr := h.Assoc.BindOutbound(ctx, assoc.BindOutboundInput{
+			WorkspaceID:    workspaceID,
+			AgentID:        agentID,
+			IssueID:        issueID,
+			IssueTitle:     title,
+			RunID:          uuidToString(task.ID),
+			ConversationID: cid,
+			EvidenceID:     evidence,
+			PersonID:       outbound.PersonID,
+			Kind:           "dm",
+			Purpose:        purpose,
+		})
+		if bindErr != nil {
+			slog.Error("assoc outbound bind from tool failed",
+				"event", "assoc_outbound_bind_failed",
+				"task_id", uuidToString(task.ID),
+				"conversation_id", cid,
+				"error", bindErr,
+			)
+			continue
+		}
+		slog.Info("assoc outbound bound from tool",
+			"event", "assoc_outbound_bound",
+			"task_id", uuidToString(task.ID),
+			"issue_id", issueID,
+			"conversation_id", result.ConversationID,
+			"linked", result.Linked,
+			"action", outbound.Action,
+		)
+	}
+}
+
+func toolCommandHint(msg TaskMessageRequest) string {
+	var b strings.Builder
+	b.WriteString(msg.Tool)
+	b.WriteByte(' ')
+	b.WriteString(msg.Content)
+	if msg.Input != nil {
+		raw, err := json.Marshal(msg.Input)
+		if err == nil {
+			b.WriteByte(' ')
+			b.Write(raw)
+		}
+	}
+	return b.String()
 }
 
 func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.TaskMessagePayload {

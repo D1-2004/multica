@@ -169,11 +169,28 @@ func (r *OutboundReplier) Reply(ctx context.Context, inst engine.ResolvedInstall
 			r.logger.WarnContext(ctx, "dingtalk replier: fresh-session confirmation failed",
 				"installation_id", util.UUIDToString(inst.ID), "error", err)
 		}
+	case engine.OutcomeCoordinatorReply:
+		text := strings.TrimSpace(res.ReplyText)
+		if text == "" {
+			return
+		}
+		if err := r.post(ctx, inst, msg, text); err != nil {
+			r.logger.WarnContext(ctx, "dingtalk replier: coordinator reply failed",
+				"installation_id", util.UUIDToString(inst.ID), "error", err)
+		}
+	case engine.OutcomeCoordinatorSilence:
+		return
 	case engine.OutcomeIngested:
 		// Only a /issue-created message warrants a confirmation; a plain chat
 		// message stays silent (the agent's own reply lands via EventChatDone).
 		if res.IssueID.Valid {
-			if err := r.post(ctx, inst, msg, issueCreatedText(res)); err != nil {
+			text := strings.TrimSpace(res.ReplyText)
+			if res.IssueDuplicate {
+				text = issueDuplicateText(res)
+			} else if text == "" {
+				text = issueCreatedText(res)
+			}
+			if err := r.post(ctx, inst, msg, text); err != nil {
 				r.logger.WarnContext(ctx, "dingtalk replier: issue-created confirmation failed",
 					"installation_id", util.UUIDToString(inst.ID), "error", err)
 			}
@@ -323,4 +340,16 @@ func issueCreatedText(res engine.Result) string {
 		return "✅ 已创建 " + id
 	}
 	return "✅ 已创建 " + id + " — " + title
+}
+
+func issueDuplicateText(res engine.Result) string {
+	id := res.IssueIdentifier
+	if id == "" {
+		id = fmt.Sprintf("#%d", res.IssueNumber)
+	}
+	title := strings.TrimSpace(res.IssueTitle)
+	if title == "" {
+		return "⚠️ 未创建 —— 已存在进行中的 " + id
+	}
+	return "⚠️ 未创建 —— 已存在进行中的 " + id + " — " + title
 }

@@ -1,0 +1,5 @@
+ALTER TABLE agent
+DROP COLUMN IF EXISTS reply_tone;
+
+ALTER TABLE agent
+DROP COLUMN IF EXISTS persona;

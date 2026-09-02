@@ -1,0 +1,358 @@
+package inboundcoord
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/llm"
+)
+
+type coordQueriesStub struct {
+	inbound   bool
+	persona   string
+	replyTone string
+	page      []db.ChatMessage
+	listErr   error
+	lastList  db.ListChatMessagesPageParams
+	listCalls int
+}
+
+func (s *coordQueriesStub) ListChatMessagesPage(_ context.Context, arg db.ListChatMessagesPageParams) ([]db.ChatMessage, error) {
+	s.lastList = arg
+	s.listCalls++
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return s.page, nil
+}
+
+func (s *coordQueriesStub) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
+	return db.Agent{}, nil
+}
+
+func (s *coordQueriesStub) CountRunningTasks(context.Context, pgtype.UUID) (int64, error) {
+	return 0, nil
+}
+
+func (s *coordQueriesStub) GetAgentInboundCoordinator(context.Context, pgtype.UUID) (bool, error) {
+	return s.inbound, nil
+}
+
+func (s *coordQueriesStub) GetAgentVoice(context.Context, pgtype.UUID) (db.GetAgentVoiceRow, error) {
+	return db.GetAgentVoiceRow{Persona: s.persona, ReplyTone: s.replyTone}, nil
+}
+
+func testAgentID() pgtype.UUID {
+	return pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+}
+
+func TestIssueTitlePrefersUserMessageWhenLookIntoIsShort(t *testing.T) {
+	got := IssueTitle(Decision{LookInto: "报名表"}, "问一下冬翔，今天想吃什么")
+	if got != "问一下冬翔，今天想吃什么" {
+		t.Fatalf("title=%q", got)
+	}
+}
+
+func TestParseDecisionReply(t *testing.T) {
+	got := parseDecision(`{"action":"reply","text":"在的，今天想先对哪件事？","look_into":"","reason":"这是打招呼"}`, Turn{Source: SourceWeb})
+	if got.Action != ActionReply || got.UserText == "" || got.Reason != "这是打招呼" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestParseDecisionIssueFillsAck(t *testing.T) {
+	got := parseDecision(`{"action":"issue","text":"","look_into":"报名截止时间"}`, Turn{Source: SourceDigitalEmployee, Message: "看下截止"})
+	if got.Action != ActionIssue {
+		t.Fatalf("action = %s", got.Action)
+	}
+	if !strings.Contains(got.UserText, "报名截止时间") {
+		t.Fatalf("ack = %q", got.UserText)
+	}
+}
+
+func TestParseDecisionSilenceRejectedOnWeb(t *testing.T) {
+	got := parseDecision(`{"action":"silence","text":""}`, Turn{Source: SourceWeb, Addressed: true, Message: "你好"})
+	if got.Action != ActionContinue {
+		t.Fatalf("web silence should fail open, got %s", got.Action)
+	}
+}
+
+func TestParseDecisionSilenceAllowedForDigitalEmployee(t *testing.T) {
+	got := parseDecision(`{"action":"silence","text":""}`, Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "晚上吃饭吗"})
+	if got.Action != ActionSilence {
+		t.Fatalf("got %s", got.Action)
+	}
+}
+
+func TestGroupUnaddressedSilenceWithoutLLM(t *testing.T) {
+	c := &Coordinator{LLM: llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"})}
+	got := c.Decide(context.Background(), Turn{
+		Source:    SourceDigitalEmployee,
+		Addressed: false,
+		ChatType:  "group",
+		Message:   "你们晚上吃饭吗",
+	})
+	if got.Action != ActionSilence {
+		t.Fatalf("got %s", got.Action)
+	}
+}
+
+func TestDecideContinueWhenLLMDisabled(t *testing.T) {
+	c := &Coordinator{LLM: llm.New(llm.Config{})}
+	got := c.Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, Message: "你好"})
+	if got.Action != ActionContinue {
+		t.Fatalf("got %s", got.Action)
+	}
+}
+
+func TestDecisionObserverReceivesVerdictFromEveryIngress(t *testing.T) {
+	t.Parallel()
+	var observed Decision
+	ctx := WithDecisionObserver(context.Background(), func(decision Decision) {
+		observed = decision
+	})
+	c := &Coordinator{LLM: llm.New(llm.Config{})}
+	got := c.Decide(ctx, Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "你好"})
+	if observed.Action != got.Action || observed.Source != SourceDigitalEmployee {
+		t.Fatalf("observed=%#v got=%#v", observed, got)
+	}
+}
+
+func TestDecideSkipsWhenAgentSwitchOff(t *testing.T) {
+	c := &Coordinator{
+		LLM:     llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
+		Queries: &coordQueriesStub{inbound: false},
+	}
+	started := time.Now()
+	got := c.Decide(context.Background(), Turn{
+		Source:    SourceWeb,
+		Addressed: true,
+		Message:   "你好",
+		AgentID:   testAgentID(),
+	})
+	if got.Action != ActionContinue {
+		t.Fatalf("got %s", got.Action)
+	}
+	if time.Since(started) > 200*time.Millisecond {
+		t.Fatalf("switch-off should not call the LLM")
+	}
+}
+
+func TestIssueTitleAndDescription(t *testing.T) {
+	d := Decision{Action: ActionIssue, UserText: "我先核对报名表", LookInto: "报名表截止"}
+	if IssueTitle(d, "长正文") != "报名表截止" {
+		t.Fatalf("title = %q", IssueTitle(d, "长正文"))
+	}
+	desc := IssueDescription(d, "帮我看截止时间")
+	for _, want := range []string{"前台已对用户说", "帮我看截止时间", "当前可信钉钉派发事件里的发信人", "Issue 创建人或评论人只表示谁执行了 Issue 工具", "协助者", "数字员工事件", "机器人事件", "消息接收人", "当前能解除阻塞", "不要固定回复委托人", "必须实际给一个明确的人发送", "不得写“任务完成”"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("description missing %q: %q", want, desc)
+		}
+	}
+}
+
+func testSession() db.ChatSession {
+	return db.ChatSession{
+		ID:          pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
+		WorkspaceID: pgtype.UUID{Bytes: [16]byte{2}, Valid: true},
+		AgentID:     testAgentID(),
+	}
+}
+
+func newestFirstPage(n int) []db.ChatMessage {
+	page := make([]db.ChatMessage, n)
+	for i := 0; i < n; i++ {
+		// ListChatMessagesPage is newest-first.
+		page[i] = db.ChatMessage{Role: "user", Content: "钉钉历史" + string(rune('A'+n-1-i))}
+	}
+	return page
+}
+
+func TestInjectRelatedTasksFormatsRecallHits(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := assoc.NewMemory()
+	agent := testAgentID()
+	agentID := util.UUIDToString(agent)
+	now := time.Now().UTC()
+	task, err := store.InsertTask(ctx, assoc.Task{
+		WorkspaceID:   "ws",
+		AgentID:       agentID,
+		IssueID:       "issue-eat",
+		Purpose:       "向冬翔确认今晚吃什么",
+		Status:        assoc.StatusWaiting,
+		LastTouchedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEdge(ctx, assoc.Edge{
+		WorkspaceID: "ws",
+		AgentID:     agentID,
+		SrcType:     assoc.NodeTask,
+		SrcID:       task.ID,
+		DstType:     assoc.NodeScene,
+		DstID:       "cid-dongxiang",
+		Rel:         assoc.RelOutreach,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := &Coordinator{Assoc: assoc.NewService(store)}
+	got := c.injectRelatedTasks(ctx, Turn{
+		WorkspaceID:    "ws",
+		AgentID:        agent,
+		ConversationID: "cid-dongxiang",
+	})
+	if !strings.Contains(got.RelatedTasks, "向冬翔确认今晚吃什么") {
+		t.Fatalf("related_tasks=%q", got.RelatedTasks)
+	}
+	if !strings.Contains(got.RelatedTasks, "issue-eat") {
+		t.Fatalf("related_tasks missing issue: %q", got.RelatedTasks)
+	}
+}
+
+func TestFillVoiceCopiesPersonaAndTone(t *testing.T) {
+	t.Parallel()
+	c := &Coordinator{Queries: &coordQueriesStub{persona: "靠谱同事", replyTone: "短句、不客套"}}
+	turn := Turn{AgentID: testAgentID()}
+	c.FillVoice(context.Background(), &turn)
+	if turn.Persona != "靠谱同事" || turn.ReplyTone != "短句、不客套" {
+		t.Fatalf("voice=%q / %q", turn.Persona, turn.ReplyTone)
+	}
+}
+
+func TestTurnFromChatSessionLoadsVoice(t *testing.T) {
+	q := &coordQueriesStub{persona: "靠谱同事", replyTone: "短句、不客套"}
+	c := &Coordinator{Queries: q}
+	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceRobot, true, "p2p", "", "", "你好")
+	if turn.Persona != "靠谱同事" || turn.ReplyTone != "短句、不客套" {
+		t.Fatalf("voice=%q / %q", turn.Persona, turn.ReplyTone)
+	}
+	prompt := buildUserPrompt(turn)
+	if !strings.Contains(prompt, "agent_persona: 靠谱同事") || !strings.Contains(prompt, "agent_reply_tone: 短句、不客套") {
+		t.Fatalf("prompt=%q", prompt)
+	}
+}
+
+func TestTurnFromChatSessionCopiesWorkspaceID(t *testing.T) {
+	c := &Coordinator{Queries: &coordQueriesStub{}}
+	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceWeb, true, "p2p", "网页", "", "你好")
+	if turn.WorkspaceID == "" {
+		t.Fatal("workspace_id should come from the chat session")
+	}
+}
+
+func TestTurnFromChatSessionWebDoesNotLoadDingTalkHistory(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(4)}
+	c := &Coordinator{Queries: q}
+	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceWeb, true, "p2p", "网页", "", "你好")
+	if q.listCalls != 1 || q.lastList.Limit != historyLimit {
+		t.Fatalf("web history lookup = calls %d limit %d, want 1 call limit %d", q.listCalls, q.lastList.Limit, historyLimit)
+	}
+	if len(turn.DingTalkHistory) != 0 {
+		t.Fatalf("web must not load dingtalk history, got %d", len(turn.DingTalkHistory))
+	}
+	if len(turn.History) != 4 {
+		t.Fatalf("web history = %d, want 4", len(turn.History))
+	}
+	prompt := buildUserPrompt(turn)
+	if strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "recent_multica_history:") {
+		t.Fatalf("web prompt = %q", prompt)
+	}
+}
+
+func TestBuildUserPromptOmitsTitleForRobotAndDigitalEmployee(t *testing.T) {
+	stale := "须莫🥥：你有阿里内外cli吗,有哪些功能"
+	for _, src := range []Source{SourceRobot, SourceDigitalEmployee} {
+		prompt := buildUserPrompt(Turn{
+			Source:            src,
+			Addressed:         true,
+			ChatType:          "p2p",
+			ConversationTitle: stale,
+			Message:           "我们前面说啥来着，直接回复我不要去做issue",
+			DingTalkHistory: []HistoryLine{
+				{Role: "user", Content: "看看今天的新闻"},
+				{Role: "assistant", Content: "我先去搜一下今天的热点新闻。"},
+			},
+		})
+		if strings.Contains(prompt, "session_title:") || strings.Contains(prompt, stale) || strings.Contains(prompt, "\nconversation: ") {
+			t.Fatalf("%s prompt leaked dingTalk title: %q", src, prompt)
+		}
+		if !strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "看看今天的新闻") {
+			t.Fatalf("%s recent dingtalk history missing: %q", src, prompt)
+		}
+	}
+	web := buildUserPrompt(Turn{
+		Source:            SourceWeb,
+		Addressed:         true,
+		ConversationTitle: "网页会话标题",
+		Message:           "你好",
+		History:           []HistoryLine{{Role: "user", Content: "昨天那个表"}},
+	})
+	if !strings.Contains(web, "session_title: 网页会话标题") {
+		t.Fatalf("web may keep session title, prompt=%q", web)
+	}
+}
+
+func TestTurnFromChatSessionRobotAndDigitalEmployeeDropTitle(t *testing.T) {
+	q := &coordQueriesStub{page: newestFirstPage(2)}
+	c := &Coordinator{Queries: q}
+	stale := "须莫🥥：你有阿里内外cli吗,有哪些功能"
+	for _, src := range []Source{SourceRobot, SourceDigitalEmployee} {
+		turn := c.TurnFromChatSession(context.Background(), testSession(), src, true, "p2p", stale, "须莫", "我们前面说啥来着")
+		if turn.ConversationTitle != "" {
+			t.Fatalf("%s ConversationTitle = %q, want empty", src, turn.ConversationTitle)
+		}
+		prompt := buildUserPrompt(turn)
+		if strings.Contains(prompt, stale) || strings.Contains(prompt, "session_title:") {
+			t.Fatalf("%s loaded title into prompt: %q", src, prompt)
+		}
+	}
+}
+
+func TestBuildUserPromptDingTalkHistoryNewestFirst(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:  SourceRobot,
+		Message: "当前",
+		DingTalkHistory: []HistoryLine{
+			{Role: "user", Content: "更早的消息"},
+			{Role: "user", Content: "较新的消息"},
+		},
+	})
+	older := strings.Index(prompt, "更早的消息")
+	newer := strings.Index(prompt, "较新的消息")
+	if older < 0 || newer < 0 || newer > older {
+		t.Fatalf("want newest-first dingtalk history, prompt=%q", prompt)
+	}
+}
+
+func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:          SourceRobot,
+		Addressed:       true,
+		ChatType:        "p2p",
+		Message:         "帮我看看今天有什么新闻",
+		DingTalkHistory: []HistoryLine{{Role: "user", Content: "昨天那个表"}, {Role: "assistant", Content: "我去对一下"}},
+	})
+	if !strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "昨天那个表") {
+		t.Fatalf("prompt = %q", prompt)
+	}
+	got := parseDecision(`{"action":"issue","text":"我先去看今天新闻","look_into":"今天新闻","reason":"要查实时资讯"}`, Turn{Source: SourceRobot, Message: "帮我看看今天有什么新闻"})
+	if got.Action != ActionIssue {
+		t.Fatalf("news must stay issue, got %s", got.Action)
+	}
+}
+
+func TestParseDecisionInvalidJSON(t *testing.T) {
+	got := parseDecision("not-json", Turn{Source: SourceWeb, Message: "hi"})
+	if got.Action != ActionContinue {
+		t.Fatalf("got %s", got.Action)
+	}
+}

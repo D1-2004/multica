@@ -2252,6 +2252,54 @@ func (s *TaskService) SendDirectChatMessageWithContext(
 	return &out, nil
 }
 
+// CoordinatorChatTurn is a web/chat persist that does not enqueue a sandbox task.
+type CoordinatorChatTurn struct {
+	UserMessage      db.ChatMessage
+	AssistantMessage db.ChatMessage
+}
+
+func (s *TaskService) PersistCoordinatorChatTurn(
+	ctx context.Context,
+	session db.ChatSession,
+	userContent string,
+	assistantContent string,
+	elapsedMs int64,
+	trace []byte,
+) (*CoordinatorChatTurn, error) {
+	var out CoordinatorChatTurn
+	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+		userMsg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
+			ChatSessionID: session.ID,
+			Role:          "user",
+			Content:       userContent,
+			MessageKind:   pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true},
+		})
+		if err != nil {
+			return fmt.Errorf("create coordinator user message: %w", err)
+		}
+		out.UserMessage = userMsg
+		asst, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
+			ChatSessionID: session.ID,
+			Role:          "assistant",
+			Content:       assistantContent,
+			MessageKind:   pgtype.Text{String: protocol.ChatMessageKindCoordinator, Valid: true},
+			ElapsedMs:     pgtype.Int8{Int64: elapsedMs, Valid: elapsedMs > 0},
+			SourcePayload: trace,
+		})
+		if err != nil {
+			return fmt.Errorf("create coordinator assistant message: %w", err)
+		}
+		out.AssistantMessage = asst
+		if err := qtx.TouchChatSession(ctx, session.ID); err != nil {
+			return fmt.Errorf("touch chat session: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // MikaOnboardingOpenResult carries the two rows that open a Mika conversation.
 type MikaOnboardingOpenResult struct {
 	// Kickoff is the hidden product context. It is written WITHOUT a task —

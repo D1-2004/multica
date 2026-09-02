@@ -171,6 +171,96 @@ func (q *Queries) DeleteDingTalkProcessingEmotion(ctx context.Context, id pgtype
 	return err
 }
 
+const getDingTalkProcessingEmotionBySourceMessage = `-- name: GetDingTalkProcessingEmotionBySourceMessage :one
+SELECT id, installation_id, source_message_id, open_conversation_id, open_msg_id, robot_code, chat_session_id, task_id, state, add_completed, attempt_count, next_attempt_at, lease_until, created_at, updated_at
+FROM dingtalk_processing_emotion
+WHERE source_message_id = $1
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetDingTalkProcessingEmotionBySourceMessage(ctx context.Context, sourceMessageID string) (DingtalkProcessingEmotion, error) {
+	row := q.db.QueryRow(ctx, getDingTalkProcessingEmotionBySourceMessage, sourceMessageID)
+	var i DingtalkProcessingEmotion
+	err := row.Scan(
+		&i.ID,
+		&i.InstallationID,
+		&i.SourceMessageID,
+		&i.OpenConversationID,
+		&i.OpenMsgID,
+		&i.RobotCode,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.State,
+		&i.AddCompleted,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDingTalkProcessingEmotionByTask = `-- name: GetDingTalkProcessingEmotionByTask :one
+WITH RECURSIVE lineage AS (
+    SELECT task.id, task.parent_task_id
+    FROM agent_task_queue task
+    WHERE task.id = $1
+
+    UNION ALL
+
+    SELECT parent.id, parent.parent_task_id
+    FROM agent_task_queue parent
+    JOIN lineage child ON parent.id = child.parent_task_id
+)
+SELECT emotion.id, emotion.installation_id, emotion.source_message_id, emotion.open_conversation_id, emotion.open_msg_id, emotion.robot_code, emotion.chat_session_id, emotion.task_id, emotion.state, emotion.add_completed, emotion.attempt_count, emotion.next_attempt_at, emotion.lease_until, emotion.created_at, emotion.updated_at
+FROM dingtalk_processing_emotion emotion
+JOIN lineage ON lineage.id = emotion.task_id
+ORDER BY emotion.created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetDingTalkProcessingEmotionByTask(ctx context.Context, taskID pgtype.UUID) (DingtalkProcessingEmotion, error) {
+	row := q.db.QueryRow(ctx, getDingTalkProcessingEmotionByTask, taskID)
+	var i DingtalkProcessingEmotion
+	err := row.Scan(
+		&i.ID,
+		&i.InstallationID,
+		&i.SourceMessageID,
+		&i.OpenConversationID,
+		&i.OpenMsgID,
+		&i.RobotCode,
+		&i.ChatSessionID,
+		&i.TaskID,
+		&i.State,
+		&i.AddCompleted,
+		&i.AttemptCount,
+		&i.NextAttemptAt,
+		&i.LeaseUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getLastAgentCommentForIssue = `-- name: GetLastAgentCommentForIssue :one
+SELECT content
+FROM comment
+WHERE issue_id = $1
+  AND author_type = 'agent'
+  AND COALESCE(BTRIM(content), '') <> ''
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+func (q *Queries) GetLastAgentCommentForIssue(ctx context.Context, issueID pgtype.UUID) (string, error) {
+	row := q.db.QueryRow(ctx, getLastAgentCommentForIssue, issueID)
+	var content string
+	err := row.Scan(&content)
+	return content, err
+}
+
 const markDingTalkProcessingEmotionAdded = `-- name: MarkDingTalkProcessingEmotionAdded :one
 UPDATE dingtalk_processing_emotion
 SET state = CASE WHEN state = 'settled' THEN 'settled' ELSE 'active' END,

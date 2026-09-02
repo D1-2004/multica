@@ -3,6 +3,11 @@
 // Kept in core so both apps and the test suite read from one source.
 export const AGENT_DESCRIPTION_MAX_LENGTH = 255;
 
+// Inbound coordinator voice. Kept in core so the Instructions tab counter
+// and the agent update handler cannot drift.
+export const AGENT_PERSONA_MAX_LENGTH = 400;
+export const AGENT_REPLY_TONE_MAX_LENGTH = 200;
+
 // Valid range for the per-agent scheduler cap. Kept here so creation,
 // duplication, and settings editing cannot silently drift.
 export const AGENT_MAX_CONCURRENT_TASKS_MIN = 1;

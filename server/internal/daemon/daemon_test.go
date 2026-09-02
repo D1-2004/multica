@@ -692,6 +692,25 @@ func TestTaskMulticaEnvironmentIncludesPrivateConfigRoot(t *testing.T) {
 	}
 }
 
+func TestTaskMulticaEnvironmentIncludesIssueIDWhenSet(t *testing.T) {
+	t.Parallel()
+	task := Task{
+		ID:          "task-test",
+		AgentID:     "agent-test",
+		WorkspaceID: "workspace-test",
+		IssueID:     "issue-uuid",
+	}
+	env := taskMulticaEnvironment(task, "agent-name", "tok", "/cfg", "/ws", "https://task.example", 1, 0, "/tmp")
+	if env["MULTICA_ISSUE_ID"] != "issue-uuid" {
+		t.Fatalf("MULTICA_ISSUE_ID=%q", env["MULTICA_ISSUE_ID"])
+	}
+	task.IssueID = ""
+	env = taskMulticaEnvironment(task, "agent-name", "tok", "/cfg", "/ws", "https://task.example", 1, 0, "/tmp")
+	if _, ok := env["MULTICA_ISSUE_ID"]; ok {
+		t.Fatal("empty IssueID must not export MULTICA_ISSUE_ID")
+	}
+}
+
 func TestMaskA2AInheritedCredentialEnv(t *testing.T) {
 	t.Setenv("MULTICA_DAEMON_TOKEN", "mdt_owner_secret")
 	t.Setenv("DWS_CLIENT_SECRET", "dws_owner_secret")
