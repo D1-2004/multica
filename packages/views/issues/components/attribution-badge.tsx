@@ -73,6 +73,9 @@ export function AttributionBadge({
     case "delegation":
       sourceLabel = t(($) => $.execution_log.attribution.source_delegation);
       break;
+    case "stage_barrier":
+      sourceLabel = t(($) => $.execution_log.attribution.source_stage_barrier);
+      break;
     case "comment_source":
       sourceLabel = t(($) => $.execution_log.attribution.source_comment_source);
       break;

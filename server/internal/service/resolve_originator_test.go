@@ -270,23 +270,15 @@ func TestResolveOriginatorFromTriggerComment_AgentAuthoredInheritsFromParent(t *
 	}
 }
 
-// TestAttributionForIssueTask_SystemCommentFallsThroughToIssueProvenance covers
-// the Stage-completion cascade (MUL-4302; raised by Bohan). Closing the last
-// sub-issue in a Stage wakes the parent's assignee agent through a SYSTEM-authored
-// child-done comment that threads no actor. That system comment carries no human,
-// so attribution must NOT stop at it (which would degrade to owner_fallback, the
-// agent's own owner) — it must fall through to the PARENT issue's own provenance
-// and attribute to the human who caused the parent issue to exist. Here the parent
-// was created by an agent on behalf of userID (agent_create origin), so the woken
-// run is delegation-accountable to userID.
-func TestAttributionForIssueTask_SystemCommentFallsThroughToIssueProvenance(t *testing.T) {
-	pool := newResolveOriginatorPool(t)
-	_, _, parentTaskID, userID, _ := seedOriginatorFanout(t, pool)
+// seedStageBarrierComment plants the SYSTEM-authored child-done comment a closed
+// stage barrier posts on the parent issue, mirroring postChildDoneComment exactly
+// (author_type='system', zero author id, type='system'). It lands on the seed
+// fixture's issue, and returns the comment id plus the issue/workspace ids the
+// callers need to build the parent db.Issue.
+func seedStageBarrierComment(t *testing.T, pool *pgxpool.Pool, parentTaskID pgtype.UUID) (systemCommentID pgtype.UUID, issueIDStr, workspaceIDStr string) {
+	t.Helper()
 	ctx := context.Background()
 
-	// Plant a system-authored comment on the seed's issue (mirrors the child-done
-	// comment). Its issue/workspace are derived from the origin task's issue.
-	var issueIDStr, workspaceIDStr string
 	if err := pool.QueryRow(ctx, `
 		SELECT i.id::text, i.workspace_id::text
 		FROM agent_task_queue t JOIN issue i ON i.id = t.issue_id
@@ -302,7 +294,30 @@ func TestAttributionForIssueTask_SystemCommentFallsThroughToIssueProvenance(t *t
 	`, issueIDStr, workspaceIDStr).Scan(&systemCommentIDStr); err != nil {
 		t.Fatalf("seed system comment: %v", err)
 	}
-	systemCommentID := util.MustParseUUID(systemCommentIDStr)
+	return util.MustParseUUID(systemCommentIDStr), issueIDStr, workspaceIDStr
+}
+
+// TestAttributionForIssueTask_SystemCommentFallsThroughToIssueProvenance covers
+// the Stage-completion cascade (MUL-4302; raised by Bohan). Closing the last
+// sub-issue in a Stage wakes the parent's assignee agent through a SYSTEM-authored
+// child-done comment that threads no actor. That system comment carries no human,
+// so attribution must NOT stop at it (which would degrade to owner_fallback, the
+// agent's own owner) — it must fall through to the PARENT issue's own provenance
+// and attribute to the human who caused the parent issue to exist. Here the parent
+// was created by an agent on behalf of userID (agent_create origin), so the woken
+// run is accountable to userID.
+//
+// The SOURCE, however, is stage_barrier, not the provenance's own label
+// (FDE-3094): the accountable human comes from the parent's provenance but the
+// thing that enqueued the run is the barrier. See the two sibling tests below —
+// this parent and a member-created one report the SAME source, which is the whole
+// point of the label.
+func TestAttributionForIssueTask_SystemCommentFallsThroughToIssueProvenance(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	_, _, parentTaskID, userID, _ := seedOriginatorFanout(t, pool)
+	ctx := context.Background()
+
+	systemCommentID, _, workspaceIDStr := seedStageBarrierComment(t, pool, parentTaskID)
 
 	svc := &TaskService{Queries: db.New(pool)}
 	// Parent issue created by an agent on behalf of userID (agent_create origin).
@@ -317,12 +332,117 @@ func TestAttributionForIssueTask_SystemCommentFallsThroughToIssueProvenance(t *t
 	}
 
 	got := svc.attributionForIssueTask(ctx, issue, systemCommentID, attribution.SourceDelegation, pgtype.UUID{})
-	if got.Source != attribution.SourceDelegation {
-		t.Fatalf("source = %q, want delegation (system comment must fall through to issue provenance, not owner_fallback)", got.Source)
+	if got.Source != attribution.SourceStageBarrier {
+		t.Fatalf("source = %q, want stage_barrier (the barrier woke this run; the provenance only supplies the human)", got.Source)
 	}
 	if !got.UserID.Valid || got.UserID.Bytes != userID.Bytes {
 		t.Errorf("accountable = %s, want %s (the human who caused the parent issue to exist)",
 			util.UUIDToString(got.UserID), util.UUIDToString(userID))
+	}
+	if got.EvidenceKind != attribution.EvidenceComment || got.EvidenceRefID != systemCommentID {
+		t.Errorf("evidence = %s/%s, want comment/%s (the child-done comment names the closed stage)",
+			got.EvidenceKind, util.UUIDToString(got.EvidenceRefID), util.UUIDToString(systemCommentID))
+	}
+}
+
+// TestAttributionForIssueTask_SystemCommentOnMemberCreatedParentIsStageBarrier is
+// the exact reported case (FDE-3094): a parent issue a MEMBER filed, woken by the
+// stage barrier. Before the fix this reported direct_human — claiming a member's
+// own action enqueued the run, when no member touched anything; the child simply
+// reached a terminal status. The accountable human is still that member (the
+// provenance is unchanged and originator stays authorization-identical), but the
+// source now names the mechanism and the evidence points at the child-done comment
+// that says WHICH stage closed.
+func TestAttributionForIssueTask_SystemCommentOnMemberCreatedParentIsStageBarrier(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	_, _, parentTaskID, userID, _ := seedOriginatorFanout(t, pool)
+	ctx := context.Background()
+
+	systemCommentID, _, workspaceIDStr := seedStageBarrierComment(t, pool, parentTaskID)
+
+	svc := &TaskService{Queries: db.New(pool)}
+	issue := db.Issue{
+		CreatorType: "member",
+		CreatorID:   userID,
+		WorkspaceID: util.MustParseUUID(workspaceIDStr),
+	}
+
+	got := svc.attributionForIssueTask(ctx, issue, systemCommentID, attribution.SourceDelegation, pgtype.UUID{})
+	if got.Source != attribution.SourceStageBarrier {
+		t.Fatalf("source = %q, want stage_barrier (a member filing the parent is not a member pushing this run)", got.Source)
+	}
+	if !got.UserID.Valid || got.UserID.Bytes != userID.Bytes {
+		t.Errorf("originator = %s, want %s — the relabel must not move the authorization human",
+			util.UUIDToString(got.UserID), util.UUIDToString(userID))
+	}
+	if got.AccountableUserID != got.UserID {
+		t.Errorf("accountable = %s, want it equal to originator %s (finalizeAttribution invariant)",
+			util.UUIDToString(got.AccountableUserID), util.UUIDToString(got.UserID))
+	}
+	if got.EvidenceKind != attribution.EvidenceComment || got.EvidenceRefID != systemCommentID {
+		t.Errorf("evidence = %s/%s, want comment/%s",
+			got.EvidenceKind, util.UUIDToString(got.EvidenceRefID), util.UUIDToString(systemCommentID))
+	}
+}
+
+// TestAttributionForIssueTask_SystemCommentOnAutopilotParentIsStageBarrier is the
+// FDE-3089 / FDE-3099 half of the same report: an autopilot-created parent woken by
+// the same barrier used to report rule_owner. It must now report the SAME source as
+// the member-created parent above — that agreement is the entire fix — while
+// keeping the autopilot chain's accountable human (the rule publisher) and its
+// NULL originator, since an autonomous fire still carries no human's authority.
+func TestAttributionForIssueTask_SystemCommentOnAutopilotParentIsStageBarrier(t *testing.T) {
+	pool := newResolveOriginatorPool(t)
+	_, _, parentTaskID, userID, workspaceID := seedOriginatorFanout(t, pool)
+	ctx := context.Background()
+
+	systemCommentID, issueIDStr, workspaceIDStr := seedStageBarrierComment(t, pool, parentTaskID)
+
+	// A published rule version is all ruleOwnerAttribution reads; autopilot_rule_version
+	// carries no FK (MUL-4302 §7), so a bare autopilot id is a valid fixture. No
+	// autopilot_run exists for this issue, so the trigger lookup finds nothing and the
+	// chain degrades to rule_owner — the coarser autopilot label, which the barrier
+	// relabel must override just as it overrides trigger_owner.
+	var autopilotIDStr string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO autopilot_rule_version (autopilot_id, workspace_id, published_by_type, published_by_id)
+		VALUES (gen_random_uuid(), $1, 'member', $2)
+		RETURNING autopilot_id
+	`, workspaceIDStr, util.UUIDToString(userID)).Scan(&autopilotIDStr); err != nil {
+		t.Fatalf("seed autopilot rule version: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(context.Background(),
+			`DELETE FROM autopilot_rule_version WHERE workspace_id = $1`, workspaceIDStr)
+	})
+
+	svc := &TaskService{Queries: db.New(pool)}
+	issue := db.Issue{
+		ID:          util.MustParseUUID(issueIDStr),
+		CreatorType: "agent",
+		OriginType:  pgtype.Text{String: "autopilot", Valid: true},
+		OriginID:    util.MustParseUUID(autopilotIDStr),
+		WorkspaceID: workspaceID,
+	}
+
+	got := svc.attributionForIssueTask(ctx, issue, systemCommentID, attribution.SourceDelegation, pgtype.UUID{})
+	if got.Source != attribution.SourceStageBarrier {
+		t.Fatalf("source = %q, want stage_barrier — an autopilot parent and a member parent woken by the same barrier must report the same source", got.Source)
+	}
+	if got.UserID.Valid {
+		t.Errorf("originator = %s, want NULL — an autopilot chain carries no human's authority and the relabel must not grant one",
+			util.UUIDToString(got.UserID))
+	}
+	if !got.AccountableUserID.Valid || got.AccountableUserID.Bytes != userID.Bytes {
+		t.Errorf("accountable = %s, want %s (the rule publisher, preserved through the relabel)",
+			util.UUIDToString(got.AccountableUserID), util.UUIDToString(userID))
+	}
+	if !got.RuleVersionID.Valid {
+		t.Error("rule version lineage must survive the relabel so the autopilot chain stays traceable")
+	}
+	if got.EvidenceKind != attribution.EvidenceComment || got.EvidenceRefID != systemCommentID {
+		t.Errorf("evidence = %s/%s, want comment/%s",
+			got.EvidenceKind, util.UUIDToString(got.EvidenceRefID), util.UUIDToString(systemCommentID))
 	}
 }
 

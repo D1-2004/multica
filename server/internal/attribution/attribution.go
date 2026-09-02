@@ -34,10 +34,24 @@ const (
 	// accountable human.
 	SourceDirectHuman Source = "direct_human"
 	// SourceDelegation — an agent running on behalf of a human caused the
-	// enqueue (agent @-mentions another agent, agent creates a sub-issue,
-	// stage-completion wakeup). The parent task's accountable human is COPIED,
-	// not chained, so delegation cycles stay harmless (MUL-4302 §3.2).
+	// enqueue (agent @-mentions another agent, agent creates a sub-issue). The
+	// parent task's accountable human is COPIED, not chained, so delegation
+	// cycles stay harmless (MUL-4302 §3.2).
 	SourceDelegation Source = "delegation"
+	// SourceStageBarrier — the platform's stage barrier woke the parent issue's
+	// assignee because every sub-issue in the lowest unfinished stage reached a
+	// terminal status (issue_child_done.go). No member action and no agent
+	// decision enqueued this run: the MECHANISM did, so labelling it
+	// direct_human or delegation misreports what happened — and the label used
+	// to be a function of how the PARENT ISSUE was created, so runs woken by the
+	// very same barrier reported different sources (FDE-3094).
+	//
+	// The accountable human is still resolved from the parent issue's own
+	// provenance (its member creator, its agent_create origin chain, or its
+	// autopilot trigger/rule owner), so initiator stays exactly as precise as it
+	// was; only the LABEL changes. originator_user_id is untouched — this is an
+	// audit label, never an authorization input.
+	SourceStageBarrier Source = "stage_barrier"
 	// SourceCommentSource — the issue's standing assignee reacted to an
 	// agent/system-authored comment; the human is resolved through
 	// comment.source_task_id (a special case of delegation, MUL-4302 §3.3).
@@ -73,7 +87,7 @@ const (
 // attribution-coverage health metric (MUL-4302 §9).
 func (src Source) Precise() bool {
 	switch src {
-	case SourceDirectHuman, SourceDelegation, SourceCommentSource, SourceTriggerOwner, SourceRuleOwner:
+	case SourceDirectHuman, SourceDelegation, SourceStageBarrier, SourceCommentSource, SourceTriggerOwner, SourceRuleOwner:
 		return true
 	default:
 		return false

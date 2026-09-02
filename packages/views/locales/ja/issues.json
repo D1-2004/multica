@@ -516,6 +516,7 @@
       "someone": "あるメンバー",
       "source_direct_human": "メンバーの直接操作",
       "source_delegation": "別の実行から委任",
+      "source_stage_barrier": "ステージ完了による起動 — ステージ内のサブタスクがすべて完了",
       "source_comment_source": "コメントスレッドから",
       "source_trigger_owner": "オートパイロットのトリガー作成者",
       "source_rule_owner": "オートパイロットのルール公開者",
