@@ -6,7 +6,7 @@ Coordinator 短循环已经精确读 Scene Text、用 `assoc_recall` 选事项�
 
 沙箱已有 `multica assoc recall --conversation <openConversationId> --since 48h` 和 MCP `assoc_recall`。builtin skill：`server/internal/service/builtin_skills/multica-assoc/SKILL.md`。
 
-过线（P2 或 P1.4 建出 Issue 之后）：
+过线（SKILL.md 的 P2 / P3 建出 Issue 之后）：
 
 1. 该 Issue 的 Run 在沙箱里对 **入站 cid** 做 `assoc recall --conversation <cid>`
 2. 能看到刚绑定的 issue / purpose
@@ -28,7 +28,7 @@ Coordinator 短循环已经精确读 Scene Text、用 `assoc_recall` 选事项�
 - 不接入 people-group-memory
 - 落点：`server/internal/handler` Scene GET（与 D 的 API 共用）+ `builtin_skills` 里一条只读 skill（改 CLI/API 时同步 `SKILL.md` 和 `references/*-source-map.md`）
 
-过线：在 P1.3 已写入「GoalMate=工具」的 cid 上开一个 Issue Run，问「这个会话里 GoalMate 是什么」。Daemon 应读到同一份 Text；另一个 cid 的 Run 读不到。
+过线：P1.3 已写入「GoalMate=工具」之后，在该单聊开的 Issue Run 里问「这个会话里 GoalMate 是什么」。Daemon 应读到同一份 Text；P3 测试号↔配角 那条单聊的 Run 读不到。
 
 ## 不做
 
