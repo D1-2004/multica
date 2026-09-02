@@ -2532,13 +2532,6 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
 		return
 	}
-	if h.SceneMemoryStore != nil {
-		if err := h.SceneMemoryStore.WithTx(tx).DeleteByAgent(r.Context(), agent.WorkspaceID, agent.ID); err != nil {
-			slog.Warn("delete scene memory on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to archive agent")
-			return
-		}
-	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
 		return

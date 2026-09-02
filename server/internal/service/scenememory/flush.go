@@ -125,6 +125,14 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 		cursorAt = row.SourceCursorAt.Time
 	}
 	delta := afterCursor(events, cursorAt, row.SourceCursorEvidenceID)
+	if cutoffEv != "" && containsEvidence(events, cutoffEv) && !containsEvidence(delta, cutoffEv) {
+		for _, event := range events {
+			if event.EvidenceID == cutoffEv {
+				delta = append([]HistoryEvent{event}, delta...)
+				break
+			}
+		}
+	}
 	covered := CursorCovers(cursorAt, row.SourceCursorEvidenceID, cutoffAt, cutoffEv)
 	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered {
 		return flushPlan{}, &FlushError{

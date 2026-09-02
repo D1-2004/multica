@@ -6,19 +6,19 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 var (
-	secretBearer   = regexp.MustCompile(`(?i)\b(bearer\s+)[A-Za-z0-9._\-+=/]{8,}`)
-	secretPassword = regexp.MustCompile(`(?i)(password\s*[:=]\s*)\S+`)
+	secretKV       = regexp.MustCompile(`(?i)\b(api[_-]?key|token|secret|password)\s*[:=]\s*\S+`)
 	secretURLParam = regexp.MustCompile(`(?i)([?&](?:token|access_token|signature|sig|secret|key)=)[^&\s]+`)
 )
 
 func redactSecrets(s string) string {
-	s = secretBearer.ReplaceAllString(s, "${1}[REDACTED]")
-	s = secretPassword.ReplaceAllString(s, "${1}[REDACTED]")
+	s = secretKV.ReplaceAllString(s, "${1}[REDACTED]")
 	s = secretURLParam.ReplaceAllString(s, "${1}[REDACTED]")
-	return s
+	return redact.Text(s)
 }
 
 type HistoryEvent struct {

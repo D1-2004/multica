@@ -567,9 +567,8 @@ func (h *Handler) markSceneMemoryDirty(
 }
 
 func dispatchMessageOccurredAt(command DispatchCommand) time.Time {
-	messages := command.Event.Data.Messages
-	if n := len(messages); n > 0 {
-		if occurred := unixMillis(messages[n-1].OccurredAt); !occurred.IsZero() {
+	if message, ok := lastInboundTextMessage(command); ok {
+		if occurred := unixMillis(message.OccurredAt); !occurred.IsZero() {
 			return occurred
 		}
 	}

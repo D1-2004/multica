@@ -41,8 +41,8 @@ func TestAfterCursorIsExclusive(t *testing.T) {
 }
 
 func TestRedactSecrets(t *testing.T) {
-	got := redactSecrets("Authorization: Bearer abcdefghijklmnop password=secret https://x?token=abc&ok=1")
-	if strings.Contains(got, "abcdefghijklmnop") || strings.Contains(got, "password=secret") || strings.Contains(got, "token=abc") {
+	got := redactSecrets("api_key=sk-abcdefghijklmnopqrstuvwxyz password=secret token=plainval https://x?token=abc&ok=1")
+	if strings.Contains(got, "sk-abcdefghijklmnopqrstuvwxyz") || strings.Contains(got, "password=secret") || strings.Contains(got, "token=plainval") || strings.Contains(got, "token=abc") {
 		t.Fatalf("leaked: %q", got)
 	}
 	if !strings.Contains(got, "[REDACTED]") {

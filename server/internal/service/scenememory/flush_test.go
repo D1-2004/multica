@@ -93,6 +93,27 @@ func TestPlanFlushCaughtUpWhenClaimedEvidenceVisible(t *testing.T) {
 	}
 }
 
+func TestPlanFlushIncludesTriggerBeforeCursor(t *testing.T) {
+	cutoff := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
+	row := db.SceneMemory{
+		LeaseTargetThroughAt:         timestamptz(cutoff),
+		LeaseTargetThroughEvidenceID: "msg-new",
+		SourceCursorAt:               timestamptz(cutoff.Add(time.Second)),
+		SourceCursorEvidenceID:       "zzz",
+	}
+	plan, err := planFlush(row, []HistoryEvent{{
+		EvidenceID: "msg-new",
+		OccurredAt: cutoff,
+		Content:    "纠正：DELTA-5520 是排班表",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.batch) != 1 || plan.batch[0].EvidenceID != "msg-new" {
+		t.Fatalf("trigger before cursor must still merge: %+v", plan)
+	}
+}
+
 func TestPlanFlushEmptyDeltaWithoutCutoffIsCaughtUp(t *testing.T) {
 	plan, err := planFlush(db.SceneMemory{}, nil)
 	if err != nil {
