@@ -151,8 +151,15 @@ func relayTaskLLMTraceForAgent(
 	var taskContext struct {
 		CompletionCallback llmTraceCallback `json:"completion_callback"`
 	}
-	if json.Unmarshal(task.Context, &taskContext) != nil {
-		return 0, errLLMTraceUnavailable
+	// A task created without a dispatch context (a web-created Issue) has an
+	// empty context; that means "no Router callback", not a broken relay.
+	if trimmed := bytes.TrimSpace(task.Context); len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
+		if json.Unmarshal(trimmed, &taskContext) != nil {
+			if observed {
+				return http.StatusNoContent, nil
+			}
+			return 0, errLLMTraceUnavailable
+		}
 	}
 	callback := taskContext.CompletionCallback
 	staticSinkURL := ""

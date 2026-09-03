@@ -80,8 +80,12 @@ so the two traces can be joined in either direction.
   `WARNING` tool events; `issue_busy` is `ERROR`.
 - `coordinator.nudge` and `coordinator.loop_error` events.
 
-Web chat turns share the chat trace id with the task they start, so one turn
-is one tree from coordinator decision to sandbox generations.
+A coordinator turn and the task it starts are one trace: web turns share the
+chat trace with the Issue task they create, channel-engine turns reuse the
+inbound chat trace, and Router-dispatched turns install the coordinator trace
+id as the Issue task's chat trace (`inboundcoord.WithCoordinatorTrace`). The
+coordinator's root observation and the task's `agent_task` root then sit side
+by side under one trace id, with the sandbox generations beneath the task.
 
 ### Memory flush (`scene_memory_flush`)
 
@@ -110,7 +114,11 @@ messages, usage, and completion to the server, and FC runtime images with the
   streams are `ERROR` / `WARNING`. When the exporter is configured, capture is
   turned on for every task on a capable runtime image
   (`FCE2BLauncher.LLMTraceCaptureAlways`), independent of Router telemetry or
-  the Agent static sink; those two destinations are unchanged.
+  the Agent static sink; those two destinations are unchanged. The observation
+  id is derived from the task id and the runtime's sequence number, so the
+  runtime's retries of one pair upsert the same generation, and a task with no
+  dispatch context (a web-created Issue) is accepted with 204 once the
+  observer has it instead of being rejected with 503.
 - The root observation (type `agent`) is emitted once the terminal status
   commits, from `TaskService.captureTaskCompleted/Failed/Cancelled`, on a
   detached goroutine: issue title and trigger as input, result or error as

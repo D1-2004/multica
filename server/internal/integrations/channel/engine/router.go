@@ -588,6 +588,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		turn.IssueDispatchContext = taskContext
 		turn.DWSUID, turn.DWSOrgID = coordinatorDWSIdentity(taskContext)
 		turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
+		// The coordinator turn shares the inbound chat trace so its Langfuse
+		// trace and the task it may start are one tree.
+		turn.TraceID = trace.TraceID
 		coordDecision = r.coordinator.Decide(ctx, turn)
 		switch coordDecision.Action {
 		case inboundcoord.ActionRetry:
@@ -600,6 +603,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			if err != nil {
 				return Result{}, finalizeRelease, fmt.Errorf("prepare coordinator issue task context: %w", err)
 			}
+			taskContext = inboundcoord.WithCoordinatorTraceID(taskContext, coordDecision.TraceID)
 			coordinatorIssue = true
 			issueCommand = &IssueCommand{
 				Title:       inboundcoord.IssueTitle(coordDecision, msg.Text),

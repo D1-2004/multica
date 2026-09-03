@@ -1075,6 +1075,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 				CreatorType:    "member",
 				CreatorID:      parseUUID(userID),
 				AllowDuplicate: true,
+				// The Issue task inherits the turn's chat trace so its Langfuse
+				// trace is the coordinator's, not a separate one.
+				DispatchContext: inboundcoord.WithCoordinatorTrace(nil, trace.TraceID, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS)),
 			}, service.IssueCreateOpts{
 				ActorID:          userID,
 				AnalyticsAgentID: uuidToString(session.AgentID),
