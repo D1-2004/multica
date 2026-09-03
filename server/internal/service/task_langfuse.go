@@ -242,7 +242,6 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 	// provider stay available as metadata, and the task/issue ids remain
 	// reachable through the idx.* events (TaskIndexKeys).
 	traceName := ""
-	var rootMetadata map[string]any
 	if tc.CoordinatorTraceID != "" {
 		traceName = coordinatorTraceName
 		tags = tc.CoordinatorTraceTags
@@ -250,30 +249,30 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 			tags = []string{coordinatorTraceName}
 		}
 		// Trace metadata merges per key, last writer wins, so the task must
-		// not replace the turn's conversation-level values (its DingTalk
+		// not repeat the turn's conversation-level values (its DingTalk
 		// conversation type "single" would overwrite kind "p2p", its loop
-		// would overwrite inbound_coordinator). The full set stays on the
-		// agent_task root observation.
-		rootMetadata = metadata
+		// would overwrite inbound_coordinator). Langfuse also folds a root
+		// observation's metadata into the trace, so the keys are dropped
+		// rather than moved onto the agent_task root; the turn already
+		// carries them.
 		metadata = withoutCoordinatorOwnedMetadata(metadata)
 	}
 	return langfuse.TraceOptions{
-		TraceID:      traceID,
-		RootSpanID:   TaskLangfuseRootSpanID(taskID),
-		Name:         taskTraceName,
-		TraceName:    traceName,
-		Type:         langfuse.TypeAgent,
-		UserID:       userID,
-		SessionID:    sessionID,
-		Tags:         tags,
-		Metadata:     metadata,
-		RootMetadata: rootMetadata,
+		TraceID:    traceID,
+		RootSpanID: TaskLangfuseRootSpanID(taskID),
+		Name:       taskTraceName,
+		TraceName:  traceName,
+		Type:       langfuse.TypeAgent,
+		UserID:     userID,
+		SessionID:  sessionID,
+		Tags:       tags,
+		Metadata:   metadata,
 	}
 }
 
 // coordinatorOwnedMetadata are the trace-level keys a coordinator turn writes
 // (inboundcoord.coordinatorTraceOptions); a task joining the turn's trace
-// keeps them on its root observation only.
+// must not send them on any of its spans.
 var coordinatorOwnedMetadata = map[string]bool{
 	"loop": true, "conversation_id": true, "conversation_name": true, "conversation_kind": true,
 	"sender_name": true, "person_id": true, "dws_uid": true, "dws_org_id": true,
