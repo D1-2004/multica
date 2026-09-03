@@ -908,7 +908,7 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
                       }
                       onTransfer={async (userId) => {
                         const updated = await api.transferAutopilotOwner(autopilot.id, userId);
-                        qc.setQueryData(autopilotDetailOptions(wsId, autopilotId).queryKey, (old: typeof data) =>
+                        qc.setQueryData(autopilotDetailOptions(wsId, autopilotId).queryKey, (old: typeof data | undefined) =>
                           old ? { ...old, autopilot: { ...old.autopilot, ...updated } } : old,
                         );
                         toast.success(tCommon(($) => $.owner_transfer.transferred));
