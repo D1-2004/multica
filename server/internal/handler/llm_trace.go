@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -39,6 +40,20 @@ type LLMTraceExternalSink interface {
 		sinkURL string,
 		payload []byte,
 	) (int, error)
+}
+
+// LLMTraceObserver is a server-side consumer of relayed model
+// request/response pairs (the Langfuse exporter). It counts as a delivery
+// destination: when it is configured the relay accepts payloads even if
+// neither Router telemetry nor the Agent static sink is set up. Its errors
+// are logged, never surfaced to the sandbox.
+type LLMTraceObserver interface {
+	ObserveTaskLLMTrace(
+		ctx context.Context,
+		task db.AgentTaskQueue,
+		agent db.Agent,
+		payload []byte,
+	) error
 }
 
 type httpLLMTraceExternalSink struct {
@@ -96,7 +111,36 @@ func relayTaskLLMTrace(
 	now time.Time,
 	router LLMTraceRouter,
 	externalSink LLMTraceExternalSink,
+	observer LLMTraceObserver,
 ) (int, error) {
+	return relayTaskLLMTraceForAgent(ctx, task, db.Agent{}, runtimeConfig, payload, now, router, externalSink, observer)
+}
+
+func relayTaskLLMTraceForAgent(
+	ctx context.Context,
+	task db.AgentTaskQueue,
+	agent db.Agent,
+	runtimeConfig []byte,
+	payload []byte,
+	now time.Time,
+	router LLMTraceRouter,
+	externalSink LLMTraceExternalSink,
+	observer LLMTraceObserver,
+) (int, error) {
+	observed := false
+	if observer != nil {
+		// Fan out to the server-side observer first: it only parses and
+		// enqueues, so it never delays the network destinations below.
+		if err := observer.ObserveTaskLLMTrace(ctx, task, agent, payload); err != nil {
+			slog.Warn("LLM trace observer rejected payload",
+				"event", "llm_trace_observer_failed",
+				"task_id", util.UUIDToString(task.ID),
+				"error", err,
+			)
+		} else {
+			observed = true
+		}
+	}
 	var config struct {
 		LLMTrace struct {
 			Enabled bool   `json:"enabled"`
@@ -118,6 +162,9 @@ func relayTaskLLMTrace(
 	hasCallback := strings.TrimSpace(callback.TelemetryURL) != "" ||
 		strings.TrimSpace(callback.TelemetryToken) != "" || callback.TelemetryExpiresAt != 0
 	if !hasCallback && staticSinkURL == "" {
+		if observed {
+			return http.StatusNoContent, nil
+		}
 		return 0, errLLMTraceUnavailable
 	}
 
@@ -227,14 +274,16 @@ func (h *Handler) RelayTaskLLMTrace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	status, err := relayTaskLLMTrace(
+	status, err := relayTaskLLMTraceForAgent(
 		r.Context(),
 		task,
+		agent,
 		agent.RuntimeConfig,
 		payload,
 		time.Now(),
 		h.AgentMessageRouterLLMTrace,
 		h.LLMTraceExternalSink,
+		h.LLMTraceObserver,
 	)
 	if err != nil {
 		switch {

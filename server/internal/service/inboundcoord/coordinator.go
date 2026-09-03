@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -88,6 +89,9 @@ type Turn struct {
 	IssueDispatchContext []byte
 	SceneMemory          string
 	SceneMemoryRevision  int64
+	// ChatSessionID is the web Chat session the turn belongs to; channel
+	// turns leave it empty and are grouped by ConversationID instead.
+	ChatSessionID string
 }
 
 // HistoryLine is one already-persisted Multica chat message or a DingTalk row.
@@ -112,6 +116,9 @@ type Decision struct {
 	ToolsUsed    []string
 	IssueComment *IssueCommentEffect
 	Steps        []protocol.ChatCoordinatorStep
+	// TraceID is the coordinator trace id of the Decide call that produced
+	// this verdict (coord_trace_id in SLS, the Langfuse trace id).
+	TraceID string
 }
 
 type decisionObserverKey struct{}
@@ -152,6 +159,8 @@ type Coordinator struct {
 	Assoc       *assoc.Service
 	DWSHistory  DingTalkHistoryLoader
 	SceneMemory sceneMemoryReader
+	// Langfuse exports one trace per Decide call. Nil disables tracing.
+	Langfuse *langfuse.Client
 }
 
 type sceneMemoryReader interface {
@@ -198,10 +207,14 @@ func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 // Decide returns a verdict. A disabled LLM or any failure continues the
 // existing sandbox enqueue so a missing model never silences users.
 func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision) {
+	var turnTrace *langfuse.Trace
+	var loopErr error
 	defer func() {
 		if decision.Source == "" {
 			decision.Source = turn.Source
 		}
+		decision.TraceID = strings.TrimSpace(turn.TraceID)
+		finishCoordinatorTrace(turnTrace, decision, loopErr)
 		RecordDecision(ctx, decision)
 	}()
 	if c == nil {
@@ -235,9 +248,12 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
 	defer cancel()
 	started := time.Now()
+	turnTrace = c.startTurnTrace(ctx, turn, started)
+	loopCtx = langfuse.ContextWithTrace(loopCtx, turnTrace)
 	var preflightSteps []protocol.ChatCoordinatorStep
 	if turn.Source != SourceWeb {
 		if c.DWSHistory == nil {
+			loopErr = fmt.Errorf("DWS history is not configured")
 			preflightSteps = coordinatorDWSHistorySteps(turn, nil, fmt.Errorf("DWS history is not configured"))
 			slog.Warn("inbound coordinator DWS history unavailable; continuing sandbox enqueue",
 				append(coordinatorLogIndex(turn),
@@ -249,8 +265,11 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 				Steps: preflightSteps,
 			}
 		}
+		historyObs := traceHistoryStart(turnTrace, turn)
 		history, err := c.DWSHistory.Load(loopCtx, turn)
+		traceHistoryEnd(historyObs, history, err)
 		if err != nil {
+			loopErr = fmt.Errorf("dws history: %w", err)
 			preflightSteps = coordinatorDWSHistorySteps(turn, nil, err)
 			slog.Warn("inbound coordinator DWS history failed; continuing sandbox enqueue",
 				append(coordinatorLogIndex(turn),
@@ -274,6 +293,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 			)...)
 	}
 	decision, err := c.runLoop(loopCtx, turn)
+	loopErr = err
 	elapsed := time.Since(started)
 	decision.Steps = mergeCoordinatorSteps(preflightSteps, decision.Steps)
 	if err != nil {
@@ -451,6 +471,7 @@ func (c *Coordinator) TurnFromChatSession(
 		Message:           message,
 		AgentID:           session.AgentID,
 		WorkspaceID:       util.UUIDToString(session.WorkspaceID),
+		ChatSessionID:     util.UUIDToString(session.ID),
 	}
 	if c == nil || c.Queries == nil {
 		return turn

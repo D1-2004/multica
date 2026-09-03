@@ -1046,6 +1046,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	)
 	webTurn.UserID = parseUUID(userID)
 	webTurn.IdentityNote = inboundcoord.IdentityNote(inboundcoord.SourceWeb, "", "")
+	// Share the chat trace with the coordinator so the web turn's Langfuse
+	// trace and the task it may start are one tree.
+	webTurn.TraceID = trace.TraceID
 	decision := coord.Decide(r.Context(), webTurn)
 	if len(attachmentIDs) > 0 && decision.Action != inboundcoord.ActionContinue {
 		decision.Action = inboundcoord.ActionContinue
