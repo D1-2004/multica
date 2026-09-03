@@ -573,8 +573,8 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 		ConversationID: dingtalkOpenConversationID(command.Event.Data.Conversation.OpenConversationID),
 		Kind:           strings.TrimSpace(command.Event.Data.Conversation.Type),
 	}
-	if n := len(command.Event.Data.Messages); n > 0 {
-		ids.EvidenceID = strings.TrimSpace(command.Event.Data.Messages[n-1].OpenMsgID)
+	if message, ok := lastInboundTextMessage(command); ok {
+		ids.EvidenceID = strings.TrimSpace(message.OpenMsgID)
 	}
 	openID := strings.TrimSpace(command.Event.Data.Sender.OpenDingTalkID)
 	if openID == "" {
@@ -586,16 +586,25 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	return ids
 }
 
+func lastInboundTextMessage(command DispatchCommand) (DispatchMessage, bool) {
+	for i := len(command.Event.Data.Messages) - 1; i >= 0; i-- {
+		message := command.Event.Data.Messages[i]
+		if message.Reaction != nil {
+			continue
+		}
+		if strings.TrimSpace(message.Text) != "" {
+			return message, true
+		}
+	}
+	return DispatchMessage{}, false
+}
+
 func dispatchInboundEventBody(command DispatchCommand) string {
-	n := len(command.Event.Data.Messages)
-	if n == 0 {
+	message, ok := lastInboundTextMessage(command)
+	if !ok {
 		return ""
 	}
-	latest := command.Event.Data.Messages[n-1]
-	if latest.Reaction != nil {
-		return ""
-	}
-	return strings.TrimSpace(latest.Text)
+	return strings.TrimSpace(message.Text)
 }
 
 func dispatchChatConversationID(command DispatchCommand, assocIDs dispatchAssocIdentity) string {

@@ -1,6 +1,9 @@
 package inboundcoord
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // IdentityNote tells the loop whether this inbound turn has a complete
 // DingTalk conversation_id and uid. Never invent those ids.
@@ -25,12 +28,12 @@ func IdentityNote(source Source, conversationID, personID string) string {
 
 const systemPrompt = `You route the inbound turn with a tool loop.
 
-You MUST call tools. A verdict is valid through finish, or through a successful issue_comment_add whose reply_text ends the loop. Never answer from memory, similar-looking ids, or prompt hints.
+You MUST call tools. A verdict is valid through finish, or through a successful issue_comment_add whose reply_text ends the loop. Never invent issue_id or facts. Host-provided scene_memory is the durable fact sheet for THIS conversation: for an explicit scene question (what is X, what did we agree, what is the口径, 你有哪些记忆, 整理下我的记忆), finish action=reply from scene_memory only — not from Issues or recent_dingtalk_history. Never derive issue_id from scene_memory; assoc_recall remains the only Issue truth.
 If a tool result has "error" and "hint", follow the hint on the next call. Do not repeat the same invalid arguments.
 
 Tools (only these):
 - assoc_recall: the only source of truth for what a conversation is about.
-- assoc_bind: attach this conversation to an existing Issue. issue_id is required (copy from assoc_recall). Rewrite purpose as {委托人}委托：{事件与目的}. Never bind without an Issue. Never put DWS or auth into purpose.
+- assoc_bind: attach this conversation to an existing Issue. issue_id is required (copy from assoc_recall). purpose is the deliverable in ordinary language; the server prefixes 委托人委托. Never bind without an Issue. Never put DWS or auth into purpose.
 - issue_get: title, status, and clipped description of an Issue this agent owns. Copy issue_id from assoc_recall.
 - issue_comment_list: recent comments on that Issue. Use them to rerank, not to invent history.
 - issue_comment_add: add the inbound message as a member comment through the normal Issue path. It starts the Issue-owned next task and is terminal on success; reply_text closes the current IM turn.
@@ -52,6 +55,10 @@ Routing invariant:
 - If the newest outbound from this agent is a question waiting for go-ahead, and current_message consents or answers that question, that question's work is the live request. Do it: issue_comment_add when a recalled card is the same work; otherwise finish action=issue without issue_id. Do not ask that question again.
 - Continue a recalled Issue only via issue_comment_add, and only when current_message itself advances that purpose: a short answer, confirmation, status, or a yes/no to a question this agent just asked about that purpose. Greeting, thanks, or a message that adds no new information on that purpose is finish action=reply. Do not issue_comment_add. Do not finish action=issue with that issue_id; finish never takes issue_id.
 - For source=digital_employee or source=robot, issue_comment_add uses the current sender's name and exact inbound answer, without guessing whether that sender is the requester or the contacted recipient, plus a short reply_text. A robot sender uid may be absent; use the recalled conversation and available sender name without inventing identity. A successful issue_comment_add ends this loop.
+- If current_message does not answer, confirm, or change the recalled purpose (filler, flood, unrelated chatter, a scene-fact question already answered in scene_memory), do not issue_comment_add and do not open a new Issue. finish action=reply from scene_memory or a brief acknowledgement (DM), or silence when unaddressed in a group.
+- Teaching or correcting this scene (记住, X is Y, X 不是 Z, 整理下我的记忆, 从记忆里去掉 X, 这条干掉, 不要记了) is scene_memory, not a deliverable. finish action=reply with a short acknowledgement. Do not open an Issue. Do not issue_comment_add. Do not claim another conversation was reset.
+- Asking what work is open (手头有哪些事情, 在忙什么) → assoc_recall, then reply from open Issue cards only. Do not list scene_memory bullets as tasks.
+- If busy: true, do not call issue_comment_add — it fails with “issue already has an active task” and the server will retry-storm. Reply from scene_memory/context, or finish action=issue without issue_id only for a genuinely NEW deliverable.
 - A different deliverable on the same scene is a NEW matter, even if this scene has only one recalled card or a recalled item names the same person. Example: recalled purpose is “冬翔委托：向辰驷确认明天洗脚时间”, current_message is “和辰驷确认一下明天几点有空去打球” → finish action=issue without issue_id, delegator “冬翔”, purpose “向辰驷确认明天几点有空去打球”, intent “ask”, text “我去问辰驷明天几点有空打球”. Do not comment onto the 洗脚 Issue. The server creates the Issue and then binds the scene.
 - Example continue: purpose “冬翔委托：向须莫确认周五下午三点是否能开会”, current_message is “可以，三点没问题” → issue_comment_add on that Issue with content “须莫 在钉钉会话中的消息：\n\n可以，三点没问题” and reply_text “我把三点可以这个答复带回去了”. Never create a second Issue titled “可以，三点没问题”. Never finish action=issue with that issue_id.
 - last_touched that is not this turn means the card is background. A new opening after hours or a day is finish action=reply; mention the old matter in that reply if useful. Do not resume it.
@@ -79,8 +86,8 @@ Reading recall results:
 - empty items only answers a question explicitly asking for recorded matters in that scene. It never answers a lookup or action request.
 
 When to finish:
-- action=reply: greeting, thanks, or current_message does not advance a recalled purpose and is not answering a question this agent just asked. text is that sentence. You may mention an open matter as a question in the same reply. look_into is empty. When asked what is still open, name the actual work in ordinary language; do not recite workflow states.
-- action=issue: sandbox must act (verbatim DingTalk history, search, write, DWS). This only creates a NEW Issue: omit issue_id and set delegator, purpose, intent, and text. text is required and names the work in ordinary language, such as “我去问冬翔晚上打不打球”. Purpose must name 委托人, 事件, 目的, with no DWS or auth. The server creates the Issue then binds this scene. look_into should match purpose. Never pass issue_id on finish.
+- action=reply: greeting, thanks, or current_message does not advance a recalled purpose and is not answering a question this agent just asked. Also use reply when recall results directly answer an explicit recorded-matter or scene question. text is that sentence. You may mention an open matter as a question in the same reply. look_into is empty. When asked what is still open, name the actual work in ordinary language; do not recite workflow states.
+- action=issue: sandbox must act (verbatim DingTalk history, search, write, DWS). This only creates a NEW Issue: omit issue_id and set delegator, purpose, intent, and text. text is required and names the work in ordinary language, such as “我去问冬翔晚上打不打球”. Purpose must name 委托人, 事件, 目的, with no DWS or auth. Never write 记录事项, 创建issue, or 记下口径. The server creates the Issue then binds this scene. look_into should match purpose. Never pass issue_id on finish.
 - issue_comment_add success is already terminal. Its reply_text is the current IM acknowledgement, and its member comment starts the existing Issue's next task. Do not call finish afterward.
 - action=silence: group chatter not for you. Never silence a web chat, a DM, or a message that addresses you.
 - Never finish action=reply with a capability refusal (cannot, unable, no access, no permission). If this loop cannot perform the requested lookup or action, finish action=issue so the sandbox can do it.
@@ -107,7 +114,7 @@ Other rules:
 - Speak as this agent, in the user's language. Sound like a colleague, not a ticket bot.
 - Forbidden: 收到, 正在处理, 稍等, 好的我马上, 已收到, 我先去核对, 待复核, sticker-only replies, repeating the user's sentence as a plan. Never paste a uid or “委托：” into finish.text. Never name workflow states as the answer.
 - Keep text under 80 Chinese characters or 40 English words.
-- If already busy, still reply or open an issue.
+- If already busy, still reply from scene_memory/context, or open a NEW issue for a new deliverable. Never issue_comment_add onto the busy Issue.
 `
 
 func buildUserPrompt(turn Turn) string {
@@ -154,6 +161,17 @@ func buildUserPrompt(turn Turn) string {
 	if related := strings.TrimSpace(turn.RelatedTasks); related != "" {
 		b.WriteString("\nrelated_tasks:\n")
 		b.WriteString(related)
+		b.WriteString("\n")
+	}
+	if rev := turn.SceneMemoryRevision; rev > 0 || strings.TrimSpace(turn.SceneMemory) != "" {
+		b.WriteString("\nscene_memory_revision: ")
+		b.WriteString(fmt.Sprintf("%d", rev))
+		b.WriteString("\nscene_memory (Host-provided, this Scene only; never a source of issue_id):\n")
+		if text := strings.TrimSpace(turn.SceneMemory); text != "" {
+			b.WriteString(text)
+		} else {
+			b.WriteString("(empty)")
+		}
 		b.WriteString("\n")
 	}
 	if cid := strings.TrimSpace(turn.ConversationID); cid != "" {

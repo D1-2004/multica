@@ -123,6 +123,14 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		if !sameDingTalkBindingAgentSet(activeAgentIDs, result.ArchivedAgents) {
 			return empty, errors.New("agent set changed during member revocation")
 		}
+		if h.SceneMemoryStore != nil {
+			store := h.SceneMemoryStore.WithTx(tx)
+			for _, archived := range result.ArchivedAgents {
+				if err := store.DeleteByAgent(ctx, archived.WorkspaceID, archived.ID); err != nil {
+					return empty, err
+				}
+			}
+		}
 
 		// Cancel by runtime AND by archived agent. agent.runtime_id can be
 		// reassigned via UpdateAgent without rewriting the runtime_id on

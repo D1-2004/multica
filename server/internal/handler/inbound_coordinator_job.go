@@ -14,7 +14,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -181,9 +183,26 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 		return true, w.complete(ctx, job)
 	}
 	if response.Status() == http.StatusConflict || response.Status() >= http.StatusInternalServerError {
-		return true, w.retry(ctx, job, fmt.Errorf("dispatch returned HTTP %d", response.Status()))
+		return true, w.retry(ctx, job, fmt.Errorf("%s", dispatchRejectReason(response)))
 	}
-	return true, w.fail(ctx, job, command, fmt.Sprintf("dispatch rejected with HTTP %d", response.Status()))
+	return true, w.fail(ctx, job, command, dispatchRejectReason(response))
+}
+
+func dispatchRejectReason(response *bufferedDispatchResponse) string {
+	status := 0
+	body := ""
+	if response != nil {
+		status = response.Status()
+		body = strings.TrimSpace(response.body.String())
+		runes := []rune(body)
+		if len(runes) > 300 {
+			body = string(runes[:300])
+		}
+	}
+	if body == "" {
+		return fmt.Sprintf("dispatch rejected with HTTP %d", status)
+	}
+	return fmt.Sprintf("dispatch rejected with HTTP %d: %s", status, body)
 }
 
 func restoreInboundCoordinatorCommand(raw []byte, endpointID pgtype.UUID, targetIdentity string) (DispatchCommand, error) {
@@ -247,6 +266,7 @@ func (w *InboundCoordinatorJobWorker) retry(ctx context.Context, job db.InboundC
 		"job_id", util.UUIDToString(job.ID),
 		"attempt", job.AttemptCount,
 		"delay_ms", delay.Milliseconds(),
+		"error", cause.Error(),
 	)
 	rows, err := w.handler.Queries.RetryInboundCoordinatorJob(ctx, db.RetryInboundCoordinatorJobParams{
 		ID: job.ID, LeaseToken: job.LeaseToken,
@@ -292,6 +312,7 @@ func (w *InboundCoordinatorJobWorker) fail(ctx context.Context, job db.InboundCo
 		"event", "inbound_coordinator_job_failed",
 		"job_id", util.UUIDToString(job.ID),
 		"attempt", job.AttemptCount,
+		"reason", reason,
 	)
 	return nil
 }
@@ -303,7 +324,25 @@ func coordinatorSource(command DispatchCommand) inboundcoord.Source {
 	return inboundcoord.SourceRobot
 }
 
+func dispatchSceneIdentity(command DispatchCommand) (kind, title string) {
+	chatType := strings.TrimSpace(command.Event.Data.Conversation.Type)
+	if chatType == "" {
+		chatType = strings.TrimSpace(dispatchAssocIDs(command).Kind)
+	}
+	kind = scenememory.KindFromChatType(chatType)
+	title = strings.TrimSpace(command.Event.Data.Conversation.Title)
+	if title == "" && kind == scenememory.KindDM {
+		title = strings.TrimSpace(command.Event.Data.Sender.DisplayName)
+	}
+	return kind, title
+}
+
 func coordinatorJobTitle(command DispatchCommand) string {
+	kind, name := dispatchSceneIdentity(command)
+	label := "单聊"
+	if kind == scenememory.KindGroup {
+		label = "群聊"
+	}
 	text := ""
 	for _, message := range command.Event.Data.Messages {
 		if message.Reaction == nil && strings.TrimSpace(message.Text) != "" {
@@ -315,10 +354,13 @@ func coordinatorJobTitle(command DispatchCommand) string {
 		text = "Inbound event"
 	}
 	runes := []rune(text)
-	if len(runes) > 60 {
-		text = string(runes[:60]) + "…"
+	if len(runes) > 40 {
+		text = string(runes[:40]) + "…"
 	}
-	return "Coordinator · " + text
+	if name != "" {
+		return label + " · " + name + " · " + text
+	}
+	return label + " · " + text
 }
 
 func coordinatorJobMessage(command DispatchCommand) string {
@@ -398,8 +440,12 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if err != nil {
 		return nil, job, err
 	}
+	h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, job, err
+	}
+	if h.SceneMemoryWorker != nil {
+		h.SceneMemoryWorker.Notify()
 	}
 	slog.Info("inbound coordinator job accepted",
 		"event", "inbound_coordinator_job_accepted",
@@ -483,4 +529,94 @@ func shouldDeferInboundCoordinator(command DispatchCommand, plan agentDispatchEx
 		command.Event.Domain == "channel" && command.Event.Type == "message.created" &&
 		(plan.MaterializerType == protocol.DispatchSurfaceTypeIssue ||
 			plan.MaterializerType == protocol.DispatchSurfaceTypeChat)
+}
+
+func (h *Handler) markSceneMemoryDirty(
+	ctx context.Context,
+	qtx *db.Queries,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+	job db.InboundCoordinatorJob,
+) {
+	if h == nil || h.SceneMemoryStore == nil || qtx == nil {
+		return
+	}
+	if command.Source.Type != "digital_employee" {
+		return
+	}
+	body := dispatchInboundEventBody(command)
+	if body == "" || isInboundResetMemory(body) {
+		return
+	}
+	flags, err := qtx.GetAgentSceneMemoryFlags(ctx, dispatchContext.AgentID)
+	if err != nil || !flags.WriteEnabled {
+		return
+	}
+	ids := dispatchAssocIDs(command)
+	if ids.ConversationID == "" || !assoc.ValidSceneID(ids.ConversationID) {
+		return
+	}
+	identity, err := qtx.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: dispatchContext.WorkspaceID,
+		AgentID:     dispatchContext.AgentID,
+	})
+	if err != nil {
+		slog.Warn("scene memory mark dirty skipped; no DWS identity",
+			"event", "scene_memory_mark_dirty",
+			"error", err,
+		)
+		return
+	}
+	kind, title := dispatchSceneIdentity(command)
+	store := scenememory.NewStore(qtx)
+	row, err := store.MarkDirty(ctx, scenememory.Identity{
+		WorkspaceID: dispatchContext.WorkspaceID,
+		AgentID:     dispatchContext.AgentID,
+		OrgID:       identity.OrgID,
+		SceneKey:    ids.ConversationID,
+		SceneKind:   kind,
+		SceneTitle:  title,
+	}, scenememory.DirtyTrigger{
+		OccurredAt:     dispatchMessageOccurredAt(command),
+		EvidenceID:     ids.EvidenceID,
+		JobID:          job.ID,
+		CoordTraceID:   util.UUIDToString(job.ID),
+		IdempotencyKey: job.IdempotencyKey,
+	})
+	if err != nil {
+		slog.Warn("scene memory mark dirty failed",
+			"event", "scene_memory_mark_dirty",
+			"conversation_id", ids.ConversationID,
+			"error", err,
+		)
+		return
+	}
+	slog.Info("scene memory marked dirty",
+		"event", "scene_memory_mark_dirty",
+		"workspace_id", util.UUIDToString(dispatchContext.WorkspaceID),
+		"agent_id", util.UUIDToString(dispatchContext.AgentID),
+		"scene_key", ids.ConversationID,
+		"dirty_revision", row.DirtyRevision,
+		"idempotency", job.IdempotencyKey,
+		"scene_memory_id", util.UUIDToString(row.ID),
+	)
+}
+
+func dispatchMessageOccurredAt(command DispatchCommand) time.Time {
+	if message, ok := lastInboundTextMessage(command); ok {
+		if occurred := unixMillis(message.OccurredAt); !occurred.IsZero() {
+			return occurred
+		}
+	}
+	return time.Now().UTC()
+}
+
+func unixMillis(raw int64) time.Time {
+	if raw <= 0 {
+		return time.Time{}
+	}
+	if raw < 1e12 {
+		return time.Unix(raw, 0).UTC().Truncate(time.Second)
+	}
+	return time.UnixMilli(raw).UTC().Truncate(time.Second)
 }

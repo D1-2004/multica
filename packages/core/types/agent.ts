@@ -478,6 +478,14 @@ export interface Agent {
    */
   inbound_coordinator?: boolean;
   /**
+   * Scene-memory flags. Optional because older backends omit them; treat
+   * `undefined` as false. Only an explicit true turns a flag on.
+   */
+  scene_memory_write_enabled?: boolean;
+  scene_memory_recall_enabled?: boolean;
+  scene_memory_ui_enabled?: boolean;
+  scene_memory_bootstrap_enabled?: boolean;
+  /**
    * Who this agent is when the inbound coordinator replies. Empty uses a
    * concise colleague default. Optional because older backends omit it.
    * Does not replace `instructions` for sandbox tasks.
@@ -768,6 +776,33 @@ export interface CreateAgentFromTemplateFailure {
   failed_urls: string[];
 }
 
+/** One exact Scene Memory row for a bound digital-employee conversation. */
+export interface AgentSceneMemory {
+  id: string;
+  workspace_id: string;
+  agent_id: string;
+  org_id: string;
+  scene_key: string;
+  scene_kind: string;
+  scene_title: string;
+  memory_text: string;
+  memory_revision: number;
+  status: string;
+  last_error: string;
+  last_error_code: string;
+  updated_at: string;
+  bootstrapped_at?: string;
+  last_flushed_at?: string;
+}
+
+export interface AgentSceneRelation {
+  issue_id: string;
+  issue: string;
+  purpose: string;
+  status: string;
+  on_this_scene: boolean;
+}
+
 export interface UpdateAgentRequest {
   name?: string;
   description?: string;
@@ -776,6 +811,10 @@ export interface UpdateAgentRequest {
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  scene_memory_write_enabled?: boolean;
+  scene_memory_recall_enabled?: boolean;
+  scene_memory_ui_enabled?: boolean;
+  scene_memory_bootstrap_enabled?: boolean;
   persona?: string;
   reply_tone?: string;
   avatar_url?: string;

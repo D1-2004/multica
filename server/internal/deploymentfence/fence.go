@@ -52,11 +52,13 @@ type WorkCounts struct {
 	DingTalkStreamProcessing int64 `json:"dingtalk_stream_processing"`
 	WebhookLeases            int64 `json:"webhook_leases"`
 	DispatchAcceptances      int64 `json:"dispatch_acceptances"`
+	SceneMemoryLeases        int64 `json:"scene_memory_leases"`
 }
 
 func (c WorkCounts) Total() int64 {
 	return c.ActiveTasks + c.CompletionOutbox + c.ExecutionUpdateOutbox +
-		c.DingTalkStreamProcessing + c.WebhookLeases + c.DispatchAcceptances
+		c.DingTalkStreamProcessing + c.WebhookLeases + c.DispatchAcceptances +
+		c.SceneMemoryLeases
 }
 
 type Status struct {
@@ -385,7 +387,9 @@ func queryWorkCounts(ctx context.Context, q rowQuerier) (WorkCounts, error) {
 			(SELECT count(*) FROM dingtalk_stream_inbox WHERE status = 'processing'),
 			(SELECT count(*) FROM webhook_delivery
 			 WHERE status = 'queued' AND lease_token IS NOT NULL),
-			(SELECT count(*) FROM agent_dispatch_acceptance WHERE status = 'pending')
+			(SELECT count(*) FROM agent_dispatch_acceptance WHERE status = 'pending'),
+			(SELECT count(*) FROM scene_memory
+			 WHERE lease_token IS NOT NULL AND lease_expires_at > now())
 	`).Scan(
 		&counts.ActiveTasks,
 		&counts.CompletionOutbox,
@@ -393,6 +397,7 @@ func queryWorkCounts(ctx context.Context, q rowQuerier) (WorkCounts, error) {
 		&counts.DingTalkStreamProcessing,
 		&counts.WebhookLeases,
 		&counts.DispatchAcceptances,
+		&counts.SceneMemoryLeases,
 	)
 	return counts, err
 }

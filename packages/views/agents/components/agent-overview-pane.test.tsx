@@ -61,6 +61,9 @@ vi.mock("../../common/actor-issues-panel", () => ({
 vi.mock("./tabs/coordinator-sessions-tab", () => ({
   CoordinatorSessionsTab: () => <div>coordinator-sessions-tab</div>,
 }));
+vi.mock("./tabs/scene-memory-tab", () => ({
+  SceneMemoryTab: () => <div>scene-memory-tab</div>,
+}));
 
 // The pane now reads workspace context to decide whether the Integrations
 // tab is worth showing (it queries Lark installations to learn whether the
@@ -358,6 +361,7 @@ describe("AgentOverviewPane Identity tab", () => {
       "Overview",
       "Work",
       "Inbound",
+      "Memory",
       "Capabilities",
       "Settings",
       "Instructions",
@@ -387,6 +391,22 @@ describe("AgentOverviewPane Identity tab", () => {
 
     expect(
       screen.queryByRole("tab", { name: /^Identity$/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentOverviewPane Memory tab", () => {
+  it("shows Memory to someone who can manage the agent", () => {
+    renderPane([makeRuntime("claude")]);
+    expect(screen.getByRole("tab", { name: /^Memory$/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /^Memory$/i }));
+    expect(screen.getByText("scene-memory-tab")).toBeInTheDocument();
+  });
+
+  it("hides Memory from users who cannot manage the agent", () => {
+    renderPane([makeRuntime("claude")], { canEdit: false });
+    expect(
+      screen.queryByRole("tab", { name: /^Memory$/i }),
     ).not.toBeInTheDocument();
   });
 });

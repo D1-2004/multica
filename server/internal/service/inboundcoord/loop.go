@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/openai/openai-go/v3"
@@ -124,6 +125,14 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			if errors.Is(callErr, ErrIssueBusy) {
 				appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: callErr.Error(), Error: true})
 				logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, callErr.Error(), true, "issue_busy")
+				if !shouldRetryBusyIssueComment(turn) {
+					return Decision{
+						Action:     ActionReply,
+						UserText:   "这条先不并进正在处理的事项。",
+						Reason:     "issue_busy_unrelated",
+						ToolRounds: round + 1, ToolsUsed: used, Steps: append([]protocol.ChatCoordinatorStep{}, steps...),
+					}, nil
+				}
 				return Decision{
 					Action: ActionRetry, IssueID: issueIDFromToolArguments(call.Arguments),
 					ToolRounds: round + 1, ToolsUsed: used, Steps: append([]protocol.ChatCoordinatorStep{}, steps...),
@@ -222,6 +231,28 @@ func functionToolCalls(msg openai.ChatCompletionMessage) []functionCall {
 	return out
 }
 
+// shortIssueContinuationRunes is the max inbound length we will 409-retry onto a
+// busy Issue. Real confirmations are a few words ("番茄", "可以，三点没问题").
+// Flood / filler is longer; retrying it HTTP-409 storms and surfaces 处理失败.
+const shortIssueContinuationRunes = 24
+
+func shouldRetryBusyIssueComment(turn Turn) bool {
+	// Prompt already showed busy: true. Re-queueing cannot succeed until the
+	// active task ends, and flood jobs then fail after max attempts.
+	if turn.Busy {
+		return false
+	}
+	return isShortIssueContinuation(turn.Message)
+}
+
+func isShortIssueContinuation(message string) bool {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return false
+	}
+	return utf8.RuneCountInString(message) <= shortIssueContinuationRunes
+}
+
 func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {
 	if round >= maxLoopRounds-1 {
 		return []openai.ChatCompletionToolUnionParam{coordinatorFinishTool()}
@@ -270,7 +301,7 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocBind,
-			Description: openai.String("Attach this conversation to an existing Issue. issue_id is required by schema and must be copied from assoc_recall items[].issue_id. Rewrite purpose as {委托人}委托：{事件与目的}. Never omit issue_id. Never invent issue_id. For a new matter do not call this tool — finish action=issue with delegator, purpose, intent, and omit issue_id."),
+			Description: openai.String("Attach this conversation to an existing Issue. issue_id is required by schema and must be copied from assoc_recall items[].issue_id. purpose is the ordinary-language deliverable; the server prefixes 委托人委托. Never omit issue_id. Never invent issue_id. For a new matter do not call this tool — finish action=issue with delegator, purpose, intent, and omit issue_id."),
 			Parameters: shared.FunctionParameters{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -364,10 +395,10 @@ func recalledIssueIDSchema(description string) map[string]any {
 const (
 	hintBindNeedsIssue  = "assoc_bind only attaches an existing Issue. Copy issue_id from assoc_recall items[].issue_id. If this is a new matter, do not bind; call finish action=issue with delegator, purpose, intent, and omit issue_id."
 	hintCopyIssueID     = "Call assoc_recall first, then copy items[].issue_id byte-for-byte. Do not invent an id. A new matter uses finish action=issue without issue_id. Continuing an existing Issue uses issue_comment_add."
-	hintNewIssueFinish  = "finish action=issue without issue_id creates the Issue. Set delegator (inbound sender), purpose as {委托人}委托：{事件与目的} with no DWS/auth, intent ask|confirm|notify|lookup|wait|other, and text naming the work."
+	hintNewIssueFinish  = "finish action=issue without issue_id creates the Issue. Set delegator (inbound sender), purpose as {委托人}委托：{事件与目的} with no DWS/auth, intent ask|confirm|notify|lookup|wait|other, and text naming the work. Do not write 记录事项."
 	hintContinueComment = "finish cannot take issue_id. Continuing an existing Issue uses issue_comment_add with that issue_id, content naming the current sender and exact inbound words, and reply_text. If current_message does not advance a recalled purpose, finish action=reply."
 	hintIssueText       = "finish action=issue needs text spoken to the user, naming the work in ordinary language, such as 我去问冬翔晚上打不打球. Do not omit text."
-	hintPurpose         = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, and openConversationId."
+	hintPurpose         = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, openConversationId, and 记录事项."
 	hintIntent          = "intent must be one of ask, confirm, notify, lookup, wait, other."
 	hintConversation    = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
 	hintReplyText       = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
@@ -492,6 +523,7 @@ func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
 			"reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget),
 			"dingtalk_history_count", len(turn.DingTalkHistory),
 			"multica_history_count", len(turn.History),
+			"scene_memory_revision", turn.SceneMemoryRevision,
 			"system_prompt_runes", len([]rune(systemPrompt)),
 			"user_prompt", clipRunes(userPrompt, llmLogPromptBudget),
 			"user_prompt_runes", len([]rune(userPrompt)),

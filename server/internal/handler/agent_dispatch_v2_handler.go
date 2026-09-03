@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -75,7 +76,7 @@ func buildAgentDispatchIssueCreateParams(
 		AssigneeID:                agent.ID,
 		CreatorType:               "member",
 		CreatorID:                 dispatchContext.UserID,
-		AllowDuplicate:            command.CompletionCallback != nil,
+		AllowDuplicate:            true,
 		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:           privateContext,
 		Metadata:                  overrides.Metadata,
@@ -1267,20 +1268,27 @@ func isInboundResetMemory(text string) bool {
 		return false
 	}
 	token := fields[0]
-	if strings.HasPrefix(token, "@") && len(fields) > 1 {
+	if isInboundMentionToken(token) && len(fields) > 1 {
 		token = fields[1]
 	}
 	return strings.EqualFold(token, inboundResetMemoryCommand)
 }
 
+func isInboundMentionToken(token string) bool {
+	if strings.HasPrefix(token, "@") {
+		return true
+	}
+	return strings.HasPrefix(token, "<@") && strings.HasSuffix(token, ">")
+}
+
 func resetMemoryReply(conversationID string, err error) string {
 	if err != nil {
-		return "清理事项关联失败，请稍后再试。"
+		return "清理事项关联或场域记忆失败，请稍后再试。"
 	}
 	if strings.TrimSpace(conversationID) == "" {
 		return "没法识别这个会话，事项关联没有改。"
 	}
-	return "已清理这个会话上的事项关联。之后不会再按旧事项接话。"
+	return "已清理这个会话上的事项关联和场域记忆。之后不会再按旧事项接话。"
 }
 
 func (h *Handler) tryDispatchResetMemory(
@@ -1313,6 +1321,67 @@ func (h *Handler) tryDispatchResetMemory(
 		closeErr = err
 		closedEdges = result.ClosedEdges
 		unlinkedEvents = result.UnlinkedEvents
+	}
+	if h != nil && h.SceneMemoryStore != nil && conversationID != "" &&
+		command.Source.Type == "digital_employee" {
+		kind, title := dispatchSceneIdentity(command)
+		orgID := ""
+		var identityErr error
+		if h.Queries != nil {
+			identity, err := h.Queries.GetAgentDingTalkIdentity(r.Context(), db.GetAgentDingTalkIdentityParams{
+				WorkspaceID: dispatchContext.WorkspaceID,
+				AgentID:     dispatchContext.AgentID,
+			})
+			if err == nil {
+				orgID = identity.OrgID
+			} else {
+				identityErr = err
+			}
+		}
+		if orgID == "" && command.ExternalIdentity.DWS != nil {
+			orgID = strings.TrimSpace(command.ExternalIdentity.DWS.OrgID)
+		}
+		if orgID == "" && closeErr == nil {
+			if identityErr != nil {
+				closeErr = identityErr
+			} else {
+				closeErr = errors.New("scene memory identity is unavailable")
+			}
+		}
+		if orgID != "" {
+			identity := scenememory.Identity{
+				WorkspaceID: dispatchContext.WorkspaceID,
+				AgentID:     dispatchContext.AgentID,
+				OrgID:       orgID,
+				SceneKey:    conversationID,
+				SceneKind:   kind,
+				SceneTitle:  title,
+			}
+			oldRevision := int64(0)
+			if existing, err := h.SceneMemoryStore.Get(r.Context(), identity); err == nil {
+				oldRevision = existing.MemoryRevision
+			}
+			if _, err := h.SceneMemoryStore.Reset(r.Context(), identity, scenememory.DirtyTrigger{
+				OccurredAt: dispatchMessageOccurredAt(command),
+				EvidenceID: ids.EvidenceID,
+			}); err != nil {
+				slog.Warn("scene memory reset-memory failed",
+					"event", "scene_memory_reset",
+					"scene_key", conversationID,
+					"old_revision", oldRevision,
+					"error", err,
+				)
+				if closeErr == nil {
+					closeErr = err
+				}
+			} else {
+				slog.Info("scene memory reset",
+					"event", "scene_memory_reset",
+					"scene_key", conversationID,
+					"old_revision", oldRevision,
+				)
+			}
+		}
 	}
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "reset_memory",

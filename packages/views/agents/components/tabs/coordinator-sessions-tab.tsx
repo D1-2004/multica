@@ -3,13 +3,13 @@
 import { useEffect, useState } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, MessageSquare } from "lucide-react";
-import { useDefaultLayout } from "react-resizable-panels";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@multica/ui/components/ui/resizable";
+import { useDefaultLayout } from "react-resizable-panels";
 import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import {
   agentCoordinatorSessionsOptions,
@@ -91,7 +91,11 @@ function CoordinatorConversation({
   );
 }
 
-export function CoordinatorSessionsTab({ agent }: { agent: Agent }) {
+export function CoordinatorSessionsTab({
+  agent,
+}: {
+  agent: Agent;
+}) {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const isCompact = useIsCompact();
@@ -113,8 +117,10 @@ export function CoordinatorSessionsTab({ agent }: { agent: Agent }) {
     sessions.find((session) => session.id === selectedId) ?? null;
 
   const listHeader = (
-    <PageHeader className="justify-between">
-      <h1 className="text-body font-semibold">{t(($) => $.tabs.inbound)}</h1>
+    <PageHeader>
+      <h1 className="truncate text-body font-semibold text-pretty">
+        {t(($) => $.tabs.inbound)}
+      </h1>
     </PageHeader>
   );
 
@@ -136,7 +142,7 @@ export function CoordinatorSessionsTab({ agent }: { agent: Agent }) {
       {t(($) => $.tab_body.inbound.empty)}
     </p>
   ) : (
-    <div className="px-2 py-1">
+    <div className="px-2 pb-3">
       <ChatThreadList
         sessions={sessions}
         agents={[agent]}

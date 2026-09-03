@@ -524,6 +524,9 @@ func main() {
 	if h.InboundCoordinatorWorker != nil {
 		go h.InboundCoordinatorWorker.Run(sweepCtx)
 	}
+	if h.SceneMemoryWorker != nil {
+		go h.SceneMemoryWorker.Run(sweepCtx)
+	}
 	if h.DingTalkStreamInbox != nil {
 		go h.DingTalkStreamInbox.Run(sweepCtx)
 	}
@@ -653,6 +656,9 @@ func main() {
 	}
 	if h.InboundCoordinatorWorker != nil && !h.InboundCoordinatorWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("inbound coordinator worker did not exit within shutdown timeout")
+	}
+	if h.SceneMemoryWorker != nil && !h.SceneMemoryWorker.WaitWithTimeout(5*time.Second) {
+		slog.Warn("scene memory worker did not exit within shutdown timeout")
 	}
 	if h.DingTalkStreamInbox != nil && !h.DingTalkStreamInbox.WaitWithTimeout(5*time.Second) {
 		slog.Warn("dingtalk stream inbox worker did not exit within shutdown timeout",

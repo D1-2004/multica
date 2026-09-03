@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -32,7 +33,7 @@ const (
 	instructionsBudget   = 400
 	personaBudget        = 400
 	toneBudget           = 200
-	titleBudget          = 40
+	titleBudget          = 80
 	temperature          = 0.3
 	maxCompletionTokens  = 512
 )
@@ -85,6 +86,8 @@ type Turn struct {
 	Kind                 string
 	TraceID              string
 	IssueDispatchContext []byte
+	SceneMemory          string
+	SceneMemoryRevision  int64
 }
 
 // HistoryLine is one already-persisted Multica chat message or a DingTalk row.
@@ -137,16 +140,22 @@ type historyReader interface {
 	CountRunningTasks(ctx context.Context, agentID pgtype.UUID) (int64, error)
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 	GetAgentVoice(ctx context.Context, id pgtype.UUID) (db.GetAgentVoiceRow, error)
+	GetAgentSceneMemoryFlags(ctx context.Context, id pgtype.UUID) (db.AgentSceneMemoryFlags, error)
 }
 
 // Coordinator runs the bounded assoc tool loop in loop.go.
 type Coordinator struct {
-	LLM        *llm.Client
-	Queries    historyReader
-	Tools      Tools
-	Chat       Completer
-	Assoc      *assoc.Service
-	DWSHistory DingTalkHistoryLoader
+	LLM         *llm.Client
+	Queries     historyReader
+	Tools       Tools
+	Chat        Completer
+	Assoc       *assoc.Service
+	DWSHistory  DingTalkHistoryLoader
+	SceneMemory sceneMemoryReader
+}
+
+type sceneMemoryReader interface {
+	Get(ctx context.Context, id scenememory.Identity) (db.SceneMemory, error)
 }
 
 // New wires the loop. assocSvc may be nil; Decide still fail-opens.
@@ -211,6 +220,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		return Decision{Action: ActionSilence}
 	}
 	ensureTurnTraceID(&turn)
+	c.prefetchSceneMemory(ctx, &turn)
 	if c.coordinatorOff(ctx, turn) {
 		slog.Info("inbound coordinator skipped; agent switch off",
 			append(coordinatorLogIndex(turn),
@@ -484,6 +494,46 @@ func (c *Coordinator) listHistory(ctx context.Context, sessionID pgtype.UUID, li
 	return lines
 }
 
+func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
+	if c == nil || turn == nil || c.SceneMemory == nil || c.Queries == nil {
+		return
+	}
+	if turn.Source != SourceDigitalEmployee {
+		return
+	}
+	if strings.TrimSpace(turn.ConversationID) == "" || !turn.AgentID.Valid {
+		return
+	}
+	flags, err := c.Queries.GetAgentSceneMemoryFlags(ctx, turn.AgentID)
+	if err != nil || !flags.RecallEnabled {
+		return
+	}
+	workspaceID, err := util.ParseUUID(turn.WorkspaceID)
+	if err != nil {
+		return
+	}
+	kind := scenememory.KindFromChatType(turn.ChatType)
+	row, err := c.SceneMemory.Get(ctx, scenememory.Identity{
+		WorkspaceID: workspaceID,
+		AgentID:     turn.AgentID,
+		OrgID:       turn.DWSOrgID,
+		SceneKey:    turn.ConversationID,
+		SceneKind:   kind,
+	})
+	if err != nil {
+		return
+	}
+	turn.SceneMemory = row.MemoryText
+	turn.SceneMemoryRevision = row.MemoryRevision
+	slog.Info("scene memory injected into coordinator",
+		append(coordinatorLogIndex(*turn),
+			"event", "scene_memory_recall_injected",
+			"scene_key", row.SceneKey,
+			"scene_memory_revision", row.MemoryRevision,
+			"code_points", utf8.RuneCountInString(row.MemoryText),
+		)...)
+}
+
 func (c *Coordinator) coordinatorOff(ctx context.Context, turn Turn) bool {
 	if c == nil || c.Queries == nil || !turn.AgentID.Valid {
 		return false
@@ -542,26 +592,61 @@ func parseDecision(raw string, turn Turn) Decision {
 	}
 }
 
-// IssueTitle is the Issue row title for a sandbox handoff.
+// IssueTitle is the Issue row title for a sandbox handoff. It is what humans
+// and later models read, so it keeps the deliverable and drops ticket jargon.
 func IssueTitle(decision Decision, message string) string {
-	if purpose := strings.TrimSpace(decision.Purpose); utf8.RuneCountInString(purpose) >= 8 {
-		return clipRunes(purpose, titleBudget)
+	candidates := []string{
+		DisplayMatterTitle(decision.Purpose),
+		DisplayMatterTitle(decision.LookInto),
+		DisplayMatterTitle(message),
 	}
-	look := strings.TrimSpace(decision.LookInto)
-	msg := strings.TrimSpace(message)
-	if utf8.RuneCountInString(look) >= 8 {
-		return clipRunes(look, titleBudget)
+	for _, title := range candidates {
+		if utf8.RuneCountInString(title) >= 8 {
+			return clipRunes(title, titleBudget)
+		}
 	}
-	if utf8.RuneCountInString(msg) >= 8 {
-		return clipRunes(msg, titleBudget)
-	}
-	if look != "" {
-		return clipRunes(look, titleBudget)
-	}
-	if msg != "" {
-		return clipRunes(msg, titleBudget)
+	for _, title := range candidates {
+		if title != "" {
+			return clipRunes(title, titleBudget)
+		}
 	}
 	return "跟进事项"
+}
+
+// DisplayMatterTitle is the human-facing form of a purpose or inbound line:
+// the deliverable, without 委托人委托 prefixes or <@id> mention tokens.
+func DisplayMatterTitle(raw string) string {
+	s := stripMentionTokens(strings.TrimSpace(raw))
+	s = stripDelegatorPrefix(s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func stripDelegatorPrefix(s string) string {
+	for _, sep := range []string{"委托：", "委托:"} {
+		idx := strings.Index(s, sep)
+		if idx <= 0 || idx > 16 {
+			continue
+		}
+		rest := strings.TrimSpace(s[idx+len(sep):])
+		if rest != "" {
+			return rest
+		}
+	}
+	return s
+}
+
+func stripMentionTokens(s string) string {
+	for {
+		start := strings.Index(s, "<@")
+		if start < 0 {
+			return s
+		}
+		rel := strings.Index(s[start:], ">")
+		if rel < 0 {
+			return s
+		}
+		s = strings.TrimSpace(s[:start] + " " + s[start+rel+1:])
+	}
 }
 
 // IssueDescription is the Issue body the sandbox will see.

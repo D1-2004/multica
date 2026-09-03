@@ -96,7 +96,7 @@ func TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity(t *testing.
 	`, response.Continuation.IssueID).Scan(&title, &description); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(title, "【钉钉·私聊】张三：帮我看一下线上告警 · ") {
+	if title != "张三：帮我看一下线上告警" {
 		t.Fatalf("title = %q", title)
 	}
 	for _, visible := range []string{"张三", "帮我看一下线上告警", "关注最近十分钟的错误日志"} {
@@ -234,7 +234,7 @@ func TestHandleAgentDispatchV2AcceptsEmotionReplyAndQueuesIssueTask(t *testing.T
 	`, response.Continuation.IssueID).Scan(&title, &description); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(title, "【钉钉·私聊】张三：对消息「一条消息」的表情回复 憨笑 · ") {
+	if title != "张三：对消息「一条消息」的表情回复 憨笑" {
 		t.Fatalf("title = %q", title)
 	}
 	if !strings.Contains(description.String, "张三") ||
@@ -338,9 +338,8 @@ func TestHandleAgentDispatchV2SeparatesTitleDuplicatesFromAcceptanceIdempotency(
 	if err := testPool.QueryRow(context.Background(), `SELECT title FROM issue WHERE id = $1`, secondResponse.Continuation.IssueID).Scan(&secondTitle); err != nil {
 		t.Fatal(err)
 	}
-	if firstTitle != "【钉钉·私聊】张三：你好 · LMYHEJFQ" ||
-		secondTitle != "【钉钉·私聊】张三：你好 · 5TEIWDJF" {
-		t.Fatalf("titles do not separate event windows: first=%q second=%q", firstTitle, secondTitle)
+	if firstTitle != "张三：你好" || secondTitle != "张三：你好" {
+		t.Fatalf("titles should be the human message, not a window hash: first=%q second=%q", firstTitle, secondTitle)
 	}
 
 	replay := dispatch(firstKey)
@@ -364,14 +363,12 @@ func TestHandleAgentDispatchV2SeparatesTitleDuplicatesFromAcceptanceIdempotency(
 	if taskCount != 1 {
 		t.Fatalf("same key created %d root tasks, want 1", taskCount)
 	}
-	var issueCount int
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT count(*) FROM issue WHERE workspace_id = $1 AND title = $2
-	`, testWorkspaceID, firstTitle).Scan(&issueCount); err != nil {
+	var replayResponse AgentDispatchResponse
+	if err := json.Unmarshal(replay.Body.Bytes(), &replayResponse); err != nil {
 		t.Fatal(err)
 	}
-	if issueCount != 1 {
-		t.Fatalf("same key created %d issues with title %q, want 1", issueCount, firstTitle)
+	if replayResponse.Continuation.IssueID != firstResponse.Continuation.IssueID {
+		t.Fatalf("same-key replay created a new issue: first=%q replay=%q", firstResponse.Continuation.IssueID, replayResponse.Continuation.IssueID)
 	}
 
 	endpoint, err := testHandler.Queries.GetAgentDispatchEndpointByEndpointID(context.Background(), endpointID)

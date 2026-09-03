@@ -49,6 +49,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -766,6 +767,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	h.SceneMemoryStore = scenememory.NewStore(queries)
+	coordinator.SceneMemory = h.SceneMemoryStore
+	sceneFlusher := &scenememory.MemoryFlusher{
+		Store: h.SceneMemoryStore,
+		History: scenememory.NewDWSRangeReader(scenememory.DWSRangeConfig{
+			Queries:         queries,
+			AgentIdentity:   agentidentityhsf.NewClient(),
+			BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
+			BaseURLProvider: agentIdentityControlBaseURLProvider,
+			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+		}),
+		LLM: h.LLM,
+	}
+	h.SceneMemoryWorker = scenememory.NewWorker(h.SceneMemoryStore, sceneFlusher, func() bool {
+		if opts.DeploymentFence == nil {
+			return true
+		}
+		return opts.DeploymentFence.Snapshot().State == deploymentfence.StateNormal
+	})
 	channelRouter.SetInboundCoordinator(coordinator)
 	channelRouter.SetSceneAssociator(h.Assoc)
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
@@ -2438,6 +2458,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
+					r.Get("/scene-memory", h.ListAgentSceneMemory)
+					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
+					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)
+					r.Post("/scene-memory/{memoryId}/relations/clear", h.ClearAgentSceneRelations)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)

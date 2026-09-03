@@ -114,4 +114,22 @@ describe("AgentDetailInspector labels", () => {
     });
     expect(toggle).toBeChecked();
   });
+
+  it("keeps scene memory flags off the settings form", () => {
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={agent}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Write")).toBeNull();
+    expect(screen.queryByLabelText("Recall")).toBeNull();
+    expect(screen.queryByLabelText("Show list")).toBeNull();
+  });
 });
