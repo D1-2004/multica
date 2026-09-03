@@ -80,6 +80,17 @@ func TestIssueTitlePrefersUserMessageWhenLookIntoIsShort(t *testing.T) {
 	}
 }
 
+func TestIssueTitleUsesDeliverableNotDelegatorPrefix(t *testing.T) {
+	got := IssueTitle(Decision{Purpose: "冬翔委托：向dxxh确认明天上午有没有空"}, "原文")
+	if got != "向dxxh确认明天上午有没有空" {
+		t.Fatalf("title=%q", got)
+	}
+	got = IssueTitle(Decision{Purpose: "冬翔委托：<@abc> 向dxxh确认明天有空"}, "")
+	if got != "向dxxh确认明天有空" {
+		t.Fatalf("mention title=%q", got)
+	}
+}
+
 func TestParseDecisionReply(t *testing.T) {
 	got := parseDecision(`{"action":"reply","text":"在的，今天想先对哪件事？","look_into":"","reason":"这是打招呼"}`, Turn{Source: SourceWeb})
 	if got.Action != ActionReply || got.UserText == "" || got.Reason != "这是打招呼" {

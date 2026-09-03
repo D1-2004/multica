@@ -33,7 +33,7 @@ const (
 	instructionsBudget   = 400
 	personaBudget        = 400
 	toneBudget           = 200
-	titleBudget          = 40
+	titleBudget          = 80
 	temperature          = 0.3
 	maxCompletionTokens  = 512
 )
@@ -602,26 +602,61 @@ func issueAckFallback(look string) string {
 	return "我先去核对「" + target + "」，跟完马上回你。"
 }
 
-// IssueTitle is the Issue row title for a sandbox handoff.
+// IssueTitle is the Issue row title for a sandbox handoff. It is what humans
+// and later models read, so it keeps the deliverable and drops ticket jargon.
 func IssueTitle(decision Decision, message string) string {
-	if purpose := strings.TrimSpace(decision.Purpose); utf8.RuneCountInString(purpose) >= 8 {
-		return clipRunes(purpose, titleBudget)
+	candidates := []string{
+		DisplayMatterTitle(decision.Purpose),
+		DisplayMatterTitle(decision.LookInto),
+		DisplayMatterTitle(message),
 	}
-	look := strings.TrimSpace(decision.LookInto)
-	msg := strings.TrimSpace(message)
-	if utf8.RuneCountInString(look) >= 8 {
-		return clipRunes(look, titleBudget)
+	for _, title := range candidates {
+		if utf8.RuneCountInString(title) >= 8 {
+			return clipRunes(title, titleBudget)
+		}
 	}
-	if utf8.RuneCountInString(msg) >= 8 {
-		return clipRunes(msg, titleBudget)
-	}
-	if look != "" {
-		return clipRunes(look, titleBudget)
-	}
-	if msg != "" {
-		return clipRunes(msg, titleBudget)
+	for _, title := range candidates {
+		if title != "" {
+			return clipRunes(title, titleBudget)
+		}
 	}
 	return "跟进事项"
+}
+
+// DisplayMatterTitle is the human-facing form of a purpose or inbound line:
+// the deliverable, without 委托人委托 prefixes or <@id> mention tokens.
+func DisplayMatterTitle(raw string) string {
+	s := stripMentionTokens(strings.TrimSpace(raw))
+	s = stripDelegatorPrefix(s)
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func stripDelegatorPrefix(s string) string {
+	for _, sep := range []string{"委托：", "委托:"} {
+		idx := strings.Index(s, sep)
+		if idx <= 0 || idx > 16 {
+			continue
+		}
+		rest := strings.TrimSpace(s[idx+len(sep):])
+		if rest != "" {
+			return rest
+		}
+	}
+	return s
+}
+
+func stripMentionTokens(s string) string {
+	for {
+		start := strings.Index(s, "<@")
+		if start < 0 {
+			return s
+		}
+		rel := strings.Index(s[start:], ">")
+		if rel < 0 {
+			return s
+		}
+		s = strings.TrimSpace(s[:start] + " " + s[start+rel+1:])
+	}
 }
 
 // IssueDescription is the Issue body the sandbox will see.

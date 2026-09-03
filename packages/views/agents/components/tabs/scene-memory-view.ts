@@ -91,6 +91,16 @@ export function sceneDisplayTitle(
   return stored || untitled;
 }
 
+export function displayMatterTitle(raw: string, untitled = ""): string {
+  let value = raw.replace(/<@[^>]+>/g, " ").trim();
+  const delegated = value.match(/^.{1,16}委托[:：]\s*(.+)$/);
+  if (delegated?.[1]) {
+    value = delegated[1].trim();
+  }
+  value = value.replace(/\s+/g, " ").trim();
+  return value || untitled;
+}
+
 export function partitionSceneMemories<T extends { scene_kind: string }>(
   memories: T[],
 ): { dms: T[]; groups: T[] } {

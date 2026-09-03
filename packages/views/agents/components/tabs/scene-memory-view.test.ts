@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  displayMatterTitle,
   isEmptyMemoryBody,
   parseMemorySections,
   partitionSceneMemories,
@@ -54,6 +55,15 @@ describe("scene memory view helpers", () => {
       dms: [{ scene_kind: "dm" }, { scene_kind: "dm" }],
       groups: [{ scene_kind: "group" }],
     });
+  });
+
+  it("shows the deliverable without the 委托 wrapper", () => {
+    expect(
+      displayMatterTitle("冬翔委托：向dxxh确认明天上午有没有空", "未命名事项"),
+    ).toBe("向dxxh确认明天上午有没有空");
+    expect(
+      displayMatterTitle("<@abc> 向dxxh确认明天有空", "未命名事项"),
+    ).toBe("向dxxh确认明天有空");
   });
 
   it("keeps an explicit title and strips markdown from the list preview", () => {

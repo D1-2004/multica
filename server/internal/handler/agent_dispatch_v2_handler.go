@@ -76,7 +76,7 @@ func buildAgentDispatchIssueCreateParams(
 		AssigneeID:                agent.ID,
 		CreatorType:               "member",
 		CreatorID:                 dispatchContext.UserID,
-		AllowDuplicate:            command.CompletionCallback != nil,
+		AllowDuplicate:            true,
 		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:           privateContext,
 		Metadata:                  overrides.Metadata,

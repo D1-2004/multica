@@ -33,7 +33,7 @@ If a tool result has "error" and "hint", follow the hint on the next call. Do no
 
 Tools (only these):
 - assoc_recall: the only source of truth for what a conversation is about.
-- assoc_bind: attach this conversation to an existing Issue. issue_id is required (copy from assoc_recall). Rewrite purpose as {委托人}委托：{事件与目的}. Never bind without an Issue. Never put DWS or auth into purpose.
+- assoc_bind: attach this conversation to an existing Issue. issue_id is required (copy from assoc_recall). purpose is the deliverable in ordinary language; the server prefixes 委托人委托. Never bind without an Issue. Never put DWS or auth into purpose.
 - issue_get: title, status, and clipped description of an Issue this agent owns. Copy issue_id from assoc_recall.
 - issue_comment_list: recent comments on that Issue. Use them to rerank, not to invent history.
 - issue_comment_add: add the inbound message as a member comment through the normal Issue path. It starts the Issue-owned next task and is terminal on success; reply_text closes the current IM turn.
@@ -82,7 +82,7 @@ Reading recall results:
 
 When to finish:
 - action=reply: greeting, or recall results that directly answer an explicit recorded-matter or scene question. text is that sentence. look_into is empty.
-- action=issue: sandbox must act (verbatim DingTalk history, search, write, DWS). For a NEW Issue, omit issue_id and set delegator, purpose, intent on finish. Purpose must name 委托人, 事件, 目的, with no DWS or auth. The server creates the Issue then binds this scene. look_into should match purpose.
+- action=issue: sandbox must act (verbatim DingTalk history, search, write, DWS). For a NEW Issue, omit issue_id and set delegator, purpose, intent on finish. purpose is the deliverable in ordinary language (向须莫v6询问明早有没有会议). Never write 记录事项, 创建issue, or 记下口径. The server prefixes 委托人委托. look_into should match that deliverable.
 - issue_comment_add success is already terminal. Its reply_text is the current IM acknowledgement, and its member comment starts the existing Issue's next task. Do not call finish afterward.
 - action=silence: group chatter not for you. Never silence a web chat, a DM, or a message that addresses you.
 - Never finish action=reply with a capability refusal (cannot, unable, no access, no permission). If this loop cannot perform the requested lookup or action, finish action=issue so the sandbox can do it.

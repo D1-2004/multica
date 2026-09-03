@@ -7,7 +7,6 @@ package handler
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base32"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1736,33 +1735,29 @@ func dispatchWindowIdempotencyKey(c DispatchCommand) string {
 }
 
 func dispatchIssueTitle(c DispatchCommand, idempotencyKey string) string {
-	shortCode := dispatchEventShortCode(idempotencyKey)
+	_ = idempotencyKey
 	if c.Event.Domain == "calendar" && c.Event.Type == "calendar.started" {
 		subject := normalizeDispatchTitleFragment(c.Event.Data.Subject)
 		if subject == "" {
-			subject = "钉钉日程"
+			subject = "日程"
 		}
-		return truncateDispatchTitle(
-			"【钉钉·日程】"+subject+"｜"+dispatchCalendarTitleTime(c.Event.Data),
-			shortCode,
-		)
+		return clipDispatchTitle("日程：" + subject + "｜" + dispatchCalendarTitleTime(c.Event.Data))
 	}
 	if c.Event.Domain == "approval" && c.Event.Type == "approval.status_changed" && c.Event.Data.Approval != nil {
 		formCode := normalizeDispatchTitleFragment(c.Event.Data.Approval.FormCode)
 		if formCode == "" {
-			formCode = "钉钉审批"
+			formCode = "审批"
 		}
-		return truncateDispatchTitle("审批单："+formCode, shortCode)
+		return clipDispatchTitle("审批单：" + formCode)
 	}
 
 	summary := ""
 	for _, message := range c.Event.Data.Messages {
 		if message.Reaction != nil {
-			// 表情条目的 text 是被反应消息原文，不能直接当标题摘要。
 			summary = dispatchReactionTitleSummary(message)
 			break
 		}
-		if text := normalizeDispatchTitleFragment(message.Text); text != "" {
+		if text := inboundcoord.DisplayMatterTitle(normalizeDispatchTitleFragment(message.Text)); text != "" {
 			summary = text
 			break
 		}
@@ -1783,7 +1778,10 @@ func dispatchIssueTitle(c DispatchCommand, idempotencyKey string) string {
 		})
 	}
 	if summary == "" {
-		summary = "钉钉消息"
+		summary = "一条消息"
+	}
+	if runes := []rune(summary); len(runes) > 36 {
+		summary = string(runes[:36]) + "…"
 	}
 
 	sender := normalizeDispatchTitleFragment(c.Event.Data.Sender.DisplayName)
@@ -1791,29 +1789,22 @@ func dispatchIssueTitle(c DispatchCommand, idempotencyKey string) string {
 		sender = "钉钉用户"
 	}
 
-	var title string
 	switch strings.ToLower(normalizeDispatchTitleFragment(c.Event.Data.Conversation.Type)) {
 	case "single", "p2p", "private", "direct":
-		title = "【钉钉·私聊】" + sender + "：" + summary
+		return clipDispatchTitle(sender + "：" + summary)
 	case "group":
 		conversation := normalizeDispatchTitleFragment(c.Event.Data.Conversation.Title)
-		if conversation == "" {
-			conversation = "钉钉群聊"
+		if conversation == "" || conversation == "钉钉群聊" {
+			conversation = "群聊"
 		}
-		title = "【钉钉·群聊】" + conversation + "｜" + sender + "：" + summary
+		return clipDispatchTitle(conversation + " · " + sender + "：" + summary)
 	default:
 		conversation := normalizeDispatchTitleFragment(c.Event.Data.Conversation.Title)
-		if conversation != "" {
-			conversation += "｜"
+		if conversation != "" && conversation != "钉钉群聊" {
+			return clipDispatchTitle(conversation + " · " + sender + "：" + summary)
 		}
-		title = "【钉钉消息】" + conversation + sender + "：" + summary
+		return clipDispatchTitle(sender + "：" + summary)
 	}
-	return truncateDispatchTitle(title, shortCode)
-}
-
-func dispatchEventShortCode(idempotencyKey string) string {
-	digest := sha256.Sum256([]byte(idempotencyKey))
-	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(digest[:])[:8]
 }
 
 func firstDispatchAttachmentTitleFragment(
@@ -1864,16 +1855,14 @@ func dispatchCalendarTitleTime(data DispatchEventData) string {
 	return start.Format("2006-01-02 15:04")
 }
 
-func truncateDispatchTitle(title, shortCode string) string {
-	const maxRunes = 160
-	suffix := " · " + shortCode
-	available := maxRunes - len([]rune(suffix))
-	titleRunes := []rune(title)
-	if len(titleRunes) > available {
-		title = string(titleRunes[:available])
-		title = strings.TrimRightFunc(title, func(r rune) bool {
-			return unicode.IsSpace(r) || strings.ContainsRune("|｜:：·•・/\\,，;；", r)
-		})
+func clipDispatchTitle(title string) string {
+	const maxRunes = 80
+	titleRunes := []rune(strings.TrimSpace(title))
+	if len(titleRunes) <= maxRunes {
+		return string(titleRunes)
 	}
-	return title + suffix
+	title = string(titleRunes[:maxRunes])
+	return strings.TrimRightFunc(title, func(r rune) bool {
+		return unicode.IsSpace(r) || strings.ContainsRune("|｜:：·•・/\\,，;；", r)
+	})
 }

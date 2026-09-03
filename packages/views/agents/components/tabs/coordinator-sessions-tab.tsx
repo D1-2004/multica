@@ -56,6 +56,7 @@ import { ChatSessionHeader } from "../../../chat/components/chat-session-header"
 import { ChatThreadList } from "../../../chat/components/chat-thread-list";
 import { useT, useTimeAgo } from "../../../i18n";
 import {
+  displayMatterTitle,
   isEmptyMemoryBody,
   memoryStatusKey,
   parseMemorySections,
@@ -710,11 +711,14 @@ function SceneMemoryDetail({
                         href={paths.issueDetail(issueId)}
                         className="text-body font-medium text-brand hover:underline"
                       >
-                        {item.purpose || issueId}
+                        {displayMatterTitle(item.purpose, issueId)}
                       </AppLink>
                     ) : (
                       <p className="text-body font-medium">
-                        {item.purpose || t(($) => $.tab_body.inbound.relations_untitled)}
+                        {displayMatterTitle(
+                          item.purpose,
+                          t(($) => $.tab_body.inbound.relations_untitled),
+                        )}
                       </p>
                     )}
                     <p className="mt-1 text-caption text-muted-foreground">

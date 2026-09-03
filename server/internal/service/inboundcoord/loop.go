@@ -298,7 +298,7 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocBind,
-			Description: openai.String("Attach this conversation to an existing Issue. issue_id is required by schema and must be copied from assoc_recall items[].issue_id. Rewrite purpose as {委托人}委托：{事件与目的}. Never omit issue_id. Never invent issue_id. For a new matter do not call this tool — finish action=issue with delegator, purpose, intent, and omit issue_id."),
+			Description: openai.String("Attach this conversation to an existing Issue. issue_id is required by schema and must be copied from assoc_recall items[].issue_id. purpose is the ordinary-language deliverable; the server prefixes 委托人委托. Never omit issue_id. Never invent issue_id. For a new matter do not call this tool — finish action=issue with delegator, purpose, intent, and omit issue_id."),
 			Parameters: shared.FunctionParameters{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -392,8 +392,8 @@ func recalledIssueIDSchema(description string) map[string]any {
 const (
 	hintBindNeedsIssue = "assoc_bind only attaches an existing Issue. Copy issue_id from assoc_recall items[].issue_id. If this is a new matter, do not bind; call finish action=issue with delegator, purpose, intent, and omit issue_id."
 	hintCopyIssueID    = "Call assoc_recall first, then copy items[].issue_id byte-for-byte. Do not invent an id. A new matter uses finish action=issue without issue_id."
-	hintNewIssueFinish = "finish action=issue without issue_id creates the Issue. Set delegator (inbound sender), purpose as {委托人}委托：{事件与目的} with no DWS/auth, and intent ask|confirm|notify|lookup|wait|other."
-	hintPurpose        = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, and openConversationId."
+	hintNewIssueFinish = "finish action=issue without issue_id creates the Issue. Set delegator (inbound sender), purpose as the ordinary-language deliverable (向须莫v6询问明早有没有会议) with no DWS/auth, and intent ask|confirm|notify|lookup|wait|other. Do not write 记录事项."
+	hintPurpose        = "Write purpose as the deliverable, e.g. 向须莫v6询问明早有没有会议. The server prefixes 委托人委托. Drop dws, data-auth, openConversationId, and 记录事项."
 	hintIntent         = "intent must be one of ask, confirm, notify, lookup, wait, other."
 	hintConversation   = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
 	hintReplyText      = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
