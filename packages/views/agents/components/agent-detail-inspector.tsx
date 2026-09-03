@@ -326,81 +326,9 @@ export function AgentDetailInspector({
             canEdit={canEdit}
             onSave={(next) => update({ inbound_coordinator: next })}
           />
-          <BooleanSettingField
-            agentId={agent.id}
-            enabled={agent.scene_memory_write_enabled === true}
-            canEdit={canEdit}
-            label={t(($) => $.inspector.prop_scene_memory_write)}
-            description={t(($) => $.inspector.prop_scene_memory_write_hint)}
-            onSave={(next) => update({ scene_memory_write_enabled: next })}
-          />
-          <BooleanSettingField
-            agentId={agent.id}
-            enabled={agent.scene_memory_recall_enabled === true}
-            canEdit={canEdit}
-            label={t(($) => $.inspector.prop_scene_memory_recall)}
-            description={t(($) => $.inspector.prop_scene_memory_recall_hint)}
-            onSave={(next) => update({ scene_memory_recall_enabled: next })}
-          />
-          <BooleanSettingField
-            agentId={agent.id}
-            enabled={agent.scene_memory_ui_enabled === true}
-            canEdit={canEdit}
-            label={t(($) => $.inspector.prop_scene_memory_ui)}
-            description={t(($) => $.inspector.prop_scene_memory_ui_hint)}
-            onSave={(next) => update({ scene_memory_ui_enabled: next })}
-          />
-          <BooleanSettingField
-            agentId={agent.id}
-            enabled={agent.scene_memory_bootstrap_enabled === true}
-            canEdit={canEdit}
-            label={t(($) => $.inspector.prop_scene_memory_bootstrap)}
-            description={t(($) => $.inspector.prop_scene_memory_bootstrap_hint)}
-            onSave={(next) => update({ scene_memory_bootstrap_enabled: next })}
-          />
         </SettingsCard>
       </SettingsSection>
     </div>
-  );
-}
-
-function BooleanSettingField({
-  agentId,
-  enabled,
-  canEdit,
-  label,
-  description,
-  onSave,
-}: {
-  agentId: string;
-  enabled: boolean;
-  canEdit: boolean;
-  label: string;
-  description: string;
-  onSave: (next: boolean) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState(enabled);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setDraft(enabled);
-  }, [agentId, enabled]);
-
-  return (
-    <SettingsRow label={label} description={description} align="start">
-      <Switch
-        checked={draft}
-        disabled={!canEdit || saving}
-        onCheckedChange={(checked) => {
-          setDraft(checked);
-          setSaving(true);
-          void onSave(checked)
-            .catch(() => setDraft(!checked))
-            .finally(() => setSaving(false));
-        }}
-        aria-label={label}
-      />
-    </SettingsRow>
   );
 }
 

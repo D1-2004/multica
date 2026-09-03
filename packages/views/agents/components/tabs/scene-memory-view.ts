@@ -37,6 +37,8 @@ const GENERIC_TITLES = new Set([
   "钉钉群",
   "钉钉单聊",
   "钉钉消息",
+  "群聊",
+  "群聊场景",
   "本会话尚在观察中",
   "[推断] 本会话尚在观察中",
 ]);
@@ -47,7 +49,10 @@ function stripTitlePunct(value: string): string {
 
 function isGenericSceneTitle(line: string): boolean {
   const normalized = stripTitlePunct(line);
-  return GENERIC_TITLES.has(normalized) || normalized.startsWith("[推断]");
+  if (GENERIC_TITLES.has(normalized) || normalized.startsWith("[推断]")) {
+    return true;
+  }
+  return /^(群聊|钉钉群)/.test(normalized);
 }
 
 function locatingTitle(text: string): string {
@@ -64,9 +69,16 @@ function locatingTitle(text: string): string {
     if (!line || isEmptyMemoryBody(line)) {
       continue;
     }
-    const memberMatch = line.match(/^成员[：:]\s*(.+)$/);
+    const memberMatch =
+      line.match(/(?:已知)?成员[：:]\s*(.+)$/) ??
+      line.match(/参与者包括(.+)$/);
     if (memberMatch?.[1]) {
-      members = stripTitlePunct(memberMatch[1]);
+      members = stripTitlePunct(
+        memberMatch[1].replace(/和/g, "、").replace(/[。．.]+$/u, ""),
+      );
+      continue;
+    }
+    if (/^本会话/.test(line) || /^这是与/.test(line)) {
       continue;
     }
     if (!named && !isGenericSceneTitle(line)) {
@@ -116,11 +128,30 @@ export function partitionSceneMemories<T extends { scene_kind: string }>(
   return { dms, groups };
 }
 
+const LOCATING_HEADING = "场域定位";
+
+export function visibleMemorySections(text: string): MemorySection[] {
+  return parseMemorySections(text).filter((section) => {
+    if (section.heading === LOCATING_HEADING) {
+      return false;
+    }
+    if (!section.body || isEmptyMemoryBody(section.body)) {
+      return false;
+    }
+    return true;
+  });
+}
+
 export function scenePreview(
   memory: Pick<AgentSceneMemory, "memory_text">,
 ): string {
-  return memory.memory_text
-    .replace(/^#+\s+/gm, "")
+  const sections = visibleMemorySections(memory.memory_text);
+  const knowledge = sections.find((section) =>
+    /稳定知识|约定/.test(section.heading),
+  );
+  const source = knowledge?.body || sections.map((section) => section.body).join(" ");
+  return source
+    .replace(/^[-*]\s+/gm, "")
     .replace(/[（(]暂无[)）]/g, " ")
     .replace(/\s+/g, " ")
     .trim();

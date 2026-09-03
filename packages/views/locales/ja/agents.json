@@ -174,8 +174,8 @@
     "prop_scene_memory_write_hint": "オンのとき、このバインド済みデジタル社員の受信が当該グループ/DM を dirty にし、バックグラウンドでシーン本文を更新します。オフにすると書き込みを止めます。",
     "prop_scene_memory_recall": "シーン記憶を召還する",
     "prop_scene_memory_recall_hint": "オンのとき、受信判定に当該会話のシーン本文を載せます。オフにすると直ちに読みません。シーン本文から issue id は取りません。",
-    "prop_scene_memory_ui": "受信タブに記憶を表示",
-    "prop_scene_memory_ui_hint": "オンのとき、受信タブに各会話のシーン本文を出します。オフにすると表示しません。",
+    "prop_scene_memory_ui": "記憶リストを表示",
+    "prop_scene_memory_ui_hint": "オンのとき、記憶タブに各会話のシーン本文を出します。オフにするとスイッチだけ残します。",
     "prop_scene_memory_bootstrap": "シーン記憶をウォームアップ",
     "prop_scene_memory_bootstrap_hint": "オンのとき、初回書き込みはこの会話の最大 14 日分を遡って記憶を作ります。オフのときは最初の受信時点のメッセージだけから学びます。",
     "prop_owner": "オーナー",
@@ -267,7 +267,8 @@
   "tabs": {
     "overview": "概要",
     "work": "作業",
-    "inbound": "着信と記憶",
+    "inbound": "着信",
+    "memory": "記憶",
     "capabilities": "機能",
     "settings": "設定",
     "general": "一般",
@@ -1157,6 +1158,14 @@
       "relations_clear_confirm": "この会話の事項リンクを解除しますか？記憶テキストは残します。",
       "relations_cleared": "事項リンクを解除しました",
       "relations_clear_failed": "事項リンクの解除に失敗しました"
+    },
+    "memory": {
+      "flags_hint": "書き込み・召還・ウォームアップは記憶の保持方法、表示リストはこの画面に出すかどうかです。",
+      "flag_write": "書き込み",
+      "flag_recall": "召還",
+      "flag_bootstrap": "ウォームアップ",
+      "flag_ui": "リスト表示",
+      "ui_off": "「リスト表示」をオンにすると、各1対1とグループの記憶がここに出ます。"
     }
   },
   "char_counter": {

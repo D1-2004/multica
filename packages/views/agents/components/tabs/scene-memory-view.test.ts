@@ -6,6 +6,7 @@ import {
   partitionSceneMemories,
   sceneDisplayTitle,
   scenePreview,
+  visibleMemorySections,
 } from "./scene-memory-view";
 
 describe("scene memory view helpers", () => {
@@ -38,6 +39,15 @@ describe("scene memory view helpers", () => {
         {
           scene_title: "",
           memory_text: "## 场域定位\n钉钉群聊。\n成员：SixSix、东翔测试号。\n",
+        },
+        "未命名群聊",
+      ),
+    ).toBe("SixSix、东翔测试号");
+    expect(
+      sceneDisplayTitle(
+        {
+          scene_title: "",
+          memory_text: "## 场域定位\n群聊。已知成员：SixSix、东翔测试号。\n",
         },
         "未命名群聊",
       ),
@@ -78,5 +88,28 @@ describe("scene memory view helpers", () => {
         memory_text: "## 稳定知识与约定\n- GoalMate 是工具，不是数字员工",
       }),
     ).toContain("GoalMate 是工具");
+  });
+
+  it("does not use a locating dump as the list title", () => {
+    expect(
+      sceneDisplayTitle(
+        {
+          scene_title: "群聊。已知成员：SixSix、东翔测试号",
+          memory_text:
+            "## 场域定位\n群聊。已知成员：SixSix、东翔测试号。\n本会话是内部群。\n",
+        },
+        "未命名群聊",
+      ),
+    ).toBe("SixSix、东翔测试号");
+  });
+
+  it("hides locating and empty buckets from the owner-facing preview", () => {
+    const text =
+      "## 场域定位\n冬翔\n成员：冬翔。\n\n## 稳定知识与约定\n（暂无）\n\n## 近期事实\n- 约了dxxh\n";
+    expect(visibleMemorySections(text)).toEqual([
+      { heading: "近期事实", body: "- 约了dxxh" },
+    ]);
+    expect(scenePreview({ memory_text: text })).toContain("约了dxxh");
+    expect(scenePreview({ memory_text: text })).not.toContain("冬翔");
   });
 });

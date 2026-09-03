@@ -115,8 +115,7 @@ describe("AgentDetailInspector labels", () => {
     expect(toggle).toBeChecked();
   });
 
-  it("defaults scene memory flags off and saves write independently", () => {
-    const onUpdate = vi.fn(async () => {});
+  it("keeps scene memory flags off the settings form", () => {
     renderWithI18n(
       <AgentDetailInspector
         agent={agent}
@@ -125,22 +124,12 @@ describe("AgentDetailInspector labels", () => {
         members={[]}
         currentUserId="user-1"
         canEdit
-        onUpdate={onUpdate}
+        onUpdate={vi.fn(async () => {})}
       />,
     );
 
-    const write = screen.getByLabelText("Write scene memory");
-    const recall = screen.getByLabelText("Recall scene memory");
-    const ui = screen.getByLabelText("Show scene memory in inbound");
-    const bootstrap = screen.getByLabelText("Warm up scene memory");
-    expect(write).not.toBeChecked();
-    expect(recall).not.toBeChecked();
-    expect(ui).not.toBeChecked();
-    expect(bootstrap).not.toBeChecked();
-    fireEvent.click(write);
-    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
-      scene_memory_write_enabled: true,
-    });
-    expect(write).toBeChecked();
+    expect(screen.queryByLabelText("Write")).toBeNull();
+    expect(screen.queryByLabelText("Recall")).toBeNull();
+    expect(screen.queryByLabelText("Show list")).toBeNull();
   });
 });
