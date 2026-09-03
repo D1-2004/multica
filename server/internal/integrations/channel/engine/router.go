@@ -577,7 +577,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			msg.AddressedToBot || msg.Source.ChatType == channel.ChatTypeP2P,
 			string(msg.Source.ChatType),
 			"",
-			msg.Source.SenderID,
+			coordinatorSenderName(taskContext, msg.Source.SenderID),
 			msg.Text,
 		)
 		turn.ConversationID = strings.TrimSpace(msg.Source.ChatID)
@@ -1363,6 +1363,31 @@ func coordinatorDWSIdentity(taskContext []byte) (string, string) {
 		return "", ""
 	}
 	return uid, orgID
+}
+
+// coordinatorSenderName is the sender's display name from the dispatch event
+// carried in the task context, so the coordinator turn (and its Langfuse
+// trace) names the person rather than the DingTalk open id; the id is the
+// fallback when the event carries no name.
+func coordinatorSenderName(taskContext []byte, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if len(taskContext) == 0 {
+		return fallback
+	}
+	var payload struct {
+		EventData struct {
+			Sender struct {
+				DisplayName string `json:"displayName"`
+			} `json:"sender"`
+		} `json:"dispatch_event_data"`
+	}
+	if json.Unmarshal(taskContext, &payload) != nil {
+		return fallback
+	}
+	if name := strings.TrimSpace(payload.EventData.Sender.DisplayName); name != "" {
+		return name
+	}
+	return fallback
 }
 
 // ErrDedupFinalize marks a failed post-pipeline dedup transition. Callers must
