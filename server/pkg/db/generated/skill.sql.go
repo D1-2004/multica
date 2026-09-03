@@ -639,6 +639,36 @@ func (q *Queries) UpdateSkill(ctx context.Context, arg UpdateSkillParams) (Skill
 	return i, err
 }
 
+const updateSkillOwner = `-- name: UpdateSkillOwner :one
+UPDATE skill
+SET created_by = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3
+RETURNING id, workspace_id, name, description, content, config, created_by, created_at, updated_at
+`
+
+type UpdateSkillOwnerParams struct {
+	ID          pgtype.UUID `json:"id"`
+	CreatedBy   pgtype.UUID `json:"created_by"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateSkillOwner(ctx context.Context, arg UpdateSkillOwnerParams) (Skill, error) {
+	row := q.db.QueryRow(ctx, updateSkillOwner, arg.ID, arg.CreatedBy, arg.WorkspaceID)
+	var i Skill
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.Config,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const upsertSkillFile = `-- name: UpsertSkillFile :one
 INSERT INTO skill_file (skill_id, path, content)
 VALUES ($1, $2, $3)

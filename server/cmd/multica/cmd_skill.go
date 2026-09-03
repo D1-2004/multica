@@ -57,6 +57,13 @@ var skillDeleteCmd = &cobra.Command{
 	RunE:  runSkillDelete,
 }
 
+var skillTransferOwnerCmd = &cobra.Command{
+	Use:   "transfer-owner <id>",
+	Short: "Transfer a skill's creator to another workspace member",
+	Args:  exactArgs(1),
+	RunE:  runSkillTransferOwner,
+}
+
 var skillImportCmd = &cobra.Command{
 	Use:   "import",
 	Short: "Import a skill from a URL (clawhub.ai, skills.sh, github.com) or a local .skill/.zip archive",
@@ -103,6 +110,7 @@ func init() {
 	skillCmd.AddCommand(skillGetCmd)
 	skillCmd.AddCommand(skillCreateCmd)
 	skillCmd.AddCommand(skillUpdateCmd)
+	skillCmd.AddCommand(skillTransferOwnerCmd)
 	skillCmd.AddCommand(skillDeleteCmd)
 	skillCmd.AddCommand(skillImportCmd)
 	skillCmd.AddCommand(skillSearchCmd)
@@ -114,6 +122,9 @@ func init() {
 
 	// skill list
 	skillListCmd.Flags().String("output", "table", "Output format: table or json")
+
+	skillTransferOwnerCmd.Flags().String("to-id", "", "User id of the new creator (must be a current workspace member)")
+	skillTransferOwnerCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// skill get
 	skillGetCmd.Flags().String("output", "json", "Output format: table or json")
@@ -327,6 +338,29 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Printf("Skill created: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
+	return nil
+}
+
+func runSkillTransferOwner(cmd *cobra.Command, args []string) error {
+	toID, _ := cmd.Flags().GetString("to-id")
+	if toID == "" {
+		return fmt.Errorf("--to-id is required")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/skills/"+args[0]+"/owner", map[string]any{"owner_id": toID}, &result); err != nil {
+		return fmt.Errorf("transfer skill owner: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	fmt.Printf("Skill owner transferred: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
 	return nil
 }
 

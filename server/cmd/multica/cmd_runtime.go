@@ -47,6 +47,36 @@ var runtimeUpdateCmd = &cobra.Command{
 	RunE:  runRuntimeUpdate,
 }
 
+var runtimeTransferOwnerCmd = &cobra.Command{
+	Use:   "transfer-owner <runtime-id>",
+	Short: "Transfer a runtime's owner to another workspace member",
+	Args:  exactArgs(1),
+	RunE:  runRuntimeTransferOwner,
+}
+
+func runRuntimeTransferOwner(cmd *cobra.Command, args []string) error {
+	toID, _ := cmd.Flags().GetString("to-id")
+	if toID == "" {
+		return fmt.Errorf("--to-id is required")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/runtimes/"+args[0]+"/owner", map[string]any{"owner_id": toID}, &result); err != nil {
+		return fmt.Errorf("transfer runtime owner: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	fmt.Printf("Runtime owner transferred: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
+	return nil
+}
+
 var runtimeRenameCmd = &cobra.Command{
 	Use:   "rename <runtime-id> <name>",
 	Short: "Set a custom display name for a runtime",
@@ -74,7 +104,11 @@ func init() {
 	runtimeCmd.AddCommand(runtimeActivityCmd)
 	runtimeCmd.AddCommand(runtimeUpdateCmd)
 	runtimeCmd.AddCommand(runtimeRenameCmd)
+	runtimeCmd.AddCommand(runtimeTransferOwnerCmd)
 	runtimeCmd.AddCommand(runtimeDeleteCmd)
+
+	runtimeTransferOwnerCmd.Flags().String("to-id", "", "User id of the new owner (must be a current workspace member)")
+	runtimeTransferOwnerCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// runtime list
 	runtimeListCmd.Flags().String("output", "table", "Output format: table or json")

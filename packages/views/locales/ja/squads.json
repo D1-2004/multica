@@ -17,7 +17,9 @@
   },
   "inspector": {
     "details_section": "詳細",
-    "archive_button": "アーカイブ"
+    "archive_button": "アーカイブ",
+    "created_by": "作成者",
+    "transfer_owner_description": "「{{name}}」の作成者を {{owner}} に変更します。以降、一般メンバーでは新しい作成者だけがこの小隊を管理できます。"
   },
   "archive_dialog": {
     "title": "このスクワッドをアーカイブしますか？",

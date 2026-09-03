@@ -118,6 +118,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   const {
     canAssign,
     canEdit,
+    canTransferOwner,
     isLoading: permissionsLoading,
   } = useAgentPermissions(agent, wsId);
 
@@ -185,6 +186,26 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       qc.invalidateQueries({ queryKey });
       toast.error(
         e instanceof Error ? e.message : t(($) => $.detail.update_failed_toast),
+      );
+      throw e;
+    }
+  };
+
+  const handleTransferOwner = async (userId: string) => {
+    const queryKey = workspaceKeys.agents(wsId);
+    try {
+      const updated = await api.transferAgentOwner(agentId, userId);
+      qc.setQueryData<Agent[]>(queryKey, (old) =>
+        old?.map((a) => (a.id === agentId ? { ...a, ...updated } : a)),
+      );
+      qc.invalidateQueries({ queryKey });
+      qc.invalidateQueries({ queryKey: workspaceKeys.members(wsId) });
+      toast.success(t(($) => $.detail.owner_transferred_toast));
+    } catch (e) {
+      toast.error(
+        e instanceof Error
+          ? e.message
+          : t(($) => $.detail.owner_transfer_failed_toast),
       );
       throw e;
     }
@@ -437,8 +458,10 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           runtimes={runtimes}
           members={members}
           onUpdate={handleUpdate}
+          onTransferOwner={handleTransferOwner}
           currentUserId={currentUser?.id ?? null}
           canEdit={canEdit.allowed}
+          canTransferOwner={canTransferOwner.allowed && !permissionsLoading}
           canOperateDingTalkBinding={canEdit.allowed && canAssign.allowed}
           dingTalkBindingPermissionLoading={permissionsLoading}
           source={agentSource ?? null}

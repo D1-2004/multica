@@ -750,6 +750,39 @@ func (q *Queries) UpdateSquad(ctx context.Context, arg UpdateSquadParams) (Squad
 	return i, err
 }
 
+const updateSquadOwner = `-- name: UpdateSquadOwner :one
+UPDATE squad
+SET creator_id = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3
+RETURNING id, workspace_id, name, description, leader_id, creator_id, created_at, updated_at, archived_at, archived_by, avatar_url, instructions
+`
+
+type UpdateSquadOwnerParams struct {
+	ID          pgtype.UUID `json:"id"`
+	CreatorID   pgtype.UUID `json:"creator_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateSquadOwner(ctx context.Context, arg UpdateSquadOwnerParams) (Squad, error) {
+	row := q.db.QueryRow(ctx, updateSquadOwner, arg.ID, arg.CreatorID, arg.WorkspaceID)
+	var i Squad
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.LeaderID,
+		&i.CreatorID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.AvatarUrl,
+		&i.Instructions,
+	)
+	return i, err
+}
+
 const updateSquadMemberRole = `-- name: UpdateSquadMemberRole :one
 UPDATE squad_member SET role = $4
 WHERE squad_id = $1 AND member_type = $2 AND member_id = $3

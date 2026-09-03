@@ -8585,6 +8585,59 @@ func (q *Queries) UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusPa
 	return i, err
 }
 
+const updateAgentOwner = `-- name: UpdateAgentOwner :one
+-- Workspace owner/admin or the current agent owner reassigns responsibility.
+-- kind = 'user' keeps system carriers (agent builder) out of this path.
+UPDATE agent
+SET owner_id = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3 AND kind = 'user'
+RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, visibility, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level, composio_toolkit_allowlist, permission_mode, kind, system_key, disabled_runtime_skills, service_tier, dispatch_always_new_issue, dispatch_prompt_overrides
+`
+
+type UpdateAgentOwnerParams struct {
+	ID          pgtype.UUID `json:"id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateAgentOwner(ctx context.Context, arg UpdateAgentOwnerParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, updateAgentOwner, arg.ID, arg.OwnerID, arg.WorkspaceID)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Visibility,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+		&i.ThinkingLevel,
+		&i.ComposioToolkitAllowlist,
+		&i.PermissionMode,
+		&i.Kind,
+		&i.SystemKey,
+		&i.DisabledRuntimeSkills,
+		&i.ServiceTier,
+		&i.DispatchAlwaysNewIssue,
+		&i.DispatchPromptOverrides,
+	)
+	return i, err
+}
+
 const updateAgentTaskSession = `-- name: UpdateAgentTaskSession :exec
 UPDATE agent_task_queue
 SET session_id = COALESCE($2, session_id),

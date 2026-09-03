@@ -162,7 +162,17 @@
     "updated": "Updated {{when}}",
     "source_sync_succeeded": "GitHub source synced",
     "source_already_current": "GitHub source is already current",
-    "source_sync_failed": "Failed to sync GitHub source"
+    "source_sync_failed": "Failed to sync GitHub source",
+    "owner_left": "Left workspace",
+    "owner_none": "No owner",
+    "owner_search_placeholder": "Search members…",
+    "owner_no_results": "No matching members",
+    "owner_transferred_toast": "Owner transferred",
+    "owner_transfer_failed_toast": "Failed to transfer owner",
+    "transfer_owner_title": "Transfer owner?",
+    "transfer_owner_description": "\"{{name}}\" will be owned by {{owner}}. Private invocation moves to the new owner. A2A / MCP export stops until the new owner turns it back on. DingTalk identity and environment variables stay on the agent; the previous owner's personal authorizations are not transferred.",
+    "transfer_owner_cancel": "Cancel",
+    "transfer_owner_confirm": "Transfer"
   },
   "inspector": {
     "section_profile": "Profile",
@@ -173,7 +183,7 @@
     "section_access_hint": "Control who can run this agent and use its connected capabilities.",
     "section_properties": "Properties",
     "section_details": "Details",
-    "section_details_hint": "Read-only ownership and lifecycle information.",
+    "section_details_hint": "Ownership and lifecycle. Workspace admins can transfer the owner.",
     "section_skills": "Skills",
     "section_integrations": "Integrations",
     "prop_runtime": "Runtime",

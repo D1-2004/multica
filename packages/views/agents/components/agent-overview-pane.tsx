@@ -154,11 +154,13 @@ interface AgentOverviewPaneProps {
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   currentUserId?: string | null;
   canEdit: boolean;
+  canTransferOwner?: boolean;
   canOperateDingTalkBinding: boolean;
   dingTalkBindingPermissionLoading: boolean;
   source?: AgentSource | null;
   sourceSyncing?: boolean;
   onSourceSync?: () => void;
+  onTransferOwner?: (userId: string) => Promise<void>;
   navIntent?: DetailTab | null;
   onNavIntentHandled?: () => void;
 }
@@ -180,11 +182,13 @@ export function AgentOverviewPane({
   onUpdate,
   currentUserId,
   canEdit,
+  canTransferOwner = false,
   canOperateDingTalkBinding,
   dingTalkBindingPermissionLoading,
   source = null,
   sourceSyncing = false,
   onSourceSync,
+  onTransferOwner,
   navIntent,
   onNavIntentHandled,
 }: AgentOverviewPaneProps) {
@@ -433,10 +437,13 @@ export function AgentOverviewPane({
                 agent={agent}
                 runtime={runtime}
                 owner={owner}
+                members={members}
+                canTransferOwner={canTransferOwner}
                 source={source}
                 canSyncSource={canEdit}
                 sourceSyncing={sourceSyncing}
                 onSourceSync={onSourceSync}
+                onTransferOwner={onTransferOwner}
               />
             </div>
           </div>

@@ -31,6 +31,17 @@
     "presets": "预设颜色",
     "random": "随机"
   },
+  "owner_transfer": {
+    "left": "已离开",
+    "none": "无所有者",
+    "search": "搜索成员…",
+    "no_results": "没有匹配的成员",
+    "transferred": "已转交所有者",
+    "failed": "转交所有者失败",
+    "title": "转交所有者？",
+    "cancel": "取消",
+    "confirm": "转交"
+  },
   "save": "保存",
   "cancel": "取消",
   "delete": "删除",

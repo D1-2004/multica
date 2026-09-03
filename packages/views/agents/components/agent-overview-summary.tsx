@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Bot, GitFork, Loader2, RefreshCw, Server } from "lucide-react";
 import type {
   Agent,
@@ -8,6 +9,19 @@ import type {
   MemberWithUser,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@multica/ui/components/ui/dialog";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@multica/ui/components/ui/popover";
 import { runtimeDisplayLabel } from "@multica/core/runtimes";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
@@ -18,28 +32,83 @@ interface AgentOverviewSummaryProps {
   agent: Agent;
   runtime: AgentRuntime | null;
   owner: MemberWithUser | null;
+  members?: MemberWithUser[];
+  canTransferOwner?: boolean;
   source?: AgentSource | null;
   canSyncSource?: boolean;
   sourceSyncing?: boolean;
   onSourceSync?: () => void;
+  onTransferOwner?: (userId: string) => Promise<void>;
 }
 
 /**
- * Read-only context for the workbench Overview. Editing lives under Settings;
- * keeping this surface non-interactive lets users scan identity, execution,
- * and capability context without mistaking every value for a control.
+ * Context for the workbench Overview. Most rows stay read-only so users can
+ * scan identity and execution without treating every value as a control.
+ * The owner row is interactive when the caller may transfer ownership.
  */
 export function AgentOverviewSummary({
   agent,
   runtime,
   owner,
+  members = [],
+  canTransferOwner = false,
   source = null,
   canSyncSource = false,
   sourceSyncing = false,
   onSourceSync,
+  onTransferOwner,
 }: AgentOverviewSummaryProps) {
   const { t } = useT("agents");
   const runtimeOnline = runtime?.status === "online";
+  const [ownerOpen, setOwnerOpen] = useState(false);
+  const [ownerFilter, setOwnerFilter] = useState("");
+  const [pendingOwner, setPendingOwner] = useState<MemberWithUser | null>(null);
+  const [transferring, setTransferring] = useState(false);
+
+  const filteredMembers = useMemo(() => {
+    const q = ownerFilter.trim().toLowerCase();
+    if (!q) return members;
+    return members.filter((m) => m.name.toLowerCase().includes(q));
+  }, [members, ownerFilter]);
+
+  const ownerLabel = owner
+    ? owner.name
+    : agent.owner_id
+      ? t(($) => $.detail.owner_left)
+      : t(($) => $.detail.owner_none);
+
+  const pickOwner = (member: MemberWithUser) => {
+    setOwnerOpen(false);
+    setOwnerFilter("");
+    if (member.user_id === agent.owner_id) return;
+    setPendingOwner(member);
+  };
+
+  const confirmTransfer = async () => {
+    if (!pendingOwner || !onTransferOwner) return;
+    setTransferring(true);
+    try {
+      await onTransferOwner(pendingOwner.user_id);
+      setPendingOwner(null);
+    } finally {
+      setTransferring(false);
+    }
+  };
+
+  const ownerValue = (
+    <span className="flex min-w-0 items-center gap-1.5">
+      {owner ? (
+        <ActorAvatar actorType="member" actorId={owner.user_id} size="xs" />
+      ) : null}
+      <span
+        className={
+          owner ? "truncate text-foreground" : "truncate text-muted-foreground"
+        }
+      >
+        {ownerLabel}
+      </span>
+    </span>
+  );
 
   return (
     <aside className="self-start rounded-xl border border-surface-border bg-surface p-5 shadow-[var(--surface-shadow)] xl:sticky xl:top-6">
@@ -48,18 +117,63 @@ export function AgentOverviewSummary({
           {t(($) => $.overview.agent_context)}
         </h2>
         <dl className="mt-4 space-y-3 text-caption">
-          {owner && (
-            <SummaryRow label={t(($) => $.inspector.prop_owner)}>
-              <span className="flex min-w-0 items-center gap-1.5">
-                <ActorAvatar
-                  actorType="member"
-                  actorId={owner.user_id}
-                  size="xs"
+          <SummaryRow label={t(($) => $.inspector.prop_owner)}>
+            {canTransferOwner && onTransferOwner ? (
+              <Popover
+                open={ownerOpen}
+                onOpenChange={(open) => {
+                  setOwnerOpen(open);
+                  if (!open) setOwnerFilter("");
+                }}
+              >
+                <PopoverTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="inline-flex min-w-0 items-center text-left hover:text-foreground"
+                    >
+                      {ownerValue}
+                    </button>
+                  }
                 />
-                <span className="truncate text-foreground">{owner.name}</span>
-              </span>
-            </SummaryRow>
-          )}
+                <PopoverContent align="start" className="w-52 p-0">
+                  <div className="border-b px-2 py-1.5">
+                    <input
+                      type="text"
+                      value={ownerFilter}
+                      onChange={(e) => setOwnerFilter(e.target.value)}
+                      placeholder={t(($) => $.detail.owner_search_placeholder)}
+                      className="w-full bg-transparent text-body outline-none placeholder:text-muted-foreground"
+                    />
+                  </div>
+                  <div className="max-h-60 overflow-y-auto p-1">
+                    {filteredMembers.map((m) => (
+                      <button
+                        type="button"
+                        key={m.user_id}
+                        onClick={() => pickOwner(m)}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-body transition-colors hover:bg-accent"
+                      >
+                        <ActorAvatar
+                          actorType="member"
+                          actorId={m.user_id}
+                          size="sm"
+                        />
+                        <span className="truncate">{m.name}</span>
+                      </button>
+                    ))}
+                    {filteredMembers.length === 0 && (
+                      <div className="px-2 py-3 text-center text-body text-muted-foreground">
+                        {t(($) => $.detail.owner_no_results)}
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            ) : (
+              ownerValue
+            )}
+          </SummaryRow>
           <SummaryRow label={t(($) => $.overview.access)}>
             <VisibilityBadge value={agent.visibility} />
           </SummaryRow>
@@ -205,6 +319,40 @@ export function AgentOverviewSummary({
       )}
 
       <AgentPerformanceSummary agent={agent} />
+
+      <Dialog
+        open={pendingOwner !== null}
+        onOpenChange={(open) => {
+          if (!open && !transferring) setPendingOwner(null);
+        }}
+      >
+        <DialogContent className="max-w-sm" showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle className="text-body font-semibold">
+              {t(($) => $.detail.transfer_owner_title)}
+            </DialogTitle>
+            <DialogDescription className="text-caption">
+              {t(($) => $.detail.transfer_owner_description, {
+                name: agent.name,
+                owner: pendingOwner?.name ?? "",
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={transferring}
+              onClick={() => setPendingOwner(null)}
+            >
+              {t(($) => $.detail.transfer_owner_cancel)}
+            </Button>
+            <Button size="sm" disabled={transferring} onClick={() => void confirmTransfer()}>
+              {t(($) => $.detail.transfer_owner_confirm)}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }

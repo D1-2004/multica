@@ -154,7 +154,17 @@
     "updated": "{{when}} 업데이트됨",
     "source_sync_succeeded": "GitHub 소스를 동기화했습니다",
     "source_already_current": "GitHub 소스가 이미 최신입니다",
-    "source_sync_failed": "GitHub 소스를 동기화하지 못했습니다"
+    "source_sync_failed": "GitHub 소스를 동기화하지 못했습니다",
+    "owner_left": "워크스페이스를 나감",
+    "owner_none": "소유자 없음",
+    "owner_search_placeholder": "멤버 검색…",
+    "owner_no_results": "일치하는 멤버가 없습니다",
+    "owner_transferred_toast": "소유자를 이전했습니다",
+    "owner_transfer_failed_toast": "소유자 이전에 실패했습니다",
+    "transfer_owner_title": "소유자를 이전할까요?",
+    "transfer_owner_description": "\"{{name}}\"의 소유자가 {{owner}}(으)로 바뀝니다. 비공개 실행 권한은 새 소유자에게 넘어갑니다. A2A / MCP 보내기는 새 소유자가 다시 켜기 전까지 중지됩니다. DingTalk 신원과 환경 변수는 에이전트에 남고, 이전 소유자의 개인 권한은 이전되지 않습니다.",
+    "transfer_owner_cancel": "취소",
+    "transfer_owner_confirm": "이전"
   },
   "inspector": {
     "section_profile": "프로필",
@@ -165,7 +175,7 @@
     "section_access_hint": "이 에이전트와 연결된 기능을 사용할 수 있는 대상을 관리합니다.",
     "section_properties": "속성",
     "section_details": "세부 정보",
-    "section_details_hint": "소유권과 수명 주기에 대한 읽기 전용 정보입니다.",
+    "section_details_hint": "소유권과 수명 주기. 워크스페이스 관리자는 소유자를 이전할 수 있습니다.",
     "section_skills": "스킬",
     "section_integrations": "연동",
     "prop_runtime": "런타임",

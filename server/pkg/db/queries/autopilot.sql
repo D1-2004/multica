@@ -81,6 +81,12 @@ UPDATE autopilot SET
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateAutopilotOwner :one
+UPDATE autopilot
+SET created_by_type = 'member', created_by_id = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3
+RETURNING *;
+
 -- name: ArchiveAutopilot :exec
 UPDATE autopilot
 SET status = 'archived', pause_reason = NULL, updated_at = now()

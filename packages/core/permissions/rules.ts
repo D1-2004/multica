@@ -42,6 +42,33 @@ export function canEditAgent(agent: Agent, ctx: PermissionContext): Decision {
 }
 
 /**
+ * Reassign a workspace resource's owner/creator. Same actors as edit:
+ * the current owner, or a workspace owner/admin (including when the
+ * current owner has left). Target membership is enforced on the server.
+ */
+export function canTransferOwnedResource(
+  ownerId: string | null,
+  ctx: PermissionContext,
+): Decision {
+  if (ctx.userId === null) {
+    return deny("not_authenticated", "Sign in to transfer this.");
+  }
+  if (isAdminLike(ctx.role)) return ALLOW;
+  if (ownerId !== null && ownerId === ctx.userId) return ALLOW;
+  return deny(
+    "not_resource_owner",
+    "Only the owner and workspace admins can transfer this.",
+  );
+}
+
+export function canTransferAgentOwner(
+  agent: Agent,
+  ctx: PermissionContext,
+): Decision {
+  return canTransferOwnedResource(agent.owner_id, ctx);
+}
+
+/**
  * Invoke an agent — assign it to an issue, @mention it, chat with it, or
  * otherwise trigger a run. Mirrors the MUL-3963 backend invocation gate,
  * which reads `permission_mode` + `invocation_targets` (NOT the derived

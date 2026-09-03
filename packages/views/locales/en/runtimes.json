@@ -121,6 +121,7 @@
     "last_seen": "last seen {{when}}",
     "never_seen": "never connected",
     "fact_owner": "Owner",
+    "transfer_owner_description": "\"{{name}}\" will be owned by {{owner}}. This does not bring an offline runtime back online. If this is a live shared FC runtime, later task tokens will bind to the new owner.",
     "fact_device": "Device",
     "fact_runtime": "Runtime",
     "technical_details": "Technical details",

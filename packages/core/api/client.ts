@@ -1696,6 +1696,44 @@ export class ApiClient {
     });
   }
 
+  async transferAgentOwner(id: string, ownerId: string): Promise<Agent> {
+    return this.fetch(`/api/agents/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+  }
+
+  async transferSkillOwner(id: string, ownerId: string): Promise<Skill> {
+    return this.fetch(`/api/skills/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+  }
+
+  async transferSquadOwner(id: string, ownerId: string): Promise<Squad> {
+    const raw = await this.fetch<unknown>(`/api/squads/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+      endpoint: "PUT /api/squads/:id/owner",
+    }) as Squad;
+  }
+
+  async transferAutopilotOwner(id: string, ownerId: string): Promise<Autopilot> {
+    return this.fetch(`/api/autopilots/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+  }
+
+  async transferRuntimeOwner(id: string, ownerId: string): Promise<AgentRuntime> {
+    return this.fetch(`/api/runtimes/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+  }
+
   /**
    * The composed inbound task instruction for one agent, produced by the same
    * server function the claim path uses. Falls back to an empty preview so an

@@ -80,6 +80,36 @@ var squadGetCmd = &cobra.Command{
 	RunE:  runSquadGet,
 }
 
+var squadTransferOwnerCmd = &cobra.Command{
+	Use:   "transfer-owner <squad-id>",
+	Short: "Transfer a squad's creator to another workspace member",
+	Args:  exactArgs(1),
+	RunE:  runSquadTransferOwner,
+}
+
+func runSquadTransferOwner(cmd *cobra.Command, args []string) error {
+	toID, _ := cmd.Flags().GetString("to-id")
+	if toID == "" {
+		return fmt.Errorf("--to-id is required")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var squad map[string]any
+	if err := client.PutJSON(ctx, "/api/squads/"+args[0]+"/owner", map[string]any{"owner_id": toID}, &squad); err != nil {
+		return fmt.Errorf("transfer squad owner: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, squad)
+	}
+	fmt.Printf("Squad owner transferred: %s (%s)\n", strVal(squad, "name"), strVal(squad, "id"))
+	return nil
+}
+
 func runSquadGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -504,6 +534,8 @@ func init() {
 
 	// get
 	squadGetCmd.Flags().String("output", "table", "Output format: table or json")
+	squadTransferOwnerCmd.Flags().String("to-id", "", "User id of the new creator (must be a current workspace member)")
+	squadTransferOwnerCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// create
 	squadCreateCmd.Flags().String("name", "", "Squad name (required)")
@@ -555,6 +587,7 @@ func init() {
 	squadCmd.AddCommand(squadGetCmd)
 	squadCmd.AddCommand(squadCreateCmd)
 	squadCmd.AddCommand(squadUpdateCmd)
+	squadCmd.AddCommand(squadTransferOwnerCmd)
 	squadCmd.AddCommand(squadDeleteCmd)
 	squadCmd.AddCommand(squadMemberCmd)
 	squadCmd.AddCommand(squadActivityCmd)

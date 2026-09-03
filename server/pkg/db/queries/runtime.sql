@@ -335,6 +335,12 @@ WHERE status IN ('dispatched', 'running', 'waiting_local_directory')
   )
 RETURNING *;
 
+-- name: UpdateAgentRuntimeOwner :one
+UPDATE agent_runtime
+SET owner_id = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3
+RETURNING *;
+
 -- name: ListAgentRuntimesByOwner :many
 SELECT * FROM agent_runtime
 WHERE workspace_id = $1 AND owner_id = $2

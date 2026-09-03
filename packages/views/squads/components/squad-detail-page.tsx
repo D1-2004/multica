@@ -61,6 +61,7 @@ import { ChevronDown, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Agent, MemberWithUser } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { OwnerTransferControl } from "../../common/owner-transfer-control";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
 export function SquadDetailPage() {
@@ -227,11 +228,17 @@ export function SquadDetailPage() {
           squad={squad}
           memberCount={members.length}
           leaderName={getEntityName("agent", squad.leader_id)}
-          creatorName={getEntityName("member", squad.creator_id)}
+          creator={wsMembers.find((m) => m.user_id === squad.creator_id) ?? null}
+          members={wsMembers}
           canManage={canManage}
           onUploadAvatar={(url) => updateSquadMut.mutateAsync({ avatar_url: url })}
           onRename={async (next) => { await updateSquadMut.mutateAsync({ name: next.trim() }); }}
           onUpdateDescription={async (next) => { await updateSquadMut.mutateAsync({ description: next }); }}
+          onTransferOwner={async (userId) => {
+            const updated = await api.transferSquadOwner(squad.id, userId);
+            queryClient.setQueryData([...workspaceKeys.squads(wsId), squadId], updated);
+            queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+          }}
         />
 
         <SquadOverviewPane
@@ -712,16 +719,19 @@ function SquadDetailInspector({
   squad,
   memberCount,
   leaderName,
-  creatorName,
+  creator,
+  members,
   canManage,
   onUploadAvatar,
   onRename,
   onUpdateDescription,
+  onTransferOwner,
 }: {
   squad: Squad;
   memberCount: number;
   leaderName: string;
-  creatorName: string;
+  creator: MemberWithUser | null;
+  members: MemberWithUser[];
   // When false the identity block renders as static text (no avatar upload,
   // no rename/description popovers) — the viewer can read the squad but not
   // edit it. Mirrors the agent inspector's `canEdit` read-only treatment.
@@ -729,8 +739,10 @@ function SquadDetailInspector({
   onUploadAvatar: (url: string) => Promise<unknown>;
   onRename: (next: string) => Promise<void>;
   onUpdateDescription: (next: string) => Promise<void>;
+  onTransferOwner: (userId: string) => Promise<void>;
 }) {
   const { t } = useT("squads");
+  const { t: tCommon } = useT("common");
   const timeAgo = useTimeAgo();
   const initials = squad.name
     .split(" ")
@@ -794,11 +806,23 @@ function SquadDetailInspector({
           <InspectorRow label="Members">
             <span className="text-muted-foreground tabular-nums">{memberCount}</span>
           </InspectorRow>
-          <InspectorRow label="Created by">
-            <span className="flex min-w-0 items-center gap-1.5">
-              <ActorAvatar actorType="member" actorId={squad.creator_id} size="xs" />
-              <span className="truncate">{creatorName}</span>
-            </span>
+          <InspectorRow label={t(($) => $.inspector.created_by)}>
+            <OwnerTransferControl
+              ownerId={squad.creator_id}
+              owner={creator}
+              members={members}
+              canTransfer={canManage}
+              descriptionFor={(ownerName) =>
+                t(($) => $.inspector.transfer_owner_description, {
+                  name: squad.name,
+                  owner: ownerName,
+                })
+              }
+              onTransfer={async (userId) => {
+                await onTransferOwner(userId);
+                toast.success(tCommon(($) => $.owner_transfer.transferred));
+              }}
+            />
           </InspectorRow>
           <InspectorRow label="Created">
             <span className="text-muted-foreground">{timeAgo(squad.created_at)}</span>

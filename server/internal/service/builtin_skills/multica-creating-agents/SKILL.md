@@ -308,6 +308,11 @@ State-changing (require an explicit instruction — do not run speculatively):
   it drops bindings not in the new list).
 - `multica agent env set` — overwrites the full `custom_env` map and writes an
   audit row.
+- `multica agent transfer-owner <id> --to-id <user-id>` — `PUT /api/agents/{id}/owner`.
+  The current owner, or a workspace owner/admin, reassigns `agent.owner_id` to a
+  current human workspace member. Not part of `agent update`. A2A/MCP export
+  stops until the new owner re-opens it; DingTalk identity and `custom_env` stay
+  on the agent.
 
 ## Common wrong assumptions
 
@@ -317,6 +322,8 @@ State-changing (require an explicit instruction — do not run speculatively):
 - "Create binds the agent's skills." It does not; bind explicitly afterward.
 - "`agent update` can rotate env." It cannot — it 400s on `custom_env`; use the
   env endpoint.
+- "`agent update --owner-id` changes the owner." It does not; use
+  `agent transfer-owner`.
 - "`mcp_config` behaves like `custom_env` on update." It does not — `mcp_config`
   IS settable via `agent update` (`--mcp-config`), with `--mcp-config null` to
   clear; only `custom_env` is gated behind the dedicated env endpoint.

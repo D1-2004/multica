@@ -51,6 +51,12 @@ UPDATE skill SET
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateSkillOwner :one
+UPDATE skill
+SET created_by = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3
+RETURNING *;
+
 -- name: DeleteSkill :exec
 -- Defense-in-depth: workspace_id is a SQL-layer tenant guard. See DeleteIssue.
 DELETE FROM skill WHERE id = $1 AND workspace_id = $2;

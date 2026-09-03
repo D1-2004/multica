@@ -33,6 +33,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `agent skills list` | 890 | reads bindings, no side effect | `multica agent skills list --help` |
 | `agent env get` | 1024 | `GET /api/agents/{id}/env` (1034) | `multica agent env get --help` |
 | `agent env set` | 1059 | `PUT /api/agents/{id}/env` with full `custom_env` map (1079) | `multica agent env set --help` |
+| `agent transfer-owner` | `cmd_agent.go` `agentTransferOwnerCmd` / `runAgentTransferOwner` | `PUT /api/agents/{id}/owner` with `{owner_id}`; current owner or workspace owner/admin; target must be a current human member | `multica agent transfer-owner --help` |
 | `agent okr list` | `server/cmd/multica/cmd_agent_okr.go:19,32` | Resolves an Agent ref, then GETs `/api/agents/{id}/okrs`; JSON preserves the complete `{usage_available,okrs}` response | `multica agent okr list --help` |
 
 ## Agent OKRs — `server/internal/handler/agent_okr.go`

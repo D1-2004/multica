@@ -90,6 +90,7 @@
     "section_danger": "Danger Zone",
     "field_agent": "Agent",
     "field_created_by": "Created by",
+    "transfer_owner_description": "\"{{name}}\" will be owned by {{owner}}. After this, only the new creator or an admin can change the collaborator list.",
     "field_output_mode": "Output Mode",
     "field_project": "Project",
     "no_project": "No project",

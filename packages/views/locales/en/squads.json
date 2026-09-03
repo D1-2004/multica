@@ -17,7 +17,9 @@
   },
   "inspector": {
     "details_section": "Details",
-    "archive_button": "Archive"
+    "archive_button": "Archive",
+    "created_by": "Created by",
+    "transfer_owner_description": "\"{{name}}\" will be owned by {{owner}}. After this, only the new creator (among regular members) can manage the squad."
   },
   "archive_dialog": {
     "title": "Archive this squad?",
