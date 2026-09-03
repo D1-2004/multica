@@ -307,6 +307,12 @@ func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
 	if !strings.Contains(flushSystemPrompt, "If unsure, write one [待确认] line instead of dropping the fact") {
 		t.Fatal("flush must not drop borderline facts")
 	}
+	if !strings.Contains(flushSystemPrompt, `delete matching bullets`) {
+		t.Fatal("flush must drop a fact the human retracts, not tombstone it")
+	}
+	if !strings.Contains(flushSystemPrompt, "Git SHAs") {
+		t.Fatal("flush must not keep git/pipeline e2e debris as standing knowledge")
+	}
 }
 
 func TestFallbackMergeCitesSpeakerWhenTimeIsKnown(t *testing.T) {

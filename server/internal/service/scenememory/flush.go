@@ -328,6 +328,12 @@ Keep (slightly more than before, still small):
 - Standing preferences the next short reply depends on
 If unsure, write one [待确认] line instead of dropping the fact.
 
+Drop, do not keep:
+- Git SHAs, commit ids, pipeline/CI/deploy status, e2e playbook notes, "下一轮 SLS"
+- Open tasks ("需从机器中移除…") — those are Issues
+When a [peer] says 去掉/删掉/干掉/不要记/从记忆里去掉 X: delete matching bullets from every section. Do not add "X 已移除".
+When they say 整理记忆: compact — drop stale 待确认 and process notes; keep people, prefs, terms, and corrections of terms.
+
 Still skip: secrets, issue ids, tasks to execute, another scene, insults with no factual payload, health/pay/performance. Events tagged [self] are this digital employee's own messages. Do not treat them as human corrections or group consensus.
 
 Cite every kept fact at the end of its line as (来自{speaker}, {M}月{D}日 {HH:mm}的发言) using the event clock printed below (Asia/Shanghai). Copy speaker and stamp; do not invent. Keep an older citation unless a newer event rewrites the fact.

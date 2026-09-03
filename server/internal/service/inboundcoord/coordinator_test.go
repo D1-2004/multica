@@ -382,7 +382,7 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	if !strings.Contains(systemPrompt, "assoc_recall remains the only Issue truth") {
 		t.Fatal("system prompt must keep assoc as the only issue truth")
 	}
-	if !strings.Contains(systemPrompt, "finish action=reply from it") {
+	if !strings.Contains(systemPrompt, "finish action=reply from scene_memory only") {
 		t.Fatal("system prompt must allow scene_memory to answer scene questions")
 	}
 	if !strings.Contains(systemPrompt, "do not call issue_comment_add") {
@@ -390,6 +390,15 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	}
 	if !strings.Contains(systemPrompt, "Teaching or correcting this scene") {
 		t.Fatal("system prompt must not open an Issue for scene teaching")
+	}
+	if !strings.Contains(systemPrompt, "从记忆里去掉 X") {
+		t.Fatal("system prompt must treat dropping a scene fact as memory rewrite, not an Issue")
+	}
+	if !strings.Contains(systemPrompt, "reply from scene_memory only") {
+		t.Fatal("system prompt must answer 有哪些记忆 from scene_memory only")
+	}
+	if !strings.Contains(systemPrompt, "手头有哪些事情") {
+		t.Fatal("system prompt must not list scene_memory bullets as open work")
 	}
 }
 
