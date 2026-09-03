@@ -167,6 +167,9 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	if attrs["langfuse.trace.tags"] != `["agent_task","runtime:cloud","provider:hermes"]` || attrs["langfuse.trace.metadata.provider"] != "hermes" {
 		t.Fatalf("relay tags/provider = %q / %q", attrs["langfuse.trace.tags"], attrs["langfuse.trace.metadata.provider"])
 	}
+	if _, named := attrs["langfuse.trace.name"]; named {
+		t.Fatal("relay generations must not name the trace")
+	}
 	if attrs["langfuse.observation.metadata.sequence"] != "3" || attrs["langfuse.observation.metadata.api"] != "chat.completions" {
 		t.Fatalf("observation metadata = %v", attrs)
 	}

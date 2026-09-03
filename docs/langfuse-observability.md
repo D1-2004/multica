@@ -89,7 +89,10 @@ chat trace with the Issue task they create, channel-engine turns reuse the
 inbound chat trace, and Router-dispatched turns install the coordinator trace
 id as the Issue task's chat trace (`inboundcoord.WithCoordinatorTrace`). The
 coordinator's root observation and the task's `agent_task` root then sit side
-by side under one trace id, with the sandbox generations beneath the task.
+by side under one trace id, with the sandbox generations beneath the task. Such
+a trace keeps the `inbound_coordinator` name (task spans only name traces they
+own); filter by `metadata.coordinator_trigger` or the `agent_task` tag to find
+the tasks inside.
 
 ### Memory flush (`scene_memory_flush`)
 
