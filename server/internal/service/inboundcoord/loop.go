@@ -232,7 +232,7 @@ func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {
 func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply when current_message is a greeting or does not advance a recalled purpose. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop. Never use reply to say you cannot complete the request. New Issue: omit issue_id and set delegator, purpose, intent, and text naming the work. Continue an existing Issue with issue_comment_add, never with finish issue_id. text is required for reply and issue."),
+		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply when current_message is a greeting or does not advance a recalled purpose and is not answering a question this agent just asked. If current_message answers that question, do not reply with the same question; continue or open the work. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop. Never use reply to say you cannot complete the request. New Issue: omit issue_id and set delegator, purpose, intent, and text naming the work. Continue an existing Issue with issue_comment_add, never with finish issue_id. text is required for reply and issue."),
 		Parameters: shared.FunctionParameters{
 			"type":                 "object",
 			"additionalProperties": false,

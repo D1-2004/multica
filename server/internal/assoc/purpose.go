@@ -33,6 +33,27 @@ func ValidatePurpose(purpose string) error {
 
 // ValidateCoordinatorPurpose requires the bind card to name the task
 // elements: delegator (委托人), event (事件), and goal (目的). Place is optional.
+// EventFromCoordinatorPurpose is the event and goal after 委托：.
+// A purpose with no event (empty after 委托：) names no work.
+func EventFromCoordinatorPurpose(purpose string) string {
+	p := strings.TrimSpace(purpose)
+	for _, sep := range []string{"委托：", "委托:"} {
+		if i := strings.LastIndex(p, sep); i >= 0 {
+			return strings.TrimSpace(p[i+len(sep):])
+		}
+	}
+	return p
+}
+
+// PurposeNamesEvent reports whether purpose names a doable event and goal.
+func PurposeNamesEvent(purpose string) bool {
+	event := EventFromCoordinatorPurpose(purpose)
+	if event == "" {
+		return false
+	}
+	return ValidatePurpose(event) == nil
+}
+
 func ValidateCoordinatorPurpose(purpose string) error {
 	if err := ValidatePurpose(purpose); err != nil {
 		return err

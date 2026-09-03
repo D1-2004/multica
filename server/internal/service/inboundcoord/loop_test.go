@@ -691,6 +691,7 @@ func TestFinishToolRoutesUnavailableCapabilitiesToIssue(t *testing.T) {
 	description := fn.Description.Value
 	for _, rule := range []string{
 		"Use reply when current_message is a greeting or does not advance a recalled purpose",
+		"do not reply with the same question",
 		"Use issue for contacts, DWS, search, files",
 		"Never use reply to say you cannot complete the request",
 		"issue_comment_add",

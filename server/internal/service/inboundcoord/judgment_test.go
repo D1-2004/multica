@@ -48,6 +48,10 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"items are memory of open matters",
 		"finish never takes issue_id",
 		"Do not finish action=issue with that issue_id",
+		"Do not ask that question again",
+		"purpose names no event or goal",
+		"do not recite workflow states",
+		"do not output that question again",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)

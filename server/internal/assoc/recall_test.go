@@ -36,6 +36,22 @@ func TestValidatePurpose(t *testing.T) {
 	}
 }
 
+func TestPurposeNamesEvent(t *testing.T) {
+	t.Parallel()
+	if PurposeNamesEvent("冬翔委托：向辰驷确认明天几点打球") != true {
+		t.Fatal("expected event after 委托：")
+	}
+	if PurposeNamesEvent("向辰驷确认明天几点打球") != true {
+		t.Fatal("expected purpose without 委托 still names an event")
+	}
+	if PurposeNamesEvent("某人委托：") {
+		t.Fatal("empty event after 委托： is not a matter")
+	}
+	if PurposeNamesEvent("帮我看看") {
+		t.Fatal("vague event is not a matter")
+	}
+}
+
 func TestComposeCoordinatorPurposeRequiresDelegatorAndPlace(t *testing.T) {
 	t.Parallel()
 	got, err := ComposeCoordinatorPurpose("冬翔", "", "向辰驷确认明天几点打球")
