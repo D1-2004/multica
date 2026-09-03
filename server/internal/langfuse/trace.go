@@ -37,6 +37,12 @@ const (
 	attrObsModelParameters = "langfuse.observation.model.parameters"
 	attrObsUsageDetails    = "langfuse.observation.usage_details"
 	attrObsCompletionStart = "langfuse.observation.completion_start_time"
+	// OpenTelemetry GenAI semantic-convention usage counters, mapped by every
+	// Langfuse version (the langfuse.* JSON form is newer).
+	attrGenAIUsageInput     = "gen_ai.usage.input_tokens"
+	attrGenAIUsageOutput    = "gen_ai.usage.output_tokens"
+	attrGenAIUsageTotal     = "gen_ai.usage.total_tokens"
+	attrGenAIUsageCacheRead = "gen_ai.usage.cache_read_input_tokens"
 )
 
 // ObservationType is the Langfuse observation kind. Unknown values fall back
@@ -192,15 +198,20 @@ func (c *Client) StartTrace(ctx context.Context, opts TraceOptions) *Trace {
 		forced.spanID = id
 	}
 	traceAttrs := c.traceAttributes(opts)
+	// Tags live on the root observation only. Langfuse takes a trace's tags
+	// from the first span it ingests and never unions later spans, so tags
+	// carried by children (which end first) would freeze the set before the
+	// root can add its final action/status tags. Children still carry user,
+	// session, and metadata, which merge per key.
 	tags := cleanTags(opts.Tags)
-	if len(tags) > 0 {
-		traceAttrs = append(traceAttrs, attribute.StringSlice(attrTraceTags, tags))
-	}
 	obsType := opts.Type
 	if obsType == "" {
 		obsType = TypeSpan
 	}
 	attrs := append([]attribute.KeyValue{}, traceAttrs...)
+	if len(tags) > 0 {
+		attrs = append(attrs, attribute.StringSlice(attrTraceTags, tags))
+	}
 	attrs = append(attrs, attribute.String(attrObsType, string(obsType)))
 	if opts.Input != nil {
 		encoded := encodePayload(opts.Input)
@@ -320,17 +331,15 @@ func (c *Client) StartObservationInTrace(ctx context.Context, traceOpts TraceOpt
 	if !ok {
 		traceID = randomTraceID()
 	}
-	traceAttrs := c.traceAttributes(traceOpts)
-	tags := cleanTags(traceOpts.Tags)
-	if len(tags) > 0 {
-		traceAttrs = append(traceAttrs, attribute.StringSlice(attrTraceTags, tags))
-	}
+	// Detached observations never carry trace tags: they usually arrive before
+	// the root (the sandbox relay runs during the task), and the first tagged
+	// span would freeze the trace's tag set before the root reports the
+	// final status. See StartTrace.
 	detached := &Trace{
 		client:     c,
 		ctx:        withForcedIDs(ctx, forcedIDs{traceID: traceID}),
 		id:         traceID,
-		traceAttrs: traceAttrs,
-		tags:       tags,
+		traceAttrs: c.traceAttributes(traceOpts),
 	}
 	return detached.start(detached.ctx, opts)
 }
@@ -482,7 +491,7 @@ func finishSpan(span trace.Span, end EndOptions) {
 		attrs = append(attrs, attribute.String(attrObsOutput, encodePayload(end.Output)))
 	}
 	if !end.Usage.empty() {
-		attrs = append(attrs, attribute.String(attrObsUsageDetails, encodePayload(end.Usage.details())))
+		attrs = append(attrs, usageAttributes(end.Usage)...)
 	}
 	if !end.CompletionStartTime.IsZero() {
 		attrs = append(attrs, attribute.String(attrObsCompletionStart, end.CompletionStartTime.UTC().Format(time.RFC3339Nano)))
@@ -514,6 +523,28 @@ func finishSpan(span trace.Span, end EndOptions) {
 		endTime = time.Now()
 	}
 	span.End(trace.WithTimestamp(endTime))
+}
+
+// usageAttributes renders token usage in both vocabularies: the Langfuse JSON
+// attribute newer servers map directly, and the OpenTelemetry GenAI semantic
+// convention counters (gen_ai.usage.*) that this deployment's Langfuse build
+// maps into usageDetails. Emitting both keeps usage visible across versions.
+func usageAttributes(usage *Usage) []attribute.KeyValue {
+	details := usage.details()
+	attrs := []attribute.KeyValue{attribute.String(attrObsUsageDetails, encodePayload(details))}
+	if input, ok := details["input"]; ok {
+		attrs = append(attrs, attribute.Int64(attrGenAIUsageInput, input))
+	}
+	if output, ok := details["output"]; ok {
+		attrs = append(attrs, attribute.Int64(attrGenAIUsageOutput, output))
+	}
+	if total, ok := details["total"]; ok {
+		attrs = append(attrs, attribute.Int64(attrGenAIUsageTotal, total))
+	}
+	if cacheRead, ok := details["cache_read_input_tokens"]; ok {
+		attrs = append(attrs, attribute.Int64(attrGenAIUsageCacheRead, cacheRead))
+	}
+	return attrs
 }
 
 // maxPayloadBytes bounds a single input/output attribute. Langfuse accepts

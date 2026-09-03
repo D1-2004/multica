@@ -192,6 +192,19 @@ func TestStartTracePinsTraceIDAndPropagatesTraceAttributes(t *testing.T) {
 	if got := attrValue(t, generation, attrObsUsageDetails).AsString(); got != `{"cache_read_input_tokens":2,"input":10,"output":5,"total":15}` {
 		t.Fatalf("usage = %s", got)
 	}
+	// The GenAI semantic-convention counters are what older Langfuse builds map.
+	if got := attrValue(t, generation, attrGenAIUsageInput).AsInt64(); got != 10 {
+		t.Fatalf("gen_ai input tokens = %d", got)
+	}
+	if got := attrValue(t, generation, attrGenAIUsageOutput).AsInt64(); got != 5 {
+		t.Fatalf("gen_ai output tokens = %d", got)
+	}
+	if got := attrValue(t, generation, attrGenAIUsageTotal).AsInt64(); got != 15 {
+		t.Fatalf("gen_ai total tokens = %d", got)
+	}
+	if got := attrValue(t, generation, attrGenAIUsageCacheRead).AsInt64(); got != 2 {
+		t.Fatalf("gen_ai cache read tokens = %d", got)
+	}
 	// Trace-level attributes ride on every child so Langfuse can filter by them.
 	if got := attrValue(t, generation, attrSessionID).AsString(); got != "cid-1" {
 		t.Fatalf("child session id = %s", got)
@@ -201,6 +214,11 @@ func TestStartTracePinsTraceIDAndPropagatesTraceAttributes(t *testing.T) {
 	}
 	if hasAttr(generation, attrTraceInput) {
 		t.Fatal("children must not carry the trace input")
+	}
+	// Tags stay on the root: Langfuse freezes a trace's tags on the first span
+	// it ingests, and children end before the root adds action/status tags.
+	if hasAttr(generation, attrTraceTags) {
+		t.Fatal("children must not carry trace tags")
 	}
 
 	toolSpan := findSpan(t, spans, "assoc_recall")
@@ -225,7 +243,7 @@ func TestDeterministicIDsLinkDetachedObservations(t *testing.T) {
 
 	// The relay exports a generation before the task root exists.
 	relay := client.StartObservationInTrace(context.Background(), TraceOptions{
-		TraceID: taskID, Name: "agent_task", SessionID: "cid-9",
+		TraceID: taskID, Name: "agent_task", SessionID: "cid-9", Tags: []string{"agent_task"},
 		Metadata: map[string]any{"task_id": taskID},
 	}, ObservationOptions{
 		Type: TypeGeneration, Name: "llm.call.1", ParentSpanID: rootID, Model: "gpt-5.6",
@@ -259,6 +277,9 @@ func TestDeterministicIDsLinkDetachedObservations(t *testing.T) {
 	}
 	if got := attrValue(t, relaySpan, attrSessionID).AsString(); got != "cid-9" {
 		t.Fatalf("relay session id = %s", got)
+	}
+	if hasAttr(relaySpan, attrTraceTags) {
+		t.Fatal("detached observations must not carry trace tags")
 	}
 	toolSpan := findSpan(t, spans, "bash")
 	if toolSpan.Parent.SpanID().String() != rootID {
