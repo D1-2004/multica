@@ -147,10 +147,11 @@ export function CoordinatorSessionsTab({
   }, [selectedMemoryId, memories]);
 
   useEffect(() => {
-    if (!showMemory || selectedId || selectedMemoryId || memories.length === 0) {
+    const firstMemory = memories[0];
+    if (!showMemory || selectedId || selectedMemoryId || !firstMemory) {
       return;
     }
-    setSelectedMemoryId(memories[0].id);
+    setSelectedMemoryId(firstMemory.id);
   }, [showMemory, selectedId, selectedMemoryId, memories]);
 
   const selected =
