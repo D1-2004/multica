@@ -130,3 +130,5 @@ FC warm sandbox 复用的是文件系统和 provider proxy，不是上一次 Dae
 功能 rolling matrix 已通过。二进制公共表面仍为 FAIL：候选相对 0.4.33 缺少 `--workspaces-root` 和 `zeroclaw`，因此仍不能宣告本地 Daemon 完全向后兼容。
 
 清理结果：两个临时 Daemon 均停止；四条 local Runtime 严格删除且最终 ledger 为 0；三个有效 smoke Issue 和一个首次 marker 不完整的诊断 Issue 均删除；临时 Agent 归档；隔离 profile、PAT 副本、worktree 与临时目录清除；默认 `pre-fde` Daemon 保持 `stopped`。
+
+共享预发随后被其它 CR 更新触发的 Run `3106563734` 覆盖。该 Run 的实际 build commit 为 `9b8fcfa46f18d3bbe39765c8519139f8083d6307`，仍包含本次功能 commit `675e7abcf`；构建、扫描、部署、集成测试再次全部成功，最终健康与配置接口正常，并停在人工“预发验证” gate。两次部署之间本次 Daemon/server 功能 revision 未改变，因此不重复创建本地 Runtime 做第三轮相同 smoke。

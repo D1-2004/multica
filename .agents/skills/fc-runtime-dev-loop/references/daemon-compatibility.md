@@ -167,3 +167,5 @@ Against that deployed server:
 3. FC candidate Runtime `f069b307-2bc1-4ab5-92ff-7fdd5bcf2114` completed RunOnce task `326ee13c-1851-4646-80a7-b24267764bf3` with marker `FC_POSTDEPLOY_OK_096B5C07`.
 
 The functional rolling matrix therefore passed on the deployed server. Binary-surface compatibility remains failed because candidate `675e7abcf` still removes `--workspaces-root` and `zeroclaw` relative to 0.4.33. Do not collapse these two results into one green status.
+
+The shared pre-release flow later superseded that deployment with run `3106563734`. Its build commit `9b8fcfa46f18d3bbe39765c8519139f8083d6307` still contains `675e7abcf`; build, artifact scan, deployment, integration test, and the post-deploy health/config probes succeeded before the run waited at the same manual verification gate. No Daemon/server functional revision changed between the smoke and this superseding deployment.
