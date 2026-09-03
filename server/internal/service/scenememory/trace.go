@@ -39,12 +39,19 @@ func (f *MemoryFlusher) startFlushTrace(ctx context.Context, row db.SceneMemory,
 	if f == nil || f.Langfuse == nil {
 		return nil
 	}
-	return f.Langfuse.StartTrace(ctx, flushTraceOptions(row, started))
+	agentName := ""
+	if f.Agents != nil && row.AgentID.Valid {
+		if agent, err := f.Agents.GetAgent(ctx, row.AgentID); err == nil {
+			agentName = strings.TrimSpace(agent.Name)
+		}
+	}
+	return f.Langfuse.StartTrace(ctx, flushTraceOptions(row, agentName, started))
 }
 
-func flushTraceOptions(row db.SceneMemory, started time.Time) langfuse.TraceOptions {
+func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) langfuse.TraceOptions {
 	metadata := map[string]any{
 		"loop":                flushTraceName,
+		"agent_name":          agentName,
 		"scene_memory_id":     util.UUIDToString(row.ID),
 		"scene_key":           strings.TrimSpace(row.SceneKey),
 		"conversation_id":     strings.TrimSpace(row.SceneKey),

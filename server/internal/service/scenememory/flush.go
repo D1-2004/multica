@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -52,6 +53,14 @@ type MemoryFlusher struct {
 	LLM     *llm.Client
 	// Langfuse exports one trace per claimed flush. Nil disables tracing.
 	Langfuse *langfuse.Client
+	// Agents resolves the agent name for trace metadata. Optional.
+	Agents AgentReader
+}
+
+// AgentReader is the subset of db.Queries the flusher needs for trace
+// metadata.
+type AgentReader interface {
+	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 }
 
 func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err error) {

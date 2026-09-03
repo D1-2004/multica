@@ -233,6 +233,18 @@ func TestDecideTraceRecordsExhaustedRoundsAsLoopError(t *testing.T) {
 	}
 }
 
+func TestConversationNameFallsBackToSceneTitleBeforeSender(t *testing.T) {
+	if got := conversationName(Turn{SceneTitle: "冬翔", SenderName: "Dv6WPxM5cBX83sOS9u0PAAwiEiE"}); got != "冬翔" {
+		t.Fatalf("conversation name = %q, want the scene title", got)
+	}
+	if got := conversationName(Turn{ConversationTitle: "项目群", SceneTitle: "冬翔"}); got != "项目群" {
+		t.Fatalf("conversation name = %q, want the channel title", got)
+	}
+	if got := conversationName(Turn{SenderName: "uid-1"}); got != "uid-1" {
+		t.Fatalf("conversation name = %q, want the sender", got)
+	}
+}
+
 func TestRunLoopWithoutTraceIsUnchanged(t *testing.T) {
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),

@@ -783,7 +783,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			BaseURLProvider: agentIdentityControlBaseURLProvider,
 			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
 		}),
-		LLM: h.LLM,
+		LLM:    h.LLM,
+		Agents: queries,
 	}
 	// Langfuse tracing: the coordinator loop, the memory loop, and the agent
 	// task lifecycle share one exporter. The sandbox LLM relay fans out to it
