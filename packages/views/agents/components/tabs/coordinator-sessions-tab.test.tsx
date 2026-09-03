@@ -164,8 +164,8 @@ describe("CoordinatorSessionsTab scene memory", () => {
     renderTab({ ...agent, scene_memory_ui_enabled: true }, true);
     expect(await screen.findByText("冬翔")).toBeInTheDocument();
     expect(screen.getByText("Scene memory")).toBeInTheDocument();
-    expect(screen.getAllByText(/Revision 2/).length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Save memory" })).toBeInTheDocument();
+    expect(screen.getAllByText("GoalMate 是工具").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
     expect(screen.getByText("Issue links")).toBeInTheDocument();
   });
 
@@ -206,7 +206,8 @@ describe("CoordinatorSessionsTab scene memory", () => {
     expect(await screen.findByText("场域隔离A")).toBeInTheDocument();
     expect(screen.getByText("场域隔离B")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /场域隔离A/ }));
-    expect(screen.getByText("GAMMA-A-881 是报表工具")).toBeInTheDocument();
-    expect(screen.queryByText("这个群还没有口径")).toBeNull();
+    expect(screen.getAllByText("GAMMA-A-881 是报表工具").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: /场域隔离B/ }));
+    expect(screen.getAllByText("这个群还没有口径").length).toBeGreaterThan(0);
   });
 });
