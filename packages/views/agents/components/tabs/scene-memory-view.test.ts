@@ -85,6 +85,7 @@ describe("scene memory view helpers", () => {
     ).toBe("冬翔");
     expect(
       scenePreview({
+        scene_kind: "dm",
         memory_text: "## 稳定知识与约定\n- GoalMate 是工具，不是数字员工",
       }),
     ).toContain("GoalMate 是工具");
@@ -109,7 +110,31 @@ describe("scene memory view helpers", () => {
     expect(visibleMemorySections(text)).toEqual([
       { heading: "近期事实", body: "- 约了dxxh" },
     ]);
-    expect(scenePreview({ memory_text: text })).toContain("约了dxxh");
-    expect(scenePreview({ memory_text: text })).not.toContain("冬翔");
+    expect(scenePreview({ memory_text: text, scene_kind: "dm" })).toContain(
+      "约了dxxh",
+    );
+    expect(scenePreview({ memory_text: text, scene_kind: "dm" })).not.toContain(
+      "冬翔",
+    );
+  });
+
+  it("keeps group locating so owners see what the group is for", () => {
+    const text =
+      "## 场域定位\n场域回归-R7A。\n成员：SixSix、东翔测试号。\n用途：对齐 GoalMate 报表。\n\n## 稳定知识与约定\nGoalMate 是工具\n";
+    const sections = visibleMemorySections(text, "group");
+    expect(sections[0]).toEqual({
+      heading: "场域定位",
+      body: "场域回归-R7A。\n成员：SixSix、东翔测试号。\n用途：对齐 GoalMate 报表。",
+    });
+    expect(
+      scenePreview({ memory_text: text, scene_kind: "group" }),
+    ).toContain("GoalMate 是工具");
+    expect(
+      scenePreview({
+        memory_text:
+          "## 场域定位\n场域回归-R7A。\n成员：SixSix、东翔测试号。\n用途：对齐 GoalMate 报表。\n\n## 稳定知识与约定\n（暂无）\n",
+        scene_kind: "group",
+      }),
+    ).toBe("对齐 GoalMate 报表");
   });
 });

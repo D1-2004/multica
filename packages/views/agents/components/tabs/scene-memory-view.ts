@@ -130,9 +130,12 @@ export function partitionSceneMemories<T extends { scene_kind: string }>(
 
 const LOCATING_HEADING = "场域定位";
 
-export function visibleMemorySections(text: string): MemorySection[] {
+export function visibleMemorySections(
+  text: string,
+  sceneKind = "",
+): MemorySection[] {
   return parseMemorySections(text).filter((section) => {
-    if (section.heading === LOCATING_HEADING) {
+    if (section.heading === LOCATING_HEADING && sceneKind !== "group") {
       return false;
     }
     if (!section.body || isEmptyMemoryBody(section.body)) {
@@ -142,14 +145,54 @@ export function visibleMemorySections(text: string): MemorySection[] {
   });
 }
 
+function locatingPurposeLine(body: string): string {
+  let fallback = "";
+  for (const raw of body.split("\n")) {
+    const line = raw.replace(/^[-*]\s+/, "").replace(/^#+\s+/, "").trim();
+    if (!line || isEmptyMemoryBody(line)) {
+      continue;
+    }
+    if (/(?:已知)?成员[：:]/.test(line) || /参与者包括/.test(line)) {
+      continue;
+    }
+    const purpose = line.match(/^用途[：:]\s*(.+)$/);
+    if (purpose?.[1] && !isGenericSceneTitle(purpose[1])) {
+      return stripTitlePunct(purpose[1]);
+    }
+    if (!fallback && !isGenericSceneTitle(line) && !/^本会话/.test(line)) {
+      fallback = stripTitlePunct(line);
+    }
+  }
+  return fallback;
+}
+
 export function scenePreview(
-  memory: Pick<AgentSceneMemory, "memory_text">,
+  memory: Pick<AgentSceneMemory, "memory_text" | "scene_kind">,
 ): string {
-  const sections = visibleMemorySections(memory.memory_text);
+  const sections = parseMemorySections(memory.memory_text);
   const knowledge = sections.find((section) =>
     /稳定知识|约定/.test(section.heading),
   );
-  const source = knowledge?.body || sections.map((section) => section.body).join(" ");
+  if (knowledge?.body && !isEmptyMemoryBody(knowledge.body)) {
+    return knowledge.body
+      .replace(/^[-*]\s+/gm, "")
+      .replace(/[（(]暂无[)）]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  if (memory.scene_kind === "group") {
+    const locating = sections.find(
+      (section) => section.heading === LOCATING_HEADING,
+    );
+    const purpose = locatingPurposeLine(locating?.body ?? "");
+    if (purpose) {
+      return purpose;
+    }
+  }
+  const source = sections
+    .filter((section) => section.heading !== LOCATING_HEADING)
+    .map((section) => section.body)
+    .join(" ");
   return source
     .replace(/^[-*]\s+/gm, "")
     .replace(/[（(]暂无[)）]/g, " ")

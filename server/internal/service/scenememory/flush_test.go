@@ -295,8 +295,11 @@ func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
 	if !strings.Contains(flushSystemPrompt, "inbound judge") {
 		t.Fatal("flush must keep background the next Coordinator turn needs")
 	}
-	if !strings.Contains(flushSystemPrompt, "For a group, add one short line per known person") {
-		t.Fatal("flush must keep counterpart lines on groups")
+	if !strings.Contains(flushSystemPrompt, "这个群是做什么的") {
+		t.Fatal("flush must keep what a group is for")
+	}
+	if !strings.Contains(flushSystemPrompt, "For a DM, do not invent a purpose") {
+		t.Fatal("flush must not invent a DM purpose")
 	}
 	if !strings.Contains(flushSystemPrompt, `A human [peer] "记住 …"`) {
 		t.Fatal("flush must keep an explicit 记住 from a human")

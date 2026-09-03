@@ -593,7 +593,10 @@ function SceneMemoryDetail({
             ? t(($) => $.tab_body.inbound.status_blocked)
             : t(($) => $.tab_body.inbound.status_clean);
   const dirty = draft !== memory.memory_text;
-  const sections = visibleMemorySections(memory.memory_text);
+  const sections = visibleMemorySections(
+    memory.memory_text,
+    memory.scene_kind,
+  );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-start justify-between gap-3 border-b px-6 py-5">

@@ -315,12 +315,14 @@ This text is the inbound judge's only durable background for the NEXT turn on th
 Sections:
 ## 场域定位
 First line is the conversation's own name: the DingTalk group title, or the other person's name for a DM. Never write only "钉钉群聊" or "钉钉单聊". Next line 成员：....
-For a group, add one short line per known person when the events say who they are, how they are called, or their role here. Do not invent an org chart.
+For a group, locating MUST answer 这个群是做什么的 in one short 用途：… line after 成员. Use the group title and what people actually talk about. If thin, write 用途：[推断] … rather than omitting it. Then add one short line per known person when the events say who they are, how they are called, or their role here. Do not invent an org chart.
+For a DM, do not invent a purpose; name and 成员 are enough unless they explicitly say what this chat is for.
 ## 稳定知识与约定
 ## 纠正信号
 ## 待确认
 
 Keep (slightly more than before, still small):
+- For a group: what this group is for (project, standup, alert, social, …)
 - A human [peer] "记住 …" about a person, nickname, preference, or term in this scene
 - Explicit corrections ("我的意思是…", "不是X是Y")
 - Standing preferences the next short reply depends on
