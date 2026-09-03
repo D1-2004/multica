@@ -354,6 +354,8 @@ type AgentRunnerBinding struct {
 	MachineID   pgtype.UUID        `json:"machine_id"`
 	BoundBy     pgtype.UUID        `json:"bound_by"`
 	Roots       []byte             `json:"roots"`
+	// Server-name to configuration-fingerprint allowlist for Agent-enabled local MCP mounts.
+	EnabledMcpServers []byte             `json:"enabled_mcp_servers"`
 	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
 	RevokedBy   pgtype.UUID        `json:"revoked_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`

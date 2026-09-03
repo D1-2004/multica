@@ -1881,6 +1881,33 @@ export class ApiClient {
     return CreateRunnerPairingResponseSchema.parse(raw);
   }
 
+  async createAccountRunnerPairing(): Promise<CreateRunnerPairingResponse> {
+    const raw = await this.fetch<unknown>("/api/me/runner-pairings", { method: "POST" });
+    return CreateRunnerPairingResponseSchema.parse(raw);
+  }
+
+  async mountAgentRunnerMachine(agentId: string, machineId: string): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/runner-mount`, {
+      method: "PUT",
+      body: JSON.stringify({ machine_id: machineId }),
+    });
+  }
+
+  async setAgentRunnerMcpServerEnabled(agentId: string, bindingId: string, serverName: string, enabled: boolean, fingerprint: string): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/runner-bindings/${bindingId}/mcp-servers/${encodeURIComponent(serverName)}`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled, fingerprint }),
+    });
+  }
+
+  async renameAccountRunnerMachine(machineId: string, name: string): Promise<void> {
+    await this.fetch(`/api/me/runner-machines/${machineId}`, { method: "PATCH", body: JSON.stringify({ name }) });
+  }
+
+  async revokeAccountRunnerMachine(machineId: string): Promise<void> {
+    await this.fetch(`/api/me/runner-machines/${machineId}`, { method: "DELETE" });
+  }
+
   async revokeAgentRunnerBinding(
     agentId: string,
     bindingId: string,

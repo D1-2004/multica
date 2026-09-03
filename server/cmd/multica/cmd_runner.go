@@ -291,7 +291,7 @@ func runRunnerStart(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if len(bindings) == 0 {
-		return errors.New("Runner is not bound; copy a new install command from Agent settings")
+		return errors.New("Runner is not paired; copy a new install command from General settings")
 	}
 	privateKey, err := runnerPrivateKey(cfg)
 	if err != nil {
@@ -562,13 +562,20 @@ func runAllRunnerLoops(ctx context.Context, cfg runnerConfig, privateKey ed25519
 	if len(bindings) == 0 {
 		return errors.New("Runner is not bound; copy a new install command from Agent settings")
 	}
+	mcpConfig, err := loadRunnerMCPConfig()
+	if err != nil {
+		slog.Warn("Runner MCP config is unavailable", "error", err)
+		mcpConfig, _ = parseRunnerMCPConfig([]byte(`{"mcpServers":{}}`))
+	}
+	mcpManager := newRunnerMCPManager(mcpConfig)
+	defer mcpManager.Close()
 	errCh := make(chan error, len(bindings))
 	var wg sync.WaitGroup
 	for _, binding := range bindings {
 		wg.Add(1)
 		go func(binding runnerServerBinding) {
 			defer wg.Done()
-			errCh <- runRunnerLoop(ctx, binding, privateKey)
+			errCh <- runRunnerLoop(ctx, binding, privateKey, mcpConfig.Inventory, mcpManager)
 		}(binding)
 	}
 	go func() {
@@ -590,7 +597,7 @@ func runAllRunnerLoops(ctx context.Context, cfg runnerConfig, privateKey ed25519
 	return first
 }
 
-func runRunnerLoop(ctx context.Context, binding runnerServerBinding, privateKey ed25519.PrivateKey) error {
+func runRunnerLoop(ctx context.Context, binding runnerServerBinding, privateKey ed25519.PrivateKey, inventory runnerprotocol.MCPInventory, mcpManager *runnerMCPManager) error {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).With(
 		"server_url", binding.ServerURL,
 		"machine_id", binding.MachineID,
@@ -599,13 +606,9 @@ func runRunnerLoop(ctx context.Context, binding runnerServerBinding, privateKey 
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		err := runRunnerConnection(ctx, binding, privateKey, logger)
+		err := runRunnerConnectionWithMCP(ctx, binding, privateKey, inventory, mcpManager, logger)
 		if ctx.Err() != nil {
 			return ctx.Err()
-		}
-		if errors.Is(err, errRunnerHasNoBindings) {
-			logger.Info("Runner has no connected Agent bindings; leaving this server")
-			return err
 		}
 		logger.Warn("Runner connection closed", "error", err)
 		select {
@@ -616,7 +619,11 @@ func runRunnerLoop(ctx context.Context, binding runnerServerBinding, privateKey 
 	}
 }
 
-func runRunnerConnection(ctx context.Context, binding runnerServerBinding, privateKey ed25519.PrivateKey, logger *slog.Logger) error {
+func runRunnerConnection(ctx context.Context, binding runnerServerBinding, privateKey ed25519.PrivateKey, inventory runnerprotocol.MCPInventory, logger *slog.Logger) error {
+	return runRunnerConnectionWithMCP(ctx, binding, privateKey, inventory, nil, logger)
+}
+
+func runRunnerConnectionWithMCP(ctx context.Context, binding runnerServerBinding, privateKey ed25519.PrivateKey, inventory runnerprotocol.MCPInventory, mcpManager *runnerMCPManager, logger *slog.Logger) error {
 	client := cli.NewAPIClient(binding.ServerURL, "", "")
 	challengeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -624,10 +631,6 @@ func runRunnerConnection(ctx context.Context, binding runnerServerBinding, priva
 	if err != nil {
 		return fmt.Errorf("create connection challenge: %w", err)
 	}
-	if challenge.ActiveBindingCount == 0 {
-		return errRunnerHasNoBindings
-	}
-
 	wsURL, err := url.Parse(binding.ServerURL)
 	if err != nil {
 		return err
@@ -679,6 +682,9 @@ func runRunnerConnection(ctx context.Context, binding runnerServerBinding, priva
 	if err := writeJSON(runnerprotocol.Heartbeat{Type: runnerprotocol.MessageHeartbeat, ClientVersion: version}); err != nil {
 		return err
 	}
+	if err := writeJSON(inventory); err != nil {
+		return err
+	}
 	heartbeatsDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatsDone)
@@ -723,11 +729,6 @@ func runRunnerConnection(ctx context.Context, binding runnerServerBinding, priva
 			var bindings runnerprotocol.BindingsChanged
 			if json.Unmarshal(raw, &bindings) != nil {
 				continue
-			}
-			if bindings.ActiveBindingCount == 0 {
-				connectionCancel()
-				<-heartbeatsDone
-				return errRunnerHasNoBindings
 			}
 			if !runnerConnectionActive(os.Getpid(), binding.MachineID) {
 				if err := writeRunnerConnectionState(binding.MachineID); err != nil {
@@ -774,7 +775,7 @@ func runRunnerConnection(ctx context.Context, binding runnerServerBinding, priva
 				defer func() { <-sem }()
 			case <-callCtx.Done():
 			}
-			result := executeRunnerCall(callCtx, call)
+			result := executeRunnerCallWithMCP(callCtx, call, mcpManager)
 			callsMu.Lock()
 			delete(runningCalls, call.CallID)
 			delete(cancelledCalls, call.CallID)

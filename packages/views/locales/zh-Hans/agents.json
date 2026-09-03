@@ -521,6 +521,17 @@
       "unsaved_changes": "未保存的修改"
     },
     "runner": {
+      "execution_title": "执行机器",
+      "execution_hint": "从账号已配对的机器中选择一台。配对本身不会授权智能体使用。",
+      "account_empty": "请先在通用设置中配对机器。",
+      "mounted": "已挂载",
+      "mounted_toast": "已更新执行机器",
+      "local_mcp_title": "Runner MCP 服务",
+      "local_mcp_hint": "只有启用的服务会注入新任务，配置详情与密钥始终留在本机。",
+      "mount_first": "选择执行机器后可查看其 MCP 服务。",
+      "mcp_empty": "该 Runner 未上报本机 MCP 服务。",
+      "mcp_offline": "已挂载的 Runner 当前离线。",
+      "read_only": "只读",
       "security_warning": "Shell 命令以这台机器当前系统用户的完整权限运行，文件根目录不会限制 Shell。任何能运行该智能体的成员、群聊或自动化都能使用已绑定机器。",
       "machines_title": "已绑定机器",
       "intro": "将多台 macOS 或 Linux 机器绑定为该智能体的 Runner MCP。调用时必须明确选择机器；同一台机器被多个智能体使用时，共享一个 Runner 进程。",

@@ -100,7 +100,6 @@ const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "instructions", labelKey: "instructions" },
   { id: "skills", labelKey: "skills" },
   { id: "mcp_config", labelKey: "mcp_config" },
-  { id: "runner", labelKey: "runner" },
   { id: "composio_mcp", labelKey: "composio_mcp" },
   { id: "integrations", labelKey: "integrations" },
   { id: "identity", labelKey: "identity" },
@@ -108,6 +107,7 @@ const CAPABILITY_TABS: SecondaryTab[] = [
 
 const SETTINGS_TABS: SecondaryTab[] = [
   { id: "general", labelKey: "general" },
+	{ id: "runner", labelKey: "runner" },
   { id: "okr", labelKey: "okr" },
   { id: "access", labelKey: "access" },
   { id: "env", labelKey: "environment" },
@@ -558,11 +558,13 @@ export function AgentOverviewPane({
                       runtime={runtime}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
+					  canEdit={canEdit}
                     />
                   )}
                   {effectiveView === "runner" && (
                     <RunnerTab
                       agent={agent}
+					  mode="execution"
                       canBind={
                         !!currentUserId && agent.owner_id === currentUserId
                       }

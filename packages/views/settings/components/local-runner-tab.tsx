@@ -8,6 +8,8 @@ import {
   Bot,
   Laptop,
   Loader2,
+	Plus,
+	Pencil,
   Power,
   RefreshCw,
   Trash2,
@@ -19,6 +21,9 @@ import { useAuthStore } from "@multica/core/auth";
 import { paths } from "@multica/core/paths";
 import {
   accountRunnerBindingsOptions,
+	useCreateAccountRunnerPairing,
+	useRenameAccountRunnerMachine,
+	useRevokeAccountRunnerMachine,
   useCreateAccountRunnerReconnectCommand,
   useDisconnectAccountRunnerBinding,
   useRevokeAccountRunnerBinding,
@@ -26,6 +31,7 @@ import {
   type AccountRunnerBindingTarget,
   type AccountRunnerMachine,
   type CreateRunnerReconnectCommandResponse,
+	type CreateRunnerPairingResponse,
 } from "@multica/core/runner";
 import {
   AlertDialog,
@@ -62,6 +68,9 @@ export function LocalRunnerTab() {
   const { t } = useT("settings");
   const userId = useAuthStore((state) => state.user?.id ?? "");
   const bindingsQuery = useQuery(accountRunnerBindingsOptions(userId));
+	const createPairing = useCreateAccountRunnerPairing();
+	const renameMachine = useRenameAccountRunnerMachine(userId);
+	const revokeMachine = useRevokeAccountRunnerMachine(userId);
   const disconnectBinding = useDisconnectAccountRunnerBinding(userId);
   const createReconnectCommand =
     useCreateAccountRunnerReconnectCommand(userId);
@@ -73,6 +82,29 @@ export function LocalRunnerTab() {
   );
   const [reconnectCommand, setReconnectCommand] =
     useState<CreateRunnerReconnectCommandResponse | null>(null);
+	const [pairing, setPairing] = useState<CreateRunnerPairingResponse | null>(null);
+	const [revokeMachineTarget, setRevokeMachineTarget] = useState<AccountRunnerMachine | null>(null);
+
+	const handleCreatePairing = async () => {
+		try {
+			setPairing(await createPairing.mutateAsync());
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : t(($) => $.local_runner.load_failed));
+		}
+	};
+
+	const handleRenameMachine = async (machine: AccountRunnerMachine) => {
+		const name = window.prompt(t(($) => $.local_runner.rename_prompt), machine.name)?.trim();
+		if (!name || name === machine.name) return;
+		try { await renameMachine.mutateAsync({ machineId: machine.machineId, name }); }
+		catch (error) { toast.error(error instanceof Error ? error.message : t(($) => $.local_runner.rename_failed)); }
+	};
+
+	const handleRevokeMachine = async () => {
+		if (!revokeMachineTarget) return;
+		try { await revokeMachine.mutateAsync(revokeMachineTarget.machineId); setRevokeMachineTarget(null); }
+		catch (error) { toast.error(error instanceof Error ? error.message : t(($) => $.local_runner.machine_revoke_failed)); }
+	};
 
   const handleDisconnect = async () => {
     if (!disconnectTarget) return;
@@ -144,6 +176,12 @@ export function LocalRunnerTab() {
         title={t(($) => $.local_runner.machines_title)}
         description={t(($) => $.local_runner.machines_description)}
       >
+		<div className="flex justify-end">
+			<Button type="button" size="sm" onClick={() => void handleCreatePairing()} disabled={createPairing.isPending}>
+				{createPairing.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+				{t(($) => $.local_runner.add_machine)}
+			</Button>
+		</div>
         {bindingsQuery.isLoading || !userId ? (
           <div className="flex items-center gap-2 rounded-lg border border-surface-border px-4 py-8 text-body text-muted-foreground">
             <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -194,6 +232,8 @@ export function LocalRunnerTab() {
                   void handleReconnect({ machine, binding })
                 }
                 onRevoke={(binding) => setRevokeTarget({ machine, binding })}
+				onRenameMachine={() => void handleRenameMachine(machine)}
+				onRevokeMachine={() => setRevokeMachineTarget(machine)}
               />
             ))}
           </ul>
@@ -201,6 +241,17 @@ export function LocalRunnerTab() {
       </SettingsSection>
 
       <RunnerCommandDialog
+		command={pairing?.installCommand ?? null}
+		title={t(($) => $.local_runner.install_command_title)}
+		description={t(($) => $.local_runner.install_command_description)}
+		expiry={t(($) => $.local_runner.reconnect_command_expiry)}
+		copiedToast={t(($) => $.local_runner.reconnect_copied_toast)}
+		copyAria={t(($) => $.local_runner.copy_aria)}
+		closeLabel={t(($) => $.local_runner.close)}
+		onClose={() => setPairing(null)}
+	  />
+
+	  <RunnerCommandDialog
         command={reconnectCommand?.reconnectCommand ?? null}
         title={t(($) => $.local_runner.reconnect_command_title)}
         description={t(($) => $.local_runner.reconnect_command_description)}
@@ -215,6 +266,13 @@ export function LocalRunnerTab() {
       />
 
       <AlertDialog
+		open={revokeMachineTarget !== null}
+		onOpenChange={(open) => { if (!open && !revokeMachine.isPending) setRevokeMachineTarget(null); }}
+	  >
+		<AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t(($) => $.local_runner.machine_revoke_title, { machine: revokeMachineTarget?.name ?? "" })}</AlertDialogTitle><AlertDialogDescription>{t(($) => $.local_runner.machine_revoke_description)}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={revokeMachine.isPending}>{t(($) => $.local_runner.cancel)}</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={revokeMachine.isPending} onClick={(event) => { event.preventDefault(); void handleRevokeMachine(); }}>{t(($) => $.local_runner.machine_revoke_confirm)}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
+	  </AlertDialog>
+
+	  <AlertDialog
         open={disconnectTarget !== null}
         onOpenChange={(open) => {
           if (!open && !disconnectBinding.isPending) setDisconnectTarget(null);
@@ -300,12 +358,16 @@ function MachineCard({
   onDisconnect,
   onReconnect,
   onRevoke,
+	onRenameMachine,
+	onRevokeMachine,
 }: {
   machine: AccountRunnerMachine;
   reconnectPendingId?: string;
   onDisconnect: (binding: AccountRunnerBinding) => void;
   onReconnect: (binding: AccountRunnerBinding) => void;
   onRevoke: (binding: AccountRunnerBinding) => void;
+	onRenameMachine: () => void;
+	onRevokeMachine: () => void;
 }) {
   const { t } = useT("settings");
   const timeAgo = useTimeAgo();
@@ -363,12 +425,9 @@ function MachineCard({
             ) : null}
           </div>
         </div>
-        <Badge variant="outline" className="text-micro">
-          {t(($) => $.local_runner.binding_count, {
-            count: machine.bindings.length,
-          })}
-        </Badge>
+		<div className="flex items-center gap-1"><Badge variant="outline" className="text-micro">{t(($) => $.local_runner.binding_count, { count: machine.bindings.length })}</Badge><Button type="button" size="icon-sm" variant="ghost" onClick={onRenameMachine} aria-label={t(($) => $.local_runner.rename_machine)}><Pencil className="size-3.5" /></Button><Button type="button" size="icon-sm" variant="ghost" onClick={onRevokeMachine} aria-label={t(($) => $.local_runner.revoke_machine)}><Trash2 className="size-3.5" /></Button></div>
       </div>
+	  {machine.mcpServers.length > 0 && <div className="flex flex-wrap gap-1 border-t px-4 py-2">{machine.mcpServers.map((server) => <Badge key={server.name} variant="secondary" className="text-micro">{server.name} · {server.transport}</Badge>)}</div>}
 
       <ul className="divide-y divide-surface-border">
         {machine.bindings.map((binding) => {

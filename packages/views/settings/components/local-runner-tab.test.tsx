@@ -35,6 +35,7 @@ const revokeMutation = vi.hoisted(() => ({
   isPending: false,
   variables: undefined as { bindingId: string } | undefined,
 }));
+const simpleMutation = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
 const runnerOptions = vi.hoisted(() => vi.fn());
 const disconnectHook = vi.hoisted(() => vi.fn());
 const reconnectHook = vi.hoisted(() => vi.fn());
@@ -69,6 +70,9 @@ vi.mock("@multica/core/runner", () => ({
     revokeHook(userId);
     return revokeMutation;
   },
+	useCreateAccountRunnerPairing: () => simpleMutation,
+	useRenameAccountRunnerMachine: () => simpleMutation,
+	useRevokeAccountRunnerMachine: () => simpleMutation,
 }));
 
 vi.mock("sonner", () => ({
@@ -93,6 +97,8 @@ const machine = {
   clientVersion: "0.2.0",
   online: true,
   lastSeenAt: "2026-08-24T08:00:00Z",
+	mcpServers: [],
+	inventoryRevision: "",
   bindings: [
     {
       bindingId,

@@ -38,17 +38,20 @@ import {
   type ManagedMcpServer,
 } from "./mcp-config-model";
 import { McpServerDialog } from "./mcp-server-dialog";
+import { RunnerTab } from "./runner-tab";
 
 export function McpConfigTab({
   agent,
   runtime,
   onSave,
   onDirtyChange,
+	canEdit = true,
 }: {
   agent: Agent;
   runtime: AgentRuntime | null;
   onSave: (updates: { mcp_config: unknown | null }) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
+	canEdit?: boolean;
 }) {
   const { t } = useT("agents");
   const runtimeId =
@@ -255,14 +258,16 @@ export function McpConfigTab({
         )}
       </section>
 
+	  <div className="border-t pt-5"><RunnerTab agent={agent} canBind={canEdit} mode="mcp" /></div>
+
       {!redacted && (
-        <McpServerDialog
+		<McpServerDialog
           open={editorOpen}
           server={editingServer}
           existingNames={managedNames}
           onOpenChange={setEditorOpen}
           onSave={handleSaveServer}
-        />
+		/>
       )}
 
       <AlertDialog

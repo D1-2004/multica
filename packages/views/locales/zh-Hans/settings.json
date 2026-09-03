@@ -253,6 +253,17 @@
     }
   },
   "local_runner": {
+    "rename_prompt": "机器名称",
+    "rename_failed": "无法重命名 Runner 机器",
+    "rename_machine": "重命名机器",
+    "revoke_machine": "撤销机器",
+    "machine_revoke_title": "撤销 \"{{machine}}\"？",
+    "machine_revoke_description": "这会从账号移除该机器，撤销所有智能体挂载并停止正在执行的调用。",
+    "machine_revoke_confirm": "撤销机器",
+    "machine_revoke_failed": "无法撤销 Runner 机器",
+    "add_machine": "配对机器",
+    "install_command_title": "安装并配对 Runner",
+    "install_command_description": "在 macOS 或 Linux 机器上运行这条一次性命令。配对只会加入账号，不会为任何智能体启用能力。",
     "title": "本机 Runner",
     "description": "查看当前账号绑定的所有本机、可使用它们的智能体，以及每条绑定开放的文件根目录。",
     "security_warning": "Runner 的 Shell 命令以本机系统用户的完整权限运行，文件根目录不会限制 Shell。任何能运行已绑定智能体的人都可能触发这台机器。",

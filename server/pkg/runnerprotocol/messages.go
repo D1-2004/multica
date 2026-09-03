@@ -9,6 +9,7 @@ const (
 	MessageHello           = "runner:hello"
 	MessageBindingsChanged = "runner:bindings_changed"
 	MessageCallsCancelled  = "runner:calls_cancelled"
+	MessageInventory       = "runner:mcp_inventory"
 
 	ManagedMCPServerName    = "multica_runner"
 	ManagedMCPRoutingHeader = "X-Multica-Runner-MCP"
@@ -56,4 +57,17 @@ type BindingsChanged struct {
 type CallsCancelled struct {
 	Type    string   `json:"type"`
 	CallIDs []string `json:"call_ids"`
+}
+
+type MCPServerSummary struct {
+	Name         string `json:"name"`
+	Transport    string `json:"transport"`
+	Availability string `json:"availability"`
+	Fingerprint  string `json:"fingerprint"`
+}
+
+type MCPInventory struct {
+	Type     string             `json:"type"`
+	Revision string             `json:"revision"`
+	Servers  []MCPServerSummary `json:"servers"`
 }

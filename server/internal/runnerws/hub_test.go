@@ -1,6 +1,10 @@
 package runnerws
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/runnerprotocol"
+)
 
 func TestSendRejectsClosedClient(t *testing.T) {
 	done := make(chan struct{})
@@ -63,5 +67,29 @@ func TestCloseStopsConnectedClient(t *testing.T) {
 	case <-done:
 	default:
 		t.Fatal("Runner client done channel is still open")
+	}
+}
+
+func TestMCPInventoryIsMachineScopedAndDefensivelyCopied(t *testing.T) {
+	hub := NewHub()
+	inventory := runnerprotocol.MCPInventory{
+		Type: runnerprotocol.MessageInventory, Revision: "sha256:revision",
+		Servers: []runnerprotocol.MCPServerSummary{{Name: "wiki", Transport: "stdio", Availability: "available", Fingerprint: "sha256:fingerprint"}},
+	}
+	if !hub.storeMCPInventory("machine-1", inventory) {
+		t.Fatal("valid MCP inventory rejected")
+	}
+	inventory.Servers[0].Name = "mutated"
+	got, ok := hub.MCPInventory("machine-1")
+	if !ok || got.Servers[0].Name != "wiki" {
+		t.Fatalf("stored MCP inventory = %#v, ok=%v", got, ok)
+	}
+	got.Servers[0].Name = "mutated-again"
+	again, _ := hub.MCPInventory("machine-1")
+	if again.Servers[0].Name != "wiki" {
+		t.Fatal("returned MCP inventory aliases Hub state")
+	}
+	if _, ok := hub.MCPInventory("machine-2"); ok {
+		t.Fatal("inventory leaked across machines")
 	}
 }

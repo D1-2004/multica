@@ -531,6 +531,17 @@
       "unsaved_changes": "Unsaved changes"
     },
     "runner": {
+      "execution_title": "Execution machine",
+      "execution_hint": "Choose one machine already paired to your account. Pairing does not grant this agent access.",
+      "account_empty": "Pair a machine in General settings first.",
+      "mounted": "Mounted",
+      "mounted_toast": "Execution machine updated",
+      "local_mcp_title": "Runner MCP servers",
+      "local_mcp_hint": "Only enabled servers are injected into new tasks. Configuration details and secrets stay local.",
+      "mount_first": "Select an execution machine to see its MCP servers.",
+      "mcp_empty": "No local MCP servers were reported by this Runner.",
+      "mcp_offline": "The mounted Runner is offline.",
+      "read_only": "Read only",
       "security_warning": "Shell commands run with the current operating-system user's full permissions; file roots do not restrict the shell. Any member, group chat, or automation allowed to run this agent can use a bound machine.",
       "machines_title": "Bound machines",
       "intro": "Bind multiple macOS or Linux machines as this agent's Runner MCP. Every call selects a machine explicitly; agents using the same machine share one Runner process.",

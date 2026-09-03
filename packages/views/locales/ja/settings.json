@@ -253,6 +253,17 @@
     }
   },
   "local_runner": {
+    "rename_prompt": "マシン名",
+    "rename_failed": "Runner マシンの名前を変更できませんでした",
+    "rename_machine": "マシン名を変更",
+    "revoke_machine": "マシンを取り消す",
+    "machine_revoke_title": "\"{{machine}}\" を取り消しますか？",
+    "machine_revoke_description": "アカウントからマシンを削除し、すべての Agent マウントと実行中の呼び出しを停止します。",
+    "machine_revoke_confirm": "マシンを取り消す",
+    "machine_revoke_failed": "Runner マシンを取り消せませんでした",
+    "add_machine": "マシンをペアリング",
+    "install_command_title": "Runner をインストールしてペアリング",
+    "install_command_description": "macOS または Linux マシンで一度だけ実行します。ペアリングしてもエージェント機能は有効になりません。",
     "title": "ローカル Runner",
     "description": "アカウントにバインドされたすべてのローカルマシン、利用できるエージェント、各バインドが公開するファイルルートを確認します。",
     "security_warning": "Runner の Shell コマンドはローカル OS ユーザーの完全な権限で実行され、ファイルルートは Shell を制限しません。バインド済みエージェントを実行できる人は、このマシンを起動できます。",

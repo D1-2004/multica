@@ -367,7 +367,6 @@ describe("AgentOverviewPane Identity tab", () => {
       "Instructions",
       "Skills",
       "MCP",
-      "Local Runner",
       "Integrations",
       "Identity",
     ]);

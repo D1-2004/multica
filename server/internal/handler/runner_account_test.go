@@ -338,3 +338,33 @@ func TestListMyRunnerBindingsReturnsEmptyArray(t *testing.T) {
 		t.Fatalf("empty Runner list status = %d, body = %s", w.Code, w.Body.String())
 	}
 }
+
+func TestListMyRunnerBindingsIncludesMachineWithoutAgentMount(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ownerID := seedRunnerAccountUser(t, "runner-unmounted-owner")
+	machineID := seedRunnerAccountMachine(t, ownerID, "Unmounted Machine", 9, true)
+
+	w := httptest.NewRecorder()
+	testHandler.ListMyRunnerBindings(w, runnerAccountRequest(http.MethodGet, "/api/me/runner-bindings", ownerID, ""))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListMyRunnerBindings status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Machines []accountRunnerMachineResponse `json:"machines"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode Runner account list: %v", err)
+	}
+	if len(response.Machines) != 1 {
+		t.Fatalf("machine count = %d, want 1: %s", len(response.Machines), w.Body.String())
+	}
+	machine := response.Machines[0]
+	if machine.MachineID != machineID || machine.Name != "Unmounted Machine" || !machine.Online {
+		t.Fatalf("machine = %#v", machine)
+	}
+	if len(machine.Bindings) != 0 {
+		t.Fatalf("mount count = %d, want 0", len(machine.Bindings))
+	}
+}

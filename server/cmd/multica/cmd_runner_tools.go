@@ -38,6 +38,10 @@ type runnerToolError struct {
 func (e *runnerToolError) Error() string { return e.message }
 
 func executeRunnerCall(parent context.Context, call runnerprotocol.Call) runnerprotocol.Result {
+	return executeRunnerCallWithMCP(parent, call, nil)
+}
+
+func executeRunnerCallWithMCP(parent context.Context, call runnerprotocol.Call, mcp *runnerMCPManager) runnerprotocol.Result {
 	result := runnerprotocol.Result{Type: runnerprotocol.MessageResult, CallID: call.CallID}
 	expiresAt, err := time.Parse(time.RFC3339Nano, call.ExpiresAt)
 	if err != nil || !expiresAt.After(time.Now()) {
@@ -47,13 +51,28 @@ func executeRunnerCall(parent context.Context, call runnerprotocol.Call) runnerp
 	}
 	ctx, cancel := context.WithDeadline(parent, expiresAt)
 	defer cancel()
-	value, toolErr := runRunnerTool(ctx, call.Roots, call.ToolName, call.Arguments)
+	var value any
+	var toolErr *runnerToolError
+	if call.ToolName == "mcp" {
+		if mcp == nil {
+			toolErr = &runnerToolError{code: "runner_mcp_unavailable", message: "Local MCP manager is unavailable"}
+		} else {
+			value, toolErr = mcp.Execute(ctx, call.Arguments)
+		}
+	} else {
+		value, toolErr = runRunnerTool(ctx, call.Roots, call.ToolName, call.Arguments)
+	}
 	if toolErr != nil {
 		result.ErrorCode = toolErr.code
 		result.ErrorMessage = toolErr.message
 		return result
 	}
-	raw, err := json.Marshal(value)
+	var raw []byte
+	if direct, ok := value.(json.RawMessage); ok {
+		raw = direct
+	} else {
+		raw, err = json.Marshal(value)
+	}
 	if err != nil {
 		result.ErrorCode = "runner_result_encode_failed"
 		result.ErrorMessage = "Could not encode Runner result"

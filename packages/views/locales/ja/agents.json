@@ -377,6 +377,17 @@
       "unsaved_changes": "保存していない変更"
     },
     "runner": {
+      "execution_title": "実行マシン",
+      "execution_hint": "アカウントにペアリング済みのマシンを選択します。ペアリングだけではエージェントに権限は付与されません。",
+      "account_empty": "先に一般設定でマシンをペアリングしてください。",
+      "mounted": "マウント済み",
+      "mounted_toast": "実行マシンを更新しました",
+      "local_mcp_title": "Runner MCP サーバー",
+      "local_mcp_hint": "有効なサーバーだけが新しいタスクに注入され、設定とシークレットはローカルに残ります。",
+      "mount_first": "MCP サーバーを表示するには実行マシンを選択してください。",
+      "mcp_empty": "この Runner からローカル MCP サーバーが報告されていません。",
+      "mcp_offline": "マウント済み Runner はオフラインです。",
+      "read_only": "読み取り専用",
       "security_warning": "Shell コマンドは現在の OS ユーザーの完全な権限で実行され、ファイルルートは Shell を制限しません。このエージェントを実行できるメンバー、グループチャット、自動化は、バインド済みマシンを使用できます。",
       "machines_title": "バインド済みマシン",
       "intro": "複数の macOS または Linux マシンをこのエージェントの Runner MCP としてバインドします。同じマシンを使うエージェントは 1 つの Runner プロセスを共有します。",
