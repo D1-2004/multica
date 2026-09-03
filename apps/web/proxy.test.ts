@@ -80,7 +80,6 @@ describe("proxy legacy workspace route redirects", () => {
     ["my-issues", "/acme/my-issues"],
     ["autopilots", "/acme/autopilots"],
     ["runtimes", "/acme/runtimes"],
-    ["runners", "/acme/runners"],
     ["skills", "/acme/skills"],
     ["settings", "/acme/settings"],
     ["usage", "/acme/usage"],
@@ -113,6 +112,12 @@ describe("proxy legacy workspace route redirects", () => {
 
   it("does not redirect workspace-scoped URLs whose first segment is already a slug", () => {
     expect(redirectLocation("/acme/squads", sessionCookies)).toBeNull();
+  });
+
+  it("does not treat the global Runner authorization page as a legacy workspace route", () => {
+    expect(
+      redirectLocation("/runners/authorize?code=ULRZ-B4ZA", sessionCookies),
+    ).toBeNull();
   });
 
   it("redirects app-host root URLs to the last workspace", () => {
