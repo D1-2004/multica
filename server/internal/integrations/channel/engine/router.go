@@ -613,6 +613,11 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		case inboundcoord.ActionReply, inboundcoord.ActionSilence:
 			skipSandboxPrepare = true
 		}
+		if len(coordDecision.Steps) > 0 {
+			// The task (Issue or chat continuation) records which coordinator
+			// turn looked at it; both share the inbound chat trace already.
+			taskContext = inboundcoord.WithCoordinatorTraceID(taskContext, coordDecision.TraceID)
+		}
 	}
 	issueNeedsUsage := issueCommandRequested && issueCommand.Title == "" && !set.DurableRuns
 	hasMedia := set.Media != nil && set.Media.HasMedia(msg)

@@ -111,10 +111,27 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 		}
 	}
 
+	if opts.Name != taskTraceName {
+		t.Fatalf("task-owned trace name = %q", opts.Name)
+	}
+
 	// Without a chat trace the task id is the trace root, as the daemon sees it.
 	plain := TaskLangfuseTraceOptions(db.AgentTaskQueue{ID: taskID, CreatedAt: task.CreatedAt}, nil, nil)
 	if plain.TraceID != "aabb0000-0000-0000-0000-000000000000" {
 		t.Fatalf("plain trace id = %s", plain.TraceID)
+	}
+
+	// A task started by a coordinator turn shares that turn's trace and must
+	// not rename it.
+	owned := TaskLangfuseTraceOptions(db.AgentTaskQueue{
+		ID: taskID, CreatedAt: task.CreatedAt,
+		Context: []byte(`{"coordinator_trace_id":"5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7"}`),
+	}, nil, nil)
+	if owned.Name != "" {
+		t.Fatalf("coordinator-owned trace name = %q, want empty", owned.Name)
+	}
+	if got, _ := owned.Metadata["coord_trace_id"].(string); got != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
+		t.Fatalf("coord_trace_id metadata = %q", got)
 	}
 }
 

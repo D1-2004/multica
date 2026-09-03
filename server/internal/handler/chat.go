@@ -1145,7 +1145,13 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// creator-only), so they are the task initiator — surfaced to the agent
 	// under `## Task Initiator`. actorType/actorID were resolved above for the
 	// invoke gate.
-	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), trace)
+	// A turn the coordinator looked at and handed to the sandbox keeps the
+	// coordinator's trace id on the task so the two share one Langfuse trace.
+	var coordinatorContext []byte
+	if len(decision.Steps) > 0 {
+		coordinatorContext = inboundcoord.WithCoordinatorTraceID(nil, decision.TraceID)
+	}
+	sent, err := h.TaskService.SendDirectChatMessageWithContext(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), coordinatorContext, trace)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrChatSessionArchived):
