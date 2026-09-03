@@ -29,4 +29,14 @@ describe("accountRunnerBindingsOptions", () => {
   it("does not fetch before an authenticated user is known", () => {
     expect(accountRunnerBindingsOptions("").enabled).toBe(false);
   });
+
+  it("rejects a malformed account inventory so cached machines stay intact", async () => {
+    listAccountRunnerBindings.mockResolvedValue(null);
+
+    const options = accountRunnerBindingsOptions("user-1");
+
+    await expect(options.queryFn?.({} as never)).rejects.toThrow(
+      "Runner inventory response is invalid",
+    );
+  });
 });

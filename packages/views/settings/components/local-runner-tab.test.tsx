@@ -369,6 +369,24 @@ describe("LocalRunnerTab", () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the last successful machine list visible during a refresh error", () => {
+    queryState.current = {
+      data: { machines: [machine] },
+      isLoading: false,
+      isError: true,
+      refetch: vi.fn(),
+    };
+
+    renderTab();
+
+    expect(
+      screen.getByRole("heading", { name: "studio-mac" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Couldn't load your Local Runner exposure/),
+    ).not.toBeInTheDocument();
+  });
+
   it("scopes account queries and mutations to the signed-in user", () => {
     renderTab();
 

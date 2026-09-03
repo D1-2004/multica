@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../../test/i18n";
@@ -9,8 +9,12 @@ const mount = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
 const revoke = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
 const setServer = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
 const queryState = vi.hoisted(() => ({
-  account: { data: { machines: [] as unknown[] }, isLoading: false },
-  mounts: { data: { machines: [] as unknown[] }, isLoading: false },
+  account: {
+    data: { machines: [] as unknown[] } as { machines: unknown[] } | null,
+    isLoading: false,
+    isError: false,
+  },
+  mounts: { data: { machines: [] as unknown[] }, isLoading: false, isError: false },
 }));
 
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "ws-1" }));
@@ -30,8 +34,8 @@ vi.mock("@multica/core/runner", () => ({
   useSetAgentRunnerMcpServerEnabled: () => setServer,
 }));
 vi.mock("@multica/ui/components/ui/select", () => ({
-  Select: ({ children, onValueChange }: { children: React.ReactNode; onValueChange: (value: string) => void }) => (
-    <div>{typeof children === "function" ? null : children}<button type="button" onClick={() => onValueChange("__none__")}>clear-runner</button></div>
+  Select: ({ children, onValueChange, value }: { children: React.ReactNode; onValueChange: (value: string) => void; value: string }) => (
+    <div data-value={value}>{typeof children === "function" ? null : children}<button type="button" onClick={() => onValueChange("__none__")}>clear-runner</button></div>
   ),
   SelectContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SelectItem: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
@@ -45,8 +49,8 @@ const agent = { id: "agent-1" } as Agent;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  queryState.account = { data: { machines: [] }, isLoading: false };
-  queryState.mounts = { data: { machines: [] }, isLoading: false };
+  queryState.account = { data: { machines: [] }, isLoading: false, isError: false };
+  queryState.mounts = { data: { machines: [] }, isLoading: false, isError: false };
 });
 
 describe("RunnerTab", () => {
@@ -54,12 +58,65 @@ describe("RunnerTab", () => {
     queryState.mounts = {
       data: { machines: [{ bindingId: "binding-1", machineId: "machine-1" }] },
       isLoading: false,
+      isError: false,
     };
 
     renderWithI18n(<RunnerTab agent={agent} canBind mode="execution" />);
     fireEvent.click(screen.getByRole("button", { name: "clear-runner" }));
 
     expect(revoke.mutateAsync).toHaveBeenCalledWith("binding-1");
+  });
+
+  it("keeps the mounted Runner visible as offline when account refresh fails", () => {
+    queryState.account = {
+      data: null,
+      isLoading: false,
+      isError: true,
+    };
+    queryState.mounts = {
+      data: {
+        machines: [
+          {
+            bindingId: "binding-1",
+            machineId: "machine-1",
+            name: "studio-mac",
+            online: false,
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+
+    renderWithI18n(<RunnerTab agent={agent} canBind mode="execution" />);
+
+    const trigger = screen.getByRole("button", { name: "Local Runner" });
+    expect(within(trigger).getByText("studio-mac")).toBeInTheDocument();
+    expect(within(trigger).getByLabelText("Offline")).toHaveClass(
+      "bg-muted-foreground/40",
+    );
+  });
+
+  it("uses a green status dot for an online mounted Runner", () => {
+    queryState.mounts = {
+      data: {
+        machines: [
+          {
+            bindingId: "binding-1",
+            machineId: "machine-1",
+            name: "studio-mac",
+            online: true,
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+
+    renderWithI18n(<RunnerTab agent={agent} canBind mode="execution" />);
+
+    const trigger = screen.getByRole("button", { name: "Local Runner" });
+    expect(within(trigger).getByLabelText("Online")).toHaveClass("bg-success");
   });
 
   it("uses the requested heading and managed-style empty state", () => {

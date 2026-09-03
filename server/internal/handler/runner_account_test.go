@@ -368,3 +368,34 @@ func TestListMyRunnerBindingsIncludesMachineWithoutAgentMount(t *testing.T) {
 		t.Fatalf("mount count = %d, want 0", len(machine.Bindings))
 	}
 }
+
+func TestListMyRunnerBindingsSkipsOrphanedAgentMount(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ownerID := seedRunnerAccountUser(t, "runner-orphan-owner")
+	workspaceID, _, _, agentID := seedRunnerAccountWorkspaceAgent(t, ownerID, "RunnerOrphan")
+	machineID := seedRunnerAccountMachine(t, ownerID, "Orphan Machine", 10, false)
+	_ = seedRunnerAccountBinding(t, workspaceID, agentID, machineID, ownerID, false, false)
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("delete mounted Agent: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	testHandler.ListMyRunnerBindings(w, runnerAccountRequest(http.MethodGet, "/api/me/runner-bindings", ownerID, ""))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListMyRunnerBindings status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Machines []accountRunnerMachineResponse `json:"machines"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode Runner account list: %v", err)
+	}
+	if len(response.Machines) != 1 || response.Machines[0].MachineID != machineID {
+		t.Fatalf("machines = %#v, want the paired machine", response.Machines)
+	}
+	if len(response.Machines[0].Bindings) != 0 {
+		t.Fatalf("orphaned mounts = %#v, want none", response.Machines[0].Bindings)
+	}
+}
