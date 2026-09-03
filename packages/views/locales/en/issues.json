@@ -539,6 +539,7 @@
       "someone": "someone",
       "source_direct_human": "Direct member action",
       "source_delegation": "Delegated from another run",
+      "source_stage_barrier": "Stage barrier — every sub-issue in the stage finished",
       "source_comment_source": "From a comment thread",
       "source_trigger_owner": "Autopilot trigger creator",
       "source_rule_owner": "Autopilot rule publisher",

@@ -464,11 +464,13 @@ func (s *TaskService) resolveOriginatorForIssueTask(ctx context.Context, issue d
 // attributionForIssueTask resolves the full attribution for an issue-backed
 // enqueue. Comment-triggered runs keep the comment-chain semantics; direct
 // assignment/creation falls back to the issue's member creator; agent-created
-// quick-create issues inherit the origin task's human as a delegation. The
-// accountable-human value is byte-identical to resolveOriginatorForIssueTask,
-// which now delegates here — so there is a single source of truth and
-// authorization is unaffected. agentAuthoredSource labels the agent-authored
-// trigger comment case (see attributionFromTriggerComment).
+// quick-create issues inherit the origin task's human as a delegation; a
+// stage-barrier wake resolves the same issue provenance but reports
+// stage_barrier, since the mechanism — not a member or an agent — enqueued it
+// (see stageBarrierAttribution). The accountable-human value is byte-identical to
+// resolveOriginatorForIssueTask, which now delegates here — so there is a single
+// source of truth and authorization is unaffected. agentAuthoredSource labels the
+// agent-authored trigger comment case (see attributionFromTriggerComment).
 func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, agentAuthoredSource attribution.Source, actorUserID pgtype.UUID) attribution.Result {
 	// A direct member action is the accountable human AND originator, ahead of any
 	// trigger comment, origin, or rule (MUL-4302 §4/§5). This covers assign/promote,
@@ -493,21 +495,71 @@ func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issu
 			return attribution.Result{Source: attribution.SourceUnattributed}
 		}
 		// A member/agent trigger comment resolves the human (direct_human / delegation
-		// / comment_source). A SYSTEM-authored comment — today the Stage-completion
+		// / comment_source). A SYSTEM-authored comment — the Stage-completion
 		// child-done comment (issue_child_done.go), which wakes the parent assignee
 		// and threads no actor — carries no human and is not part of any delegation
 		// chain. Classifying it would degrade straight to owner_fallback (the agent's
 		// own owner), which is wrong for a Stage cascade: the woken run should be
 		// accountable to whoever caused the PARENT issue to exist. So for a system
-		// comment we skip the comment branch and fall through to the parent issue's
-		// own provenance below — the same creator / agent_create-origin /
-		// autopilot-origin chain a direct enqueue resolves — reaching owner_fallback
-		// only if that provenance itself has no human (MUL-4302; raised by Bohan on
-		// the stage-cascade fallback).
+		// comment we resolve the human from the parent issue's own provenance — the
+		// same creator / agent_create-origin / autopilot-origin chain a direct enqueue
+		// resolves — reaching owner_fallback only if that provenance itself has no
+		// human (MUL-4302; raised by Bohan on the stage-cascade fallback) — and then
+		// relabel the SOURCE as the mechanism that actually fired (FDE-3094).
+		//
+		// postChildDoneComment is the only writer of author_type='system' comments in
+		// the server, and dispatchParentAssigneeTrigger is the only caller that hands
+		// one to an enqueue as a trigger comment, so author_type alone identifies the
+		// stage barrier today. A future system-comment trigger path must narrow this
+		// condition instead of inheriting the label.
 		if comment.AuthorType != "system" {
 			return s.attributionFromComment(ctx, comment, agentAuthoredSource)
 		}
+		return stageBarrierAttribution(s.attributionFromIssueProvenance(ctx, issue), comment.ID)
 	}
+	return s.attributionFromIssueProvenance(ctx, issue)
+}
+
+// stageBarrierAttribution relabels a parent issue's provenance attribution as the
+// stage-barrier wake that actually enqueued the run (FDE-3094).
+//
+// The provenance chain answers "which human is accountable", and that answer is
+// right — but Source answers "what enqueued this run", and for a barrier wake the
+// honest answer is neither the parent's creator (direct_human) nor an agent hop
+// (delegation / trigger_owner / rule_owner): the platform's stage barrier fired
+// because every sub-issue in the lowest unfinished stage reached a terminal
+// status. Left unrelabelled, Source was a function of how the PARENT ISSUE was
+// created, so runs woken by the same barrier reported different sources and the
+// field could not answer "did the mechanism advance this chain, or did a human
+// push it?".
+//
+// Only the audit label and the evidence pointer move. UserID (originator, the
+// authorization value) and AccountableUserID pass through untouched, so
+// canInvokeAgent and the Composio overlay see exactly what they saw before, and
+// the finalizeAttribution invariant the provenance result already satisfies still
+// holds. Evidence repoints at the system comment because that comment names the
+// closed stage and links the triggering sub-issue — strictly more locating than
+// the parent issue id the provenance branch stamps. An unattributed provenance is
+// returned untouched so the owner_fallback / fail-closed handling downstream keeps
+// seeing the same "no human resolved" result.
+func stageBarrierAttribution(prov attribution.Result, systemCommentID pgtype.UUID) attribution.Result {
+	if prov.Source == attribution.SourceUnattributed {
+		return prov
+	}
+	prov.Source = attribution.SourceStageBarrier
+	prov.EvidenceKind = attribution.EvidenceComment
+	prov.EvidenceRefID = systemCommentID
+	return prov
+}
+
+// attributionFromIssueProvenance resolves the accountable human from an issue's
+// OWN provenance — no acting member and no trigger comment to read: the autopilot
+// trigger/rule owner for an autopilot-created issue, the member creator for a
+// member-created one, and the origin task's human for an agent-created
+// quick_create / agent_create issue. It is the tail of attributionForIssueTask
+// (what a plain assignment enqueue resolves), split out because a stage-barrier
+// wake resolves the same chain before stageBarrierAttribution relabels it.
+func (s *TaskService) attributionFromIssueProvenance(ctx context.Context, issue db.Issue) attribution.Result {
 	// Autopilot-origin issues (origin_id is the autopilot id) from a schedule /
 	// webhook trigger: no human authorized the run, so originator stays NULL, but it
 	// is accountable to the human currently RESPONSIBLE for the firing trigger's
@@ -515,8 +567,9 @@ func (s *TaskService) attributionForIssueTask(ctx context.Context, issue db.Issu
 	// (MUL-4302; Elon must-fix), degrading to the rule publisher when no such member
 	// is recoverable. Resolved the same way run_only dispatch resolves
 	// it, so both autopilot execution modes attribute identically. (A manual trigger
-	// carries an actor and is already handled above.) The issue only stores the
-	// autopilot id, so bridge issue → active run → trigger_id to find the trigger.
+	// carries an actor, which attributionForIssueTask resolves before it ever gets
+	// here.) The issue only stores the autopilot id, so bridge issue → active run →
+	// trigger_id to find the trigger.
 	if s != nil && s.Queries != nil && issue.OriginType.Valid &&
 		issue.OriginType.String == "autopilot" && issue.OriginID.Valid {
 		var triggerID pgtype.UUID

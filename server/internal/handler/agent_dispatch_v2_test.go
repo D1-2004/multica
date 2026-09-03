@@ -100,7 +100,7 @@ func TestCalendarStartedDispatchUsesIssueWithoutOutboundReply(t *testing.T) {
 	if got := dispatchWindowIdempotencyKey(c); got != "calendar:calendar-1:1784217600000" {
 		t.Fatalf("calendar idempotency key = %q", got)
 	}
-	if got := dispatchIssueTitle(c, dispatchWindowIdempotencyKey(c)); got != "【钉钉·日程】项目评审会｜2026-07-16 16:00 · UZMQZZ4C" {
+	if got := dispatchIssueTitle(c, dispatchWindowIdempotencyKey(c)); got != "日程：项目评审会｜2026-07-16 16:00" {
 		t.Fatalf("calendar issue title = %q", got)
 	}
 
@@ -826,6 +826,8 @@ func TestCoordinatorNewIssueIdentifiesDingTalkSenderAsDelegator(t *testing.T) {
 		"dingtalk_sender_name\":\"路由用户",
 		"current DingTalk sender is the task delegator/requester",
 		"Multica Issue creator is only the tool executor and an assistant",
+		"finish this run immediately",
+		"Do not wait, listen, poll",
 	} {
 		if !strings.Contains(instruction, want) {
 			t.Errorf("new-Issue identity instruction missing %q: %q", want, instruction)
@@ -854,6 +856,8 @@ func TestCoordinatorIssueIdentityIsInjectedForRobotRoute(t *testing.T) {
 		"This is the robot route",
 		"Sender uid may be absent",
 		"never invent an identity or borrow the Multica Issue author",
+		"finish this run immediately",
+		"Do not wait, listen, poll",
 	} {
 		if !strings.Contains(instruction, want) {
 			t.Errorf("robot identity instruction missing %q: %q", want, instruction)
@@ -1646,7 +1650,7 @@ func TestApprovalStatusChangedDispatchUsesIssueWithoutOutboundReply(t *testing.T
 	if got := dispatchWindowIdempotencyKey(c); got != "approval:FORM-2026-001:approving" {
 		t.Fatalf("approval idempotency key = %q", got)
 	}
-	if got := dispatchIssueTitle(c, dispatchWindowIdempotencyKey(c)); !strings.HasPrefix(got, "审批单：FORM-2026-001 · ") {
+	if got := dispatchIssueTitle(c, dispatchWindowIdempotencyKey(c)); got != "审批单：FORM-2026-001" {
 		t.Fatalf("approval issue title = %q", got)
 	}
 
@@ -2039,7 +2043,7 @@ func TestBuildAgentDispatchIssueCreateParamsBuildsNormalizedBusinessTitle(t *tes
 				},
 			}}},
 			key:  "dispatch-window-A",
-			want: "【钉钉·群聊】项目群｜张三：你好 👋 · LMYHEJFQ",
+			want: "项目群 · 张三：你好 👋",
 		},
 		{
 			name: "private message omits conversation title and normalizes nfkc",
@@ -2049,7 +2053,7 @@ func TestBuildAgentDispatchIssueCreateParamsBuildsNormalizedBusinessTitle(t *tes
 				Messages:     []DispatchMessage{{Text: " Ａ\u200bＢ\x00\nＣ "}},
 			}}},
 			key:  "dispatch-window-B",
-			want: "【钉钉·私聊】李四：AB C · 5TEIWDJF",
+			want: "李四：AB C",
 		},
 		{
 			name: "attachment name and empty display fallbacks",
@@ -2060,7 +2064,7 @@ func TestBuildAgentDispatchIssueCreateParamsBuildsNormalizedBusinessTitle(t *tes
 				}}},
 			}}},
 			key:  "dispatch-window-A",
-			want: "【钉钉·群聊】钉钉群聊｜钉钉用户：告警截图.png · LMYHEJFQ",
+			want: "群聊 · 钉钉用户：告警截图.png",
 		},
 		{
 			name: "unknown conversation and attachment content type",
@@ -2070,7 +2074,7 @@ func TestBuildAgentDispatchIssueCreateParamsBuildsNormalizedBusinessTitle(t *tes
 				}}},
 			}}},
 			key:  "dispatch-window-A",
-			want: "【钉钉消息】钉钉用户：application/pdf · LMYHEJFQ",
+			want: "钉钉用户：application/pdf",
 		},
 		{
 			name: "attachment type fallback",
@@ -2082,7 +2086,7 @@ func TestBuildAgentDispatchIssueCreateParamsBuildsNormalizedBusinessTitle(t *tes
 				}}},
 			}}},
 			key:  "dispatch-window-A",
-			want: "【钉钉·私聊】王五：image · LMYHEJFQ",
+			want: "王五：image",
 		},
 	}
 
@@ -2116,7 +2120,7 @@ func TestBuildAgentDispatchIssueCreateParamsUsesAcceptanceInsteadOfTitleDeduplic
 		agentDispatchIssueCreateOverrides{},
 	)
 	if !withAcceptance.AllowDuplicate {
-		t.Fatal("dispatch with durable acceptance still uses business title as its idempotency guard")
+		t.Fatal("dispatch issue titles are human labels; window idempotency is the acceptance key")
 	}
 
 	command.CompletionCallback = nil
@@ -2128,30 +2132,12 @@ func TestBuildAgentDispatchIssueCreateParamsUsesAcceptanceInsteadOfTitleDeduplic
 		"dispatch-window-A",
 		agentDispatchIssueCreateOverrides{},
 	)
-	if withoutAcceptance.AllowDuplicate {
-		t.Fatal("dispatch without durable acceptance unexpectedly bypasses the title duplicate guard")
+	if !withoutAcceptance.AllowDuplicate {
+		t.Fatal("dispatch issue create should not use title as its idempotency guard")
 	}
 }
 
-func TestDispatchEventShortCodeIsStableBase32(t *testing.T) {
-	for _, key := range []string{"dispatch-window-A", "含中文的 key", "key/with:safe-input"} {
-		first := dispatchEventShortCode(key)
-		second := dispatchEventShortCode(key)
-		if first != second || len(first) != 8 {
-			t.Fatalf("short code for %q is not stable eight-character output: %q / %q", key, first, second)
-		}
-		for _, r := range first {
-			if (r < 'A' || r > 'Z') && (r < '2' || r > '7') {
-				t.Fatalf("short code for %q contains unsafe rune %q: %q", key, r, first)
-			}
-		}
-	}
-	if dispatchEventShortCode("dispatch-window-A") == dispatchEventShortCode("dispatch-window-B") {
-		t.Fatal("different dispatch windows produced the same short code")
-	}
-}
-
-func TestBuildAgentDispatchIssueCreateParamsKeepsShortCodeWithinRuneLimit(t *testing.T) {
+func TestBuildAgentDispatchIssueCreateParamsKeepsTitleWithinRuneLimit(t *testing.T) {
 	command := DispatchCommand{Event: DispatchEvent{Domain: "channel", Type: "message.created", Data: DispatchEventData{
 		Conversation: DispatchConversation{Type: "group", Title: strings.Repeat("会", 100)},
 		Sender:       DispatchSender{DisplayName: strings.Repeat("发", 100)},
@@ -2166,11 +2152,8 @@ func TestBuildAgentDispatchIssueCreateParamsKeepsShortCodeWithinRuneLimit(t *tes
 		agentDispatchIssueCreateOverrides{},
 	)
 
-	if got := utf8.RuneCountInString(params.Title); got > 160 {
-		t.Fatalf("title rune count = %d, want <= 160", got)
-	}
-	if !strings.HasSuffix(params.Title, " · LMYHEJFQ") {
-		t.Fatalf("title lost stable short code: %q", params.Title)
+	if got := utf8.RuneCountInString(params.Title); got > 80 {
+		t.Fatalf("title rune count = %d, want <= 80", got)
 	}
 }
 
@@ -2187,7 +2170,7 @@ func TestBuildAgentDispatchIssueCreateParamsFormatsCalendarTitle(t *testing.T) {
 		"calendar-key",
 		agentDispatchIssueCreateOverrides{},
 	)
-	if params.Title != "【钉钉·日程】项目评审会｜2026-07-17 00:00 · 5CYY7PQC" {
+	if params.Title != "日程：项目评审会｜2026-07-17 00:00" {
 		t.Fatalf("calendar title = %q", params.Title)
 	}
 }

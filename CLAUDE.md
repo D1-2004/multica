@@ -242,6 +242,7 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 - All queries filter by `workspace_id`; membership gates access; `X-Workspace-ID` selects the workspace.
 - Issue assignees are polymorphic: `assignee_type` plus `assignee_id` can reference a member or an agent.
+- Coordinator Scene Memory e2e plays and next-turn SLS checks: `docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`. How to send/query: skill `scene-memory-e2e`.
 
 ## Aone Fork
 

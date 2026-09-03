@@ -45,6 +45,13 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"purpose",
 		"Read it like a person opening the chat",
 		"Never mention internal machinery",
+		"items are memory of open matters",
+		"finish never takes issue_id",
+		"Do not finish action=issue with that issue_id",
+		"Do not ask that question again",
+		"purpose names no event or goal",
+		"do not recite workflow states",
+		"do not output that question again",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)
@@ -143,6 +150,12 @@ func TestJudgmentParseDecision(t *testing.T) {
 			name: "empty_reply_text_continue",
 			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},
 			raw:  `{"action":"reply","text":"","look_into":"","reason":"空"}`,
+			want: ActionContinue,
+		},
+		{
+			name: "empty_issue_text_continue",
+			turn: Turn{Source: SourceRobot, Addressed: true, ChatType: "p2p", Message: "hi"},
+			raw:  `{"action":"issue","issue_id":"8aae2a90-009e-4338-b17a-13ce6ff2f82a","text":""}`,
 			want: ActionContinue,
 		},
 		{

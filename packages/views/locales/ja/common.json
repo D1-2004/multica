@@ -31,6 +31,17 @@
     "presets": "プリセット",
     "random": "ランダム"
   },
+  "owner_transfer": {
+    "left": "ワークスペースを離れました",
+    "none": "オーナーなし",
+    "search": "メンバーを検索…",
+    "no_results": "一致するメンバーがいません",
+    "transferred": "オーナーを移しました",
+    "failed": "オーナーの移動に失敗しました",
+    "title": "オーナーを移しますか？",
+    "cancel": "キャンセル",
+    "confirm": "移す"
+  },
   "save": "保存",
   "cancel": "キャンセル",
   "delete": "削除",

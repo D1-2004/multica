@@ -2,8 +2,10 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +25,7 @@ func TestIsInboundResetMemory(t *testing.T) {
 		{"/Reset-Memory", true},
 		{"/reset-memory 确认", true},
 		{"@菲迪 /reset-memory", true},
+		{"<@Dl2XMiS9sbxHgSb1GMrRWVz6DHXBFkLb6iP> /reset-memory", true},
 		{"reset-memory", false},
 		{"/reset", false},
 		{"请 /reset-memory", false},
@@ -32,6 +35,34 @@ func TestIsInboundResetMemory(t *testing.T) {
 		if got := isInboundResetMemory(tc.in); got != tc.want {
 			t.Fatalf("%q: got %v want %v", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestUnixMillisPrefersSourceTime(t *testing.T) {
+	got := unixMillis(1_000)
+	if got.Unix() != 1000 {
+		t.Fatalf("seconds = %s", got)
+	}
+	got = unixMillis(1_780_000_000_123)
+	if got.Unix() != 1_780_000_000 || got.Nanosecond() != 0 {
+		t.Fatalf("millis must truncate to seconds = %s", got)
+	}
+	cmd := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		Messages: []DispatchMessage{{OccurredAt: 1_780_000_000_000, Text: "hi"}},
+	}}}
+	if dispatchMessageOccurredAt(cmd).UnixMilli() != 1_780_000_000_000 {
+		t.Fatalf("dispatch time = %s", dispatchMessageOccurredAt(cmd))
+	}
+}
+
+func TestResetMemoryReplyReportsMemoryFailure(t *testing.T) {
+	got := resetMemoryReply("cid-a", errors.New("reset failed"))
+	if !strings.Contains(got, "场域记忆") {
+		t.Fatalf("%q", got)
+	}
+	ok := resetMemoryReply("cid-a", nil)
+	if !strings.Contains(ok, "场域记忆") || strings.Contains(ok, "失败") {
+		t.Fatalf("%q", ok)
 	}
 }
 

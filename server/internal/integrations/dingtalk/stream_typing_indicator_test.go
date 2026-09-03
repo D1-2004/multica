@@ -253,6 +253,47 @@ func TestStreamInboxAddsEmotionBeforeDispatchAndBindsResult(t *testing.T) {
 	}
 }
 
+func TestStreamInboxRecallsEmotionAfterCoordinatorIssue(t *testing.T) {
+	box, err := secretbox.New(bytes.Repeat([]byte{0x52}, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inboxRow := testStreamInboxRow(t, box, 0, `{"msgId":"source-coord","conversationId":"cid-coord","robotCode":"robot-from-callback","senderStaffId":"staff","conversationType":"2","msgtype":"text","text":{"content":"问问辰驷饿不饿"}}`)
+	store := &fakeStreamInboxStore{claims: []db.DingtalkStreamInbox{inboxRow}}
+	rec, srv := newEmotionAPIServer(t)
+	inst := historicalStreamInstallation(t, inboxRow.InstallationID)
+	q := newFakeStreamEmotionQueries(inst)
+	mgr := NewTypingIndicatorManager(NewRobotMessenger(srv.URL, srv.URL, srv.Client()), plaintextDecrypter, q, nil)
+	session, task := typingTestUUID(51), typingTestUUID(52)
+	worker := newStreamInboxWorker(store, nil, box.Seal, box.Open, nil)
+	worker.typing = mgr
+	worker.resultHandler = func(context.Context, channel.InboundMessage) (channelengine.Result, error) {
+		if len(rec.replies) != 1 {
+			t.Fatalf("dispatch started before processing emotion, adds=%d", len(rec.replies))
+		}
+		return channelengine.Result{
+			Outcome:          channelengine.OutcomeIngested,
+			ChatSessionID:    session,
+			TaskID:           task,
+			CoordinatorIssue: true,
+			ReplyText:        "我去问问辰驷饿不饿。",
+		}, nil
+	}
+	worked, err := worker.ProcessNext(context.Background())
+	if err != nil || !worked {
+		t.Fatalf("ProcessNext worked=%v err=%v", worked, err)
+	}
+	if q.rowCount() != 0 {
+		t.Fatalf("coordinator short loop left a bound processing emotion")
+	}
+	if len(rec.replies) != 1 {
+		t.Fatalf("emotion replies=%d, want processing only", len(rec.replies))
+	}
+	if len(rec.recalls) != 1 {
+		t.Fatalf("recalls=%d, want 1", len(rec.recalls))
+	}
+}
+
 func TestStreamEmotionTerminalWhileAddInFlightRecallsLateAttach(t *testing.T) {
 	addStarted := make(chan struct{})
 	releaseAdd := make(chan struct{})

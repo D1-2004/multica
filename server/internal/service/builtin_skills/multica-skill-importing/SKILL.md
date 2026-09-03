@@ -234,6 +234,23 @@ Then report that the skill already exists and include its `id` / `name`. Do not
 retry in a loop, and do not create a second skill under a different name just to
 dodge the conflict.
 
+`multica skill list --output json` returns metadata only. Every row carries
+`content_omitted: true` and `files_omitted: true`; the SKILL.md body and the
+skill's files are never in the list payload. A missing `content` key means "not
+returned by this endpoint", never "the skill is empty" — treating the absent key
+as an empty body is how a sync script concludes a live skill was wiped and
+re-uploads over it. Before comparing a workspace skill against local files,
+fetch the real content:
+
+```bash
+multica skill get <skill-id> --output json
+multica skill files list <skill-id> --output json
+```
+
+The same two markers ride along on the narrower skill shape embedded in
+`multica agent get <agent-id> --output json`, which also carries no body or
+files.
+
 ## Incorrect → correct
 
 Incorrect (bypasses Multica):

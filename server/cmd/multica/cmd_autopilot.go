@@ -46,6 +46,13 @@ var autopilotUpdateCmd = &cobra.Command{
 	RunE:  runAutopilotUpdate,
 }
 
+var autopilotTransferOwnerCmd = &cobra.Command{
+	Use:   "transfer-owner <id>",
+	Short: "Transfer an autopilot's creator to another workspace member",
+	Args:  exactArgs(1),
+	RunE:  runAutopilotTransferOwner,
+}
+
 var autopilotDeleteCmd = &cobra.Command{
 	Use:   "delete <id>",
 	Short: "Delete an autopilot",
@@ -100,6 +107,7 @@ func init() {
 	autopilotCmd.AddCommand(autopilotGetCmd)
 	autopilotCmd.AddCommand(autopilotCreateCmd)
 	autopilotCmd.AddCommand(autopilotUpdateCmd)
+	autopilotCmd.AddCommand(autopilotTransferOwnerCmd)
 	autopilotCmd.AddCommand(autopilotDeleteCmd)
 	autopilotCmd.AddCommand(autopilotTriggerCmd)
 	autopilotCmd.AddCommand(autopilotRunsCmd)
@@ -115,6 +123,8 @@ func init() {
 
 	// get
 	autopilotGetCmd.Flags().String("output", "json", "Output format: table or json")
+	autopilotTransferOwnerCmd.Flags().String("to-id", "", "User id of the new creator (must be a current workspace member)")
+	autopilotTransferOwnerCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// create
 	autopilotCreateCmd.Flags().String("title", "", "Autopilot title (required)")
@@ -123,7 +133,7 @@ func init() {
 	autopilotCreateCmd.Flags().String("mode", "", "Execution mode: create_issue or run_only (required)")
 	autopilotCreateCmd.Flags().String("priority", "none", "Priority for created issues (none, low, medium, high, urgent)")
 	autopilotCreateCmd.Flags().String("project", "", "Project ID (optional)")
-	autopilotCreateCmd.Flags().String("issue-title-template", "", "Template for issue titles (create_issue mode). Only {{date}} (UTC, YYYY-MM-DD) is interpolated; any other {{...}} token is rejected at create-time.")
+	autopilotCreateCmd.Flags().String("issue-title-template", "", "Template for issue titles (create_issue mode). Interpolates {{date}} (the run's own day) and {{date_yesterday}} (the day before it), both YYYY-MM-DD rendered in the triggering schedule's timezone; runs with no schedule trigger (manual, webhook) render UTC. Any other {{...}} token is rejected at create-time.")
 	autopilotCreateCmd.Flags().StringArray("subscriber", nil, "Member subscriber to notify for issues this autopilot creates (name or user ID; repeatable)")
 	autopilotCreateCmd.Flags().String("output", "json", "Output format: table or json")
 
@@ -135,7 +145,7 @@ func init() {
 	autopilotUpdateCmd.Flags().String("priority", "", "New priority")
 	autopilotUpdateCmd.Flags().String("status", "", "New status (active, paused)")
 	autopilotUpdateCmd.Flags().String("mode", "", "New execution mode (create_issue or run_only)")
-	autopilotUpdateCmd.Flags().String("issue-title-template", "", "New issue title template. Only {{date}} (UTC, YYYY-MM-DD) is interpolated; any other {{...}} token is rejected.")
+	autopilotUpdateCmd.Flags().String("issue-title-template", "", "New issue title template. Interpolates {{date}} (the run's own day) and {{date_yesterday}} (the day before it), both YYYY-MM-DD rendered in the triggering schedule's timezone; runs with no schedule trigger (manual, webhook) render UTC. Any other {{...}} token is rejected.")
 	autopilotUpdateCmd.Flags().StringArray("subscriber", nil, "Replace subscribers with this member (name or user ID; repeatable)")
 	autopilotUpdateCmd.Flags().Bool("clear-subscribers", false, "Remove all autopilot subscribers")
 	autopilotUpdateCmd.Flags().String("output", "json", "Output format: table or json")
@@ -334,6 +344,29 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Printf("Autopilot created: %s (%s)\n", strVal(result, "title"), strVal(result, "id"))
+	return nil
+}
+
+func runAutopilotTransferOwner(cmd *cobra.Command, args []string) error {
+	toID, _ := cmd.Flags().GetString("to-id")
+	if toID == "" {
+		return fmt.Errorf("--to-id is required")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/autopilots/"+args[0]+"/owner", map[string]any{"owner_id": toID}, &result); err != nil {
+		return fmt.Errorf("transfer autopilot owner: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	fmt.Printf("Autopilot owner transferred: %s (%s)\n", strVal(result, "title"), strVal(result, "id"))
 	return nil
 }
 

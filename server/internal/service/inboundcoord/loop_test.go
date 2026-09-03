@@ -93,6 +93,69 @@ func TestLoopIssueCommentBusyRequestsDispatchRetry(t *testing.T) {
 	}
 }
 
+func TestLoopIssueCommentBusyLongMessageDoesNotRetryStorm(t *testing.T) {
+	t.Parallel()
+	flood := "灌水11：食堂窗口11 今天供应番茄炒蛋，与探针无关。这不是对 GoalMate 事项的答复。"
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"`+flood+`","reply_text":"已记下"}`),
+	}}
+	tools := &stubTools{
+		recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认GoalMate含义","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`,
+		errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy},
+	}
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: flood, ConversationID: "cid-v6", Busy: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionReply {
+		t.Fatalf("long unrelated inbound must not 409-retry, decision=%#v", decision)
+	}
+}
+
+func TestLoopIssueCommentAlreadyBusyDoesNotRetryStorm(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"须莫v6 在钉钉会话中的消息：\n\n番茄","reply_text":"我把番茄这个答复带回去了。"}`),
+	}}
+	tools := &stubTools{
+		recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认喜欢番茄还是菠萝","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`,
+		errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy},
+	}
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "番茄", ConversationID: "cid-v6", Busy: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionReply {
+		t.Fatalf("known-busy inbound must not 409-retry, decision=%#v", decision)
+	}
+}
+
+func TestShouldRetryBusyIssueComment(t *testing.T) {
+	t.Parallel()
+	flood := "灌水11：食堂窗口11 今天供应番茄炒蛋，与探针无关。"
+	if shouldRetryBusyIssueComment(Turn{Message: "番茄"}) != true {
+		t.Fatal("short unseen-busy confirmation should retry")
+	}
+	if shouldRetryBusyIssueComment(Turn{Message: "可以，三点没问题"}) != true {
+		t.Fatal("short confirmation sentence should retry")
+	}
+	if shouldRetryBusyIssueComment(Turn{Message: "番茄", Busy: true}) {
+		t.Fatal("already-busy prompt must not 409-retry")
+	}
+	if shouldRetryBusyIssueComment(Turn{Message: flood}) {
+		t.Fatal("flood filler must not 409-retry")
+	}
+	if shouldRetryBusyIssueComment(Turn{Message: flood, Busy: true}) {
+		t.Fatal("busy flood must not 409-retry")
+	}
+}
+
 func assistantJSON(content string) openai.ChatCompletion {
 	return openai.ChatCompletion{Choices: []openai.ChatCompletionChoice{{
 		Message: openai.ChatCompletionMessage{Content: content, Role: "assistant"},
@@ -690,13 +753,90 @@ func TestFinishToolRoutesUnavailableCapabilitiesToIssue(t *testing.T) {
 	}
 	description := fn.Description.Value
 	for _, rule := range []string{
-		"Use reply only for a complete answer available now",
+		"Use reply when current_message is a greeting or does not advance a recalled purpose",
+		"do not reply with the same question",
 		"Use issue for contacts, DWS, search, files",
 		"Never use reply to say you cannot complete the request",
+		"issue_comment_add",
+		"never with finish issue_id",
 	} {
 		if !strings.Contains(description, rule) {
 			t.Fatalf("finish tool description missing %q: %q", rule, description)
 		}
+	}
+	params := coordinatorFunctionParams(toolFinish)
+	if params == nil {
+		t.Fatal("finish missing")
+	}
+	props, _ := params["properties"].(map[string]any)
+	if _, ok := props["issue_id"]; ok {
+		t.Fatal("finish must not advertise issue_id")
+	}
+}
+
+func TestLoopFinishIssueIDIsRejectedThenCommentAdd(t *testing.T) {
+	t.Parallel()
+	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("finish-id", toolFinish, `{"action":"issue","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"须莫v6 在钉钉会话中的消息：\n\n7点","reply_text":"我把7点这个答复带回去了。"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫v6确认今晚几点打球","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`}
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Message:        "7点",
+		ConversationID: "cid-v6",
+		PersonID:       "uid-v6",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionReply || got.IssueID != issueID || got.IssueComment == nil {
+		t.Fatalf("decision=%#v", got)
+	}
+	sawHint := false
+	for _, step := range got.Steps {
+		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, "issue_comment_add") {
+			sawHint = true
+		}
+	}
+	if !sawHint {
+		t.Fatalf("finish issue_id must be rejected with comment hint, steps=%#v", got.Steps)
+	}
+}
+
+func TestLoopFinishIssueEmptyTextIsRejectedThenSpoken(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("finish-empty", toolFinish, `{"action":"issue","delegator":"冬翔","purpose":"向冬翔确认今天吃什么","intent":"ask"}`),
+		assistantTool("finish-ok", toolFinish, `{"action":"issue","text":"我去问冬翔今天想吃什么","delegator":"冬翔","purpose":"向冬翔确认今天吃什么","intent":"ask","reason":"新事项"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[]}`}
+	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Message:        "问一下冬翔，今天想吃什么",
+		ConversationID: "cid-dongxiang",
+		SenderName:     "冬翔",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != ActionIssue || got.UserText != "我去问冬翔今天想吃什么" || got.IssueID != "" {
+		t.Fatalf("decision=%#v", got)
+	}
+	if strings.Contains(got.UserText, "核对") {
+		t.Fatalf("synthesized ack: %q", got.UserText)
+	}
+	sawHint := false
+	for _, step := range got.Steps {
+		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, "needs text") {
+			sawHint = true
+		}
+	}
+	if !sawHint {
+		t.Fatalf("empty issue text must be rejected, steps=%#v", got.Steps)
 	}
 }
 

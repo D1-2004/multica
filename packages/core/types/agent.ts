@@ -478,6 +478,14 @@ export interface Agent {
    */
   inbound_coordinator?: boolean;
   /**
+   * Scene-memory flags. Optional because older backends omit them; treat
+   * `undefined` as false. Only an explicit true turns a flag on.
+   */
+  scene_memory_write_enabled?: boolean;
+  scene_memory_recall_enabled?: boolean;
+  scene_memory_ui_enabled?: boolean;
+  scene_memory_bootstrap_enabled?: boolean;
+  /**
    * Who this agent is when the inbound coordinator replies. Empty uses a
    * concise colleague default. Optional because older backends omit it.
    * Does not replace `instructions` for sandbox tasks.
@@ -623,6 +631,12 @@ export interface AgentSkillSummary {
   description: string;
 	/** Older servers omit this field; consumers must treat that as enabled. */
 	enabled?: boolean;
+  /**
+   * Always `true` when present — see the same fields on `SkillSummary`.
+   * `undefined` means "unknown / older server", never "content was returned".
+   */
+  content_omitted?: boolean;
+  files_omitted?: boolean;
 }
 
 export interface CreateAgentRequest {
@@ -768,6 +782,33 @@ export interface CreateAgentFromTemplateFailure {
   failed_urls: string[];
 }
 
+/** One exact Scene Memory row for a bound digital-employee conversation. */
+export interface AgentSceneMemory {
+  id: string;
+  workspace_id: string;
+  agent_id: string;
+  org_id: string;
+  scene_key: string;
+  scene_kind: string;
+  scene_title: string;
+  memory_text: string;
+  memory_revision: number;
+  status: string;
+  last_error: string;
+  last_error_code: string;
+  updated_at: string;
+  bootstrapped_at?: string;
+  last_flushed_at?: string;
+}
+
+export interface AgentSceneRelation {
+  issue_id: string;
+  issue: string;
+  purpose: string;
+  status: string;
+  on_this_scene: boolean;
+}
+
 export interface UpdateAgentRequest {
   name?: string;
   description?: string;
@@ -776,6 +817,10 @@ export interface UpdateAgentRequest {
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  scene_memory_write_enabled?: boolean;
+  scene_memory_recall_enabled?: boolean;
+  scene_memory_ui_enabled?: boolean;
+  scene_memory_bootstrap_enabled?: boolean;
   persona?: string;
   reply_tone?: string;
   avatar_url?: string;
@@ -886,6 +931,16 @@ export interface SkillSummary {
   updated_at: string;
 	/** Present only when returned from an agent-scoped assignment endpoint. */
 	enabled?: boolean;
+  /**
+   * Always `true` when present: this endpoint deliberately withheld the
+   * SKILL.md body and the skill's files. They exist so a caller can tell
+   * "withheld here" apart from "the skill is empty" — an absent `content`
+   * key coerces to `""` in most scripting languages, and a diffing script
+   * reads that as a wiped body. `undefined` means "unknown / older server",
+   * never "content was returned".
+   */
+  content_omitted?: boolean;
+  files_omitted?: boolean;
 }
 
 export interface Skill extends SkillSummary {

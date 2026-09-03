@@ -26,6 +26,8 @@ import type {
   IssueTableRowsRequest,
   IssueTableRowsResponse,
   Agent,
+  AgentSceneMemory,
+  AgentSceneRelation,
   MikaBootstrapResponse,
   CreateAgentRequest,
   AgentTemplate,
@@ -272,6 +274,12 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
   AgentTaskListSchema,
+  AgentSceneMemoryListSchema,
+  AgentSceneMemorySchema,
+  AgentSceneRelationListSchema,
+  EMPTY_AGENT_SCENE_MEMORY,
+  EMPTY_AGENT_SCENE_MEMORY_LIST,
+  EMPTY_AGENT_SCENE_RELATION_LIST,
   HostedSiteListSchema,
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
@@ -1696,6 +1704,44 @@ export class ApiClient {
     });
   }
 
+  async transferAgentOwner(id: string, ownerId: string): Promise<Agent> {
+    return this.fetch(`/api/agents/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+  }
+
+  async transferSkillOwner(id: string, ownerId: string): Promise<Skill> {
+    return this.fetch(`/api/skills/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+  }
+
+  async transferSquadOwner(id: string, ownerId: string): Promise<Squad> {
+    const raw = await this.fetch<unknown>(`/api/squads/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+      endpoint: "PUT /api/squads/:id/owner",
+    }) as Squad;
+  }
+
+  async transferAutopilotOwner(id: string, ownerId: string): Promise<Autopilot> {
+    return this.fetch(`/api/autopilots/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+  }
+
+  async transferRuntimeOwner(id: string, ownerId: string): Promise<AgentRuntime> {
+    return this.fetch(`/api/runtimes/${id}/owner`, {
+      method: "PUT",
+      body: JSON.stringify({ owner_id: ownerId }),
+    });
+  }
+
   /**
    * The composed inbound task instruction for one agent, produced by the same
    * server function the claim path uses. Falls back to an empty preview so an
@@ -2759,6 +2805,86 @@ export class ApiClient {
 
   async listAgentCoordinatorSessions(agentId: string): Promise<ChatSession[]> {
     return this.fetch(`/api/agents/${agentId}/coordinator-sessions`);
+  }
+
+  async listAgentSceneMemory(agentId: string): Promise<AgentSceneMemory[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory`,
+    );
+    return parseWithFallback(
+      raw,
+      AgentSceneMemoryListSchema,
+      EMPTY_AGENT_SCENE_MEMORY_LIST,
+      { endpoint: "GET /api/agents/{id}/scene-memory" },
+    );
+  }
+
+  async updateAgentSceneMemory(
+    agentId: string,
+    memoryId: string,
+    body: { memory_text: string; expected_revision: number },
+  ): Promise<AgentSceneMemory> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}`,
+      { method: "PUT", body: JSON.stringify(body) },
+    );
+    return parseWithFallback(
+      raw,
+      AgentSceneMemorySchema,
+      EMPTY_AGENT_SCENE_MEMORY,
+      { endpoint: "PUT /api/agents/{id}/scene-memory/{memoryId}" },
+    );
+  }
+
+  async resetAgentSceneMemory(
+    agentId: string,
+    memoryId: string,
+  ): Promise<AgentSceneMemory> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}/reset`,
+      { method: "POST" },
+    );
+    return parseWithFallback(
+      raw,
+      AgentSceneMemorySchema,
+      EMPTY_AGENT_SCENE_MEMORY,
+      { endpoint: "POST /api/agents/{id}/scene-memory/{memoryId}/reset" },
+    );
+  }
+
+  async clearAgentSceneRelations(
+    agentId: string,
+    memoryId: string,
+  ): Promise<void> {
+    await this.fetch(
+      `/api/agents/${encodeURIComponent(agentId)}/scene-memory/${encodeURIComponent(memoryId)}/relations/clear`,
+      { method: "POST" },
+    );
+  }
+
+  async listAgentSceneRelations(
+    agentId: string,
+    conversationId: string,
+  ): Promise<AgentSceneRelation[]> {
+    const search = new URLSearchParams({
+      agent_id: agentId,
+      conversation_id: conversationId,
+      since: "7d",
+    });
+    const raw = await this.fetch<unknown>(`/api/assoc/recall?${search.toString()}`);
+    const parsed = parseWithFallback(
+      raw,
+      AgentSceneRelationListSchema,
+      EMPTY_AGENT_SCENE_RELATION_LIST,
+      { endpoint: "GET /api/assoc/recall" },
+    );
+    return parsed.items.map((item) => ({
+      issue_id: item.issue_id || item.issue || "",
+      issue: item.issue || item.issue_id || "",
+      purpose: item.purpose,
+      status: item.status,
+      on_this_scene: item.on_this_scene === true,
+    }));
   }
 
   // Workspace-scoped agent task snapshot: every active task

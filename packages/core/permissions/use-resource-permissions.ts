@@ -7,6 +7,8 @@ import {
   canDeleteSkill,
   canEditAgent,
   canEditSkill,
+  canTransferAgentOwner,
+  canTransferOwnedResource,
 } from "./rules";
 import { deny, type Decision } from "./types";
 
@@ -34,6 +36,7 @@ export function useAgentPermissions(
 ): {
   canEdit: Decision;
   canAssign: Decision;
+  canTransferOwner: Decision;
   isLoading: boolean;
 } {
   const { userId, role, isLoading } = useCurrentMember(wsId);
@@ -43,11 +46,17 @@ export function useAgentPermissions(
   // public_to+workspace agent). Callers with always-clickable affordances
   // must treat `isLoading` as "undetermined", not as a deny.
   if (agent === null) {
-    return { canEdit: PENDING, canAssign: PENDING, isLoading };
+    return {
+      canEdit: PENDING,
+      canAssign: PENDING,
+      canTransferOwner: PENDING,
+      isLoading,
+    };
   }
   return {
     canEdit: canEditAgent(agent, ctx),
     canAssign: canAssignAgentToIssue(agent, ctx),
+    canTransferOwner: canTransferAgentOwner(agent, ctx),
     isLoading,
   };
 }
@@ -58,14 +67,16 @@ export function useSkillPermissions(
 ): {
   canEdit: Decision;
   canDelete: Decision;
+  canTransferOwner: Decision;
 } {
   const { userId, role } = useCurrentMember(wsId);
   const ctx = { userId, role };
   if (skill === null) {
-    return { canEdit: PENDING, canDelete: PENDING };
+    return { canEdit: PENDING, canDelete: PENDING, canTransferOwner: PENDING };
   }
   return {
     canEdit: canEditSkill(skill, ctx),
     canDelete: canDeleteSkill(skill, ctx),
+    canTransferOwner: canTransferOwnedResource(skill.created_by, ctx),
   };
 }

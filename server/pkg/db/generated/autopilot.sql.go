@@ -1835,6 +1835,43 @@ func (q *Queries) UpdateAutopilot(ctx context.Context, arg UpdateAutopilotParams
 	return i, err
 }
 
+const updateAutopilotOwner = `-- name: UpdateAutopilotOwner :one
+UPDATE autopilot
+SET created_by_type = 'member', created_by_id = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, pause_reason
+`
+
+type UpdateAutopilotOwnerParams struct {
+	ID          pgtype.UUID `json:"id"`
+	CreatedByID pgtype.UUID `json:"created_by_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateAutopilotOwner(ctx context.Context, arg UpdateAutopilotOwnerParams) (Autopilot, error) {
+	row := q.db.QueryRow(ctx, updateAutopilotOwner, arg.ID, arg.CreatedByID, arg.WorkspaceID)
+	var i Autopilot
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.AssigneeID,
+		&i.Status,
+		&i.ExecutionMode,
+		&i.IssueTitleTemplate,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.LastRunAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssigneeType,
+		&i.ProjectID,
+		&i.PauseReason,
+	)
+	return i, err
+}
+
 const updateAutopilotLastRunAt = `-- name: UpdateAutopilotLastRunAt :exec
 UPDATE autopilot SET last_run_at = now(), updated_at = now()
 WHERE id = $1

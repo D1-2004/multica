@@ -184,7 +184,9 @@
       "used_by_empty": "还未分配给任何智能体。打开某个智能体的 Skills 标签页进行分配。",
       "permissions_owner": "你可以编辑和删除该技能。改动将在智能体下次运行时生效。",
       "permissions_locked_creator": "只有创建者（{{name}}）或工作区管理员可以编辑该技能。",
-      "permissions_locked": "只有创建者或工作区管理员可以编辑该技能。"
+      "permissions_locked": "只有创建者或工作区管理员可以编辑该技能。",
+      "creator": "创建者",
+      "transfer_owner_description": "「{{name}}」的创建者将改为 {{owner}}。之后只有新创建者可以用运行时本地导入覆盖该技能。"
     },
     "files": {
       "list_aria": "技能文件",

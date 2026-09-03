@@ -565,7 +565,13 @@ func TestRunIssueCreateDoesNotSendAgentIdentityContextToken(t *testing.T) {
 }
 
 func TestRunIssueCreateShowsDuplicateMessage(t *testing.T) {
-	want := "Active duplicate issue exists: YUA-36 SH-PM-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs (status: in_progress). Set allow_duplicate=true or use --allow-duplicate to create another."
+	// Mirrors issueguard.DuplicateMessage verbatim: the CLI must surface the
+	// server's rejection unchanged, including the clause defining "active" and
+	// the match scope — that definition exists nowhere else the caller can see.
+	want := "Active duplicate issue exists: YUA-36 SH-PM-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs (status: in_progress). " +
+		"Active means any status except done and cancelled; the match is scoped to the same project and parent issue, " +
+		"comparing titles case-insensitively with runs of whitespace collapsed. " +
+		"Set allow_duplicate=true or use --allow-duplicate to create another."
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/issues" {
 			http.NotFound(w, r)
@@ -2852,6 +2858,7 @@ func newIssueUpdateTestCmd() *cobra.Command {
 	cmd.Flags().String("due-date", "", "")
 	cmd.Flags().String("parent", "", "")
 	cmd.Flags().Float64("position", 0, "")
+	cmd.Flags().Bool("no-start", false, "")
 	cmd.Flags().String("output", "json", "")
 	return cmd
 }
@@ -3731,5 +3738,517 @@ func TestRunIssueCommentListCompactWiring(t *testing.T) {
 		if _, ok := compacted[0][k]; !ok {
 			t.Errorf("--compact dropped %q — zero-value scalars must survive", k)
 		}
+	}
+}
+
+func newIssueChildrenTestCmd(output string) *cobra.Command {
+	cmd := &cobra.Command{Use: "children"}
+	cmd.Flags().String("output", "table", "")
+	cmd.Flags().Bool("full-id", false, "")
+	_ = cmd.Flags().Set("output", output)
+	return cmd
+}
+
+// childIssueFixture builds one child row in the shape ListChildIssues returns.
+// stage < 1 renders an unstaged child (stage null).
+func childIssueFixture(key, status string, stage int) map[string]any {
+	child := map[string]any{
+		"id":         key + "-uuid",
+		"identifier": key,
+		"title":      key + " work",
+		"status":     status,
+		"priority":   "medium",
+	}
+	if stage >= 1 {
+		child["stage"] = stage
+	} else {
+		child["stage"] = nil
+	}
+	return child
+}
+
+// newIssueChildrenTestServer serves the three routes runIssueChildren touches:
+// the issue-ref resolve, the children list, and (table output only) the actor
+// display lookups.
+func newIssueChildrenTestServer(t *testing.T, children []map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/issues/MUL-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "parent-uuid", "identifier": "MUL-1"})
+		case "/api/issues/parent-uuid/children":
+			_ = json.NewEncoder(w).Encode(map[string]any{"issues": children})
+		case "/api/workspaces/ws-1/members":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case "/api/agents":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func runIssueChildrenCapturingStdout(t *testing.T, srv *httptest.Server, output string) string {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := newIssueChildrenTestCmd(output)
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	runErr := runIssueChildren(cmd, []string{"MUL-1"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if runErr != nil {
+		t.Fatalf("runIssueChildren: %v", runErr)
+	}
+	return string(out)
+}
+
+// A stage that is 4/4 done is NOT closed while an earlier stage still has a
+// non-terminal child: the barrier is frontier-shaped, so per-stage counts alone
+// read as "done" on a chain that is in fact parked. The canonical stall is a
+// child left in `in_review` — the status the assignment brief asks ordinary
+// agents to finish at, and which the server does not count as terminal.
+func TestRunIssueChildrenReportsFrontierBarrier(t *testing.T) {
+	srv := newIssueChildrenTestServer(t, []map[string]any{
+		childIssueFixture("MUL-2", "done", 1),
+		childIssueFixture("MUL-3", "in_review", 1),
+		childIssueFixture("MUL-4", "done", 2),
+		childIssueFixture("MUL-5", "done", 2),
+		childIssueFixture("MUL-6", "done", 2),
+		childIssueFixture("MUL-7", "done", 2),
+	})
+	defer srv.Close()
+
+	out := runIssueChildrenCapturingStdout(t, srv, "json")
+
+	var payload struct {
+		Total  int `json:"total"`
+		Stages []struct {
+			Stage         int  `json:"stage"`
+			Total         int  `json:"total"`
+			Done          int  `json:"done"`
+			BarrierClosed bool `json:"barrier_closed"`
+			WaitingOn     []struct {
+				Key    string `json:"key"`
+				Stage  int    `json:"stage"`
+				Status string `json:"status"`
+			} `json:"waiting_on"`
+			Issues []map[string]any `json:"issues"`
+		} `json:"stages"`
+		NextStage             int              `json:"next_stage"`
+		Unstaged              []map[string]any `json:"unstaged"`
+		UnstagedTotal         int              `json:"unstaged_total"`
+		UnstagedDone          int              `json:"unstaged_done"`
+		UnstagedBarrierClosed bool             `json:"unstaged_barrier_closed"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, out)
+	}
+
+	if payload.Total != 6 {
+		t.Errorf("total = %d, want 6", payload.Total)
+	}
+	if len(payload.Stages) != 2 {
+		t.Fatalf("stages length = %d, want 2\n%s", len(payload.Stages), out)
+	}
+
+	stage1 := payload.Stages[0]
+	if stage1.Stage != 1 || stage1.Total != 2 || stage1.Done != 1 {
+		t.Errorf("stage 1 = %+v, want stage 1 total 2 done 1", stage1)
+	}
+	if stage1.BarrierClosed {
+		t.Errorf("stage 1 barrier_closed = true, want false (MUL-3 is in_review)")
+	}
+	if len(stage1.WaitingOn) != 1 || stage1.WaitingOn[0].Key != "MUL-3" || stage1.WaitingOn[0].Status != "in_review" {
+		t.Errorf("stage 1 waiting_on = %+v, want [MUL-3 in_review]", stage1.WaitingOn)
+	}
+
+	// The whole point: 4/4 done and still open, because stage 1 is not.
+	stage2 := payload.Stages[1]
+	if stage2.Stage != 2 || stage2.Total != 4 || stage2.Done != 4 {
+		t.Errorf("stage 2 = %+v, want stage 2 total 4 done 4", stage2)
+	}
+	if stage2.BarrierClosed {
+		t.Errorf("stage 2 barrier_closed = true, want false — stage 1 still has a non-terminal child")
+	}
+	if len(stage2.WaitingOn) != 1 || stage2.WaitingOn[0].Key != "MUL-3" || stage2.WaitingOn[0].Stage != 1 {
+		t.Errorf("stage 2 waiting_on = %+v, want the earlier stage's blocker MUL-3 (stage 1)", stage2.WaitingOn)
+	}
+
+	if payload.NextStage != 1 {
+		t.Errorf("next_stage = %d, want 1", payload.NextStage)
+	}
+	if payload.UnstagedTotal != 0 || payload.UnstagedDone != 0 || !payload.UnstagedBarrierClosed {
+		t.Errorf("unstaged summary = %d/%d closed=%v, want 0/0 closed=true",
+			payload.UnstagedDone, payload.UnstagedTotal, payload.UnstagedBarrierClosed)
+	}
+	if payload.Unstaged == nil {
+		t.Errorf("unstaged array must stay present (existing CLI contract)\n%s", out)
+	}
+	if len(stage1.Issues) != 2 || len(stage2.Issues) != 4 {
+		t.Errorf("issues arrays = %d/%d, want 2/4", len(stage1.Issues), len(stage2.Issues))
+	}
+}
+
+// Once every staged child is terminal the barrier is closed everywhere and
+// next_stage is 0 — nothing is waiting on anything.
+func TestRunIssueChildrenClosedBarrier(t *testing.T) {
+	srv := newIssueChildrenTestServer(t, []map[string]any{
+		childIssueFixture("MUL-2", "done", 1),
+		childIssueFixture("MUL-3", "cancelled", 1),
+		childIssueFixture("MUL-4", "done", 2),
+	})
+	defer srv.Close()
+
+	out := runIssueChildrenCapturingStdout(t, srv, "json")
+
+	var payload struct {
+		Stages []struct {
+			Stage         int  `json:"stage"`
+			BarrierClosed bool `json:"barrier_closed"`
+			WaitingOn     []struct {
+				Key string `json:"key"`
+			} `json:"waiting_on"`
+		} `json:"stages"`
+		NextStage int `json:"next_stage"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, out)
+	}
+	for _, g := range payload.Stages {
+		if !g.BarrierClosed || len(g.WaitingOn) != 0 {
+			t.Errorf("stage %d = closed:%v waiting_on:%+v, want closed with no blockers (cancelled is terminal)",
+				g.Stage, g.BarrierClosed, g.WaitingOn)
+		}
+	}
+	if payload.NextStage != 0 {
+		t.Errorf("next_stage = %d, want 0", payload.NextStage)
+	}
+}
+
+// An unstaged sibling set is one implicit stage: the parent wakes only when
+// every child is terminal, so a single `in_review` child holds it open.
+func TestRunIssueChildrenUnstagedBarrier(t *testing.T) {
+	srv := newIssueChildrenTestServer(t, []map[string]any{
+		childIssueFixture("MUL-2", "done", 0),
+		childIssueFixture("MUL-3", "done", 0),
+		childIssueFixture("MUL-4", "in_review", 0),
+	})
+	defer srv.Close()
+
+	out := runIssueChildrenCapturingStdout(t, srv, "json")
+
+	var payload struct {
+		Total                 int              `json:"total"`
+		Stages                []map[string]any `json:"stages"`
+		NextStage             int              `json:"next_stage"`
+		Unstaged              []map[string]any `json:"unstaged"`
+		UnstagedTotal         int              `json:"unstaged_total"`
+		UnstagedDone          int              `json:"unstaged_done"`
+		UnstagedBarrierClosed bool             `json:"unstaged_barrier_closed"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, out)
+	}
+	if payload.Total != 3 || len(payload.Stages) != 0 || len(payload.Unstaged) != 3 {
+		t.Fatalf("payload = total %d stages %d unstaged %d, want 3/0/3\n%s",
+			payload.Total, len(payload.Stages), len(payload.Unstaged), out)
+	}
+	if payload.UnstagedTotal != 3 || payload.UnstagedDone != 2 {
+		t.Errorf("unstaged progress = %d/%d, want 2/3", payload.UnstagedDone, payload.UnstagedTotal)
+	}
+	if payload.UnstagedBarrierClosed {
+		t.Errorf("unstaged_barrier_closed = true, want false — MUL-4 is in_review, which is not terminal")
+	}
+	// No child carries a stage, so there is no staged frontier to report.
+	if payload.NextStage != 0 {
+		t.Errorf("next_stage = %d, want 0 for an unstaged sibling set", payload.NextStage)
+	}
+}
+
+// Mixed sibling set: as soon as ANY child carries a stage the server switches
+// to the frontier rule, which ignores unstaged children entirely — an unstaged
+// child neither closes a stage nor holds one open (handler.stageBarrierClosed
+// returns false outright for an unstaged completed child, and `continue`s past
+// unstaged children in the frontier loop). So with every STAGED child terminal
+// the parent has already been woken, and neither output channel may claim a
+// stall on account of a pending unstaged sibling.
+func TestRunIssueChildrenMixedSetIgnoresUnstagedForBarrier(t *testing.T) {
+	srv := newIssueChildrenTestServer(t, []map[string]any{
+		childIssueFixture("MUL-2", "done", 1),
+		childIssueFixture("MUL-3", "done", 1),
+		childIssueFixture("MUL-4", "in_review", 0), // unstaged, and NOT terminal
+	})
+	defer srv.Close()
+
+	out := runIssueChildrenCapturingStdout(t, srv, "json")
+
+	var payload struct {
+		NextStage             int  `json:"next_stage"`
+		UnstagedTotal         int  `json:"unstaged_total"`
+		UnstagedDone          int  `json:"unstaged_done"`
+		UnstagedBarrierClosed bool `json:"unstaged_barrier_closed"`
+		Stages                []struct {
+			Stage         int  `json:"stage"`
+			BarrierClosed bool `json:"barrier_closed"`
+		} `json:"stages"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, out)
+	}
+	if len(payload.Stages) != 1 || !payload.Stages[0].BarrierClosed {
+		t.Fatalf("stage 1 must report a closed barrier; its only non-terminal sibling is unstaged\n%s", out)
+	}
+	if payload.NextStage != 0 {
+		t.Errorf("next_stage = %d, want 0 — an unstaged child is not a staged blocker", payload.NextStage)
+	}
+	if !payload.UnstagedBarrierClosed {
+		t.Errorf("unstaged_barrier_closed = false, want true — the implicit unstaged barrier does not apply to a staged set, so reporting it open claims a stall that cannot exist\n%s", out)
+	}
+	if payload.UnstagedTotal != 1 || payload.UnstagedDone != 0 {
+		t.Errorf("unstaged progress = %d/%d, want 0/1 (the raw count stays truthful)", payload.UnstagedDone, payload.UnstagedTotal)
+	}
+}
+
+// The same mixed set must not print a stall notice on the default table output.
+func TestRunIssueChildrenMixedSetTableOmitsUnstagedNotice(t *testing.T) {
+	srv := newIssueChildrenTestServer(t, []map[string]any{
+		childIssueFixture("MUL-2", "done", 1),
+		childIssueFixture("MUL-3", "done", 1),
+		childIssueFixture("MUL-4", "in_review", 0),
+	})
+	defer srv.Close()
+
+	out := runIssueChildrenCapturingStdout(t, srv, "table")
+
+	for _, unwanted := range []string{"Unstaged sub-issues:", "is not closed"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("table output must not claim a stall for a mixed set, found %q\n%s", unwanted, out)
+		}
+	}
+}
+
+// The default (table) output must surface the stall too — the table's own
+// STATUS column shows `in_review` without saying that it holds the stage open.
+func TestRunIssueChildrenTablePrintsBarrierNotice(t *testing.T) {
+	srv := newIssueChildrenTestServer(t, []map[string]any{
+		childIssueFixture("MUL-2", "done", 1),
+		childIssueFixture("MUL-3", "in_review", 1),
+		childIssueFixture("MUL-4", "done", 2),
+	})
+	defer srv.Close()
+
+	out := runIssueChildrenCapturingStdout(t, srv, "table")
+
+	for _, want := range []string{"Stage 1 is not closed", "MUL-3 (in_review)", "done/cancelled"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("table output missing %q\n%s", want, out)
+		}
+	}
+}
+
+// A fully closed chain prints the table alone: the notice exists to flag a
+// stall, not to append a line to every listing.
+func TestRunIssueChildrenTableOmitsNoticeWhenClosed(t *testing.T) {
+	srv := newIssueChildrenTestServer(t, []map[string]any{
+		childIssueFixture("MUL-2", "done", 1),
+		childIssueFixture("MUL-3", "cancelled", 1),
+	})
+	defer srv.Close()
+
+	out := runIssueChildrenCapturingStdout(t, srv, "table")
+
+	if strings.Contains(out, "is not closed") || strings.Contains(out, "waiting on") {
+		t.Errorf("table output must carry no barrier notice when nothing is blocked\n%s", out)
+	}
+}
+
+// formatChildBlockers caps the named blockers so a wide fan-out cannot turn the
+// one-line notice into a wall of text.
+func TestFormatChildBlockersCapsNamedBlockers(t *testing.T) {
+	blockers := []childBlocker{
+		{Key: "MUL-2", Stage: 1, Status: "in_review"},
+		{Key: "MUL-3", Stage: 1, Status: "in_progress"},
+		{Key: "MUL-4", Stage: 1, Status: "todo"},
+		{Key: "MUL-5", Stage: 1, Status: "todo"},
+		{Key: "MUL-6", Stage: 1, Status: "todo"},
+	}
+	want := "MUL-2 (in_review), MUL-3 (in_progress), MUL-4 (todo), +2 more"
+	if got := formatChildBlockers(blockers); got != want {
+		t.Errorf("formatChildBlockers() = %q, want %q", got, want)
+	}
+}
+
+func newIssueStatusTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "status"}
+	cmd.Flags().Bool("no-start", false, "")
+	cmd.Flags().String("output", "table", "")
+	return cmd
+}
+
+func newIssueAssignTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "assign"}
+	cmd.Flags().String("to", "", "")
+	cmd.Flags().String("to-id", "", "")
+	cmd.Flags().Bool("unassign", false, "")
+	cmd.Flags().Bool("no-start", false, "")
+	cmd.Flags().String("output", "json", "")
+	return cmd
+}
+
+// --no-start is the CLI half of the server's `suppress_run` contract
+// (handler.UpdateIssueRequest.SuppressRun, honored at issue.go:3148): the
+// status/assignee write lands as usual but the run that would normally be
+// enqueued is skipped. These tests pin that the flag actually reaches the wire
+// on all three commands that can start a run — the failure the flag's absence
+// caused was only visible in production, as `unknown flag: --no-start`.
+
+func TestRunIssueUpdateNoStartSendsSuppressRun(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/MUL-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1", "status": "todo"})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/issues/issue-1":
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1", "status": "in_progress"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("HOME", t.TempDir())
+
+	cmd := newIssueUpdateTestCmd()
+	_ = cmd.Flags().Set("status", "in_progress")
+	_ = cmd.Flags().Set("no-start", "true")
+	if err := runIssueUpdate(cmd, []string{"MUL-1"}); err != nil {
+		t.Fatalf("runIssueUpdate: %v", err)
+	}
+	if got := body["suppress_run"]; got != true {
+		t.Fatalf("suppress_run = %#v, want true", got)
+	}
+}
+
+func TestRunIssueUpdateWithoutNoStartOmitsSuppressRun(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/MUL-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1", "status": "todo"})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/issues/issue-1":
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1", "status": "in_progress"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("HOME", t.TempDir())
+
+	cmd := newIssueUpdateTestCmd()
+	_ = cmd.Flags().Set("status", "in_progress")
+	if err := runIssueUpdate(cmd, []string{"MUL-1"}); err != nil {
+		t.Fatalf("runIssueUpdate: %v", err)
+	}
+	if _, ok := body["suppress_run"]; ok {
+		t.Fatalf("suppress_run must be absent without --no-start, got: %v", body)
+	}
+}
+
+func TestRunIssueStatusNoStartSendsSuppressRun(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/MUL-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1", "status": "backlog"})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/issues/issue-1":
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1", "status": "in_progress"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("HOME", t.TempDir())
+
+	cmd := newIssueStatusTestCmd()
+	_ = cmd.Flags().Set("no-start", "true")
+	if err := runIssueStatus(cmd, []string{"MUL-1", "in_progress"}); err != nil {
+		t.Fatalf("runIssueStatus: %v", err)
+	}
+	if got := body["status"]; got != "in_progress" {
+		t.Fatalf("status = %#v, want in_progress", got)
+	}
+	if got := body["suppress_run"]; got != true {
+		t.Fatalf("suppress_run = %#v, want true", got)
+	}
+}
+
+func TestRunIssueAssignNoStartSendsSuppressRun(t *testing.T) {
+	const agentID = "5fb87ac7-23b5-4a7a-81fa-ed295a54545d"
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/MUL-1":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1", "status": "todo"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1/members":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/agents":
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": agentID, "name": "CodeBot"}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/squads":
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/issues/issue-1":
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "issue-1", "identifier": "MUL-1", "status": "todo"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	setCLITestServerEnv(t, srv.URL)
+	t.Setenv("HOME", t.TempDir())
+
+	cmd := newIssueAssignTestCmd()
+	_ = cmd.Flags().Set("to-id", agentID)
+	_ = cmd.Flags().Set("no-start", "true")
+	if err := runIssueAssign(cmd, []string{"MUL-1"}); err != nil {
+		t.Fatalf("runIssueAssign: %v", err)
+	}
+	if got := body["suppress_run"]; got != true {
+		t.Fatalf("suppress_run = %#v, want true", got)
+	}
+}
+
+func TestRunIssueAssignNoStartRejectsUnassign(t *testing.T) {
+	cmd := newIssueAssignTestCmd()
+	_ = cmd.Flags().Set("unassign", "true")
+	_ = cmd.Flags().Set("no-start", "true")
+	err := runIssueAssign(cmd, []string{"MUL-1"})
+	if err == nil {
+		t.Fatal("runIssueAssign: want an error for --no-start with --unassign, got nil")
+	}
+	if !strings.Contains(err.Error(), "--no-start cannot be used with --unassign") {
+		t.Fatalf("error = %q, want it to name the --no-start/--unassign conflict", err)
 	}
 }

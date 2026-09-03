@@ -27,7 +27,20 @@ var skillCmd = &cobra.Command{
 var skillListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List skills in the workspace",
-	RunE:  runSkillList,
+	Long: "Lists skill metadata for the current workspace. Rows never carry the\n" +
+		"SKILL.md body or the skill's files: bodies routinely run 50-200KB and\n" +
+		"shipping them here tripped CLI timeouts on high-latency links.\n\n" +
+		"Every row in --output json therefore carries content_omitted: true and\n" +
+		"files_omitted: true. A missing `content` key means \"not returned by this\n" +
+		"endpoint\" — never \"the skill is empty\". Do not let a script coerce the\n" +
+		"absent key to \"\" and conclude the body was wiped.\n\n" +
+		"Use `multica skill get <id>` for the SKILL.md body and\n" +
+		"`multica skill files list <id> --output json` for file contents before\n" +
+		"diffing a remote skill against local files.\n\n" +
+		"Carve-out: `multica agent get <id> --output json` embeds a narrower\n" +
+		"skill shape (id/name/description/enabled) that also carries the two\n" +
+		"markers; `multica agent skills list <id>` returns the full list shape.",
+	RunE: runSkillList,
 }
 
 var skillGetCmd = &cobra.Command{
@@ -55,6 +68,13 @@ var skillDeleteCmd = &cobra.Command{
 	Short: "Delete a skill",
 	Args:  exactArgs(1),
 	RunE:  runSkillDelete,
+}
+
+var skillTransferOwnerCmd = &cobra.Command{
+	Use:   "transfer-owner <id>",
+	Short: "Transfer a skill's creator to another workspace member",
+	Args:  exactArgs(1),
+	RunE:  runSkillTransferOwner,
 }
 
 var skillImportCmd = &cobra.Command{
@@ -103,6 +123,7 @@ func init() {
 	skillCmd.AddCommand(skillGetCmd)
 	skillCmd.AddCommand(skillCreateCmd)
 	skillCmd.AddCommand(skillUpdateCmd)
+	skillCmd.AddCommand(skillTransferOwnerCmd)
 	skillCmd.AddCommand(skillDeleteCmd)
 	skillCmd.AddCommand(skillImportCmd)
 	skillCmd.AddCommand(skillSearchCmd)
@@ -114,6 +135,9 @@ func init() {
 
 	// skill list
 	skillListCmd.Flags().String("output", "table", "Output format: table or json")
+
+	skillTransferOwnerCmd.Flags().String("to-id", "", "User id of the new creator (must be a current workspace member)")
+	skillTransferOwnerCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// skill get
 	skillGetCmd.Flags().String("output", "json", "Output format: table or json")
@@ -327,6 +351,29 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	fmt.Printf("Skill created: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
+	return nil
+}
+
+func runSkillTransferOwner(cmd *cobra.Command, args []string) error {
+	toID, _ := cmd.Flags().GetString("to-id")
+	if toID == "" {
+		return fmt.Errorf("--to-id is required")
+	}
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/skills/"+args[0]+"/owner", map[string]any{"owner_id": toID}, &result); err != nil {
+		return fmt.Errorf("transfer skill owner: %w", err)
+	}
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+	fmt.Printf("Skill owner transferred: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
 	return nil
 }
 

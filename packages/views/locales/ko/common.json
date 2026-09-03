@@ -31,6 +31,17 @@
     "presets": "프리셋",
     "random": "무작위"
   },
+  "owner_transfer": {
+    "left": "워크스페이스를 나감",
+    "none": "소유자 없음",
+    "search": "멤버 검색…",
+    "no_results": "일치하는 멤버가 없습니다",
+    "transferred": "소유자를 이전했습니다",
+    "failed": "소유자 이전에 실패했습니다",
+    "title": "소유자를 이전할까요?",
+    "cancel": "취소",
+    "confirm": "이전"
+  },
   "save": "저장",
   "cancel": "취소",
   "delete": "삭제",

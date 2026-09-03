@@ -6,8 +6,9 @@ import {
   Ban, ChevronDown, ChevronRight,
   Webhook, RotateCw, Server,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { autopilotDetailOptions, autopilotRunsOptions, autopilotRunOptions } from "@multica/core/autopilots/queries";
+import { memberListOptions } from "@multica/core/workspace/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import {
   useUpdateAutopilot,
@@ -69,6 +70,7 @@ import { WebhookPayloadPreview } from "./webhook-payload-preview";
 import { WebhookDeliveriesSection } from "./webhook-deliveries-section";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
+import { OwnerTransferControl } from "../../common/owner-transfer-control";
 
 // A run that already happened is an instant in the reader's day, so it reads in
 // the reader's zone (no timeZone passed). A run that is still to come belongs to
@@ -640,12 +642,15 @@ function SubscriberChips({
 
 export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
   const { t } = useT("autopilots");
+  const { t: tCommon } = useT("common");
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const router = useNavigation();
+  const qc = useQueryClient();
   const { getActorName } = useActorName();
 
   const { data, isLoading } = useQuery(autopilotDetailOptions(wsId, autopilotId));
+  const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: runs = [], isLoading: runsLoading } = useQuery(autopilotRunsOptions(wsId, autopilotId));
   const updateAutopilot = useUpdateAutopilot();
   const deleteAutopilot = useDeleteAutopilot();
@@ -868,19 +873,48 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
               <div>
                 <label className="text-caption text-muted-foreground">{t(($) => $.detail.field_created_by)}</label>
                 <div className="mt-1 flex items-center gap-2">
-                  {/* Creator may be a member or an agent: the HTTP create path stamps
-                      member today, but backend logic also writes created_by_type=agent.
-                      ActorAvatar/getActorName resolve both, so never assume member. */}
-                  <ActorAvatar
-                    actorType={autopilot.created_by_type}
-                    actorId={autopilot.created_by_id}
-                    size="sm"
-                    enableHoverCard
-                    showStatusDot={autopilot.created_by_type === "agent"}
-                  />
-                  <span className="cursor-pointer">
-                    {getActorName(autopilot.created_by_type, autopilot.created_by_id)}
-                  </span>
+                  {autopilot.created_by_type === "agent" && !canManageAccess ? (
+                    <>
+                      <ActorAvatar
+                        actorType="agent"
+                        actorId={autopilot.created_by_id}
+                        size="sm"
+                        enableHoverCard
+                        showStatusDot
+                      />
+                      <span className="cursor-pointer">
+                        {getActorName("agent", autopilot.created_by_id)}
+                      </span>
+                    </>
+                  ) : (
+                    <OwnerTransferControl
+                      ownerId={
+                        autopilot.created_by_type === "member"
+                          ? autopilot.created_by_id
+                          : null
+                      }
+                      owner={
+                        autopilot.created_by_type === "member"
+                          ? members.find((m) => m.user_id === autopilot.created_by_id) ?? null
+                          : null
+                      }
+                      members={members}
+                      canTransfer={canManageAccess}
+                      descriptionFor={(ownerName) =>
+                        t(($) => $.detail.transfer_owner_description, {
+                          name: autopilot.title,
+                          owner: ownerName,
+                        })
+                      }
+                      onTransfer={async (userId) => {
+                        const updated = await api.transferAutopilotOwner(autopilot.id, userId);
+                        qc.setQueryData(autopilotDetailOptions(wsId, autopilotId).queryKey, (old: typeof data | undefined) =>
+                          old ? { ...old, autopilot: { ...old.autopilot, ...updated } } : old,
+                        );
+                        toast.success(tCommon(($) => $.owner_transfer.transferred));
+                      }}
+                    />
+                  )}
                 </div>
               </div>
               <div>

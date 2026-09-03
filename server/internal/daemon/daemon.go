@@ -7451,11 +7451,19 @@ func idleWatchdogReason(window time.Duration) string {
 // empty — a buffered-but-undrained message means the drain loop is behind, not
 // the backend.
 //
-// Tick interval is window/2 (floored at 30 s in production, but the floor only
+// Tick interval is window/10 (floored at 30 s in production, but the floor only
 // kicks in for windows >= 1 min so tests can pass tiny windows like 50 ms and
-// see the watchdog fire within a few ticks).
+// see the watchdog fire within a few ticks). The interval bounds detection
+// latency, not the budget: silence is only ever observed on a tick, so the
+// worst-case time-to-kill is window + interval. It used to be window/2, which
+// made that 1.5x the configured window — a 30-minute budget could take 45
+// minutes to fire, because any single early message (an opencode step_start
+// arriving seconds into the run, say) restamps lastActivityAt and pushes the
+// first over-threshold observation onto the following tick. At window/10 the
+// same 30-minute budget kills within ~33 minutes. The tick body is a few
+// atomic loads and a channel length check, so the extra ticks cost nothing.
 func (d *Daemon) runIdleWatchdog(agentCtx context.Context, window, toolWindow time.Duration, lastActivityAt *atomic.Int64, inFlightTools *atomic.Int32, fired *atomic.Bool, firedThreshold *atomic.Int64, cancel context.CancelFunc, messages <-chan agent.Message, taskLog *slog.Logger, taskID string) {
-	interval := window / 2
+	interval := window / 10
 	if window >= time.Minute && interval < 30*time.Second {
 		interval = 30 * time.Second
 	}

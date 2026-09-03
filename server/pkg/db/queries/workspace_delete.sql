@@ -320,6 +320,10 @@ WHERE chat_session_id IN (
 
 -- name: DeleteWorkspaceCommunicationRoots :exec
 WITH
+deleted_scene_memory AS (
+    DELETE FROM scene_memory
+    WHERE scene_memory.workspace_id = $1
+),
 deleted_inbound_coordinator_jobs AS (
     DELETE FROM inbound_coordinator_job
     WHERE inbound_coordinator_job.workspace_id = $1

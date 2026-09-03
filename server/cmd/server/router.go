@@ -49,6 +49,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -766,6 +767,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	h.SceneMemoryStore = scenememory.NewStore(queries)
+	coordinator.SceneMemory = h.SceneMemoryStore
+	sceneFlusher := &scenememory.MemoryFlusher{
+		Store: h.SceneMemoryStore,
+		History: scenememory.NewDWSRangeReader(scenememory.DWSRangeConfig{
+			Queries:         queries,
+			AgentIdentity:   agentidentityhsf.NewClient(),
+			BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
+			BaseURLProvider: agentIdentityControlBaseURLProvider,
+			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+		}),
+		LLM: h.LLM,
+	}
+	h.SceneMemoryWorker = scenememory.NewWorker(h.SceneMemoryStore, sceneFlusher, func() bool {
+		if opts.DeploymentFence == nil {
+			return true
+		}
+		return opts.DeploymentFence.Snapshot().State == deploymentfence.StateNormal
+	})
 	channelRouter.SetInboundCoordinator(coordinator)
 	channelRouter.SetSceneAssociator(h.Assoc)
 	// So an inbound DingTalk/Slack/Lark message appears in a web client
@@ -2328,6 +2348,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetSquad)
 					r.Put("/", h.UpdateSquad)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferSquadOwner)
 					r.Delete("/", h.DeleteSquad)
 					r.Get("/members", h.ListSquadMembers)
 					r.Get("/members/status", h.ListSquadMemberStatus)
@@ -2348,6 +2369,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAutopilot)
 					r.Patch("/", h.UpdateAutopilot)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferAutopilotOwner)
 					r.Delete("/", h.DeleteAutopilot)
 					r.Post("/trigger", h.TriggerAutopilot)
 					r.Get("/runs", h.ListAutopilotRuns)
@@ -2433,11 +2455,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/extract-voice", h.ExtractAgentVoice)
 					r.Post("/source/sync", h.SyncAgentSource)
 					r.Put("/", h.UpdateAgent)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferAgentOwner)
 					r.Post("/archive", h.ArchiveAgent)
 					r.Post("/restore", h.RestoreAgent)
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
+					r.Get("/scene-memory", h.ListAgentSceneMemory)
+					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
+					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)
+					r.Post("/scene-memory/{memoryId}/relations/clear", h.ClearAgentSceneRelations)
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)
@@ -2503,6 +2530,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetSkill)
 					r.Put("/", h.UpdateSkill)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferSkillOwner)
 					r.Delete("/", h.DeleteSkill)
 					r.Get("/labels", h.ListLabelsForSkill)
 					r.Post("/labels", h.AttachLabelToSkill)
@@ -2534,6 +2562,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/asb-credential/validate", h.ValidateASBRuntimeCredential)
 				r.Route("/{runtimeId}", func(r chi.Router) {
 					r.Patch("/", h.UpdateAgentRuntime)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferRuntimeOwner)
 					r.Patch("/fc-e2b-template", h.UpdateFCE2BRuntimeTemplate)
 					r.Patch("/cloud-sandbox-artifact", h.UpdateCloudSandboxRuntimeArtifact)
 					r.Get("/asb-credential", h.GetASBRuntimeCredential)

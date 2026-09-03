@@ -473,7 +473,7 @@ func TestUnattributed(t *testing.T) {
 }
 
 func TestSourcePrecise(t *testing.T) {
-	precise := []Source{SourceDirectHuman, SourceDelegation, SourceCommentSource, SourceTriggerOwner, SourceRuleOwner}
+	precise := []Source{SourceDirectHuman, SourceDelegation, SourceStageBarrier, SourceCommentSource, SourceTriggerOwner, SourceRuleOwner}
 	degraded := []Source{SourceOwnerFallback, SourceBackfill, SourceUnattributed, Source("")}
 	for _, s := range precise {
 		if !s.Precise() {
@@ -493,5 +493,20 @@ func TestSourceStringDefaultsToUnattributed(t *testing.T) {
 	}
 	if SourceDirectHuman.String() != "direct_human" {
 		t.Errorf("unexpected string for direct_human: %q", SourceDirectHuman.String())
+	}
+}
+
+// TestSourceStageBarrierIsPrecise pins the stage-barrier label as a FIRST-CLASS,
+// compliance-grade source (FDE-3094). A stage-barrier wake still resolves the
+// accountable human from the parent issue's own provenance, so it is exactly as
+// precise as the source it replaces; forgetting it in Precise()'s case list would
+// silently push every barrier-woken run into the degraded attribution-coverage
+// bucket and give the UI a warning tone for a perfectly healthy attribution.
+func TestSourceStageBarrierIsPrecise(t *testing.T) {
+	if !SourceStageBarrier.Precise() {
+		t.Error("stage_barrier must be precise: the accountable human is resolved, only the trigger label differs")
+	}
+	if SourceStageBarrier.String() != "stage_barrier" {
+		t.Errorf("unexpected string for stage_barrier: %q", SourceStageBarrier.String())
 	}
 }

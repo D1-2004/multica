@@ -117,6 +117,7 @@
     "last_seen": "最終確認 {{when}}",
     "never_seen": "未接続",
     "fact_owner": "所有者",
+    "transfer_owner_description": "「{{name}}」の所有者を {{owner}} に変更します。オフラインのランタイムは自動ではオンラインになりません。稼働中の共有 FC ランタイムなら、以降のタスク資格情報は新しい所有者に紐づきます。",
     "fact_device": "デバイス",
     "fact_runtime": "ランタイム",
     "technical_details": "技術的な詳細",

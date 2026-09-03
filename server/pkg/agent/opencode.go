@@ -251,6 +251,35 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		startTime := time.Now()
 		scanResult := b.processEvents(stdout, msgCh)
 
+		// The terminal-signal guard can only report that the stream went dead;
+		// the first question anyone asks of that is how big the request was.
+		// Nothing downstream can answer it — the task row keeps this string and
+		// nothing else, the "prompt_bytes" log line above lives on whichever
+		// host ran the daemon, and the accumulated usage is a running sum that
+		// is all-zero in exactly this failure shape. So report the sizes this
+		// process did measure, which is what turns "the provider produced
+		// nothing" from an unactionable sentence into a comparable data point
+		// across runs.
+		//
+		// Placed here, before the branches below, on purpose. The timeout and
+		// cancellation branches REPLACE errMsg wholesale, and a cancelled run
+		// commonly arrives here with noTerminalSignal set (the cancellation
+		// goroutine SIGKILLs the tree and closes stdout, which ends the scan
+		// mid-step). Appending after them would leave a message that no longer
+		// opens with "opencode stream ended", escaping the prefix witness
+		// taskfailure.Classify keys on and letting the numbers in the bracket
+		// re-bucket the failure off the retry allowlist. Appending here instead
+		// means those branches cleanly overwrite the whole thing, the exit /
+		// write-failure suffixes below land after the bracket, and every
+		// enriched string still starts with the guarded prefix.
+		if scanResult.noTerminalSignal {
+			scanResult.errMsg += opencodeRequestSizeSuffix(
+				len(prompt),
+				scanResult.lastAcceptedInputTokens,
+				scanResult.steps,
+			)
+		}
+
 		// Wait for process exit, then release the cancellation handler.
 		exitErr := cmd.Wait()
 		close(procDone)
@@ -327,6 +356,28 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
+// opencodeRequestSizeSuffix renders the request-size bracket appended to a
+// terminal-signal guard failure: how many bytes of prompt went down stdin and,
+// when the provider billed at least one step, how large the last request it did
+// accept was and how far the run got before the stream died.
+//
+// The token figure is omitted rather than printed as zero when no step reported
+// input tokens: zero there means "the provider never billed anything", which
+// the guard's own sentence already says, and printing it invites reading it as
+// a measurement of the dropped request.
+//
+// Each number is printed with the unit it is in, and the whole bracket trails
+// the message so the classifier's prefix witness stays first.
+func opencodeRequestSizeSuffix(promptBytes int, lastAcceptedInputTokens int64, steps int) string {
+	if lastAcceptedInputTokens > 0 {
+		return fmt.Sprintf(
+			" [request: %d prompt bytes on stdin; last accepted step reported %d input tokens across %d steps]",
+			promptBytes, lastAcceptedInputTokens, steps,
+		)
+	}
+	return fmt.Sprintf(" [request: %d prompt bytes on stdin]", promptBytes)
+}
+
 func opencodeUsageModel(configuredModel, runnerProvider, managedModel string) string {
 	if model := strings.TrimSpace(configuredModel); model != "" {
 		return model
@@ -364,6 +415,14 @@ type eventResult struct {
 	// need "this run really completed" must test this field; status defaults to
 	// "completed" and cannot carry that meaning on its own.
 	sawTerminalSignal bool
+
+	// steps and lastAcceptedInputTokens are diagnostics for the guard failure
+	// message Execute assembles, never inputs to any guard here. usage is a
+	// running SUM with no per-step value, and in the void-step shape every
+	// counter is zero, so neither the total nor Result.Usage can say how large
+	// the request the provider dropped actually was.
+	steps                   int   // step_finish events seen
+	lastAcceptedInputTokens int64 // input tokens of the last step the provider actually billed
 }
 
 // processEvents reads JSON lines from r, dispatches events to ch, and returns
@@ -413,6 +472,14 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	stepProducedOutput := false // current step emitted text, a tool call, or reported usage
 	lastStepVoid := false       // the most recently closed step produced nothing at all
 
+	// Write-only diagnostics: they describe how far the run got and how large
+	// the last request the provider actually billed was, so a guard failure can
+	// name a size instead of only saying the stream went dead. Deliberately
+	// consulted by nothing in this loop — a step's productiveness must keep
+	// being decided by stepProducedOutput alone.
+	steps := 0                          // step_finish events seen
+	lastAcceptedInputTokens := int64(0) // input tokens of the last step the provider actually billed
+
 	scanner := newAgentStreamScanner(r)
 
 	for scanner.Scan() {
@@ -460,6 +527,7 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 		case "step_finish":
 			openStep = false
 			sawStepFinish = true
+			steps++
 			awaitingContinuation = event.Part.Reason == "tool-calls" ||
 				(event.Part.Reason != "" && stepHasContinuationTool)
 			stepHasContinuationTool = false
@@ -473,6 +541,14 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 				if t.Cache != nil {
 					usage.CacheReadTokens += t.Cache.Read
 					usage.CacheWriteTokens += t.Cache.Write
+				}
+				// Remember the last non-zero input count separately from the
+				// sum: it is the size of the last request the provider did
+				// accept, which is the closest measurement we have of the one
+				// it then dropped. A zero is the void step itself, so it must
+				// not overwrite the last real figure.
+				if t.Input > 0 {
+					lastAcceptedInputTokens = t.Input
 				}
 			}
 			if stepReportedUsage(&event.Part) {
@@ -516,13 +592,15 @@ func (b *opencodeBackend) processEvents(r io.Reader, ch chan<- Message) eventRes
 	}
 
 	return eventResult{
-		status:            finalStatus,
-		errMsg:            finalError,
-		output:            output.String(),
-		sessionID:         sessionID,
-		usage:             usage,
-		noTerminalSignal:  noTerminalSignal,
-		sawTerminalSignal: sawStepFinish && !noTerminalSignal,
+		status:                  finalStatus,
+		errMsg:                  finalError,
+		output:                  output.String(),
+		sessionID:               sessionID,
+		usage:                   usage,
+		noTerminalSignal:        noTerminalSignal,
+		sawTerminalSignal:       sawStepFinish && !noTerminalSignal,
+		steps:                   steps,
+		lastAcceptedInputTokens: lastAcceptedInputTokens,
 	}
 }
 

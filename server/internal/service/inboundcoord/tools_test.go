@@ -121,6 +121,63 @@ func TestAssocToolsRecallUsesExplicitConversationID(t *testing.T) {
 	}
 }
 
+func TestAssocToolsRecallOmitsPurposeWithoutEvent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := assoc.NewMemory()
+	svc := assoc.NewService(store)
+	agent := testAgentID()
+	agentID := util.UUIDToString(agent)
+	now := time.Now().UTC()
+	empty, err := store.InsertTask(ctx, assoc.Task{
+		WorkspaceID:   "ws",
+		AgentID:       agentID,
+		IssueID:       "issue-empty",
+		Purpose:       "某人委托：",
+		Status:        assoc.StatusWaiting,
+		LastTouchedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEdge(ctx, assoc.Edge{
+		WorkspaceID:   "ws",
+		AgentID:       agentID,
+		SrcType:       assoc.NodeTask,
+		SrcID:         empty.ID,
+		DstType:       assoc.NodeScene,
+		DstID:         "cid-a",
+		Rel:           assoc.RelTaskScene,
+		LastTouchedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.BindOutbound(ctx, assoc.BindOutboundInput{
+		WorkspaceID:    "ws",
+		AgentID:        agentID,
+		IssueID:        "issue-eat",
+		IssueTitle:     "向冬翔确认今天吃什么",
+		Purpose:        "向冬翔确认今天吃什么",
+		ConversationID: "cid-a",
+		EvidenceID:     "msg-out-1",
+		Kind:           "dm",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := (&AssocTools{Service: svc}).Call(ctx, Turn{
+		WorkspaceID:    "ws",
+		AgentID:        agent,
+		ConversationID: "cid-a",
+	}, toolAssocRecall, `{}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := mustCoordinatorRecall(t, raw)
+	if len(result.Items) != 1 || result.Items[0].IssueID != "issue-eat" {
+		t.Fatalf("empty-event cards must be omitted, items=%+v", result.Items)
+	}
+}
+
 func TestAssocToolsRecallQKeepsInboundConversation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -616,6 +616,44 @@ func (q *Queries) ListAgentRuntimes(ctx context.Context, workspaceID pgtype.UUID
 	return items, nil
 }
 
+const updateAgentRuntimeOwner = `-- name: UpdateAgentRuntimeOwner :one
+UPDATE agent_runtime
+SET owner_id = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id, custom_name
+`
+
+type UpdateAgentRuntimeOwnerParams struct {
+	ID          pgtype.UUID `json:"id"`
+	OwnerID     pgtype.UUID `json:"owner_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) UpdateAgentRuntimeOwner(ctx context.Context, arg UpdateAgentRuntimeOwnerParams) (AgentRuntime, error) {
+	row := q.db.QueryRow(ctx, updateAgentRuntimeOwner, arg.ID, arg.OwnerID, arg.WorkspaceID)
+	var i AgentRuntime
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DaemonID,
+		&i.Name,
+		&i.RuntimeMode,
+		&i.Provider,
+		&i.Status,
+		&i.DeviceInfo,
+		&i.Metadata,
+		&i.LastSeenAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerID,
+		&i.LegacyDaemonID,
+		&i.Visibility,
+		&i.ProfileID,
+		&i.CustomName,
+	)
+	return i, err
+}
+
 const listAgentRuntimesByOwner = `-- name: ListAgentRuntimesByOwner :many
 SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, visibility, profile_id, custom_name FROM agent_runtime
 WHERE workspace_id = $1 AND owner_id = $2

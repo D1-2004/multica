@@ -9,19 +9,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 type coordQueriesStub struct {
-	inbound   bool
-	persona   string
-	replyTone string
-	page      []db.ChatMessage
-	listErr   error
-	lastList  db.ListChatMessagesPageParams
-	listCalls int
+	inbound    bool
+	persona    string
+	replyTone  string
+	page       []db.ChatMessage
+	listErr    error
+	lastList   db.ListChatMessagesPageParams
+	listCalls  int
+	sceneFlags db.AgentSceneMemoryFlags
 }
 
 func (s *coordQueriesStub) ListChatMessagesPage(_ context.Context, arg db.ListChatMessagesPageParams) ([]db.ChatMessage, error) {
@@ -49,6 +51,24 @@ func (s *coordQueriesStub) GetAgentVoice(context.Context, pgtype.UUID) (db.GetAg
 	return db.GetAgentVoiceRow{Persona: s.persona, ReplyTone: s.replyTone}, nil
 }
 
+func (s *coordQueriesStub) GetAgentSceneMemoryFlags(context.Context, pgtype.UUID) (db.AgentSceneMemoryFlags, error) {
+	return s.sceneFlags, nil
+}
+
+type sceneMemoryStub struct {
+	rows map[string]db.SceneMemory
+	last scenememory.Identity
+}
+
+func (s *sceneMemoryStub) Get(_ context.Context, id scenememory.Identity) (db.SceneMemory, error) {
+	s.last = id
+	row, ok := s.rows[id.SceneKey]
+	if !ok {
+		return db.SceneMemory{}, context.Canceled
+	}
+	return row, nil
+}
+
 func testAgentID() pgtype.UUID {
 	return pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
 }
@@ -60,6 +80,17 @@ func TestIssueTitlePrefersUserMessageWhenLookIntoIsShort(t *testing.T) {
 	}
 }
 
+func TestIssueTitleUsesDeliverableNotDelegatorPrefix(t *testing.T) {
+	got := IssueTitle(Decision{Purpose: "冬翔委托：向dxxh确认明天上午有没有空"}, "原文")
+	if got != "向dxxh确认明天上午有没有空" {
+		t.Fatalf("title=%q", got)
+	}
+	got = IssueTitle(Decision{Purpose: "冬翔委托：<@abc> 向dxxh确认明天有空"}, "")
+	if got != "向dxxh确认明天有空" {
+		t.Fatalf("mention title=%q", got)
+	}
+}
+
 func TestParseDecisionReply(t *testing.T) {
 	got := parseDecision(`{"action":"reply","text":"在的，今天想先对哪件事？","look_into":"","reason":"这是打招呼"}`, Turn{Source: SourceWeb})
 	if got.Action != ActionReply || got.UserText == "" || got.Reason != "这是打招呼" {
@@ -67,13 +98,30 @@ func TestParseDecisionReply(t *testing.T) {
 	}
 }
 
-func TestParseDecisionIssueFillsAck(t *testing.T) {
+func TestParseDecisionIssueEmptyTextContinues(t *testing.T) {
 	got := parseDecision(`{"action":"issue","text":"","look_into":"报名截止时间"}`, Turn{Source: SourceDigitalEmployee, Message: "看下截止"})
-	if got.Action != ActionIssue {
-		t.Fatalf("action = %s", got.Action)
+	if got.Action != ActionContinue {
+		t.Fatalf("empty issue text must not synthesize an ack, got %s text=%q", got.Action, got.UserText)
 	}
-	if !strings.Contains(got.UserText, "报名截止时间") {
-		t.Fatalf("ack = %q", got.UserText)
+	if strings.Contains(got.UserText, "核对") {
+		t.Fatalf("ack fallback leaked: %q", got.UserText)
+	}
+}
+
+func TestParseDecisionIssueDropsFinishIssueID(t *testing.T) {
+	got := parseDecision(`{"action":"issue","text":"我去问冬翔晚上打不打球","issue_id":"8aae2a90-009e-4338-b17a-13ce6ff2f82a","delegator":"冬翔","purpose":"向冬翔确认晚上是否打球","intent":"ask"}`, Turn{
+		Source:     SourceRobot,
+		SenderName: "冬翔",
+		Message:    "问下冬翔晚上打球",
+	})
+	if got.Action != ActionIssue {
+		t.Fatalf("action=%s", got.Action)
+	}
+	if got.IssueID != "" {
+		t.Fatalf("finish must not continue via issue_id, issue_id=%q", got.IssueID)
+	}
+	if got.UserText != "我去问冬翔晚上打不打球" {
+		t.Fatalf("text=%q", got.UserText)
 	}
 }
 
@@ -330,6 +378,193 @@ func TestBuildUserPromptDingTalkHistoryNewestFirst(t *testing.T) {
 	newer := strings.Index(prompt, "较新的消息")
 	if older < 0 || newer < 0 || newer > older {
 		t.Fatalf("want newest-first dingtalk history, prompt=%q", prompt)
+	}
+}
+
+func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:              SourceDigitalEmployee,
+		Addressed:           true,
+		ChatType:            "p2p",
+		Message:             "GoalMate 是什么",
+		SceneMemory:         "## 稳定知识与约定\n- GoalMate 是工具，不是数字员工",
+		SceneMemoryRevision: 4,
+	})
+	if !strings.Contains(prompt, "scene_memory_revision: 4") {
+		t.Fatalf("missing revision: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Host-provided") || !strings.Contains(prompt, "GoalMate 是工具，不是数字员工") {
+		t.Fatalf("missing scene memory: %q", prompt)
+	}
+	if !strings.Contains(systemPrompt, "assoc_recall remains the only Issue truth") {
+		t.Fatal("system prompt must keep assoc as the only issue truth")
+	}
+	if !strings.Contains(systemPrompt, "finish action=reply from scene_memory only") {
+		t.Fatal("system prompt must allow scene_memory to answer scene questions")
+	}
+	if !strings.Contains(systemPrompt, "do not call issue_comment_add") {
+		t.Fatal("system prompt must not comment onto a busy Issue")
+	}
+	if !strings.Contains(systemPrompt, "Teaching or correcting this scene") {
+		t.Fatal("system prompt must not open an Issue for scene teaching")
+	}
+	if !strings.Contains(systemPrompt, "从记忆里去掉 X") {
+		t.Fatal("system prompt must treat dropping a scene fact as memory rewrite, not an Issue")
+	}
+	if !strings.Contains(systemPrompt, "reply from scene_memory only") {
+		t.Fatal("system prompt must answer 有哪些记忆 from scene_memory only")
+	}
+	if !strings.Contains(systemPrompt, "手头有哪些事情") {
+		t.Fatal("system prompt must not list scene_memory bullets as open work")
+	}
+}
+
+func TestBuildUserPromptResetShowsEmptyHostBlock(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:              SourceDigitalEmployee,
+		Addressed:           true,
+		ChatType:            "p2p",
+		Message:             "ALPHA-7749 是什么",
+		SceneMemory:         "",
+		SceneMemoryRevision: 3,
+		DingTalkHistory: []HistoryLine{
+			{Role: "user", Content: "灌水12：食堂窗口12 今天供应番茄炒蛋，与探针无关。"},
+		},
+	})
+	if !strings.Contains(prompt, "scene_memory_revision: 3") {
+		t.Fatalf("reset still injects revision: %q", prompt)
+	}
+	if !strings.Contains(prompt, "(empty)") {
+		t.Fatalf("reset Host block must be empty: %q", prompt)
+	}
+	if strings.Contains(prompt, "ALPHA-7749 是会议室预约脚本") {
+		t.Fatalf("cleared text must not reappear in Host block: %q", prompt)
+	}
+}
+
+func TestBuildUserPromptHostFactOutsideLastNHistory(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:              SourceDigitalEmployee,
+		Addressed:           true,
+		ChatType:            "p2p",
+		Message:             "ALPHA-7749 是什么",
+		SceneMemory:         "蓝鲸探针 ALPHA-7749 是会议室预约脚本，不是数字员工。",
+		SceneMemoryRevision: 5,
+		DingTalkHistory: []HistoryLine{
+			{Role: "user", Content: "灌水12：食堂窗口12 今天供应番茄炒蛋，与探针无关。"},
+		},
+	})
+	host, history, current := splitCoordinatorPrompt(prompt)
+	if !strings.Contains(host, "ALPHA-7749") || !strings.Contains(host, "会议室预约脚本") {
+		t.Fatalf("host missing probe: %q", host)
+	}
+	if strings.Contains(history, "ALPHA-7749") {
+		t.Fatalf("last-N history leaked probe: %q", history)
+	}
+	if !strings.Contains(current, "ALPHA-7749 是什么") {
+		t.Fatalf("current message missing ask: %q", current)
+	}
+}
+
+func TestPrefetchSceneMemoryInjectsMatchingSceneOnly(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: "GAMMA-A-881 是报表工具", MemoryRevision: 2},
+		"cid-b": {SceneKey: "cid-b", MemoryText: "这个群还没有口径", MemoryRevision: 1},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
+		SceneMemory: mem,
+	}
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ChatType:       "group",
+		AgentID:        testAgentID(),
+		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		ConversationID: "cid-b",
+		DWSOrgID:       "org-1",
+	}
+	c.prefetchSceneMemory(context.Background(), &turn)
+	if turn.SceneMemory != "这个群还没有口径" || turn.SceneMemoryRevision != 1 {
+		t.Fatalf("got %q rev=%d", turn.SceneMemory, turn.SceneMemoryRevision)
+	}
+	if strings.Contains(turn.SceneMemory, "报表工具") {
+		t.Fatal("group A leaked into group B")
+	}
+	if mem.last.SceneKind != scenememory.KindGroup || mem.last.SceneKey != "cid-b" {
+		t.Fatalf("lookup identity=%+v", mem.last)
+	}
+}
+
+func TestPrefetchSceneMemorySkippedWhenRecallDisabled(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: "不该出现", MemoryRevision: 4},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{},
+		SceneMemory: mem,
+	}
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ChatType:       "p2p",
+		AgentID:        testAgentID(),
+		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		ConversationID: "cid-a",
+		DWSOrgID:       "org-1",
+	}
+	c.prefetchSceneMemory(context.Background(), &turn)
+	if turn.SceneMemory != "" || turn.SceneMemoryRevision != 0 {
+		t.Fatalf("recall-off injected %q rev=%d", turn.SceneMemory, turn.SceneMemoryRevision)
+	}
+}
+
+func TestPrefetchSceneMemorySkippedForWebAndRobot(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: "不该出现", MemoryRevision: 4},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
+		SceneMemory: mem,
+	}
+	for _, source := range []Source{SourceWeb, SourceRobot} {
+		turn := Turn{
+			Source:         source,
+			ChatType:       "p2p",
+			AgentID:        testAgentID(),
+			WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+			ConversationID: "cid-a",
+			DWSOrgID:       "org-1",
+		}
+		c.prefetchSceneMemory(context.Background(), &turn)
+		if turn.SceneMemory != "" {
+			t.Fatalf("%s injected %q", source, turn.SceneMemory)
+		}
+	}
+}
+
+func splitCoordinatorPrompt(prompt string) (host, history, current string) {
+	const currentMark = "\ncurrent_message:\n"
+	const histMark = "\nrecent_dingtalk_history (newest first):\n"
+	if i := strings.Index(prompt, currentMark); i >= 0 {
+		current = prompt[i+len(currentMark):]
+		prompt = prompt[:i]
+	}
+	if i := strings.Index(prompt, histMark); i >= 0 {
+		history = prompt[i+len(histMark):]
+		prompt = prompt[:i]
+	}
+	host = prompt
+	return
+}
+
+func TestBuildUserPromptOmitsSceneMemoryWhenUnset(t *testing.T) {
+	prompt := buildUserPrompt(Turn{
+		Source:    SourceDigitalEmployee,
+		Addressed: true,
+		ChatType:  "p2p",
+		Message:   "你好",
+	})
+	if strings.Contains(prompt, "scene_memory") {
+		t.Fatalf("unset memory must not appear: %q", prompt)
 	}
 }
 

@@ -129,6 +129,8 @@ multica skill import --url <skill-url>
 multica agent skills add <agent-id> --skill-ids <skill-id>
 ```
 
+`multica skill list` returns metadata only. Every row carries `content_omitted: true` and `files_omitted: true`; the SKILL.md body and the skill's files are never in the list payload. A missing `content` key means "not returned by this endpoint", not "empty" — coerce it to an empty string and a sync script will conclude a live skill was wiped. Fetch `multica skill get <skill-id>` for the body and `multica skill files list <skill-id> --output json` for file contents before diffing against local files.
+
 When an import hits a skill with the same name, the default is to stop without modifying existing content. Pick by intent:
 
 ```bash

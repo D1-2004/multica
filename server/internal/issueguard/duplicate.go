@@ -17,8 +17,23 @@ func NormalizeTitle(title string) string {
 	return strings.ToLower(strings.Join(strings.Fields(title), " "))
 }
 
+// DuplicateMessage renders the rejection an idempotent caller sees when a
+// create is refused. It is the ONLY surface that explains the guard — both
+// "active" and the match scope are otherwise defined nowhere but the SQL — so
+// the definition is spelled out inline instead of left to be inferred from the
+// word "duplicate".
+//
+// It must track FindActiveDuplicateIssue (server/pkg/db/queries/issue.sql):
+// active is `status NOT IN ('done', 'cancelled')`, and the match is scoped to
+// the same workspace with `project_id` and `parent_issue_id` compared
+// NULL-equally (`IS NOT DISTINCT FROM`) and the title compared after
+// NormalizeTitle (lower-cased, whitespace runs collapsed). Change the query and
+// this message together.
 func DuplicateMessage(identifier, title, status string) string {
-	return "Active duplicate issue exists: " + identifier + " " + title + " (status: " + status + "). Set allow_duplicate=true or use --allow-duplicate to create another."
+	return "Active duplicate issue exists: " + identifier + " " + title + " (status: " + status + "). " +
+		"Active means any status except done and cancelled; the match is scoped to the same project and parent issue, " +
+		"comparing titles case-insensitively with runs of whitespace collapsed. " +
+		"Set allow_duplicate=true or use --allow-duplicate to create another."
 }
 
 type ActiveDuplicateError struct {

@@ -78,6 +78,7 @@ import {
 } from "./skill-list-actions";
 import { useT } from "../../i18n";
 import { ResourceLabelPicker } from "../../labels/resource-label-picker";
+import { OwnerTransferControl } from "../../common/owner-transfer-control";
 
 const SKILL_MD = "SKILL.md";
 
@@ -416,23 +417,30 @@ function OverviewTab({
   name,
   description,
   canEdit,
-  creatorName,
+  canTransferOwner,
+  creator,
+  members,
   skillAgents,
   onNameChange,
   onDescriptionChange,
   onAddToAgents,
+  onTransferOwner,
 }: {
   skill: Skill;
   name: string;
   description: string;
   canEdit: boolean;
-  creatorName: string | null;
+  canTransferOwner: boolean;
+  creator: MemberWithUser | null;
+  members: MemberWithUser[];
   skillAgents: Agent[];
   onNameChange: (value: string) => void;
   onDescriptionChange: (value: string) => void;
   onAddToAgents: () => void;
+  onTransferOwner: (userId: string) => Promise<void>;
 }) {
   const { t } = useT("skills");
+  const { t: tCommon } = useT("common");
 
   return (
     <div className="mx-auto w-full max-w-3xl p-4 sm:p-6 md:p-8">
@@ -483,6 +491,25 @@ function OverviewTab({
               canEdit={canEdit}
             />
           </PropertyRow>
+
+          <PropertyRow label={t(($) => $.detail.overview.creator)}>
+            <OwnerTransferControl
+              ownerId={skill.created_by}
+              owner={creator}
+              members={members}
+              canTransfer={canTransferOwner}
+              descriptionFor={(ownerName) =>
+                t(($) => $.detail.overview.transfer_owner_description, {
+                  name: skill.name,
+                  owner: ownerName,
+                })
+              }
+              onTransfer={async (userId) => {
+                await onTransferOwner(userId);
+                toast.success(tCommon(($) => $.owner_transfer.transferred));
+              }}
+            />
+          </PropertyRow>
         </div>
       </section>
 
@@ -509,8 +536,8 @@ function OverviewTab({
       <p className="mt-10 rounded-lg bg-muted px-3 py-2.5 text-caption leading-relaxed text-muted-foreground">
         {canEdit
           ? t(($) => $.detail.overview.permissions_owner)
-          : creatorName
-            ? t(($) => $.detail.overview.permissions_locked_creator, { name: creatorName })
+          : creator
+            ? t(($) => $.detail.overview.permissions_locked_creator, { name: creator.name })
             : t(($) => $.detail.overview.permissions_locked)}
       </p>
     </div>
@@ -719,6 +746,7 @@ function FilesTab({
 
 export function SkillDetailPage({ skillId }: { skillId: string }) {
   const { t } = useT("skills");
+  const { t: tCommon } = useT("common");
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const paths = useWorkspacePaths();
@@ -1253,11 +1281,27 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
             name={name}
             description={description}
             canEdit={canEdit}
-            creatorName={creator?.name ?? null}
+            canTransferOwner={skillPermissions.canTransferOwner.allowed}
+            creator={creator}
+            members={members}
             skillAgents={skillAgents}
             onNameChange={setName}
             onDescriptionChange={setDescription}
             onAddToAgents={() => setShowAddToAgents(true)}
+            onTransferOwner={async (userId) => {
+              try {
+                const updated = await api.transferSkillOwner(skill.id, userId);
+                qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
+                qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
+              } catch (e) {
+                toast.error(
+                  e instanceof Error
+                    ? e.message
+                    : tCommon(($) => $.owner_transfer.failed),
+                );
+                throw e;
+              }
+            }}
           />
         ) : (
           <FilesTab

@@ -195,7 +195,9 @@
       "used_by_empty": "Not assigned to any agent yet. Open an agent's Skills tab to assign.",
       "permissions_owner": "You can edit and delete this skill. Changes take effect on the next agent run.",
       "permissions_locked_creator": "Only the creator ({{name}}) or a workspace admin can edit this skill.",
-      "permissions_locked": "Only the creator or a workspace admin can edit this skill."
+      "permissions_locked": "Only the creator or a workspace admin can edit this skill.",
+      "creator": "Creator",
+      "transfer_owner_description": "\"{{name}}\" will be owned by {{owner}}. Only the new creator can overwrite this skill by re-importing it from a runtime."
     },
     "files": {
       "list_aria": "Skill files",

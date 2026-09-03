@@ -48,15 +48,17 @@ import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
+import { SceneMemoryTab } from "./tabs/scene-memory-tab";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
 
-type DetailSection = "overview" | "work" | "inbound" | "capabilities" | "settings";
+type DetailSection = "overview" | "work" | "inbound" | "memory" | "capabilities" | "settings";
 
 export type DetailTab =
   | "overview"
   | "work"
   | "inbound"
+  | "memory"
   | "instructions"
   | "okr"
   | "skills"
@@ -119,6 +121,7 @@ const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "overview", labelKey: "overview" },
   { id: "work", labelKey: "work" },
   { id: "inbound", labelKey: "inbound" },
+  { id: "memory", labelKey: "memory" },
   { id: "capabilities", labelKey: "capabilities" },
   { id: "settings", labelKey: "settings" },
 ];
@@ -129,6 +132,7 @@ const DETAIL_VIEWS = new Set<DetailTab>([
   "overview",
   "work",
   "inbound",
+  "memory",
   ...CAPABILITY_TABS.map((tab) => tab.id),
   ...SETTINGS_TABS.map((tab) => tab.id),
 ]);
@@ -141,6 +145,7 @@ function sectionForView(view: DetailTab): DetailSection {
   if (view === "overview") return "overview";
   if (view === "work") return "work";
   if (view === "inbound") return "inbound";
+  if (view === "memory") return "memory";
   if (CAPABILITY_IDS.has(view)) return "capabilities";
   return "settings";
 }
@@ -154,11 +159,13 @@ interface AgentOverviewPaneProps {
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
   currentUserId?: string | null;
   canEdit: boolean;
+  canTransferOwner?: boolean;
   canOperateDingTalkBinding: boolean;
   dingTalkBindingPermissionLoading: boolean;
   source?: AgentSource | null;
   sourceSyncing?: boolean;
   onSourceSync?: () => void;
+  onTransferOwner?: (userId: string) => Promise<void>;
   navIntent?: DetailTab | null;
   onNavIntentHandled?: () => void;
 }
@@ -166,7 +173,8 @@ interface AgentOverviewPaneProps {
 /**
  * Agent workbench organised around user intent instead of backend fields.
  * Overview answers "what is happening now?", Work owns the issue surface,
- * Inbound lists short-loop channel transcripts, Capabilities describes what
+ * Inbound lists short-loop channel transcripts, Memory holds scene text,
+ * issue links, and the write/recall switches, Capabilities describes what
  * the agent can do, and Settings describes how it runs. The lower-level
  * editors stay intact so the reorganisation does not alter persistence or
  * permission semantics.
@@ -180,11 +188,13 @@ export function AgentOverviewPane({
   onUpdate,
   currentUserId,
   canEdit,
+  canTransferOwner = false,
   canOperateDingTalkBinding,
   dingTalkBindingPermissionLoading,
   source = null,
   sourceSyncing = false,
   onSourceSync,
+  onTransferOwner,
   navIntent,
   onNavIntentHandled,
 }: AgentOverviewPaneProps) {
@@ -296,10 +306,11 @@ export function AgentOverviewPane({
         "overview",
         "work",
         "inbound",
+        ...(canEdit ? (["memory"] as const) : []),
         ...visibleCapabilityTabs.map((tab) => tab.id),
         ...visibleSettingsTabs.map((tab) => tab.id),
       ]),
-    [visibleCapabilityTabs, visibleSettingsTabs],
+    [canEdit, visibleCapabilityTabs, visibleSettingsTabs],
   );
 
   const effectiveView = visibleViews.has(activeView) ? activeView : "overview";
@@ -330,7 +341,12 @@ export function AgentOverviewPane({
   );
 
   const requestSection = (section: DetailSection) => {
-    if (section === "overview" || section === "work" || section === "inbound") {
+    if (
+      section === "overview" ||
+      section === "work" ||
+      section === "inbound" ||
+      section === "memory"
+    ) {
       requestView(section);
       return;
     }
@@ -392,7 +408,10 @@ export function AgentOverviewPane({
         aria-label={t(($) => $.tabs.page_navigation_aria)}
       >
         <div className="mx-auto flex max-w-[1440px] items-center gap-6">
-          {TOP_TABS.map((tab) => (
+          {(canEdit
+            ? TOP_TABS
+            : TOP_TABS.filter((tab) => tab.id !== "memory")
+          ).map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -420,7 +439,7 @@ export function AgentOverviewPane({
           "min-h-0 flex-1",
           isSecondaryLayout
             ? "overflow-y-auto md:overflow-hidden"
-            : effectiveView === "inbound"
+            : effectiveView === "inbound" || effectiveView === "memory"
               ? "overflow-hidden"
               : "overflow-y-auto",
         )}
@@ -433,10 +452,13 @@ export function AgentOverviewPane({
                 agent={agent}
                 runtime={runtime}
                 owner={owner}
+                members={members}
+                canTransferOwner={canTransferOwner}
                 source={source}
                 canSyncSource={canEdit}
                 sourceSyncing={sourceSyncing}
                 onSourceSync={onSourceSync}
+                onTransferOwner={onTransferOwner}
               />
             </div>
           </div>
@@ -451,6 +473,16 @@ export function AgentOverviewPane({
         {effectiveView === "inbound" && (
           <div className="flex h-full min-h-0 flex-1 flex-col">
             <CoordinatorSessionsTab agent={agent} />
+          </div>
+        )}
+
+        {effectiveView === "memory" && (
+          <div className="flex h-full min-h-0 flex-1 flex-col">
+            <SceneMemoryTab
+              agent={agent}
+              canEdit={canEdit}
+              onUpdate={onUpdate}
+            />
           </div>
         )}
 

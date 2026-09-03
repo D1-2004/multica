@@ -69,6 +69,17 @@ type SkillSummaryResponse struct {
 	// Enabled is only populated for agent-scoped skill responses. Workspace
 	// skill lists describe the skill itself, so they omit assignment state.
 	Enabled *bool `json:"enabled,omitempty"`
+	// ContentOmitted and FilesOmitted are always true here. They exist so a
+	// client can tell "withheld by this endpoint" apart from "the skill is
+	// empty": without a positive marker the absent `content` key coerces to
+	// "" in most scripting languages (`row.get("content", "")`, `.content //
+	// ""`), and a diffing caller reads that as a wiped body. Fetch
+	// `GET /api/skills/{id}` for the SKILL.md body and
+	// `GET /api/skills/{id}/files` for file contents before comparing
+	// against local state. A missing key means "not returned here", never
+	// "empty".
+	ContentOmitted bool `json:"content_omitted"`
+	FilesOmitted   bool `json:"files_omitted"`
 }
 
 // AgentSkillSummary is the still-narrower shape used for skills embedded in
@@ -81,6 +92,21 @@ type AgentSkillSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Enabled     bool   `json:"enabled"`
+}
+
+// MarshalJSON stamps the same always-true omission markers onto the embedded
+// agent-skill shape. They are emitted by the marshaller rather than declared
+// as struct fields because AgentSkillSummary is built by plain composite
+// literals in agent.go; a plain bool field would default to false there and
+// tell clients the opposite of the truth. The alias indirection keeps future
+// fields flowing through automatically and avoids recursing into this method.
+func (s AgentSkillSummary) MarshalJSON() ([]byte, error) {
+	type alias AgentSkillSummary
+	return json.Marshal(struct {
+		alias
+		ContentOmitted bool `json:"content_omitted"`
+		FilesOmitted   bool `json:"files_omitted"`
+	}{alias: alias(s), ContentOmitted: true, FilesOmitted: true})
 }
 
 type SkillFileResponse struct {
@@ -197,6 +223,11 @@ func skillSummaryToResponse(
 		CreatedBy:   uuidToPtr(createdBy),
 		CreatedAt:   timestampToString(createdAt),
 		UpdatedAt:   timestampToString(updatedAt),
+		// Constant for every list surface: this constructor feeds ListSkills,
+		// ListAgentSkills and writeUpdatedAgentSkills, none of which SELECT
+		// the content column or join skill_file.
+		ContentOmitted: true,
+		FilesOmitted:   true,
 	}
 }
 
