@@ -28,6 +28,14 @@ own absolute task relay URL. The two destinations do not override each other:
 after receiving one paired event, Multica forwards the unchanged JSON to
 Router, and additionally to the static sink only when its switch is enabled.
 
+When the server has a Langfuse exporter configured (`LANGFUSE_*` keys, see
+`docs/langfuse-observability.md`), capture is enabled for every task on a
+capable Runtime regardless of the Router callback or the Agent switch, and
+each paired event is additionally parsed into a Langfuse generation under the
+task's trace. The Langfuse fan-out counts as a delivery destination, so the
+relay accepts payloads with neither Router nor static sink configured; it
+never changes what Router or the static sink receive.
+
 Multica passes these values only in the task's sandbox execution environment:
 
 - `MULTICA_LLM_TRACE_ENABLED`
@@ -129,3 +137,4 @@ status, task identity, sequence, sizes, and bounded error classification.
 | 2026-08-08 | Unified all sandbox trace delivery through daemon-authenticated Multica ingress and added server-side fan-out to both Router telemetry and the Agent static sink | Prevent a dynamic Router callback from suppressing the original trace destination, keep Router capabilities out of the sandbox, and reuse the same proven control-plane path as task lifecycle reporting |
 | 2026-08-13 | Added nullable `executionSummary.first_effective_reply_at` from the task's first persisted Agent activity by message-stream order; no historical outbox rows are backfilled | Preserve first-reply latency metrics after Router stopped fetching the post-terminal transcript |
 | 2026-08-20 | Made task-scoped Router telemetry default-on and limited the Agent `enabled` switch to the configured static sink | Preserve platform observability for every Router-dispatched task while keeping external trace forwarding explicitly controlled by the Agent setting |
+| 2026-09-03 | Added the Langfuse fan-out: paired events become generations under the task trace, and a configured exporter turns capture on for every task on a capable Runtime | Give the Daemon side the same Langfuse view as the Coordinator and memory loops without rebuilding the runtime image |
