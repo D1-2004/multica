@@ -125,10 +125,16 @@ type TraceOptions struct {
 	// RootSpanID optionally pins the root observation id (16 hex chars, see
 	// DeterministicSpanID) so producers in other requests can parent under it.
 	RootSpanID string
-	Name       string
-	Type       ObservationType
-	UserID     string
-	SessionID  string
+	// Name names the root observation and, unless NoTraceName is set, the
+	// trace itself.
+	Name string
+	// NoTraceName keeps langfuse.trace.name off every span so a trace owned
+	// by another producer (a coordinator turn that started this task) keeps
+	// its own name; Langfuse lets the latest span rename a trace.
+	NoTraceName bool
+	Type        ObservationType
+	UserID      string
+	SessionID   string
 	// Tags must be complete when the trace starts: Langfuse freezes them on
 	// the first span it ingests. Put outcome-dependent values in Metadata.
 	Tags []string
@@ -243,7 +249,7 @@ func (c *Client) StartTrace(ctx context.Context, opts TraceOptions) *Trace {
 // outcome fields (action, status) are metadata rather than tags.
 func (c *Client) traceAttributes(opts TraceOptions) []attribute.KeyValue {
 	attrs := append([]attribute.KeyValue{}, c.baseAttrs...)
-	if name := strings.TrimSpace(opts.Name); name != "" {
+	if name := strings.TrimSpace(opts.Name); name != "" && !opts.NoTraceName {
 		attrs = append(attrs, attribute.String(attrTraceName, name))
 	}
 	if user := strings.TrimSpace(opts.UserID); user != "" {

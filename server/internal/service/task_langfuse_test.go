@@ -111,8 +111,8 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 		}
 	}
 
-	if opts.Name != taskTraceName {
-		t.Fatalf("task-owned trace name = %q", opts.Name)
+	if opts.Name != taskTraceName || opts.NoTraceName {
+		t.Fatalf("task-owned trace name = %q (no-trace-name=%v)", opts.Name, opts.NoTraceName)
 	}
 
 	// Without a chat trace the task id is the trace root, as the daemon sees it.
@@ -127,8 +127,8 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 		ID: taskID, CreatedAt: task.CreatedAt,
 		Context: []byte(`{"coordinator_trace_id":"5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7"}`),
 	}, nil, nil)
-	if owned.Name != "" {
-		t.Fatalf("coordinator-owned trace name = %q, want empty", owned.Name)
+	if owned.Name != taskTraceName || !owned.NoTraceName {
+		t.Fatalf("coordinator-owned trace: root name %q, no-trace-name=%v", owned.Name, owned.NoTraceName)
 	}
 	if got, _ := owned.Metadata["coord_trace_id"].(string); got != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
 		t.Fatalf("coord_trace_id metadata = %q", got)

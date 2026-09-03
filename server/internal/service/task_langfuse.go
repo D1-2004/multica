@@ -207,22 +207,20 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 	if sessionID == "" {
 		sessionID = util.UUIDToString(task.ChatSessionID)
 	}
-	// A task started by a coordinator turn shares that turn's trace, which is
-	// already named inbound_coordinator; Langfuse lets the latest span rename
-	// a trace, so such tasks leave the name alone.
-	name := taskTraceName
-	if tc.CoordinatorTraceID != "" {
-		name = ""
-	}
 	return langfuse.TraceOptions{
 		TraceID:    traceID,
 		RootSpanID: TaskLangfuseRootSpanID(taskID),
-		Name:       name,
-		Type:       langfuse.TypeAgent,
-		UserID:     userID,
-		SessionID:  sessionID,
-		Tags:       tags,
-		Metadata:   metadata,
+		Name:       taskTraceName,
+		// A task started by a coordinator turn shares that turn's trace, which
+		// is already named inbound_coordinator; Langfuse lets the latest span
+		// rename a trace, so such tasks keep their root observation name but
+		// never name the trace.
+		NoTraceName: tc.CoordinatorTraceID != "",
+		Type:        langfuse.TypeAgent,
+		UserID:      userID,
+		SessionID:   sessionID,
+		Tags:        tags,
+		Metadata:    metadata,
 	}
 }
 
