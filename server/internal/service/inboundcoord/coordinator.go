@@ -145,7 +145,7 @@ func ContextWithTraceID(ctx context.Context, traceID string) context.Context {
 	return context.WithValue(ctx, turnTraceIDKey{}, traceID)
 }
 
-func traceIDFromContext(ctx context.Context) string {
+func TraceIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""
 	}
@@ -238,7 +238,7 @@ func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 // existing sandbox enqueue so a missing model never silences users.
 func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision) {
 	if strings.TrimSpace(turn.TraceID) == "" {
-		turn.TraceID = traceIDFromContext(ctx)
+		turn.TraceID = TraceIDFromContext(ctx)
 	}
 	var turnTrace *langfuse.Trace
 	var loopErr error
