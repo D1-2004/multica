@@ -490,6 +490,10 @@ func (c DispatchCommand) validateChannelMessageCreated() error {
 	if c.Source.Type == "robot" && strings.TrimSpace(c.Event.Data.Sender.OpenDingTalkID) == "" && strings.TrimSpace(c.Event.Data.Sender.SenderOpenDingTalkID) == "" && strings.TrimSpace(c.Event.Data.Sender.StaffID) == "" {
 		return errors.New("event.data.sender identity is required")
 	}
+	controlAction := "dispatch"
+	if c.Control != nil {
+		controlAction = c.Control.Action
+	}
 	for _, m := range c.Event.Data.Messages {
 		if strings.TrimSpace(m.OpenMsgID) == "" {
 			return errors.New("each message needs openMsgId and text or attachment")
@@ -502,7 +506,7 @@ func (c DispatchCommand) validateChannelMessageCreated() error {
 			}
 			continue
 		}
-		if strings.TrimSpace(m.Text) == "" && len(m.Attachments) == 0 {
+		if controlAction == "dispatch" && strings.TrimSpace(m.Text) == "" && len(m.Attachments) == 0 {
 			return errors.New("each message needs openMsgId and text or attachment")
 		}
 	}

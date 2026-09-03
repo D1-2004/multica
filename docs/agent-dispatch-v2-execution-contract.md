@@ -194,10 +194,12 @@ structures; Multica never infers control from the message text:
   terminal callback with `executionStatus=canceled`.
 - `/cancel` sends `action=cancel` plus the exact canonical UUID in
   `targetExternalTaskId`. It also replays the target's chat continuation but
-  sends no completion callback for the command itself. Multica verifies that
-  the target belongs to that Agent and chat session, cancels only an active
-  task, preserves the ingested IM input, and creates no new task. Queued turns
-  are retained. Repeating cancellation for a terminal target is idempotent.
+  sends no message text or completion callback for the command itself. Multica
+  still requires the message envelope and `openMsgId`, but does not require
+  text or an attachment for `action=cancel`. It verifies that the target belongs
+  to that Agent and chat session, cancels only an active task, preserves the
+  ingested IM input, and creates no new task. Queued turns are retained.
+  Repeating cancellation for a terminal target is idempotent.
 
 A dispatch control returns the ordinary Chat continuation and task id. A steer
 also returns `controlResult` with the promoted task and, when present, the
@@ -1024,3 +1026,13 @@ parsing or rewriting Router's context string.
   Router-owned dispatch caused a correctly continuation-free `/new` request to
   rediscover the previous Chat and made completion routing appear coupled to a
   binding that Router does not use.
+
+## Change record: 2026-09-01 Action-specific IM control validation
+
+- History: Agent Dispatch V2 now validates message content according to
+  `control.action`. The default `dispatch` action still requires text or an
+  attachment, while `cancel` accepts the Router's command envelope with an
+  `openMsgId` and no remaining message content.
+- Reason: The Router removes the `/cancel` command before dispatch. Applying
+  ordinary dispatch-content validation before the cancel branch rejected a
+  valid cancellation before Multica could validate and cancel its target task.

@@ -1308,6 +1308,9 @@ func TestHandleAgentDispatchV2IMControls(t *testing.T) {
 				"surface":{"type":"chat"},"outbound":{"mode":"dws","replyTo":"latest_message"},
 				"externalIdentity":{"contextToken":"sealed-im-control-context","expiresAt":4102444800000}
 			}`, secondIdentity, controlJSON, firstDispatchID, secondDispatchID)
+			if tc.wantNoNewTask {
+				secondBody = strings.Replace(secondBody, `"text":"控制旧任务"`, `"text":null`, 1)
+			}
 			if !tc.wantNoNewTask {
 				secondBody = strings.Replace(secondBody, `"source":`, fmt.Sprintf(`"completionCallback":{"url":"/api/v1/dispatch-tasks/%s/execution-result"},"source":`, secondDispatchID), 1)
 			}
