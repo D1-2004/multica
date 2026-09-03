@@ -56,7 +56,7 @@ func TestParseDWSPageCountsEmptyMessages(t *testing.T) {
 			]
 		}
 	}`)
-	page, err := parseDWSPage(raw, "")
+	page, err := parseDWSPage(raw, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestParseDWSPageAcceptsArrayResult(t *testing.T) {
 		],
 		"result": []
 	}`)
-	page, err := parseDWSPage(raw, "")
+	page, err := parseDWSPage(raw, "", "")
 	if err != nil || len(page.Events) != 1 || page.Events[0].EvidenceID != "m1" {
 		t.Fatalf("array result must not fail unmarshal: page=%+v err=%v", page, err)
 	}
@@ -93,7 +93,7 @@ func TestParseDWSPageRedactsSecrets(t *testing.T) {
 			]
 		}
 	}`)
-	page, err := parseDWSPage(raw, "")
+	page, err := parseDWSPage(raw, "", "")
 	if err != nil || len(page.Events) != 1 {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
@@ -111,7 +111,7 @@ func TestParseDWSPageAcceptsTopLevelMessages(t *testing.T) {
 			{"text":"GoalMate 是工具","createTime":"2026-09-01 12:00:00","messageId":"m1","sender":"冬翔"}
 		]
 	}`)
-	page, err := parseDWSPage(raw, "")
+	page, err := parseDWSPage(raw, "", "")
 	if err != nil || len(page.Events) != 1 || page.Events[0].EvidenceID != "m1" {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
@@ -141,12 +141,31 @@ func TestParseDWSPageMarksSelfByUID(t *testing.T) {
 			]
 		}
 	}`)
-	page, err := parseDWSPage(raw, "24710833")
+	page, err := parseDWSPage(raw, "24710833", "")
 	if err != nil || len(page.Events) != 2 {
 		t.Fatalf("page=%+v err=%v", page, err)
 	}
 	if !page.Events[0].Self || page.Events[1].Self {
 		t.Fatalf("self flags %+v %+v", page.Events[0], page.Events[1])
+	}
+}
+
+func TestParseDWSPageMarksSelfByDisplayName(t *testing.T) {
+	raw := []byte(`{
+		"success": true,
+		"result": {
+			"messages": [
+				{"content":"WS-42 已 cancelled","createTime":"2026-09-03 14:33:00","openMessageId":"m1","sender":"东翔测试号","senderId":"other"},
+				{"content":"从记忆里去掉","createTime":"2026-09-03 14:31:00","openMessageId":"m2","sender":"冬翔","senderId":"103262"}
+			]
+		}
+	}`)
+	page, err := parseDWSPage(raw, "24710833", "东翔测试号")
+	if err != nil || len(page.Events) != 2 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	if !page.Events[0].Self || page.Events[1].Self {
+		t.Fatalf("display-name self flags %+v %+v", page.Events[0], page.Events[1])
 	}
 }
 

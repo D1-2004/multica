@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -243,6 +244,11 @@ func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []H
 			messages = append(messages, msg.ToParam(), openai.ToolMessage(err.Error(), call.ID))
 			continue
 		}
+		text = sanitizeFlushText(text, batch)
+		if !ValidateMemoryText(text) {
+			messages = append(messages, msg.ToParam(), openai.ToolMessage("text exceeds 1600 code points after dropping self-sourced lines", call.ID))
+			continue
+		}
 		return text, nil
 	}
 	return "", fmt.Errorf("memory flush: no commit")
@@ -256,6 +262,9 @@ func fallbackMerge(old string, batch []HistoryEvent) string {
 	var b strings.Builder
 	b.WriteString("## 场域定位\n- [推断] 本会话尚在观察中\n## 稳定知识与约定\n")
 	for _, event := range batch {
+		if event.Self {
+			continue
+		}
 		line := clipRunes(event.Speaker+": "+event.Content, 80)
 		if line == "" {
 			continue
@@ -334,7 +343,8 @@ Drop, do not keep:
 When a [peer] says 去掉/删掉/干掉/不要记/从记忆里去掉 X: delete matching bullets from every section. Do not add "X 已移除".
 When they say 整理记忆: compact — drop stale 待确认 and process notes; keep people, prefs, terms, and corrections of terms.
 
-Still skip: secrets, issue ids, tasks to execute, another scene, insults with no factual payload, health/pay/performance. Events tagged [self] are this digital employee's own messages. Do not treat them as human corrections or group consensus.
+Still skip: secrets, issue ids, tasks to execute, another scene, insults with no factual payload, health/pay/performance.
+Events tagged [self] are this digital employee. Never write them into 纠正信号, 稳定知识与约定, or 待确认 — not as a citation (来自{this agent}…), not as a fact. If current_memory already has such a bullet, delete it. [self] is only context for understanding [peer] humans.
 
 Cite every kept fact at the end of its line as (来自{speaker}, {M}月{D}日 {HH:mm}的发言) using the event clock printed below (Asia/Shanghai). Copy speaker and stamp; do not invent. Keep an older citation unless a newer event rewrites the fact.
 
@@ -400,6 +410,11 @@ func buildFlushUserPrompt(row db.SceneMemory, batch []HistoryEvent) string {
 		b.WriteString(row.MemoryText)
 		b.WriteString("\n")
 	}
+	if names := selfSpeakerNames(batch); len(names) > 0 {
+		b.WriteString("self_speakers: ")
+		b.WriteString(strings.Join(names, ", "))
+		b.WriteString(" (this digital employee; never cite in 纠正信号 / 稳定知识与约定 / 待确认)\n")
+	}
 	b.WriteString("\nevents (oldest first, clocks Asia/Shanghai):\n")
 	for _, event := range batch {
 		b.WriteString("- ")
@@ -418,4 +433,76 @@ func buildFlushUserPrompt(row db.SceneMemory, batch []HistoryEvent) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+var (
+	flushProcessDebris = regexp.MustCompile(`(?i)(commit\s+[0-9a-f]{7,}|流水线\s*\d+|下一轮.*SLS|feat/[a-z0-9._-]+|inbound-coordinator 基线|群隔离策略)`)
+	flushIssueStatus   = regexp.MustCompile(`\bWS-\d+\b`)
+)
+
+func selfSpeakerNames(batch []HistoryEvent) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0)
+	for _, event := range batch {
+		if !event.Self {
+			continue
+		}
+		name := strings.TrimSpace(event.Speaker)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func citesSelfSpeaker(line string, names []string) bool {
+	for _, name := range names {
+		if name != "" && strings.Contains(line, "来自"+name) {
+			return true
+		}
+	}
+	return false
+}
+
+func isFlushTaskBullet(line string) bool {
+	return strings.Contains(line, "需从") || strings.Contains(line, "执行情况")
+}
+
+func sanitizeFlushText(text string, batch []HistoryEvent) string {
+	names := selfSpeakerNames(batch)
+	heading := ""
+	var b strings.Builder
+	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		trimmed := strings.TrimSpace(raw)
+		if strings.HasPrefix(trimmed, "## ") {
+			heading = strings.TrimSpace(strings.TrimPrefix(trimmed, "## "))
+			b.WriteString(raw)
+			b.WriteByte('\n')
+			continue
+		}
+		switch heading {
+		case "纠正信号", "稳定知识与约定", "待确认":
+			if citesSelfSpeaker(trimmed, names) {
+				continue
+			}
+			if flushProcessDebris.MatchString(trimmed) {
+				continue
+			}
+			if heading == "纠正信号" && flushIssueStatus.MatchString(trimmed) {
+				continue
+			}
+			if (heading == "纠正信号" || heading == "待确认") && isFlushTaskBullet(trimmed) {
+				continue
+			}
+		}
+		b.WriteString(raw)
+		b.WriteByte('\n')
+	}
+	return strings.TrimSpace(b.String())
 }

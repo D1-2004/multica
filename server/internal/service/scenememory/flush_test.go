@@ -264,6 +264,9 @@ func TestBuildFlushUserPromptTagsSelfEvents(t *testing.T) {
 	if !strings.Contains(prompt, "[peer] 冬翔: GoalMate 是工具") {
 		t.Fatalf("missing peer tag: %q", prompt)
 	}
+	if !strings.Contains(prompt, "self_speakers: 测试号") {
+		t.Fatalf("missing self speaker list: %q", prompt)
+	}
 }
 
 func TestFormatFlushStampUsesShanghaiClock(t *testing.T) {
@@ -312,6 +315,59 @@ func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
 	}
 	if !strings.Contains(flushSystemPrompt, "Git SHAs") {
 		t.Fatal("flush must not keep git/pipeline e2e debris as standing knowledge")
+	}
+	if !strings.Contains(flushSystemPrompt, "Never write them into 纠正信号") {
+		t.Fatal("flush must forbid digital-employee speech in 纠正信号 and 稳定知识")
+	}
+}
+
+func TestSanitizeFlushTextDropsSelfCitationsAndProcessDebris(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"冬翔",
+		"成员：冬翔",
+		"## 稳定知识与约定",
+		"- feat/agentic-memory-view 已合入 commit d2d5c86ed，阶段 A→D 完成",
+		"- GoalMate 是账本/报表工具，不是数字员工或人（来自冬翔, 9月3日 13:31的发言）",
+		"- 多件事情沟通时使用 markdown 无序列表格式 (来自冬翔, 9月3日 13:34的发言)",
+		"## 纠正信号",
+		"- GoalMate 定位为账本/报表工具，非数字员工/人 (来自冬翔, 9月3日 10:27的发言)",
+		"- WS-42「向辰驷确认其数字员工是否具备记忆功能并测试交互」状态已改为 cancelled，该记忆测试记录已清除 (来自东翔测试号, 9月3日 14:33的发言)",
+		"- 需从冬翔机器中移除 GoalMate 相关内容 (来自冬翔, 9月3日 14:32的发言)",
+		"## 待确认",
+		"- 从冬翔机器中移除 GoalMate 相关内容的执行情况 (来自冬翔, 9月3日 14:32的发言)",
+	}, "\n")
+	got := sanitizeFlushText(raw, []HistoryEvent{
+		{Speaker: "东翔测试号", Self: true, Content: "WS-42 cancelled"},
+		{Speaker: "冬翔", Content: "从记忆里去掉"},
+	})
+	if strings.Contains(got, "东翔测试号") {
+		t.Fatalf("self citation must not survive: %q", got)
+	}
+	if strings.Contains(got, "d2d5c86ed") || strings.Contains(got, "feat/agentic-memory-view") {
+		t.Fatalf("git/process debris must not survive: %q", got)
+	}
+	if strings.Contains(got, "WS-42") || strings.Contains(got, "需从") || strings.Contains(got, "执行情况") {
+		t.Fatalf("issue/task bullets must not survive: %q", got)
+	}
+	if !strings.Contains(got, "GoalMate 是账本/报表工具") {
+		t.Fatalf("human term must stay: %q", got)
+	}
+	if !strings.Contains(got, "markdown 无序列表") {
+		t.Fatalf("human preference must stay: %q", got)
+	}
+}
+
+func TestFallbackMergeSkipsSelfEvents(t *testing.T) {
+	got := fallbackMerge("", []HistoryEvent{
+		{OccurredAt: parseFlushTime(), Speaker: "东翔测试号", Content: "WS-42 cancelled", Self: true},
+		{OccurredAt: parseFlushTime(), Speaker: "冬翔", Content: "GoalMate 是工具"},
+	})
+	if strings.Contains(got, "WS-42") || strings.Contains(got, "东翔测试号") {
+		t.Fatalf("self event must not seed memory: %q", got)
+	}
+	if !strings.Contains(got, "GoalMate 是工具") {
+		t.Fatalf("peer event must seed: %q", got)
 	}
 }
 

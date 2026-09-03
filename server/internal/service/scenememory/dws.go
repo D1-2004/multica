@@ -143,7 +143,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		if err != nil {
 			return nil, err
 		}
-		parsed, err := parseDWSPage(raw, identity.DwsUid)
+		parsed, err := parseDWSPage(raw, identity.DwsUid, identity.AccountDisplayName)
 		if err != nil {
 			return nil, err
 		}
@@ -274,7 +274,7 @@ type dwsPage struct {
 }
 
 func parseDWSEvents(raw []byte) ([]HistoryEvent, error) {
-	page, err := parseDWSPage(raw, "")
+	page, err := parseDWSPage(raw, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +294,7 @@ type dwsListMessage struct {
 	Self          bool   `json:"self"`
 }
 
-func parseDWSPage(raw []byte, agentUID string) (dwsPage, error) {
+func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (dwsPage, error) {
 	var payload struct {
 		Success   bool             `json:"success"`
 		ErrorCode string           `json:"errorCode"`
@@ -343,13 +343,13 @@ func parseDWSPage(raw []byte, agentUID string) (dwsPage, error) {
 			OccurredAt: occurred,
 			Speaker:    speaker,
 			Content:    content,
-			Self:       messageIsSelf(message.IsSelf, message.Self, agentUID, message.SenderID, message.SenderOpenID),
+			Self:       messageIsSelf(message.IsSelf, message.Self, agentUID, agentDisplayName, message.SenderID, message.SenderOpenID, speaker),
 		})
 	}
 	return page, nil
 }
 
-func messageIsSelf(flag *bool, self bool, agentUID, senderID, senderOpenID string) bool {
+func messageIsSelf(flag *bool, self bool, agentUID, agentDisplayName, senderID, senderOpenID, senderName string) bool {
 	if flag != nil {
 		return *flag
 	}
@@ -357,10 +357,11 @@ func messageIsSelf(flag *bool, self bool, agentUID, senderID, senderOpenID strin
 		return true
 	}
 	agentUID = strings.TrimSpace(agentUID)
-	if agentUID == "" {
-		return false
+	if agentUID != "" && (strings.TrimSpace(senderID) == agentUID || strings.TrimSpace(senderOpenID) == agentUID) {
+		return true
 	}
-	return strings.TrimSpace(senderID) == agentUID || strings.TrimSpace(senderOpenID) == agentUID
+	name := strings.TrimSpace(agentDisplayName)
+	return name != "" && strings.EqualFold(strings.TrimSpace(senderName), name)
 }
 
 func parseDWSTime(raw string) time.Time {
