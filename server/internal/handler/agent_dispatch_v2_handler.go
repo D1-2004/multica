@@ -1100,7 +1100,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
 			return
 		}
-		overrides.DispatchContext = inboundcoord.WithCoordinatorTrace(independentContext, decision.TraceID, "dingtalk", time.Now())
+		overrides.DispatchContext = inboundcoord.StampCoordinatorTrace(independentContext, decision, "dingtalk", time.Now())
 	}
 	createParams := buildAgentDispatchIssueCreateParams(
 		c,

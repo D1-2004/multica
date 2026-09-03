@@ -1077,7 +1077,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 				AllowDuplicate: true,
 				// The Issue task inherits the turn's chat trace so its Langfuse
 				// trace is the coordinator's, not a separate one.
-				DispatchContext: inboundcoord.WithCoordinatorTrace(nil, trace.TraceID, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS)),
+				DispatchContext: inboundcoord.StampCoordinatorTrace(nil, decision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS)),
 			}, service.IssueCreateOpts{
 				ActorID:          userID,
 				AnalyticsAgentID: uuidToString(session.AgentID),
@@ -1149,7 +1149,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// coordinator's trace id on the task so the two share one Langfuse trace.
 	var coordinatorContext []byte
 	if len(decision.Steps) > 0 {
-		coordinatorContext = inboundcoord.WithCoordinatorTraceID(nil, decision.TraceID)
+		coordinatorContext = inboundcoord.StampCoordinatorTrace(nil, decision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS))
 	}
 	sent, err := h.TaskService.SendDirectChatMessageWithContext(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), coordinatorContext, trace)
 	if err != nil {

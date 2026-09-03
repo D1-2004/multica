@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -62,14 +63,18 @@ func TestParseTaskTraceContextExtractsLookupKeys(t *testing.T) {
 		CoordinatorTraceID: "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7", Channel: "dingtalk",
 		DispatchSource: "digital_employee", IssueTrigger: "new_issue", SurfaceType: "issue",
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseTaskTraceContext = %+v, want %+v", got, want)
 	}
-	if empty := parseTaskTraceContext(nil); empty != (taskTraceContext{}) {
+	if empty := parseTaskTraceContext(nil); !reflect.DeepEqual(empty, taskTraceContext{}) {
 		t.Fatalf("empty context = %+v", empty)
 	}
-	if malformed := parseTaskTraceContext([]byte(`{"dispatch_event_data":"nope"`)); malformed != (taskTraceContext{}) {
+	if malformed := parseTaskTraceContext([]byte(`{"dispatch_event_data":"nope"`)); !reflect.DeepEqual(malformed, taskTraceContext{}) {
 		t.Fatalf("malformed context = %+v", malformed)
+	}
+	tagged := parseTaskTraceContext([]byte(`{"coordinator_trace_tags":["inbound_coordinator"," source:web ",""]}`))
+	if strings.Join(tagged.CoordinatorTraceTags, ",") != "inbound_coordinator,source:web" {
+		t.Fatalf("coordinator trace tags = %v", tagged.CoordinatorTraceTags)
 	}
 }
 
@@ -111,8 +116,8 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 		}
 	}
 
-	if opts.Name != taskTraceName || opts.NoTraceName {
-		t.Fatalf("task-owned trace name = %q (no-trace-name=%v)", opts.Name, opts.NoTraceName)
+	if opts.Name != taskTraceName || opts.TraceName != "" {
+		t.Fatalf("task-owned trace name = %q (trace name=%q)", opts.Name, opts.TraceName)
 	}
 
 	// Without a chat trace the task id is the trace root, as the daemon sees it.
@@ -125,13 +130,26 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 	// not rename it.
 	owned := TaskLangfuseTraceOptions(db.AgentTaskQueue{
 		ID: taskID, CreatedAt: task.CreatedAt,
-		Context: []byte(`{"coordinator_trace_id":"5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7"}`),
-	}, nil, nil)
-	if owned.Name != taskTraceName || !owned.NoTraceName {
-		t.Fatalf("coordinator-owned trace: root name %q, no-trace-name=%v", owned.Name, owned.NoTraceName)
+		Context: []byte(`{"coordinator_trace_id":"5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7","coordinator_trace_tags":["inbound_coordinator","source:digital_employee","kind:group"]}`),
+	}, nil, runtime)
+	if owned.Name != taskTraceName || owned.TraceName != coordinatorTraceName {
+		t.Fatalf("coordinator-owned trace: root name %q, trace name %q", owned.Name, owned.TraceName)
+	}
+	if strings.Join(owned.Tags, ",") != "inbound_coordinator,source:digital_employee,kind:group" {
+		t.Fatalf("coordinator-owned tags = %v", owned.Tags)
 	}
 	if got, _ := owned.Metadata["coord_trace_id"].(string); got != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
 		t.Fatalf("coord_trace_id metadata = %q", got)
+	}
+	if got, _ := owned.Metadata["provider"].(string); got != "hermes" {
+		t.Fatalf("runtime metadata must survive on coordinator-owned tasks: %q", got)
+	}
+	bare := TaskLangfuseTraceOptions(db.AgentTaskQueue{
+		ID: taskID, CreatedAt: task.CreatedAt,
+		Context: []byte(`{"coordinator_trace_id":"5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7"}`),
+	}, nil, nil)
+	if strings.Join(bare.Tags, ",") != coordinatorTraceName {
+		t.Fatalf("coordinator-owned tags without stamp = %v", bare.Tags)
 	}
 }
 

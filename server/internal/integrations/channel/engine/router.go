@@ -603,7 +603,6 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			if err != nil {
 				return Result{}, finalizeRelease, fmt.Errorf("prepare coordinator issue task context: %w", err)
 			}
-			taskContext = inboundcoord.WithCoordinatorTraceID(taskContext, coordDecision.TraceID)
 			coordinatorIssue = true
 			issueCommand = &IssueCommand{
 				Title:       inboundcoord.IssueTitle(coordDecision, msg.Text),
@@ -615,8 +614,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		}
 		if len(coordDecision.Steps) > 0 {
 			// The task (Issue or chat continuation) records which coordinator
-			// turn looked at it; both share the inbound chat trace already.
-			taskContext = inboundcoord.WithCoordinatorTraceID(taskContext, coordDecision.TraceID)
+			// turn looked at it and repeats its trace tags; both share the
+			// inbound chat trace already.
+			taskContext = inboundcoord.StampCoordinatorTrace(taskContext, coordDecision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS))
 		}
 	}
 	issueNeedsUsage := issueCommandRequested && issueCommand.Title == "" && !set.DurableRuns

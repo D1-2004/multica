@@ -119,6 +119,9 @@ type Decision struct {
 	// TraceID is the coordinator trace id of the Decide call that produced
 	// this verdict (coord_trace_id in SLS, the Langfuse trace id).
 	TraceID string
+	// TraceTags are the Langfuse trace tags of that turn. A task that joins
+	// the turn's trace repeats them so the trace keeps one consistent tag set.
+	TraceTags []string
 }
 
 type decisionObserverKey struct{}
@@ -214,6 +217,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 			decision.Source = turn.Source
 		}
 		decision.TraceID = strings.TrimSpace(turn.TraceID)
+		decision.TraceTags = coordinatorTraceTags(turn)
 		finishCoordinatorTrace(turnTrace, decision, loopErr)
 		RecordDecision(ctx, decision)
 	}()
