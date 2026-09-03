@@ -341,7 +341,7 @@ func ensureRunnerBackground(preserveRunning bool) error {
 		return err
 	}
 	if len(bindings) == 0 {
-		return errors.New("Runner is not bound; copy a new install command from Agent settings")
+		return errors.New("Runner is not paired; copy a new install command from General settings")
 	}
 	if pid, running := currentRunnerPID(); running {
 		if preserveRunning || runnerAllBindingsConnected(pid, cfg) {
