@@ -385,14 +385,15 @@
       "unsaved_changes": "저장하지 않은 변경사항"
     },
     "runner": {
-      "execution_title": "실행 머신",
+      "execution_title": "로컬 Runner",
       "execution_hint": "계정에 페어링된 머신 하나를 선택합니다. 페어링만으로 에이전트에 권한이 부여되지는 않습니다.",
       "account_empty": "먼저 일반 설정에서 머신을 페어링하세요.",
+      "none": "로컬 Runner 선택 안 함",
       "mounted": "마운트됨",
       "mounted_toast": "실행 머신을 업데이트했습니다",
-      "local_mcp_title": "Runner MCP 서버",
+      "local_mcp_title": "로컬 Runner에서 연결",
       "local_mcp_hint": "활성화된 서버만 새 작업에 주입되며 설정과 비밀은 로컬에 유지됩니다.",
-      "mount_first": "MCP 서버를 보려면 실행 머신을 선택하세요.",
+      "mount_first": "실행 설정에서 로컬 Runner를 선택하면 MCP 서버를 확인할 수 있습니다.",
       "mcp_empty": "이 Runner가 보고한 로컬 MCP 서버가 없습니다.",
       "mcp_offline": "마운트된 Runner가 오프라인입니다.",
       "read_only": "읽기 전용",
@@ -628,7 +629,7 @@
       "save_failed_toast": "사용자 지정 인자를 저장하지 못했습니다"
     },
     "mcp_config": {
-      "intro": "이 에이전트가 사용할 수 있는 MCP Server를 관리합니다. Multica에서 관리하는 Server와 로컬 Runtime에서 상속한 Server가 함께 사용됩니다.",
+      "intro": "이 에이전트가 사용할 수 있는 MCP Server를 관리합니다. Multica에서 관리하거나 런타임에서 상속하거나 로컬 Runner에서 연결한 Server가 함께 사용됩니다.",
       "managed_title": "Multica에서 관리",
       "managed_hint": "이 에이전트용으로 Multica에 저장됩니다. Runtime MCP와 병합되며 이름이 같으면 Multica 설정이 우선합니다.",
       "managed_empty": "Multica에서 관리하는 MCP Server가 없습니다.",

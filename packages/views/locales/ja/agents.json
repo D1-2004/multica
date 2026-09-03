@@ -377,14 +377,15 @@
       "unsaved_changes": "保存していない変更"
     },
     "runner": {
-      "execution_title": "実行マシン",
+      "execution_title": "ローカル Runner",
       "execution_hint": "アカウントにペアリング済みのマシンを選択します。ペアリングだけではエージェントに権限は付与されません。",
       "account_empty": "先に一般設定でマシンをペアリングしてください。",
+      "none": "ローカル Runner なし",
       "mounted": "マウント済み",
       "mounted_toast": "実行マシンを更新しました",
-      "local_mcp_title": "Runner MCP サーバー",
+      "local_mcp_title": "ローカル Runner から接続",
       "local_mcp_hint": "有効なサーバーだけが新しいタスクに注入され、設定とシークレットはローカルに残ります。",
-      "mount_first": "MCP サーバーを表示するには実行マシンを選択してください。",
+      "mount_first": "実行設定でローカル Runner を選択すると MCP サーバーを確認できます。",
       "mcp_empty": "この Runner からローカル MCP サーバーが報告されていません。",
       "mcp_offline": "マウント済み Runner はオフラインです。",
       "read_only": "読み取り専用",
@@ -620,7 +621,7 @@
       "save_failed_toast": "カスタム引数を保存できませんでした"
     },
     "mcp_config": {
-      "intro": "このエージェントが使用できる MCP Server を管理します。Multica 管理の Server とローカル Runtime から継承した Server は統合して使用されます。",
+      "intro": "このエージェントが使用できる MCP Server を管理します。Multica 管理、ランタイムから継承、ローカル Runner から接続した Server は統合して使用されます。",
       "managed_title": "Multica で管理",
       "managed_hint": "このエージェント用に Multica に保存されます。Runtime MCP と統合され、同名の場合は Multica の設定が優先されます。",
       "managed_empty": "Multica で管理されている MCP Server はありません。",

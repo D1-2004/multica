@@ -182,6 +182,10 @@ describe("LocalRunnerTab", () => {
     expect(screen.getByText("2 agent bindings")).toBeInTheDocument();
     expect(screen.getByText("/Users/dev/code")).toBeInTheDocument();
     expect(screen.getByText("/Users/dev/review")).toBeInTheDocument();
+    expect(screen.getByText("Add Local Runner")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Pair machine" }),
+    ).toBeInTheDocument();
   });
 
   it("shows an enabled binding as offline when its machine is offline", () => {

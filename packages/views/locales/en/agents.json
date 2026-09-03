@@ -531,14 +531,15 @@
       "unsaved_changes": "Unsaved changes"
     },
     "runner": {
-      "execution_title": "Execution machine",
+      "execution_title": "Local Runner",
       "execution_hint": "Choose one machine already paired to your account. Pairing does not grant this agent access.",
       "account_empty": "Pair a machine in General settings first.",
+      "none": "No Local Runner",
       "mounted": "Mounted",
       "mounted_toast": "Execution machine updated",
-      "local_mcp_title": "Runner MCP servers",
+      "local_mcp_title": "Connect from Local Runner",
       "local_mcp_hint": "Only enabled servers are injected into new tasks. Configuration details and secrets stay local.",
-      "mount_first": "Select an execution machine to see its MCP servers.",
+      "mount_first": "Select a Local Runner in Execution Configuration to see its MCP servers.",
       "mcp_empty": "No local MCP servers were reported by this Runner.",
       "mcp_offline": "The mounted Runner is offline.",
       "read_only": "Read only",
@@ -776,7 +777,7 @@
       "save_failed_toast": "Failed to save custom arguments"
     },
     "mcp_config": {
-      "intro": "Manage the MCP servers available to this agent. Servers managed by Multica are merged with servers inherited from the local runtime.",
+      "intro": "Manage the MCP servers available to this agent. Servers managed by Multica, inherited from the runtime, and connected from Local Runner are merged together.",
       "managed_title": "Managed by Multica",
       "managed_hint": "Saved in Multica for this agent. These servers are merged with runtime servers; a Multica server wins when names match.",
       "managed_empty": "No MCP servers are managed by Multica yet.",
