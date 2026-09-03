@@ -233,6 +233,29 @@ func TestDecideTraceRecordsExhaustedRoundsAsLoopError(t *testing.T) {
 	}
 }
 
+func TestDecideTakesTraceIDFromContextWhenTurnHasNone(t *testing.T) {
+	client, exporter := langfuseTestClient(t)
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("done", toolFinish, `{"action":"reply","text":"好的"}`),
+	}}
+	coord := &Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: chat, Tools: &stubTools{}, Langfuse: client}
+	const jobID = "0f0f0f0f-1111-4222-8333-444444444444"
+	ctx := ContextWithTraceID(context.Background(), jobID)
+	decision := coord.Decide(ctx, Turn{Source: SourceWeb, Addressed: true, ChatType: "p2p", Message: "hi"})
+	if decision.TraceID != jobID {
+		t.Fatalf("decision trace id = %q, want the context id %q", decision.TraceID, jobID)
+	}
+	roots := spansNamed(exporter.GetSpans(), coordinatorTraceName)
+	if len(roots) != 1 || roots[0].SpanContext.TraceID().String() != strings.ReplaceAll(jobID, "-", "") {
+		t.Fatalf("root spans = %d, trace id mismatch", len(roots))
+	}
+	// An explicit turn id still wins over the context.
+	explicit := coord.Decide(ContextWithTraceID(context.Background(), jobID), Turn{Source: SourceWeb, Addressed: true, ChatType: "p2p", Message: "hi", TraceID: "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7"})
+	if explicit.TraceID != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
+		t.Fatalf("explicit trace id overridden: %q", explicit.TraceID)
+	}
+}
+
 func TestConversationNameFallsBackToSceneTitleBeforeSender(t *testing.T) {
 	if got := conversationName(Turn{SceneTitle: "冬翔", SenderName: "Dv6WPxM5cBX83sOS9u0PAAwiEiE"}); got != "冬翔" {
 		t.Fatalf("conversation name = %q, want the scene title", got)

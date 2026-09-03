@@ -131,6 +131,28 @@ type Decision struct {
 
 type decisionObserverKey struct{}
 
+type turnTraceIDKey struct{}
+
+// ContextWithTraceID pins the coordinator trace id of the next Decide call
+// that receives a turn without one. Durable dispatch workers pass their job
+// id so the coord_trace_id in SLS and Langfuse, the job, and the Scene
+// Memory trigger it records all share one identifier.
+func ContextWithTraceID(ctx context.Context, traceID string) context.Context {
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, turnTraceIDKey{}, traceID)
+}
+
+func traceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	traceID, _ := ctx.Value(turnTraceIDKey{}).(string)
+	return strings.TrimSpace(traceID)
+}
+
 // WithDecisionObserver attaches a request-scoped observer used by durable
 // dispatch workers to persist the same verdict regardless of which ingress
 // adapter invoked the Coordinator.
@@ -215,6 +237,9 @@ func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 // Decide returns a verdict. A disabled LLM or any failure continues the
 // existing sandbox enqueue so a missing model never silences users.
 func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision) {
+	if strings.TrimSpace(turn.TraceID) == "" {
+		turn.TraceID = traceIDFromContext(ctx)
+	}
 	var turnTrace *langfuse.Trace
 	var loopErr error
 	defer func() {
