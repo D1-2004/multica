@@ -276,7 +276,6 @@ func (s *TaskService) emitTaskTrace(ctx context.Context, task db.AgentTaskQueue)
 		trace.AddMetadata(usageMeta)
 	}
 	status := strings.TrimSpace(task.Status)
-	trace.AddTags("status:" + status)
 	output := map[string]any{
 		"status":         status,
 		"failure_reason": strings.TrimSpace(task.FailureReason.String),

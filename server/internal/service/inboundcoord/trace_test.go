@@ -114,7 +114,7 @@ func TestDecideExportsOneLangfuseTracePerTurn(t *testing.T) {
 	if got, _ := spanAttr(root, "langfuse.user.id"); got.AsString() != "02000000-0000-0000-0000-000000000000" {
 		t.Errorf("user id = %q", got.AsString())
 	}
-	if got, _ := spanAttr(root, "langfuse.trace.tags"); strings.Join(got.AsStringSlice(), ",") != "inbound_coordinator,source:web,kind:p2p,action:reply" {
+	if got, _ := spanAttr(root, "langfuse.trace.tags"); strings.Join(got.AsStringSlice(), ",") != "inbound_coordinator,source:web,kind:p2p" {
 		t.Errorf("tags = %v", got.AsStringSlice())
 	}
 	if got, _ := spanAttr(root, "langfuse.trace.output"); !strings.Contains(got.AsString(), `"action":"reply"`) || !strings.Contains(got.AsString(), "好的") {
@@ -193,8 +193,8 @@ func TestDecideTraceRecordsLoopFailureAsError(t *testing.T) {
 	if got, _ := spanAttr(roots[0], "langfuse.trace.metadata.fail_open"); !got.AsBool() {
 		t.Errorf("fail_open metadata missing")
 	}
-	if got, _ := spanAttr(roots[0], "langfuse.trace.tags"); !strings.Contains(strings.Join(got.AsStringSlice(), ","), "action:continue") {
-		t.Errorf("tags = %v", got.AsStringSlice())
+	if got, _ := spanAttr(roots[0], "langfuse.trace.metadata.action"); got.AsString() != "continue" {
+		t.Errorf("action metadata = %q, want continue", got.AsString())
 	}
 	if len(spansNamed(spans, "coordinator.nudge")) != 1 {
 		t.Errorf("nudge event missing: %v", spanNames(spans))

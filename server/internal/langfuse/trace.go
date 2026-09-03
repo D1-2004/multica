@@ -129,7 +129,9 @@ type TraceOptions struct {
 	Type       ObservationType
 	UserID     string
 	SessionID  string
-	Tags       []string
+	// Tags must be complete when the trace starts: Langfuse freezes them on
+	// the first span it ingests. Put outcome-dependent values in Metadata.
+	Tags []string
 	// Metadata becomes first-level, filterable trace metadata.
 	Metadata map[string]any
 	// RootMetadata is observation metadata of the root only.
@@ -177,7 +179,6 @@ type Trace struct {
 	root       trace.Span
 	id         trace.TraceID
 	traceAttrs []attribute.KeyValue
-	tags       []string
 	ended      bool
 }
 
@@ -198,20 +199,11 @@ func (c *Client) StartTrace(ctx context.Context, opts TraceOptions) *Trace {
 		forced.spanID = id
 	}
 	traceAttrs := c.traceAttributes(opts)
-	// Tags live on the root observation only. Langfuse takes a trace's tags
-	// from the first span it ingests and never unions later spans, so tags
-	// carried by children (which end first) would freeze the set before the
-	// root can add its final action/status tags. Children still carry user,
-	// session, and metadata, which merge per key.
-	tags := cleanTags(opts.Tags)
 	obsType := opts.Type
 	if obsType == "" {
 		obsType = TypeSpan
 	}
 	attrs := append([]attribute.KeyValue{}, traceAttrs...)
-	if len(tags) > 0 {
-		attrs = append(attrs, attribute.StringSlice(attrTraceTags, tags))
-	}
 	attrs = append(attrs, attribute.String(attrObsType, string(obsType)))
 	if opts.Input != nil {
 		encoded := encodePayload(opts.Input)
@@ -240,10 +232,15 @@ func (c *Client) StartTrace(ctx context.Context, opts TraceOptions) *Trace {
 		root:       span,
 		id:         span.SpanContext().TraceID(),
 		traceAttrs: traceAttrs,
-		tags:       tags,
 	}
 }
 
+// traceAttributes are the trace-level attributes copied onto every span of a
+// trace. Langfuse creates the trace record from whichever export batch
+// arrives first and only merges user, session, and metadata keys afterwards;
+// tags are frozen at creation. Every span therefore carries the full tag set,
+// which is why TraceOptions.Tags must be known when the trace starts and
+// outcome fields (action, status) are metadata rather than tags.
 func (c *Client) traceAttributes(opts TraceOptions) []attribute.KeyValue {
 	attrs := append([]attribute.KeyValue{}, c.baseAttrs...)
 	if name := strings.TrimSpace(opts.Name); name != "" {
@@ -254,6 +251,9 @@ func (c *Client) traceAttributes(opts TraceOptions) []attribute.KeyValue {
 	}
 	if session := strings.TrimSpace(opts.SessionID); session != "" {
 		attrs = append(attrs, attribute.String(attrSessionID, session))
+	}
+	if tags := cleanTags(opts.Tags); len(tags) > 0 {
+		attrs = append(attrs, attribute.StringSlice(attrTraceTags, tags))
 	}
 	attrs = append(attrs, metadataAttributes(attrTraceMetadataPfx, opts.Metadata)...)
 	return attrs
@@ -300,21 +300,6 @@ func (t *Trace) AddMetadata(metadata map[string]any) {
 	}
 }
 
-// AddTags appends trace tags.
-func (t *Trace) AddTags(tags ...string) {
-	if t == nil || t.ended {
-		return
-	}
-	merged := cleanTags(append(append([]string{}, t.tags...), tags...))
-	if len(merged) == len(t.tags) {
-		return
-	}
-	t.tags = merged
-	if t.root != nil {
-		t.root.SetAttributes(attribute.StringSlice(attrTraceTags, merged))
-	}
-}
-
 // StartObservationInTrace opens one observation inside an existing trace
 // without creating a root observation. Producers that run in a different
 // request than the trace owner (the sandbox LLM relay, for example) use it
@@ -331,10 +316,9 @@ func (c *Client) StartObservationInTrace(ctx context.Context, traceOpts TraceOpt
 	if !ok {
 		traceID = randomTraceID()
 	}
-	// Detached observations never carry trace tags: they usually arrive before
-	// the root (the sandbox relay runs during the task), and the first tagged
-	// span would freeze the trace's tag set before the root reports the
-	// final status. See StartTrace.
+	// Detached observations usually arrive before the root (the sandbox relay
+	// runs during the task) and may create the trace record, so they carry
+	// the same trace-level attributes, tags included. See traceAttributes.
 	detached := &Trace{
 		client:     c,
 		ctx:        withForcedIDs(ctx, forcedIDs{traceID: traceID}),

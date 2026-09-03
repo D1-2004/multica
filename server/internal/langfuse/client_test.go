@@ -73,7 +73,6 @@ func TestNilClientIsInert(t *testing.T) {
 	obs := tr.StartObservation(ObservationOptions{Name: "child"})
 	obs.End(EndOptions{})
 	tr.AddMetadata(map[string]any{"k": "v"})
-	tr.AddTags("a")
 	tr.Event(ObservationOptions{Name: "e"}, EndOptions{})
 	tr.End(EndOptions{})
 	if got := client.StartObservationInTrace(context.Background(), TraceOptions{}, ObservationOptions{}); got != nil {
@@ -119,7 +118,6 @@ func TestStartTracePinsTraceIDAndPropagatesTraceAttributes(t *testing.T) {
 	tool := gen.StartObservation(ObservationOptions{Type: TypeTool, Name: "assoc_recall"})
 	tool.End(EndOptions{Err: errors.New("boom")})
 	tr.AddMetadata(map[string]any{"issue_id": "issue-1"})
-	tr.AddTags("action:reply")
 	tr.End(EndOptions{Output: map[string]any{"action": "reply"}, EndTime: start.Add(3 * time.Second)})
 
 	spans := exporter.GetSpans()
@@ -151,7 +149,7 @@ func TestStartTracePinsTraceIDAndPropagatesTraceAttributes(t *testing.T) {
 	if got := attrValue(t, root, attrRelease).AsString(); got != "v0.4.40" {
 		t.Fatalf("release = %s", got)
 	}
-	if got := attrValue(t, root, attrTraceTags).AsStringSlice(); strings.Join(got, ",") != "coordinator,source:web,action:reply" {
+	if got := attrValue(t, root, attrTraceTags).AsStringSlice(); strings.Join(got, ",") != "coordinator,source:web" {
 		t.Fatalf("tags = %v", got)
 	}
 	if got := attrValue(t, root, attrTraceMetadataPfx+"workspace_id").AsString(); got != "ws-1" {
@@ -215,10 +213,10 @@ func TestStartTracePinsTraceIDAndPropagatesTraceAttributes(t *testing.T) {
 	if hasAttr(generation, attrTraceInput) {
 		t.Fatal("children must not carry the trace input")
 	}
-	// Tags stay on the root: Langfuse freezes a trace's tags on the first span
-	// it ingests, and children end before the root adds action/status tags.
-	if hasAttr(generation, attrTraceTags) {
-		t.Fatal("children must not carry trace tags")
+	// Tags ride on every span: Langfuse freezes a trace's tags on whichever
+	// export batch creates the trace, and children usually end first.
+	if got := attrValue(t, generation, attrTraceTags).AsStringSlice(); strings.Join(got, ",") != "coordinator,source:web" {
+		t.Fatalf("child tags = %v", got)
 	}
 
 	toolSpan := findSpan(t, spans, "assoc_recall")
@@ -278,8 +276,8 @@ func TestDeterministicIDsLinkDetachedObservations(t *testing.T) {
 	if got := attrValue(t, relaySpan, attrSessionID).AsString(); got != "cid-9" {
 		t.Fatalf("relay session id = %s", got)
 	}
-	if hasAttr(relaySpan, attrTraceTags) {
-		t.Fatal("detached observations must not carry trace tags")
+	if got := attrValue(t, relaySpan, attrTraceTags).AsStringSlice(); strings.Join(got, ",") != "agent_task" {
+		t.Fatalf("detached observation tags = %v", got)
 	}
 	toolSpan := findSpan(t, spans, "bash")
 	if toolSpan.Parent.SpanID().String() != rootID {

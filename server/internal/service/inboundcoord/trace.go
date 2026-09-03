@@ -117,8 +117,9 @@ func finishCoordinatorTrace(t *langfuse.Trace, decision Decision, loopErr error)
 	if t == nil {
 		return
 	}
+	// The verdict is metadata, not a tag: Langfuse freezes tags when the
+	// first span of the trace arrives, long before the decision exists.
 	action := string(decision.Action)
-	t.AddTags("action:" + action)
 	t.AddMetadata(map[string]any{
 		"action":      action,
 		"issue_id":    strings.TrimSpace(decision.IssueID),

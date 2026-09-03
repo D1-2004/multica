@@ -103,8 +103,8 @@ func finishFlushTrace(t *langfuse.Trace, outcome *flushOutcome, err error) {
 	case !outcome.CaughtUp:
 		status = "partial"
 	}
-	t.AddTags("status:" + status)
 	t.AddMetadata(map[string]any{
+		"status":              status,
 		"event_count":         outcome.EventCount,
 		"caught_up":           outcome.CaughtUp,
 		"replace":             outcome.Replace,
