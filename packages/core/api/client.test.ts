@@ -316,6 +316,7 @@ describe("ApiClient Runner contracts", () => {
                 online: false,
                 last_seen_at: null,
                 bound_at: "2026-08-12T09:00:00Z",
+                mcp_servers: null,
               },
             ],
           }),
@@ -326,7 +327,9 @@ describe("ApiClient Runner contracts", () => {
 
     await expect(
       new ApiClient("https://api.example.test").listAgentRunnerBindings(agentId),
-    ).resolves.toMatchObject({ machines: [{ disconnected: false }] });
+    ).resolves.toMatchObject({
+      machines: [{ disconnected: false, mcpServers: [] }],
+    });
   });
 
   it("maps account Runner machines separately from their Agent bindings", async () => {
@@ -347,6 +350,7 @@ describe("ApiClient Runner contracts", () => {
                 client_version: "0.2.0",
                 online: true,
                 last_seen_at: "2026-08-12T10:00:00Z",
+                mcp_servers: null,
                 bindings: [
                   {
                     binding_id: bindingId,
@@ -397,6 +401,7 @@ describe("ApiClient Runner contracts", () => {
         expect.objectContaining({
           machineId,
           online: true,
+          mcpServers: [],
           bindings: [
             expect.objectContaining({
               bindingId,

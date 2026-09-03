@@ -112,7 +112,10 @@ func (h *Handler) ListMyRunnerBindings(w http.ResponseWriter, r *http.Request) {
 		}
 		if machines[machineIndex].Online && len(machines[machineIndex].MCPServers) == 0 {
 			if inventory, found := h.runnerMCPInventory(r.Context(), machineID); found {
-				machines[machineIndex].MCPServers = inventory.Servers
+				machines[machineIndex].MCPServers = append(
+					[]runnerprotocol.MCPServerSummary{},
+					inventory.Servers...,
+				)
 				machines[machineIndex].InventoryRevision = inventory.Revision
 			}
 		}

@@ -317,7 +317,10 @@ func (h *Handler) ListAgentRunnerBindings(w http.ResponseWriter, r *http.Request
 		}
 		if item.Online {
 			if inventory, found := h.runnerMCPInventory(r.Context(), item.MachineID); found {
-				item.MCPServers = inventory.Servers
+				item.MCPServers = append(
+					[]runnerprotocol.MCPServerSummary{},
+					inventory.Servers...,
+				)
 				item.InventoryRevision = inventory.Revision
 			}
 		}

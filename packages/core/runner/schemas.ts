@@ -7,6 +7,11 @@ const RunnerMcpServerSchema = z.object({
   fingerprint: z.string().min(1),
 }).loose();
 
+const RunnerMcpServerListSchema = z
+  .array(RunnerMcpServerSchema)
+  .nullish()
+  .transform((servers) => servers ?? []);
+
 const RunnerMachineBindingSchema = z
   .object({
     binding_id: z.string().uuid(),
@@ -17,7 +22,7 @@ const RunnerMachineBindingSchema = z
     client_version: z.string(),
     roots: z.array(z.string()),
 		enabled_mcp_servers: z.record(z.string(), z.string()).optional().default({}),
-		mcp_servers: z.array(RunnerMcpServerSchema).optional().default([]),
+		mcp_servers: RunnerMcpServerListSchema,
 		inventory_revision: z.string().optional().default(""),
     online: z.boolean(),
     disconnected: z.boolean().optional().default(false),
@@ -81,7 +86,7 @@ const AccountRunnerMachineSchema = z
     online: z.boolean(),
     last_seen_at: z.string().nullable(),
     bindings: z.array(AccountRunnerBindingSchema),
-		mcp_servers: z.array(RunnerMcpServerSchema).optional().default([]),
+		mcp_servers: RunnerMcpServerListSchema,
 		inventory_revision: z.string().optional().default(""),
   })
   .loose()
