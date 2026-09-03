@@ -1288,9 +1288,14 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
             onDescriptionChange={setDescription}
             onAddToAgents={() => setShowAddToAgents(true)}
             onTransferOwner={async (userId) => {
-              const updated = await api.transferSkillOwner(skill.id, userId);
-              qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
-              qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
+              try {
+                const updated = await api.transferSkillOwner(skill.id, userId);
+                qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
+                qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : t(($) => $.detail.update_failed_toast));
+                throw e;
+              }
             }}
           />
         ) : (
