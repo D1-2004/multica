@@ -13,7 +13,6 @@ export {
   useRevokeAccountRunnerBinding,
 	useRevokeAgentRunnerBinding,
 	useMountAgentRunnerMachine,
-	useSetAgentRunnerMcpServerEnabled,
 	useRenameAccountRunnerMachine,
 	useRevokeAccountRunnerMachine,
 } from "./mutations";

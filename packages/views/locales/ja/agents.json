@@ -384,7 +384,7 @@
       "mounted": "マウント済み",
       "mounted_toast": "実行マシンを更新しました",
       "local_mcp_title": "ローカル Runner から接続",
-      "local_mcp_hint": "有効なサーバーだけが新しいタスクに注入され、設定とシークレットはローカルに残ります。",
+      "local_mcp_hint": "この Runner が公開する利用可能なすべてのサーバーが新しいタスクに注入され、設定とシークレットはローカルに残ります。",
       "mount_first": "実行設定でローカル Runner を選択すると MCP サーバーを確認できます。",
       "mcp_empty": "この Runner からローカル MCP サーバーが報告されていません。",
       "mcp_offline": "マウント済み Runner はオフラインです。",

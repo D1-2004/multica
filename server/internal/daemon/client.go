@@ -190,6 +190,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityTaskInstructionV1,
 		protocol.DaemonCapabilityRPCV1,
 		protocol.DaemonCapabilityA2AInvocationV2,
+		protocol.DaemonCapabilityRunnerMCPMountsV1,
 	}, ",")
 }
 

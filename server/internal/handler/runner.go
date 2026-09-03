@@ -349,6 +349,11 @@ func (h *Handler) MountAgentRunnerMachine(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	inventory, inventoryFound := h.runnerMCPInventory(r.Context(), uuidToString(machineID))
+	inventorySnapshot := json.RawMessage(`{}`)
+	if inventoryFound {
+		inventorySnapshot, _ = json.Marshal(resolveRunnerMCPServers(nil, inventory, true))
+	}
 	actorID := parseUUID(requestUserID(r))
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -381,6 +386,14 @@ func (h *Handler) MountAgentRunnerMachine(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to mount Runner machine")
 		return
 	}
+	if err := qtx.SnapshotRunnerMCPServersForMachine(r.Context(), db.SnapshotRunnerMCPServersForMachineParams{
+		EnabledMcpServers: inventorySnapshot,
+		MachineID:         machineID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to snapshot Runner MCP inventory")
+		return
+	}
+	mount.EnabledMcpServers = inventorySnapshot
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mount Runner machine")
 		return
@@ -393,81 +406,6 @@ func (h *Handler) MountAgentRunnerMachine(w http.ResponseWriter, r *http.Request
 		"machine_id": uuidToString(mount.MachineID),
 		"enabled_mcp_servers": decodeEnabledRunnerMCPServers(mount.EnabledMcpServers),
 	})
-}
-
-func (h *Handler) SetAgentRunnerMCPServerEnabled(w http.ResponseWriter, r *http.Request) {
-	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
-	if !ok || !h.canManageAgent(w, r, agent) {
-		return
-	}
-	bindingID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "bindingId"), "Runner binding id")
-	if !ok {
-		return
-	}
-	serverName := strings.TrimSpace(chi.URLParam(r, "serverName"))
-	if serverName == "" || len(serverName) > 64 {
-		writeError(w, http.StatusBadRequest, "MCP server name is invalid")
-		return
-	}
-	var req struct {
-		Enabled     bool   `json:"enabled"`
-		Fingerprint string `json:"fingerprint"`
-	}
-	if err := decodeRunnerRequest(w, r, 8<<10, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid MCP server setting")
-		return
-	}
-	binding, err := h.Queries.GetAgentRunnerBindingByID(r.Context(), db.GetAgentRunnerBindingByIDParams{ID: bindingID, AgentID: agent.ID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "Runner mount not found")
-		return
-	}
-	if err != nil || binding.WorkspaceID != agent.WorkspaceID {
-		writeError(w, http.StatusInternalServerError, "failed to load Runner mount")
-		return
-	}
-	enabled := decodeEnabledRunnerMCPServers(binding.EnabledMcpServers)
-	if req.Enabled {
-		machine, machineErr := h.Queries.GetActiveAgentRunnerBinding(r.Context(), db.GetActiveAgentRunnerBindingParams{
-			WorkspaceID: agent.WorkspaceID, AgentID: agent.ID, MachineID: binding.MachineID,
-		})
-		if machineErr != nil || !runnerBindingOnline(machine.DisconnectedAt, machine.ConnectionID, machine.LastSeenAt, time.Now()) {
-			writeError(w, http.StatusConflict, "Runner machine is offline")
-			return
-		}
-		inventory, found := h.runnerMCPInventory(r.Context(), uuidToString(binding.MachineID))
-		if !found {
-			writeError(w, http.StatusConflict, "Runner MCP inventory is unavailable")
-			return
-		}
-		matched := false
-		for _, server := range inventory.Servers {
-			if server.Name == serverName && server.Fingerprint == req.Fingerprint && server.Availability == "available" {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			writeError(w, http.StatusConflict, "Runner MCP fingerprint changed; refresh and enable it again")
-			return
-		}
-		enabled[serverName] = req.Fingerprint
-	} else {
-		delete(enabled, serverName)
-	}
-	raw, err := json.Marshal(enabled)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save Runner MCP setting")
-		return
-	}
-	updated, err := h.Queries.UpdateAgentRunnerMCPServers(r.Context(), db.UpdateAgentRunnerMCPServersParams{
-		EnabledMcpServers: raw, BindingID: bindingID, WorkspaceID: agent.WorkspaceID, AgentID: agent.ID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save Runner MCP setting")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled_mcp_servers": decodeEnabledRunnerMCPServers(updated.EnabledMcpServers)})
 }
 
 func (h *Handler) CreateAgentRunnerReconnectCommand(w http.ResponseWriter, r *http.Request) {
@@ -1254,16 +1192,34 @@ func (h *Handler) handleRunnerHeartbeat(ctx context.Context, identity runnerws.I
 }
 
 func (h *Handler) handleRunnerInventory(ctx context.Context, identity runnerws.Identity, inventory runnerprotocol.MCPInventory) {
-	cache, ok := h.RunnerRelay.(realtime.RunnerInventoryCache)
-	if !ok {
+	machineID, err := util.ParseUUID(identity.MachineID)
+	if err != nil {
 		return
 	}
+	h.snapshotRunnerMCPInventory(ctx, identity.MachineID, machineID, inventory)
 	raw, err := json.Marshal(inventory)
 	if err != nil || len(raw) > 256<<10 {
 		return
 	}
+	cache, ok := h.RunnerRelay.(realtime.RunnerInventoryCache)
+	if !ok {
+		return
+	}
 	if err := cache.StoreRunnerInventory(ctx, identity.MachineID, raw, 2*runnerOnlineTTL); err != nil {
 		slog.Warn("Runner MCP inventory cache failed", "machine_id", identity.MachineID, "error", err)
+	}
+}
+
+func (h *Handler) snapshotRunnerMCPInventory(ctx context.Context, machineIDString string, machineID pgtype.UUID, inventory runnerprotocol.MCPInventory) {
+	snapshot, err := json.Marshal(resolveRunnerMCPServers(nil, inventory, true))
+	if err != nil {
+		return
+	}
+	if err := h.Queries.SnapshotRunnerMCPServersForMachine(ctx, db.SnapshotRunnerMCPServersForMachineParams{
+		EnabledMcpServers: snapshot,
+		MachineID:         machineID,
+	}); err != nil {
+		slog.Warn("Runner MCP inventory snapshot failed", "machine_id", machineIDString, "error", err)
 	}
 }
 

@@ -39,15 +39,6 @@ export function useMountAgentRunnerMachine(workspaceId: string, agentId: string)
   });
 }
 
-export function useSetAgentRunnerMcpServerEnabled(workspaceId: string, agentId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (input: { bindingId: string; serverName: string; enabled: boolean; fingerprint: string }) =>
-      api.setAgentRunnerMcpServerEnabled(agentId, input.bindingId, input.serverName, input.enabled, input.fingerprint),
-    onSuccess: async () => queryClient.invalidateQueries({ queryKey: runnerBindingKeys.agent(workspaceId, agentId) }),
-  });
-}
-
 export function useRenameAccountRunnerMachine(userId: string) {
   const queryClient = useQueryClient();
   return useMutation({

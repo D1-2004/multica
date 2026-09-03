@@ -7,7 +7,6 @@ import { renderWithI18n } from "../../../test/i18n";
 
 const mount = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
 const revoke = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
-const setServer = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
 const queryState = vi.hoisted(() => ({
   account: {
     data: { machines: [] as unknown[] } as { machines: unknown[] } | null,
@@ -31,7 +30,6 @@ vi.mock("@multica/core/runner", () => ({
   agentRunnerBindingsOptions: () => ({ queryKey: ["runner", "agent"] }),
   useMountAgentRunnerMachine: () => mount,
   useRevokeAgentRunnerBinding: () => revoke,
-  useSetAgentRunnerMcpServerEnabled: () => setServer,
 }));
 vi.mock("@multica/ui/components/ui/select", () => ({
   Select: ({ children, onValueChange, value }: { children: React.ReactNode; onValueChange: (value: string) => void; value: string }) => (
@@ -129,5 +127,34 @@ describe("RunnerTab", () => {
       screen.getByText("请先在执行配置中选择本机 Runner，之后可查看其 MCP 服务。")
         .parentElement,
     ).toHaveClass("border-dashed");
+  });
+
+  it("makes every exposed MCP visible without per-server enable switches", () => {
+    queryState.mounts = {
+      data: {
+        machines: [
+          {
+            bindingId: "binding-1",
+            machineId: "machine-1",
+            name: "studio-mac",
+            online: true,
+            enabledMcpServers: {},
+            mcpServers: [
+              { name: "llm-wiki", transport: "stdio", availability: "available", fingerprint: "sha256:wiki" },
+              { name: "future-mcp", transport: "http", availability: "available", fingerprint: "sha256:future" },
+            ],
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    };
+
+    renderWithI18n(<RunnerTab agent={agent} canBind mode="mcp" />);
+
+    expect(screen.getByText("llm-wiki")).toBeInTheDocument();
+    expect(screen.getByText("future-mcp")).toBeInTheDocument();
+    expect(screen.queryAllByRole("switch")).toHaveLength(0);
+    expect(screen.getByText("llm-wiki").closest("li")?.querySelector(".bg-success")).not.toBeNull();
   });
 });

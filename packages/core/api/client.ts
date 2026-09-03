@@ -1893,13 +1893,6 @@ export class ApiClient {
     });
   }
 
-  async setAgentRunnerMcpServerEnabled(agentId: string, bindingId: string, serverName: string, enabled: boolean, fingerprint: string): Promise<void> {
-    await this.fetch(`/api/agents/${agentId}/runner-bindings/${bindingId}/mcp-servers/${encodeURIComponent(serverName)}`, {
-      method: "PUT",
-      body: JSON.stringify({ enabled, fingerprint }),
-    });
-  }
-
   async renameAccountRunnerMachine(machineId: string, name: string): Promise<void> {
     await this.fetch(`/api/me/runner-machines/${machineId}`, { method: "PATCH", body: JSON.stringify({ name }) });
   }

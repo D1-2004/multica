@@ -2519,7 +2519,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/env", h.UpdateAgentEnv)
 					r.With(handler.RequireHumanActor).Get("/runner-bindings", h.ListAgentRunnerBindings)
 					r.With(handler.RequireHumanActor).Put("/runner-mount", h.MountAgentRunnerMachine)
-					r.With(handler.RequireHumanActor).Put("/runner-bindings/{bindingId}/mcp-servers/{serverName}", h.SetAgentRunnerMCPServerEnabled)
 					r.With(handler.RequireHumanActor).Post("/runner-pairings", h.CreateAgentRunnerPairing)
 					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/disconnect", h.DisconnectAgentRunnerBinding)
 					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/reconnect-command", h.CreateAgentRunnerReconnectCommand)

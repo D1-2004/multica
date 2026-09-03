@@ -538,7 +538,7 @@
       "mounted": "Mounted",
       "mounted_toast": "Execution machine updated",
       "local_mcp_title": "Connect from Local Runner",
-      "local_mcp_hint": "Only enabled servers are injected into new tasks. Configuration details and secrets stay local.",
+      "local_mcp_hint": "Every available server exposed by this Runner is injected into new tasks. Configuration details and secrets stay local.",
       "mount_first": "Select a Local Runner in Execution Configuration to see its MCP servers.",
       "mcp_empty": "No local MCP servers were reported by this Runner.",
       "mcp_offline": "The mounted Runner is offline.",
