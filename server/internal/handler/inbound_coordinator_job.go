@@ -162,6 +162,10 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	}
 	jobCtx, cancel := context.WithTimeout(ctx, 55*time.Second)
 	defer cancel()
+	// The job id is the coordinator trace id of this turn, so the Scene
+	// Memory trigger recorded at enqueue time (coord_trace_id = job id) and
+	// the turn's SLS/Langfuse trace resolve to the same identifier.
+	jobCtx = inboundcoord.ContextWithTraceID(jobCtx, util.UUIDToString(job.ID))
 	var recordedDecision *inboundcoord.Decision
 	jobCtx = inboundcoord.WithDecisionObserver(jobCtx, func(decision inboundcoord.Decision) {
 		copied := decision
