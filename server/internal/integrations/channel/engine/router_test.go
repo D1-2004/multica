@@ -2380,6 +2380,22 @@ func TestCoordinatorDWSIdentityReadsPrivateTaskContext(t *testing.T) {
 	}
 }
 
+func TestCoordinatorSenderNamePrefersDispatchDisplayName(t *testing.T) {
+	got := coordinatorSenderName([]byte(`{"dispatch_event_data":{"sender":{"displayName":" 冬翔 ","staffId":"Dv6W"}}}`), "Dv6W")
+	if got != "冬翔" {
+		t.Fatalf("sender name = %q", got)
+	}
+	for _, raw := range [][]byte{
+		nil,
+		[]byte(`not-json`),
+		[]byte(`{"dispatch_event_data":{"sender":{"staffId":"Dv6W"}}}`),
+	} {
+		if got := coordinatorSenderName(raw, " Dv6W "); got != "Dv6W" {
+			t.Fatalf("fallback sender name = %q for %s", got, raw)
+		}
+	}
+}
+
 func TestCoordinatorDWSIdentityRejectsIncompleteOrInvalidContext(t *testing.T) {
 	for _, raw := range [][]byte{
 		nil,
