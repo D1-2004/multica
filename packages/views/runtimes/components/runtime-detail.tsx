@@ -216,6 +216,18 @@ export function RuntimeDetail({
               health={health}
               lastSeen={lastSeen}
               ownerMember={ownerMember}
+              members={members}
+              canTransferOwner={
+                canTransferOwnedResource(runtime.owner_id, {
+                  userId: user?.id ?? null,
+                  role: currentMember?.role ?? null,
+                }).allowed
+              }
+              onTransferOwner={async (userId) => {
+                await api.transferRuntimeOwner(runtime.id, userId);
+                qc.invalidateQueries({ queryKey: ["runtimes", wsId] });
+                toast.success(tCommon(($) => $.owner_transfer.transferred));
+              }}
               cliVersion={cliVersion}
               daemonShort={daemonShort}
             />
@@ -298,6 +310,9 @@ function HeroCard({
   health,
   lastSeen,
   ownerMember,
+  members,
+  canTransferOwner,
+  onTransferOwner,
   cliVersion,
   daemonShort,
 }: {
@@ -306,6 +321,9 @@ function HeroCard({
   health: ReturnType<typeof deriveRuntimeHealth>;
   lastSeen: string;
   ownerMember: MemberWithUser | null;
+  members: MemberWithUser[];
+  canTransferOwner: boolean;
+  onTransferOwner: (userId: string) => Promise<void>;
   cliVersion: string | null;
   daemonShort: string | null;
 }) {
@@ -345,23 +363,14 @@ function HeroCard({
             ownerId={runtime.owner_id}
             owner={ownerMember}
             members={members}
-            canTransfer={
-              canTransferOwnedResource(runtime.owner_id, {
-                userId: user?.id ?? null,
-                role: currentMember?.role ?? null,
-              }).allowed
-            }
+            canTransfer={canTransferOwner}
             descriptionFor={(ownerName) =>
               t(($) => $.detail.transfer_owner_description, {
                 name: runtimeName,
                 owner: ownerName,
               })
             }
-            onTransfer={async (userId) => {
-              await api.transferRuntimeOwner(runtime.id, userId);
-              qc.invalidateQueries({ queryKey: ["runtimes", wsId] });
-              toast.success(tCommon(($) => $.owner_transfer.transferred));
-            }}
+            onTransfer={onTransferOwner}
           />
         </Fact>
         <Fact label={t(($) => $.detail.fact_device)}>
