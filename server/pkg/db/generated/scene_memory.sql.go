@@ -582,3 +582,46 @@ func (q *Queries) DeleteSceneMemoryByAgent(ctx context.Context, arg DeleteSceneM
 	_, err := q.db.Exec(ctx, `DELETE FROM scene_memory WHERE workspace_id = $1 AND agent_id = $2`, arg.WorkspaceID, arg.AgentID)
 	return err
 }
+
+type ReplaceSceneMemoryTextParams struct {
+	MemoryText             string      `json:"memory_text"`
+	ID                     pgtype.UUID `json:"id"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
+	AgentID                pgtype.UUID `json:"agent_id"`
+	ExpectedMemoryRevision int64       `json:"expected_memory_revision"`
+}
+
+func (q *Queries) ReplaceSceneMemoryText(ctx context.Context, arg ReplaceSceneMemoryTextParams) (SceneMemory, error) {
+	return scanSceneMemory(q.db.QueryRow(ctx, `
+UPDATE scene_memory
+SET memory_text = $1,
+    memory_revision = memory_revision + 1,
+    last_flush_meta = '{"source":"owner_edit"}'::jsonb,
+    last_flushed_at = now(),
+    source_cursor_at = date_trunc('second', now()),
+    source_cursor_evidence_id = 'owner-edit',
+    flushed_revision = dirty_revision,
+    dirty_since = NULL,
+    dirty_through_at = NULL,
+    dirty_through_evidence_id = '',
+    pending_from_at = NULL,
+    pending_from_evidence_id = '',
+    history_resume_before = NULL,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    lease_target_dirty_revision = NULL,
+    lease_target_through_at = NULL,
+    lease_target_through_evidence_id = '',
+    lease_expected_memory_revision = NULL,
+    attempt_count = 0,
+    last_error_code = '',
+    last_error = '',
+    blocked_at = NULL,
+    updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND agent_id = $4
+  AND memory_revision = $5
+RETURNING *`,
+		arg.MemoryText, arg.ID, arg.WorkspaceID, arg.AgentID, arg.ExpectedMemoryRevision))
+}

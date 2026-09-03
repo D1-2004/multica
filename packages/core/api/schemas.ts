@@ -2,6 +2,7 @@ import { z } from "zod";
 import type {
   Agent,
   AgentSceneMemory,
+  AgentSceneRelation,
   AgentTemplate,
   AgentTemplateSummary,
   AgentBuilderRuntimeSwitch,
@@ -2307,7 +2308,7 @@ export const AgentTaskSchema = z
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
 
-const AgentSceneMemorySchema = z
+export const AgentSceneMemorySchema = z
   .object({
     id: z.string(),
     workspace_id: z.string().default(""),
@@ -2328,7 +2329,41 @@ const AgentSceneMemorySchema = z
   .loose();
 
 export const AgentSceneMemoryListSchema = z.array(AgentSceneMemorySchema);
+export const EMPTY_AGENT_SCENE_MEMORY: AgentSceneMemory = {
+  id: "",
+  workspace_id: "",
+  agent_id: "",
+  org_id: "",
+  scene_key: "",
+  scene_kind: "",
+  scene_title: "",
+  memory_text: "",
+  memory_revision: 0,
+  status: "",
+  last_error: "",
+  last_error_code: "",
+  updated_at: "",
+};
 export const EMPTY_AGENT_SCENE_MEMORY_LIST: AgentSceneMemory[] = [];
+
+const AgentSceneRelationItemSchema = z
+  .object({
+    issue_id: z.string().optional().default(""),
+    issue: z.string().optional().default(""),
+    purpose: z.string().default(""),
+    status: z.string().default(""),
+    on_this_scene: z.boolean().optional().default(false),
+  })
+  .loose();
+
+export const AgentSceneRelationListSchema = z
+  .object({
+    items: z.array(AgentSceneRelationItemSchema).catch([]),
+  })
+  .loose();
+export const EMPTY_AGENT_SCENE_RELATION_LIST: { items: AgentSceneRelation[] } = {
+  items: [],
+};
 
 // Task cancellation (`POST /api/tasks/:id/cancel`) is consumed directly by
 // chat recovery. Its optional message payload must be well-formed before the

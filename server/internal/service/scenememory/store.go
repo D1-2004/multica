@@ -206,6 +206,38 @@ func (s *Store) Block(ctx context.Context, row db.SceneMemory, code, message str
 	return nil
 }
 
+func (s *Store) ReplaceText(ctx context.Context, workspaceID, agentID, memoryID pgtype.UUID, expectedRevision int64, text string) (db.SceneMemory, error) {
+	if !ValidateMemoryText(text) {
+		return db.SceneMemory{}, ErrMemoryText
+	}
+	row, err := s.queries.ReplaceSceneMemoryText(ctx, db.ReplaceSceneMemoryTextParams{
+		MemoryText:             text,
+		ID:                     memoryID,
+		WorkspaceID:            workspaceID,
+		AgentID:                agentID,
+		ExpectedMemoryRevision: expectedRevision,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return db.SceneMemory{}, ErrStaleRevision
+		}
+		return db.SceneMemory{}, err
+	}
+	return row, nil
+}
+
+func IdentityFromRow(row db.SceneMemory) Identity {
+	return Identity{
+		WorkspaceID: row.WorkspaceID,
+		AgentID:     row.AgentID,
+		Platform:    row.Platform,
+		OrgID:       row.OrgID,
+		SceneKey:    row.SceneKey,
+		SceneKind:   row.SceneKind,
+		SceneTitle:  row.SceneTitle,
+	}
+}
+
 func (s *Store) Reset(ctx context.Context, id Identity, cutoff DirtyTrigger) (db.SceneMemory, error) {
 	id = id.normalized()
 	if !id.valid() {

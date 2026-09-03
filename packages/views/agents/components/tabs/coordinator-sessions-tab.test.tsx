@@ -19,6 +19,32 @@ vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 
+vi.mock("@multica/core/paths", () => ({
+  useWorkspacePaths: () => ({
+    issueDetail: (id: string) => `/ws/issues/${id}`,
+  }),
+}));
+
+vi.mock("../../../navigation", () => ({
+  AppLink: ({ href, children }: { href: string; children: unknown }) => (
+    <a href={href}>{children as string}</a>
+  ),
+}));
+
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+const updateMemory = vi.fn();
+vi.mock("@multica/core/api", () => ({
+  api: {
+    updateAgentSceneMemory: (...args: unknown[]) => updateMemory(...args),
+    resetAgentSceneMemory: vi.fn(),
+    clearAgentSceneRelations: vi.fn(),
+    listAgentSceneRelations: vi.fn(async () => []),
+  },
+}));
+
 vi.mock("@multica/core/agents", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@multica/core/agents")>();
   return {
@@ -37,6 +63,11 @@ vi.mock("@multica/core/agents", async (importOriginal) => {
         queryKey: ["mem", wsId, agentId, enabled],
         queryFn: async () => (enabled ? memoriesRef.current : []),
         enabled,
+      }),
+    agentSceneRelationOptions: () =>
+      queryOptions({
+        queryKey: ["rel"],
+        queryFn: async () => [],
       }),
     useAgentPresenceDetail: () => "loading",
   };
@@ -133,7 +164,9 @@ describe("CoordinatorSessionsTab scene memory", () => {
     renderTab({ ...agent, scene_memory_ui_enabled: true }, true);
     expect(await screen.findByText("冬翔")).toBeInTheDocument();
     expect(screen.getByText("Scene memory")).toBeInTheDocument();
-    expect(screen.getByText(/Revision 2/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Revision 2/).length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Save memory" })).toBeInTheDocument();
+    expect(screen.getByText("Issue links")).toBeInTheDocument();
   });
 
   it("keeps two scenes distinct and shows the selected text", async () => {

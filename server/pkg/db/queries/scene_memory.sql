@@ -358,3 +358,35 @@ DELETE FROM scene_memory WHERE workspace_id = @workspace_id;
 
 -- name: DeleteSceneMemoryByAgent :exec
 DELETE FROM scene_memory WHERE workspace_id = @workspace_id AND agent_id = @agent_id;
+
+-- name: ReplaceSceneMemoryText :one
+UPDATE scene_memory
+SET memory_text = @memory_text,
+    memory_revision = memory_revision + 1,
+    last_flush_meta = '{"source":"owner_edit"}'::jsonb,
+    last_flushed_at = now(),
+    source_cursor_at = date_trunc('second', now()),
+    source_cursor_evidence_id = 'owner-edit',
+    flushed_revision = dirty_revision,
+    dirty_since = NULL,
+    dirty_through_at = NULL,
+    dirty_through_evidence_id = '',
+    pending_from_at = NULL,
+    pending_from_evidence_id = '',
+    history_resume_before = NULL,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    lease_target_dirty_revision = NULL,
+    lease_target_through_at = NULL,
+    lease_target_through_evidence_id = '',
+    lease_expected_memory_revision = NULL,
+    attempt_count = 0,
+    last_error_code = '',
+    last_error = '',
+    blocked_at = NULL,
+    updated_at = now()
+WHERE id = @id
+  AND workspace_id = @workspace_id
+  AND agent_id = @agent_id
+  AND memory_revision = @expected_memory_revision
+RETURNING *;

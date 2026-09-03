@@ -795,6 +795,14 @@ export interface AgentSceneMemory {
   last_flushed_at?: string;
 }
 
+export interface AgentSceneRelation {
+  issue_id: string;
+  issue: string;
+  purpose: string;
+  status: string;
+  on_this_scene: boolean;
+}
+
 export interface UpdateAgentRequest {
   name?: string;
   description?: string;

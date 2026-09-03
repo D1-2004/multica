@@ -1,10 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { ArrowLeft, MessageSquare } from "lucide-react";
+import { toast } from "sonner";
 import { useDefaultLayout } from "react-resizable-panels";
+import { api } from "@multica/core/api";
 import { Button } from "@multica/ui/components/ui/button";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -13,7 +21,10 @@ import {
 import { useIsCompact } from "@multica/ui/hooks/use-mobile";
 import {
   agentCoordinatorSessionsOptions,
+  agentSceneMemoryKeys,
+  agentSceneRelationKeys,
   agentSceneMemoryOptions,
+  agentSceneRelationOptions,
   useAgentPresenceDetail,
 } from "@multica/core/agents";
 import {
@@ -22,8 +33,10 @@ import {
 } from "@multica/core/chat/queries";
 import { hideQueuedChatMessages } from "@multica/core/chat/pending";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
 import type { Agent, AgentSceneMemory, ChatSession } from "@multica/core/types";
 import { PageHeader } from "../../../layout/page-header";
+import { AppLink } from "../../../navigation";
 import {
   ChatMessageList,
   ChatMessageSkeleton,
@@ -133,6 +146,13 @@ export function CoordinatorSessionsTab({
     }
   }, [selectedMemoryId, memories]);
 
+  useEffect(() => {
+    if (!showMemory || selectedId || selectedMemoryId || memories.length === 0) {
+      return;
+    }
+    setSelectedMemoryId(memories[0].id);
+  }, [showMemory, selectedId, selectedMemoryId, memories]);
+
   const selected =
     sessions.find((session) => session.id === selectedId) ?? null;
   const selectedMemory =
@@ -140,7 +160,14 @@ export function CoordinatorSessionsTab({
 
   const listHeader = (
     <PageHeader className="justify-between">
-      <h1 className="text-body font-semibold">{t(($) => $.tabs.inbound)}</h1>
+      <div className="min-w-0">
+        <h1 className="text-body font-semibold">{t(($) => $.tabs.inbound)}</h1>
+        {showMemory ? (
+          <p className="text-caption text-muted-foreground">
+            {t(($) => $.tab_body.inbound.memory_header_hint)}
+          </p>
+        ) : null}
+      </div>
     </PageHeader>
   );
 
@@ -192,7 +219,11 @@ export function CoordinatorSessionsTab({
   ) : null;
 
   const conversation = selectedMemory ? (
-    <SceneMemoryDetail memory={selectedMemory} />
+    <SceneMemoryDetail
+      agent={agent}
+      memory={selectedMemory}
+      canEdit={canEdit}
+    />
   ) : selected ? (
     <CoordinatorConversation session={selected} agent={agent} />
   ) : (
@@ -232,8 +263,8 @@ export function CoordinatorSessionsTab({
       <div className="flex min-h-0 flex-1 flex-col">
         {listHeader}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {listBody}
           {memoryList}
+          {listBody}
         </div>
       </div>
     );
@@ -256,8 +287,8 @@ export function CoordinatorSessionsTab({
         <div className="flex h-full flex-col border-r">
           {listHeader}
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {listBody}
             {memoryList}
+            {listBody}
           </div>
         </div>
       </ResizablePanel>
@@ -286,8 +317,8 @@ function SceneMemoryList({
 }) {
   const { t } = useT("agents");
   return (
-    <div className="border-t">
-      <h2 className="px-4 py-2 text-caption font-medium text-muted-foreground">
+    <div className="border-b bg-muted/30">
+      <h2 className="px-4 py-2 text-caption font-medium text-foreground">
         {t(($) => $.tab_body.inbound.memory_title)}
       </h2>
       {isLoading ? (
@@ -345,14 +376,78 @@ function SceneMemoryList({
   );
 }
 
-function SceneMemoryDetail({ memory }: { memory: AgentSceneMemory }) {
+function SceneMemoryDetail({
+  agent,
+  memory,
+  canEdit,
+}: {
+  agent: Agent;
+  memory: AgentSceneMemory;
+  canEdit: boolean;
+}) {
   const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const paths = useWorkspacePaths();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState(memory.memory_text);
+  useEffect(() => {
+    setDraft(memory.memory_text);
+  }, [memory.id, memory.memory_revision, memory.memory_text]);
+  const { data: relations = [], isLoading: relationsLoading } = useQuery(
+    agentSceneRelationOptions(wsId, agent.id, memory.scene_key, true),
+  );
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateAgentSceneMemory(agent.id, memory.id, {
+        memory_text: draft,
+        expected_revision: memory.memory_revision,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: agentSceneMemoryKeys.list(wsId, agent.id),
+      });
+      toast.success(t(($) => $.tab_body.inbound.memory_saved));
+    },
+    onError: () => {
+      toast.error(t(($) => $.tab_body.inbound.memory_save_failed));
+    },
+  });
+  const reset = useMutation({
+    mutationFn: () => api.resetAgentSceneMemory(agent.id, memory.id),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: agentSceneMemoryKeys.list(wsId, agent.id),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_key),
+        }),
+      ]);
+      toast.success(t(($) => $.tab_body.inbound.memory_reset_done));
+    },
+    onError: () => {
+      toast.error(t(($) => $.tab_body.inbound.memory_reset_failed));
+    },
+  });
+  const clearRelations = useMutation({
+    mutationFn: () => api.clearAgentSceneRelations(agent.id, memory.id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: agentSceneRelationKeys.list(wsId, agent.id, memory.scene_key),
+      });
+      toast.success(t(($) => $.tab_body.inbound.relations_cleared));
+    },
+    onError: () => {
+      toast.error(t(($) => $.tab_body.inbound.relations_clear_failed));
+    },
+  });
   const title =
     memory.scene_title.trim() || t(($) => $.tab_body.inbound.memory_untitled);
   const kind =
     memory.scene_kind === "group"
       ? t(($) => $.tab_body.inbound.memory_kind_group)
       : t(($) => $.tab_body.inbound.memory_kind_dm);
+  const dirty = draft !== memory.memory_text;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b px-4 py-3">
@@ -365,10 +460,113 @@ function SceneMemoryDetail({ memory }: { memory: AgentSceneMemory }) {
           })}
           {memory.status ? ` · ${memory.status}` : ""}
         </p>
+        {memory.last_error ? (
+          <p className="mt-1 text-caption text-destructive">{memory.last_error}</p>
+        ) : null}
       </div>
-      <pre className="min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap px-4 py-3 text-body">
-        {memory.memory_text.trim() || t(($) => $.tab_body.inbound.memory_empty)}
-      </pre>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+        <section className="space-y-2">
+          <h2 className="text-caption font-medium text-muted-foreground">
+            {t(($) => $.tab_body.inbound.memory_editor_label)}
+          </h2>
+          <Textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            readOnly={!canEdit}
+            rows={12}
+            className="min-h-48 font-mono text-body"
+          />
+          {canEdit ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                disabled={!dirty || save.isPending}
+                onClick={() => save.mutate()}
+              >
+                {t(($) => $.tab_body.inbound.memory_save)}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={reset.isPending}
+                onClick={() => {
+                  if (
+                    window.confirm(t(($) => $.tab_body.inbound.memory_reset_confirm))
+                  ) {
+                    reset.mutate();
+                  }
+                }}
+              >
+                {t(($) => $.tab_body.inbound.memory_reset)}
+              </Button>
+            </div>
+          ) : null}
+        </section>
+        <section className="mt-6 space-y-2">
+          <h2 className="text-caption font-medium text-muted-foreground">
+            {t(($) => $.tab_body.inbound.relations_title)}
+          </h2>
+          {relationsLoading ? (
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.tab_body.inbound.relations_loading)}
+            </p>
+          ) : relations.length === 0 ? (
+            <p className="text-caption text-muted-foreground">
+              {t(($) => $.tab_body.inbound.relations_empty)}
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {relations.map((item) => {
+                const issueId = item.issue_id || item.issue;
+                return (
+                  <li
+                    key={issueId || item.purpose}
+                    className="rounded-md border px-3 py-2"
+                  >
+                    {issueId ? (
+                      <AppLink
+                        href={paths.issueDetail(issueId)}
+                        className="text-body font-medium text-brand hover:underline"
+                      >
+                        {item.purpose || issueId}
+                      </AppLink>
+                    ) : (
+                      <p className="text-body font-medium">
+                        {item.purpose || t(($) => $.tab_body.inbound.relations_untitled)}
+                      </p>
+                    )}
+                    <p className="text-caption text-muted-foreground">
+                      {item.status}
+                      {item.on_this_scene
+                        ? ` · ${t(($) => $.tab_body.inbound.relations_on_scene)}`
+                        : ""}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {canEdit ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={clearRelations.isPending || relations.length === 0}
+              onClick={() => {
+                if (
+                  window.confirm(t(($) => $.tab_body.inbound.relations_clear_confirm))
+                ) {
+                  clearRelations.mutate();
+                }
+              }}
+            >
+              {t(($) => $.tab_body.inbound.relations_clear)}
+            </Button>
+          ) : null}
+        </section>
+      </div>
     </div>
   );
 }

@@ -192,6 +192,27 @@ export function agentSceneMemoryOptions(
     refetchOnWindowFocus: true,
   });
 }
+
+export const agentSceneRelationKeys = {
+  list: (wsId: string, agentId: string, conversationId: string) =>
+    [...agentSceneMemoryKeys.all(wsId), agentId, "relations", conversationId] as const,
+};
+
+export function agentSceneRelationOptions(
+  wsId: string,
+  agentId: string,
+  conversationId: string,
+  enabled = true,
+) {
+  return queryOptions({
+    queryKey: agentSceneRelationKeys.list(wsId, agentId, conversationId),
+    queryFn: () => api.listAgentSceneRelations(agentId, conversationId),
+    enabled: enabled && !!wsId && !!agentId && !!conversationId,
+    staleTime: 15 * 1000,
+    gcTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
+  });
+}
 // Agent templates are workspace-independent: a static catalog served from
 // the server's embedded JSON. Cache effectively forever — the only way the
 // list / detail change is a server deploy, and a hard reload picks that up.
