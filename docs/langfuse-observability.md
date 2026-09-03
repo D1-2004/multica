@@ -96,6 +96,13 @@ and tags (stamped into `task.context.coordinator_trace_tags`) on every span;
 the task's runtime and provider remain as metadata, and the `agent_task` root
 observation name still identifies the task inside the trace.
 
+For a DingTalk digital-employee turn handled by the durable coordinator job,
+the job id is the turn's trace id: the worker pins it through
+`inboundcoord.ContextWithTraceID`, the dispatch handler hands it to the channel
+engine as the inbound chat trace, and the Scene Memory trigger recorded at
+enqueue time stores the same id. `coord_trace_id` in SLS, the Langfuse trace
+id, `job_id`, and the flush's `coord_trace_id` are therefore one value.
+
 ### Memory flush (`scene_memory_flush`)
 
 - Root observation: type `chain`, input = current memory and cursor, output =
