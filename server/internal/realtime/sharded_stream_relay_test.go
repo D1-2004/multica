@@ -31,6 +31,33 @@ func TestShardedStreamRelayConfigDefaults(t *testing.T) {
 	}
 }
 
+func TestShardedStreamRelayStoresAndLoadsRunnerInventory(t *testing.T) {
+	rdb, mock := redismock.NewClientMock()
+	t.Cleanup(func() { _ = rdb.Close() })
+	relay := NewShardedStreamRelay(NewHub(), rdb, rdb, ShardedStreamRelayConfig{})
+	ctx := context.Background()
+	machineID := "machine-1"
+	inventory := []byte(`{"type":"runner:mcp_inventory","revision":"sha256:test","servers":[]}`)
+	ttl := 90 * time.Second
+
+	mock.ExpectSet(RunnerInventoryKey(machineID), inventory, ttl).SetVal("OK")
+	if err := relay.StoreRunnerInventory(ctx, machineID, inventory, ttl); err != nil {
+		t.Fatalf("store Runner inventory: %v", err)
+	}
+
+	mock.ExpectGet(RunnerInventoryKey(machineID)).SetVal(string(inventory))
+	got, found, err := relay.LoadRunnerInventory(ctx, machineID)
+	if err != nil {
+		t.Fatalf("load Runner inventory: %v", err)
+	}
+	if !found || string(got) != string(inventory) {
+		t.Fatalf("loaded Runner inventory = %q, found=%v", got, found)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestShardedStreamRelayShardForScopeIsStableAndBounded(t *testing.T) {
 	relay := NewShardedStreamRelay(NewHub(), nil, nil, ShardedStreamRelayConfig{Shards: 8})
 
