@@ -40,7 +40,8 @@ session, and tags on every span:
 | name | `inbound_coordinator` | `scene_memory_flush` | `agent_task` |
 | user id | `person_id` → `dws_uid` → Multica user id → sender name | (none) | `person_id` → `dws_uid` → originator → initiator |
 | session id | `conversation_id` (openConversationId) → chat session id | `scene_key` (openConversationId) | `conversation_id` → chat session id |
-| tags | `inbound_coordinator`, `source:*`, `kind:*`, `action:*` | `scene_memory`, `kind:*`, `status:*` | `agent_task`, `runtime:*`, `provider:*`, `channel:*`, `source:*`, `status:*` |
+| tags | `inbound_coordinator`, `source:*`, `kind:*` | `scene_memory`, `kind:*` | `agent_task`, `runtime:*`, `provider:*`, `channel:*`, `source:*` |
+| outcome (metadata) | `action`, `issue_id`, `tool_rounds`, `fail_open` | `status`, `caught_up`, `replace`, `error_code` | `status`, `failure_reason`, token totals |
 
 Two behaviours of the deployed Langfuse build shape the attribute layout
 (verified on 2026-09-03 against `unify-aipilot.dingtalk.com`, v3.123.1):
@@ -49,10 +50,13 @@ Two behaviours of the deployed Langfuse build shape the attribute layout
   (`gen_ai.usage.input_tokens` / `output_tokens` / `total_tokens`); the newer
   `langfuse.observation.usage_details` JSON attribute is stored but not mapped,
   so the exporter emits both.
-- A trace's tags come from the first span ingested and later spans never add
-  to them, while user id, session id, and metadata merge per key. Tags are
-  therefore set on the root observation only (children carry none), which is
-  why the final `action:*` / `status:*` tags survive.
+- A trace's tags are frozen by whichever export batch creates the trace
+  record and later batches never add to them, while user id, session id, and
+  metadata merge per key (eventually, within about a minute). Tags therefore
+  hold only what is known when the trace starts and ride on every span
+  (children usually end, and export, before the root); outcome fields such as
+  the coordinator `action`, the flush `status`, and the task `status` are
+  first-level metadata instead (`metadata.action`, `metadata.status`).
 
 Metadata keys present on every span of a trace include `coord_trace_id`,
 `conversation_id`, `conversation_name`, `conversation_kind`, `sender_name`,

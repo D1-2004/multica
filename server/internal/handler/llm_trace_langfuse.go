@@ -59,7 +59,7 @@ type llmTracePairedEvent struct {
 	DurationMS      int64 `json:"duration_ms"`
 }
 
-func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task db.AgentTaskQueue, agent db.Agent, payload []byte) error {
+func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task db.AgentTaskQueue, agent db.Agent, runtime db.AgentRuntime, payload []byte) error {
 	if o == nil || o.client == nil {
 		return nil
 	}
@@ -76,7 +76,13 @@ func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task
 	if agent.ID.Valid {
 		agentPtr = &agent
 	}
-	traceOpts := service.TaskLangfuseTraceOptions(task, agentPtr, nil)
+	var runtimePtr *db.AgentRuntime
+	if runtime.ID.Valid {
+		runtimePtr = &runtime
+	}
+	// The relay usually creates the task's trace record before the completion
+	// hook runs, so it must carry the same tags (runtime, provider, channel).
+	traceOpts := service.TaskLangfuseTraceOptions(task, agentPtr, runtimePtr)
 
 	now := o.now()
 	start := now

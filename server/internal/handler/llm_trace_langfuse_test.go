@@ -20,7 +20,7 @@ type recordingLLMTraceObserver struct {
 	payload []byte
 }
 
-func (r *recordingLLMTraceObserver) ObserveTaskLLMTrace(_ context.Context, _ db.AgentTaskQueue, _ db.Agent, payload []byte) error {
+func (r *recordingLLMTraceObserver) ObserveTaskLLMTrace(_ context.Context, _ db.AgentTaskQueue, _ db.Agent, _ db.AgentRuntime, payload []byte) error {
 	r.calls++
 	r.payload = append([]byte(nil), payload...)
 	return nil
@@ -123,12 +123,13 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 		Context:   []byte(`{"dispatch_event_data":{"conversation":{"openConversationId":"cid-1"}}}`),
 	}
 	agent := db.Agent{ID: task.AgentID, Name: "FDE教练", WorkspaceID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true}}
+	runtime := db.AgentRuntime{ID: pgtype.UUID{Bytes: [16]byte{7}, Valid: true}, Name: "FC-Hermes-Stable", RuntimeMode: "cloud", Provider: "hermes"}
 	payload := []byte(`{
 		"sequence": 3,
 		"request": {"body": "{\"model\":\"qwen3.7-plus\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"temperature\":0.2}", "size": 80, "truncated": false},
 		"response": {"body": "{\"choices\":[{\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"hello\"}}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2,\"total_tokens\":7}}", "size": 120, "truncated": false, "status": 200, "complete": true}
 	}`)
-	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, payload); err != nil {
+	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, runtime, payload); err != nil {
 		t.Fatal(err)
 	}
 	spans := exporter.GetSpans()
@@ -161,6 +162,11 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	if attrs["langfuse.session.id"] != "cid-1" || attrs["langfuse.trace.metadata.agent_name"] != "FDE教练" || attrs["langfuse.trace.metadata.task_id"] != "abcd0000-0000-0000-0000-000000000000" {
 		t.Fatalf("lookup keys = %v", attrs)
 	}
+	// The relay usually creates the trace record, so it carries the runtime
+	// and provider tags the completion hook would otherwise add too late.
+	if attrs["langfuse.trace.tags"] != `["agent_task","runtime:cloud","provider:hermes"]` || attrs["langfuse.trace.metadata.provider"] != "hermes" {
+		t.Fatalf("relay tags/provider = %q / %q", attrs["langfuse.trace.tags"], attrs["langfuse.trace.metadata.provider"])
+	}
 	if attrs["langfuse.observation.metadata.sequence"] != "3" || attrs["langfuse.observation.metadata.api"] != "chat.completions" {
 		t.Fatalf("observation metadata = %v", attrs)
 	}
@@ -172,7 +178,7 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	}
 	// A runtime retry of the same sequence must reuse the observation id so
 	// Langfuse upserts instead of duplicating the generation.
-	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, payload); err != nil {
+	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, runtime, payload); err != nil {
 		t.Fatal(err)
 	}
 	retried := exporter.GetSpans()
@@ -180,15 +186,15 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 		t.Fatalf("retry produced a different observation id: %v", retried)
 	}
 
-	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, []byte(`not json`)); err == nil {
+	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, runtime, []byte(`not json`)); err == nil {
 		t.Fatal("malformed payload must be reported")
 	}
-	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, []byte(`{"sequence":4}`)); err == nil {
+	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, runtime, []byte(`{"sequence":4}`)); err == nil {
 		t.Fatal("payload without bodies must be reported")
 	}
 
 	errPayload := []byte(`{"sequence":5,"request":{"body":"{\"model\":\"m\",\"messages\":[]}"},"response":{"body":"{\"error\":{\"message\":\"rate limited\"}}","status":429,"complete":true}}`)
-	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, errPayload); err != nil {
+	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, runtime, errPayload); err != nil {
 		t.Fatal(err)
 	}
 	spans = exporter.GetSpans()

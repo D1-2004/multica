@@ -52,6 +52,7 @@ type LLMTraceObserver interface {
 		ctx context.Context,
 		task db.AgentTaskQueue,
 		agent db.Agent,
+		runtime db.AgentRuntime,
 		payload []byte,
 	) error
 }
@@ -113,13 +114,14 @@ func relayTaskLLMTrace(
 	externalSink LLMTraceExternalSink,
 	observer LLMTraceObserver,
 ) (int, error) {
-	return relayTaskLLMTraceForAgent(ctx, task, db.Agent{}, runtimeConfig, payload, now, router, externalSink, observer)
+	return relayTaskLLMTraceForAgent(ctx, task, db.Agent{}, db.AgentRuntime{}, runtimeConfig, payload, now, router, externalSink, observer)
 }
 
 func relayTaskLLMTraceForAgent(
 	ctx context.Context,
 	task db.AgentTaskQueue,
 	agent db.Agent,
+	runtime db.AgentRuntime,
 	runtimeConfig []byte,
 	payload []byte,
 	now time.Time,
@@ -131,7 +133,7 @@ func relayTaskLLMTraceForAgent(
 	if observer != nil {
 		// Fan out to the server-side observer first: it only parses and
 		// enqueues, so it never delays the network destinations below.
-		if err := observer.ObserveTaskLLMTrace(ctx, task, agent, payload); err != nil {
+		if err := observer.ObserveTaskLLMTrace(ctx, task, agent, runtime, payload); err != nil {
 			slog.Warn("LLM trace observer rejected payload",
 				"event", "llm_trace_observer_failed",
 				"task_id", util.UUIDToString(task.ID),
@@ -285,6 +287,7 @@ func (h *Handler) RelayTaskLLMTrace(w http.ResponseWriter, r *http.Request) {
 		r.Context(),
 		task,
 		agent,
+		runtime,
 		agent.RuntimeConfig,
 		payload,
 		time.Now(),
