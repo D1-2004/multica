@@ -4,6 +4,7 @@ description: >
   查 Coordinator 快循环在预发/正式 SLS 上的推理：user prompt、assoc_recall 参数和返回、finish 裁决。
   用户说「Coordinator 怎么决策」「SLS 推理」「inbound_coordinator」「为什么接到旧事项」、给了会话名/cid/coord_trace_id 时必须用。
   走 Normandy `log list --source sls`（或 scripts/query-coordinator-sls.sh），不要用 Router LLM trace 顶 Coordinator 上下文。
+  Generation I/O 和沙箱 Run 另走 skill `inspect-langfuse`。
 compatibility: Requires logged-in normandy (AIT). Unset HTTP proxy. Project dt-fde-multica-sls / logstore application-log.
 metadata:
   version: "1.0.0"
@@ -69,11 +70,14 @@ normandy log list --source sls \
 3. `inbound_coordinator_llm_finish` 或 `issue_comment_add` terminal：`action` / `issue_id` / `text`。
 4. `inbound_coordinator_decided`：最终裁决。
 
+Generation 原文、token、沙箱 `agent_task`：skill `inspect-langfuse`（`scripts/query-langfuse.sh --trace <coord_trace_id>`）。SLS 仍是 Host 召回过线标准。
+
 没有 `inbound_coordinator_llm_request` 的旧日志只有 `inbound_coordinator_decided`，看不出 prompt。
 
 ## 错法
 
 - 用 Router `get_observability_llm_trace` 当 Coordinator 上下文。那是沙箱模型。
+- 用 Langfuse `agent_task` 当 Scene Text 召回证据。那是沙箱 Run。
 - 查询 `inbound_coordinator` 或 `event: inbound_coordinator*`。前者匹配不到带后缀的 event 名；后者当 JSON 字段，这一路不是 JSON。
 - 不带预发 tag，把正式和预发混在一起。
 - 不 unset HTTP 代理。

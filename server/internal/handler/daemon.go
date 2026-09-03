@@ -4029,6 +4029,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// by the existing per-(issue, agent) dedup, and terminating because the
 	// triggering comment always predates the follow-up run's started_at.
 	h.reconcileCommentsOnCompletion(r.Context(), task)
+	go h.maybeRunTaskFinishedLoop(context.WithoutCancel(r.Context()), task)
 	if h.ManagedAgent != nil {
 		if err := h.ManagedAgent.ReconcileAgent(r.Context(), task.AgentID); err != nil {
 			slog.Warn("complete task: managed Agent reconciliation failed", "agent_id", uuidToString(task.AgentID), "error", err)

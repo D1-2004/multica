@@ -22,7 +22,7 @@ import (
 
 const maxLoopRounds = 8
 
-const toolRequiredNudge = "You must call a tool. Do not answer from memory or related_tasks. If the user named a conversation_id, call assoc_recall with that exact id. Then call finish."
+const toolRequiredNudge = "You must call a tool. Do not invent facts or use related_tasks as the answer. Scene questions finish from Host scene_memory. If the user named a conversation_id, call assoc_recall with that exact id. Then call finish."
 
 // Completer is the one Chat Completions round the coordinator loop needs.
 type Completer interface {
@@ -43,6 +43,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	var bind BindSpec
 	recalledIssues := map[string]struct{}{}
 	continuationIssues := map[string]struct{}{}
+	if turn.Loop == LoopTaskFinished {
+		if id := strings.TrimSpace(turn.IssueID); id != "" {
+			recalledIssues[id] = struct{}{}
+		}
+	}
 	steps := make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2)
 	appendStep := func(step protocol.ChatCoordinatorStep) {
 		step.Seq = len(steps) + 1
@@ -60,7 +65,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		traceToolReject(lt, round, call, out, reason)
 	}
 	for round := 0; round < maxLoopRounds; round++ {
-		tools := toolsForRound(round)
+		tools := toolsForTurn(turn, round)
 		generation := traceRoundGeneration(lt, round, messages, tools)
 		completion, err := c.complete(ctx, messages, tools)
 		endRoundGeneration(generation, completion, err)
@@ -142,7 +147,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				if !shouldRetryBusyIssueComment(turn) {
 					return Decision{
 						Action:     ActionReply,
-						UserText:   "这条先不并进正在处理的事项。",
+						UserText:   busyIssueUnrelatedReply(turn),
 						Reason:     "issue_busy_unrelated",
 						ToolRounds: round + 1, ToolsUsed: used, Steps: append([]protocol.ChatCoordinatorStep{}, steps...),
 					}, nil
@@ -290,17 +295,60 @@ func isShortIssueContinuation(message string) bool {
 	return utf8.RuneCountInString(message) <= shortIssueContinuationRunes
 }
 
-func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {
+func busyIssueUnrelatedReply(turn Turn) string {
+	clip := clipRunes(strings.TrimSpace(turn.Message), 16)
+	if clip == "" {
+		return "手头这件还在做，做完我再接你这句。"
+	}
+	return "手头这件还在做，做完再看「" + clip + "」。"
+}
+
+func toolsForTurn(turn Turn, round int) []openai.ChatCompletionToolUnionParam {
 	if round >= maxLoopRounds-1 {
+		if turn.Loop == LoopTaskFinished {
+			return []openai.ChatCompletionToolUnionParam{coordinatorTaskFinishedFinishTool()}
+		}
 		return []openai.ChatCompletionToolUnionParam{coordinatorFinishTool()}
 	}
+	if turn.Loop == LoopTaskFinished {
+		return taskFinishedToolDefs()
+	}
 	return coordinatorToolDefs()
+}
+
+func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {
+	return toolsForTurn(Turn{}, round)
+}
+
+func taskFinishedToolDefs() []openai.ChatCompletionToolUnionParam {
+	return []openai.ChatCompletionToolUnionParam{
+		coordinatorIssueGetTool(),
+		coordinatorIssueCommentListTool(),
+		coordinatorTaskFinishedFinishTool(),
+	}
+}
+
+func coordinatorTaskFinishedFinishTool() openai.ChatCompletionToolUnionParam {
+	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+		Name:        toolFinish,
+		Description: openai.String("End the task-finished loop. action=reply is a short wrap-up or suggestion for the original delegator. action=silence when the sandbox result already told them. Do not open a new Issue from this loop."),
+		Parameters: shared.FunctionParameters{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"action"},
+			"properties": map[string]any{
+				"action": map[string]any{"type": "string", "enum": []string{"reply", "silence"}},
+				"text":   map[string]any{"type": "string", "description": "Required for reply. The IM sentence spoken to the delegator."},
+				"reason": map[string]any{"type": "string"},
+			},
+		},
+	})
 }
 
 func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply when current_message is a greeting or does not advance a recalled purpose and is not answering a question this agent just asked. If current_message answers that question, do not reply with the same question; continue or open the work. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop. Never use reply to say you cannot complete the request. New Issue: omit issue_id and set delegator, purpose, intent, and text naming the work. Continue an existing Issue with issue_comment_add, never with finish issue_id. text is required for reply and issue."),
+		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply when current_message is a greeting or does not advance a recalled purpose and is not answering a question this agent just asked. Also use reply for a scene-memory inventory, or a delegated send/ask whose payload is still missing (ask for the missing content; do not open an Issue). If current_message answers that question, do not reply with the same question; continue or open the work. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop, but only once the payload is named. Never use reply to say you cannot complete the request. New Issue: omit issue_id and set delegator, purpose, intent, and text naming the work. Continue an existing Issue with issue_comment_add, never with finish issue_id. text is required for reply and issue."),
 		Parameters: shared.FunctionParameters{
 			"type":                 "object",
 			"additionalProperties": false,
@@ -310,7 +358,7 @@ func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 				"text":      map[string]any{"type": "string", "description": "Required for reply and issue. The IM sentence spoken to the person. Name the work in ordinary language. Do not omit it."},
 				"look_into": map[string]any{"type": "string"},
 				"delegator": map[string]any{"type": "string", "minLength": 1, "description": "Required when action=issue. Who asked this agent to act. Copy the inbound sender name."},
-				"purpose":   map[string]any{"type": "string", "minLength": 8, "description": "Required when action=issue. Event and goal, such as 向辰驷确认明天几点打球. No DWS, data-auth, or openConversationId."},
+				"purpose":   map[string]any{"type": "string", "minLength": 8, "description": "Required when action=issue. Structured brief of 委托人, 事件, 目的. No DWS, data-auth, or openConversationId."},
 				"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "Required when action=issue."},
 				"reason":    map[string]any{"type": "string"},
 			},
@@ -322,7 +370,7 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 	return []openai.ChatCompletionToolUnionParam{
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolAssocRecall,
-			Description: openai.String("Recall Issue/Task matters and inbound/outbound events on the scene graph. Always include this inbound conversation_id; the server fills it if omitted. q filters purpose on that scene and must not drop the cid. Pass a different openConversationId only when the user named one. since defaults to 48h."),
+			Description: openai.String("Recall Issue/Task matters and inbound/outbound events on the scene graph. Always include this inbound conversation_id; the server fills it if omitted. q filters purpose on that scene and must not drop the cid. Pass a different openConversationId only when the user named one. since defaults to 48h; use 7d or 30d for older work the user still names."),
 			Parameters: shared.FunctionParameters{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -358,31 +406,8 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 				},
 			},
 		}),
-		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-			Name:        toolIssueGet,
-			Description: openai.String("Read one Issue this agent owns. Copy issue_id from assoc_recall. Returns title, status, and a clipped description for rerank. Does not start a sandbox."),
-			Parameters: shared.FunctionParameters{
-				"type":                 "object",
-				"additionalProperties": false,
-				"required":             []string{"issue_id"},
-				"properties": map[string]any{
-					"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall items[].issue_id."),
-				},
-			},
-		}),
-		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-			Name:        toolIssueCommentList,
-			Description: openai.String("List recent comments on an Issue this agent owns. Copy issue_id from assoc_recall. Use before deciding whether the inbound turn continues that matter."),
-			Parameters: shared.FunctionParameters{
-				"type":                 "object",
-				"additionalProperties": false,
-				"required":             []string{"issue_id"},
-				"properties": map[string]any{
-					"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall items[].issue_id."),
-					"tail":     map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "description": "Newest comments to return, default 20, max 50."},
-				},
-			},
-		}),
+		coordinatorIssueGetTool(),
+		coordinatorIssueCommentListTool(),
 		openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 			Name:        toolIssueCommentAdd,
 			Description: openai.String("Add the trusted inbound DingTalk message as a member comment on an Issue this agent owns. The current DingTalk event sender is the actual speaker. The stored Multica comment author is only the workspace principal executing this Issue tool and is not evidence of the delegator, speaker, or recipient. This identity rule applies to both digital-employee and robot messages; a robot sender uid may be missing and must not be invented. The normal Issue comment path starts its next task. This tool is terminal on success: reply_text closes the current IM turn, so do not call finish afterward."),
@@ -400,6 +425,37 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 		}),
 		coordinatorFinishTool(),
 	}
+}
+
+func coordinatorIssueGetTool() openai.ChatCompletionToolUnionParam {
+	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+		Name:        toolIssueGet,
+		Description: openai.String("Read one Issue this agent owns. Copy issue_id from assoc_recall, or from issue_id when loop=task_finished. Returns title, status, and a clipped description for rerank. Does not start a sandbox."),
+		Parameters: shared.FunctionParameters{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"issue_id"},
+			"properties": map[string]any{
+				"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall items[].issue_id, or from this turn's issue_id when loop=task_finished."),
+			},
+		},
+	})
+}
+
+func coordinatorIssueCommentListTool() openai.ChatCompletionToolUnionParam {
+	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+		Name:        toolIssueCommentList,
+		Description: openai.String("List recent comments on an Issue this agent owns. Copy issue_id from assoc_recall, or from issue_id when loop=task_finished. Use to understand this task, not a 300-person thread."),
+		Parameters: shared.FunctionParameters{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []string{"issue_id"},
+			"properties": map[string]any{
+				"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall items[].issue_id, or from this turn's issue_id when loop=task_finished."),
+				"tail":     map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "description": "Newest comments to return, default 20, max 50."},
+			},
+		},
+	})
 }
 
 func normalizeToolCallTypes(msg *openai.ChatCompletionMessage) {
@@ -550,6 +606,7 @@ func coordinatorLogIndex(turn Turn) []any {
 		"workspace_id", strings.TrimSpace(turn.WorkspaceID),
 		"evidence_id", strings.TrimSpace(turn.EvidenceID),
 		"source", string(turn.Source),
+		"loop", string(turn.Loop),
 		"current_message", clipRunes(strings.TrimSpace(turn.Message), llmLogFieldBudget),
 	}
 }
@@ -888,6 +945,9 @@ func requireRecallBeforeFinish(
 	bind BindSpec,
 	finishRaw string,
 ) error {
+	if turn.Loop == LoopTaskFinished {
+		return nil
+	}
 	var parsed struct {
 		Action  string `json:"action"`
 		IssueID string `json:"issue_id"`

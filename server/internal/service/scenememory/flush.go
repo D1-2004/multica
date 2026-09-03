@@ -21,10 +21,11 @@ import (
 )
 
 const (
-	flushModel       = "qwen3.7-plus"
-	flushTimeout     = 50 * time.Second
-	flushBatchEvents = 24
-	flushMaxRounds   = 4
+	flushModel            = "qwen3.7-plus"
+	flushTimeout          = 120 * time.Second
+	flushBatchEvents      = 24
+	flushGroupBatchEvents = 40
+	flushMaxRounds        = 4
 )
 
 var flushClock = func() *time.Location {
@@ -119,6 +120,7 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err erro
 	committed, err := f.Store.CommitBatch(ctx, row, CommitBatch{
 		ReplaceText:            replace,
 		MemoryText:             newText,
+		SceneTitle:             LocatingTitle(newText),
 		SourceCursorAt:         plan.cursorAt,
 		SourceCursorEvidenceID: plan.cursorEv,
 		FlushMeta:              meta,
@@ -199,8 +201,12 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 		plan.cursorAt = cutoffAt
 		plan.cursorEv = cutoffEv
 	}
-	if len(plan.batch) > flushBatchEvents {
-		plan.batch = plan.batch[:flushBatchEvents]
+	limit := flushBatchEvents
+	if row.SceneKind == KindGroup {
+		limit = flushGroupBatchEvents
+	}
+	if len(plan.batch) > limit {
+		plan.batch = plan.batch[:limit]
 	}
 	if len(delta) == 0 {
 		plan.caughtUp = cutoffEv == "" || containsEvidence(events, cutoffEv) || covered
@@ -374,6 +380,11 @@ When they say 整理记忆: compact — drop stale 待确认 and process notes; 
 
 Still skip: secrets, issue ids, tasks to execute, another scene, insults with no factual payload, health/pay/performance.
 Events tagged [self] are this digital employee. Never write them into 纠正信号, 稳定知识与约定, or 待确认 — not as a citation (来自{this agent}…), not as a fact. If current_memory already has such a bullet, delete it. [self] is only context for understanding [peer] humans.
+Match self_speakers loosely: 菲迪 and 菲迪-FDE教练 are the same speaker.
+On a DM, 成员 is the other human. Never cite self_speakers, or any name not in 成员, as the source of 稳定知识.
+On a group, still never cite self_speakers even if 成员 lists this agent.
+Do not copy this agent's recitation of how it will talk (回复偏好, 回复风格, 我会遵循这些偏好) into Scene Text unless a human [peer] stated that preference. Those lines belong in agent_instructions.
+Do not keep this agent's operational limits ("每次只能回一条", "无法一次发两条") as standing knowledge — that is a coordinator bug, not a scene fact.
 
 Cite every kept fact at the end of its line as (来自{speaker}, {M}月{D}日 {HH:mm}的发言) using the event clock printed below (Asia/Shanghai). Copy speaker and stamp; do not invent. Keep an older citation unless a newer event rewrites the fact.
 
@@ -492,8 +503,16 @@ func selfSpeakerNames(batch []HistoryEvent) []string {
 
 func citesSelfSpeaker(line string, names []string) bool {
 	for _, name := range names {
-		if name != "" && strings.Contains(line, "来自"+name) {
+		if name == "" {
+			continue
+		}
+		if strings.Contains(line, "来自"+name) {
 			return true
+		}
+		for _, alias := range agentNameAliases(name) {
+			if alias != "" && strings.Contains(line, "来自"+alias) {
+				return true
+			}
 		}
 	}
 	return false
@@ -503,8 +522,152 @@ func isFlushTaskBullet(line string) bool {
 	return strings.Contains(line, "需从") || strings.Contains(line, "执行情况")
 }
 
+func looksLikeAgentReplyStyle(line string) bool {
+	return strings.Contains(line, "回复偏好") ||
+		strings.Contains(line, "回复风格") ||
+		strings.Contains(line, "我会遵循这些偏好")
+}
+
+func looksLikeCoordinatorSelfLimit(line string) bool {
+	return strings.Contains(line, "每次触发只能回复一条") ||
+		strings.Contains(line, "无法一次发两条")
+}
+
+func locatingMembers(text string) []string {
+	in := false
+	seen := map[string]struct{}{}
+	var members []string
+	add := func(name string) {
+		name = strings.TrimSpace(strings.TrimPrefix(name, "[推断]"))
+		name = strings.TrimSpace(name)
+		if name == "" || strings.HasPrefix(name, "用途") {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		members = append(members, name)
+	}
+	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "## ") {
+			heading := strings.TrimSpace(strings.TrimPrefix(line, "## "))
+			if heading == "场域定位" {
+				in = true
+				continue
+			}
+			if in {
+				break
+			}
+			continue
+		}
+		if !in || line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "成员") {
+			rest := line
+			for _, prefix := range []string{"成员：", "成员:"} {
+				if strings.HasPrefix(rest, prefix) {
+					rest = strings.TrimSpace(strings.TrimPrefix(rest, prefix))
+					break
+				}
+			}
+			for _, part := range strings.FieldsFunc(rest, func(r rune) bool {
+				return r == '、' || r == ',' || r == '，' || r == '/'
+			}) {
+				add(part)
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "用途") || strings.HasPrefix(line, "-") {
+			continue
+		}
+		add(line)
+	}
+	return members
+}
+
+func citationSpeaker(line string) string {
+	idx := strings.Index(line, "来自")
+	if idx < 0 {
+		return ""
+	}
+	rest := line[idx+len("来自"):]
+	cut := len(rest)
+	for i, r := range rest {
+		if r == ',' || r == '，' || r == ' ' || r == ')' || r == '）' {
+			cut = i
+			break
+		}
+	}
+	return strings.TrimSpace(rest[:cut])
+}
+
+func citesOutsideMembers(line string, members []string) bool {
+	if len(members) != 1 {
+		return false
+	}
+	speaker := citationSpeaker(line)
+	if speaker == "" {
+		return false
+	}
+	peer := members[0]
+	if speaker == peer || strings.Contains(peer, speaker) || strings.Contains(speaker, peer) {
+		return false
+	}
+	return true
+}
+
+func isSinglePeerScene(text string, members []string) bool {
+	if len(members) != 1 {
+		return false
+	}
+	return !strings.Contains(text, "用途：") && !strings.Contains(text, "用途:")
+}
+
+// SanitizeMemoryText drops Flush debris that must never reach the inbound
+// judge: self-citations, git/pipeline notes, issue tombstones, and on a DM
+// any 稳定知识 cited from someone who is not the other person.
+func SanitizeMemoryText(text string, batch []HistoryEvent) string {
+	return sanitizeFlushText(text, batch)
+}
+
+// SanitizeMemoryTextForAgent drops this agent's own citations from Host
+// inject even when Flush has no [self] batch (typical for groups).
+func SanitizeMemoryTextForAgent(text, agentName string) string {
+	batch := []HistoryEvent{}
+	if name := strings.TrimSpace(agentName); name != "" {
+		batch = []HistoryEvent{{Self: true, Speaker: name}}
+	}
+	return sanitizeFlushText(text, batch)
+}
+
 func sanitizeFlushText(text string, batch []HistoryEvent) string {
 	names := selfSpeakerNames(batch)
+	expanded := make([]string, 0, len(names)*2)
+	seen := map[string]struct{}{}
+	addName := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		expanded = append(expanded, name)
+	}
+	for _, name := range names {
+		addName(name)
+		for _, alias := range agentNameAliases(name) {
+			addName(alias)
+		}
+	}
+	names = expanded
+	members := locatingMembers(text)
+	singlePeer := isSinglePeerScene(text, members)
 	heading := ""
 	var b strings.Builder
 	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
@@ -527,6 +690,15 @@ func sanitizeFlushText(text string, batch []HistoryEvent) string {
 				continue
 			}
 			if (heading == "纠正信号" || heading == "待确认") && isFlushTaskBullet(trimmed) {
+				continue
+			}
+			if singlePeer && citesOutsideMembers(trimmed, members) {
+				continue
+			}
+			if looksLikeCoordinatorSelfLimit(trimmed) {
+				continue
+			}
+			if heading == "稳定知识与约定" && looksLikeAgentReplyStyle(trimmed) && citationSpeaker(trimmed) == "" {
 				continue
 			}
 		}

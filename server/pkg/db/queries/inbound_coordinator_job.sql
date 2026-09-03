@@ -1,10 +1,12 @@
 -- name: CreateInboundCoordinatorJob :one
 INSERT INTO inbound_coordinator_job (
     acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id,
-    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id
+    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id,
+    available_at
 ) VALUES (
     @acceptance_id, @workspace_id, @agent_id, @user_id, @endpoint_namespace_id,
-    @dispatch_endpoint_id, @idempotency_key, @command, @chat_session_id, @user_message_id
+    @dispatch_endpoint_id, @idempotency_key, @command, @chat_session_id, @user_message_id,
+    @available_at
 )
 RETURNING *;
 
@@ -84,3 +86,50 @@ SELECT EXISTS (
       AND role = 'assistant'
       AND message_kind = 'coordinator'
 ) AS exists;
+
+-- name: FindPendingInboundCoordinatorJobForConversation :one
+SELECT *
+FROM inbound_coordinator_job
+WHERE workspace_id = @workspace_id
+  AND agent_id = @agent_id
+  AND status = 'pending'
+  AND command #>> '{event,data,conversation,openConversationId}' = @conversation_id
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE;
+
+-- name: ListPendingInboundCoordinatorJobsForConversation :many
+SELECT *
+FROM inbound_coordinator_job
+WHERE workspace_id = @workspace_id
+  AND agent_id = @agent_id
+  AND status = 'pending'
+  AND id <> @exclude_id
+  AND command #>> '{event,data,conversation,openConversationId}' = @conversation_id
+ORDER BY created_at ASC
+FOR UPDATE;
+
+-- name: UpdateInboundCoordinatorJobCollect :one
+UPDATE inbound_coordinator_job
+SET command = @command,
+    available_at = @available_at,
+    updated_at = now()
+WHERE id = @id AND status = 'pending'
+RETURNING *;
+
+-- name: CompleteCoalescedInboundCoordinatorJob :execrows
+UPDATE inbound_coordinator_job
+SET status = 'completed',
+    last_error = NULL,
+    updated_at = now()
+WHERE id = @id AND status = 'pending';
+
+-- name: AppendCoordinatorUserMessage :execrows
+UPDATE chat_message
+SET content = @content
+WHERE id = @id AND role = 'user';
+
+-- name: UpdateInboundCoordinatorJobCommand :execrows
+UPDATE inbound_coordinator_job
+SET command = @command, updated_at = now()
+WHERE id = @id AND status = 'running';

@@ -1452,6 +1452,22 @@ func dispatchWindowIsLifecycleEmotion(c DispatchCommand) bool {
 // employee's own bubble emotion (Router processing/complete indications, or
 // the sandbox adding then removing an ack). Those events must not create new
 // Issue/comment work: doing so re-enters processing emotions and loops.
+func dispatchIsAgentSelfMessage(c DispatchCommand) bool {
+	if c.Event.Domain != "channel" || c.Event.Type != "message.created" {
+		return false
+	}
+	agentIDs := dispatchAgentIdentityIDs(c)
+	if len(agentIDs) == 0 {
+		return false
+	}
+	for _, id := range dispatchSenderIdentifiers(c.Event.Data.Sender) {
+		if _, ok := agentIDs[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func dispatchIsAgentSelfEmotion(c DispatchCommand) bool {
 	if c.Event.Domain != "channel" {
 		return false

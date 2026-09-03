@@ -360,8 +360,49 @@ func messageIsSelf(flag *bool, self bool, agentUID, agentDisplayName, senderID, 
 	if agentUID != "" && (strings.TrimSpace(senderID) == agentUID || strings.TrimSpace(senderOpenID) == agentUID) {
 		return true
 	}
-	name := strings.TrimSpace(agentDisplayName)
-	return name != "" && strings.EqualFold(strings.TrimSpace(senderName), name)
+	return namesReferToSameAgent(senderName, agentDisplayName)
+}
+
+// namesReferToSameAgent treats "菲迪" and "菲迪-FDE教练" as the same digital employee.
+func namesReferToSameAgent(speaker, display string) bool {
+	speaker = strings.TrimSpace(speaker)
+	display = strings.TrimSpace(display)
+	if speaker == "" || display == "" {
+		return false
+	}
+	if strings.EqualFold(speaker, display) {
+		return true
+	}
+	for _, alias := range agentNameAliases(display) {
+		if strings.EqualFold(speaker, alias) {
+			return true
+		}
+	}
+	for _, alias := range agentNameAliases(speaker) {
+		if strings.EqualFold(display, alias) {
+			return true
+		}
+	}
+	return false
+}
+
+func agentNameAliases(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	out := []string{name}
+	cut := name
+	for _, sep := range []string{"-", "－", "—", "–", "（", "(", " "} {
+		if i := strings.Index(cut, sep); i > 0 {
+			cut = strings.TrimSpace(cut[:i])
+			break
+		}
+	}
+	if cut != "" && !strings.EqualFold(cut, name) {
+		out = append(out, cut)
+	}
+	return out
 }
 
 func parseDWSTime(raw string) time.Time {

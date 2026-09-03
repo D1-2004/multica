@@ -2336,6 +2336,24 @@ func TestDispatchIsAgentSelfEmotion(t *testing.T) {
 	}
 }
 
+func TestDispatchIsAgentSelfMessage(t *testing.T) {
+	created := emotionReplyDispatchCommand()
+	created.Event.Type = "message.created"
+	created.Event.Data.Messages[0].Reaction = nil
+	created.Event.Data.Messages[0].Text = "收到，我开始逐项核验"
+	created.Event.Data.Sender.UID = "agent-uid-1"
+	created.ExternalIdentity.DWS = &AgentDispatchDWSIdentity{UID: "agent-uid-1"}
+	if !dispatchIsAgentSelfMessage(created) {
+		t.Fatal("digital employee outbound re-entering inbound must be skipped")
+	}
+
+	human := created
+	human.Event.Data.Sender.UID = "human-uid-9"
+	if dispatchIsAgentSelfMessage(human) {
+		t.Fatal("human inbound must still dispatch")
+	}
+}
+
 func TestEmotionReplyDispatchValidatesAndRendersReactionEntries(t *testing.T) {
 	c := emotionReplyDispatchCommand()
 	if err := c.validate(); err != nil {

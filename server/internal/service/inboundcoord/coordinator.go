@@ -59,8 +59,17 @@ const (
 	SourceRobot           Source = "robot"
 )
 
+// Loop names which coordinator cycle is running.
+type Loop string
+
+const (
+	LoopInbound      Loop = "inbound"
+	LoopTaskFinished Loop = "task_finished"
+)
+
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
+	Loop                 Loop
 	Source               Source
 	Addressed            bool
 	ChatType             string
@@ -97,6 +106,8 @@ type Turn struct {
 	// ChatSessionID is the web Chat session the turn belongs to; channel
 	// turns leave it empty and are grouped by ConversationID instead.
 	ChatSessionID string
+	TaskResult    string
+	IssueID       string
 }
 
 // HistoryLine is one already-persisted Multica chat message or a DingTalk row.
@@ -255,6 +266,9 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		return Decision{Action: ActionContinue}
 	}
 	if c.LLM == nil || !c.LLM.Enabled() {
+		if turn.Loop == LoopTaskFinished {
+			return Decision{Action: ActionSilence}
+		}
 		return Decision{Action: ActionContinue}
 	}
 	if strings.TrimSpace(turn.Message) == "" {
@@ -268,7 +282,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
-	if c.coordinatorOff(ctx, turn) {
+	if turn.Loop != LoopTaskFinished && c.coordinatorOff(ctx, turn) {
 		slog.Info("inbound coordinator skipped; agent switch off",
 			append(coordinatorLogIndex(turn),
 				"event", "inbound_coordinator_decided",
@@ -285,7 +299,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	turnTrace = c.startTurnTrace(ctx, turn, started)
 	loopCtx = langfuse.ContextWithTrace(loopCtx, turnTrace)
 	var preflightSteps []protocol.ChatCoordinatorStep
-	if turn.Source != SourceWeb {
+	if turn.Source != SourceWeb && turn.Loop != LoopTaskFinished {
 		if c.DWSHistory == nil {
 			loopErr = fmt.Errorf("DWS history is not configured")
 			preflightSteps = coordinatorDWSHistorySteps(turn, nil, fmt.Errorf("DWS history is not configured"))
@@ -331,16 +345,20 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	elapsed := time.Since(started)
 	decision.Steps = mergeCoordinatorSteps(preflightSteps, decision.Steps)
 	if err != nil {
-		slog.Warn("inbound coordinator llm failed; continuing sandbox enqueue",
+		failOpen := ActionContinue
+		if turn.Loop == LoopTaskFinished {
+			failOpen = ActionSilence
+		}
+		slog.Warn("inbound coordinator llm failed",
 			append(coordinatorLogIndex(turn),
 				"event", "inbound_coordinator_decided",
-				"action", string(ActionContinue),
+				"action", string(failOpen),
 				"model", coordinatorModel,
 				"fail_open", true,
 				"elapsed_ms", elapsed.Milliseconds(),
 				"error", err,
 			)...)
-		decision.Action = ActionContinue
+		decision.Action = failOpen
 		decision.ElapsedMs = elapsed.Milliseconds()
 		decision.Source = turn.Source
 		return decision
@@ -578,7 +596,7 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	if err != nil {
 		return
 	}
-	turn.SceneMemory = row.MemoryText
+	turn.SceneMemory = scenememory.SanitizeMemoryTextForAgent(row.MemoryText, turn.AgentName)
 	turn.SceneMemoryRevision = row.MemoryRevision
 	turn.SceneTitle = strings.TrimSpace(row.SceneTitle)
 	slog.Info("scene memory injected into coordinator",
@@ -629,6 +647,9 @@ func parseDecision(raw string, turn Turn) Decision {
 		if text == "" {
 			return Decision{Action: ActionContinue}
 		}
+		if isMissingPayloadIssue(text) {
+			return Decision{Action: ActionReply, UserText: text, Reason: firstNonEmpty(reason, "missing send payload")}
+		}
 		purpose, _ := assoc.ComposeCoordinatorPurpose(firstNonEmpty(parsed.Delegator, turn.SenderName), parsed.Place, parsed.Purpose)
 		intent, _ := assoc.CoordinatorIntent(parsed.Intent)
 		if look == "" {
@@ -646,6 +667,18 @@ func parseDecision(raw string, turn Turn) Decision {
 	default:
 		return Decision{Action: ActionContinue}
 	}
+}
+
+// isMissingPayloadIssue detects an issue ack that is actually asking the user
+// what to send. Opening a sandbox for that wastes a Run and the Issue body
+// tells the daemon to "process directly".
+func isMissingPayloadIssue(text string) bool {
+	for _, needle := range []string{"要说什么", "请问要说", "发什么内容", "说什么？", "发什么？"} {
+		if strings.Contains(text, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // IssueTitle is the Issue row title for a sandbox handoff. It is what humans
@@ -717,6 +750,14 @@ func IssueDescription(decision Decision, message string) string {
 	if decision.LookInto != "" {
 		b.WriteString("\n要核对：")
 		b.WriteString(decision.LookInto)
+	}
+	if purpose := strings.TrimSpace(decision.Purpose); purpose != "" {
+		b.WriteString("\n事项简报：")
+		b.WriteString(purpose)
+		if intent := strings.TrimSpace(decision.Intent); intent != "" {
+			b.WriteString("\n意图：")
+			b.WriteString(intent)
+		}
 	}
 	b.WriteString("\n\n身份与闭环要求：本次委托人是当前可信钉钉派发事件里的发信人；Multica 的 Issue 创建人或评论人只表示谁执行了 Issue 工具，是协助者，不等同于委托人、当前钉钉发信人或消息接收人。数字员工事件的会话和用户身份完整；机器人事件的用户标识可能缺失，此时只能使用事件里已有的发信人名称、会话和原文，不能虚构身份或改用 Issue 署名。如涉及代问或转达，先从当前钉钉消息和关联会话中明确委托人、Agent 转达人、消息接收人和下一位应答人。联系接收人时要说明是谁委托、具体问什么；拿到答复后要注明是谁说了什么，再回给需要结果的人。遇到阻塞时，回复当前能解除阻塞、且正在处理其问题的人，不要固定回复委托人。每次新建 Issue 或 Issue 评论触发的任务，在结束前必须实际给一个明确的人发送进度、阻塞或结果；只在 Issue 中留言不算送达，钉钉发送未成功时不得写“任务完成”。")
 	return b.String()

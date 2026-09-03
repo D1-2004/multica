@@ -28,27 +28,29 @@ type pgxRow interface {
 const inboundCoordinatorJobColumns = `id, acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id, dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id, status, attempt_count, available_at, lease_token, lease_expires_at, last_error, created_at, updated_at`
 
 type CreateInboundCoordinatorJobParams struct {
-	AcceptanceID        pgtype.UUID `json:"acceptance_id"`
-	WorkspaceID         pgtype.UUID `json:"workspace_id"`
-	AgentID             pgtype.UUID `json:"agent_id"`
-	UserID              pgtype.UUID `json:"user_id"`
-	EndpointNamespaceID pgtype.UUID `json:"endpoint_namespace_id"`
-	DispatchEndpointID  string      `json:"dispatch_endpoint_id"`
-	IdempotencyKey      string      `json:"idempotency_key"`
-	Command             []byte      `json:"command"`
-	ChatSessionID       pgtype.UUID `json:"chat_session_id"`
-	UserMessageID       pgtype.UUID `json:"user_message_id"`
+	AcceptanceID        pgtype.UUID        `json:"acceptance_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	EndpointNamespaceID pgtype.UUID        `json:"endpoint_namespace_id"`
+	DispatchEndpointID  string             `json:"dispatch_endpoint_id"`
+	IdempotencyKey      string             `json:"idempotency_key"`
+	Command             []byte             `json:"command"`
+	ChatSessionID       pgtype.UUID        `json:"chat_session_id"`
+	UserMessageID       pgtype.UUID        `json:"user_message_id"`
+	AvailableAt         pgtype.Timestamptz `json:"available_at"`
 }
 
 func (q *Queries) CreateInboundCoordinatorJob(ctx context.Context, arg CreateInboundCoordinatorJobParams) (InboundCoordinatorJob, error) {
 	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
 INSERT INTO inbound_coordinator_job (
     acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id,
-    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id,
+    available_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 RETURNING `+inboundCoordinatorJobColumns,
 		arg.AcceptanceID, arg.WorkspaceID, arg.AgentID, arg.UserID, arg.EndpointNamespaceID,
-		arg.DispatchEndpointID, arg.IdempotencyKey, arg.Command, arg.ChatSessionID, arg.UserMessageID))
+		arg.DispatchEndpointID, arg.IdempotencyKey, arg.Command, arg.ChatSessionID, arg.UserMessageID, arg.AvailableAt))
 }
 
 func (q *Queries) GetInboundCoordinatorJobByAcceptance(ctx context.Context, acceptanceID pgtype.UUID) (InboundCoordinatorJob, error) {
@@ -129,4 +131,91 @@ func (q *Queries) CoordinatorChatMessageExists(ctx context.Context, chatSessionI
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+type FindPendingInboundCoordinatorJobForConversationParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	ConversationID string      `json:"conversation_id"`
+}
+
+func (q *Queries) FindPendingInboundCoordinatorJobForConversation(ctx context.Context, arg FindPendingInboundCoordinatorJobForConversationParams) (InboundCoordinatorJob, error) {
+	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
+SELECT `+inboundCoordinatorJobColumns+`
+FROM inbound_coordinator_job
+WHERE workspace_id=$1 AND agent_id=$2 AND status='pending'
+  AND command #>> '{event,data,conversation,openConversationId}'=$3
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE`, arg.WorkspaceID, arg.AgentID, arg.ConversationID))
+}
+
+type ListPendingInboundCoordinatorJobsForConversationParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	ExcludeID      pgtype.UUID `json:"exclude_id"`
+	ConversationID string      `json:"conversation_id"`
+}
+
+func (q *Queries) ListPendingInboundCoordinatorJobsForConversation(ctx context.Context, arg ListPendingInboundCoordinatorJobsForConversationParams) ([]InboundCoordinatorJob, error) {
+	rows, err := q.db.Query(ctx, `
+SELECT `+inboundCoordinatorJobColumns+`
+FROM inbound_coordinator_job
+WHERE workspace_id=$1 AND agent_id=$2 AND status='pending'
+  AND id<>$3
+  AND command #>> '{event,data,conversation,openConversationId}'=$4
+ORDER BY created_at ASC
+FOR UPDATE`, arg.WorkspaceID, arg.AgentID, arg.ExcludeID, arg.ConversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []InboundCoordinatorJob
+	for rows.Next() {
+		item, err := scanInboundCoordinatorJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+type UpdateInboundCoordinatorJobCollectParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	Command     []byte             `json:"command"`
+	AvailableAt pgtype.Timestamptz `json:"available_at"`
+}
+
+func (q *Queries) UpdateInboundCoordinatorJobCollect(ctx context.Context, arg UpdateInboundCoordinatorJobCollectParams) (InboundCoordinatorJob, error) {
+	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
+UPDATE inbound_coordinator_job
+SET command=$2, available_at=$3, updated_at=now()
+WHERE id=$1 AND status='pending'
+RETURNING `+inboundCoordinatorJobColumns, arg.ID, arg.Command, arg.AvailableAt))
+}
+
+func (q *Queries) CompleteCoalescedInboundCoordinatorJob(ctx context.Context, id pgtype.UUID) (int64, error) {
+	tag, err := q.db.Exec(ctx, `UPDATE inbound_coordinator_job SET status='completed', last_error=NULL, updated_at=now() WHERE id=$1 AND status='pending'`, id)
+	return tag.RowsAffected(), err
+}
+
+type AppendCoordinatorUserMessageParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Content string      `json:"content"`
+}
+
+func (q *Queries) AppendCoordinatorUserMessage(ctx context.Context, arg AppendCoordinatorUserMessageParams) (int64, error) {
+	tag, err := q.db.Exec(ctx, `UPDATE chat_message SET content=$2 WHERE id=$1 AND role='user'`, arg.ID, arg.Content)
+	return tag.RowsAffected(), err
+}
+
+type UpdateInboundCoordinatorJobCommandParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Command []byte      `json:"command"`
+}
+
+func (q *Queries) UpdateInboundCoordinatorJobCommand(ctx context.Context, arg UpdateInboundCoordinatorJobCommandParams) (int64, error) {
+	tag, err := q.db.Exec(ctx, `UPDATE inbound_coordinator_job SET command=$2, updated_at=now() WHERE id=$1 AND status='running'`, arg.ID, arg.Command)
+	return tag.RowsAffected(), err
 }

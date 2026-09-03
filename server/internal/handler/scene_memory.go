@@ -75,7 +75,7 @@ func (h *Handler) ListAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []sceneMemoryResponse{})
 		return
 	}
-	rows, err := h.SceneMemoryStore.List(r.Context(), agent.WorkspaceID, agent.ID, 50)
+	rows, err := h.SceneMemoryStore.List(r.Context(), agent.WorkspaceID, agent.ID, 200)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list scene memory")
 		return

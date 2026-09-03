@@ -196,6 +196,8 @@
     "prop_chat_session_resume_hint": "Off: every turn starts a fresh provider session, never resumed. On: in 1:1 chat, reuse the previous Claude/Codex session when the sandbox is still warm, the last reply finished within 20 minutes, and this agent's instructions, skills, and runtime have not changed. Faster follow-ups; falls back to full history if resume is not possible.",
     "prop_inbound_coordinator": "Judge before sandbox",
     "prop_inbound_coordinator_hint": "When on, DingTalk and web chat first decide whether to reply immediately. Only work that needs tools, lookup, or tracking starts a sandbox. Turn off to send every message into the sandbox.",
+    "prop_task_finished_loop": "Judge after task finishes",
+    "prop_task_finished_loop_hint": "When on, an Issue opened by the inbound judge comes back to Coordinator after the sandbox finishes. The original requester gets a short wrap-up or suggestion; other comments on a busy Issue are not treated as this turn. Off skips that wrap-up.",
     "prop_scene_memory_write": "Write scene memory",
     "prop_scene_memory_write_hint": "When on, inbound messages from this bound digital employee mark that group or DM dirty so background flush can update its scene text. Off stops writes.",
     "prop_scene_memory_recall": "Recall scene memory",

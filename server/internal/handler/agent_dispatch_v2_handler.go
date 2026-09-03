@@ -310,7 +310,10 @@ func (h *Handler) handleAgentDispatchV2(
 		recovered.Forward(w)
 		return
 	}
-	if h.InboundCoordinatorWorker != nil && shouldDeferInboundCoordinator(command, plan) {
+	if h.InboundCoordinatorWorker != nil &&
+		shouldDeferInboundCoordinator(command, plan) &&
+		!dispatchIsAgentSelfMessage(command) &&
+		!dispatchIsAgentSelfEmotion(command) {
 		response, _, enqueueErr := h.enqueueInboundCoordinatorJob(
 			r.Context(), acceptance, command, dispatchContext, idempotencyKey, plan.Prompt.DisplayContent,
 		)
@@ -353,9 +356,9 @@ func (h *Handler) executeAgentDispatchV2(
 		return
 	}
 
-	if dispatchIsAgentSelfEmotion(command) {
+	if dispatchIsAgentSelfMessage(command) || dispatchIsAgentSelfEmotion(command) {
 		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
-			"outcome", "skipped_self_emotion",
+			"outcome", "skipped_self_inbound",
 			"protocol", "dispatch_command_v2",
 			"eventType", command.Event.Type,
 			"sourceType", command.Source.Type,
@@ -1147,11 +1150,14 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		h.TaskService != nil &&
 		c.CompletionCallback != nil &&
 		strings.TrimSpace(decision.UserText) != "" {
-		if err := h.TaskService.EnqueueSynchronousCompleted(
+		if err := h.enqueueCoordinatorIssueAckOrComplete(
 			r.Context(),
-			c.CompletionCallback.URL,
-			c.CompletionCallback.Target,
-			dispatchContext.AgentID,
+			c,
+			dispatchContext,
+			agent.ID,
+			*result.EnqueuedTask,
+			result.Issue,
+			issueIdentifier,
 			decision.UserText,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
@@ -1171,6 +1177,43 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		IssueIdentifier: issueIdentifier,
 		TaskID:          taskID,
 	})
+}
+
+func (h *Handler) enqueueCoordinatorIssueAckOrComplete(
+	ctx context.Context,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+	agentID pgtype.UUID,
+	issueTask db.AgentTaskQueue,
+	issue db.Issue,
+	issueIdentifier string,
+	text string,
+) error {
+	if command.CompletionCallback == nil {
+		return errors.New("coordinator issue callback is required")
+	}
+	wrapupOn := false
+	if on, err := h.Queries.GetAgentTaskFinishedLoop(ctx, agentID); err == nil {
+		wrapupOn = on
+	}
+	if wrapupOn && strings.TrimSpace(command.CompletionCallback.UpdateURL) != "" {
+		return h.TaskService.EnqueueCoordinatorIssueAck(
+			ctx,
+			issueTask,
+			issue,
+			issueIdentifier,
+			command.CompletionCallback.UpdateURL,
+			command.CompletionCallback.Target,
+			text,
+		)
+	}
+	return h.TaskService.EnqueueSynchronousCompleted(
+		ctx,
+		command.CompletionCallback.URL,
+		command.CompletionCallback.Target,
+		dispatchContext.AgentID,
+		text,
+	)
 }
 
 func coordinatorRecalledIssueContinuation(
