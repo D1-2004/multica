@@ -265,3 +265,54 @@ func TestBuildFlushUserPromptTagsSelfEvents(t *testing.T) {
 		t.Fatalf("missing peer tag: %q", prompt)
 	}
 }
+
+func TestFormatFlushStampUsesShanghaiClock(t *testing.T) {
+	// 12:00 UTC on 1 Sep is 20:00 in Asia/Shanghai.
+	got := formatFlushStamp(parseFlushTime())
+	if got != "9月1日 20:00" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestBuildFlushUserPromptPrintsShanghaiStamp(t *testing.T) {
+	prompt := buildFlushUserPrompt(testFlushRow("口径"), []HistoryEvent{{
+		OccurredAt: parseFlushTime(),
+		Speaker:    "辰驷",
+		Content:    "记住，须莫喜欢打球",
+	}})
+	if !strings.Contains(prompt, "9月1日 20:00 [peer] 辰驷: 记住，须莫喜欢打球") {
+		t.Fatalf("prompt=%q", prompt)
+	}
+	if strings.Contains(prompt, "T12:00:00Z") {
+		t.Fatal("flush events should not use UTC RFC3339; the model copies the printed stamp")
+	}
+}
+
+func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
+	if !strings.Contains(flushSystemPrompt, "(来自{speaker}, {M}月{D}日 {HH:mm}的发言)") {
+		t.Fatal("flush must ask for a simple provenance citation")
+	}
+	if !strings.Contains(flushSystemPrompt, "inbound judge") {
+		t.Fatal("flush must keep background the next Coordinator turn needs")
+	}
+	if !strings.Contains(flushSystemPrompt, "For a group, add one short line per known person") {
+		t.Fatal("flush must keep counterpart lines on groups")
+	}
+	if !strings.Contains(flushSystemPrompt, `A human [peer] "记住 …"`) {
+		t.Fatal("flush must keep an explicit 记住 from a human")
+	}
+	if !strings.Contains(flushSystemPrompt, "If unsure, write one [待确认] line instead of dropping the fact") {
+		t.Fatal("flush must not drop borderline facts")
+	}
+}
+
+func TestFallbackMergeCitesSpeakerWhenTimeIsKnown(t *testing.T) {
+	got := fallbackMerge("", []HistoryEvent{{
+		OccurredAt: parseFlushTime(),
+		Speaker:    "辰驷",
+		Content:    "须莫喜欢打球",
+	}})
+	if !strings.Contains(got, "(来自辰驷, 9月1日 20:00的发言)") {
+		t.Fatalf("got %q", got)
+	}
+}
