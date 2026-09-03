@@ -121,6 +121,7 @@ type NavKey =
   | "usage"
   | "sites"
   | "runtimes"
+  | "runners"
   | "skills"
   | "settings";
 
@@ -138,6 +139,7 @@ type NavLabelKey =
   | "usage"
   | "sites"
   | "runtimes"
+  | "runners"
   | "skills"
   | "settings";
 
@@ -162,6 +164,7 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "runtimes", labelKey: "runtimes" },
+  { key: "runners", labelKey: "runners" },
   { key: "skills", labelKey: "skills" },
   { key: "settings", labelKey: "settings" },
 ];

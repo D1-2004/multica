@@ -62,6 +62,7 @@ describe("resolveRouteIconName", () => {
     expect(resolveRouteIconName("/acme/squads")).toBe("Users");
     expect(resolveRouteIconName("/acme/usage")).toBe("BarChart3");
     expect(resolveRouteIconName("/acme/sites")).toBe("Globe2");
+    expect(resolveRouteIconName("/acme/runners")).toBe("Laptop");
     expect(resolveRouteIconName("/acme/my-issues")).toBe("CircleUser");
   });
 

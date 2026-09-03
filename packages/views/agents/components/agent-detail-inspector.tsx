@@ -265,6 +265,17 @@ export function AgentDetailInspector({
             />
           </SettingsRow>
           <SettingsRow
+            label={t(($) => $.tab_body.runner.execution_title)}
+            description={t(($) => $.tab_body.runner.execution_hint)}
+            size="select-wide"
+          >
+            <RunnerTab
+              agent={agent}
+              mode="execution"
+              canBind={canEdit && !!currentUserId && agent.owner_id === currentUserId}
+            />
+          </SettingsRow>
+          <SettingsRow
             label={t(($) => $.inspector.prop_model)}
             size="select-wide"
           >
@@ -328,13 +339,6 @@ export function AgentDetailInspector({
             onSave={(next) => update({ inbound_coordinator: next })}
           />
         </SettingsCard>
-		<div className="mt-5">
-		  <RunnerTab
-			agent={agent}
-			mode="execution"
-			canBind={canEdit && !!currentUserId && agent.owner_id === currentUserId}
-		  />
-		</div>
       </SettingsSection>
     </div>
   );

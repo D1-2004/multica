@@ -4,7 +4,7 @@ import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 
-vi.mock("./tabs/runner-tab", () => ({ RunnerTab: () => <div>Execution machine</div> }));
+vi.mock("./tabs/runner-tab", () => ({ RunnerTab: () => <div data-testid="runner-picker">No Local Runner</div> }));
 
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-query")>()),
@@ -92,6 +92,23 @@ describe("AgentDetailInspector labels", () => {
       chat_session_resume: true,
     });
     expect(toggle).toBeChecked();
+  });
+
+  it("shows the optional Local Runner picker inside execution configuration", () => {
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={agent}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(screen.getByText("Local Runner")).toBeInTheDocument();
+    expect(screen.getByTestId("runner-picker")).toHaveTextContent("No Local Runner");
   });
 
   it("defaults inbound coordinator off and saves an explicit on", () => {

@@ -133,6 +133,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     usage: () => "/acme/usage",
     sites: () => "/acme/sites",
     runtimes: () => "/acme/runtimes",
+    runners: () => "/acme/runners",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
     issueDetail: (id: string) => `/acme/issues/${id}`,
@@ -437,5 +438,14 @@ describe("personal nav — Chat", () => {
     appForeground.current = false;
     const { container } = render(<AppSidebar />);
     expect(chatBadge(container)).toHaveAttribute("aria-label", "5");
+  });
+});
+
+describe("configure nav — Local Runner", () => {
+  it("links to the workspace runner list", () => {
+    const { container } = render(<AppSidebar />);
+    expect(
+      container.querySelector('button[data-href="/acme/runners"]'),
+    ).not.toBeNull();
   });
 });

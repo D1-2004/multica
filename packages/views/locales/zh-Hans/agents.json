@@ -521,14 +521,15 @@
       "unsaved_changes": "未保存的修改"
     },
     "runner": {
-      "execution_title": "执行机器",
+      "execution_title": "本机 Runner",
       "execution_hint": "从账号已配对的机器中选择一台。配对本身不会授权智能体使用。",
       "account_empty": "请先在通用设置中配对机器。",
+      "none": "不选择本机 Runner",
       "mounted": "已挂载",
       "mounted_toast": "已更新执行机器",
-      "local_mcp_title": "Runner MCP 服务",
+      "local_mcp_title": "从本机 Runner 连接",
       "local_mcp_hint": "只有启用的服务会注入新任务，配置详情与密钥始终留在本机。",
-      "mount_first": "选择执行机器后可查看其 MCP 服务。",
+      "mount_first": "请先在执行配置中选择本机 Runner，之后可查看其 MCP 服务。",
       "mcp_empty": "该 Runner 未上报本机 MCP 服务。",
       "mcp_offline": "已挂载的 Runner 当前离线。",
       "read_only": "只读",
@@ -764,7 +765,7 @@
       "save_failed_toast": "保存自定义参数失败"
     },
     "mcp_config": {
-      "intro": "管理该智能体可用的 MCP Server。由 Multica 管理的 Server 会与本地 Runtime 继承的 Server 合并使用。",
+      "intro": "管理该智能体可用的 MCP Server。由 Multica 管理、从运行时继承和从本机 Runner 连接的 Server 会合并使用。",
       "managed_title": "由 Multica 管理",
       "managed_hint": "保存在 Multica 中并仅配置给该智能体。执行任务时会与 Runtime MCP 合并；名称相同时以 Multica 配置为准。",
       "managed_empty": "还没有由 Multica 管理的 MCP Server。",

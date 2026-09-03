@@ -176,12 +176,6 @@ export function LocalRunnerTab() {
         title={t(($) => $.local_runner.machines_title)}
         description={t(($) => $.local_runner.machines_description)}
       >
-		<div className="flex justify-end">
-			<Button type="button" size="sm" onClick={() => void handleCreatePairing()} disabled={createPairing.isPending}>
-				{createPairing.isPending ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-				{t(($) => $.local_runner.add_machine)}
-			</Button>
-		</div>
         {bindingsQuery.isLoading || !userId ? (
           <div className="flex items-center gap-2 rounded-lg border border-surface-border px-4 py-8 text-body text-muted-foreground">
             <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -238,6 +232,36 @@ export function LocalRunnerTab() {
             ))}
           </ul>
         )}
+      </SettingsSection>
+
+      <SettingsSection
+        title={t(($) => $.local_runner.add_guide_title)}
+        description={t(($) => $.local_runner.add_guide_description)}
+      >
+        <div className="flex flex-col gap-4 rounded-lg border border-surface-border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-body font-medium">
+              {t(($) => $.local_runner.add_guide_step)}
+            </p>
+            <p className="mt-1 text-caption text-muted-foreground">
+              {t(($) => $.local_runner.add_guide_hint)}
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0"
+            onClick={() => void handleCreatePairing()}
+            disabled={createPairing.isPending}
+          >
+            {createPairing.isPending ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Plus className="size-4" />
+            )}
+            {t(($) => $.local_runner.add_machine)}
+          </Button>
+        </div>
       </SettingsSection>
 
       <RunnerCommandDialog
