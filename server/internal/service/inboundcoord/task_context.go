@@ -4,12 +4,42 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const coordinatorIssueFollowUpContextKey = "coordinator_issue_follow_up"
 const coordinatorIssueTriggerContextKey = "coordinator_issue_trigger"
+
+// CoordinatorTraceIDContextKey is the task.context key that points an Issue
+// task back at the coordinator turn that created it. The task trace exporter
+// (service.TaskContextCoordinatorTraceKey) reads the same key.
+const CoordinatorTraceIDContextKey = "coordinator_trace_id"
+
+// WithCoordinatorTraceID stamps the coordinator trace id on a task context.
+// It returns raw unchanged when the id is empty or the context cannot be
+// decoded, so tracing never blocks Issue creation.
+func WithCoordinatorTraceID(raw []byte, traceID string) []byte {
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" || len(raw) == 0 {
+		return raw
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &payload); err != nil || payload == nil {
+		return raw
+	}
+	encoded, err := json.Marshal(traceID)
+	if err != nil {
+		return raw
+	}
+	payload[CoordinatorTraceIDContextKey] = encoded
+	merged, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return merged
+}
 
 type CoordinatorIssueTrigger string
 

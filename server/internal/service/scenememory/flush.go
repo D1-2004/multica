@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -49,20 +50,28 @@ type MemoryFlusher struct {
 	Store   *Store
 	History HistorySource
 	LLM     *llm.Client
+	// Langfuse exports one trace per claimed flush. Nil disables tracing.
+	Langfuse *langfuse.Client
 }
 
-func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
+func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err error) {
 	if f == nil || f.Store == nil {
 		return &FlushError{Code: ErrorConfig, Err: fmt.Errorf("scene memory flusher is not configured")}
 	}
 	ctx, cancel := context.WithTimeout(ctx, flushTimeout)
 	defer cancel()
+	outcome := &flushOutcome{MemoryRevision: row.MemoryRevision}
+	flushTrace := f.startFlushTrace(ctx, row, time.Now())
+	ctx = langfuse.ContextWithTrace(ctx, flushTrace)
+	defer func() { finishFlushTrace(flushTrace, outcome, err) }()
 	if err := f.Store.Renew(ctx, row); err != nil {
 		return err
 	}
 	var events []HistoryEvent
 	if f.History != nil {
+		historyObs := traceHistoryRead(flushTrace, row)
 		got, err := f.History.Read(ctx, row)
+		endHistoryRead(historyObs, got, err)
 		if err != nil {
 			var gap *HistoryGapError
 			if errors.As(err, &gap) && !gap.Oldest.IsZero() {
@@ -76,6 +85,7 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 	if err != nil {
 		return err
 	}
+	outcome.EventCount, outcome.CaughtUp, outcome.CursorAt = len(plan.batch), plan.caughtUp, plan.cursorAt
 	newText := row.MemoryText
 	replace := false
 	if len(plan.batch) > 0 {
@@ -108,6 +118,7 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 	if err != nil {
 		return err
 	}
+	outcome.Replace, outcome.MemoryText, outcome.MemoryRevision = replace, newText, committed.MemoryRevision
 	cursorLog := ""
 	if !plan.cursorAt.IsZero() {
 		cursorLog = plan.cursorAt.UTC().Format(time.RFC3339)
@@ -217,12 +228,15 @@ func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []H
 		openai.SystemMessage(flushSystemPrompt),
 		openai.UserMessage(user),
 	}
+	lt := langfuse.TraceFromContext(ctx)
 	for round := 0; round < flushMaxRounds; round++ {
+		generation := traceFlushGeneration(lt, round, messages)
 		completion, err := f.LLM.Chat(ctx, openai.ChatCompletionNewParams{
 			Model:    flushModel,
 			Messages: messages,
 			Tools:    []openai.ChatCompletionToolUnionParam{flushCommitTool()},
 		})
+		endFlushGeneration(generation, completion, err)
 		if err != nil {
 			return "", err
 		}
@@ -231,24 +245,30 @@ func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []H
 		}
 		msg := completion.Choices[0].Message
 		if len(msg.ToolCalls) == 0 {
+			traceFlushNudge(lt, round, msg.Content)
 			messages = append(messages, msg.ToParam(), openai.UserMessage("Call memory_flush_commit."))
 			continue
 		}
 		call := msg.ToolCalls[0]
 		if strings.TrimSpace(call.Function.Name) != "memory_flush_commit" {
+			traceFlushCommit(lt, round, call.ID, call.Function.Arguments, false, "unexpected tool "+strings.TrimSpace(call.Function.Name))
 			messages = append(messages, msg.ToParam(), openai.ToolMessage(`{"error":"only memory_flush_commit is allowed"}`, call.ID))
 			continue
 		}
 		text, err := parseFlushCommit(row.MemoryText, call.Function.Arguments)
 		if err != nil {
+			traceFlushCommit(lt, round, call.ID, call.Function.Arguments, false, err.Error())
 			messages = append(messages, msg.ToParam(), openai.ToolMessage(err.Error(), call.ID))
 			continue
 		}
 		text = sanitizeFlushText(text, batch)
 		if !ValidateMemoryText(text) {
+			traceFlushCommit(lt, round, call.ID, call.Function.Arguments, false, "text exceeds 1600 code points after dropping self-sourced lines")
 			messages = append(messages, msg.ToParam(), openai.ToolMessage("text exceeds 1600 code points after dropping self-sourced lines", call.ID))
 			continue
 		}
+		traceFlushCommit(lt, round, call.ID, call.Function.Arguments, true, "committed")
+		lt.AddMetadata(map[string]any{"rounds": round + 1})
 		return text, nil
 	}
 	return "", fmt.Errorf("memory flush: no commit")
