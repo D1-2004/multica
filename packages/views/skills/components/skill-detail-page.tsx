@@ -746,6 +746,7 @@ function FilesTab({
 
 export function SkillDetailPage({ skillId }: { skillId: string }) {
   const { t } = useT("skills");
+  const { t: tCommon } = useT("common");
   const wsId = useWorkspaceId();
   const qc = useQueryClient();
   const paths = useWorkspacePaths();
@@ -1293,7 +1294,11 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
                 qc.setQueryData(skillDetailOptions(wsId, skill.id).queryKey, updated);
                 qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
               } catch (e) {
-                toast.error(e instanceof Error ? e.message : t(($) => $.detail.update_failed_toast));
+                toast.error(
+                  e instanceof Error
+                    ? e.message
+                    : tCommon(($) => $.owner_transfer.failed),
+                );
                 throw e;
               }
             }}
