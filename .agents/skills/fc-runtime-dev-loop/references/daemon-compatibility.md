@@ -155,3 +155,15 @@ For a switch, record `previous_template_id` before mutation. If the canary fails
 The candidate built from `dt-fde-multica@003d8242ffc8112a8ef9b504c9cfa492923b3e4c` successfully registered eight local Runtime rows across the PAT user's two pre-release Workspaces, connected WebSocket heartbeats, batch-claimed task `f0f7b9cc-175d-4e02-8e39-a02f5a2ce258`, ran local Codex, returned `LOCAL_DAEMON_COMPAT_OK_003d8242`, and received the complete callback acknowledgement. Stop changed all rows offline; the exact Issue, Runtime rows, profile, and PAT copy were removed. The temporary Agent remains as an archived audit record because the product exposes archive, not hard delete.
 
 The same check also found two compatibility regressions relative to installed Multica 0.4.33: candidate help lacked `--workspaces-root`, and candidate probing omitted `zeroclaw`. Functional task execution passed, but binary-surface compatibility did not; keep those as explicit rollout blockers unless separately reviewed and fixed.
+
+## Verified post-deployment rolling matrix (2026-09-03)
+
+The pre-release server build `096b5c07d5c8e6975c553c4b886f87a91b2a4f8f` contains Skill/Daemon source commit `675e7abcf9703cf5efa50ffdad7c9da2afed51e5`. Aone pipeline `66`, run `3106557446`, completed build, artifact scan, pre-release deployment, and integration test successfully before waiting at its manual pre-release verification gate.
+
+Against that deployed server:
+
+1. Installed Multica `0.4.33` registered two Codex-only local Runtime rows across both PAT-visible Workspaces, connected WebSocket/heartbeat, completed exact-marker task `ffdf878d-356b-4d7f-a711-c0908be5324b`, stopped, and left zero Runtime rows after strict deletion.
+2. Candidate Multica `postdeploy-675e7abcf` repeated the same lifecycle and completed exact-marker task `9eb068ee-ec98-4c9c-b40f-99e389c5b968`; stop and strict cleanup also left zero Runtime rows.
+3. FC candidate Runtime `f069b307-2bc1-4ab5-92ff-7fdd5bcf2114` completed RunOnce task `326ee13c-1851-4646-80a7-b24267764bf3` with marker `FC_POSTDEPLOY_OK_096B5C07`.
+
+The functional rolling matrix therefore passed on the deployed server. Binary-surface compatibility remains failed because candidate `675e7abcf` still removes `--workspaces-root` and `zeroclaw` relative to 0.4.33. Do not collapse these two results into one green status.

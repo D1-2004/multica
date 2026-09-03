@@ -106,3 +106,27 @@ FC warm sandbox 复用的是文件系统和 provider proxy，不是上一次 Dae
 
 - 本地设备 rollout 仍被 binary-surface gate 阻断。要宣告“正确兼容”，必须决定并修复/明确批准 `--workspaces-root` 与 `zeroclaw` 两项回退，再用修复后的 commit 重跑 compare + live + task + stop。
 - 若未来修改服务端 `/api/daemon/*`、DaemonAuth、register/heartbeat/claim/complete wire contract，必须先部署精确服务端 commit 到预发，再跑：旧正式 Daemon + 新服务端、候选 Daemon + 新服务端、候选 FC + 新服务端。三项都过后才可写 `rolling_compatibility_verified=true`。
+
+## 预发服务端发布补验
+
+用户复核指出 Runtime candidate 发布不能替代 `dt-fde-multica` 服务端部署。随后补齐了服务端发布和部署后 rolling matrix：
+
+- Aone CR：`35944604`，branch revision `675e7abcf9703cf5efa50ffdad7c9da2afed51e5`。
+- 发布流水线：pipeline `66`，run `3106557446`。
+- 实际构建 release commit：`096b5c07d5c8e6975c553c4b886f87a91b2a4f8f`；Git ancestry 已证明包含 `675e7abcf`。
+- 构建、制品扫描、预发部署、预发集成测试均为 `SUCCESS`；流水线按设计停在人工“预发验证” gate。
+- `/health` 返回 `success`，`/api/config` 正常响应。
+
+本次 release flow 同时包含其它 CR。首次构建因 `agentic-memory-view` 的 `memories[0]` 未做 TypeScript undefined 收窄而失败；在 release branch 以 commit `4c53b3e68` 做最小 `firstMemory` 判空修复，后续集成 branch 更新到 build commit `096b5c07d` 并成功部署。
+
+部署后重新执行三项功能矩阵：
+
+| 组合 | 证据 | 结果 |
+| --- | --- | --- |
+| 新服务端 + 已发布本地 Daemon 0.4.33 | 两个 Workspace 注册、WS/heartbeat、task `ffdf878d-356b-4d7f-a711-c0908be5324b`、stop/zero ledger | PASS |
+| 新服务端 + 候选本地 Daemon `675e7abcf` | 两个 Workspace 注册、精确版本、WS/heartbeat、task `9eb068ee-ec98-4c9c-b40f-99e389c5b968`、stop/zero ledger | PASS |
+| 新服务端 + FC candidate RunOnce | Runtime `f069b307-2bc1-4ab5-92ff-7fdd5bcf2114`，task `326ee13c-1851-4646-80a7-b24267764bf3`，marker `FC_POSTDEPLOY_OK_096B5C07` | PASS |
+
+功能 rolling matrix 已通过。二进制公共表面仍为 FAIL：候选相对 0.4.33 缺少 `--workspaces-root` 和 `zeroclaw`，因此仍不能宣告本地 Daemon 完全向后兼容。
+
+清理结果：两个临时 Daemon 均停止；四条 local Runtime 严格删除且最终 ledger 为 0；三个有效 smoke Issue 和一个首次 marker 不完整的诊断 Issue 均删除；临时 Agent 归档；隔离 profile、PAT 副本、worktree 与临时目录清除；默认 `pre-fde` Daemon 保持 `stopped`。
