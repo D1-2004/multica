@@ -81,11 +81,10 @@ func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task
 		runtimePtr = &runtime
 	}
 	// The relay usually creates the task's trace record before the completion
-	// hook runs, so it must carry the same tags (runtime, provider, channel).
-	// It never names the trace: the task root does that when the task owns
-	// the trace, and a coordinator turn keeps its own name otherwise.
+	// hook runs, so it carries exactly the trace name and tags the root will
+	// send (the task's own, or the coordinator turn's when the task joined
+	// that turn's trace).
 	traceOpts := service.TaskLangfuseTraceOptions(task, agentPtr, runtimePtr)
-	traceOpts.NoTraceName = true
 
 	now := o.now()
 	start := now

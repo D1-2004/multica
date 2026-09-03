@@ -41,6 +41,12 @@ const (
 	// coordinator stamps on the Issue task it creates, so the task trace can
 	// point back at the coordinator turn (coord_trace_id).
 	TaskContextCoordinatorTraceKey = "coordinator_trace_id"
+	// TaskContextCoordinatorTraceTagsKey carries that turn's trace tags.
+	TaskContextCoordinatorTraceTagsKey = "coordinator_trace_tags"
+	// coordinatorTraceName is the trace name of a coordinator turn; a task
+	// joining that trace repeats it (inboundcoord owns the constant, but
+	// service cannot import inboundcoord without a cycle in tests).
+	coordinatorTraceName = "inbound_coordinator"
 )
 
 // TaskLangfuseRootSpanID is the deterministic root observation id of a task
@@ -59,7 +65,10 @@ type taskTraceContext struct {
 	DWSUID             string
 	DWSOrgID           string
 	CoordinatorTraceID string
-	Channel            string
+	// CoordinatorTraceTags are the tags of the coordinator turn whose trace
+	// this task joins; the task repeats them so the trace keeps one tag set.
+	CoordinatorTraceTags []string
+	Channel              string
 	DispatchSource     string
 	IssueTrigger       string
 	SurfaceType        string
@@ -73,6 +82,16 @@ func parseTaskTraceContext(raw []byte) taskTraceContext {
 	out := taskTraceContext{
 		CoordinatorTraceID: rawString(payload[TaskContextCoordinatorTraceKey]),
 		IssueTrigger:       rawString(payload["coordinator_issue_trigger"]),
+	}
+	if raw, ok := payload[TaskContextCoordinatorTraceTagsKey]; ok {
+		var tags []string
+		if json.Unmarshal(raw, &tags) == nil {
+			for _, tag := range tags {
+				if tag = strings.TrimSpace(tag); tag != "" {
+					out.CoordinatorTraceTags = append(out.CoordinatorTraceTags, tag)
+				}
+			}
+		}
 	}
 	if trace, present, err := chattrace.Parse(raw); err == nil && present {
 		out.Channel = trace.Channel
@@ -207,20 +226,29 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 	if sessionID == "" {
 		sessionID = util.UUIDToString(task.ChatSessionID)
 	}
+	// A task started by a coordinator turn joins that turn's trace. Langfuse
+	// resolves a trace's name and tags from whichever span it processes last,
+	// so the task repeats the turn's name and tags instead of its own; the
+	// root observation is still named agent_task and the task's runtime and
+	// provider stay available as metadata.
+	traceName := ""
+	if tc.CoordinatorTraceID != "" {
+		traceName = coordinatorTraceName
+		tags = tc.CoordinatorTraceTags
+		if len(tags) == 0 {
+			tags = []string{coordinatorTraceName}
+		}
+	}
 	return langfuse.TraceOptions{
 		TraceID:    traceID,
 		RootSpanID: TaskLangfuseRootSpanID(taskID),
 		Name:       taskTraceName,
-		// A task started by a coordinator turn shares that turn's trace, which
-		// is already named inbound_coordinator; Langfuse lets the latest span
-		// rename a trace, so such tasks keep their root observation name but
-		// never name the trace.
-		NoTraceName: tc.CoordinatorTraceID != "",
-		Type:        langfuse.TypeAgent,
-		UserID:      userID,
-		SessionID:   sessionID,
-		Tags:        tags,
-		Metadata:    metadata,
+		TraceName:  traceName,
+		Type:       langfuse.TypeAgent,
+		UserID:     userID,
+		SessionID:  sessionID,
+		Tags:       tags,
+		Metadata:   metadata,
 	}
 }
 

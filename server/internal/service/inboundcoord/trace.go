@@ -63,10 +63,7 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 	if turn.SceneMemoryRevision > 0 {
 		metadata["scene_memory_revision"] = turn.SceneMemoryRevision
 	}
-	tags := []string{coordinatorTraceTag, "source:" + string(turn.Source)}
-	if kind != "" {
-		tags = append(tags, "kind:"+kind)
-	}
+	tags := coordinatorTraceTags(turn)
 	input := map[string]any{
 		"message":                clipRunes(strings.TrimSpace(turn.Message), traceOutputTextBudget),
 		"sender_name":            clipRunes(strings.TrimSpace(turn.SenderName), llmLogNameBudget),
@@ -91,6 +88,20 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 		Input:     input,
 		StartTime: started,
 	}
+}
+
+// coordinatorTraceTags are the static Langfuse tags of a turn; they must be
+// known before the loop starts and are repeated by any task joining the trace.
+func coordinatorTraceTags(turn Turn) []string {
+	tags := []string{coordinatorTraceTag, "source:" + string(turn.Source)}
+	kind := strings.TrimSpace(turn.Kind)
+	if kind == "" {
+		kind = strings.TrimSpace(turn.ChatType)
+	}
+	if kind != "" {
+		tags = append(tags, "kind:"+kind)
+	}
+	return tags
 }
 
 // coordinatorTraceUserID is the Langfuse user: the DingTalk person when the

@@ -167,8 +167,24 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	if attrs["langfuse.trace.tags"] != `["agent_task","runtime:cloud","provider:hermes"]` || attrs["langfuse.trace.metadata.provider"] != "hermes" {
 		t.Fatalf("relay tags/provider = %q / %q", attrs["langfuse.trace.tags"], attrs["langfuse.trace.metadata.provider"])
 	}
-	if _, named := attrs["langfuse.trace.name"]; named {
-		t.Fatal("relay generations must not name the trace")
+	if attrs["langfuse.trace.name"] != "agent_task" {
+		t.Fatalf("relay trace name = %q, want the task's own name", attrs["langfuse.trace.name"])
+	}
+
+	// A task that joined a coordinator turn's trace repeats that turn's name
+	// and tags on every relayed generation.
+	owned := task
+	owned.Context = []byte(`{"coordinator_trace_id":"5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7","coordinator_trace_tags":["inbound_coordinator","source:web","kind:p2p"]}`)
+	exporter.Reset()
+	if err := observer.ObserveTaskLLMTrace(context.Background(), owned, agent, runtime, payload); err != nil {
+		t.Fatal(err)
+	}
+	ownedAttrs := map[string]string{}
+	for _, kv := range exporter.GetSpans()[0].Attributes {
+		ownedAttrs[string(kv.Key)] = kv.Value.Emit()
+	}
+	if ownedAttrs["langfuse.trace.name"] != "inbound_coordinator" || ownedAttrs["langfuse.trace.tags"] != `["inbound_coordinator","source:web","kind:p2p"]` {
+		t.Fatalf("coordinator-owned relay name/tags = %q / %q", ownedAttrs["langfuse.trace.name"], ownedAttrs["langfuse.trace.tags"])
 	}
 	if attrs["langfuse.observation.metadata.sequence"] != "3" || attrs["langfuse.observation.metadata.api"] != "chat.completions" {
 		t.Fatalf("observation metadata = %v", attrs)

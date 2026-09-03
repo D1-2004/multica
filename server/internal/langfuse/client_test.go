@@ -288,22 +288,22 @@ func TestDeterministicIDsLinkDetachedObservations(t *testing.T) {
 	}
 }
 
-func TestNoTraceNameKeepsRootObservationName(t *testing.T) {
+func TestTraceNameCanDifferFromRootObservationName(t *testing.T) {
 	client, exporter := testClient(t)
-	tr := client.StartTrace(context.Background(), TraceOptions{Name: "agent_task", Type: TypeAgent, NoTraceName: true})
+	tr := client.StartTrace(context.Background(), TraceOptions{Name: "agent_task", TraceName: "inbound_coordinator", Type: TypeAgent})
 	child := tr.StartObservation(ObservationOptions{Type: TypeTool, Name: "bash"})
 	child.End(EndOptions{})
 	tr.End(EndOptions{})
 	spans := exporter.GetSpans()
 	root := findSpan(t, spans, "agent_task")
-	if hasAttr(root, attrTraceName) {
-		t.Fatal("NoTraceName must keep langfuse.trace.name off the root")
+	if got := attrValue(t, root, attrTraceName).AsString(); got != "inbound_coordinator" {
+		t.Fatalf("root trace name = %s", got)
 	}
 	if got := attrValue(t, root, attrObsType).AsString(); got != "agent" {
 		t.Fatalf("root type = %s", got)
 	}
-	if hasAttr(findSpan(t, spans, "bash"), attrTraceName) {
-		t.Fatal("NoTraceName must keep langfuse.trace.name off children")
+	if got := attrValue(t, findSpan(t, spans, "bash"), attrTraceName).AsString(); got != "inbound_coordinator" {
+		t.Fatalf("child trace name = %s", got)
 	}
 }
 

@@ -58,4 +58,21 @@ func TestWithCoordinatorTraceInstallsChatTraceAndStamp(t *testing.T) {
 	if got := WithCoordinatorTrace(nil, "not-a-uuid", "web", startedAt); string(got) != `{"coordinator_trace_id":"not-a-uuid"}` {
 		t.Fatalf("invalid trace id must still stamp: %s", got)
 	}
+
+	// StampCoordinatorTrace also records the turn's tags for the task trace.
+	stampedAll := StampCoordinatorTrace([]byte(`{"a":1}`), Decision{
+		TraceID: traceID, TraceTags: []string{"inbound_coordinator", " source:web ", "", "kind:p2p"},
+	}, "web", startedAt)
+	if err := json.Unmarshal(stampedAll, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if string(payload[CoordinatorTraceTagsContextKey]) != `["inbound_coordinator","source:web","kind:p2p"]` || string(payload["a"]) != "1" {
+		t.Fatalf("stamped tags = %s", stampedAll)
+	}
+	if _, present, err := chattrace.Parse(stampedAll); err != nil || !present {
+		t.Fatalf("stamp must install the chat trace: present=%v err=%v", present, err)
+	}
+	if got := WithCoordinatorTraceTags([]byte(`{"a":1}`), nil); string(got) != `{"a":1}` {
+		t.Fatalf("empty tags changed context: %s", got)
+	}
 }
