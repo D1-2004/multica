@@ -152,18 +152,19 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 	if got, _ := owned.Metadata["provider"].(string); got != "hermes" {
 		t.Fatalf("runtime metadata must survive on coordinator-owned tasks: %q", got)
 	}
-	// Conversation-level keys belong to the turn: they must not reach the
-	// trace level (last writer wins there) but stay on the task's root.
+	// Conversation-level keys belong to the turn: the task must not write
+	// them at trace level (last writer wins) nor on its root observation
+	// (Langfuse folds root observation metadata into the trace as well).
 	for _, key := range []string{"loop", "conversation_kind", "agent_id"} {
 		if _, ok := owned.Metadata[key]; ok {
 			t.Fatalf("coordinator-owned task must not write trace metadata %q", key)
 		}
 	}
-	if got, _ := owned.RootMetadata["loop"].(string); got != taskTraceName {
-		t.Fatalf("coordinator-owned root metadata loop = %q", got)
+	if owned.RootMetadata != nil {
+		t.Fatalf("coordinator-owned task must not carry root metadata: %v", owned.RootMetadata)
 	}
-	if plain.RootMetadata != nil || plain.Metadata["loop"] != taskTraceName {
-		t.Fatalf("task-owned trace keeps loop at trace level: %v / %v", plain.RootMetadata, plain.Metadata["loop"])
+	if plain.Metadata["loop"] != taskTraceName {
+		t.Fatalf("task-owned trace keeps loop at trace level: %v", plain.Metadata["loop"])
 	}
 	bare := TaskLangfuseTraceOptions(db.AgentTaskQueue{
 		ID: taskID, CreatedAt: task.CreatedAt,

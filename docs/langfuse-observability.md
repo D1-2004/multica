@@ -96,12 +96,14 @@ processes last, the task repeats the turn's trace name (`inbound_coordinator`)
 and tags (stamped into `task.context.coordinator_trace_tags`) on every span;
 the task's runtime and provider remain as metadata, and the `agent_task` root
 observation name still identifies the task inside the trace. Trace metadata
-merges per key with the last writer winning, so a coordinator-owned task keeps
-the turn's conversation-level keys (`loop`, `conversation_*`, `sender_name`,
-`person_id`, `dws_uid`, `dws_org_id`, `agent_*`, `workspace_id`,
-`chat_session_id`) off the trace level and carries them only on its
-`agent_task` root observation; without that, the DingTalk conversation type
-`single` replaced the turn's `conversation_kind` `p2p`.
+merges per key with the last writer winning, and this Langfuse build also folds
+every root observation's metadata into the trace, so a coordinator-owned task
+sends none of the turn's conversation-level keys (`loop`, `conversation_*`,
+`sender_name`, `person_id`, `dws_uid`, `dws_org_id`, `agent_*`,
+`workspace_id`, `chat_session_id`) on any of its spans; without that, the
+DingTalk conversation type `single` replaced the turn's `conversation_kind`
+`p2p`. The same folding is why the coordinator's prompt-context root metadata
+(`persona`, history counts, `scene_memory`) shows up in the trace metadata.
 
 For a DingTalk digital-employee turn handled by the durable coordinator job,
 the job id is the turn's trace id: the worker pins it through
