@@ -66,9 +66,9 @@ var runnerStatusCmd = &cobra.Command{
 }
 
 func init() {
-	runnerBindCmd.Flags().String("pairing-token", "", "Short-lived pairing token copied from Agent settings")
+	runnerBindCmd.Flags().String("pairing-token", "", "Short-lived pairing token copied from General settings")
 	runnerBindCmd.Flags().StringSlice("root", nil, "Absolute file root to expose; defaults to this user's Desktop on first bind")
-	runnerReconnectCmd.Flags().String("reconnect-token", "", "Short-lived reconnect token copied from Agent settings")
+	runnerReconnectCmd.Flags().String("reconnect-token", "", "Short-lived reconnect token copied from General settings")
 	runnerStartCmd.Flags().Bool("foreground", false, "Run in the current terminal")
 	runnerCmd.AddCommand(runnerBindCmd, runnerReconnectCmd, runnerStartCmd, runnerStopCmd, runnerStatusCmd)
 }
@@ -372,7 +372,7 @@ func restartRunnerBackground() error {
 		return err
 	}
 	if len(bindings) == 0 {
-		return errors.New("Runner is not bound; copy a new install command from Agent settings")
+		return errors.New("Runner is not paired; copy a new install command from General settings")
 	}
 	return launchRunnerBackground(cfg)
 }
