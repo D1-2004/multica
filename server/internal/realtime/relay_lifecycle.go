@@ -4,9 +4,37 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 )
+
+func (r *MirroredRelay) StoreRunnerInventory(ctx context.Context, machineID string, inventory []byte, ttl time.Duration) error {
+	var first error
+	for _, relay := range []ManagedRelay{r.primary, r.mirror} {
+		if cache, ok := relay.(RunnerInventoryCache); ok {
+			if err := cache.StoreRunnerInventory(ctx, machineID, inventory, ttl); err != nil && first == nil {
+				first = err
+			}
+		}
+	}
+	return first
+}
+
+func (r *MirroredRelay) LoadRunnerInventory(ctx context.Context, machineID string) ([]byte, bool, error) {
+	for _, relay := range []ManagedRelay{r.primary, r.mirror} {
+		if cache, ok := relay.(RunnerInventoryCache); ok {
+			raw, found, err := cache.LoadRunnerInventory(ctx, machineID)
+			if err != nil {
+				return nil, false, err
+			}
+			if found {
+				return raw, true, nil
+			}
+		}
+	}
+	return nil, false, nil
+}
 
 // ManagedRelay is a Redis-backed realtime relay with explicit goroutine
 // lifecycle management.

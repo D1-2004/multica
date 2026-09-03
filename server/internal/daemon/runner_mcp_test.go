@@ -56,3 +56,21 @@ func TestRebaseManagedRunnerMCPRejectsInvalidDaemonURL(t *testing.T) {
 		t.Fatal("invalid daemon URL was accepted")
 	}
 }
+
+func TestRebaseManagedRunnerMCPRewritesEveryMarkedMountAndKeepsPath(t *testing.T) {
+	raw := json.RawMessage(`{"mcpServers":{"filesystem":{"url":"https://pre.example/api/runner-mcp/mounts/111/servers/filesystem","headers":{"Authorization":"Bearer mat_task","X-Multica-Runner-MCP":"v1"}},"browser":{"url":"https://pre.example/api/runner-mcp/mounts/111/servers/browser","headers":{"X-Multica-Runner-MCP":"v1"}}}}`)
+	got, err := rebaseManagedRunnerMCP(raw, "http://127.0.0.1:39123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct{ MCPServers map[string]struct{ URL string `json:"url"`; Headers map[string]string `json:"headers"` } `json:"mcpServers"` }
+	if err := json.Unmarshal(got, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.MCPServers["filesystem"].URL != "http://127.0.0.1:39123/api/runner-mcp/mounts/111/servers/filesystem" {
+		t.Fatalf("filesystem URL = %q", document.MCPServers["filesystem"].URL)
+	}
+	if document.MCPServers["browser"].URL != "http://127.0.0.1:39123/api/runner-mcp/mounts/111/servers/browser" {
+		t.Fatalf("browser URL = %q", document.MCPServers["browser"].URL)
+	}
+}

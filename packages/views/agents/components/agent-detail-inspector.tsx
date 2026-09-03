@@ -35,6 +35,7 @@ import {
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
+import { RunnerTab } from "./tabs/runner-tab";
 
 interface InspectorProps {
   agent: Agent;
@@ -327,6 +328,13 @@ export function AgentDetailInspector({
             onSave={(next) => update({ inbound_coordinator: next })}
           />
         </SettingsCard>
+		<div className="mt-5">
+		  <RunnerTab
+			agent={agent}
+			mode="execution"
+			canBind={canEdit && !!currentUserId && agent.owner_id === currentUserId}
+		  />
+		</div>
       </SettingsSection>
     </div>
   );

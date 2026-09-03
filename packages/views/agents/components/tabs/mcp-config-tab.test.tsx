@@ -11,6 +11,8 @@ import enCommon from "../../../locales/en/common.json";
 import enAgents from "../../../locales/en/agents.json";
 import { McpConfigTab } from "./mcp-config-tab";
 
+vi.mock("./runner-tab", () => ({ RunnerTab: () => <div>Runner MCP servers</div> }));
+
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
 
 const mockRuntimeCapabilities = vi.hoisted(() => vi.fn());

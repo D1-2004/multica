@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+const RunnerMcpServerSchema = z.object({
+  name: z.string().min(1),
+  transport: z.enum(["stdio", "http"]),
+  availability: z.string().min(1),
+  fingerprint: z.string().min(1),
+}).loose();
+
 const RunnerMachineBindingSchema = z
   .object({
     binding_id: z.string().uuid(),
@@ -9,6 +16,9 @@ const RunnerMachineBindingSchema = z
     arch: z.string().min(1),
     client_version: z.string(),
     roots: z.array(z.string()),
+		enabled_mcp_servers: z.record(z.string(), z.string()).optional().default({}),
+		mcp_servers: z.array(RunnerMcpServerSchema).optional().default([]),
+		inventory_revision: z.string().optional().default(""),
     online: z.boolean(),
     disconnected: z.boolean().optional().default(false),
     last_seen_at: z.string().nullable(),
@@ -23,6 +33,9 @@ const RunnerMachineBindingSchema = z
     arch: machine.arch,
     clientVersion: machine.client_version,
     roots: machine.roots,
+		enabledMcpServers: machine.enabled_mcp_servers,
+		mcpServers: machine.mcp_servers,
+		inventoryRevision: machine.inventory_revision,
     online: machine.online,
     disconnected: machine.disconnected,
     lastSeenAt: machine.last_seen_at,
@@ -68,6 +81,8 @@ const AccountRunnerMachineSchema = z
     online: z.boolean(),
     last_seen_at: z.string().nullable(),
     bindings: z.array(AccountRunnerBindingSchema),
+		mcp_servers: z.array(RunnerMcpServerSchema).optional().default([]),
+		inventory_revision: z.string().optional().default(""),
   })
   .loose()
   .transform((machine) => ({
@@ -79,6 +94,8 @@ const AccountRunnerMachineSchema = z
     online: machine.online,
     lastSeenAt: machine.last_seen_at,
     bindings: machine.bindings,
+		mcpServers: machine.mcp_servers,
+		inventoryRevision: machine.inventory_revision,
   }));
 
 export const AccountRunnerBindingListSchema = z
@@ -113,24 +130,18 @@ export const RunnerDeviceAuthorizationSchema = z
   .object({
     user_code: z.string().min(1),
     state: z.enum(["device_pending", "approved", "denied", "consumed"]),
-    agent_id: z.string().uuid(),
-    agent_name: z.string().min(1),
     machine_name: z.string().min(1),
     os: z.string().min(1),
     arch: z.string().min(1),
-    roots: z.array(z.string()),
     expires_at: z.string(),
   })
   .loose()
   .transform((authorization) => ({
     userCode: authorization.user_code,
     state: authorization.state,
-    agentId: authorization.agent_id,
-    agentName: authorization.agent_name,
     machineName: authorization.machine_name,
     os: authorization.os,
     arch: authorization.arch,
-    roots: authorization.roots,
     expiresAt: authorization.expires_at,
   }));
 

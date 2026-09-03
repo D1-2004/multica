@@ -24,6 +24,46 @@ export function useCreateAgentRunnerPairing(agentId: string) {
   });
 }
 
+export function useCreateAccountRunnerPairing() {
+  return useMutation({ mutationFn: () => api.createAccountRunnerPairing() });
+}
+
+export function useMountAgentRunnerMachine(workspaceId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (machineId: string) => api.mountAgentRunnerMachine(agentId, machineId),
+    onSuccess: async () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: runnerBindingKeys.agent(workspaceId, agentId) }),
+      queryClient.invalidateQueries({ queryKey: runnerBindingKeys.accountAll() }),
+    ]),
+  });
+}
+
+export function useSetAgentRunnerMcpServerEnabled(workspaceId: string, agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { bindingId: string; serverName: string; enabled: boolean; fingerprint: string }) =>
+      api.setAgentRunnerMcpServerEnabled(agentId, input.bindingId, input.serverName, input.enabled, input.fingerprint),
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: runnerBindingKeys.agent(workspaceId, agentId) }),
+  });
+}
+
+export function useRenameAccountRunnerMachine(userId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { machineId: string; name: string }) => api.renameAccountRunnerMachine(input.machineId, input.name),
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: runnerBindingKeys.account(userId) }),
+  });
+}
+
+export function useRevokeAccountRunnerMachine(userId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (machineId: string) => api.revokeAccountRunnerMachine(machineId),
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: runnerBindingKeys.account(userId) }),
+  });
+}
+
 export function useRevokeAgentRunnerBinding(
   workspaceId: string,
   agentId: string,

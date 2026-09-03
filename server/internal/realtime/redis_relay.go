@@ -24,6 +24,9 @@ func NodesKey(scopeType, scopeID string) string {
 func HeartbeatKey(nodeID string) string {
 	return fmt.Sprintf("ws:node:%s:heartbeat", nodeID)
 }
+func RunnerInventoryKey(machineID string) string {
+	return fmt.Sprintf("runner:machine:%s:mcp-inventory", machineID)
+}
 
 const (
 	streamMaxLen        int64 = 10000
@@ -273,6 +276,24 @@ func (r *RedisRelay) UnsubscribeRunnerMachine(scopeID string) {
 		return
 	}
 	r.stopConsumer(ScopeRunnerMachine, scopeID)
+}
+
+func (r *RedisRelay) StoreRunnerInventory(ctx context.Context, machineID string, inventory []byte, ttl time.Duration) error {
+	if r.writeRDB == nil || machineID == "" || ttl <= 0 {
+		return errors.New("Runner inventory cache unavailable")
+	}
+	return r.writeRDB.Set(ctx, RunnerInventoryKey(machineID), inventory, ttl).Err()
+}
+
+func (r *RedisRelay) LoadRunnerInventory(ctx context.Context, machineID string) ([]byte, bool, error) {
+	if r.writeRDB == nil || machineID == "" {
+		return nil, false, nil
+	}
+	raw, err := r.writeRDB.Get(ctx, RunnerInventoryKey(machineID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, false, nil
+	}
+	return raw, err == nil, err
 }
 
 // BroadcastToScope publishes message into the scope's Redis stream. The

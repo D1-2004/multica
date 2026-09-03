@@ -52,6 +52,9 @@ type runnerBindingResponse struct {
 	Arch          string   `json:"arch"`
 	ClientVersion string   `json:"client_version"`
 	Roots         []string `json:"roots"`
+	EnabledMCPServers map[string]string `json:"enabled_mcp_servers"`
+	MCPServers        []runnerprotocol.MCPServerSummary `json:"mcp_servers"`
+	InventoryRevision string `json:"inventory_revision"`
 	Online        bool     `json:"online"`
 	Disconnected  bool     `json:"disconnected"`
 	LastSeenAt    *string  `json:"last_seen_at"`
@@ -178,6 +181,14 @@ func decodeRunnerRoots(raw []byte) []string {
 	return roots
 }
 
+func decodeEnabledRunnerMCPServers(raw []byte) map[string]string {
+	servers := make(map[string]string)
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &servers)
+	}
+	return servers
+}
+
 func validateRunnerRoots(roots []string) error {
 	if len(roots) == 0 || len(roots) > runnerMaxRoots {
 		return fmt.Errorf("roots must contain 1 to %d paths", runnerMaxRoots)
@@ -211,10 +222,21 @@ func (h *Handler) requireRunnerAgentOwner(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) CreateAgentRunnerPairing(w http.ResponseWriter, r *http.Request) {
-	agent, ok := h.requireRunnerAgentOwner(w, r)
-	if !ok {
+	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
+	if !ok || !h.canManageAgent(w, r, agent) {
 		return
 	}
+	h.createMyRunnerPairing(w, r)
+}
+
+func (h *Handler) CreateMyRunnerPairing(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUserID(w, r); !ok {
+		return
+	}
+	h.createMyRunnerPairing(w, r)
+}
+
+func (h *Handler) createMyRunnerPairing(w http.ResponseWriter, r *http.Request) {
 	publicURL, err := runnerBaseURL(h.currentConfig().PublicURL)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "Runner binding requires MULTICA_PUBLIC_URL")
@@ -230,9 +252,9 @@ func (h *Handler) CreateAgentRunnerPairing(w http.ResponseWriter, r *http.Reques
 	expiresAt := time.Now().Add(runnerPairingTTL)
 	row, err := h.Queries.CreateRunnerPairingSession(r.Context(), db.CreateRunnerPairingSessionParams{
 		ID:               pairingID,
-		WorkspaceID:      agent.WorkspaceID,
-		AgentID:          agent.ID,
-		OwnerID:          agent.OwnerID,
+		WorkspaceID:      pgtype.UUID{},
+		AgentID:          pgtype.UUID{},
+		OwnerID:          parseUUID(requestUserID(r)),
 		PairingTokenHash: auth.HashToken(token),
 		ExpiresAt:        pgtype.Timestamptz{Time: expiresAt, Valid: true},
 	})
@@ -243,9 +265,7 @@ func (h *Handler) CreateAgentRunnerPairing(w http.ResponseWriter, r *http.Reques
 	slog.Info("Runner pairing created",
 		"event", "runner_pairing_created",
 		"pairing_id", uuidToString(row.ID),
-		"workspace_id", uuidToString(agent.WorkspaceID),
-		"agent_id", uuidToString(agent.ID),
-		"owner_id", uuidToString(agent.OwnerID),
+		"owner_id", requestUserID(r),
 	)
 	command := fmt.Sprintf(
 		"curl -fsSL %s | sh -s -- --server-url %s --pairing-token %s",
@@ -262,7 +282,12 @@ func (h *Handler) CreateAgentRunnerPairing(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) ListAgentRunnerBindings(w http.ResponseWriter, r *http.Request) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
-	if !ok || !h.canManageAgent(w, r, agent) {
+	if !ok {
+		return
+	}
+	userID := requestUserID(r)
+	if !h.canAccessPrivateAgent(r.Context(), agent, "member", userID, uuidToString(agent.WorkspaceID)) {
+		writeError(w, http.StatusForbidden, "agent not found")
 		return
 	}
 	rows, err := h.Queries.ListAgentRunnerBindings(r.Context(), db.ListAgentRunnerBindingsParams{
@@ -284,9 +309,17 @@ func (h *Handler) ListAgentRunnerBindings(w http.ResponseWriter, r *http.Request
 			Arch:          row.Arch,
 			ClientVersion: row.ClientVersion,
 			Roots:         decodeRunnerRoots(row.Roots),
+			EnabledMCPServers: decodeEnabledRunnerMCPServers(row.EnabledMcpServers),
 			Online:        runnerBindingOnline(row.DisconnectedAt, row.ConnectionID, row.LastSeenAt, now),
 			Disconnected:  row.DisconnectedAt.Valid,
 			BoundAt:       row.BoundAt.Time.UTC().Format(time.RFC3339),
+			MCPServers:    []runnerprotocol.MCPServerSummary{},
+		}
+		if item.Online {
+			if inventory, found := h.runnerMCPInventory(r.Context(), item.MachineID); found {
+				item.MCPServers = inventory.Servers
+				item.InventoryRevision = inventory.Revision
+			}
 		}
 		if row.LastSeenAt.Valid {
 			value := row.LastSeenAt.Time.UTC().Format(time.RFC3339)
@@ -295,6 +328,143 @@ func (h *Handler) ListAgentRunnerBindings(w http.ResponseWriter, r *http.Request
 		items = append(items, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"machines": items})
+}
+
+func (h *Handler) MountAgentRunnerMachine(w http.ResponseWriter, r *http.Request) {
+	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
+	if !ok || !h.canManageAgent(w, r, agent) {
+		return
+	}
+	var req struct {
+		MachineID string `json:"machine_id"`
+	}
+	if err := decodeRunnerRequest(w, r, 8<<10, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "machine_id is required")
+		return
+	}
+	machineID, ok := parseUUIDOrBadRequest(w, req.MachineID, "Runner machine id")
+	if !ok {
+		return
+	}
+	actorID := parseUUID(requestUserID(r))
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mount Runner machine")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	revoked, err := qtx.RevokeOtherAgentRunnerMounts(r.Context(), db.RevokeOtherAgentRunnerMountsParams{
+		ActorID: actorID, WorkspaceID: agent.WorkspaceID, AgentID: agent.ID, MachineID: machineID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to replace Runner mount")
+		return
+	}
+	for _, mount := range revoked {
+		if _, err := qtx.ExpireRunnerCallsForBinding(r.Context(), db.ExpireRunnerCallsForBindingParams{AgentID: agent.ID, MachineID: mount.MachineID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to stop active Runner calls")
+			return
+		}
+	}
+	mount, err := qtx.MountAgentRunnerMachine(r.Context(), db.MountAgentRunnerMachineParams{
+		WorkspaceID: agent.WorkspaceID, AgentID: agent.ID, MachineID: machineID, ActorID: actorID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "Runner machine not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mount Runner machine")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mount Runner machine")
+		return
+	}
+	for _, oldMount := range revoked {
+		h.notifyRunnerBindingsChanged(uuidToString(oldMount.MachineID), 0)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"binding_id": uuidToString(mount.ID),
+		"machine_id": uuidToString(mount.MachineID),
+		"enabled_mcp_servers": decodeEnabledRunnerMCPServers(mount.EnabledMcpServers),
+	})
+}
+
+func (h *Handler) SetAgentRunnerMCPServerEnabled(w http.ResponseWriter, r *http.Request) {
+	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
+	if !ok || !h.canManageAgent(w, r, agent) {
+		return
+	}
+	bindingID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "bindingId"), "Runner binding id")
+	if !ok {
+		return
+	}
+	serverName := strings.TrimSpace(chi.URLParam(r, "serverName"))
+	if serverName == "" || len(serverName) > 64 {
+		writeError(w, http.StatusBadRequest, "MCP server name is invalid")
+		return
+	}
+	var req struct {
+		Enabled     bool   `json:"enabled"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := decodeRunnerRequest(w, r, 8<<10, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid MCP server setting")
+		return
+	}
+	binding, err := h.Queries.GetAgentRunnerBindingByID(r.Context(), db.GetAgentRunnerBindingByIDParams{ID: bindingID, AgentID: agent.ID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "Runner mount not found")
+		return
+	}
+	if err != nil || binding.WorkspaceID != agent.WorkspaceID {
+		writeError(w, http.StatusInternalServerError, "failed to load Runner mount")
+		return
+	}
+	enabled := decodeEnabledRunnerMCPServers(binding.EnabledMcpServers)
+	if req.Enabled {
+		machine, machineErr := h.Queries.GetActiveAgentRunnerBinding(r.Context(), db.GetActiveAgentRunnerBindingParams{
+			WorkspaceID: agent.WorkspaceID, AgentID: agent.ID, MachineID: binding.MachineID,
+		})
+		if machineErr != nil || !runnerBindingOnline(machine.DisconnectedAt, machine.ConnectionID, machine.LastSeenAt, time.Now()) {
+			writeError(w, http.StatusConflict, "Runner machine is offline")
+			return
+		}
+		inventory, found := h.runnerMCPInventory(r.Context(), uuidToString(binding.MachineID))
+		if !found {
+			writeError(w, http.StatusConflict, "Runner MCP inventory is unavailable")
+			return
+		}
+		matched := false
+		for _, server := range inventory.Servers {
+			if server.Name == serverName && server.Fingerprint == req.Fingerprint && server.Availability == "available" {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			writeError(w, http.StatusConflict, "Runner MCP fingerprint changed; refresh and enable it again")
+			return
+		}
+		enabled[serverName] = req.Fingerprint
+	} else {
+		delete(enabled, serverName)
+	}
+	raw, err := json.Marshal(enabled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save Runner MCP setting")
+		return
+	}
+	updated, err := h.Queries.UpdateAgentRunnerMCPServers(r.Context(), db.UpdateAgentRunnerMCPServersParams{
+		EnabledMcpServers: raw, BindingID: bindingID, WorkspaceID: agent.WorkspaceID, AgentID: agent.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save Runner MCP setting")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled_mcp_servers": decodeEnabledRunnerMCPServers(updated.EnabledMcpServers)})
 }
 
 func (h *Handler) CreateAgentRunnerReconnectCommand(w http.ResponseWriter, r *http.Request) {
@@ -573,11 +743,7 @@ func (h *Handler) BeginRunnerDeviceAuthorization(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, "client_version is too long")
 		return
 	}
-	if err := validateRunnerRoots(req.Roots); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	roots, _ := json.Marshal(req.Roots)
+	roots := json.RawMessage(`[]`)
 	pairingID, ok := runnerPairingIDFromToken(req.PairingToken)
 	if !ok {
 		logRunnerDeviceAuthorizationRejected("token_format", pgtype.UUID{})
@@ -672,10 +838,8 @@ func (h *Handler) BeginRunnerDeviceAuthorization(w http.ResponseWriter, r *http.
 	slog.Info("Runner device authorization started",
 		"event", "runner_device_authorization_started",
 		"pairing_id", uuidToString(pairing.ID),
-		"agent_id", uuidToString(pairing.AgentID),
 		"machine_os", req.OS,
 		"machine_arch", req.Arch,
-		"root_count", len(req.Roots),
 	)
 	verificationURI := appURL + "/runners/authorize"
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -745,20 +909,12 @@ func (h *Handler) GetRunnerDeviceAuthorization(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusForbidden, "this Runner authorization belongs to another user")
 		return
 	}
-	agent, err := h.Queries.GetAgent(r.Context(), pairing.AgentID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "Agent not found")
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user_code":    pairing.UserCode.String,
 		"state":        pairing.State,
-		"agent_id":     uuidToString(pairing.AgentID),
-		"agent_name":   agent.Name,
 		"machine_name": pairing.MachineName.String,
 		"os":           pairing.Os.String,
 		"arch":         pairing.Arch.String,
-		"roots":        decodeRunnerRoots(pairing.Roots),
 		"expires_at":   pairing.ExpiresAt.Time.UTC().Format(time.RFC3339),
 	})
 }
@@ -784,7 +940,7 @@ func (h *Handler) finishRunnerDeviceAuthorization(w http.ResponseWriter, r *http
 	}
 	actorID := requestUserID(r)
 	if actorID != uuidToString(pairing.OwnerID) {
-		writeError(w, http.StatusForbidden, "only the Agent owner can approve this Runner")
+		writeError(w, http.StatusForbidden, "only the machine owner can approve this Runner")
 		return
 	}
 	if !approve {
@@ -795,7 +951,6 @@ func (h *Handler) finishRunnerDeviceAuthorization(w http.ResponseWriter, r *http
 		slog.Info("Runner authorization denied",
 			"event", "runner_authorization_denied",
 			"pairing_id", uuidToString(pairing.ID),
-			"agent_id", uuidToString(pairing.AgentID),
 			"owner_id", actorID,
 		)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "denied"})
@@ -809,17 +964,6 @@ func (h *Handler) finishRunnerDeviceAuthorization(w http.ResponseWriter, r *http
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	currentAgent, err := qtx.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID: pairing.AgentID, WorkspaceID: pairing.WorkspaceID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && currentAgent.OwnerID != pairing.OwnerID) {
-		writeError(w, http.StatusConflict, "Agent ownership changed; create a new Runner pairing")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to verify Runner authorization")
-		return
-	}
 	machine, err := qtx.UpsertRunnerMachine(r.Context(), db.UpsertRunnerMachineParams{
 		OwnerID:       pairing.OwnerID,
 		Name:          pairing.MachineName.String,
@@ -827,17 +971,6 @@ func (h *Handler) finishRunnerDeviceAuthorization(w http.ResponseWriter, r *http
 		Arch:          pairing.Arch.String,
 		PublicKey:     pairing.PublicKey,
 		ClientVersion: pairing.ClientVersion,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to approve Runner")
-		return
-	}
-	binding, err := qtx.CreateAgentRunnerBinding(r.Context(), db.CreateAgentRunnerBindingParams{
-		WorkspaceID: pairing.WorkspaceID,
-		AgentID:     pairing.AgentID,
-		MachineID:   machine.ID,
-		BoundBy:     pairing.OwnerID,
-		Roots:       pairing.Roots,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to approve Runner")
@@ -851,36 +984,14 @@ func (h *Handler) finishRunnerDeviceAuthorization(w http.ResponseWriter, r *http
 		}
 		return
 	}
-	details, _ := json.Marshal(map[string]any{
-		"agent_id":   uuidToString(pairing.AgentID),
-		"binding_id": uuidToString(binding.ID),
-		"machine_id": uuidToString(machine.ID),
-		"machine_os": machine.Os,
-		"root_count": len(decodeRunnerRoots(binding.Roots)),
-	})
-	if _, err := qtx.CreateActivity(r.Context(), db.CreateActivityParams{
-		WorkspaceID: pairing.WorkspaceID,
-		IssueID:     pgtype.UUID{},
-		ActorType:   pgtype.Text{String: "member", Valid: true},
-		ActorID:     pairing.OwnerID,
-		Action:      runnerBindingAuthorizedActivity,
-		Details:     details,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to audit Runner authorization")
-		return
-	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to approve Runner")
 		return
 	}
-	slog.Info("Runner binding authorized",
-		"event", "runner_binding_authorized",
-		"workspace_id", uuidToString(pairing.WorkspaceID),
-		"agent_id", uuidToString(pairing.AgentID),
-		"binding_id", uuidToString(binding.ID),
+	slog.Info("Runner machine authorized",
+		"event", "runner_machine_authorized",
 		"machine_id", uuidToString(machine.ID),
 		"owner_id", actorID,
-		"root_count", len(decodeRunnerRoots(binding.Roots)),
 	)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "approved", "machine_id": uuidToString(machine.ID)})
 }
@@ -1036,15 +1147,6 @@ func (h *Handler) RunnerWebSocket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "machine_id is required")
 		return
 	}
-	activeBindings, err := h.Queries.CountConnectedRunnerBindings(r.Context(), machineID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read Runner bindings")
-		return
-	}
-	if activeBindings == 0 {
-		writeError(w, http.StatusConflict, "Runner has no connected Agent bindings")
-		return
-	}
 	if err := h.consumeRunnerChallenge(r.Context(), machineID, r); err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
@@ -1141,14 +1243,46 @@ func (h *Handler) handleRunnerHeartbeat(ctx context.Context, identity runnerws.I
 	_, _ = h.Queries.UpdateRunnerMachineHeartbeat(ctx, db.UpdateRunnerMachineHeartbeatParams{
 		ID: machineID, ConnectionID: connectionID, ClientVersion: clientVersion,
 	})
-	activeBindings, err := h.Queries.CountConnectedRunnerBindings(ctx, machineID)
-	if err != nil || activeBindings > 0 {
+	if h.RunnerHub != nil {
+		if inventory, ok := h.RunnerHub.MCPInventory(identity.MachineID); ok {
+			h.handleRunnerInventory(ctx, identity, inventory)
+		}
+	}
+}
+
+func (h *Handler) handleRunnerInventory(ctx context.Context, identity runnerws.Identity, inventory runnerprotocol.MCPInventory) {
+	cache, ok := h.RunnerRelay.(realtime.RunnerInventoryCache)
+	if !ok {
 		return
 	}
-	// The disconnect/revoke request may land on a different replica from the
-	// WebSocket. Re-checking on the owning replica makes zero-binding shutdown
-	// independent of cross-replica notification delivery.
-	h.notifyRunnerBindingsChanged(identity.MachineID, 0)
+	raw, err := json.Marshal(inventory)
+	if err != nil || len(raw) > 256<<10 {
+		return
+	}
+	if err := cache.StoreRunnerInventory(ctx, identity.MachineID, raw, 2*runnerOnlineTTL); err != nil {
+		slog.Warn("Runner MCP inventory cache failed", "machine_id", identity.MachineID, "error", err)
+	}
+}
+
+func (h *Handler) runnerMCPInventory(ctx context.Context, machineID string) (runnerprotocol.MCPInventory, bool) {
+	if h.RunnerHub != nil {
+		if inventory, ok := h.RunnerHub.MCPInventory(machineID); ok {
+			return inventory, true
+		}
+	}
+	cache, ok := h.RunnerRelay.(realtime.RunnerInventoryCache)
+	if !ok {
+		return runnerprotocol.MCPInventory{}, false
+	}
+	raw, found, err := cache.LoadRunnerInventory(ctx, machineID)
+	if err != nil || !found {
+		return runnerprotocol.MCPInventory{}, false
+	}
+	var inventory runnerprotocol.MCPInventory
+	if json.Unmarshal(raw, &inventory) != nil {
+		return runnerprotocol.MCPInventory{}, false
+	}
+	return inventory, true
 }
 
 func (h *Handler) handleRunnerResult(ctx context.Context, identity runnerws.Identity, result runnerprotocol.Result) {
@@ -1213,12 +1347,6 @@ func (h *Handler) DeliverRunnerMachine(scopeID string, frame []byte, _ string) {
 		h.dispatchRunnerCall(context.Background(), scopeID, dispatch.CallID)
 	case runnerprotocol.MessageBindingsChanged:
 		if h.RunnerHub == nil {
-			return
-		}
-		if dispatch.ActiveBindingCount == 0 {
-			if !h.RunnerHub.SendAndClose(scopeID, frame) {
-				h.RunnerHub.Close(scopeID)
-			}
 			return
 		}
 		h.RunnerHub.Send(scopeID, frame)

@@ -33,48 +33,45 @@ func rebaseManagedRunnerMCP(raw json.RawMessage, serverBaseURL string) (json.Raw
 	if err := json.Unmarshal(serversRaw, &servers); err != nil {
 		return nil, fmt.Errorf("parse mcpServers for Runner routing: %w", err)
 	}
-	runnerRaw, ok := servers[runnerprotocol.ManagedMCPServerName]
-	if !ok {
+	changed := false
+	for name, serverRaw := range servers {
+		var server map[string]json.RawMessage
+		if err := json.Unmarshal(serverRaw, &server); err != nil {
+			return nil, fmt.Errorf("parse MCP entry %q for Runner routing: %w", name, err)
+		}
+		headersRaw, ok := server["headers"]
+		if !ok {
+			continue
+		}
+		var headers map[string]string
+		if err := json.Unmarshal(headersRaw, &headers); err != nil {
+			return nil, fmt.Errorf("parse MCP headers %q for Runner routing: %w", name, err)
+		}
+		markerKey, marked := runnerMCPRoutingMarker(headers)
+		if !marked {
+			continue
+		}
+		var originalURL string
+		if json.Unmarshal(server["url"], &originalURL) != nil {
+			return nil, fmt.Errorf("parse MCP URL %q for Runner routing", name)
+		}
+		endpoint, err := managedRunnerMCPEndpoint(serverBaseURL, originalURL)
+		if err != nil {
+			return nil, err
+		}
+		delete(headers, markerKey)
+		server["url"], _ = json.Marshal(endpoint)
+		server["headers"], _ = json.Marshal(headers)
+		servers[name], err = json.Marshal(server)
+		if err != nil {
+			return nil, fmt.Errorf("marshal MCP entry %q after Runner routing: %w", name, err)
+		}
+		changed = true
+	}
+	if !changed {
 		return raw, nil
 	}
-
-	var runner map[string]json.RawMessage
-	if err := json.Unmarshal(runnerRaw, &runner); err != nil {
-		return nil, fmt.Errorf("parse managed Runner MCP entry: %w", err)
-	}
-	headersRaw, ok := runner["headers"]
-	if !ok {
-		return raw, nil
-	}
-	var headers map[string]string
-	if err := json.Unmarshal(headersRaw, &headers); err != nil {
-		return nil, fmt.Errorf("parse managed Runner MCP headers: %w", err)
-	}
-	markerKey, marked := runnerMCPRoutingMarker(headers)
-	if !marked {
-		return raw, nil
-	}
-	delete(headers, markerKey)
-
-	endpoint, err := managedRunnerMCPEndpoint(serverBaseURL)
-	if err != nil {
-		return nil, err
-	}
-	urlRaw, err := json.Marshal(endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("marshal managed Runner MCP URL: %w", err)
-	}
-	headersRaw, err = json.Marshal(headers)
-	if err != nil {
-		return nil, fmt.Errorf("marshal managed Runner MCP headers: %w", err)
-	}
-	runner["url"] = urlRaw
-	runner["headers"] = headersRaw
-	runnerRaw, err = json.Marshal(runner)
-	if err != nil {
-		return nil, fmt.Errorf("marshal managed Runner MCP entry: %w", err)
-	}
-	servers[runnerprotocol.ManagedMCPServerName] = runnerRaw
+	var err error
 	serversRaw, err = json.Marshal(servers)
 	if err != nil {
 		return nil, fmt.Errorf("marshal mcpServers after Runner routing: %w", err)
@@ -96,7 +93,7 @@ func runnerMCPRoutingMarker(headers map[string]string) (string, bool) {
 	return "", false
 }
 
-func managedRunnerMCPEndpoint(serverBaseURL string) (string, error) {
+func managedRunnerMCPEndpoint(serverBaseURL, originalURL string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(serverBaseURL))
 	if err != nil {
 		return "", fmt.Errorf("parse daemon server URL for Runner MCP: %w", err)
@@ -107,7 +104,11 @@ func managedRunnerMCPEndpoint(serverBaseURL string) (string, error) {
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", errors.New("daemon server URL for Runner MCP must not contain a query or fragment")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + runnerprotocol.ManagedMCPPath
+	original, err := url.Parse(strings.TrimSpace(originalURL))
+	if err != nil || original.Path == "" || original.RawQuery != "" || original.Fragment != "" {
+		return "", errors.New("managed Runner MCP URL must contain a path without query or fragment")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + original.Path
 	parsed.RawPath = ""
 	return parsed.String(), nil
 }

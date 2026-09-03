@@ -369,7 +369,7 @@ WHERE b.id = c.binding_id
   AND b.machine_id = c.machine_id
   AND b.revoked_at IS NULL
   AND b.disconnected_at IS NOT NULL
-RETURNING b.id, b.workspace_id, b.agent_id, b.machine_id, b.bound_by, b.roots, b.revoked_at, b.revoked_by, b.created_at, b.updated_at, b.disconnected_at, b.disconnected_by
+RETURNING b.id, b.workspace_id, b.agent_id, b.machine_id, b.bound_by, b.roots, b.revoked_at, b.revoked_by, b.created_at, b.updated_at, b.disconnected_at, b.disconnected_by, b.enabled_mcp_servers
 `
 
 type ConsumeRunnerReconnectSessionParams struct {
@@ -400,6 +400,7 @@ func (q *Queries) ConsumeRunnerReconnectSession(ctx context.Context, arg Consume
 		&i.UpdatedAt,
 		&i.DisconnectedAt,
 		&i.DisconnectedBy,
+		&i.EnabledMcpServers,
 	)
 	return i, err
 }
@@ -423,15 +424,16 @@ func (q *Queries) CountConnectedRunnerBindings(ctx context.Context, machineID pg
 
 const createAgentRunnerBinding = `-- name: CreateAgentRunnerBinding :one
 INSERT INTO agent_runner_binding (
-    workspace_id, agent_id, machine_id, bound_by, roots
-) VALUES ($1, $2, $3, $4, $5)
+    workspace_id, agent_id, machine_id, bound_by, roots, enabled_mcp_servers
+) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb)
 ON CONFLICT (agent_id, machine_id) WHERE revoked_at IS NULL DO UPDATE
 SET roots = EXCLUDED.roots,
+    enabled_mcp_servers = '{}'::jsonb,
     bound_by = EXCLUDED.bound_by,
     disconnected_at = NULL,
     disconnected_by = NULL,
     updated_at = now()
-RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by
+RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by, enabled_mcp_servers
 `
 
 type CreateAgentRunnerBindingParams struct {
@@ -464,6 +466,7 @@ func (q *Queries) CreateAgentRunnerBinding(ctx context.Context, arg CreateAgentR
 		&i.UpdatedAt,
 		&i.DisconnectedAt,
 		&i.DisconnectedBy,
+		&i.EnabledMcpServers,
 	)
 	return i, err
 }
@@ -510,6 +513,11 @@ WHERE b.workspace_id = $1
   AND b.revoked_at IS NULL
   AND b.disconnected_at IS NULL
   AND m.revoked_at IS NULL
+  AND (
+      $6::text <> 'mcp'
+      OR b.enabled_mcp_servers ->> ($7::jsonb ->> 'server_name')
+         = ($7::jsonb ->> 'fingerprint')
+  )
 FOR SHARE OF b
 RETURNING id, workspace_id, agent_id, task_id, user_id, machine_id, tool_name, arguments, roots, result, status, error_code, error_message, expires_at, started_at, completed_at, created_at, updated_at
 `
@@ -705,7 +713,7 @@ SET disconnected_at = COALESCE(disconnected_at, now()),
     disconnected_by = $3,
     updated_at = now()
 WHERE id = $1 AND agent_id = $2 AND revoked_at IS NULL
-RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by
+RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by, enabled_mcp_servers
 `
 
 type DisconnectAgentRunnerBindingParams struct {
@@ -730,6 +738,7 @@ func (q *Queries) DisconnectAgentRunnerBinding(ctx context.Context, arg Disconne
 		&i.UpdatedAt,
 		&i.DisconnectedAt,
 		&i.DisconnectedBy,
+		&i.EnabledMcpServers,
 	)
 	return i, err
 }
@@ -831,6 +840,7 @@ SELECT
     m.arch,
     m.client_version,
     b.roots,
+    b.enabled_mcp_servers,
     b.disconnected_at,
     m.last_seen_at,
     m.connection_id
@@ -850,19 +860,20 @@ type GetActiveAgentRunnerBindingParams struct {
 }
 
 type GetActiveAgentRunnerBindingRow struct {
-	BindingID      pgtype.UUID        `json:"binding_id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	AgentID        pgtype.UUID        `json:"agent_id"`
-	MachineID      pgtype.UUID        `json:"machine_id"`
-	OwnerID        pgtype.UUID        `json:"owner_id"`
-	Name           string             `json:"name"`
-	Os             string             `json:"os"`
-	Arch           string             `json:"arch"`
-	ClientVersion  string             `json:"client_version"`
-	Roots          []byte             `json:"roots"`
-	DisconnectedAt pgtype.Timestamptz `json:"disconnected_at"`
-	LastSeenAt     pgtype.Timestamptz `json:"last_seen_at"`
-	ConnectionID   pgtype.UUID        `json:"connection_id"`
+	BindingID         pgtype.UUID        `json:"binding_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	MachineID         pgtype.UUID        `json:"machine_id"`
+	OwnerID           pgtype.UUID        `json:"owner_id"`
+	Name              string             `json:"name"`
+	Os                string             `json:"os"`
+	Arch              string             `json:"arch"`
+	ClientVersion     string             `json:"client_version"`
+	Roots             []byte             `json:"roots"`
+	EnabledMcpServers []byte             `json:"enabled_mcp_servers"`
+	DisconnectedAt    pgtype.Timestamptz `json:"disconnected_at"`
+	LastSeenAt        pgtype.Timestamptz `json:"last_seen_at"`
+	ConnectionID      pgtype.UUID        `json:"connection_id"`
 }
 
 func (q *Queries) GetActiveAgentRunnerBinding(ctx context.Context, arg GetActiveAgentRunnerBindingParams) (GetActiveAgentRunnerBindingRow, error) {
@@ -879,6 +890,7 @@ func (q *Queries) GetActiveAgentRunnerBinding(ctx context.Context, arg GetActive
 		&i.Arch,
 		&i.ClientVersion,
 		&i.Roots,
+		&i.EnabledMcpServers,
 		&i.DisconnectedAt,
 		&i.LastSeenAt,
 		&i.ConnectionID,
@@ -887,7 +899,7 @@ func (q *Queries) GetActiveAgentRunnerBinding(ctx context.Context, arg GetActive
 }
 
 const getAgentRunnerBindingByID = `-- name: GetAgentRunnerBindingByID :one
-SELECT b.id, b.workspace_id, b.agent_id, b.machine_id, b.bound_by, b.roots, b.revoked_at, b.revoked_by, b.created_at, b.updated_at, b.disconnected_at, b.disconnected_by
+SELECT b.id, b.workspace_id, b.agent_id, b.machine_id, b.bound_by, b.roots, b.revoked_at, b.revoked_by, b.created_at, b.updated_at, b.disconnected_at, b.disconnected_by, b.enabled_mcp_servers
 FROM agent_runner_binding b
 JOIN runner_machine m ON m.id = b.machine_id
 WHERE b.id = $1
@@ -917,6 +929,7 @@ func (q *Queries) GetAgentRunnerBindingByID(ctx context.Context, arg GetAgentRun
 		&i.UpdatedAt,
 		&i.DisconnectedAt,
 		&i.DisconnectedBy,
+		&i.EnabledMcpServers,
 	)
 	return i, err
 }
@@ -966,7 +979,7 @@ func (q *Queries) GetRunnerAuthChallenge(ctx context.Context, arg GetRunnerAuthC
 }
 
 const getRunnerBindingForOwner = `-- name: GetRunnerBindingForOwner :one
-SELECT b.id, b.workspace_id, b.agent_id, b.machine_id, b.bound_by, b.roots, b.revoked_at, b.revoked_by, b.created_at, b.updated_at, b.disconnected_at, b.disconnected_by
+SELECT b.id, b.workspace_id, b.agent_id, b.machine_id, b.bound_by, b.roots, b.revoked_at, b.revoked_by, b.created_at, b.updated_at, b.disconnected_at, b.disconnected_by, b.enabled_mcp_servers
 FROM agent_runner_binding b
 JOIN runner_machine m ON m.id = b.machine_id
 WHERE b.id = $1
@@ -996,6 +1009,7 @@ func (q *Queries) GetRunnerBindingForOwner(ctx context.Context, arg GetRunnerBin
 		&i.UpdatedAt,
 		&i.DisconnectedAt,
 		&i.DisconnectedBy,
+		&i.EnabledMcpServers,
 	)
 	return i, err
 }
@@ -1193,6 +1207,7 @@ SELECT
     m.arch,
     m.client_version,
     b.roots,
+    b.enabled_mcp_servers,
     b.disconnected_at,
     m.last_seen_at,
     m.connection_id,
@@ -1212,22 +1227,23 @@ type ListAgentRunnerBindingsParams struct {
 }
 
 type ListAgentRunnerBindingsRow struct {
-	BindingID        pgtype.UUID        `json:"binding_id"`
-	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
-	AgentID          pgtype.UUID        `json:"agent_id"`
-	MachineID        pgtype.UUID        `json:"machine_id"`
-	BoundBy          pgtype.UUID        `json:"bound_by"`
-	BoundAt          pgtype.Timestamptz `json:"bound_at"`
-	OwnerID          pgtype.UUID        `json:"owner_id"`
-	Name             string             `json:"name"`
-	Os               string             `json:"os"`
-	Arch             string             `json:"arch"`
-	ClientVersion    string             `json:"client_version"`
-	Roots            []byte             `json:"roots"`
-	DisconnectedAt   pgtype.Timestamptz `json:"disconnected_at"`
-	LastSeenAt       pgtype.Timestamptz `json:"last_seen_at"`
-	ConnectionID     pgtype.UUID        `json:"connection_id"`
-	MachineCreatedAt pgtype.Timestamptz `json:"machine_created_at"`
+	BindingID         pgtype.UUID        `json:"binding_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	MachineID         pgtype.UUID        `json:"machine_id"`
+	BoundBy           pgtype.UUID        `json:"bound_by"`
+	BoundAt           pgtype.Timestamptz `json:"bound_at"`
+	OwnerID           pgtype.UUID        `json:"owner_id"`
+	Name              string             `json:"name"`
+	Os                string             `json:"os"`
+	Arch              string             `json:"arch"`
+	ClientVersion     string             `json:"client_version"`
+	Roots             []byte             `json:"roots"`
+	EnabledMcpServers []byte             `json:"enabled_mcp_servers"`
+	DisconnectedAt    pgtype.Timestamptz `json:"disconnected_at"`
+	LastSeenAt        pgtype.Timestamptz `json:"last_seen_at"`
+	ConnectionID      pgtype.UUID        `json:"connection_id"`
+	MachineCreatedAt  pgtype.Timestamptz `json:"machine_created_at"`
 }
 
 func (q *Queries) ListAgentRunnerBindings(ctx context.Context, arg ListAgentRunnerBindingsParams) ([]ListAgentRunnerBindingsRow, error) {
@@ -1252,6 +1268,7 @@ func (q *Queries) ListAgentRunnerBindings(ctx context.Context, arg ListAgentRunn
 			&i.Arch,
 			&i.ClientVersion,
 			&i.Roots,
+			&i.EnabledMcpServers,
 			&i.DisconnectedAt,
 			&i.LastSeenAt,
 			&i.ConnectionID,
@@ -1334,12 +1351,11 @@ SELECT
     b.disconnected_at,
     b.created_at AS bound_at
 FROM runner_machine m
-JOIN agent_runner_binding b ON b.machine_id = m.id
-JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id
-JOIN workspace w ON w.id = b.workspace_id
+LEFT JOIN agent_runner_binding b ON b.machine_id = m.id AND b.revoked_at IS NULL
+LEFT JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id
+LEFT JOIN workspace w ON w.id = b.workspace_id
 WHERE m.owner_id = $1
   AND m.revoked_at IS NULL
-  AND b.revoked_at IS NULL
 ORDER BY m.created_at DESC, m.id, b.created_at DESC, b.id
 `
 
@@ -1353,10 +1369,10 @@ type ListRunnerBindingsForOwnerRow struct {
 	ConnectionID   pgtype.UUID        `json:"connection_id"`
 	BindingID      pgtype.UUID        `json:"binding_id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	WorkspaceName  string             `json:"workspace_name"`
-	WorkspaceSlug  string             `json:"workspace_slug"`
+	WorkspaceName  pgtype.Text        `json:"workspace_name"`
+	WorkspaceSlug  pgtype.Text        `json:"workspace_slug"`
 	AgentID        pgtype.UUID        `json:"agent_id"`
-	AgentName      string             `json:"agent_name"`
+	AgentName      pgtype.Text        `json:"agent_name"`
 	Roots          []byte             `json:"roots"`
 	DisconnectedAt pgtype.Timestamptz `json:"disconnected_at"`
 	BoundAt        pgtype.Timestamptz `json:"bound_at"`
@@ -1476,6 +1492,97 @@ func (q *Queries) MarkRunnerPairingDenied(ctx context.Context, id pgtype.UUID) (
 	return i, err
 }
 
+const mountAgentRunnerMachine = `-- name: MountAgentRunnerMachine :one
+INSERT INTO agent_runner_binding (
+    workspace_id, agent_id, machine_id, bound_by, roots, enabled_mcp_servers
+)
+SELECT
+    $1, $2, m.id,
+    $3, '[]'::jsonb, '{}'::jsonb
+FROM runner_machine m
+WHERE m.id = $4
+  AND m.owner_id = $3
+  AND m.revoked_at IS NULL
+ON CONFLICT (agent_id, machine_id) WHERE revoked_at IS NULL DO UPDATE
+SET bound_by = EXCLUDED.bound_by,
+    roots = '[]'::jsonb,
+    enabled_mcp_servers = '{}'::jsonb,
+    disconnected_at = NULL,
+    disconnected_by = NULL,
+    updated_at = now()
+RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by, enabled_mcp_servers
+`
+
+type MountAgentRunnerMachineParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	ActorID     pgtype.UUID `json:"actor_id"`
+	MachineID   pgtype.UUID `json:"machine_id"`
+}
+
+func (q *Queries) MountAgentRunnerMachine(ctx context.Context, arg MountAgentRunnerMachineParams) (AgentRunnerBinding, error) {
+	row := q.db.QueryRow(ctx, mountAgentRunnerMachine,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.ActorID,
+		arg.MachineID,
+	)
+	var i AgentRunnerBinding
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.MachineID,
+		&i.BoundBy,
+		&i.Roots,
+		&i.RevokedAt,
+		&i.RevokedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisconnectedAt,
+		&i.DisconnectedBy,
+		&i.EnabledMcpServers,
+	)
+	return i, err
+}
+
+const renameRunnerMachineForOwner = `-- name: RenameRunnerMachineForOwner :one
+UPDATE runner_machine
+SET name = $1, updated_at = now()
+WHERE id = $2
+  AND owner_id = $3
+  AND revoked_at IS NULL
+RETURNING id, owner_id, name, os, arch, public_key, client_version, last_seen_at, revoked_at, revoked_by, created_at, updated_at, connection_id, connected_at
+`
+
+type RenameRunnerMachineForOwnerParams struct {
+	Name      string      `json:"name"`
+	MachineID pgtype.UUID `json:"machine_id"`
+	OwnerID   pgtype.UUID `json:"owner_id"`
+}
+
+func (q *Queries) RenameRunnerMachineForOwner(ctx context.Context, arg RenameRunnerMachineForOwnerParams) (RunnerMachine, error) {
+	row := q.db.QueryRow(ctx, renameRunnerMachineForOwner, arg.Name, arg.MachineID, arg.OwnerID)
+	var i RunnerMachine
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Os,
+		&i.Arch,
+		&i.PublicKey,
+		&i.ClientVersion,
+		&i.LastSeenAt,
+		&i.RevokedAt,
+		&i.RevokedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ConnectionID,
+		&i.ConnectedAt,
+	)
+	return i, err
+}
+
 const requeueRunnerCall = `-- name: RequeueRunnerCall :exec
 UPDATE runner_call
 SET status = 'queued', started_at = NULL, updated_at = now()
@@ -1496,7 +1603,7 @@ const revokeAgentRunnerBinding = `-- name: RevokeAgentRunnerBinding :one
 UPDATE agent_runner_binding
 SET revoked_at = now(), revoked_by = $3, updated_at = now()
 WHERE id = $1 AND agent_id = $2 AND revoked_at IS NULL
-RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by
+RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by, enabled_mcp_servers
 `
 
 type RevokeAgentRunnerBindingParams struct {
@@ -1521,6 +1628,191 @@ func (q *Queries) RevokeAgentRunnerBinding(ctx context.Context, arg RevokeAgentR
 		&i.UpdatedAt,
 		&i.DisconnectedAt,
 		&i.DisconnectedBy,
+		&i.EnabledMcpServers,
+	)
+	return i, err
+}
+
+const revokeOtherAgentRunnerMounts = `-- name: RevokeOtherAgentRunnerMounts :many
+UPDATE agent_runner_binding
+SET revoked_at = now(), revoked_by = $1, updated_at = now()
+WHERE workspace_id = $2
+  AND agent_id = $3
+  AND machine_id <> $4
+  AND revoked_at IS NULL
+RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by, enabled_mcp_servers
+`
+
+type RevokeOtherAgentRunnerMountsParams struct {
+	ActorID     pgtype.UUID `json:"actor_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	MachineID   pgtype.UUID `json:"machine_id"`
+}
+
+func (q *Queries) RevokeOtherAgentRunnerMounts(ctx context.Context, arg RevokeOtherAgentRunnerMountsParams) ([]AgentRunnerBinding, error) {
+	rows, err := q.db.Query(ctx, revokeOtherAgentRunnerMounts,
+		arg.ActorID,
+		arg.WorkspaceID,
+		arg.AgentID,
+		arg.MachineID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentRunnerBinding{}
+	for rows.Next() {
+		var i AgentRunnerBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.MachineID,
+			&i.BoundBy,
+			&i.Roots,
+			&i.RevokedAt,
+			&i.RevokedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DisconnectedAt,
+			&i.DisconnectedBy,
+			&i.EnabledMcpServers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const revokeRunnerBindingsForMachine = `-- name: RevokeRunnerBindingsForMachine :many
+UPDATE agent_runner_binding
+SET revoked_at = now(), revoked_by = $1, updated_at = now()
+WHERE machine_id = $2
+  AND revoked_at IS NULL
+RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by, enabled_mcp_servers
+`
+
+type RevokeRunnerBindingsForMachineParams struct {
+	OwnerID   pgtype.UUID `json:"owner_id"`
+	MachineID pgtype.UUID `json:"machine_id"`
+}
+
+func (q *Queries) RevokeRunnerBindingsForMachine(ctx context.Context, arg RevokeRunnerBindingsForMachineParams) ([]AgentRunnerBinding, error) {
+	rows, err := q.db.Query(ctx, revokeRunnerBindingsForMachine, arg.OwnerID, arg.MachineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AgentRunnerBinding{}
+	for rows.Next() {
+		var i AgentRunnerBinding
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.AgentID,
+			&i.MachineID,
+			&i.BoundBy,
+			&i.Roots,
+			&i.RevokedAt,
+			&i.RevokedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DisconnectedAt,
+			&i.DisconnectedBy,
+			&i.EnabledMcpServers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const revokeRunnerMachineForOwner = `-- name: RevokeRunnerMachineForOwner :one
+UPDATE runner_machine
+SET revoked_at = now(), revoked_by = $1,
+    connection_id = NULL, connected_at = NULL, updated_at = now()
+WHERE id = $2
+  AND owner_id = $1
+  AND revoked_at IS NULL
+RETURNING id, owner_id, name, os, arch, public_key, client_version, last_seen_at, revoked_at, revoked_by, created_at, updated_at, connection_id, connected_at
+`
+
+type RevokeRunnerMachineForOwnerParams struct {
+	OwnerID   pgtype.UUID `json:"owner_id"`
+	MachineID pgtype.UUID `json:"machine_id"`
+}
+
+func (q *Queries) RevokeRunnerMachineForOwner(ctx context.Context, arg RevokeRunnerMachineForOwnerParams) (RunnerMachine, error) {
+	row := q.db.QueryRow(ctx, revokeRunnerMachineForOwner, arg.OwnerID, arg.MachineID)
+	var i RunnerMachine
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Name,
+		&i.Os,
+		&i.Arch,
+		&i.PublicKey,
+		&i.ClientVersion,
+		&i.LastSeenAt,
+		&i.RevokedAt,
+		&i.RevokedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ConnectionID,
+		&i.ConnectedAt,
+	)
+	return i, err
+}
+
+const updateAgentRunnerMCPServers = `-- name: UpdateAgentRunnerMCPServers :one
+UPDATE agent_runner_binding
+SET enabled_mcp_servers = $1, updated_at = now()
+WHERE id = $2
+  AND workspace_id = $3
+  AND agent_id = $4
+  AND revoked_at IS NULL
+  AND jsonb_typeof($1) = 'object'
+RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by, enabled_mcp_servers
+`
+
+type UpdateAgentRunnerMCPServersParams struct {
+	EnabledMcpServers []byte      `json:"enabled_mcp_servers"`
+	BindingID         pgtype.UUID `json:"binding_id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	AgentID           pgtype.UUID `json:"agent_id"`
+}
+
+func (q *Queries) UpdateAgentRunnerMCPServers(ctx context.Context, arg UpdateAgentRunnerMCPServersParams) (AgentRunnerBinding, error) {
+	row := q.db.QueryRow(ctx, updateAgentRunnerMCPServers,
+		arg.EnabledMcpServers,
+		arg.BindingID,
+		arg.WorkspaceID,
+		arg.AgentID,
+	)
+	var i AgentRunnerBinding
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.MachineID,
+		&i.BoundBy,
+		&i.Roots,
+		&i.RevokedAt,
+		&i.RevokedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DisconnectedAt,
+		&i.DisconnectedBy,
+		&i.EnabledMcpServers,
 	)
 	return i, err
 }

@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -25,6 +28,101 @@ const (
 )
 
 var errRunnerMCPRuntimeUnsupported = errors.New("runtime does not support managed MCP")
+
+type runnerMountedMCPArguments struct {
+	ServerName  string          `json:"server_name"`
+	Fingerprint string          `json:"fingerprint"`
+	SessionKey  string          `json:"session_key"`
+	ProtocolVersion string      `json:"protocol_version,omitempty"`
+	Request     json.RawMessage `json:"request"`
+}
+
+// RunnerMountedMCP is a task-token-scoped transparent JSON-RPC relay. The
+// server never receives the local command, URL, headers, environment, or
+// credentials; it only routes to an explicitly enabled inventory fingerprint.
+func (h *Handler) RunnerMountedMCP(w http.ResponseWriter, r *http.Request) {
+	if !multicaMCPTaskTokenAuthenticated(r) {
+		writeError(w, http.StatusForbidden, "Runner MCP requires an Agent task token")
+		return
+	}
+	if !h.multicaMCPOriginAllowed(r) {
+		writeError(w, http.StatusForbidden, "untrusted MCP Origin")
+		return
+	}
+	workspaceID, agentID, ok := runnerMCPTaskScope(r)
+	if !ok {
+		writeError(w, http.StatusForbidden, "invalid Runner MCP task scope")
+		return
+	}
+	bindingID, err := util.ParseUUID(strings.TrimSpace(chi.URLParam(r, "mountId")))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Runner MCP mount not found")
+		return
+	}
+	serverName := strings.TrimSpace(chi.URLParam(r, "serverName"))
+	bindingRecord, err := h.Queries.GetAgentRunnerBindingByID(r.Context(), db.GetAgentRunnerBindingByIDParams{ID: bindingID, AgentID: agentID})
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && bindingRecord.WorkspaceID != workspaceID {
+		writeError(w, http.StatusNotFound, "Runner MCP mount not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load Runner MCP mount")
+		return
+	}
+	enabled := decodeEnabledRunnerMCPServers(bindingRecord.EnabledMcpServers)
+	expectedFingerprint, enabledNow := enabled[serverName]
+	inventory, inventoryOK := h.runnerMCPInventory(r.Context(), uuidToString(bindingRecord.MachineID))
+	summary, available := runnerMCPInventoryServer(inventory, serverName)
+	if !enabledNow || !inventoryOK || !available || summary.Availability != "available" || summary.Fingerprint != expectedFingerprint {
+		writeError(w, http.StatusConflict, "Runner MCP mount is disabled, unavailable, or changed")
+		return
+	}
+	binding, err := h.Queries.GetActiveAgentRunnerBinding(r.Context(), db.GetActiveAgentRunnerBindingParams{
+		WorkspaceID: workspaceID, AgentID: agentID, MachineID: bindingRecord.MachineID,
+	})
+	if err != nil || !runnerBindingOnline(binding.DisconnectedAt, binding.ConnectionID, binding.LastSeenAt, time.Now()) {
+		writeError(w, http.StatusConflict, "Runner machine is offline")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, multicaMCPMaxRequestBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil || !json.Valid(body) {
+		h.writeMulticaMCPError(w, nil, -32700, "parse error")
+		return
+	}
+	var request multicaMCPRequest
+	if json.Unmarshal(body, &request) != nil || request.JSONRPC != "2.0" || strings.TrimSpace(request.Method) == "" {
+		h.writeMulticaMCPError(w, request.ID, -32600, "invalid request")
+		return
+	}
+	arguments, _ := json.Marshal(runnerMountedMCPArguments{
+		ServerName: serverName, Fingerprint: expectedFingerprint,
+		SessionKey: strings.Join([]string{r.Header.Get("X-Task-ID"), uuidToString(bindingID), serverName}, "/"),
+		ProtocolVersion: strings.TrimSpace(r.Header.Get("MCP-Protocol-Version")),
+		Request: body,
+	})
+	result, callErr := h.callRunnerMCP(r, binding, "mcp", arguments)
+	if callErr != nil {
+		h.writeMulticaMCPError(w, request.ID, -32000, callErr.code+": "+callErr.message)
+		return
+	}
+	if !multicaMCPRequestHasID(request.ID) {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(result)
+}
+
+func runnerMCPInventoryServer(inventory runnerprotocol.MCPInventory, name string) (runnerprotocol.MCPServerSummary, bool) {
+	for _, server := range inventory.Servers {
+		if server.Name == name {
+			return server, true
+		}
+	}
+	return runnerprotocol.MCPServerSummary{}, false
+}
 
 func runnerMCPRuntimeUnsupported(runtime db.AgentRuntime) bool {
 	return service.IsCloudSandboxRuntime(runtime) &&
@@ -45,7 +143,15 @@ var runnerMCPForwardedTools = map[string]struct{}{
 	"shell_kill":     {},
 }
 
+// RunnerMCP used to expose a fixed filesystem/shell tool bundle. It is no
+// longer task-injected: machine pairing must not implicitly enable a local
+// capability. Keep the old route closed instead of letting existing task
+// tokens bypass the per-server mount allowlist.
 func (h *Handler) RunnerMCP(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusGone, "legacy Runner MCP is disabled; enable a mounted local MCP server")
+}
+
+func (h *Handler) runnerLegacyMCP(w http.ResponseWriter, r *http.Request) {
 	if !multicaMCPTaskTokenAuthenticated(r) {
 		writeError(w, http.StatusForbidden, "Runner MCP requires an Agent task token")
 		return
@@ -349,9 +455,11 @@ func (h *Handler) callRunnerMCP(r *http.Request, binding db.GetActiveAgentRunner
 		select {
 		case <-r.Context().Done():
 			_ = h.Queries.ExpireRunnerCall(context.WithoutCancel(r.Context()), call.ID)
+			h.notifyRunnerCallsCancelled(uuidToString(binding.MachineID), []pgtype.UUID{call.ID})
 			return nil, &runnerMCPCallError{code: "runner_call_cancelled", message: "The Runner call was cancelled"}
 		case <-timer.C:
 			_ = h.Queries.ExpireRunnerCall(context.WithoutCancel(r.Context()), call.ID)
+			h.notifyRunnerCallsCancelled(uuidToString(binding.MachineID), []pgtype.UUID{call.ID})
 			return nil, &runnerMCPCallError{code: "runner_timeout", message: "The Runner did not finish before the deadline"}
 		case <-ticker.C:
 			current, getErr := h.Queries.GetRunnerCall(r.Context(), call.ID)
@@ -453,21 +561,55 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	if agentData == nil {
 		return errors.New("claimed task is missing Agent data")
 	}
-	hasBindings, err := h.Queries.AgentHasRunnerBindings(ctx, agentID)
+	bindings, err := h.Queries.ListAgentRunnerBindings(ctx, db.ListAgentRunnerBindingsParams{WorkspaceID: runtime.WorkspaceID, AgentID: agentID})
 	if err != nil {
 		return err
 	}
-	if !hasBindings {
+	publicURL := ""
+	overlayServers := make(map[string]any)
+	existingServers, err := mcpServerNames(agentData.McpConfig)
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		if !runnerBindingOnline(binding.DisconnectedAt, binding.ConnectionID, binding.LastSeenAt, time.Now()) {
+			continue
+		}
+		inventory, ok := h.runnerMCPInventory(ctx, uuidToString(binding.MachineID))
+		if !ok {
+			continue
+		}
+		for name, fingerprint := range decodeEnabledRunnerMCPServers(binding.EnabledMcpServers) {
+			summary, found := runnerMCPInventoryServer(inventory, name)
+			if !found || summary.Availability != "available" || summary.Fingerprint != fingerprint {
+				continue
+			}
+			if _, collision := existingServers[name]; collision {
+				continue
+			}
+			if publicURL == "" {
+				publicURL, err = runnerBaseURL(h.currentConfig().PublicURL)
+				if err != nil {
+					return errors.New("Runner MCP requires MULTICA_PUBLIC_URL")
+				}
+			}
+			overlayServers[name] = map[string]any{
+				"type": "http",
+				"url": publicURL + "/api/runner-mcp/mounts/" + url.PathEscape(uuidToString(binding.BindingID)) + "/servers/" + url.PathEscape(name),
+				"headers": map[string]string{
+					"Authorization": "Bearer " + taskToken,
+					runnerprotocol.ManagedMCPRoutingHeader: runnerprotocol.ManagedMCPRoutingValue,
+				},
+			}
+		}
+	}
+	if len(overlayServers) == 0 {
 		return nil
 	}
 	if runnerMCPRuntimeUnsupported(runtime) {
 		return errRunnerMCPRuntimeUnsupported
 	}
-	publicURL, err := runnerBaseURL(h.currentConfig().PublicURL)
-	if err != nil {
-		return errors.New("Runner MCP requires MULTICA_PUBLIC_URL")
-	}
-	overlay, err := runnerMCPOverlay(publicURL, taskToken)
+	overlay, err := json.Marshal(map[string]any{"mcpServers": overlayServers})
 	if err != nil {
 		return err
 	}
@@ -477,6 +619,25 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	}
 	agentData.McpConfig = merged
 	return nil
+}
+
+func mcpServerNames(raw json.RawMessage) (map[string]struct{}, error) {
+	if !hasManagedJSON(raw) {
+		return map[string]struct{}{}, nil
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil, fmt.Errorf("parse Agent MCP config: %w", err)
+	}
+	servers, err := unmarshalServerMap(document["mcpServers"])
+	if err != nil {
+		return nil, fmt.Errorf("parse Agent MCP servers: %w", err)
+	}
+	names := make(map[string]struct{}, len(servers))
+	for name := range servers {
+		names[name] = struct{}{}
+	}
+	return names, nil
 }
 
 func runnerMCPOverlay(publicURL, taskToken string) (json.RawMessage, error) {

@@ -253,6 +253,17 @@
     }
   },
   "local_runner": {
+    "rename_prompt": "Machine name",
+    "rename_failed": "Couldn't rename Runner machine",
+    "rename_machine": "Rename machine",
+    "revoke_machine": "Revoke machine",
+    "machine_revoke_title": "Revoke \"{{machine}}\"?",
+    "machine_revoke_description": "This removes the machine from your account, revokes every Agent mount, and stops active calls.",
+    "machine_revoke_confirm": "Revoke machine",
+    "machine_revoke_failed": "Couldn't revoke Runner machine",
+    "add_machine": "Pair machine",
+    "install_command_title": "Install and pair Runner",
+    "install_command_description": "Run this one-time command on the macOS or Linux machine. Pairing adds it to your account without enabling any agent capability.",
     "title": "Local Runner",
     "description": "Review every local machine bound to your account, the agents that can use it, and the file roots each binding exposes.",
     "security_warning": "Runner Shell commands use the local operating-system user's full permissions; file roots do not restrict the Shell. Anyone allowed to run a bound agent may trigger that machine.",
