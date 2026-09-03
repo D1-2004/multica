@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const coordinatorIssueFollowUpContextKey = "coordinator_issue_follow_up"
 const coordinatorIssueTriggerContextKey = "coordinator_issue_trigger"
+const coordinatorWrapupCallbackContextKey = "coordinator_wrapup_callback"
 
 type CoordinatorIssueTrigger string
 
@@ -46,12 +48,45 @@ func IndependentIssueTaskContext(raw []byte, trigger CoordinatorIssueTrigger) ([
 	if err := ensureCoordinatorIssueDispatchEnvelope(payload); err != nil {
 		return nil, err
 	}
-	delete(payload, "completion_callback")
+	if cb, ok := payload["completion_callback"]; ok {
+		payload[coordinatorWrapupCallbackContextKey] = cb
+		delete(payload, "completion_callback")
+	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("encode coordinator issue dispatch context: %w", err)
 	}
 	return encoded, nil
+}
+
+// WrapupCallback is the original inbound Router execution-update target,
+// stashed so the task-finished loop can talk to the delegator without
+// letting CompleteTask reuse the inbound completion.
+func WrapupCallback(raw []byte) (callbackURL, target string, ok bool) {
+	if len(raw) == 0 {
+		return "", "", false
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return "", "", false
+	}
+	cbRaw, present := payload[coordinatorWrapupCallbackContextKey]
+	if !present {
+		cbRaw = payload["completion_callback"]
+	}
+	var cb struct {
+		URL    string `json:"url"`
+		Target string `json:"target"`
+	}
+	if json.Unmarshal(cbRaw, &cb) != nil {
+		return "", "", false
+	}
+	callbackURL = strings.TrimSpace(cb.URL)
+	target = strings.TrimSpace(cb.Target)
+	if callbackURL == "" || target == "" {
+		return "", "", false
+	}
+	return callbackURL, target, true
 }
 
 // ensureCoordinatorIssueDispatchEnvelope fills the claim-time dispatch

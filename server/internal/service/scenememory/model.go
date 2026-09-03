@@ -59,6 +59,7 @@ type DirtyTrigger struct {
 type CommitBatch struct {
 	ReplaceText            bool
 	MemoryText             string
+	SceneTitle             string
 	SourceCursorAt         time.Time
 	SourceCursorEvidenceID string
 	FlushMeta              []byte

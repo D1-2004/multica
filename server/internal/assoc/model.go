@@ -35,7 +35,7 @@ const (
 	MinPurposeRunes   = 8
 	EventBodyMaxRunes = 160
 	EventCardLimit    = 8
-	RecencyTau        = 6 * time.Hour
+	RecencyTau        = 48 * time.Hour
 
 	RecallReadThis = "候选。purpose 对得上才续，对不上就新建 Issue。"
 )

@@ -417,6 +417,48 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	if !strings.Contains(systemPrompt, "手头有哪些事情") {
 		t.Fatal("system prompt must not list scene_memory bullets as open work")
 	}
+	if !strings.Contains(systemPrompt, "当前记忆为空") {
+		t.Fatal("system prompt must not claim Host memory is empty while 稳定知识 remains")
+	}
+	if !strings.Contains(systemPrompt, "给X发一条消息") {
+		t.Fatal("system prompt must ask for a missing send payload instead of opening an Issue")
+	}
+	if !strings.Contains(systemPrompt, "交付物一条笑话") {
+		t.Fatal("system prompt must pack a job brief, not dump scene_memory, for a complete send")
+	}
+	if !strings.Contains(systemPrompt, "short burst") {
+		t.Fatal("system prompt must answer a collected burst in one reply")
+	}
+	if !strings.Contains(systemPrompt, "since=7d") {
+		t.Fatal("system prompt must recall older work beyond the default 48h window")
+	}
+}
+
+func TestParseDecisionCoercesMissingSendPayloadToReply(t *testing.T) {
+	got := parseDecision(`{"action":"issue","text":"我去给须莫发消息，请问要说什么？","look_into":"冬翔委托：向须莫发送消息","delegator":"冬翔","purpose":"向须莫发送消息","intent":"other","reason":"要发消息"}`, Turn{
+		Source:     SourceDigitalEmployee,
+		SenderName: "冬翔",
+		ChatType:   "p2p",
+		Message:    "给须莫发一条消息",
+	})
+	if got.Action != ActionReply {
+		t.Fatalf("missing payload must reply, got %s", got.Action)
+	}
+	if got.LookInto != "" {
+		t.Fatalf("reply must not keep look_into=%q", got.LookInto)
+	}
+	if !strings.Contains(got.UserText, "要说什么") {
+		t.Fatalf("text=%q", got.UserText)
+	}
+
+	joke := parseDecision(`{"action":"issue","text":"我去给须莫发个笑话","look_into":"委托人冬翔；对象须莫；交付物一条笑话","delegator":"冬翔","purpose":"向须莫发送一个笑话","intent":"other"}`, Turn{
+		Source:     SourceDigitalEmployee,
+		SenderName: "冬翔",
+		Message:    "发个笑话给他",
+	})
+	if joke.Action != ActionIssue {
+		t.Fatalf("named payload must stay issue, got %s", joke.Action)
+	}
 }
 
 func TestBuildUserPromptResetShowsEmptyHostBlock(t *testing.T) {
@@ -492,6 +534,44 @@ func TestPrefetchSceneMemoryInjectsMatchingSceneOnly(t *testing.T) {
 	}
 	if mem.last.SceneKind != scenememory.KindGroup || mem.last.SceneKey != "cid-b" {
 		t.Fatalf("lookup identity=%+v", mem.last)
+	}
+}
+
+func TestPrefetchSceneMemorySanitizesHostDebris(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: strings.Join([]string{
+			"## 场域定位",
+			"冬翔",
+			"成员：冬翔",
+			"## 稳定知识与约定",
+			"- feat/agentic-memory-view 已合入 commit d2d5c86ed",
+			"- 多件事情沟通时使用 markdown 无序列表格式 (来自冬翔, 9月3日 13:34的发言)",
+			"- 回复偏好：简短直接 (来自东翔测试号, 9月3日 17:27的发言)",
+			"## 纠正信号",
+			"## 待确认",
+		}, "\n"), MemoryRevision: 18},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
+		SceneMemory: mem,
+	}
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ChatType:       "p2p",
+		AgentID:        testAgentID(),
+		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		ConversationID: "cid-a",
+		DWSOrgID:       "org-1",
+	}
+	c.prefetchSceneMemory(context.Background(), &turn)
+	if strings.Contains(turn.SceneMemory, "d2d5c86ed") || strings.Contains(turn.SceneMemory, "东翔测试号") {
+		t.Fatalf("host inject leaked debris: %q", turn.SceneMemory)
+	}
+	if !strings.Contains(turn.SceneMemory, "markdown 无序列表") {
+		t.Fatalf("human fact stripped: %q", turn.SceneMemory)
+	}
+	if turn.SceneMemoryRevision != 18 {
+		t.Fatalf("revision=%d", turn.SceneMemoryRevision)
 	}
 }
 

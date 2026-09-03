@@ -908,5 +908,86 @@ func TestBuildUserPromptIncludesConversationID(t *testing.T) {
 	}
 }
 
+func TestBusyIssueUnrelatedReplyIsHuman(t *testing.T) {
+	t.Parallel()
+	got := busyIssueUnrelatedReply(Turn{Message: "帮我看一下报名表截止时间"})
+	if strings.Contains(got, "这条先不并进") {
+		t.Fatalf("canned busy line leaked: %q", got)
+	}
+	if !strings.Contains(got, "手头这件还在做") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLoopTaskFinishedAllowsIssueGetWithoutRecall(t *testing.T) {
+	t.Parallel()
+	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("get", toolIssueGet, `{"issue_id":"`+issueID+`"}`),
+		assistantTool("finish", toolFinish, `{"action":"reply","text":"已经问过须莫，周五三点可以。"}`),
+	}}
+	tools := &stubTools{}
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Loop:       LoopTaskFinished,
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "p2p",
+		Message:    "任务已完成，请向委托人汇报。",
+		IssueID:    issueID,
+		TaskResult: "须莫说周五三点可以开会。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionReply {
+		t.Fatalf("decision=%#v", decision)
+	}
+	if len(tools.calls) == 0 || !strings.HasPrefix(tools.calls[0], toolIssueGet) {
+		t.Fatalf("expected issue_get, calls=%v", tools.calls)
+	}
+}
+
+func TestToolsForTurnTaskFinishedOmitsAssocRecall(t *testing.T) {
+	t.Parallel()
+	defs := toolsForTurn(Turn{Loop: LoopTaskFinished}, 0)
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		fn := def.GetFunction()
+		if fn == nil {
+			t.Fatal("tool missing function")
+		}
+		names = append(names, fn.Name)
+	}
+	joined := strings.Join(names, ",")
+	if strings.Contains(joined, toolAssocRecall) || strings.Contains(joined, toolIssueCommentAdd) {
+		t.Fatalf("task-finished tools must not include scene-wide recall or comment add: %v", names)
+	}
+	if !strings.Contains(joined, toolIssueGet) || !strings.Contains(joined, toolFinish) {
+		t.Fatalf("task-finished tools=%v", names)
+	}
+}
+
+func TestBuildUserPromptIncludesTaskFinishedWindow(t *testing.T) {
+	t.Parallel()
+	prompt := buildUserPrompt(Turn{
+		Loop:           LoopTaskFinished,
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ConversationID: "cid-dongxiang",
+		IssueID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		TaskResult:     "须莫说周五三点可以。",
+		Message:        "任务已完成，请向委托人汇报。",
+	})
+	for _, want := range []string{
+		"loop: task_finished",
+		"issue_id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		"须莫说周五三点可以。",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 var _ Completer = (*scriptedCompleter)(nil)
 var _ Tools = (*stubTools)(nil)

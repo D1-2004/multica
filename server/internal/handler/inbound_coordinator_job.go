@@ -127,6 +127,10 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.fail(ctx, job, command, "invalid persisted dispatch command")
 	}
+	command, err = w.absorbPendingSameScene(ctx, job, command)
+	if err != nil {
+		return true, w.retry(ctx, job, fmt.Errorf("collect same-scene jobs: %w", err))
+	}
 	dispatchContext := agentDispatchContext{
 		EndpointID:          job.DispatchEndpointID,
 		EndpointNamespaceID: job.EndpointNamespaceID,
@@ -203,6 +207,80 @@ func dispatchRejectReason(response *bufferedDispatchResponse) string {
 		return fmt.Sprintf("dispatch rejected with HTTP %d", status)
 	}
 	return fmt.Sprintf("dispatch rejected with HTTP %d: %s", status, body)
+}
+
+func (w *InboundCoordinatorJobWorker) absorbPendingSameScene(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) (DispatchCommand, error) {
+	if w == nil || w.handler == nil || w.handler.Queries == nil {
+		return command, nil
+	}
+	cid := dispatchConversationID(command)
+	persist := func(q *db.Queries, merged DispatchCommand) error {
+		raw, err := json.Marshal(merged)
+		if err != nil {
+			return err
+		}
+		n, err := q.UpdateInboundCoordinatorJobCommand(ctx, db.UpdateInboundCoordinatorJobCommandParams{
+			ID: job.ID, Command: raw,
+		})
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("persist coalesced command: job is not running")
+		}
+		return nil
+	}
+	if cid == "" || w.handler.TxStarter == nil {
+		if err := persist(w.handler.Queries, command); err != nil {
+			return command, err
+		}
+		return command, nil
+	}
+	tx, err := w.handler.TxStarter.Begin(ctx)
+	if err != nil {
+		return command, err
+	}
+	defer tx.Rollback(ctx)
+	qtx := w.handler.Queries.WithTx(tx)
+	siblings, err := qtx.ListPendingInboundCoordinatorJobsForConversation(ctx, db.ListPendingInboundCoordinatorJobsForConversationParams{
+		WorkspaceID:    job.WorkspaceID,
+		AgentID:        job.AgentID,
+		ExcludeID:      job.ID,
+		ConversationID: cid,
+	})
+	if err != nil {
+		return command, err
+	}
+	for _, sib := range siblings {
+		extra, restoreErr := restoreInboundCoordinatorCommand(
+			sib.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity,
+		)
+		if restoreErr != nil {
+			return command, restoreErr
+		}
+		command = mergeDispatchCommands(command, extra)
+	}
+	if err := persist(qtx, command); err != nil {
+		return command, err
+	}
+	for _, sib := range siblings {
+		n, completeErr := qtx.CompleteCoalescedInboundCoordinatorJob(ctx, sib.ID)
+		if completeErr != nil {
+			return command, completeErr
+		}
+		if n != 1 {
+			return command, fmt.Errorf("coalesce sibling %s: no longer pending", util.UUIDToString(sib.ID))
+		}
+		slog.Info("inbound coordinator job coalesced",
+			"event", "inbound_coordinator_job_coalesced",
+			"job_id", util.UUIDToString(job.ID),
+			"absorbed_job_id", util.UUIDToString(sib.ID),
+		)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return command, err
+	}
+	return command, nil
 }
 
 func restoreInboundCoordinatorCommand(raw []byte, endpointID pgtype.UUID, targetIdentity string) (DispatchCommand, error) {
@@ -397,6 +475,66 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
+	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
+	if cid := dispatchConversationID(command); cid != "" {
+		existing, findErr := qtx.FindPendingInboundCoordinatorJobForConversation(ctx, db.FindPendingInboundCoordinatorJobForConversationParams{
+			WorkspaceID:    dispatchContext.WorkspaceID,
+			AgentID:        dispatchContext.AgentID,
+			ConversationID: cid,
+		})
+		if findErr == nil {
+			base, restoreErr := restoreJobCommand(existing)
+			if restoreErr != nil {
+				return nil, job, restoreErr
+			}
+			merged := mergeDispatchCommands(base, command)
+			mergedRaw, marshalErr := json.Marshal(merged)
+			if marshalErr != nil {
+				return nil, job, marshalErr
+			}
+			job, err = qtx.UpdateInboundCoordinatorJobCollect(ctx, db.UpdateInboundCoordinatorJobCollectParams{
+				ID:          existing.ID,
+				Command:     mergedRaw,
+				AvailableAt: pgtype.Timestamptz{Time: collectAt, Valid: true},
+			})
+			if err != nil {
+				return nil, job, err
+			}
+			content := firstNonEmpty(strings.TrimSpace(buildDingTalkChannelDisplay(merged)), coordinatorJobMessage(merged))
+			if _, err := qtx.AppendCoordinatorUserMessage(ctx, db.AppendCoordinatorUserMessageParams{
+				ID: existing.UserMessageID, Content: content,
+			}); err != nil {
+				return nil, job, err
+			}
+			_, err = qtx.CompleteAgentDispatchAcceptance(ctx, db.CompleteAgentDispatchAcceptanceParams{
+				ResponseStatus:      pgtype.Int4{Int32: int32(response.Status()), Valid: true},
+				ResponseContentType: pgtype.Text{String: response.header.Get("Content-Type"), Valid: true},
+				ResponseBody:        append([]byte{}, response.body.Bytes()...),
+				ID:                  acceptance.ID,
+				LeaseToken:          acceptance.LeaseToken,
+			})
+			if err != nil {
+				return nil, job, err
+			}
+			h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job)
+			if err := tx.Commit(ctx); err != nil {
+				return nil, job, err
+			}
+			if h.SceneMemoryWorker != nil {
+				h.SceneMemoryWorker.Notify()
+			}
+			slog.Info("inbound coordinator job collected",
+				"event", "inbound_coordinator_job_collected",
+				"job_id", util.UUIDToString(job.ID),
+				"source", command.Source.Type,
+				"message_count", len(merged.Event.Data.Messages),
+			)
+			return response, job, nil
+		}
+		if findErr != nil && !errors.Is(findErr, pgx.ErrNoRows) {
+			return nil, job, findErr
+		}
+	}
 	session, err := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
 		WorkspaceID: dispatchContext.WorkspaceID,
 		AgentID:     dispatchContext.AgentID,
@@ -426,6 +564,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		Command:             rawCommand,
 		ChatSessionID:       session.ID,
 		UserMessageID:       userMessage.ID,
+		AvailableAt:         pgtype.Timestamptz{Time: collectAt, Valid: true},
 	})
 	if err != nil {
 		return nil, job, err
