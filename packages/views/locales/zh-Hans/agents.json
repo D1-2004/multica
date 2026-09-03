@@ -1271,6 +1271,8 @@
       "memory_kind_dm": "单聊",
       "memory_kind_group": "群聊",
       "memory_untitled": "未命名场域",
+      "memory_untitled_dm": "未命名单聊",
+      "memory_untitled_group": "未命名群聊",
       "memory_header_hint": "上方是各群/单聊的记忆，点开可编辑；下方是入站对话记录。",
       "memory_editor_label": "记忆文本",
       "memory_edit": "编辑",

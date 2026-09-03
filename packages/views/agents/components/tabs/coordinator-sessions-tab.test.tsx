@@ -162,7 +162,8 @@ describe("CoordinatorSessionsTab scene memory", () => {
       },
     ];
     renderTab({ ...agent, scene_memory_ui_enabled: true }, true);
-    expect(await screen.findByText("冬翔")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Direct message 冬翔" })).toBeInTheDocument();
+    expect(screen.queryByText("Group")).toBeNull();
     expect(screen.getByText("Scene memory")).toBeInTheDocument();
     expect(screen.getAllByText("GoalMate 是工具").length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Edit" })).toBeInTheDocument();
@@ -203,11 +204,55 @@ describe("CoordinatorSessionsTab scene memory", () => {
       },
     ];
     renderTab({ ...agent, scene_memory_ui_enabled: true }, true);
-    expect(await screen.findByText("场域隔离A")).toBeInTheDocument();
-    expect(screen.getByText("场域隔离B")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Group 场域隔离A" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Group 场域隔离B" })).toBeInTheDocument();
+    expect(screen.queryByText("Direct message")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /场域隔离A/ }));
     expect(screen.getAllByText("GAMMA-A-881 是报表工具").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: /场域隔离B/ }));
     expect(screen.getAllByText("这个群还没有口径").length).toBeGreaterThan(0);
+  });
+
+  it("splits untitled groups from named direct messages", async () => {
+    memoriesRef.current = [
+      {
+        id: "mem-dm",
+        workspace_id: "ws-1",
+        agent_id: "agent-1",
+        org_id: "org",
+        scene_key: "cid-dm",
+        scene_kind: "dm",
+        scene_title: "冬翔",
+        memory_text: "GoalMate 是工具",
+        memory_revision: 1,
+        status: "clean",
+        last_error: "",
+        last_error_code: "",
+        updated_at: "2026-09-01T00:00:00Z",
+      },
+      {
+        id: "mem-group",
+        workspace_id: "ws-1",
+        agent_id: "agent-1",
+        org_id: "org",
+        scene_key: "cid-group",
+        scene_kind: "group",
+        scene_title: "",
+        memory_text: "## 场域定位\n钉钉群聊。\n成员：SixSix、东翔测试号。\n",
+        memory_revision: 1,
+        status: "clean",
+        last_error: "",
+        last_error_code: "",
+        updated_at: "2026-09-01T00:00:01Z",
+      },
+    ];
+    renderTab({ ...agent, scene_memory_ui_enabled: true }, true);
+    expect(
+      await screen.findByRole("button", { name: "Direct message 冬翔" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Group SixSix、东翔测试号" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Untitled group")).toBeNull();
   });
 });

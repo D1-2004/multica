@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isEmptyMemoryBody,
   parseMemorySections,
+  partitionSceneMemories,
   sceneDisplayTitle,
   scenePreview,
 } from "./scene-memory-view";
@@ -23,11 +24,36 @@ describe("scene memory view helpers", () => {
       sceneDisplayTitle(
         {
           scene_title: "",
-          memory_text: "## 场域定位\n钉钉群聊。成员：SixSix、东翔测试号。\n",
+          memory_text: "## 场域定位\n场域回归-R7A。\n成员：SixSix、东翔测试号。\n",
         },
-        "未命名场域",
+        "未命名群聊",
       ),
-    ).toBe("钉钉群聊。成员：SixSix、东翔测试号。");
+    ).toBe("场域回归-R7A");
+  });
+
+  it("skips a generic 钉钉群聊 filler and names the group from members", () => {
+    expect(
+      sceneDisplayTitle(
+        {
+          scene_title: "",
+          memory_text: "## 场域定位\n钉钉群聊。\n成员：SixSix、东翔测试号。\n",
+        },
+        "未命名群聊",
+      ),
+    ).toBe("SixSix、东翔测试号");
+  });
+
+  it("splits direct messages from groups", () => {
+    expect(
+      partitionSceneMemories([
+        { scene_kind: "dm" },
+        { scene_kind: "group" },
+        { scene_kind: "dm" },
+      ]),
+    ).toEqual({
+      dms: [{ scene_kind: "dm" }, { scene_kind: "dm" }],
+      groups: [{ scene_kind: "group" }],
+    });
   });
 
   it("keeps an explicit title and strips markdown from the list preview", () => {

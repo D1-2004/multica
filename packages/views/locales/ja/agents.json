@@ -1127,6 +1127,8 @@
       "memory_kind_dm": "1対1",
       "memory_kind_group": "グループ",
       "memory_untitled": "無題のシーン",
+      "memory_untitled_dm": "無題の1対1",
+      "memory_untitled_group": "無題のグループ",
       "memory_header_hint": "上段が各会話の記憶です。開いて本文と事項リンクを編集できます。",
       "memory_editor_label": "記憶テキスト",
       "memory_edit": "編集",

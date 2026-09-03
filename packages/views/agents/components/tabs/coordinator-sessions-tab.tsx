@@ -59,6 +59,7 @@ import {
   isEmptyMemoryBody,
   memoryStatusKey,
   parseMemorySections,
+  partitionSceneMemories,
   sceneDisplayTitle,
   scenePreview,
 } from "./scene-memory-view";
@@ -335,6 +336,7 @@ function SceneMemoryList({
   onSelect: (memory: AgentSceneMemory) => void;
 }) {
   const { t } = useT("agents");
+  const { dms, groups } = partitionSceneMemories(memories);
   return (
     <div className="border-b">
       <p className="px-4 pb-1.5 pt-3 text-caption font-medium text-muted-foreground">
@@ -358,64 +360,114 @@ function SceneMemoryList({
           {t(($) => $.tab_body.inbound.memory_empty)}
         </p>
       ) : (
-        <ul className="px-2 pb-3">
-          {memories.map((memory) => {
-            const active = memory.id === selectedId;
-            const untitled = t(($) => $.tab_body.inbound.memory_untitled);
-            const title = sceneDisplayTitle(memory, untitled);
-            const kind =
-              memory.scene_kind === "group"
-                ? t(($) => $.tab_body.inbound.memory_kind_group)
-                : t(($) => $.tab_body.inbound.memory_kind_dm);
-            const preview = scenePreview(memory);
-            const status = memoryStatusKey(memory.status);
-            return (
-              <li key={memory.id}>
-                <button
-                  type="button"
-                  data-active={active ? "true" : undefined}
-                  aria-current={active ? "true" : undefined}
-                  className="flex w-full min-w-0 items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted data-active:bg-muted data-active:font-medium data-active:text-foreground data-active:hover:bg-muted"
-                  onClick={() => onSelect(memory)}
-                >
-                  <span
-                    aria-hidden="true"
-                    className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
-                  >
-                    {memory.scene_kind === "group" ? (
-                      <Users className="size-3.5" />
-                    ) : (
-                      <MessageSquare className="size-3.5" />
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="truncate text-body">{title}</span>
-                      {status !== "clean" ? (
-                        <Badge
-                          variant={
-                            status === "blocked" || status === "retrying"
-                              ? "destructive"
-                              : "secondary"
-                          }
-                          className="shrink-0"
-                        >
-                          {t(($) => $.tab_body.inbound[`status_${status}`])}
-                        </Badge>
-                      ) : null}
-                    </span>
-                    <span className="mt-0.5 block truncate text-caption text-muted-foreground">
-                      {kind}
-                      {preview ? ` · ${preview}` : ""}
-                    </span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <div className="px-2 pb-3">
+          {dms.length > 0 ? (
+            <section className="pb-1">
+              <p className="flex items-center gap-1.5 px-2 pb-1 pt-1 text-caption font-medium text-muted-foreground">
+                <MessageSquare className="size-3.5" aria-hidden="true" />
+                {t(($) => $.tab_body.inbound.memory_kind_dm)}
+              </p>
+              <ul>
+                {dms.map((memory) => (
+                  <SceneMemoryRow
+                    key={memory.id}
+                    memory={memory}
+                    selected={memory.id === selectedId}
+                    onSelect={onSelect}
+                  />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+          {groups.length > 0 ? (
+            <section className="pb-1">
+              <p className="flex items-center gap-1.5 px-2 pb-1 pt-1 text-caption font-medium text-muted-foreground">
+                <Users className="size-3.5" aria-hidden="true" />
+                {t(($) => $.tab_body.inbound.memory_kind_group)}
+              </p>
+              <ul>
+                {groups.map((memory) => (
+                  <SceneMemoryRow
+                    key={memory.id}
+                    memory={memory}
+                    selected={memory.id === selectedId}
+                    onSelect={onSelect}
+                  />
+                ))}
+              </ul>
+            </section>
+          ) : null}
+        </div>
       )}
     </div>
+  );
+}
+
+function SceneMemoryRow({
+  memory,
+  selected,
+  onSelect,
+}: {
+  memory: AgentSceneMemory;
+  selected: boolean;
+  onSelect: (memory: AgentSceneMemory) => void;
+}) {
+  const { t } = useT("agents");
+  const untitled =
+    memory.scene_kind === "group"
+      ? t(($) => $.tab_body.inbound.memory_untitled_group)
+      : t(($) => $.tab_body.inbound.memory_untitled_dm);
+  const title = sceneDisplayTitle(memory, untitled);
+  const preview = scenePreview(memory);
+  const status = memoryStatusKey(memory.status);
+  const kind =
+    memory.scene_kind === "group"
+      ? t(($) => $.tab_body.inbound.memory_kind_group)
+      : t(($) => $.tab_body.inbound.memory_kind_dm);
+  return (
+    <li>
+      <button
+        type="button"
+        data-active={selected ? "true" : undefined}
+        aria-current={selected ? "true" : undefined}
+        aria-label={`${kind} ${title}`}
+        className="flex w-full min-w-0 items-start gap-2.5 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted data-active:bg-muted data-active:font-medium data-active:text-foreground data-active:hover:bg-muted"
+        onClick={() => onSelect(memory)}
+      >
+        <span
+          aria-hidden="true"
+          className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+        >
+          {memory.scene_kind === "group" ? (
+            <Users className="size-3.5" />
+          ) : (
+            <MessageSquare className="size-3.5" />
+          )}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-body">{title}</span>
+            {status !== "clean" ? (
+              <Badge
+                variant={
+                  status === "blocked" || status === "retrying"
+                    ? "destructive"
+                    : "secondary"
+                }
+                className="shrink-0"
+              >
+                {t(($) => $.tab_body.inbound[`status_${status}`])}
+              </Badge>
+            ) : null}
+          </span>
+          {preview ? (
+            <span className="mt-0.5 block truncate text-caption text-muted-foreground">
+              {preview}
+            </span>
+          ) : null}
+        </span>
+      </button>
+    </li>
   );
 }
 
@@ -491,7 +543,10 @@ function SceneMemoryDetail({
       toast.error(t(($) => $.tab_body.inbound.relations_clear_failed));
     },
   });
-  const untitled = t(($) => $.tab_body.inbound.memory_untitled);
+  const untitled =
+    memory.scene_kind === "group"
+      ? t(($) => $.tab_body.inbound.memory_untitled_group)
+      : t(($) => $.tab_body.inbound.memory_untitled_dm);
   const title = sceneDisplayTitle(memory, untitled);
   const kind =
     memory.scene_kind === "group"

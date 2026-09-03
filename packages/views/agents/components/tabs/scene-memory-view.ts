@@ -32,31 +32,78 @@ export function isEmptyMemoryBody(body: string): boolean {
   return EMPTY_MARKERS.has(body.trim());
 }
 
-function firstMeaningfulLine(text: string): string {
-  for (const raw of text.split("\n")) {
+const GENERIC_TITLES = new Set([
+  "钉钉群聊",
+  "钉钉群",
+  "钉钉单聊",
+  "钉钉消息",
+  "本会话尚在观察中",
+  "[推断] 本会话尚在观察中",
+]);
+
+function stripTitlePunct(value: string): string {
+  return value.replace(/[。．.\s]+$/u, "").trim();
+}
+
+function isGenericSceneTitle(line: string): boolean {
+  const normalized = stripTitlePunct(line);
+  return GENERIC_TITLES.has(normalized) || normalized.startsWith("[推断]");
+}
+
+function locatingTitle(text: string): string {
+  const sections = parseMemorySections(text);
+  const locating =
+    sections.find((section) => section.heading === "场域定位") ?? sections[0];
+  if (!locating) {
+    return "";
+  }
+  let named = "";
+  let members = "";
+  for (const raw of locating.body.split("\n")) {
     const line = raw.replace(/^[-*]\s+/, "").replace(/^#+\s+/, "").trim();
-    if (line && !isEmptyMemoryBody(line)) {
-      return line;
+    if (!line || isEmptyMemoryBody(line)) {
+      continue;
+    }
+    const memberMatch = line.match(/^成员[：:]\s*(.+)$/);
+    if (memberMatch?.[1]) {
+      members = stripTitlePunct(memberMatch[1]);
+      continue;
+    }
+    if (!named && !isGenericSceneTitle(line)) {
+      named = stripTitlePunct(line);
     }
   }
-  return "";
+  return named || members;
 }
 
 export function sceneDisplayTitle(
   memory: Pick<AgentSceneMemory, "scene_title" | "memory_text">,
   untitled: string,
 ): string {
-  const named = memory.scene_title.trim();
-  if (named) {
-    return named;
+  const stored = memory.scene_title.trim();
+  if (stored && !isGenericSceneTitle(stored)) {
+    return stored;
   }
-  for (const section of parseMemorySections(memory.memory_text)) {
-    const fromBody = firstMeaningfulLine(section.body);
-    if (fromBody) {
-      return fromBody.length > 22 ? `${fromBody.slice(0, 22)}…` : fromBody;
+  const fromLocating = locatingTitle(memory.memory_text);
+  if (fromLocating) {
+    return fromLocating;
+  }
+  return stored || untitled;
+}
+
+export function partitionSceneMemories<T extends { scene_kind: string }>(
+  memories: T[],
+): { dms: T[]; groups: T[] } {
+  const dms: T[] = [];
+  const groups: T[] = [];
+  for (const memory of memories) {
+    if (memory.scene_kind === "group") {
+      groups.push(memory);
+    } else {
+      dms.push(memory);
     }
   }
-  return untitled;
+  return { dms, groups };
 }
 
 export function scenePreview(

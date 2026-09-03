@@ -43,6 +43,32 @@ type DispatchConversation struct {
 	Title              string `json:"title,omitempty"`
 }
 
+func (c *DispatchConversation) UnmarshalJSON(data []byte) error {
+	type wire struct {
+		OpenConversationID string `json:"openConversationId"`
+		Type               string `json:"type"`
+		Title              string `json:"title"`
+		ConversationTitle  string `json:"conversationTitle"`
+		ConversationName   string `json:"conversationName"`
+		Name               string `json:"name"`
+		SnakeTitle         string `json:"conversation_title"`
+	}
+	var value wire
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	c.OpenConversationID = strings.TrimSpace(value.OpenConversationID)
+	c.Type = strings.TrimSpace(value.Type)
+	c.Title = firstNonEmpty(
+		value.Title,
+		value.ConversationTitle,
+		value.ConversationName,
+		value.Name,
+		value.SnakeTitle,
+	)
+	return nil
+}
+
 type DispatchSender struct {
 	DisplayName          string `json:"displayName,omitempty"`
 	OpenDingTalkID       string `json:"openDingTalkId,omitempty"`

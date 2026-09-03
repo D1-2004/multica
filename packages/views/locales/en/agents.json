@@ -1292,6 +1292,8 @@
       "memory_kind_dm": "Direct message",
       "memory_kind_group": "Group",
       "memory_untitled": "Untitled scene",
+      "memory_untitled_dm": "Untitled direct message",
+      "memory_untitled_group": "Untitled group",
       "memory_header_hint": "Scene memory is listed first. Open a row to edit the text and linked issues.",
       "memory_editor_label": "Memory text",
       "memory_edit": "Edit",

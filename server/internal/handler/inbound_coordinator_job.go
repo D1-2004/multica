@@ -324,7 +324,25 @@ func coordinatorSource(command DispatchCommand) inboundcoord.Source {
 	return inboundcoord.SourceRobot
 }
 
+func dispatchSceneIdentity(command DispatchCommand) (kind, title string) {
+	chatType := strings.TrimSpace(command.Event.Data.Conversation.Type)
+	if chatType == "" {
+		chatType = strings.TrimSpace(dispatchAssocIDs(command).Kind)
+	}
+	kind = scenememory.KindFromChatType(chatType)
+	title = strings.TrimSpace(command.Event.Data.Conversation.Title)
+	if title == "" && kind == scenememory.KindDM {
+		title = strings.TrimSpace(command.Event.Data.Sender.DisplayName)
+	}
+	return kind, title
+}
+
 func coordinatorJobTitle(command DispatchCommand) string {
+	kind, name := dispatchSceneIdentity(command)
+	label := "单聊"
+	if kind == scenememory.KindGroup {
+		label = "群聊"
+	}
 	text := ""
 	for _, message := range command.Event.Data.Messages {
 		if message.Reaction == nil && strings.TrimSpace(message.Text) != "" {
@@ -336,10 +354,13 @@ func coordinatorJobTitle(command DispatchCommand) string {
 		text = "Inbound event"
 	}
 	runes := []rune(text)
-	if len(runes) > 60 {
-		text = string(runes[:60]) + "…"
+	if len(runes) > 40 {
+		text = string(runes[:40]) + "…"
 	}
-	return "Coordinator · " + text
+	if name != "" {
+		return label + " · " + name + " · " + text
+	}
+	return label + " · " + text
 }
 
 func coordinatorJobMessage(command DispatchCommand) string {
@@ -546,11 +567,7 @@ func (h *Handler) markSceneMemoryDirty(
 		)
 		return
 	}
-	kind := scenememory.KindFromChatType(ids.Kind)
-	title := strings.TrimSpace(command.Event.Data.Conversation.Title)
-	if title == "" && kind == scenememory.KindDM {
-		title = strings.TrimSpace(command.Event.Data.Sender.DisplayName)
-	}
+	kind, title := dispatchSceneIdentity(command)
 	store := scenememory.NewStore(qtx)
 	row, err := store.MarkDirty(ctx, scenememory.Identity{
 		WorkspaceID: dispatchContext.WorkspaceID,

@@ -33,3 +33,47 @@ func TestRestoreInboundCoordinatorCommandRestoresPrivateExecutionFields(t *testi
 		t.Fatalf("completion target = %#v", restored.CompletionCallback)
 	}
 }
+
+func TestDispatchConversationTitleAliases(t *testing.T) {
+	t.Parallel()
+	var conv DispatchConversation
+	if err := json.Unmarshal([]byte(`{"openConversationId":"cid-1","type":"group","conversationTitle":"场域回归-R7A"}`), &conv); err != nil {
+		t.Fatal(err)
+	}
+	if conv.Title != "场域回归-R7A" || conv.Type != "group" {
+		t.Fatalf("got %+v", conv)
+	}
+}
+
+func TestCoordinatorJobTitleDistinguishesDMAndGroup(t *testing.T) {
+	t.Parallel()
+	dm := DispatchCommand{
+		Event: DispatchEvent{Data: DispatchEventData{
+			Conversation: DispatchConversation{Type: "single"},
+			Sender:       DispatchSender{DisplayName: "冬翔"},
+			Messages:     []DispatchMessage{{Text: "hello"}},
+		}},
+	}
+	if got := coordinatorJobTitle(dm); got != "单聊 · 冬翔 · hello" {
+		t.Fatalf("dm title=%q", got)
+	}
+	group := DispatchCommand{
+		Event: DispatchEvent{Data: DispatchEventData{
+			Conversation: DispatchConversation{Type: "group", Title: "场域回归-R7A"},
+			Sender:       DispatchSender{DisplayName: "冬翔"},
+			Messages:     []DispatchMessage{{Text: "what is GoalMate"}},
+		}},
+	}
+	if got := coordinatorJobTitle(group); got != "群聊 · 场域回归-R7A · what is GoalMate" {
+		t.Fatalf("group title=%q", got)
+	}
+	untitledGroup := DispatchCommand{
+		Event: DispatchEvent{Data: DispatchEventData{
+			Conversation: DispatchConversation{Type: "group"},
+			Messages:     []DispatchMessage{{Text: "ping"}},
+		}},
+	}
+	if got := coordinatorJobTitle(untitledGroup); got != "群聊 · ping" {
+		t.Fatalf("untitled group title=%q", got)
+	}
+}

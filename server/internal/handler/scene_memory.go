@@ -40,7 +40,7 @@ func sceneMemoryToResponse(row db.SceneMemory) sceneMemoryResponse {
 		OrgID:          row.OrgID,
 		SceneKey:       row.SceneKey,
 		SceneKind:      row.SceneKind,
-		SceneTitle:     row.SceneTitle,
+		SceneTitle:     scenememory.DisplayTitle(row.SceneTitle, row.MemoryText),
 		MemoryText:     row.MemoryText,
 		MemoryRevision: row.MemoryRevision,
 		Status:         scenememory.StatusOf(row),

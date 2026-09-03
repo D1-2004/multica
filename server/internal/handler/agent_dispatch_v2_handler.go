@@ -1324,7 +1324,7 @@ func (h *Handler) tryDispatchResetMemory(
 	}
 	if h != nil && h.SceneMemoryStore != nil && conversationID != "" &&
 		command.Source.Type == "digital_employee" {
-		kind := scenememory.KindFromChatType(command.Event.Data.Conversation.Type)
+		kind, title := dispatchSceneIdentity(command)
 		orgID := ""
 		var identityErr error
 		if h.Queries != nil {
@@ -1349,10 +1349,6 @@ func (h *Handler) tryDispatchResetMemory(
 			}
 		}
 		if orgID != "" {
-			title := strings.TrimSpace(command.Event.Data.Conversation.Title)
-			if title == "" && kind == scenememory.KindDM {
-				title = strings.TrimSpace(command.Event.Data.Sender.DisplayName)
-			}
 			identity := scenememory.Identity{
 				WorkspaceID: dispatchContext.WorkspaceID,
 				AgentID:     dispatchContext.AgentID,
