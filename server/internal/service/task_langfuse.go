@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -69,9 +71,9 @@ type taskTraceContext struct {
 	// this task joins; the task repeats them so the trace keeps one tag set.
 	CoordinatorTraceTags []string
 	Channel              string
-	DispatchSource     string
-	IssueTrigger       string
-	SurfaceType        string
+	DispatchSource       string
+	IssueTrigger         string
+	SurfaceType          string
 }
 
 func parseTaskTraceContext(raw []byte) taskTraceContext {
@@ -190,28 +192,20 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 		"coordinator_trigger": tc.IssueTrigger,
 	}
 	tags := []string{taskTraceTag}
+	workspaceID := ""
 	if agent != nil {
 		metadata["agent_name"] = strings.TrimSpace(agent.Name)
-		metadata["workspace_id"] = util.UUIDToString(agent.WorkspaceID)
+		workspaceID = util.UUIDToString(agent.WorkspaceID)
+		metadata["workspace_id"] = workspaceID
 	}
 	if runtime != nil {
 		metadata["runtime_name"] = strings.TrimSpace(runtime.Name)
 		metadata["runtime_mode"] = strings.TrimSpace(runtime.RuntimeMode)
 		metadata["provider"] = strings.TrimSpace(runtime.Provider)
 		metadata["daemon_id"] = strings.TrimSpace(runtime.DaemonID.String)
-		if mode := strings.TrimSpace(runtime.RuntimeMode); mode != "" {
-			tags = append(tags, "runtime:"+mode)
-		}
-		if provider := strings.TrimSpace(runtime.Provider); provider != "" {
-			tags = append(tags, "provider:"+provider)
-		}
+		tags = append(tags, langfuse.Tag("runtime", runtime.RuntimeMode), langfuse.Tag("provider", runtime.Provider))
 	}
-	if tc.Channel != "" {
-		tags = append(tags, "channel:"+tc.Channel)
-	}
-	if tc.DispatchSource != "" {
-		tags = append(tags, "source:"+tc.DispatchSource)
-	}
+	tags = append(tags, langfuse.Tag("channel", tc.Channel), langfuse.Tag("source", tc.DispatchSource))
 	userID := tc.PersonID
 	if userID == "" {
 		userID = tc.DWSUID
@@ -226,11 +220,27 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 	if sessionID == "" {
 		sessionID = util.UUIDToString(task.ChatSessionID)
 	}
+	// Ids the Langfuse API can only filter through tags on this deployment.
+	tags = append(tags,
+		langfuse.Tag("agent", util.UUIDToString(task.AgentID)),
+		langfuse.Tag("workspace", workspaceID),
+		langfuse.Tag("user", userID),
+		langfuse.Tag("task", taskID),
+		langfuse.Tag("issue", util.UUIDToString(task.IssueID)),
+	)
+	cleaned := tags[:0]
+	for _, tag := range tags {
+		if tag != "" {
+			cleaned = append(cleaned, tag)
+		}
+	}
+	tags = cleaned
 	// A task started by a coordinator turn joins that turn's trace. Langfuse
 	// resolves a trace's name and tags from whichever span it processes last,
 	// so the task repeats the turn's name and tags instead of its own; the
-	// root observation is still named agent_task and the task's runtime and
-	// provider stay available as metadata.
+	// root observation is still named agent_task, the task's runtime and
+	// provider stay available as metadata, and the task/issue ids remain
+	// reachable through the idx.* events (TaskIndexKeys).
 	traceName := ""
 	if tc.CoordinatorTraceID != "" {
 		traceName = coordinatorTraceName
@@ -250,6 +260,35 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 		Tags:       tags,
 		Metadata:   metadata,
 	}
+}
+
+// TaskIndexKeys are the ids a reader may hold when looking for a task's
+// trace; each becomes an "idx.<key>.<value>" event. The sandbox relay and the
+// completion hook both emit them (deterministic ids, so they upsert).
+func TaskIndexKeys(task db.AgentTaskQueue, agent *db.Agent) map[string]string {
+	tc := parseTaskTraceContext(task.Context)
+	keys := map[string]string{
+		"task_id":            util.UUIDToString(task.ID),
+		"issue_id":           util.UUIDToString(task.IssueID),
+		"agent_id":           util.UUIDToString(task.AgentID),
+		"runtime_id":         util.UUIDToString(task.RuntimeID),
+		"chat_session_id":    util.UUIDToString(task.ChatSessionID),
+		"parent_task_id":     util.UUIDToString(task.ParentTaskID),
+		"autopilot_run_id":   util.UUIDToString(task.AutopilotRunID),
+		"trigger_comment_id": util.UUIDToString(task.TriggerCommentID),
+		"initiator_user_id":  util.UUIDToString(task.InitiatorUserID),
+		"originator_user_id": util.UUIDToString(task.OriginatorUserID),
+		"session_id":         strings.TrimSpace(task.SessionID.String),
+		"coord_trace_id":     tc.CoordinatorTraceID,
+		"conversation_id":    tc.ConversationID,
+		"person_id":          tc.PersonID,
+		"dws_uid":            tc.DWSUID,
+		"dws_org_id":         tc.DWSOrgID,
+	}
+	if agent != nil {
+		keys["workspace_id"] = util.UUIDToString(agent.WorkspaceID)
+	}
+	return keys
 }
 
 // observeTaskTerminal exports the task trace after a terminal status commits.
@@ -294,6 +333,7 @@ func (s *TaskService) emitTaskTrace(ctx context.Context, task db.AgentTaskQueue)
 	if trace == nil {
 		return
 	}
+	trace.Index(TaskIndexKeys(task, agent))
 	endTime := time.Now()
 	if task.CompletedAt.Valid {
 		endTime = task.CompletedAt.Time
@@ -421,13 +461,34 @@ func appendUnique(list []string, value string) []string {
 	return append(list, value)
 }
 
+// coalesceTaskMessages merges runs of consecutive streamed chunks of the same
+// kind (thinking, text) into one message so a transcript reads as a few
+// paragraphs instead of hundreds of token-sized events. Tool rows are kept.
+func coalesceTaskMessages(messages []db.TaskMessage) []db.TaskMessage {
+	out := make([]db.TaskMessage, 0, len(messages))
+	for _, msg := range messages {
+		kind := strings.TrimSpace(msg.Type)
+		if (kind == "text" || kind == "thinking") && len(out) > 0 {
+			last := &out[len(out)-1]
+			if strings.TrimSpace(last.Type) == kind {
+				last.Content = pgtype.Text{String: last.Content.String + msg.Content.String, Valid: true}
+				continue
+			}
+		}
+		out = append(out, msg)
+	}
+	return out
+}
+
 // emitTaskMessageObservations replays the persisted transcript as child
 // observations: tool_use rows open a tool observation that the matching
-// tool_result closes; assistant text and thinking become events.
+// tool_result closes; assistant text and thinking become events, one per
+// contiguous run of streamed chunks.
 func emitTaskMessageObservations(trace *langfuse.Trace, messages []db.TaskMessage, taskEnd time.Time) {
 	if trace == nil {
 		return
 	}
+	messages = coalesceTaskMessages(messages)
 	if len(messages) > taskTraceMessageCap {
 		trace.Event(langfuse.ObservationOptions{
 			Type: langfuse.TypeEvent, Name: "transcript_truncated",

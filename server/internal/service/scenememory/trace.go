@@ -45,7 +45,23 @@ func (f *MemoryFlusher) startFlushTrace(ctx context.Context, row db.SceneMemory,
 			agentName = strings.TrimSpace(agent.Name)
 		}
 	}
-	return f.Langfuse.StartTrace(ctx, flushTraceOptions(row, agentName, started))
+	trace := f.Langfuse.StartTrace(ctx, flushTraceOptions(row, agentName, started))
+	trace.Index(flushIndexKeys(row))
+	return trace
+}
+
+// flushIndexKeys are the ids a reader may hold when looking for this flush.
+func flushIndexKeys(row db.SceneMemory) map[string]string {
+	return map[string]string{
+		"scene_memory_id": util.UUIDToString(row.ID),
+		"scene_key":       strings.TrimSpace(row.SceneKey),
+		"conversation_id": strings.TrimSpace(row.SceneKey),
+		"agent_id":        util.UUIDToString(row.AgentID),
+		"workspace_id":    util.UUIDToString(row.WorkspaceID),
+		"coord_trace_id":  strings.TrimSpace(row.LastTriggerCoordTraceID),
+		"job_id":          util.UUIDToString(row.LastTriggerJobID),
+		"dws_org_id":      strings.TrimSpace(row.OrgID),
+	}
 }
 
 func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) langfuse.TraceOptions {
@@ -74,8 +90,14 @@ func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) 
 		"model":               flushModel,
 	}
 	tags := []string{flushTraceTag}
-	if kind := strings.TrimSpace(row.SceneKind); kind != "" {
-		tags = append(tags, "kind:"+kind)
+	for _, tag := range []string{
+		langfuse.Tag("kind", row.SceneKind),
+		langfuse.Tag("agent", util.UUIDToString(row.AgentID)),
+		langfuse.Tag("workspace", util.UUIDToString(row.WorkspaceID)),
+	} {
+		if tag != "" {
+			tags = append(tags, tag)
+		}
 	}
 	input := map[string]any{
 		"memory_revision":       row.MemoryRevision,

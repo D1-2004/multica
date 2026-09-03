@@ -114,8 +114,23 @@ func TestDecideExportsOneLangfuseTracePerTurn(t *testing.T) {
 	if got, _ := spanAttr(root, "langfuse.user.id"); got.AsString() != "02000000-0000-0000-0000-000000000000" {
 		t.Errorf("user id = %q", got.AsString())
 	}
-	if got, _ := spanAttr(root, "langfuse.trace.tags"); strings.Join(got.AsStringSlice(), ",") != "inbound_coordinator,source:web,kind:p2p" {
+	wantTags := "inbound_coordinator,source-web,kind-p2p,agent-01000000-0000-0000-0000-000000000000,workspace-ws-1,user-02000000-0000-0000-0000-000000000000"
+	if got, _ := spanAttr(root, "langfuse.trace.tags"); strings.Join(got.AsStringSlice(), ",") != wantTags {
 		t.Errorf("tags = %v", got.AsStringSlice())
+	}
+	if got, _ := spanAttr(root, "langfuse.observation.input"); got.AsString() != "记一下：明天三点打球" {
+		t.Errorf("root input = %q, want the inbound message", got.AsString())
+	}
+	if got, _ := spanAttr(root, "langfuse.observation.metadata.conversation_title"); got.AsString() != "冬翔的会话" {
+		t.Errorf("root metadata conversation_title = %q", got.AsString())
+	}
+	for _, name := range []string{"idx.coord_trace_id." + traceID, "idx.agent_id.01000000-0000-0000-0000-000000000000", "idx.chat_session_id.session-1", "idx.workspace_id.ws-1"} {
+		if len(spansNamed(spans, name)) != 1 {
+			t.Errorf("index event %q missing: %v", name, spanNames(spans))
+		}
+	}
+	if got := len(spansNamed(spans, "idx.conversation_id.")); got != 0 {
+		t.Errorf("empty conversation id must not be indexed")
 	}
 	if got, _ := spanAttr(root, "langfuse.trace.output"); !strings.Contains(got.AsString(), `"action":"reply"`) || !strings.Contains(got.AsString(), "好的") {
 		t.Errorf("trace output = %s", got.AsString())

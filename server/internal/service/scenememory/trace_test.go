@@ -28,8 +28,12 @@ func TestFlushTraceOptionsCarryLookupKeys(t *testing.T) {
 	if opts.Name != flushTraceName || opts.SessionID != "cid+abc==" {
 		t.Fatalf("name/session = %q/%q", opts.Name, opts.SessionID)
 	}
-	if strings.Join(opts.Tags, ",") != "scene_memory,kind:dm" {
+	if strings.Join(opts.Tags, ",") != "scene_memory,kind-dm,agent-03000000-0000-0000-0000-000000000000,workspace-02000000-0000-0000-0000-000000000000" {
 		t.Fatalf("tags = %v", opts.Tags)
+	}
+	keys := flushIndexKeys(row)
+	if keys["scene_key"] != "cid+abc==" || keys["coord_trace_id"] != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" || keys["agent_id"] != "03000000-0000-0000-0000-000000000000" {
+		t.Fatalf("index keys = %v", keys)
 	}
 	for key, want := range map[string]any{
 		"agent_name":        "预发测试智能体",

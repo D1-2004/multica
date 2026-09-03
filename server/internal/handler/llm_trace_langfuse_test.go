@@ -134,7 +134,7 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	}
 	spans := exporter.GetSpans()
 	if len(spans) != 1 {
-		t.Fatalf("spans = %d", len(spans))
+		t.Fatalf("spans = %d (sequence 3 must not emit index events)", len(spans))
 	}
 	span := spans[0]
 	if span.Name != "llm.call.3" {
@@ -164,7 +164,8 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	}
 	// The relay usually creates the trace record, so it carries the runtime
 	// and provider tags the completion hook would otherwise add too late.
-	if attrs["langfuse.trace.tags"] != `["agent_task","runtime:cloud","provider:hermes"]` || attrs["langfuse.trace.metadata.provider"] != "hermes" {
+	wantTags := `["agent_task","runtime-cloud","provider-hermes","agent-01000000-0000-0000-0000-000000000000","workspace-09000000-0000-0000-0000-000000000000","task-abcd0000-0000-0000-0000-000000000000"]`
+	if attrs["langfuse.trace.tags"] != wantTags || attrs["langfuse.trace.metadata.provider"] != "hermes" {
 		t.Fatalf("relay tags/provider = %q / %q", attrs["langfuse.trace.tags"], attrs["langfuse.trace.metadata.provider"])
 	}
 	if attrs["langfuse.trace.name"] != "agent_task" {
@@ -203,6 +204,22 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	retried := exporter.GetSpans()
 	if len(retried) != 2 || retried[1].SpanContext.SpanID() != retried[0].SpanContext.SpanID() {
 		t.Fatalf("retry produced a different observation id: %v", retried)
+	}
+
+	// The first pair also indexes the task ids under the deterministic root.
+	exporter.Reset()
+	first := []byte(strings.Replace(string(payload), `"sequence": 3`, `"sequence": 1`, 1))
+	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, runtime, first); err != nil {
+		t.Fatal(err)
+	}
+	indexed := map[string]bool{}
+	for _, s := range exporter.GetSpans() {
+		if strings.HasPrefix(s.Name, "idx.") {
+			indexed[s.Name] = s.Parent.SpanID().String() == service.TaskLangfuseRootSpanID("abcd0000-0000-0000-0000-000000000000")
+		}
+	}
+	if !indexed["idx.task_id.abcd0000-0000-0000-0000-000000000000"] || !indexed["idx.conversation_id.cid-1"] || !indexed["idx.agent_id.01000000-0000-0000-0000-000000000000"] {
+		t.Fatalf("index events = %v", indexed)
 	}
 
 	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, runtime, []byte(`not json`)); err == nil {

@@ -128,6 +128,12 @@ func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task
 		// storing one generation per attempt.
 		SpanID: LLMTraceObservationID(taskID, event.Sequence),
 	})
+	if event.Sequence <= 1 {
+		// The first relayed pair usually creates the trace record long before
+		// the task finishes; index the task's ids right away so the trace is
+		// reachable by task/issue id while the sandbox is still running.
+		o.client.IndexInTrace(ctx, traceOpts, service.TaskLangfuseRootSpanID(taskID), service.TaskIndexKeys(task, agentPtr))
+	}
 	endOpts := langfuse.EndOptions{EndTime: end, Output: exchange.Output, Usage: exchange.Usage}
 	switch {
 	case exchange.Error != nil || event.Response.Status >= 400:

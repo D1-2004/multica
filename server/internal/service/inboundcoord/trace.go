@@ -30,7 +30,9 @@ func (c *Coordinator) startTurnTrace(ctx context.Context, turn Turn, started tim
 	if c == nil || c.Langfuse == nil {
 		return nil
 	}
-	return c.Langfuse.StartTrace(ctx, coordinatorTraceOptions(turn, started))
+	trace := c.Langfuse.StartTrace(ctx, coordinatorTraceOptions(turn, started))
+	trace.Index(coordinatorIndexKeys(turn))
+	return trace
 }
 
 func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions {
@@ -64,9 +66,10 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 		metadata["scene_memory_revision"] = turn.SceneMemoryRevision
 	}
 	tags := coordinatorTraceTags(turn)
-	input := map[string]any{
-		"message":                clipRunes(strings.TrimSpace(turn.Message), traceOutputTextBudget),
-		"sender_name":            clipRunes(strings.TrimSpace(turn.SenderName), llmLogNameBudget),
+	// The root input is what the person said; the prompt context the loop saw
+	// (history sizes, persona, scene memory) is root metadata so the trace
+	// reads as "message in, verdict out" in the Langfuse UI.
+	rootMetadata := map[string]any{
 		"conversation_title":     clipRunes(strings.TrimSpace(turn.ConversationTitle), llmLogNameBudget),
 		"dingtalk_history_count": len(turn.DingTalkHistory),
 		"multica_history_count":  len(turn.History),
@@ -75,33 +78,59 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 		"reply_tone":             clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget),
 	}
 	if turn.SceneMemoryRevision > 0 {
-		input["scene_memory"] = clipRunes(strings.TrimSpace(turn.SceneMemory), traceOutputTextBudget)
+		rootMetadata["scene_memory"] = clipRunes(strings.TrimSpace(turn.SceneMemory), traceOutputTextBudget)
 	}
 	return langfuse.TraceOptions{
-		TraceID:   turn.TraceID,
-		Name:      coordinatorTraceName,
-		Type:      langfuse.TypeAgent,
-		UserID:    coordinatorTraceUserID(turn),
-		SessionID: coordinatorTraceSessionID(turn),
-		Tags:      tags,
-		Metadata:  metadata,
-		Input:     input,
-		StartTime: started,
+		TraceID:      turn.TraceID,
+		Name:         coordinatorTraceName,
+		Type:         langfuse.TypeAgent,
+		UserID:       coordinatorTraceUserID(turn),
+		SessionID:    coordinatorTraceSessionID(turn),
+		Tags:         tags,
+		Metadata:     metadata,
+		RootMetadata: rootMetadata,
+		Input:        clipRunes(strings.TrimSpace(turn.Message), traceOutputTextBudget),
+		StartTime:    started,
+	}
+}
+
+// coordinatorIndexKeys are the ids a reader may hold when looking for this
+// turn; each becomes an "idx.<key>.<value>" event (see langfuse.Trace.Index).
+func coordinatorIndexKeys(turn Turn) map[string]string {
+	return map[string]string{
+		"coord_trace_id":  strings.TrimSpace(turn.TraceID),
+		"conversation_id": strings.TrimSpace(turn.ConversationID),
+		"chat_session_id": strings.TrimSpace(turn.ChatSessionID),
+		"agent_id":        util.UUIDToString(turn.AgentID),
+		"workspace_id":    strings.TrimSpace(turn.WorkspaceID),
+		"person_id":       strings.TrimSpace(turn.PersonID),
+		"dws_uid":         strings.TrimSpace(turn.DWSUID),
+		"user_id":         util.UUIDToString(turn.UserID),
+		"evidence_id":     strings.TrimSpace(turn.EvidenceID),
 	}
 }
 
 // coordinatorTraceTags are the static Langfuse tags of a turn; they must be
 // known before the loop starts and are repeated by any task joining the trace.
 func coordinatorTraceTags(turn Turn) []string {
-	tags := []string{coordinatorTraceTag, "source:" + string(turn.Source)}
 	kind := strings.TrimSpace(turn.Kind)
 	if kind == "" {
 		kind = strings.TrimSpace(turn.ChatType)
 	}
-	if kind != "" {
-		tags = append(tags, "kind:"+kind)
+	tags := []string{coordinatorTraceTag, langfuse.Tag("source", string(turn.Source)), langfuse.Tag("kind", kind)}
+	// Ids the Langfuse API can only filter through tags on this deployment.
+	tags = append(tags,
+		langfuse.Tag("agent", util.UUIDToString(turn.AgentID)),
+		langfuse.Tag("workspace", turn.WorkspaceID),
+		langfuse.Tag("user", coordinatorTraceUserID(turn)),
+	)
+	out := tags[:0]
+	for _, tag := range tags {
+		if tag != "" {
+			out = append(out, tag)
+		}
 	}
-	return tags
+	return out
 }
 
 // coordinatorTraceUserID is the Langfuse user: the DingTalk person when the

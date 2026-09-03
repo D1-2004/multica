@@ -307,6 +307,70 @@ func TestTraceNameCanDifferFromRootObservationName(t *testing.T) {
 	}
 }
 
+func TestIndexTokensAndTags(t *testing.T) {
+	if got := IndexToken(" cid+abc== "); got != "cid+abc==" {
+		t.Fatalf("IndexToken kept base64 chars wrong: %q", got)
+	}
+	if got := IndexToken("a:b c\td"); got != "a_b_c_d" {
+		t.Fatalf("IndexToken must replace colons and whitespace: %q", got)
+	}
+	if got := Tag("source", "web"); got != "source-web" {
+		t.Fatalf("Tag = %q", got)
+	}
+	if got := Tag("agent", ""); got != "" {
+		t.Fatalf("empty Tag = %q", got)
+	}
+	if got := IndexObservationName("task_id", "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7"); got != "idx.task_id.5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
+		t.Fatalf("IndexObservationName = %q", got)
+	}
+}
+
+func TestIndexEventsAreDeterministicAndUpsertable(t *testing.T) {
+	client, exporter := testClient(t)
+	const taskID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	start := time.Date(2026, 9, 4, 1, 0, 0, 0, time.UTC)
+	rootID := DeterministicSpanID("task:" + taskID)
+	keys := map[string]string{"task_id": taskID, "issue_id": "", "person_id": "Dv6WPx", "conversation_id": "cid+abc=="}
+
+	// The relay indexes first, without a root.
+	client.IndexInTrace(context.Background(), TraceOptions{TraceID: taskID, Name: "agent_task", StartTime: start}, rootID, keys)
+	// The completion hook indexes again from the real root.
+	tr := client.StartTrace(context.Background(), TraceOptions{TraceID: taskID, RootSpanID: rootID, Name: "agent_task", Type: TypeAgent, StartTime: start})
+	tr.Index(keys)
+	tr.End(EndOptions{EndTime: start.Add(time.Second)})
+
+	spans := exporter.GetSpans()
+	byName := map[string][]tracetest.SpanStub{}
+	for _, span := range spans {
+		byName[span.Name] = append(byName[span.Name], span)
+	}
+	for _, name := range []string{"idx.task_id." + taskID, "idx.person_id.Dv6WPx", "idx.conversation_id.cid+abc=="} {
+		got := byName[name]
+		if len(got) != 2 {
+			t.Fatalf("index %q emitted %d times, want 2 (relay + root)", name, len(got))
+		}
+		if got[0].SpanContext.SpanID() != got[1].SpanContext.SpanID() {
+			t.Fatalf("index %q ids differ between producers", name)
+		}
+		if got[0].Parent.SpanID().String() != rootID || got[1].Parent.SpanID().String() != rootID {
+			t.Fatalf("index %q must be parented on the task root", name)
+		}
+		if attrValue(t, got[0], attrObsType).AsString() != "event" || attrValue(t, got[0], attrObsLevel).AsString() != "DEBUG" {
+			t.Fatalf("index %q must be a DEBUG event", name)
+		}
+		if !got[0].StartTime.Equal(start) || !got[0].EndTime.Equal(start) {
+			t.Fatalf("index %q timing = %s..%s", name, got[0].StartTime, got[0].EndTime)
+		}
+	}
+	if _, present := byName["idx.issue_id."]; present {
+		t.Fatal("empty ids must not be indexed")
+	}
+	var nilTrace *Trace
+	nilTrace.Index(keys)
+	var nilClient *Client
+	nilClient.IndexInTrace(context.Background(), TraceOptions{}, "", keys)
+}
+
 func TestDetachedObservationWithoutParentIsTopLevel(t *testing.T) {
 	client, exporter := testClient(t)
 	obs := client.StartObservationInTrace(context.Background(), TraceOptions{TraceID: "not-a-uuid"},
