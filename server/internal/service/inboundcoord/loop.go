@@ -93,6 +93,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					reject(turn, round, call, reqErr, "purpose_required")
 					continue
 				}
+				if reqErr := requireSpokenIssueText(call.Arguments); reqErr != nil {
+					reject(turn, round, call, reqErr, "issue_text_required")
+					continue
+				}
 				used = append(used, call.Name)
 				decision := parseDecision(call.Arguments, turn)
 				applyBindSpec(&decision, bind)
@@ -228,19 +232,18 @@ func toolsForRound(round int) []openai.ChatCompletionToolUnionParam {
 func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply only for a complete answer available now. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop. Never use reply to say you cannot complete the request. New Issue: omit issue_id and set delegator, purpose, intent. Continue: copy issue_id from assoc_recall items[].issue_id."),
+		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply when current_message is a greeting or does not advance a recalled purpose. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop. Never use reply to say you cannot complete the request. New Issue: omit issue_id and set delegator, purpose, intent, and text naming the work. Continue an existing Issue with issue_comment_add, never with finish issue_id. text is required for reply and issue."),
 		Parameters: shared.FunctionParameters{
 			"type":                 "object",
 			"additionalProperties": false,
 			"required":             []string{"action"},
 			"properties": map[string]any{
 				"action":    map[string]any{"type": "string", "enum": []string{"reply", "issue", "silence"}},
-				"text":      map[string]any{"type": "string"},
+				"text":      map[string]any{"type": "string", "description": "Required for reply and issue. The IM sentence spoken to the person. Name the work in ordinary language. Do not omit it."},
 				"look_into": map[string]any{"type": "string"},
-				"issue_id":  recalledIssueIDSchema("Existing Issue UUID copied exactly from assoc_recall items[].issue_id when continuing. Omit for a new Issue. Never invent."),
-				"delegator": map[string]any{"type": "string", "minLength": 1, "description": "Required when action=issue and issue_id is omitted. Who asked this agent to act. Copy the inbound sender name."},
-				"purpose":   map[string]any{"type": "string", "minLength": 8, "description": "Required when action=issue and issue_id is omitted. Event and goal, such as 向辰驷确认明天几点打球. No DWS, data-auth, or openConversationId."},
-				"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "Required when action=issue and issue_id is omitted."},
+				"delegator": map[string]any{"type": "string", "minLength": 1, "description": "Required when action=issue. Who asked this agent to act. Copy the inbound sender name."},
+				"purpose":   map[string]any{"type": "string", "minLength": 8, "description": "Required when action=issue. Event and goal, such as 向辰驷确认明天几点打球. No DWS, data-auth, or openConversationId."},
+				"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "Required when action=issue."},
 				"reason":    map[string]any{"type": "string"},
 			},
 		},
@@ -359,14 +362,16 @@ func recalledIssueIDSchema(description string) map[string]any {
 }
 
 const (
-	hintBindNeedsIssue = "assoc_bind only attaches an existing Issue. Copy issue_id from assoc_recall items[].issue_id. If this is a new matter, do not bind; call finish action=issue with delegator, purpose, intent, and omit issue_id."
-	hintCopyIssueID    = "Call assoc_recall first, then copy items[].issue_id byte-for-byte. Do not invent an id. A new matter uses finish action=issue without issue_id."
-	hintNewIssueFinish = "finish action=issue without issue_id creates the Issue. Set delegator (inbound sender), purpose as {委托人}委托：{事件与目的} with no DWS/auth, and intent ask|confirm|notify|lookup|wait|other."
-	hintPurpose        = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, and openConversationId."
-	hintIntent         = "intent must be one of ask, confirm, notify, lookup, wait, other."
-	hintConversation   = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
-	hintReplyText      = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
-	hintRecallFirst    = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
+	hintBindNeedsIssue  = "assoc_bind only attaches an existing Issue. Copy issue_id from assoc_recall items[].issue_id. If this is a new matter, do not bind; call finish action=issue with delegator, purpose, intent, and omit issue_id."
+	hintCopyIssueID     = "Call assoc_recall first, then copy items[].issue_id byte-for-byte. Do not invent an id. A new matter uses finish action=issue without issue_id. Continuing an existing Issue uses issue_comment_add."
+	hintNewIssueFinish  = "finish action=issue without issue_id creates the Issue. Set delegator (inbound sender), purpose as {委托人}委托：{事件与目的} with no DWS/auth, intent ask|confirm|notify|lookup|wait|other, and text naming the work."
+	hintContinueComment = "finish cannot take issue_id. Continuing an existing Issue uses issue_comment_add with that issue_id, content naming the current sender and exact inbound words, and reply_text. If current_message does not advance a recalled purpose, finish action=reply."
+	hintIssueText       = "finish action=issue needs text spoken to the user, naming the work in ordinary language, such as 我去问冬翔晚上打不打球. Do not omit text."
+	hintPurpose         = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, and openConversationId."
+	hintIntent          = "intent must be one of ask, confirm, notify, lookup, wait, other."
+	hintConversation    = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
+	hintReplyText       = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
+	hintRecallFirst     = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
 )
 
 type toolHintError struct {
@@ -786,6 +791,21 @@ func requirePurposeForNewIssue(turn Turn, finishRaw string) error {
 	return nil
 }
 
+func requireSpokenIssueText(finishRaw string) error {
+	var parsed struct {
+		Action string `json:"action"`
+		Text   string `json:"text"`
+	}
+	_ = json.Unmarshal([]byte(strings.TrimSpace(finishRaw)), &parsed)
+	if Action(strings.TrimSpace(parsed.Action)) != ActionIssue {
+		return nil
+	}
+	if strings.TrimSpace(parsed.Text) == "" {
+		return hintErr("finish action=issue needs text spoken to the user", hintIssueText)
+	}
+	return nil
+}
+
 func requireRecallBeforeFinish(
 	turn Turn,
 	recalls []recallCall,
@@ -802,12 +822,7 @@ func requireRecallBeforeFinish(
 	action := Action(strings.TrimSpace(parsed.Action))
 	issueID := strings.TrimSpace(parsed.IssueID)
 	if issueID != "" {
-		if action != ActionIssue {
-			return hintErr("issue_id is only valid with action=issue", hintCopyIssueID)
-		}
-		if _, ok := recalledIssues[issueID]; !ok {
-			return hintErr("issue_id must be copied exactly from assoc_recall", hintCopyIssueID)
-		}
+		return hintErr("finish cannot take issue_id", hintContinueComment)
 	}
 	if action == ActionSilence {
 		return nil

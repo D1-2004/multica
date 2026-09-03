@@ -67,13 +67,30 @@ func TestParseDecisionReply(t *testing.T) {
 	}
 }
 
-func TestParseDecisionIssueFillsAck(t *testing.T) {
+func TestParseDecisionIssueEmptyTextContinues(t *testing.T) {
 	got := parseDecision(`{"action":"issue","text":"","look_into":"报名截止时间"}`, Turn{Source: SourceDigitalEmployee, Message: "看下截止"})
-	if got.Action != ActionIssue {
-		t.Fatalf("action = %s", got.Action)
+	if got.Action != ActionContinue {
+		t.Fatalf("empty issue text must not synthesize an ack, got %s text=%q", got.Action, got.UserText)
 	}
-	if !strings.Contains(got.UserText, "报名截止时间") {
-		t.Fatalf("ack = %q", got.UserText)
+	if strings.Contains(got.UserText, "核对") {
+		t.Fatalf("ack fallback leaked: %q", got.UserText)
+	}
+}
+
+func TestParseDecisionIssueDropsFinishIssueID(t *testing.T) {
+	got := parseDecision(`{"action":"issue","text":"我去问冬翔晚上打不打球","issue_id":"8aae2a90-009e-4338-b17a-13ce6ff2f82a","delegator":"冬翔","purpose":"向冬翔确认晚上是否打球","intent":"ask"}`, Turn{
+		Source:     SourceRobot,
+		SenderName: "冬翔",
+		Message:    "问下冬翔晚上打球",
+	})
+	if got.Action != ActionIssue {
+		t.Fatalf("action=%s", got.Action)
+	}
+	if got.IssueID != "" {
+		t.Fatalf("finish must not continue via issue_id, issue_id=%q", got.IssueID)
+	}
+	if got.UserText != "我去问冬翔晚上打不打球" {
+		t.Fatalf("text=%q", got.UserText)
 	}
 }
 

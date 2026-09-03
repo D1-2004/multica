@@ -500,7 +500,6 @@ func parseDecision(raw string, turn Turn) Decision {
 		Action    string `json:"action"`
 		Text      string `json:"text"`
 		LookInto  string `json:"look_into"`
-		IssueID   string `json:"issue_id"`
 		Purpose   string `json:"purpose"`
 		Delegator string `json:"delegator"`
 		Intent    string `json:"intent"`
@@ -513,7 +512,6 @@ func parseDecision(raw string, turn Turn) Decision {
 	action := Action(strings.TrimSpace(parsed.Action))
 	text := strings.TrimSpace(parsed.Text)
 	look := strings.TrimSpace(parsed.LookInto)
-	issueID := strings.TrimSpace(parsed.IssueID)
 	reason := strings.TrimSpace(parsed.Reason)
 	switch action {
 	case ActionReply:
@@ -522,6 +520,9 @@ func parseDecision(raw string, turn Turn) Decision {
 		}
 		return Decision{Action: ActionReply, UserText: text, Reason: reason}
 	case ActionIssue:
+		if text == "" {
+			return Decision{Action: ActionContinue}
+		}
 		purpose, _ := assoc.ComposeCoordinatorPurpose(firstNonEmpty(parsed.Delegator, turn.SenderName), parsed.Place, parsed.Purpose)
 		intent, _ := assoc.CoordinatorIntent(parsed.Intent)
 		if look == "" {
@@ -530,10 +531,7 @@ func parseDecision(raw string, turn Turn) Decision {
 		if look == "" {
 			look = clipRunes(strings.TrimSpace(turn.Message), titleBudget)
 		}
-		if text == "" {
-			text = issueAckFallback(look)
-		}
-		return Decision{Action: ActionIssue, UserText: text, LookInto: look, IssueID: issueID, Purpose: purpose, Intent: intent, Reason: reason}
+		return Decision{Action: ActionIssue, UserText: text, LookInto: look, Purpose: purpose, Intent: intent, Reason: reason}
 	case ActionSilence:
 		if turn.Source == SourceWeb {
 			return Decision{Action: ActionContinue}
@@ -542,14 +540,6 @@ func parseDecision(raw string, turn Turn) Decision {
 	default:
 		return Decision{Action: ActionContinue}
 	}
-}
-
-func issueAckFallback(look string) string {
-	target := strings.TrimSpace(look)
-	if target == "" {
-		return "我先把这件事单独跟一下，核对完马上回你。"
-	}
-	return "我先去核对「" + target + "」，跟完马上回你。"
 }
 
 // IssueTitle is the Issue row title for a sandbox handoff.
