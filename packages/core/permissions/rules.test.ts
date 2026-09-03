@@ -11,6 +11,7 @@ import {
   canEditComment,
   canEditSkill,
   canManageMembers,
+  canTransferAgentOwner,
   canUpdateWorkspaceSettings,
 } from "./rules";
 
@@ -139,6 +140,45 @@ describe("canEditAgent", () => {
     expect(canEditAgent(orphan, { userId: BOB, role: "admin" }).allowed).toBe(
       true,
     );
+  });
+});
+
+describe("canTransferAgentOwner", () => {
+  const agent = makeAgent({ owner_id: ALICE });
+
+  it("allows the current owner", () => {
+    expect(
+      canTransferAgentOwner(agent, { userId: ALICE, role: "member" }).allowed,
+    ).toBe(true);
+  });
+  it("allows workspace owner even when they do not own the agent", () => {
+    expect(
+      canTransferAgentOwner(agent, { userId: BOB, role: "owner" }).allowed,
+    ).toBe(true);
+  });
+  it("allows workspace admin even when they do not own the agent", () => {
+    expect(
+      canTransferAgentOwner(agent, { userId: BOB, role: "admin" }).allowed,
+    ).toBe(true);
+  });
+  it("denies a plain member who is not the owner", () => {
+    const d = canTransferAgentOwner(agent, { userId: BOB, role: "member" });
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toBe("not_resource_owner");
+  });
+  it("allows admin when owner_id points at someone no longer in the member list", () => {
+    const departed = makeAgent({ owner_id: "user-left" });
+    expect(
+      canTransferAgentOwner(departed, { userId: BOB, role: "admin" }).allowed,
+    ).toBe(true);
+  });
+  it("denies a plain member when owner_id is null", () => {
+    expect(
+      canTransferAgentOwner(makeAgent({ owner_id: null }), {
+        userId: ALICE,
+        role: "member",
+      }).allowed,
+    ).toBe(false);
   });
 });
 

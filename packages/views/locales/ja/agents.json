@@ -146,7 +146,17 @@
     "updated": "{{when}}に更新",
     "source_sync_succeeded": "GitHub ソースを同期しました",
     "source_already_current": "GitHub ソースは最新です",
-    "source_sync_failed": "GitHub ソースを同期できませんでした"
+    "source_sync_failed": "GitHub ソースを同期できませんでした",
+    "owner_left": "ワークスペースを離れました",
+    "owner_none": "オーナーなし",
+    "owner_search_placeholder": "メンバーを検索…",
+    "owner_no_results": "一致するメンバーがいません",
+    "owner_transferred_toast": "オーナーを移しました",
+    "owner_transfer_failed_toast": "オーナーの移動に失敗しました",
+    "transfer_owner_title": "オーナーを移しますか？",
+    "transfer_owner_description": "「{{name}}」のオーナーを {{owner}} に変更します。プライベート実行権は新しいオーナーに移ります。A2A / MCP エクスポートは停止し、新しいオーナーが再度有効化する必要があります。DingTalk の身分と環境変数はエージェントに残ります。前のオーナーの個人認可は移しません。",
+    "transfer_owner_cancel": "キャンセル",
+    "transfer_owner_confirm": "移す"
   },
   "inspector": {
     "section_profile": "プロフィール",
@@ -157,7 +167,7 @@
     "section_access_hint": "このエージェントと接続済み機能を利用できる相手を管理します。",
     "section_properties": "プロパティ",
     "section_details": "詳細",
-    "section_details_hint": "所有者とライフサイクルに関する読み取り専用情報です。",
+    "section_details_hint": "所有権とライフサイクル。ワークスペース管理者はオーナーを移せます。",
     "section_skills": "スキル",
     "section_integrations": "連携",
     "prop_runtime": "ランタイム",

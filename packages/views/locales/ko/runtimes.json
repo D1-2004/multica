@@ -117,6 +117,7 @@
     "last_seen": "마지막 확인 {{when}}",
     "never_seen": "연결 기록 없음",
     "fact_owner": "소유자",
+    "transfer_owner_description": "\"{{name}}\"의 소유자가 {{owner}}(으)로 바뀝니다. 오프라인 런타임은 자동으로 다시 켜지지 않습니다. 살아있는 공유 FC 런타임이면 이후 작업 토큰이 새 소유자에게 묶입니다.",
     "fact_device": "기기",
     "fact_runtime": "런타임",
     "technical_details": "기술 세부 정보",

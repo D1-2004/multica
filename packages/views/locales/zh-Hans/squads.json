@@ -17,7 +17,9 @@
   },
   "inspector": {
     "details_section": "详情",
-    "archive_button": "归档"
+    "archive_button": "归档",
+    "created_by": "创建者",
+    "transfer_owner_description": "「{{name}}」的创建者将改为 {{owner}}。之后普通成员里只有新创建者能管理这个小队。"
   },
   "archive_dialog": {
     "title": "归档这个小队？",

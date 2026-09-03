@@ -73,6 +73,12 @@ UPDATE squad SET
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateSquadOwner :one
+UPDATE squad
+SET creator_id = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3
+RETURNING *;
+
 -- name: ArchiveSquad :one
 UPDATE squad SET archived_at = now(), archived_by = $2, updated_at = now()
 WHERE id = $1

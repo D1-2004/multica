@@ -49,6 +49,13 @@ var agentUpdateCmd = &cobra.Command{
 	RunE:  runAgentUpdate,
 }
 
+var agentTransferOwnerCmd = &cobra.Command{
+	Use:   "transfer-owner <id>",
+	Short: "Transfer an agent's owner to another workspace member",
+	Args:  exactArgs(1),
+	RunE:  runAgentTransferOwner,
+}
+
 var agentArchiveCmd = &cobra.Command{
 	Use:   "archive <id>",
 	Short: "Archive an agent",
@@ -135,6 +142,7 @@ func init() {
 	agentCmd.AddCommand(agentGetCmd)
 	agentCmd.AddCommand(agentCreateCmd)
 	agentCmd.AddCommand(agentUpdateCmd)
+	agentCmd.AddCommand(agentTransferOwnerCmd)
 	agentCmd.AddCommand(agentArchiveCmd)
 	agentCmd.AddCommand(agentRestoreCmd)
 	agentCmd.AddCommand(agentTasksCmd)
@@ -208,6 +216,9 @@ func init() {
 	agentUpdateCmd.Flags().String("status", "", "New status")
 	agentUpdateCmd.Flags().Int32("max-concurrent-tasks", 0, "New max concurrent tasks (1-50)")
 	agentUpdateCmd.Flags().String("output", "json", "Output format: table or json")
+
+	agentTransferOwnerCmd.Flags().String("to-id", "", "User id of the new owner (must be a current workspace member)")
+	agentTransferOwnerCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// agent archive
 	agentArchiveCmd.Flags().String("output", "json", "Output format: table or json")
@@ -757,6 +768,34 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Agent updated: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
+	return nil
+}
+
+func runAgentTransferOwner(cmd *cobra.Command, args []string) error {
+	toID, _ := cmd.Flags().GetString("to-id")
+	if toID == "" {
+		return fmt.Errorf("--to-id is required")
+	}
+
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/agents/"+args[0]+"/owner", map[string]any{"owner_id": toID}, &result); err != nil {
+		return fmt.Errorf("transfer agent owner: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, result)
+	}
+
+	fmt.Printf("Agent owner transferred: %s (%s) -> %s\n", strVal(result, "name"), strVal(result, "id"), strVal(result, "owner_id"))
 	return nil
 }
 

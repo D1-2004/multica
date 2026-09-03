@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { Trash2, ChevronRight, Cloud, Cpu, Globe, Lock } from "lucide-react";
 import { toast } from "sonner";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@multica/core/api";
 import type {
   AgentRuntime,
   Agent,
@@ -38,6 +39,8 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { OwnerTransferControl } from "../../common/owner-transfer-control";
+import { canTransferOwnedResource } from "@multica/core/permissions";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
@@ -106,6 +109,7 @@ export function RuntimeDetail({
   afterDeleteHref?: string;
 }) {
   const { t } = useT("runtimes");
+  const { t: tCommon } = useT("common");
   const timeAgo = useTimeAgo();
   const cliVersion =
     runtime.runtime_mode === "local" ? getCliVersion(runtime.metadata) : null;
@@ -115,6 +119,7 @@ export function RuntimeDetail({
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
+  const qc = useQueryClient();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: profiles = [] } = useQuery(runtimeProfileListOptions(wsId));
@@ -211,6 +216,18 @@ export function RuntimeDetail({
               health={health}
               lastSeen={lastSeen}
               ownerMember={ownerMember}
+              members={members}
+              canTransferOwner={
+                canTransferOwnedResource(runtime.owner_id, {
+                  userId: user?.id ?? null,
+                  role: currentMember?.role ?? null,
+                }).allowed
+              }
+              onTransferOwner={async (userId) => {
+                await api.transferRuntimeOwner(runtime.id, userId);
+                qc.invalidateQueries({ queryKey: ["runtimes", wsId] });
+                toast.success(tCommon(($) => $.owner_transfer.transferred));
+              }}
               cliVersion={cliVersion}
               daemonShort={daemonShort}
             />
@@ -293,6 +310,9 @@ function HeroCard({
   health,
   lastSeen,
   ownerMember,
+  members,
+  canTransferOwner,
+  onTransferOwner,
   cliVersion,
   daemonShort,
 }: {
@@ -301,6 +321,9 @@ function HeroCard({
   health: ReturnType<typeof deriveRuntimeHealth>;
   lastSeen: string;
   ownerMember: MemberWithUser | null;
+  members: MemberWithUser[];
+  canTransferOwner: boolean;
+  onTransferOwner: (userId: string) => Promise<void>;
   cliVersion: string | null;
   daemonShort: string | null;
 }) {
@@ -336,21 +359,19 @@ function HeroCard({
           everything (including dev-only IDs) at the same visual weight. */}
       <dl className="grid grid-cols-1 divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
         <Fact label={t(($) => $.detail.fact_owner)}>
-          {ownerMember ? (
-            <span className="inline-flex min-w-0 items-center gap-1.5">
-              <ActorAvatar
-                actorType="member"
-                actorId={ownerMember.user_id}
-                size="sm"
-                enableHoverCard
-              />
-              <span className="cursor-pointer truncate text-body">
-                {ownerMember.name}
-              </span>
-            </span>
-          ) : (
-            <span className="text-body text-muted-foreground">—</span>
-          )}
+          <OwnerTransferControl
+            ownerId={runtime.owner_id}
+            owner={ownerMember}
+            members={members}
+            canTransfer={canTransferOwner}
+            descriptionFor={(ownerName) =>
+              t(($) => $.detail.transfer_owner_description, {
+                name: runtimeName,
+                owner: ownerName,
+              })
+            }
+            onTransfer={onTransferOwner}
+          />
         </Fact>
         <Fact label={t(($) => $.detail.fact_device)}>
           {device?.hostname ? (

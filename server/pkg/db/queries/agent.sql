@@ -2359,6 +2359,14 @@ UPDATE agent SET status = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateAgentOwner :one
+-- Workspace owner/admin or the current agent owner reassigns responsibility.
+-- kind = 'user' keeps system carriers (agent builder) out of this path.
+UPDATE agent
+SET owner_id = $2, updated_at = now()
+WHERE id = $1 AND workspace_id = $3 AND kind = 'user'
+RETURNING *;
+
 -- name: RefreshAgentStatusFromTasks :one
 -- Persisted agent.status has no queued/resource-wait bucket. Keep dispatched
 -- as working because the daemon is actively preparing that task, but do not

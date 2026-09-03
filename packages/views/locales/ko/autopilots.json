@@ -90,6 +90,7 @@
     "section_danger": "위험 영역",
     "field_agent": "에이전트",
     "field_created_by": "생성자",
+    "transfer_owner_description": "\"{{name}}\"의 생성자가 {{owner}}(으)로 바뀝니다. 이후 협업자 목록을 바꿀 수 있는 사람은 새 생성자 또는 관리자뿐입니다.",
     "field_output_mode": "출력 모드",
     "field_project": "프로젝트",
     "no_project": "프로젝트 없음",

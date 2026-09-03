@@ -31,6 +31,17 @@
     "presets": "Presets",
     "random": "Random"
   },
+  "owner_transfer": {
+    "left": "Left workspace",
+    "none": "No owner",
+    "search": "Search members…",
+    "no_results": "No matching members",
+    "transferred": "Owner transferred",
+    "failed": "Failed to transfer owner",
+    "title": "Transfer owner?",
+    "cancel": "Cancel",
+    "confirm": "Transfer"
+  },
   "save": "Save",
   "cancel": "Cancel",
   "delete": "Delete",

@@ -154,7 +154,17 @@
     "updated": "{{when}}更新",
     "source_sync_succeeded": "GitHub 来源已同步",
     "source_already_current": "GitHub 来源已是最新版本",
-    "source_sync_failed": "同步 GitHub 来源失败"
+    "source_sync_failed": "同步 GitHub 来源失败",
+    "owner_left": "已离开",
+    "owner_none": "无所有者",
+    "owner_search_placeholder": "搜索成员…",
+    "owner_no_results": "没有匹配的成员",
+    "owner_transferred_toast": "已转交所有者",
+    "owner_transfer_failed_toast": "转交所有者失败",
+    "transfer_owner_title": "转交所有者？",
+    "transfer_owner_description": "「{{name}}」的所有者将改为 {{owner}}。私有调用权转到新所有者。A2A / MCP 导出会停用，需由新所有者重新开启。钉钉身份和环境变量跟着智能体走，不会转走旧人的个人授权。",
+    "transfer_owner_cancel": "取消",
+    "transfer_owner_confirm": "转交"
   },
   "inspector": {
     "section_profile": "资料",
@@ -165,7 +175,7 @@
     "section_access_hint": "控制谁可以运行该智能体并使用它已连接的能力。",
     "section_properties": "属性",
     "section_details": "详情",
-    "section_details_hint": "只读的所有权和生命周期信息。",
+    "section_details_hint": "所有权和生命周期信息。工作区管理员可以转交所有者。",
     "section_skills": "Skills",
     "section_integrations": "外部集成",
     "prop_runtime": "运行时",

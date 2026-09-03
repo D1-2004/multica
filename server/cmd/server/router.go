@@ -2348,6 +2348,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetSquad)
 					r.Put("/", h.UpdateSquad)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferSquadOwner)
 					r.Delete("/", h.DeleteSquad)
 					r.Get("/members", h.ListSquadMembers)
 					r.Get("/members/status", h.ListSquadMemberStatus)
@@ -2368,6 +2369,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAutopilot)
 					r.Patch("/", h.UpdateAutopilot)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferAutopilotOwner)
 					r.Delete("/", h.DeleteAutopilot)
 					r.Post("/trigger", h.TriggerAutopilot)
 					r.Get("/runs", h.ListAutopilotRuns)
@@ -2453,6 +2455,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/extract-voice", h.ExtractAgentVoice)
 					r.Post("/source/sync", h.SyncAgentSource)
 					r.Put("/", h.UpdateAgent)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferAgentOwner)
 					r.Post("/archive", h.ArchiveAgent)
 					r.Post("/restore", h.RestoreAgent)
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
@@ -2527,6 +2530,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetSkill)
 					r.Put("/", h.UpdateSkill)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferSkillOwner)
 					r.Delete("/", h.DeleteSkill)
 					r.Get("/labels", h.ListLabelsForSkill)
 					r.Post("/labels", h.AttachLabelToSkill)
@@ -2558,6 +2562,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Post("/asb-credential/validate", h.ValidateASBRuntimeCredential)
 				r.Route("/{runtimeId}", func(r chi.Router) {
 					r.Patch("/", h.UpdateAgentRuntime)
+					r.With(handler.RequireHumanActor).Put("/owner", h.TransferRuntimeOwner)
 					r.Patch("/fc-e2b-template", h.UpdateFCE2BRuntimeTemplate)
 					r.Patch("/cloud-sandbox-artifact", h.UpdateCloudSandboxRuntimeArtifact)
 					r.Get("/asb-credential", h.GetASBRuntimeCredential)
