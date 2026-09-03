@@ -528,7 +528,7 @@
       "mounted": "已挂载",
       "mounted_toast": "已更新执行机器",
       "local_mcp_title": "从本机 Runner 连接",
-      "local_mcp_hint": "只有启用的服务会注入新任务，配置详情与密钥始终留在本机。",
+      "local_mcp_hint": "该 Runner 暴露的全部可用服务会自动注入新任务，配置详情与密钥始终留在本机。",
       "mount_first": "请先在执行配置中选择本机 Runner，之后可查看其 MCP 服务。",
       "mcp_empty": "该 Runner 未上报本机 MCP 服务。",
       "mcp_offline": "已挂载的 Runner 当前离线。",

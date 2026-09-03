@@ -1773,48 +1773,23 @@ func (q *Queries) RevokeRunnerMachineForOwner(ctx context.Context, arg RevokeRun
 	return i, err
 }
 
-const updateAgentRunnerMCPServers = `-- name: UpdateAgentRunnerMCPServers :one
+const snapshotRunnerMCPServersForMachine = `-- name: SnapshotRunnerMCPServersForMachine :exec
 UPDATE agent_runner_binding
 SET enabled_mcp_servers = $1, updated_at = now()
-WHERE id = $2
-  AND workspace_id = $3
-  AND agent_id = $4
+WHERE machine_id = $2
   AND revoked_at IS NULL
+  AND enabled_mcp_servers IS DISTINCT FROM $1
   AND jsonb_typeof($1) = 'object'
-RETURNING id, workspace_id, agent_id, machine_id, bound_by, roots, revoked_at, revoked_by, created_at, updated_at, disconnected_at, disconnected_by, enabled_mcp_servers
 `
 
-type UpdateAgentRunnerMCPServersParams struct {
+type SnapshotRunnerMCPServersForMachineParams struct {
 	EnabledMcpServers []byte      `json:"enabled_mcp_servers"`
-	BindingID         pgtype.UUID `json:"binding_id"`
-	WorkspaceID       pgtype.UUID `json:"workspace_id"`
-	AgentID           pgtype.UUID `json:"agent_id"`
+	MachineID         pgtype.UUID `json:"machine_id"`
 }
 
-func (q *Queries) UpdateAgentRunnerMCPServers(ctx context.Context, arg UpdateAgentRunnerMCPServersParams) (AgentRunnerBinding, error) {
-	row := q.db.QueryRow(ctx, updateAgentRunnerMCPServers,
-		arg.EnabledMcpServers,
-		arg.BindingID,
-		arg.WorkspaceID,
-		arg.AgentID,
-	)
-	var i AgentRunnerBinding
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.AgentID,
-		&i.MachineID,
-		&i.BoundBy,
-		&i.Roots,
-		&i.RevokedAt,
-		&i.RevokedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DisconnectedAt,
-		&i.DisconnectedBy,
-		&i.EnabledMcpServers,
-	)
-	return i, err
+func (q *Queries) SnapshotRunnerMCPServersForMachine(ctx context.Context, arg SnapshotRunnerMCPServersForMachineParams) error {
+	_, err := q.db.Exec(ctx, snapshotRunnerMCPServersForMachine, arg.EnabledMcpServers, arg.MachineID)
+	return err
 }
 
 const updateRunnerMachineHeartbeat = `-- name: UpdateRunnerMachineHeartbeat :one

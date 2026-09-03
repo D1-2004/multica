@@ -176,6 +176,7 @@ func TestInjectDEAPA2ARunnerMCPSkipsOrdinaryA2A(t *testing.T) {
 		task,
 		pgtype.UUID{},
 		&TaskAgentData{},
+		false,
 	); err != nil {
 		t.Fatalf("ordinary A2A Runner inject = %v", err)
 	}

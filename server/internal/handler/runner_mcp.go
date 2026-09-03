@@ -28,6 +28,7 @@ const (
 )
 
 var errRunnerMCPRuntimeUnsupported = errors.New("runtime does not support managed MCP")
+var errRunnerMCPMountsUnsupported = errors.New("sandbox daemon does not support dynamic Runner MCP mounts")
 
 type runnerMountedMCPArguments struct {
 	ServerName  string          `json:"server_name"`
@@ -39,7 +40,7 @@ type runnerMountedMCPArguments struct {
 
 // RunnerMountedMCP is a task-token-scoped transparent JSON-RPC relay. The
 // server never receives the local command, URL, headers, environment, or
-// credentials; it only routes to an explicitly enabled inventory fingerprint.
+// credentials; it only routes to an available inventory fingerprint.
 func (h *Handler) RunnerMountedMCP(w http.ResponseWriter, r *http.Request) {
 	if !multicaMCPTaskTokenAuthenticated(r) {
 		writeError(w, http.StatusForbidden, "Runner MCP requires an Agent task token")
@@ -69,11 +70,11 @@ func (h *Handler) RunnerMountedMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load Runner MCP mount")
 		return
 	}
-	enabled := decodeEnabledRunnerMCPServers(bindingRecord.EnabledMcpServers)
+	snapshot := decodeEnabledRunnerMCPServers(bindingRecord.EnabledMcpServers)
 	inventory, inventoryOK := h.runnerMCPInventory(r.Context(), uuidToString(bindingRecord.MachineID))
-	expectedFingerprint, enabledNow := resolveEnabledRunnerMCPServers(enabled, inventory, inventoryOK)[serverName]
-	if !enabledNow {
-		writeError(w, http.StatusConflict, "Runner MCP mount is disabled, unavailable, or changed")
+	expectedFingerprint, availableNow := resolveRunnerMCPServers(snapshot, inventory, inventoryOK)[serverName]
+	if !availableNow {
+		writeError(w, http.StatusConflict, "Runner MCP mount is unavailable or changed")
 		return
 	}
 	binding, err := h.Queries.GetActiveAgentRunnerBinding(r.Context(), db.GetActiveAgentRunnerBindingParams{
@@ -145,9 +146,9 @@ var runnerMCPForwardedTools = map[string]struct{}{
 // RunnerMCP used to expose a fixed filesystem/shell tool bundle. It is no
 // longer task-injected: machine pairing must not implicitly enable a local
 // capability. Keep the old route closed instead of letting existing task
-// tokens bypass the per-server mount allowlist.
+// tokens bypass the dynamic mounted-server inventory.
 func (h *Handler) RunnerMCP(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusGone, "legacy Runner MCP is disabled; enable a mounted local MCP server")
+	writeError(w, http.StatusGone, "legacy Runner MCP is disabled; select a Local Runner on the Agent")
 }
 
 func (h *Handler) runnerLegacyMCP(w http.ResponseWriter, r *http.Request) {
@@ -524,6 +525,7 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	task db.AgentTaskQueue,
 	workspaceID pgtype.UUID,
 	agentData *TaskAgentData,
+	supportsRunnerMCPMounts bool,
 ) error {
 	if !service.ShouldInjectA2ARunnerMCP(task.Context) {
 		return nil
@@ -542,7 +544,7 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	if err != nil {
 		return err
 	}
-	if err := h.injectRunnerMCP(ctx, runtime, task.AgentID, token, agentData); err != nil {
+	if err := h.injectRunnerMCP(ctx, runtime, task.AgentID, token, agentData, supportsRunnerMCPMounts); err != nil {
 		return err
 	}
 	_, err = h.Queries.CreateTaskToken(ctx, db.CreateTaskTokenParams{
@@ -556,7 +558,7 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	return err
 }
 
-func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData) error {
+func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts bool) error {
 	if agentData == nil {
 		return errors.New("claimed task is missing Agent data")
 	}
@@ -575,15 +577,15 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 			continue
 		}
 		inventory, inventoryOK := h.runnerMCPInventory(ctx, uuidToString(binding.MachineID))
-		enabled := decodeEnabledRunnerMCPServers(binding.EnabledMcpServers)
-		if !inventoryOK && len(enabled) > 0 {
-			slog.Warn("Runner MCP inventory unavailable at task claim; using persisted enabled selection",
+		snapshot := decodeEnabledRunnerMCPServers(binding.EnabledMcpServers)
+		if !inventoryOK && len(snapshot) > 0 {
+			slog.Warn("Runner MCP inventory unavailable at task claim; using last inventory snapshot",
 				"agent_id", uuidToString(agentID),
 				"machine_id", uuidToString(binding.MachineID),
-				"server_count", len(enabled),
+				"server_count", len(snapshot),
 			)
 		}
-		for name := range resolveEnabledRunnerMCPServers(enabled, inventory, inventoryOK) {
+		for name := range resolveRunnerMCPServers(snapshot, inventory, inventoryOK) {
 			if _, collision := existingServers[name]; collision {
 				continue
 			}
@@ -605,6 +607,9 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	}
 	if len(overlayServers) == 0 {
 		return nil
+	}
+	if !supportsRunnerMCPMounts {
+		return errRunnerMCPMountsUnsupported
 	}
 	if runnerMCPRuntimeUnsupported(runtime) {
 		return errRunnerMCPRuntimeUnsupported

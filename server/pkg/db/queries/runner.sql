@@ -136,15 +136,13 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND revoked_at IS NULL
 RETURNING *;
 
--- name: UpdateAgentRunnerMCPServers :one
+-- name: SnapshotRunnerMCPServersForMachine :exec
 UPDATE agent_runner_binding
 SET enabled_mcp_servers = sqlc.arg(enabled_mcp_servers), updated_at = now()
-WHERE id = sqlc.arg(binding_id)
-  AND workspace_id = sqlc.arg(workspace_id)
-  AND agent_id = sqlc.arg(agent_id)
+WHERE machine_id = sqlc.arg(machine_id)
   AND revoked_at IS NULL
-  AND jsonb_typeof(sqlc.arg(enabled_mcp_servers)) = 'object'
-RETURNING *;
+  AND enabled_mcp_servers IS DISTINCT FROM sqlc.arg(enabled_mcp_servers)
+  AND jsonb_typeof(sqlc.arg(enabled_mcp_servers)) = 'object';
 
 -- name: ListRunnerBindingsForOwner :many
 SELECT

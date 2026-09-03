@@ -392,7 +392,7 @@
       "mounted": "마운트됨",
       "mounted_toast": "실행 머신을 업데이트했습니다",
       "local_mcp_title": "로컬 Runner에서 연결",
-      "local_mcp_hint": "활성화된 서버만 새 작업에 주입되며 설정과 비밀은 로컬에 유지됩니다.",
+      "local_mcp_hint": "이 Runner가 노출한 사용 가능한 모든 서버가 새 작업에 주입되며 설정과 비밀은 로컬에 유지됩니다.",
       "mount_first": "실행 설정에서 로컬 Runner를 선택하면 MCP 서버를 확인할 수 있습니다.",
       "mcp_empty": "이 Runner가 보고한 로컬 MCP 서버가 없습니다.",
       "mcp_offline": "마운트된 Runner가 오프라인입니다.",

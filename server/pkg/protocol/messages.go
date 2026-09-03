@@ -17,6 +17,9 @@ const (
 	// task-control injection, external ContextToken isolation, and file
 	// artifact support for inbound A2A execution.
 	DaemonCapabilityA2AInvocationV2 = "a2a-invocation-v2"
+	// DaemonCapabilityRunnerMCPMountsV1 advertises that the sandbox daemon
+	// rebases every dynamically named Runner MCP mount to its localhost relay.
+	DaemonCapabilityRunnerMCPMountsV1 = "runner-mcp-mounts-v1"
 
 	// AppCapabilityChatDraftRestoreV1 is advertised (X-Client-Capabilities) by
 	// app clients that understand the durable draft-restore recovery path:

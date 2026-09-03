@@ -137,7 +137,7 @@ describe("ApiClient Runner contracts", () => {
   const pairingId = "33333333-3333-4333-8333-333333333333";
   const agentId = "44444444-4444-4444-8444-444444444444";
 
-	it("keeps account pairing, Agent mounting, and MCP enablement as separate calls", async () => {
+	it("keeps account pairing and Agent mounting as separate calls", async () => {
 		const fetchMock = vi.fn()
 			.mockResolvedValueOnce(new Response(JSON.stringify({ id: pairingId, install_command: "install runner", expires_at: "2026-09-03T10:10:00Z" }), { status: 201, headers: { "Content-Type": "application/json" } }))
 			.mockResolvedValue(new Response(null, { status: 204 }));
@@ -145,13 +145,11 @@ describe("ApiClient Runner contracts", () => {
 		const client = new ApiClient("https://api.example.test");
 		await client.createAccountRunnerPairing();
 		await client.mountAgentRunnerMachine(agentId, machineId);
-		await client.setAgentRunnerMcpServerEnabled(agentId, bindingId, "local browser", true, "sha256:current");
 		await client.renameAccountRunnerMachine(machineId, "Studio Mac");
 		await client.revokeAccountRunnerMachine(machineId);
 		expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
 			["https://api.example.test/api/me/runner-pairings", "POST"],
 			[`https://api.example.test/api/agents/${agentId}/runner-mount`, "PUT"],
-			[`https://api.example.test/api/agents/${agentId}/runner-bindings/${bindingId}/mcp-servers/local%20browser`, "PUT"],
 			[`https://api.example.test/api/me/runner-machines/${machineId}`, "PATCH"],
 			[`https://api.example.test/api/me/runner-machines/${machineId}`, "DELETE"],
 		]);
