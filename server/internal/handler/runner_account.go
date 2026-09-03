@@ -116,7 +116,10 @@ func (h *Handler) ListMyRunnerBindings(w http.ResponseWriter, r *http.Request) {
 				machines[machineIndex].InventoryRevision = inventory.Revision
 			}
 		}
-		if row.BindingID.Valid {
+		if row.BindingID.Valid &&
+			row.WorkspaceName.Valid && row.WorkspaceName.String != "" &&
+			row.WorkspaceSlug.Valid && row.WorkspaceSlug.String != "" &&
+			row.AgentName.Valid && row.AgentName.String != "" {
 			machines[machineIndex].Bindings = append(machines[machineIndex].Bindings, accountRunnerBindingResponse{
 				BindingID:     uuidToString(row.BindingID),
 				WorkspaceID:   uuidToString(row.WorkspaceID),

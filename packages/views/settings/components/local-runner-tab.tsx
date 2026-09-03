@@ -156,7 +156,9 @@ export function LocalRunnerTab() {
     }
   };
 
-  const loadFailed = bindingsQuery.isError || bindingsQuery.data === null;
+  const loadFailed =
+    bindingsQuery.data === null ||
+    (bindingsQuery.isError && bindingsQuery.data === undefined);
   const machines = bindingsQuery.data?.machines ?? [];
 
   return (

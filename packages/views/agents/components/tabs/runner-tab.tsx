@@ -30,9 +30,15 @@ export function RunnerTab({ agent, canBind, mode = "all" }: { agent: Agent; canB
   const revokeMount = useRevokeAgentRunnerBinding(workspaceId, agent.id);
   const setServer = useSetAgentRunnerMcpServerEnabled(workspaceId, agent.id);
   const mounted = mounts.data?.machines[0];
+  const accountMachines = account.data?.machines ?? [];
+  const selectableMachines =
+    mounted &&
+    !accountMachines.some((machine) => machine.machineId === mounted.machineId)
+      ? [mounted, ...accountMachines]
+      : accountMachines;
   const runnerItems = [
     { value: "__none__", label: t(($) => $.tab_body.runner.none) },
-    ...(account.data?.machines ?? []).map((machine) => ({
+    ...selectableMachines.map((machine) => ({
       value: machine.machineId,
       label: `${machine.name} · ${machine.online
         ? t(($) => $.tab_body.runner.online)
@@ -89,6 +95,11 @@ export function RunnerTab({ agent, canBind, mode = "all" }: { agent: Agent; canB
                 <Loader2 className="size-4 animate-spin" aria-hidden />
                 {t(($) => $.tab_body.runner.loading)}
               </span>
+            ) : mounted ? (
+              <RunnerMachineStatus
+                name={mounted.name}
+                online={mounted.online}
+              />
             ) : (
               <SelectValue />
             )}
@@ -97,11 +108,12 @@ export function RunnerTab({ agent, canBind, mode = "all" }: { agent: Agent; canB
             <SelectItem value="__none__">
               {t(($) => $.tab_body.runner.none)}
             </SelectItem>
-            {account.data?.machines.map((machine) => (
+            {selectableMachines.map((machine) => (
               <SelectItem key={machine.machineId} value={machine.machineId}>
-                {machine.name} · {machine.online
-                  ? t(($) => $.tab_body.runner.online)
-                  : t(($) => $.tab_body.runner.offline)}
+                <RunnerMachineStatus
+                  name={machine.name}
+                  online={machine.online}
+                />
               </SelectItem>
             ))}
           </SelectContent>
@@ -118,6 +130,32 @@ export function RunnerTab({ agent, canBind, mode = "all" }: { agent: Agent; canB
 	  </section>}
       {!canBind && mode !== "execution" && <Button variant="outline" disabled>{t(($) => $.tab_body.runner.read_only)}</Button>}
     </div>
+  );
+}
+
+function RunnerMachineStatus({
+  name,
+  online,
+}: {
+  name: string;
+  online: boolean;
+}) {
+  const { t } = useT("agents");
+  const status = online
+    ? t(($) => $.tab_body.runner.online)
+    : t(($) => $.tab_body.runner.offline);
+
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="min-w-0 flex-1 truncate">{name}</span>
+      <span
+        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+          online ? "bg-success" : "bg-muted-foreground/40"
+        }`}
+        aria-label={status}
+        title={status}
+      />
+    </span>
   );
 }
 
