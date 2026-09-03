@@ -242,24 +242,52 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 	// provider stay available as metadata, and the task/issue ids remain
 	// reachable through the idx.* events (TaskIndexKeys).
 	traceName := ""
+	var rootMetadata map[string]any
 	if tc.CoordinatorTraceID != "" {
 		traceName = coordinatorTraceName
 		tags = tc.CoordinatorTraceTags
 		if len(tags) == 0 {
 			tags = []string{coordinatorTraceName}
 		}
+		// Trace metadata merges per key, last writer wins, so the task must
+		// not replace the turn's conversation-level values (its DingTalk
+		// conversation type "single" would overwrite kind "p2p", its loop
+		// would overwrite inbound_coordinator). The full set stays on the
+		// agent_task root observation.
+		rootMetadata = metadata
+		metadata = withoutCoordinatorOwnedMetadata(metadata)
 	}
 	return langfuse.TraceOptions{
-		TraceID:    traceID,
-		RootSpanID: TaskLangfuseRootSpanID(taskID),
-		Name:       taskTraceName,
-		TraceName:  traceName,
-		Type:       langfuse.TypeAgent,
-		UserID:     userID,
-		SessionID:  sessionID,
-		Tags:       tags,
-		Metadata:   metadata,
+		TraceID:      traceID,
+		RootSpanID:   TaskLangfuseRootSpanID(taskID),
+		Name:         taskTraceName,
+		TraceName:    traceName,
+		Type:         langfuse.TypeAgent,
+		UserID:       userID,
+		SessionID:    sessionID,
+		Tags:         tags,
+		Metadata:     metadata,
+		RootMetadata: rootMetadata,
 	}
+}
+
+// coordinatorOwnedMetadata are the trace-level keys a coordinator turn writes
+// (inboundcoord.coordinatorTraceOptions); a task joining the turn's trace
+// keeps them on its root observation only.
+var coordinatorOwnedMetadata = map[string]bool{
+	"loop": true, "conversation_id": true, "conversation_name": true, "conversation_kind": true,
+	"sender_name": true, "person_id": true, "dws_uid": true, "dws_org_id": true,
+	"agent_id": true, "agent_name": true, "workspace_id": true, "chat_session_id": true,
+}
+
+func withoutCoordinatorOwnedMetadata(metadata map[string]any) map[string]any {
+	out := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		if !coordinatorOwnedMetadata[key] {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 // TaskIndexKeys are the ids a reader may hold when looking for a task's
