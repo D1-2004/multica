@@ -161,7 +161,7 @@ func (m *TypingIndicatorManager) ClearTask(ctx context.Context, chatSessionID, t
 	// Stream reactions use their dedicated durable lifecycle so an in-flight
 	// add can handshake with a terminal event. Keep clearing the shared-table
 	// rows too for HTTP Callback and rows written by an older rolling replica.
-	m.completeStreamTask(ctx, chatSessionID, taskID)
+	m.settleStreamTask(ctx, chatSessionID, taskID)
 	rows, err := m.q.ListChannelTypingIndicatorsByTask(ctx, db.ListChannelTypingIndicatorsByTaskParams{
 		ChatSessionID: chatSessionID,
 		ChannelType:   string(TypeDingtalk),
@@ -172,7 +172,7 @@ func (m *TypingIndicatorManager) ClearTask(ctx context.Context, chatSessionID, t
 			"chat_session_id", key, "task_id", util.UUIDToString(taskID), "err", err)
 		return
 	}
-	m.clearRows(ctx, chatSessionID, rows, true)
+	m.clearRows(ctx, chatSessionID, rows)
 }
 
 // Clear recalls every tracked "processing" emotion for the chat session
@@ -195,10 +195,10 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 	if len(rows) == 0 {
 		return
 	}
-	m.clearRows(ctx, chatSessionID, rows, false)
+	m.clearRows(ctx, chatSessionID, rows)
 }
 
-func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pgtype.UUID, rows []db.ChannelTypingIndicator, completed bool) {
+func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pgtype.UUID, rows []db.ChannelTypingIndicator) {
 	if len(rows) == 0 {
 		return
 	}
@@ -262,15 +262,6 @@ func (m *TypingIndicatorManager) clearRows(ctx context.Context, chatSessionID pg
 				"task_id", t.TaskID,
 				"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)
 			continue
-		}
-		if completed {
-			if err := m.messenger.AddCompletedEmotionReply(ctx, rowCreds, target); err != nil {
-				m.log.Warn("dingtalk typing indicator: completed indication failed",
-					"event", "dingtalk_typing_indicator_completed_failed",
-					"chat_session_id", key,
-					"task_id", t.TaskID,
-					"open_msg_id_hash", dingtalkTraceHash(target.OpenMsgID), "err", err)
-			}
 		}
 		if err := m.q.DeleteChannelTypingIndicator(ctx, row.ID); err != nil {
 			m.log.Warn("dingtalk typing indicator: delete recalled target failed",

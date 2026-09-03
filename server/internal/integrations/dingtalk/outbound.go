@@ -407,11 +407,7 @@ func (o *Outbound) processDispatchEvent(ctx context.Context, e events.Event) (bo
 		return true, err
 	}
 	if wantStreamSettle {
-		if e.Type == protocol.EventTaskCompleted {
-			o.completeStreamProcessingEmotion(ctx, streamRow)
-		} else {
-			o.settleStreamProcessingEmotion(ctx, streamRow)
-		}
+		o.settleStreamProcessingEmotion(ctx, streamRow)
 	}
 	if !wantProcessing && !wantRecall && !wantReply {
 		return true, nil
@@ -552,13 +548,6 @@ func (o *Outbound) settleStreamProcessingEmotion(ctx context.Context, row db.Din
 	o.typing.settleStreamSource(ctx, row.InstallationID, row.SourceMessageID)
 }
 
-func (o *Outbound) completeStreamProcessingEmotion(ctx context.Context, row db.DingtalkProcessingEmotion) {
-	if o.typing == nil {
-		return
-	}
-	o.typing.completeStreamSource(ctx, row.InstallationID, row.SourceMessageID)
-}
-
 // processStreamIssueEvent owns Stream robot coordinator issues. Those tasks
 // carry an issue_id and a Stream processing emotion, but not
 // dispatch_outbound.mode=robot_sdk, so processDispatchEvent ignores them.
@@ -605,11 +594,7 @@ func (o *Outbound) processStreamIssueEvent(ctx context.Context, e events.Event) 
 			return true, err
 		}
 	}
-	if e.Type == protocol.EventTaskCompleted {
-		o.completeStreamProcessingEmotion(ctx, row)
-	} else {
-		o.settleStreamProcessingEmotion(ctx, row)
-	}
+	o.settleStreamProcessingEmotion(ctx, row)
 	if strings.TrimSpace(content) == "" {
 		o.logger.Info("dingtalk stream issue outbound skipped",
 			"event", "dingtalk_stream_issue_outbound_empty",

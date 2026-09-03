@@ -253,7 +253,7 @@ func TestStreamInboxAddsEmotionBeforeDispatchAndBindsResult(t *testing.T) {
 	}
 }
 
-func TestStreamInboxCompletesEmotionAfterCoordinatorIssue(t *testing.T) {
+func TestStreamInboxRecallsEmotionAfterCoordinatorIssue(t *testing.T) {
 	box, err := secretbox.New(bytes.Repeat([]byte{0x52}, 32))
 	if err != nil {
 		t.Fatal(err)
@@ -286,11 +286,8 @@ func TestStreamInboxCompletesEmotionAfterCoordinatorIssue(t *testing.T) {
 	if q.rowCount() != 0 {
 		t.Fatalf("coordinator short loop left a bound processing emotion")
 	}
-	if len(rec.replies) != 2 {
-		t.Fatalf("emotion replies=%d, want processing then completed", len(rec.replies))
-	}
-	if name, _ := rec.replies[1]["emotionName"].(string); name != completedEmotionName {
-		t.Fatalf("completed emotion name=%q", name)
+	if len(rec.replies) != 1 {
+		t.Fatalf("emotion replies=%d, want processing only", len(rec.replies))
 	}
 	if len(rec.recalls) != 1 {
 		t.Fatalf("recalls=%d, want 1", len(rec.recalls))
