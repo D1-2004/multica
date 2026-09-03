@@ -187,6 +187,7 @@ type Trace struct {
 	root       trace.Span
 	id         trace.TraceID
 	traceAttrs []attribute.KeyValue
+	startedAt  time.Time
 	ended      bool
 }
 
@@ -240,6 +241,7 @@ func (c *Client) StartTrace(ctx context.Context, opts TraceOptions) *Trace {
 		root:       span,
 		id:         span.SpanContext().TraceID(),
 		traceAttrs: traceAttrs,
+		startedAt:  start,
 	}
 }
 
@@ -396,6 +398,9 @@ func (t *Trace) End(end EndOptions) {
 
 func (t *Trace) start(parent context.Context, opts ObservationOptions) *Observation {
 	ctx := parent
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var startOpts []trace.SpanStartOption
 	if parentID, ok := parseSpanID(opts.ParentSpanID); ok {
 		ctx = trace.ContextWithRemoteSpanContext(ctx, trace.NewSpanContext(trace.SpanContextConfig{

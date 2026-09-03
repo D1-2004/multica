@@ -103,8 +103,16 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 	if opts.UserID != "04000000-0000-0000-0000-000000000000" || opts.SessionID != "03000000-0000-0000-0000-000000000000" {
 		t.Fatalf("user/session = %s/%s", opts.UserID, opts.SessionID)
 	}
-	if strings.Join(opts.Tags, ",") != "agent_task,runtime:cloud,provider:hermes,channel:web" {
+	wantTags := "agent_task,runtime-cloud,provider-hermes,channel-web," +
+		"agent-01000000-0000-0000-0000-000000000000,workspace-09000000-0000-0000-0000-000000000000," +
+		"user-04000000-0000-0000-0000-000000000000,task-aabb0000-0000-0000-0000-000000000000,issue-02000000-0000-0000-0000-000000000000"
+	if strings.Join(opts.Tags, ",") != wantTags {
 		t.Fatalf("tags = %v", opts.Tags)
+	}
+	keys := TaskIndexKeys(task, agent)
+	if keys["task_id"] != "aabb0000-0000-0000-0000-000000000000" || keys["issue_id"] != "02000000-0000-0000-0000-000000000000" ||
+		keys["workspace_id"] != "09000000-0000-0000-0000-000000000000" || keys["chat_session_id"] != "03000000-0000-0000-0000-000000000000" {
+		t.Fatalf("index keys = %v", keys)
 	}
 	for key, want := range map[string]string{
 		"task_id": "aabb0000-0000-0000-0000-000000000000", "agent_name": "FDE教练", "provider": "hermes",
@@ -161,7 +169,8 @@ func TestEmitTaskMessageObservationsPairsToolUseWithResult(t *testing.T) {
 	}
 	text := func(s string) pgtype.Text { return pgtype.Text{String: s, Valid: s != ""} }
 	messages := []db.TaskMessage{
-		{Seq: 1, Type: "thinking", Content: text("先看看"), CreatedAt: at(1)},
+		{Seq: 0, Type: "thinking", Content: text("先看"), CreatedAt: at(1)},
+		{Seq: 1, Type: "thinking", Content: text("看"), CreatedAt: at(1)},
 		{Seq: 2, Type: "tool_use", Tool: text("bash"), Input: []byte(`{"cmd":"ls"}`), CreatedAt: at(2)},
 		{Seq: 3, Type: "tool_result", Tool: text("bash"), Output: text("README.md"), CreatedAt: at(5)},
 		{Seq: 4, Type: "tool_use", Tool: text("dws"), Input: []byte(`{"cmd":"chat"}`), Output: text("sent"), CreatedAt: at(6)},
@@ -210,6 +219,10 @@ func TestEmitTaskMessageObservationsPairsToolUseWithResult(t *testing.T) {
 	}
 	if got := taskTraceAttr(byName["thinking"], "langfuse.observation.level"); got != "DEBUG" {
 		t.Errorf("thinking level = %q", got)
+	}
+	// Streamed thinking chunks are coalesced into one event.
+	if got := taskTraceAttr(byName["thinking"], "langfuse.observation.output"); got != "先看看" {
+		t.Errorf("coalesced thinking = %q", got)
 	}
 	if got := taskTraceAttr(byName["assistant_text"], "langfuse.observation.output"); got != "完成了" {
 		t.Errorf("assistant text = %q", got)
