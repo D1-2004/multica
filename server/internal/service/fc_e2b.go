@@ -909,6 +909,12 @@ type FCE2BLauncher struct {
 	sleep              func(context.Context, time.Duration) error
 	jitter             func(time.Duration) time.Duration
 
+	// LLMTraceCaptureAlways turns on sandbox model request/response capture
+	// for every task on a capable runtime image, independent of Router
+	// telemetry or the Agent static sink. Set when the server exports LLM
+	// traces itself (Langfuse).
+	LLMTraceCaptureAlways bool
+
 	// Pool backs the cross-replica runtime and sandbox advisory locks.
 	Pool *pgxpool.Pool
 }
@@ -1867,6 +1873,7 @@ func (l *FCE2BLauncher) extraEnvForTaskWithModel(
 		task.Context,
 		l.Config.ServerURL,
 		util.UUIDToString(task.ID),
+		l.LLMTraceCaptureAlways,
 	) {
 		env[key] = value
 	}

@@ -16,12 +16,17 @@ const (
 	llmTraceExpiresAtEnvKey = "MULTICA_LLM_TRACE_EXPIRES_AT"
 )
 
+// llmTraceEnv decides whether the sandbox captures model request/response
+// pairs and where it posts them. captureAlways is true when the server has a
+// destination of its own (the Langfuse exporter), so capture no longer depends
+// on a Router callback or the Agent's static sink being configured.
 func llmTraceEnv(
 	runtime db.AgentRuntime,
 	runtimeConfig []byte,
 	taskContext []byte,
 	relayBaseURL string,
 	taskID string,
+	captureAlways bool,
 ) map[string]string {
 	if !CloudSandboxRuntimeHasCapability(runtime, LLMTraceCapability) {
 		return nil
@@ -50,7 +55,7 @@ func llmTraceEnv(
 	hasRouterTelemetry := strings.TrimSpace(callback.TelemetryURL) != "" &&
 		strings.TrimSpace(callback.TelemetryToken) != "" && callback.TelemetryExpiresAt > 0
 	hasStaticSink := config.LLMTrace.Enabled && strings.TrimSpace(config.LLMTrace.SinkURL) != ""
-	if hasRouterTelemetry || hasStaticSink {
+	if hasRouterTelemetry || hasStaticSink || captureAlways {
 		sinkURL = llmTraceRelayURL(relayBaseURL, taskID)
 	}
 	if strings.TrimSpace(sinkURL) != "" {

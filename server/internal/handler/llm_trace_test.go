@@ -70,6 +70,7 @@ func TestRelayTaskLLMTraceUsesStoredRelativeCallback(t *testing.T) {
 		time.UnixMilli(1786377600000),
 		router,
 		nil,
+		nil,
 	)
 	if err != nil || status != http.StatusNoContent {
 		t.Fatalf("status=%d err=%v", status, err)
@@ -101,6 +102,7 @@ func TestRelayTaskLLMTraceDisabledAgentSinkStillForwardsRouterCallback(t *testin
 		time.UnixMilli(1786377600000),
 		router,
 		sink,
+		nil,
 	)
 	if err != nil || status != http.StatusNoContent {
 		t.Fatalf("status=%d err=%v", status, err)
@@ -145,6 +147,7 @@ func TestRelayTaskLLMTraceUsesStoredCapabilityIndependentlyOfDaemonAuthorization
 				test.now,
 				router,
 				nil,
+				nil,
 			)
 			if !errors.Is(err, test.match) {
 				t.Fatalf("error=%v want=%v", err, test.match)
@@ -176,6 +179,7 @@ func TestRelayTaskLLMTraceFansOutToRouterAndAgentSink(t *testing.T) {
 		time.UnixMilli(1786377600000),
 		router,
 		sink,
+		nil,
 	)
 	if err != nil || status != http.StatusNoContent {
 		t.Fatalf("status=%d err=%v", status, err)
@@ -200,6 +204,7 @@ func TestRelayTaskLLMTraceSupportsAgentSinkWithoutRouterCallback(t *testing.T) {
 		time.UnixMilli(1786377600000),
 		nil,
 		sink,
+		nil,
 	)
 	if err != nil || status != http.StatusNoContent {
 		t.Fatalf("status=%d err=%v", status, err)
