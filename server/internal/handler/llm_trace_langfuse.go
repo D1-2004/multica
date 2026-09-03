@@ -85,7 +85,7 @@ func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task
 	// It never names the trace: the task root does that when the task owns
 	// the trace, and a coordinator turn keeps its own name otherwise.
 	traceOpts := service.TaskLangfuseTraceOptions(task, agentPtr, runtimePtr)
-	traceOpts.Name = ""
+	traceOpts.NoTraceName = true
 
 	now := o.now()
 	start := now
