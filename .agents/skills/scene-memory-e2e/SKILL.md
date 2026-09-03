@@ -5,7 +5,7 @@ description: >
   /reset-memory 清空本 cid、用下一轮 SLS 证明召回或隔离。用户说「场域记忆 e2e」
   「造场景」「拉群隔离」「reset-memory」「跑剧本」「验证 scene memory」
   或 /scene-memory-e2e 时必须用。
-compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
+compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy. Langfuse 凭证 ~/.grok/langfuse.env。
 ---
 
 # Scene Memory e2e
@@ -22,12 +22,12 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
 1. dws 保持预发。`python3 "$HOME/.agents/skills/dws-env/scripts/dws_env.py" status`
 2. 演员只有 冬翔 / 东翔测试号 / dxxh。每条 `dws` 都经 `as 主角|测试号|配角`。不用菲迪。
 3. 冬翔→测试号单聊禁止 `+dm --to 东翔测试号`。cid 以 e2e 文档为准。
-4. 召回只认 **下一轮** Coordinator SLS `user_prompt`，不是本轮 IM、不是 Router LLM trace。
+4. 召回只认 **下一轮** Coordinator SLS `user_prompt`，不是本轮 IM、不是 Router LLM trace。Langfuse `inbound_coordinator` generation 可补 UTF-8；沙箱看见什么看 Langfuse `loop=agent_task`，不能当 Host 召回。
 5. 探针用 ASCII id（如 `R7-ALPHA-4821`）。SLS 会把 CJK 弄乱；不要用中文当唯一证据。
 6. 证明 Host vs last-N：把 `user_prompt` 在 `current_message:` 处切开。Host = 切开前；`recent_dingtalk_history` = 切开后到 `current_message:` 之前。探针必须在 Host 且不在 history 段，才算记忆召回。
 7. 预发二进制以最近一次 Aone SUCCESS 为准。未部署的本地 commit 不能拿预发 SLS 当它已生效。
 
-发消息、查 SLS：`dws-env` + `inspect-coordinator-sls`。部署：`aone-deploy`。
+发消息、查 SLS：`dws-env` + `inspect-coordinator-sls`。查 generation / 沙箱：`inspect-langfuse`。部署：`aone-deploy`。
 
 ## 跑一条
 
@@ -37,6 +37,7 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
 4. 发下一轮（问句或第二群）。
 5. 拉该 cid 的 `inbound_coordinator_llm_request`，按上面第 6 条切开 `user_prompt`。
 6. 事项类另看下一轮 `assoc_recall`，不要用记忆 Text 里的句子当 issue_id。
+7. 需要看沙箱或 generation 原文时：`scripts/query-langfuse.sh --trace <coord_trace_id> --observations`。
 
 ## 回归优先
 
