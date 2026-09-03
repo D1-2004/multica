@@ -120,6 +120,8 @@ vi.mock("@multica/core/wecom", () => ({
 
 import { AgentOverviewPane } from "./agent-overview-pane";
 
+vi.mock("./tabs/runner-tab", () => ({ RunnerTab: () => <div>Execution machine</div> }));
+
 const baseAgent: Agent = {
   id: "agent-1",
   workspace_id: "ws-1",
