@@ -521,11 +521,16 @@ func ensureTurnTraceID(turn *Turn) {
 	}
 }
 
+// conversationName is the human-readable scene name used by the SLS index and
+// the Langfuse metadata: the channel title, else the Scene Memory title, else
+// the sender (which channel adapters may pass as a bare id).
 func conversationName(turn Turn) string {
-	if name := strings.TrimSpace(turn.ConversationTitle); name != "" {
-		return clipRunes(name, llmLogNameBudget)
+	for _, candidate := range []string{turn.ConversationTitle, turn.SceneTitle, turn.SenderName} {
+		if name := strings.TrimSpace(candidate); name != "" {
+			return clipRunes(name, llmLogNameBudget)
+		}
 	}
-	return clipRunes(strings.TrimSpace(turn.SenderName), llmLogNameBudget)
+	return ""
 }
 
 func coordinatorLogIndex(turn Turn) []any {

@@ -89,6 +89,11 @@ type Turn struct {
 	IssueDispatchContext []byte
 	SceneMemory          string
 	SceneMemoryRevision  int64
+	// SceneTitle is the conversation title Scene Memory recorded for this
+	// scene (the DM peer's name or the group title). Channel turns often
+	// carry only a sender id, so it is the human-readable conversation name
+	// for logs and traces when ConversationTitle is empty.
+	SceneTitle string
 	// ChatSessionID is the web Chat session the turn belongs to; channel
 	// turns leave it empty and are grouped by ConversationID instead.
 	ChatSessionID string
@@ -550,6 +555,7 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	}
 	turn.SceneMemory = row.MemoryText
 	turn.SceneMemoryRevision = row.MemoryRevision
+	turn.SceneTitle = strings.TrimSpace(row.SceneTitle)
 	slog.Info("scene memory injected into coordinator",
 		append(coordinatorLogIndex(*turn),
 			"event", "scene_memory_recall_injected",
