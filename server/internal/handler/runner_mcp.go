@@ -70,10 +70,9 @@ func (h *Handler) RunnerMountedMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabled := decodeEnabledRunnerMCPServers(bindingRecord.EnabledMcpServers)
-	expectedFingerprint, enabledNow := enabled[serverName]
 	inventory, inventoryOK := h.runnerMCPInventory(r.Context(), uuidToString(bindingRecord.MachineID))
-	summary, available := runnerMCPInventoryServer(inventory, serverName)
-	if !enabledNow || !inventoryOK || !available || summary.Availability != "available" || summary.Fingerprint != expectedFingerprint {
+	expectedFingerprint, enabledNow := resolveEnabledRunnerMCPServers(enabled, inventory, inventoryOK)[serverName]
+	if !enabledNow {
 		writeError(w, http.StatusConflict, "Runner MCP mount is disabled, unavailable, or changed")
 		return
 	}
@@ -575,15 +574,16 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 		if !runnerBindingOnline(binding.DisconnectedAt, binding.ConnectionID, binding.LastSeenAt, time.Now()) {
 			continue
 		}
-		inventory, ok := h.runnerMCPInventory(ctx, uuidToString(binding.MachineID))
-		if !ok {
-			continue
+		inventory, inventoryOK := h.runnerMCPInventory(ctx, uuidToString(binding.MachineID))
+		enabled := decodeEnabledRunnerMCPServers(binding.EnabledMcpServers)
+		if !inventoryOK && len(enabled) > 0 {
+			slog.Warn("Runner MCP inventory unavailable at task claim; using persisted enabled selection",
+				"agent_id", uuidToString(agentID),
+				"machine_id", uuidToString(binding.MachineID),
+				"server_count", len(enabled),
+			)
 		}
-		for name, fingerprint := range decodeEnabledRunnerMCPServers(binding.EnabledMcpServers) {
-			summary, found := runnerMCPInventoryServer(inventory, name)
-			if !found || summary.Availability != "available" || summary.Fingerprint != fingerprint {
-				continue
-			}
+		for name := range resolveEnabledRunnerMCPServers(enabled, inventory, inventoryOK) {
 			if _, collision := existingServers[name]; collision {
 				continue
 			}
