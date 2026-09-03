@@ -536,7 +536,12 @@ func (w *StreamInboxWorker) ProcessNext(ctx context.Context) (bool, error) {
 	}
 	if w.typing != nil {
 		stateCtx, stateCancel := context.WithTimeout(context.Background(), streamInboxMutationTimeout)
-		if handlerErr == nil && result.Outcome == channelengine.OutcomeIngested && result.TaskID.Valid {
+		shortLoopDone := result.CoordinatorIssue ||
+			result.Outcome == channelengine.OutcomeCoordinatorReply ||
+			result.Outcome == channelengine.OutcomeCoordinatorSilence
+		if handlerErr == nil && shortLoopDone {
+			w.typing.settleStreamSource(stateCtx, row.InstallationID, data.MsgID)
+		} else if handlerErr == nil && result.Outcome == channelengine.OutcomeIngested && result.TaskID.Valid {
 			w.typing.bindStreamEmotion(stateCtx, row.InstallationID, data.MsgID, result.ChatSessionID, result.TaskID)
 		} else {
 			w.typing.settleStreamSource(stateCtx, row.InstallationID, data.MsgID)

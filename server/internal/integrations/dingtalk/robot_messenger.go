@@ -123,7 +123,8 @@ type EmotionTarget struct {
 // Processing emotion payload. The emotionId/backgroundId pair is the
 // publicly shipped "🤔思考中" text emotion the official DingTalk OpenClaw
 // connector hardcodes for every org — proven to render without any
-// per-org emotion registration.
+// per-org emotion registration. Short-loop completion recalls it and
+// does not replace it with 已完成.
 const (
 	processingEmotionType       = 2 // text emotion
 	processingEmotionID         = "2659900"
