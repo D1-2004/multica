@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -1099,7 +1100,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
 			return
 		}
-		overrides.DispatchContext = inboundcoord.WithCoordinatorTraceID(independentContext, decision.TraceID)
+		overrides.DispatchContext = inboundcoord.WithCoordinatorTrace(independentContext, decision.TraceID, "dingtalk", time.Now())
 	}
 	createParams := buildAgentDispatchIssueCreateParams(
 		c,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,12 @@ import (
 type langfuseLLMTraceObserver struct {
 	client *langfuse.Client
 	now    func() time.Time
+}
+
+// LLMTraceObservationID is the stable Langfuse observation id of one relayed
+// model call, derived from the task and the runtime's sequence number.
+func LLMTraceObservationID(taskID string, sequence int64) string {
+	return langfuse.DeterministicSpanID("task:" + strings.TrimSpace(taskID) + ":llm:" + strconv.FormatInt(sequence, 10))
 }
 
 // NewLangfuseLLMTraceObserver returns nil when client is nil so the handler
@@ -98,6 +105,7 @@ func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task
 		"finish_reason":      exchange.FinishReason,
 		"source":             "sandbox_relay",
 	}
+	taskID := util.UUIDToString(task.ID)
 	obs := o.client.StartObservationInTrace(ctx, traceOpts, langfuse.ObservationOptions{
 		Type:            langfuse.TypeGeneration,
 		Name:            fmt.Sprintf("llm.call.%d", event.Sequence),
@@ -106,7 +114,11 @@ func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task
 		ModelParameters: exchange.ModelParameters,
 		Input:           exchange.Input,
 		Metadata:        metadata,
-		ParentSpanID:    service.TaskLangfuseRootSpanID(util.UUIDToString(task.ID)),
+		ParentSpanID:    service.TaskLangfuseRootSpanID(taskID),
+		// The runtime retries a paired event with the same sequence and
+		// payload; a deterministic id makes Langfuse upsert instead of
+		// storing one generation per attempt.
+		SpanID: LLMTraceObservationID(taskID, event.Sequence),
 	})
 	endOpts := langfuse.EndOptions{EndTime: end, Output: exchange.Output, Usage: exchange.Usage}
 	switch {

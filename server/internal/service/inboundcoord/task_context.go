@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -17,17 +19,39 @@ const coordinatorIssueTriggerContextKey = "coordinator_issue_trigger"
 // (service.TaskContextCoordinatorTraceKey) reads the same key.
 const CoordinatorTraceIDContextKey = "coordinator_trace_id"
 
+// WithCoordinatorTrace makes a coordinator-created Issue task share the
+// coordinator turn's trace: it installs the turn's trace id as the task's
+// chat trace when the context carries none (channel names the inbound
+// surface), and always stamps coordinator_trace_id. The Langfuse trace of the
+// turn and of the task are then one tree. Any failure returns raw unchanged.
+func WithCoordinatorTrace(raw []byte, traceID, channel string, startedAt time.Time) []byte {
+	traceID = strings.TrimSpace(traceID)
+	if traceID == "" {
+		return raw
+	}
+	if _, present, err := chattrace.Parse(raw); err == nil && !present {
+		if trace, err := chattrace.From(traceID, channel, startedAt.UnixMilli()); err == nil {
+			if merged, err := chattrace.Merge(raw, trace); err == nil {
+				raw = merged
+			}
+		}
+	}
+	return WithCoordinatorTraceID(raw, traceID)
+}
+
 // WithCoordinatorTraceID stamps the coordinator trace id on a task context.
 // It returns raw unchanged when the id is empty or the context cannot be
 // decoded, so tracing never blocks Issue creation.
 func WithCoordinatorTraceID(raw []byte, traceID string) []byte {
 	traceID = strings.TrimSpace(traceID)
-	if traceID == "" || len(raw) == 0 {
+	if traceID == "" {
 		return raw
 	}
-	var payload map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &payload); err != nil || payload == nil {
-		return raw
+	payload := map[string]json.RawMessage{}
+	if trimmed := strings.TrimSpace(string(raw)); trimmed != "" && trimmed != "null" {
+		if err := json.Unmarshal(raw, &payload); err != nil || payload == nil {
+			return raw
+		}
 	}
 	encoded, err := json.Marshal(traceID)
 	if err != nil {

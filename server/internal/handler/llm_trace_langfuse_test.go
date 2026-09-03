@@ -46,6 +46,34 @@ func TestRelayTaskLLMTraceObserverAloneAcceptsPayload(t *testing.T) {
 	}
 }
 
+func TestRelayTaskLLMTraceObserverAcceptsTasksWithoutContext(t *testing.T) {
+	// A web-created Issue task has no dispatch context at all. Before the
+	// observer existed that was a 503 and the runtime retried every pair.
+	for _, raw := range [][]byte{nil, []byte(""), []byte("null"), []byte("not json")} {
+		observer := &recordingLLMTraceObserver{}
+		status, err := relayTaskLLMTrace(
+			context.Background(),
+			db.AgentTaskQueue{Context: raw},
+			[]byte(`{}`),
+			[]byte(`{"sequence":1,"request":{"body":"{}"},"response":{"body":"{}"}}`),
+			time.UnixMilli(1786377600000),
+			nil,
+			nil,
+			observer,
+		)
+		if err != nil || status != http.StatusNoContent {
+			t.Fatalf("context %q: status=%d err=%v", raw, status, err)
+		}
+		if observer.calls != 1 {
+			t.Fatalf("context %q: observer calls = %d", raw, observer.calls)
+		}
+	}
+	// Without any destination the old contract still applies.
+	if _, err := relayTaskLLMTrace(context.Background(), db.AgentTaskQueue{}, []byte(`{}`), []byte(`{}`), time.Now(), nil, nil, nil); err == nil {
+		t.Fatal("relay without destinations must report unavailable")
+	}
+}
+
 func TestRelayTaskLLMTraceObserverRunsAlongsideRouterAndSink(t *testing.T) {
 	observer := &recordingLLMTraceObserver{}
 	router := &fakeLLMTraceRouter{status: http.StatusCreated}
@@ -135,6 +163,21 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	}
 	if attrs["langfuse.observation.metadata.sequence"] != "3" || attrs["langfuse.observation.metadata.api"] != "chat.completions" {
 		t.Fatalf("observation metadata = %v", attrs)
+	}
+	if attrs["gen_ai.usage.input_tokens"] != "5" || attrs["gen_ai.usage.output_tokens"] != "2" {
+		t.Fatalf("gen_ai usage attributes = %v", attrs)
+	}
+	if got, want := span.SpanContext.SpanID().String(), LLMTraceObservationID("abcd0000-0000-0000-0000-000000000000", 3); got != want {
+		t.Fatalf("observation id = %s, want deterministic %s", got, want)
+	}
+	// A runtime retry of the same sequence must reuse the observation id so
+	// Langfuse upserts instead of duplicating the generation.
+	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, payload); err != nil {
+		t.Fatal(err)
+	}
+	retried := exporter.GetSpans()
+	if len(retried) != 2 || retried[1].SpanContext.SpanID() != retried[0].SpanContext.SpanID() {
+		t.Fatalf("retry produced a different observation id: %v", retried)
 	}
 
 	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, []byte(`not json`)); err == nil {
