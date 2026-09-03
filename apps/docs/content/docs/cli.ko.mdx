@@ -129,6 +129,8 @@ multica skill import --url <skill-url>
 multica agent skills add <agent-id> --skill-ids <skill-id>
 ```
 
+`multica skill list`는 메타데이터만 반환합니다. 모든 행에 `content_omitted: true`와 `files_omitted: true`가 포함되며, SKILL.md 본문과 스킬 파일은 목록 응답에 들어가지 않습니다. `content` 키가 없다는 것은 "이 엔드포인트가 반환하지 않는다"는 뜻이지 "내용이 비었다"는 뜻이 아닙니다. 빈 문자열로 바꿔 처리하면 동기화 스크립트가 운영 중인 스킬이 지워졌다고 잘못 판단합니다. 로컬 파일과 비교하기 전에 본문은 `multica skill get <skill-id>`, 파일 내용은 `multica skill files list <skill-id> --output json`으로 가져오세요.
+
 가져올 때 같은 이름의 스킬이 있으면 기본적으로 중지하고 기존 내용을 수정하지 않습니다. 의도에 맞는 방식을 선택하세요.
 
 ```bash

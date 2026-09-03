@@ -27,7 +27,20 @@ var skillCmd = &cobra.Command{
 var skillListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List skills in the workspace",
-	RunE:  runSkillList,
+	Long: "Lists skill metadata for the current workspace. Rows never carry the\n" +
+		"SKILL.md body or the skill's files: bodies routinely run 50-200KB and\n" +
+		"shipping them here tripped CLI timeouts on high-latency links.\n\n" +
+		"Every row in --output json therefore carries content_omitted: true and\n" +
+		"files_omitted: true. A missing `content` key means \"not returned by this\n" +
+		"endpoint\" — never \"the skill is empty\". Do not let a script coerce the\n" +
+		"absent key to \"\" and conclude the body was wiped.\n\n" +
+		"Use `multica skill get <id>` for the SKILL.md body and\n" +
+		"`multica skill files list <id> --output json` for file contents before\n" +
+		"diffing a remote skill against local files.\n\n" +
+		"Carve-out: `multica agent get <id> --output json` embeds a narrower\n" +
+		"skill shape (id/name/description/enabled) that also carries the two\n" +
+		"markers; `multica agent skills list <id>` returns the full list shape.",
+	RunE: runSkillList,
 }
 
 var skillGetCmd = &cobra.Command{

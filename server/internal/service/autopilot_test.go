@@ -181,15 +181,16 @@ func TestBuildIssueDescription_NonWebhookSourceWithPayloadIgnored(t *testing.T) 
 	}
 }
 
-// TestInterpolateTemplate covers the three behaviours that real autopilot
-// runs depend on: {{date}} substitution, falling back to Title when the
-// template is unset/empty, and leaving any non-{{date}} text alone (the
+// TestInterpolateTemplate covers the behaviours that real autopilot runs
+// depend on: {{date}} / {{date_yesterday}} substitution, falling back to
+// Title when the template is unset/empty, and leaving unknown tokens alone (the
 // handler is the layer that prevents unknown tokens from being stored in
 // the first place — service-layer interpolation stays substitute-or-leave).
 func TestInterpolateTemplate(t *testing.T) {
 	s := &AutopilotService{}
 	run := db.AutopilotRun{TriggeredAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true}}
 	today := run.TriggeredAt.Time.UTC().Format("2006-01-02")
+	yesterday := run.TriggeredAt.Time.UTC().AddDate(0, 0, -1).Format("2006-01-02")
 
 	cases := []struct {
 		name   string
@@ -205,6 +206,21 @@ func TestInterpolateTemplate(t *testing.T) {
 			name:   "date placeholder with whitespace substituted",
 			ap:     db.Autopilot{Title: "fallback", IssueTitleTemplate: pgtype.Text{String: "probe — {{ date }}", Valid: true}},
 			expect: "probe — " + today,
+		},
+		{
+			name:   "date_yesterday placeholder substituted",
+			ap:     db.Autopilot{Title: "fallback", IssueTitleTemplate: pgtype.Text{String: "probe — {{date_yesterday}}", Valid: true}},
+			expect: "probe — " + yesterday,
+		},
+		{
+			name:   "date_yesterday placeholder with whitespace substituted",
+			ap:     db.Autopilot{Title: "fallback", IssueTitleTemplate: pgtype.Text{String: "probe — {{ date_yesterday }}", Valid: true}},
+			expect: "probe — " + yesterday,
+		},
+		{
+			name:   "both date placeholders substituted in one template",
+			ap:     db.Autopilot{Title: "fallback", IssueTitleTemplate: pgtype.Text{String: "{{date_yesterday}} → {{date}}", Valid: true}},
+			expect: yesterday + " → " + today,
 		},
 		{
 			name:   "empty template falls back to autopilot title",
@@ -242,10 +258,50 @@ func TestInterpolateTemplate_UsesTriggerTimezoneForDate(t *testing.T) {
 	}
 }
 
+// {{date_yesterday}} is the day before the run's trigger-LOCAL day, not the
+// day before its UTC day. A 23:30 UTC run is already 2026-05-27 in Tokyo, so
+// its yesterday is 2026-05-26 — the same UTC calendar day the run fired on.
+func TestInterpolateTemplate_UsesTriggerTimezoneForDateYesterday(t *testing.T) {
+	s := &AutopilotService{}
+	ap := db.Autopilot{
+		Title:              "fallback",
+		IssueTitleTemplate: pgtype.Text{String: "Tokyo digest {{date_yesterday}}", Valid: true},
+	}
+	run := db.AutopilotRun{
+		TriggeredAt: pgtype.Timestamptz{Time: time.Date(2026, 5, 26, 23, 30, 0, 0, time.UTC), Valid: true},
+	}
+
+	got := s.interpolateTemplate(ap, run, "Asia/Tokyo")
+	if want := "Tokyo digest 2026-05-26"; got != want {
+		t.Fatalf("interpolateTemplate = %q, want %q", got, want)
+	}
+}
+
+// {{date_yesterday}} must step back one CALENDAR day, not 24 hours. This run
+// fires at 2026-03-09T04:30Z, which is 00:30 on 2026-03-09 in New York — the
+// morning US clocks jump forward, so that local day is only 23 hours long.
+// AddDate(0, 0, -1) correctly yields 2026-03-08; Add(-24 * time.Hour) would
+// land back on 2026-03-07 and silently title the issue with the wrong day.
+func TestInterpolateTemplate_DateYesterdayCrossesDSTByCalendarDay(t *testing.T) {
+	s := &AutopilotService{}
+	ap := db.Autopilot{
+		Title:              "fallback",
+		IssueTitleTemplate: pgtype.Text{String: "{{date}} covering {{date_yesterday}}", Valid: true},
+	}
+	run := db.AutopilotRun{
+		TriggeredAt: pgtype.Timestamptz{Time: time.Date(2026, 3, 9, 4, 30, 0, 0, time.UTC), Valid: true},
+	}
+
+	got := s.interpolateTemplate(ap, run, "America/New_York")
+	if want := "2026-03-09 covering 2026-03-08"; got != want {
+		t.Fatalf("interpolateTemplate = %q, want %q", got, want)
+	}
+}
+
 // TestValidateIssueTitleTemplate locks down what create/update accept.
 // Reject path: anything inside {{...}} that is not in the supported set.
-// Accept path: empty, plain text, and the canonical {{date}} placeholder
-// in both compact and whitespace-padded forms.
+// Accept path: empty, plain text, and the two canonical placeholders
+// {{date}} / {{date_yesterday}} in both compact and whitespace-padded forms.
 func TestValidateIssueTitleTemplate(t *testing.T) {
 	t.Run("accepts empty template", func(t *testing.T) {
 		if err := ValidateIssueTitleTemplate(""); err != nil {
@@ -267,6 +323,16 @@ func TestValidateIssueTitleTemplate(t *testing.T) {
 			t.Fatalf("{{ date }} must be valid: %v", err)
 		}
 	})
+	t.Run("accepts {{date_yesterday}}", func(t *testing.T) {
+		if err := ValidateIssueTitleTemplate("probe — {{date_yesterday}}"); err != nil {
+			t.Fatalf("{{date_yesterday}} must be valid: %v", err)
+		}
+	})
+	t.Run("accepts {{ date_yesterday }} with whitespace", func(t *testing.T) {
+		if err := ValidateIssueTitleTemplate("probe — {{ date_yesterday }}"); err != nil {
+			t.Fatalf("{{ date_yesterday }} must be valid: %v", err)
+		}
+	})
 
 	rejections := []struct {
 		name string
@@ -280,6 +346,10 @@ func TestValidateIssueTitleTemplate(t *testing.T) {
 		{"datetime not yet supported", "probe — {{datetime}}", "datetime"},
 		{"empty placeholder", "probe — {{}}", ""},
 		{"mixed valid + invalid still fails", "probe — {{date}} {{trigger_source}}", "trigger_source"},
+		// The yesterday token is named {{date_yesterday}}; arithmetic-looking
+		// spellings are not silently accepted.
+		{"arithmetic spelling of yesterday", "probe — {{date-1}}", "date-1"},
+		{"bare yesterday", "probe — {{yesterday}}", "yesterday"},
 	}
 	for _, tc := range rejections {
 		t.Run(tc.name, func(t *testing.T) {

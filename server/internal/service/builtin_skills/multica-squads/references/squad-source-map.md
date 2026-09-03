@@ -205,7 +205,8 @@ Contracts:
 Source:
 
 ```text
-server/internal/handler/issue_child_done.go       # dispatchParentAssigneeTrigger ~246, triggerChildDoneSquad ~304
+server/internal/handler/issue_child_done.go       # dispatchParentAssigneeTrigger :586, triggerChildDoneAgent :612, triggerChildDoneSquad :664
+server/internal/handler/issue_child_done.go       # isTerminalChildStatus :340, stageBarrierClosed :370, stageAdvanceInstruction :452
 ```
 
 Contracts:
@@ -213,6 +214,19 @@ Contracts:
 - when a child issue closes a stage barrier and the parent is assigned to a
   squad, the parent squad leader is triggered (triggerChildDoneSquad in
   issue_child_done.go);
+- a stage closes only when every child in it is **terminal**, and terminal is
+  exactly `done` or `cancelled` (`isTerminalChildStatus` at
+  issue_child_done.go:340). `in_review` is NOT terminal — yet the assignment
+  brief tells every non-leader agent to finish there
+  (`writeWorkflowIssue` in `server/internal/daemon/execenv/runtime_config_sections.go`).
+  A leader that fans work out to agent-assigned children therefore stalls at
+  the first stage unless someone moves those children to `done`: there is no
+  timeout and no reconciler behind the barrier, and the silence is
+  indistinguishable from "this stage's turn has not come yet". A leader waiting
+  on a stage should read `multica issue children <parent-id> --output json`,
+  whose `barrier_closed` / `waiting_on` / `next_stage` fields name the blocking
+  stage and the children holding it (`groupChildStages` in
+  `server/cmd/multica/cmd_issue.go:1010`);
 - routing is leader-only — one `EnqueueTaskForSquadLeader` on the leader, no
   member fan-out (triggerChildDoneSquad / dispatchParentAssigneeTrigger);
 - no self-trigger guard: a same-squad or shared-leader child still wakes the
@@ -231,9 +245,11 @@ Contracts:
   ungated path; any future invocation gate must be added to BOTH together.
 - parent status is not auto-advanced by the barrier: the system comment asks the
   leader to continue or — when the overall goal is met — run
-  `multica issue status <parent-id> in_review`. That explicit ask is what lets a
-  comment-triggered leader turn change status (the comment workflow otherwise
-  forbids status flips unless asked). `done` remains human / integration owned.
+  `multica issue status <parent-id> in_review` (`stageAdvanceInstruction` at
+  issue_child_done.go:452). That explicit ask is what lets a comment-triggered
+  leader turn change status (the comment workflow otherwise forbids status flips
+  unless asked). `done` remains human / integration owned — which is also why a
+  parent moved to `in_review` never closes ITS OWN parent's stage.
 
 ## Private Leader Access
 

@@ -1241,6 +1241,15 @@ func TestOpencodeProcessEventsEmptyFinalStepFails(t *testing.T) {
 	if result.usage.InputTokens != 14585 || result.usage.OutputTokens != 89 {
 		t.Errorf("usage: got %+v, want the first step's tokens preserved", result.usage)
 	}
+	// Execute turns these two into the request-size bracket on the failure
+	// message. The accumulated usage cannot stand in for either: it is a sum,
+	// and the void step contributes zeros to it.
+	if result.lastAcceptedInputTokens != 14585 {
+		t.Errorf("lastAcceptedInputTokens: got %d, want 14585 (the last step the provider billed, not the void one)", result.lastAcceptedInputTokens)
+	}
+	if result.steps != 2 {
+		t.Errorf("steps: got %d, want 2", result.steps)
+	}
 
 	close(ch)
 }

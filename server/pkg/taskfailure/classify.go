@@ -70,6 +70,23 @@ func Classify(rawError string) Reason {
 	}
 	lower := strings.ToLower(trimmed)
 
+	// Prefix witness, checked ahead of every rule below. Exactly one code path
+	// emits opencodeStreamEndedPrefix and it OPENS the message, so its presence
+	// identifies the failure outright — no later rule can know better. The
+	// guard exists because rules 1-6 scan for numbers anywhere in the text: the
+	// OpenCode backend appends request-size diagnostics to these messages (see
+	// opencodeRequestSizeSuffix in pkg/agent/opencode.go), and a byte or token
+	// count that happens to sit on a digit boundary reading as 429 / 5xx would
+	// otherwise re-bucket the failure out of provider_network — the only
+	// agent_error.* reason on internal/service/task.go's retryableReasons
+	// allowlist — silently disabling the retry this failure exists to trigger.
+	// Diagnostics the backend appends must never be able to move a failure
+	// whose identity its own prefix already established. Mirrors the witness
+	// NormalizeDaemonReason uses for the same prefix below.
+	if strings.HasPrefix(lower, opencodeStreamEndedPrefix) {
+		return ReasonAgentProviderNetwork
+	}
+
 	switch {
 	// 1. Context / token window overflow. Checked early so "token
 	//    limit" doesn't get swallowed by the broader "limit" / "quota"

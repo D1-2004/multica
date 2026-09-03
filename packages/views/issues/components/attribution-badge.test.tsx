@@ -51,6 +51,30 @@ describe("AttributionBadge", () => {
       .toBeInTheDocument();
   });
 
+  it("labels a stage-barrier wake as the mechanism, in the normal tone (FDE-3094)", () => {
+    // A stage barrier firing is a normal, healthy attribution: the accountable
+    // human is fully resolved from the parent issue's provenance and only the
+    // trigger label differs. It must read like any other precise source — the
+    // cautionary tone belongs to owner_fallback, not to this.
+    const attribution: TaskAttribution = {
+      source: "stage_barrier",
+      precise: true,
+      initiator: { id: "u6", name: "Elon" },
+    };
+    const { container } = renderWithI18n(
+      <AttributionBadge attribution={attribution} />,
+    );
+
+    expect(screen.getByText("On behalf of Elon")).toBeInTheDocument();
+    // The label names the mechanism, not the raw enum — a missing case would
+    // leak "stage_barrier" straight into the tooltip.
+    expect(
+      screen.getByTitle("Stage barrier — every sub-issue in the stage finished"),
+    ).toBeInTheDocument();
+    expect(container.querySelector(".text-warning")).toBeNull();
+    expect(container.querySelector(".text-muted-foreground")).not.toBeNull();
+  });
+
   it("shows a backfilled attribution in the normal tone, not a warning (MUL-4768)", () => {
     // Backfill is non-precise for the coverage metric — a historical, after-the-
     // fact record — but that does not make the displayed name wrong, so it must

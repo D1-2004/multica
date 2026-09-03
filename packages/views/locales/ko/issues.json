@@ -516,6 +516,7 @@
       "someone": "어떤 멤버",
       "source_direct_human": "멤버 직접 작업",
       "source_delegation": "다른 실행에서 위임됨",
+      "source_stage_barrier": "단계 완료로 자동 실행 — 해당 단계의 하위 태스크가 모두 완료됨",
       "source_comment_source": "댓글 스레드에서",
       "source_trigger_owner": "오토파일럿 트리거 작성자",
       "source_rule_owner": "오토파일럿 규칙 게시자",

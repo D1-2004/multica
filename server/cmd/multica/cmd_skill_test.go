@@ -460,3 +460,69 @@ func TestRunSkillInlineEmptyContentKeepsExistingBehavior(t *testing.T) {
 		t.Fatalf("upsert inline empty error = %v", err)
 	}
 }
+
+func newSkillListTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "list"}
+	cmd.Flags().String("server-url", "", "")
+	cmd.Flags().String("workspace-id", "", "")
+	cmd.Flags().String("profile", "", "")
+	cmd.Flags().String("output", "table", "")
+	return cmd
+}
+
+// TestRunSkillListPassesOmissionMarkersThroughWithoutSynthesizingContent locks
+// the two halves of the "withheld vs empty" contract on the client side: the
+// server's content_omitted / files_omitted markers must survive to stdout, and
+// the CLI must never invent a `content` key for a list row. A synthesized
+// empty `content` is exactly what makes a deploy script believe a live skill's
+// body was wiped.
+func TestRunSkillListPassesOmissionMarkersThroughWithoutSynthesizingContent(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %s, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/skills" {
+			t.Errorf("path = %q, want /api/skills", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{{
+			"id":              "skill-123",
+			"workspace_id":    "ws-1",
+			"name":            "skill-name",
+			"description":     "desc",
+			"config":          map[string]any{},
+			"created_by":      nil,
+			"created_at":      "2026-01-01T00:00:00Z",
+			"updated_at":      "2026-01-01T00:00:00Z",
+			"content_omitted": true,
+			"files_omitted":   true,
+		}})
+	}))
+	defer srv.Close()
+	setSkillServerEnv(t, srv.URL)
+
+	cmd := newSkillListTestCmd()
+	_ = cmd.Flags().Set("output", "json")
+	out, err := captureStdout(t, func() error { return runSkillList(cmd, nil) })
+	if err != nil {
+		t.Fatalf("runSkillList: %v", err)
+	}
+
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil {
+		t.Fatalf("decode printed json: %v (output: %s)", err, out)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1 (output: %s)", len(rows), out)
+	}
+	if rows[0]["content_omitted"] != true {
+		t.Fatalf("content_omitted = %v, want true (output: %s)", rows[0]["content_omitted"], out)
+	}
+	if rows[0]["files_omitted"] != true {
+		t.Fatalf("files_omitted = %v, want true (output: %s)", rows[0]["files_omitted"], out)
+	}
+	if _, ok := rows[0]["content"]; ok {
+		t.Fatalf("CLI must not synthesize a `content` key for list rows (output: %s)", out)
+	}
+}

@@ -516,6 +516,7 @@
       "someone": "某位成员",
       "source_direct_human": "成员直接操作",
       "source_delegation": "由其他运行委托",
+      "source_stage_barrier": "阶段完成唤醒——该阶段子任务已全部完成",
       "source_comment_source": "来自评论线程",
       "source_trigger_owner": "Autopilot 触发器创建者",
       "source_rule_owner": "Autopilot 规则发布者",
