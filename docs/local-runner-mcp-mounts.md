@@ -98,6 +98,15 @@ Cancellation notifications are ordinary JSON-RPC notifications. Transport
 context cancellation stops a blocked local stdio process and resets it for the
 next call.
 
+`local_machine` exposes the MCP `2025-06-18` wire contract. Its `tools/list`
+definitions use object input schemas and omit optional schema members such as
+`required` when they have no value. Unknown tool names return the MCP/JSON-RPC
+invalid-params error `-32602`; failures produced by a known tool remain visible
+to the model as `CallToolResult` values with `isError: true`. Tool annotations
+describe the actual boundary: filesystem and managed-process tools are
+closed-world, while `shell` is open-world because the command can interact with
+anything permitted to the local operating-system user.
+
 File operations and Shell `cwd` must be inside a configured Runner root. Shell
 commands execute as the operating-system user running the CLI; roots constrain
 the starting directory but are not an operating-system sandbox and do not stop
@@ -121,6 +130,12 @@ selecting the machine for an Agent mounts the CLI-owned replacement.
   `runner_call` polling; inventory lookup uses local memory then Redis.
 
 ## History
+
+- 2026-09-04 — Aligned the built-in `local_machine` tool catalog and error
+  responses with MCP `2025-06-18`, including optional zero-argument schema
+  fields, unknown-tool protocol errors, and Shell's open-world annotation.
+  Reason: clients must be able to validate and mount the Server through their
+  standard MCP implementation without compatibility-specific fallbacks.
 
 - 2026-09-04 — Moved the fixed filesystem/Shell capability from the backend
   into the Runner CLI as the always-present reserved `multica_runner` MCP Server.
