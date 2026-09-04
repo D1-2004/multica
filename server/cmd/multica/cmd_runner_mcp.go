@@ -18,6 +18,10 @@ import (
 
 var runnerMCPServerNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
+const runnerBuiltinShellMCPName = "multica_runner"
+
+var runnerBuiltinShellMCPRaw = json.RawMessage(`{"type":"builtin","builtin":"shell"}`)
+
 type runnerMCPServerSummary = runnerprotocol.MCPServerSummary
 type runnerMCPInventory = runnerprotocol.MCPInventory
 
@@ -26,6 +30,7 @@ type runnerMCPServerConfig struct {
 	Transport   string
 	Fingerprint string
 	Raw         json.RawMessage
+	Builtin     bool
 }
 
 type runnerMCPConfigDocument struct {
@@ -34,7 +39,7 @@ type runnerMCPConfigDocument struct {
 }
 
 func runnerMCPInventoryFromJSON(raw []byte) (runnerMCPInventory, error) {
-	document, err := parseRunnerMCPConfig(raw)
+	document, err := parseRunnerMCPConfigWithBuiltins(raw)
 	if err != nil {
 		return runnerMCPInventory{}, err
 	}
@@ -56,12 +61,66 @@ func loadRunnerMCPConfig() (runnerMCPConfigDocument, error) {
 	}
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return parseRunnerMCPConfig([]byte(`{"mcpServers":{}}`))
+		return parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
 	}
 	if err != nil {
 		return runnerMCPConfigDocument{}, fmt.Errorf("read Runner MCP config: %w", err)
 	}
-	return parseRunnerMCPConfig(raw)
+	return parseRunnerMCPConfigWithBuiltins(raw)
+}
+
+func parseRunnerMCPConfigWithBuiltins(raw []byte) (runnerMCPConfigDocument, error) {
+	document, err := parseRunnerMCPConfig(raw)
+	if err != nil {
+		return runnerMCPConfigDocument{}, err
+	}
+	if _, exists := document.Servers[runnerBuiltinShellMCPName]; exists {
+		return runnerMCPConfigDocument{}, fmt.Errorf("MCP server name %q is reserved for the built-in Shell MCP", runnerBuiltinShellMCPName)
+	}
+
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return runnerMCPConfigDocument{}, err
+	}
+	var servers map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["mcpServers"], &servers); err != nil {
+		return runnerMCPConfigDocument{}, err
+	}
+	servers[runnerBuiltinShellMCPName] = append(json.RawMessage(nil), runnerBuiltinShellMCPRaw...)
+	serversRaw, err := json.Marshal(servers)
+	if err != nil {
+		return runnerMCPConfigDocument{}, err
+	}
+	envelope["mcpServers"] = serversRaw
+	effectiveRaw, err := json.Marshal(envelope)
+	if err != nil {
+		return runnerMCPConfigDocument{}, err
+	}
+
+	canonical := make(map[string]any)
+	if err := json.Unmarshal(runnerBuiltinShellMCPRaw, &canonical); err != nil {
+		return runnerMCPConfigDocument{}, err
+	}
+	canonicalRaw, err := json.Marshal(canonical)
+	if err != nil {
+		return runnerMCPConfigDocument{}, err
+	}
+	fingerprintHash := sha256.Sum256(canonicalRaw)
+	fingerprint := "sha256:" + hex.EncodeToString(fingerprintHash[:])
+	document.Servers[runnerBuiltinShellMCPName] = runnerMCPServerConfig{
+		Name: runnerBuiltinShellMCPName, Transport: "stdio", Fingerprint: fingerprint,
+		Raw: canonicalRaw, Builtin: true,
+	}
+	document.Inventory.Servers = append(document.Inventory.Servers, runnerMCPServerSummary{
+		Name: runnerBuiltinShellMCPName, Transport: "stdio", Availability: "available", Fingerprint: fingerprint,
+	})
+	sort.Slice(document.Inventory.Servers, func(i, j int) bool {
+		return document.Inventory.Servers[i].Name < document.Inventory.Servers[j].Name
+	})
+	document.Inventory.Config = effectiveRaw
+	revisionHash := sha256.Sum256(effectiveRaw)
+	document.Inventory.Revision = "sha256:" + hex.EncodeToString(revisionHash[:])
+	return document, nil
 }
 
 func parseRunnerMCPConfig(raw []byte) (runnerMCPConfigDocument, error) {
