@@ -514,7 +514,7 @@ WHERE b.workspace_id = $1
   AND b.disconnected_at IS NULL
   AND m.revoked_at IS NULL
   AND (
-      $6::text <> 'mcp'
+      $6::varchar(64) <> 'mcp'
       OR b.enabled_mcp_servers ->> ($7::jsonb ->> 'server_name')
          = ($7::jsonb ->> 'fingerprint')
   )

@@ -344,7 +344,7 @@ WHERE b.workspace_id = sqlc.arg(workspace_id)
   AND b.disconnected_at IS NULL
   AND m.revoked_at IS NULL
   AND (
-      sqlc.arg(tool_name)::text <> 'mcp'
+      sqlc.arg(tool_name)::varchar(64) <> 'mcp'
       OR b.enabled_mcp_servers ->> (sqlc.arg(arguments)::jsonb ->> 'server_name')
          = (sqlc.arg(arguments)::jsonb ->> 'fingerprint')
   )
