@@ -565,9 +565,9 @@ func runAllRunnerLoops(ctx context.Context, cfg runnerConfig, privateKey ed25519
 	mcpConfig, err := loadRunnerMCPConfig()
 	if err != nil {
 		slog.Warn("Runner MCP config is unavailable", "error", err)
-		mcpConfig, _ = parseRunnerMCPConfig([]byte(`{"mcpServers":{}}`))
+		mcpConfig, _ = parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
 	}
-	mcpManager := newRunnerMCPManager(mcpConfig)
+	mcpManager := newRunnerMCPManager(mcpConfig, cfg.Roots...)
 	defer mcpManager.Close()
 	errCh := make(chan error, len(bindings))
 	var wg sync.WaitGroup

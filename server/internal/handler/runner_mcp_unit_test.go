@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/runnerprotocol"
 )
 
 type runnerMCPErrorRow struct {
@@ -136,15 +135,20 @@ func TestRunnerBindingOnlineRequiresConnectedRecentSocket(t *testing.T) {
 	}
 }
 
-func TestRunnerCallTimeoutTracksForegroundShellTimeout(t *testing.T) {
-	if got := runnerCallTimeout("read_file", []byte(`{}`)); got != time.Minute {
-		t.Fatalf("read timeout = %s, want 1m", got)
+func TestRunnerCallTimeoutTracksBuiltinForegroundShellTimeout(t *testing.T) {
+	foreground, _ := json.Marshal(runnerMountedMCPArguments{
+		ServerName: "multica_runner",
+		Request: json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"shell","arguments":{"timeout_seconds":300}}}`),
+	})
+	if got := runnerCallTimeout("mcp", foreground); got != 310*time.Second {
+		t.Fatalf("built-in Shell timeout = %s, want 310s", got)
 	}
-	if got := runnerCallTimeout("shell", []byte(`{"timeout_seconds":300}`)); got != 310*time.Second {
-		t.Fatalf("shell timeout = %s, want 310s", got)
-	}
-	if got := runnerCallTimeout("shell", []byte(`{"background":true,"timeout_seconds":300}`)); got != time.Minute {
-		t.Fatalf("background shell timeout = %s, want 1m", got)
+	background, _ := json.Marshal(runnerMountedMCPArguments{
+		ServerName: "multica_runner",
+		Request: json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"shell","arguments":{"background":true,"timeout_seconds":300}}}`),
+	})
+	if got := runnerCallTimeout("mcp", background); got != time.Minute {
+		t.Fatalf("background Shell timeout = %s, want 1m", got)
 	}
 }
 
@@ -255,20 +259,6 @@ func TestRunnerBaseURLRequiresAnOrigin(t *testing.T) {
 	}
 }
 
-func TestRunnerMCPForwardedToolsAlwaysRequireMachineID(t *testing.T) {
-	for _, definition := range runnerMCPToolDefinitions() {
-		tool := definition.(map[string]any)
-		if tool["name"] == "list_machines" {
-			continue
-		}
-		schema := tool["inputSchema"].(map[string]any)
-		required := schema["required"].([]string)
-		if len(required) == 0 || required[0] != "machine_id" {
-			t.Fatalf("tool %q does not require machine_id first: %#v", tool["name"], required)
-		}
-	}
-}
-
 func TestInjectDEAPA2ARunnerMCPSkipsOrdinaryA2A(t *testing.T) {
 	handler := &Handler{}
 	task := db.AgentTaskQueue{Context: []byte(`{"multica_origin":"a2a"}`)}
@@ -282,29 +272,6 @@ func TestInjectDEAPA2ARunnerMCPSkipsOrdinaryA2A(t *testing.T) {
 		false,
 	); err != nil {
 		t.Fatalf("ordinary A2A Runner inject = %v", err)
-	}
-}
-
-func TestRunnerMCPOverlayMarksManagedRoute(t *testing.T) {
-	overlay, err := runnerMCPOverlay("https://pre.example", "mat_task")
-	if err != nil {
-		t.Fatalf("build Runner MCP overlay: %v", err)
-	}
-	var document struct {
-		MCPServers map[string]struct {
-			URL     string            `json:"url"`
-			Headers map[string]string `json:"headers"`
-		} `json:"mcpServers"`
-	}
-	if err := json.Unmarshal(overlay, &document); err != nil {
-		t.Fatalf("parse Runner MCP overlay: %v", err)
-	}
-	runner := document.MCPServers[runnerprotocol.ManagedMCPServerName]
-	if runner.URL != "https://pre.example/api/runner-mcp" {
-		t.Fatalf("Runner MCP URL = %q", runner.URL)
-	}
-	if runner.Headers["Authorization"] != "Bearer mat_task" || runner.Headers[runnerprotocol.ManagedMCPRoutingHeader] != runnerprotocol.ManagedMCPRoutingValue {
-		t.Fatalf("Runner MCP headers = %#v", runner.Headers)
 	}
 }
 

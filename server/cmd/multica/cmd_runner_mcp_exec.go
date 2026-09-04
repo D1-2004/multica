@@ -24,6 +24,7 @@ type runnerMCPCallArguments struct {
 
 type runnerMCPManager struct {
 	document runnerMCPConfigDocument
+	roots    []string
 	client   *http.Client
 	mu       sync.Mutex
 	sessions map[string]string
@@ -37,9 +38,10 @@ type runnerMCPStdioProcess struct {
 	decoder *json.Decoder
 }
 
-func newRunnerMCPManager(document runnerMCPConfigDocument) *runnerMCPManager {
+func newRunnerMCPManager(document runnerMCPConfigDocument, roots ...string) *runnerMCPManager {
 	return &runnerMCPManager{
 		document: document,
+		roots:    append([]string(nil), roots...),
 		client:   &http.Client{},
 		sessions: make(map[string]string),
 		stdio:    make(map[string]*runnerMCPStdioProcess),
@@ -69,6 +71,9 @@ func (m *runnerMCPManager) Execute(ctx context.Context, raw json.RawMessage) (js
 	}
 	if !json.Valid(args.Request) || len(bytes.TrimSpace(args.Request)) == 0 {
 		return nil, &runnerToolError{code: "runner_mcp_invalid_request", message: "Invalid MCP JSON-RPC request"}
+	}
+	if config.Builtin {
+		return executeRunnerBuiltinShellMCP(ctx, m.roots, args.Request)
 	}
 	if config.Transport == "http" {
 		return m.executeHTTP(ctx, config, args)

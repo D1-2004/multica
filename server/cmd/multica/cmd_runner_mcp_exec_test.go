@@ -8,6 +8,7 @@ import (
 	"os"
 	"bufio"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -84,5 +85,93 @@ func TestRunnerMCPManagerRejectsFingerprintMismatch(t *testing.T) {
 	_, toolErr := manager.Execute(context.Background(), args)
 	if toolErr == nil || toolErr.code != "runner_mcp_configuration_changed" {
 		t.Fatalf("error = %#v", toolErr)
+	}
+}
+
+func TestRunnerBuiltinShellMCPListsTools(t *testing.T) {
+	document, err := parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newRunnerMCPManager(document)
+	defer manager.Close()
+	initialize := json.RawMessage(`{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}`)
+	initializeArgs, _ := json.Marshal(runnerMCPCallArguments{
+		ServerName: runnerBuiltinShellMCPName,
+		Fingerprint: document.Servers[runnerBuiltinShellMCPName].Fingerprint,
+		Request: initialize,
+	})
+	initializeResponse, toolErr := manager.Execute(context.Background(), initializeArgs)
+	if toolErr != nil || !strings.Contains(string(initializeResponse), `"protocolVersion":"2025-06-18"`) {
+		t.Fatalf("initialize built-in MCP: response=%s error=%v", initializeResponse, toolErr)
+	}
+	request := json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	args, _ := json.Marshal(runnerMCPCallArguments{
+		ServerName: runnerBuiltinShellMCPName,
+		Fingerprint: document.Servers[runnerBuiltinShellMCPName].Fingerprint,
+		Request: request,
+	})
+	response, toolErr := manager.Execute(context.Background(), args)
+	if toolErr != nil {
+		t.Fatalf("execute built-in MCP: %v", toolErr)
+	}
+	var decoded struct {
+		Result struct {
+			Tools []struct{ Name string `json:"name"` } `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	names := make(map[string]bool, len(decoded.Result.Tools))
+	for _, tool := range decoded.Result.Tools {
+		names[tool.Name] = true
+	}
+	for _, name := range []string{"list_roots", "read_file", "write_file", "edit_file", "list_directory", "stat", "glob", "grep", "shell", "shell_output", "shell_kill"} {
+		if !names[name] {
+			t.Fatalf("built-in MCP tools missing %q: %s", name, response)
+		}
+	}
+}
+
+func TestRunnerBuiltinShellMCPCallsShellInsideConfiguredRoot(t *testing.T) {
+	root := t.TempDir()
+	document, err := parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newRunnerMCPManager(document, root)
+	defer manager.Close()
+	requestBody, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": "shell-1", "method": "tools/call",
+		"params": map[string]any{
+			"name": "shell",
+			"arguments": map[string]any{"command": "pwd", "cwd": root},
+		},
+	})
+	args, _ := json.Marshal(runnerMCPCallArguments{
+		ServerName: runnerBuiltinShellMCPName,
+		Fingerprint: document.Servers[runnerBuiltinShellMCPName].Fingerprint,
+		Request: requestBody,
+	})
+	response, toolErr := manager.Execute(context.Background(), args)
+	if toolErr != nil {
+		t.Fatalf("execute built-in Shell MCP: %v", toolErr)
+	}
+	var decoded struct {
+		Result struct {
+			IsError bool `json:"isError"`
+			StructuredContent struct {
+				ExitCode  int    `json:"exit_code"`
+				Output    string `json:"output"`
+				Succeeded bool   `json:"succeeded"`
+			} `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Result.IsError || !decoded.Result.StructuredContent.Succeeded || decoded.Result.StructuredContent.ExitCode != 0 || strings.TrimSpace(decoded.Result.StructuredContent.Output) != root {
+		t.Fatalf("Shell MCP response = %s", response)
 	}
 }
