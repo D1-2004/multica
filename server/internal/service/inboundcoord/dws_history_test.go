@@ -95,6 +95,30 @@ func TestDecideLoadsDWSHistoryForRobotAndDigitalEmployee(t *testing.T) {
 	}
 }
 
+func TestDecideDWSHistoryTimeoutStillRunsLLM(t *testing.T) {
+	loader := &dwsHistoryStub{err: context.DeadlineExceeded}
+	var calls atomic.Int32
+	var prompt string
+	c := &Coordinator{LLM: decisionLLM(t, &calls, &prompt), DWSHistory: loader}
+	got := c.Decide(context.Background(), Turn{
+		Source:            SourceDigitalEmployee,
+		Addressed:         true,
+		ChatType:          "group",
+		ConversationTitle: "OwnerGraph",
+		Message:           "刚才口径是什么",
+		AgentID:           testAgentID(),
+		ConversationID:    "cid-ownergraph",
+		DWSUID:            "24710833",
+		DWSOrgID:          "439446171",
+	})
+	if got.Action == ActionContinue || calls.Load() != 1 || loader.calls != 1 {
+		t.Fatalf("timeout must still judge: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	}
+	if strings.Contains(prompt, "recent_dingtalk_history") {
+		t.Fatalf("timed-out last-N must not appear: %q", prompt)
+	}
+}
+
 func TestDecideDWSHistoryFailureContinuesWithoutLLM(t *testing.T) {
 	loader := &dwsHistoryStub{err: errors.New("read failed")}
 	var calls atomic.Int32
