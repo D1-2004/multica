@@ -8,6 +8,8 @@
     "search_placeholder": "런타임 검색...",
     "scope_mine": "내 것",
     "scope_all": "전체",
+    "owner_filter": "소유자",
+    "all_owners": "모든 소유자",
     "live": "실시간",
     "live_tooltip": "실시간 업데이트 · 오프라인 감지는 최대 75초",
     "filter_all": "전체",
