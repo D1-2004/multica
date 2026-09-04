@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -28,6 +29,7 @@ import (
 
 const (
 	decisionTimeout      = 45 * time.Second
+	dwsHistoryTimeout    = 12 * time.Second
 	coordinatorModel     = "qwen3.7-plus"
 	historyLimit         = 4
 	dingtalkHistoryLimit = 10
@@ -314,31 +316,44 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 			}
 		}
 		historyObs := traceHistoryStart(turnTrace, turn)
-		history, err := c.DWSHistory.Load(loopCtx, turn)
+		histCtx, histCancel := context.WithTimeout(loopCtx, dwsHistoryTimeout)
+		history, err := c.DWSHistory.Load(histCtx, turn)
+		histCancel()
 		traceHistoryEnd(historyObs, history, err)
 		if err != nil {
 			loopErr = fmt.Errorf("dws history: %w", err)
 			preflightSteps = coordinatorDWSHistorySteps(turn, nil, err)
-			slog.Warn("inbound coordinator DWS history failed; continuing sandbox enqueue",
-				append(coordinatorLogIndex(turn),
-					"event", "inbound_coordinator_dws_history_failed",
-					"error_class", "read_failed",
-					"elapsed_ms", time.Since(started).Milliseconds(),
-					"error", err,
-				)...)
-			return Decision{
-				Action: ActionContinue, ElapsedMs: time.Since(started).Milliseconds(), Source: turn.Source,
-				Steps: preflightSteps,
+			if dwsclient.IsTimeout(err) {
+				slog.Warn("inbound coordinator DWS history timed out; judging without last-N",
+					append(coordinatorLogIndex(turn),
+						"event", "inbound_coordinator_dws_history_failed",
+						"error_class", "timeout",
+						"elapsed_ms", time.Since(started).Milliseconds(),
+						"error", err,
+					)...)
+			} else {
+				slog.Warn("inbound coordinator DWS history failed; continuing sandbox enqueue",
+					append(coordinatorLogIndex(turn),
+						"event", "inbound_coordinator_dws_history_failed",
+						"error_class", "read_failed",
+						"elapsed_ms", time.Since(started).Milliseconds(),
+						"error", err,
+					)...)
+				return Decision{
+					Action: ActionContinue, ElapsedMs: time.Since(started).Milliseconds(), Source: turn.Source,
+					Steps: preflightSteps,
+				}
 			}
+		} else {
+			turn.DingTalkHistory = history
+			preflightSteps = coordinatorDWSHistorySteps(turn, history, nil)
+			slog.Info("inbound coordinator DWS history loaded",
+				append(coordinatorLogIndex(turn),
+					"event", "inbound_coordinator_dws_history_loaded",
+					"message_count", len(history),
+					"elapsed_ms", time.Since(started).Milliseconds(),
+				)...)
 		}
-		turn.DingTalkHistory = history
-		preflightSteps = coordinatorDWSHistorySteps(turn, history, nil)
-		slog.Info("inbound coordinator DWS history loaded",
-			append(coordinatorLogIndex(turn),
-				"event", "inbound_coordinator_dws_history_loaded",
-				"message_count", len(history),
-				"elapsed_ms", time.Since(started).Milliseconds(),
-			)...)
 	}
 	decision, err := c.runLoop(loopCtx, turn)
 	loopErr = err

@@ -24,6 +24,31 @@ const (
 	DefaultCLIPath   = "dws"
 )
 
+// IsTimeout reports a cancelled or deadline-exceeded call, including wrapped CLI errors.
+func IsTimeout(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "context canceled")
+}
+
+func commandFailed(ctx context.Context, op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return fmt.Errorf("%s: %w", op, ctx.Err())
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return fmt.Errorf("%s: %w", op, err)
+	}
+	return errors.New(op)
+}
+
 type Credential struct {
 	UID      string
 	ClientID string
@@ -66,7 +91,7 @@ func (c CLI) Exchange(ctx context.Context, configDir string, credential Credenti
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
-		return errors.New("DWS AuthCode exchange failed")
+		return commandFailed(ctx, "DWS AuthCode exchange failed", err)
 	}
 	return nil
 }
@@ -99,7 +124,7 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 	cmd.Stdout = &stdout
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
-		return nil, errors.New("DWS conversation history query failed")
+		return nil, commandFailed(ctx, "DWS conversation history query failed", err)
 	}
 	if stdout.Len() > MaxResponseBytes {
 		return nil, errors.New("DWS conversation history response is too large")

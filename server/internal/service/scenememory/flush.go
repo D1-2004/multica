@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -23,6 +24,7 @@ import (
 const (
 	flushModel            = "qwen3.7-plus"
 	flushTimeout          = 120 * time.Second
+	flushLLMTimeout       = 50 * time.Second
 	flushBatchEvents      = 24
 	flushGroupBatchEvents = 40
 	flushMaxRounds        = 4
@@ -98,11 +100,13 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err erro
 	outcome.EventCount, outcome.CaughtUp, outcome.CursorAt = len(plan.batch), plan.caughtUp, plan.cursorAt
 	newText := row.MemoryText
 	replace := false
+	fallback := false
 	if len(plan.batch) > 0 {
-		merged, err := f.merge(ctx, row, plan.batch)
+		merged, usedFallback, err := f.merge(ctx, row, plan.batch)
 		if err != nil {
 			return err
 		}
+		fallback = usedFallback
 		merged = redactSecrets(merged)
 		if merged != row.MemoryText {
 			if !ValidateMemoryText(merged) {
@@ -113,9 +117,10 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err erro
 		}
 	}
 	meta, _ := json.Marshal(map[string]any{
-		"event_count": len(plan.batch),
-		"caught_up":   plan.caughtUp,
-		"replace":     replace,
+		"event_count":          len(plan.batch),
+		"caught_up":            plan.caughtUp,
+		"replace":              replace,
+		"llm_timeout_fallback": fallback,
 	})
 	committed, err := f.Store.CommitBatch(ctx, row, CommitBatch{
 		ReplaceText:            replace,
@@ -178,19 +183,26 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 	delta = forceIncludeEvidence(delta, events, triggerEv)
 	delta = forceIncludeEvidence(delta, events, pendingEv)
 	covered := CursorCovers(cursorAt, cursorEv, cutoffAt, cutoffEv)
-	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered {
+	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered &&
+		!missingEvidenceBehindWindow(events, cursorAt, cutoffAt) {
 		return flushPlan{}, &FlushError{
 			Code: ErrorIncomplete,
 			Err:  fmt.Errorf("claimed evidence is not visible yet"),
 		}
 	}
-	if triggerEv != "" && !containsEvidence(events, triggerEv) {
+	triggerAt := time.Time{}
+	if row.LastTriggerAt.Valid {
+		triggerAt = row.LastTriggerAt.Time
+	}
+	if triggerEv != "" && !containsEvidence(events, triggerEv) &&
+		!missingEvidenceBehindWindow(events, cursorAt, triggerAt) {
 		return flushPlan{}, &FlushError{
 			Code: ErrorIncomplete,
 			Err:  fmt.Errorf("pending trigger evidence is not visible yet"),
 		}
 	}
-	if pendingEv != "" && !containsEvidence(events, pendingEv) {
+	if pendingEv != "" && !containsEvidence(events, pendingEv) &&
+		!missingEvidenceBehindWindow(events, cursorAt, pendingAt) {
 		return flushPlan{}, &FlushError{
 			Code: ErrorIncomplete,
 			Err:  fmt.Errorf("pending window evidence is not visible yet"),
@@ -224,6 +236,31 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 	return plan, nil
 }
 
+func missingEvidenceBehindWindow(events []HistoryEvent, cursorAt, evidenceAt time.Time) bool {
+	if evidenceAt.IsZero() || cursorAt.IsZero() {
+		return false
+	}
+	oldest, ok := oldestHistoryEvent(events)
+	if !ok {
+		return false
+	}
+	return oldest.OccurredAt.After(cursorAt) && oldest.OccurredAt.After(evidenceAt)
+}
+
+func oldestHistoryEvent(events []HistoryEvent) (HistoryEvent, bool) {
+	if len(events) == 0 {
+		return HistoryEvent{}, false
+	}
+	oldest := events[0]
+	for _, event := range events[1:] {
+		if event.OccurredAt.Before(oldest.OccurredAt) ||
+			(event.OccurredAt.Equal(oldest.OccurredAt) && event.EvidenceID < oldest.EvidenceID) {
+			oldest = event
+		}
+	}
+	return oldest, true
+}
+
 func pendingFrom(row db.SceneMemory) (time.Time, string) {
 	if row.PendingFromAt.Valid && !row.PendingFromAt.Time.IsZero() {
 		return row.PendingFromAt.Time, strings.TrimSpace(row.PendingFromEvidenceID)
@@ -234,10 +271,12 @@ func pendingFrom(row db.SceneMemory) (time.Time, string) {
 	return time.Time{}, strings.TrimSpace(row.LastTriggerEvidenceID)
 }
 
-func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []HistoryEvent) (string, error) {
+func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []HistoryEvent) (string, bool, error) {
 	if f.LLM == nil || !f.LLM.Enabled() {
-		return "", &FlushError{Code: ErrorConfig, Err: fmt.Errorf("memory flush LLM is not configured")}
+		return "", false, &FlushError{Code: ErrorConfig, Err: fmt.Errorf("memory flush LLM is not configured")}
 	}
+	llmCtx, cancel := context.WithTimeout(ctx, flushLLMTimeout)
+	defer cancel()
 	user := buildFlushUserPrompt(row, batch)
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(flushSystemPrompt),
@@ -246,17 +285,26 @@ func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []H
 	lt := langfuse.TraceFromContext(ctx)
 	for round := 0; round < flushMaxRounds; round++ {
 		generation := traceFlushGeneration(lt, round, messages)
-		completion, err := f.LLM.Chat(ctx, openai.ChatCompletionNewParams{
+		completion, err := f.LLM.Chat(llmCtx, openai.ChatCompletionNewParams{
 			Model:    flushModel,
 			Messages: messages,
 			Tools:    []openai.ChatCompletionToolUnionParam{flushCommitTool()},
 		})
 		endFlushGeneration(generation, completion, err)
 		if err != nil {
-			return "", err
+			if dwsclient.IsTimeout(err) {
+				slog.Warn("scene memory flush llm timed out; keeping current text",
+					"event", "scene_memory_flush_fallback",
+					"scene_key", row.SceneKey,
+					"reason", "llm_timeout",
+					"event_count", len(batch),
+				)
+				return fallbackMerge(row.MemoryText, batch), true, nil
+			}
+			return "", false, err
 		}
 		if len(completion.Choices) == 0 {
-			return "", fmt.Errorf("memory flush: no choices")
+			return "", false, fmt.Errorf("memory flush: no choices")
 		}
 		msg := completion.Choices[0].Message
 		if len(msg.ToolCalls) == 0 {
@@ -284,9 +332,9 @@ func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []H
 		}
 		traceFlushCommit(lt, round, call.ID, call.Function.Arguments, true, "committed")
 		lt.AddMetadata(map[string]any{"rounds": round + 1})
-		return text, nil
+		return text, false, nil
 	}
-	return "", fmt.Errorf("memory flush: no commit")
+	return "", false, fmt.Errorf("memory flush: no commit")
 }
 
 func fallbackMerge(old string, batch []HistoryEvent) string {

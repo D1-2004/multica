@@ -1,8 +1,11 @@
 package dwsclient
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSafeCode(t *testing.T) {
@@ -28,4 +31,28 @@ func TestCommandEnvIsolatesSecrets(t *testing.T) {
 	if strings.Contains(joined, "should-not-leak") {
 		t.Fatal("blocked secret leaked into command env")
 	}
+}
+
+func TestIsTimeout(t *testing.T) {
+	if IsTimeout(nil) || IsTimeout(errors.New("DWS conversation history query failed")) {
+		t.Fatal("plain errors are not timeouts")
+	}
+	if !IsTimeout(context.DeadlineExceeded) || !IsTimeout(context.Canceled) {
+		t.Fatal("context errors must match")
+	}
+	wrapped := commandFailed(canceledCtx(t), "DWS conversation history query failed", errors.New("signal: killed"))
+	if !IsTimeout(wrapped) {
+		t.Fatalf("wrapped CLI timeout not detected: %v", wrapped)
+	}
+	plain := commandFailed(context.Background(), "DWS conversation history query failed", errors.New("exit 1"))
+	if plain.Error() != "DWS conversation history query failed" {
+		t.Fatalf("live CLI failure must keep stable text: %v", plain)
+	}
+}
+
+func canceledCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	t.Cleanup(cancel)
+	return ctx
 }

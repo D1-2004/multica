@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -43,8 +44,10 @@ type DWSRangeReader struct {
 }
 
 const (
-	maxHistoryPages = 8
-	historyLookback = 14 * 24 * time.Hour
+	maxHistoryPages    = 8
+	historyLookback    = 14 * 24 * time.Hour
+	historyReadTimeout = 40 * time.Second
+	historyPageReserve = 3 * time.Second
 )
 
 func NewDWSRangeReader(cfg DWSRangeConfig) *DWSRangeReader {
@@ -73,7 +76,9 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 	if r == nil || r.queries == nil || r.issuer == nil {
 		return nil, errors.New("scene memory DWS reader is not configured")
 	}
-	identity, err := r.queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+	readCtx, cancel := context.WithTimeout(ctx, historyReadTimeout)
+	defer cancel()
+	identity, err := r.queries.GetAgentDingTalkIdentity(readCtx, db.GetAgentDingTalkIdentityParams{
 		WorkspaceID: row.WorkspaceID, AgentID: row.AgentID,
 	})
 	if err != nil {
@@ -92,7 +97,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		}
 	}
 	runID := "scene-memory-dws-" + uuid.NewString()
-	issued, err := r.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
+	issued, err := r.issuer.CreateContext(readCtx, agentidentityhsf.CreateContextRequest{
 		RequestID: runID, TaskID: runID,
 		AgentID:     util.UUIDToString(row.AgentID),
 		RuntimeType: "SERVER", RuntimeID: runID,
@@ -103,7 +108,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 	if err != nil {
 		return nil, fmt.Errorf("issue DWS history identity: %w", err)
 	}
-	credential, err := r.redeem.Redeem(ctx, issued.ContextToken)
+	credential, err := r.redeem.Redeem(readCtx, issued.ContextToken)
 	if err != nil {
 		return nil, err
 	}
@@ -115,16 +120,13 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return nil, errors.New("secure isolated DWS history directory")
 	}
-	if err := r.cli.Exchange(ctx, dir, credential); err != nil {
+	if err := r.cli.Exchange(readCtx, dir, credential); err != nil {
 		return nil, err
 	}
-	limit := 30
-	if row.SceneKind == KindGroup {
-		limit = 60
-	}
+	const limit = 30
 	now := time.Now().UTC()
 	bootstrap := false
-	if flags, flagErr := r.queries.GetAgentSceneMemoryFlags(ctx, row.AgentID); flagErr == nil {
+	if flags, flagErr := r.queries.GetAgentSceneMemoryFlags(readCtx, row.AgentID); flagErr == nil {
 		bootstrap = flags.BootstrapEnabled
 	}
 	lookback := HistoryLookback(row, bootstrap, now)
@@ -134,13 +136,38 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 	oldest := before
 	hitPageCap := false
 	for page := 0; page < maxHistoryPages; page++ {
-		raw, err := r.cli.List(ctx, dir, dwsclient.ListRequest{
+		if stop, retErr := historyPageStop(readCtx, len(out)); stop {
+			if retErr != nil {
+				return nil, retErr
+			}
+			slog.Warn("scene memory history stopping with partial pages",
+				"event", "scene_memory_history_partial",
+				"scene_key", row.SceneKey,
+				"pages", page,
+				"event_count", len(out),
+				"reason", "deadline",
+			)
+			hitPageCap = true
+			break
+		}
+		raw, err := r.cli.List(readCtx, dir, dwsclient.ListRequest{
 			ConversationID: row.SceneKey,
 			Before:         before,
 			Direction:      "older",
 			Limit:          limit,
 		})
 		if err != nil {
+			if len(out) > 0 && dwsclient.IsTimeout(err) {
+				slog.Warn("scene memory history list timed out; flushing newest pages",
+					"event", "scene_memory_history_partial",
+					"scene_key", row.SceneKey,
+					"pages", page,
+					"event_count", len(out),
+					"reason", "list_timeout",
+				)
+				hitPageCap = true
+				break
+			}
 			return nil, err
 		}
 		parsed, err := parseDWSPage(raw, identity.DwsUid, identity.AccountDisplayName)
@@ -171,7 +198,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		}
 		before = oldest
 	}
-	if historyHasGap(row, oldest, hitPageCap) {
+	if historyHasGap(row, oldest, hitPageCap) && len(out) == 0 {
 		return nil, &HistoryGapError{
 			FlushError: FlushError{
 				Code: ErrorIncomplete,
@@ -181,6 +208,34 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		}
 	}
 	return filterAfterLookback(out, lookback), nil
+}
+
+func historyPageStop(ctx context.Context, have int) (bool, error) {
+	if ctx == nil {
+		return false, nil
+	}
+	if ctx.Err() != nil {
+		if have > 0 {
+			return true, nil
+		}
+		return false, ctx.Err()
+	}
+	remaining, ok := deadlineRemaining(ctx)
+	if ok && remaining < historyPageReserve && have > 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
+func deadlineRemaining(ctx context.Context) (time.Duration, bool) {
+	if ctx == nil {
+		return 0, false
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0, false
+	}
+	return time.Until(deadline), true
 }
 
 func historyStartBefore(row db.SceneMemory, now time.Time) time.Time {

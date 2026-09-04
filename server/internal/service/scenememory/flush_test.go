@@ -1,12 +1,16 @@
 package scenememory
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 func TestParseFlushCommit(t *testing.T) {
@@ -32,6 +36,35 @@ func TestParseFlushCommit(t *testing.T) {
 	redacted, err := parseFlushCommit(old, `{"decision":"replace","full_text":"token Bearer abcdefghijklmnop"}`)
 	if err != nil || !strings.Contains(redacted, "[REDACTED]") || strings.Contains(redacted, "abcdefghijklmnop") {
 		t.Fatalf("replace must redact secrets: %q err=%v", redacted, err)
+	}
+}
+
+func TestMergeFallsBackOnLLMTimeoutForBusyGroups(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(150 * time.Millisecond):
+		}
+		w.WriteHeader(http.StatusGatewayTimeout)
+	}))
+	t.Cleanup(server.Close)
+	f := &MemoryFlusher{LLM: llm.New(llm.Config{APIKey: "test", BaseURL: server.URL, MaxRetries: -1})}
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	old := strings.Join([]string{
+		"## 场域定位",
+		"OwnerGraph",
+		"## 稳定知识与约定",
+		"- 主链路跳转顺序已冻结 (来自圆畅, 9月3日 20:44的发言)",
+	}, "\n")
+	got, fallback, err := f.merge(ctx, db.SceneMemory{SceneKey: "cid-ownergraph", MemoryText: old}, []HistoryEvent{
+		{Speaker: "圆畅", Content: "PoC主链路Demo筹备群口径不变"},
+	})
+	if err != nil || !fallback {
+		t.Fatalf("timeout must keep current text, not fail flush: fallback=%v err=%v", fallback, err)
+	}
+	if !strings.Contains(got, "OwnerGraph") || !strings.Contains(got, "主链路跳转顺序已冻结") {
+		t.Fatalf("busy-group timeout must not wipe scene text: %q", got)
 	}
 }
 
@@ -139,6 +172,35 @@ func TestPlanFlushMergesEarlierTriggerWhenLeaseTargetIsLater(t *testing.T) {
 	}
 	if !CursorCovers(plan.cursorAt, plan.cursorEv, later, "msg-later") {
 		t.Fatalf("cursor must stay at the later high-water: %+v", plan)
+	}
+}
+
+func TestPlanFlushAdvancesWhenOldPendingIsBehindPartialWindow(t *testing.T) {
+	now := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
+	oldPending := now.Add(-48 * time.Hour)
+	cursor := now.Add(-72 * time.Hour)
+	row := db.SceneMemory{
+		LeaseTargetThroughAt:         timestamptz(now),
+		LeaseTargetThroughEvidenceID: "msg-new",
+		LastTriggerAt:                timestamptz(now),
+		LastTriggerEvidenceID:        "msg-new",
+		PendingFromAt:                timestamptz(oldPending),
+		PendingFromEvidenceID:        "msg-stale-pending",
+		SourceCursorAt:               timestamptz(cursor),
+		SourceCursorEvidenceID:       "msg-old-cursor",
+	}
+	plan, err := planFlush(row, []HistoryEvent{
+		{EvidenceID: "msg-mid", OccurredAt: now.Add(-time.Minute), Content: "OwnerGraph 近况"},
+		{EvidenceID: "msg-new", OccurredAt: now, Content: "PoC主链路Demo筹备群口径"},
+	})
+	if err != nil {
+		t.Fatalf("old pending outside newest window must not block: %v", err)
+	}
+	if !containsEvidence(plan.batch, "msg-new") {
+		t.Fatalf("visible newest events must merge: %+v", plan)
+	}
+	if !plan.caughtUp || plan.cursorEv != "msg-new" {
+		t.Fatalf("cursor must advance through the visible window: %+v", plan)
 	}
 }
 
