@@ -18,7 +18,7 @@ import (
 
 var runnerMCPServerNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 
-const runnerBuiltinShellMCPName = "multica_runner"
+const runnerBuiltinShellMCPName = runnerprotocol.BuiltinMachineMCPServerName
 
 var runnerBuiltinShellMCPRaw = json.RawMessage(`{"type":"builtin","builtin":"shell"}`)
 

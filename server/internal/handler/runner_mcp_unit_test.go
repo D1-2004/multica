@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/runnerprotocol"
 )
 
 type runnerMCPErrorRow struct {
@@ -137,14 +138,14 @@ func TestRunnerBindingOnlineRequiresConnectedRecentSocket(t *testing.T) {
 
 func TestRunnerCallTimeoutTracksBuiltinForegroundShellTimeout(t *testing.T) {
 	foreground, _ := json.Marshal(runnerMountedMCPArguments{
-		ServerName: "multica_runner",
+		ServerName: runnerprotocol.BuiltinMachineMCPServerName,
 		Request: json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"shell","arguments":{"timeout_seconds":300}}}`),
 	})
 	if got := runnerCallTimeout("mcp", foreground); got != 310*time.Second {
 		t.Fatalf("built-in Shell timeout = %s, want 310s", got)
 	}
 	background, _ := json.Marshal(runnerMountedMCPArguments{
-		ServerName: "multica_runner",
+		ServerName: runnerprotocol.BuiltinMachineMCPServerName,
 		Request: json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"shell","arguments":{"background":true,"timeout_seconds":300}}}`),
 	})
 	if got := runnerCallTimeout("mcp", background); got != time.Minute {

@@ -4,7 +4,7 @@
 
 **Goal:** Make the legacy Local Runner filesystem and Shell tool bundle an always-available MCP server built into the Runner CLI.
 
-**Architecture:** The Runner constructs one effective MCP document at startup from the untouched user entries in `~/.multica/runner/mcp.json` plus a reserved `multica_runner` entry. The existing Runner MCP manager handles that reserved entry in-process with standard MCP JSON-RPC and forwards every other entry to its configured stdio or HTTP server. The backend continues to persist and inject the Runner-reported effective document and routes every reported name through the existing task-scoped relay.
+**Architecture:** The Runner constructs one effective MCP document at startup from the untouched user entries in `~/.multica/runner/mcp.json` plus a reserved `local_machine` entry. The existing Runner MCP manager handles that reserved entry in-process with standard MCP JSON-RPC and forwards every other entry to its configured stdio or HTTP server. The backend continues to persist and inject the Runner-reported effective document and routes every reported name through the existing task-scoped relay.
 
 The reserved entry uses `{"type":"builtin","builtin":"shell"}` as an internal
 descriptor. It never names or starts a second executable; only the installed
@@ -22,7 +22,7 @@ descriptor. It never names or starts a second executable; only the installed
 
 - [x] **Step 1: Write the failing inventory tests**
 
-Add tests asserting that an empty user document still reports `multica_runner`, ordinary user entries and extension fields survive, and a user-defined `multica_runner` entry is rejected.
+Add tests asserting that an empty user document still reports `local_machine`, ordinary user entries and extension fields survive, and a user-defined `local_machine` entry is rejected.
 
 - [x] **Step 2: Run the inventory tests and verify RED**
 
@@ -89,7 +89,7 @@ Delete assertions for the unreachable server-owned tool schema and retain relay 
 
 - [x] **Step 3: Update maintenance documentation and history**
 
-Document `multica_runner` as an unconditional CLI-owned MCP, its root and OS-user permission semantics, reserved-name behavior, and the reason for moving ownership out of the backend. Append dated history entries to both maintenance documents.
+Document `local_machine` as an unconditional CLI-owned MCP, its root and OS-user permission semantics, reserved-name behavior, and the reason for moving ownership out of the backend. Append dated history entries to both maintenance documents.
 
 - [ ] **Step 4: Run focused and package verification**
 

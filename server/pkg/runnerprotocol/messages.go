@@ -11,6 +11,7 @@ const (
 	MessageCallsCancelled  = "runner:calls_cancelled"
 	MessageInventory       = "runner:mcp_inventory"
 
+	BuiltinMachineMCPServerName = "local_machine"
 	ManagedMCPServerName    = "multica_runner"
 	ManagedMCPRoutingHeader = "X-Multica-Runner-MCP"
 	ManagedMCPRoutingValue  = "v1"
