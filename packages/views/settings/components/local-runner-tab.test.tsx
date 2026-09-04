@@ -182,10 +182,34 @@ describe("LocalRunnerTab", () => {
     expect(screen.getByText("2 agent bindings")).toBeInTheDocument();
     expect(screen.getByText("/Users/dev/code")).toBeInTheDocument();
     expect(screen.getByText("/Users/dev/review")).toBeInTheDocument();
-    expect(screen.getByText("Add Local Runner")).toBeInTheDocument();
+    expect(screen.getByText("Install and use Local Runner")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Pair machine" }),
     ).toBeInTheDocument();
+  });
+
+  it("explains installation, MCP configuration, lifecycle commands, and local file access", () => {
+    renderTab();
+
+    expect(
+      screen.getByText(/starts Runner automatically after browser approval/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Configure MCP services")).toBeInTheDocument();
+    expect(screen.getByText("~/.multica/runner/mcp.json")).toBeInTheDocument();
+    expect(screen.getAllByText(/local_machine/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("~/.multica/runner/bin/multica runner start"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("~/.multica/runner/bin/multica runner stop"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("~/.multica/runner/bin/multica runner status"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Local file access directories").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Exposed file roots")).not.toBeInTheDocument();
   });
 
   it("shows an enabled binding as offline when its machine is offline", () => {
