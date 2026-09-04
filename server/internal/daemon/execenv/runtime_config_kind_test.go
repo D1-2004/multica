@@ -224,8 +224,7 @@ func TestChatAvailableCommandsDropsIssueScopedSurface(t *testing.T) {
 	for _, want := range []string{
 		"## Available Commands",
 		"`multica <command> --help`",
-		"multica mcp tools --output json",
-		"multica mcp call --method <name>",
+		"MCP Servers are mounted as native runtime tools for this task",
 		"multica issue list",
 		"multica issue get <id> --output json",
 		"multica issue create --title",
@@ -234,6 +233,11 @@ func TestChatAvailableCommandsDropsIssueScopedSurface(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("chat Available Commands missing %q\n---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{"multica mcp tools", "multica mcp call"} {
+		if strings.Contains(out, banned) {
+			t.Errorf("chat Available Commands still advertises removed command %q\n---\n%s", banned, out)
 		}
 	}
 
