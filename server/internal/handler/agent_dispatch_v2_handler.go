@@ -828,11 +828,14 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 			return true
 		}
 		if command.CompletionCallback != nil {
-			if err := h.TaskService.EnqueueSynchronousCompleted(
+			if err := h.enqueueCoordinatorIssueAckOrComplete(
 				ctx,
-				command.CompletionCallback.URL,
-				command.CompletionCallback.Target,
+				command,
+				dispatchContext,
 				dispatchContext.AgentID,
+				db.AgentTaskQueue{ID: result.TaskID, AgentID: dispatchContext.AgentID},
+				db.Issue{ID: result.IssueID},
+				result.IssueIdentifier,
 				result.ReplyText,
 			); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")

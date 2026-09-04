@@ -329,6 +329,7 @@ export function AgentDetailInspector({
           <TaskFinishedLoopField
             agentId={agent.id}
             enabled={agent.task_finished_loop_enabled === true}
+            inboundEnabled={agent.inbound_coordinator === true}
             canEdit={canEdit}
             onSave={(next) => update({ task_finished_loop_enabled: next })}
           />
@@ -382,11 +383,13 @@ function InboundCoordinatorField({
 function TaskFinishedLoopField({
   agentId,
   enabled,
+  inboundEnabled,
   canEdit,
   onSave,
 }: {
   agentId: string;
   enabled: boolean;
+  inboundEnabled: boolean;
   canEdit: boolean;
   onSave: (next: boolean) => Promise<void>;
 }) {
@@ -406,7 +409,7 @@ function TaskFinishedLoopField({
     >
       <Switch
         checked={draft}
-        disabled={!canEdit || saving}
+        disabled={!canEdit || saving || !inboundEnabled}
         onCheckedChange={(checked) => {
           setDraft(checked);
           setSaving(true);

@@ -515,6 +515,34 @@ func (s *TaskService) EnqueueSynchronousCompleted(
 	agentID pgtype.UUID,
 	resultMessage string,
 ) error {
+	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-completed")
+}
+
+// EnqueueSynchronousWrapup delivers the task-finished Coordinator reply on the
+// original inbound Router callback without colliding with the issue-create ACK.
+func (s *TaskService) EnqueueSynchronousWrapup(
+	ctx context.Context,
+	callbackURL string,
+	targetIdentity string,
+	agentID pgtype.UUID,
+	resultMessage string,
+	taskID string,
+) error {
+	suffix := strings.TrimSpace(taskID)
+	if suffix == "" {
+		return errors.New("synchronous wrap-up task id is required")
+	}
+	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-wrapup:"+suffix)
+}
+
+func (s *TaskService) enqueueSynchronousCompleted(
+	ctx context.Context,
+	callbackURL string,
+	targetIdentity string,
+	agentID pgtype.UUID,
+	resultMessage string,
+	requestKind string,
+) error {
 	const prefix = "/api/v1/dispatch-tasks/"
 	const suffix = "/execution-result"
 	dispatchTaskID := strings.TrimSuffix(strings.TrimPrefix(callbackURL, prefix), suffix)
@@ -529,10 +557,14 @@ func (s *TaskService) EnqueueSynchronousCompleted(
 	if message == "" {
 		return errors.New("synchronous completed result message is required")
 	}
+	kind := strings.TrimSpace(requestKind)
+	if kind == "" {
+		kind = "sync-completed"
+	}
 	_, err := s.Queries.EnqueueSynchronousCompletedTaskCompletion(ctx, db.EnqueueSynchronousCompletedTaskCompletionParams{
 		CallbackUrl:    callbackURL,
 		TargetIdentity: targetIdentity,
-		RequestID:      "multica-terminal:sync-completed:" + dispatchTaskID,
+		RequestID:      "multica-terminal:" + kind + ":" + dispatchTaskID,
 		AgentID:        agentID,
 		ResultMessage:  redact.Text(message),
 	})

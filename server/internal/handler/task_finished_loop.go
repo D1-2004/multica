@@ -106,8 +106,8 @@ func (h *Handler) deliverTaskFinishedDecision(ctx context.Context, task *db.Agen
 		)
 		return
 	}
-	if err := h.TaskService.EnqueueSynchronousCompleted(
-		ctx, callbackURL, target, task.AgentID, text,
+	if err := h.TaskService.EnqueueSynchronousWrapup(
+		ctx, callbackURL, target, task.AgentID, text, uuidToString(task.ID),
 	); err != nil {
 		slog.Warn("task finished loop: enqueue wrap-up failed",
 			"event", "task_finished_loop_delivery_failed",
