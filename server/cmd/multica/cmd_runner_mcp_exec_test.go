@@ -134,6 +134,116 @@ func TestRunnerBuiltinShellMCPListsTools(t *testing.T) {
 	}
 }
 
+func TestRunnerBuiltinShellMCPOmitsEmptyRequired(t *testing.T) {
+	document, err := parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newRunnerMCPManager(document)
+	defer manager.Close()
+	request := json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	args, _ := json.Marshal(runnerMCPCallArguments{
+		ServerName:  runnerBuiltinShellMCPName,
+		Fingerprint: document.Servers[runnerBuiltinShellMCPName].Fingerprint,
+		Request:     request,
+	})
+	response, toolErr := manager.Execute(context.Background(), args)
+	if toolErr != nil {
+		t.Fatalf("execute built-in MCP: %v", toolErr)
+	}
+	var decoded struct {
+		Result struct {
+			Tools []struct {
+				Name        string                     `json:"name"`
+				InputSchema map[string]json.RawMessage `json:"inputSchema"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range decoded.Result.Tools {
+		if tool.Name != "list_roots" {
+			continue
+		}
+		if required, exists := tool.InputSchema["required"]; exists {
+			t.Fatalf("list_roots required must be omitted, got %s", required)
+		}
+		return
+	}
+	t.Fatal("list_roots tool not found")
+}
+
+func TestRunnerBuiltinShellMCPMarksShellAsOpenWorld(t *testing.T) {
+	document, err := parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newRunnerMCPManager(document)
+	defer manager.Close()
+	args, _ := json.Marshal(runnerMCPCallArguments{
+		ServerName:  runnerBuiltinShellMCPName,
+		Fingerprint: document.Servers[runnerBuiltinShellMCPName].Fingerprint,
+		Request:     json.RawMessage(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`),
+	})
+	response, toolErr := manager.Execute(context.Background(), args)
+	if toolErr != nil {
+		t.Fatalf("execute built-in MCP: %v", toolErr)
+	}
+	var decoded struct {
+		Result struct {
+			Tools []struct {
+				Name        string `json:"name"`
+				Annotations struct {
+					OpenWorld bool `json:"openWorldHint"`
+				} `json:"annotations"`
+			} `json:"tools"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range decoded.Result.Tools {
+		if tool.Name == "shell" {
+			if !tool.Annotations.OpenWorld {
+				t.Fatalf("shell openWorldHint must be true: %s", response)
+			}
+			return
+		}
+	}
+	t.Fatal("shell tool not found")
+}
+
+func TestRunnerBuiltinShellMCPReturnsProtocolErrorForUnknownTool(t *testing.T) {
+	document, err := parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newRunnerMCPManager(document)
+	defer manager.Close()
+	args, _ := json.Marshal(runnerMCPCallArguments{
+		ServerName:  runnerBuiltinShellMCPName,
+		Fingerprint: document.Servers[runnerBuiltinShellMCPName].Fingerprint,
+		Request:     json.RawMessage(`{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"missing","arguments":{}}}`),
+	})
+	response, toolErr := manager.Execute(context.Background(), args)
+	if toolErr != nil {
+		t.Fatalf("execute built-in MCP: %v", toolErr)
+	}
+	var decoded struct {
+		Error *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Error == nil || decoded.Error.Code != -32602 || decoded.Error.Message != "Unknown tool: missing" {
+		t.Fatalf("unknown tool must be an MCP protocol error: %s", response)
+	}
+}
+
 func TestRunnerBuiltinShellMCPCallsShellInsideConfiguredRoot(t *testing.T) {
 	root := t.TempDir()
 	document, err := parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))

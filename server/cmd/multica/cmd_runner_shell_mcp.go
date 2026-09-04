@@ -54,16 +54,20 @@ func runnerBuiltinMCPError(id json.RawMessage, code int, message string) json.Ra
 	return raw
 }
 
-func runnerBuiltinMCPTool(name, title, description string, properties map[string]any, required []string, readOnly, destructive, idempotent bool) map[string]any {
+func runnerBuiltinMCPTool(name, title, description string, properties map[string]any, required []string, readOnly, destructive, idempotent, openWorld bool) map[string]any {
+	inputSchema := map[string]any{
+		"type": "object", "additionalProperties": false,
+		"properties": properties,
+	}
+	if len(required) > 0 {
+		inputSchema["required"] = required
+	}
 	return map[string]any{
 		"name": name, "title": title, "description": description,
-		"inputSchema": map[string]any{
-			"type": "object", "additionalProperties": false,
-			"properties": properties, "required": required,
-		},
+		"inputSchema": inputSchema,
 		"annotations": map[string]any{
 			"readOnlyHint": readOnly, "destructiveHint": destructive,
-			"idempotentHint": idempotent, "openWorldHint": false,
+			"idempotentHint": idempotent, "openWorldHint": openWorld,
 		},
 	}
 }
@@ -71,42 +75,42 @@ func runnerBuiltinMCPTool(name, title, description string, properties map[string
 func runnerBuiltinShellMCPTools() []any {
 	path := map[string]any{"type": "string", "minLength": 1, "description": "Absolute path inside one of the Runner's configured file roots."}
 	return []any{
-		runnerBuiltinMCPTool("list_roots", "List file roots", "List the file roots exposed by this Runner.", map[string]any{}, nil, true, false, true),
+		runnerBuiltinMCPTool("list_roots", "List file roots", "List the file roots exposed by this Runner.", map[string]any{}, nil, true, false, true, false),
 		runnerBuiltinMCPTool("read_file", "Read a local file", "Read a file from an exposed root.", map[string]any{
 			"path": path, "offset": map[string]any{"type": "integer", "minimum": 0, "default": 0},
 			"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 1048576, "default": 1048576},
 			"encoding": map[string]any{"type": "string", "enum": []string{"utf8", "base64"}, "default": "utf8"},
-		}, []string{"path"}, true, false, true),
+		}, []string{"path"}, true, false, true, false),
 		runnerBuiltinMCPTool("write_file", "Write a local file", "Replace a file inside an exposed root.", map[string]any{
 			"path": path, "content": map[string]any{"type": "string"},
 			"encoding": map[string]any{"type": "string", "enum": []string{"utf8", "base64"}, "default": "utf8"},
 			"create_parents": map[string]any{"type": "boolean", "default": false},
-		}, []string{"path", "content"}, false, true, true),
+		}, []string{"path", "content"}, false, true, true, false),
 		runnerBuiltinMCPTool("edit_file", "Edit a local text file", "Replace exact text inside a UTF-8 file in an exposed root.", map[string]any{
 			"path": path, "old_text": map[string]any{"type": "string", "minLength": 1},
 			"new_text": map[string]any{"type": "string"}, "replace_all": map[string]any{"type": "boolean", "default": false},
-		}, []string{"path", "old_text", "new_text"}, false, true, true),
-		runnerBuiltinMCPTool("list_directory", "List a local directory", "List direct children of a directory in an exposed root.", map[string]any{"path": path}, []string{"path"}, true, false, true),
-		runnerBuiltinMCPTool("stat", "Inspect a local path", "Return metadata for a file or directory in an exposed root.", map[string]any{"path": path}, []string{"path"}, true, false, true),
+		}, []string{"path", "old_text", "new_text"}, false, true, true, false),
+		runnerBuiltinMCPTool("list_directory", "List a local directory", "List direct children of a directory in an exposed root.", map[string]any{"path": path}, []string{"path"}, true, false, true, false),
+		runnerBuiltinMCPTool("stat", "Inspect a local path", "Return metadata for a file or directory in an exposed root.", map[string]any{"path": path}, []string{"path"}, true, false, true, false),
 		runnerBuiltinMCPTool("glob", "Match local paths", "Match a glob pattern recursively under an exposed root.", map[string]any{
 			"root": path, "pattern": map[string]any{"type": "string", "minLength": 1},
 			"max_results": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "default": 200},
-		}, []string{"root", "pattern"}, true, false, true),
+		}, []string{"root", "pattern"}, true, false, true, false),
 		runnerBuiltinMCPTool("grep", "Search local text files", "Search text recursively under an exposed root.", map[string]any{
 			"root": path, "pattern": map[string]any{"type": "string", "minLength": 1},
 			"max_results": map[string]any{"type": "integer", "minimum": 1, "maximum": 1000, "default": 200},
-		}, []string{"root", "pattern"}, true, false, true),
+		}, []string{"root", "pattern"}, true, false, true, false),
 		runnerBuiltinMCPTool("shell", "Run a local shell command", "Run /bin/sh as the operating-system user that installed Runner. File roots do not restrict command access outside the selected working directory.", map[string]any{
 			"command": map[string]any{"type": "string", "minLength": 1}, "cwd": path,
 			"background": map[string]any{"type": "boolean", "default": false},
 			"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 600, "default": 60},
-		}, []string{"command", "cwd"}, false, true, false),
+		}, []string{"command", "cwd"}, false, true, false, true),
 		runnerBuiltinMCPTool("shell_output", "Read background shell output", "Read accumulated output and exit state for a process started by shell.", map[string]any{
 			"process_id": map[string]any{"type": "string", "minLength": 1},
-		}, []string{"process_id"}, true, false, true),
+		}, []string{"process_id"}, true, false, true, false),
 		runnerBuiltinMCPTool("shell_kill", "Stop a background shell", "Terminate a process started by shell.", map[string]any{
 			"process_id": map[string]any{"type": "string", "minLength": 1},
-		}, []string{"process_id"}, false, true, true),
+		}, []string{"process_id"}, false, true, true, false),
 	}
 }
 
@@ -133,6 +137,9 @@ func runnerBuiltinMCPToolsCall(ctx context.Context, roots []string, request runn
 		value, toolErr = runRunnerTool(ctx, roots, params.Name, params.Arguments)
 	}
 	if toolErr != nil {
+		if toolErr.code == "runner_unknown_tool" {
+			return runnerBuiltinMCPError(request.ID, -32602, "Unknown tool: "+params.Name), nil
+		}
 		return runnerBuiltinMCPToolResult(request.ID, map[string]string{"code": toolErr.code, "message": toolErr.message}, true), nil
 	}
 	return runnerBuiltinMCPToolResult(request.ID, value, false), nil
