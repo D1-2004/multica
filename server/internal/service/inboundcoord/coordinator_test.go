@@ -139,6 +139,26 @@ func TestParseDecisionSilenceAllowedForDigitalEmployee(t *testing.T) {
 	}
 }
 
+func TestParseDecisionSilenceAllowedForAddressedGroupFlood(t *testing.T) {
+	got := parseDecision(`{"action":"silence","text":""}`, Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
+		Message: "R9-P8-FLOOD-3 unrelated noise",
+	})
+	if got.Action != ActionSilence {
+		t.Fatalf("addressed group flood may silence, got %s", got.Action)
+	}
+}
+
+func TestParseDecisionSilenceAllowedForDMFloodNoise(t *testing.T) {
+	got := parseDecision(`{"action":"silence","text":""}`, Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p",
+		Message: "R9-P8-FLOOD-7 unrelated noise",
+	})
+	if got.Action != ActionSilence {
+		t.Fatalf("DM numbered flood may silence, got %s", got.Action)
+	}
+}
+
 func TestGroupUnaddressedSilenceWithoutLLM(t *testing.T) {
 	c := &Coordinator{LLM: llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"})}
 	got := c.Decide(context.Background(), Turn{

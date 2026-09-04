@@ -260,6 +260,25 @@ P1–P6 可以复用已有 cid。下面几条必须 **当场建场景** 或 **�
 
 ---
 
+## 拟人 / 灌水 / 群交互 / 任务完成 Hook（2026-09-04）
+
+开关：Agent 设置里「入站先判断」旁边是「任务完成再判断」。入站关时完成 Hook 开关禁用。预发 Agent `e2293e9e` 两开关都开。
+
+| ID | 场景 | 过线 |
+|---|---|---|
+| H1 | 群里不 @ 员工，人类互聊「晚上吃饭吗 / 哈哈」 | `decided=silence`，钉钉无员工插话 |
+| H2 | 群里 @员工 但正文是编号灌水 `R9-P8-FLOOD-n unrelated noise` | `silence` 或一句短人话；**不得** `action=issue`；不得每条 收到 |
+| H3 | 群里 @员工 真事（ASCII 探针口径或请他问 dxxh） | 口径类 `reply`；办事类 `issue` 且 purpose 含委托人/事件 |
+| H4 | 单聊编号灌水 3 条（可 collect） | 至多一轮 Decide；`silence` 或一句带过；Host 不被灌水写成稳定知识主条 |
+| H5 | 忙着办事时单聊一句闲聊 | 人话 ack（手头这件还在做…），不 `issue_comment_add` |
+| W1 | GUI：打开「任务完成再判断」后 PUT `task_finished_loop_enabled=true` | 设置页开关亮；API 读回 true |
+| W2 | 冬翔让员工 `echo R9-WRAP-4401` 并回话 | 沙箱完成后 `task_finished_loop_decided`；冬翔单聊有一句人话小结（不是「收到」）；Langfuse `loop=task_finished` |
+| W3 | 关掉完成 Hook 再跑同类 echo | 无 `task_finished_loop_decided`；沙箱自己的 IM 可以有，Coordinator wrap-up 没有 |
+
+H1–H3 用配角建 INTERNAL 群、只拉测试号、每次 @ 用该群 members-list 的 openDingTalkId。W2 的证明看 SLS `task_finished_loop_decided` + 钉钉回读，不看 Issue 自述。
+
+---
+
 ## 切片和剧本
 
 | 切片 | 用哪条「下一轮 SLS」过线 |

@@ -134,6 +134,47 @@ describe("AgentDetailInspector labels", () => {
     expect(toggle).toBeChecked();
   });
 
+  it("saves task-finished loop when inbound judge is on", async () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={{ ...agent, inbound_coordinator: true, task_finished_loop_enabled: false }}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const toggle = screen.getByLabelText("Judge after task finishes");
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toBeEnabled();
+    fireEvent.click(toggle);
+    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+      task_finished_loop_enabled: true,
+    });
+    expect(toggle).toBeChecked();
+  });
+
+  it("disables task-finished loop when inbound judge is off", () => {
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={{ ...agent, inbound_coordinator: false, task_finished_loop_enabled: false }}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={vi.fn(async () => {})}
+      />,
+    );
+
+    const toggle = screen.getByLabelText("Judge after task finishes");
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+  });
+
   it("keeps scene memory flags off the settings form", () => {
     renderWithI18n(
       <AgentDetailInspector
