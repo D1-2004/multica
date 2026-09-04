@@ -1737,7 +1737,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			} else {
 				receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), task, deliveredCommentIDs, commentBackedTask)
 				if ferr == nil {
-					if err := h.injectDEAPA2ARunnerMCP(r.Context(), rt, task, parseUUID(resp.WorkspaceID), resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1)); err != nil {
+					if err := h.injectDEAPA2ARunnerMCP(r.Context(), rt, task, parseUUID(resp.WorkspaceID), resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
 						if errors.Is(err, errRunnerMCPMountsUnsupported) {
 							slog.Error("batch claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
 								"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
@@ -1769,7 +1769,7 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		default:
 			tokenStr, ferr = auth.GenerateAgentTaskToken()
 			if ferr == nil {
-				if err := h.injectRunnerMCP(r.Context(), rt, task.AgentID, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1)); err != nil {
+				if err := h.injectRunnerMCP(r.Context(), rt, task.AgentID, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
 					if errors.Is(err, errRunnerMCPMountsUnsupported) {
 						slog.Error("batch claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
 							"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
@@ -3303,7 +3303,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		} else {
 			receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), *task, deliveredCommentIDs, commentBackedTask)
 			if ferr == nil {
-				if err := h.injectDEAPA2ARunnerMCP(r.Context(), runtime, *task, parseUUID(resp.WorkspaceID), resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1)); err != nil {
+				if err := h.injectDEAPA2ARunnerMCP(r.Context(), runtime, *task, parseUUID(resp.WorkspaceID), resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
 					if errors.Is(err, errRunnerMCPMountsUnsupported) {
 						outcome = "error_daemon_capability"
 						slog.Error("task claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
@@ -3338,7 +3338,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	default:
 		tokenStr, ferr = auth.GenerateAgentTaskToken()
 		if ferr == nil {
-			if err := h.injectRunnerMCP(r.Context(), runtime, task.AgentID, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1)); err != nil {
+			if err := h.injectRunnerMCP(r.Context(), runtime, task.AgentID, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
 				if errors.Is(err, errRunnerMCPMountsUnsupported) {
 					outcome = "error_daemon_capability"
 					slog.Error("task claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",

@@ -18,8 +18,13 @@ const (
 	// artifact support for inbound A2A execution.
 	DaemonCapabilityA2AInvocationV2 = "a2a-invocation-v2"
 	// DaemonCapabilityRunnerMCPMountsV1 advertises that the sandbox daemon
-	// rebases every dynamically named Runner MCP mount to its localhost relay.
+	// consumes explicit per-name relay routes for backend-hosted and Runner MCP
+	// entries and projects them to its localhost relay.
 	DaemonCapabilityRunnerMCPMountsV1 = "runner-mcp-mounts-v1"
+	// DaemonCapabilityManagedMCPRelayRoutesV1 advertises the explicit route-map
+	// wire shape. It is distinct from RunnerMCPMountsV1 so a rolling server can
+	// distinguish marker-only daemons from route-map daemons.
+	DaemonCapabilityManagedMCPRelayRoutesV1 = "managed-mcp-relay-routes-v1"
 
 	// AppCapabilityChatDraftRestoreV1 is advertised (X-Client-Capabilities) by
 	// app clients that understand the durable draft-restore recovery path:

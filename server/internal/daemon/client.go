@@ -191,6 +191,7 @@ func daemonClientCapabilities() string {
 		protocol.DaemonCapabilityRPCV1,
 		protocol.DaemonCapabilityA2AInvocationV2,
 		protocol.DaemonCapabilityRunnerMCPMountsV1,
+		protocol.DaemonCapabilityManagedMCPRelayRoutesV1,
 	}, ",")
 }
 

@@ -5934,9 +5934,17 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			return TaskResult{}, fmt.Errorf("inject A2A task control MCP: %w", controlErr)
 		}
 	}
-	routedMcpConfig, routeErr := rebaseManagedRunnerMCP(effectiveMcpConfig, d.cfg.ServerBaseURL)
+	var routedMcpConfig json.RawMessage
+	var routeErr error
+	if task.Agent != nil && len(task.Agent.McpRelayRoutes) > 0 {
+		routedMcpConfig, routeErr = rebaseManagedMCP(effectiveMcpConfig, task.Agent.McpRelayRoutes, d.cfg.ServerBaseURL)
+	} else {
+		// Backward compatibility while old servers still emit the private
+		// Runner marker instead of explicit route metadata.
+		routedMcpConfig, routeErr = rebaseManagedRunnerMCP(effectiveMcpConfig, d.cfg.ServerBaseURL)
+	}
 	if routeErr != nil {
-		return TaskResult{}, fmt.Errorf("route managed Runner MCP through daemon server: %w", routeErr)
+		return TaskResult{}, fmt.Errorf("route managed MCP through daemon server: %w", routeErr)
 	}
 	effectiveMcpConfig = routedMcpConfig
 	// Decode openclaw-specific runtime_config knobs once so reuse / prepare /
