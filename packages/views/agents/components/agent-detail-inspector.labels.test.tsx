@@ -148,7 +148,7 @@ describe("AgentDetailInspector labels", () => {
       />,
     );
 
-    const toggle = screen.getByLabelText("Judge after task finishes");
+    const toggle = screen.getByLabelText("Judge after the work finishes");
     expect(toggle).not.toBeChecked();
     expect(toggle).toBeEnabled();
     fireEvent.click(toggle);
@@ -171,7 +171,7 @@ describe("AgentDetailInspector labels", () => {
       />,
     );
 
-    const toggle = screen.getByLabelText("Judge after task finishes");
+    const toggle = screen.getByLabelText("Judge after the work finishes");
     expect(toggle).toHaveAttribute("aria-disabled", "true");
   });
 
