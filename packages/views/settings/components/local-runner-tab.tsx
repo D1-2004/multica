@@ -56,6 +56,21 @@ interface BindingSelection {
   binding: AccountRunnerBinding;
 }
 
+const RUNNER_MCP_CONFIG_PATH = "~/.multica/runner/mcp.json";
+const RUNNER_MCP_CONFIG_EXAMPLE = `{
+  "mcpServers": {
+    "my_mcp": {
+      "command": "npx",
+      "args": ["-y", "your-mcp-package"]
+    }
+  }
+}`;
+const RUNNER_COMMANDS = [
+  "~/.multica/runner/bin/multica runner start",
+  "~/.multica/runner/bin/multica runner stop",
+  "~/.multica/runner/bin/multica runner status",
+];
+
 function mutationTarget(binding: AccountRunnerBinding): AccountRunnerBindingTarget {
   return {
     bindingId: binding.bindingId,
@@ -240,30 +255,100 @@ export function LocalRunnerTab() {
         title={t(($) => $.local_runner.add_guide_title)}
         description={t(($) => $.local_runner.add_guide_description)}
       >
-        <div className="flex flex-col gap-4 rounded-lg border border-surface-border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-body font-medium">
-              {t(($) => $.local_runner.add_guide_step)}
-            </p>
-            <p className="mt-1 text-caption text-muted-foreground">
-              {t(($) => $.local_runner.add_guide_hint)}
-            </p>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            className="shrink-0"
-            onClick={() => void handleCreatePairing()}
-            disabled={createPairing.isPending}
-          >
-            {createPairing.isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Plus className="size-4" />
-            )}
-            {t(($) => $.local_runner.add_machine)}
-          </Button>
-        </div>
+        <ol className="space-y-3">
+          <li className="flex gap-3 rounded-lg border border-surface-border bg-muted/20 p-4">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-foreground text-micro font-semibold text-background">
+              1
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-body font-medium">
+                    {t(($) => $.local_runner.install_step_title)}
+                  </p>
+                  <p className="mt-1 text-caption text-muted-foreground">
+                    {t(($) => $.local_runner.install_step_description)}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => void handleCreatePairing()}
+                  disabled={createPairing.isPending}
+                >
+                  {createPairing.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Plus className="size-4" />
+                  )}
+                  {t(($) => $.local_runner.add_machine)}
+                </Button>
+              </div>
+            </div>
+          </li>
+
+          <li className="flex gap-3 rounded-lg border border-surface-border p-4">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-micro font-semibold">
+              2
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-body font-medium">
+                {t(($) => $.local_runner.mcp_step_title)}
+              </p>
+              <p className="mt-1 text-caption text-muted-foreground">
+                {t(($) => $.local_runner.mcp_step_description)}
+              </p>
+              <code className="mt-3 block break-all rounded bg-muted px-3 py-2 font-mono text-micro">
+                {RUNNER_MCP_CONFIG_PATH}
+              </code>
+              <pre className="mt-2 overflow-x-auto rounded bg-muted px-3 py-2 font-mono text-micro leading-5">
+                <code>{RUNNER_MCP_CONFIG_EXAMPLE}</code>
+              </pre>
+              <p className="mt-2 text-caption text-muted-foreground">
+                {t(($) => $.local_runner.mcp_restart_hint)}
+              </p>
+            </div>
+          </li>
+
+          <li className="flex gap-3 rounded-lg border border-surface-border p-4">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-micro font-semibold">
+              3
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-body font-medium">
+                {t(($) => $.local_runner.lifecycle_step_title)}
+              </p>
+              <p className="mt-1 text-caption text-muted-foreground">
+                {t(($) => $.local_runner.lifecycle_step_description)}
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {RUNNER_COMMANDS.map((command) => (
+                  <code
+                    key={command}
+                    className="rounded bg-muted px-3 py-2 font-mono text-micro"
+                  >
+                    {command}
+                  </code>
+                ))}
+              </div>
+            </div>
+          </li>
+
+          <li className="flex gap-3 rounded-lg border border-surface-border p-4">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-micro font-semibold">
+              4
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-body font-medium">
+                {t(($) => $.local_runner.file_access_directories)}
+              </p>
+              <p className="mt-1 text-caption text-muted-foreground">
+                {t(($) => $.local_runner.file_access_description)}
+              </p>
+            </div>
+          </li>
+        </ol>
       </SettingsSection>
 
       <RunnerCommandDialog
@@ -550,7 +635,7 @@ function MachineCard({
 
               <div>
                 <p className="mb-1 text-micro font-medium text-muted-foreground">
-                  {t(($) => $.local_runner.file_roots)}
+                  {t(($) => $.local_runner.file_access_directories)}
                 </p>
                 <div className="space-y-1">
                   {binding.roots.map((root) => (
