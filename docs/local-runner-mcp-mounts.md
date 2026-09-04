@@ -27,10 +27,10 @@ Runner reads user-managed MCP Servers from `~/.multica/runner/mcp.json`:
 
 Each user entry must configure exactly one of `command` (stdio) or `url`.
 Runner preserves each entry and every extension field as configured. At startup,
-the CLI also adds the reserved `multica_runner` Server to the effective document.
+the CLI also adds the reserved `local_machine` Server to the effective document.
 Users must not define that name in `mcp.json`.
 
-`multica_runner` is implemented in-process by the Runner CLI and is available
+`local_machine` is implemented in-process by the Runner CLI and is available
 whenever the Runner process is running. It exposes `list_roots`, `read_file`,
 `write_file`, `edit_file`, `list_directory`, `stat`, `glob`, `grep`, `shell`,
 `shell_output`, and `shell_kill`. No child MCP process or separate MCP CLI
@@ -59,7 +59,7 @@ the last successfully reported document.
 3. `PUT /api/agents/{agentId}/runner-mount` selects one account-owned machine
    for that Agent. Replacing it revokes the previous mount and expires calls.
 4. Every Server in the selected machine's last successfully reported effective
-   document is mounted automatically, including `multica_runner`. Adding,
+   document is mounted automatically, including `local_machine`. Adding,
    removing, or renaming a user MCP Server takes effect for subsequently claimed
    tasks without changing an Agent or rebuilding a Runtime image.
 
@@ -90,7 +90,7 @@ sandbox image. A stale daemon fails the claim before provider startup instead
 of leaving OpenCode to time out against the public URL.
 
 Runner verifies the fingerprint again before using its effective configuration.
-The built-in `multica_runner` Server executes JSON-RPC in the CLI process. Other
+The built-in `local_machine` Server executes JSON-RPC in the CLI process. Other
 stdio processes are reused per server and JSON-RPC IDs are forwarded unchanged.
 Local HTTP servers receive JSON POST requests; `Mcp-Session-Id` is retained per
 task/mount/server and JSON or SSE responses are returned transparently.
@@ -132,6 +132,11 @@ selecting the machine for an Agent mounts the CLI-owned replacement.
   document without online-state filtering or field rewriting. Reason: configured
   capabilities must remain selected while a Runner is offline, and connection
   failures should surface when the Agent initializes or calls the Server.
+
+- 2026-09-04 — Renamed the built-in MCP Server from `multica_runner` to
+  `local_machine`. Reason: the previous name could be confused with the Multica
+  platform MCP; the new name tells the model that Shell and filesystem tools
+  execute on the selected local machine.
 
 - 2026-09-03 — Changed Agent mounts to expose every available MCP from the
   selected Runner dynamically and added `runner-mcp-mounts-v1` executor

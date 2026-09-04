@@ -132,7 +132,7 @@ func TestRunnerMCPBuiltinAlwaysReported(t *testing.T) {
 		t.Fatalf("servers = %#v, want only built-in Shell MCP", report.Servers)
 	}
 	server := report.Servers[0]
-	if server.Name != "multica_runner" || server.Transport != "stdio" || server.Availability != "available" || server.Fingerprint == "" {
+	if server.Name != "local_machine" || server.Transport != "stdio" || server.Availability != "available" || server.Fingerprint == "" {
 		t.Fatalf("built-in summary = %#v", server)
 	}
 	var effective struct {
@@ -141,11 +141,11 @@ func TestRunnerMCPBuiltinAlwaysReported(t *testing.T) {
 	if err := json.Unmarshal(report.Config, &effective); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := effective.MCPServers["multica_runner"]; !ok {
+	if _, ok := effective.MCPServers["local_machine"]; !ok {
 		t.Fatalf("reported config does not contain built-in Shell MCP: %s", report.Config)
 	}
 	var builtIn map[string]string
-	if err := json.Unmarshal(effective.MCPServers["multica_runner"], &builtIn); err != nil {
+	if err := json.Unmarshal(effective.MCPServers["local_machine"], &builtIn); err != nil {
 		t.Fatal(err)
 	}
 	if builtIn["type"] != "builtin" || builtIn["builtin"] != "shell" {
@@ -157,7 +157,7 @@ func TestRunnerMCPBuiltinAlwaysReported(t *testing.T) {
 }
 
 func TestRunnerMCPBuiltinNameIsReserved(t *testing.T) {
-	_, err := runnerMCPInventoryFromJSON([]byte(`{"mcpServers":{"multica_runner":{"command":"custom"}}}`))
+	_, err := runnerMCPInventoryFromJSON([]byte(`{"mcpServers":{"local_machine":{"command":"custom"}}}`))
 	if err == nil || !strings.Contains(err.Error(), "reserved") {
 		t.Fatalf("reserved built-in name error = %v", err)
 	}

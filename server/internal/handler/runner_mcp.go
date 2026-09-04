@@ -236,7 +236,7 @@ func runnerCallTimeout(toolName string, arguments []byte) time.Duration {
 		return runnerMCPCallTimeout
 	}
 	var mounted runnerMountedMCPArguments
-	if json.Unmarshal(arguments, &mounted) != nil || mounted.ServerName != "multica_runner" {
+	if json.Unmarshal(arguments, &mounted) != nil || mounted.ServerName != runnerprotocol.BuiltinMachineMCPServerName {
 		return runnerMCPCallTimeout
 	}
 	var request struct {
