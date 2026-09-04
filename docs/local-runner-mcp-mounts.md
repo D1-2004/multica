@@ -112,6 +112,20 @@ commands execute as the operating-system user running the CLI; roots constrain
 the starting directory but are not an operating-system sandbox and do not stop
 the command from accessing other paths allowed to that user.
 
+The UI calls these paths **local file access directories**. The first pairing
+defaults to the current user's Desktop. Configure one or more existing
+directories without editing the credential-bearing Runner state file:
+
+```bash
+~/.multica/runner/bin/multica runner configure \
+  --directory /absolute/path \
+  --directory /another/absolute/path
+```
+
+The command replaces the current directory list. If Runner is online, it
+restarts automatically to apply the new list; if Runner is stopped, it remains
+stopped until `runner start` is run.
+
 The old backend-owned `/api/runner-mcp` fixed filesystem/Shell bundle remains
 disabled. Pairing a machine alone never makes a capability available to a task;
 selecting the machine for an Agent mounts the CLI-owned replacement.
@@ -130,6 +144,11 @@ selecting the machine for an Agent mounts the CLI-owned replacement.
   `runner_call` polling; inventory lookup uses local memory then Redis.
 
 ## History
+
+- 2026-09-04 — Added `runner configure --directory` and renamed the CLI status
+  label to "File access directories". Reason: users need a supported way to
+  configure `local_machine` paths without editing the Runner's credential file,
+  and the internal term "roots" should not be exposed as product language.
 
 - 2026-09-04 — Aligned the built-in `local_machine` tool catalog and error
   responses with MCP `2025-06-18`, including optional zero-argument schema

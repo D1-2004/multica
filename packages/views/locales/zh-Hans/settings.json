@@ -272,7 +272,7 @@
     "lifecycle_step_title": "启动、停止或查看 Runner",
     "lifecycle_step_description": "Runner 通常在后台持续运行。安装完成后或修改 MCP 配置时，可以使用下面的命令管理它。",
     "file_access_directories": "本机文件访问目录",
-    "file_access_description": "首次安装默认使用当前用户的桌面目录。这些目录限定 local_machine 文件工具可操作的位置和 Shell 命令的起始目录；它们不是操作系统沙箱，Shell 仍以当前本机用户权限运行。",
+    "file_access_description": "首次安装默认使用当前用户的桌面目录。将下面命令中的路径替换为已存在的绝对路径即可重新配置；需要开放多个目录时，在同一条命令中重复添加 --directory。Runner 正在运行时会自动重启生效。这些目录限定 local_machine 文件工具和 Shell 起始目录，但 Shell 仍以当前本机用户权限运行。",
     "install_command_title": "安装并配对 Runner",
     "install_command_description": "在 macOS 或 Linux 机器上运行这条一次性命令，并在浏览器中确认授权。命令会安装 Multica CLI、配对机器，并自动在后台启动 Runner。",
     "title": "本机 Runner",
