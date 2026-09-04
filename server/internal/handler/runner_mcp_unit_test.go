@@ -23,6 +23,32 @@ type runnerMCPErrorRow struct {
 	err error
 }
 
+func TestMergeManagedMCPConfigPreservesRunnerEntryFields(t *testing.T) {
+	base := json.RawMessage(`{"mcpServers":{"agent-direct":{"url":"https://agent.example/mcp","headers":{"X-Agent":"keep"}}}}`)
+	runner := json.RawMessage(`{"mcpServers":{"wiki":{"command":"node","args":["/private/wiki.js"],"env":{"TOKEN":"secret"},"vendor":{"keep":true}}},"runnerExtension":{"exact":true}}`)
+
+	got, names, err := mergeManagedMCPConfig(base, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 1 || names[0] != "wiki" {
+		t.Fatalf("managed names = %#v", names)
+	}
+	for _, expected := range []string{`"command":"node"`, `"args":["/private/wiki.js"]`, `"TOKEN":"secret"`, `"vendor":{"keep":true}`, `"X-Agent":"keep"`, `"runnerExtension":{"exact":true}`} {
+		if !strings.Contains(string(got), expected) {
+			t.Fatalf("merged config lost %s: %s", expected, got)
+		}
+	}
+}
+
+func TestMergeManagedMCPConfigRejectsNameCollision(t *testing.T) {
+	base := json.RawMessage(`{"mcpServers":{"wiki":{"url":"https://agent.example/mcp"}}}`)
+	runner := json.RawMessage(`{"mcpServers":{"wiki":{"command":"node"}}}`)
+	if _, _, err := mergeManagedMCPConfig(base, runner); err == nil || !strings.Contains(err.Error(), "mcp_server_name_conflict") {
+		t.Fatalf("collision error = %v", err)
+	}
+}
+
 func (r runnerMCPErrorRow) Scan(...any) error {
 	return r.err
 }
@@ -252,6 +278,7 @@ func TestInjectDEAPA2ARunnerMCPSkipsOrdinaryA2A(t *testing.T) {
 		task,
 		pgtype.UUID{},
 		&TaskAgentData{},
+		false,
 		false,
 	); err != nil {
 		t.Fatalf("ordinary A2A Runner inject = %v", err)

@@ -19,8 +19,13 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/mcpprotocol"
 	"github.com/multica-ai/multica/server/pkg/runnerprotocol"
 )
+
+func mergeManagedMCPConfig(base, managed json.RawMessage) (json.RawMessage, []string, error) {
+	return mcpprotocol.MergeManagedConfig(base, managed)
+}
 
 const (
 	runnerMCPCallTimeout      = 60 * time.Second
@@ -524,9 +529,9 @@ func (h *Handler) writeRunnerMCPToolError(w http.ResponseWriter, id json.RawMess
 	})
 }
 
-// injectDEAPA2ARunnerMCP exposes the Agent-bound local Runner MCP on DEAP
-// A2A claims without putting a task token into AuthToken / MULTICA_TOKEN.
-// Ordinary external A2A stays tokenless and does not see the owner's machines.
+// injectDEAPA2ARunnerMCP exposes backend-hosted MCP and any Agent-bound local
+// Runner MCP on DEAP A2A claims without putting a task token into AuthToken /
+// MULTICA_TOKEN. Ordinary external A2A stays tokenless.
 func (h *Handler) injectDEAPA2ARunnerMCP(
 	ctx context.Context,
 	runtime db.AgentRuntime,
@@ -534,6 +539,7 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	workspaceID pgtype.UUID,
 	agentData *TaskAgentData,
 	supportsRunnerMCPMounts bool,
+	supportsManagedRelayRoutes bool,
 ) error {
 	if !service.ShouldInjectA2ARunnerMCP(task.Context) {
 		return nil
@@ -541,18 +547,11 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	if !runtime.OwnerID.Valid {
 		return errors.New("DEAP Runner MCP requires a Runtime owner")
 	}
-	hasBindings, err := h.Queries.AgentHasRunnerBindings(ctx, task.AgentID)
-	if err != nil {
-		return err
-	}
-	if !hasBindings {
-		return nil
-	}
 	token, err := auth.GenerateAgentTaskToken()
 	if err != nil {
 		return err
 	}
-	if err := h.injectRunnerMCP(ctx, runtime, task.AgentID, token, agentData, supportsRunnerMCPMounts); err != nil {
+	if err := h.injectRunnerMCP(ctx, runtime, task.AgentID, token, agentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes); err != nil {
 		return err
 	}
 	_, err = h.Queries.CreateTaskToken(ctx, db.CreateTaskTokenParams{
@@ -566,10 +565,74 @@ func (h *Handler) injectDEAPA2ARunnerMCP(
 	return err
 }
 
-func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts bool) error {
+func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts, supportsManagedRelayRoutes bool) error {
 	if agentData == nil {
 		return errors.New("claimed task is missing Agent data")
 	}
+	if !supportsRunnerMCPMounts {
+		return errRunnerMCPMountsUnsupported
+	}
+	if !supportsManagedRelayRoutes {
+		return h.injectLegacyRunnerMCP(ctx, runtime, agentID, taskToken, agentData)
+	}
+	if runnerMCPRuntimeUnsupported(runtime) {
+		return errRunnerMCPRuntimeUnsupported
+	}
+	publicURL, err := runnerBaseURL(h.currentConfig().PublicURL)
+	if err != nil {
+		return errors.New("managed MCP requires MULTICA_PUBLIC_URL")
+	}
+	backendConfig, err := json.Marshal(map[string]any{
+		"mcpServers": map[string]any{
+			"multica": map[string]any{
+				"type": "http",
+				"url":  publicURL + "/api/mcp",
+				"headers": map[string]string{
+					"Authorization": "Bearer " + taskToken,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	effectiveConfig, _, err := mergeManagedMCPConfig(agentData.McpConfig, backendConfig)
+	if err != nil {
+		return err
+	}
+	routes := map[string]MCPRelayRoute{
+		"multica": {Path: "/api/mcp", Authorization: "Bearer " + taskToken},
+	}
+	bindings, err := h.Queries.ListAgentRunnerBindings(ctx, db.ListAgentRunnerBindingsParams{WorkspaceID: runtime.WorkspaceID, AgentID: agentID})
+	if err != nil {
+		return err
+	}
+	for _, binding := range bindings {
+		rawConfig, _, found, loadErr := h.loadRunnerMCPConfig(ctx, binding.MachineID)
+		if loadErr != nil {
+			return loadErr
+		}
+		if !found {
+			continue
+		}
+		var names []string
+		effectiveConfig, names, err = mergeManagedMCPConfig(effectiveConfig, rawConfig)
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			routes[name] = MCPRelayRoute{
+				Path:          "/api/runner-mcp/mounts/" + url.PathEscape(uuidToString(binding.BindingID)) + "/servers/" + url.PathEscape(name),
+				Authorization: "Bearer " + taskToken,
+			}
+		}
+	}
+	agentData.McpConfig = effectiveConfig
+	agentData.McpRelayRoutes = routes
+	return nil
+}
+
+func (h *Handler) injectLegacyRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData) error {
 	bindings, err := h.Queries.ListAgentRunnerBindings(ctx, db.ListAgentRunnerBindingsParams{WorkspaceID: runtime.WorkspaceID, AgentID: agentID})
 	if err != nil {
 		return err
@@ -585,15 +648,7 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 			continue
 		}
 		inventory, inventoryOK := h.runnerMCPInventory(ctx, uuidToString(binding.MachineID))
-		snapshot := decodeEnabledRunnerMCPServers(binding.EnabledMcpServers)
-		if !inventoryOK && len(snapshot) > 0 {
-			slog.Warn("Runner MCP inventory unavailable at task claim; using last inventory snapshot",
-				"agent_id", uuidToString(agentID),
-				"machine_id", uuidToString(binding.MachineID),
-				"server_count", len(snapshot),
-			)
-		}
-		for name := range resolveRunnerMCPServers(snapshot, inventory, inventoryOK) {
+		for name := range resolveRunnerMCPServers(decodeEnabledRunnerMCPServers(binding.EnabledMcpServers), inventory, inventoryOK) {
 			if _, collision := existingServers[name]; collision {
 				continue
 			}
@@ -605,9 +660,9 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 			}
 			overlayServers[name] = map[string]any{
 				"type": "http",
-				"url": publicURL + "/api/runner-mcp/mounts/" + url.PathEscape(uuidToString(binding.BindingID)) + "/servers/" + url.PathEscape(name),
+				"url":  publicURL + "/api/runner-mcp/mounts/" + url.PathEscape(uuidToString(binding.BindingID)) + "/servers/" + url.PathEscape(name),
 				"headers": map[string]string{
-					"Authorization": "Bearer " + taskToken,
+					"Authorization":                        "Bearer " + taskToken,
 					runnerprotocol.ManagedMCPRoutingHeader: runnerprotocol.ManagedMCPRoutingValue,
 				},
 			}
@@ -616,9 +671,6 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	if len(overlayServers) == 0 {
 		return nil
 	}
-	if !supportsRunnerMCPMounts {
-		return errRunnerMCPMountsUnsupported
-	}
 	if runnerMCPRuntimeUnsupported(runtime) {
 		return errRunnerMCPRuntimeUnsupported
 	}
@@ -626,12 +678,8 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	if err != nil {
 		return err
 	}
-	merged, err := mergeMCPOverlay(agentData.McpConfig, overlay)
-	if err != nil {
-		return err
-	}
-	agentData.McpConfig = merged
-	return nil
+	agentData.McpConfig, err = mergeMCPOverlay(agentData.McpConfig, overlay)
+	return err
 }
 
 func mcpServerNames(raw json.RawMessage) (map[string]struct{}, error) {

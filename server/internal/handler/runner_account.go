@@ -45,6 +45,9 @@ func (h *Handler) RevokeMyRunnerMachine(w http.ResponseWriter, r *http.Request) 
 	for _, binding := range bindings {
 		_, _ = qtx.ExpireRunnerCallsForBinding(r.Context(), db.ExpireRunnerCallsForBindingParams{AgentID: binding.AgentID, MachineID: machineID})
 	}
+	if _, err = tx.Exec(r.Context(), `DELETE FROM runner_mcp_config WHERE machine_id = $1`, machineID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete Runner MCP config"); return
+	}
 	if err = tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to revoke Runner machine"); return }
 	writeJSON(w, http.StatusOK, map[string]any{"revoked": true})
 }

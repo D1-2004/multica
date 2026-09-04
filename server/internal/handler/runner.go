@@ -1197,6 +1197,11 @@ func (h *Handler) handleRunnerInventory(ctx context.Context, identity runnerws.I
 		return
 	}
 	h.snapshotRunnerMCPInventory(ctx, identity.MachineID, machineID, inventory)
+	if len(inventory.Config) > 0 {
+		if err := h.storeRunnerMCPConfig(ctx, machineID, inventory); err != nil {
+			slog.Warn("Runner MCP raw config persistence failed", "machine_id", identity.MachineID, "error", err)
+		}
+	}
 	raw, err := json.Marshal(inventory)
 	if err != nil || len(raw) > 256<<10 {
 		return
@@ -1208,6 +1213,47 @@ func (h *Handler) handleRunnerInventory(ctx context.Context, identity runnerws.I
 	if err := cache.StoreRunnerInventory(ctx, identity.MachineID, raw, 2*runnerOnlineTTL); err != nil {
 		slog.Warn("Runner MCP inventory cache failed", "machine_id", identity.MachineID, "error", err)
 	}
+}
+
+func (h *Handler) storeRunnerMCPConfig(ctx context.Context, machineID pgtype.UUID, inventory runnerprotocol.MCPInventory) error {
+	if len(inventory.Config) == 0 || len(inventory.Config) > 1<<20 || !json.Valid(inventory.Config) {
+		return errors.New("invalid Runner MCP config document")
+	}
+	if strings.TrimSpace(inventory.Revision) == "" {
+		return errors.New("missing Runner MCP config revision")
+	}
+	_, err := h.DB.Exec(ctx, `
+		INSERT INTO runner_mcp_config (machine_id, config, revision, updated_at)
+		SELECT id, $2, $3, now()
+		FROM runner_machine
+		WHERE id = $1 AND revoked_at IS NULL
+		ON CONFLICT (machine_id) DO UPDATE
+		SET config = EXCLUDED.config,
+		    revision = EXCLUDED.revision,
+		    updated_at = now()
+		WHERE runner_mcp_config.config IS DISTINCT FROM EXCLUDED.config
+		   OR runner_mcp_config.revision IS DISTINCT FROM EXCLUDED.revision`,
+		machineID, []byte(inventory.Config), inventory.Revision)
+	return err
+}
+
+func (h *Handler) loadRunnerMCPConfig(ctx context.Context, machineID pgtype.UUID) (json.RawMessage, string, bool, error) {
+	var raw []byte
+	var revision string
+	err := h.DB.QueryRow(ctx, `
+		SELECT config, revision
+		FROM runner_mcp_config
+		WHERE machine_id = $1`, machineID).Scan(&raw, &revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, "", false, nil
+	}
+	if err != nil {
+		return nil, "", false, err
+	}
+	if len(raw) == 0 || !json.Valid(raw) {
+		return nil, "", false, errors.New("stored Runner MCP config is invalid")
+	}
+	return append(json.RawMessage(nil), raw...), revision, true, nil
 }
 
 func (h *Handler) snapshotRunnerMCPInventory(ctx context.Context, machineIDString string, machineID pgtype.UUID, inventory runnerprotocol.MCPInventory) {

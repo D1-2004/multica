@@ -27,6 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/mcpprotocol"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -921,6 +922,7 @@ type TaskAgentData struct {
 	CustomEnv             map[string]string           `json:"custom_env,omitempty"`
 	CustomArgs            []string                    `json:"custom_args,omitempty"`
 	McpConfig             json.RawMessage             `json:"mcp_config,omitempty"`
+	McpRelayRoutes        map[string]MCPRelayRoute    `json:"mcp_relay_routes,omitempty"`
 	Model                 string                      `json:"model,omitempty"`
 	ThinkingLevel         string                      `json:"thinking_level,omitempty"`
 	ServiceTier           string                      `json:"service_tier,omitempty"`
@@ -932,6 +934,8 @@ type TaskAgentData struct {
 	// raw so the daemon can evolve its schema without a server roundtrip.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
+
+type MCPRelayRoute = mcpprotocol.RelayRoute
 
 // taskToResponse maps a queue row to its wire shape. workspaceID is threaded
 // in because the row itself doesn't carry one (workspace lives on the agent

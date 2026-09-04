@@ -8,8 +8,71 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/multica-ai/multica/server/pkg/mcpprotocol"
 	"github.com/multica-ai/multica/server/pkg/runnerprotocol"
 )
+
+type mcpRelayRoute = mcpprotocol.RelayRoute
+
+// rebaseManagedMCP builds the runtime-facing projection of an unchanged task
+// MCP document. Only server names explicitly present in routes are converted
+// to the sandbox loopback relay; configuration content is never inspected to
+// infer routing.
+func rebaseManagedMCP(raw json.RawMessage, routes map[string]mcpRelayRoute, serverBaseURL string) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(routes) == 0 || len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return raw, nil
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &document); err != nil {
+		return nil, fmt.Errorf("parse mcp_config for managed routing: %w", err)
+	}
+	var servers map[string]json.RawMessage
+	if err := json.Unmarshal(document["mcpServers"], &servers); err != nil {
+		return nil, fmt.Errorf("parse mcpServers for managed routing: %w", err)
+	}
+	changed := false
+	for name, route := range routes {
+		serverRaw, ok := servers[name]
+		if !ok {
+			return nil, fmt.Errorf("managed MCP route %q has no matching config entry", name)
+		}
+		var server map[string]json.RawMessage
+		if err := json.Unmarshal(serverRaw, &server); err != nil {
+			return nil, fmt.Errorf("parse MCP entry %q for managed routing: %w", name, err)
+		}
+		endpoint, err := managedRunnerMCPEndpoint(serverBaseURL, route.Path)
+		if err != nil {
+			return nil, fmt.Errorf("route MCP entry %q: %w", name, err)
+		}
+		for _, field := range []string{"command", "args", "env", "url", "headers", "type"} {
+			delete(server, field)
+		}
+		server["type"], _ = json.Marshal("http")
+		server["url"], _ = json.Marshal(endpoint)
+		if route.Authorization != "" {
+			server["headers"], _ = json.Marshal(map[string]string{"Authorization": route.Authorization})
+		}
+		servers[name], err = json.Marshal(server)
+		if err != nil {
+			return nil, fmt.Errorf("marshal MCP entry %q after managed routing: %w", name, err)
+		}
+		changed = true
+	}
+	if !changed {
+		return raw, nil
+	}
+	serversRaw, err := json.Marshal(servers)
+	if err != nil {
+		return nil, fmt.Errorf("marshal mcpServers after managed routing: %w", err)
+	}
+	document["mcpServers"] = serversRaw
+	result, err := json.Marshal(document)
+	if err != nil {
+		return nil, fmt.Errorf("marshal mcp_config after managed routing: %w", err)
+	}
+	return result, nil
+}
 
 // rebaseManagedRunnerMCP keeps the product-managed Runner endpoint on the
 // same Multica origin already selected by the daemon. In pre-release FC/E2B
