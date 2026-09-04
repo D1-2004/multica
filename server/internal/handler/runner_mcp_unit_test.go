@@ -1,17 +1,47 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/runnerprotocol"
 )
+
+type runnerMCPErrorRow struct {
+	err error
+}
+
+func (r runnerMCPErrorRow) Scan(...any) error {
+	return r.err
+}
+
+type runnerMCPCreateFailDB struct {
+	err error
+}
+
+func (d runnerMCPCreateFailDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	panic("unexpected Exec call")
+}
+
+func (d runnerMCPCreateFailDB) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	panic("unexpected Query call")
+}
+
+func (d runnerMCPCreateFailDB) QueryRow(context.Context, string, ...any) pgx.Row {
+	return runnerMCPErrorRow{err: d.err}
+}
 
 func TestRunnerPairingIDFromToken(t *testing.T) {
 	const id = "29f6cd78-cfaf-4023-9fbd-c804a299a10d"
@@ -89,6 +119,52 @@ func TestRunnerCallTimeoutTracksForegroundShellTimeout(t *testing.T) {
 	}
 	if got := runnerCallTimeout("shell", []byte(`{"background":true,"timeout_seconds":300}`)); got != time.Minute {
 		t.Fatalf("background shell timeout = %s, want 1m", got)
+	}
+}
+
+func TestCallRunnerMCPLogsCreateFailureWithoutArguments(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	databaseErr := errors.New("ERROR: new row violates check constraint runner_call_tool_name_check (SQLSTATE 23514)")
+	handler := &Handler{Queries: db.New(runnerMCPCreateFailDB{err: databaseErr})}
+	taskID := uuid.New()
+	agentID := uuid.New()
+	machineID := uuid.New()
+	request, err := http.NewRequest(http.MethodPost, "/api/runner-mcp", nil)
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	request.Header.Set("X-Task-ID", taskID.String())
+	request.Header.Set("X-User-ID", uuid.NewString())
+
+	_, callErr := handler.callRunnerMCP(request, db.GetActiveAgentRunnerBindingRow{
+		AgentID:   pgtype.UUID{Bytes: agentID, Valid: true},
+		MachineID: pgtype.UUID{Bytes: machineID, Valid: true},
+	}, "shell", []byte(`{"command":"super-secret"}`))
+	if callErr == nil || callErr.code != "runner_call_create_failed" || callErr.message != "Could not create the Runner call" {
+		t.Fatalf("call error = %#v", callErr)
+	}
+
+	got := logs.String()
+	for _, want := range []string{
+		"event=runner_call_create_failed",
+		"task_id=" + taskID.String(),
+		"agent_id=" + agentID.String(),
+		"machine_id=" + machineID.String(),
+		"tool_name=shell",
+		"error=\"" + databaseErr.Error() + "\"",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Runner call create failure log missing %q in %s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"arguments", "super-secret"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("Runner call create failure log contains %q in %s", forbidden, got)
+		}
 	}
 }
 

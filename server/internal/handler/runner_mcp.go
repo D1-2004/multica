@@ -435,6 +435,14 @@ func (h *Handler) callRunnerMCP(r *http.Request, binding db.GetActiveAgentRunner
 		return nil, &runnerMCPCallError{code: "runner_not_bound", message: "The selected machine is no longer bound to this Agent"}
 	}
 	if err != nil {
+		slog.Error("Runner call create failed",
+			"event", "runner_call_create_failed",
+			"task_id", uuidToString(taskID),
+			"agent_id", uuidToString(binding.AgentID),
+			"machine_id", uuidToString(binding.MachineID),
+			"tool_name", toolName,
+			"error", err,
+		)
 		return nil, &runnerMCPCallError{code: "runner_call_create_failed", message: "Could not create the Runner call"}
 	}
 	slog.Info("Runner call created",
