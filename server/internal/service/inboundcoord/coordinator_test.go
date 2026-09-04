@@ -159,6 +159,42 @@ func TestParseDecisionSilenceAllowedForDMFloodNoise(t *testing.T) {
 	}
 }
 
+func TestParseDecisionSilenceAllowedForAddressedEmojiAndThanks(t *testing.T) {
+	emoji := parseDecision(`{"action":"silence","text":""}`, Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
+		Message: "👍",
+	})
+	if emoji.Action != ActionSilence {
+		t.Fatalf("addressed emoji may silence, got %s", emoji.Action)
+	}
+	thanks := parseDecision(`{"action":"reply","text":"嗯"}`, Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
+		Message: "谢谢",
+	})
+	if thanks.Action != ActionReply || thanks.UserText != "嗯" {
+		t.Fatalf("addressed thanks should stay a short reply, got %#v", thanks)
+	}
+}
+
+func TestSystemPromptHumanGroupFloodRules(t *testing.T) {
+	must := []string{
+		"You are a colleague in the group, not a minute-taker",
+		"Never one Issue per flood line",
+		"Addressed sticker, emoji-only",
+		"Addressed 在吗 / 你好 / 还在吗",
+		"Addressed thanks / 谢谢 / 好的 / 辛苦了",
+		"A collected current_message that mixes flood and one real ask",
+		"Two colleagues talking to each other",
+		"Do not volunteer 我来帮你们建事项",
+		"我去问 dxxh 周五三点",
+	}
+	for _, needle := range must {
+		if !strings.Contains(systemPrompt, needle) {
+			t.Fatalf("system prompt missing human/flood rule %q", needle)
+		}
+	}
+}
+
 func TestGroupUnaddressedSilenceWithoutLLM(t *testing.T) {
 	c := &Coordinator{LLM: llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"})}
 	got := c.Decide(context.Background(), Turn{

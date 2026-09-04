@@ -260,22 +260,41 @@ P1–P6 可以复用已有 cid。下面几条必须 **当场建场景** 或 **�
 
 ---
 
-## 拟人 / 灌水 / 群交互 / 任务完成 Hook（2026-09-04）
+## 拟人 / 灌水 / 群交互 / 事情完成 Hook（2026-09-04）
 
-开关：Agent 设置里「入站先判断」旁边是「任务完成再判断」。入站关时完成 Hook 开关禁用。预发 Agent `e2293e9e` 两开关都开。
+开关在 Agent 设置「属性」：`入站先判断` 旁边是 **`事情完成再判断`**。入站关时完成 Hook 禁用。预发 Agent `e2293e9e` 两开关都开才能看 wrap-up 效果。
+
+群消息不 @ 绑定号不会进 Coordinator（H1/H7 的过线可以是「无 `inbound_coordinator_llm_request`」）。@ 了才会 Decide。每次 @ 用该群 `+chat-members-list` 的测试号 `openDingTalkId`，正文写 `<@id>`。
+
+### 本轮必跑
 
 | ID | 场景 | 过线 |
 |---|---|---|
-| H1 | 群里不 @ 员工，人类互聊「晚上吃饭吗 / 哈哈」 | `decided=silence`，钉钉无员工插话 |
-| H2 | 群里 @员工 但正文是编号灌水 `R9-P8-FLOOD-n unrelated noise` | `silence` 或一句短人话；**不得** `action=issue`；不得每条 收到 |
-| H3 | 群里 @员工 真事（ASCII 探针口径或请他问 dxxh） | 口径类 `reply`；办事类 `issue` 且 purpose 含委托人/事件 |
-| H4 | 单聊编号灌水 3 条（可 collect） | 至多一轮 Decide；`silence` 或一句带过；Host 不被灌水写成稳定知识主条 |
-| H5 | 忙着办事时单聊一句闲聊 | 人话 ack（手头这件还在做…），不 `issue_comment_add` |
-| W1 | GUI：打开「任务完成再判断」后 PUT `task_finished_loop_enabled=true` | 设置页开关亮；API 读回 true |
-| W2 | 冬翔让员工 `echo R9-WRAP-4401` 并回话 | 沙箱完成后 `task_finished_loop_decided`；冬翔单聊有一句人话小结（不是「收到」）；Langfuse `loop=task_finished` |
-| W3 | 关掉完成 Hook 再跑同类 echo | 无 `task_finished_loop_decided`；沙箱自己的 IM 可以有，Coordinator wrap-up 没有 |
+| W1 | Workbench 打开「事情完成再判断」（入站已开） | 设置页开关可点、亮着；API `task_finished_loop_enabled=true`。入站关掉时该开关 `aria-disabled` |
+| H1 | 群里不 @，配角↔测试号互聊「晚上吃饭吗 / 哈哈」 | 无员工插话；无 Decide 或 `decided=silence` |
+| H2 | 群里 @员工 编号灌水 `R10-FLOOD-n unrelated noise`（连发 3 条，可 collect） | `silence` 或一句短人话；**不得** `action=issue`；不得每条「收到」 |
+| H3 | 群里 @员工 真事：`帮 dxxh 确认周五三点能不能开会，回我` | `action=issue`；purpose 含委托人/事件/目的；IM 是「我去问…」不是「已创建事项」 |
+| H6 | 上一件办完后，群里 @「谢谢」/「好的」无新事 | `reply` 一句短 ack（嗯/好/没事）或 `silence`；不得新 Issue |
+| H8 | 3s 窗口内 @ 两条灌水 + 一条真事（`echo R10-MIX-5521`） | 一轮 Decide 即可；只办真事；灌水不当事项 |
+| H9 | 群里 @「在吗」 | `reply` 一句在；不得 Issue |
+| W2 | 冬翔单聊 `echo R10-WRAP-4401 and tell me` | 沙箱完成后 `task_finished_loop_decided`；冬翔 cid 有一句人话小结（不是「收到」）；Langfuse `loop=task_finished` |
 
-H1–H3 用配角建 INTERNAL 群、只拉测试号、每次 @ 用该群 members-list 的 openDingTalkId。W2 的证明看 SLS `task_finished_loop_decided` + 钉钉回读，不看 Issue 自述。
+### 扩展（时间够再打）
+
+| ID | 场景 | 过线 |
+|---|---|---|
+| H4 | 单聊编号灌水 3 条（可 collect） | 至多一轮 Decide；`silence` 或一句带过；Host 不被灌水写成稳定知识主条 |
+| H5 | 忙着办事时单聊一句闲聊 | 人话 ack，不 `issue_comment_add` |
+| H7 | 群里两人聊真工作（报销、约会）但不 @ 员工 | 员工不插话、不建事项 |
+| H10 | 群里 @ 只有表情 / 「哈哈」/ 「+1」 | `silence`；无 Issue |
+| H11 | 群里别人聊完一长串，@「你看一下」无对象 | `reply` 问看什么；不复述群聊；不建空事项 |
+| H12 | 群里 @「帮我问 dxxh」无正文 | `reply` 问要说什么；不 Issue |
+| H13 | 群里 @「帮我问 dxxh 就说周五三点开会」 | `issue`；purpose 结构化；text 像人 |
+| H14 | 冬翔单聊「你好」 | 必须 `reply`，禁止 silence |
+| H15 | 群里 A @ 真事之后 B 立刻 @ 食堂灌水 | 真事不被灌水改道；灌水 silence |
+| W3 | 关掉「事情完成再判断」再跑同类 echo | 无 `task_finished_loop_decided`；沙箱 IM 可以有，Coordinator wrap-up 没有。打完再打开 |
+
+H1–H3 / H6–H13 用配角建 INTERNAL 群、只拉测试号。W2 证明看 SLS `task_finished_loop_decided` + 钉钉回读，不看 Issue 自述。W3 会关掉开关，打完必须再打开，避免把狗粮 Agent 留在无 wrap-up。
 
 ---
 
