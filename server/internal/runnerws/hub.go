@@ -269,7 +269,7 @@ func (c *client) readPump(parent context.Context) {
 }
 
 func (h *Hub) storeMCPInventory(machineID string, inventory runnerprotocol.MCPInventory) bool {
-	if strings.TrimSpace(inventory.Revision) == "" || len(inventory.Servers) > 256 {
+	if strings.TrimSpace(inventory.Revision) == "" || len(inventory.Servers) > 256 || len(inventory.Config) > 1<<20 || (len(inventory.Config) > 0 && !json.Valid(inventory.Config)) {
 		return false
 	}
 	seen := make(map[string]struct{}, len(inventory.Servers))
@@ -284,6 +284,7 @@ func (h *Hub) storeMCPInventory(machineID string, inventory runnerprotocol.MCPIn
 	}
 	copyInventory := inventory
 	copyInventory.Servers = append([]runnerprotocol.MCPServerSummary(nil), inventory.Servers...)
+	copyInventory.Config = append([]byte(nil), inventory.Config...)
 	h.mu.Lock()
 	h.inventory[machineID] = copyInventory
 	h.mu.Unlock()
@@ -298,6 +299,7 @@ func (h *Hub) MCPInventory(machineID string) (runnerprotocol.MCPInventory, bool)
 		return runnerprotocol.MCPInventory{}, false
 	}
 	inventory.Servers = append([]runnerprotocol.MCPServerSummary(nil), inventory.Servers...)
+	inventory.Config = append([]byte(nil), inventory.Config...)
 	return inventory, true
 }
 

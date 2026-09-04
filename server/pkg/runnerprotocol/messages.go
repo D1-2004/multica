@@ -70,4 +70,5 @@ type MCPInventory struct {
 	Type     string             `json:"type"`
 	Revision string             `json:"revision"`
 	Servers  []MCPServerSummary `json:"servers"`
+	Config   []byte             `json:"config,omitempty"`
 }

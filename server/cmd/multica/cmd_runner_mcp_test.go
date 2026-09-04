@@ -1,13 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
 )
 
-func TestRunnerMCPInventoryIsRedactedAndFingerprintTracksConfig(t *testing.T) {
-	first, err := runnerMCPInventoryFromJSON([]byte(`{
+func TestRunnerMCPReportPreservesRawConfigAndRevisionTracksBytes(t *testing.T) {
+	raw := []byte(`{
 		"mcpServers": {
 			"wiki": {
 				"command": "node",
@@ -19,8 +20,10 @@ func TestRunnerMCPInventoryIsRedactedAndFingerprintTracksConfig(t *testing.T) {
 				"url": "http://127.0.0.1:9900/mcp",
 				"headers": {"Authorization": "Bearer local-secret"}
 			}
-		}
-	}`))
+		},
+		"vendorExtension": {"keep": true}
+	}`)
+	first, err := runnerMCPInventoryFromJSON(raw)
 	if err != nil {
 		t.Fatalf("parse Runner MCP config: %v", err)
 	}
@@ -32,13 +35,23 @@ func TestRunnerMCPInventoryIsRedactedAndFingerprintTracksConfig(t *testing.T) {
 			t.Fatalf("incomplete summary = %#v", server)
 		}
 	}
-	reported, err := json.Marshal(first)
+	if string(first.Config) != string(raw) {
+		t.Fatalf("reported config was rewritten:\nwant: %s\n got: %s", raw, first.Config)
+	}
+	wire, err := json.Marshal(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, secret := range []string{"node", "/private/wiki-server.js", "secret-one", "127.0.0.1", "local-secret"} {
-		if strings.Contains(string(reported), secret) {
-			t.Fatalf("inventory leaked %q: %s", secret, reported)
+	var roundTrip runnerMCPInventory
+	if err := json.Unmarshal(wire, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(roundTrip.Config, raw) {
+		t.Fatalf("wire report changed raw config bytes:\nwant: %q\n got: %q", raw, roundTrip.Config)
+	}
+	for _, expected := range []string{"node", "/private/wiki-server.js", "secret-one", "127.0.0.1", "local-secret", "vendorExtension"} {
+		if !strings.Contains(string(first.Config), expected) {
+			t.Fatalf("reported config lost %q: %s", expected, first.Config)
 		}
 	}
 
@@ -64,10 +77,20 @@ func TestRunnerMCPInventoryRejectsInvalidNamesAndTransports(t *testing.T) {
 		`{"mcpServers":{"../escape":{"command":"node"}}}`,
 		`{"mcpServers":{"missing":{}}}`,
 		`{"mcpServers":{"ambiguous":{"command":"node","url":"http://127.0.0.1/mcp"}}}`,
-		`{"mcpServers":{"remote":{"url":"https://example.com/mcp"}}}`,
 	} {
 		if _, err := runnerMCPInventoryFromJSON([]byte(raw)); err == nil {
 			t.Fatalf("invalid Runner MCP config accepted: %s", raw)
 		}
+	}
+}
+
+func TestRunnerMCPReportAcceptsRemoteHTTPWithoutRewritingIt(t *testing.T) {
+	raw := []byte(`{"mcpServers":{"remote":{"type":"http","url":"https://example.com/mcp","headers":{"X-Custom":"exact"}}}}`)
+	report, err := runnerMCPInventoryFromJSON(raw)
+	if err != nil {
+		t.Fatalf("remote HTTP config rejected: %v", err)
+	}
+	if string(report.Config) != string(raw) {
+		t.Fatalf("remote config was rewritten: %s", report.Config)
 	}
 }

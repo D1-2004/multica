@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -66,11 +65,13 @@ func loadRunnerMCPConfig() (runnerMCPConfigDocument, error) {
 }
 
 func parseRunnerMCPConfig(raw []byte) (runnerMCPConfigDocument, error) {
+	if len(raw) == 0 || len(raw) > 1<<20 || !json.Valid(raw) {
+		return runnerMCPConfigDocument{}, errors.New("Runner MCP config must be one valid JSON document of at most 1 MiB")
+	}
 	var envelope struct {
 		MCPServers map[string]json.RawMessage `json:"mcpServers"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&envelope); err != nil {
 		return runnerMCPConfigDocument{}, fmt.Errorf("parse Runner MCP config: %w", err)
 	}
@@ -84,7 +85,7 @@ func parseRunnerMCPConfig(raw []byte) (runnerMCPConfigDocument, error) {
 	}
 	sort.Strings(names)
 	document := runnerMCPConfigDocument{
-		Inventory: runnerMCPInventory{Type: runnerprotocol.MessageInventory, Servers: make([]runnerMCPServerSummary, 0, len(names))},
+		Inventory: runnerMCPInventory{Type: runnerprotocol.MessageInventory, Servers: make([]runnerMCPServerSummary, 0, len(names)), Config: append([]byte(nil), raw...)},
 		Servers:   make(map[string]runnerMCPServerConfig, len(names)),
 	}
 	for _, name := range names {
@@ -104,7 +105,7 @@ func parseRunnerMCPConfig(raw []byte) (runnerMCPConfigDocument, error) {
 		}
 		transport := "stdio"
 		if rawURL != "" {
-			if err := validateLocalRunnerMCPURL(rawURL); err != nil {
+			if err := validateRunnerMCPURL(rawURL); err != nil {
 				return runnerMCPConfigDocument{}, fmt.Errorf("MCP server %q: %w", name, err)
 			}
 			transport = "http"
@@ -124,27 +125,15 @@ func parseRunnerMCPConfig(raw []byte) (runnerMCPConfigDocument, error) {
 			Name: name, Transport: transport, Availability: "available", Fingerprint: fingerprint,
 		})
 	}
-	revisionRaw, err := json.Marshal(document.Inventory.Servers)
-	if err != nil {
-		return runnerMCPConfigDocument{}, err
-	}
-	revisionHash := sha256.Sum256(revisionRaw)
+	revisionHash := sha256.Sum256(raw)
 	document.Inventory.Revision = "sha256:" + hex.EncodeToString(revisionHash[:])
 	return document, nil
 }
 
-func validateLocalRunnerMCPURL(raw string) error {
+func validateRunnerMCPURL(raw string) error {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil {
-		return errors.New("url must be a local HTTP(S) endpoint")
-	}
-	host := strings.ToLower(parsed.Hostname())
-	if host == "localhost" {
-		return nil
-	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return errors.New("url must use localhost or a loopback address")
+		return errors.New("url must be an HTTP(S) endpoint without userinfo")
 	}
 	return nil
 }
