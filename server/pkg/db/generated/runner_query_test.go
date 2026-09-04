@@ -95,7 +95,7 @@ func TestCreateRunnerMCPCallRequiresEnabledFingerprint(t *testing.T) {
 		);
 		CREATE TABLE runner_call (
 			id uuid PRIMARY KEY DEFAULT gen_random_uuid(), workspace_id uuid NOT NULL, agent_id uuid NOT NULL,
-			task_id uuid NOT NULL, user_id uuid NOT NULL, machine_id uuid NOT NULL, tool_name text NOT NULL,
+			task_id uuid NOT NULL, user_id uuid NOT NULL, machine_id uuid NOT NULL, tool_name varchar(64) NOT NULL,
 			arguments jsonb NOT NULL, roots jsonb NOT NULL, result jsonb, status text NOT NULL DEFAULT 'queued',
 			error_code text, error_message text, expires_at timestamptz NOT NULL, started_at timestamptz,
 			completed_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
