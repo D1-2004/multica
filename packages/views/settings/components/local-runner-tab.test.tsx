@@ -209,6 +209,11 @@ describe("LocalRunnerTab", () => {
     expect(
       screen.getAllByText("Local file access directories").length,
     ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        "~/.multica/runner/bin/multica runner configure --directory /absolute/path",
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Exposed file roots")).not.toBeInTheDocument();
   });
 

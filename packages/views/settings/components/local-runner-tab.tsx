@@ -70,6 +70,8 @@ const RUNNER_COMMANDS = [
   "~/.multica/runner/bin/multica runner stop",
   "~/.multica/runner/bin/multica runner status",
 ];
+const RUNNER_FILE_ACCESS_COMMAND =
+  "~/.multica/runner/bin/multica runner configure --directory /absolute/path";
 
 function mutationTarget(binding: AccountRunnerBinding): AccountRunnerBindingTarget {
   return {
@@ -346,6 +348,9 @@ export function LocalRunnerTab() {
               <p className="mt-1 text-caption text-muted-foreground">
                 {t(($) => $.local_runner.file_access_description)}
               </p>
+              <code className="mt-3 block break-all rounded bg-muted px-3 py-2 font-mono text-micro">
+                {RUNNER_FILE_ACCESS_COMMAND}
+              </code>
             </div>
           </li>
         </ol>

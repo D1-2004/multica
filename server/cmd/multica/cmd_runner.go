@@ -51,6 +51,13 @@ var runnerStopCmd = &cobra.Command{
 	RunE:  runRunnerStop,
 }
 
+var runnerConfigureCmd = &cobra.Command{
+	Use:   "configure",
+	Short: "Configure the local Runner",
+	Args:  cobra.NoArgs,
+	RunE:  runRunnerConfigure,
+}
+
 var runnerReconnectCmd = &cobra.Command{
 	Use:   "reconnect",
 	Short: "Reconnect one Agent binding for this local Runner",
@@ -70,7 +77,8 @@ func init() {
 	runnerBindCmd.Flags().StringSlice("root", nil, "Absolute file root to expose; defaults to this user's Desktop on first bind")
 	runnerReconnectCmd.Flags().String("reconnect-token", "", "Short-lived reconnect token copied from General settings")
 	runnerStartCmd.Flags().Bool("foreground", false, "Run in the current terminal")
-	runnerCmd.AddCommand(runnerBindCmd, runnerReconnectCmd, runnerStartCmd, runnerStopCmd, runnerStatusCmd)
+	runnerConfigureCmd.Flags().StringSlice("directory", nil, "Local file access directory; repeat to configure more than one")
+	runnerCmd.AddCommand(runnerBindCmd, runnerReconnectCmd, runnerStartCmd, runnerStopCmd, runnerStatusCmd, runnerConfigureCmd)
 }
 
 type runnerDeviceAuthorization struct {
@@ -118,16 +126,9 @@ func runRunnerBind(cmd *cobra.Command, _ []string) error {
 			roots = []string{desktop}
 		}
 	}
-	for i, root := range roots {
-		absolute, absoluteErr := filepath.Abs(root)
-		if absoluteErr != nil {
-			return fmt.Errorf("resolve Runner root %q: %w", root, absoluteErr)
-		}
-		info, statErr := os.Stat(absolute)
-		if statErr != nil || !info.IsDir() {
-			return fmt.Errorf("Runner root must be an existing directory: %s", absolute)
-		}
-		roots[i] = filepath.Clean(absolute)
+	roots, err = normalizeRunnerFileAccessDirectories(roots)
+	if err != nil {
+		return err
 	}
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -220,6 +221,56 @@ func defaultRunnerDesktop() (string, error) {
 		return "", fmt.Errorf("default Runner root is not a directory: %s", desktop)
 	}
 	return filepath.Clean(desktop), nil
+}
+
+func normalizeRunnerFileAccessDirectories(directories []string) ([]string, error) {
+	if len(directories) == 0 {
+		return nil, errors.New("at least one --directory is required")
+	}
+	result := make([]string, 0, len(directories))
+	seen := make(map[string]struct{}, len(directories))
+	for _, directory := range directories {
+		absolute, err := filepath.Abs(directory)
+		if err != nil {
+			return nil, fmt.Errorf("resolve file access directory %q: %w", directory, err)
+		}
+		absolute = filepath.Clean(absolute)
+		info, err := os.Stat(absolute)
+		if err != nil || !info.IsDir() {
+			return nil, fmt.Errorf("file access directory must be an existing directory: %s", absolute)
+		}
+		if _, exists := seen[absolute]; exists {
+			return nil, fmt.Errorf("file access directory is listed more than once: %s", absolute)
+		}
+		seen[absolute] = struct{}{}
+		result = append(result, absolute)
+	}
+	return result, nil
+}
+
+func runRunnerConfigure(cmd *cobra.Command, _ []string) error {
+	directories, err := cmd.Flags().GetStringSlice("directory")
+	if err != nil {
+		return err
+	}
+	directories, err = normalizeRunnerFileAccessDirectories(directories)
+	if err != nil {
+		return err
+	}
+	cfg, err := loadRunnerConfig()
+	if err != nil {
+		return err
+	}
+	cfg.Roots = directories
+	if err := saveRunnerConfig(cfg); err != nil {
+		return err
+	}
+	if _, running := currentRunnerPID(); running {
+		fmt.Fprintln(os.Stderr, "File access directories saved. Restarting Runner to apply them...")
+		return restartRunnerBackground()
+	}
+	fmt.Fprintln(os.Stderr, "File access directories saved. Start Runner to apply them.")
+	return nil
 }
 
 func runRunnerReconnect(cmd *cobra.Command, _ []string) error {
@@ -511,7 +562,7 @@ func runRunnerStatus(_ *cobra.Command, _ []string) error {
 		fmt.Printf("PID: %d\n", pid)
 	}
 	if len(cfg.Roots) > 0 {
-		fmt.Printf("Roots: %s\n", strings.Join(cfg.Roots, ", "))
+		fmt.Printf("File access directories: %s\n", strings.Join(cfg.Roots, ", "))
 	}
 	for _, binding := range bindings {
 		connection := "offline"
