@@ -111,6 +111,9 @@ type Turn struct {
 	TaskResult    string
 	IssueID       string
 	Utterances    []WindowUtterance
+	// AlreadyToldScene is set by Host on task_finished when this sandbox
+	// run already sent IM on the inbound conversation. Decide silences.
+	AlreadyToldScene bool
 }
 
 // HistoryLine is one already-persisted Multica chat message or a DingTalk row.
@@ -281,6 +284,9 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
 		return Decision{Action: ActionSilence, Reason: "window_ack"}
 	}
+	if turn.Loop == LoopTaskFinished && turn.AlreadyToldScene {
+		return Decision{Action: ActionSilence, Reason: "already_told_scene"}
+	}
 	if c.LLM == nil || !c.LLM.Enabled() {
 		if turn.Loop == LoopTaskFinished {
 			return Decision{Action: ActionSilence}
@@ -364,6 +370,9 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	loopErr = err
 	elapsed := time.Since(started)
 	decision.Steps = mergeCoordinatorSteps(preflightSteps, decision.Steps)
+	if turn.Loop == LoopTaskFinished {
+		decision = FilterTaskFinishedWrapup(decision)
+	}
 	if err != nil {
 		failOpen := ActionContinue
 		if turn.Loop == LoopTaskFinished {
@@ -695,7 +704,11 @@ func parseDecision(raw string, turn Turn) Decision {
 		if text == "" {
 			return Decision{Action: ActionContinue}
 		}
-		return Decision{Action: ActionReply, UserText: text, Reason: reason}
+		reply := Decision{Action: ActionReply, UserText: text, Reason: reason}
+		if turn.Loop == LoopTaskFinished {
+			return FilterTaskFinishedWrapup(reply)
+		}
+		return reply
 	case ActionIssue:
 		break
 	case ActionSilence:

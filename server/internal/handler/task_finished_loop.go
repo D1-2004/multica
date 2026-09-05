@@ -79,6 +79,7 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		IssueID:              uuidToString(task.IssueID),
 		TaskResult:           result,
 		IssueDispatchContext: task.Context,
+		AlreadyToldScene:     h.taskFinishedSceneAlreadyTold(ctx, task, agent, cid),
 	}
 	if envelope.ExternalIdentity != nil && envelope.ExternalIdentity.DWS != nil {
 		turn.DWSUID = strings.TrimSpace(envelope.ExternalIdentity.DWS.UID)
@@ -93,12 +94,40 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		"issue_id", uuidToString(task.IssueID),
 		"task_id", uuidToString(task.ID),
 		"action", string(decision.Action),
+		"reason", decision.Reason,
 		"text", clipRunes(decision.UserText, 80),
 	)
 	h.deliverTaskFinishedDecision(ctx, task, decision)
 }
 
+func (h *Handler) taskFinishedSceneAlreadyTold(ctx context.Context, task *db.AgentTaskQueue, agent db.Agent, cid string) bool {
+	if h == nil || h.Assoc == nil || task == nil {
+		return false
+	}
+	since := task.CreatedAt.Time
+	if task.StartedAt.Valid {
+		since = task.StartedAt.Time
+	}
+	if since.IsZero() {
+		since = time.Now().Add(-2 * time.Hour)
+	}
+	events, err := h.Assoc.ListEventsByScene(ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), cid, since, 20)
+	if err != nil {
+		return false
+	}
+	return inboundcoord.TaskFinishedAlreadyToldScene(events, cid, uuidToString(task.ID))
+}
+
 func (h *Handler) deliverTaskFinishedDecision(ctx context.Context, task *db.AgentTaskQueue, decision inboundcoord.Decision) {
+	filtered := inboundcoord.FilterTaskFinishedWrapup(decision)
+	if filtered.Action != decision.Action || filtered.UserText != decision.UserText {
+		slog.Info("task finished loop skipped wrap-up delivery",
+			"event", "task_finished_loop_skip_delivery",
+			"task_id", uuidToString(task.ID),
+			"reason", "redundant_wrapup",
+		)
+	}
+	decision = filtered
 	text := strings.TrimSpace(decision.UserText)
 	if decision.Action != inboundcoord.ActionReply || text == "" || h.TaskService == nil {
 		return

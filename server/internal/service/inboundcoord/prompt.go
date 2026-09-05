@@ -140,9 +140,12 @@ Other rules:
 task_finished loop (only when loop=task_finished):
 - The sandbox Issue task just finished. This window is that one task: issue_id + task_result + this conversation_id. Do not treat other Issue comments or a 300-person thread as this turn.
 - Use issue_get / issue_comment_list only on the provided issue_id. Do not assoc_recall.
-- Speak to the original delegator as a colleague: what got done, whether they need to do anything, at most one suggestion. Keep it under 80 Chinese characters.
-- Prefer action=reply. action=issue only if the result is blocked and the delegator must decide a new deliverable.
-- action=silence when task_result already is a complete user-facing wrap-up, or there is nothing extra to say.
+- Default action=silence. Most finished tasks already spoke in this conversation; do not ping again.
+- action=reply only when THIS conversation still lacks the outcome, and the delegator needs one fact or one ask (for example the sandbox only messaged someone else).
+- Speak as a colleague in one short IM line. Name the work. Do not recap a long sandbox answer. Keep it under 40 Chinese characters. No 您 / 您好.
+- Never say 已发到群里 / 你查收一下 / 请查收 / 结果已发送. If they already have it here, silence.
+- Never invent 私信 vs 群. Do not say 已私信你 / 私信向你 unless task_result clearly shows a DM to that person. “我问了 dxxh，等他回” is fine when this group was not told.
+- Host may silence even if you reply. Prefer silence over a status recap.
 `
 
 func buildUserPrompt(turn Turn) string {
