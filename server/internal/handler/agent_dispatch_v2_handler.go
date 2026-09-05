@@ -496,16 +496,21 @@ func bindDispatchCompletionTarget(
 	command DispatchCommand,
 	targetIdentity string,
 ) (DispatchCommand, error) {
-	if command.CompletionCallback == nil {
+	targetIdentity = strings.TrimSpace(targetIdentity)
+	if command.CompletionCallback == nil && len(command.ExtraCompletionCallbacks) == 0 {
 		return command, nil
 	}
-	targetIdentity = strings.TrimSpace(targetIdentity)
 	if !routerCompletionTargetPattern.MatchString(targetIdentity) {
 		return DispatchCommand{}, errors.New("task completion target is not configured")
 	}
-	callback := *command.CompletionCallback
-	callback.Target = targetIdentity
-	command.CompletionCallback = &callback
+	if command.CompletionCallback != nil {
+		callback := *command.CompletionCallback
+		callback.Target = targetIdentity
+		command.CompletionCallback = &callback
+	}
+	for i := range command.ExtraCompletionCallbacks {
+		command.ExtraCompletionCallbacks[i].Target = targetIdentity
+	}
 	return command, nil
 }
 
@@ -1137,6 +1142,8 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		var firstIssue db.Issue
 		var firstTask db.AgentTaskQueue
 		created := 0
+		incomplete := false
+		usedEvidence := map[string]struct{}{}
 		for i, item := range items {
 			itemDecision := decision
 			itemDecision.Purpose = item.Purpose
@@ -1152,6 +1159,18 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				itemKey = idempotencyKey + ":window-item:" + fmt.Sprintf("%d", i)
 			}
 			itemCommand := overlayDispatchSender(c, item.Delegator)
+			bindWindowItemEvidence(&itemCommand, item, usedEvidence)
+			if existingIssue, existingTask, existingIdent, ok := h.lookupCoordinatorWindowItem(
+				r.Context(), agent.ID, itemKey, dispatchContext.EndpointID, dispatchContext.WorkspaceID,
+			); ok {
+				keepAttachments = true
+				if created == 0 {
+					firstIssueID, firstTaskID, firstIdentifier = uuidToString(existingIssue.ID), uuidToString(existingTask.ID), existingIdent
+					firstIssue, firstTask = existingIssue, existingTask
+				}
+				created++
+				continue
+			}
 			independentContext, contextErr := inboundcoord.IndependentIssueTaskContext(
 				dispatchRuntimeContext(itemCommand, itemKey),
 				inboundcoord.CoordinatorIssueTriggerCreate,
@@ -1161,6 +1180,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 					writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
 					return
 				}
+				incomplete = true
 				break
 			}
 			overrides.DispatchContext = inboundcoord.StampCoordinatorTrace(independentContext, itemDecision, "dingtalk", time.Now())
@@ -1176,10 +1196,22 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				Platform:         "webhook",
 			})
 			if errors.Is(err, service.ErrActiveDuplicate) {
+				if existingIssue, existingTask, existingIdent, ok := h.lookupCoordinatorWindowItem(
+					r.Context(), agent.ID, itemKey, dispatchContext.EndpointID, dispatchContext.WorkspaceID,
+				); ok {
+					keepAttachments = true
+					if created == 0 {
+						firstIssueID, firstTaskID, firstIdentifier = uuidToString(existingIssue.ID), uuidToString(existingTask.ID), existingIdent
+						firstIssue, firstTask = existingIssue, existingTask
+					}
+					created++
+					continue
+				}
 				if created == 0 {
 					writeError(w, http.StatusConflict, service.ErrActiveDuplicate.Error())
 					return
 				}
+				incomplete = true
 				break
 			}
 			if err != nil {
@@ -1187,6 +1219,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 					writeError(w, http.StatusInternalServerError, "failed to create issue")
 					return
 				}
+				incomplete = true
 				break
 			}
 			keepAttachments = true
@@ -1195,6 +1228,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 					writeError(w, http.StatusInternalServerError, "issue created but agent task was not enqueued")
 					return
 				}
+				incomplete = true
 				break
 			}
 			prefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
@@ -1211,6 +1245,10 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		}
 		if created == 0 {
 			writeError(w, http.StatusInternalServerError, "failed to create issue")
+			return
+		}
+		if incomplete || created < len(items) {
+			writeError(w, http.StatusInternalServerError, "failed to create remaining scene items")
 			return
 		}
 		if h.TaskService != nil && c.CompletionCallback != nil {
@@ -1234,6 +1272,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			"continuationFingerprint", agentDispatchIdentifierFingerprint(firstIssueID),
 			"taskFingerprint", agentDispatchIdentifierFingerprint(firstTaskID),
 		)
+		h.closeExtraCoordinatorCallbacks(r.Context(), c, agent.ID)
 		writeJSON(w, http.StatusCreated, AgentDispatchResponse{
 			Continuation:    AgentDispatchContinuation{Kind: "issue", IssueID: firstIssueID},
 			IssueIdentifier: firstIdentifier,
@@ -1633,6 +1672,7 @@ func writeDispatchCoordinatorTerminal(
 			response.IssueIdentifier = decision.IssueComment.IssueIdentifier
 			response.CommentID = decision.IssueComment.CommentID
 		}
+		h.closeExtraCoordinatorCallbacks(ctx, command, dispatchContext.AgentID)
 		writeJSON(w, http.StatusAccepted, response)
 		return true
 	case inboundcoord.ActionSilence:
@@ -1645,11 +1685,46 @@ func writeDispatchCoordinatorTerminal(
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
 			return true
 		}
+		h.closeExtraCoordinatorCallbacks(ctx, command, dispatchContext.AgentID)
 		w.WriteHeader(http.StatusAccepted)
 		return true
 	default:
 		return false
 	}
+}
+
+func (h *Handler) closeExtraCoordinatorCallbacks(ctx context.Context, command DispatchCommand, agentID pgtype.UUID) {
+	for i := range command.ExtraCompletionCallbacks {
+		cb := command.ExtraCompletionCallbacks[i]
+		h.enqueueCoordinatorSilenceCallback(ctx, &cb, agentID, "inbound_coordinator_extra_silence_failed", "")
+	}
+}
+
+func (h *Handler) lookupCoordinatorWindowItem(
+	ctx context.Context,
+	agentID pgtype.UUID,
+	itemKey, endpointID string,
+	workspaceID pgtype.UUID,
+) (db.Issue, db.AgentTaskQueue, string, bool) {
+	var noneIssue db.Issue
+	var noneTask db.AgentTaskQueue
+	if h == nil || h.Queries == nil || strings.TrimSpace(itemKey) == "" {
+		return noneIssue, noneTask, "", false
+	}
+	existing, err := h.Queries.GetAgentDispatchRootTaskByIdempotency(ctx, db.GetAgentDispatchRootTaskByIdempotencyParams{
+		AgentID:        agentID,
+		IdempotencyKey: itemKey,
+		EndpointID:     endpointID,
+	})
+	if err != nil || !existing.IssueID.Valid {
+		return noneIssue, noneTask, "", false
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: existing.IssueID, WorkspaceID: workspaceID})
+	if err != nil {
+		return noneIssue, noneTask, "", false
+	}
+	ident := h.getIssuePrefix(ctx, workspaceID) + "-" + formatIssueNumber(issue.Number)
+	return issue, existing, ident, true
 }
 
 func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext) {

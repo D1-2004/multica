@@ -21,6 +21,12 @@ func dispatchConversationID(command DispatchCommand) string {
 func mergeDispatchCommands(base, extra DispatchCommand) DispatchCommand {
 	stampDispatchMessageSenders(&base)
 	stampDispatchMessageSenders(&extra)
+	if extra.CompletionCallback != nil {
+		base.ExtraCompletionCallbacks = append(append([]DispatchCompletionCallback{}, base.ExtraCompletionCallbacks...), *extra.CompletionCallback)
+	}
+	if len(extra.ExtraCompletionCallbacks) > 0 {
+		base.ExtraCompletionCallbacks = append(base.ExtraCompletionCallbacks, extra.ExtraCompletionCallbacks...)
+	}
 	if len(extra.Event.Data.Messages) == 0 {
 		return base
 	}

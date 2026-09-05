@@ -58,6 +58,20 @@ func (q *Queries) GetInboundCoordinatorJobByAcceptance(ctx context.Context, acce
 		`SELECT `+inboundCoordinatorJobColumns+` FROM inbound_coordinator_job WHERE acceptance_id = $1`, acceptanceID))
 }
 
+type GetInboundCoordinatorJobByIdempotencyParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	IdempotencyKey string      `json:"idempotency_key"`
+}
+
+func (q *Queries) GetInboundCoordinatorJobByIdempotency(ctx context.Context, arg GetInboundCoordinatorJobByIdempotencyParams) (InboundCoordinatorJob, error) {
+	return scanInboundCoordinatorJob(q.db.QueryRow(ctx,
+		`SELECT `+inboundCoordinatorJobColumns+` FROM inbound_coordinator_job
+WHERE workspace_id = $1 AND agent_id = $2 AND idempotency_key = $3
+ORDER BY created_at ASC LIMIT 1`,
+		arg.WorkspaceID, arg.AgentID, arg.IdempotencyKey))
+}
+
 func (q *Queries) ClaimInboundCoordinatorJob(ctx context.Context) (InboundCoordinatorJob, error) {
 	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
 WITH candidate AS (

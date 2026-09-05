@@ -129,6 +129,12 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.fail(ctx, job, command, "invalid persisted dispatch command")
 	}
+	if strings.TrimSpace(command.TaskFinishedTaskID) != "" {
+		if runErr := w.handler.runPersistedTaskFinishedLoop(ctx, command.TaskFinishedTaskID); runErr != nil {
+			return true, w.retry(ctx, job, runErr)
+		}
+		return true, w.complete(ctx, job)
+	}
 	command, err = w.absorbPendingSameScene(ctx, job, command)
 	if err != nil {
 		return true, w.retry(ctx, job, fmt.Errorf("collect same-scene jobs: %w", err))
@@ -164,7 +170,7 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if recoverErr != nil {
 		return true, w.retry(ctx, job, fmt.Errorf("recover dispatch result: %w", recoverErr))
 	}
-	if recoveredOK {
+	if recoveredOK && !coordinatorIssueReplayRequired(recovered) {
 		decision := recoveredCoordinatorDecision(command, recovered)
 		if err := w.handler.persistCoordinatorJobChat(ctx, job, decision); err != nil {
 			return true, w.retry(ctx, job, fmt.Errorf("persist recovered coordinator Chat: %w", err))
@@ -412,18 +418,11 @@ func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentI
 	params := db.CountActiveTasksForConversationParams{
 		WorkspaceID: workspaceID, AgentID: agentID, ConversationID: cid,
 	}
-	open, err := h.Queries.CountOpenSceneMattersForConversation(ctx, params)
+	active, err := h.Queries.CountActiveTasksForConversation(ctx, params)
 	if err != nil {
 		return slots
 	}
-	active, err := h.Queries.CountActiveTasksForConversation(ctx, params)
-	if err != nil {
-		active = 0
-	}
-	used := open
-	if active > used {
-		used = active
-	}
+	used := active
 	left := slots - int(used)
 	if left < 0 {
 		return 0
@@ -458,6 +457,17 @@ func isCoordinatorBusyParkReason(reason string) bool {
 		strings.Contains(reason, "already has an active task") ||
 		strings.Contains(reason, "issue_busy") ||
 		strings.Contains(reason, "active duplicate")
+}
+
+func coordinatorIssueReplayRequired(response *bufferedDispatchResponse) bool {
+	if response == nil {
+		return false
+	}
+	var dispatchResponse AgentDispatchResponse
+	if json.Unmarshal(response.body.Bytes(), &dispatchResponse) != nil {
+		return false
+	}
+	return dispatchResponse.Continuation.Kind == "issue"
 }
 
 func recoveredCoordinatorDecision(command DispatchCommand, response *bufferedDispatchResponse) inboundcoord.Decision {
@@ -671,7 +681,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if err != nil {
 				return nil, job, err
 			}
-			h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job)
+			h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job, idempotencyKey)
 			if err := tx.Commit(ctx); err != nil {
 				return nil, job, err
 			}
@@ -739,7 +749,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if err != nil {
 		return nil, job, err
 	}
-	h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job)
+	h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job, idempotencyKey)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, job, err
 	}
@@ -836,6 +846,7 @@ func (h *Handler) markSceneMemoryDirty(
 	command DispatchCommand,
 	dispatchContext agentDispatchContext,
 	job db.InboundCoordinatorJob,
+	idempotencyKey string,
 ) {
 	if h == nil || h.SceneMemoryStore == nil || qtx == nil {
 		return
@@ -880,7 +891,7 @@ func (h *Handler) markSceneMemoryDirty(
 		EvidenceID:     ids.EvidenceID,
 		JobID:          job.ID,
 		CoordTraceID:   util.UUIDToString(job.ID),
-		IdempotencyKey: job.IdempotencyKey,
+		IdempotencyKey: firstNonEmpty(strings.TrimSpace(idempotencyKey), job.IdempotencyKey),
 	})
 	if err != nil {
 		slog.Warn("scene memory mark dirty failed",
@@ -896,7 +907,7 @@ func (h *Handler) markSceneMemoryDirty(
 		"agent_id", util.UUIDToString(dispatchContext.AgentID),
 		"scene_key", ids.ConversationID,
 		"dirty_revision", row.DirtyRevision,
-		"idempotency", job.IdempotencyKey,
+		"idempotency", firstNonEmpty(strings.TrimSpace(idempotencyKey), job.IdempotencyKey),
 		"scene_memory_id", util.UUIDToString(row.ID),
 	)
 }
