@@ -1093,20 +1093,130 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	}()
 
 	idempotencyKey := dispatchIdempotencyKey(r, c)
-	overrides := agentDispatchIssueCreateOverrides{}
-	if decision.Action == inboundcoord.ActionIssue {
-		overrides.Title = inboundcoord.IssueTitle(decision, prompt.DisplayContent)
-		overrides.DisplayContent = inboundcoord.IssueDescription(decision, prompt.DisplayContent)
-		independentContext, contextErr := inboundcoord.IndependentIssueTaskContext(
-			dispatchRuntimeContext(c, idempotencyKey),
-			inboundcoord.CoordinatorIssueTriggerCreate,
-		)
-		if contextErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
+	items := decision.Items
+	if decision.Action == inboundcoord.ActionIssue && len(items) == 0 {
+		items = []inboundcoord.WindowItem{{
+			Delegator: strings.TrimSpace(c.Event.Data.Sender.DisplayName),
+			Purpose:   decision.Purpose,
+			Intent:    decision.Intent,
+			LookInto:  decision.LookInto,
+		}}
+	}
+	if decision.Action == inboundcoord.ActionIssue && len(items) > 0 {
+		slots := sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c))
+		if slots <= 0 {
+			writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
 			return
 		}
-		overrides.DispatchContext = independentContext
+		if len(items) > slots {
+			items = items[:slots]
+		}
+		var firstIssueID, firstTaskID, firstIdentifier string
+		var firstIssue db.Issue
+		var firstTask db.AgentTaskQueue
+		created := 0
+		for i, item := range items {
+			itemDecision := decision
+			itemDecision.Purpose = item.Purpose
+			itemDecision.Intent = item.Intent
+			itemDecision.LookInto = item.LookInto
+			itemDecision.Items = []inboundcoord.WindowItem{item}
+			overrides := agentDispatchIssueCreateOverrides{
+				Title:          inboundcoord.IssueTitle(itemDecision, prompt.DisplayContent),
+				DisplayContent: inboundcoord.IssueDescription(itemDecision, prompt.DisplayContent),
+			}
+			itemKey := idempotencyKey
+			if i > 0 {
+				itemKey = idempotencyKey + ":window-item:" + fmt.Sprintf("%d", i)
+			}
+			itemCommand := overlayDispatchSender(c, item.Delegator)
+			independentContext, contextErr := inboundcoord.IndependentIssueTaskContext(
+				dispatchRuntimeContext(itemCommand, itemKey),
+				inboundcoord.CoordinatorIssueTriggerCreate,
+			)
+			if contextErr != nil {
+				if created == 0 {
+					writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
+					return
+				}
+				break
+			}
+			overrides.DispatchContext = independentContext
+			createParams := buildAgentDispatchIssueCreateParams(
+				itemCommand, prompt, dispatchContext, agent, itemKey, overrides,
+			)
+			if i == 0 {
+				createParams.AttachmentIDs = attachmentIDs(imported)
+			}
+			result, err := h.IssueService.Create(r.Context(), createParams, service.IssueCreateOpts{
+				ActorID:          uuidToString(dispatchContext.UserID),
+				AnalyticsAgentID: uuidToString(agent.ID),
+				Platform:         "webhook",
+			})
+			if errors.Is(err, service.ErrActiveDuplicate) {
+				if created == 0 {
+					writeError(w, http.StatusConflict, service.ErrActiveDuplicate.Error())
+					return
+				}
+				break
+			}
+			if err != nil {
+				if created == 0 {
+					writeError(w, http.StatusInternalServerError, "failed to create issue")
+					return
+				}
+				break
+			}
+			keepAttachments = true
+			if result.EnqueuedTask == nil {
+				if created == 0 {
+					writeError(w, http.StatusInternalServerError, "issue created but agent task was not enqueued")
+					return
+				}
+				break
+			}
+			prefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
+			issueID := uuidToString(result.Issue.ID)
+			taskID := uuidToString(result.EnqueuedTask.ID)
+			issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
+			h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, issueID, result.Issue.Title, taskID, prompt.DisplayContent, itemDecision)
+			if created == 0 {
+				firstIssueID, firstTaskID, firstIdentifier = issueID, taskID, issueIdentifier
+				firstIssue = result.Issue
+				firstTask = *result.EnqueuedTask
+			}
+			created++
+		}
+		if created == 0 {
+			writeError(w, http.StatusInternalServerError, "failed to create issue")
+			return
+		}
+		if h.TaskService != nil && c.CompletionCallback != nil && strings.TrimSpace(decision.UserText) != "" {
+			if err := h.enqueueCoordinatorIssueAckOrComplete(
+				r.Context(), c, dispatchContext, agent.ID,
+				firstTask, firstIssue, firstIdentifier, decision.UserText,
+			); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
+				return
+			}
+		}
+		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "created_issue",
+			"protocol", "dispatch_command_v2",
+			"httpStatus", http.StatusCreated,
+			"continuationReturned", true,
+			"window_items", created,
+			"continuationFingerprint", agentDispatchIdentifierFingerprint(firstIssueID),
+			"taskFingerprint", agentDispatchIdentifierFingerprint(firstTaskID),
+		)
+		writeJSON(w, http.StatusCreated, AgentDispatchResponse{
+			Continuation:    AgentDispatchContinuation{Kind: "issue", IssueID: firstIssueID},
+			IssueIdentifier: firstIdentifier,
+			TaskID:          firstTaskID,
+		})
+		return
 	}
+	overrides := agentDispatchIssueCreateOverrides{}
 	createParams := buildAgentDispatchIssueCreateParams(
 		c,
 		prompt,
@@ -1139,24 +1249,6 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	taskID := uuidToString(result.EnqueuedTask.ID)
 	issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
 	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueID, result.Issue.Title, taskID, prompt.DisplayContent, decision)
-	if decision.Action == inboundcoord.ActionIssue &&
-		h.TaskService != nil &&
-		c.CompletionCallback != nil &&
-		strings.TrimSpace(decision.UserText) != "" {
-		if err := h.enqueueCoordinatorIssueAckOrComplete(
-			r.Context(),
-			c,
-			dispatchContext,
-			agent.ID,
-			*result.EnqueuedTask,
-			result.Issue,
-			issueIdentifier,
-			decision.UserText,
-		); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
-			return
-		}
-	}
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "created_issue",
 		"protocol", "dispatch_command_v2",
@@ -1275,6 +1367,7 @@ func decideDispatchCoordinator(
 		EvidenceID:           ids.EvidenceID,
 		Kind:                 ids.Kind,
 		IssueDispatchContext: issueDispatchContext,
+		Utterances:           windowUtterancesFromCommand(command),
 	}
 	turn.DWSUID, turn.DWSOrgID = dispatchCoordinatorDWSIdentity(command)
 	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
@@ -1282,6 +1375,26 @@ func decideDispatchCoordinator(
 	}
 	coord.FillVoice(ctx, &turn)
 	return coord.Decide(ctx, turn)
+}
+
+func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowUtterance {
+	fallback := strings.TrimSpace(command.Event.Data.Sender.DisplayName)
+	out := make([]inboundcoord.WindowUtterance, 0, len(command.Event.Data.Messages))
+	for _, message := range command.Event.Data.Messages {
+		if message.Reaction != nil {
+			continue
+		}
+		text := strings.TrimSpace(message.Text)
+		if text == "" {
+			continue
+		}
+		sender := strings.TrimSpace(message.SenderDisplayName)
+		if sender == "" {
+			sender = fallback
+		}
+		out = append(out, inboundcoord.WindowUtterance{Sender: sender, Text: text})
+	}
+	return out
 }
 
 func dispatchCoordinatorDWSIdentity(command DispatchCommand) (string, string) {

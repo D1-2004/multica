@@ -25,3 +25,22 @@ func TestDispatchRejectReasonEmptyBody(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestIsCoordinatorBusyParkReason(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		reason string
+		park   bool
+	}{
+		{"dispatch rejected with HTTP 409: recalled issue already has a pending agent task", true},
+		{"dispatch rejected with HTTP 409: issue already has an active task", true},
+		{"issue_busy", true},
+		{"dispatch rejected with HTTP 409: active duplicate issue exists", true},
+		{"dispatch rejected with HTTP 422: attachment download URL has expired", false},
+	}
+	for _, tc := range cases {
+		if got := isCoordinatorBusyParkReason(tc.reason); got != tc.park {
+			t.Fatalf("reason %q park=%v want %v", tc.reason, got, tc.park)
+		}
+	}
+}

@@ -126,12 +126,16 @@ func (m *DispatchReferencedMessage) UnmarshalJSON(data []byte) error {
 }
 
 type DispatchMessage struct {
-	OpenMsgID         string                     `json:"openMsgId"`
-	OccurredAt        int64                      `json:"occurredAt"`
-	Text              string                     `json:"text,omitempty"`
-	Attachments       []DispatchAttachment       `json:"attachments,omitempty"`
-	Reaction          *DispatchMessageReaction   `json:"reaction,omitempty"`
-	ReferencedMessage *DispatchReferencedMessage `json:"referencedMessage,omitempty"`
+	OpenMsgID            string                     `json:"openMsgId"`
+	OccurredAt           int64                      `json:"occurredAt"`
+	Text                 string                     `json:"text,omitempty"`
+	SenderDisplayName    string                     `json:"senderDisplayName,omitempty"`
+	SenderUID            string                     `json:"senderUid,omitempty"`
+	SenderOpenDingTalkID string                     `json:"senderOpenDingTalkId,omitempty"`
+	SenderStaffID        string                     `json:"senderStaffId,omitempty"`
+	Attachments          []DispatchAttachment       `json:"attachments,omitempty"`
+	Reaction             *DispatchMessageReaction   `json:"reaction,omitempty"`
+	ReferencedMessage    *DispatchReferencedMessage `json:"referencedMessage,omitempty"`
 }
 
 type DispatchCalendarAttendee struct {

@@ -43,6 +43,8 @@ Issue/评论写入和原有 callback。每个副本有 8 个并发 worker；Post
 可重试错误最多 6 次。Router 的 10 秒读超时因此不再包住短循环，也不会因为
 acceptance 仍为 pending 而进入 409 重试。
 
+同一 `workspace + agent + cid` 同时最多一个 **running 窗口**。该 Scene 已有 running job、或已有两个进行中沙箱事项时，新 @ 留在 `pending`（park，不丢消息），等下一窗统一 Decide。一窗 `finish.items` 最多两件，委托人是该句发送人。忙时跟句是 park，不是对用户说「不并进」。合同见 [Coordinator Scene Window](plans/2026-09-05-coordinator-scene-window.md)。
+
 每个入站短循环对应一个 Multica Chat，会话级显示 `Coordinator` 标签。接单提交后
 会话立即出现在列表；执行完成后，assistant 行保存 `message_kind=coordinator`，并按普通
 Chat timeline 展示 DWS 历史拉取、模型判断、tool use、tool result 和最终文本。这个 Chat
@@ -330,10 +332,11 @@ Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 
 | action | IM | 平台 |
 |---|---|---|
 | `reply` | `text` 经 dispatch callback / Stream 发出 | 无沙箱。网页 Chat 记 `message_kind=coordinator` |
-| `issue` 无 `issue_id` | 先回一句正在核对什么（`execution-update` 冻结 ack） | 新建 Issue + Task，Associate 本 cid |
+| `issue` 无 `issue_id` | 整窗一句 `text` | `items[0..2]` 各建 Issue + Task，Associate 本 cid；`delegator` 为该句发送人 |
 | `issue_comment_add` | `reply_text` 回当前说话人 | 成员评论写入原 Issue，并自驱下一轮 Issue task |
 | `issue` 有 `issue_id` | 非外呼回信的普通续旧 | 原 Issue 上追加 follow-up 任务 |
-| `silence` | 不回 | 无沙箱。网页禁止 |
+| `silence` | 不回 | 无沙箱。网页禁止。ACK / 谢谢 / 不用回了 由 Host 直接 silence |
+| 内部 `retry` / park | 不回 | 沙箱仍忙：job 回 pending，下一窗再 Decide |
 | 内部 `continue` | 走原入队 | LLM / DWS 历史 / 开关失败时的 fail-open |
 
 `reply` 禁止能力拒绝（「我看不到联系人」）。Loop 做不了的查找或动作必须 `issue`。

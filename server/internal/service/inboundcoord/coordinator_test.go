@@ -262,6 +262,17 @@ func TestIssueTitleAndDescription(t *testing.T) {
 			t.Fatalf("description missing %q: %q", want, desc)
 		}
 	}
+	two := Decision{
+		Action:   ActionIssue,
+		UserText: "我去问",
+		Items:    []WindowItem{{Delegator: "测试号", LookInto: "周五三点"}, {Delegator: "dxxh", LookInto: "今日token"}},
+	}
+	onlyFirst := two
+	onlyFirst.Items = []WindowItem{two.Items[0]}
+	got := IssueDescription(onlyFirst, "窗口")
+	if !strings.Contains(got, "委托人=测试号") || strings.Contains(got, "委托人=dxxh") {
+		t.Fatalf("item body must not list the sibling: %q", got)
+	}
 }
 
 func testSession() db.ChatSession {
@@ -460,8 +471,8 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	if !strings.Contains(systemPrompt, "finish action=reply from scene_memory only") {
 		t.Fatal("system prompt must allow scene_memory to answer scene questions")
 	}
-	if !strings.Contains(systemPrompt, "do not call issue_comment_add") {
-		t.Fatal("system prompt must not comment onto a busy Issue")
+	if !strings.Contains(systemPrompt, "Host parks the window") {
+		t.Fatal("system prompt must park busy follow-ups instead of a user-facing busy line")
 	}
 	if !strings.Contains(systemPrompt, "Teaching or correcting this scene") {
 		t.Fatal("system prompt must not open an Issue for scene teaching")
