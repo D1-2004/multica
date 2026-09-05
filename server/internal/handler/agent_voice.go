@@ -31,7 +31,7 @@ Rules:
 - persona: who this agent is, 1-3 sentences, in the same language as the instructions. No tools, no workflow, no secrets, no action policy.
 - reply_tone: how they speak in chat, 1-2 sentences. Cover length, formality, and what to avoid.
 - Do not copy the full instructions. Do not invent duties that change what the agent does.
-- If the instructions do not describe a person or tone, write a concise professional colleague persona and a short, direct work-chat tone.
+- If the instructions do not describe a person or tone, write a concise DingTalk teammate persona (a real colleague, not a helpdesk) and a short spoken work-chat tone. No 您.
 `
 
 type extractAgentVoiceRequest struct {
