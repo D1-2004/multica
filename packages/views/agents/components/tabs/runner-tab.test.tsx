@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { fireEvent, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../../test/i18n";
@@ -140,7 +141,23 @@ describe("RunnerTab", () => {
             online: true,
             enabledMcpServers: {},
             mcpServers: [
-              { name: "llm-wiki", transport: "stdio", availability: "available", fingerprint: "sha256:wiki" },
+              {
+                name: "llm-wiki",
+                title: "LLM Wiki Desktop",
+                description: "Search and read the local knowledge base.",
+                version: "1.2.0",
+                transport: "stdio",
+                availability: "available",
+                detailStatus: "available",
+                fingerprint: "sha256:wiki",
+                tools: [
+                  {
+                    name: "search_wiki",
+                    title: "Search wiki",
+                    description: "Search pages in LLM Wiki.",
+                  },
+                ],
+              },
               { name: "future-mcp", transport: "http", availability: "available", fingerprint: "sha256:future" },
             ],
           },
@@ -156,5 +173,40 @@ describe("RunnerTab", () => {
     expect(screen.getByText("future-mcp")).toBeInTheDocument();
     expect(screen.queryAllByRole("switch")).toHaveLength(0);
     expect(screen.getByText("llm-wiki").closest("li")?.querySelector(".bg-success")).not.toBeNull();
+  });
+
+  it("shows protocol details for a mounted Runner MCP server", async () => {
+    const user = userEvent.setup();
+    queryState.mounts = {
+      data: {
+        machines: [{
+          bindingId: "binding-1",
+          machineId: "machine-1",
+          name: "studio-mac",
+          online: true,
+          enabledMcpServers: {},
+          mcpServers: [{
+            name: "llm-wiki",
+            title: "LLM Wiki Desktop",
+            description: "Search and read the local knowledge base.",
+            version: "1.2.0",
+            transport: "stdio",
+            availability: "available",
+            detailStatus: "available",
+            fingerprint: "sha256:wiki",
+            tools: [{ name: "search_wiki", title: "Search wiki", description: "Search pages in LLM Wiki." }],
+          }],
+        }],
+      },
+      isLoading: false,
+      isError: false,
+    };
+
+    renderWithI18n(<RunnerTab agent={agent} canBind mode="mcp" />);
+    await user.click(screen.getByRole("button", { name: /llm-wiki/i }));
+
+    expect(screen.getByText("Search and read the local knowledge base.")).toBeInTheDocument();
+    expect(screen.getByText("Search pages in LLM Wiki.")).toBeInTheDocument();
+    expect(screen.getByText("v1.2.0")).toBeInTheDocument();
   });
 });

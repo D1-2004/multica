@@ -17,9 +17,21 @@ export interface RunnerMachineBinding {
 
 export interface RunnerMcpServer {
   name: string;
+  title?: string;
+  description?: string;
+  version?: string;
   transport: "stdio" | "http";
   availability: string;
+  detailStatus?: "available" | "unavailable";
+  capabilities: string[];
+  tools: RunnerMcpTool[];
   fingerprint: string;
+}
+
+export interface RunnerMcpTool {
+  name: string;
+  title?: string;
+  description?: string;
 }
 
 export interface CreateRunnerReconnectCommandResponse {

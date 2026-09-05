@@ -51,6 +51,17 @@ The inventory message is `runner:mcp_inventory`. Its effective configuration is
 persisted on the Runner machine record; disconnecting the machine does not clear
 the last successfully reported document.
 
+At startup, Runner also performs the standard MCP initialization handshake for
+each configured Server, sends `notifications/initialized`, and reads
+`tools/list` including cursor pagination. The non-secret inventory summary
+includes the Server title, instructions, version, capability names, and each
+tool's name, title, and description. This metadata is shown in both the account
+machine list and the selected Agent's MCP settings. URLs, commands, arguments,
+headers, environment variables, input schemas, and credentials are not included
+in the detail summary. A failed detail handshake does not remove or disable the
+configured Server; it only marks the detail summary unavailable, and task-time
+initialization remains authoritative.
+
 ## Account machine and Agent mount
 
 1. `POST /api/me/runner-pairings` creates account-scoped installation material.
@@ -144,6 +155,12 @@ selecting the machine for an Agent mounts the CLI-owned replacement.
   `runner_call` polling; inventory lookup uses local memory then Redis.
 
 ## History
+
+- 2026-09-05 — Added protocol-level Server and tool details to Runner inventory
+  and both Local Runner UI surfaces. Reason: a name and transport alone do not
+  explain an MCP Server's capabilities; users need the Server-provided
+  description, version, capabilities, and tool catalog without exposing local
+  connection configuration or secrets.
 
 - 2026-09-04 — Added `runner configure --directory` and renamed the CLI status
   label to "File access directories". Reason: users need a supported way to

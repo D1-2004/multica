@@ -61,10 +61,22 @@ type CallsCancelled struct {
 }
 
 type MCPServerSummary struct {
-	Name         string `json:"name"`
-	Transport    string `json:"transport"`
-	Availability string `json:"availability"`
-	Fingerprint  string `json:"fingerprint"`
+	Name         string           `json:"name"`
+	Title        string           `json:"title,omitempty"`
+	Description  string           `json:"description,omitempty"`
+	Version      string           `json:"version,omitempty"`
+	Transport    string           `json:"transport"`
+	Availability string           `json:"availability"`
+	DetailStatus string           `json:"detail_status,omitempty"`
+	Capabilities []string         `json:"capabilities,omitempty"`
+	Tools        []MCPToolSummary `json:"tools,omitempty"`
+	Fingerprint  string           `json:"fingerprint"`
+}
+
+type MCPToolSummary struct {
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 type MCPInventory struct {

@@ -134,6 +134,67 @@ func TestRunnerBuiltinShellMCPListsTools(t *testing.T) {
 	}
 }
 
+func TestInspectRunnerMCPInventoryAddsProtocolDetails(t *testing.T) {
+	document, err := parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newRunnerMCPManager(document, "/Users/test/Desktop")
+	defer manager.Close()
+
+	inventory := inspectRunnerMCPInventory(context.Background(), manager, document.Inventory)
+	if len(inventory.Servers) != 1 {
+		t.Fatalf("servers = %#v", inventory.Servers)
+	}
+	server := inventory.Servers[0]
+	if server.Title != "Local machine" || server.Version != "1.0.0" {
+		t.Fatalf("server metadata = %#v", server)
+	}
+	if server.DetailStatus != "available" || len(server.Tools) == 0 {
+		t.Fatalf("server details = %#v", server)
+	}
+	if server.Tools[0].Name == "" || server.Tools[0].Description == "" {
+		t.Fatalf("tool detail = %#v", server.Tools[0])
+	}
+}
+
+func TestInspectRunnerMCPInventoryFollowsToolsPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Params struct{ Cursor string `json:"cursor"` } `json:"params"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&request)
+		w.Header().Set("Content-Type", "application/json")
+		switch request.Method {
+		case "initialize":
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"wiki","title":"Wiki","version":"2.0.0"},"instructions":"Search company knowledge."}}`, request.ID)
+		case "notifications/initialized":
+			w.WriteHeader(http.StatusAccepted)
+		case "tools/list":
+			if request.Params.Cursor == "next" {
+				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"read","description":"Read a page."}]}}`, request.ID)
+			} else {
+				_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","description":"Search pages."}],"nextCursor":"next"}}`, request.ID)
+			}
+		}
+	}))
+	defer server.Close()
+	document, err := parseRunnerMCPConfig([]byte(`{"mcpServers":{"wiki":{"url":"` + server.URL + `"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := newRunnerMCPManager(document)
+	defer manager.Close()
+
+	inventory := inspectRunnerMCPInventory(context.Background(), manager, document.Inventory)
+	got := inventory.Servers[0]
+	if got.Description != "Search company knowledge." || len(got.Tools) != 2 || got.Tools[1].Name != "read" {
+		t.Fatalf("details = %#v", got)
+	}
+}
+
 func TestRunnerBuiltinShellMCPOmitsEmptyRequired(t *testing.T) {
 	document, err := parseRunnerMCPConfigWithBuiltins([]byte(`{"mcpServers":{}}`))
 	if err != nil {

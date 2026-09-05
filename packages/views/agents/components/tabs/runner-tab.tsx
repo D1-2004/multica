@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@multica/ui/components/ui/select";
 import { useT } from "../../../i18n";
+import { McpServerDetailsList } from "../../../runner/mcp-server-details-list";
 
 // Pairing and machine lifecycle are account concerns in General settings;
 // this panel selects the Agent execution mount and shows its dynamic inventory.
@@ -111,9 +112,7 @@ export function RunnerTab({ agent, canBind, mode = "all" }: { agent: Agent; canB
 	  {mode !== "execution" && <section className="space-y-3">
         <div><p className="text-body font-medium">{t(($) => $.tab_body.runner.local_mcp_title)}</p><p className="text-caption text-muted-foreground">{t(($) => $.tab_body.runner.local_mcp_hint)}</p></div>
         {!mounted ? <RunnerMcpNotice text={t(($) => $.tab_body.runner.mount_first)} /> : mounted.mcpServers.length === 0 ? <RunnerMcpNotice text={mounted.online ? t(($) => $.tab_body.runner.mcp_empty) : t(($) => $.tab_body.runner.mcp_offline)} /> : (
-          <ul className="divide-y rounded-lg border">{mounted.mcpServers.map((server) => (
-            <li key={server.name} className="flex items-center justify-between px-3 py-3"><div><p className="text-body font-medium">{server.name}</p><p className="text-caption text-muted-foreground">{server.transport}</p></div><span className={`h-1.5 w-1.5 shrink-0 rounded-full ${mounted.online && server.availability === "available" ? "bg-success" : "bg-muted-foreground/40"}`} aria-hidden="true" /></li>
-          ))}</ul>
+          <McpServerDetailsList servers={mounted.mcpServers} online={mounted.online} />
         )}
 	  </section>}
       {!canBind && mode !== "execution" && <Button variant="outline" disabled>{t(($) => $.tab_body.runner.read_only)}</Button>}

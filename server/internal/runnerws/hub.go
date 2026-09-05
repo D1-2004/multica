@@ -282,9 +282,7 @@ func (h *Hub) storeMCPInventory(machineID string, inventory runnerprotocol.MCPIn
 		}
 		seen[server.Name] = struct{}{}
 	}
-	copyInventory := inventory
-	copyInventory.Servers = append([]runnerprotocol.MCPServerSummary(nil), inventory.Servers...)
-	copyInventory.Config = append([]byte(nil), inventory.Config...)
+	copyInventory := cloneMCPInventory(inventory)
 	h.mu.Lock()
 	h.inventory[machineID] = copyInventory
 	h.mu.Unlock()
@@ -298,9 +296,18 @@ func (h *Hub) MCPInventory(machineID string) (runnerprotocol.MCPInventory, bool)
 	if !ok {
 		return runnerprotocol.MCPInventory{}, false
 	}
-	inventory.Servers = append([]runnerprotocol.MCPServerSummary(nil), inventory.Servers...)
-	inventory.Config = append([]byte(nil), inventory.Config...)
-	return inventory, true
+	return cloneMCPInventory(inventory), true
+}
+
+func cloneMCPInventory(inventory runnerprotocol.MCPInventory) runnerprotocol.MCPInventory {
+	cloned := inventory
+	cloned.Servers = append([]runnerprotocol.MCPServerSummary(nil), inventory.Servers...)
+	for index := range cloned.Servers {
+		cloned.Servers[index].Capabilities = append([]string(nil), inventory.Servers[index].Capabilities...)
+		cloned.Servers[index].Tools = append([]runnerprotocol.MCPToolSummary(nil), inventory.Servers[index].Tools...)
+	}
+	cloned.Config = append([]byte(nil), inventory.Config...)
+	return cloned
 }
 
 func (c *client) writePump() {

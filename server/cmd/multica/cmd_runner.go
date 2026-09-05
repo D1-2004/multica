@@ -620,6 +620,7 @@ func runAllRunnerLoops(ctx context.Context, cfg runnerConfig, privateKey ed25519
 	}
 	mcpManager := newRunnerMCPManager(mcpConfig, cfg.Roots...)
 	defer mcpManager.Close()
+	mcpConfig.Inventory = inspectRunnerMCPInventory(ctx, mcpManager, mcpConfig.Inventory)
 	errCh := make(chan error, len(bindings))
 	var wg sync.WaitGroup
 	for _, binding := range bindings {

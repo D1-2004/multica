@@ -48,6 +48,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink } from "../../navigation";
 import { RunnerCommandDialog } from "../../runner/runner-command-dialog";
+import { McpServerDetailsList } from "../../runner/mcp-server-details-list";
 import { useT, useTimeAgo } from "../../i18n";
 import { SettingsSection, SettingsTab } from "./settings-layout";
 
@@ -543,7 +544,12 @@ function MachineCard({
         </div>
 		<div className="flex items-center gap-1"><Badge variant="outline" className="text-micro">{t(($) => $.local_runner.binding_count, { count: machine.bindings.length })}</Badge><Button type="button" size="icon-sm" variant="ghost" onClick={onRenameMachine} aria-label={t(($) => $.local_runner.rename_machine)}><Pencil className="size-3.5" /></Button><Button type="button" size="icon-sm" variant="ghost" onClick={onRevokeMachine} aria-label={t(($) => $.local_runner.revoke_machine)}><Trash2 className="size-3.5" /></Button></div>
       </div>
-	  {machine.mcpServers.length > 0 && <div className="flex flex-wrap gap-1 border-t px-4 py-2">{machine.mcpServers.map((server) => <Badge key={server.name} variant="secondary" className="text-micro">{server.name} · {server.transport}</Badge>)}</div>}
+	  {machine.mcpServers.length > 0 && (
+        <div className="space-y-2 border-t px-4 py-3">
+          <p className="text-micro font-medium text-muted-foreground">{t(($) => $.local_runner.mcp_services)}</p>
+          <McpServerDetailsList servers={machine.mcpServers} online={machine.online} />
+        </div>
+      )}
 
       <ul className="divide-y divide-surface-border">
         {machine.bindings.map((binding) => {

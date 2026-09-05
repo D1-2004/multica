@@ -280,6 +280,7 @@
     "security_warning": "Runner Shell 명령은 로컬 운영 체제 사용자의 전체 권한으로 실행되며 로컬 파일 접근 디렉터리는 Shell을 제한하지 않습니다. 바인딩된 에이전트를 실행할 수 있는 사람은 이 머신을 작동시킬 수 있습니다.",
     "machines_title": "계정 머신",
     "machines_description": "안정적인 머신 ID별로 그룹화됩니다. 각 에이전트 바인딩은 별도의 연결 상태와 로컬 파일 접근 디렉터리를 가집니다.",
+    "mcp_services": "MCP 서비스",
     "loading": "계정 머신을 불러오는 중...",
     "load_failed": "로컬 Runner 노출 현황을 불러오지 못했습니다. 성공할 때까지 목록이 불완전할 수 있습니다.",
     "retry": "다시 시도",

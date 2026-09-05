@@ -28,7 +28,12 @@ func executeRunnerBuiltinShellMCP(ctx context.Context, roots []string, raw json.
 		return runnerBuiltinMCPResult(request.ID, map[string]any{
 			"protocolVersion": runnerBuiltinMCPProtocolVersion,
 			"capabilities": map[string]any{"tools": map[string]any{"listChanged": false}},
-			"serverInfo": map[string]string{"name": runnerBuiltinShellMCPName, "version": "1.0.0"},
+			"serverInfo": map[string]string{
+				"name": runnerBuiltinShellMCPName,
+				"title": "Local machine",
+				"version": "1.0.0",
+			},
+			"instructions": "Read, edit, and search exposed files, and run Shell commands on this Runner.",
 		}), nil
 	case "ping":
 		return runnerBuiltinMCPResult(request.ID, map[string]any{}), nil

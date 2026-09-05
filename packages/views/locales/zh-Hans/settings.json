@@ -280,6 +280,7 @@
     "security_warning": "Runner 的 Shell 命令以本机系统用户的完整权限运行，本机文件访问目录不会限制 Shell。任何能运行已绑定智能体的人都可能触发这台机器。",
     "machines_title": "账号下的机器",
     "machines_description": "按稳定的机器 ID 分组。每条智能体绑定都有独立的连接状态和本机文件访问目录。",
+    "mcp_services": "MCP 服务",
     "loading": "正在加载账号下的机器...",
     "load_failed": "无法加载本机 Runner 暴露情况。在加载成功前，当前清单可能不完整。",
     "retry": "重试",

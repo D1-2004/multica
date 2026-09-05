@@ -280,6 +280,7 @@
     "security_warning": "Runner Shell commands use the local operating-system user's full permissions; local file access directories do not restrict the Shell. Anyone allowed to run a bound agent may trigger that machine.",
     "machines_title": "Account machines",
     "machines_description": "Machines are grouped by their stable machine ID. Each agent binding keeps its own connection state and local file access directories.",
+    "mcp_services": "MCP services",
     "loading": "Loading account machines...",
     "load_failed": "Couldn't load your Local Runner exposure. The inventory may be incomplete until this succeeds.",
     "retry": "Try again",

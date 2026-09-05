@@ -245,6 +245,38 @@ describe("LocalRunnerTab", () => {
     expect(screen.queryByText("Disconnected")).not.toBeInTheDocument();
   });
 
+  it("shows protocol details for MCP servers exposed by a machine", async () => {
+    const user = userEvent.setup();
+    queryState.current = {
+      data: {
+        machines: [{
+          ...machine,
+          mcpServers: [{
+            name: "llm-wiki",
+            title: "LLM Wiki Desktop",
+            description: "Search and read the local knowledge base.",
+            version: "1.2.0",
+            transport: "stdio",
+            availability: "available",
+            detailStatus: "available",
+            fingerprint: "sha256:wiki",
+            tools: [{ name: "search_wiki", title: "Search wiki", description: "Search pages in LLM Wiki." }],
+          }],
+        }],
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    };
+
+    renderTab();
+    await user.click(screen.getByRole("button", { name: /llm-wiki/i }));
+
+    expect(screen.getByText("Search and read the local knowledge base.")).toBeInTheDocument();
+    expect(screen.getByText("Search pages in LLM Wiki.")).toBeInTheDocument();
+    expect(screen.getByText("v1.2.0")).toBeInTheDocument();
+  });
+
   it("does not render an invalid last-seen timestamp", () => {
     queryState.current = {
       data: {
