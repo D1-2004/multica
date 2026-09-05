@@ -295,7 +295,34 @@ func (w *InboundCoordinatorJobWorker) absorbPendingSameScene(ctx context.Context
 	if err := tx.Commit(ctx); err != nil {
 		return command, err
 	}
+	w.closeCoalescedRouterCallbacks(ctx, job, siblings)
 	return command, nil
+}
+
+func (w *InboundCoordinatorJobWorker) closeCoalescedRouterCallbacks(ctx context.Context, job db.InboundCoordinatorJob, siblings []db.InboundCoordinatorJob) {
+	if w == nil || w.handler == nil || w.handler.TaskService == nil {
+		return
+	}
+	for _, sib := range siblings {
+		extra, err := restoreInboundCoordinatorCommand(
+			sib.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity,
+		)
+		if err != nil || extra.CompletionCallback == nil {
+			continue
+		}
+		if err := w.handler.TaskService.EnqueueSynchronousSilence(
+			ctx,
+			extra.CompletionCallback.URL,
+			extra.CompletionCallback.Target,
+			job.AgentID,
+		); err != nil {
+			slog.Warn("coalesced inbound coordinator job silence callback failed",
+				"event", "inbound_coordinator_job_coalesced_silence_failed",
+				"absorbed_job_id", util.UUIDToString(sib.ID),
+				"error", err,
+			)
+		}
+	}
 }
 
 func restoreInboundCoordinatorCommand(raw []byte, endpointID pgtype.UUID, targetIdentity string) (DispatchCommand, error) {
