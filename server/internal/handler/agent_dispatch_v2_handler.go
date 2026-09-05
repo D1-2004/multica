@@ -864,12 +864,26 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 	}
 	switch result.Outcome {
 	case engine.OutcomeCoordinatorReply:
+		visible := stripReplyDecisionLeak(result.ReplyText)
+		if visible == "" {
+			if err := h.TaskService.EnqueueSynchronousSilence(
+				ctx,
+				command.CompletionCallback.URL,
+				command.CompletionCallback.Target,
+				dispatchContext.AgentID,
+			); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
+				return true
+			}
+			w.WriteHeader(http.StatusAccepted)
+			return true
+		}
 		if err := h.TaskService.EnqueueSynchronousCompleted(
 			ctx,
 			command.CompletionCallback.URL,
 			command.CompletionCallback.Target,
 			dispatchContext.AgentID,
-			result.ReplyText,
+			visible,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
 			return true
@@ -1189,13 +1203,16 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "failed to create issue")
 			return
 		}
-		if h.TaskService != nil && c.CompletionCallback != nil && strings.TrimSpace(decision.UserText) != "" {
-			if err := h.enqueueCoordinatorIssueAckOrComplete(
-				r.Context(), c, dispatchContext, agent.ID,
-				firstTask, firstIssue, firstIdentifier, decision.UserText,
-			); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
-				return
+		if h.TaskService != nil && c.CompletionCallback != nil {
+			spoken := stripReplyDecisionLeak(decision.UserText)
+			if spoken != "" {
+				if err := h.enqueueCoordinatorIssueAckOrComplete(
+					r.Context(), c, dispatchContext, agent.ID,
+					firstTask, firstIssue, firstIdentifier, spoken,
+				); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
+					return
+				}
 			}
 		}
 		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
@@ -1567,6 +1584,11 @@ func (h *Handler) tryDispatchResetMemory(
 	return true
 }
 
+func stripReplyDecisionLeak(text string) string {
+	visible, _ := service.NormalizeReplyDecisionOutput(text, nil)
+	return strings.TrimSpace(visible)
+}
+
 func writeDispatchCoordinatorTerminal(
 	w http.ResponseWriter,
 	ctx context.Context,
@@ -1578,6 +1600,11 @@ func writeDispatchCoordinatorTerminal(
 	if h.TaskService == nil || command.CompletionCallback == nil {
 		return false
 	}
+	visible := stripReplyDecisionLeak(decision.UserText)
+	if decision.Action == inboundcoord.ActionReply && visible == "" {
+		decision.Action = inboundcoord.ActionSilence
+		decision.UserText = ""
+	}
 	switch decision.Action {
 	case inboundcoord.ActionReply:
 		if err := h.TaskService.EnqueueSynchronousCompleted(
@@ -1585,7 +1612,7 @@ func writeDispatchCoordinatorTerminal(
 			command.CompletionCallback.URL,
 			command.CompletionCallback.Target,
 			dispatchContext.AgentID,
-			decision.UserText,
+			visible,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
 			return true
