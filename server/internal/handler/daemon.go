@@ -3916,8 +3916,8 @@ type TaskCompleteRequest struct {
 	// (GH #6066). Distinct from an empty SessionID, which only means "nothing
 	// to report" — this says "never hand this id to a later run". Older
 	// daemons omit it, which is exactly the pre-fix behaviour.
-	RetiredSessionID string `json:"retired_session_id,omitempty"`
-	ReplyDecision *protocol.ReplyDecision `json:"reply_decision,omitempty"`
+	RetiredSessionID string                  `json:"retired_session_id,omitempty"`
+	ReplyDecision    *protocol.ReplyDecision `json:"reply_decision,omitempty"`
 }
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -3989,7 +3989,15 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// by the existing per-(issue, agent) dedup, and terminating because the
 	// triggering comment always predates the follow-up run's started_at.
 	h.reconcileCommentsOnCompletion(r.Context(), task)
-	go h.maybeRunTaskFinishedLoop(context.WithoutCancel(r.Context()), task)
+	if err := h.enqueueTaskFinishedLoop(r.Context(), task); err != nil {
+		slog.Error("task finished loop enqueue failed",
+			"event", "task_finished_loop_enqueue_failed",
+			"task_id", uuidToString(task.ID),
+			"error", err,
+		)
+		writeError(w, http.StatusInternalServerError, "failed to persist task-finished loop")
+		return
+	}
 	if h.ManagedAgent != nil {
 		if err := h.ManagedAgent.ReconcileAgent(r.Context(), task.AgentID); err != nil {
 			slog.Warn("complete task: managed Agent reconciliation failed", "agent_id", uuidToString(task.AgentID), "error", err)
@@ -4673,6 +4681,15 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 		return
 	}
 	h.reconcileCommentsOnCompletion(r.Context(), task)
+	if err := h.enqueueTaskFinishedLoop(r.Context(), task); err != nil {
+		slog.Error("task finished loop enqueue failed",
+			"event", "task_finished_loop_enqueue_failed",
+			"task_id", uuidToString(task.ID),
+			"error", err,
+		)
+		writeError(w, http.StatusInternalServerError, "failed to persist task-finished loop")
+		return
+	}
 	if h.ManagedAgent != nil {
 		if err := h.ManagedAgent.ReconcileAgent(r.Context(), task.AgentID); err != nil {
 			slog.Warn("fail task: managed Agent reconciliation failed", "agent_id", uuidToString(task.AgentID), "error", err)
@@ -5011,6 +5028,15 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("cancel task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.enqueueTaskFinishedLoop(r.Context(), task); err != nil {
+		slog.Error("task finished loop enqueue failed",
+			"event", "task_finished_loop_enqueue_failed",
+			"task_id", uuidToString(task.ID),
+			"error", err,
+		)
+		writeError(w, http.StatusInternalServerError, "failed to persist task-finished loop")
 		return
 	}
 

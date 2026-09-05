@@ -60,11 +60,8 @@ func TestMergeFallsBackOnLLMTimeoutForBusyGroups(t *testing.T) {
 	got, fallback, err := f.merge(ctx, db.SceneMemory{SceneKey: "cid-ownergraph", MemoryText: old}, []HistoryEvent{
 		{Speaker: "圆畅", Content: "PoC主链路Demo筹备群口径不变"},
 	})
-	if err != nil || !fallback {
-		t.Fatalf("timeout must keep current text, not fail flush: fallback=%v err=%v", fallback, err)
-	}
-	if !strings.Contains(got, "OwnerGraph") || !strings.Contains(got, "主链路跳转顺序已冻结") {
-		t.Fatalf("busy-group timeout must not wipe scene text: %q", got)
+	if err == nil || fallback {
+		t.Fatalf("timeout must hold the dirty batch, not commit: fallback=%v err=%v got=%q", fallback, err, got)
 	}
 }
 

@@ -270,13 +270,13 @@ func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []H
 		})
 		if err != nil {
 			if dwsclient.IsTimeout(err) {
-				slog.Warn("scene memory flush llm timed out; keeping current text",
-					"event", "scene_memory_flush_fallback",
+				slog.Warn("scene memory flush llm timed out; holding dirty batch",
+					"event", "scene_memory_flush_timeout",
 					"scene_key", row.SceneKey,
 					"reason", "llm_timeout",
 					"event_count", len(batch),
 				)
-				return fallbackMerge(row.MemoryText, batch), true, nil
+				return "", false, &FlushError{Code: ErrorIncomplete, Err: fmt.Errorf("memory flush llm timed out")}
 			}
 			return "", false, err
 		}

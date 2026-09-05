@@ -210,18 +210,20 @@ type DispatchCompletionCallback struct {
 }
 
 type DispatchCommand struct {
-	SchemaVersion      string                        `json:"schemaVersion"`
-	AgentID            string                        `json:"agentId,omitempty"`
-	Continuation       *AgentDispatchContinuation    `json:"continuation"`
-	Source             DispatchSource                `json:"source"`
-	Event              DispatchEvent                 `json:"event"`
-	Surface            DispatchSurface               `json:"surface"`
-	Outbound           DispatchOutbound              `json:"outbound"`
-	Control            *DispatchControl              `json:"control,omitempty"`
-	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
-	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
-	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
-	DispatchEndpointID string                        `json:"-"`
+	SchemaVersion            string                        `json:"schemaVersion"`
+	AgentID                  string                        `json:"agentId,omitempty"`
+	Continuation             *AgentDispatchContinuation    `json:"continuation"`
+	Source                   DispatchSource                `json:"source"`
+	Event                    DispatchEvent                 `json:"event"`
+	Surface                  DispatchSurface               `json:"surface"`
+	Outbound                 DispatchOutbound              `json:"outbound"`
+	Control                  *DispatchControl              `json:"control,omitempty"`
+	ContextPrompt            string                        `json:"contextPrompt,omitempty"`
+	ExternalIdentity         AgentDispatchExternalIdentity `json:"externalIdentity"`
+	CompletionCallback       *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
+	ExtraCompletionCallbacks []DispatchCompletionCallback  `json:"extraCompletionCallbacks,omitempty"`
+	TaskFinishedTaskID       string                        `json:"taskFinishedTaskId,omitempty"`
+	DispatchEndpointID       string                        `json:"-"`
 }
 
 type DispatchPrompt struct {

@@ -2,6 +2,8 @@ package handler
 
 import (
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 )
 
 func TestMergeDispatchCommandsAppendsBurst(t *testing.T) {
@@ -28,6 +30,40 @@ func TestMergeDispatchCommandsAppendsBurst(t *testing.T) {
 	}
 	if got.CompletionCallback == nil || got.CompletionCallback.URL != base.CompletionCallback.URL {
 		t.Fatalf("collect must keep the pending job callback, not the extra: %#v", got.CompletionCallback)
+	}
+	if len(got.ExtraCompletionCallbacks) != 1 || got.ExtraCompletionCallbacks[0].URL != extra.CompletionCallback.URL {
+		t.Fatalf("collect must persist extra callbacks: %#v", got.ExtraCompletionCallbacks)
+	}
+}
+
+func TestBindWindowItemEvidenceUsesMatchingMessage(t *testing.T) {
+	cmd := DispatchCommand{
+		Event: DispatchEvent{Data: DispatchEventData{
+			Sender: DispatchSender{DisplayName: "冬翔"},
+			Messages: []DispatchMessage{
+				{OpenMsgID: "msg-a", Text: "问 dxxh", SenderDisplayName: "冬翔", SenderUID: "uid-a"},
+				{OpenMsgID: "msg-b", Text: "查配额", SenderDisplayName: "SixSix", SenderUID: "uid-b", SenderOpenDingTalkID: "open-b"},
+			},
+		}},
+	}
+	used := map[string]struct{}{}
+	first := cmd
+	bindWindowItemEvidence(&first, inboundcoord.WindowItem{Delegator: "冬翔"}, used)
+	if first.Event.Data.Sender.DisplayName != "冬翔" || first.Event.Data.Sender.UID != "uid-a" {
+		t.Fatalf("first sender=%#v", first.Event.Data.Sender)
+	}
+	second := cmd
+	bindWindowItemEvidence(&second, inboundcoord.WindowItem{Delegator: "SixSix"}, used)
+	if second.Event.Data.Sender.DisplayName != "SixSix" || second.Event.Data.Sender.OpenDingTalkID != "open-b" {
+		t.Fatalf("second sender=%#v", second.Event.Data.Sender)
+	}
+	ids := dispatchAssocIDs(second)
+	if ids.EvidenceID != "msg-b" {
+		t.Fatalf("second evidence=%q", ids.EvidenceID)
+	}
+	firstIDs := dispatchAssocIDs(first)
+	if firstIDs.EvidenceID != "msg-a" {
+		t.Fatalf("first evidence=%q", firstIDs.EvidenceID)
 	}
 }
 

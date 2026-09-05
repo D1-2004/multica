@@ -3,13 +3,20 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const taskFinishedLoopTimeout = 55 * time.Second
@@ -31,7 +38,8 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 	if h == nil || task == nil || !task.AgentID.Valid {
 		return
 	}
-	if strings.TrimSpace(task.Status) != "completed" {
+	status := strings.TrimSpace(task.Status)
+	if status != "completed" && status != "failed" && status != "cancelled" {
 		return
 	}
 	// Completing a sandbox task frees a scene slot. Wake parked inbound
@@ -47,6 +55,10 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		return
 	}
 	if !coordinatorIssueFollowUp(task.Context) {
+		return
+	}
+	if status != "completed" {
+		h.deliverTaskFinishedDecision(ctx, task, inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "task_" + status})
 		return
 	}
 	envelope, ok := parseTaskFinishedEnvelope(task.Context)
@@ -215,4 +227,122 @@ func clipRunes(s string, n int) string {
 		return s
 	}
 	return string([]rune(s)[:n])
+}
+
+func (h *Handler) runPersistedTaskFinishedLoop(ctx context.Context, taskID string) error {
+	id, err := util.ParseUUID(strings.TrimSpace(taskID))
+	if err != nil {
+		return err
+	}
+	task, err := h.Queries.GetAgentTask(ctx, id)
+	if err != nil {
+		return err
+	}
+	h.maybeRunTaskFinishedLoop(ctx, &task)
+	return nil
+}
+
+func (h *Handler) enqueueTaskFinishedLoop(ctx context.Context, task *db.AgentTaskQueue) error {
+	if h == nil || task == nil || h.Queries == nil || h.TxStarter == nil {
+		return nil
+	}
+	if h.InboundCoordinatorWorker != nil {
+		h.InboundCoordinatorWorker.Notify()
+	}
+	if !coordinatorIssueFollowUp(task.Context) {
+		return nil
+	}
+	agent, err := h.Queries.GetAgent(ctx, task.AgentID)
+	if err != nil {
+		return err
+	}
+	key := "task-finished:" + uuidToString(task.ID)
+	_, err = h.Queries.GetInboundCoordinatorJobByIdempotency(ctx, db.GetInboundCoordinatorJobByIdempotencyParams{
+		WorkspaceID:    agent.WorkspaceID,
+		AgentID:        task.AgentID,
+		IdempotencyKey: key,
+	})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	envelope, _ := parseTaskFinishedEnvelope(task.Context)
+	cid := strings.TrimSpace(envelope.EventData.Conversation.OpenConversationID)
+	command := DispatchCommand{
+		TaskFinishedTaskID: uuidToString(task.ID),
+		Source:             DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
+		Event: DispatchEvent{
+			Domain: "channel",
+			Type:   "message.created",
+			Data: DispatchEventData{
+				Conversation: DispatchConversation{
+					OpenConversationID: cid,
+					Type:               envelope.EventData.Conversation.Type,
+					Title:              envelope.EventData.Conversation.Title,
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(command)
+	if err != nil {
+		return err
+	}
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+	session, err := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
+		WorkspaceID: agent.WorkspaceID,
+		AgentID:     task.AgentID,
+		CreatorID:   agent.OwnerID,
+		Title:       "task-finished " + uuidToString(task.ID),
+	})
+	if err != nil {
+		return err
+	}
+	userMessage, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
+		ChatSessionID: session.ID,
+		Role:          "user",
+		Content:       "任务已完成，请向委托人汇报。",
+		MessageKind:   pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	var acceptanceID pgtype.UUID
+	if scanErr := acceptanceID.Scan(uuid.New().String()); scanErr != nil {
+		return scanErr
+	}
+	endpointID := ""
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(task.Context, &payload) == nil {
+		endpointID = strings.Trim(string(payload["dispatch_endpoint_id"]), `"`)
+	}
+	_, err = qtx.CreateInboundCoordinatorJob(ctx, db.CreateInboundCoordinatorJobParams{
+		AcceptanceID:        acceptanceID,
+		WorkspaceID:         agent.WorkspaceID,
+		AgentID:             task.AgentID,
+		UserID:              agent.OwnerID,
+		EndpointNamespaceID: agent.WorkspaceID,
+		DispatchEndpointID:  endpointID,
+		IdempotencyKey:      key,
+		Command:             raw,
+		ChatSessionID:       session.ID,
+		UserMessageID:       userMessage.ID,
+		AvailableAt:         pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if h.InboundCoordinatorWorker != nil {
+		h.InboundCoordinatorWorker.Notify()
+	}
+	return nil
 }

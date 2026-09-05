@@ -198,7 +198,7 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		}
 		before = oldest
 	}
-	if historyHasGap(row, oldest, hitPageCap) && len(out) == 0 {
+	if historyHasGap(row, oldest, hitPageCap) {
 		return nil, &HistoryGapError{
 			FlushError: FlushError{
 				Code: ErrorIncomplete,

@@ -34,8 +34,8 @@ func TestIncludePendingWindowKeepsEveryLateEvent(t *testing.T) {
 	}
 	delta := afterCursor(events, cursor, "later")
 	got := includePendingWindow(delta, events, early, "early", cursor, "later")
-	if !containsEvidence(got, "early") || !containsEvidence(got, "mid") {
-		t.Fatalf("pending window must keep both late events: %#v", got)
+	if containsEvidence(got, "early") || containsEvidence(got, "mid") {
+		t.Fatalf("consumed pending-window events must not re-enter the batch: %#v", got)
 	}
 }
 

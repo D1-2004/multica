@@ -13,6 +13,14 @@ RETURNING *;
 -- name: GetInboundCoordinatorJobByAcceptance :one
 SELECT * FROM inbound_coordinator_job WHERE acceptance_id = @acceptance_id;
 
+-- name: GetInboundCoordinatorJobByIdempotency :one
+SELECT * FROM inbound_coordinator_job
+WHERE workspace_id = @workspace_id
+  AND agent_id = @agent_id
+  AND idempotency_key = @idempotency_key
+ORDER BY created_at ASC
+LIMIT 1;
+
 -- name: ClaimInboundCoordinatorJob :one
 WITH candidate AS (
     SELECT job.id
