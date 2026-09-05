@@ -74,22 +74,27 @@ func TestMCPInventoryIsMachineScopedAndDefensivelyCopied(t *testing.T) {
 	hub := NewHub()
 	inventory := runnerprotocol.MCPInventory{
 		Type: runnerprotocol.MessageInventory, Revision: "sha256:revision",
-		Servers: []runnerprotocol.MCPServerSummary{{Name: "wiki", Transport: "stdio", Availability: "available", Fingerprint: "sha256:fingerprint"}},
+		Servers: []runnerprotocol.MCPServerSummary{{
+			Name: "wiki", Transport: "stdio", Availability: "available", Fingerprint: "sha256:fingerprint",
+			Tools: []runnerprotocol.MCPToolSummary{{Name: "search", Description: "Search the wiki"}},
+		}},
 		Config:  []byte(`{"mcpServers":{"wiki":{"command":"node","env":{"TOKEN":"secret"}}}}`),
 	}
 	if !hub.storeMCPInventory("machine-1", inventory) {
 		t.Fatal("valid MCP inventory rejected")
 	}
 	inventory.Servers[0].Name = "mutated"
+	inventory.Servers[0].Tools[0].Name = "mutated-tool"
 	inventory.Config[0] = '['
 	got, ok := hub.MCPInventory("machine-1")
-	if !ok || got.Servers[0].Name != "wiki" || got.Config[0] != '{' {
+	if !ok || got.Servers[0].Name != "wiki" || got.Servers[0].Tools[0].Name != "search" || got.Config[0] != '{' {
 		t.Fatalf("stored MCP inventory = %#v, ok=%v", got, ok)
 	}
 	got.Servers[0].Name = "mutated-again"
+	got.Servers[0].Tools[0].Name = "mutated-tool-again"
 	got.Config[0] = '['
 	again, _ := hub.MCPInventory("machine-1")
-	if again.Servers[0].Name != "wiki" || again.Config[0] != '{' {
+	if again.Servers[0].Name != "wiki" || again.Servers[0].Tools[0].Name != "search" || again.Config[0] != '{' {
 		t.Fatal("returned MCP inventory aliases Hub state")
 	}
 	if _, ok := hub.MCPInventory("machine-2"); ok {

@@ -2,10 +2,31 @@ import { z } from "zod";
 
 const RunnerMcpServerSchema = z.object({
   name: z.string().min(1),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  version: z.string().optional(),
   transport: z.enum(["stdio", "http"]),
   availability: z.string().min(1),
+  detail_status: z.enum(["available", "unavailable"]).optional(),
+  capabilities: z.array(z.string()).nullish().transform((value) => value ?? []),
+  tools: z.array(z.object({
+    name: z.string().min(1),
+    title: z.string().optional(),
+    description: z.string().optional(),
+  }).loose()).nullish().transform((value) => value ?? []),
   fingerprint: z.string().min(1),
-}).loose();
+}).loose().transform((server) => ({
+  name: server.name,
+  title: server.title,
+  description: server.description,
+  version: server.version,
+  transport: server.transport,
+  availability: server.availability,
+  detailStatus: server.detail_status,
+  capabilities: server.capabilities,
+  tools: server.tools,
+  fingerprint: server.fingerprint,
+}));
 
 const RunnerMcpServerListSchema = z
   .array(RunnerMcpServerSchema)
