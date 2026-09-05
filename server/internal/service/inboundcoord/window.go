@@ -78,14 +78,39 @@ func validWindowDelegator(turn Turn, delegator string) bool {
 func AllWindowAck(turn Turn) bool {
 	utterances := windowUtterances(turn)
 	if len(utterances) == 0 {
-		return isAckOrStopReply(turn.Message)
+		return allAckText(turn.Message)
 	}
 	for _, u := range utterances {
-		if !isAckOrStopReply(u.Text) {
+		if !allAckText(u.Text) {
 			return false
 		}
 	}
 	return true
+}
+
+func allAckText(raw string) bool {
+	s := stripInboundDisplay(raw)
+	found := false
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !isAckOrStopReply(line) {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
+func stripInboundDisplay(raw string) string {
+	s := strings.TrimSpace(raw)
+	if i := strings.Index(s, "在钉钉会话中的消息："); i >= 0 {
+		s = strings.TrimSpace(s[i+len("在钉钉会话中的消息："):])
+	}
+	s = strings.TrimSpace(strings.TrimPrefix(s, "钉钉会话消息："))
+	return s
 }
 
 // KeepWorkUtterances drops thanks / OK lines from a mixed window so a real
@@ -97,7 +122,7 @@ func KeepWorkUtterances(turn Turn) Turn {
 	}
 	work := make([]WindowUtterance, 0, len(utterances))
 	for _, u := range utterances {
-		if isAckOrStopReply(u.Text) {
+		if allAckText(u.Text) {
 			continue
 		}
 		work = append(work, u)

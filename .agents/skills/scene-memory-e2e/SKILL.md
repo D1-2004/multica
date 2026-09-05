@@ -16,6 +16,7 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy. L
 
 造群/单聊步骤：[references/create-scene.md](references/create-scene.md)。
 `/reset-memory`：[references/reset-memory.md](references/reset-memory.md)。
+场景窗 W3/W5/W7/wrap-up 固定夹具：[references/scene-window-plays.md](references/scene-window-plays.md)，重跑 `scripts/run-window-plays.py`。
 
 ## 铁律
 
@@ -50,5 +51,7 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy. L
 | last-N 灌水后 Host 仍有探针 | P8 |
 | `/reset-memory` 清本 cid，其它 cid 还在 | P5 / P10 / P11 |
 | reset 后立刻新口径，旧口径不回 | P9 |
+| 忙时下一窗不丢第三件 @；ACK 不并进停驻事项 | W5 / W7（scene-window-plays） |
+| 沙箱已在本 cid 说过则 wrap-up Host 静默 | WRAP |
 
-隔离必须 **建群 + 跑证明** 一起做，不要只用旧群名口头说「应该隔离」。
+隔离必须 **建群 + 跑证明** 一起做，不要只用旧群名口头说「应该隔离」。场景窗优先用 G1/G2 固定 cid，不要另造群。
