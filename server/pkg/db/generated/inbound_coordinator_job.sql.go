@@ -138,7 +138,33 @@ WHERE assoc_edge.workspace_id=$1
     (assoc_edge.dst_type='scene' AND assoc_edge.dst_id=$3)
     OR (assoc_edge.src_type='scene' AND assoc_edge.src_id=$3)
   )
-  AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')`,
+  AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')`,
+		arg.WorkspaceID, arg.AgentID, arg.ConversationID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+func (q *Queries) CountOpenSceneMattersForConversation(ctx context.Context, arg CountActiveTasksForConversationParams) (int64, error) {
+	row := q.db.QueryRow(ctx, `
+SELECT count(DISTINCT assoc_task.issue_id)::bigint
+FROM assoc_edge
+JOIN assoc_task
+  ON assoc_task.workspace_id = assoc_edge.workspace_id
+ AND assoc_task.agent_id = assoc_edge.agent_id
+ AND (
+    (assoc_edge.src_type = 'task' AND assoc_edge.src_id = assoc_task.id::text)
+    OR (assoc_edge.dst_type = 'task' AND assoc_edge.dst_id = assoc_task.id::text)
+ )
+WHERE assoc_edge.workspace_id=$1
+  AND assoc_edge.agent_id=$2
+  AND assoc_edge.rel='task_scene'
+  AND assoc_edge.status='open'
+  AND assoc_task.status IN ('open', 'waiting')
+  AND (
+    (assoc_edge.dst_type='scene' AND assoc_edge.dst_id=$3)
+    OR (assoc_edge.src_type='scene' AND assoc_edge.src_id=$3)
+  )`,
 		arg.WorkspaceID, arg.AgentID, arg.ConversationID)
 	var n int64
 	err := row.Scan(&n)
@@ -250,6 +276,7 @@ func (q *Queries) ListPendingInboundCoordinatorJobsForConversation(ctx context.C
 SELECT `+inboundCoordinatorJobColumns+`
 FROM inbound_coordinator_job
 WHERE workspace_id=$1 AND agent_id=$2 AND status='pending'
+  AND available_at<=now()
   AND id<>$3
   AND command #>> '{event,data,conversation,openConversationId}'=$4
 ORDER BY created_at ASC
@@ -278,7 +305,7 @@ type UpdateInboundCoordinatorJobCollectParams struct {
 func (q *Queries) UpdateInboundCoordinatorJobCollect(ctx context.Context, arg UpdateInboundCoordinatorJobCollectParams) (InboundCoordinatorJob, error) {
 	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
 UPDATE inbound_coordinator_job
-SET command=$2, available_at=$3, updated_at=now()
+SET command=$2, available_at=GREATEST(available_at, $3), updated_at=now()
 WHERE id=$1 AND status='pending'
 RETURNING `+inboundCoordinatorJobColumns, arg.ID, arg.Command, arg.AvailableAt))
 }

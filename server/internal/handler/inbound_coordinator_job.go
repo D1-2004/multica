@@ -370,13 +370,22 @@ func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentI
 	if h == nil || h.Queries == nil || strings.TrimSpace(cid) == "" {
 		return slots
 	}
-	active, err := h.Queries.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{
+	params := db.CountActiveTasksForConversationParams{
 		WorkspaceID: workspaceID, AgentID: agentID, ConversationID: cid,
-	})
+	}
+	open, err := h.Queries.CountOpenSceneMattersForConversation(ctx, params)
 	if err != nil {
 		return slots
 	}
-	left := slots - int(active)
+	active, err := h.Queries.CountActiveTasksForConversation(ctx, params)
+	if err != nil {
+		active = 0
+	}
+	used := open
+	if active > used {
+		used = active
+	}
+	left := slots - int(used)
 	if left < 0 {
 		return 0
 	}

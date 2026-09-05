@@ -32,9 +32,12 @@ inbound @  → pending job (never dropped)
            yes → park
      ACK/thanks window?
            yes → Decide (silence; skip the 2-task cap)
-     2 active sandbox tasks?
-           yes → park (available_at += delay)
+     2 running sandboxes?
+           yes → park (available_at stays; collect cannot pull it earlier)
            no  → Decide once
+                │
+     finish new issue while 2 open/waiting matters on this cid?
+           yes → 409 park (do not open a third)
                 │
            Decide once
                 │
@@ -59,6 +62,8 @@ inbound @  → pending job (never dropped)
 | Slot free → next window | `handler/task_finished_loop.go` Notify on every completed task, even when wrap-up is off |
 | ACK skips 2-task cap | `parkIfSceneWindowBusy` after absorb; `AllWindowAck` |
 | Per-item speaker | `overlayDispatchSender` before Issue create |
+| Parked jobs stay queued | absorb only `available_at <= now()`; collect uses `GREATEST(available_at, …)` |
+| Third matter | `CountOpenSceneMattersForConversation` (assoc open/waiting) caps new Issue creates |
 
 ## Verification
 
