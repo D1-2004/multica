@@ -252,6 +252,18 @@ func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 	turn.ReplyTone = voice.ReplyTone
 }
 
+func hostSilence(turn Turn, reason string) Decision {
+	ensureTurnTraceID(&turn)
+	slog.Info("inbound coordinator decided",
+		append(coordinatorLogIndex(turn),
+			"event", "inbound_coordinator_decided",
+			"action", string(ActionSilence),
+			"reason", reason,
+			"window_items", 0,
+		)...)
+	return Decision{Action: ActionSilence, Reason: reason}
+}
+
 // Decide returns a verdict. A disabled LLM or any failure continues the
 // existing sandbox enqueue so a missing model never silences users.
 func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision) {
@@ -282,13 +294,13 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		return Decision{Action: ActionSilence}
 	}
 	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
-		return Decision{Action: ActionSilence, Reason: "window_ack"}
+		return hostSilence(turn, "window_ack")
 	}
 	if turn.Loop != LoopTaskFinished {
 		turn = KeepWorkUtterances(turn)
 	}
 	if turn.Loop == LoopTaskFinished && turn.AlreadyToldScene {
-		return Decision{Action: ActionSilence, Reason: "already_told_scene"}
+		return hostSilence(turn, "already_told_scene")
 	}
 	if c.LLM == nil || !c.LLM.Enabled() {
 		if turn.Loop == LoopTaskFinished {
