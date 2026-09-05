@@ -115,6 +115,7 @@ FROM inbound_coordinator_job
 WHERE workspace_id = @workspace_id
   AND agent_id = @agent_id
   AND status = 'pending'
+  AND available_at <= now()
   AND id <> @exclude_id
   AND command #>> '{event,data,conversation,openConversationId}' = @conversation_id
 ORDER BY created_at ASC
@@ -123,7 +124,7 @@ FOR UPDATE;
 -- name: UpdateInboundCoordinatorJobCollect :one
 UPDATE inbound_coordinator_job
 SET command = @command,
-    available_at = @available_at,
+    available_at = GREATEST(available_at, @available_at),
     updated_at = now()
 WHERE id = @id AND status = 'pending'
 RETURNING *;
@@ -176,7 +177,27 @@ WHERE assoc_edge.workspace_id = @workspace_id
     (assoc_edge.dst_type = 'scene' AND assoc_edge.dst_id = @conversation_id)
     OR (assoc_edge.src_type = 'scene' AND assoc_edge.src_id = @conversation_id)
   )
-  AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory');
+  AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred');
+
+-- name: CountOpenSceneMattersForConversation :one
+SELECT count(DISTINCT assoc_task.issue_id)::bigint
+FROM assoc_edge
+JOIN assoc_task
+  ON assoc_task.workspace_id = assoc_edge.workspace_id
+ AND assoc_task.agent_id = assoc_edge.agent_id
+ AND (
+    (assoc_edge.src_type = 'task' AND assoc_edge.src_id = assoc_task.id::text)
+    OR (assoc_edge.dst_type = 'task' AND assoc_edge.dst_id = assoc_task.id::text)
+ )
+WHERE assoc_edge.workspace_id = @workspace_id
+  AND assoc_edge.agent_id = @agent_id
+  AND assoc_edge.rel = 'task_scene'
+  AND assoc_edge.status = 'open'
+  AND assoc_task.status IN ('open', 'waiting')
+  AND (
+    (assoc_edge.dst_type = 'scene' AND assoc_edge.dst_id = @conversation_id)
+    OR (assoc_edge.src_type = 'scene' AND assoc_edge.src_id = @conversation_id)
+  );
 
 -- name: ParkInboundCoordinatorJob :execrows
 UPDATE inbound_coordinator_job
