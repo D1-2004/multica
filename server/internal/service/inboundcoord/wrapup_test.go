@@ -17,8 +17,10 @@ func TestTaskFinishedAlreadyToldScene(t *testing.T) {
 	if !TaskFinishedAlreadyToldScene(events, cid, taskID) {
 		t.Fatal("same-scene outbound from this task must skip wrap-up")
 	}
-	if TaskFinishedAlreadyToldScene(events, cid, "other-task") {
-		t.Fatal("outbound from another task must not count")
+	// Production wrap-up passes agent_task_queue.id; assoc events store the
+	// graph task node id. A mismatch must not keep wrap-up talking.
+	if !TaskFinishedAlreadyToldScene(events, cid, "other-task") {
+		t.Fatal("outbound on this cid during the run must skip wrap-up even when task ids differ")
 	}
 	dm := []assoc.Event{
 		{Direction: assoc.DirOutbound, SceneKey: "cid-dxxh-dm", TaskID: taskID},
