@@ -175,8 +175,8 @@
     "transfer_owner_confirm": "Transfer"
   },
   "inspector": {
-    "section_profile": "Profile",
-    "section_profile_hint": "Manage how this agent appears across the workspace.",
+    "section_profile": "Employee profile",
+    "section_profile_hint": "Manage how this digital employee appears across the workspace.",
     "section_execution": "Execution",
     "section_execution_hint": "Choose the runtime, model, reasoning level, and parallel task limit.",
     "section_access": "Access",
@@ -296,14 +296,22 @@
   "tabs": {
     "overview": "Overview",
     "work": "Work",
-    "inbound": "Inbound",
+    "inbound": "Conversations",
     "memory": "Memory",
     "capabilities": "Capabilities",
+    "configuration": "Configuration",
+    "identity_goals": "Identity & Goals",
+    "connections": "Connections",
+    "execution": "Execution",
+    "management": "Management",
+    "digital_employee": "Digital Employee",
     "settings": "Settings",
-    "general": "General",
+    "general": "Runtime",
     "access": "Access",
     "page_navigation_aria": "Agent page",
     "section_navigation_aria": "Agent section",
+    "config_group_aria": "Configuration group",
+    "config_tab_aria": "Configuration page",
     "activity": "Activity",
     "tasks": "Tasks",
     "instructions": "Instructions",
@@ -311,10 +319,11 @@
     "skills": "Skills",
     "environment": "Environment",
     "custom_args": "Custom Args",
-    "mcp_config": "MCP",
+    "mcp_config": "MCP Tools",
     "runner": "Local Runner",
     "composio_mcp": "MCP Apps",
-    "integrations": "Integrations",
+    "integrations": "Bot Connections",
+    "mcp_access": "MCP Access",
     "runtime_config": "Routing",
     "a2a": "A2A",
     "discard_dialog_title": "Discard unsaved changes?",
@@ -531,6 +540,14 @@
       "save": "Save",
       "add": "Add",
       "unsaved_changes": "Unsaved changes"
+    },
+    "digital_employee": {
+      "identity_title": "Employee identity",
+      "identity_hint": "Keep message accounts and execution identities distinct. Each binding explains where it is used.",
+      "voice_title": "Communication style",
+      "voice_hint": "Control how this digital employee speaks in chat without changing task instructions.",
+      "message_title": "Message handling",
+      "message_hint": "Decide how this digital employee handles conversations and follow-up work."
     },
     "runner": {
       "execution_title": "Local Runner",
@@ -1082,7 +1099,7 @@
       "add_failed_toast": "Failed to add skill"
     },
     "integrations": {
-      "intro": "Connect this agent to external tools and platforms.",
+      "intro": "Connect this agent to chat platforms as a bot. Digital employee accounts are managed separately.",
       "mcp_link_intro": "Copy this link and paste it into any agent platform that supports remote MCP to use this agent.",
       "mcp_link_active": "Active",
       "mcp_link_not_created": "Not created",

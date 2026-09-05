@@ -126,31 +126,6 @@ vi.mock("../../../settings/components/dingtalk-tab", () => ({
   ),
 }));
 
-vi.mock("../integrations/dingtalk-account-binding", () => ({
-  DingTalkAccountBindingCard: ({
-    agentId,
-    canOperate,
-    permissionLoading,
-  }: {
-    agentId: string;
-    canOperate: boolean;
-    permissionLoading: boolean;
-  }) => (
-    <section
-      aria-label="Enterprise digital employee"
-      data-agent-id={agentId}
-      data-can-operate={canOperate ? "true" : "false"}
-      data-permission-loading={permissionLoading ? "true" : "false"}
-    />
-  ),
-}));
-
-vi.mock("../integrations/mcp-link-card", () => ({
-  AgentMCPLinkCard: ({ agent }: { agent: Agent }) => (
-    <section aria-label="MCP link" data-agent-id={agent.id} />
-  ),
-}));
-
 // Same stubbing rationale for WeCom smart-bot: the shared bind entry has
 // its own coverage in wecom-tab.test.tsx (when added); here it's a marker.
 vi.mock("../../../settings/components/wecom-tab", () => ({
@@ -213,50 +188,37 @@ function resetFixtures() {
 describe("IntegrationsTab", () => {
   beforeEach(resetFixtures);
 
-  it("shows only the MCP integration when no platform integration is configured", () => {
+  it("keeps MCP access and digital employee identity out of bot connections", () => {
     renderTab(
       <IntegrationsTab
         agent={agent}
-        showMcpLink
-        platformIntegrationsConfigured={false}
-        canOperateDingTalkBinding
-        dingTalkBindingPermissionLoading={false}
       />,
     );
 
-    expect(screen.getByRole("region", { name: /MCP link/i })).toHaveAttribute(
-      "data-agent-id",
-      "agent-1",
-    );
-    expect(screen.queryByText("Lark")).not.toBeInTheDocument();
-    expect(screen.queryByText("Slack")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: /MCP link/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: /Enterprise digital employee/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Lark")).toBeInTheDocument();
+    expect(screen.getByText("Slack")).toBeInTheDocument();
   });
 
   it("renders the shared bind entry for every platform for an owner when configured and supported", () => {
     renderTab(
       <IntegrationsTab
         agent={agent}
-        canOperateDingTalkBinding
-        dingTalkBindingPermissionLoading={false}
       />,
     );
     expect(screen.getByText("Lark")).toBeTruthy();
     expect(screen.getByText("Slack")).toBeTruthy();
     expect(screen.getByText("Enterprise bot")).toBeTruthy();
     expect(screen.getByText("WeCom")).toBeTruthy();
-    const digitalEmployee = screen.getByRole("region", {
-      name: /Enterprise digital employee/i,
-    });
     const enterpriseBot = screen.getByText("Enterprise bot");
     const lark = screen.getByText("Lark");
     const slack = screen.getByText("Slack");
     const wecom = screen.getByText("WeCom");
-    expect(digitalEmployee).toHaveAttribute("data-agent-id", "agent-1");
-    expect(digitalEmployee).toHaveAttribute("data-can-operate", "true");
-    expect(
-      digitalEmployee.compareDocumentPosition(enterpriseBot) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
     expect(
       enterpriseBot.compareDocumentPosition(lark) &
         Node.DOCUMENT_POSITION_FOLLOWING,
@@ -290,8 +252,6 @@ describe("IntegrationsTab", () => {
     renderTab(
       <IntegrationsTab
         agent={agent}
-        canOperateDingTalkBinding
-        dingTalkBindingPermissionLoading={false}
       />,
     );
     // Lark has no manual fallback, so it still surfaces coming-soon.
@@ -316,8 +276,6 @@ describe("IntegrationsTab", () => {
     renderTab(
       <IntegrationsTab
         agent={agent}
-        canOperateDingTalkBinding
-        dingTalkBindingPermissionLoading={false}
       />,
     );
     expect(screen.getByText(/Lark integration not enabled/i)).toBeTruthy();
@@ -328,22 +286,16 @@ describe("IntegrationsTab", () => {
 
   it("points members at Settings when they are neither an admin nor the agent owner", () => {
     // A plain member viewing an agent owned by someone else cannot manage
-    // bot installations. The digital-employee card remains visible, while
-    // its mutation controls receive the read-only permission decision.
+    // bot installations. Employee identity stays on Digital Employee.
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(
       <IntegrationsTab
         agent={{ ...agent, owner_id: "user-2" }}
-        canOperateDingTalkBinding={false}
-        dingTalkBindingPermissionLoading={false}
       />,
     );
     expect(
-      screen.getByRole("region", { name: /Enterprise digital employee/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("region", { name: /Enterprise digital employee/i }),
-    ).toHaveAttribute("data-can-operate", "false");
+      screen.queryByRole("region", { name: /Enterprise digital employee/i }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByText(
         /Only workspace owners and admins can create enterprise bots/i,
@@ -363,8 +315,6 @@ describe("IntegrationsTab", () => {
     renderTab(
       <IntegrationsTab
         agent={agent}
-        canOperateDingTalkBinding
-        dingTalkBindingPermissionLoading={false}
       />,
     );
     const larkButton = screen.getByTestId("lark-bind-button");
@@ -395,8 +345,6 @@ describe("IntegrationsTab", () => {
     renderTab(
       <IntegrationsTab
         agent={agent}
-        canOperateDingTalkBinding
-        dingTalkBindingPermissionLoading={false}
       />,
     );
     expect(screen.getByTestId("lark-bind-button")).toBeTruthy();
