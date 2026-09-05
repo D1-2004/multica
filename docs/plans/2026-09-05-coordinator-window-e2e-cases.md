@@ -20,6 +20,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 | 8 | E0048-loop | 3106918496 | W3A **no Decide** leftover 处理中 (C11); W3B+W5 issue; ACK window_ack ×2 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; C10 W2B 处理失败 |
 | 9 | E0218-loop | 3106924013 | W3A+W3B issue (C11 not reproduced); W5 park then issue 02:21:10; ACK window_ack ×4 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; this-token W2B reply no 处理失败; W5 inbound leftover 处理中 |
 | 10 | E0303-loop | 3106924013 | W3A+W3B issue (C11 2nd clean); W5 park then issue 03:05:34; ACK window_ack ×4 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; W2 inbound **处理失败**; W2B reply clean; W3B/W5 leftover 处理中 |
+| 11 | E0348-loop | 3106924013 | W3A+W3B issue (C11 3rd); W5 park then issue 03:51:37; ACK window_ack ×3 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; this-token W2/W2B no 处理失败; W5 leftover 处理中; W2 wrap-up extra reply |
 
 ## Open cases
 
@@ -73,13 +74,13 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 - Found: E2103-loop G1 W2B (`就约线上`) Decide `action=retry` ×6 `reason=issue_busy_park` on issue `049c6f99-…`; wrap-up later `already_told_scene`; IM still has emotion `处理中` on the W2B inbound (E1-2007-W2B still stamped too)
 - Fix: Host/channel should complete the DingTalk silence callback (clear 处理中) when `ActionRetry` parks or when wrap-up silences the same cid; do not leave the confirmation @ spinning
 - Prove: next round W2B has no leftover `处理中` after the meeting issue settles
-- Status: E10 `E0303-loop-W2` inbound **处理失败** even after Decide `action=issue` + IM replies; W2B this token clean. Emotion leak after success. Not shipping this fire
+- Status: E11 `E0348-loop-W2/W2B` inbound **no** 处理失败 (W2B retried then comment). E10 W2 still stamped. Flaky leftover. Not shipping this fire
 
 ### C11 G2 W3A never Decide, inbound stuck `处理中`
 - Found: E0048-loop W3A (`帮我问 dxxh 下周排期`) IM 00:48:21 emotion `处理中`; no `inbound_coordinator_llm_request` and no `inbound_coordinator_decided` for this token. W3B/W5 on same cid did Decide. WRAP on G1 was sent ~3s later (different scene).
 - Fix: Host/Router must persist+Decide the first G2 @ even when a G1 WRAP is in-flight; complete the 处理中 callback if the job is dropped
 - Prove: next round W3A has `action=issue` (or reply) in SLS and inbound `处理中` is cleared
-- Status: E9+E10 **two clean Decide rounds** on `3106924013` (W3A `action=issue`, inbound no leftover 处理中). Drop-without-Decide looks recovered; keep listed until C10 emotion path is fixed. Not shipping this fire
+- Status: E9–E11 **three clean Decide rounds** on `3106924013`. Drop-without-Decide recovered. Not shipping this fire
 
 ## Round 3 detail (E2103-loop)
 
@@ -208,3 +209,19 @@ Pipeline 66 `3106924013` 预发部署 SUCCESS. dws pre. Actors 主角/配角 onl
 | wrap-up | G1 WRAP `already_told_scene`. G2 W3 `already_told_scene` issue `583e653a-…` |
 | shouldReply | none |
 | 处理中/失败 | C10: G1 W2 inbound **处理失败** after successful issue+IM. W2B clean. W3B/W5 leftover `处理中` |
+
+## Round 11 detail (E0348-loop)
+
+Pipeline 66 `3106924013` 预发部署 SUCCESS. dws pre. Actors 主角/配角 only.
+
+| Check | Result |
+|---|---|
+| W3 | PASS C11 3rd: W3A+W3B `action=issue` token kept; inbound clean |
+| W5 | job `fa52b7ef-…` parked `two in-flight` ~03:49:44–03:51:29, then Decide `action=issue` 03:51:37. IM sandbox 无法订票; inbound leftover `处理中` |
+| collect_split | 03:49:38 / 03:49:54 / 03:50:06 `incoming_ack=true` |
+| ACK | `window_ack` ×3; G2 `llm_request` only W3A/W3B/W5 |
+| WRAP | PASS C9: `action=issue`; IM **E0348-loop 差旅住宿清单**; wrap-up `already_told_scene` issue `6e84d1ff-…` |
+| W6 | 配角 ok. R9A 已记下. R9B `action=issue` look_into `scene_cid=` R9B; Host no R9A cid; IM searched this cid only |
+| wrap-up | WRAP `already_told_scene`. W2 wrap-up `action=reply` 「已问 dxxh 明天线上开会时间」 after W2B comment (extra ping) |
+| shouldReply | none |
+| 处理中/失败 | This-token W2/W2B inbound clean. W5 leftover `处理中`. Old E0303-W2 still 处理失败 |
