@@ -955,6 +955,28 @@ func TestLoopTaskFinishedAllowsIssueGetWithoutRecall(t *testing.T) {
 	}
 }
 
+func TestLoopTaskFinishedSilencesRedundantWrapup(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("finish", toolFinish, `{"action":"reply","text":"劳动合同法第三条的大白话解释已发到群里，你查收一下。"}`),
+	}}
+	decision, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
+		Loop:       LoopTaskFinished,
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "group",
+		Message:    "任务已完成，请向委托人汇报。",
+		IssueID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		TaskResult: "已向当前钉钉会话发送劳动合同法第三条解释。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionSilence || strings.TrimSpace(decision.UserText) != "" {
+		t.Fatalf("redundant wrap-up must silence, decision=%#v", decision)
+	}
+}
+
 func TestToolsForTurnTaskFinishedOmitsAssocRecall(t *testing.T) {
 	t.Parallel()
 	defs := toolsForTurn(Turn{Loop: LoopTaskFinished}, 0)
@@ -972,6 +994,16 @@ func TestToolsForTurnTaskFinishedOmitsAssocRecall(t *testing.T) {
 	}
 	if !strings.Contains(joined, toolIssueGet) || !strings.Contains(joined, toolFinish) {
 		t.Fatalf("task-finished tools=%v", names)
+	}
+	defs = toolsForTurn(Turn{Loop: LoopTaskFinished}, 0)
+	for _, def := range defs {
+		fn := def.GetFunction()
+		if fn == nil || fn.Name != toolFinish {
+			continue
+		}
+		if !strings.Contains(fn.Description.Or(""), "Default action=silence") {
+			t.Fatalf("finish tool should default to silence: %s", fn.Description.Or(""))
+		}
 	}
 }
 

@@ -274,14 +274,14 @@ func taskFinishedToolDefs() []openai.ChatCompletionToolUnionParam {
 func coordinatorTaskFinishedFinishTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("End the task-finished loop. action=reply is a short wrap-up or suggestion for the original delegator. action=silence when the sandbox result already told them. Do not open a new Issue from this loop."),
+		Description: openai.String("End the task-finished loop. Default action=silence when the sandbox already told this conversation. action=reply is one short colleague line only if this chat still lacks the outcome. Never 已发到群里 or 查收一下. Do not open a new Issue."),
 		Parameters: shared.FunctionParameters{
 			"type":                 "object",
 			"additionalProperties": false,
 			"required":             []string{"action"},
 			"properties": map[string]any{
 				"action": map[string]any{"type": "string", "enum": []string{"reply", "silence"}},
-				"text":   map[string]any{"type": "string", "description": "Required for reply. The IM sentence spoken to the delegator."},
+				"text":   map[string]any{"type": "string", "description": "Required for reply. One short colleague line. Forbidden: 已发到群里, 查收一下, inventing 私信你."},
 				"reason": map[string]any{"type": "string"},
 			},
 		},

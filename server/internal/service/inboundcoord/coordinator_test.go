@@ -189,6 +189,9 @@ func TestSystemPromptHumanGroupFloodRules(t *testing.T) {
 		"Do not volunteer 我来帮你们建事项",
 		"我去问 dxxh 周五三点",
 		"a real teammate, not a helpdesk",
+		"Default action=silence",
+		"Never say 已发到群里",
+		"Never invent 私信 vs 群",
 	}
 	for _, needle := range must {
 		if !strings.Contains(systemPrompt, needle) {
@@ -207,6 +210,21 @@ func TestGroupUnaddressedSilenceWithoutLLM(t *testing.T) {
 	})
 	if got.Action != ActionSilence {
 		t.Fatalf("got %s", got.Action)
+	}
+}
+
+func TestDecideTaskFinishedAlreadyToldSceneWithoutLLM(t *testing.T) {
+	c := &Coordinator{LLM: llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"})}
+	got := c.Decide(context.Background(), Turn{
+		Loop:             LoopTaskFinished,
+		Source:           SourceDigitalEmployee,
+		Addressed:        true,
+		ChatType:         "group",
+		Message:          "任务已完成，请向委托人汇报。",
+		AlreadyToldScene: true,
+	})
+	if got.Action != ActionSilence || got.Reason != "already_told_scene" {
+		t.Fatalf("got %#v", got)
 	}
 }
 
