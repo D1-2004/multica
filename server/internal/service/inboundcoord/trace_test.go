@@ -72,6 +72,7 @@ func TestDecideExportsOneLangfuseTracePerTurn(t *testing.T) {
 		AgentName:         "FDE教练",
 		WorkspaceID:       "ws-1",
 		ChatSessionID:     "session-1",
+		EvidenceID:        "msg-1",
 		TraceID:           traceID,
 	})
 	if decision.Action != ActionReply {
@@ -124,9 +125,14 @@ func TestDecideExportsOneLangfuseTracePerTurn(t *testing.T) {
 	if got, _ := spanAttr(root, "langfuse.observation.metadata.conversation_title"); got.AsString() != "冬翔的会话" {
 		t.Errorf("root metadata conversation_title = %q", got.AsString())
 	}
+	// Only ids no trace id, tag or session covers are indexed, under one
+	// "index" node.
+	if len(spansNamed(spans, "idx.evidence_id.msg-1")) != 1 || len(spansNamed(spans, "index")) != 1 {
+		t.Errorf("index node or evidence event missing: %v", spanNames(spans))
+	}
 	for _, name := range []string{"idx.coord_trace_id." + traceID, "idx.agent_id.01000000-0000-0000-0000-000000000000", "idx.chat_session_id.session-1", "idx.workspace_id.ws-1"} {
-		if len(spansNamed(spans, name)) != 1 {
-			t.Errorf("index event %q missing: %v", name, spanNames(spans))
+		if len(spansNamed(spans, name)) != 0 {
+			t.Errorf("%q is covered by the trace id, a tag or the session and must not be indexed", name)
 		}
 	}
 	if got := len(spansNamed(spans, "idx.conversation_id.")); got != 0 {

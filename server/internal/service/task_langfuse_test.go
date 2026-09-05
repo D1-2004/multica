@@ -109,10 +109,20 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 	if strings.Join(opts.Tags, ",") != wantTags {
 		t.Fatalf("tags = %v", opts.Tags)
 	}
-	keys := TaskIndexKeys(task, agent)
-	if keys["task_id"] != "aabb0000-0000-0000-0000-000000000000" || keys["issue_id"] != "02000000-0000-0000-0000-000000000000" ||
-		keys["workspace_id"] != "09000000-0000-0000-0000-000000000000" || keys["chat_session_id"] != "03000000-0000-0000-0000-000000000000" {
-		t.Fatalf("index keys = %v", keys)
+	// A task-owned trace reaches task, issue, agent, workspace and user
+	// through tags and the chat session through the session, so none of
+	// them is indexed as an event.
+	keys := TaskIndexKeys(task)
+	for _, covered := range []string{"task_id", "issue_id", "agent_id", "workspace_id", "chat_session_id", "initiator_user_id"} {
+		if _, indexed := keys[covered]; indexed {
+			t.Fatalf("%s is covered by a tag or the session and must not be indexed: %v", covered, keys)
+		}
+	}
+	joined := task
+	joined.Context = []byte(`{"coordinator_trace_id":"5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7","coordinator_trace_tags":["inbound_coordinator"]}`)
+	joinedKeys := TaskIndexKeys(joined)
+	if joinedKeys["task_id"] != "aabb0000-0000-0000-0000-000000000000" || joinedKeys["issue_id"] != "02000000-0000-0000-0000-000000000000" {
+		t.Fatalf("coordinator-owned task must index task and issue ids: %v", joinedKeys)
 	}
 	for key, want := range map[string]string{
 		"task_id": "aabb0000-0000-0000-0000-000000000000", "agent_name": "FDE教练", "provider": "hermes",

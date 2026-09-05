@@ -51,17 +51,20 @@ func (f *MemoryFlusher) startFlushTrace(ctx context.Context, row db.SceneMemory,
 }
 
 // flushIndexKeys are the ids a reader may hold when looking for this flush.
+// flushIndexKeys are the flush's ids that nothing else makes searchable: the
+// session is the scene key and the tags carry the agent and the workspace,
+// so only the row id and the triggering turn (coord_trace_id, plus the job id
+// when it differs) are indexed.
 func flushIndexKeys(row db.SceneMemory) map[string]string {
-	return map[string]string{
+	coord := strings.TrimSpace(row.LastTriggerCoordTraceID)
+	keys := map[string]string{
 		"scene_memory_id": util.UUIDToString(row.ID),
-		"scene_key":       strings.TrimSpace(row.SceneKey),
-		"conversation_id": strings.TrimSpace(row.SceneKey),
-		"agent_id":        util.UUIDToString(row.AgentID),
-		"workspace_id":    util.UUIDToString(row.WorkspaceID),
-		"coord_trace_id":  strings.TrimSpace(row.LastTriggerCoordTraceID),
-		"job_id":          util.UUIDToString(row.LastTriggerJobID),
-		"dws_org_id":      strings.TrimSpace(row.OrgID),
+		"coord_trace_id":  coord,
 	}
+	if job := util.UUIDToString(row.LastTriggerJobID); job != "" && job != coord {
+		keys["job_id"] = job
+	}
+	return keys
 }
 
 func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) langfuse.TraceOptions {

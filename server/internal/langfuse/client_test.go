@@ -344,6 +344,20 @@ func TestIndexEventsAreDeterministicAndUpsertable(t *testing.T) {
 	for _, span := range spans {
 		byName[span.Name] = append(byName[span.Name], span)
 	}
+	containers := byName[IndexContainerName]
+	if len(containers) != 2 || containers[0].SpanContext.SpanID() != containers[1].SpanContext.SpanID() {
+		t.Fatalf("index node emitted %d times or with differing ids, want one upserted node", len(containers))
+	}
+	if containers[0].Parent.SpanID().String() != rootID || containers[1].Parent.SpanID().String() != rootID {
+		t.Fatal("index node must be parented on the task root")
+	}
+	if attrValue(t, containers[0], attrObsType).AsString() != "span" || attrValue(t, containers[0], attrObsLevel).AsString() != "DEBUG" {
+		t.Fatal("index node must be a DEBUG span")
+	}
+	if attrValue(t, containers[0], attrObsMetadataPfx+"task_id").AsString() != taskID {
+		t.Fatal("index node metadata must list the indexed ids")
+	}
+	containerID := containers[0].SpanContext.SpanID()
 	for _, name := range []string{"idx.task_id." + taskID, "idx.person_id.Dv6WPx", "idx.conversation_id.cid+abc=="} {
 		got := byName[name]
 		if len(got) != 2 {
@@ -352,8 +366,8 @@ func TestIndexEventsAreDeterministicAndUpsertable(t *testing.T) {
 		if got[0].SpanContext.SpanID() != got[1].SpanContext.SpanID() {
 			t.Fatalf("index %q ids differ between producers", name)
 		}
-		if got[0].Parent.SpanID().String() != rootID || got[1].Parent.SpanID().String() != rootID {
-			t.Fatalf("index %q must be parented on the task root", name)
+		if got[0].Parent.SpanID() != containerID || got[1].Parent.SpanID() != containerID {
+			t.Fatalf("index %q must be parented on the index node", name)
 		}
 		if attrValue(t, got[0], attrObsType).AsString() != "event" || attrValue(t, got[0], attrObsLevel).AsString() != "DEBUG" {
 			t.Fatalf("index %q must be a DEBUG event", name)

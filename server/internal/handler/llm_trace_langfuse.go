@@ -132,7 +132,7 @@ func (o *langfuseLLMTraceObserver) ObserveTaskLLMTrace(ctx context.Context, task
 		// The first relayed pair usually creates the trace record long before
 		// the task finishes; index the task's ids right away so the trace is
 		// reachable by task/issue id while the sandbox is still running.
-		o.client.IndexInTrace(ctx, traceOpts, service.TaskLangfuseRootSpanID(taskID), service.TaskIndexKeys(task, agentPtr))
+		o.client.IndexInTrace(ctx, traceOpts, service.TaskLangfuseRootSpanID(taskID), service.TaskIndexKeys(task))
 	}
 	endOpts := langfuse.EndOptions{EndTime: end, Output: exchange.Output, Usage: exchange.Usage}
 	switch {

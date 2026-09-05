@@ -41,7 +41,7 @@ session, and tags on every span:
 | user id | `person_id` → `dws_uid` → Multica user id → sender name | (none) | `person_id` → `dws_uid` → originator → initiator |
 | session id | `conversation_id` (openConversationId) → chat session id | `scene_key` (openConversationId) | `conversation_id` → chat session id |
 | tags | `inbound_coordinator`, `source-*`, `kind-*`, `agent-<id>`, `workspace-<id>`, `user-<id>` | `scene_memory`, `kind-*`, `agent-<id>`, `workspace-<id>` | `agent_task`, `runtime-*`, `provider-*`, `channel-*`, `source-*`, `agent-<id>`, `workspace-<id>`, `user-<id>`, `task-<id>`, `issue-<id>` (a coordinator-owned task repeats the turn's tags instead) |
-| index events | `idx.coord_trace_id.*`, `idx.conversation_id.*`, `idx.chat_session_id.*`, `idx.agent_id.*`, `idx.workspace_id.*`, `idx.person_id.*`, `idx.dws_uid.*`, `idx.user_id.*`, `idx.evidence_id.*` | `idx.scene_memory_id.*`, `idx.scene_key.*`, `idx.conversation_id.*`, `idx.agent_id.*`, `idx.workspace_id.*`, `idx.coord_trace_id.*`, `idx.job_id.*`, `idx.dws_org_id.*` | `idx.task_id.*`, `idx.issue_id.*`, `idx.agent_id.*`, `idx.workspace_id.*`, `idx.runtime_id.*`, `idx.chat_session_id.*`, `idx.coord_trace_id.*`, `idx.conversation_id.*`, `idx.person_id.*`, `idx.dws_uid.*`, `idx.initiator_user_id.*`, `idx.originator_user_id.*`, `idx.session_id.*`, … |
+| index events (under one `index` node; only ids no tag, session or trace id covers) | `idx.evidence_id.*`, `idx.chat_session_id.*` (turns inside a conversation), the user ids the `user-` tag does not carry (`idx.person_id.*`, `idx.dws_uid.*`, `idx.user_id.*`) | `idx.scene_memory_id.*`, `idx.coord_trace_id.*`, `idx.job_id.*` (when it differs) | `idx.runtime_id.*`, `idx.session_id.*`, `idx.parent_task_id.*`, `idx.autopilot_run_id.*`, `idx.trigger_comment_id.*`; task-owned traces add `idx.chat_session_id.*` (when a conversation is the session) and the user ids the tag does not carry; coordinator-owned tasks add `idx.task_id.*`, `idx.issue_id.*` |
 | outcome (metadata) | `action`, `issue_id`, `tool_rounds`, `fail_open` | `status`, `caught_up`, `replace`, `error_code` | `status`, `failure_reason`, token totals |
 
 Two behaviours of the deployed Langfuse build shape the attribute layout
@@ -184,21 +184,28 @@ Langfuse build can and cannot filter on was measured on 2026-09-04:
 | `GET /api/public/observations?name=` | exact match; `=`, `+`, CJK fine, `:` and whitespace not |
 
 Hence two index layers per trace: dash-style tags for the categorical keys
-known at trace start, and one zero-duration `DEBUG` event per id named
-`idx.<key>.<value>` (colons and whitespace in the value become `_`;
-`langfuse.IndexToken`). Every producer of a trace emits the index events with
-deterministic ids, so the relay can index a task before it finishes.
+known at trace start, and, only for the ids no tag, session or trace id
+covers, one zero-duration `DEBUG` event per id named `idx.<key>.<value>`
+(colons and whitespace in the value become `_`; `langfuse.IndexToken`). A
+producer's index events hang from one `DEBUG` span named `index` under its
+root observation, whose metadata lists the ids, so the trace tree shows a
+single collapsible node rather than one row per id. Every producer emits its
+index with deterministic ids, so the relay can index a task before it
+finishes and the completion hook upserts the same node.
 
 | Id in hand | Lookup |
 | --- | --- |
 | `coord_trace_id`, digital-employee coordinator job id, chat trace id | trace id = the UUID without dashes |
-| `task_id` (non-chat task) | trace id = the task UUID without dashes; otherwise `idx.task_id.<uuid>` |
-| `issue_id` | `idx.issue_id.<uuid>`; `issue-<uuid>` tag on task-owned traces |
+| `task_id` | non-chat task: trace id = the task UUID without dashes; task-owned trace: `task-<uuid>` tag; task inside a coordinator trace: `idx.task_id.<uuid>` |
+| `issue_id` | `issue-<uuid>` tag on task-owned traces; `idx.issue_id.<uuid>` inside a coordinator trace |
 | openConversationId / cid / scene_key | `sessionId=<cid>` (turns, flushes, and tasks of the scene) |
-| web chat session id | `sessionId=<uuid>` or `idx.chat_session_id.<uuid>` |
-| DingTalk uid / dws_uid / Multica user id | `user-<id>` tag, `idx.person_id.*`, `idx.dws_uid.*`, `idx.user_id.*` |
-| `agent_id` / `workspace_id` | `agent-<uuid>` / `workspace-<uuid>` tags or the matching `idx.*` events |
-| `evidence_id` (openMsgId), `scene_memory_id`, trigger `job_id` | `idx.evidence_id.*`, `idx.scene_memory_id.*`, `idx.job_id.*` |
+| web chat session id | `sessionId=<uuid>` (web turns and tasks) or `idx.chat_session_id.<uuid>` (turns and tasks inside a DingTalk conversation) |
+| DingTalk uid / dws_uid / Multica user id | `user-<id>` tag; the trace's other user ids as `idx.person_id.*`, `idx.dws_uid.*`, `idx.user_id.*` |
+| `agent_id` / `workspace_id` | `agent-<uuid>` / `workspace-<uuid>` tags |
+| `evidence_id` (openMsgId), `scene_memory_id`, trigger `job_id`, `runtime_id`, provider `session_id` | `idx.evidence_id.*`, `idx.scene_memory_id.*`, `idx.job_id.*` (when it differs from `coord_trace_id`), `idx.runtime_id.*`, `idx.session_id.*` |
+
+The skill's `key <name> <value>` command applies these fallbacks itself, so
+any key of this table works with it.
 
 Cross-links: a coordinator turn and the task it starts share one trace; a
 memory flush's `coord_trace_id` (and `idx.coord_trace_id`) names the turn that
