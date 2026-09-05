@@ -15,6 +15,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 | 3 | E2103-loop | 3106906434 / `6c51b3544` | W5 park (`two in-flight`) then `action=issue` token kept; ACK `window_ack` ×3 no ACK `llm_request`; `collect_split incoming_ack=true`; W3B issue / W3A reply-reuse 排期; WRAP reply reused E2-2024-WRAP (C9); W6 配角, R9B cid no R9A cid; wrap-up `already_told_scene`; no shouldReply; W2B 处理中 stuck (C10); W5 inbound 处理失败 (sandbox 订票) |
 | 4 | E2147-loop | 3106906434 / `6c51b3544` | W3A+W3B both `issue`; W5 park then `issue`; ACK `window_ack` ×3 no ACK llm; collect_split; C9 WRAP `issue` + IM 住宿清单 + wrap-up already_told; W6 R9B `issue` look_into R9B cid no R9A; no shouldReply; W5 inbound no 处理失败; C10 W2B 处理中 still |
 | 5 | E2232-loop | 3106906434 / `6c51b3544` | W3A+W3B issue; W5 park then issue; ACK window_ack ×4 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 IM isolation (R9B SLS lag); no shouldReply; this-token W2B no 处理中 (C10 not reproduced); old W2Bs still stamped |
+| 6 | E2317-loop | 3106906434 / `6c51b3544` | W3A issue / W3B reply-reuse 配额; W5 park then issue; ACK window_ack ×3 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; C10 W2B 处理中 reproduced |
 
 ## Open cases
 
@@ -68,7 +69,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 - Found: E2103-loop G1 W2B (`就约线上`) Decide `action=retry` ×6 `reason=issue_busy_park` on issue `049c6f99-…`; wrap-up later `already_told_scene`; IM still has emotion `处理中` on the W2B inbound (E1-2007-W2B still stamped too)
 - Fix: Host/channel should complete the DingTalk silence callback (clear 处理中) when `ActionRetry` parks or when wrap-up silences the same cid; do not leave the confirmation @ spinning
 - Prove: next round W2B has no leftover `处理中` after the meeting issue settles
-- Status: E5 `E2232-loop-W2B` inbound has **no** `处理中` (retries still fired on `049c6f99-…`, then IM replies). E3/E4 W2Bs still stamped. Keep open until a retry-storm round is clean without relying on a later reply. Not shipping this fire
+- Status: E6 reproduced — `E2317-loop-W2B` inbound emotion `处理中` while W2 sandbox in-flight (W2 was a **new** `action=issue` this round, not 049c6f99). E5 was clean. Flaky; still not a one-line window_ack fix. Not shipping this fire
 
 ## Round 3 detail (E2103-loop)
 
@@ -117,3 +118,19 @@ Pipeline 66 `3106906434` 预发部署 SUCCESS, SHA `6c51b3544`. dws pre. Actors 
 | wrap-up | G1 WRAP `already_told_scene`. G2 W3A wrap-up `action=reply` 「已问 dxxh 下周排期，等他回。」 (first group report). G1 W2 wrap-up `already_told_scene` on `049c6f99-…` |
 | shouldReply | none |
 | 处理中/失败 | This-token W2B/W5 inbound have no 处理中/处理失败. Older E2147/E2103 W2Bs still `处理中` |
+
+## Round 6 detail (E2317-loop)
+
+Pipeline 66 `3106906434` 预发部署 SUCCESS, SHA `6c51b3544`. dws pre. Actors 主角/配角 only.
+
+| Check | Result |
+|---|---|
+| W3 | W3A `action=issue` token kept. W3B `action=reply` on issue `df5ce9fc-…` 「收到，我继续跟进这个查询。」 (配额 reuse; still filled a slot) |
+| W5 | job `339f1272-…` parked `two in-flight` ~23:18:55–23:19:37, then Decide `action=issue` 23:19:48 look_into `scene_cid=` G2. IM sandbox 无法订票; inbound no 处理失败 |
+| collect_split | 23:18:55 / 23:18:59 / 23:19:19 `incoming_ack=true` |
+| ACK | `window_ack` ×3; G2 `llm_request` only W3A/W3B/W5 |
+| WRAP | PASS C9: `action=issue`; IM **E2317-loop 差旅住宿清单**; wrap-up `already_told_scene` issue `a823b387-…` |
+| W6 | 配角 ok. R9A 已记下. R9B `action=issue` look_into `scene_cid=` R9B; Host no R9A cid; IM searched this cid only |
+| wrap-up | G1 WRAP + W2 `already_told_scene` (`a823b387`, `13f8b406`). G2 W3B `already_told_scene` (`df5ce9fc`) |
+| shouldReply | none |
+| 处理中/失败 | C10: G1 `E2317-loop-W2B` emotion `处理中`. W5 inbound clean |
