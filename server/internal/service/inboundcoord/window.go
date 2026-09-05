@@ -88,6 +88,32 @@ func AllWindowAck(turn Turn) bool {
 	return true
 }
 
+// KeepWorkUtterances drops thanks / OK lines from a mixed window so a real
+// ask is not silenced because later ACKs landed on the same job.
+func KeepWorkUtterances(turn Turn) Turn {
+	utterances := windowUtterances(turn)
+	if len(utterances) == 0 {
+		return turn
+	}
+	work := make([]WindowUtterance, 0, len(utterances))
+	for _, u := range utterances {
+		if isAckOrStopReply(u.Text) {
+			continue
+		}
+		work = append(work, u)
+	}
+	if len(work) == 0 || len(work) == len(utterances) {
+		return turn
+	}
+	turn.Utterances = work
+	parts := make([]string, 0, len(work))
+	for _, u := range work {
+		parts = append(parts, u.Text)
+	}
+	turn.Message = strings.Join(parts, "\n")
+	return turn
+}
+
 func isAckOrStopReply(raw string) bool {
 	s := stripMentionsAndSpace(raw)
 	if s == "" {

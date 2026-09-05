@@ -237,6 +237,9 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
 		return Decision{Action: ActionSilence, Reason: "window_ack"}
 	}
+	if turn.Loop != LoopTaskFinished {
+		turn = KeepWorkUtterances(turn)
+	}
 	if turn.Loop == LoopTaskFinished && turn.AlreadyToldScene {
 		return Decision{Action: ActionSilence, Reason: "already_told_scene"}
 	}

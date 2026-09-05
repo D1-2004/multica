@@ -113,6 +113,46 @@ func TestParseDecisionSameDeliverableStaysOneItemWhenModelSendsOne(t *testing.T)
 	}
 }
 
+func TestKeepWorkUtterancesDropsAckLines(t *testing.T) {
+	t.Parallel()
+	got := KeepWorkUtterances(Turn{
+		Message: "@东翔测试号 帮我订高铁\n谢谢",
+		Utterances: []WindowUtterance{
+			{Sender: "冬翔", Text: "@东翔测试号 帮我订下周去上海的高铁"},
+			{Sender: "冬翔", Text: "谢谢"},
+			{Sender: "dxxh", Text: "好的"},
+		},
+	})
+	if len(got.Utterances) != 1 || got.Utterances[0].Text != "@东翔测试号 帮我订下周去上海的高铁" {
+		t.Fatalf("utterances=%#v", got.Utterances)
+	}
+	if got.Message != "@东翔测试号 帮我订下周去上海的高铁" {
+		t.Fatalf("message=%q", got.Message)
+	}
+	unchanged := KeepWorkUtterances(Turn{Message: "谢谢", Utterances: []WindowUtterance{{Text: "谢谢"}}})
+	if unchanged.Message != "谢谢" || len(unchanged.Utterances) != 1 {
+		t.Fatalf("all-ack window must stay intact: %#v", unchanged)
+	}
+}
+
+func TestDecideKeepsWorkWhenMixedWithAck(t *testing.T) {
+	t.Parallel()
+	got := (&Coordinator{}).Decide(context.Background(), Turn{
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "group",
+		Message:    "帮我订高铁\n谢谢",
+		SenderName: "冬翔",
+		Utterances: []WindowUtterance{
+			{Sender: "冬翔", Text: "帮我订下周去上海的高铁"},
+			{Sender: "冬翔", Text: "谢谢"},
+		},
+	})
+	if got.Action == ActionSilence {
+		t.Fatal("mixed ACK+ask must not Host-silence the ask")
+	}
+}
+
 func TestDecideSilencesAckWindowWithoutLLM(t *testing.T) {
 	t.Parallel()
 	got := (&Coordinator{}).Decide(context.Background(), Turn{

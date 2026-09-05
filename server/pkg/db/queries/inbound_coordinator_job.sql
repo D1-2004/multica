@@ -117,6 +117,16 @@ ORDER BY created_at DESC
 LIMIT 1
 FOR UPDATE;
 
+-- name: ListPendingInboundCoordinatorJobsForConversationCollect :many
+SELECT *
+FROM inbound_coordinator_job
+WHERE workspace_id = @workspace_id
+  AND agent_id = @agent_id
+  AND status = 'pending'
+  AND command #>> '{event,data,conversation,openConversationId}' = @conversation_id
+ORDER BY created_at DESC
+FOR UPDATE;
+
 -- name: ListPendingInboundCoordinatorJobsForConversation :many
 SELECT *
 FROM inbound_coordinator_job
