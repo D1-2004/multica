@@ -2551,6 +2551,33 @@ func TestLegacyDWSWorkflowWithCompletionCallbackUsesRouterFinalOutput(t *testing
 	if !strings.Contains(prompt, "ordinary final assistant reply") {
 		t.Fatalf("durable Router delivery is missing the provider final-output instruction: %q", prompt)
 	}
+	if !strings.Contains(prompt, "--ai-tag=false") {
+		t.Fatalf("durable Router delivery must drop the AI badge: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Never add 已完成") {
+		t.Fatalf("durable Router delivery must not stamp 已完成: %q", prompt)
+	}
+}
+
+func TestLegacyDWSWorkflowClearsLifecycleEmotionAndDropsAITag(t *testing.T) {
+	prompt := buildLegacyDingTalkDWSWorkflowPrompt(DispatchCommand{
+		Outbound: DispatchOutbound{Mode: "dws", ReplyTo: "latest_message"},
+	})
+	if strings.Contains(prompt, "add-emoji") {
+		t.Fatalf("sandbox must not be told to stamp an ack emoji: %q", prompt)
+	}
+	if !strings.Contains(prompt, "+messages-remove-text-emotion") || !strings.Contains(prompt, "--ai-tag=false") {
+		t.Fatalf("sandbox must clear lifecycle emotion and drop AI tag: %q", prompt)
+	}
+	if !strings.Contains(dispatchCoordinatorIssueFollowUpSection, "--ai-tag=false") {
+		t.Fatal("coordinator follow-up sends must drop the AI badge")
+	}
+	if !strings.Contains(dispatchCoordinatorIssueFollowUpSection, "never add 已完成") {
+		t.Fatal("coordinator follow-up must not stamp 已完成")
+	}
+	if !dispatchLifecycleEmotionName("🤔思考中") {
+		t.Fatal("thinking emotion must count as a lifecycle stamp")
+	}
 }
 
 func TestAgentDispatchPromptReplacesDiamondCompositionAtClaim(t *testing.T) {

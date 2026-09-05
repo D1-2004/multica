@@ -184,9 +184,11 @@ func TestSystemPromptHumanGroupFloodRules(t *testing.T) {
 		"Addressed 在吗 / 你好 / 还在吗",
 		"Addressed thanks / 谢谢 / 好的 / 辛苦了",
 		"A collected current_message that mixes flood and one real ask",
+		"current_message may be several inbound lines collected while the person was still typing",
 		"Two colleagues talking to each other",
 		"Do not volunteer 我来帮你们建事项",
 		"我去问 dxxh 周五三点",
+		"a real teammate, not a helpdesk",
 	}
 	for _, needle := range must {
 		if !strings.Contains(systemPrompt, needle) {

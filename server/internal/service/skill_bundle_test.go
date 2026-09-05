@@ -64,6 +64,8 @@ func TestDWSAgentSkillShipsDWSInstructions(t *testing.T) {
 		"dws chat message send",
 		"dws chat message send-by-bot",
 		"Default to the current-user identity",
+		"--ai-tag=false",
+		"Never add 已完成",
 		"Only use bot identity when the user explicitly asks",
 		"Do not switch to bot identity because current-user sending fails",
 		"obtain explicit confirmation before sending",

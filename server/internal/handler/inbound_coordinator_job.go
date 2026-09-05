@@ -477,6 +477,10 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	qtx := h.Queries.WithTx(tx)
 	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
 	if cid := dispatchConversationID(command); cid != "" {
+		lockName := uuidToString(dispatchContext.WorkspaceID) + ":" + uuidToString(dispatchContext.AgentID) + ":" + cid
+		if _, lockErr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockName); lockErr != nil {
+			return nil, job, lockErr
+		}
 		existing, findErr := qtx.FindPendingInboundCoordinatorJobForConversation(ctx, db.FindPendingInboundCoordinatorJobForConversationParams{
 			WorkspaceID:    dispatchContext.WorkspaceID,
 			AgentID:        dispatchContext.AgentID,

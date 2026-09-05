@@ -10,8 +10,9 @@ import (
 
 // inboundCoordinatorCollectWindow waits for a short silence so several
 // inbound IMs on the same scene become one Decide, like a person reading
-// the chat before answering.
-const inboundCoordinatorCollectWindow = 3 * time.Second
+// the chat before answering. Each new line on a pending job re-arms this
+// window. Parallel creates serialize on an advisory lock so they merge.
+const inboundCoordinatorCollectWindow = 4 * time.Second
 
 func dispatchConversationID(command DispatchCommand) string {
 	return strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID)

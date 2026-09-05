@@ -805,6 +805,7 @@ const (
 		"Before this run may finish, you MUST successfully send at least one DingTalk message to one concrete person selected by the relay contract: progress or a blocker to the person who can act next, or the result to the person who needs it. " +
 		"If the triggering Issue comment contains a contacted person's answer, find the requester and send a natural summary such as ‘<recipient> replied: <answer>’. Writing that summary only in the Issue does not count as delivery. " +
 		"Do not write or claim ‘task complete’ until the DingTalk send returns a successful receipt. " +
+		"Send as the current-user identity with `--ai-tag=false` so the message has no AI badge. After that successful send, remove processing/complete emotions (处理中, 已完成, 思考中, 🤔思考中) from the inbound target message; never add 已完成. " +
 		"After that successful send and assoc bind, finish this run immediately. Do not wait, listen, poll, or keep the sandbox open for the other party's reply. A later inbound message on that conversation continues this Issue automatically.\n\n"
 
 	dispatchConversationCommandsSection = "Ready to run as written:\n\n%s\n\n"
@@ -815,7 +816,7 @@ const (
 
 const dispatchSceneGraphInstruction = `## Scene graph (Issue ↔ DingTalk conversation)
 
-Outreach to another person is not the reply the platform delivers back to the waiting sender. After a successful ` + "`dws chat message send`" + ` or ` + "`send-by-bot`" + `, bind that outbound conversation to this Issue immediately.
+Outreach to another person is not the reply the platform delivers back to the waiting sender. After a successful ` + "`dws chat message send`" + ` or ` + "`send-by-bot`" + `, bind that outbound conversation to this Issue immediately. Current-user sends must pass ` + "`--ai-tag=false`" + `. After a user-visible reply, remove 处理中 / 已完成 / 思考中 / 🤔思考中 from the inbound target message; never add 已完成.
 
 Delegation and relay contract:
 - You are the intermediary, not the requester and not the contacted recipient. Before sending anything, identify the requester/origin scene, the intended recipient, the exact request, the current sender, and the next person whose answer or action is required. The current sender can be either requester or recipient; never assume the role from message order alone.
@@ -1317,15 +1318,16 @@ func buildLegacyDingTalkDWSWorkflowPrompt(c DispatchCommand) string {
 		instructions = append(instructions,
 			"Use the injected current-user DWS capability only for the read receipt below. The platform owns lifecycle status and final DingTalk delivery; do not use the robot SDK, a bot identity, or another delivery path.",
 			"Immediately, before doing the requested work, first use the injected current-user DingTalk capability to mark the exact target message as read. Do not substitute a read-status query for the read receipt; `dws chat message read-status` only inspects read state and does not mark the inbound message as read.",
-			"Do not add an emoji or text emotion to the target message. The platform owns lifecycle status indications for this dispatch.",
+			"Never add 已完成, 处理中, 思考中, or 收到 as a completion stamp. After a real reply exists, remove those processing/complete emotions from the inbound target with `dws chat +messages-remove-text-emotion` and `dws chat +messages-remove-emoji`.",
+			"When you send DingTalk messages as the current user, pass `--ai-tag=false`.",
 		)
 	} else {
 		instructions = append(instructions,
 			"Use the injected current-user DWS capability for the following acknowledgement lifecycle. Do not use the robot SDK, a bot identity, or a framework fallback.",
-			"Immediately, before doing the requested work, first use the injected current-user DingTalk capability to mark the exact target message as read, then acknowledge it with exactly one reaction. Sending the read receipt and adding the reaction are separate required steps. Do not substitute a read-status query for the read receipt; `dws chat message read-status` only inspects read state and does not mark the inbound message as read. Choose the exact acknowledgement yourself so it matches the message tone, urgency, sender relationship, and your Agent persona; do not mechanically reuse one fixed response.",
-			"Prefer one DingTalk-supported default emoji reaction when it expresses the acknowledgement well: use `dws chat message add-emoji --group <openConversationId> --msg-id <openMsgId> --emoji <supported-name> --format json`. The --emoji value must be a DingTalk-supported default emoji name; examples such as 收到, OK, 抱拳, 赞, 加油干, 奋斗, and 专注 are style references, not a fixed choice.",
-			"If a short personalized acknowledgement fits better, first run `dws chat message create-text-emotion --emotion-name <short-text> --text <short-text> --format json`; then use its emotionId and backgroundId with `dws chat message add-text-emotion --group <openConversationId> --msg-id <openMsgId> --emotion-id <emotionId> --emotion-name <short-text> --text <short-text> --background-id <backgroundId> --format json`. Assume the ordinary non-member limit: custom text must contain at most 4 visible characters, and any emoji counts toward this limit. Short ideas such as 收到, 处理中, 马上办, or 加急中 illustrate the tone only; compose the actual text yourself. If the intended wording does not fit, use a supported default emoji instead of truncating it into an unclear message.",
-			"Use exactly one acknowledgement reaction by default; do not stack reactions or send an extra acknowledgement message. Never imply urgency, progress, or completion that is not true. If a custom text emotion is unavailable or fails, fall back to one supported default emoji. A read-receipt or acknowledgement-reaction failure must not block the requested work, but the final result must report it truthfully.",
+			"Immediately, before doing the requested work, first use the injected current-user DingTalk capability to mark the exact target message as read. Do not substitute a read-status query for the read receipt; `dws chat message read-status` only inspects read state and does not mark the inbound message as read.",
+			"A thinking reaction is optional only while you are still working. Once a real reply exists, remove it. Never add 已完成, 处理中, 思考中, or 收到 as a completion stamp. Clear 处理中 / 已完成 / 思考中 / 🤔思考中 on the inbound target with `dws chat +messages-remove-text-emotion` and `dws chat +messages-remove-emoji` before this run finishes.",
+			"When you send DingTalk messages as the current user, pass `--ai-tag=false`.",
+			"A read-receipt or reaction-cleanup failure must not block the requested work, but the final result must report it truthfully.",
 		)
 	}
 	if c.CompletionCallback != nil {
@@ -1336,7 +1338,7 @@ func buildLegacyDingTalkDWSWorkflowPrompt(c DispatchCommand) string {
 	} else {
 		instructions = append(instructions,
 			"End the run with the ordinary final assistant reply. Multica persists that provider-selected final output for server-managed DingTalk delivery for success, partial success, blocked, or failed outcomes.",
-			"The dispatch itself authorizes only the read receipt and acknowledgement reaction to this trusted target; final delivery is server-managed, so do not ask for separate confirmation.",
+			"The dispatch itself authorizes the read receipt and reaction cleanup on this trusted target; final delivery is server-managed, so do not ask for separate confirmation.",
 		)
 	}
 	return strings.Join(instructions, "\n")
@@ -1429,7 +1431,7 @@ func dispatchWindowIsReactionOnly(c DispatchCommand) bool {
 
 func dispatchLifecycleEmotionName(name string) bool {
 	switch strings.TrimSpace(name) {
-	case "处理中", "已排队", "投递中", "已完成", "排队中", "思考中":
+	case "处理中", "已排队", "投递中", "已完成", "排队中", "思考中", "🤔思考中":
 		return true
 	default:
 		return false
