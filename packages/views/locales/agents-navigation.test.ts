@@ -45,5 +45,16 @@ describe("agent navigation translations", () => {
     expect(zhHansSettings.page.tabs.integrations).toBe("应用集成");
     expect(zhHansSettings.local_runner.title).toBe("我的电脑");
     expect(zhHansSettings.local_runner.empty_title).not.toContain("Runner");
+
+    expect(en.tab_body.composio_mcp.empty_link_to_settings).toContain(
+      "App Integrations",
+    );
+    expect(en.tab_body.integrations.members_note).toContain(
+      "App Integrations",
+    );
+    expect(zhHans.tab_body.composio_mcp.empty_link_to_settings).toContain(
+      "应用集成",
+    );
+    expect(zhHans.tab_body.integrations.members_note).toContain("应用集成");
   });
 });
