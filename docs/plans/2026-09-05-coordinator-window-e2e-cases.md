@@ -18,6 +18,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 | 6 | E2317-loop | 3106906434 / `6c51b3544` | W3A issue / W3B reply-reuse 配额; W5 park then issue; ACK window_ack ×3 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; C10 W2B 处理中 reproduced |
 | 7 | E0003-loop | 3106918496 / (new 66 run) | W3A+W3B issue; W5 park then issue 00:06:12; ACK window_ack ×3 no ACK llm; collect_split; WRAP issue (sandbox asked fields, not 竞业限制); W6 R9B issue look_into R9B cid no R9A; no shouldReply; C10 W2B **处理失败**; W3/W5 inbound 处理中 leftover |
 | 8 | E0048-loop | 3106918496 | W3A **no Decide** leftover 处理中 (C11); W3B+W5 issue; ACK window_ack ×2 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; C10 W2B 处理失败 |
+| 9 | E0218-loop | 3106924013 | W3A+W3B issue (C11 not reproduced); W5 park then issue 02:21:10; ACK window_ack ×4 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; this-token W2B reply no 处理失败; W5 inbound leftover 处理中 |
 
 ## Open cases
 
@@ -71,13 +72,13 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 - Found: E2103-loop G1 W2B (`就约线上`) Decide `action=retry` ×6 `reason=issue_busy_park` on issue `049c6f99-…`; wrap-up later `already_told_scene`; IM still has emotion `处理中` on the W2B inbound (E1-2007-W2B still stamped too)
 - Fix: Host/channel should complete the DingTalk silence callback (clear 处理中) when `ActionRetry` parks or when wrap-up silences the same cid; do not leave the confirmation @ spinning
 - Prove: next round W2B has no leftover `处理中` after the meeting issue settles
-- Status: E8 `E0048-loop-W2B` again **处理失败** (W2 was `reply` reuse, W2B `action=issue`). Not shipping this fire
+- Status: E9 `E0218-loop-W2B` was `reply` with **no** 处理失败/处理中. E7/E8 still stamped 处理失败. Flaky. Not shipping this fire
 
 ### C11 G2 W3A never Decide, inbound stuck `处理中`
 - Found: E0048-loop W3A (`帮我问 dxxh 下周排期`) IM 00:48:21 emotion `处理中`; no `inbound_coordinator_llm_request` and no `inbound_coordinator_decided` for this token. W3B/W5 on same cid did Decide. WRAP on G1 was sent ~3s later (different scene).
 - Fix: Host/Router must persist+Decide the first G2 @ even when a G1 WRAP is in-flight; complete the 处理中 callback if the job is dropped
 - Prove: next round W3A has `action=issue` (or reply) in SLS and inbound `处理中` is cleared
-- Status: new E8. Not a one-line window_ack bug; do not ship this fire
+- Status: E9 **not reproduced** — W3A `action=issue` 02:18:37, inbound no leftover 处理中. Keep open until two clean rounds. Not shipping this fire
 
 ## Round 3 detail (E2103-loop)
 
@@ -174,3 +175,19 @@ Pipeline 66 `3106918496` 预发部署 SUCCESS. dws pre. Actors 主角/配角 onl
 | wrap-up | G1 WRAP `already_told_scene` |
 | shouldReply | none |
 | 处理中/失败 | C11 W3A `处理中`. C10 W2B **处理失败** |
+
+## Round 9 detail (E0218-loop)
+
+Pipeline 66 **new** run `3106924013` 预发部署 SUCCESS. dws pre. Actors 主角/配角 only.
+
+| Check | Result |
+|---|---|
+| W3 | PASS C11: W3A `action=issue` token kept; W3B `action=issue` token kept. W3A inbound no leftover 处理中 |
+| W5 | job `66088ac6-…` parked `two in-flight` ~02:19:15–02:20:56, then Decide `action=issue` 02:21:10. IM sandbox 无法订票; inbound leftover `处理中` |
+| collect_split | 02:19:15 / 02:19:24 / 02:19:32 / 02:19:44 `incoming_ack=true` |
+| ACK | `window_ack` ×4; G2 `llm_request` only W3A/W3B/W5 + wrap-up |
+| WRAP | PASS C9: `action=issue`; IM **E0218-loop 差旅住宿清单**; wrap-up `already_told_scene` issue `833edf82-…` |
+| W6 | 配角 ok. R9A 已记下. R9B `action=issue` look_into `scene_cid=` R9B; Host no R9A cid; IM searched this cid only. R9B inbound leftover `处理中` after reply |
+| wrap-up | G1 WRAP `already_told_scene`. G2 W3 wrap-up silence |
+| shouldReply | none |
+| 处理中/失败 | This-token W2B clean. W5 inbound leftover `处理中`. Old E0048/E0003 W2Bs still 处理失败 |
