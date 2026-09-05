@@ -11,9 +11,8 @@
     "usage": "统计",
     "sites": "网站",
     "runtimes": "运行时",
-    "runners": "本机 Runner",
+    "runners": "我的电脑",
     "skills": "Skills",
-    "connections": "连接",
     "settings": "设置"
   },
   "tab": {
@@ -55,8 +54,6 @@
     "new_issue_shortcut": "C",
     "pinned_label": "固定",
     "workspace_group": "工作区",
-    "agents_group": "智能体与小队",
-    "extensions_group": "扩展",
     "configure_group": "配置",
     "unread_overflow": "99+",
     "discord_card": {

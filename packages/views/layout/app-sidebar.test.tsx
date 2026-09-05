@@ -247,53 +247,44 @@ describe("workspace navigation groups", () => {
     }
   });
 
-  it("groups agents, squads, and execution surfaces", () => {
-    render(<AppSidebar />);
-    expect(
-      screen.getByRole("button", { name: /Agents & Squads/i }),
-    ).toHaveAttribute("aria-expanded");
-    expect(screen.getByText("Agents")).toBeInTheDocument();
-    expect(screen.getByText("Squads")).toBeInTheDocument();
-    expect(screen.getByText("Runtimes")).toBeInTheDocument();
-    expect(screen.getByText("Local Runner")).toBeInTheDocument();
-  });
-
-  it("groups skills and connections separately from settings", () => {
+  it("shows agent tools as direct workspace links", () => {
     const { container } = render(<AppSidebar />);
     expect(
-      screen.getByRole("button", { name: /Extensions/i }),
-    ).toHaveAttribute("aria-expanded");
+      screen.queryByRole("button", { name: /Agents & Squads/i }),
+    ).not.toBeInTheDocument();
     expect(
-      container.querySelector('button[data-href="/acme/skills"]'),
-    ).not.toBeNull();
+      screen.queryByRole("button", { name: /Extensions/i }),
+    ).not.toBeInTheDocument();
+    for (const href of [
+      "/acme/agents",
+      "/acme/squads",
+      "/acme/runtimes",
+      "/acme/runners",
+      "/acme/skills",
+    ]) {
+      expect(
+        container.querySelector(`button[data-href="${href}"]`),
+      ).not.toBeNull();
+    }
+    expect(screen.getByText("My Computer")).toBeInTheDocument();
     expect(
       container.querySelector(
         'button[data-href="/acme/settings?tab=integrations"]',
       ),
-    ).not.toBeNull();
-    expect(
-      container.querySelector('button[data-href="/acme/settings"]'),
-    ).not.toBeNull();
+    ).toBeNull();
   });
 
-  it("highlights Connections without also highlighting Settings", () => {
+  it("keeps Settings selected for the Application Integrations page", () => {
     navigation.current = {
       pathname: "/acme/settings",
       searchParams: new URLSearchParams("tab=integrations"),
     };
+
     const { container } = render(<AppSidebar />);
 
     expect(
-      screen.getByRole("button", { name: "Extensions" }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(
-      container.querySelector(
-        'button[data-href="/acme/settings?tab=integrations"]',
-      ),
-    ).toHaveAttribute("data-active", "true");
-    expect(
       container.querySelector('button[data-href="/acme/settings"]'),
-    ).not.toHaveAttribute("data-active");
+    ).toHaveAttribute("data-active", "true");
   });
 });
 

@@ -11,9 +11,8 @@
     "usage": "分析",
     "sites": "ウェブサイト",
     "runtimes": "ランタイム",
-    "runners": "ローカル Runner",
+    "runners": "マイコンピューター",
     "skills": "スキル",
-    "connections": "接続",
     "settings": "設定"
   },
   "tab": {
@@ -55,8 +54,6 @@
     "new_issue_shortcut": "C",
     "pinned_label": "ピン留め済み",
     "workspace_group": "ワークスペース",
-    "agents_group": "エージェントとスクワッド",
-    "extensions_group": "拡張機能",
     "configure_group": "設定",
     "unread_overflow": "99+",
     "discord_card": {

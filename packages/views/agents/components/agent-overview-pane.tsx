@@ -44,7 +44,6 @@ import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
-import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
 import { SceneMemoryTab } from "./tabs/scene-memory-tab";
 import { DigitalEmployeeTab } from "./tabs/digital-employee-tab";
 import { AgentMCPAccessTab } from "./tabs/mcp-access-tab";
@@ -66,7 +65,6 @@ export type { DetailTab } from "./agent-config-navigation";
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "overview", labelKey: "overview" },
   { id: "work", labelKey: "work" },
-  { id: "inbound", labelKey: "inbound" },
   { id: "memory", labelKey: "memory" },
   { id: "configuration", labelKey: "configuration" },
 ];
@@ -203,7 +201,6 @@ export function AgentOverviewPane({
       new Set<DetailTab>([
         "overview",
         "work",
-        "inbound",
         ...(canEdit ? (["memory"] as const) : []),
         ...visibleConfigGroups.flatMap((group) =>
           group.items.map((item) => item.id),
@@ -249,7 +246,6 @@ export function AgentOverviewPane({
     if (
       section === "overview" ||
       section === "work" ||
-      section === "inbound" ||
       section === "memory"
     ) {
       requestView(section);
@@ -298,6 +294,22 @@ export function AgentOverviewPane({
     const params = new URLSearchParams(navigation.searchParams);
     params.set("view", "digital_employee");
     navigation.replace(`${navigation.pathname}?${params.toString()}`);
+  }, [navigation, urlView]);
+
+  useEffect(() => {
+    if (
+      urlView === null ||
+      urlView === "identity" ||
+      normalizeDetailView(urlView) !== null
+    ) {
+      return;
+    }
+    const params = new URLSearchParams(navigation.searchParams);
+    params.delete("view");
+    const query = params.toString();
+    navigation.replace(
+      `${navigation.pathname}${query ? `?${query}` : ""}`,
+    );
   }, [navigation, urlView]);
 
   useEffect(() => {
@@ -365,7 +377,7 @@ export function AgentOverviewPane({
           "min-h-0 flex-1",
           isSecondaryLayout
             ? "overflow-y-auto md:overflow-hidden"
-            : effectiveView === "inbound" || effectiveView === "memory"
+            : effectiveView === "memory"
               ? "overflow-hidden"
               : "overflow-y-auto",
         )}
@@ -393,12 +405,6 @@ export function AgentOverviewPane({
         {effectiveView === "work" && (
           <div className="flex min-h-[620px] flex-col">
             <ActorIssuesPanel actorType="agent" actorId={agent.id} />
-          </div>
-        )}
-
-        {effectiveView === "inbound" && (
-          <div className="flex h-full min-h-0 flex-1 flex-col">
-            <CoordinatorSessionsTab agent={agent} />
           </div>
         )}
 

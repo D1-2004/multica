@@ -1,7 +1,6 @@
 export type DetailSection =
   | "overview"
   | "work"
-  | "inbound"
   | "memory"
   | "configuration";
 
@@ -15,7 +14,6 @@ export type ConfigGroupId =
 export type DetailTab =
   | "overview"
   | "work"
-  | "inbound"
   | "memory"
   | "digital_employee"
   | "instructions"
@@ -37,7 +35,6 @@ export type DetailTab =
 export type AgentTabLabelKey =
   | "overview"
   | "work"
-  | "inbound"
   | "memory"
   | "configuration"
   | "digital_employee"
@@ -126,7 +123,6 @@ const CONFIG_GROUP_BY_VIEW = new Map<DetailTab, ConfigGroupId>(
 const DETAIL_VIEWS = new Set<DetailTab>([
   "overview",
   "work",
-  "inbound",
   "memory",
   ...CONFIG_GROUP_BY_VIEW.keys(),
 ]);
@@ -148,7 +144,7 @@ export function isConfigView(view: DetailTab): boolean {
 }
 
 export function sectionForView(view: DetailTab): DetailSection {
-  if (view === "overview" || view === "work" || view === "inbound" || view === "memory") {
+  if (view === "overview" || view === "work" || view === "memory") {
     return view;
   }
   return "configuration";

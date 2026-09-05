@@ -5,7 +5,10 @@ import { isASBRuntime } from "@multica/core/runtimes";
 import type { Agent, AgentRuntime, MemberWithUser } from "@multica/core/types";
 import { SettingsSection } from "../../../settings/components/settings-layout";
 import { useT } from "../../../i18n";
-import { AgentMessageSettings } from "../agent-message-settings";
+import {
+  AgentMessageSettings,
+  InboundCoordinatorSetting,
+} from "../agent-message-settings";
 import { AgentProfileSettings } from "../agent-profile-settings";
 import { AgentVoiceSettings } from "../agent-voice-settings";
 import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-binding";
@@ -48,6 +51,26 @@ export function DigitalEmployeeTab({
 
   return (
     <div className="space-y-8">
+      <InboundCoordinatorSetting
+        agent={agent}
+        canEdit={canEdit}
+        onUpdate={update}
+      />
+
+      {agent.inbound_coordinator !== true ? (
+        <section
+          role="note"
+          className="rounded-xl border border-dashed border-surface-border bg-muted/20 px-4 py-3"
+        >
+          <h3 className="text-body font-medium text-pretty">
+            {t(($) => $.tab_body.digital_employee.inbound_disabled_title)}
+          </h3>
+          <p className="mt-1 text-caption leading-5 text-muted-foreground text-pretty">
+            {t(($) => $.tab_body.digital_employee.inbound_disabled_hint)}
+          </p>
+        </section>
+      ) : null}
+
       <AgentProfileSettings
         agent={agent}
         canEdit={canEdit}
@@ -82,12 +105,14 @@ export function DigitalEmployeeTab({
         </div>
       </SettingsSection>
 
-      <AgentVoiceSettings
-        agent={agent}
-        canEdit={canEdit}
-        onSave={update}
-        onDirtyChange={onDirtyChange}
-      />
+      {agent.inbound_coordinator === true ? (
+        <AgentVoiceSettings
+          agent={agent}
+          canEdit={canEdit}
+          onSave={update}
+          onDirtyChange={onDirtyChange}
+        />
+      ) : null}
 
       <AgentMessageSettings
         agent={agent}

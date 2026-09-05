@@ -35,6 +35,38 @@ export function AgentMessageSettings({
           canEdit={canEdit}
           onSave={(next) => onUpdate({ chat_session_resume: next })}
         />
+        {agent.inbound_coordinator === true ? (
+          <BooleanSetting
+            agentId={agent.id}
+            label={t(($) => $.inspector.prop_task_finished_loop)}
+            description={t(($) => $.inspector.prop_task_finished_loop_hint)}
+            enabled={agent.task_finished_loop_enabled === true}
+            canEdit={canEdit}
+            onSave={(next) => onUpdate({ task_finished_loop_enabled: next })}
+          />
+        ) : null}
+      </SettingsCard>
+    </SettingsSection>
+  );
+}
+
+export function InboundCoordinatorSetting({
+  agent,
+  canEdit,
+  onUpdate,
+}: {
+  agent: Agent;
+  canEdit: boolean;
+  onUpdate: (data: Record<string, unknown>) => Promise<void>;
+}) {
+  const { t } = useT("agents");
+
+  return (
+    <SettingsSection
+      title={t(($) => $.tab_body.digital_employee.inbound_title)}
+      description={t(($) => $.tab_body.digital_employee.inbound_hint)}
+    >
+      <SettingsCard>
         <BooleanSetting
           agentId={agent.id}
           label={t(($) => $.inspector.prop_inbound_coordinator)}
@@ -42,14 +74,6 @@ export function AgentMessageSettings({
           enabled={agent.inbound_coordinator === true}
           canEdit={canEdit}
           onSave={(next) => onUpdate({ inbound_coordinator: next })}
-        />
-        <BooleanSetting
-          agentId={agent.id}
-          label={t(($) => $.inspector.prop_task_finished_loop)}
-          description={t(($) => $.inspector.prop_task_finished_loop_hint)}
-          enabled={agent.task_finished_loop_enabled === true}
-          canEdit={canEdit && agent.inbound_coordinator === true}
-          onSave={(next) => onUpdate({ task_finished_loop_enabled: next })}
         />
       </SettingsCard>
     </SettingsSection>

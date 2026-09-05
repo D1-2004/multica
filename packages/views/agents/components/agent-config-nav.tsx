@@ -1,6 +1,5 @@
 "use client";
 
-import { ChevronRight } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -46,69 +45,45 @@ export function AgentConfigNav({
 
   return (
     <>
-      <aside className="hidden w-52 shrink-0 overflow-y-auto border-r border-surface-border p-3 md:block">
+      <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-surface-border bg-muted/20 px-3 py-5 md:block">
         <nav aria-label={t(($) => $.tabs.section_navigation_aria)}>
           {groups.map((group) => {
-            const expanded = group.id === activeGroup.id;
-            const firstItem = group.items[0];
             return (
-              <div key={group.id} className="mb-1">
-                <button
-                  type="button"
-                  aria-expanded={expanded}
-                  onClick={() => {
-                    if (!expanded && firstItem) onSelect(firstItem.id);
-                  }}
-                  className="flex h-8 w-full items-center rounded-md px-2 text-left text-caption font-medium text-foreground transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              <section key={group.id} className="mb-5 last:mb-0">
+                <h3
+                  className="px-3 text-caption font-medium leading-6 text-muted-foreground text-pretty"
                 >
-                  <ChevronRight
-                    aria-hidden="true"
-                    className={cn(
-                      "mr-1.5 size-3.5 transition-transform motion-reduce:transition-none",
-                      expanded && "rotate-90",
-                    )}
-                  />
-                  <span className="min-w-0 flex-1 truncate">
-                    {t(($) => $.tabs[group.labelKey])}
-                  </span>
-                  {!expanded && (
-                    <span
-                      aria-hidden="true"
-                      className="ml-2 tabular-nums text-muted-foreground"
-                    >
-                      {group.items.length}
-                    </span>
-                  )}
-                </button>
-                {expanded && (
-                  <div
-                    className="ml-3 border-l border-surface-border pl-2"
-                    role="tablist"
-                    aria-label={t(($) => $.tabs[group.labelKey])}
-                  >
-                    {group.items.map((item) => {
-                      const active = item.id === activeView;
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          role="tab"
-                          aria-selected={active}
-                          onClick={() => onSelect(item.id)}
-                          className={cn(
-                            "flex min-h-8 w-full items-center rounded-md px-2 text-left text-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                            active
-                              ? "bg-surface-selected font-medium text-surface-selected-foreground hover:bg-surface-selected"
-                              : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-                          )}
-                        >
+                  {t(($) => $.tabs[group.labelKey])}
+                </h3>
+                <div
+                  className="mt-1 space-y-0.5"
+                  role="tablist"
+                  aria-label={t(($) => $.tabs[group.labelKey])}
+                >
+                  {group.items.map((item) => {
+                    const active = item.id === activeView;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => onSelect(item.id)}
+                        className={cn(
+                          "relative flex min-h-9 w-full min-w-0 items-center rounded-lg px-3 text-left text-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          active
+                            ? "bg-surface-selected font-medium text-surface-selected-foreground before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-foreground hover:bg-surface-selected"
+                            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+                        )}
+                      >
+                        <span className="min-w-0 truncate">
                           {t(($) => $.tabs[item.labelKey])}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
             );
           })}
         </nav>

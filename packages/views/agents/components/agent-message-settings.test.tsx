@@ -33,7 +33,7 @@ describe("AgentMessageSettings", () => {
     });
   });
 
-  it("disables the finished-work judge when inbound judging is off", () => {
+  it("hides the finished-work judge when inbound judging is off", () => {
     renderWithI18n(
       <AgentMessageSettings
         agent={{
@@ -47,7 +47,7 @@ describe("AgentMessageSettings", () => {
     );
 
     expect(
-      screen.getByLabelText("Judge after the work finishes"),
-    ).toHaveAttribute("aria-disabled", "true");
+      screen.queryByLabelText("Judge after the work finishes"),
+    ).not.toBeInTheDocument();
   });
 });

@@ -7,7 +7,7 @@ import { AgentConfigNav } from "./agent-config-nav";
 import { AGENT_CONFIG_GROUPS } from "./agent-config-navigation";
 
 describe("AgentConfigNav", () => {
-  it("shows only the active desktop group and selects a clear default", () => {
+  it("keeps every desktop configuration group and page visible", () => {
     const onSelect = vi.fn();
     renderWithI18n(
       <AgentConfigNav
@@ -17,15 +17,20 @@ describe("AgentConfigNav", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("button", { name: /^Identity & Goals/i }),
-    ).toHaveAttribute("aria-expanded", "true");
-    expect(
-      screen.getByRole("button", { name: /^Capabilities/i }),
-    ).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("tab", { name: "Skills" })).not.toBeInTheDocument();
+    for (const name of [
+      "Identity & Goals",
+      "Capabilities",
+      "Connections",
+      "Execution",
+      "Management",
+    ]) {
+      expect(screen.getAllByText(name).length).toBeGreaterThan(0);
+    }
+    expect(screen.queryByRole("button", { name: /^Capabilities/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Skills" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Access" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Capabilities/i }));
+    fireEvent.click(screen.getByRole("tab", { name: "Skills" }));
     expect(onSelect).toHaveBeenCalledWith("skills");
   });
 

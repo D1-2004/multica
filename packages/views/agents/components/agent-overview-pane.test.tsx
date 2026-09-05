@@ -63,9 +63,6 @@ vi.mock("./tabs/a2a-tab", () => ({
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
-vi.mock("./tabs/coordinator-sessions-tab", () => ({
-  CoordinatorSessionsTab: () => <div>coordinator-sessions-tab</div>,
-}));
 vi.mock("./tabs/scene-memory-tab", () => ({
   SceneMemoryTab: () => <div>scene-memory-tab</div>,
 }));
@@ -226,12 +223,6 @@ function openConfiguration() {
   fireEvent.click(screen.getByRole("tab", { name: /^Configuration$/i }));
 }
 
-function openConfigGroup(name: string) {
-  fireEvent.click(
-    screen.getByRole("button", { name: new RegExp(`^${name}`, "i") }),
-  );
-}
-
 beforeEach(() => {
   larkListingRef.current = { installations: [], configured: false };
   slackListingRef.current = { installations: [], configured: false };
@@ -240,15 +231,25 @@ beforeEach(() => {
 });
 
 describe("AgentOverviewPane primary navigation", () => {
-  it("shows five plain-language destinations", () => {
+  it("shows four plain-language destinations", () => {
     renderPane([makeRuntime("claude")]);
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Overview",
       "Work",
-      "Conversations",
       "Memory",
       "Configuration",
     ]);
+  });
+
+  it("returns removed inbound links to Overview", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "inbound",
+    });
+
+    expect(screen.getByText("activity-tab")).toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledWith(
+      "/acme/agents/agent-1",
+    );
   });
 });
 
@@ -267,7 +268,6 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     (_label, provider) => {
       renderPane([makeRuntime(provider)]);
       openConfiguration();
-      openConfigGroup("Capabilities");
       expect(
         screen.getByRole("tab", { name: /^MCP Tools$/i }),
       ).toBeInTheDocument();
@@ -279,7 +279,6 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     // time — that's the bug this hiding logic is meant to prevent.
     renderPane([makeRuntime("gemini")]);
     openConfiguration();
-    openConfigGroup("Capabilities");
     expect(
       screen.queryByRole("tab", { name: /^MCP Tools$/i }),
     ).not.toBeInTheDocument();
@@ -288,7 +287,6 @@ describe("AgentOverviewPane MCP tab visibility", () => {
   it("shows MCP only for Pi runtimes whose template declares the capability", () => {
     const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
     openConfiguration();
-    openConfigGroup("Capabilities");
     expect(
       screen.getByRole("tab", { name: /^MCP Tools$/i }),
     ).toBeInTheDocument();
@@ -296,7 +294,6 @@ describe("AgentOverviewPane MCP tab visibility", () => {
 
     renderPane([makeRuntime("pi", ["pi", "dws"])]);
     openConfiguration();
-    openConfigGroup("Capabilities");
     expect(
       screen.queryByRole("tab", { name: /^MCP Tools$/i }),
     ).not.toBeInTheDocument();
@@ -308,7 +305,6 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     // then back on, which reads as a bug.
     renderPane([]);
     openConfiguration();
-    openConfigGroup("Capabilities");
     expect(
       screen.getByRole("tab", { name: /^MCP Tools$/i }),
     ).toBeInTheDocument();
@@ -320,7 +316,6 @@ describe("AgentOverviewPane connection visibility", () => {
     renderPane([makeRuntime("claude")], { currentUserId: "user-1" });
 
     openConfiguration();
-    openConfigGroup("Connections");
 
     expect(
       screen.queryByRole("tab", { name: /^Bot Connections$/i }),
@@ -334,9 +329,6 @@ describe("AgentOverviewPane connection visibility", () => {
     larkListingRef.current = { installations: [], configured: true };
     renderPane([makeRuntime("claude")]);
     openConfiguration();
-    fireEvent.click(
-      await screen.findByRole("button", { name: /^Connections/i }),
-    );
     expect(
       await screen.findByRole("tab", { name: /^Bot Connections$/i }),
     ).toBeInTheDocument();
@@ -348,9 +340,6 @@ describe("AgentOverviewPane connection visibility", () => {
     slackListingRef.current = { installations: [], configured: true };
     renderPane([makeRuntime("claude")]);
     openConfiguration();
-    fireEvent.click(
-      await screen.findByRole("button", { name: /^Connections/i }),
-    );
     expect(
       await screen.findByRole("tab", { name: /^Bot Connections$/i }),
     ).toBeInTheDocument();
@@ -363,7 +352,7 @@ describe("AgentOverviewPane connection visibility", () => {
       screen.queryByRole("tab", { name: /^Bot Connections$/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /^Identity & Goals/i }),
+      screen.getByRole("heading", { name: /^Identity & Goals/i }),
     ).toBeInTheDocument();
   });
 
@@ -469,14 +458,12 @@ describe("AgentOverviewPane Settings navigation", () => {
   it("gives Access its own settings tab", () => {
     renderPane([makeRuntime("claude")]);
     openConfiguration();
-    openConfigGroup("Management");
     expect(screen.getByRole("tab", { name: /^Access$/i })).toBeInTheDocument();
   });
 
   it("shows LLM Trace only for cloud agents", () => {
     const { unmount } = renderPane([makeRuntime("hermes")]);
     openConfiguration();
-    openConfigGroup("Management");
     expect(
       screen.queryByRole("tab", { name: /^LLM Trace$/i }),
     ).not.toBeInTheDocument();
@@ -486,7 +473,6 @@ describe("AgentOverviewPane Settings navigation", () => {
       agentOverrides: { runtime_mode: "cloud" },
     });
     openConfiguration();
-    openConfigGroup("Management");
     expect(
       screen.getByRole("tab", { name: /^LLM Trace$/i }),
     ).toBeInTheDocument();
@@ -494,19 +480,17 @@ describe("AgentOverviewPane Settings navigation", () => {
 });
 
 describe("AgentOverviewPane Environment tab visibility", () => {
-  it("keeps Local Runner as its own execution tab", () => {
+  it("keeps My Computer as its own execution tab", () => {
     renderPane([makeRuntime("claude")]);
     openConfiguration();
-    openConfigGroup("Execution");
 
-    fireEvent.click(screen.getByRole("tab", { name: /^Local Runner$/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /^My Computer$/i }));
     expect(screen.getByText("Execution machine")).toBeInTheDocument();
   });
 
   it("shows the Environment tab to someone who can manage the agent", () => {
     renderPane([makeRuntime("claude")]);
     openConfiguration();
-    openConfigGroup("Execution");
     expect(
       screen.getByRole("tab", { name: /^Environment$/i }),
     ).toBeInTheDocument();
@@ -518,7 +502,6 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     // the tab hits a guaranteed 403 on "Reveal & edit".
     renderPane([makeRuntime("claude")], { canEdit: false });
     openConfiguration();
-    openConfigGroup("Execution");
     expect(
       screen.queryByRole("tab", { name: /^Environment$/i }),
     ).not.toBeInTheDocument();
@@ -529,7 +512,6 @@ describe("AgentOverviewPane Environment tab visibility", () => {
       currentUserId: "user-1",
     });
     openConfiguration();
-    openConfigGroup("Connections");
     expect(screen.getByRole("tab", { name: /^A2A$/i })).toBeInTheDocument();
     unmount();
 

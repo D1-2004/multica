@@ -109,8 +109,40 @@ describe("DigitalEmployeeTab", () => {
     expect(
       screen.getByLabelText("Judge before sandbox"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Judge after the work finishes"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Lark")).not.toBeInTheDocument();
     expect(screen.queryByText("GitHub sandbox identity")).not.toBeInTheDocument();
+  });
+
+  it("hides coordinator-only behavior until inbound judgment is enabled", () => {
+    renderWithI18n(
+      <DigitalEmployeeTab
+        agent={{
+          ...agent,
+          inbound_coordinator: false,
+          chat_session_resume: true,
+        }}
+        runtime={asbRuntime}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+        onUpdate={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(screen.getByLabelText("Judge before sandbox")).toBeInTheDocument();
+    expect(screen.getByLabelText("Resume last session")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Persona")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Judge after the work finishes"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/only take effect when Judge before sandbox is on/i),
+    ).toBeInTheDocument();
   });
 
   it("keeps employee identities read-only for viewers who cannot edit", () => {

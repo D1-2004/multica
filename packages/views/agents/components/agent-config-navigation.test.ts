@@ -30,4 +30,8 @@ describe("agent configuration navigation", () => {
   it("rejects unknown detail views", () => {
     expect(normalizeDetailView("not-a-view")).toBeNull();
   });
+
+  it("rejects the removed inbound detail view", () => {
+    expect(normalizeDetailView("inbound")).toBeNull();
+  });
 });

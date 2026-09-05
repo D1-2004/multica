@@ -11,9 +11,8 @@
     "usage": "Analytics",
     "sites": "Websites",
     "runtimes": "Runtimes",
-    "runners": "Local Runner",
+    "runners": "My Computer",
     "skills": "Skills",
-    "connections": "Connections",
     "settings": "Settings"
   },
   "tab": {
@@ -55,8 +54,6 @@
     "new_issue_shortcut": "C",
     "pinned_label": "Pinned",
     "workspace_group": "Workspace",
-    "agents_group": "Agents & Squads",
-    "extensions_group": "Extensions",
     "configure_group": "Configure",
     "unread_overflow": "99+",
     "discord_card": {

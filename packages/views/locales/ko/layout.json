@@ -11,9 +11,8 @@
     "usage": "분석",
     "sites": "웹사이트",
     "runtimes": "런타임",
-    "runners": "로컬 Runner",
+    "runners": "내 컴퓨터",
     "skills": "스킬",
-    "connections": "연결",
     "settings": "설정"
   },
   "tab": {
@@ -55,8 +54,6 @@
     "new_issue_shortcut": "C",
     "pinned_label": "고정됨",
     "workspace_group": "워크스페이스",
-    "agents_group": "에이전트 및 스쿼드",
-    "extensions_group": "확장",
     "configure_group": "설정",
     "unread_overflow": "99+",
     "discord_card": {
