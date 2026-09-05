@@ -34,6 +34,12 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 	if strings.TrimSpace(task.Status) != "completed" {
 		return
 	}
+	// Completing a sandbox task frees a scene slot. Wake parked inbound
+	// windows even when the wrap-up switch is off; otherwise they wait
+	// on the 5s claim ticker.
+	if h.InboundCoordinatorWorker != nil {
+		h.InboundCoordinatorWorker.Notify()
+	}
 	ctx, cancel := context.WithTimeout(ctx, taskFinishedLoopTimeout)
 	defer cancel()
 	on, err := h.Queries.GetAgentTaskFinishedLoop(ctx, task.AgentID)

@@ -26,6 +26,8 @@ const (
 	inboundCoordinatorWorkerConcurrency  = 8
 	inboundCoordinatorWorkerPollInterval = 500 * time.Millisecond
 	inboundCoordinatorWorkerMaxAttempts  = 6
+	inboundCoordinatorSceneParkDelay     = 5 * time.Second
+	inboundCoordinatorSceneBusyDelay     = 500 * time.Millisecond
 )
 
 // InboundCoordinatorJobWorker executes accepted short loops from PostgreSQL.
@@ -131,6 +133,11 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.retry(ctx, job, fmt.Errorf("collect same-scene jobs: %w", err))
 	}
+	if parked, parkErr := w.parkIfSceneWindowBusy(ctx, job, command); parkErr != nil {
+		return true, parkErr
+	} else if parked {
+		return true, nil
+	}
 	dispatchContext := agentDispatchContext{
 		EndpointID:          job.DispatchEndpointID,
 		EndpointNamespaceID: job.EndpointNamespaceID,
@@ -191,7 +198,11 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 		return true, w.complete(ctx, job)
 	}
 	if response.Status() == http.StatusConflict || response.Status() >= http.StatusInternalServerError {
-		return true, w.retry(ctx, job, fmt.Errorf("%s", dispatchRejectReason(response)))
+		reason := dispatchRejectReason(response)
+		if response.Status() == http.StatusConflict && isCoordinatorBusyParkReason(reason) {
+			return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, reason)
+		}
+		return true, w.retry(ctx, job, fmt.Errorf("%s", reason))
 	}
 	return true, w.fail(ctx, job, command, dispatchRejectReason(response))
 }
@@ -311,7 +322,98 @@ func (w *InboundCoordinatorJobWorker) complete(ctx context.Context, job db.Inbou
 		"job_id", util.UUIDToString(job.ID),
 		"attempt", job.AttemptCount,
 	)
+	w.Notify()
 	return nil
+}
+
+func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) (bool, error) {
+	cid := dispatchConversationID(command)
+	if cid == "" || w.handler == nil || w.handler.Queries == nil {
+		return false, nil
+	}
+	running, err := w.handler.Queries.CountRunningInboundCoordinatorJobsForConversation(ctx, db.CountRunningInboundCoordinatorJobsForConversationParams{
+		WorkspaceID: job.WorkspaceID, AgentID: job.AgentID, ExcludeID: job.ID, ConversationID: cid,
+	})
+	if err != nil {
+		return false, w.retry(ctx, job, fmt.Errorf("count running scene window: %w", err))
+	}
+	if running > 0 {
+		return true, w.park(ctx, job, inboundCoordinatorSceneBusyDelay, "scene window already running")
+	}
+	if commandIsWindowAck(command) {
+		return false, nil
+	}
+	active, err := w.handler.Queries.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{
+		WorkspaceID: job.WorkspaceID, AgentID: job.AgentID, ConversationID: cid,
+	})
+	if err != nil {
+		return false, w.retry(ctx, job, fmt.Errorf("count scene active tasks: %w", err))
+	}
+	if shouldParkSceneCapacity(command, active) {
+		return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, "scene already has two in-flight matters")
+	}
+	return false, nil
+}
+
+func commandIsWindowAck(command DispatchCommand) bool {
+	return inboundcoord.AllWindowAck(inboundcoord.Turn{
+		SenderName: strings.TrimSpace(command.Event.Data.Sender.DisplayName),
+		Utterances: windowUtterancesFromCommand(command),
+	})
+}
+
+func shouldParkSceneCapacity(command DispatchCommand, active int64) bool {
+	if active < int64(inboundcoord.SceneWindowMaxItems) {
+		return false
+	}
+	return !commandIsWindowAck(command)
+}
+
+func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentID pgtype.UUID, cid string) int {
+	slots := inboundcoord.SceneWindowMaxItems
+	if h == nil || h.Queries == nil || strings.TrimSpace(cid) == "" {
+		return slots
+	}
+	active, err := h.Queries.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{
+		WorkspaceID: workspaceID, AgentID: agentID, ConversationID: cid,
+	})
+	if err != nil {
+		return slots
+	}
+	left := slots - int(active)
+	if left < 0 {
+		return 0
+	}
+	return left
+}
+
+func (w *InboundCoordinatorJobWorker) park(ctx context.Context, job db.InboundCoordinatorJob, delay time.Duration, reason string) error {
+	slog.Info("inbound coordinator job parked for next window",
+		"event", "inbound_coordinator_job_parked",
+		"job_id", util.UUIDToString(job.ID),
+		"attempt", job.AttemptCount,
+		"delay_ms", delay.Milliseconds(),
+		"reason", reason,
+	)
+	rows, err := w.handler.Queries.ParkInboundCoordinatorJob(ctx, db.ParkInboundCoordinatorJobParams{
+		ID: job.ID, LeaseToken: job.LeaseToken,
+		AvailableAt: pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true},
+		LastError:   pgtype.Text{String: reason, Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("park inbound coordinator job: lease no longer owned")
+	}
+	return nil
+}
+
+func isCoordinatorBusyParkReason(reason string) bool {
+	return strings.Contains(reason, "pending agent task") ||
+		strings.Contains(reason, "already has an active task") ||
+		strings.Contains(reason, "issue_busy") ||
+		strings.Contains(reason, "active duplicate")
 }
 
 func recoveredCoordinatorDecision(command DispatchCommand, response *bufferedDispatchResponse) inboundcoord.Decision {
@@ -467,6 +569,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if h == nil || h.TxStarter == nil {
 		return nil, job, errors.New("coordinator job store is not configured")
 	}
+	stampDispatchMessageSenders(&command)
 	rawCommand, err := json.Marshal(command)
 	if err != nil {
 		return nil, job, err

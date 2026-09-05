@@ -133,7 +133,7 @@ func TestAssocToolsRecallOmitsPurposeWithoutEvent(t *testing.T) {
 		WorkspaceID:   "ws",
 		AgentID:       agentID,
 		IssueID:       "issue-empty",
-		Purpose:       "某人委托：",
+		Purpose:       "某人委托：待确认事项占位",
 		Status:        assoc.StatusWaiting,
 		LastTouchedAt: now,
 	})

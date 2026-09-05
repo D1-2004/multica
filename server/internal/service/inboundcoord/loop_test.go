@@ -110,8 +110,8 @@ func TestLoopIssueCommentBusyLongMessageDoesNotRetryStorm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Action != ActionReply {
-		t.Fatalf("long unrelated inbound must not 409-retry, decision=%#v", decision)
+	if decision.Action != ActionSilence {
+		t.Fatalf("busy flood must silence, decision=%#v", decision)
 	}
 }
 
@@ -131,8 +131,8 @@ func TestLoopIssueCommentAlreadyBusyDoesNotRetryStorm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Action != ActionReply {
-		t.Fatalf("known-busy inbound must not 409-retry, decision=%#v", decision)
+	if decision.Action != ActionRetry {
+		t.Fatalf("known-busy inbound must park for the next window, decision=%#v", decision)
 	}
 }
 
@@ -145,8 +145,8 @@ func TestShouldRetryBusyIssueComment(t *testing.T) {
 	if shouldRetryBusyIssueComment(Turn{Message: "可以，三点没问题"}) != true {
 		t.Fatal("short confirmation sentence should retry")
 	}
-	if shouldRetryBusyIssueComment(Turn{Message: "番茄", Busy: true}) {
-		t.Fatal("already-busy prompt must not 409-retry")
+	if !shouldRetryBusyIssueComment(Turn{Message: "番茄", Busy: true}) {
+		t.Fatal("already-busy confirmation must park for the next window")
 	}
 	if shouldRetryBusyIssueComment(Turn{Message: flood}) {
 		t.Fatal("flood filler must not 409-retry")
@@ -753,10 +753,8 @@ func TestFinishToolRoutesUnavailableCapabilitiesToIssue(t *testing.T) {
 	}
 	description := fn.Description.Value
 	for _, rule := range []string{
-		"Use reply when current_message is a greeting or does not advance a recalled purpose",
-		"do not reply with the same question",
-		"Use issue for contacts, DWS, search, files",
-		"Never use reply to say you cannot complete the request",
+		"Use reply when the window is a greeting or does not advance a recalled purpose",
+		"items holds 1-2 deliverables",
 		"issue_comment_add",
 		"never with finish issue_id",
 	} {
@@ -908,14 +906,24 @@ func TestBuildUserPromptIncludesConversationID(t *testing.T) {
 	}
 }
 
-func TestBusyIssueUnrelatedReplyIsHuman(t *testing.T) {
+func TestLoopIssueBusyAckSilences(t *testing.T) {
 	t.Parallel()
-	got := busyIssueUnrelatedReply(Turn{Message: "帮我看一下报名表截止时间"})
-	if strings.Contains(got, "这条先不并进") {
-		t.Fatalf("canned busy line leaked: %q", got)
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"谢谢","reply_text":"没事"}`),
+	}}
+	tools := &stubTools{
+		recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认GoalMate含义","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`,
+		errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy},
 	}
-	if !strings.Contains(got, "手头这件还在做") {
-		t.Fatalf("got %q", got)
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "谢谢", ConversationID: "cid-v6", Busy: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionSilence {
+		t.Fatalf("busy ack must silence, decision=%#v", decision)
 	}
 }
 

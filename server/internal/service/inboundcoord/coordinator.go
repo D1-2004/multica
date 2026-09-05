@@ -110,6 +110,7 @@ type Turn struct {
 	ChatSessionID string
 	TaskResult    string
 	IssueID       string
+	Utterances    []WindowUtterance
 }
 
 // HistoryLine is one already-persisted Multica chat message or a DingTalk row.
@@ -133,6 +134,7 @@ type Decision struct {
 	ToolRounds   int
 	ToolsUsed    []string
 	IssueComment *IssueCommentEffect
+	Items        []WindowItem
 	Steps        []protocol.ChatCoordinatorStep
 	// TraceID is the coordinator trace id of the Decide call that produced
 	// this verdict (coord_trace_id in SLS, the Langfuse trace id).
@@ -267,12 +269,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if c == nil {
 		return Decision{Action: ActionContinue}
 	}
-	if c.LLM == nil || !c.LLM.Enabled() {
-		if turn.Loop == LoopTaskFinished {
-			return Decision{Action: ActionSilence}
-		}
-		return Decision{Action: ActionContinue}
-	}
 	if strings.TrimSpace(turn.Message) == "" {
 		if turn.Source == SourceWeb {
 			return Decision{Action: ActionContinue}
@@ -281,6 +277,15 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	if turn.Source != SourceWeb && !turn.Addressed && strings.EqualFold(turn.ChatType, "group") {
 		return Decision{Action: ActionSilence}
+	}
+	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
+		return Decision{Action: ActionSilence, Reason: "window_ack"}
+	}
+	if c.LLM == nil || !c.LLM.Enabled() {
+		if turn.Loop == LoopTaskFinished {
+			return Decision{Action: ActionSilence}
+		}
+		return Decision{Action: ActionContinue}
 	}
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
@@ -393,6 +398,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 			"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
 			"look_into_runes", utf8.RuneCountInString(decision.LookInto),
 			"reply_runes", utf8.RuneCountInString(decision.UserText),
+			"window_items", len(decision.Items),
 			"elapsed_ms", decision.ElapsedMs,
 		)...)
 	return decision
@@ -644,6 +650,13 @@ func parseDecision(raw string, turn Turn) Decision {
 		Intent    string `json:"intent"`
 		Place     string `json:"place"`
 		Reason    string `json:"reason"`
+		Items     []struct {
+			Delegator string `json:"delegator"`
+			Purpose   string `json:"purpose"`
+			Intent    string `json:"intent"`
+			LookInto  string `json:"look_into"`
+			Place     string `json:"place"`
+		} `json:"items"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed); err != nil {
 		return Decision{Action: ActionContinue}
@@ -652,36 +665,138 @@ func parseDecision(raw string, turn Turn) Decision {
 	text := strings.TrimSpace(parsed.Text)
 	look := strings.TrimSpace(parsed.LookInto)
 	reason := strings.TrimSpace(parsed.Reason)
+	items := parseWindowItems(turn, parsed.Items)
+	if len(items) == 0 && action == ActionIssue {
+		purpose := strings.TrimSpace(parsed.Purpose)
+		if purpose == "" || utf8.RuneCountInString(purpose) < 8 {
+			purpose = firstNonEmpty(purpose, look, strings.TrimSpace(turn.Message), text)
+		}
+		intent := strings.TrimSpace(parsed.Intent)
+		if intent == "" {
+			intent = "other"
+		}
+		item, ok := newWindowItem(turn, firstNonEmpty(parsed.Delegator, turn.SenderName), parsed.Place, purpose, intent, look)
+		if !ok {
+			item, ok = newWindowItem(turn, turn.SenderName, parsed.Place, purpose, intent, look)
+		}
+		if ok {
+			items = []WindowItem{item}
+		}
+	}
+	if len(items) > SceneWindowMaxItems {
+		items = items[:SceneWindowMaxItems]
+	}
 	switch action {
 	case ActionReply:
+		if len(items) > 0 {
+			action = ActionIssue
+			break
+		}
 		if text == "" {
 			return Decision{Action: ActionContinue}
 		}
 		return Decision{Action: ActionReply, UserText: text, Reason: reason}
 	case ActionIssue:
-		if text == "" {
-			return Decision{Action: ActionContinue}
-		}
-		if isMissingPayloadIssue(text) {
-			return Decision{Action: ActionReply, UserText: text, Reason: firstNonEmpty(reason, "missing send payload")}
-		}
-		purpose, _ := assoc.ComposeCoordinatorPurpose(firstNonEmpty(parsed.Delegator, turn.SenderName), parsed.Place, parsed.Purpose)
-		intent, _ := assoc.CoordinatorIntent(parsed.Intent)
-		if look == "" {
-			look = purpose
-		}
-		if look == "" {
-			look = clipRunes(strings.TrimSpace(turn.Message), titleBudget)
-		}
-		return Decision{Action: ActionIssue, UserText: text, LookInto: look, Purpose: purpose, Intent: intent, Reason: reason}
+		break
 	case ActionSilence:
+		if len(items) > 0 {
+			action = ActionIssue
+			break
+		}
 		if turn.Source == SourceWeb {
 			return Decision{Action: ActionContinue}
 		}
 		return Decision{Action: ActionSilence, Reason: reason}
 	default:
+		if len(items) == 0 {
+			return Decision{Action: ActionContinue}
+		}
+		action = ActionIssue
+	}
+	if action != ActionIssue {
 		return Decision{Action: ActionContinue}
 	}
+	if text == "" {
+		return Decision{Action: ActionContinue}
+	}
+	if isMissingPayloadIssue(text) {
+		return Decision{Action: ActionReply, UserText: text, Reason: firstNonEmpty(reason, "missing send payload")}
+	}
+	if len(items) > 0 {
+		primary := items[0]
+		if look == "" {
+			look = primary.LookInto
+		}
+		return Decision{
+			Action:   ActionIssue,
+			UserText: text,
+			LookInto: look,
+			Purpose:  primary.Purpose,
+			Intent:   primary.Intent,
+			Reason:   reason,
+			Items:    items,
+		}
+	}
+	delegator := firstNonEmpty(parsed.Delegator, turn.SenderName)
+	if delegator != "" && !validWindowDelegator(turn, delegator) {
+		return Decision{Action: ActionContinue, UserText: text, Reason: firstNonEmpty(reason, "invalid window item")}
+	}
+	purpose, _ := assoc.ComposeCoordinatorPurpose(delegator, parsed.Place, parsed.Purpose)
+	intent, _ := assoc.CoordinatorIntent(parsed.Intent)
+	if look == "" {
+		look = purpose
+	}
+	if look == "" {
+		look = clipRunes(strings.TrimSpace(turn.Message), titleBudget)
+	}
+	return Decision{Action: ActionIssue, UserText: text, LookInto: look, Purpose: purpose, Intent: intent, Reason: reason}
+}
+
+func parseWindowItems(turn Turn, raw []struct {
+	Delegator string `json:"delegator"`
+	Purpose   string `json:"purpose"`
+	Intent    string `json:"intent"`
+	LookInto  string `json:"look_into"`
+	Place     string `json:"place"`
+}) []WindowItem {
+	out := make([]WindowItem, 0, SceneWindowMaxItems)
+	for _, row := range raw {
+		item, ok := newWindowItem(turn, row.Delegator, row.Place, row.Purpose, row.Intent, row.LookInto)
+		if !ok {
+			continue
+		}
+		out = append(out, item)
+		if len(out) == SceneWindowMaxItems {
+			break
+		}
+	}
+	return out
+}
+
+func newWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string) (WindowItem, bool) {
+	delegator = strings.TrimSpace(delegator)
+	if delegator == "" {
+		delegator = strings.TrimSpace(turn.SenderName)
+	}
+	if !validWindowDelegator(turn, delegator) {
+		return WindowItem{}, false
+	}
+	composed, err := assoc.ComposeCoordinatorPurpose(delegator, place, purpose)
+	if err != nil {
+		return WindowItem{}, false
+	}
+	gotIntent, ok := assoc.CoordinatorIntent(intent)
+	if !ok {
+		return WindowItem{}, false
+	}
+	look := strings.TrimSpace(lookInto)
+	if look == "" {
+		look = composed
+	}
+	if cid := strings.TrimSpace(turn.ConversationID); cid != "" {
+		look = strings.TrimSpace(look) + "\nscene_cid=" + cid
+	}
+	return WindowItem{Delegator: delegator, Purpose: composed, Intent: gotIntent, LookInto: look}, true
 }
 
 // isMissingPayloadIssue detects an issue ack that is actually asking the user
@@ -774,7 +889,14 @@ func IssueDescription(decision Decision, message string) string {
 			b.WriteString(intent)
 		}
 	}
-	b.WriteString("\n\n身份与闭环要求：本次委托人是当前可信钉钉派发事件里的发信人；Multica 的 Issue 创建人或评论人只表示谁执行了 Issue 工具，是协助者，不等同于委托人、当前钉钉发信人或消息接收人。数字员工事件的会话和用户身份完整；机器人事件的用户标识可能缺失，此时只能使用事件里已有的发信人名称、会话和原文，不能虚构身份或改用 Issue 署名。如涉及代问或转达，先从当前钉钉消息和关联会话中明确委托人、Agent 转达人、消息接收人和下一位应答人。联系接收人时要说明是谁委托、具体问什么；拿到答复后要注明是谁说了什么，再回给需要结果的人。遇到阻塞时，回复当前能解除阻塞、且正在处理其问题的人，不要固定回复委托人。每次新建 Issue 或 Issue 评论触发的任务，在结束前必须实际给一个明确的人发送进度、阻塞或结果；只在 Issue 中留言不算送达，钉钉发送未成功时不得写“任务完成”。")
+	if len(decision.Items) > 0 {
+		b.WriteString("\n窗口事项：")
+		for i, item := range decision.Items {
+			b.WriteString("\n")
+			b.WriteString(fmt.Sprintf("%d. 委托人=%s；%s", i+1, item.Delegator, item.LookInto))
+		}
+	}
+	b.WriteString("\n\n身份与闭环要求：本次委托人是当前可信钉钉派发事件里的发信人；Multica 的 Issue 创建人或评论人只表示谁执行了 Issue 工具，是协助者，不等同于委托人、当前钉钉发信人或消息接收人。数字员工事件的会话和用户身份完整；机器人事件的用户标识可能缺失，此时只能使用事件里已有的发信人名称、会话和原文，不能虚构身份或改用 Issue 署名。如涉及代问或转达，先从当前钉钉消息和关联会话中明确委托人、Agent 转达人、消息接收人和下一位应答人。联系接收人时要说明是谁委托、具体问什么；拿到答复后要注明是谁说了什么，再回给需要结果的人。遇到阻塞时，回复当前能解除阻塞、且正在处理其问题的人，不要固定回复委托人。每次新建 Issue 或 Issue 评论触发的任务，在结束前必须实际给一个明确的人发送进度、阻塞或结果；只在 Issue 中留言不算送达，钉钉发送未成功时不得写“任务完成”。检索听记、文档、消息时只使用本轮 scene_cid / conversation_id，禁止打开或引用其它群的内容。")
 	return b.String()
 }
 

@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 	openai "github.com/openai/openai-go/v3"
@@ -146,14 +145,14 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				traceToolEnd(toolObs, callErr.Error(), callErr, "issue_busy")
 				if !shouldRetryBusyIssueComment(turn) {
 					return Decision{
-						Action:     ActionReply,
-						UserText:   busyIssueUnrelatedReply(turn),
+						Action:     ActionSilence,
 						Reason:     "issue_busy_unrelated",
 						ToolRounds: round + 1, ToolsUsed: used, Steps: append([]protocol.ChatCoordinatorStep{}, steps...),
 					}, nil
 				}
 				return Decision{
 					Action: ActionRetry, IssueID: issueIDFromToolArguments(call.Arguments),
+					Reason:     "issue_busy_park",
 					ToolRounds: round + 1, ToolsUsed: used, Steps: append([]protocol.ChatCoordinatorStep{}, steps...),
 				}, nil
 			}
@@ -273,34 +272,15 @@ func functionToolCalls(msg openai.ChatCompletionMessage) []functionCall {
 	return out
 }
 
-// shortIssueContinuationRunes is the max inbound length we will 409-retry onto a
-// busy Issue. Real confirmations are a few words ("番茄", "可以，三点没问题").
-// Flood / filler is longer; retrying it HTTP-409 storms and surfaces 处理失败.
-const shortIssueContinuationRunes = 24
-
 func shouldRetryBusyIssueComment(turn Turn) bool {
-	// Prompt already showed busy: true. Re-queueing cannot succeed until the
-	// active task ends, and flood jobs then fail after max attempts.
-	if turn.Busy {
+	if AllWindowAck(turn) {
 		return false
 	}
-	return isShortIssueContinuation(turn.Message)
-}
-
-func isShortIssueContinuation(message string) bool {
-	message = strings.TrimSpace(message)
-	if message == "" {
+	msg := strings.TrimSpace(turn.Message)
+	if strings.Contains(msg, "灌水") || strings.Contains(strings.ToUpper(msg), "FLOOD") {
 		return false
 	}
-	return utf8.RuneCountInString(message) <= shortIssueContinuationRunes
-}
-
-func busyIssueUnrelatedReply(turn Turn) string {
-	clip := clipRunes(strings.TrimSpace(turn.Message), 16)
-	if clip == "" {
-		return "手头这件还在做，做完我再接你这句。"
-	}
-	return "手头这件还在做，做完再看「" + clip + "」。"
+	return true
 }
 
 func toolsForTurn(turn Turn, round int) []openai.ChatCompletionToolUnionParam {
@@ -348,19 +328,36 @@ func coordinatorTaskFinishedFinishTool() openai.ChatCompletionToolUnionParam {
 func coordinatorFinishTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("End the coordinator loop with the user-facing verdict. Use reply when current_message is a greeting or does not advance a recalled purpose and is not answering a question this agent just asked. Also use reply for a scene-memory inventory, or a delegated send/ask whose payload is still missing (ask for the missing content; do not open an Issue). If current_message answers that question, do not reply with the same question; continue or open the work. Use issue for contacts, DWS, search, files, external data, writes, actions, or any capability unavailable in this loop, but only once the payload is named. Never use reply to say you cannot complete the request. New Issue: omit issue_id and set delegator, purpose, intent, and text naming the work. Continue an existing Issue with issue_comment_add, never with finish issue_id. text is required for reply and issue."),
+		Description: openai.String("End the coordinator loop with the user-facing verdict for this scene window. Use reply when the window is a greeting or does not advance a recalled purpose. Use issue when sandbox work is needed. items holds 1-2 deliverables in this window; each delegator copies that line's sender. Same deliverable → one item. Two different deliverables → two items. Never more than two. Continue an existing Issue with issue_comment_add, never with finish issue_id. text is one IM sentence for the whole window, required for reply and issue."),
 		Parameters: shared.FunctionParameters{
 			"type":                 "object",
 			"additionalProperties": false,
 			"required":             []string{"action"},
 			"properties": map[string]any{
 				"action":    map[string]any{"type": "string", "enum": []string{"reply", "issue", "silence"}},
-				"text":      map[string]any{"type": "string", "description": "Required for reply and issue. The IM sentence spoken to the person. Name the work in ordinary language. Do not omit it."},
+				"text":      map[string]any{"type": "string", "description": "Required for reply and issue. One IM sentence for the whole window. Name the work in ordinary language."},
 				"look_into": map[string]any{"type": "string"},
-				"delegator": map[string]any{"type": "string", "minLength": 1, "description": "Required when action=issue. Who asked this agent to act. Copy the inbound sender name."},
-				"purpose":   map[string]any{"type": "string", "minLength": 8, "description": "Required when action=issue. Structured brief of 委托人, 事件, 目的. No DWS, data-auth, or openConversationId."},
-				"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "Required when action=issue."},
-				"reason":    map[string]any{"type": "string"},
+				"delegator": map[string]any{"type": "string", "minLength": 1, "description": "Required when action=issue and items is omitted. Copy the utterance sender. Never use another person."},
+				"purpose":   map[string]any{"type": "string", "minLength": 8, "description": "Required when action=issue and items is omitted. Structured brief of 委托人, 事件, 目的."},
+				"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "description": "Required when action=issue and items is omitted."},
+				"items": map[string]any{
+					"type":        "array",
+					"maxItems":    SceneWindowMaxItems,
+					"description": "0-2 work items for this window. Omit for reply/silence. One item per distinct deliverable. delegator must be that line's sender.",
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"required":             []string{"delegator", "purpose", "intent"},
+						"properties": map[string]any{
+							"delegator": map[string]any{"type": "string", "minLength": 1},
+							"purpose":   map[string]any{"type": "string", "minLength": 8},
+							"intent":    map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}},
+							"look_into": map[string]any{"type": "string"},
+							"place":     map[string]any{"type": "string"},
+						},
+					},
+				},
+				"reason": map[string]any{"type": "string"},
 			},
 		},
 	})
@@ -904,15 +901,42 @@ func requirePurposeForNewIssue(turn Turn, finishRaw string) error {
 		Delegator string `json:"delegator"`
 		Intent    string `json:"intent"`
 		Place     string `json:"place"`
+		Items     []struct {
+			Delegator string `json:"delegator"`
+			Purpose   string `json:"purpose"`
+			Intent    string `json:"intent"`
+			Place     string `json:"place"`
+		} `json:"items"`
 	}
 	_ = json.Unmarshal([]byte(strings.TrimSpace(finishRaw)), &parsed)
-	if Action(strings.TrimSpace(parsed.Action)) != ActionIssue {
+	if Action(strings.TrimSpace(parsed.Action)) != ActionIssue && len(parsed.Items) == 0 {
 		return nil
 	}
 	if strings.TrimSpace(parsed.IssueID) != "" {
 		return nil
 	}
+	if len(parsed.Items) > 0 {
+		if len(parsed.Items) > SceneWindowMaxItems {
+			return hintErr("finish items is at most 2", hintNewIssueFinish)
+		}
+		for _, item := range parsed.Items {
+			delegator := firstNonEmpty(item.Delegator, turn.SenderName)
+			if !validWindowDelegator(turn, delegator) {
+				return hintErr("item.delegator must copy the utterance sender", hintNewIssueFinish)
+			}
+			if _, err := assoc.ComposeCoordinatorPurpose(delegator, item.Place, item.Purpose); err != nil {
+				return hintWrap("each item needs delegator, purpose, and intent", hintNewIssueFinish, err)
+			}
+			if _, ok := assoc.CoordinatorIntent(item.Intent); !ok {
+				return hintErr("each item needs intent: ask, confirm, notify, lookup, wait, or other", hintNewIssueFinish)
+			}
+		}
+		return nil
+	}
 	delegator := firstNonEmpty(parsed.Delegator, turn.SenderName)
+	if !validWindowDelegator(turn, delegator) {
+		return hintErr("delegator must copy the utterance sender", hintNewIssueFinish)
+	}
 	if _, err := assoc.ComposeCoordinatorPurpose(delegator, parsed.Place, parsed.Purpose); err != nil {
 		return hintWrap("new Issue needs delegator, purpose, and intent on finish", hintNewIssueFinish, err)
 	}
