@@ -22,6 +22,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 | 10 | E0303-loop | 3106924013 | W3A+W3B issue (C11 2nd clean); W5 park then issue 03:05:34; ACK window_ack ×4 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; W2 inbound **处理失败**; W2B reply clean; W3B/W5 leftover 处理中 |
 | 11 | E0348-loop | 3106924013 | W3A+W3B issue (C11 3rd); W5 park then issue 03:51:37; ACK window_ack ×3 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; this-token W2/W2B no 处理失败; W5 leftover 处理中; W2 wrap-up extra reply |
 | 12 | E0433-loop | 3106924013 | W3A+W3B issue (C11 4th); W5 park then issue 04:35:09; ACK window_ack ×3 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; this-token W2/W2B/W3 inbound clean; W5 inbound 处理失败; W2 wrap-up extra replies (C12) |
+| 13 | E0517-loop | 3106924013 | W3A+W3B issue (C11 5th); W5 park then issue 05:20:49; ACK window_ack ×4 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; C10 W2B leftover 处理中; W5 inbound 处理失败; C12 not reproduced |
 
 ## Open cases
 
@@ -75,19 +76,19 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 - Found: E2103-loop G1 W2B (`就约线上`) Decide `action=retry` ×6 `reason=issue_busy_park` on issue `049c6f99-…`; wrap-up later `already_told_scene`; IM still has emotion `处理中` on the W2B inbound (E1-2007-W2B still stamped too)
 - Fix: Host/channel should complete the DingTalk silence callback (clear 处理中) when `ActionRetry` parks or when wrap-up silences the same cid; do not leave the confirmation @ spinning
 - Prove: next round W2B has no leftover `处理中` after the meeting issue settles
-- Status: E11/E12 `E0348/E0433-loop-W2/W2B` inbound **no** 处理失败 (W2B retried then comment). E10 W2 and E12 W5 still stamped. Flaky leftover. Not shipping this fire
+- Status: E13 `E0517-loop-W2B` leftover **处理中** after retry×6 then wrap-up `already_told` on `4404d05d-…` (W2 inbound cleared). E12 W2/W2B were clean. Flaky leftover. Not shipping this fire
 
 ### C11 G2 W3A never Decide, inbound stuck `处理中`
 - Found: E0048-loop W3A (`帮我问 dxxh 下周排期`) IM 00:48:21 emotion `处理中`; no `inbound_coordinator_llm_request` and no `inbound_coordinator_decided` for this token. W3B/W5 on same cid did Decide. WRAP on G1 was sent ~3s later (different scene).
 - Fix: Host/Router must persist+Decide the first G2 @ even when a G1 WRAP is in-flight; complete the 处理中 callback if the job is dropped
 - Prove: next round W3A has `action=issue` (or reply) in SLS and inbound `处理中` is cleared
-- Status: E9–E12 **four clean Decide rounds** on `3106924013`. Drop-without-Decide recovered. Not shipping this fire
+- Status: E9–E13 **five clean Decide rounds** on `3106924013`. Drop-without-Decide recovered. Not shipping this fire
 
 ### C12 W2 wrap-up extra IM after `already_told_scene`
 - Found: E0348-loop G1 wrap-up `action=reply` 「已问 dxxh 明天线上开会时间」 after W2B comment. E0433-loop: wrap-up `already_told_scene` on issue `5c1a9b68-…` at 04:35:59, then extra IM 04:36:20 / 04:36:43 「已确认线上开会…等待 dxxh」 (not 已报群里)
 - Fix: after sandbox already spoke on the cid, wrap-up Host silence must also stop later sandbox/Host pings on the same meeting issue
 - Prove: next round W2/W2B settle with `already_told_scene` and **no** extra IM after the W2B comment
-- Status: reproduced E12. Not shipping this fire
+- Status: reproduced E12; E13 W2 wrap-up `already_told` with **no** extra IM after W2B. Flaky. Not shipping this fire
 
 ## Round 3 detail (E2103-loop)
 
@@ -248,3 +249,19 @@ Pipeline 66 `3106924013` 预发部署 SUCCESS. dws pre. Actors 主角/配角 onl
 | wrap-up | WRAP `already_told_scene`. G2 W3 `already_told_scene` issues `b91d5710-…` / `e1b6ded5-…`. W2 wrap-up `already_told_scene` issue `5c1a9b68-…` then extra IM (C12) |
 | shouldReply | none this token (old 2026-09-05 18:12 G2 leak only) |
 | 处理中/失败 | This-token W2/W2B/W3A/W3B/WRAP inbound clean. W5 inbound **处理失败**. Old E0303-W2 still 处理失败 |
+
+## Round 13 detail (E0517-loop)
+
+Pipeline 66 `3106924013` 预发部署 SUCCESS. dws pre. Actors 主角/配角 only. HEAD `c3a023b90` (doc from E12; no new Host deploy).
+
+| Check | Result |
+|---|---|
+| W3 | PASS C11 5th: W3A `action=issue` 05:18:10 token kept, inbound clean; IM 排期 05:19:05. W3B `action=issue` 05:18:28 token kept, inbound cleared; IM 配额失败 ×2 05:21:27/05:21:30 |
+| W5 | job `daa3d1ab-…` parked `two in-flight` ~05:18:50–05:20:41, then Decide `action=issue` 05:20:49 look_into `scene_cid=` G2 text 「我去帮冬翔订下周去上海的高铁」. No this-token sandbox IM. Inbound **处理失败** |
+| collect_split | 05:18:50 / 05:18:55 / 05:19:03 / 05:19:19 `incoming_ack=true` |
+| ACK | `window_ack` ×4 (谢谢; 好的/收到; 嗯/行/辛苦了; 没事). G2 `llm_request` only W3A/W3B/W5 — no ACK llm |
+| WRAP | PASS C9: `action=issue`; IM **E0517-loop 差旅住宿清单**; wrap-up `already_told_scene` issue `3132896c-…` |
+| W6 | 配角 ok. R9A 已记下. R9B `action=issue` look_into `scene_cid=` R9B; Host no R9A cid; IM searched this cid only; inbound cleared |
+| wrap-up | WRAP `already_told_scene`. G2 W3 `already_told_scene` issue `0c81797e-…`. W2 wrap-up `already_told_scene` issue `4404d05d-…` with **no** extra IM (C12 not reproduced) |
+| shouldReply | none this token (old 2026-09-05 18:12 G2 leak only) |
+| 处理中/失败 | C10: G1 W2B leftover `处理中` after retry×6. W2 inbound cleared. W5 inbound **处理失败**. Old E0303-W2 still 处理失败 |
