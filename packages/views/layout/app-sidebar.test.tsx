@@ -1,6 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import { cloneElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@multica/core/api";
+import enLayout from "../locales/en/layout.json";
 import { AppSidebar } from "./app-sidebar";
 
 const { appForeground, chatSessions, chatStore, detail, deletePin, inboxItems, navigation, pins, sidebarState, summary, workspaces } = vi.hoisted(() => ({
@@ -11,7 +13,12 @@ const { appForeground, chatSessions, chatStore, detail, deletePin, inboxItems, n
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
   inboxItems: { current: [] as { id: string; read: boolean }[] },
-  navigation: { current: { pathname: "/acme/issues" } },
+  navigation: {
+    current: {
+      pathname: "/acme/issues",
+      searchParams: new URLSearchParams(),
+    },
+  },
   summary: { current: [] as { workspace_id: string; count: number }[] },
   workspaces: {
     current: [] as { id: string; name: string; slug: string; avatar_url: string | null }[],
@@ -50,7 +57,17 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   SidebarFooter: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarGroupContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  SidebarGroupLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SidebarGroupLabel: ({
+    children,
+    render,
+    ...props
+  }: {
+    children: React.ReactNode;
+    render?: React.ReactElement;
+  }) =>
+    render
+      ? cloneElement(render, props, children)
+      : <div {...props}>{children}</div>,
   SidebarHeader: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarMenuButton: ({
@@ -82,7 +99,12 @@ vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
 vi.mock("@multica/ui/components/ui/collapsible", () => ({
   Collapsible: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   CollapsibleContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  CollapsibleTrigger: () => <button type="button" />,
+  CollapsibleTrigger: ({
+    children,
+    ...props
+  }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" {...props}>{children}</button>
+  ),
 }));
 vi.mock("@multica/ui/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -92,12 +114,22 @@ vi.mock("@multica/ui/components/ui/tooltip", () => ({
 vi.mock("../common/use-app-foreground", () => ({
   useAppForeground: () => appForeground.current,
 }));
+vi.mock("../i18n", () => ({
+  useT: () => ({
+    t: (selector: (resources: typeof enLayout) => string) =>
+      selector(enLayout),
+  }),
+}));
 vi.mock("./help-launcher", () => ({ HelpLauncher: () => null }));
 vi.mock("../auth", () => ({ useLogout: () => vi.fn() }));
 vi.mock("../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("../navigation", () => ({
   AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
-  useNavigation: () => ({ pathname: navigation.current.pathname, push: vi.fn() }),
+  useNavigation: () => ({
+    pathname: navigation.current.pathname,
+    searchParams: navigation.current.searchParams,
+    push: vi.fn(),
+  }),
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
 vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /> }));
@@ -136,6 +168,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
     runners: () => "/acme/runners",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
+    settingsIntegrations: () => "/acme/settings?tab=integrations",
     issueDetail: (id: string) => `/acme/issues/${id}`,
     projectDetail: (id: string) => `/acme/projects/${id}`,
   }),
@@ -191,12 +224,76 @@ vi.mock("@tanstack/react-query", async (importOriginal) => ({
   useQueryClient: () => ({ fetchQuery: vi.fn(), invalidateQueries: vi.fn() }),
 }));
 
-describe("workspace nav — Websites", () => {
-  it("renders a Websites link in the primary workspace section", () => {
+describe("workspace navigation groups", () => {
+  beforeEach(() => {
+    navigation.current = {
+      pathname: "/acme/issues",
+      searchParams: new URLSearchParams(),
+    };
+  });
+
+  it("keeps everyday work destinations directly visible", () => {
+    const { container } = render(<AppSidebar />);
+    for (const href of [
+      "/acme/issues",
+      "/acme/projects",
+      "/acme/autopilots",
+      "/acme/usage",
+      "/acme/sites",
+    ]) {
+      expect(
+        container.querySelector(`button[data-href="${href}"]`),
+      ).not.toBeNull();
+    }
+  });
+
+  it("groups agents, squads, and execution surfaces", () => {
+    render(<AppSidebar />);
+    expect(
+      screen.getByRole("button", { name: /Agents & Squads/i }),
+    ).toHaveAttribute("aria-expanded");
+    expect(screen.getByText("Agents")).toBeInTheDocument();
+    expect(screen.getByText("Squads")).toBeInTheDocument();
+    expect(screen.getByText("Runtimes")).toBeInTheDocument();
+    expect(screen.getByText("Local Runner")).toBeInTheDocument();
+  });
+
+  it("groups skills and connections separately from settings", () => {
     const { container } = render(<AppSidebar />);
     expect(
-      container.querySelector('button[data-href="/acme/sites"]'),
+      screen.getByRole("button", { name: /Extensions/i }),
+    ).toHaveAttribute("aria-expanded");
+    expect(
+      container.querySelector('button[data-href="/acme/skills"]'),
     ).not.toBeNull();
+    expect(
+      container.querySelector(
+        'button[data-href="/acme/settings?tab=integrations"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      container.querySelector('button[data-href="/acme/settings"]'),
+    ).not.toBeNull();
+  });
+
+  it("highlights Connections without also highlighting Settings", () => {
+    navigation.current = {
+      pathname: "/acme/settings",
+      searchParams: new URLSearchParams("tab=integrations"),
+    };
+    const { container } = render(<AppSidebar />);
+
+    expect(
+      screen.getByRole("button", { name: "Extensions" }),
+    ).toHaveAttribute("aria-expanded", "true");
+    expect(
+      container.querySelector(
+        'button[data-href="/acme/settings?tab=integrations"]',
+      ),
+    ).toHaveAttribute("data-active", "true");
+    expect(
+      container.querySelector('button[data-href="/acme/settings"]'),
+    ).not.toHaveAttribute("data-active");
   });
 });
 
@@ -252,14 +349,20 @@ describe("PinRow", () => {
 describe("mobile sheet dismissal", () => {
   beforeEach(() => {
     sidebarState.setOpenMobile.mockClear();
-    navigation.current = { pathname: "/acme/issues" };
+    navigation.current = {
+      pathname: "/acme/issues",
+      searchParams: new URLSearchParams(),
+    };
   });
 
   it("dismisses the sheet once the route changes", () => {
     const { rerender } = render(<AppSidebar />);
     sidebarState.setOpenMobile.mockClear();
 
-    navigation.current = { pathname: "/acme/inbox" };
+    navigation.current = {
+      pathname: "/acme/inbox",
+      searchParams: new URLSearchParams(),
+    };
     rerender(<AppSidebar />);
 
     expect(sidebarState.setOpenMobile).toHaveBeenCalledWith(false);
@@ -348,7 +451,10 @@ describe("personal nav — Chat", () => {
   beforeEach(() => {
     chatSessions.current = [];
     inboxItems.current = [];
-    navigation.current = { pathname: "/acme/issues" };
+    navigation.current = {
+      pathname: "/acme/issues",
+      searchParams: new URLSearchParams(),
+    };
     chatStore.current = { activeSessionId: null, isOpen: false };
     appForeground.current = true;
   });
@@ -395,7 +501,10 @@ describe("personal nav — Chat", () => {
     // must follow, or a reply landing in the open conversation flashes a
     // count with no matching row.
     chatSessions.current = [{ id: "a", unread_count: 2 }, { id: "b", unread_count: 3 }];
-    navigation.current = { pathname: "/acme/chat" };
+    navigation.current = {
+      pathname: "/acme/chat",
+      searchParams: new URLSearchParams(),
+    };
     chatStore.current = { activeSessionId: "a", isOpen: false };
     const { container } = render(<AppSidebar />);
     expect(chatBadge(container)).toHaveAttribute("aria-label", "3");
@@ -403,7 +512,10 @@ describe("personal nav — Chat", () => {
 
   it("excludes the viewed session when the floating chat window is open off-route", () => {
     chatSessions.current = [{ id: "a", unread_count: 2 }, { id: "b", unread_count: 3 }];
-    navigation.current = { pathname: "/acme/issues" };
+    navigation.current = {
+      pathname: "/acme/issues",
+      searchParams: new URLSearchParams(),
+    };
     chatStore.current = { activeSessionId: "a", isOpen: true };
     const { container } = render(<AppSidebar />);
     expect(chatBadge(container)).toHaveAttribute("aria-label", "3");
@@ -413,7 +525,10 @@ describe("personal nav — Chat", () => {
     // activeSessionId persists after the chat page closes; with both
     // surfaces closed nothing will auto mark-read, so the badge must count.
     chatSessions.current = [{ id: "a", unread_count: 2 }, { id: "b", unread_count: 3 }];
-    navigation.current = { pathname: "/acme/issues" };
+    navigation.current = {
+      pathname: "/acme/issues",
+      searchParams: new URLSearchParams(),
+    };
     chatStore.current = { activeSessionId: "a", isOpen: false };
     const { container } = render(<AppSidebar />);
     expect(chatBadge(container)).toHaveAttribute("aria-label", "5");
@@ -424,7 +539,10 @@ describe("personal nav — Chat", () => {
     // marked-read (MUL-4485), so its unread must still badge — otherwise the
     // notification is silently eaten while the user is away.
     chatSessions.current = [{ id: "a", unread_count: 2 }, { id: "b", unread_count: 3 }];
-    navigation.current = { pathname: "/acme/issues" };
+    navigation.current = {
+      pathname: "/acme/issues",
+      searchParams: new URLSearchParams(),
+    };
     chatStore.current = { activeSessionId: "a", isOpen: true };
     appForeground.current = false;
     const { container } = render(<AppSidebar />);
@@ -433,7 +551,10 @@ describe("personal nav — Chat", () => {
 
   it("counts the active session on the chat route while the app is backgrounded", () => {
     chatSessions.current = [{ id: "a", unread_count: 2 }, { id: "b", unread_count: 3 }];
-    navigation.current = { pathname: "/acme/chat" };
+    navigation.current = {
+      pathname: "/acme/chat",
+      searchParams: new URLSearchParams(),
+    };
     chatStore.current = { activeSessionId: "a", isOpen: false };
     appForeground.current = false;
     const { container } = render(<AppSidebar />);

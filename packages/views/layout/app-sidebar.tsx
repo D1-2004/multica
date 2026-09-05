@@ -95,6 +95,22 @@ function isNavActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
+function isNavItemActive(
+  pathname: string,
+  searchParams: URLSearchParams,
+  href: string,
+): boolean {
+  const [targetPath, targetQuery = ""] = href.split("?");
+  if (!isNavActive(pathname, targetPath ?? href)) return false;
+
+  const targetTab = new URLSearchParams(targetQuery).get("tab");
+  if (targetTab) return searchParams.get("tab") === targetTab;
+  if (targetPath?.endsWith("/settings")) {
+    return searchParams.get("tab") !== "integrations";
+  }
+  return true;
+}
+
 // Stable empty arrays for query defaults. Using an inline `= []` default on
 // `useQuery` creates a new array reference on every render when `data` is
 // undefined (e.g. query disabled or loading) — which in turn breaks any
@@ -123,6 +139,7 @@ type NavKey =
   | "runtimes"
   | "runners"
   | "skills"
+  | "settingsIntegrations"
   | "settings";
 
 // Static schema (key only) — labels resolved at render via useT("layout"),
@@ -141,6 +158,7 @@ type NavLabelKey =
   | "runtimes"
   | "runners"
   | "skills"
+  | "connections"
   | "settings";
 
 // Nav icons are NOT declared here: they are derived from each item's
@@ -156,18 +174,52 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "issues", labelKey: "issues" },
   { key: "projects", labelKey: "projects" },
   { key: "autopilots", labelKey: "autopilots" },
-  { key: "agents", labelKey: "agents" },
-  { key: "squads", labelKey: "squads" },
   { key: "usage", labelKey: "usage" },
   { key: "sites", labelKey: "sites" },
 ];
 
-const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
+const agentNav: { key: NavKey; labelKey: NavLabelKey }[] = [
+  { key: "agents", labelKey: "agents" },
+  { key: "squads", labelKey: "squads" },
   { key: "runtimes", labelKey: "runtimes" },
   { key: "runners", labelKey: "runners" },
-  { key: "skills", labelKey: "skills" },
-  { key: "settings", labelKey: "settings" },
 ];
+
+const extensionNav: { key: NavKey; labelKey: NavLabelKey }[] = [
+  { key: "skills", labelKey: "skills" },
+  { key: "settingsIntegrations", labelKey: "connections" },
+];
+
+function CollapsibleNavGroup({
+  label,
+  open,
+  onOpenChange,
+  children,
+}: {
+  label: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Collapsible open={open} onOpenChange={onOpenChange}>
+      <SidebarGroup className="group/nav-section py-0">
+        <SidebarGroupLabel
+          render={<CollapsibleTrigger aria-expanded={open} />}
+          className="group/trigger cursor-pointer text-body font-medium text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground"
+        >
+          <span>{label}</span>
+          <ChevronRight className="ml-auto !size-3 stroke-[2.5] transition-transform duration-200 group-data-[panel-open]/trigger:rotate-90 motion-reduce:transition-none" />
+        </SidebarGroupLabel>
+        <CollapsibleContent>
+          <SidebarGroupContent className="ml-3 border-l border-sidebar-border pl-2">
+            {children}
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
+  );
+}
 
 function DraftDot() {
   const hasDraft = useIssueDraftStore((s) => s.hasDraft());
@@ -425,12 +477,30 @@ interface AppSidebarProps {
 
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname, push } = useNavigation();
+  const { pathname, searchParams, push } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
   const workspace = useCurrentWorkspace();
   const p = useWorkspacePaths();
+  const agentGroupActive = agentNav.some((item) =>
+    isNavItemActive(pathname, searchParams, p[item.key]()),
+  );
+  const extensionGroupActive = extensionNav.some((item) =>
+    isNavItemActive(pathname, searchParams, p[item.key]()),
+  );
+  const [agentGroupOpen, setAgentGroupOpen] = useState(agentGroupActive);
+  const [extensionGroupOpen, setExtensionGroupOpen] = useState(
+    extensionGroupActive,
+  );
+
+  useEffect(() => {
+    if (agentGroupActive) setAgentGroupOpen(true);
+  }, [agentGroupActive]);
+
+  useEffect(() => {
+    if (extensionGroupActive) setExtensionGroupOpen(true);
+  }, [extensionGroupActive]);
   const { data: workspaces = EMPTY_WORKSPACES } = useQuery(workspaceListOptions());
   const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
@@ -851,27 +921,83 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             </SidebarGroupContent>
           </SidebarGroup>
 
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.sidebar.configure_group)}</SidebarGroupLabel>
+          <CollapsibleNavGroup
+            label={t(($) => $.sidebar.agents_group)}
+            open={agentGroupOpen}
+            onOpenChange={setAgentGroupOpen}
+          >
+            <SidebarMenu className="gap-0.5">
+              {agentNav.map((item) => {
+                const href = p[item.key]();
+                const Icon = routeIconForPath(href);
+                const isActive = isNavItemActive(
+                  pathname,
+                  searchParams,
+                  href,
+                );
+                return (
+                  <SidebarMenuItem key={item.key}>
+                    <SidebarMenuButton
+                      isActive={isActive}
+                      render={<AppLink href={href} />}
+                      className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                    >
+                      <Icon />
+                      <span>{t(($) => $.nav[item.labelKey])}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </CollapsibleNavGroup>
+
+          <CollapsibleNavGroup
+            label={t(($) => $.sidebar.extensions_group)}
+            open={extensionGroupOpen}
+            onOpenChange={setExtensionGroupOpen}
+          >
+            <SidebarMenu className="gap-0.5">
+              {extensionNav.map((item) => {
+                const href = p[item.key]();
+                const Icon = routeIconForPath(href);
+                const isActive = isNavItemActive(
+                  pathname,
+                  searchParams,
+                  href,
+                );
+                return (
+                  <SidebarMenuItem key={item.key}>
+                    <SidebarMenuButton
+                      isActive={isActive}
+                      render={<AppLink href={href} />}
+                      className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                    >
+                      <Icon />
+                      <span>{t(($) => $.nav[item.labelKey])}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </CollapsibleNavGroup>
+
+          <SidebarGroup className="py-0">
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
-                {configureNav.map((item) => {
-                  const href = p[item.key]();
-                  const Icon = routeIconForPath(href);
-                  const isActive = isNavActive(pathname, href);
-                  return (
-                    <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <Icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    isActive={isNavItemActive(
+                      pathname,
+                      searchParams,
+                      p.settings(),
+                    )}
+                    render={<AppLink href={p.settings()} />}
+                    className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                  >
+                    {React.createElement(routeIconForPath(p.settings()))}
+                    <span>{t(($) => $.nav.settings)}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>

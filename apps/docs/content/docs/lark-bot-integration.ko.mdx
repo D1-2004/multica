@@ -13,7 +13,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 | 위치 | 동작 |
 |---|---|
-| **에이전트 → Integrations** | 에이전트 상세 페이지에 **Integrations** 탭이 있습니다(왼쪽 사이드바에도 대응하는 섹션이 있습니다). owner와 admin에게는 여기에 **Bind to Lark**가 보이며, 바인딩되면 **Connected to Lark** 배지와 **Manage in Lark** 링크로 바뀝니다. |
+| **에이전트 → 구성 → 봇 연결** | 에이전트 상세 페이지에서는 채팅 봇을 **봇 연결**에 모아 디지털 직원 신원과 분리합니다. owner와 admin에게는 여기에 **Bind to Lark**가 보이며, 바인딩되면 **Connected to Lark** 배지와 **Manage in Lark** 링크로 바뀝니다. |
 | **봇에게 개인 메시지** | 워크스페이스 멤버가 Lark에서 봇에게 직접 메시지를 보냅니다. 각 대화는 그 에이전트와의 Multica [chat](/chat) 세션이 되며, 에이전트는 해당 스레드에서 답변합니다. |
 | **그룹에서 `@` 멘션** | 봇을 Lark 그룹에 추가하고 `@`로 멘션하세요. 멘션한 메시지만 읽으며, 봇이 그룹 전체를 듣지는 않습니다. |
 | **`/issue` 명령** | `/issue <제목>`(본문 추가 가능)을 입력하면 워크스페이스에 새 Multica 이슈가 생성되고, 당신 이름으로 귀속됩니다. |
@@ -25,7 +25,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 바인딩은 스캔하여 설치하는 방식입니다 — 복사할 앱 시크릿도, 개발자 콘솔 작업도 없습니다.
 
 1. **Agents → _당신의 에이전트_**에서 에이전트를 엽니다.
-2. **Integrations** 탭으로 이동하거나(또는 왼쪽 사이드바의 **Integrations** 섹션 사용) **Bind to Lark**를 클릭합니다.
+2. **구성 → 봇 연결**로 이동해 **Bind to Lark**를 클릭합니다.
 3. QR 코드가 나타납니다. 휴대폰에서 **Lark → 스캔**을 열고, 새로 생긴 PersonalAgent 봇을 인증하세요.
 4. 스캔이 완료되면 대화상자가 닫히고 에이전트에 **Connected to Lark**가 표시됩니다. 당신의 Lark 신원이 자동으로 Multica 계정에 바인딩되므로, 곧바로 봇과 대화를 시작할 수 있습니다.
 

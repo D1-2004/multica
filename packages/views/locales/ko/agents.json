@@ -167,8 +167,8 @@
     "transfer_owner_confirm": "이전"
   },
   "inspector": {
-    "section_profile": "프로필",
-    "section_profile_hint": "워크스페이스에서 이 에이전트가 표시되는 방식을 관리합니다.",
+    "section_profile": "직원 프로필",
+    "section_profile_hint": "워크스페이스에서 디지털 직원이 표시되는 방식을 관리합니다.",
     "section_execution": "실행 설정",
     "section_execution_hint": "런타임, 모델, 추론 수준과 병렬 작업 한도를 설정합니다.",
     "section_access": "접근 권한",
@@ -287,14 +287,22 @@
   "tabs": {
     "overview": "개요",
     "work": "작업",
-    "inbound": "수신",
+    "inbound": "대화",
     "memory": "기억",
     "capabilities": "기능",
+    "configuration": "구성",
+    "identity_goals": "정체성 및 목표",
+    "connections": "연결",
+    "execution": "실행",
+    "management": "관리",
+    "digital_employee": "디지털 직원",
     "settings": "설정",
-    "general": "일반",
+    "general": "런타임",
     "access": "접근 권한",
     "page_navigation_aria": "에이전트 페이지",
     "section_navigation_aria": "에이전트 섹션",
+    "config_group_aria": "구성 그룹",
+    "config_tab_aria": "구성 페이지",
     "activity": "활동",
     "tasks": "작업",
     "instructions": "지침",
@@ -302,10 +310,11 @@
     "skills": "스킬",
     "environment": "환경",
     "custom_args": "사용자 지정 인자",
-    "mcp_config": "MCP",
+    "mcp_config": "MCP 도구",
     "runner": "로컬 Runner",
     "composio_mcp": "MCP 앱",
-    "integrations": "연동",
+    "integrations": "봇 연결",
+    "mcp_access": "MCP 연결",
     "runtime_config": "라우팅",
     "a2a": "A2A",
     "discard_dialog_title": "저장하지 않은 변경사항을 버릴까요?",
@@ -385,6 +394,14 @@
       "save": "저장",
       "add": "추가",
       "unsaved_changes": "저장하지 않은 변경사항"
+    },
+    "digital_employee": {
+      "identity_title": "직원 신원",
+      "identity_hint": "메시지 계정과 실행 신원을 분리하고 각 바인딩의 용도를 설명합니다.",
+      "voice_title": "커뮤니케이션 스타일",
+      "voice_hint": "작업 지침을 바꾸지 않고 채팅에서 말하는 방식을 설정합니다.",
+      "message_title": "메시지 처리",
+      "message_hint": "디지털 직원이 대화와 후속 작업을 처리하는 방식을 설정합니다."
     },
     "runner": {
       "execution_title": "로컬 Runner",
@@ -933,7 +950,7 @@
       "add_failed_toast": "스킬을 추가하지 못했습니다"
     },
     "integrations": {
-      "intro": "이 에이전트를 외부 도구와 플랫폼에 연결합니다.",
+      "intro": "이 에이전트를 봇으로 외부 채팅 플랫폼에 연결합니다. 디지털 직원 계정은 별도로 관리합니다.",
       "mcp_link_intro": "이 링크를 복사해 원격 MCP를 지원하는 Agent 플랫폼에 붙여 넣으면 이 Agent를 사용할 수 있습니다.",
       "mcp_link_active": "사용 중",
       "mcp_link_not_created": "생성되지 않음",
