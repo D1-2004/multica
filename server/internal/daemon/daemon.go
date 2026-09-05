@@ -6356,6 +6356,19 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		agentEnv["REASONIX_STATE_HOME"] = reasonixStateHome
 	}
+	if provider == "dsh" {
+		dshSessionRoot, err := prepareDshTaskSessionRoot(d.cfg.Profile, task.RuntimeID, task.AgentID)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("prepare dsh session root: %w", err)
+		}
+		agentEnv["MULTICA_DSH_SESSION_ROOT"] = dshSessionRoot
+		agentEnv["DSH_TELEMETRY_DISABLED"] = "1"
+		// The fork's runtime image drives DSH through DSH_TELEMETRY_MODE while
+		// the bundle honours DSH_TELEMETRY_DISABLED; 0.1.2-rc.1 flipped the
+		// row default to FEEDBACK_ONLY, so set both rather than depend on which
+		// spelling the installed harness build reads.
+		agentEnv["DSH_TELEMETRY_MODE"] = "DISABLED"
+	}
 	if err := configureCodexTaskShellEnvironment(provider, env.CodexHome, os.Environ(), agentEnv, agentCustomEnv, d.logger); err != nil {
 		return TaskResult{}, err
 	}
@@ -6707,7 +6720,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 				SessionID: result.SessionID,
 				WorkDir:   env.WorkDir,
 				EnvRoot:   env.RootDir,
-				Usage:         usageEntries,
+				Usage:     usageEntries,
 			}, nil
 		}
 		// Detect "poisoned" terminal output: the agent didn't reach a real
@@ -6737,7 +6750,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			SessionID: result.SessionID,
 			WorkDir:   env.WorkDir,
 			EnvRoot:   env.RootDir,
-			Usage:         usageEntries,
+			Usage:     usageEntries,
 		}
 		return taskResult, nil
 	case "timeout":
@@ -8288,6 +8301,32 @@ func prepareReasonixTaskStateHome(profile, runtimeID, agentID string) (string, e
 		return "", err
 	}
 	path := filepath.Join(profileDir, "reasonix-state", runtimeSegment, agentSegment)
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(path, 0o700); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// prepareDshTaskSessionRoot keeps DSH transcripts private to one Multica
+// runtime/agent pair. Credentials and the user's DSH profile remain in the
+// ordinary DSH_HOME; only session persistence is redirected.
+func prepareDshTaskSessionRoot(profile, runtimeID, agentID string) (string, error) {
+	profileDir, err := cli.ProfileDir(profile)
+	if err != nil {
+		return "", err
+	}
+	runtimeSegment, err := validateReasonixStateSegment("runtime", runtimeID)
+	if err != nil {
+		return "", err
+	}
+	agentSegment, err := validateReasonixStateSegment("agent", agentID)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(profileDir, "dsh-sessions", runtimeSegment, agentSegment)
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return "", err
 	}
