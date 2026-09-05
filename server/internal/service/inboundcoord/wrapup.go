@@ -8,20 +8,20 @@ import (
 
 // TaskFinishedAlreadyToldScene reports whether this sandbox run already
 // sent IM on the inbound conversation. Wrap-up must stay silent then.
+//
+// Event.TaskID is the assoc graph task node, not agent_task_queue.id.
+// ListEventsByScene already scoped the rows to this cid and to
+// since=task.StartedAt, so any outbound on this scene is "already told".
 func TaskFinishedAlreadyToldScene(events []assoc.Event, sceneCID, taskID string) bool {
 	cid := assoc.NormalizeConversationID(sceneCID)
 	if cid == "" {
 		return false
 	}
-	taskID = strings.TrimSpace(taskID)
 	for _, ev := range events {
 		if ev.Direction != assoc.DirOutbound {
 			continue
 		}
 		if assoc.NormalizeConversationID(ev.SceneKey) != cid {
-			continue
-		}
-		if taskID != "" && strings.TrimSpace(ev.TaskID) != "" && strings.TrimSpace(ev.TaskID) != taskID {
 			continue
 		}
 		return true

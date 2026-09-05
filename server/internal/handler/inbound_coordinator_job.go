@@ -300,28 +300,36 @@ func (w *InboundCoordinatorJobWorker) absorbPendingSameScene(ctx context.Context
 }
 
 func (w *InboundCoordinatorJobWorker) closeCoalescedRouterCallbacks(ctx context.Context, job db.InboundCoordinatorJob, siblings []db.InboundCoordinatorJob) {
-	if w == nil || w.handler == nil || w.handler.TaskService == nil {
+	if w == nil || w.handler == nil {
 		return
 	}
 	for _, sib := range siblings {
 		extra, err := restoreInboundCoordinatorCommand(
 			sib.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity,
 		)
-		if err != nil || extra.CompletionCallback == nil {
+		if err != nil {
 			continue
 		}
-		if err := w.handler.TaskService.EnqueueSynchronousSilence(
-			ctx,
-			extra.CompletionCallback.URL,
-			extra.CompletionCallback.Target,
-			job.AgentID,
-		); err != nil {
-			slog.Warn("coalesced inbound coordinator job silence callback failed",
-				"event", "inbound_coordinator_job_coalesced_silence_failed",
-				"absorbed_job_id", util.UUIDToString(sib.ID),
-				"error", err,
-			)
-		}
+		w.handler.enqueueCoordinatorSilenceCallback(ctx, extra.CompletionCallback, job.AgentID,
+			"inbound_coordinator_job_coalesced_silence_failed", util.UUIDToString(sib.ID))
+	}
+}
+
+func (h *Handler) enqueueCoordinatorSilenceCallback(
+	ctx context.Context,
+	callback *DispatchCompletionCallback,
+	agentID pgtype.UUID,
+	logEvent, jobID string,
+) {
+	if h == nil || h.TaskService == nil || callback == nil {
+		return
+	}
+	if err := h.TaskService.EnqueueSynchronousSilence(ctx, callback.URL, callback.Target, agentID); err != nil {
+		slog.Warn("coordinator silence callback failed",
+			"event", logEvent,
+			"job_id", jobID,
+			"error", err,
+		)
 	}
 }
 
@@ -670,6 +678,11 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if h.SceneMemoryWorker != nil {
 				h.SceneMemoryWorker.Notify()
 			}
+			// Collect merges extra inbounds onto the pending job and drops
+			// their CompletionCallback. Close those Router dispatches now or
+			// the extra @ lines stay 处理中 after the window finishes.
+			h.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, dispatchContext.AgentID,
+				"inbound_coordinator_job_collected_silence_failed", util.UUIDToString(job.ID))
 			slog.Info("inbound coordinator job collected",
 				"event", "inbound_coordinator_job_collected",
 				"job_id", util.UUIDToString(job.ID),

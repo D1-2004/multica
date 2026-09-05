@@ -6,12 +6,14 @@ import (
 
 func TestMergeDispatchCommandsAppendsBurst(t *testing.T) {
 	base := DispatchCommand{
+		CompletionCallback: &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/base/execution-result"},
 		Event: DispatchEvent{Data: DispatchEventData{
 			Conversation: DispatchConversation{OpenConversationID: "cid-a"},
 			Messages:     []DispatchMessage{{Text: "第1项通过"}},
 		}},
 	}
 	extra := DispatchCommand{
+		CompletionCallback: &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/extra/execution-result"},
 		Event: DispatchEvent{Data: DispatchEventData{
 			Conversation: DispatchConversation{OpenConversationID: "cid-a"},
 			Messages:     []DispatchMessage{{Text: "第2项通过"}, {Text: "第3项通过"}},
@@ -23,6 +25,9 @@ func TestMergeDispatchCommandsAppendsBurst(t *testing.T) {
 	}
 	if got.Event.Data.Messages[2].Text != "第3项通过" {
 		t.Fatalf("merged=%#v", got.Event.Data.Messages)
+	}
+	if got.CompletionCallback == nil || got.CompletionCallback.URL != base.CompletionCallback.URL {
+		t.Fatalf("collect must keep the pending job callback, not the extra: %#v", got.CompletionCallback)
 	}
 }
 
