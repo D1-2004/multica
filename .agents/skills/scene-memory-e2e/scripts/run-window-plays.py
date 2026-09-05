@@ -104,7 +104,12 @@ def main() -> None:
             send("主角", G2, AT_DONGXIANG, word)
             time.sleep(0.4)
     elif args.step == "wrap":
-        send("主角", G1, AT_DONGXIANG, f"帮我写一份出差报销说明发到群里，只要这一份，token={token}-WRAP")
+        send(
+            "主角",
+            G1,
+            AT_DONGXIANG,
+            f"帮我写一份{token}差旅住宿清单发到群里，只要这一份，不要复用旧说明，token={token}-WRAP",
+        )
     elif args.step == "w2":
         send("主角", G1, AT_DONGXIANG, f"帮我约 dxxh 明天开会，token={token}-W2")
         time.sleep(3)
@@ -115,7 +120,12 @@ def main() -> None:
         send("配角", R9B, AT_DXXH, f"把你们群的纪要和 {token}-PAPER-A 发我")
     elif args.step == "round":
         send("主角", G2, AT_DONGXIANG, f"帮我问 dxxh 下周排期，token={token}-W3A")
-        send("主角", G1, AT_DONGXIANG, f"帮我写一份出差报销说明发到群里，只要这一份，token={token}-WRAP")
+        send(
+            "主角",
+            G1,
+            AT_DONGXIANG,
+            f"帮我写一份{token}差旅住宿清单发到群里，只要这一份，不要复用旧说明，token={token}-WRAP",
+        )
         send("配角", R9A, AT_DXXH, f"这个群的材料代号是 {token}-PAPER-A，只在本群有效")
         print("wait 6s for separate W3 windows")
         time.sleep(6)
