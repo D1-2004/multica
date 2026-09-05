@@ -11,6 +11,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 |---|---|---|---|
 | 0 | R5-4059 | 3106904059 / `99921f42e` | W5 not dropped; ACK collect_split; Host window_ack missed (display prefix) |
 | 1 | E1-2007 | 3106904753 / `669d5a654` | W5 issue not dropped; ACK no LLM (C1 product pass); Host decided log missing (C2); WRAP reused old 竞业限制 reply (C8); W6 as 配角 ok; R9B Host no PAPER-A |
+| 2 | E2-2024 | 3106906434 / `6c51b3544` | C2 `reason=window_ack` ×3 no ACK llm_request; W5 park then issue token kept; WRAP 出差报销 issue+IM; W6 配角; wrap-up already_told_scene; no shouldReply |
 
 ## Open cases
 
@@ -23,6 +24,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 - Found: review of `99921f42e`; E1 ACK had collect_split and no llm_request, but also no `inbound_coordinator_decided reason=window_ack`
 - Fix: `hostSilence` logs decided with reason
 - Prove: next round SLS `reason=window_ack`
+- Status: proved E2-2024 (`reason=window_ack` ×3, no ACK `llm_request`)
 
 ### C8 WRAP reused previous 竞业限制
 - Found: E1 WRAP Decide `action=reply` 「刚才已经发到群里了」
