@@ -32,8 +32,13 @@ func TestFlushTraceOptionsCarryLookupKeys(t *testing.T) {
 		t.Fatalf("tags = %v", opts.Tags)
 	}
 	keys := flushIndexKeys(row)
-	if keys["scene_key"] != "cid+abc==" || keys["coord_trace_id"] != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" || keys["agent_id"] != "03000000-0000-0000-0000-000000000000" {
+	if keys["scene_memory_id"] != "01000000-0000-0000-0000-000000000000" || keys["coord_trace_id"] != "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
 		t.Fatalf("index keys = %v", keys)
+	}
+	for _, covered := range []string{"scene_key", "conversation_id", "agent_id", "workspace_id", "dws_org_id"} {
+		if _, indexed := keys[covered]; indexed {
+			t.Fatalf("%s is covered by the session or a tag and must not be indexed", covered)
+		}
 	}
 	for key, want := range map[string]any{
 		"agent_name":        "预发测试智能体",

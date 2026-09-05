@@ -121,7 +121,7 @@ def cmd_trace(client: Client, args: list, as_json: bool) -> None:
     print("input:", json.dumps(tr.get("input"), ensure_ascii=False)[:800])
     print("output:", json.dumps(tr.get("output"), ensure_ascii=False)[:800])
     for obs in sorted(tr.get("observations", []), key=lambda o: (o.get("startTime") or "", o.get("name") or "")):
-        if str(obs.get("name", "")).startswith("idx."):
+        if str(obs.get("name", "")).startswith("idx.") or obs.get("name") == "index":
             continue
         usage = obs.get("usageDetails") or {}
         print(f" - {obs.get('type')} {obs.get('name')} level={obs.get('level')} model={obs.get('model') or ''} "
@@ -142,17 +142,49 @@ def cmd_tag(client: Client, args: list, as_json: bool) -> None:
     print_traces(data.get("data", []), as_json)
 
 
-def cmd_key(client: Client, args: list, as_json: bool) -> None:
-    key, value = args[0], args[1]
+# Ids the exporter does not index as events because a tag, the session or the
+# trace id already makes them searchable; `key` falls back to those lookups so
+# any key of the id table works.
+TAG_KEYS = {
+    "agent_id": "agent", "workspace_id": "workspace", "task_id": "task", "issue_id": "issue",
+    "person_id": "user", "dws_uid": "user", "user_id": "user", "initiator_user_id": "user", "originator_user_id": "user",
+}
+SESSION_KEYS = {"conversation_id", "scene_key", "chat_session_id"}
+TRACE_ID_KEYS = {"coord_trace_id", "job_id", "task_id", "chat_trace_id"}
+
+
+def looks_like_uuid(value: str) -> bool:
+    bare = value.strip().replace("-", "")
+    return len(bare) == 32 and all(c in "0123456789abcdefABCDEF" for c in bare)
+
+
+def traces_by_key(client: Client, key: str, value: str) -> list:
+    found = {}
+
+    def add(traces: list) -> None:
+        for tr in traces:
+            if tr.get("id") and tr["id"] not in found:
+                found[tr["id"]] = tr
+
     data = client.get("/api/public/observations", {"name": index_name(key, value), "limit": 100})
-    trace_ids = []
     for obs in data.get("data", []):
         tid = obs.get("traceId")
-        if tid and tid not in trace_ids:
-            trace_ids.append(tid)
-    traces = [client.get(f"/api/public/traces/{tid}") for tid in trace_ids]
-    traces.sort(key=lambda t: t.get("timestamp") or "", reverse=True)
-    print_traces(traces, as_json)
+        if tid and tid not in found:
+            found[tid] = client.get(f"/api/public/traces/{tid}")
+    if key in TAG_KEYS:
+        add(client.get("/api/public/traces", {"tags": [tag(TAG_KEYS[key], value)], "limit": 50, "orderBy": "timestamp.desc"}).get("data", []))
+    if key in SESSION_KEYS:
+        add(client.get("/api/public/traces", {"sessionId": value, "limit": 50, "orderBy": "timestamp.desc"}).get("data", []))
+    if key in TRACE_ID_KEYS and looks_like_uuid(value):
+        try:
+            add([client.get(f"/api/public/traces/{trace_id_hex(value)}")])
+        except SystemExit:
+            pass
+    return sorted(found.values(), key=lambda t: t.get("timestamp") or "", reverse=True)
+
+
+def cmd_key(client: Client, args: list, as_json: bool) -> None:
+    print_traces(traces_by_key(client, args[0], args[1]), as_json)
 
 
 def cmd_recent(client: Client, args: list, as_json: bool) -> None:
@@ -188,6 +220,10 @@ def cmd_related(client: Client, args: list, as_json: bool) -> None:
             tid = obs.get("traceId")
             if tid and tid not in found:
                 found[tid] = client.get(f"/api/public/traces/{tid}")
+    # Task-owned traces carry task and issue ids as tags rather than events.
+    for tag_key in ("task", "issue"):
+        for tr in client.get("/api/public/traces", {"tags": [tag(tag_key, dashed)], "limit": 50, "orderBy": "timestamp.desc"}).get("data", []):
+            found.setdefault(tr["id"], tr)
     traces = sorted(found.values(), key=lambda t: t.get("timestamp") or "")
     print_traces(traces, as_json)
 

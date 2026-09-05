@@ -209,16 +209,28 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	// The first pair also indexes the task ids under the deterministic root.
 	exporter.Reset()
 	first := []byte(strings.Replace(string(payload), `"sequence": 3`, `"sequence": 1`, 1))
-	if err := observer.ObserveTaskLLMTrace(context.Background(), task, agent, runtime, first); err != nil {
+	// A task inside a coordinator trace indexes its task id under one
+	// "index" node hanging from the task root; ids the turn's tags and
+	// session cover are not repeated.
+	if err := observer.ObserveTaskLLMTrace(context.Background(), owned, agent, runtime, first); err != nil {
 		t.Fatal(err)
+	}
+	indexNodeID := ""
+	for _, s := range exporter.GetSpans() {
+		if s.Name == "index" && s.Parent.SpanID().String() == service.TaskLangfuseRootSpanID("abcd0000-0000-0000-0000-000000000000") {
+			indexNodeID = s.SpanContext.SpanID().String()
+		}
+	}
+	if indexNodeID == "" {
+		t.Fatal("index node must hang from the task root")
 	}
 	indexed := map[string]bool{}
 	for _, s := range exporter.GetSpans() {
 		if strings.HasPrefix(s.Name, "idx.") {
-			indexed[s.Name] = s.Parent.SpanID().String() == service.TaskLangfuseRootSpanID("abcd0000-0000-0000-0000-000000000000")
+			indexed[s.Name] = s.Parent.SpanID().String() == indexNodeID
 		}
 	}
-	if !indexed["idx.task_id.abcd0000-0000-0000-0000-000000000000"] || !indexed["idx.conversation_id.cid-1"] || !indexed["idx.agent_id.01000000-0000-0000-0000-000000000000"] {
+	if !indexed["idx.task_id.abcd0000-0000-0000-0000-000000000000"] || len(indexed) != 1 {
 		t.Fatalf("index events = %v", indexed)
 	}
 

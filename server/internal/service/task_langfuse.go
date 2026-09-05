@@ -206,16 +206,7 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 		tags = append(tags, langfuse.Tag("runtime", runtime.RuntimeMode), langfuse.Tag("provider", runtime.Provider))
 	}
 	tags = append(tags, langfuse.Tag("channel", tc.Channel), langfuse.Tag("source", tc.DispatchSource))
-	userID := tc.PersonID
-	if userID == "" {
-		userID = tc.DWSUID
-	}
-	if userID == "" {
-		userID = util.UUIDToString(task.OriginatorUserID)
-	}
-	if userID == "" {
-		userID = util.UUIDToString(task.InitiatorUserID)
-	}
+	userID := taskTraceUserID(task, tc)
 	sessionID := tc.ConversationID
 	if sessionID == "" {
 		sessionID = util.UUIDToString(task.ChatSessionID)
@@ -289,31 +280,53 @@ func withoutCoordinatorOwnedMetadata(metadata map[string]any) map[string]any {
 	return out
 }
 
+// taskTraceUserID is the user a task's trace is filed under: the DingTalk
+// person, then the DWS uid, then the originating and initiating Multica users.
+func taskTraceUserID(task db.AgentTaskQueue, tc taskTraceContext) string {
+	for _, candidate := range []string{tc.PersonID, tc.DWSUID, util.UUIDToString(task.OriginatorUserID), util.UUIDToString(task.InitiatorUserID)} {
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
+}
+
 // TaskIndexKeys are the ids a reader may hold when looking for a task's
-// trace; each becomes an "idx.<key>.<value>" event. The sandbox relay and the
-// completion hook both emit them (deterministic ids, so they upsert).
-func TaskIndexKeys(task db.AgentTaskQueue, agent *db.Agent) map[string]string {
+// trace that no tag, session or trace id already covers; each becomes an
+// "idx.<key>.<value>" event under the task root's "index" node. The sandbox
+// relay and the completion hook both emit them (deterministic ids, so they
+// upsert). A task-owned trace carries agent, workspace, user, task and issue
+// as tags and the conversation (or the chat session) as its session. A task
+// that joined a coordinator turn's trace repeats the turn's tags, so its task
+// and issue ids go into the index, while the conversation, agent and user
+// were indexed by the turn.
+func TaskIndexKeys(task db.AgentTaskQueue) map[string]string {
 	tc := parseTaskTraceContext(task.Context)
 	keys := map[string]string{
-		"task_id":            util.UUIDToString(task.ID),
-		"issue_id":           util.UUIDToString(task.IssueID),
-		"agent_id":           util.UUIDToString(task.AgentID),
 		"runtime_id":         util.UUIDToString(task.RuntimeID),
-		"chat_session_id":    util.UUIDToString(task.ChatSessionID),
 		"parent_task_id":     util.UUIDToString(task.ParentTaskID),
 		"autopilot_run_id":   util.UUIDToString(task.AutopilotRunID),
 		"trigger_comment_id": util.UUIDToString(task.TriggerCommentID),
-		"initiator_user_id":  util.UUIDToString(task.InitiatorUserID),
-		"originator_user_id": util.UUIDToString(task.OriginatorUserID),
 		"session_id":         strings.TrimSpace(task.SessionID.String),
-		"coord_trace_id":     tc.CoordinatorTraceID,
-		"conversation_id":    tc.ConversationID,
+	}
+	if tc.CoordinatorTraceID != "" {
+		keys["task_id"] = util.UUIDToString(task.ID)
+		keys["issue_id"] = util.UUIDToString(task.IssueID)
+		return keys
+	}
+	if tc.ConversationID != "" {
+		keys["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
+	}
+	tagged := taskTraceUserID(task, tc)
+	for key, value := range map[string]string{
 		"person_id":          tc.PersonID,
 		"dws_uid":            tc.DWSUID,
-		"dws_org_id":         tc.DWSOrgID,
-	}
-	if agent != nil {
-		keys["workspace_id"] = util.UUIDToString(agent.WorkspaceID)
+		"originator_user_id": util.UUIDToString(task.OriginatorUserID),
+		"initiator_user_id":  util.UUIDToString(task.InitiatorUserID),
+	} {
+		if value != "" && value != tagged {
+			keys[key] = value
+		}
 	}
 	return keys
 }
@@ -360,7 +373,7 @@ func (s *TaskService) emitTaskTrace(ctx context.Context, task db.AgentTaskQueue)
 	if trace == nil {
 		return
 	}
-	trace.Index(TaskIndexKeys(task, agent))
+	trace.Index(TaskIndexKeys(task))
 	endTime := time.Now()
 	if task.CompletedAt.Valid {
 		endTime = task.CompletedAt.Time

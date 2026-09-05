@@ -19,17 +19,20 @@ import (
 //
 //   - dash-style tags for the categorical keys known at trace start
 //     (Tag("source", "web") -> "source-web"), and
-//   - one zero-duration DEBUG event per lookup id named
-//     "idx.<key>.<value>" (IndexObservationName), so
+//   - for the ids no tag, session or trace id covers, one zero-duration DEBUG
+//     event named "idx.<key>.<value>" (IndexObservationName), so
 //     GET /api/public/observations?name=idx.task_id.<uuid> returns the
 //     observation and its traceId.
 //
-// Index events have deterministic observation ids, so every producer of a
-// trace (the coordinator turn, the sandbox relay, the task completion hook)
-// may emit them and Langfuse upserts instead of duplicating.
+// A producer's index events sit under one DEBUG "index" span whose metadata
+// lists the ids, so the trace tree shows a single collapsible node instead
+// of one row per id. Index observations have deterministic ids, so every
+// producer of a trace (the coordinator turn, the sandbox relay, the task
+// completion hook) may emit them and Langfuse upserts instead of duplicating.
 const (
-	IndexNamePrefix = "idx."
-	indexEventLevel = LevelDebug
+	IndexNamePrefix    = "idx."
+	IndexContainerName = "index"
+	indexEventLevel    = LevelDebug
 )
 
 // IndexToken normalizes an id for use inside a tag or an index observation
@@ -100,28 +103,52 @@ func (c *Client) IndexInTrace(ctx context.Context, traceOpts TraceOptions, paren
 
 func (t *Trace) indexEvents(ctx context.Context, parentSpanID string, keys map[string]string) {
 	names := make([]string, 0, len(keys))
-	for key := range keys {
+	values := make(map[string]any, len(keys))
+	for key, value := range keys {
+		if IndexObservationName(key, value) == "" {
+			continue
+		}
 		names = append(names, key)
+		values[key] = strings.TrimSpace(value)
+	}
+	if len(names) == 0 {
+		return
 	}
 	sort.Strings(names)
 	at := t.startedAt
 	if at.IsZero() {
 		at = time.Now()
 	}
+	// One index node per producer: keyed by the parent it hangs from, so the
+	// relay and the completion hook share the task's node while the
+	// coordinator turn keeps its own.
+	parentKey := parentSpanID
+	if parentKey == "" && t.root != nil {
+		parentKey = t.root.SpanContext().SpanID().String()
+	}
+	container := t.start(ctx, ObservationOptions{
+		Type:         TypeSpan,
+		Name:         IndexContainerName,
+		StartTime:    at,
+		Level:        indexEventLevel,
+		Metadata:     values,
+		SpanID:       DeterministicSpanID(t.id.String() + ":idx:" + parentKey),
+		ParentSpanID: parentSpanID,
+	})
 	for _, key := range names {
 		name := IndexObservationName(key, keys[key])
-		if name == "" {
-			continue
-		}
+		// Explicit parent: a detached trace (no root in ctx) would otherwise
+		// start each event as a new root.
 		obs := t.start(ctx, ObservationOptions{
 			Type:         TypeEvent,
 			Name:         name,
 			StartTime:    at,
 			Level:        indexEventLevel,
-			Metadata:     map[string]any{"index_key": key, "index_value": strings.TrimSpace(keys[key])},
+			Metadata:     map[string]any{"index_key": key, "index_value": values[key]},
 			SpanID:       DeterministicSpanID(t.id.String() + ":idx:" + name),
-			ParentSpanID: parentSpanID,
+			ParentSpanID: container.SpanID(),
 		})
 		obs.End(EndOptions{EndTime: at})
 	}
+	container.End(EndOptions{EndTime: at})
 }

@@ -38,7 +38,7 @@ LF=.agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py
 因此导出侧给每条 trace 加了两层索引：
 
 1. 静态 tag：`inbound_coordinator` / `scene_memory` / `agent_task`、`source-*`、`kind-*`、`runtime-*`、`provider-*`、`channel-*`、`agent-<agent_id>`、`workspace-<workspace_id>`、`user-<id>`，任务自有 trace 还有 `task-<task_id>`、`issue-<issue_id>`。
-2. 索引事件：每个 id 一个零时长 DEBUG event，名字 `idx.<key>.<value>`（`value` 中冒号和空白换成 `_`），挂在根 observation 下，用 observations `name=` 精确命中后取 `traceId`。
+2. 索引事件：只给 tag、session、trace id 都覆盖不到的 id 建索引，每个 id 一个零时长 DEBUG event，名字 `idx.<key>.<value>`（`value` 中冒号和空白换成 `_`），统一挂在根 observation 下的一个 DEBUG `index` 节点里（节点 metadata 列出全部 id，树上只占一行），用 observations `name=` 精确命中后取 `traceId`。Coordinator 回合索引 `evidence_id`、`chat_session_id`（有会话时）和 `user-` tag 之外的用户 id；记忆刷新索引 `scene_memory_id`、`coord_trace_id`（job id 不同时再加 `job_id`）；任务索引 `runtime_id`、`session_id`、`parent_task_id`、`autopilot_run_id`、`trigger_comment_id`，加入 Coordinator trace 的任务再加 `task_id`、`issue_id`。`key` 子命令对 tag / session / trace id 覆盖的 key 会自动改走对应查法，所以下表任何 key 都能 `key <key> <值>`。
 
 ## id → 查法
 
@@ -63,7 +63,7 @@ LF=.agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py
 python3 $LF related <任意上述 id>
 ```
 
-它把同一 id 的 trace、以及 `idx.coord_trace_id` / `idx.job_id` / `idx.task_id` / `idx.issue_id` / `idx.chat_session_id` 命中的 trace 按时间排在一起：
+它把同一 id 的 trace、`idx.coord_trace_id` / `idx.job_id` / `idx.task_id` / `idx.issue_id` / `idx.chat_session_id` 命中的 trace、以及 `task-<id>` / `issue-<id>` tag 命中的任务自有 trace 按时间排在一起：
 
 - Coordinator 回合 → 派生任务：同一个 trace（Web、渠道引擎、Router 派发三条路径都把回合 trace id 写成任务 chat trace），根 observation `inbound_coordinator` 与 `agent_task` 并排，沙箱 `llm.call.N` 在任务根下。
 - Coordinator 回合 ↔ Scene Memory 刷新：刷新 trace 的 `coord_trace_id` / `idx.coord_trace_id` 指向触发它的回合（数字员工回合 = job id）。

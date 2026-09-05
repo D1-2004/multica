@@ -96,18 +96,28 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 
 // coordinatorIndexKeys are the ids a reader may hold when looking for this
 // turn; each becomes an "idx.<key>.<value>" event (see langfuse.Trace.Index).
+// coordinatorIndexKeys are the turn's ids that nothing else makes searchable:
+// the trace id is the coord_trace_id, the session is the conversation (or the
+// chat session when there is no conversation), and the tags carry the agent,
+// the workspace and one user id.
 func coordinatorIndexKeys(turn Turn) map[string]string {
-	return map[string]string{
-		"coord_trace_id":  strings.TrimSpace(turn.TraceID),
-		"conversation_id": strings.TrimSpace(turn.ConversationID),
-		"chat_session_id": strings.TrimSpace(turn.ChatSessionID),
-		"agent_id":        util.UUIDToString(turn.AgentID),
-		"workspace_id":    strings.TrimSpace(turn.WorkspaceID),
-		"person_id":       strings.TrimSpace(turn.PersonID),
-		"dws_uid":         strings.TrimSpace(turn.DWSUID),
-		"user_id":         util.UUIDToString(turn.UserID),
-		"evidence_id":     strings.TrimSpace(turn.EvidenceID),
+	keys := map[string]string{
+		"evidence_id": strings.TrimSpace(turn.EvidenceID),
 	}
+	if strings.TrimSpace(turn.ConversationID) != "" {
+		keys["chat_session_id"] = strings.TrimSpace(turn.ChatSessionID)
+	}
+	tagged := coordinatorTraceUserID(turn)
+	for key, value := range map[string]string{
+		"person_id": strings.TrimSpace(turn.PersonID),
+		"dws_uid":   strings.TrimSpace(turn.DWSUID),
+		"user_id":   util.UUIDToString(turn.UserID),
+	} {
+		if value != "" && value != tagged {
+			keys[key] = value
+		}
+	}
+	return keys
 }
 
 // coordinatorTraceTags are the static Langfuse tags of a turn; they must be
