@@ -88,6 +88,10 @@ Pre-release IM (after this SHA is on pipeline 66), both Coordinator switches on,
 
 Proof: IM reread + SLS `inbound_coordinator_decided` (`window_items`, `action=retry` park, `reason=window_ack`).
 
+Durable fixtures and rerun: `.agents/skills/scene-memory-e2e/references/scene-window-plays.md`.
+
+Live on pipeline 66 instance 3106904059 (`d6eeda741` / `99921f42e`), G2 token `R5-4059-W5`: third ask parked then `action=issue` (not silenced with the ACK burst); `inbound_coordinator_job_collect_split incoming_ack=true`; no `shouldReply` leak; wrap-up `already_told_scene` on G1 after sandbox spoke.
+
 Production 67 is out of scope until pre plays pass.
 
 ## Out of scope

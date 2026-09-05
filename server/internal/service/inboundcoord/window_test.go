@@ -37,6 +37,57 @@ func TestAllWindowAck(t *testing.T) {
 	}
 }
 
+func TestAllWindowAckLiveInboundForms(t *testing.T) {
+	t.Parallel()
+	acks := []string{
+		"谢谢",
+		"@东翔测试号 谢谢",
+		"@东翔测试号  谢谢",
+		"<@DIBwz3Bm4ugAGaaIaZvSXyAiEiE> 谢谢",
+		"冬翔 在钉钉会话中的消息：\n\n谢谢",
+		"冬翔 在钉钉会话中的消息：\n\n@东翔测试号  谢谢",
+		"冬翔 在钉钉会话中的消息：\n\n谢谢\n\n好的",
+		"钉钉会话消息：\n\n不用回了",
+	}
+	for _, msg := range acks {
+		if !AllWindowAck(Turn{Message: msg}) {
+			t.Fatalf("ack form must Host-silence: %q", msg)
+		}
+	}
+	if AllWindowAck(Turn{Message: "冬翔 在钉钉会话中的消息：\n\n帮我订下周去上海的高铁"}) {
+		t.Fatal("display-wrapped ask is not ack")
+	}
+}
+
+func TestR5ParkedAskNotSilencedByAckBurst(t *testing.T) {
+	t.Parallel()
+	got := KeepWorkUtterances(Turn{
+		Message: "冬翔 在钉钉会话中的消息：\n\n帮我订下周去上海的高铁，token=R5-4059-W5\n\n谢谢\n\n好的",
+		Utterances: []WindowUtterance{
+			{Sender: "冬翔", Text: "<@DIBwz3Bm4ugAGaaIaZvSXyAiEiE> 帮我订下周去上海的高铁，token=R5-4059-W5"},
+			{Sender: "冬翔", Text: "<@DIBwz3Bm4ugAGaaIaZvSXyAiEiE> 谢谢"},
+			{Sender: "冬翔", Text: "<@DIBwz3Bm4ugAGaaIaZvSXyAiEiE> 好的"},
+		},
+	})
+	if AllWindowAck(got) {
+		t.Fatal("parked ask plus ACK burst must not become an ACK window")
+	}
+	if len(got.Utterances) != 1 || !strings.Contains(got.Utterances[0].Text, "R5-4059-W5") {
+		t.Fatalf("must keep the ask: %#v", got.Utterances)
+	}
+	decision := (&Coordinator{}).Decide(context.Background(), Turn{
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "group",
+		Message:    got.Message,
+		SenderName: "冬翔",
+		Utterances: got.Utterances,
+	})
+	if decision.Action == ActionSilence {
+		t.Fatal("Host must not silence the parked 高铁 ask")
+	}
+}
+
 func TestParseDecisionTwoWindowItems(t *testing.T) {
 	t.Parallel()
 	got := parseDecision(`{
@@ -164,5 +215,15 @@ func TestDecideSilencesAckWindowWithoutLLM(t *testing.T) {
 	})
 	if got.Action != ActionSilence {
 		t.Fatalf("ack window must silence without LLM, got %s", got.Action)
+	}
+	wrapped := (&Coordinator{}).Decide(context.Background(), Turn{
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "group",
+		Message:    "冬翔 在钉钉会话中的消息：\n\n谢谢\n\n好的",
+		SenderName: "冬翔",
+	})
+	if wrapped.Action != ActionSilence || wrapped.Reason != "window_ack" {
+		t.Fatalf("display-wrapped ACK burst must Host-silence, got action=%s reason=%q", wrapped.Action, wrapped.Reason)
 	}
 }
