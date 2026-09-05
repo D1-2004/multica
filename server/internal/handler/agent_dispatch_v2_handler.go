@@ -880,13 +880,11 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 		})
 		return true
 	case engine.OutcomeCoordinatorSilence:
-		if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+		if err := h.TaskService.EnqueueSynchronousSilence(
 			ctx,
 			command.CompletionCallback.URL,
 			command.CompletionCallback.Target,
 			dispatchContext.AgentID,
-			"coordinator silence",
-			string(engine.OutcomeCoordinatorSilence),
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
 			return true
@@ -1601,13 +1599,11 @@ func writeDispatchCoordinatorTerminal(
 		writeJSON(w, http.StatusAccepted, response)
 		return true
 	case inboundcoord.ActionSilence:
-		if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+		if err := h.TaskService.EnqueueSynchronousSilence(
 			ctx,
 			command.CompletionCallback.URL,
 			command.CompletionCallback.Target,
 			dispatchContext.AgentID,
-			"coordinator silence",
-			string(engine.OutcomeCoordinatorSilence),
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
 			return true

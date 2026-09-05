@@ -129,7 +129,21 @@ func (h *Handler) deliverTaskFinishedDecision(ctx context.Context, task *db.Agen
 	}
 	decision = filtered
 	text := strings.TrimSpace(decision.UserText)
-	if decision.Action != inboundcoord.ActionReply || text == "" || h.TaskService == nil {
+	if h.TaskService == nil {
+		return
+	}
+	if decision.Action != inboundcoord.ActionReply || text == "" {
+		callbackURL, target, ok := inboundcoord.WrapupCallback(task.Context)
+		if !ok {
+			return
+		}
+		if err := h.TaskService.EnqueueSynchronousSilence(ctx, callbackURL, target, task.AgentID); err != nil {
+			slog.Warn("task finished loop: enqueue wrap-up silence failed",
+				"event", "task_finished_loop_delivery_failed",
+				"task_id", uuidToString(task.ID),
+				"error", err,
+			)
+		}
 		return
 	}
 	callbackURL, target, ok := inboundcoord.WrapupCallback(task.Context)
