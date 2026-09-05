@@ -18,6 +18,13 @@ func dispatchConversationID(command DispatchCommand) string {
 	return strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID)
 }
 
+// sameCoordinatorCollectKind is false when one side is thanks/OK and the
+// other is a real ask. ACK windows skip the 2-task cap; mixing them onto a
+// parked ask lets the model silence the ask.
+func sameCoordinatorCollectKind(base, extra DispatchCommand) bool {
+	return commandIsWindowAck(base) == commandIsWindowAck(extra)
+}
+
 func mergeDispatchCommands(base, extra DispatchCommand) DispatchCommand {
 	stampDispatchMessageSenders(&base)
 	stampDispatchMessageSenders(&extra)

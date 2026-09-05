@@ -272,6 +272,7 @@ func (w *InboundCoordinatorJobWorker) absorbPendingSameScene(ctx context.Context
 	if err != nil {
 		return command, err
 	}
+	absorbed := make([]db.InboundCoordinatorJob, 0, len(siblings))
 	for _, sib := range siblings {
 		extra, restoreErr := restoreInboundCoordinatorCommand(
 			sib.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity,
@@ -279,12 +280,23 @@ func (w *InboundCoordinatorJobWorker) absorbPendingSameScene(ctx context.Context
 		if restoreErr != nil {
 			return command, restoreErr
 		}
+		if !sameCoordinatorCollectKind(command, extra) {
+			slog.Info("inbound coordinator job absorb skipped different kind",
+				"event", "inbound_coordinator_job_absorb_skipped",
+				"job_id", util.UUIDToString(job.ID),
+				"skipped_job_id", util.UUIDToString(sib.ID),
+				"job_ack", commandIsWindowAck(command),
+				"sibling_ack", commandIsWindowAck(extra),
+			)
+			continue
+		}
 		command = mergeDispatchCommands(command, extra)
+		absorbed = append(absorbed, sib)
 	}
 	if err := persist(qtx, command); err != nil {
 		return command, err
 	}
-	for _, sib := range siblings {
+	for _, sib := range absorbed {
 		n, completeErr := qtx.CompleteCoalescedInboundCoordinatorJob(ctx, sib.ID)
 		if completeErr != nil {
 			return command, completeErr
@@ -301,7 +313,7 @@ func (w *InboundCoordinatorJobWorker) absorbPendingSameScene(ctx context.Context
 	if err := tx.Commit(ctx); err != nil {
 		return command, err
 	}
-	w.closeCoalescedRouterCallbacks(ctx, job, siblings)
+	w.closeCoalescedRouterCallbacks(ctx, job, absorbed)
 	return command, nil
 }
 
@@ -642,15 +654,23 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		if _, lockErr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockName); lockErr != nil {
 			return nil, job, lockErr
 		}
-		existing, findErr := qtx.FindPendingInboundCoordinatorJobForConversation(ctx, db.FindPendingInboundCoordinatorJobForConversationParams{
+		pending, listErr := qtx.ListPendingInboundCoordinatorJobsForConversationCollect(ctx, db.FindPendingInboundCoordinatorJobForConversationParams{
 			WorkspaceID:    dispatchContext.WorkspaceID,
 			AgentID:        dispatchContext.AgentID,
 			ConversationID: cid,
 		})
-		if findErr == nil {
+		if listErr != nil {
+			return nil, job, listErr
+		}
+		var splitKind bool
+		for _, existing := range pending {
 			base, restoreErr := restoreJobCommand(existing)
 			if restoreErr != nil {
 				return nil, job, restoreErr
+			}
+			if !sameCoordinatorCollectKind(base, command) {
+				splitKind = true
+				continue
 			}
 			merged := mergeDispatchCommands(base, command)
 			mergedRaw, marshalErr := json.Marshal(merged)
@@ -701,8 +721,12 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			)
 			return response, job, nil
 		}
-		if findErr != nil && !errors.Is(findErr, pgx.ErrNoRows) {
-			return nil, job, findErr
+		if splitKind {
+			slog.Info("inbound coordinator job collect split ack and work",
+				"event", "inbound_coordinator_job_collect_split",
+				"source", command.Source.Type,
+				"incoming_ack", commandIsWindowAck(command),
+			)
 		}
 	}
 	session, err := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{

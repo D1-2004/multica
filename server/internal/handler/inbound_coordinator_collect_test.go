@@ -142,6 +142,37 @@ func TestOverlayDispatchSenderCopiesDelegator(t *testing.T) {
 	}
 }
 
+func TestSameCoordinatorCollectKindSeparatesAckFromWork(t *testing.T) {
+	ask := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		Sender:   DispatchSender{DisplayName: "冬翔"},
+		Messages: []DispatchMessage{{Text: "帮我订下周去上海的高铁", SenderDisplayName: "冬翔"}},
+	}}}
+	follow := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		Sender:   DispatchSender{DisplayName: "冬翔"},
+		Messages: []DispatchMessage{{Text: "改成明天的票", SenderDisplayName: "冬翔"}},
+	}}}
+	ack := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		Sender:   DispatchSender{DisplayName: "冬翔"},
+		Messages: []DispatchMessage{{Text: "谢谢", SenderDisplayName: "冬翔"}},
+	}}}
+	thanks := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		Sender:   DispatchSender{DisplayName: "dxxh"},
+		Messages: []DispatchMessage{{Text: "好的", SenderDisplayName: "dxxh"}},
+	}}}
+	if sameCoordinatorCollectKind(ask, ack) {
+		t.Fatal("ACK must not collect onto a parked ask")
+	}
+	if sameCoordinatorCollectKind(ack, ask) {
+		t.Fatal("ask must not collect onto an ACK window")
+	}
+	if !sameCoordinatorCollectKind(ask, follow) {
+		t.Fatal("follow-up asks on the same scene still collect")
+	}
+	if !sameCoordinatorCollectKind(ack, thanks) {
+		t.Fatal("ACK lines still collect with each other")
+	}
+}
+
 func TestShouldParkSceneCapacitySkipsAckWindows(t *testing.T) {
 	ask := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
 		Sender:   DispatchSender{DisplayName: "测试号"},

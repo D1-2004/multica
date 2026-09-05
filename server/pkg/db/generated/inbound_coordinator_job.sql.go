@@ -278,6 +278,29 @@ LIMIT 1
 FOR UPDATE`, arg.WorkspaceID, arg.AgentID, arg.ConversationID))
 }
 
+func (q *Queries) ListPendingInboundCoordinatorJobsForConversationCollect(ctx context.Context, arg FindPendingInboundCoordinatorJobForConversationParams) ([]InboundCoordinatorJob, error) {
+	rows, err := q.db.Query(ctx, `
+SELECT `+inboundCoordinatorJobColumns+`
+FROM inbound_coordinator_job
+WHERE workspace_id=$1 AND agent_id=$2 AND status='pending'
+  AND command #>> '{event,data,conversation,openConversationId}'=$3
+ORDER BY created_at DESC
+FOR UPDATE`, arg.WorkspaceID, arg.AgentID, arg.ConversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []InboundCoordinatorJob
+	for rows.Next() {
+		item, err := scanInboundCoordinatorJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
 type ListPendingInboundCoordinatorJobsForConversationParams struct {
 	WorkspaceID    pgtype.UUID `json:"workspace_id"`
 	AgentID        pgtype.UUID `json:"agent_id"`

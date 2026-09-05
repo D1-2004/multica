@@ -63,6 +63,7 @@ inbound @  → pending job (never dropped)
 | ACK skips 2-task cap | `parkIfSceneWindowBusy` after absorb; `AllWindowAck` |
 | Per-item speaker | `overlayDispatchSender` before Issue create |
 | Parked jobs stay queued | absorb only `available_at <= now()`; collect uses `GREATEST(available_at, …)` |
+| ACK vs real ask | collect/absorb only merge same kind; mixed windows drop ACK lines before Decide |
 | Third matter | `CountOpenSceneMattersForConversation` (assoc open/waiting) caps new Issue creates |
 
 ## Verification
