@@ -597,7 +597,8 @@ func (s *TaskService) enqueueSynchronousCompleted(
 		!agentID.Valid {
 		return errors.New("synchronous completed task target is invalid")
 	}
-	message := strings.TrimSpace(resultMessage)
+	message, _ := NormalizeReplyDecisionOutput(resultMessage, nil)
+	message = strings.TrimSpace(message)
 	if message == "" {
 		return errors.New("synchronous completed result message is required")
 	}

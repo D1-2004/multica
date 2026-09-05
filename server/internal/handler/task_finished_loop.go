@@ -119,6 +119,10 @@ func (h *Handler) taskFinishedSceneAlreadyTold(ctx context.Context, task *db.Age
 }
 
 func (h *Handler) deliverTaskFinishedDecision(ctx context.Context, task *db.AgentTaskQueue, decision inboundcoord.Decision) {
+	decision.UserText = stripReplyDecisionLeak(decision.UserText)
+	if decision.Action == inboundcoord.ActionReply && decision.UserText == "" {
+		decision.Action = inboundcoord.ActionSilence
+	}
 	filtered := inboundcoord.FilterTaskFinishedWrapup(decision)
 	if filtered.Action != decision.Action || filtered.UserText != decision.UserText {
 		slog.Info("task finished loop skipped wrap-up delivery",
