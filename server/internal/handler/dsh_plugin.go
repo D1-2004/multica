@@ -320,6 +320,13 @@ func (h *Handler) persistDshPlugin(w http.ResponseWriter, r *http.Request, in ds
 			PackageName: in.Resolved.PackageName,
 		})
 	if err == nil {
+		// Replacing an imported plugin changes what already-bound agents run on
+		// their next task, and the digest recorded for the new bytes proves
+		// integrity but not authorship. A first import stays open to any
+		// member; swapping one out does not.
+		if in.OnConflict == "overwrite" && !h.dshPluginActorMayReplace(w, r, in.WorkspaceID) {
+			return
+		}
 		switch in.OnConflict {
 		case "skip":
 			writeJSON(w, http.StatusOK, map[string]any{
@@ -799,6 +806,24 @@ func pinnedSource(source dshplugin.Source, resolved *dshplugin.Resolved) dshplug
 	source.Version = resolved.Version
 	source.Spec = "npm:" + resolved.PackageName + "@" + resolved.Version
 	return source
+}
+
+// dshPluginActorMayReplace reports whether the caller may overwrite an existing
+// plugin, writing the refusal itself when they may not.
+func (h *Handler) dshPluginActorMayReplace(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID) bool {
+	member, ok := h.requireWorkspaceRole(
+		w, r, uuidToString(workspaceID), "workspace not found",
+		"owner", "admin", "member",
+	)
+	if !ok {
+		return false
+	}
+	if !roleAllowed(member.Role, "owner", "admin") {
+		writeError(w, http.StatusForbidden,
+			"only a workspace owner or admin can replace an imported plugin")
+		return false
+	}
+	return true
 }
 
 func orEmptyObject(in map[string]any) map[string]any {

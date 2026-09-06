@@ -854,3 +854,12 @@ func (r *Resolver) LatestVersion(ctx context.Context, name string) (string, erro
 	}
 	return meta.Version, nil
 }
+
+// ArchiveContents exposes a stored package's files for reading.
+//
+// Deliberately the same reader the import gates use, so what a viewer shows is
+// what the sandbox unpacks — a separate, laxer reader here would let the two
+// disagree about what is in the package.
+func ArchiveContents(data []byte) (map[string][]byte, error) {
+	return archiveFiles(data)
+}

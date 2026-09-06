@@ -627,6 +627,79 @@ func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, file
 	return result.ID, result.URL, nil
 }
 
+// UploadDshPluginFile imports a DSH plugin from a local .zip or .tgz.
+//
+// Same multipart shape as a skill archive import, against the plugin endpoint.
+// The server normalises whatever layout the file has and applies the same
+// validation a package fetched from a registry gets, so the CLI does not need
+// to know anything about package structure.
+func (c *APIClient) UploadDshPluginFile(ctx context.Context, fileData []byte, filename, onConflict, displayName string, out any) error {
+	fields := map[string]string{}
+	if onConflict != "" {
+		fields["on_conflict"] = onConflict
+	}
+	if displayName != "" {
+		fields["display_name"] = displayName
+	}
+	return c.postMultipart(ctx, "/api/dsh-plugins/upload", fileData, filename, fields, out)
+}
+
+// postMultipart uploads one file plus optional text fields to an endpoint.
+func (c *APIClient) postMultipart(ctx context.Context, path string, fileData []byte, filename string, fields map[string]string, out any) error {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := writer.CreateFormFile("file", filepath.Base(filename))
+	if err != nil {
+		return fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return fmt.Errorf("write file data: %w", err)
+	}
+	for name, value := range fields {
+		if err := writer.WriteField(name, value); err != nil {
+			return fmt.Errorf("write %s field: %w", name, err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.setHeaders(req)
+
+	// Respect a longer context deadline for slow uploads: the default client
+	// timeout would otherwise shadow it.
+	httpClient := c.HTTPClient
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining > httpClient.Timeout {
+			clientCopy := *httpClient
+			clientCopy.Timeout = remaining
+			httpClient = &clientCopy
+		}
+	}
+
+	resp, err := httpClient.Do(req)
+	err = wrapTransport(req, err)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return newHTTPError(http.MethodPost, path, resp)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
 // ImportSkillFile imports a skill from a local archive (.skill / .zip) by
 // POSTing it as multipart/form-data to /api/skills/import, alongside the
 // on_conflict strategy. The structured import result is decoded into out.

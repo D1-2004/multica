@@ -2552,6 +2552,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdateDshPlugin)
 					r.Delete("/", h.DeleteDshPlugin)
 					r.Get("/update", h.CheckDshPluginUpdate)
+					// What is actually inside the package. Read from the
+					// stored bytes, so a viewer and the sandbox can never
+					// disagree about what was imported.
+					r.Get("/files", h.ListDshPluginFiles)
+					r.Get("/file", h.GetDshPluginFile)
 				})
 			})
 
