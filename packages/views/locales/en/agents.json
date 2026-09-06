@@ -307,6 +307,7 @@
     "instructions": "Instructions",
     "okr": "OKR",
     "skills": "Skills",
+    "dsh_plugins": "Plugins",
     "environment": "Environment",
     "custom_args": "Custom Args",
     "mcp_config": "MCP",
@@ -1066,6 +1067,24 @@
       "add_dialog_confirm_other": "Add {{count}} skills",
       "add_dialog_cancel": "Cancel",
       "add_failed_toast": "Failed to add skill"
+    },
+    "dsh_plugins": {
+      "intro": "Plugins this agent's DeepSeek Harness profile loads at the start of every task. Import plugins into the workspace first, then attach the ones this agent should boot with.",
+      "attached_title": "Attached plugins",
+      "attached_hint": "Composed into the profile bundle list when a task starts on {{runtime}}.",
+      "add_action": "Attach",
+      "add_title": "Attach a plugin",
+      "add_description": "Pick from the plugins imported into this workspace.",
+      "add_none_available": "Every imported plugin is already attached to this agent.",
+      "attach_action": "Attach",
+      "loading": "Reading attached plugins…",
+      "empty_title": "No plugins attached",
+      "empty_hint": "Attach one to have this agent boot with it.",
+      "empty_hint_none_imported": "No plugins have been imported into this workspace yet. Import one from the DSH Plugins page first.",
+      "no_description": "No description",
+      "toggle_aria": "Enable {{name}}",
+      "remove_aria": "Detach {{name}}",
+      "save_failed_toast": "Could not update the agent's plugins."
     },
     "integrations": {
       "intro": "Connect this agent to external tools and platforms.",

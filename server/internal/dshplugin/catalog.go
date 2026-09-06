@@ -125,6 +125,12 @@ func (r *Resolver) FetchCatalog(ctx context.Context) (*CatalogDocument, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Same rule as a plugin download: the tarball CDN is a separate host from
+	// the metadata, so a swapped-but-well-formed catalog would otherwise be
+	// written to the shared index and stamped with the registry's version.
+	if err := verifyPublishedDigest(data, meta.Dist.Integrity, meta.Dist.Shasum); err != nil {
+		return nil, err
+	}
 	files, err := archiveFiles(data)
 	if err != nil {
 		return nil, err

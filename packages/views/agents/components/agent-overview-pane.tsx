@@ -37,6 +37,7 @@ import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
+import { DshPluginsTab } from "./tabs/dsh-plugins-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
 import { IdentityTab } from "./tabs/identity-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
@@ -62,6 +63,7 @@ export type DetailTab =
   | "instructions"
   | "okr"
   | "skills"
+  | "dsh_plugins"
   | "mcp_config"
   | "runner"
   | "composio_mcp"
@@ -82,6 +84,7 @@ type SecondaryTab = {
     | "okr"
   | "okr"
       | "skills"
+    | "dsh_plugins"
     | "mcp_config"
     | "runner"
     | "composio_mcp"
@@ -99,6 +102,7 @@ type SecondaryTab = {
 const CAPABILITY_TABS: SecondaryTab[] = [
   { id: "instructions", labelKey: "instructions" },
   { id: "skills", labelKey: "skills" },
+  { id: "dsh_plugins", labelKey: "dsh_plugins" },
   { id: "mcp_config", labelKey: "mcp_config" },
   { id: "runner", labelKey: "runner" },
   { id: "composio_mcp", labelKey: "composio_mcp" },
@@ -257,6 +261,10 @@ export function AgentOverviewPane({
 
     return CAPABILITY_TABS.filter((tab) => {
       if (tab.id === "mcp_config") return showMcp;
+      // Plugins are a DeepSeek Harness concept: the composed set reaches
+      // the sandbox through a variable only that runtime reads, so on any
+      // other provider this tab would be a control that does nothing.
+      if (tab.id === "dsh_plugins") return runtime?.provider === "dsh";
       if (tab.id === "runner") return canEdit;
       if (tab.id === "composio_mcp") return showComposioMcp;
       if (tab.id === "integrations") {
@@ -547,6 +555,13 @@ export function AgentOverviewPane({
                   )}
                   {effectiveView === "skills" && (
                     <SkillsTab
+                      agent={agent}
+                      runtime={runtime}
+                      canEdit={canEdit}
+                    />
+                  )}
+                  {effectiveView === "dsh_plugins" && (
+                    <DshPluginsTab
                       agent={agent}
                       runtime={runtime}
                       canEdit={canEdit}

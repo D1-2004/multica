@@ -72,13 +72,18 @@ type ImportDshPluginRequest struct {
 
 // UpdateDshPluginRequest changes only what an operator owns. Identity and
 // provenance come from the package and are never client-supplied.
+//
+// Every field is a pointer so an omitted field can be told apart from one the
+// caller deliberately emptied. Treating them the same would let a rename or a
+// version bump silently discard a plugin's configuration, which is where its
+// credentials and connection settings live.
 type UpdateDshPluginRequest struct {
-	DisplayName string         `json:"display_name"`
-	ConfigRow   string         `json:"config_row"`
-	Config      map[string]any `json:"config"`
+	DisplayName *string         `json:"display_name"`
+	ConfigRow   *string         `json:"config_row"`
+	Config      *map[string]any `json:"config"`
 	// Source, when set, re-resolves the plugin — this is how an operator
 	// moves to a new version.
-	Source string `json:"source"`
+	Source *string `json:"source"`
 }
 
 func dshPluginResolver() *dshplugin.Resolver {
@@ -398,8 +403,12 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(row.BundleRows, &availableRows)
 	}
 
-	if strings.TrimSpace(req.Source) != "" && strings.TrimSpace(req.Source) != row.SourceSpec {
-		source, err := dshplugin.ParseSource(req.Source)
+	// Re-resolve whenever a source is supplied, even an identical one. A
+	// github: ref or an https URL can point at different bytes than it did at
+	// import, and the recorded digest would then make the sandbox refuse to
+	// run — re-resolving in place is the only way to adopt the new content.
+	if req.Source != nil && strings.TrimSpace(*req.Source) != "" {
+		source, err := dshplugin.ParseSource(*req.Source)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -423,7 +432,8 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "that source resolves to "+resolved.PackageName+", not "+row.PackageName)
 			return
 		}
-		sourceSpec = pinnedSource(source, resolved).Spec
+		pinned := pinnedSource(source, resolved)
+		sourceSpec = pinned.Spec
 		version = resolved.Version
 		integrity = resolved.Integrity
 		description = resolved.Description
@@ -434,22 +444,41 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	configRow, err := chooseConfigRow(req.ConfigRow, req.Config, &dshplugin.Resolved{
-		PackageName: row.PackageName,
-		BundleRows:  availableRows,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+	// Config and its row travel together: changing one without the other would
+	// address settings at a row they do not belong to.
+	configJSON := row.Config
+	configRow := row.ConfigRow
+	if req.Config != nil || req.ConfigRow != nil {
+		nextConfig := map[string]any{}
+		if req.Config != nil {
+			nextConfig = orEmptyObject(*req.Config)
+		} else if len(row.Config) > 0 {
+			_ = json.Unmarshal(row.Config, &nextConfig)
+		}
+		requestedRow := configRow
+		if req.ConfigRow != nil {
+			requestedRow = *req.ConfigRow
+		}
+		chosen, err := chooseConfigRow(requestedRow, nextConfig, &dshplugin.Resolved{
+			PackageName: row.PackageName,
+			BundleRows:  availableRows,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		encoded, err := json.Marshal(nextConfig)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "configuration could not be encoded")
+			return
+		}
+		configJSON = encoded
+		configRow = chosen
 	}
-	configJSON, err := json.Marshal(orEmptyObject(req.Config))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "configuration could not be encoded")
-		return
-	}
-	displayName := strings.TrimSpace(req.DisplayName)
-	if displayName == "" {
-		displayName = row.DisplayName
+
+	displayName := row.DisplayName
+	if req.DisplayName != nil && strings.TrimSpace(*req.DisplayName) != "" {
+		displayName = strings.TrimSpace(*req.DisplayName)
 	}
 
 	updated, err := h.Queries.UpdateDshPlugin(r.Context(), db.UpdateDshPluginParams{
@@ -643,6 +672,16 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	// Delete-then-insert is only a replacement if nothing interleaves. Without
+	// this lock two concurrent replaces can both delete, then both insert, and
+	// the agent ends up with the union of two requests — a set neither caller
+	// asked for.
+	if _, err := tx.Exec(r.Context(),
+		"SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+		"agent_dsh_plugin:"+uuidToString(agent.ID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock the agent's DSH plugins")
+		return
+	}
 	qtx := h.Queries.WithTx(tx)
 	if err := qtx.DeleteAgentDshPluginsByAgent(r.Context(), agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear the agent's DSH plugins")

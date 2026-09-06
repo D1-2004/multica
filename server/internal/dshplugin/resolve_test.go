@@ -102,26 +102,123 @@ func TestBundleRowIDsWalksNestedGroups(t *testing.T) {
 	}
 }
 
-func TestDeclaredEntryPrefersMainThenExports(t *testing.T) {
+func TestDeclaredEntryFollowsNodeResolution(t *testing.T) {
 	cases := []struct {
+		name     string
 		manifest string
 		want     string
+		wantErr  string
 	}{
-		{`{"main":"lib/index.js"}`, "lib/index.js"},
-		{`{"main":"./lib/index.js"}`, "lib/index.js"},
-		{`{"exports":"./lib/index.js"}`, "lib/index.js"},
-		{`{"exports":{".":{"import":"./dist/x.js"}}}`, "dist/x.js"},
-		{`{"exports":{".":{"types":"./x.d.ts","default":"./lib/index.js"}}}`, "lib/index.js"},
-		{`{}`, ""},
+		{"main only", `{"main":"lib/index.js"}`, "lib/index.js", ""},
+		{"main with a leading dot slash", `{"main":"./lib/index.js"}`, "lib/index.js", ""},
+		{"exports as a bare string", `{"exports":"./lib/index.js"}`, "lib/index.js", ""},
+		{"root export wins over main", `{"main":"other.js","exports":{".":"./lib/index.js"}}`, "lib/index.js", ""},
+		{"conditional root export", `{"exports":{".":{"import":"./dist/x.js"}}}`, "dist/x.js", ""},
+		{"types is never the entry", `{"exports":{".":{"types":"./x.d.ts","default":"./lib/index.js"}}}`, "lib/index.js", ""},
+		{
+			// Node matches conditions in declaration order, so a package that
+			// lists default first gets default — ranking import higher would
+			// validate a file the runtime never loads.
+			"declaration order decides between conditions",
+			`{"exports":{".":{"default":"./lib/index.js","import":"./esm.js"}}}`,
+			"lib/index.js", "",
+		},
+		{"array is a fallback list", `{"exports":{".":["./first.js","./second.js"]}}`, "first.js", ""},
+		{"nothing declared", `{}`, "", ""},
+		{
+			// Subpaths but no ".": importing the package by name fails, so
+			// falling back to main would validate an unreachable file.
+			"subpath exports without a root export",
+			`{"main":"lib/index.js","exports":{"./sub":"./lib/sub.js"}}`,
+			"", "no root export",
+		},
 	}
 	for _, tc := range cases {
-		var manifest packageManifest
-		if err := json.Unmarshal([]byte(tc.manifest), &manifest); err != nil {
-			t.Fatalf("unmarshal %s: %v", tc.manifest, err)
-		}
-		if got := declaredEntry(manifest); got != tc.want {
-			t.Errorf("declaredEntry(%s) = %q, want %q", tc.manifest, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			var manifest packageManifest
+			if err := json.Unmarshal([]byte(tc.manifest), &manifest); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got, err := declaredEntry(manifest)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("error = %v, want it to mention %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("declaredEntry: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("declaredEntry = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBundleRowIDsReportsTheFinalTree(t *testing.T) {
+	// A later patch replaces the group's children wholesale, so the row that
+	// exists afterwards is `new` — offering `old` would point configuration at
+	// a row the loader never registers.
+	rows, err := BundleRowIDs([]byte(`
+- insert:
+    - id: outer
+      name: demo-plugin
+      group: true
+      config:
+        - id: old
+- id: outer
+  name: demo-plugin
+  config:
+    - id: new
+`))
+	if err != nil {
+		t.Fatalf("BundleRowIDs: %v", err)
+	}
+	joined := strings.Join(rows, ",")
+	if joined != "outer,new" {
+		t.Fatalf("rows = %v, want [outer new]", rows)
+	}
+}
+
+func TestBundleRowIDsAppendsAnInsertIntoAGroup(t *testing.T) {
+	rows, err := BundleRowIDs([]byte(`
+- insert:
+    - id: outer
+      group: true
+      config: []
+- id: outer
+  insert:
+    - id: child
+`))
+	if err != nil {
+		t.Fatalf("BundleRowIDs: %v", err)
+	}
+	if strings.Join(rows, ",") != "outer,child" {
+		t.Fatalf("rows = %v, want [outer child]", rows)
+	}
+}
+
+func TestBundleRowIDsHonoursTheNameGuard(t *testing.T) {
+	// The loader skips a patch whose `name` does not match the target, so a
+	// mismatched override must not change the tree.
+	rows, err := BundleRowIDs([]byte(`
+- insert:
+    - id: outer
+      name: demo-plugin
+      group: true
+      config:
+        - id: kept
+- id: outer
+  name: someone-else
+  config:
+    - id: ignored
+`))
+	if err != nil {
+		t.Fatalf("BundleRowIDs: %v", err)
+	}
+	if strings.Join(rows, ",") != "outer,kept" {
+		t.Fatalf("rows = %v, want [outer kept]", rows)
 	}
 }
 
@@ -372,5 +469,65 @@ func TestArchiveFilesRefusesPathTraversal(t *testing.T) {
 	_ = gz.Close()
 	if _, err := archiveFiles(buf.Bytes()); err == nil {
 		t.Fatal("archiveFiles accepted a path that escapes the archive root")
+	}
+}
+
+func TestArchiveFilesRefusesAGlobalHeader(t *testing.T) {
+	// Go skips a PAX global header; Python's tarfile applies its `path`
+	// override to every following member. The adapter unpacks with Python, so
+	// one tarball could show the validator a different package.json than the
+	// sandbox loads — with a matching digest, because the bytes are identical.
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	_ = tw.WriteHeader(&tar.Header{
+		Typeflag:   tar.TypeXGlobalHeader,
+		Name:       "pax_global_header",
+		PAXRecords: map[string]string{"path": "package/package.json"},
+		Format:     tar.FormatPAX,
+	})
+	body := "{}"
+	_ = tw.WriteHeader(&tar.Header{Name: "package/other.json", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+	_, _ = tw.Write([]byte(body))
+	_ = tw.Close()
+	_ = gz.Close()
+
+	if _, err := archiveFiles(buf.Bytes()); err == nil || !strings.Contains(err.Error(), "global header") {
+		t.Fatalf("error = %v, want a global-header refusal", err)
+	}
+}
+
+func TestArchiveFilesRefusesASecondRootDirectory(t *testing.T) {
+	// A bare second top-level directory has no slash, so an implementation
+	// that only checks prefixed paths lets it through — and then the adapter
+	// refuses to boot, far from anyone who could read the error.
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	body := "{}"
+	_ = tw.WriteHeader(&tar.Header{Name: "package/package.json", Mode: 0o644, Size: int64(len(body)), Typeflag: tar.TypeReg})
+	_, _ = tw.Write([]byte(body))
+	_ = tw.WriteHeader(&tar.Header{Name: "extra/", Mode: 0o755, Typeflag: tar.TypeDir})
+	_ = tw.Close()
+	_ = gz.Close()
+
+	if _, err := archiveFiles(buf.Bytes()); err == nil || !strings.Contains(err.Error(), "more than one root") {
+		t.Fatalf("error = %v, want a multiple-root refusal", err)
+	}
+}
+
+func TestArchiveFilesRefusesAnOverLongName(t *testing.T) {
+	// A PAX long name is stored as member data, so an unbounded name is an
+	// unbounded allocation that no per-file content cap would notice.
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	long := "package/" + strings.Repeat("a", maxMemberNameBytes+1)
+	_ = tw.WriteHeader(&tar.Header{Name: long, Mode: 0o644, Size: 0, Typeflag: tar.TypeReg, Format: tar.FormatPAX})
+	_ = tw.Close()
+	_ = gz.Close()
+
+	if _, err := archiveFiles(buf.Bytes()); err == nil || !strings.Contains(err.Error(), "over-long file name") {
+		t.Fatalf("error = %v, want an over-long-name refusal", err)
 	}
 }

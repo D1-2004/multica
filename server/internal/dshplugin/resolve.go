@@ -37,6 +37,9 @@ const (
 	// maxArchiveBytes bounds the DECOMPRESSED total. Without it a small,
 	// highly compressible archive expands without limit in memory.
 	maxArchiveBytes = 96 << 20
+	// maxMemberNameBytes caps a single entry name. PAX stores a long name as
+	// member data, so an unbounded name is an unbounded allocation.
+	maxMemberNameBytes = 4096
 	// DefaultRegistry is the mirror the runtime adapter also defaults to.
 	DefaultRegistry = "https://registry.npmmirror.com"
 )
@@ -253,13 +256,15 @@ func archiveFiles(data []byte) (map[string][]byte, error) {
 	}
 	defer gz.Close()
 
+	// Bound the DECOMPRESSED stream itself, not just the bytes retained. Tar
+	// headers carry their own payload — a PAX long-name record is file data —
+	// so counting only regular-file contents leaves a gap wide enough to blow
+	// the heap with a few kilobytes of archive.
+	limited := &countingReader{inner: io.LimitReader(gz, maxArchiveBytes+1)}
+
 	files := map[string][]byte{}
-	reader := tar.NewReader(gz)
+	reader := tar.NewReader(limited)
 	root := ""
-	// A 32 MiB archive of highly compressible members can expand to gigabytes,
-	// so the running total is what actually bounds memory — the per-member and
-	// per-archive caps alone do not.
-	var total int64
 	for count := 0; ; count++ {
 		if count >= maxMembers {
 			return nil, fmt.Errorf("the package archive holds more than %d files", maxMembers)
@@ -270,6 +275,20 @@ func archiveFiles(data []byte) (map[string][]byte, error) {
 		}
 		if err != nil {
 			return nil, fmt.Errorf("the package archive is malformed")
+		}
+		if limited.read > maxArchiveBytes {
+			return nil, fmt.Errorf("the package archive expands past the %d byte limit", int64(maxArchiveBytes))
+		}
+		// A PAX global header sets defaults for every following member. Go
+		// ignores it; Python's tarfile applies it. The runtime adapter unpacks
+		// with Python, so honouring the difference would let one tarball
+		// present a different package.json to the validator than to the
+		// sandbox — with a matching digest, because it is the same bytes.
+		if header.Typeflag == tar.TypeXGlobalHeader {
+			return nil, fmt.Errorf("the package archive carries a global header, which is not accepted")
+		}
+		if len(header.Name) > maxMemberNameBytes {
+			return nil, fmt.Errorf("the package archive contains an over-long file name")
 		}
 		name := path.Clean(strings.TrimPrefix(header.Name, "./"))
 		// Check the path before deciding whether to read the member. Skipping
@@ -282,19 +301,23 @@ func archiveFiles(data []byte) (map[string][]byte, error) {
 		if header.Typeflag == tar.TypeSymlink || header.Typeflag == tar.TypeLink {
 			return nil, fmt.Errorf("the package archive contains a link, which is not accepted: %s", header.Name)
 		}
-		slash := strings.Index(name, "/")
-		if slash < 0 {
-			// A bare top-level entry is the wrapper directory itself.
-			if root == "" && header.Typeflag == tar.TypeDir {
-				root = name
-			}
+		if name == "." || name == "" {
 			continue
 		}
-		if root == "" {
-			root = name[:slash]
+		top := name
+		if slash := strings.Index(name, "/"); slash >= 0 {
+			top = name[:slash]
 		}
-		if name[:slash] != root {
+		if root == "" {
+			root = top
+		}
+		// Applies to the bare wrapper entry too: a second empty top-level
+		// directory is still a second root, and the adapter refuses those.
+		if top != root {
 			return nil, fmt.Errorf("the package archive has more than one root directory")
+		}
+		if top == name {
+			continue
 		}
 		if header.Typeflag != tar.TypeReg {
 			continue
@@ -303,24 +326,36 @@ func archiveFiles(data []byte) (map[string][]byte, error) {
 			return nil, fmt.Errorf("the package archive contains a file over the %d byte limit: %s",
 				int64(maxMemberBytes), name)
 		}
-		remaining := maxArchiveBytes - total
-		if remaining <= 0 {
-			return nil, fmt.Errorf("the package archive expands past the %d byte limit", int64(maxArchiveBytes))
-		}
-		body, err := io.ReadAll(io.LimitReader(reader, remaining+1))
+		body, err := io.ReadAll(io.LimitReader(reader, maxMemberBytes+1))
 		if err != nil {
 			return nil, fmt.Errorf("the package archive is malformed")
 		}
-		total += int64(len(body))
-		if total > maxArchiveBytes {
-			return nil, fmt.Errorf("the package archive expands past the %d byte limit", int64(maxArchiveBytes))
+		if int64(len(body)) > maxMemberBytes {
+			return nil, fmt.Errorf("the package archive contains a file over the %d byte limit: %s",
+				int64(maxMemberBytes), name)
 		}
-		files[path.Clean(name[slash+1:])] = body
+		files[path.Clean(name[len(top)+1:])] = body
+	}
+	if limited.read > maxArchiveBytes {
+		return nil, fmt.Errorf("the package archive expands past the %d byte limit", int64(maxArchiveBytes))
 	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("the package archive holds no files")
 	}
 	return files, nil
+}
+
+// countingReader tracks how many decompressed bytes the tar reader has
+// consumed, including the bytes of headers and of members that are skipped.
+type countingReader struct {
+	inner io.Reader
+	read  int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.inner.Read(p)
+	c.read += int64(n)
+	return n, err
 }
 
 // inspectArchive applies the same gates the runtime adapter applies before it
@@ -357,7 +392,10 @@ func inspectArchive(data []byte, src Source) (*Resolved, error) {
 		return nil, fmt.Errorf("the package declares no dsh.bundle.patch, so DeepSeek Harness would refuse to load it as a profile bundle")
 	}
 
-	entry := declaredEntry(manifest)
+	entry, err := declaredEntry(manifest)
+	if err != nil {
+		return nil, err
+	}
 	if entry == "" {
 		return nil, fmt.Errorf("the package declares neither main nor exports, so nothing would load")
 	}
@@ -419,34 +457,38 @@ func sortedKeys(m map[string]string) []string {
 // declaredEntry returns the file Node would load for the package root.
 //
 // exports wins over main when both are present, because that is Node's own
-// precedence: a package whose main points at a shipped file while its "."
-// export points at a missing one does not load, and validating main would pass
-// it. Only the "." key counts — a subpath export is not the package entry.
-func declaredEntry(manifest packageManifest) string {
+// precedence. Two details matter and are easy to get wrong: an exports map that
+// declares subpaths but no "." does not export the root at all, so falling back
+// to main would validate a file nothing can import; and conditions are matched
+// in the order the package DECLARES them, not in a fixed order of our choosing.
+func declaredEntry(manifest packageManifest) (string, error) {
 	if len(manifest.Exports) > 0 {
 		var asString string
 		if err := json.Unmarshal(manifest.Exports, &asString); err == nil && asString != "" {
-			return path.Clean(strings.TrimPrefix(asString, "./"))
+			return path.Clean(strings.TrimPrefix(asString, "./")), nil
 		}
 		var asObject map[string]json.RawMessage
 		if err := json.Unmarshal(manifest.Exports, &asObject); err == nil {
-			// An exports object with no "." and no leading-dot keys is the
-			// shorthand for the root's own conditions.
 			if entry, ok := asObject["."]; ok {
-				if found := firstStringLeaf(entry); found != "" {
-					return found
+				found := firstStringLeaf(entry)
+				if found == "" {
+					return "", errors.New("the package exports its root as something this server cannot resolve")
 				}
-			} else if !hasSubpathKeys(asObject) {
-				if found := firstStringLeaf(manifest.Exports); found != "" {
-					return found
-				}
+				return found, nil
+			}
+			if hasSubpathKeys(asObject) {
+				// Subpaths only: the package root is deliberately not exported.
+				return "", errors.New("the package declares subpath exports but no root export, so importing it by name would fail")
+			}
+			if found := firstStringLeaf(manifest.Exports); found != "" {
+				return found, nil
 			}
 		}
 	}
 	if main := strings.TrimPrefix(strings.TrimSpace(manifest.Main), "./"); main != "" {
-		return path.Clean(main)
+		return path.Clean(main), nil
 	}
-	return ""
+	return "", nil
 }
 
 // hasSubpathKeys reports whether an exports object maps subpaths ("./x")
@@ -460,8 +502,10 @@ func hasSubpathKeys(exports map[string]json.RawMessage) bool {
 	return false
 }
 
-// firstStringLeaf walks a conditional-exports subtree and returns the first
-// path it finds, preferring the conditions Node resolves first. An array is a
+// firstStringLeaf walks a conditional-exports subtree and returns the path a
+// resolver would pick. Conditions are tried in declaration order, which is what
+// Node does — a fixed preference list picks the wrong branch whenever a package
+// lists a fallback before the condition we happen to rank higher. An array is a
 // fallback list, so its first usable entry wins.
 func firstStringLeaf(raw json.RawMessage) string {
 	var asString string
@@ -480,107 +524,243 @@ func firstStringLeaf(raw json.RawMessage) string {
 		}
 		return ""
 	}
-	var asObject map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &asObject); err != nil {
-		return ""
-	}
-	// "types" is deliberately absent: it names a declaration file, never
-	// something Node loads.
-	for _, condition := range []string{"node", "import", "require", "default"} {
-		if child, ok := asObject[condition]; ok {
-			if found := firstStringLeaf(child); found != "" {
-				return found
-			}
+	for _, key := range objectKeysInOrder(raw) {
+		// "types" names a declaration file, never something a runtime loads.
+		if key == "types" {
+			continue
+		}
+		var asObject map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &asObject); err != nil {
+			return ""
+		}
+		if found := firstStringLeaf(asObject[key]); found != "" {
+			return found
 		}
 	}
 	return ""
 }
 
-// BundleRowIDs reads the loader row ids a bundle's cordis.patch.yml inserts.
+// objectKeysInOrder returns a JSON object's keys in the order the document
+// declares them, which encoding/json's map decoding discards.
+func objectKeysInOrder(raw json.RawMessage) []string {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	token, err := decoder.Token()
+	if err != nil {
+		return nil
+	}
+	if delim, ok := token.(json.Delim); !ok || delim != '{' {
+		return nil
+	}
+	var keys []string
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		if err != nil {
+			return keys
+		}
+		key, ok := keyToken.(string)
+		if !ok {
+			return keys
+		}
+		keys = append(keys, key)
+		var skip json.RawMessage
+		if err := decoder.Decode(&skip); err != nil {
+			return keys
+		}
+	}
+	return keys
+}
+
+// BundleRowIDs reads the loader rows a bundle's cordis.patch.yml leaves behind.
 //
 // The file is YAML with DSH's own `!!js` tag, whose value is an expression
 // evaluated at compose time. A strict decode rejects the unknown tag outright,
 // so the document is walked as nodes and tagged scalars are left alone — the
 // row ids are what matter here, not the expressions.
+//
+// Patches are applied in order, the way the loader applies them, because the
+// list is a program and not a set: a later patch can replace a group's children,
+// and reporting the ids an earlier insert mentioned would offer configuration
+// targets that no longer exist while hiding the ones that do.
 func BundleRowIDs(body []byte) ([]string, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
 		return nil, fmt.Errorf("the package's bundle patch is not valid YAML")
 	}
-	seen := map[string]bool{}
-	var rows []string
 
-	// collectRow reads one entry of an insert list. A group row carries its
-	// children in `config` and marks itself with `group: true`; a plain row's
-	// `config` is opaque plugin settings that may hold an unrelated `id`, so
-	// the two cases must be told apart rather than both walked.
-	var collectRow func(node *yaml.Node)
-	collectRow = func(node *yaml.Node) {
-		if node == nil || node.Kind != yaml.MappingNode {
-			return
+	var top []*patchEntry
+	// Only rows introduced by an insert are addressable, mirroring the
+	// loader's own index; a patch naming anything else is a no-op there too.
+	index := map[string]*patchEntry{}
+
+	var register func(entry *patchEntry)
+	register = func(entry *patchEntry) {
+		if entry.id != "" {
+			index[entry.id] = entry
 		}
-		isGroup := false
-		var id string
-		var config *yaml.Node
-		for i := 0; i+1 < len(node.Content); i += 2 {
-			key, value := node.Content[i], node.Content[i+1]
-			switch key.Value {
-			case "id":
-				if value.Kind == yaml.ScalarNode {
-					id = value.Value
-				}
-			case "group":
-				if value.Kind == yaml.ScalarNode && value.Value == "true" {
-					isGroup = true
-				}
-				// Some bundles nest children directly under `group`.
-				if value.Kind == yaml.SequenceNode {
-					isGroup = true
-					config = value
-				}
-			case "config":
-				config = value
-			}
-		}
-		if id != "" && !seen[id] {
-			seen[id] = true
-			rows = append(rows, id)
-		}
-		if isGroup && config != nil && config.Kind == yaml.SequenceNode {
-			for _, child := range config.Content {
-				collectRow(child)
+		if entry.isGroup {
+			for _, child := range entry.children {
+				register(child)
 			}
 		}
 	}
 
-	// Only rows an `insert` actually adds are this bundle's rows. An `id` on a
-	// patch that modifies somebody else's row is a reference, not a row this
-	// package declares, and treating it as one produces a config target that
-	// does not belong to the plugin.
-	var walkPatches func(node *yaml.Node)
-	walkPatches = func(node *yaml.Node) {
-		if node == nil {
-			return
-		}
-		switch node.Kind {
-		case yaml.DocumentNode, yaml.SequenceNode:
-			for _, child := range node.Content {
-				walkPatches(child)
+	for _, patch := range patchList(&doc) {
+		id := mappingValue(patch, "id")
+		insert := mappingNode(patch, "insert")
+		if insert != nil && insert.Kind == yaml.SequenceNode {
+			inserted := make([]*patchEntry, 0, len(insert.Content))
+			for _, node := range insert.Content {
+				if entry := parsePatchEntry(node); entry != nil {
+					inserted = append(inserted, entry)
+				}
 			}
-		case yaml.MappingNode:
-			for i := 0; i+1 < len(node.Content); i += 2 {
-				key, value := node.Content[i], node.Content[i+1]
-				if key.Value != "insert" || value.Kind != yaml.SequenceNode {
+			if id == "" {
+				top = append(top, inserted...)
+			} else {
+				target, ok := index[id]
+				if !ok || !target.isGroup {
+					// The loader warns and skips; so do we.
 					continue
 				}
-				for _, entry := range value.Content {
-					collectRow(entry)
+				target.children = append(target.children, inserted...)
+			}
+			for _, entry := range inserted {
+				register(entry)
+			}
+			continue
+		}
+		if id == "" {
+			continue
+		}
+		target, ok := index[id]
+		if !ok {
+			continue
+		}
+		// `name` is an assertion guard: a mismatch makes the loader skip the
+		// whole patch rather than apply it to the wrong row.
+		if asserted := mappingValue(patch, "name"); asserted != "" && asserted != target.name {
+			continue
+		}
+		if group := mappingNode(patch, "group"); group != nil && group.Kind == yaml.ScalarNode {
+			target.isGroup = group.Value == "true"
+		}
+		if config := mappingNode(patch, "config"); config != nil {
+			// An override replaces the value wholesale. For a group that means
+			// its children become exactly this list; for anything else the row
+			// simply has no children.
+			target.children = nil
+			if target.isGroup && config.Kind == yaml.SequenceNode {
+				for _, node := range config.Content {
+					if entry := parsePatchEntry(node); entry != nil {
+						target.children = append(target.children, entry)
+					}
 				}
 			}
 		}
 	}
-	walkPatches(&doc)
+
+	seen := map[string]bool{}
+	var rows []string
+	var flatten func(entries []*patchEntry)
+	flatten = func(entries []*patchEntry) {
+		for _, entry := range entries {
+			if entry.id != "" && !seen[entry.id] {
+				seen[entry.id] = true
+				rows = append(rows, entry.id)
+			}
+			if entry.isGroup {
+				flatten(entry.children)
+			}
+		}
+	}
+	flatten(top)
 	return rows, nil
+}
+
+// patchEntry is one row in the composed tree.
+type patchEntry struct {
+	id       string
+	name     string
+	isGroup  bool
+	children []*patchEntry
+}
+
+// parsePatchEntry reads a single row, including a group's nested children.
+func parsePatchEntry(node *yaml.Node) *patchEntry {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	entry := &patchEntry{
+		id:   mappingValue(node, "id"),
+		name: mappingValue(node, "name"),
+	}
+	if group := mappingNode(node, "group"); group != nil {
+		// Both shapes appear in the wild: `group: true` with children under
+		// `config`, and children directly under `group`.
+		if group.Kind == yaml.ScalarNode {
+			entry.isGroup = group.Value == "true"
+		} else if group.Kind == yaml.SequenceNode {
+			entry.isGroup = true
+			for _, child := range group.Content {
+				if parsed := parsePatchEntry(child); parsed != nil {
+					entry.children = append(entry.children, parsed)
+				}
+			}
+		}
+	}
+	if entry.isGroup && entry.children == nil {
+		if config := mappingNode(node, "config"); config != nil && config.Kind == yaml.SequenceNode {
+			for _, child := range config.Content {
+				if parsed := parsePatchEntry(child); parsed != nil {
+					entry.children = append(entry.children, parsed)
+				}
+			}
+		}
+	}
+	return entry
+}
+
+// patchList returns the top-level patch mappings of a document.
+func patchList(doc *yaml.Node) []*yaml.Node {
+	node := doc
+	for node != nil && node.Kind == yaml.DocumentNode {
+		if len(node.Content) == 0 {
+			return nil
+		}
+		node = node.Content[0]
+	}
+	if node == nil || node.Kind != yaml.SequenceNode {
+		return nil
+	}
+	out := make([]*yaml.Node, 0, len(node.Content))
+	for _, child := range node.Content {
+		if child.Kind == yaml.MappingNode {
+			out = append(out, child)
+		}
+	}
+	return out
+}
+
+// mappingNode returns the value node for a key of a mapping, or nil.
+func mappingNode(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// mappingValue returns a scalar value for a key of a mapping, or "".
+func mappingValue(node *yaml.Node, key string) string {
+	value := mappingNode(node, key)
+	if value == nil || value.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return value.Value
 }
 
 // getJSON performs a bounded GET and returns the body.

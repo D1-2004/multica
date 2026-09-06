@@ -288,7 +288,11 @@ func (h *Handler) RefreshDshPluginCatalog(w http.ResponseWriter, r *http.Request
 			InstallHint: entry.Install,
 			AddedOn:     added,
 		}
-		key := strings.ToLower(entry.Owner) + "/" + strings.ToLower(entry.Name)
+		// Exactly the unique index's key: same case sensitivity, and a
+		// separator that cannot occur inside either field. Lowercasing here
+		// would merge two rows Postgres considers distinct, and a "/" would
+		// let ("a/b","c") collide with ("a","b/c").
+		key := entry.Owner + "\x00" + entry.Name
 		if index, ok := seen[key]; ok {
 			rows[index] = row
 			continue
