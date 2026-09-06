@@ -120,16 +120,35 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 		"--format", "json",
 	)
 	cmd.Env = CommandEnv(configDir, nil)
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		return nil, commandFailed(ctx, "DWS conversation history query failed", err)
-	}
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
 	if stdout.Len() > MaxResponseBytes {
 		return nil, errors.New("DWS conversation history response is too large")
 	}
-	return stdout.Bytes(), nil
+	raw := stdout.Bytes()
+	if runErr != nil {
+		// dws often exits 1 with a success:false JSON envelope. Keep the
+		// body so callers can log errorMsg instead of a blank CLI failure.
+		if looksLikeJSONObject(raw) {
+			return raw, nil
+		}
+		failed := commandFailed(ctx, "DWS conversation history query failed", runErr)
+		if IsTimeout(failed) {
+			return nil, failed
+		}
+		if msg := SafeMessage(stderr.String(), 80); msg != "" {
+			return nil, fmt.Errorf("%s: %s", failed.Error(), msg)
+		}
+		return nil, failed
+	}
+	return raw, nil
+}
+
+func looksLikeJSONObject(raw []byte) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{'
 }
 
 type Redeemer struct {
@@ -244,4 +263,37 @@ func SafeCode(raw string) string {
 		}
 	}
 	return raw
+}
+
+// SafeMessage clips a DWS errorMsg for logs. Control characters are dropped
+// so the value can sit in slog without becoming a second error code.
+func SafeMessage(raw string, maxRunes int) string {
+	if maxRunes <= 0 {
+		maxRunes = 80
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range strings.TrimSpace(raw) {
+		if r < 32 || r == 127 {
+			continue
+		}
+		if n >= maxRunes {
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
+}
+
+// HistoryRejected formats a DWS list envelope that is not success. Empty
+// errorCode becomes operation_failed; errorMsg is attached when present so
+// logs are not just the placeholder.
+func HistoryRejected(errorCode, errorMsg string) error {
+	code := SafeCode(errorCode)
+	msg := SafeMessage(errorMsg, 80)
+	if msg == "" {
+		return fmt.Errorf("DWS conversation history query rejected: %s", code)
+	}
+	return fmt.Errorf("DWS conversation history query rejected: %s: %s", code, msg)
 }

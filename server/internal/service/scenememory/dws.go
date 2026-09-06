@@ -353,6 +353,7 @@ func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (dwsPage, error
 	var payload struct {
 		Success   bool             `json:"success"`
 		ErrorCode string           `json:"errorCode"`
+		ErrorMsg  string           `json:"errorMsg"`
 		Messages  []dwsListMessage `json:"messages"`
 		Result    json.RawMessage  `json:"result"`
 	}
@@ -369,7 +370,7 @@ func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (dwsPage, error
 		}
 	}
 	if !payload.Success && len(messages) == 0 {
-		return dwsPage{}, fmt.Errorf("DWS conversation history query rejected: %s", dwsclient.SafeCode(payload.ErrorCode))
+		return dwsPage{}, dwsclient.HistoryRejected(payload.ErrorCode, payload.ErrorMsg)
 	}
 	page := dwsPage{RawCount: len(messages)}
 	for _, message := range messages {

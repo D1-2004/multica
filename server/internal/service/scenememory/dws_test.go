@@ -59,8 +59,19 @@ func TestParseDWSEventsSkipsEmptyContent(t *testing.T) {
 }
 
 func TestParseDWSEventsRejected(t *testing.T) {
-	if _, err := parseDWSEvents([]byte(`{"success":false,"errorCode":"auth_failed"}`)); err == nil {
+	_, err := parseDWSEvents([]byte(`{"success":false,"errorCode":"auth_failed"}`))
+	if err == nil {
 		t.Fatal("rejected history must error")
+	}
+	if !strings.Contains(err.Error(), "auth_failed") {
+		t.Fatalf("got %v", err)
+	}
+	_, err = parseDWSEvents([]byte(`{"success":false,"errorCode":null,"errorMsg":"无权限查看会话"}`))
+	if err == nil {
+		t.Fatal("rejected history with errorMsg must error")
+	}
+	if !strings.Contains(err.Error(), "operation_failed") || !strings.Contains(err.Error(), "无权限查看会话") {
+		t.Fatalf("got %v", err)
 	}
 	if _, err := parseDWSEvents([]byte(`not-json`)); err == nil {
 		t.Fatal("invalid json must error")

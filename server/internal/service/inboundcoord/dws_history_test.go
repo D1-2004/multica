@@ -264,6 +264,48 @@ func TestDWSHistoryLoaderIsolatesConcurrentCallsAndKeepsLatestTen(t *testing.T) 
 	}
 }
 
+func TestParseDWSHistoryAcceptsTopLevelMessages(t *testing.T) {
+	raw := []byte(`{
+		"success":true,
+		"messages":[
+			{"content":"上一句","openMessageId":"prev","sender":"冬翔"}
+		]
+	}`)
+	history, err := parseDWSHistory(raw, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || history[0].Content != "上一句" || history[0].EvidenceID != "prev" {
+		t.Fatalf("history=%#v", history)
+	}
+}
+
+func TestParseDWSHistoryRejectedIncludesErrorMsg(t *testing.T) {
+	_, err := parseDWSHistory([]byte(`{
+		"success":false,
+		"errorCode":null,
+		"errorMsg":"无权限查看会话"
+	}`), "current")
+	if err == nil {
+		t.Fatal("rejected envelope must error")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "operation_failed") || !strings.Contains(got, "无权限查看会话") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestParseDWSHistoryKeepsMessagesWhenSuccessFalse(t *testing.T) {
+	history, err := parseDWSHistory([]byte(`{
+		"success":false,
+		"errorCode":null,
+		"messages":[{"content":"仍可用","openMessageId":"m1","sender":"冬翔"}]
+	}`), "current")
+	if err != nil || len(history) != 1 || history[0].Content != "仍可用" {
+		t.Fatalf("history=%#v err=%v", history, err)
+	}
+}
+
 func TestParseDWSHistoryIncludesQuotedMessage(t *testing.T) {
 	raw := []byte(`{
 		"success":true,
