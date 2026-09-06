@@ -21,8 +21,9 @@ WHERE workspace_id = $1 AND package_name = $2;
 INSERT INTO dsh_plugin (
     workspace_id, package_name, display_name, description, homepage,
     source_kind, source_spec, resolved_version, integrity,
-    bundle_rows, config_row, config, catalog, validated_dsh_version, created_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    bundle_rows, config_row, config, catalog, validated_dsh_version,
+    artifact_key, artifact_size, created_by
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 RETURNING *;
 
 -- name: UpdateDshPlugin :one
@@ -36,6 +37,9 @@ UPDATE dsh_plugin SET
     config_row = $9,
     config = $10,
     validated_dsh_version = $11,
+    source_kind = $12,
+    artifact_key = $13,
+    artifact_size = $14,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;
@@ -194,3 +198,10 @@ FROM dsh_plugin_catalog_entry
 WHERE catalog = $1 AND category <> ''
 GROUP BY category
 ORDER BY entry_count DESC, category ASC;
+
+-- name: ListDshPluginArtifactKeysByWorkspace :many
+-- Object keys to delete when a workspace goes away. The rows are removed by the
+-- workspace-delete statement, but the stored bytes are not, so they have to be
+-- collected before that runs.
+SELECT artifact_key FROM dsh_plugin
+WHERE workspace_id = $1 AND artifact_key <> '';

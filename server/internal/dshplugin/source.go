@@ -25,6 +25,9 @@ const (
 	SourceGitHub SourceKind = "github"
 	SourceURL    SourceKind = "url"
 	SourceFile   SourceKind = "file"
+	// SourceUpload is a package that arrived as a file rather than a
+	// reference, so there is no upstream to re-resolve against.
+	SourceUpload SourceKind = "upload"
 )
 
 // Source is a parsed package reference.

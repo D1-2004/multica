@@ -51,6 +51,9 @@
     "cancel": "キャンセル",
     "success": "{{name}} を導入しました",
     "conflict": "{{name}} は導入済みです。",
-    "failed": "導入に失敗しました"
+    "failed": "導入に失敗しました",
+    "upload_label": "またはパッケージをアップロード",
+    "upload_help": ".zip か .tgz。npm pack の出力、GitHub のダウンロード、素のフォルダのいずれでも構いません。",
+    "uploading": "{{name}} をアップロード中…"
   }
 }

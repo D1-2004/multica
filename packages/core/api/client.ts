@@ -279,6 +279,7 @@ import type {
   DshPluginCatalogCategory,
   DshPluginCatalogPage,
   DshPluginRegistryResult,
+  DshPluginUpdate,
   ImportDshPluginRequest,
   ImportDshPluginResult,
 } from "../dsh-plugins/types";
@@ -297,6 +298,7 @@ import {
   DshPluginCatalogPageSchema,
   DshPluginListSchema,
   DshPluginRegistrySearchSchema,
+  DshPluginUpdateSchema,
   DshPluginSchema,
   ImportDshPluginResultSchema,
   AgentTemplateSchema,
@@ -3421,6 +3423,73 @@ export class ApiClient {
 
   async deleteDshPlugin(id: string): Promise<void> {
     await this.fetch(`/api/dsh-plugins/${id}`, { method: "DELETE" });
+  }
+
+  async uploadDshPlugin(
+    file: File,
+    opts?: { onConflict?: "fail" | "overwrite" | "skip"; displayName?: string },
+  ): Promise<ImportDshPluginResult> {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (opts?.onConflict) formData.append("on_conflict", opts.onConflict);
+    if (opts?.displayName) formData.append("display_name", opts.displayName);
+
+    // Multipart, so the body must not carry a JSON content type — the browser
+    // sets the boundary itself.
+    const res = await fetch(`${this.baseUrl}/api/dsh-plugins/upload`, {
+      method: "POST",
+      headers: this.authHeaders(),
+      body: formData,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      if (res.status === 401) this.handleUnauthorized();
+      let message = `Upload failed (${res.status})`;
+      try {
+        const parsed: unknown = await res.json();
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof (parsed as { error?: unknown }).error === "string"
+        ) {
+          message = (parsed as { error: string }).error;
+        }
+      } catch {
+        // Keep the status-based message.
+      }
+      throw new ApiError(message, res.status, res.statusText);
+    }
+    const raw: unknown = await res.json();
+    return parseWithFallback(
+      raw,
+      ImportDshPluginResultSchema,
+      {
+        status: "",
+        plugin: null,
+        warnings: [],
+        existingPlugin: null,
+        error: "",
+      } as ImportDshPluginResult,
+      { endpoint: "POST /api/dsh-plugins/upload" },
+    );
+  }
+
+  async checkDshPluginUpdate(id: string): Promise<DshPluginUpdate> {
+    const raw = await this.fetch<unknown>(`/api/dsh-plugins/${id}/update`);
+    return parseWithFallback(
+      raw,
+      DshPluginUpdateSchema,
+      {
+        packageName: "",
+        currentVersion: "",
+        latestVersion: "",
+        updateAvailable: false,
+        checkable: false,
+        reason: "",
+        sourceSpec: "",
+      } as DshPluginUpdate,
+      { endpoint: "GET /api/dsh-plugins/{id}/update" },
+    );
   }
 
   async listDshPluginBindings(): Promise<DshPluginBinding[]> {

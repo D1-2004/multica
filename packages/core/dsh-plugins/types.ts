@@ -8,7 +8,13 @@
  */
 
 /** How a plugin's package is fetched. */
-export type DshPluginSourceKind = "npm" | "github" | "url" | "file";
+/** `upload` is a package that arrived as a file, so it has no upstream. */
+export type DshPluginSourceKind =
+  | "npm"
+  | "github"
+  | "url"
+  | "file"
+  | "upload";
 
 export interface DshPlugin {
   id: string;
@@ -123,4 +129,16 @@ export interface ImportDshPluginResult {
   warnings: string[];
   existingPlugin: DshPlugin | null;
   error: string;
+}
+
+/** Whether a newer version of a plugin is published upstream. */
+export interface DshPluginUpdate {
+  packageName: string;
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  /** False for a source with no upstream to compare against. */
+  checkable: boolean;
+  reason: string;
+  sourceSpec: string;
 }

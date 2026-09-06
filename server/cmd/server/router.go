@@ -2538,10 +2538,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Get("/catalog/categories", h.ListDshPluginCatalogCategories)
 				r.With(handler.RequireHumanActor).Post("/catalog/refresh", h.RefreshDshPluginCatalog)
 				r.Get("/registry-search", h.SearchDshPluginRegistry)
+				// A package that arrives as a file rather than a reference.
+				r.Post("/upload", h.UploadDshPlugin)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetDshPlugin)
 					r.Put("/", h.UpdateDshPlugin)
 					r.Delete("/", h.DeleteDshPlugin)
+					r.Get("/update", h.CheckDshPluginUpdate)
 				})
 			})
 

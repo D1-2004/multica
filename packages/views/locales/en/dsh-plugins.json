@@ -51,6 +51,9 @@
     "cancel": "Cancel",
     "success": "Imported {{name}}",
     "conflict": "{{name}} is already imported.",
-    "failed": "Import failed"
+    "failed": "Import failed",
+    "upload_label": "Or upload a package",
+    "upload_help": "A .zip or .tgz. Accepts an npm pack, a GitHub download, or a plain folder.",
+    "uploading": "Uploading {{name}}…"
   }
 }

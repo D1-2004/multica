@@ -69,6 +69,9 @@ type Resolved struct {
 	Warnings []string
 	// SizeBytes is the fetched archive size.
 	SizeBytes int64
+	// Archive is the exact bytes that were validated, so the caller can store
+	// them without fetching the package a second time.
+	Archive []byte
 }
 
 type packageManifest struct {
@@ -162,6 +165,7 @@ func (r *Resolver) Resolve(ctx context.Context, src Source) (*Resolved, error) {
 	}
 	resolved.Integrity = "sha256-" + hex.EncodeToString(digest[:])
 	resolved.SizeBytes = int64(len(data))
+	resolved.Archive = data
 	if meta != nil {
 		if resolved.Version == "" {
 			resolved.Version = meta.Version
@@ -835,4 +839,18 @@ func verifyPublishedDigest(data []byte, integrity, shasum string) error {
 		return nil
 	}
 	return fmt.Errorf("the registry published no digest for this version, so the download cannot be verified")
+}
+
+// LatestVersion asks the registry what the newest published version of a
+// package is, so an operator can be told an update exists rather than having to
+// go and look.
+func (r *Resolver) LatestVersion(ctx context.Context, name string) (string, error) {
+	if !ValidPackageName(name) {
+		return "", fmt.Errorf("%q is not a valid npm package name", name)
+	}
+	meta, err := r.fetchRegistryVersion(ctx, Source{Kind: SourceNPM, Name: name})
+	if err != nil {
+		return "", err
+	}
+	return meta.Version, nil
 }

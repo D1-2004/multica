@@ -106,6 +106,7 @@ import type {
   DshPluginCatalogState,
   DshPluginRegistryResult,
   DshPluginSourceKind,
+  DshPluginUpdate,
   ImportDshPluginResult,
 } from "../dsh-plugins/types";
 
@@ -4385,5 +4386,29 @@ export const ImportDshPluginResultSchema = z
       warnings: row.warnings ?? [],
       existingPlugin: row.existing_plugin ?? null,
       error: row.error ?? "",
+    }),
+  );
+
+export const DshPluginUpdateSchema = z
+  .object({
+    package_name: z.string().optional(),
+    current_version: z.string().optional(),
+    latest_version: z.string().optional(),
+    update_available: z.boolean().optional(),
+    checkable: z.boolean().optional(),
+    reason: z.string().optional(),
+    source_spec: z.string().optional(),
+  })
+  .loose()
+  .transform(
+    (row): DshPluginUpdate => ({
+      packageName: row.package_name ?? "",
+      currentVersion: row.current_version ?? "",
+      latestVersion: row.latest_version ?? "",
+      // Default to false: never claim an update exists on a drifted response.
+      updateAvailable: row.update_available === true,
+      checkable: row.checkable === true,
+      reason: row.reason ?? "",
+      sourceSpec: row.source_spec ?? "",
     }),
   );

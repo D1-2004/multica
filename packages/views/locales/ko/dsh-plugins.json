@@ -51,6 +51,9 @@
     "cancel": "취소",
     "success": "{{name}}을(를) 가져왔습니다",
     "conflict": "{{name}}은(는) 이미 가져왔습니다.",
-    "failed": "가져오기 실패"
+    "failed": "가져오기 실패",
+    "upload_label": "또는 패키지 업로드",
+    "upload_help": ".zip 또는 .tgz. npm pack 결과물, GitHub 다운로드, 일반 폴더 모두 됩니다.",
+    "uploading": "{{name}} 업로드 중…"
   }
 }

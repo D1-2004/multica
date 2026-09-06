@@ -224,16 +224,28 @@ func (h *Handler) ImportDshPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keep the exact bytes that were validated. A later task then loads them
+	// from storage instead of asking a registry again, which is both faster and
+	// the only way to guarantee the sandbox runs what was checked here.
+	artifactKey, storeErr := h.storeDshPluginArtifact(
+		r.Context(), workspaceUUID, resolved.PackageName, resolved.Archive)
+	if storeErr != nil {
+		slog.Warn("failed to store a DSH plugin artifact; the sandbox will fetch the source itself",
+			"package", resolved.PackageName, "error", storeErr)
+	}
+
 	h.persistDshPlugin(w, r, dshPluginWrite{
-		WorkspaceID: workspaceUUID,
-		CreatorID:   parseUUID(creatorID),
-		Source:      pinnedSource(source, resolved),
-		Resolved:    resolved,
-		DisplayName: strings.TrimSpace(req.DisplayName),
-		ConfigRow:   configRow,
-		Config:      req.Config,
-		Catalog:     strings.TrimSpace(req.Catalog),
-		OnConflict:  strings.TrimSpace(req.OnConflict),
+		WorkspaceID:  workspaceUUID,
+		CreatorID:    parseUUID(creatorID),
+		ArtifactKey:  artifactKey,
+		ArtifactSize: int64(len(resolved.Archive)),
+		Source:       pinnedSource(source, resolved),
+		Resolved:     resolved,
+		DisplayName:  strings.TrimSpace(req.DisplayName),
+		ConfigRow:    configRow,
+		Config:       req.Config,
+		Catalog:      strings.TrimSpace(req.Catalog),
+		OnConflict:   strings.TrimSpace(req.OnConflict),
 	})
 }
 
@@ -280,6 +292,10 @@ type dshPluginWrite struct {
 	Config      map[string]any
 	Catalog     string
 	OnConflict  string
+	// ArtifactKey is where the validated bytes were stored. Empty means the
+	// sandbox falls back to fetching the upstream source itself.
+	ArtifactKey  string
+	ArtifactSize int64
 }
 
 func (h *Handler) persistDshPlugin(w http.ResponseWriter, r *http.Request, in dshPluginWrite) {
@@ -324,7 +340,13 @@ func (h *Handler) persistDshPlugin(w http.ResponseWriter, r *http.Request, in ds
 				ConfigRow:           in.ConfigRow,
 				Config:              configJSON,
 				ValidatedDshVersion: prior.ValidatedDshVersion,
+				SourceKind:          string(in.Source.Kind),
+				ArtifactKey:         in.ArtifactKey,
+				ArtifactSize:        in.ArtifactSize,
 			})
+			// The replaced version's bytes are no longer referenced by any
+			// row, so leaving them would accumulate silently.
+			h.dropDshPluginArtifact(r.Context(), prior.ArtifactKey, in.ArtifactKey)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to update the DSH plugin")
 				return
@@ -363,6 +385,8 @@ func (h *Handler) persistDshPlugin(w http.ResponseWriter, r *http.Request, in ds
 		Config:              configJSON,
 		Catalog:             in.Catalog,
 		ValidatedDshVersion: "",
+		ArtifactKey:         in.ArtifactKey,
+		ArtifactSize:        in.ArtifactSize,
 		CreatedBy:           in.CreatorID,
 	})
 	if err != nil {
@@ -392,6 +416,9 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sourceSpec := row.SourceSpec
+	sourceKind := row.SourceKind
+	artifactKey := row.ArtifactKey
+	artifactSize := row.ArtifactSize
 	version := row.ResolvedVersion
 	integrity := row.Integrity
 	description := row.Description
@@ -433,6 +460,16 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		pinned := pinnedSource(source, resolved)
+		if key, err := h.storeDshPluginArtifact(
+			r.Context(), row.WorkspaceID, resolved.PackageName, resolved.Archive); err == nil && key != "" {
+			h.dropDshPluginArtifact(r.Context(), artifactKey, key)
+			artifactKey = key
+			artifactSize = int64(len(resolved.Archive))
+		} else if err != nil {
+			slog.Warn("failed to store the updated DSH plugin artifact",
+				"package", resolved.PackageName, "error", err)
+		}
+		sourceKind = string(source.Kind)
 		sourceSpec = pinned.Spec
 		version = resolved.Version
 		integrity = resolved.Integrity
@@ -493,6 +530,9 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 		ConfigRow:           configRow,
 		Config:              configJSON,
 		ValidatedDshVersion: row.ValidatedDshVersion,
+		SourceKind:          sourceKind,
+		ArtifactKey:         artifactKey,
+		ArtifactSize:        artifactSize,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update the DSH plugin")
@@ -538,7 +578,23 @@ func (h *Handler) DeleteDshPlugin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to remove the DSH plugin")
 		return
 	}
+	// After the commit: a failed delete here leaves an orphan object, which is
+	// recoverable, whereas deleting before the commit could lose the bytes a
+	// still-referenced row points at.
+	h.dropDshPluginArtifact(r.Context(), row.ArtifactKey, "")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// dropDshPluginArtifact removes a stored package, unless it is the one still in
+// use. Keys are content-addressed, so re-importing identical bytes yields the
+// same key and must not delete what the new row just claimed.
+func (h *Handler) dropDshPluginArtifact(ctx context.Context, key, keep string) {
+	if h.Storage == nil || key == "" || key == keep {
+		return
+	}
+	if err := h.Storage.DeleteObject(ctx, key); err != nil {
+		slog.Warn("failed to delete a DSH plugin artifact", "key", key, "error", err)
+	}
 }
 
 // DshPluginBindingResponse is one (agent, plugin) pair.

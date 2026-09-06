@@ -2105,6 +2105,8 @@ type DshPlugin struct {
 	CreatedBy           pgtype.UUID        `json:"created_by"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ArtifactKey         string             `json:"artifact_key"`
+	ArtifactSize        int64              `json:"artifact_size"`
 }
 
 type DshPluginCatalogEntry struct {

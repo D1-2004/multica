@@ -46,9 +46,18 @@ func (h *Handler) composeAgentDshPluginSet(ctx context.Context, agentID, workspa
 		if !row.Enabled {
 			continue
 		}
+		source, err := h.dshPluginDeliverySource(ctx, db.DshPlugin{
+			PackageName: row.PackageName,
+			SourceKind:  row.SourceKind,
+			SourceSpec:  row.SourceSpec,
+			ArtifactKey: row.ArtifactKey,
+		})
+		if err != nil {
+			return "", err
+		}
 		entry := dshPluginSetEntry{
 			Name:      row.PackageName,
-			Source:    row.SourceSpec,
+			Source:    source,
 			Integrity: row.Integrity,
 		}
 		// A patch replaces a loader row's config wholesale, so an empty config

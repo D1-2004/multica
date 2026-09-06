@@ -116,9 +116,10 @@ const createDshPlugin = `-- name: CreateDshPlugin :one
 INSERT INTO dsh_plugin (
     workspace_id, package_name, display_name, description, homepage,
     source_kind, source_spec, resolved_version, integrity,
-    bundle_rows, config_row, config, catalog, validated_dsh_version, created_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-RETURNING id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at
+    bundle_rows, config_row, config, catalog, validated_dsh_version,
+    artifact_key, artifact_size, created_by
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+RETURNING id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size
 `
 
 type CreateDshPluginParams struct {
@@ -136,6 +137,8 @@ type CreateDshPluginParams struct {
 	Config              []byte      `json:"config"`
 	Catalog             string      `json:"catalog"`
 	ValidatedDshVersion string      `json:"validated_dsh_version"`
+	ArtifactKey         string      `json:"artifact_key"`
+	ArtifactSize        int64       `json:"artifact_size"`
 	CreatedBy           pgtype.UUID `json:"created_by"`
 }
 
@@ -155,6 +158,8 @@ func (q *Queries) CreateDshPlugin(ctx context.Context, arg CreateDshPluginParams
 		arg.Config,
 		arg.Catalog,
 		arg.ValidatedDshVersion,
+		arg.ArtifactKey,
+		arg.ArtifactSize,
 		arg.CreatedBy,
 	)
 	var i DshPlugin
@@ -177,6 +182,8 @@ func (q *Queries) CreateDshPlugin(ctx context.Context, arg CreateDshPluginParams
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArtifactKey,
+		&i.ArtifactSize,
 	)
 	return i, err
 }
@@ -240,7 +247,7 @@ func (q *Queries) DeleteStaleDshPluginCatalogEntries(ctx context.Context, arg De
 }
 
 const getDshPluginByWorkspaceAndPackage = `-- name: GetDshPluginByWorkspaceAndPackage :one
-SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at FROM dsh_plugin
+SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size FROM dsh_plugin
 WHERE workspace_id = $1 AND package_name = $2
 `
 
@@ -274,6 +281,8 @@ func (q *Queries) GetDshPluginByWorkspaceAndPackage(ctx context.Context, arg Get
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArtifactKey,
+		&i.ArtifactSize,
 	)
 	return i, err
 }
@@ -340,7 +349,7 @@ func (q *Queries) GetDshPluginCatalogState(ctx context.Context, catalog string) 
 }
 
 const getDshPluginInWorkspace = `-- name: GetDshPluginInWorkspace :one
-SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at FROM dsh_plugin
+SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size FROM dsh_plugin
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -371,8 +380,38 @@ func (q *Queries) GetDshPluginInWorkspace(ctx context.Context, arg GetDshPluginI
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArtifactKey,
+		&i.ArtifactSize,
 	)
 	return i, err
+}
+
+const listDshPluginArtifactKeysByWorkspace = `-- name: ListDshPluginArtifactKeysByWorkspace :many
+SELECT artifact_key FROM dsh_plugin
+WHERE workspace_id = $1 AND artifact_key <> ''
+`
+
+// Object keys to delete when a workspace goes away. The rows are removed by the
+// workspace-delete statement, but the stored bytes are not, so they have to be
+// collected before that runs.
+func (q *Queries) ListDshPluginArtifactKeysByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]string, error) {
+	rows, err := q.db.Query(ctx, listDshPluginArtifactKeysByWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var artifact_key string
+		if err := rows.Scan(&artifact_key); err != nil {
+			return nil, err
+		}
+		items = append(items, artifact_key)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listDshPluginBindingsByWorkspace = `-- name: ListDshPluginBindingsByWorkspace :many
@@ -445,7 +484,7 @@ func (q *Queries) ListDshPluginCatalogCategories(ctx context.Context, catalog st
 
 const listDshPluginsByWorkspace = `-- name: ListDshPluginsByWorkspace :many
 
-SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at FROM dsh_plugin
+SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size FROM dsh_plugin
 WHERE workspace_id = $1
 ORDER BY package_name ASC
 `
@@ -480,6 +519,8 @@ func (q *Queries) ListDshPluginsByWorkspace(ctx context.Context, workspaceID pgt
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ArtifactKey,
+			&i.ArtifactSize,
 		); err != nil {
 			return nil, err
 		}
@@ -492,7 +533,7 @@ func (q *Queries) ListDshPluginsByWorkspace(ctx context.Context, workspaceID pgt
 }
 
 const listDshPluginsForAgent = `-- name: ListDshPluginsForAgent :many
-SELECT p.id, p.workspace_id, p.package_name, p.display_name, p.description, p.homepage, p.source_kind, p.source_spec, p.resolved_version, p.integrity, p.bundle_rows, p.config_row, p.config, p.catalog, p.validated_dsh_version, p.created_by, p.created_at, p.updated_at, b.enabled
+SELECT p.id, p.workspace_id, p.package_name, p.display_name, p.description, p.homepage, p.source_kind, p.source_spec, p.resolved_version, p.integrity, p.bundle_rows, p.config_row, p.config, p.catalog, p.validated_dsh_version, p.created_by, p.created_at, p.updated_at, p.artifact_key, p.artifact_size, b.enabled
 FROM dsh_plugin p
 JOIN agent_dsh_plugin b ON b.dsh_plugin_id = p.id
 WHERE b.agent_id = $1 AND p.workspace_id = $2
@@ -523,6 +564,8 @@ type ListDshPluginsForAgentRow struct {
 	CreatedBy           pgtype.UUID        `json:"created_by"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ArtifactKey         string             `json:"artifact_key"`
+	ArtifactSize        int64              `json:"artifact_size"`
 	Enabled             bool               `json:"enabled"`
 }
 
@@ -556,6 +599,8 @@ func (q *Queries) ListDshPluginsForAgent(ctx context.Context, arg ListDshPlugins
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ArtifactKey,
+			&i.ArtifactSize,
 			&i.Enabled,
 		); err != nil {
 			return nil, err
@@ -669,9 +714,12 @@ UPDATE dsh_plugin SET
     config_row = $9,
     config = $10,
     validated_dsh_version = $11,
+    source_kind = $12,
+    artifact_key = $13,
+    artifact_size = $14,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at
+RETURNING id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size
 `
 
 type UpdateDshPluginParams struct {
@@ -686,6 +734,9 @@ type UpdateDshPluginParams struct {
 	ConfigRow           string      `json:"config_row"`
 	Config              []byte      `json:"config"`
 	ValidatedDshVersion string      `json:"validated_dsh_version"`
+	SourceKind          string      `json:"source_kind"`
+	ArtifactKey         string      `json:"artifact_key"`
+	ArtifactSize        int64       `json:"artifact_size"`
 }
 
 func (q *Queries) UpdateDshPlugin(ctx context.Context, arg UpdateDshPluginParams) (DshPlugin, error) {
@@ -701,6 +752,9 @@ func (q *Queries) UpdateDshPlugin(ctx context.Context, arg UpdateDshPluginParams
 		arg.ConfigRow,
 		arg.Config,
 		arg.ValidatedDshVersion,
+		arg.SourceKind,
+		arg.ArtifactKey,
+		arg.ArtifactSize,
 	)
 	var i DshPlugin
 	err := row.Scan(
@@ -722,6 +776,8 @@ func (q *Queries) UpdateDshPlugin(ctx context.Context, arg UpdateDshPluginParams
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ArtifactKey,
+		&i.ArtifactSize,
 	)
 	return i, err
 }

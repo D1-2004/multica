@@ -51,6 +51,9 @@
     "cancel": "取消",
     "success": "已导入 {{name}}",
     "conflict": "{{name}} 已经导入过了。",
-    "failed": "导入失败"
+    "failed": "导入失败",
+    "upload_label": "或者上传一个包",
+    "upload_help": "支持 .zip 或 .tgz：npm pack 的产物、GitHub 下载的压缩包，或者直接打包的目录都可以。",
+    "uploading": "正在上传 {{name}}…"
   }
 }
