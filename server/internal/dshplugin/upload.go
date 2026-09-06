@@ -257,12 +257,16 @@ func writeTarball(files map[string][]byte) ([]byte, error) {
 	tw := tar.NewWriter(gz)
 	for _, name := range names {
 		body := files[name]
+		// No explicit format: USTAR cannot encode a non-ASCII name, a path
+		// component over 100 bytes, or a path over 255, and forcing it would
+		// reject those packages outright. Letting the writer choose means PAX
+		// where needed, which the archive reader accepts — it refuses only a
+		// GLOBAL header — and which Python's tarfile reads natively.
 		if err := tw.WriteHeader(&tar.Header{
 			Name:     name,
 			Mode:     0o644,
 			Size:     int64(len(body)),
 			Typeflag: tar.TypeReg,
-			Format:   tar.FormatUSTAR,
 		}); err != nil {
 			return nil, fmt.Errorf("failed to repack the archive: %w", err)
 		}

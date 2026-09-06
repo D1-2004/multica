@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,24 +19,32 @@ import (
 
 // Serving a stored plugin package to a sandbox.
 //
-// The runtime adapter fetches a plugin with a plain GET and no Authorization
-// header, so the credential has to live in the URL. That is the same problem
-// attachment downloads already solved, and this mirrors their capability
-// signature rather than inventing a second scheme.
+// The sandbox has no route to Multica's public origin. The only Multica it can
+// reach is the loopback egress relay the daemon hands it as MULTICA_SERVER_URL,
+// so the server cannot name a host at all — it sends a path, and the adapter
+// joins it to the origin it was actually given.
 //
-// A presigned object-store URL was the obvious alternative and does not work
-// here: the deployment's object endpoint is VPC-internal, so a URL signed
-// against it is unreachable from the sandbox, and the public endpoint rejects
-// the same signature. Serving through the API keeps the object read on the
-// server, where the internal endpoint is exactly right.
+// The relay forwards an /api/ request only when it carries a task-scoped mat_
+// bearer, so the adapter attaches that too. The signature below is the second
+// of the two checks and the only one bound to a specific plugin: the bearer
+// says "a running task", the signature says "this package".
+//
+// A presigned object-store URL was tried first and is the wrong shape here. The
+// deployment's object endpoint is VPC-internal, so a URL signed against it is
+// unreachable from the sandbox; the public endpoint is reachable but returned
+// 403, which probing showed to be bucket policy or credential expiry rather
+// than anything about the signature format. Serving through the API sidesteps
+// all of it and keeps the object read on the server, where the internal
+// endpoint is exactly right.
 
 const (
 	dshPluginCapabilityDomain  = "dsh-plugin-artifact-v1"
 	dshPluginCapabilityVersion = "v1"
 	// dshPluginCapabilityTTL bounds a link. A sandbox fetches within seconds of
-	// the task claim; this leaves room for a slow cold start without leaving a
-	// usable link sitting in an environment variable for long.
-	dshPluginCapabilityTTL = 30 * time.Minute
+	// the task claim, and this leaves room for a slow cold start; anything
+	// longer just widens the window in which a leaked environment variable is
+	// still worth something.
+	dshPluginCapabilityTTL = 5 * time.Minute
 	// maxDshArtifactServeBytes bounds what this route will stream.
 	maxDshArtifactServeBytes = 64 << 20
 )
@@ -95,17 +102,15 @@ func verifyDshPluginCapability(pluginID, rawExp, rawSig string, now time.Time) b
 	return hmac.Equal(got, want)
 }
 
-// dshPluginArtifactURL is the absolute link handed to a sandbox.
+// dshPluginArtifactSource is the plugin source handed to a sandbox.
 //
-// Absolute, not site-relative: the consumer is a process in a sandbox with no
-// notion of an API base, unlike a browser resolving `download_url`.
-func (h *Handler) dshPluginArtifactURL(pluginID string, now time.Time) string {
-	base := strings.TrimRight(strings.TrimSpace(h.currentConfig().PublicURL), "/")
-	if base == "" {
-		return ""
-	}
+// Deliberately origin-less. The server's own public URL is not reachable from a
+// sandbox, and the address that is — a per-task loopback relay — is not
+// something the server knows. So this names only the path, under a scheme the
+// adapter recognises as "resolve against the server URL you were given".
+func (h *Handler) dshPluginArtifactSource(pluginID string, now time.Time) string {
 	exp := now.Add(dshPluginCapabilityTTL).Unix()
-	return base + "/api/dsh-plugins/" + pluginID + "/artifact" +
+	return "multica:/api/dsh-plugins/" + pluginID + "/artifact" +
 		"?exp=" + strconv.FormatInt(exp, 10) +
 		"&sig=" + signDshPluginCapability(pluginID, exp)
 }
@@ -151,6 +156,12 @@ func (h *Handler) DownloadDshPluginArtifact(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/gzip")
 	w.Header().Set("Cache-Control", "private, no-store")
+	// Same hardening as the attachment capability route this mirrors: never let
+	// a stored package be sniffed into something a browser would execute, and
+	// never leak the signed URL onward through a referrer.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Content-Disposition", "attachment")
 	if row.ArtifactSize > 0 && row.ArtifactSize <= maxDshArtifactServeBytes {
 		w.Header().Set("Content-Length", strconv.FormatInt(row.ArtifactSize, 10))
 	}

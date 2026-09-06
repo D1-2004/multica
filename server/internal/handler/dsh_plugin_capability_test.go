@@ -2,6 +2,7 @@ package handler
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,5 +58,24 @@ func TestSignDshPluginCapabilityIsUnambiguous(t *testing.T) {
 	b := signDshPluginCapability("aaaa", 12)
 	if a == b {
 		t.Fatal("two different capabilities produced the same signature")
+	}
+}
+
+func TestDshPluginArtifactSourceCarriesNoOrigin(t *testing.T) {
+	// The server cannot name a host the sandbox can reach — the only Multica it
+	// can reach is a per-task loopback relay the server knows nothing about. If
+	// this ever grows an origin again, every managed plugin stops loading.
+	handler := &Handler{}
+	source := handler.dshPluginArtifactSource(
+		"11111111-1111-4111-8111-111111111111", time.Unix(1_700_000_000, 0))
+
+	if !strings.HasPrefix(source, "multica:/api/dsh-plugins/") {
+		t.Fatalf("source = %q, want a multica:/api/ path", source)
+	}
+	if strings.Contains(source, "://") || strings.Contains(source, "multica://") {
+		t.Fatalf("source = %q, want no origin", source)
+	}
+	if !strings.Contains(source, "exp=") || !strings.Contains(source, "sig=") {
+		t.Fatalf("source = %q, want the capability query", source)
 	}
 }

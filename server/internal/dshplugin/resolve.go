@@ -34,9 +34,11 @@ const (
 	maxMemberBytes = 8 << 20
 	// maxMembers stops a tarball with an absurd file count from spinning here.
 	maxMembers = 20000
-	// maxArchiveBytes bounds the DECOMPRESSED total. Without it a small,
-	// highly compressible archive expands without limit in memory.
-	maxArchiveBytes = 96 << 20
+	// maxArchiveBytes bounds the DECOMPRESSED total. Without it a small, highly
+	// compressible archive expands without limit in memory. Kept close to the
+	// compressed cap: a real package does not expand many times over, and the
+	// whole thing is held in memory while it is read.
+	maxArchiveBytes = 48 << 20
 	// maxMemberNameBytes caps a single entry name. PAX stores a long name as
 	// member data, so an unbounded name is an unbounded allocation.
 	maxMemberNameBytes = 4096

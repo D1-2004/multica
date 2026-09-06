@@ -27,14 +27,12 @@ import (
 // three, and it is the only way an uploaded package — which has no upstream URL
 // at all — can be delivered.
 //
-// The link is a presigned object-store GET, so the runtime adapter needs no
-// change: it already accepts an https tarball and verifies the recorded digest.
+// The adapter fetches it under a `multica:` scheme it resolves against the
+// server URL the daemon gave that task, because the sandbox can reach no other
+// Multica origin. It still verifies the recorded digest, so what runs is what
+// was validated.
 
 const (
-	// dshArtifactLinkTTL bounds a presigned link. A sandbox fetches within
-	// seconds of the task claim; this leaves room for a slow start without
-	// leaving a usable link lying around in an environment variable.
-	dshArtifactLinkTTL = 30 * time.Minute
 	// maxDshPluginUploadBytes bounds the multipart body.
 	maxDshPluginUploadBytes = dshplugin.MaxUploadBytes
 )
@@ -72,11 +70,7 @@ func (h *Handler) storeDshPluginArtifact(
 // adapter will reject with a confusing error.
 func (h *Handler) dshPluginDeliverySource(_ context.Context, row db.DshPlugin) (string, error) {
 	if row.ArtifactKey != "" && h.Storage != nil {
-		if url := h.dshPluginArtifactURL(uuidToString(row.ID), time.Now()); url != "" {
-			return url, nil
-		}
-		slog.Warn("no public URL is configured, so the stored plugin package cannot be served",
-			"package", row.PackageName)
+		return h.dshPluginArtifactSource(uuidToString(row.ID), time.Now()), nil
 	}
 	if row.SourceKind == string(dshplugin.SourceUpload) {
 		return "", fmt.Errorf("plugin %s was uploaded and its stored package cannot be served", row.PackageName)
@@ -161,17 +155,43 @@ func (h *Handler) UploadDshPlugin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	configRow, err := chooseConfigRow("", nil, resolved)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Settle the conflict before writing anything. An upload that will be
+	// refused should not leave an object behind; `overwrite` falls through to
+	// the shared write path, which is where the admin check lives.
+	if prior, priorErr := h.Queries.GetDshPluginByWorkspaceAndPackage(r.Context(),
+		db.GetDshPluginByWorkspaceAndPackageParams{
+			WorkspaceID: workspaceUUID,
+			PackageName: resolved.PackageName,
+		}); priorErr == nil {
+		switch strings.TrimSpace(r.FormValue("on_conflict")) {
+		case "skip":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"status": "skipped",
+				"plugin": dshPluginToResponse(prior),
+			})
+			return
+		case "overwrite":
+		default:
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"status":          "conflict",
+				"error":           resolved.PackageName + " is already imported into this workspace",
+				"existing_plugin": dshPluginToResponse(prior),
+			})
+			return
+		}
+	}
+
 	artifactKey, err := h.storeDshPluginArtifact(r.Context(), workspaceUUID, resolved.PackageName, normalized)
 	if err != nil || artifactKey == "" {
 		slog.Error("failed to store an uploaded DSH plugin",
 			"package", resolved.PackageName, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to store the uploaded package")
-		return
-	}
-
-	configRow, err := chooseConfigRow("", nil, resolved)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
