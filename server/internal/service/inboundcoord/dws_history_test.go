@@ -119,7 +119,7 @@ func TestDecideDWSHistoryTimeoutStillRunsLLM(t *testing.T) {
 	}
 }
 
-func TestDecideDWSHistoryFailureContinuesWithoutLLM(t *testing.T) {
+func TestDecideDWSHistoryFailureStillRunsLLM(t *testing.T) {
 	loader := &dwsHistoryStub{err: errors.New("read failed")}
 	var calls atomic.Int32
 	var prompt string
@@ -134,10 +134,13 @@ func TestDecideDWSHistoryFailureContinuesWithoutLLM(t *testing.T) {
 		DWSUID:         "24710833",
 		DWSOrgID:       "439446171",
 	})
-	if got.Action != ActionContinue || calls.Load() != 0 || loader.calls != 1 {
-		t.Fatalf("decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	if got.Action == ActionContinue || calls.Load() != 1 || loader.calls != 1 {
+		t.Fatalf("read_failed must still judge: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
 	}
-	if len(got.Steps) != 2 || !got.Steps[1].Error || got.Steps[1].Tool != "dws_chat_history" {
+	if strings.Contains(prompt, "recent_dingtalk_history") {
+		t.Fatalf("failed last-N must not appear: %q", prompt)
+	}
+	if len(got.Steps) < 2 || !got.Steps[1].Error || got.Steps[1].Tool != "dws_chat_history" {
 		t.Fatalf("DWS failure timeline=%#v", got.Steps)
 	}
 }

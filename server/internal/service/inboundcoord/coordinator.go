@@ -305,17 +305,13 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 						"error", err,
 					)...)
 			} else {
-				slog.Warn("inbound coordinator DWS history failed; continuing sandbox enqueue",
+				slog.Warn("inbound coordinator DWS history failed; judging without last-N",
 					append(coordinatorLogIndex(turn),
 						"event", "inbound_coordinator_dws_history_failed",
 						"error_class", "read_failed",
 						"elapsed_ms", time.Since(started).Milliseconds(),
 						"error", err,
 					)...)
-				return Decision{
-					Action: ActionContinue, ElapsedMs: time.Since(started).Milliseconds(), Source: turn.Source,
-					Steps: preflightSteps,
-				}
 			}
 		} else {
 			turn.DingTalkHistory = history
