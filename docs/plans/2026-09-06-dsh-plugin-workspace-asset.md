@@ -1,93 +1,133 @@
 # DSH Plugin as a Workspace asset
 
-Status: design, not implemented. Phase B (per-task import in the runtime image)
-is landed and verified; this document covers Phase A, the Workspace-level asset
-that feeds it.
+Status: implemented. This describes what the code does and why, not a proposal.
 
-## What is already true
+## What DeepSeek Harness actually provides
 
-The runtime image can import a DSH plugin for one task and boot a profile that
-carries it. `scripts/multica-dsh` in `dingtalk-ai-lab/multica-fc-hermes-runtime`
-reads a JSON plugin set from `DSH_PLUGIN_SET`, fetches each package, unpacks it
-into a per-task profile, writes a profile manifest whose `dsh.profile.bundles`
-ends with the plugin, and launches that profile instead of stock `headless`.
+Read the harness before reading the rest of this. Verified against a DSH
+0.1.2-rc.1 install:
 
-Verified on pre-release 2026-09-06 with `dsh-mcp-lens@0.1.0-rc.9`
-(task `40e7bdcd`, issue WS-212) and a negative control with the plugin set
-cleared (task `acb1629a`, issue WS-213). Nothing about the plugin is baked into
-the image; a different plugin needs no rebuild.
+- **There is no plugin registry.** `dsh plugin --profile <p> add <pkg>` is a
+  `spawnSync("pnpm", args)` executed with the profile directory as its working
+  directory, and it is the only package-manager subprocess in any of the 223
+  shipped packages. No registry URL is hardcoded anywhere. Whatever registry
+  pnpm is configured with *is* the plugin source.
+- **There is no catalog, index, or search endpoint.** `dsh plugin search` also
+  forwards to pnpm, which hits the npm registry's standard `/-/v1/search`.
+- **The official Plugins settings surface is read-only.** Its host API exposes
+  one method, `pluginInventory/list`, returning four fields per row — entry id,
+  module specifier, enabled, fiber phase — with no version, description, or
+  install source. Its own README calls enable/disable "deliberate follow-up
+  work".
+- **There is no compatibility declaration and nothing enforces one.** A plugin
+  built against an older harness installs cleanly and fails at boot.
 
-Accepted sources today: `npm:<name>@<version>`, `github:<owner>/<repo>#<ref>`,
-`https://…tgz`, and `file:<abs path>`. An optional `integrity` field pins the
-tarball to `sha256-<64 hex>`.
+So "reuse the official mechanism" cannot mean calling an official market API.
+It means adopting the harness's data model and install contract, and building
+the browse/install layer on top — which is the extension the harness explicitly
+anticipates, since its settings surface exposes an open slot for exactly that.
 
-## The gap
+## The model, and why each part is shaped that way
 
-`DSH_PLUGIN_SET` is agent `custom_env`. That means a plugin is configured by
-hand-writing JSON into an environment variable, per agent. There is no catalog,
-no import UI, no provenance record, and no way for a second agent to reuse what
-the first one installed. Skills already solve exactly this shape of problem, and
-the plugin asset should look like a Skill, not like a new subsystem.
+**A plugin is a pinned package reference.** `dsh_plugin` stores the source spec
+plus the resolved version and an integrity digest. Nothing Multica-specific is
+invented, because the install contract has nothing else in it.
 
-## Reuse, not reinvention
+**Configuration is addressed by loader row, not by package.** A row id is chosen
+by the plugin author and routinely differs from the package name —
+`dsh-mcp-lens` declares row `mcp-lens`, and the harness's own plugin-inventory
+package declares `plugin-inventory`. A patch also *replaces* a row's config
+rather than merging into it, so an empty config object would erase the defaults
+the plugin's own bundle layer supplies. The composed plugin set therefore omits
+config entirely when there is none.
 
-Two prior questions were researched before writing any code.
+**Enabling a plugin for an agent means putting its package in the profile's
+`bundles` array** — the same lever `reconcilePlugins` pulls after a pnpm
+install. The user's own `cordis.patch.yml` is never written on install, matching
+the harness.
 
-**Package resolution and fetching.** Do not hand-roll it. The npm CLI's own
-building blocks are published as libraries and are the de-facto standard:
+## Discovery
 
-| Library | Role |
-| --- | --- |
-| `npm-package-arg` | Parse a user-typed spec into a typed descriptor. Already understands `npm:`, `github:`, `file:`, and tarball URLs, which is the exact set we accept. |
-| `pacote` | Resolve that descriptor to a concrete tarball and extract it, with registry auth, redirects, and caching handled. |
-| `ssri` | Compute and verify Subresource Integrity digests, the same `sha512-…`/`sha256-…` strings npm itself records. |
+Two sources, both read rather than built, neither presented as official:
 
-They are Node libraries and the server is Go, so the fetch runs as a short-lived
-Node worker the Go service invokes, not as an in-process dependency. Estimated
-custom code with this split is 1,600–2,700 lines; a from-scratch resolver is
-several times that and would have to re-derive npm's spec grammar.
+| Source | What it is | Why |
+| --- | --- | --- |
+| `awesome-dsh-plugin` | The community index, 3158 entries, CC0-1.0 | The de-facto ecosystem index. `deepseek-ai/awesome-dsh-plugin` does not exist; this one has ~14.6k stars, and competing markets consume it rather than maintaining their own. |
+| npm registry search | `/-/v1/search` on the configured registry | The same endpoint `dsh plugin search` reaches through pnpm. |
 
-**The asset shell.** Skills already have the import surface this needs:
-`POST /api/skills/import` accepts either a JSON body naming a URL or a
-multipart archive upload, and takes an `on_conflict` strategy of
-`fail | overwrite | rename | skip`. Mirror that route shape, its permission
-checks, and its conflict semantics rather than designing new ones. The user's
-requirement that import support GitHub and file is satisfied by the same two
-request shapes.
+The index is fetched from its origin with a conditional GET, falling back to the
+`dsh-plugin-catalog` npm package. Both paths exist for a reason: the origin is
+freshest, but it is served from GitHub Pages, which is unreliable from inside
+China — which is why the npm mirror exists at all.
 
-## Shape of the work
+About half the index is installable without a human resolving anything: 1542 of
+3158 entries carry both an npm package and an exact version. The browse surface
+hides the rest by default, because listing an entry that cannot be imported is a
+dead end.
 
-**Storage.** A workspace-scoped `dsh_plugin` table holding identity, the source
-spec as typed by the importer, the resolved concrete version, the integrity
-digest, and the declared bundle rows read out of the package's
-`cordis.patch.yml`. Per the fork's deployment rules the tarball itself is an
-immutable object and belongs in OSS, with identity and lifecycle in PostgreSQL.
-No foreign keys, per repository rule.
+Rows are user-submitted, so a release tarball URL is only trusted when it
+belongs to the repository the entry itself names. Without that bind, an entry
+can name a well-known repo while pointing the download at someone else's.
 
-**Assembly.** An agent references plugins by id. At dispatch the daemon
-composes the same JSON the adapter already consumes and injects it, so the
-runtime contract does not change and Phase B needs no second image.
+## Import is a validation gate
 
-**Config overrides.** A patch replaces a loader row's config wholesale, so a
-plugin with required fields fails loudly at compose time. The adapter already
-resolves which row a config belongs to, including the case where the row id
-differs from the package name (`dsh-mcp-lens` declares row `mcp-lens`). Surface
-that row id in the catalog so the UI can label the config form correctly.
+The import path applies the same checks the sandbox applies at boot, so a
+package that cannot load fails at import, with a reason, instead of failing
+inside a task where nobody is watching:
 
-## Constraints worth stating up front
+- the archive is bounded on compressed size, expanded size, member size and
+  member count, and refuses links, escaping paths and multiple roots;
+- the bytes must match the digest the registry published for that version, not
+  merely hash consistently with themselves;
+- no install script is declared, because none is ever run;
+- `dsh.bundle.patch` is declared and the file it points at exists;
+- what `exports` (then `main`) resolves to is actually present in the package;
+- the bundle patch inserts at least one loader row.
 
-- **GitHub import only accepts a prebuilt package.** Install scripts are never
-  run, so a repository that ships TypeScript and builds in `prepare` is
-  rejected with that reason. Most published DSH plugins ship prebuilt `lib/`,
-  so the npm path is the common one and GitHub is for pinned forks.
-- **The sandbox needs public egress** to fetch from the registry. Confirmed
-  working on the FC template (issue WS-211). ASB is out of scope.
-- **Dependencies must already exist in the image's DSH install.** The adapter
-  checks this before boot, anchored at the DSH installation rather than at the
-  plugin directory, because a fresh `$DSH_HOME` has no
-  `profiles/node_modules` fallback until DSH's own heal step runs at boot.
+A web-only plugin imports with a warning rather than an error: Multica runs
+headless, so its UI contributes nothing, but its host half may still be useful.
+
+**Building an arbitrary source snapshot is deliberately not supported.** Most
+published plugins ship prebuilt output, and a GitHub snapshot that needs its
+`prepare` script is refused with that explanation. Running an untrusted build on
+the server would buy the remaining minority at the cost of arbitrary code
+execution during import.
+
+## How it reaches a task
+
+At task claim the agent's enabled plugins are composed into `DSH_PLUGIN_SET` —
+the same variable an operator previously set by hand in `custom_env`. The
+daemon, the sandbox and the image are unchanged, which is the point: the managed
+path emits exactly what the manual one did.
+
+Three rules the code encodes, each of which is silent when wrong:
+
+- Composition is skipped for a non-DSH provider, so no query runs where the
+  variable is ignored.
+- Composition is skipped for an external A2A turn, which has already had
+  agent-owned environment stripped so an owner's credentials cannot reach a
+  caller from outside the workspace. Plugin configuration is agent-owned too.
+- A failure to read the bindings fails the claim rather than running the task
+  without its plugins, which would be a different task.
+
+## Constraints worth stating
+
+- **The sandbox needs public egress** to fetch a plugin at task start.
+  Confirmed on the FC template. ASB is out of scope.
+- **Dependencies must already exist in the image's DSH install.** The sandbox
+  installs nothing at task time. Import surfaces a package's runtime
+  dependencies as a warning so this is visible before a task fails.
+- **`healProfilesModuleFallback` runs only at real boot**, inside
+  `composeProfile` — not in `dsh plugin`, and not in `--dump-config`. A freshly
+  provisioned `$DSH_HOME` therefore has no shared module fallback until DSH
+  boots once, so validating dependency resolution before that reports every
+  dependency missing, including ones the image plainly ships.
+- **Version drift has no static check.** Nothing in the harness enforces
+  compatibility, so `validated_dsh_version` records what a plugin was last seen
+  working against; the only runtime signal is the inventory's failed fiber
+  phase.
 
 ## Not covered here
 
-Langfuse verification belongs to a separate branch and is deliberately not
-addressed. The image release to master is a separate rollout decision.
+Langfuse belongs to a separate branch. The image release to master is a separate
+rollout decision.
