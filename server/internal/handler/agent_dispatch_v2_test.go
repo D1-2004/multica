@@ -1028,12 +1028,13 @@ func TestCoordinatorIssueCommentTaskContextMakesIndependentRelay(t *testing.T) {
 		"current DingTalk event sender is the actual speaker",
 		"Multica comment author is only the Issue-tool executor and an assistant",
 		"Find the original delegator from the Issue's original DingTalk task scene",
-		"short loop already acknowledged",
-		"No callback will deliver this task's later progress, blocker, or result",
-		"MUST successfully send at least one DingTalk message to one concrete person",
+		"short loop already closed the inbound acknowledgement",
+		"will not automatically reach any DingTalk participant",
+		"do not send another status, waiting, or confirmation ping",
+		"If no send is required because the scene was already told, finish without another IM",
 		"<recipient> replied: <answer>",
 		"Writing that summary only in the Issue does not count as delivery",
-		"Do not write or claim ‘task complete’ until the DingTalk send returns a successful receipt",
+		"Do not write or claim ‘task complete’ until any required send returns a successful receipt",
 	} {
 		if !strings.Contains(instruction, want) {
 			t.Errorf("coordinator follow-up instruction missing %q: %q", want, instruction)
@@ -2574,6 +2575,15 @@ func TestLegacyDWSWorkflowClearsLifecycleEmotionAndDropsAITag(t *testing.T) {
 	}
 	if !strings.Contains(dispatchCoordinatorIssueFollowUpSection, "never add 已完成") {
 		t.Fatal("coordinator follow-up must not stamp 已完成")
+	}
+	if !strings.Contains(dispatchCoordinatorIssueFollowUpSection, "do not send another status, waiting, or confirmation ping") {
+		t.Fatal("coordinator follow-up must not ping a scene that was already told")
+	}
+	if strings.Contains(dispatchCoordinatorIssueFollowUpSection, "MUST successfully send at least one DingTalk message") {
+		t.Fatal("coordinator follow-up must not force a status IM after the scene was told")
+	}
+	if !strings.Contains(dispatchConversationSSOTSection, "正在处理中") {
+		t.Fatal("busy filler must be forbidden on the conversation SSOT")
 	}
 	if !dispatchLifecycleEmotionName("🤔思考中") {
 		t.Fatal("thinking emotion must count as a lifecycle stamp")

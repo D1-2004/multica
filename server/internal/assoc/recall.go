@@ -181,13 +181,11 @@ func itemOnThisScene(item Item, sceneCID string) bool {
 	if cid == "" {
 		return false
 	}
+	// waiting_on alone is a side channel for another scene's matter
+	// (G2 排期 waiting on R9B must not look like R9B's own work).
+	// Outreach / task_scene / spawned_from live on Conversations.
 	for _, conversation := range item.Conversations {
 		if NormalizeConversationID(conversation.ConversationID) == cid {
-			return true
-		}
-	}
-	for _, waiting := range item.WaitingOn {
-		if NormalizeConversationID(waiting.ConversationID) == cid {
 			return true
 		}
 	}

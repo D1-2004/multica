@@ -224,8 +224,12 @@ func marshalCoordinatorRecall(result assoc.Result) (string, error) {
 		Items:          make([]coordinatorRecallItem, 0, len(result.Items)),
 		Events:         make([]coordinatorRecallEvent, 0, len(result.Events)),
 	}
+	sceneCID := assoc.NormalizeConversationID(result.ConversationID)
 	for _, item := range result.Items {
 		if !assoc.PurposeNamesEvent(item.Purpose) {
+			continue
+		}
+		if sceneCID != "" && !item.OnThisScene {
 			continue
 		}
 		waiting := ""

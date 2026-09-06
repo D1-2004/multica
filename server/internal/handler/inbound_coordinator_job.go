@@ -204,9 +204,7 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 		if shouldSilenceCoordinatorBusyPark(response.Status(), reason) {
 			// ActionRetry parks until the recalled issue is free. Clear the
 			// inbound 处理中 now; do not 500/fail which stamps 处理失败.
-			w.handler.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, job.AgentID,
-				"inbound_coordinator_busy_park_silence_failed", util.UUIDToString(job.ID))
-			w.handler.closeExtraCoordinatorCallbacks(ctx, command, job.AgentID)
+			w.silenceParkedInbound(ctx, job, command)
 			return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, reason)
 		}
 		return true, w.retry(ctx, job, fmt.Errorf("%s", reason))
@@ -392,6 +390,8 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 		return false, w.retry(ctx, job, fmt.Errorf("count running scene window: %w", err))
 	}
 	if running > 0 {
+		// Half-second mutex wait: keep the Router callback so the next
+		// window can still speak. Do not close 处理中 here.
 		return true, w.park(ctx, job, inboundCoordinatorSceneBusyDelay, "scene window already running")
 	}
 	if commandIsWindowAck(command) {
@@ -404,9 +404,22 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 		return false, w.retry(ctx, job, fmt.Errorf("count scene active tasks: %w", err))
 	}
 	if shouldParkSceneCapacity(command, active) {
+		w.silenceParkedInbound(ctx, job, command)
 		return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, "scene already has two in-flight matters")
 	}
 	return false, nil
+}
+
+// silenceParkedInbound closes the Router dispatch without IM so 处理中
+// drops while the job waits for the next window. A colleague does not leave
+// a spinning confirmation on a message they are not answering yet.
+func (w *InboundCoordinatorJobWorker) silenceParkedInbound(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) {
+	if w == nil || w.handler == nil {
+		return
+	}
+	w.handler.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, job.AgentID,
+		"inbound_coordinator_busy_park_silence_failed", util.UUIDToString(job.ID))
+	w.handler.closeExtraCoordinatorCallbacks(ctx, command, job.AgentID)
 }
 
 func commandIsWindowAck(command DispatchCommand) bool {

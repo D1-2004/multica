@@ -336,7 +336,7 @@ Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 
 | `issue_comment_add` | `reply_text` 回当前说话人 | 成员评论写入原 Issue，并自驱下一轮 Issue task |
 | `issue` 有 `issue_id` | 非外呼回信的普通续旧 | 原 Issue 上追加 follow-up 任务 |
 | `silence` | 不回 | 无沙箱。网页禁止。ACK / 谢谢 / 不用回了 由 Host 直接 silence |
-| 内部 `retry` / park | 不回 | 沙箱仍忙：job 回 pending，下一窗再 Decide |
+| 内部 `retry` / park | 不回，并清掉入站「处理中」 | 沙箱仍忙：job 回 pending，下一窗再 Decide。忙时不留确认态空转 |
 | 内部 `continue` | 走原入队 | LLM / DWS 历史 / 开关失败时的 fail-open |
 
 `reply` 禁止能力拒绝（「我看不到联系人」）。Loop 做不了的查找或动作必须 `issue`。

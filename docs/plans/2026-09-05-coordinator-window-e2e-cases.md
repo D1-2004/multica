@@ -88,7 +88,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 - Found: E2103-loop G1 W2B (`就约线上`) Decide `action=retry` ×6 `reason=issue_busy_park` on issue `049c6f99-…`; wrap-up later `already_told_scene`; IM still has emotion `处理中` on the W2B inbound (E1-2007-W2B still stamped too)
 - Fix: Host/channel should complete the DingTalk silence callback (clear 处理中) when `ActionRetry` parks or when wrap-up silences the same cid; do not leave the confirmation @ spinning
 - Prove: next round W2B has no leftover `处理中` after the meeting issue settles
-- Status: E25 late reread this-token inbound cleaned; first-pass W2B/W3B leftover `处理中`. W2B Host skipped Decide after dws fail (C14 class). Flaky leftover. Not shipping this fire
+- Status: **Shipping this fire.** issue_busy 409 and two-in-flight capacity parks Host-silence the Router callback so 处理中 drops immediately. The 500ms scene-mutex park keeps the callback so the next window can still speak. Prove: next round W2B/W5 inbound has no leftover 处理中 while parked.
 
 ### C11 G2 W3A never Decide, inbound stuck `处理中`
 - Found: E0048-loop W3A (`帮我问 dxxh 下周排期`) IM 00:48:21 emotion `处理中`; no `inbound_coordinator_llm_request` and no `inbound_coordinator_decided` for this token. W3B/W5 on same cid did Decide. WRAP on G1 was sent ~3s later (different scene).
@@ -100,7 +100,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 - Found: E0348-loop G1 wrap-up `action=reply` 「已问 dxxh 明天线上开会时间」 after W2B comment. E0433-loop: wrap-up `already_told_scene` on issue `5c1a9b68-…` at 04:35:59, then extra IM 04:36:20 / 04:36:43 「已确认线上开会…等待 dxxh」 (not 已报群里)
 - Fix: after sandbox already spoke on the cid, wrap-up Host silence must also stop later sandbox/Host pings on the same meeting issue
 - Prove: next round W2/W2B settle with `already_told_scene` and **no** extra IM after the W2B comment
-- Status: reproduced E12/E14/E19/E21/E22/E25. E25 extra IM 13:39:16 after wrap-up `already_told_scene` 13:38:22. Flaky. Not shipping this fire
+- Status: **Shipping this fire.** Follow-up sandbox no longer MUST send a DingTalk ping; if this cid already has the matter's outbound, Host wrap-up stays silent and the sandbox must not status-ping. Prove: next round W2/W2B settle with `already_told_scene` and **no** extra IM after the W2B comment.
 
 ### C13 W5 reply-reuses previous-round 高铁 instead of `action=issue`
 - Found: E0603-loop W5 job `2f6ca55a-…` parked `two in-flight` then Decide `action=reply` on issue `2fe317cd-…` (assoc still had E0003-loop-W5) text 「我把这条新请求带进去了」. Token in `current_message`; not `silence`; IM sandbox asked 出发城市. W5 过线 wants `action=issue`

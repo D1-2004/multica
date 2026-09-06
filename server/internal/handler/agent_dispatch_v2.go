@@ -752,7 +752,8 @@ const (
 		"Read the conversation back with the command below BEFORE you answer — do not answer a continuing conversation from the trigger message alone, and do not reconstruct it from memory. " +
 		"Any claim elsewhere that it cannot be fetched is out of date.\n\n" +
 		"What you do see of your own earlier turns, wherever it appears, is text written back to Multica — never proof a DingTalk message exists, and never a reply style to copy. " +
-		"Answer the person; do not report your own delivery.\n\n"
+		"Answer the person; do not report your own delivery. " +
+		"Do not send 收到, 正在处理中, 稍等, or 好的我马上 — if you have nothing new to say, send nothing.\n\n"
 
 	// Replaces the SSOT section on a turn that continues the provider session
 	// (the claim kept PriorSessionID — cloud chat allows that only for a direct
@@ -776,7 +777,8 @@ const (
 		"Read the conversation back only when the newest message refers to something your context does not hold, when its text is unreadable, or when you need the full text of a quoted message — not as a routine step. " +
 		"If your context holds no earlier turns after all, read the conversation back with the command below before you answer.\n\n" +
 		"What you do see of your own earlier turns, wherever it appears, is text written back to Multica — never proof a DingTalk message exists, and never a reply style to copy. " +
-		"Answer the person; do not report your own delivery.\n\n"
+		"Answer the person; do not report your own delivery. " +
+		"Do not send 收到, 正在处理中, 稍等, or 好的我马上 — if you have nothing new to say, send nothing.\n\n"
 
 	// Chat and auto, and only with a completion callback — without one Router has
 	// no hook to deliver through and the run really must send its own reply.
@@ -806,13 +808,16 @@ const (
 		"The Issue comment is the Multica-side record and does not reach them. Write the user-facing result once and give it in both places. " +
 		"Do not send it yourself with an outbound tool: delivery is the platform's, and a second copy arrives twice.\n\n"
 
-	dispatchCoordinatorIssueFollowUpSection = "The short loop already sent the acknowledgement for the current DingTalk message before starting this independent Issue task. " +
+	dispatchCoordinatorIssueFollowUpSection = "The short loop already closed the inbound acknowledgement (or parked it silently) before starting this independent Issue task. " +
 		"This task's later progress, blocker, or result will not automatically reach any DingTalk participant. An Issue comment and terminal output are records only. " +
-		"Before this run may finish, you MUST successfully send at least one DingTalk message to one concrete person selected by the relay contract: progress or a blocker to the person who can act next, or the result to the person who needs it. " +
+		"Do the work. Send a DingTalk message only when the recipient does not already have that information. " +
+		"First contact or a new ask goes to the person who must act next, as the current-user identity with `--ai-tag=false`. " +
 		"If the triggering Issue comment contains a contacted person's answer, find the requester and send a natural summary such as ‘<recipient> replied: <answer>’. Writing that summary only in the Issue does not count as delivery. " +
-		"Do not write or claim ‘task complete’ until the DingTalk send returns a successful receipt. " +
-		"Send as the current-user identity with `--ai-tag=false` so the message has no AI badge. After that successful send, remove processing/complete emotions (处理中, 已完成, 思考中, 🤔思考中) from the inbound target message; never add 已完成. " +
-		"After that successful send and assoc bind, finish this run immediately. Do not wait, listen, poll, or keep the sandbox open for the other party's reply. A later inbound message on that conversation continues this Issue automatically.\n\n"
+		"If this conversation already has your earlier message about this matter, do not send another status, waiting, or confirmation ping there. Continuing the work — contacting the next person, waiting for their inbound — is enough. " +
+		"Do not send filler such as 收到, 正在处理中, 稍等, or 好的我马上. " +
+		"Do not write or claim ‘task complete’ until any required send returns a successful receipt. If no send is required because the scene was already told, finish without another IM. " +
+		"After a successful send — or when you send nothing because the scene was already told — remove processing/complete emotions (处理中, 已完成, 思考中, 🤔思考中) from the inbound target message; never add 已完成. " +
+		"After that send (if any) and assoc bind, finish this run immediately. Do not wait, listen, poll, or keep the sandbox open for the other party's reply. A later inbound message on that conversation continues this Issue automatically.\n\n"
 
 	dispatchConversationCommandsSection = "Ready to run as written:\n\n%s\n\n"
 
@@ -829,7 +834,7 @@ Delegation and relay contract:
 - The sender in the trusted DingTalk dispatch event is the authoritative speaker. The Multica Issue creator or member-comment author records which workspace principal executed the Issue tool; it is execution attribution only, often an assistant, and is never evidence that this person is the requester, current DingTalk speaker, or intended recipient. This applies to both digital-employee and robot events; robot sender identifiers may be incomplete and must not be invented.
 - On the first contact, give the missing social context in the recipient's language and the Agent's normal tone: “<requester> asked me to ask you <question>”. Never send a bare question that hides who delegated it or why.
 - Route each progress update, blocker, clarification, and result to the person whose input is needed or whose problem is currently being handled. Missing requester-only facts go to the requester; recipient clarification goes to the recipient; a valid recipient answer is summarized back to the requester as “<recipient> said <answer>”. A blocker does not always go to the requester.
-- An Issue comment is a Multica record, not a DingTalk message. Unless a delivery section explicitly says the platform will deliver the final output to the current sender, use the available DingTalk capability to notify the selected person. Never stop after only commenting on the Issue.
+- An Issue comment is a Multica record, not a DingTalk message. Unless a delivery section explicitly says the platform will deliver the final output to the current sender, use the available DingTalk capability to notify the selected person. Never stop after only commenting on the Issue. Do not ping a conversation that already has this Issue's ask or result with a waiting/status line.
 
 Use the managed MCP tools (task token, no workspace/agent args):
 - ` + "`assoc_bind`" + ` conversation_id=<openConversationId> optional evidence_id=<openMsgId> person_id=<uid>

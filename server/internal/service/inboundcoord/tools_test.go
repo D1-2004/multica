@@ -439,6 +439,38 @@ func TestMarshalCoordinatorRecallIsSlim(t *testing.T) {
 	}
 }
 
+func TestMarshalCoordinatorRecallDropsForeignScene(t *testing.T) {
+	t.Parallel()
+	raw, err := marshalCoordinatorRecall(assoc.Result{
+		ConversationID: "cid-r9b",
+		Items: []assoc.Item{
+			{
+				IssueID:     "issue-paper",
+				Purpose:     "记下本群纪要 PAPER-A",
+				OnThisScene: true,
+				WhyListed:   "本会话事项",
+			},
+			{
+				IssueID:     "issue-schedule",
+				Purpose:     "冬翔委托：向 dxxh 确认下周排期",
+				OnThisScene: false,
+				WhyListed:   "其他会话",
+				WaitingOn:   []assoc.WaitingRef{{ConversationID: "cid-r9b"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view coordinatorRecallView
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Items) != 1 || view.Items[0].IssueID != "issue-paper" {
+		t.Fatalf("coordinator cards must stay on this cid, got %+v", view.Items)
+	}
+}
+
 func TestSanitizeRecallCommentDropsDWS(t *testing.T) {
 	t.Parallel()
 	got := sanitizeRecallComment("已向须莫v6发送消息询问今晚是否有会议安排。\n发送详情：\n- 目标会话：须莫v6（openConversationId: cidx）\n- 发送状态：成功（openTaskId: abc）\n等待回复。")

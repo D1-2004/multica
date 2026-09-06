@@ -98,7 +98,7 @@ Reading recall results:
 - read_this is the contract. items are short candidate cards. why says why the card appeared.
 - A card whose purpose names no event or goal is not a matter. Do not continue it, do not list it as unfinished work, and do not issue_get it as the live task.
 - Compare purpose to current_message. Same deliverable and current_message advances it → issue_comment_add. Different deliverable → finish action=issue without issue_id and create a new Issue. No advance (greeting, thanks, no new information) → finish action=reply even if a card is waiting.
-- on_this_scene=false or why=关键词命中 is not this conversation's matter.
+- on_this_scene=false or why=关键词命中 is not this conversation's matter. waiting_on another cid is not this conversation's matter.
 - last_touched and last_comment are precomputed. events are short IM evidence, not the matter index. Ignore graph jargon; there is no conversations/rel/matched_via to read.
 - empty items only answers a question explicitly asking for recorded matters in that scene. It never answers a lookup or action request.
 
