@@ -6,6 +6,12 @@ SELECT * FROM dsh_plugin
 WHERE workspace_id = $1
 ORDER BY package_name ASC;
 
+-- name: GetDshPluginByID :one
+-- Used only by the capability-signed artifact route, where the signature has
+-- already established which plugin the caller may read and there is no
+-- authenticated workspace to scope by.
+SELECT * FROM dsh_plugin WHERE id = $1;
+
 -- name: GetDshPluginInWorkspace :one
 SELECT * FROM dsh_plugin
 WHERE id = $1 AND workspace_id = $2;

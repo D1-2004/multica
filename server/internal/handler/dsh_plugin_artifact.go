@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/dshplugin"
-	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -71,21 +70,16 @@ func (h *Handler) storeDshPluginArtifact(
 // recorded upstream spec. An uploaded package has no upstream, so if the link
 // cannot be produced it is better to say so than to emit a spec that the
 // adapter will reject with a confusing error.
-func (h *Handler) dshPluginDeliverySource(ctx context.Context, row db.DshPlugin) (string, error) {
-	if row.ArtifactKey != "" {
-		if presigner, ok := h.Storage.(storage.Presigner); ok && presigner != nil {
-			url, err := presigner.PresignGet(ctx, row.ArtifactKey, dshArtifactLinkTTL)
-			if err == nil && url != "" {
-				return url, nil
-			}
-			if err != nil {
-				slog.Warn("failed to presign a DSH plugin artifact",
-					"package", row.PackageName, "error", err)
-			}
+func (h *Handler) dshPluginDeliverySource(_ context.Context, row db.DshPlugin) (string, error) {
+	if row.ArtifactKey != "" && h.Storage != nil {
+		if url := h.dshPluginArtifactURL(uuidToString(row.ID), time.Now()); url != "" {
+			return url, nil
 		}
+		slog.Warn("no public URL is configured, so the stored plugin package cannot be served",
+			"package", row.PackageName)
 	}
 	if row.SourceKind == string(dshplugin.SourceUpload) {
-		return "", fmt.Errorf("plugin %s was uploaded and its stored package is unavailable", row.PackageName)
+		return "", fmt.Errorf("plugin %s was uploaded and its stored package cannot be served", row.PackageName)
 	}
 	return row.SourceSpec, nil
 }

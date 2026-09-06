@@ -246,6 +246,41 @@ func (q *Queries) DeleteStaleDshPluginCatalogEntries(ctx context.Context, arg De
 	return result.RowsAffected(), nil
 }
 
+const getDshPluginByID = `-- name: GetDshPluginByID :one
+SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size FROM dsh_plugin WHERE id = $1
+`
+
+// Used only by the capability-signed artifact route, where the signature has
+// already established which plugin the caller may read and there is no
+// authenticated workspace to scope by.
+func (q *Queries) GetDshPluginByID(ctx context.Context, id pgtype.UUID) (DshPlugin, error) {
+	row := q.db.QueryRow(ctx, getDshPluginByID, id)
+	var i DshPlugin
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.PackageName,
+		&i.DisplayName,
+		&i.Description,
+		&i.Homepage,
+		&i.SourceKind,
+		&i.SourceSpec,
+		&i.ResolvedVersion,
+		&i.Integrity,
+		&i.BundleRows,
+		&i.ConfigRow,
+		&i.Config,
+		&i.Catalog,
+		&i.ValidatedDshVersion,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArtifactKey,
+		&i.ArtifactSize,
+	)
+	return i, err
+}
+
 const getDshPluginByWorkspaceAndPackage = `-- name: GetDshPluginByWorkspaceAndPackage :one
 SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size FROM dsh_plugin
 WHERE workspace_id = $1 AND package_name = $2

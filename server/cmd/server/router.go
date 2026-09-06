@@ -1671,6 +1671,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// unchanged — this one is purely additive.
 	r.Get("/api/attachments/{id}/signed-download", h.DownloadAttachmentWithCapability)
 
+	// A stored DSH plugin package, fetched by a sandbox process that sends no
+	// Authorization header. Same reasoning as the capability download above:
+	// the short-lived, single-plugin signature in the query is the credential,
+	// and it is only minted while composing a task for an agent already bound
+	// to that plugin.
+	r.Get("/api/dsh-plugins/{id}/artifact", h.DownloadDshPluginArtifact)
+
 	// Avatar serving. Public for the same reason as the capability download
 	// above: the auth cookie is SameSite=Strict, so an auth-gated URL cannot
 	// be a native <img src> from Desktop / mobile webview or a split-origin

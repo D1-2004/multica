@@ -47,6 +47,7 @@ func (h *Handler) composeAgentDshPluginSet(ctx context.Context, agentID, workspa
 			continue
 		}
 		source, err := h.dshPluginDeliverySource(ctx, db.DshPlugin{
+			ID:          row.ID,
 			PackageName: row.PackageName,
 			SourceKind:  row.SourceKind,
 			SourceSpec:  row.SourceSpec,
