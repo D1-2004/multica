@@ -40,6 +40,24 @@ Agent：`e2293e9e-1e79-4926-b0e6-da4cb693add0`，workspace `sombrero-galaxy-zleb
 | WRAP | G1 @ 写一份说明发到群里 | 沙箱先发；`task_finished_loop_decided reason=already_told_scene`；无「已报群里/已发到群里」二刷 |
 | W6 | R9A 有材料，R9B 要「我们群的纪要」 | R9B `look_into` 是 B 的 cid；Host/IM 不出现 A 的探针 |
 
+## 像人（唯一过线）
+
+判断只看群里一个同事会不会这么干，不看 SLS 字段堆砌。探针仍带 ASCII token，方便对上 Host。
+
+```bash
+python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py human --token H-$(date +%H%M)
+# 等沙箱说话（约 90s），再回读 IM + SLS
+python3 .agents/skills/scene-memory-e2e/scripts/check-human-round.py --token H-….
+```
+
+| ID | 怎么演 | 同事不会做的事（失败） | 像人（过线） |
+|---|---|---|---|
+| H-busy | G2 两槽在途后再 @ 高铁（W5）；W2 在途时跟一句「就约线上」（W2B） | 入站一直转「处理中」；群里说「收到/正在处理中/不并进」 | 忙时不说话、确认态落下；槽空了再去订票 |
+| H-ping | G1 先约开会，沙箱说过之后再「就约线上」 | 再刷「已问/已确认/等待 dxxh」 | 跟句续同一件事；群里不再报进度 |
+| H-cid | G2 已有排期后，R9B 要本群纪要 | R9B 把 G2 排期当成本群的事续上 | R9B 只办 PAPER/纪要；`look_into` 是 R9B cid |
+| H-ack | 停驻后连发谢谢/好的/不用回了 | 对谢谢再回一句 | 谢谢不回；真事项 token 还在 |
+| H-wrap | G1 要一份带 token 的住宿清单 | 「已发到群里」二刷，或拿旧说明充数 | 清单发一次；之后静默 |
+
 W3 同一 4s 窗两条（两个 items）依赖发送延迟；dws 间隔常 >4s，会变成两个窗。那正好用来打满 W5 的 2 槽，不算 W3 失败。
 
 ## 重跑
@@ -62,6 +80,7 @@ python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py wrap --token
 | 日期 | 流水线 | SHA | 结论 |
 |---|---|---|---|
 | 2026-09-05 | 3106904059 | `d6eeda741` / `99921f42e` | W5 高铁停驻后 issue，ACK `collect_split`，token `R5-4059-W5` 未丢；无 shouldReply 透出；无 处理中卡住。G1 wrap-up `already_told_scene`。ACK 窗当时走了模型再 silence（Host `window_ack` 对展示文案前缀不稳，后续已补单测）。 |
+| 2026-09-06 | 3106966513 | `9920f712f` | 像人 round `H-2317`：忙时不说话、W5 确认态落下、谢谢不回、住宿清单只发一次、R9B 只查本群 PAPER。W2B 本 token 无进度二刷。 |
 
 [capture] 教训 | 停驻的下一窗不能把谢谢/好的并进真事项，否则模型整窗静默会丢掉第三件 @ | 预发 G2 R5-4059 / SLS collect_split + W5 issue | 2026-09-05
 [capture] 资产 | G1/G2/R9A/R9B/DM cid 与冬翔/dxxh 侧 @ 测试号 id 是 Coordinator 窗与场域记忆的固定预发夹具 | 本页 | 2026-09-05

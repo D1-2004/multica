@@ -84,7 +84,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "step",
-        choices=("status", "w3a", "w3b", "w5", "acks", "wrap", "w2", "w6a", "w6b", "round"),
+        choices=("status", "w3a", "w3b", "w5", "acks", "wrap", "w2", "w6a", "w6b", "round", "human"),
     )
     parser.add_argument("--token", default="WIN")
     args = parser.parse_args()
@@ -141,6 +141,32 @@ def main() -> None:
         time.sleep(3)
         send("主角", G1, AT_DONGXIANG, f"就约线上，token={token}-W2B")
         print("round sent", token)
+    elif args.step == "human":
+        # Sequence for the "feels like a colleague" bar.
+        # W2 speaks first; W2B comes after the sandbox had a chance to talk
+        # (C12). Two G2 slots fill before W5 parks (C10). R9B asks after G2
+        # 排期 exists so recall pollution would show (本 cid).
+        send("主角", G1, AT_DONGXIANG, f"帮我约 dxxh 明天开会，token={token}-W2")
+        send("主角", G2, AT_DONGXIANG, f"帮我问 dxxh 下周排期，token={token}-W3A")
+        send(
+            "主角",
+            G1,
+            AT_DONGXIANG,
+            f"帮我写一份{token}差旅住宿清单发到群里，只要这一份，不要复用旧说明，token={token}-WRAP",
+        )
+        send("配角", R9A, AT_DXXH, f"这个群的材料代号是 {token}-PAPER-A，只在本群有效")
+        print("wait 6s for separate W3 windows")
+        time.sleep(6)
+        send("配角", G2, AT_DXXH, f"查一下本月文档配额，token={token}-W3B")
+        print("wait 25s for two in-flight sandboxes and W2 to speak")
+        time.sleep(25)
+        send("主角", G2, AT_DONGXIANG, f"帮我订下周去上海的高铁，token={token}-W5")
+        for word in ACKS:
+            send("主角", G2, AT_DONGXIANG, word)
+            time.sleep(0.4)
+        send("配角", R9B, AT_DXXH, f"把你们群的纪要和 {token}-PAPER-A 发我")
+        send("主角", G1, AT_DONGXIANG, f"就约线上，token={token}-W2B")
+        print("human round sent", token)
 
 
 if __name__ == "__main__":

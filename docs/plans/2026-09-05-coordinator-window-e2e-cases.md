@@ -5,6 +5,8 @@ Runner: `.agents/skills/scene-memory-e2e/scripts/run-window-plays.py`
 
 Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py round --token <TOKEN>` then SLS + IM reread.
 
+Human bar (only judgment): `run-window-plays.py human --token H-…` then `check-human-round.py --token H-…`. Pass means a colleague would do it this way: busy stays quiet, no leftover 处理中, no 已问/已确认二刷, R9B does not continue G2 排期, thanks get no extra sentence, 住宿清单 once.
+
 ## Round log
 
 | Round | Token | Pipeline 66 | Result |
@@ -35,6 +37,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 | 23 | E1203-loop | 3106924013 | W3A+W3B issue (C11 15th); W5 park then **issue** 12:06:42 (C13/C14 not reproduced); ACK window_ack ×3 no ACK llm; collect_split; WRAP issue+IM 住宿 fields+already_told; W6 R9B **no Decide** after dws_history_failed (C15); no shouldReply; W2B/W5 inbound 处理失败; C12 not reproduced |
 | 24 | E1247-loop | 3106939889 | W3A+W3B issue (C11 16th); W5 park then **reply-reuse** E0003 高铁 `2fe317cd` (C13); ACK window_ack ×5 no ACK llm; collect_split; WRAP **no Host Decide** after dws_history_failed but IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A (C15 not reproduced); no shouldReply; this-token inbound cleaned; C12 not reproduced |
 | 25 | E1332-loop | 3106939889 | W3A+W3B issue (C11 17th); W5 park then **no Decide** after dws_history_failed (C14); sandbox IM cancelled 订票 from ACK 「没事/不用回了」; ACK window_ack ×5 no ACK llm; collect_split; WRAP issue+IM 住宿清单+already_told; W6 R9B issue look_into R9B cid no R9A; no shouldReply; W2B skip-Decide after dws fail; C12 extra IM |
+| 26 | H-2317 | 3106966513 / `9920f712f` | **像人 bar.** H-busy: W5 `two in-flight` park, inbound emo none, no 正在处理中/不并进. H-ping: this-token G1 has no 已问/已确认二刷 (W2B inbound only). H-cid: R9B `action=issue` 本群纪要+PAPER-A, IM searched this cid. H-ack: 谢谢后 `action=silence` ×5, no extra sentence. H-wrap: IM **H-2317 差旅住宿清单（新拟）** once, no 已发到群里. W5 still parked at reread (slots full) — quiet wait, not speech. |
 
 ## Open cases
 
