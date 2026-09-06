@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,7 +31,9 @@ var dshPluginCmd = &cobra.Command{
 		"A plugin is an npm package whose manifest declares a bundle patch. It can be\n" +
 		"imported by reference — npm:name@version, github:owner/repo#ref, or an https\n" +
 		"tarball — or uploaded as a .zip or .tgz. Either way the server validates that\n" +
-		"the package is something DeepSeek Harness can actually load before recording it.",
+		"the package is something DeepSeek Harness can actually load before recording it.\n\n" +
+		"Commands that take <plugin> accept either the package name `list` prints or\n" +
+		"the plugin id.",
 }
 
 var dshPluginListCmd = &cobra.Command{
@@ -40,7 +43,7 @@ var dshPluginListCmd = &cobra.Command{
 }
 
 var dshPluginGetCmd = &cobra.Command{
-	Use:   "get <plugin-id>",
+	Use:   "get <plugin>",
 	Short: "Show one plugin",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runDshPluginGet,
@@ -56,28 +59,28 @@ var dshPluginImportCmd = &cobra.Command{
 }
 
 var dshPluginFilesCmd = &cobra.Command{
-	Use:   "files <plugin-id>",
+	Use:   "files <plugin>",
 	Short: "List the files inside a plugin's package",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runDshPluginFiles,
 }
 
 var dshPluginCatCmd = &cobra.Command{
-	Use:   "cat <plugin-id> <path>",
+	Use:   "cat <plugin> <path>",
 	Short: "Print one file from a plugin's package",
 	Args:  cobra.ExactArgs(2),
 	RunE:  runDshPluginCat,
 }
 
 var dshPluginCheckUpdateCmd = &cobra.Command{
-	Use:   "check-update <plugin-id>",
+	Use:   "check-update <plugin>",
 	Short: "Report whether a newer version is published",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runDshPluginCheckUpdate,
 }
 
 var dshPluginDeleteCmd = &cobra.Command{
-	Use:   "delete <plugin-id>",
+	Use:   "delete <plugin>",
 	Short: "Remove a plugin from the workspace",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runDshPluginDelete,
@@ -134,6 +137,91 @@ type dshPluginSummary struct {
 	Catalog         string   `json:"catalog"`
 }
 
+// resolveDshPluginRef turns what a person typed into the id the API addresses.
+//
+// `list` prints the package name as the thing you read, so the package name is
+// what gets typed next. The API takes a UUID, which is not in front of anyone.
+// Without this the natural sequence -- list, then look at one -- fails on
+// "invalid id", which reads as a broken command rather than a wrong argument.
+//
+// A UUID is passed straight through, so a script that already holds one costs
+// nothing. Everything else is matched against the workspace's plugins: the
+// package name first, since that is a plugin's identity and is unique per
+// workspace, then the display name, which is a label and may not be.
+func resolveDshPluginRef(ctx context.Context, client *cli.APIClient, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("a plugin id or package name is required")
+	}
+	if looksLikeDshPluginID(ref) {
+		return ref, nil
+	}
+
+	var plugins []dshPluginSummary
+	if err := client.GetJSON(ctx, "/api/dsh-plugins", &plugins); err != nil {
+		return "", fmt.Errorf("look up %q: %w", ref, err)
+	}
+	return pickDshPlugin(plugins, ref)
+}
+
+// pickDshPlugin is the matching half of resolveDshPluginRef, kept separate from
+// the request so the precedence and both error shapes are testable.
+//
+// An exact package-name hit wins outright: the package name is a plugin's
+// identity and is unique in a workspace, so nothing else can be a better answer.
+// Only when that misses does the display name come into play — it is a label,
+// nobody promised it is unique, and an ambiguous one is worth saying so about
+// rather than guessing.
+func pickDshPlugin(plugins []dshPluginSummary, ref string) (string, error) {
+	for _, plugin := range plugins {
+		if plugin.PackageName == ref {
+			return plugin.ID, nil
+		}
+	}
+	var byLabel []dshPluginSummary
+	for _, plugin := range plugins {
+		if strings.EqualFold(plugin.DisplayName, ref) || strings.EqualFold(plugin.PackageName, ref) {
+			byLabel = append(byLabel, plugin)
+		}
+	}
+	switch len(byLabel) {
+	case 1:
+		return byLabel[0].ID, nil
+	case 0:
+		names := make([]string, 0, len(plugins))
+		for _, plugin := range plugins {
+			names = append(names, plugin.PackageName)
+		}
+		if len(names) == 0 {
+			return "", fmt.Errorf("no DSH plugin %q is imported into this workspace, and neither is any other", ref)
+		}
+		return "", fmt.Errorf("no DSH plugin %q is imported into this workspace; imported: %s",
+			ref, strings.Join(names, ", "))
+	default:
+		ids := make([]string, 0, len(byLabel))
+		for _, plugin := range byLabel {
+			ids = append(ids, plugin.PackageName+" ("+plugin.ID+")")
+		}
+		return "", fmt.Errorf("%q matches more than one plugin; use an id: %s",
+			ref, strings.Join(ids, ", "))
+	}
+}
+
+// looksLikeDshPluginID reports whether a ref is an id rather than a name.
+// Deliberately a shape test, not a parse: the point is only to choose a branch,
+// and an id that is well-shaped but wrong is the API's to reject.
+//
+// Wider than the shared uuidRegexp by one form. Before this resolver existed the
+// argument went straight to the API, whose pgtype parser also accepts the
+// undashed 32-hex spelling — so a script holding one would now fall through to
+// the name lookup and be told its plugin does not exist, or, worse, match some
+// unrelated package that happens to be named that.
+func looksLikeDshPluginID(value string) bool {
+	return uuidRegexp.MatchString(value) || undashedUUIDRe.MatchString(value)
+}
+
+var undashedUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+
 func runDshPluginList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -171,8 +259,12 @@ func runDshPluginGet(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
+	id, err := resolveDshPluginRef(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
 	var plugin dshPluginSummary
-	if err := client.GetJSON(ctx, "/api/dsh-plugins/"+args[0], &plugin); err != nil {
+	if err := client.GetJSON(ctx, "/api/dsh-plugins/"+id, &plugin); err != nil {
 		return fmt.Errorf("get DSH plugin: %w", err)
 	}
 	if outputJSON(cmd) {
@@ -302,7 +394,11 @@ func runDshPluginFiles(cmd *cobra.Command, args []string) error {
 		} `json:"files"`
 		Truncated bool `json:"truncated"`
 	}
-	if err := client.GetJSON(ctx, "/api/dsh-plugins/"+args[0]+"/files", &listing); err != nil {
+	id, err := resolveDshPluginRef(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
+	if err := client.GetJSON(ctx, "/api/dsh-plugins/"+id+"/files", &listing); err != nil {
 		return fmt.Errorf("list plugin files: %w", err)
 	}
 	if outputJSON(cmd) {
@@ -334,7 +430,11 @@ func runDshPluginCat(cmd *cobra.Command, args []string) error {
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	path := "/api/dsh-plugins/" + args[0] + "/file?path=" + queryEscape(args[1])
+	id, err := resolveDshPluginRef(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
+	path := "/api/dsh-plugins/" + id + "/file?path=" + queryEscape(args[1])
 	if err := client.GetJSON(ctx, path, &file); err != nil {
 		return fmt.Errorf("read plugin file: %w", err)
 	}
@@ -364,7 +464,11 @@ func runDshPluginCheckUpdate(cmd *cobra.Command, args []string) error {
 		Checkable       bool   `json:"checkable"`
 		Reason          string `json:"reason"`
 	}
-	if err := client.GetJSON(ctx, "/api/dsh-plugins/"+args[0]+"/update", &update); err != nil {
+	id, err := resolveDshPluginRef(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
+	if err := client.GetJSON(ctx, "/api/dsh-plugins/"+id+"/update", &update); err != nil {
 		return fmt.Errorf("check for an update: %w", err)
 	}
 	if outputJSON(cmd) {
@@ -384,9 +488,32 @@ func runDshPluginCheckUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runDshPluginDelete(cmd *cobra.Command, args []string) error {
-	skipConfirm, _ := cmd.Flags().GetBool("yes")
-	if !skipConfirm {
-		fmt.Printf("Remove DSH plugin %s? Agents using it will stop loading it. [y/N]: ", args[0])
+	var plugin dshPluginSummary
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	// Resolve before asking, not after. The prompt has to name what will
+	// actually be removed: confirming a string the server has not looked up yet
+	// is confirming nothing, and on a destructive command that is the whole
+	// value of the prompt.
+	lookupCtx, cancelLookup := cli.APIContext(context.Background())
+	id, err := resolveDshPluginRef(lookupCtx, client, args[0])
+	if err == nil {
+		err = client.GetJSON(lookupCtx, "/api/dsh-plugins/"+id, &plugin)
+		if err != nil {
+			err = fmt.Errorf("get DSH plugin: %w", err)
+		}
+	}
+	cancelLookup()
+	if err != nil {
+		return err
+	}
+
+	if skipConfirm, _ := cmd.Flags().GetBool("yes"); !skipConfirm {
+		fmt.Printf("Remove DSH plugin %s@%s? Agents using it will stop loading it. [y/N]: ",
+			plugin.PackageName, orDash(plugin.ResolvedVersion))
 		var answer string
 		_, _ = fmt.Scanln(&answer)
 		if strings.ToLower(strings.TrimSpace(answer)) != "y" {
@@ -394,17 +521,17 @@ func runDshPluginDelete(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 	}
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
-	if err := client.DeleteJSON(ctx, "/api/dsh-plugins/"+args[0]); err != nil {
+	// A second context, started after the prompt. The first one carries a
+	// request deadline of about half a minute, and the prompt blocks on a human
+	// typing — sharing it means someone who hesitates gets "context deadline
+	// exceeded" from a delete they just confirmed.
+	deleteCtx, cancelDelete := cli.APIContext(context.Background())
+	defer cancelDelete()
+	if err := client.DeleteJSON(deleteCtx, "/api/dsh-plugins/"+id); err != nil {
 		return fmt.Errorf("delete DSH plugin: %w", err)
 	}
-	fmt.Printf("DSH plugin removed: %s\n", args[0])
+	fmt.Printf("DSH plugin removed: %s\n", plugin.PackageName)
 	return nil
 }
 
