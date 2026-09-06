@@ -274,6 +274,19 @@ describe("workspace navigation groups", () => {
     ).toBeNull();
   });
 
+  it("organizes workspace destinations into four visible domains", () => {
+    const { container } = render(<AppSidebar />);
+
+    expect(
+      screen.getAllByTestId("sidebar-domain").map((node) => node.textContent),
+    ).toEqual(["Collaboration", "Agent", "Runtime", "Configuration"]);
+    expect(
+      container.querySelector(
+        'button[data-href="/acme/agents"] [data-primary-agent-entry]',
+      ),
+    ).not.toBeNull();
+  });
+
   it("keeps Settings selected for the Application Integrations page", () => {
     navigation.current = {
       pathname: "/acme/settings",

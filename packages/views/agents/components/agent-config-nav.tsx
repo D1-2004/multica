@@ -45,18 +45,18 @@ export function AgentConfigNav({
 
   return (
     <>
-      <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-surface-border bg-muted/20 px-3 py-5 md:block">
+      <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-surface-border bg-muted/20 px-3 py-6 md:block">
         <nav aria-label={t(($) => $.tabs.section_navigation_aria)}>
           {groups.map((group) => {
             return (
-              <section key={group.id} className="mb-5 last:mb-0">
+              <section key={group.id} className="mb-6 last:mb-0">
                 <h3
-                  className="px-3 text-caption font-medium leading-6 text-muted-foreground text-pretty"
+                  className="px-3 pb-1 text-micro font-semibold leading-5 text-muted-foreground/75 text-pretty"
                 >
                   {t(($) => $.tabs[group.labelKey])}
                 </h3>
                 <div
-                  className="mt-1 space-y-0.5"
+                  className="mt-1 space-y-1"
                   role="tablist"
                   aria-label={t(($) => $.tabs[group.labelKey])}
                 >
@@ -70,10 +70,10 @@ export function AgentConfigNav({
                         aria-selected={active}
                         onClick={() => onSelect(item.id)}
                         className={cn(
-                          "relative flex min-h-9 w-full min-w-0 items-center rounded-lg px-3 text-left text-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          "relative flex min-h-10 w-full min-w-0 items-center rounded-lg px-3 text-left text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                           active
-                            ? "bg-surface-selected font-medium text-surface-selected-foreground before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-foreground hover:bg-surface-selected"
-                            : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
+                            ? "bg-surface-selected font-semibold text-surface-selected-foreground shadow-xs before:absolute before:inset-y-2.5 before:left-0 before:w-0.5 before:rounded-full before:bg-brand hover:bg-surface-selected"
+                            : "text-foreground/70 hover:bg-surface-hover hover:text-foreground",
                         )}
                       >
                         <span className="min-w-0 truncate">

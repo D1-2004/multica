@@ -51,4 +51,21 @@ describe("AgentConfigNav", () => {
       screen.getByRole("combobox", { name: "Configuration page" }),
     ).toBeInTheDocument();
   });
+
+  it("visually separates group headings from configuration tabs", () => {
+    renderWithI18n(
+      <AgentConfigNav
+        groups={AGENT_CONFIG_GROUPS}
+        activeView="digital_employee"
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByRole("heading", { name: "Identity & Goals" }),
+    ).toHaveClass("text-micro", "font-semibold");
+    expect(
+      screen.getByRole("tab", { name: "Digital Employee" }),
+    ).toHaveClass("min-h-10", "text-body");
+  });
 });
