@@ -704,6 +704,10 @@ func (h *Handler) createAgentDispatchChatV2(
 	}
 	result, err := h.ChannelRouter.HandleResultWithOptions(r.Context(), message, options)
 	if err != nil {
+		if errors.Is(err, service.ErrIssueDispatchPending) {
+			writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
 		return
 	}

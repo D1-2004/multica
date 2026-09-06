@@ -42,5 +42,12 @@ func TestIsCoordinatorBusyParkReason(t *testing.T) {
 		if got := isCoordinatorBusyParkReason(tc.reason); got != tc.park {
 			t.Fatalf("reason %q park=%v want %v", tc.reason, got, tc.park)
 		}
+		silence := shouldSilenceCoordinatorBusyPark(http.StatusConflict, tc.reason)
+		if silence != tc.park {
+			t.Fatalf("reason %q silence=%v want %v", tc.reason, silence, tc.park)
+		}
+	}
+	if shouldSilenceCoordinatorBusyPark(http.StatusInternalServerError, "recalled issue already has a pending agent task") {
+		t.Fatal("chat 500 must not be treated as a silent park")
 	}
 }

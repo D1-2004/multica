@@ -201,7 +201,12 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	}
 	if response.Status() == http.StatusConflict || response.Status() >= http.StatusInternalServerError {
 		reason := dispatchRejectReason(response)
-		if response.Status() == http.StatusConflict && isCoordinatorBusyParkReason(reason) {
+		if shouldSilenceCoordinatorBusyPark(response.Status(), reason) {
+			// ActionRetry parks until the recalled issue is free. Clear the
+			// inbound 处理中 now; do not 500/fail which stamps 处理失败.
+			w.handler.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, job.AgentID,
+				"inbound_coordinator_busy_park_silence_failed", util.UUIDToString(job.ID))
+			w.handler.closeExtraCoordinatorCallbacks(ctx, command, job.AgentID)
 			return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, reason)
 		}
 		return true, w.retry(ctx, job, fmt.Errorf("%s", reason))
@@ -465,6 +470,10 @@ func isCoordinatorBusyParkReason(reason string) bool {
 		strings.Contains(reason, "already has an active task") ||
 		strings.Contains(reason, "issue_busy") ||
 		strings.Contains(reason, "active duplicate")
+}
+
+func shouldSilenceCoordinatorBusyPark(status int, reason string) bool {
+	return status == http.StatusConflict && isCoordinatorBusyParkReason(reason)
 }
 
 func coordinatorIssueReplayRequired(response *bufferedDispatchResponse) bool {
