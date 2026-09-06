@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Where the community index comes from.
@@ -24,6 +25,8 @@ const (
 	CatalogOriginURL = CatalogSiteURL + "/plugins.json"
 	// maxCatalogBytes bounds either path. The document is around 3 MB.
 	maxCatalogBytes = 24 << 20
+	// catalogOriginTimeout bounds the origin attempt before falling back.
+	catalogOriginTimeout = 20 * time.Second
 )
 
 // CatalogFetch is one refresh result, including which source answered so an
@@ -45,7 +48,12 @@ type CatalogFetch struct {
 // knownETag, when non-empty, turns the origin request into a conditional GET,
 // so an unchanged catalog costs a 304 rather than three megabytes.
 func (r *Resolver) FetchCatalogFrom(ctx context.Context, knownETag string) (*CatalogFetch, error) {
-	fetch, siteErr := r.fetchCatalogFromSite(ctx, knownETag)
+	// The origin is GitHub Pages, which from inside some networks hangs
+	// rather than failing. Give it a short budget of its own so the mirror
+	// fallback still fits inside the caller's deadline.
+	siteCtx, cancel := context.WithTimeout(ctx, catalogOriginTimeout)
+	defer cancel()
+	fetch, siteErr := r.fetchCatalogFromSite(siteCtx, knownETag)
 	if siteErr == nil {
 		return fetch, nil
 	}

@@ -2,11 +2,10 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/dshplugin"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -239,40 +238,78 @@ func (h *Handler) RefreshDshPluginCatalog(w http.ResponseWriter, r *http.Request
 	}
 	qtx := h.Queries.WithTx(tx)
 
-	written := 0
+	// ON CONFLICT cannot touch the same row twice in one statement, so the
+	// snapshot is de-duplicated by the key the unique index uses. A community
+	// index can carry a repeated owner/name pair; last one wins, as it would
+	// have with row-at-a-time upserts.
+	type catalogRow struct {
+		Name          string  `json:"name"`
+		Owner         string  `json:"owner"`
+		URL           string  `json:"url"`
+		Page          string  `json:"page"`
+		Category      string  `json:"category"`
+		DescriptionEN string  `json:"description_en"`
+		DescriptionZH string  `json:"description_zh"`
+		NpmPackage    string  `json:"npm_package"`
+		NpmVersion    string  `json:"npm_version"`
+		TarballURL    string  `json:"tarball_url"`
+		Stars         int32   `json:"stars"`
+		Downloads     int64   `json:"downloads"`
+		InstallHint   string  `json:"install_hint"`
+		AddedOn       *string `json:"added_on"`
+	}
+	seen := make(map[string]int, len(doc.Plugins))
+	rows := make([]catalogRow, 0, len(doc.Plugins))
 	for _, entry := range doc.Plugins {
 		if strings.TrimSpace(entry.Name) == "" {
 			continue
 		}
-		added := pgtype.Date{}
+		var added *string
 		if parsed, err := time.Parse("2006-01-02", strings.TrimSpace(entry.Added)); err == nil {
-			added = pgtype.Date{Time: parsed, Valid: true}
+			formatted := parsed.Format("2006-01-02")
+			added = &formatted
 		}
-		if err := qtx.UpsertDshPluginCatalogEntry(ctx, db.UpsertDshPluginCatalogEntryParams{
-			Catalog:       dshplugin.CatalogName,
+		row := catalogRow{
 			Name:          entry.Name,
 			Owner:         entry.Owner,
-			Url:           entry.URL,
+			URL:           entry.URL,
 			Page:          entry.Page,
 			Category:      entry.Category.String(),
-			DescriptionEn: entry.Description.EN,
-			DescriptionZh: entry.Description.ZH,
+			DescriptionEN: entry.Description.EN,
+			DescriptionZH: entry.Description.ZH,
 			NpmPackage:    entry.NPM,
 			NpmVersion:    entry.Version,
 			// Community-submitted rows can name a trusted repository while
 			// pointing the tarball somewhere else; only a URL that belongs to
 			// the entry's own repo is recorded.
-			TarballUrl:     entry.TrustedTarball(),
-			Stars:          entry.Stars,
-			Downloads:      entry.Downloads,
-			InstallHint:    entry.Install,
-			AddedOn:        added,
-			CatalogVersion: doc.Version,
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to write a catalog entry")
-			return
+			TarballURL:  entry.TrustedTarball(),
+			Stars:       entry.Stars,
+			Downloads:   entry.Downloads,
+			InstallHint: entry.Install,
+			AddedOn:     added,
 		}
-		written++
+		key := strings.ToLower(entry.Owner) + "/" + strings.ToLower(entry.Name)
+		if index, ok := seen[key]; ok {
+			rows[index] = row
+			continue
+		}
+		seen[key] = len(rows)
+		rows = append(rows, row)
+	}
+	written := len(rows)
+
+	payload, err := json.Marshal(rows)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode the catalog snapshot")
+		return
+	}
+	if err := qtx.BulkUpsertDshPluginCatalogEntries(ctx, db.BulkUpsertDshPluginCatalogEntriesParams{
+		Catalog:        dshplugin.CatalogName,
+		CatalogVersion: doc.Version,
+		Entries:        payload,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to write the catalog snapshot")
+		return
 	}
 
 	pruned, err := qtx.DeleteStaleDshPluginCatalogEntries(ctx,

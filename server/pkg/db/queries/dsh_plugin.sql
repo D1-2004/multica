@@ -78,6 +78,44 @@ DELETE FROM agent_dsh_plugin WHERE dsh_plugin_id = $1;
 -- name: DeleteAgentDshPluginsByAgent :exec
 DELETE FROM agent_dsh_plugin WHERE agent_id = $1;
 
+-- name: BulkUpsertDshPluginCatalogEntries :exec
+-- One statement for the whole snapshot. Row-at-a-time upserts of ~3200 entries
+-- take long enough that the ingress gateway times the request out before the
+-- refresh can finish, so the set form is what makes a refresh possible at all.
+-- Callers must de-duplicate by (owner, name) first: ON CONFLICT cannot touch the
+-- same row twice within one statement.
+INSERT INTO dsh_plugin_catalog_entry (
+    catalog, name, owner, url, page, category,
+    description_en, description_zh, npm_package, npm_version, tarball_url,
+    stars, downloads, install_hint, added_on, catalog_version, refreshed_at
+)
+SELECT
+    sqlc.arg(catalog)::text,
+    u.name, u.owner, u.url, u.page, u.category,
+    u.description_en, u.description_zh, u.npm_package, u.npm_version, u.tarball_url,
+    u.stars, u.downloads, u.install_hint, u.added_on,
+    sqlc.arg(catalog_version)::text, now()
+FROM jsonb_to_recordset(sqlc.arg(entries)::jsonb) AS u(
+    name text, owner text, url text, page text, category text,
+    description_en text, description_zh text, npm_package text, npm_version text,
+    tarball_url text, stars integer, downloads bigint, install_hint text, added_on date
+)
+ON CONFLICT (catalog, owner, name) DO UPDATE SET
+    url = EXCLUDED.url,
+    page = EXCLUDED.page,
+    category = EXCLUDED.category,
+    description_en = EXCLUDED.description_en,
+    description_zh = EXCLUDED.description_zh,
+    npm_package = EXCLUDED.npm_package,
+    npm_version = EXCLUDED.npm_version,
+    tarball_url = EXCLUDED.tarball_url,
+    stars = EXCLUDED.stars,
+    downloads = EXCLUDED.downloads,
+    install_hint = EXCLUDED.install_hint,
+    added_on = EXCLUDED.added_on,
+    catalog_version = EXCLUDED.catalog_version,
+    refreshed_at = now();
+
 -- name: UpsertDshPluginCatalogEntry :exec
 INSERT INTO dsh_plugin_catalog_entry (
     catalog, name, owner, url, page, category,
