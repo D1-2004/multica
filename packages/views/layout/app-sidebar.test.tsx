@@ -282,7 +282,7 @@ describe("workspace navigation groups", () => {
       domainLabels.map((node) => node.textContent),
     ).toEqual(["Collaboration", "Agent", "Runtime", "Configuration"]);
     for (const label of domainLabels) {
-      expect(label).toHaveClass("h-6");
+      expect(label).toHaveClass("h-5");
     }
     expect(
       container.querySelector(

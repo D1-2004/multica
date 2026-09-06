@@ -869,14 +869,11 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             </Collapsible>
           )}
 
-          {workspaceDomains.map((domain, index) => (
-            <SidebarGroup
-              key={domain.labelKey}
-              className={index === 0 ? "pt-2 pb-1" : "py-1"}
-            >
+          {workspaceDomains.map((domain) => (
+            <SidebarGroup key={domain.labelKey} className="py-0.5">
               <SidebarGroupLabel
                 data-testid="sidebar-domain"
-                className="mb-0.5 h-6 text-micro font-semibold text-muted-foreground/80"
+                className="mb-0.5 h-5 text-micro font-semibold text-muted-foreground/80"
               >
                 {t(($) => $.sidebar[domain.labelKey])}
               </SidebarGroupLabel>
