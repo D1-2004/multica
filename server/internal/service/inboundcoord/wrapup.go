@@ -7,15 +7,25 @@ import (
 	"github.com/multica-ai/multica/server/internal/assoc"
 )
 
-// TaskFinishedAlreadyToldScene reports whether this sandbox run already
-// sent IM on the inbound conversation. Wrap-up must stay silent then.
+// TaskFinishedAlreadyToldScene reports whether THIS issue already sent IM on
+// the inbound conversation. Wrap-up must stay silent then.
 //
-// Event.TaskID is the assoc graph task node, not agent_task_queue.id.
-// ListEventsByScene is scoped to this cid and to WrapupAlreadyToldSince
-// (issue created_at, not the follow-up task's StartedAt).
-func TaskFinishedAlreadyToldScene(events []assoc.Event, sceneCID, taskID string) bool {
+// Event.TaskID is the assoc graph task node. matterTaskIDs are that Issue's
+// assoc tasks (plus the agent_task_queue id). A different Issue's outbound
+// on the same cid must not suppress this wrap-up.
+func TaskFinishedAlreadyToldScene(events []assoc.Event, sceneCID string, matterTaskIDs []string) bool {
 	cid := assoc.NormalizeConversationID(sceneCID)
-	if cid == "" {
+	if cid == "" || len(matterTaskIDs) == 0 {
+		return false
+	}
+	owned := make(map[string]struct{}, len(matterTaskIDs))
+	for _, id := range matterTaskIDs {
+		id = strings.TrimSpace(id)
+		if id != "" {
+			owned[id] = struct{}{}
+		}
+	}
+	if len(owned) == 0 {
 		return false
 	}
 	for _, ev := range events {
@@ -25,7 +35,9 @@ func TaskFinishedAlreadyToldScene(events []assoc.Event, sceneCID, taskID string)
 		if assoc.NormalizeConversationID(ev.SceneKey) != cid {
 			continue
 		}
-		return true
+		if _, ok := owned[strings.TrimSpace(ev.TaskID)]; ok {
+			return true
+		}
 	}
 	return false
 }

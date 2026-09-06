@@ -128,7 +128,20 @@ func (h *Handler) taskFinishedSceneAlreadyTold(ctx context.Context, task *db.Age
 	if err != nil {
 		return false
 	}
-	return inboundcoord.TaskFinishedAlreadyToldScene(events, cid, uuidToString(task.ID))
+	matterIDs := []string{uuidToString(task.ID)}
+	if task.IssueID.Valid {
+		assocTasks, listErr := h.Assoc.ListTasksByIssue(
+			ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), uuidToString(task.IssueID), time.Time{}, time.Time{},
+		)
+		if listErr == nil {
+			for _, at := range assocTasks {
+				if id := strings.TrimSpace(at.ID); id != "" {
+					matterIDs = append(matterIDs, id)
+				}
+			}
+		}
+	}
+	return inboundcoord.TaskFinishedAlreadyToldScene(events, cid, matterIDs)
 }
 
 func (h *Handler) deliverTaskFinishedDecision(ctx context.Context, task *db.AgentTaskQueue, decision inboundcoord.Decision) {

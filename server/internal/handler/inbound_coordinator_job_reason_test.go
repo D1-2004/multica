@@ -51,3 +51,22 @@ func TestIsCoordinatorBusyParkReason(t *testing.T) {
 		t.Fatal("chat 500 must not be treated as a silent park")
 	}
 }
+
+func TestDispatchIdempotencyEndpointIDPrefersCommandNamespace(t *testing.T) {
+	t.Parallel()
+	ns := parseUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	got := dispatchIdempotencyEndpointID(
+		DispatchCommand{DispatchEndpointID: uuidToString(ns)},
+		agentDispatchContext{EndpointID: "public-endpoint", EndpointNamespaceID: ns},
+	)
+	if got != uuidToString(ns) {
+		t.Fatalf("got %q want namespace uuid", got)
+	}
+	empty := dispatchIdempotencyEndpointID(
+		DispatchCommand{},
+		agentDispatchContext{EndpointID: "public-endpoint", EndpointNamespaceID: ns},
+	)
+	if empty != uuidToString(ns) {
+		t.Fatalf("empty command must fall back to namespace, got %q", empty)
+	}
+}

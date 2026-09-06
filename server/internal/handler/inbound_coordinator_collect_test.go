@@ -173,6 +173,27 @@ func TestSameCoordinatorCollectKindSeparatesAckFromWork(t *testing.T) {
 	}
 }
 
+func TestSameCoordinatorCollectKindSeparatesTaskFinished(t *testing.T) {
+	ask := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
+		Sender:   DispatchSender{DisplayName: "冬翔"},
+		Messages: []DispatchMessage{{Text: "帮我订下周去上海的高铁", SenderDisplayName: "冬翔"}},
+	}}}
+	wrapA := DispatchCommand{TaskFinishedTaskID: "task-a"}
+	wrapB := DispatchCommand{TaskFinishedTaskID: "task-b"}
+	if sameCoordinatorCollectKind(ask, wrapA) {
+		t.Fatal("wrap-up must not collect onto inbound work")
+	}
+	if sameCoordinatorCollectKind(wrapA, ask) {
+		t.Fatal("inbound work must not collect onto wrap-up")
+	}
+	if sameCoordinatorCollectKind(wrapA, wrapB) {
+		t.Fatal("wrap-up for different tasks must not merge")
+	}
+	if !sameCoordinatorCollectKind(wrapA, DispatchCommand{TaskFinishedTaskID: "task-a"}) {
+		t.Fatal("the same wrap-up task may coalesce")
+	}
+}
+
 func TestShouldParkSceneCapacitySkipsAckWindows(t *testing.T) {
 	ask := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
 		Sender:   DispatchSender{DisplayName: "测试号"},

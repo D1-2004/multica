@@ -1155,7 +1155,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			itemCommand := overlayDispatchSender(c, item.Delegator)
 			bindWindowItemEvidence(&itemCommand, item, usedEvidence)
 			if existingIssue, existingTask, existingIdent, ok := h.lookupCoordinatorWindowItem(
-				r.Context(), agent.ID, itemKey, dispatchContext.EndpointID, dispatchContext.WorkspaceID,
+				r.Context(), agent.ID, itemKey, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID,
 			); ok {
 				keepAttachments = true
 				if created == 0 {
@@ -1191,7 +1191,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			})
 			if errors.Is(err, service.ErrActiveDuplicate) {
 				if existingIssue, existingTask, existingIdent, ok := h.lookupCoordinatorWindowItem(
-					r.Context(), agent.ID, itemKey, dispatchContext.EndpointID, dispatchContext.WorkspaceID,
+					r.Context(), agent.ID, itemKey, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID,
 				); ok {
 					keepAttachments = true
 					if created == 0 {
@@ -1692,6 +1692,19 @@ func (h *Handler) closeExtraCoordinatorCallbacks(ctx context.Context, command Di
 		cb := command.ExtraCompletionCallbacks[i]
 		h.enqueueCoordinatorSilenceCallback(ctx, &cb, agentID, "inbound_coordinator_extra_silence_failed", "")
 	}
+}
+
+// dispatchIdempotencyEndpointID is the value stored on the task as
+// dispatch_endpoint_id. V2 snapshots the namespace UUID, not the public
+// endpoint id; lookup must use the same string or retry creates a second Issue.
+func dispatchIdempotencyEndpointID(command DispatchCommand, dispatchContext agentDispatchContext) string {
+	if id := strings.TrimSpace(command.DispatchEndpointID); id != "" {
+		return id
+	}
+	if dispatchContext.EndpointNamespaceID.Valid {
+		return uuidToString(dispatchContext.EndpointNamespaceID)
+	}
+	return strings.TrimSpace(dispatchContext.EndpointID)
 }
 
 func (h *Handler) lookupCoordinatorWindowItem(

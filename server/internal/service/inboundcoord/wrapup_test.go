@@ -11,25 +11,24 @@ func TestTaskFinishedAlreadyToldScene(t *testing.T) {
 	t.Parallel()
 	cid := "cid52dllVmkRJLpUZPwxi0jtw=="
 	taskID := "87d0a35b-1e88-47a4-80e7-c63968aba9cb"
+	other := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	events := []assoc.Event{
 		{Direction: assoc.DirInbound, SceneKey: cid, TaskID: taskID},
 		{Direction: assoc.DirOutbound, SceneKey: cid, TaskID: taskID},
 	}
-	if !TaskFinishedAlreadyToldScene(events, cid, taskID) {
+	if !TaskFinishedAlreadyToldScene(events, cid, []string{taskID}) {
 		t.Fatal("same-scene outbound from this task must skip wrap-up")
 	}
-	// Production wrap-up passes agent_task_queue.id; assoc events store the
-	// graph task node id. A mismatch must not keep wrap-up talking.
-	if !TaskFinishedAlreadyToldScene(events, cid, "other-task") {
-		t.Fatal("outbound on this cid during the run must skip wrap-up even when task ids differ")
+	if TaskFinishedAlreadyToldScene(events, cid, []string{other}) {
+		t.Fatal("another Issue's outbound on this cid must not silence this wrap-up")
 	}
 	dm := []assoc.Event{
 		{Direction: assoc.DirOutbound, SceneKey: "cid-dxxh-dm", TaskID: taskID},
 	}
-	if TaskFinishedAlreadyToldScene(dm, cid, taskID) {
+	if TaskFinishedAlreadyToldScene(dm, cid, []string{taskID}) {
 		t.Fatal("DM to someone else is not telling this group")
 	}
-	if TaskFinishedAlreadyToldScene(nil, cid, taskID) {
+	if TaskFinishedAlreadyToldScene(nil, cid, []string{taskID}) {
 		t.Fatal("no events means wrap-up may still speak")
 	}
 }

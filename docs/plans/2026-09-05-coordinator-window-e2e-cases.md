@@ -106,7 +106,7 @@ Each round: `python3 .agents/skills/scene-memory-e2e/scripts/run-window-plays.py
 - Found: E0603-loop W5 job `2f6ca55a-…` parked `two in-flight` then Decide `action=reply` on issue `2fe317cd-…` (assoc still had E0003-loop-W5) text 「我把这条新请求带进去了」. Token in `current_message`; not `silence`; IM sandbox asked 出发城市. W5 过线 wants `action=issue`
 - Fix: after park, Coordinator should `ActionIssue` a new token-scoped 订票 matter rather than comment-append onto an old 高铁 issue
 - Prove: next round W5 Decide `action=issue` with this token (not reply on a previous-round issue_id)
-- Status: found E14; reproduced E22 (`9a3f759e` E1119) and **E24** park then `action=reply` on `2fe317cd-…` (issue_get still `token=E0003-loop-W5`) 「我继续处理订票。」. E15–E17/E19–E21/E23 park then `action=issue`. E18/E25 skipped Decide (C14). Flaky model/assoc. Not shipping this fire
+- Status: Host now rejects `issue_comment_add` when `token=` on the inbound does not continue that Issue (W2B may continue W2; W5 must not continue last-round W5 / W3A). Prove: next round W5 Decide `action=issue` with this token.
 
 ### C14 W5 unpark skipped Decide after `dws_history_failed`
 - Found: E0903-loop W5 job `942ee9b7-…` parked `two in-flight` then SLS `inbound_coordinator_dws_history_failed` 「continuing sandbox enqueue」 09:05:56. No `inbound_coordinator_decided` / `llm_request` for this token. Sandbox still posted 订票 IM 09:06:41. Token not dropped, but W5 过线 wants `action=issue`

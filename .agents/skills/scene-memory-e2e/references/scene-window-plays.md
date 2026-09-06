@@ -34,7 +34,8 @@ Agent：`e2293e9e-1e79-4926-b0e6-da4cb693add0`，workspace `sombrero-galaxy-zleb
 | ID | 怎么演 | 过线 |
 |---|---|---|
 | W3 | G2：冬翔一项、dxxh 另一项。要打满 2 槽就间隔 >4s | 两个 `action=issue`；`item.delegator` 不串 |
-| W5 | 2 个沙箱在途后再 @ 第三件（高铁/订票类，带 token） | `inbound_coordinator_job_parked` reason 含 `two in-flight`；槽位空后 **同一 token** `action=issue`，不得 `silence` |
+| W5 | 2 个沙箱在途后再 @ 第三件（高铁/订票类，带 token） | `inbound_coordinator_job_parked` reason 含 `two in-flight`；槽位空后 **同一 token** `action=issue`，不得 `silence`，不得 `action=reply` 续到上一轮 token 的旧高铁卡 |
+| WRAP+@ | G1 wrap-up 还在 pending 时，同一 cid 再 @ 一件真问题 | wrap-up job 不吸收这条 @；两边各自 Decide；新 @ 不得被 `TaskFinishedTaskID` 吃掉 |
 | W7 | 停驻之后连发 谢谢/好的/收到/嗯/行/辛苦了/不用回了/没事 | `inbound_coordinator_job_collect_split incoming_ack=true`；ACK 窗 `action=silence`；真事项 token 不进 ACK 的 `current_message`；IM 不多回一句；无 处理中/处理失败 |
 | WRAP | G1 @ 写一份说明发到群里 | 沙箱先发；`task_finished_loop_decided reason=already_told_scene`；无「已报群里/已发到群里」二刷 |
 | W6 | R9A 有材料，R9B 要「我们群的纪要」 | R9B `look_into` 是 B 的 cid；Host/IM 不出现 A 的探针 |

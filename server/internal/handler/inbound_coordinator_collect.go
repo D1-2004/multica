@@ -18,11 +18,23 @@ func dispatchConversationID(command DispatchCommand) string {
 	return strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID)
 }
 
+// coordinatorCollectKind is the merge class for one inbound_coordinator_job.
+// Wrap-up must not share a window with a live @; two wrap-ups for different
+// tasks must not share a window either.
+func coordinatorCollectKind(command DispatchCommand) string {
+	if id := strings.TrimSpace(command.TaskFinishedTaskID); id != "" {
+		return "task_finished:" + id
+	}
+	if commandIsWindowAck(command) {
+		return "ack"
+	}
+	return "work"
+}
+
 // sameCoordinatorCollectKind is false when one side is thanks/OK and the
-// other is a real ask. ACK windows skip the 2-task cap; mixing them onto a
-// parked ask lets the model silence the ask.
+// other is a real ask, or when wrap-up would merge with inbound work.
 func sameCoordinatorCollectKind(base, extra DispatchCommand) bool {
-	return commandIsWindowAck(base) == commandIsWindowAck(extra)
+	return coordinatorCollectKind(base) == coordinatorCollectKind(extra)
 }
 
 func mergeDispatchCommands(base, extra DispatchCommand) DispatchCommand {
