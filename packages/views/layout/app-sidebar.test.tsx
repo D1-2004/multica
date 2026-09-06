@@ -72,14 +72,21 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
   SidebarMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SidebarMenuButton: ({
     children,
+    className,
     isActive,
     render,
   }: {
     children: React.ReactNode;
+    className?: string;
     isActive?: boolean;
     render?: React.ReactElement<{ href?: string }>;
   }) => (
-    <button type="button" data-active={isActive ? "true" : undefined} data-href={render?.props.href}>
+    <button
+      type="button"
+      className={className}
+      data-active={isActive ? "true" : undefined}
+      data-href={render?.props.href}
+    >
       {children}
     </button>
   ),
@@ -284,6 +291,9 @@ describe("workspace navigation groups", () => {
     for (const label of domainLabels) {
       expect(label).toHaveClass("h-5");
     }
+    expect(
+      container.querySelector('button[data-href="/acme/agents"]'),
+    ).toHaveClass("font-semibold", "data-active:font-semibold");
     expect(
       container.querySelector(
         'button[data-href="/acme/agents"] [data-primary-agent-entry]',

@@ -894,7 +894,8 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                           render={<AppLink href={href} />}
                           className={cn(
                             "text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground",
-                            item.primary && "font-semibold text-foreground",
+                            item.primary &&
+                              "font-semibold text-foreground data-active:font-semibold",
                           )}
                         >
                           {item.primary ? (
