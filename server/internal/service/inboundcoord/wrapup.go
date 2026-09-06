@@ -2,6 +2,7 @@ package inboundcoord
 
 import (
 	"strings"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
 )
@@ -10,8 +11,8 @@ import (
 // sent IM on the inbound conversation. Wrap-up must stay silent then.
 //
 // Event.TaskID is the assoc graph task node, not agent_task_queue.id.
-// ListEventsByScene already scoped the rows to this cid and to
-// since=task.StartedAt, so any outbound on this scene is "already told".
+// ListEventsByScene is scoped to this cid and to WrapupAlreadyToldSince
+// (issue created_at, not the follow-up task's StartedAt).
 func TaskFinishedAlreadyToldScene(events []assoc.Event, sceneCID, taskID string) bool {
 	cid := assoc.NormalizeConversationID(sceneCID)
 	if cid == "" {
@@ -27,6 +28,20 @@ func TaskFinishedAlreadyToldScene(events []assoc.Event, sceneCID, taskID string)
 		return true
 	}
 	return false
+}
+
+// WrapupAlreadyToldSince is when wrap-up should start looking for outbound
+// on this cid. Follow-up comment tasks start after the previous sandbox
+// already spoke; using StartedAt would miss that outbound and ping again.
+func WrapupAlreadyToldSince(taskCreatedAt, issueCreatedAt time.Time) time.Time {
+	since := taskCreatedAt
+	if !issueCreatedAt.IsZero() && (since.IsZero() || issueCreatedAt.Before(since)) {
+		since = issueCreatedAt
+	}
+	if since.IsZero() {
+		return time.Now().Add(-2 * time.Hour)
+	}
+	return since
 }
 
 // TaskFinishedWrapupRedundant is a Host filter for wrap-up speech that only
@@ -47,6 +62,12 @@ func TaskFinishedWrapupRedundant(text string) bool {
 		"请看群",
 		"私信你",
 		"私信向你",
+		"已私信",
+		"已问",
+		"已确认",
+		"已补充告知",
+		"等他回",
+		"等他回复",
 	} {
 		if strings.Contains(t, needle) {
 			return true

@@ -977,6 +977,28 @@ func TestLoopTaskFinishedSilencesRedundantWrapup(t *testing.T) {
 	}
 }
 
+func TestLoopTaskFinishedSilencesAskedStatusPing(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("finish", toolFinish, `{"action":"reply","text":"已问 dxxh 明天开会时间，等他回。"}`),
+	}}
+	decision, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
+		Loop:       LoopTaskFinished,
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "group",
+		Message:    "任务已完成，请向委托人汇报。",
+		IssueID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		TaskResult: "已向 dxxh 确认明天线上开会。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionSilence || strings.TrimSpace(decision.UserText) != "" {
+		t.Fatalf("status-ping wrap-up must silence, decision=%#v", decision)
+	}
+}
+
 func TestToolsForTurnTaskFinishedOmitsAssocRecall(t *testing.T) {
 	t.Parallel()
 	defs := toolsForTurn(Turn{Loop: LoopTaskFinished}, 0)

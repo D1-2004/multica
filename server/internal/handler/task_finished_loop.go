@@ -116,13 +116,14 @@ func (h *Handler) taskFinishedSceneAlreadyTold(ctx context.Context, task *db.Age
 	if h == nil || h.Assoc == nil || task == nil {
 		return false
 	}
-	since := task.CreatedAt.Time
-	if task.StartedAt.Valid {
-		since = task.StartedAt.Time
+	var issueCreated time.Time
+	if task.IssueID.Valid && h.Queries != nil {
+		issue, err := h.Queries.GetIssue(ctx, task.IssueID)
+		if err == nil && issue.CreatedAt.Valid {
+			issueCreated = issue.CreatedAt.Time
+		}
 	}
-	if since.IsZero() {
-		since = time.Now().Add(-2 * time.Hour)
-	}
+	since := inboundcoord.WrapupAlreadyToldSince(task.CreatedAt.Time, issueCreated)
 	events, err := h.Assoc.ListEventsByScene(ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), cid, since, 20)
 	if err != nil {
 		return false

@@ -2,6 +2,7 @@ package inboundcoord
 
 import (
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
 )
@@ -33,6 +34,20 @@ func TestTaskFinishedAlreadyToldScene(t *testing.T) {
 	}
 }
 
+func TestWrapupAlreadyToldSinceUsesIssueCreatedAt(t *testing.T) {
+	t.Parallel()
+	issueCreated := time.Date(2026, 9, 6, 4, 30, 0, 0, time.UTC)
+	followUpCreated := time.Date(2026, 9, 6, 4, 35, 0, 0, time.UTC)
+	got := WrapupAlreadyToldSince(followUpCreated, issueCreated)
+	if !got.Equal(issueCreated) {
+		t.Fatalf("since=%s want issue created_at so prior sandbox outbound is visible", got)
+	}
+	onlyTask := WrapupAlreadyToldSince(followUpCreated, time.Time{})
+	if !onlyTask.Equal(followUpCreated) {
+		t.Fatalf("no issue timestamp should keep task created_at, got %s", onlyTask)
+	}
+}
+
 func TestTaskFinishedWrapupRedundant(t *testing.T) {
 	t.Parallel()
 	redundant := []string{
@@ -40,6 +55,10 @@ func TestTaskFinishedWrapupRedundant(t *testing.T) {
 		"@冬翔 W5B-SLOT-1102 没查到匹配机票，已私信你确认编号或补充航班细节。",
 		"已私信向你确认周五下午三点开会。",
 		"结果已发送，请看群。",
+		"已问 dxxh 明天开会时间，等他回。",
+		"已私信 dxxh 询问下周排期，等他回复。",
+		"已确认线上开会，等待 dxxh。",
+		"已补充告知线上开会时间。",
 	}
 	for _, text := range redundant {
 		if !TaskFinishedWrapupRedundant(text) {
@@ -47,7 +66,6 @@ func TestTaskFinishedWrapupRedundant(t *testing.T) {
 		}
 	}
 	keep := []string{
-		"我问了 dxxh 周五三点，等他回。",
 		"机票没查到，需要航班号或航司。",
 		"会议室系统里没有这个编号，换一个？",
 	}
@@ -67,10 +85,16 @@ func TestFilterTaskFinishedWrapup(t *testing.T) {
 		t.Fatalf("got %#v", got)
 	}
 	kept := FilterTaskFinishedWrapup(Decision{
-		Action: ActionReply, UserText: "我问了 dxxh，等他回。",
+		Action: ActionReply, UserText: "机票没查到，需要航班号或航司。",
 	})
 	if kept.Action != ActionReply || kept.UserText == "" {
 		t.Fatalf("kept %#v", kept)
+	}
+	statusPing := FilterTaskFinishedWrapup(Decision{
+		Action: ActionReply, UserText: "已问 dxxh 明天开会时间，等他回。",
+	})
+	if statusPing.Action != ActionSilence || statusPing.UserText != "" {
+		t.Fatalf("status ping %#v", statusPing)
 	}
 	silent := FilterTaskFinishedWrapup(Decision{Action: ActionSilence})
 	if silent.Action != ActionSilence {
