@@ -12,20 +12,20 @@
 // This package lifts that classifier into the in-flight write path so the
 // stored failure_reason is already refined when the row is first
 // persisted, and so server / daemon / cloud share a single source of
-// truth for the canonical 22 values. PR1 of the Grafana board plan
+// truth for the canonical 23 values. PR1 of the Grafana board plan
 // ([MUL-2946](https://multica/issues/MUL-2946)). Subsequent PRs use
 // AllReasons() to pre-warm the Prometheus failure_reason label set.
 //
-// The 22 canonical values fall into two groups:
+// The 23 canonical values fall into two groups:
 //
-//   - 8 platform-side values (no `agent_error.` prefix) emitted by the
+//   - 9 platform-side values (no `agent_error.` prefix) emitted by the
 //     server-side sweepers and daemon classifiers when the failure is
 //     attributable to the platform/scheduler/runtime layer rather than
 //     anything the agent process did:
 //
 //     queued_expired, runtime_offline, runtime_recovery, timeout,
 //     iteration_limit, agent_blocked, api_invalid_request,
-//     skill_bundle_unavailable
+//     skill_bundle_unavailable, dsh_plugin_unavailable
 //
 //   - 14 agent-side values (with `agent_error.` prefix) produced by
 //     Classify(rawError) when the agent process surfaced an error string.
@@ -48,7 +48,7 @@ type Reason string
 
 // agentErrorPrefix marks the 14 sub-reasons that originate inside the
 // agent process (provider error, runner crash, context overflow, etc.)
-// as opposed to the 8 platform-side reasons (queue expiry, runtime
+// as opposed to the 9 platform-side reasons (queue expiry, runtime
 // offline, sweeper timeout, etc.). IsAgentError uses this prefix so
 // callers don't have to enumerate the agent-side reasons by hand.
 const agentErrorPrefix = "agent_error."
@@ -110,6 +110,32 @@ const (
 	// converge instead of re-downloading the whole set. Written by
 	// taskRunFailureReason in daemon/daemon.go.
 	ReasonSkillBundleUnavailable Reason = "skill_bundle_unavailable"
+
+	// ReasonDshPluginUnavailable: a DSH plugin bound to the agent could
+	// not be fetched, unpacked, or mounted, so the harness never reached
+	// the model. Platform-side for the same reason skill bundles are:
+	// the agent process did nothing to cause it.
+	//
+	// It needs its own reason because the error text is a poor witness.
+	// A fetch failure carries the HTTP status ("403"), and a mount
+	// failure carries a Node stack trace whose line numbers are dense
+	// with three-digit numbers — so Classify's provider rules, which
+	// scan for status codes anywhere in the text, claimed both. Observed
+	// twice on 预发: a plugin 403 reported as provider_auth_or_access,
+	// and an ERR_MODULE_NOT_FOUND reported as
+	// provider_capacity_or_rate_limit.
+	//
+	// The cost is the operator's next move. Both labels name the model
+	// provider, so both send someone to re-authenticate or wait out a
+	// rate limit while the actual problem — a package they bound — sits
+	// untouched and every retry fails the same way.
+	//
+	// Deliberately NOT retryable: unlike a skill bundle, where a partial
+	// download is cached and successive attempts converge, the dominant
+	// cause here is a package that is wrong for this profile. Retrying
+	// burns a sandbox and changes nothing; the fix is to correct or
+	// unbind the plugin.
+	ReasonDshPluginUnavailable Reason = "dsh_plugin_unavailable"
 
 	// Agent process side: failure surfaced by the agent CLI / SDK as
 	// an error string. Classify(rawError) is responsible for picking
@@ -186,7 +212,7 @@ const (
 	ReasonAgentUnknown Reason = "agent_error.unknown"
 )
 
-// allReasons is the canonical ordered list of the 22 reasons. Order is
+// allReasons is the canonical ordered list of the 23 reasons. Order is
 // stable so callers (e.g. Prometheus collectors that pre-warm series via
 // AllReasons) can build deterministic label sets across restarts.
 //
@@ -205,6 +231,7 @@ var allReasons = []Reason{
 	ReasonAgentBlocked,
 	ReasonAPIInvalidRequest,
 	ReasonSkillBundleUnavailable,
+	ReasonDshPluginUnavailable,
 
 	// Agent process side: provider errors.
 	ReasonAgentProviderAuthOrAccess,
@@ -244,7 +271,7 @@ func (r Reason) IsAgentError() bool {
 	return strings.HasPrefix(string(r), agentErrorPrefix)
 }
 
-// AllReasons returns the canonical 22 reasons in a stable order. The
+// AllReasons returns the canonical 23 reasons in a stable order. The
 // caller MUST NOT mutate the returned slice; a copy is returned so
 // concurrent callers can append to their local copy without corrupting
 // the package-level fixture.

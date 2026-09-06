@@ -452,6 +452,17 @@ describe("ChatMessageList failure copy (MUL-5370 regression)", () => {
     expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
   });
 
+  // Without its own copy this reason falls back to the generic bubble, which
+  // says nothing about a plugin -- and the operator has no way to learn that a
+  // package they bound is what stopped the run.
+  it("renders dedicated copy for a DSH plugin that could not load", async () => {
+    renderFailure("dsh_plugin_unavailable");
+    expect(
+      await screen.findByText(enChat.message_list.failure.dsh_plugin_unavailable),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+  });
+
   it("renders dedicated copy for a refined reason the map names", async () => {
     renderFailure("agent_error.provider_network");
     expect(

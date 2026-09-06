@@ -7036,7 +7036,11 @@ func freshSessionMayHelp(errText string) bool {
 		// Defensive: a timeout normally carries its own terminal status and
 		// never reaches this gate, but if one is ever classified out of a
 		// "failed" result, re-running the whole task is not the answer.
-		taskfailure.ReasonAgentTimeout:
+		taskfailure.ReasonAgentTimeout,
+		// A plugin that could not be fetched or mounted fails identically on
+		// a fresh session: nothing about the conversation caused it, and the
+		// remedy is to fix or unbind the plugin.
+		taskfailure.ReasonDshPluginUnavailable:
 		return false
 	default:
 		return true

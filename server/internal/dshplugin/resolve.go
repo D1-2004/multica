@@ -91,6 +91,9 @@ type packageManifest struct {
 		Client json.RawMessage `json:"client"`
 	} `json:"dsh"`
 	Dependencies map[string]string `json:"dependencies"`
+	// PeerDependencies are resolvable too: npm installs the package into a
+	// tree where its peers are expected to already sit alongside it.
+	PeerDependencies map[string]string `json:"peerDependencies"`
 }
 
 type registryVersion struct {
@@ -418,12 +421,16 @@ func inspectArchive(data []byte, src Source) (*Resolved, error) {
 	if !ok {
 		return nil, fmt.Errorf("the package points dsh.bundle.patch at %s, which is not in the package", patchPath)
 	}
-	rows, err := BundleRowIDs(patchBody)
+	composed, err := ComposeBundleRows(patchBody)
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
+	if len(composed) == 0 {
 		return nil, fmt.Errorf("the package's bundle patch inserts no loader row, so there would be nothing to configure or run")
+	}
+	rows := make([]string, 0, len(composed))
+	for _, row := range composed {
+		rows = append(rows, row.ID)
 	}
 
 	resolved := &Resolved{
@@ -444,7 +451,88 @@ func inspectArchive(data []byte, src Source) (*Resolved, error) {
 			"Runtime dependencies (%s) must already be present in the sandbox image; the sandbox installs nothing at task time.",
 			strings.Join(sortedKeys(manifest.Dependencies), ", ")))
 	}
+	resolved.Warnings = append(resolved.Warnings,
+		unresolvableRowWarnings(composed, manifest)...)
 	return resolved, nil
+}
+
+// unresolvableRowWarnings reports rows whose module will not resolve inside the
+// sandbox.
+//
+// The loader imports a row's `name` by module specifier, and the sandbox
+// installs exactly this package and nothing else. So a bare package specifier
+// that is neither the package itself nor one of its declared dependencies has
+// nowhere to come from, and the run dies at boot with a raw ERR_MODULE_NOT_FOUND
+// that names Node internals rather than the plugin.
+//
+// Only bare package specifiers are judged. Three other shapes are legitimate
+// and unknowable from here, so they are left alone: a relative or absolute path,
+// which DSH resolves against the patch file; a `cordis:` built-in, which the
+// loader provides itself; and a subpath of a package that IS resolvable, whose
+// package half is what has to exist.
+//
+// A warning, not a refusal, even for the shapes it does judge: module resolution
+// is DSH's, not ours, and the sandbox image may carry a module this package
+// never declares. But the common cause is a package renamed without renaming its
+// patch -- an editing mistake that is free to catch here and expensive to find
+// later, since it only surfaces as a failed task.
+func unresolvableRowWarnings(rows []BundleRow, manifest packageManifest) []string {
+	resolvable := map[string]bool{manifest.Name: true}
+	for name := range manifest.Dependencies {
+		resolvable[name] = true
+	}
+	for name := range manifest.PeerDependencies {
+		resolvable[name] = true
+	}
+
+	var warnings []string
+	reported := map[string]bool{}
+	for _, row := range rows {
+		module := strings.TrimSpace(row.Module)
+		// A row with no name inherits the bundle's own module, and a disabled
+		// row is skipped before the loader resolves anything.
+		if module == "" || row.Disabled {
+			continue
+		}
+		pkg, ok := barePackageSpecifier(module)
+		if !ok || resolvable[pkg] || reported[pkg] {
+			continue
+		}
+		reported[pkg] = true
+		warnings = append(warnings, fmt.Sprintf(
+			"Loader row %q imports %q, which this package neither is nor depends on. "+
+				"Unless the sandbox image already provides it, the task will fail to start.",
+			row.ID, module))
+	}
+	return warnings
+}
+
+// barePackageSpecifier reduces a module specifier to the package that has to be
+// installed for it to resolve, and reports false for a specifier that names no
+// package at all.
+//
+// `dsh-mcp-lens/tools` needs `dsh-mcp-lens`; `@scope/pkg/sub` needs
+// `@scope/pkg`. A path (`./lib/index.js`, `/opt/x`) resolves against the file
+// system, and anything with a scheme (`cordis:group`, `node:fs`) is provided by
+// the loader or the runtime -- neither is a package this manifest could declare.
+func barePackageSpecifier(module string) (string, bool) {
+	if module == "" || strings.HasPrefix(module, ".") || strings.HasPrefix(module, "/") {
+		return "", false
+	}
+	if strings.Contains(module, ":") {
+		return "", false
+	}
+	parts := strings.Split(module, "/")
+	if strings.HasPrefix(module, "@") {
+		if len(parts) < 2 || parts[0] == "@" || parts[1] == "" {
+			return "", false
+		}
+		return parts[0] + "/" + parts[1], true
+	}
+	if parts[0] == "" {
+		return "", false
+	}
+	return parts[0], true
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -588,6 +676,35 @@ func objectKeysInOrder(raw json.RawMessage) []string {
 // and reporting the ids an earlier insert mentioned would offer configuration
 // targets that no longer exist while hiding the ones that do.
 func BundleRowIDs(body []byte) ([]string, error) {
+	rows, err := ComposeBundleRows(body)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	return ids, nil
+}
+
+// BundleRow is one loader row a bundle patch leaves behind: the id that
+// addresses it, the module the loader imports to fill it, and whether the
+// loader will look at it at all.
+type BundleRow struct {
+	// ID addresses the row. Author-chosen, and routinely not the package
+	// name -- dsh-mcp-lens inserts a row called mcp-lens.
+	ID string
+	// Module is what the loader passes to import(). Usually the package
+	// itself, but a bundle may mount a module it merely depends on, or name
+	// a path or a cordis: built-in instead.
+	Module string
+	// Disabled rows are skipped before the loader resolves anything, so a
+	// bundle may legitimately ship one naming a module that is not present.
+	Disabled bool
+}
+
+// ComposeBundleRows is BundleRowIDs with the module names kept.
+func ComposeBundleRows(body []byte) ([]BundleRow, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
 		return nil, fmt.Errorf("the package's bundle patch is not valid YAML")
@@ -666,13 +783,17 @@ func BundleRowIDs(body []byte) ([]string, error) {
 	}
 
 	seen := map[string]bool{}
-	var rows []string
+	var rows []BundleRow
 	var flatten func(entries []*patchEntry)
 	flatten = func(entries []*patchEntry) {
 		for _, entry := range entries {
 			if entry.id != "" && !seen[entry.id] {
 				seen[entry.id] = true
-				rows = append(rows, entry.id)
+				rows = append(rows, BundleRow{
+					ID:       entry.id,
+					Module:   entry.name,
+					Disabled: entry.disabled,
+				})
 			}
 			if entry.isGroup {
 				flatten(entry.children)
@@ -687,6 +808,7 @@ func BundleRowIDs(body []byte) ([]string, error) {
 type patchEntry struct {
 	id       string
 	name     string
+	disabled bool
 	isGroup  bool
 	children []*patchEntry
 }
@@ -697,8 +819,9 @@ func parsePatchEntry(node *yaml.Node) *patchEntry {
 		return nil
 	}
 	entry := &patchEntry{
-		id:   mappingValue(node, "id"),
-		name: mappingValue(node, "name"),
+		id:       mappingValue(node, "id"),
+		name:     mappingValue(node, "name"),
+		disabled: mappingValue(node, "disabled") == "true",
 	}
 	if group := mappingNode(node, "group"); group != nil {
 		// Both shapes appear in the wild: `group: true` with children under
