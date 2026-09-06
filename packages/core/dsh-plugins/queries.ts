@@ -33,6 +33,10 @@ export const dshPluginKeys = {
       params.category,
       params.offset,
     ] as const,
+  files: (wsId: string, id: string) =>
+    ["workspaces", wsId, "dsh-plugins", "files", id] as const,
+  file: (wsId: string, id: string, path: string) =>
+    ["workspaces", wsId, "dsh-plugins", "file", id, path] as const,
   categories: (wsId: string) =>
     ["workspaces", wsId, "dsh-plugins", "categories"] as const,
 };
@@ -121,4 +125,24 @@ export function selectDshPluginAssignments(
     else map.set(binding.pluginId, [agent]);
   }
   return map;
+}
+
+export function dshPluginFilesOptions(wsId: string, pluginId: string) {
+  return queryOptions({
+    queryKey: dshPluginKeys.files(wsId, pluginId),
+    queryFn: () => api.listDshPluginFiles(pluginId),
+    enabled: !!wsId && !!pluginId,
+    // A stored package is immutable for the life of the row, so there is
+    // nothing to refetch until the plugin itself changes.
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
+export function dshPluginFileOptions(wsId: string, pluginId: string, path: string) {
+  return queryOptions({
+    queryKey: dshPluginKeys.file(wsId, pluginId, path),
+    queryFn: () => api.getDshPluginFile(pluginId, path),
+    enabled: !!wsId && !!pluginId && !!path,
+    staleTime: 10 * 60 * 1000,
+  });
 }

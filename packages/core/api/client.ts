@@ -279,6 +279,8 @@ import type {
   DshPluginCatalogCategory,
   DshPluginCatalogPage,
   DshPluginRegistryResult,
+  DshPluginFileContent,
+  DshPluginFileListing,
   DshPluginUpdate,
   ImportDshPluginRequest,
   ImportDshPluginResult,
@@ -298,6 +300,8 @@ import {
   DshPluginCatalogPageSchema,
   DshPluginListSchema,
   DshPluginRegistrySearchSchema,
+  DshPluginFileContentSchema,
+  DshPluginFileListingSchema,
   DshPluginUpdateSchema,
   DshPluginSchema,
   ImportDshPluginResultSchema,
@@ -3489,6 +3493,33 @@ export class ApiClient {
         sourceSpec: "",
       } as DshPluginUpdate,
       { endpoint: "GET /api/dsh-plugins/{id}/update" },
+    );
+  }
+
+  async listDshPluginFiles(id: string): Promise<DshPluginFileListing> {
+    const raw = await this.fetch<unknown>(`/api/dsh-plugins/${id}/files`);
+    return parseWithFallback(
+      raw,
+      DshPluginFileListingSchema,
+      {
+        packageName: "",
+        resolvedVersion: "",
+        files: [],
+        truncated: false,
+      } as DshPluginFileListing,
+      { endpoint: "GET /api/dsh-plugins/{id}/files" },
+    );
+  }
+
+  async getDshPluginFile(id: string, path: string): Promise<DshPluginFileContent> {
+    const raw = await this.fetch<unknown>(
+      `/api/dsh-plugins/${id}/file?path=${encodeURIComponent(path)}`,
+    );
+    return parseWithFallback(
+      raw,
+      DshPluginFileContentSchema,
+      { path, size: 0, content: "" } as DshPluginFileContent,
+      { endpoint: "GET /api/dsh-plugins/{id}/file" },
     );
   }
 

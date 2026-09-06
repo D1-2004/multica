@@ -106,6 +106,9 @@ import type {
   DshPluginCatalogState,
   DshPluginRegistryResult,
   DshPluginSourceKind,
+  DshPluginFile,
+  DshPluginFileContent,
+  DshPluginFileListing,
   DshPluginUpdate,
   ImportDshPluginResult,
 } from "../dsh-plugins/types";
@@ -4410,5 +4413,56 @@ export const DshPluginUpdateSchema = z
       checkable: row.checkable === true,
       reason: row.reason ?? "",
       sourceSpec: row.source_spec ?? "",
+    }),
+  );
+
+export const DshPluginFileListingSchema = z
+  .object({
+    package_name: z.string().optional(),
+    resolved_version: z.string().optional(),
+    files: z
+      .array(
+        z
+          .object({
+            path: z.string(),
+            size: z.number().optional(),
+            viewable: z.boolean().optional(),
+          })
+          .loose()
+          .transform(
+            (row): DshPluginFile => ({
+              path: row.path,
+              size: row.size ?? 0,
+              // Default to false: offering to open something the server would
+              // refuse is worse than hiding a file that could have been shown.
+              viewable: row.viewable === true,
+            }),
+          ),
+      )
+      .optional(),
+    truncated: z.boolean().optional(),
+  })
+  .loose()
+  .transform(
+    (row): DshPluginFileListing => ({
+      packageName: row.package_name ?? "",
+      resolvedVersion: row.resolved_version ?? "",
+      files: row.files ?? [],
+      truncated: row.truncated === true,
+    }),
+  );
+
+export const DshPluginFileContentSchema = z
+  .object({
+    path: z.string().optional(),
+    size: z.number().optional(),
+    content: z.string().optional(),
+  })
+  .loose()
+  .transform(
+    (row): DshPluginFileContent => ({
+      path: row.path ?? "",
+      size: row.size ?? 0,
+      content: row.content ?? "",
     }),
   );

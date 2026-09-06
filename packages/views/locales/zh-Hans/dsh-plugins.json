@@ -55,5 +55,17 @@
     "upload_label": "或者上传一个包",
     "upload_help": "支持 .zip 或 .tgz：npm pack 的产物、GitHub 下载的压缩包，或者直接打包的目录都可以。",
     "uploading": "正在上传 {{name}}…"
+  },
+  "detail": {
+    "back": "全部插件",
+    "rows": "加载行：{{rows}}",
+    "pick_a_file": "选一个文件查看内容。",
+    "not_viewable": "这个文件是二进制或者太大，无法显示。",
+    "no_files": "没有存档",
+    "no_files_hint": "这个插件是在开始保存安装包之前导入的，看不到内容。重新导入一次就可以了。",
+    "files_error": "读取安装包失败",
+    "files_error_hint": "存档打不开。",
+    "file_error": "这个文件读取失败。",
+    "truncated": "文件太多，只列出了前面一部分。"
   }
 }

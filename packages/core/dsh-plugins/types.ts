@@ -142,3 +142,25 @@ export interface DshPluginUpdate {
   reason: string;
   sourceSpec: string;
 }
+
+/** One file inside an imported plugin's package. */
+export interface DshPluginFile {
+  path: string;
+  size: number;
+  /** False for a binary file or one past the display size cap. */
+  viewable: boolean;
+}
+
+export interface DshPluginFileListing {
+  packageName: string;
+  resolvedVersion: string;
+  files: DshPluginFile[];
+  /** True when the package holds more files than are listed. */
+  truncated: boolean;
+}
+
+export interface DshPluginFileContent {
+  path: string;
+  size: number;
+  content: string;
+}

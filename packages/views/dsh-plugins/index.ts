@@ -1,1 +1,1 @@
-export { DshPluginsPage } from "./components";
+export { DshPluginsPage, DshPluginDetailPage } from "./components";

@@ -14,6 +14,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import {
   dshPluginBindingsOptions,
@@ -39,6 +40,7 @@ import {
   CollectionPageHeader,
   CollectionPageState,
 } from "../../layout/collection-page";
+import { useNavigation } from "../../navigation";
 import { useT } from "../../i18n";
 import { ImportDshPluginDialog } from "./import-dsh-plugin-dialog";
 
@@ -56,6 +58,8 @@ export function DshPluginsPage() {
   const { t } = useT("dsh-plugins");
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
+  const navigation = useNavigation();
+  const paths = useWorkspacePaths();
 
   const [tab, setTab] = useState<"installed" | "market">("installed");
   const [installedQuery, setInstalledQuery] = useState("");
@@ -238,6 +242,7 @@ export function DshPluginsPage() {
               <InstalledRow
                 key={plugin.id}
                 plugin={plugin}
+                onOpen={() => navigation.push(paths.dshPluginDetail(plugin.id))}
                 agentCount={assignments.get(plugin.id)?.length ?? 0}
                 onRemove={() => {
                   if (
@@ -356,18 +361,24 @@ function ListSkeleton() {
 function InstalledRow({
   plugin,
   agentCount,
+  onOpen,
   onRemove,
   removing,
 }: {
   plugin: DshPlugin;
   agentCount: number;
+  onOpen: () => void;
   onRemove: () => void;
   removing: boolean;
 }) {
   const { t } = useT("dsh-plugins");
   return (
     <li className="flex items-start gap-3 px-5 py-3">
-      <div className="min-w-0 flex-1">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="min-w-0 flex-1 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         <div className="flex flex-wrap items-center gap-2">
           <span className="truncate font-medium">{plugin.packageName}</span>
           {plugin.resolvedVersion ? (
@@ -401,7 +412,7 @@ function InstalledRow({
               : t(($) => $.installed.used_by_count, { count: agentCount })}
           </span>
         </p>
-      </div>
+      </button>
       <Button
         variant="ghost"
         size="icon-sm"

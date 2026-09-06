@@ -55,5 +55,17 @@
     "upload_label": "Or upload a package",
     "upload_help": "A .zip or .tgz. Accepts an npm pack, a GitHub download, or a plain folder.",
     "uploading": "Uploading {{name}}…"
+  },
+  "detail": {
+    "back": "All plugins",
+    "rows": "Loader rows: {{rows}}",
+    "pick_a_file": "Choose a file to read it.",
+    "not_viewable": "This file is binary or too large to display.",
+    "no_files": "No stored package",
+    "no_files_hint": "This plugin was imported before packages were stored, so its contents cannot be shown. Re-import it to read them.",
+    "files_error": "Could not read the package",
+    "files_error_hint": "The stored package could not be opened.",
+    "file_error": "Could not read that file.",
+    "truncated": "Only the first files are listed."
   }
 }
