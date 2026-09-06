@@ -276,10 +276,14 @@ describe("workspace navigation groups", () => {
 
   it("organizes workspace destinations into four visible domains", () => {
     const { container } = render(<AppSidebar />);
+    const domainLabels = screen.getAllByTestId("sidebar-domain");
 
     expect(
-      screen.getAllByTestId("sidebar-domain").map((node) => node.textContent),
+      domainLabels.map((node) => node.textContent),
     ).toEqual(["Collaboration", "Agent", "Runtime", "Configuration"]);
+    for (const label of domainLabels) {
+      expect(label).toHaveClass("h-6");
+    }
     expect(
       container.querySelector(
         'button[data-href="/acme/agents"] [data-primary-agent-entry]',

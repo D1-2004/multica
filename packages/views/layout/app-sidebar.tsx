@@ -872,11 +872,11 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
           {workspaceDomains.map((domain, index) => (
             <SidebarGroup
               key={domain.labelKey}
-              className={index === 0 ? "pt-3 pb-2" : "py-2"}
+              className={index === 0 ? "pt-2 pb-1" : "py-1"}
             >
               <SidebarGroupLabel
                 data-testid="sidebar-domain"
-                className="mb-1 text-micro font-semibold text-muted-foreground/80"
+                className="mb-0.5 h-6 text-micro font-semibold text-muted-foreground/80"
               >
                 {t(($) => $.sidebar[domain.labelKey])}
               </SidebarGroupLabel>
