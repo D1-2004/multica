@@ -1,0 +1,56 @@
+{
+  "page": {
+    "title": "DSH 플러그인",
+    "tagline": "DeepSeek Harness가 에이전트 프로필에 불러오는 플러그인.",
+    "tab_installed": "설치됨",
+    "tab_market": "둘러보기",
+    "import": "플러그인 가져오기",
+    "refresh_catalog": "새로고침",
+    "search_installed": "설치된 플러그인 검색",
+    "search_market": "플러그인 색인 검색",
+    "all_categories": "모든 분류"
+  },
+  "catalog": {
+    "community_notice": "{{repo}}의 커뮤니티 색인({{license}}). DeepSeek은 플러그인 카탈로그를 제공하지 않으므로 공식 자료가 아닙니다.",
+    "state": "{{count}}개 항목, 카탈로그 {{version}}",
+    "never_refreshed": "플러그인 색인을 아직 내려받지 않았습니다.",
+    "refresh_now": "색인 내려받기",
+    "refreshing": "내려받는 중…",
+    "refresh_failed": "플러그인 색인을 내려받지 못했습니다.",
+    "stars": "별 {{count}}개",
+    "installed": "설치됨",
+    "install": "설치",
+    "installing": "설치 중…",
+    "empty_title": "일치하는 플러그인이 없습니다",
+    "empty_description": "다른 검색어를 쓰거나 분류 필터를 해제해 보세요."
+  },
+  "installed": {
+    "empty_title": "아직 가져온 플러그인이 없습니다",
+    "empty_description": "둘러보기에서 가져오거나 npm 사양, GitHub 참조, tarball 주소를 붙여 넣으세요.",
+    "error_title": "플러그인을 불러오지 못했습니다",
+    "error_retry": "다시 시도",
+    "version": "버전",
+    "source": "출처",
+    "rows": "로더 행",
+    "used_by": "사용 중",
+    "used_by_none": "연결된 에이전트 없음",
+    "used_by_count": "에이전트 {{count}}개",
+    "remove": "제거",
+    "remove_confirm": "{{name}}을(를) 워크스페이스에서 제거할까요? 사용 중인 에이전트는 더 이상 불러오지 않습니다.",
+    "pinned": "버전 고정됨",
+    "unpinned": "고정되지 않음"
+  },
+  "import_dialog": {
+    "title": "DSH 플러그인 가져오기",
+    "description": "플러그인은 manifest에 bundle patch를 선언한 npm 패키지입니다. `dsh plugin add`에 넘길 값을 그대로 붙여 넣으세요.",
+    "source_label": "패키지",
+    "source_placeholder": "npm:dsh-mcp-lens@0.1.0-rc.9",
+    "source_help": "npm:이름@버전, github:owner/repo#ref, https tarball 주소를 지원합니다.",
+    "submit": "가져오기",
+    "submitting": "확인 중…",
+    "cancel": "취소",
+    "success": "{{name}}을(를) 가져왔습니다",
+    "conflict": "{{name}}은(는) 이미 가져왔습니다.",
+    "failed": "가져오기 실패"
+  }
+}

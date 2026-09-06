@@ -12,6 +12,7 @@
     "sites": "웹사이트",
     "runtimes": "런타임",
     "skills": "스킬",
+    "dsh_plugins": "DSH 플러그인",
     "settings": "설정"
   },
   "tab": {
@@ -22,6 +23,7 @@
     "member": "멤버",
     "squad": "스쿼드",
     "skill": "스킬",
+    "dsh_plugin": "DSH 플러그인",
     "machine": "머신",
     "runtime": "런타임",
     "attachment": "첨부파일",

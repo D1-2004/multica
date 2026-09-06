@@ -44,6 +44,7 @@ export type TabLabelKey =
   | "member"
   | "squad"
   | "skill"
+  | "dsh_plugin"
   | "machine"
   | "runtime"
   | "attachment"
@@ -81,6 +82,7 @@ export interface TabEntityData {
   /** Resolved display name for an actor subject. */
   actorName?: string;
   skill?: { name: string };
+  dshPlugin?: { name: string };
   machine?: { name: string };
   runtime?: { name: string };
   /** Resolved chat session title (already includes the "New chat" fallback). */
@@ -178,6 +180,11 @@ export function resolveTabPresentation(
       return {
         visual: { kind: "icon", icon: "BookOpenText" },
         title: textOr(data.skill?.name, "skill"),
+      };
+    case "dshPlugin":
+      return {
+        visual: { kind: "icon", icon: "Blocks" },
+        title: textOr(data.dshPlugin?.name, "dsh_plugin"),
       };
     case "machine":
       return {

@@ -30,6 +30,8 @@ export type TabSubject =
   | { kind: "actor"; actorType: TabActorType; id: string }
   /** A single skill detail. */
   | { kind: "skill"; id: string }
+  /** A single DSH plugin detail. */
+  | { kind: "dshPlugin"; id: string }
   /** A runtime machine detail. */
   | { kind: "machine"; machineId: string }
   /** A runtime nested under a machine. */
@@ -115,6 +117,10 @@ export function parseTabSubject(url: string): TabSubject {
       return { kind: "machine", machineId: id };
     case "skills":
       return id ? { kind: "skill", id } : { kind: "page", page: "skills" };
+    case "dsh-plugins":
+      return id
+        ? { kind: "dshPlugin", id }
+        : { kind: "page", page: "dshPlugins" };
     case "settings":
       return { kind: "page", page: "settings" };
     case "attachments":
@@ -151,6 +157,8 @@ export function tabSubjectKey(subject: TabSubject): string {
       return `actor:${subject.actorType}:${subject.id}`;
     case "skill":
       return `skill:${subject.id}`;
+    case "dshPlugin":
+      return `dshPlugin:${subject.id}`;
     case "machine":
       return `machine:${subject.machineId}`;
     case "runtime":

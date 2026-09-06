@@ -2468,6 +2468,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)
+					// Which DSH plugins this agent boots with. The daemon
+					// composes these into the profile the sandbox builds.
+					r.Get("/dsh-plugins", h.ListAgentDshPlugins)
+					r.Put("/dsh-plugins", h.SetAgentDshPlugins)
+					r.Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
 					// OKRs materialize as workspace labels the agent tags
 					// issues with; the catalog is injected into its prompt.
 					r.Get("/okrs", h.ListAgentOKRs)
@@ -2519,6 +2524,25 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Autosaved configuration, including edits the user has typed
 				// but not sent. Read back through the list above.
 				r.Put("/{sessionId}/draft", h.SaveAgentBuilderDraft)
+			})
+
+			// DSH plugins. DeepSeek Harness has no registry of its own —
+			// `dsh plugin add` forwards to pnpm — so browse reads a cached
+			// community index plus the npm registry's own search endpoint,
+			// and import records a pinned package reference.
+			r.Route("/api/dsh-plugins", func(r chi.Router) {
+				r.Get("/", h.ListDshPlugins)
+				r.Post("/", h.ImportDshPlugin)
+				r.Get("/bindings", h.ListDshPluginBindings)
+				r.Get("/catalog", h.BrowseDshPluginCatalog)
+				r.Get("/catalog/categories", h.ListDshPluginCatalogCategories)
+				r.With(handler.RequireHumanActor).Post("/catalog/refresh", h.RefreshDshPluginCatalog)
+				r.Get("/registry-search", h.SearchDshPluginRegistry)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetDshPlugin)
+					r.Put("/", h.UpdateDshPlugin)
+					r.Delete("/", h.DeleteDshPlugin)
+				})
 			})
 
 			// Skills

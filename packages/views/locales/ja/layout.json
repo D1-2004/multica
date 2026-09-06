@@ -12,6 +12,7 @@
     "sites": "ウェブサイト",
     "runtimes": "ランタイム",
     "skills": "スキル",
+    "dsh_plugins": "DSH プラグイン",
     "settings": "設定"
   },
   "tab": {
@@ -22,6 +23,7 @@
     "member": "メンバー",
     "squad": "スクワッド",
     "skill": "スキル",
+    "dsh_plugin": "DSH プラグイン",
     "machine": "マシン",
     "runtime": "ランタイム",
     "attachment": "添付ファイル",

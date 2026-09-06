@@ -1,0 +1,56 @@
+{
+  "page": {
+    "title": "DSH Plugins",
+    "tagline": "Plugins DeepSeek Harness loads into an agent's profile.",
+    "tab_installed": "Installed",
+    "tab_market": "Browse",
+    "import": "Import plugin",
+    "refresh_catalog": "Refresh",
+    "search_installed": "Search installed plugins",
+    "search_market": "Search the plugin index",
+    "all_categories": "All categories"
+  },
+  "catalog": {
+    "community_notice": "Community index from {{repo}}, {{license}}. DeepSeek publishes no plugin catalog, so nothing here is official.",
+    "state": "{{count}} entries, catalog {{version}}",
+    "never_refreshed": "The plugin index has not been downloaded yet.",
+    "refresh_now": "Download the index",
+    "refreshing": "Downloading…",
+    "refresh_failed": "Could not download the plugin index.",
+    "stars": "{{count}} stars",
+    "installed": "Installed",
+    "install": "Install",
+    "installing": "Installing…",
+    "empty_title": "No plugins match",
+    "empty_description": "Try a different search, or clear the category filter."
+  },
+  "installed": {
+    "empty_title": "No plugins imported yet",
+    "empty_description": "Import one from the browse tab, or paste an npm spec, a GitHub reference, or a tarball URL.",
+    "error_title": "Could not load plugins",
+    "error_retry": "Try again",
+    "version": "Version",
+    "source": "Source",
+    "rows": "Loader rows",
+    "used_by": "Used by",
+    "used_by_none": "Not attached to any agent",
+    "used_by_count": "{{count}} agents",
+    "remove": "Remove",
+    "remove_confirm": "Remove {{name}} from this workspace? Agents using it will stop loading it.",
+    "pinned": "Pinned",
+    "unpinned": "Not pinned"
+  },
+  "import_dialog": {
+    "title": "Import a DSH plugin",
+    "description": "A plugin is an npm package whose manifest declares a bundle patch. Paste what you would give to `dsh plugin add`.",
+    "source_label": "Package",
+    "source_placeholder": "npm:dsh-mcp-lens@0.1.0-rc.9",
+    "source_help": "Accepts npm:name@version, github:owner/repo#ref, or an https tarball URL.",
+    "submit": "Import",
+    "submitting": "Resolving…",
+    "cancel": "Cancel",
+    "success": "Imported {{name}}",
+    "conflict": "{{name}} is already imported.",
+    "failed": "Import failed"
+  }
+}

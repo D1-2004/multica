@@ -96,6 +96,18 @@ import type {
 } from "../runtimes/cloud-runtime";
 import type { CreateFeedbackResponse } from "../feedback/types";
 import type { HostedSite } from "../sitehosting/types";
+import type {
+  AgentDshPlugin,
+  DshPlugin,
+  DshPluginBinding,
+  DshPluginCatalogCategory,
+  DshPluginCatalogEntry,
+  DshPluginCatalogPage,
+  DshPluginCatalogState,
+  DshPluginRegistryResult,
+  DshPluginSourceKind,
+  ImportDshPluginResult,
+} from "../dsh-plugins/types";
 
 export const HostedSiteSchema = z
   .object({
@@ -4141,3 +4153,237 @@ export const EMPTY_REDEEM_WECOM_BINDING_TOKEN_RESPONSE: RedeemWecomBindingTokenR
     installation_id: "",
     wecom_user_id: "",
   };
+
+// ---------------------------------------------------------------------------
+// DSH plugins
+//
+// The server speaks npm's vocabulary because DeepSeek Harness does: a plugin is
+// a package reference plus the loader rows its own bundle patch declares.
+// Enums stay `z.string()` so an unknown source kind still parses.
+// ---------------------------------------------------------------------------
+
+const DshPluginBaseSchema = z
+  .object({
+    id: z.string(),
+    workspace_id: z.string(),
+    package_name: z.string(),
+    display_name: z.string().optional(),
+    description: z.string().optional(),
+    homepage: z.string().optional(),
+    source_kind: z.string().optional(),
+    source_spec: z.string().optional(),
+    resolved_version: z.string().optional(),
+    integrity: z.string().optional(),
+    bundle_rows: z.array(z.string()).optional(),
+    config_row: z.string().optional(),
+    config: z.record(z.string(), z.unknown()).optional(),
+    catalog: z.string().optional(),
+    validated_dsh_version: z.string().optional(),
+    created_by: z.string().nullable().optional(),
+    created_at: z.string().optional(),
+    updated_at: z.string().optional(),
+    enabled: z.boolean().optional(),
+  })
+  .loose();
+
+function toDshPlugin(row: z.infer<typeof DshPluginBaseSchema>): DshPlugin {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    packageName: row.package_name,
+    displayName: row.display_name ?? row.package_name,
+    description: row.description ?? "",
+    homepage: row.homepage ?? "",
+    sourceKind: (row.source_kind ?? "npm") as DshPluginSourceKind,
+    sourceSpec: row.source_spec ?? "",
+    resolvedVersion: row.resolved_version ?? "",
+    integrity: row.integrity ?? "",
+    bundleRows: row.bundle_rows ?? [],
+    configRow: row.config_row ?? "",
+    config: row.config ?? {},
+    catalog: row.catalog ?? "",
+    validatedDshVersion: row.validated_dsh_version ?? "",
+    createdBy: row.created_by ?? null,
+    createdAt: row.created_at ?? "",
+    updatedAt: row.updated_at ?? "",
+  };
+}
+
+export const DshPluginSchema = DshPluginBaseSchema.transform(toDshPlugin);
+export const DshPluginListSchema = z.array(DshPluginSchema);
+
+export const AgentDshPluginListSchema = z.array(
+  DshPluginBaseSchema.transform(
+    (row): AgentDshPlugin => ({ ...toDshPlugin(row), enabled: row.enabled !== false }),
+  ),
+);
+
+export const DshPluginBindingListSchema = z.array(
+  z
+    .object({
+      agent_id: z.string(),
+      dsh_plugin_id: z.string(),
+      enabled: z.boolean().optional(),
+    })
+    .loose()
+    .transform(
+      (row): DshPluginBinding => ({
+        agentId: row.agent_id,
+        pluginId: row.dsh_plugin_id,
+        enabled: row.enabled !== false,
+      }),
+    ),
+);
+
+const DshPluginCatalogStateSchema = z
+  .object({
+    catalog: z.string().optional(),
+    catalog_version: z.string().optional(),
+    entry_count: z.number().optional(),
+    refreshed_at: z.string().optional(),
+    source_package: z.string().optional(),
+    source_repo: z.string().optional(),
+    source_site: z.string().optional(),
+    license: z.string().optional(),
+    official: z.boolean().optional(),
+  })
+  .loose()
+  .transform(
+    (row): DshPluginCatalogState => ({
+      catalog: row.catalog ?? "",
+      catalogVersion: row.catalog_version ?? "",
+      entryCount: row.entry_count ?? 0,
+      refreshedAt: row.refreshed_at ?? "",
+      sourcePackage: row.source_package ?? "",
+      sourceRepo: row.source_repo ?? "",
+      sourceSite: row.source_site ?? "",
+      license: row.license ?? "",
+      // Default to false: never imply a community list is official.
+      official: row.official === true,
+    }),
+  );
+
+const DshPluginCatalogEntrySchema = z
+  .object({
+    name: z.string(),
+    owner: z.string().optional(),
+    url: z.string().optional(),
+    page: z.string().optional(),
+    category: z.string().optional(),
+    description_en: z.string().optional(),
+    description_zh: z.string().optional(),
+    npm_package: z.string().optional(),
+    npm_version: z.string().optional(),
+    stars: z.number().optional(),
+    downloads: z.number().optional(),
+    added_on: z.string().optional(),
+    source_spec: z.string().optional(),
+  })
+  .loose()
+  .transform(
+    (row): DshPluginCatalogEntry => ({
+      name: row.name,
+      owner: row.owner ?? "",
+      url: row.url ?? "",
+      page: row.page ?? "",
+      category: row.category ?? "",
+      descriptionEn: row.description_en ?? "",
+      descriptionZh: row.description_zh ?? "",
+      npmPackage: row.npm_package ?? "",
+      npmVersion: row.npm_version ?? "",
+      stars: row.stars ?? 0,
+      downloads: row.downloads ?? 0,
+      addedOn: row.added_on ?? "",
+      sourceSpec: row.source_spec ?? "",
+    }),
+  );
+
+export const DshPluginCatalogPageSchema = z
+  .object({
+    entries: z.array(DshPluginCatalogEntrySchema).optional(),
+    total: z.number().optional(),
+    limit: z.number().optional(),
+    offset: z.number().optional(),
+    state: DshPluginCatalogStateSchema.optional(),
+  })
+  .loose()
+  .transform(
+    (row): DshPluginCatalogPage => ({
+      entries: row.entries ?? [],
+      total: row.total ?? 0,
+      limit: row.limit ?? 0,
+      offset: row.offset ?? 0,
+      state:
+        row.state ??
+        {
+          catalog: "",
+          catalogVersion: "",
+          entryCount: 0,
+          refreshedAt: "",
+          sourcePackage: "",
+          sourceRepo: "",
+          sourceSite: "",
+          license: "",
+          official: false,
+        },
+    }),
+  );
+
+export const DshPluginCatalogCategoryListSchema = z.array(
+  z
+    .object({ category: z.string(), entry_count: z.number().optional() })
+    .loose()
+    .transform(
+      (row): DshPluginCatalogCategory => ({
+        category: row.category,
+        entryCount: row.entry_count ?? 0,
+      }),
+    ),
+);
+
+export const DshPluginRegistrySearchSchema = z
+  .object({
+    results: z
+      .array(
+        z
+          .object({
+            name: z.string(),
+            version: z.string().optional(),
+            description: z.string().optional(),
+            publisher: z.string().optional(),
+            links: z.string().optional(),
+          })
+          .loose()
+          .transform(
+            (row): DshPluginRegistryResult => ({
+              name: row.name,
+              version: row.version ?? "",
+              description: row.description ?? "",
+              publisher: row.publisher ?? "",
+              links: row.links ?? "",
+            }),
+          ),
+      )
+      .optional(),
+  })
+  .loose()
+  .transform((row): DshPluginRegistryResult[] => row.results ?? []);
+
+export const ImportDshPluginResultSchema = z
+  .object({
+    status: z.string().optional(),
+    plugin: DshPluginSchema.optional(),
+    warnings: z.array(z.string()).optional(),
+    existing_plugin: DshPluginSchema.optional(),
+    error: z.string().optional(),
+  })
+  .loose()
+  .transform(
+    (row): ImportDshPluginResult => ({
+      status: row.status ?? "",
+      plugin: row.plugin ?? null,
+      warnings: row.warnings ?? [],
+      existingPlugin: row.existing_plugin ?? null,
+      error: row.error ?? "",
+    }),
+  );

@@ -2077,3 +2077,53 @@ type WorkspaceInvitation struct {
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 }
+
+// DSH plugin asset, its per-agent binding, and the cached community catalog.
+type AgentDshPlugin struct {
+	AgentID     pgtype.UUID        `json:"agent_id"`
+	DshPluginID pgtype.UUID        `json:"dsh_plugin_id"`
+	Enabled     bool               `json:"enabled"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
+type DshPlugin struct {
+	ID                  pgtype.UUID        `json:"id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	PackageName         string             `json:"package_name"`
+	DisplayName         string             `json:"display_name"`
+	Description         string             `json:"description"`
+	Homepage            string             `json:"homepage"`
+	SourceKind          string             `json:"source_kind"`
+	SourceSpec          string             `json:"source_spec"`
+	ResolvedVersion     string             `json:"resolved_version"`
+	Integrity           string             `json:"integrity"`
+	BundleRows          []byte             `json:"bundle_rows"`
+	ConfigRow           string             `json:"config_row"`
+	Config              []byte             `json:"config"`
+	Catalog             string             `json:"catalog"`
+	ValidatedDshVersion string             `json:"validated_dsh_version"`
+	CreatedBy           pgtype.UUID        `json:"created_by"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type DshPluginCatalogEntry struct {
+	ID             pgtype.UUID        `json:"id"`
+	Catalog        string             `json:"catalog"`
+	Name           string             `json:"name"`
+	Owner          string             `json:"owner"`
+	Url            string             `json:"url"`
+	Page           string             `json:"page"`
+	Category       string             `json:"category"`
+	DescriptionEn  string             `json:"description_en"`
+	DescriptionZh  string             `json:"description_zh"`
+	NpmPackage     string             `json:"npm_package"`
+	NpmVersion     string             `json:"npm_version"`
+	TarballUrl     string             `json:"tarball_url"`
+	Stars          int32              `json:"stars"`
+	Downloads      int64              `json:"downloads"`
+	InstallHint    string             `json:"install_hint"`
+	AddedOn        pgtype.Date        `json:"added_on"`
+	CatalogVersion string             `json:"catalog_version"`
+	RefreshedAt    pgtype.Timestamptz `json:"refreshed_at"`
+}

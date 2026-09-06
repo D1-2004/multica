@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS dsh_plugin_id_idx;

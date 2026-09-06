@@ -33,6 +33,7 @@ export type RouteIconName =
   | "Monitor"
   | "Server"
   | "BookOpenText"
+  | "Blocks"
   | "Settings"
   | "File"
   | "FileText"
@@ -57,6 +58,7 @@ export type NavLabelKey =
   | "sites"
   | "runtimes"
   | "skills"
+  | "dsh_plugins"
   | "settings";
 
 /** Stable identifier for each workspace navigation page. */
@@ -73,6 +75,7 @@ export type WorkspacePageKey =
   | "sites"
   | "runtimes"
   | "skills"
+  | "dshPlugins"
   | "settings";
 
 export interface WorkspacePage {
@@ -101,6 +104,11 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   sites: { segment: "sites", icon: "Globe2", navKey: "sites" },
   runtimes: { segment: "runtimes", icon: "Monitor", navKey: "runtimes" },
   skills: { segment: "skills", icon: "BookOpenText", navKey: "skills" },
+  dshPlugins: {
+    segment: "dsh-plugins",
+    icon: "Blocks",
+    navKey: "dsh_plugins",
+  },
   settings: { segment: "settings", icon: "Settings", navKey: "settings" },
 };
 

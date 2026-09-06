@@ -1966,6 +1966,23 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// session/new.
 			model = ""
 		}
+		// DSH plugins the workspace manages are composed into the same
+		// environment variable an operator used to set by hand, so the daemon,
+		// the sandbox and the image need no change to honour them.
+		var dshPluginErr error
+		customEnv, dshPluginErr = h.applyAgentDshPluginSet(
+			r.Context(), runtime.Provider, service.IsA2ATaskOrigin(task.Context),
+			agent.ID, agent.WorkspaceID, customEnv)
+		if dshPluginErr != nil {
+			slog.Error("failed to compose the agent's DSH plugin set",
+				"agent_id", uuidToString(agent.ID), "error", dshPluginErr)
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount,
+				&claimBuildFailure{
+					outcome: "error_dsh_plugin_set",
+					status:  http.StatusInternalServerError,
+					message: "failed to compose the agent's DSH plugin set",
+				}
+		}
 		resp.Agent = &TaskAgentData{
 			ID:                    uuidToString(agent.ID),
 			Name:                  agent.Name,
