@@ -192,6 +192,8 @@
     "prop_speed": "Speed",
     "prop_visibility": "Visibility",
     "prop_concurrency": "Concurrency",
+    "prop_dingtalk_show_ai_tag": "Show AI sender label",
+    "prop_dingtalk_show_ai_tag_hint": "Show an AI sender label on this digital employee's DingTalk replies and messages sent while working. Off by default. Changes apply to new work.",
     "prop_chat_session_resume": "Resume last session",
     "prop_chat_session_resume_hint": "When on, 1:1 follow-up messages reuse the previous conversation when it is still available and nothing important has changed. Consecutive questions respond faster. After 20 minutes or a configuration change, the conversation restarts with the full history. When off, every turn starts a new model session.",
     "prop_inbound_coordinator": "Judge before sandbox",

@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS dingtalk_response_policy_rollout_target_idx;

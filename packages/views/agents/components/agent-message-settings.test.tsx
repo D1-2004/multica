@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentMessageSettings } from "./agent-message-settings";
@@ -26,11 +26,13 @@ describe("AgentMessageSettings", () => {
 
     fireEvent.click(screen.getByLabelText("Resume last session"));
     fireEvent.click(screen.getByLabelText("Judge after the work finishes"));
+    fireEvent.click(screen.getByLabelText("Show AI sender label"));
 
     expect(onUpdate).toHaveBeenCalledWith({ chat_session_resume: true });
     expect(onUpdate).toHaveBeenCalledWith({
       task_finished_loop_enabled: true,
     });
+    expect(onUpdate).toHaveBeenCalledWith({ dingtalk_show_ai_tag: true });
   });
 
   it("hides the finished-work judge when inbound judging is off", () => {
@@ -49,5 +51,39 @@ describe("AgentMessageSettings", () => {
     expect(
       screen.queryByLabelText("Judge after the work finishes"),
     ).not.toBeInTheDocument();
+  });
+
+  it("defaults the AI sender label to off and respects read-only access", () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(
+      <AgentMessageSettings agent={agent} canEdit={false} onUpdate={onUpdate} />,
+    );
+
+    const toggle = screen.getByLabelText("Show AI sender label");
+    expect(toggle).not.toBeChecked();
+    expect(toggle).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(toggle);
+    expect(onUpdate).not.toHaveBeenCalled();
+  });
+
+  it("restores the AI sender label after a failed save", async () => {
+    const onUpdate = vi.fn(async () => {
+      throw new Error("save failed");
+    });
+    renderWithI18n(
+      <AgentMessageSettings
+        agent={{ ...agent, dingtalk_show_ai_tag: true }}
+        canEdit
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const toggle = screen.getByLabelText("Show AI sender label");
+    fireEvent.click(toggle);
+    expect(onUpdate).toHaveBeenCalledWith({ dingtalk_show_ai_tag: false });
+    await waitFor(() => {
+      expect(toggle).toBeChecked();
+      expect(toggle).not.toHaveAttribute("aria-disabled", "true");
+    });
   });
 });

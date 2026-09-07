@@ -131,6 +131,9 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	}
 	if strings.TrimSpace(command.TaskFinishedTaskID) != "" {
 		if runErr := w.handler.runPersistedTaskFinishedLoop(ctx, command.TaskFinishedTaskID); runErr != nil {
+			if errors.Is(runErr, errTaskFinishedResponsePending) {
+				return true, w.park(ctx, job, 5*time.Second, "response_receipt_pending")
+			}
 			return true, w.retry(ctx, job, runErr)
 		}
 		return true, w.complete(ctx, job)
@@ -331,6 +334,11 @@ func (w *InboundCoordinatorJobWorker) closeCoalescedRouterCallbacks(ctx context.
 		if err != nil {
 			continue
 		}
+		if managedDingTalkResponse(extra) {
+			// The merged window retains this callback and closes it at its
+			// business terminal, not merely when transport jobs are coalesced.
+			continue
+		}
 		w.handler.enqueueCoordinatorSilenceCallback(ctx, extra.CompletionCallback, job.AgentID,
 			"inbound_coordinator_job_coalesced_silence_failed", util.UUIDToString(sib.ID))
 	}
@@ -418,6 +426,9 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 // drops while the job waits for the next window. A colleague does not leave
 // a spinning confirmation on a message they are not answering yet.
 func (w *InboundCoordinatorJobWorker) silenceParkedInbound(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) {
+	if managedDingTalkResponse(command) {
+		return
+	}
 	if w == nil || w.handler == nil {
 		return
 	}
@@ -671,6 +682,9 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
 	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
+	if err := h.registerDingTalkResponseRoute(ctx, tx, command, dispatchContext); err != nil {
+		return nil, job, err
+	}
 	if cid := dispatchConversationID(command); cid != "" {
 		lockName := uuidToString(dispatchContext.WorkspaceID) + ":" + uuidToString(dispatchContext.AgentID) + ":" + cid
 		if _, lockErr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockName); lockErr != nil {
@@ -733,8 +747,10 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			// Collect merges extra inbounds onto the pending job and drops
 			// their CompletionCallback. Close those Router dispatches now or
 			// the extra @ lines stay 处理中 after the window finishes.
-			h.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, dispatchContext.AgentID,
-				"inbound_coordinator_job_collected_silence_failed", util.UUIDToString(job.ID))
+			if !managedDingTalkResponse(command) {
+				h.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, dispatchContext.AgentID,
+					"inbound_coordinator_job_collected_silence_failed", util.UUIDToString(job.ID))
+			}
 			slog.Info("inbound coordinator job collected",
 				"event", "inbound_coordinator_job_collected",
 				"job_id", util.UUIDToString(job.ID),

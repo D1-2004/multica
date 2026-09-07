@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -17,11 +19,15 @@ const (
 	// DWSWrapArg selects the private dws PATH wrapper in the multica binary.
 	DWSWrapArg = "__dws-wrap"
 	IssueIDEnv = "MULTICA_ISSUE_ID"
+	// The fixed Runtime wrapper delegates directly to the protected binary;
+	// PATH shims instead keep passing through the Runtime's identity wrapper.
+	dwsProtectedWrapEnv = "MULTICA_DWS_PROTECTED_WRAP"
+	dwsShimActiveEnv    = "MULTICA_DWS_SHIM_ACTIVE"
 )
 
 const dwsShimScript = `#!/bin/sh
 export MULTICA_DWS_SHIM_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec multica ` + DWSWrapArg + ` -- "$@"
+exec %s ` + DWSWrapArg + ` -- "$@"
 `
 
 // IssueEnv returns MULTICA_ISSUE_ID when the task is attached to an Issue.
@@ -36,6 +42,14 @@ func IssueEnv(issueID string) map[string]string {
 // EnsureDWSShim writes a PATH wrapper that re-execs `multica __dws-wrap` so
 // chat send uses the same Go parser as tests, then binds the conversation.
 func EnsureDWSShim(envRoot string) (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locate multica for dws shim: %w", err)
+	}
+	return ensureDWSShim(envRoot, self)
+}
+
+func ensureDWSShim(envRoot, self string) (string, error) {
 	if envRoot == "" || runtime.GOOS == "windows" {
 		return "", nil
 	}
@@ -44,8 +58,27 @@ func EnsureDWSShim(envRoot string) (string, error) {
 		return "", fmt.Errorf("create dws shim dir: %w", err)
 	}
 	path := filepath.Join(dir, "dws")
-	if err := os.WriteFile(path, []byte(dwsShimScript), 0o755); err != nil {
+	quotedSelf := "'" + strings.ReplaceAll(self, "'", "'\"'\"'") + "'"
+	file, err := os.CreateTemp(dir, ".dws-*")
+	if err != nil {
+		return "", fmt.Errorf("create dws shim: %w", err)
+	}
+	defer os.Remove(file.Name())
+	if _, err := file.WriteString(fmt.Sprintf(dwsShimScript, quotedSelf)); err != nil {
+		file.Close()
 		return "", fmt.Errorf("write dws shim: %w", err)
+	}
+	if err := file.Chmod(0o755); err != nil {
+		file.Close()
+		return "", fmt.Errorf("chmod dws shim: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("close dws shim: %w", err)
+	}
+	// Warm concurrent tasks may share this directory. Publish a complete
+	// script atomically so one task cannot execute another's truncated write.
+	if err := os.Rename(file.Name(), path); err != nil {
+		return "", fmt.Errorf("publish dws shim: %w", err)
 	}
 	return dir, nil
 }
@@ -53,28 +86,8 @@ func EnsureDWSShim(envRoot string) (string, error) {
 // ParseDWSSendConversation reports whether args are a chat send and extracts
 // --conversation-id / --conversation when present.
 func ParseDWSSendConversation(args []string) (conversationID string, send bool) {
-	hasChat := false
-	hasSend := false
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "chat":
-			hasChat = true
-		case "send", "+send", "send-by-bot", "reply", "+messages-reply":
-			hasSend = true
-		case "+dm":
-			hasChat = true
-			hasSend = true
-		case "--conversation-id", "--conversation":
-			if i+1 < len(args) {
-				conversationID = strings.TrimSpace(args[i+1])
-			}
-		}
-		if i+1 < len(args) && arg == "message" && (args[i+1] == "send" || args[i+1] == "send-by-bot" || args[i+1] == "reply") {
-			hasSend = true
-		}
-	}
-	return conversationID, hasChat && hasSend
+	parsed := parseDWSCommand(args)
+	return parsed.conversationID, parsed.send
 }
 
 // DWSWrapDeps is the testable surface for the dws PATH wrapper.
@@ -86,6 +99,7 @@ type DWSWrapDeps struct {
 	LookPath func(string) (string, error)
 	Run      func(name string, args []string, stdout, stderr io.Writer) error
 	Bind     func(conversationID, evidenceID string) error
+	Report   func(protocol.DingTalkSendReceipt) error
 }
 
 // MainDWSWrap is the CLI entrypoint for `multica __dws-wrap`.
@@ -95,7 +109,13 @@ func MainDWSWrap(args []string) int {
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
 		Getenv: os.Getenv,
+		Report: func(receipt protocol.DingTalkSendReceipt) error {
+			return reportDWSSendReceipt(os.Getenv, nil, receipt)
+		},
 		LookPath: func(name string) (string, error) {
+			if os.Getenv(dwsProtectedWrapEnv) == "1" {
+				return "/usr/local/libexec/dws", nil
+			}
 			return lookPathExcept(name, os.Getenv("MULTICA_DWS_SHIM_DIR"), os.Getenv("PATH"))
 		},
 		Run: func(name string, argv []string, stdout, stderr io.Writer) error {
@@ -103,7 +123,7 @@ func MainDWSWrap(args []string) int {
 			cmd.Stdout = stdout
 			cmd.Stderr = stderr
 			cmd.Stdin = os.Stdin
-			cmd.Env = os.Environ()
+			cmd.Env = append(os.Environ(), dwsShimActiveEnv+"=1")
 			return cmd.Run()
 		},
 		Bind: func(conversationID, evidenceID string) error {
@@ -129,30 +149,67 @@ func MainDWSWrap(args []string) int {
 // fail a successful send.
 func RunDWSWrap(deps DWSWrapDeps) int {
 	args := stripLeadingDashDash(deps.Args)
+	parsed := parseDWSCommand(args)
+	var policy *protocol.DingTalkMessagePolicy
+	if parsed.userSend {
+		var err error
+		policy, err = dwsMessagePolicyFromEnv(deps.Getenv)
+		if err != nil {
+			fmt.Fprintln(deps.Stderr, err)
+			return 64
+		}
+		args = RewriteDWSSendAITag(args, policy)
+	}
 	real, err := deps.LookPath("dws")
 	if err != nil {
 		fmt.Fprintln(deps.Stderr, "dws: real binary not found on PATH")
 		return 127
 	}
-	cid, send := ParseDWSSendConversation(args)
-	if !send {
+	cid := parsed.conversationID
+	if !parsed.send || parsed.preview {
 		if err := deps.Run(real, args, deps.Stdout, deps.Stderr); err != nil {
 			return exitCode(err)
 		}
 		return 0
 	}
+	managed := policy != nil && policy.PlatformManagedLifecycle
+	var receipt protocol.DingTalkSendReceipt
+	if managed {
+		if deps.Report == nil {
+			fmt.Fprintln(deps.Stderr, "DingTalk send receipt reporter unavailable; message was not sent")
+			return 69
+		}
+		receipt, err = newDWSSendReceipt(parsed)
+		if err == nil {
+			err = deps.Report(receipt)
+		}
+		if err != nil {
+			fmt.Fprintf(deps.Stderr, "DingTalk send intent could not be recorded; message was not sent: %v\n", err)
+			return 69
+		}
+	}
 	var captured bytes.Buffer
-	if err := deps.Run(real, args, io.MultiWriter(deps.Stdout, &captured), deps.Stderr); err != nil {
-		return exitCode(err)
+	runErr := deps.Run(real, args, io.MultiWriter(deps.Stdout, &captured), deps.Stderr)
+	if managed {
+		receipt = updateDWSSendReceipt(receipt, captured.String(), runErr)
+		if err := deps.Report(receipt); err != nil {
+			// The persisted pending intent blocks task-finished duplication.
+			// Do not turn an accepted send into a retryable CLI failure.
+			fmt.Fprintf(deps.Stderr, "DingTalk send receipt update failed; pending delivery remains recorded, do not resend: %v\n", err)
+		}
+	}
+	if runErr != nil {
+		return exitCode(runErr)
 	}
 	gotCID, msgid := ExtractDWSReceipt(captured.String())
-	if cid == "" {
+	if gotCID != "" {
 		cid = gotCID
 	}
-	if cid == "" {
+	if cid == "" && !managed {
 		if taskID := extractJSONString(captured.String(), "openTaskId"); plausibleConversationOrEvidenceID(taskID) {
 			var statusBuf bytes.Buffer
-			if err := deps.Run(real, []string{"chat", "message", "query-send-status", "--open-task-id", taskID, "--format", "json"}, &statusBuf, deps.Stderr); err == nil {
+			statusArgs := append([]string{"chat", "message", "query-send-status", "--open-task-id", taskID, "--format", "json"}, parsed.identityArgs...)
+			if err := deps.Run(real, statusArgs, &statusBuf, deps.Stderr); err == nil {
 				gotCID, gotMsg := ExtractDWSReceipt(statusBuf.String())
 				if gotCID != "" {
 					cid = gotCID

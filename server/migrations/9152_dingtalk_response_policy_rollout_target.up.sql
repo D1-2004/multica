@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS dingtalk_response_policy_rollout_target_idx ON dingtalk_response_policy_rollout (target_identity);

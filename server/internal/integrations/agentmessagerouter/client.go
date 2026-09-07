@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -57,12 +58,13 @@ type AgentDescriptor struct {
 }
 
 type Subscription struct {
-	SourceID    string               `json:"sourceId"`
-	AgentID     string               `json:"agentId"`
-	DispatchURL string               `json:"dispatchUrl"`
-	Surface     SubscriptionSurface  `json:"surface"`
-	Outbound    SubscriptionOutbound `json:"outbound"`
-	Status      string               `json:"status"`
+	SourceID       string                           `json:"sourceId"`
+	AgentID        string                           `json:"agentId"`
+	DispatchURL    string                           `json:"dispatchUrl"`
+	Surface        SubscriptionSurface              `json:"surface"`
+	Outbound       SubscriptionOutbound             `json:"outbound"`
+	Status         string                           `json:"status"`
+	ResponsePolicy *protocol.DingTalkResponsePolicy `json:"responsePolicy,omitempty"`
 }
 
 type DigitalEmployeeBindingKey struct {
@@ -141,6 +143,7 @@ type CreateSubscriptionParams struct {
 	Surface            SubscriptionSurface
 	Outbound           SubscriptionOutbound
 	ReplaceExisting    bool
+	ResponsePolicy     *protocol.DingTalkResponsePolicy
 }
 
 func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSubscriptionParams) (Subscription, error) {
@@ -155,7 +158,7 @@ func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSub
 	if err != nil || !containsBindingDomain(domains, "channel") {
 		return Subscription{}, errors.New("agent message router subscription domains are invalid")
 	}
-	body, err := json.Marshal(map[string]any{
+	requestBody := map[string]any{
 		"source": map[string]any{
 			"platform": "dingtalk", "domain": "channel",
 			"tenantId":           strings.TrimSpace(p.TenantID),
@@ -171,7 +174,14 @@ func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSub
 		"bindingToken":           strings.TrimSpace(p.BindingToken),
 		"enabledDomains":         domains,
 		"replaceExistingBinding": p.ReplaceExisting,
-	})
+	}
+	if p.ResponsePolicy != nil {
+		if !p.ResponsePolicy.Valid() {
+			return Subscription{}, errors.New("agent message router response policy is invalid")
+		}
+		requestBody["responsePolicy"] = p.ResponsePolicy
+	}
+	body, err := json.Marshal(requestBody)
 	if err != nil {
 		return Subscription{}, errors.New("encode HTTP callback subscription request")
 	}
@@ -189,7 +199,8 @@ func (c *Client) CreateHTTPCallbackSubscription(ctx context.Context, p CreateSub
 	}
 	if result.Status != "active" || !isTrimmedNonEmpty(result.SourceID) ||
 		result.AgentID != strings.TrimSpace(p.AgentID) || result.DispatchURL != strings.TrimSpace(p.DispatchURL) ||
-		result.Surface != p.Surface || result.Outbound != p.Outbound {
+		result.Surface != p.Surface || result.Outbound != p.Outbound ||
+		(p.ResponsePolicy != nil && (result.ResponsePolicy == nil || *result.ResponsePolicy != *p.ResponsePolicy)) {
 		return Subscription{}, errors.New("agent message router subscription response is invalid")
 	}
 	return result, nil
@@ -594,7 +605,8 @@ func (c *Client) GetSubscription(ctx context.Context, sourceID string) (Subscrip
 		return Subscription{}, ErrRouterInvalidResponse
 	}
 	if !isTrimmedNonEmpty(result.SourceID) || !isTrimmedNonEmpty(result.AgentID) || !isTrimmedNonEmpty(result.DispatchURL) ||
-		!validSubscriptionSurface(result.Surface) || !validSubscriptionOutbound(result.Outbound) {
+		!validSubscriptionSurface(result.Surface) || !validSubscriptionOutbound(result.Outbound) ||
+		(result.ResponsePolicy != nil && !result.ResponsePolicy.Valid()) {
 		return Subscription{}, ErrRouterInvalidResponse
 	}
 	if result.SourceID != sourceID || result.Status != "active" {

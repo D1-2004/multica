@@ -5716,19 +5716,23 @@ func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) 
 // agent during task execution: runtime-compatible workspace-bound skills,
 // platform built-ins, and runtime-specific skills implied by the exact Runtime
 // that claimed the task.
-func (s *TaskService) LoadAgentExecutionSkills(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind) []AgentSkillData {
+func (s *TaskService) LoadAgentExecutionSkills(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) []AgentSkillData {
 	skills := filterAgentSkillsForRuntime(s.LoadAgentSkills(ctx, agentID), runtime, taskBackend)
 	skills = append(skills, s.BuiltinSkills()...)
 	if CloudSandboxRuntimeHasCapability(runtime, "dws") {
-		skills = append(skills, DWSAgentSkill())
+		var policy *protocol.DingTalkMessagePolicy
+		if len(messagePolicy) > 0 {
+			policy = messagePolicy[0]
+		}
+		skills = append(skills, DWSAgentSkillForPolicy(policy))
 	}
 	return skills
 }
 
 // LoadAgentSkillBundles returns every skill visible to an agent, including
 // built-ins, with stable bundle hashes and lightweight refs for slim claims.
-func (s *TaskService) LoadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind) ([]AgentSkillData, []AgentSkillRefData) {
-	return BuildAgentSkillBundles(s.LoadAgentExecutionSkills(ctx, agentID, runtime, taskBackend))
+func (s *TaskService) LoadAgentSkillBundles(ctx context.Context, agentID pgtype.UUID, runtime db.AgentRuntime, taskBackend SandboxBackendKind, messagePolicy ...*protocol.DingTalkMessagePolicy) ([]AgentSkillData, []AgentSkillRefData) {
+	return BuildAgentSkillBundles(s.LoadAgentExecutionSkills(ctx, agentID, runtime, taskBackend, messagePolicy...))
 }
 
 func BuildAgentSkillBundles(skills []AgentSkillData) ([]AgentSkillData, []AgentSkillRefData) {

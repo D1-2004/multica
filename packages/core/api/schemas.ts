@@ -2709,15 +2709,8 @@ export const AgentOKRResponseSchema = z.object({
 });
 export type AgentOKRResponsePayload = z.infer<typeof AgentOKRResponseSchema>;
 
-// Full agent request/response payloads are NOT zod-validated today — the API
-// client returns them typed directly (see client.ts `listAgents` /
-// `getAgent` / `createAgent`), so there is no `AgentSchema` /
-// `CreateAgentRequestSchema` / `UpdateAgentRequestSchema` to extend here.
-// These lenient, exported fragments encode the new permission fields so any
-// future agent schema can reuse
-// them. Per this file's convention the enum stays lenient (a future
-// server-side value degrades to the strict default rather than failing the
-// parse), and the target array defaults to `[]`.
+// Permission fragments remain reusable for nested agent responses. Unknown
+// permission modes degrade to the strict default rather than widening access.
 // ---------------------------------------------------------------------------
 
 export const AgentPermissionModeSchema = z
@@ -2739,15 +2732,57 @@ export const AgentInvocationTargetsSchema = z
   .array(AgentInvocationTargetSchema)
   .default([]);
 
-// `agent` is a full Agent record — schematising every field would duplicate
-// a 50-field interface and bit-rot fast. Keep it loose and require only `id`.
-const MinimalAgentSchema = z
+// Agent payloads predate schema validation. Validate additive response policy
+// fields without changing other existing fields or dropping future fields.
+export const AgentResponseSchema = z
   .object({
     id: z.string(),
-    permission_mode: AgentPermissionModeSchema.optional(),
-    invocation_targets: AgentInvocationTargetsSchema.optional(),
+    dingtalk_show_ai_tag: z.boolean().catch(false).default(false),
+    dingtalk_response_policy_revision: z
+      .number()
+      .int()
+      .positive()
+      .safe()
+      .catch(1)
+      .default(1),
   })
   .loose();
+
+export const AgentResponseListSchema = z.array(AgentResponseSchema);
+
+export const EMPTY_AGENT_RESPONSE: Agent = {
+  id: "",
+  workspace_id: "",
+  runtime_id: "",
+  name: "",
+  description: "",
+  instructions: "",
+  avatar_url: null,
+  runtime_mode: "local",
+  runtime_config: {},
+  custom_args: [],
+  visibility: "private",
+  permission_mode: "private",
+  invocation_targets: [],
+  status: "offline",
+  max_concurrent_tasks: 1,
+  model: "",
+  owner_id: null,
+  skills: [],
+  created_at: "",
+  updated_at: "",
+  archived_at: null,
+  archived_by: null,
+  dingtalk_show_ai_tag: false,
+  dingtalk_response_policy_revision: 1,
+};
+
+// `agent` is a full Agent record — schematising every field would duplicate
+// a 50-field interface and bit-rot fast. Keep it loose and require only `id`.
+const MinimalAgentSchema = AgentResponseSchema.extend({
+  permission_mode: AgentPermissionModeSchema.optional(),
+  invocation_targets: AgentInvocationTargetsSchema.optional(),
+});
 
 export const CreateAgentFromTemplateResponseSchema = z
   .object({

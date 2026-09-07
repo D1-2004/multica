@@ -3,13 +3,47 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func TestDWSAgentSkillPolicyContentAndStableHashes(t *testing.T) {
+	legacy := DWSAgentSkillForPolicy(nil)
+	if legacy.Content != dwsAgentSkillContent || !strings.Contains(legacy.Content, "--ai-tag=false") {
+		t.Fatal("legacy DWS skill behavior changed")
+	}
+	_, legacyRefs := BuildAgentSkillBundles([]AgentSkillData{legacy})
+	var policyHash string
+	for _, policy := range []*protocol.DingTalkMessagePolicy{
+		{}, {ShowAITag: true}, {PlatformManagedLifecycle: true}, {ShowAITag: true, PlatformManagedLifecycle: true},
+	} {
+		skill := DWSAgentSkillForPolicy(policy)
+		for _, forbidden := range []string{"--ai-tag=false", "--ai-tag=true", "messages-remove-text-emotion", "messages-remove-emoji"} {
+			if strings.Contains(skill.Content, forbidden) {
+				t.Fatalf("policy-aware skill retains %q", forbidden)
+			}
+		}
+		for _, required := range []string{"Multica DWS wrapper", "Router own processing reactions", "accepted, not delivered", "Do not bypass the wrapper"} {
+			if !strings.Contains(skill.Content, required) {
+				t.Fatalf("policy-aware skill misses %q", required)
+			}
+		}
+		_, refs := BuildAgentSkillBundles([]AgentSkillData{skill})
+		if refs[0].Hash == legacyRefs[0].Hash {
+			t.Fatal("policy-aware and legacy bundles must differ")
+		}
+		if policyHash != "" && refs[0].Hash != policyHash {
+			t.Fatal("task values must not change the policy-aware skill hash")
+		}
+		policyHash = refs[0].Hash
+	}
+}
 
 func TestLoadAgentExecutionSkillsFollowsRuntimeDWSCapability(t *testing.T) {
 	ctx := context.Background()

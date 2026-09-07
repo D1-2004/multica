@@ -352,6 +352,9 @@ func (s *Service) activateDirectDigitalEmployeeBinding(
 	if err != nil {
 		return DirectDigitalEmployeeBinding{}, ErrInvalidResult
 	}
+	if s.responsePolicyNotifier != nil {
+		s.responsePolicyNotifier.NotifyResponsePolicyChanged()
+	}
 	result := directDigitalEmployeeBindingFromRow(activated, activeConfig)
 	result.RouterBindingStatus = "valid"
 	result.RouterBindingOwner = util.UUIDToString(activated.AgentID)
