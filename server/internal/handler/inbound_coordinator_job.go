@@ -197,6 +197,7 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	w.handler.executeAgentDispatchV2(response, req, command, plan, dispatchContext)
 	if response.Status() >= http.StatusOK && response.Status() < http.StatusMultipleChoices {
 		if recordedDecision != nil {
+			*recordedDecision = coordinatorDecisionWithDispatchResult(*recordedDecision, response)
 			if err := w.handler.persistCoordinatorJobChat(jobCtx, job, *recordedDecision); err != nil {
 				return true, w.retry(ctx, job, fmt.Errorf("persist coordinator Chat: %w", err))
 			}
@@ -211,9 +212,12 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 			w.silenceParkedInbound(ctx, job, command)
 			return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, reason)
 		}
+		if job.AttemptCount >= inboundCoordinatorWorkerMaxAttempts {
+			return true, w.failWithDecision(ctx, job, command, reason, recordedDecision)
+		}
 		return true, w.retry(ctx, job, fmt.Errorf("%s", reason))
 	}
-	return true, w.fail(ctx, job, command, dispatchRejectReason(response))
+	return true, w.failWithDecision(ctx, job, command, dispatchRejectReason(response), recordedDecision)
 }
 
 func dispatchRejectReason(response *bufferedDispatchResponse) string {
@@ -513,7 +517,7 @@ func recoveredCoordinatorDecision(command DispatchCommand, response *bufferedDis
 		action = inboundcoord.ActionIssue
 		text = "已恢复到原 Issue 继续处理。"
 	}
-	return inboundcoord.Decision{
+	return coordinatorDecisionWithDispatchResult(inboundcoord.Decision{
 		Action:   action,
 		UserText: text,
 		Reason:   "recovered durable dispatch result",
@@ -523,7 +527,32 @@ func recoveredCoordinatorDecision(command DispatchCommand, response *bufferedDis
 		}, {
 			Seq: 2, Type: "text", Content: text,
 		}},
+	}, response)
+}
+
+// Supplement a verdict from a successful materializer response. Multiple window
+// results and terminal tool effects already carry more precise evidence.
+func coordinatorDecisionWithDispatchResult(decision inboundcoord.Decision, response *bufferedDispatchResponse) inboundcoord.Decision {
+	if len(decision.IssueResults) > 0 || decision.IssueComment != nil || response == nil ||
+		response.Status() < http.StatusOK || response.Status() >= http.StatusMultipleChoices {
+		return decision
 	}
+	var result AgentDispatchResponse
+	if json.Unmarshal(response.body.Bytes(), &result) != nil || result.Continuation.Kind != "issue" ||
+		strings.TrimSpace(result.Continuation.IssueID) == "" {
+		return decision
+	}
+	action := "issue_linked"
+	if result.CommentID != "" {
+		action = "issue_commented"
+	} else if response.Status() == http.StatusCreated {
+		action = "issue_created"
+	}
+	decision.IssueResults = []protocol.ChatCoordinatorIssueResult{{
+		Action: action, IssueID: result.Continuation.IssueID,
+		IssueIdentifier: result.IssueIdentifier, CommentID: result.CommentID, TaskID: result.TaskID,
+	}}
+	return decision
 }
 
 func (w *InboundCoordinatorJobWorker) retry(ctx context.Context, job db.InboundCoordinatorJob, cause error) error {
@@ -555,18 +584,30 @@ func (w *InboundCoordinatorJobWorker) retry(ctx context.Context, job db.InboundC
 }
 
 func (w *InboundCoordinatorJobWorker) fail(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand, reason string) error {
+	return w.failWithDecision(ctx, job, command, reason, nil)
+}
+
+func failedCoordinatorDecision(command DispatchCommand, reason string, observed *inboundcoord.Decision) inboundcoord.Decision {
+	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue, Source: coordinatorSource(command)}
+	if observed != nil {
+		decision = *observed
+	}
+	decision.UserText = "本轮处理失败。"
+	decision.Reason = reason
+	decision.Steps = append(append([]protocol.ChatCoordinatorStep{}, decision.Steps...), protocol.ChatCoordinatorStep{
+		Seq: len(decision.Steps) + 1, Type: "error", Content: reason, Error: true,
+	})
+	return decision
+}
+
+func (w *InboundCoordinatorJobWorker) failWithDecision(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand, reason string, observed *inboundcoord.Decision) error {
 	if command.CompletionCallback != nil && w.handler.TaskService != nil {
 		_ = w.handler.TaskService.EnqueueSynchronousTaskCompletion(
 			ctx, command.CompletionCallback.URL, command.CompletionCallback.Target,
 			job.AgentID, reason, "coordinator_job_failed",
 		)
 	}
-	decision := inboundcoord.Decision{
-		Action: inboundcoord.ActionContinue,
-		Reason: reason,
-		Source: coordinatorSource(command),
-		Steps:  []protocol.ChatCoordinatorStep{{Seq: 1, Type: "error", Content: reason, Error: true}},
-	}
+	decision := failedCoordinatorDecision(command, reason, observed)
 	if err := w.handler.persistCoordinatorJobChat(ctx, job, decision); err != nil {
 		slog.Error("persist failed coordinator Chat failed", "job_id", util.UUIDToString(job.ID), "error", err)
 	}

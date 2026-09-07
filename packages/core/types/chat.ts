@@ -31,6 +31,17 @@ export interface ChatCoordinatorTrace {
   elapsed_ms?: number;
   source?: string;
   steps?: ChatCoordinatorStep[];
+  issue_results?: ChatCoordinatorIssueResult[];
+}
+
+/** Committed server effects, independent of the model's requested action. */
+export interface ChatCoordinatorIssueResult {
+  action: string;
+  issue_id: string;
+  issue_identifier?: string;
+  issue_title?: string;
+  comment_id?: string;
+  task_id?: string;
 }
 
 export interface ChatCoordinatorStep {

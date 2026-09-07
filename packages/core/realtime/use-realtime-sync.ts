@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import { useQueryClient, type InfiniteData, type QueryClient } from "@tanstack/react-query";
 import type { WSClient } from "../api/ws-client";
+import { parseWithFallback } from "../api/schema";
+import { ChatCoordinatorTraceSchema } from "../api/schemas";
 import type { StoreApi, UseBoundStore } from "zustand";
 import type { AuthState } from "../auth/store";
 import { createLogger } from "../logger";
@@ -197,7 +199,12 @@ export function applyChatMessageToCache(
       created_at: payload.created_at ?? new Date().toISOString(),
       message_kind: "coordinator",
       elapsed_ms: payload.elapsed_ms ?? payload.coordinator?.elapsed_ms ?? null,
-      coordinator: payload.coordinator,
+      coordinator: parseWithFallback<ChatMessage["coordinator"]>(
+        payload.coordinator,
+        ChatCoordinatorTraceSchema,
+        undefined,
+        { endpoint: "WS chat:message coordinator", includeReceived: false },
+      ),
     });
   }
   invalidateChatMessageQueries(qc, sessionId);
