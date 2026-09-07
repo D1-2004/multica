@@ -166,6 +166,11 @@ func TestCoordinatorFreshWindowJudgedAtCapacity(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM inbound_coordinator_job WHERE id=$1`, job.ID) })
+		job.LeaseToken = parseUUID(uuid.NewString())
+		job.AttemptCount = 1
+		if _, err := testPool.Exec(ctx, `UPDATE inbound_coordinator_job SET status='running',attempt_count=1,lease_token=$2,lease_expires_at=now()+interval '1 minute' WHERE id=$1`, job.ID, job.LeaseToken); err != nil {
+			t.Fatal(err)
+		}
 		parked, err := worker.parkIfSceneWindowBusy(ctx, job, command)
 		if err != nil || parked {
 			t.Fatalf("fresh %q must reach Decide at capacity: parked=%v err=%v", text, parked, err)
@@ -187,6 +192,10 @@ func TestCoordinatorFreshWindowJudgedAtCapacity(t *testing.T) {
 			}
 			if completed != 0 {
 				t.Fatal("waiting for capacity must not send a completed callback")
+			}
+		} else {
+			if _, err := q.CompleteInboundCoordinatorJob(ctx, db.CompleteInboundCoordinatorJobParams{ID: job.ID, LeaseToken: job.LeaseToken}); err != nil {
+				t.Fatal(err)
 			}
 		}
 	}

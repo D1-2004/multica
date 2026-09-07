@@ -1,6 +1,6 @@
 # Coordinator collect 与后台等待分离
 
-状态：实施中。分支：`codex/fix-coordinator-collect-window`。
+状态：修复已部署预发；真实 DWS e2e 因组织权限阻塞，尚未验收完成。分支：`codex/fix-coordinator-collect-window`。
 
 ## 事故与目标
 
@@ -31,8 +31,13 @@
 - `go test -race ./internal/service/inboundcoord -count=1` 通过。
 - Handler 定向 race 回归通过：收集期限、真实 acceptance/job/outbox、过期与 parked 分窗、12 秒上限、两槽在途仍判断新消息、等待不发完成、失败关闭所有回执。
 - `go build ./cmd/server`、e2e runner Python 语法和 case JSON 校验通过。
-- 扩展 V2 测试暴露既有 `TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity` 仍断言 instruction 仅等于 ROUTER CONTEXT；实际已包含 DingTalk Conversation。使用修改前 HEAD 独立 worktree 验证基线，不在本次改动中修改这条旧合同。
+- 扩展 V2 测试暴露既有 `TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity` 仍断言 instruction 仅等于 ROUTER CONTEXT；实际已包含 DingTalk Conversation。已用修改前 HEAD 独立 worktree 验证基线同样失败，不在本次改动中修改这条旧合同。
 - 全量 `sqlc generate` 被既有 271 号迁移先引用尚未创建的 task_completion_outbox 阻塞；维护本文件既有扫描封装及 SQL 对应改动，并用真实数据库执行回归验证查询。
 - 预发真实 DWS 预检：BLOCKED，主角/配角均 `PAT_ORG_POLICY_DENIED` / `chat.message:list`；已请求组织策略放行。runner 在回读不可用时停止，不发送无法验证的测试工作。
 - 固定 Agent 有效，404 原因是 `pre-fde` workspace 为浴发空间；已建立独立 `collect-pre-942f` profile 指向草帽星系。无 Agent 配置修改。
-- 待回填预发实例、部署 SHA、健康检查与三轮真实 IM 验收。
+- 预发部署于 15:52:17 SUCCESS，平台集成测试 SUCCESS；`/api/config` 与首页均 HTTP 200，测试 Agent 的 Coordinator 开关仍开启。发布源快照 c18d8d0ff，集成提交 626ee98eb（保留同批其它 CR）。
+- 三轮真实 IM 验收尚未进行，不能宣称体验已验收。组织管理员放开 chat.message:list 后，按 runner 逐轮执行并核对 Router、SLS、同 cid 回读和任务计数。
+- 汇总证据：`docs/evals/results/2026-09-07-coordinator-collect.json`。
+
+- 事故定向回归的红绿对照：原始 `a6f2d8c3e` 上 `TestCoordinatorFreshWindowJudgedAtCapacity` 对“你干了吗？”报 `parked=true` 失败；修复版同一数据库夹具通过。
+- 预发 CR `36000322`，run `3107058477`。共享发布分支的失败决策记录与本次全回执关闭发生一处冲突；语义合并后 race 回归和构建通过，发布合并提交 `626ee98eb`，已继续原 run。

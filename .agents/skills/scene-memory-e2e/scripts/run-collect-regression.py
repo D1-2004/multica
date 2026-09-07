@@ -83,7 +83,7 @@ def scene_tasks(profile: str) -> list[dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=("preflight", "prepare", "pings", "burst", "third", "observe"))
+    parser.add_argument("phase", choices=("preflight", "prepare", "pings", "burst", "continuous", "third", "observe"))
     parser.add_argument("--profile", required=True, help="Explicit pre-release profile scoped to the fixture workspace")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--deployment-run", required=True)
@@ -92,6 +92,9 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True, mode=0o700)
     report = {"case": CASE["id"], "phase": args.phase, "started_at": now(), "deployment_run": args.deployment_run, "revision": args.revision, "fixture": FIXTURE, "status": "INCOMPLETE"}
     try:
+        if args.phase not in ("preflight", "observe") and (args.out / f"{args.phase}.json").exists():
+            print("This phase already has a ledger; use a new round directory instead of resending it.", file=sys.stderr)
+            return 2
         profile_path = Path.home() / ".multica/profiles" / args.profile / "config.json"
         profile = json.loads(profile_path.read_text())
         if profile.get("server_url", "").rstrip("/") != "https://pre-fde-workbench.dingtalk.com" or profile.get("workspace_id") != FIXTURE["workspaceId"]:
@@ -133,6 +136,14 @@ def main() -> int:
                 b = pool.submit(send, "说话")
                 report["sends"] = [a.result(), b.result()]
             report["timing_gate"] = "Verify server arrival order and gap <4s in Router; client start times alone are insufficient."
+        elif args.phase == "continuous":
+            with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                pending = []
+                for _ in range(8):
+                    pending.append(pool.submit(send, "你说话"))
+                    time.sleep(2)
+                report["sends"] = [future.result() for future in pending]
+            report["timing_gate"] = "Require server arrival gaps <4s over >12s, then prove the first window sealed by 12s; otherwise the timing fixture is INCOMPLETE."
         elif args.phase == "third":
             if len({t["issue_id"] for t in tasks if t["status"] in ACTIVE}) != 2:
                 raise Blocked("third-work fixture requires two active matters")
