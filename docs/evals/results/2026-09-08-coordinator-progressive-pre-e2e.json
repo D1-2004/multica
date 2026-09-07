@@ -1,0 +1,255 @@
+{
+  "status": "PASS",
+  "policy_version": "2026-09-08.2",
+  "source_commit": "e42375e5bb3f52d3a37991b1dc9ec26441255e77",
+  "deployed_release_commit": "d6fe8447e44946a5d3757dc0de3f42038e034497",
+  "deployment": {
+    "cr_id": 36010734,
+    "run_id": 3107158566,
+    "pipeline_id": 66,
+    "build": "SUCCESS",
+    "artifact_scan": "SUCCESS",
+    "deploy": "SUCCESS",
+    "integration": "SUCCESS",
+    "manual_pre_verification": "WAITING",
+    "live_compatible_replicas": 2,
+    "production_published": false
+  },
+  "coverage": {
+    "source_entries": 103,
+    "obligation_families": 19,
+    "policy_modules": 12,
+    "structural_check": "PASS_STRUCTURAL_ONLY",
+    "model_full": "14/14",
+    "payload_contrast": "6/6",
+    "command_contrast": "3/3",
+    "live_smoke": "4/4"
+  },
+  "traces": [
+    {
+      "trace_id": "4cde2db376b14600bcefe536e664a643",
+      "policy_version": "2026-09-08.2",
+      "rounds": [
+        {
+          "name": "coordinator.round.1",
+          "usage": {
+            "unit": "TOKENS",
+            "input": 2964,
+            "output": 43,
+            "total": 3007
+          },
+          "calls": [
+            "assoc_recall"
+          ]
+        },
+        {
+          "name": "coordinator.round.2",
+          "usage": {
+            "unit": "TOKENS",
+            "input": 5176,
+            "output": 112,
+            "total": 5288
+          },
+          "calls": [
+            "finish"
+          ]
+        },
+        {
+          "name": "coordinator.round.3",
+          "usage": {
+            "unit": "TOKENS",
+            "input": 5347,
+            "output": 118,
+            "total": 5465
+          },
+          "calls": [
+            "finish"
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "action": "issue",
+          "elapsed_ms": 8097,
+          "intent": "other",
+          "issue_id": "",
+          "look_into": "冬翔委托：执行 printf PGCTX_OK_0908_0116 命令并将输出发送到当前会话 cid+bEFv7ngm9n79Q1vL9HYJw==\nscene_cid=cid+bEFv7ngm9n79Q1vL9HYJw==",
+          "purpose": "冬翔委托：执行 printf PGCTX_OK_0908_0116 命令并将输出发送到当前会话 cid+bEFv7ngm9n79Q1vL9HYJw==",
+          "reason": "",
+          "tool_rounds": 3,
+          "tools_used": [
+            "assoc_recall",
+            "finish",
+            "finish"
+          ],
+          "user_text": "收到，我去执行。"
+        }
+      ]
+    },
+    {
+      "trace_id": "1304d84fcd4a4be392f5ac4d79652448",
+      "policy_version": "2026-09-08.2",
+      "rounds": [
+        {
+          "name": "coordinator.round.1",
+          "usage": {
+            "unit": "TOKENS",
+            "input": 2938,
+            "output": 24,
+            "total": 2962
+          },
+          "calls": [
+            "assoc_recall"
+          ]
+        },
+        {
+          "name": "coordinator.round.2",
+          "usage": {
+            "unit": "TOKENS",
+            "input": 5247,
+            "output": 34,
+            "total": 5281
+          },
+          "calls": [
+            "finish"
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "action": "reply",
+          "elapsed_ms": 3811,
+          "intent": "",
+          "issue_id": "",
+          "look_into": "",
+          "purpose": "",
+          "reason": "",
+          "tool_rounds": 2,
+          "tools_used": [
+            "assoc_recall",
+            "finish"
+          ],
+          "user_text": "在。"
+        }
+      ]
+    },
+    {
+      "trace_id": "db03484cc34b4e3ea0fcc97dc4c97955",
+      "policy_version": "2026-09-08.2",
+      "rounds": [
+        {
+          "name": "coordinator.round.1",
+          "usage": {
+            "unit": "TOKENS",
+            "input": 2938,
+            "output": 68,
+            "total": 3006
+          },
+          "calls": [
+            "finish"
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "action": "reply",
+          "elapsed_ms": 2297,
+          "intent": "",
+          "issue_id": "",
+          "look_into": "",
+          "purpose": "",
+          "reason": "",
+          "tool_rounds": 1,
+          "tools_used": [
+            "finish"
+          ],
+          "user_text": "我目前安装了 policy-qa-demo-20260907，用于 HR 制度问答的虚构差旅语料与配套映射，供预发验证。"
+        }
+      ]
+    },
+    {
+      "trace_id": "f190140433ad48948616a591a3595709",
+      "policy_version": "2026-09-08.2",
+      "rounds": [
+        {
+          "name": "coordinator.round.1",
+          "usage": {
+            "unit": "TOKENS",
+            "input": 2944,
+            "output": 43,
+            "total": 2987
+          },
+          "calls": [
+            "assoc_recall"
+          ]
+        },
+        {
+          "name": "coordinator.round.2",
+          "usage": {
+            "unit": "TOKENS",
+            "input": 5233,
+            "output": 37,
+            "total": 5270
+          },
+          "calls": [
+            "finish"
+          ]
+        }
+      ],
+      "decisions": [
+        {
+          "action": "reply",
+          "elapsed_ms": 4335,
+          "intent": "",
+          "issue_id": "",
+          "look_into": "",
+          "purpose": "",
+          "reason": "",
+          "tool_rounds": 2,
+          "tools_used": [
+            "assoc_recall",
+            "finish"
+          ],
+          "user_text": "要发什么内容？"
+        }
+      ]
+    }
+  ],
+  "task": {
+    "id": "058c0cff-62df-4868-87a9-766af14df6bb",
+    "issue_id": "656be284-1469-4e80-861b-a1db6b41c925",
+    "identifier": "WS-238",
+    "status": "completed",
+    "started_at": "2026-09-08T01:18:20+08:00",
+    "completed_at": "2026-09-08T01:22:07+08:00",
+    "new_task_count_for_four_cases": 1,
+    "command_tool_seq": 34,
+    "command": "printf PGCTX_OK_0908_0116",
+    "stdout": "PGCTX_OK_0908_0116",
+    "result_message_id": "msgjrf0B3WFQ3hZe3lq82zbsQ==",
+    "result_messages_in_same_cid": 1,
+    "presence_while_busy": true,
+    "completion_outbox_after": 0,
+    "response_actions_after": 0
+  },
+  "earlier_failures": [
+    {
+      "policy": "2026-09-07.3",
+      "trace_id": "1c22f7ececeb4767873ee64e7d16f15f",
+      "failure": "Missing payload was clarified while simultaneously creating work.",
+      "cleanup": "Task 4b221b5f-7c71-48f0-a849-2b92d5df35d2 verified cancelled via backend."
+    },
+    {
+      "policy": "2026-09-08.1",
+      "trace_id": "99c8402fbc5c43f9b482699b22b9a458",
+      "failure": "Read-only decision tools were mistaken for employee capability; command request refused."
+    }
+  ],
+  "limits": [
+    "Structural mappings do not certify every historical semantic obligation. Four live cases do not replace all 19 historical live scenarios.",
+    "Final inventory used 2938 input tokens, one round, no history. Baseline 8028 used different context; other turns still used extra recall and repair rounds. No uniform total-token reduction claim.",
+    "Sandbox send preflight initially failed due to missing uuidgen/task token; executor recovered and sent once. Runtime bootstrap was observed, not changed.",
+    "The initial probe used locally switched-back prod MCP, then pre was restored before counted smoke; that probe is excluded.",
+    "Two pre-existing dispatch acceptances remain. No unrelated records or original-workspace files were changed."
+  ]
+}
