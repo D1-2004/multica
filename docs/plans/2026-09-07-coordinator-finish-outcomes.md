@@ -42,4 +42,16 @@
 
 ## 预发部署
 
-2026-09-07 用户已授权完成预发部署。提交当前会话改动并推送专用分支，通过 Aone 应用 342160 的预发流水线 66 发布；核对构建版本、部署和集成检查结果。部署进行中，完成后回填运行记录。正式环境不在本次范围内。
+2026-09-07 用户授权完成预发部署，已于 15:14:41（Asia/Shanghai）完成。正式环境不在本次范围内。
+
+- 应用：`342160 / dt-fde-multica`，预发流水线 `66`。
+- 功能提交：`b12c427efc55051e2dbd76d743ff20531d6cc072`，分支 `codex/coordinator-finish-results`。
+- [CR 35999156](https://cd.aone.alibaba-inc.com/unite/micro/cr/app/342160/35999156)。
+- [流水线 run 3107050090](https://cd.aone.alibaba-inc.com/unite/micro/publish/app/342160?flowId=1005452)，Mix 实例 `240640741`。
+- 构建 job `170728605`，发布合并版本 `cc7f2dcd5f845df1b538e8e7a9a8eca53257e7f8`，已通过 Git ancestry 核对包含功能提交。
+- 镜像：`hub.docker.alibaba-inc.com/aone/dt-fde-multica:20260907150705847980_prepub`，digest `sha256:a867260e48ca5176fda7f874d12c413205b4de9979efa7c2f94a769b33273dd9`。
+- [部署单 160679628](https://cd.aone.alibaba-inc.com/ec/app/342160/deploy/order?id=160679628&envId=6721850)：`SUCCESS`，两台目标实例均成功。
+- 代码合并、构建、制品扫描、预发部署、预发集成测试节点均为 `SUCCESS`。扫描节点返回非阻断提示，未执行 skip 或豁免。
+- 部署后 `https://pre-fde-workbench.dingtalk.com/health` 返回 HTTP 200 / `success`；`/status.taobao`、`/api/config`、`/login` 均为 HTTP 200，配置 JSON 和登录页 HTML 正常。
+- 流水线整体 `WAITING`，仅停在人工“预发验证”节点 `3444788433`；预发部署已完成，未推进人工发布门禁。
+- 验证边界：以上为构建版本、实例部署与服务健康核验；没有发送真实钉钉消息或创建额外任务作为线上验收数据。
