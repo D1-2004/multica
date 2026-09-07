@@ -46,7 +46,7 @@ export function AgentConfigNav({
   return (
     <>
       <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-sidebar-border bg-sidebar py-2 md:block">
-        <nav aria-label={t(($) => $.tabs.section_navigation_aria)}>
+        <nav className="space-y-3" aria-label={t(($) => $.tabs.section_navigation_aria)}>
           {groups.map((group) => {
             return (
               <section key={group.id} className="px-2 py-0.5">
