@@ -86,6 +86,32 @@ var dshPluginDeleteCmd = &cobra.Command{
 	RunE:  runDshPluginDelete,
 }
 
+// Importing a plugin does not make it run; binding it to an agent does. Without
+// these three, a CLI-driven workflow could get a package into the workspace and
+// then had to open the web UI to finish the job.
+
+var dshPluginBindingsCmd = &cobra.Command{
+	Use:   "bindings <agent>",
+	Short: "List the plugins an agent boots with",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runDshPluginBindings,
+}
+
+var dshPluginBindCmd = &cobra.Command{
+	Use:     "bind <agent> <plugin>",
+	Short:   "Bind a plugin to an agent",
+	Example: "  multica dsh-plugin bind my-agent dsh-mcp-lens",
+	Args:    cobra.ExactArgs(2),
+	RunE:    runDshPluginBind,
+}
+
+var dshPluginUnbindCmd = &cobra.Command{
+	Use:   "unbind <agent> <plugin>",
+	Short: "Unbind a plugin from an agent",
+	Args:  cobra.ExactArgs(2),
+	RunE:  runDshPluginUnbind,
+}
+
 func init() {
 	dshPluginImportCmd.Flags().String("source", "",
 		"package reference: npm:name@version, github:owner/repo#ref, or an https tarball URL")
@@ -98,9 +124,13 @@ func init() {
 
 	dshPluginDeleteCmd.Flags().Bool("yes", false, "skip the confirmation prompt")
 
+	dshPluginBindCmd.Flags().Bool("disabled", false,
+		"bind the plugin but leave it switched off")
+
 	for _, command := range []*cobra.Command{
 		dshPluginListCmd, dshPluginGetCmd, dshPluginImportCmd,
 		dshPluginFilesCmd, dshPluginCatCmd, dshPluginCheckUpdateCmd,
+		dshPluginBindingsCmd, dshPluginBindCmd, dshPluginUnbindCmd,
 	} {
 		command.Flags().String("output", "table", "Output format: table or json")
 	}
@@ -112,6 +142,9 @@ func init() {
 	dshPluginCmd.AddCommand(dshPluginCatCmd)
 	dshPluginCmd.AddCommand(dshPluginCheckUpdateCmd)
 	dshPluginCmd.AddCommand(dshPluginDeleteCmd)
+	dshPluginCmd.AddCommand(dshPluginBindingsCmd)
+	dshPluginCmd.AddCommand(dshPluginBindCmd)
+	dshPluginCmd.AddCommand(dshPluginUnbindCmd)
 	rootCmd.AddCommand(dshPluginCmd)
 }
 
@@ -154,7 +187,7 @@ func resolveDshPluginRef(ctx context.Context, client *cli.APIClient, ref string)
 		return "", fmt.Errorf("a plugin id or package name is required")
 	}
 	if looksLikeDshPluginID(ref) {
-		return ref, nil
+		return canonicalUUID(ref), nil
 	}
 
 	var plugins []dshPluginSummary
@@ -221,6 +254,23 @@ func looksLikeDshPluginID(value string) bool {
 }
 
 var undashedUUIDRe = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+
+// canonicalUUID spells an id the way the server writes it.
+//
+// Most routes take the id in the path, where pgtype parses it and any spelling
+// works. `bind` is the exception: it sends ids in a JSON body that
+// SetAgentDshPlugins looks up in a map keyed by uuidToString(row.ID) — a plain
+// string compare — so an uppercase or undashed id that is perfectly valid comes
+// back as "unknown DSH plugin". Normalising here keeps that from depending on
+// how the caller happened to spell it.
+func canonicalUUID(value string) string {
+	lower := strings.ToLower(value)
+	if len(lower) != 32 {
+		return lower
+	}
+	return lower[0:8] + "-" + lower[8:12] + "-" + lower[12:16] + "-" +
+		lower[16:20] + "-" + lower[20:32]
+}
 
 func runDshPluginList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
@@ -532,6 +582,226 @@ func runDshPluginDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("delete DSH plugin: %w", err)
 	}
 	fmt.Printf("DSH plugin removed: %s\n", plugin.PackageName)
+	return nil
+}
+
+// agentDshPluginBinding is one row of an agent's plugin set.
+type agentDshPluginBinding struct {
+	ID              string `json:"id"`
+	PackageName     string `json:"package_name"`
+	ResolvedVersion string `json:"resolved_version"`
+	SourceKind      string `json:"source_kind"`
+	Enabled         bool   `json:"enabled"`
+}
+
+func fetchAgentDshPlugins(ctx context.Context, client *cli.APIClient, agentID string) ([]agentDshPluginBinding, error) {
+	var bound []agentDshPluginBinding
+	if err := client.GetJSON(ctx, "/api/agents/"+agentID+"/dsh-plugins", &bound); err != nil {
+		return nil, fmt.Errorf("list the agent's DSH plugins: %w", err)
+	}
+	return bound, nil
+}
+
+// resolveAgentExact resolves an agent by id or by its EXACT name.
+//
+// resolveAgent, which the autopilot commands use, matches a case-insensitive
+// substring and errors only when two agents match. That is fine for reading;
+// it is not fine here. With a single agent called "build-prod", `bind build`
+// resolves silently to it, and these commands change what an agent runs. So an
+// exact name is required, and a substring that would have matched is offered as
+// a suggestion rather than acted on.
+func resolveAgentExact(ctx context.Context, client *cli.APIClient, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("an agent id or name is required")
+	}
+	if uuidRegexp.MatchString(ref) {
+		return ref, nil
+	}
+	if client.WorkspaceID == "" {
+		return "", fmt.Errorf("workspace ID is required to resolve agents; use --workspace-id or set MULTICA_WORKSPACE_ID")
+	}
+
+	var agents []struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		RuntimeMode string `json:"runtime_mode"`
+	}
+	path := "/api/agents?" + url.Values{"workspace_id": {client.WorkspaceID}}.Encode()
+	if err := client.GetJSON(ctx, path, &agents); err != nil {
+		return "", fmt.Errorf("fetch agents: %w", err)
+	}
+
+	var near []string
+	for _, a := range agents {
+		if a.Name == ref {
+			return a.ID, nil
+		}
+		if strings.Contains(strings.ToLower(a.Name), strings.ToLower(ref)) {
+			near = append(near, a.Name)
+		}
+	}
+	if len(near) > 0 {
+		return "", fmt.Errorf("no agent is named exactly %q; did you mean %s?",
+			ref, strings.Join(near, ", "))
+	}
+	return "", fmt.Errorf("no agent named %q in this workspace", ref)
+}
+
+// warnIfAgentWillNotLoadPlugins prints a warning when the agent's runtime does
+// not compose plugins at all.
+//
+// Plugins are assembled by the sandbox image's adapter; an agent on a local
+// daemon stores the binding and never loads it. Reporting "Bound … (enabled)"
+// with no further word would be the same silent no-op the web tab now warns
+// about. Not an error: the binding is real and takes effect if the agent moves
+// to a cloud runtime.
+func warnIfAgentWillNotLoadPlugins(ctx context.Context, client *cli.APIClient, agentID string) {
+	var agent struct {
+		RuntimeMode string `json:"runtime_mode"`
+	}
+	if err := client.GetJSON(ctx, "/api/agents/"+agentID, &agent); err != nil {
+		return
+	}
+	if agent.RuntimeMode != "" && agent.RuntimeMode != "cloud" {
+		fmt.Fprintln(os.Stderr,
+			"warning: this agent runs on a local daemon, which does not load DSH plugins. "+
+				"The binding is saved but will not run until the agent moves to a cloud runtime.")
+	}
+}
+
+func runDshPluginBindings(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	agentID, err := resolveAgentExact(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
+	bound, err := fetchAgentDshPlugins(ctx, client, agentID)
+	if err != nil {
+		return err
+	}
+	if outputJSON(cmd) {
+		return printJSON(bound)
+	}
+	if len(bound) == 0 {
+		fmt.Println("No DSH plugins bound to this agent.")
+		return nil
+	}
+	for _, binding := range bound {
+		state := "enabled"
+		if !binding.Enabled {
+			state = "disabled"
+		}
+		fmt.Printf("%s  %s@%s  [%s] %s\n", binding.ID, binding.PackageName,
+			orDash(binding.ResolvedVersion), binding.SourceKind, state)
+	}
+	return nil
+}
+
+// runDshPluginBind adds one plugin to the agent's set.
+//
+// Read-modify-write, because the endpoint REPLACES the set: sending only the
+// plugin being added would silently unbind everything else the agent had. The
+// web tab does the same thing for the same reason.
+func runDshPluginBind(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	agentID, err := resolveAgentExact(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
+	pluginID, err := resolveDshPluginRef(ctx, client, args[1])
+	if err != nil {
+		return err
+	}
+	bound, err := fetchAgentDshPlugins(ctx, client, agentID)
+	if err != nil {
+		return err
+	}
+
+	disabled, _ := cmd.Flags().GetBool("disabled")
+	enabled := !disabled
+
+	type entry struct {
+		ID      string `json:"id"`
+		Enabled bool   `json:"enabled"`
+	}
+	set := make([]entry, 0, len(bound)+1)
+	replaced := false
+	for _, binding := range bound {
+		if binding.ID == pluginID {
+			// Re-binding an already-bound plugin is how its enabled state is
+			// flipped; keeping the old row as well would send the id twice.
+			set = append(set, entry{ID: pluginID, Enabled: enabled})
+			replaced = true
+			continue
+		}
+		set = append(set, entry{ID: binding.ID, Enabled: binding.Enabled})
+	}
+	if !replaced {
+		set = append(set, entry{ID: pluginID, Enabled: enabled})
+	}
+
+	if err := client.PutJSON(ctx, "/api/agents/"+agentID+"/dsh-plugins",
+		map[string]any{"plugins": set}, nil); err != nil {
+		return fmt.Errorf("bind DSH plugin: %w", err)
+	}
+	warnIfAgentWillNotLoadPlugins(ctx, client, agentID)
+	if outputJSON(cmd) {
+		return printJSON(map[string]any{
+			"agent_id":  agentID,
+			"plugin_id": pluginID,
+			"enabled":   enabled,
+			"bound":     len(set),
+		})
+	}
+	state := "enabled"
+	if disabled {
+		state = "disabled"
+	}
+	fmt.Printf("Bound %s to the agent (%s). Plugins now bound: %d\n", args[1], state, len(set))
+	return nil
+}
+
+func runDshPluginUnbind(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	agentID, err := resolveAgentExact(ctx, client, args[0])
+	if err != nil {
+		return err
+	}
+	pluginID, err := resolveDshPluginRef(ctx, client, args[1])
+	if err != nil {
+		return err
+	}
+	// A dedicated route, so this one needs no read-modify-write.
+	if err := client.DeleteJSON(ctx, "/api/agents/"+agentID+"/dsh-plugins/"+pluginID); err != nil {
+		return fmt.Errorf("unbind DSH plugin: %w", err)
+	}
+	if outputJSON(cmd) {
+		return printJSON(map[string]any{
+			"agent_id":  agentID,
+			"plugin_id": pluginID,
+			"unbound":   true,
+		})
+	}
+	fmt.Printf("Unbound %s from the agent.\n", args[1])
 	return nil
 }
 
