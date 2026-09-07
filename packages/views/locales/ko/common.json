@@ -52,7 +52,7 @@
     "capabilities": "기능",
     "tools": "도구",
     "version": "v{{version}}",
-    "tool_count": "도구 {{count}}개",
+    "tool_count_other": "도구 {{count}}개",
     "no_description": "이 MCP Server는 설명을 제공하지 않았습니다.",
     "no_tool_description": "도구 설명이 없습니다.",
     "no_tools": "이 MCP Server가 보고한 도구가 없습니다.",

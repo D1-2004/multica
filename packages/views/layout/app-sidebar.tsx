@@ -95,6 +95,19 @@ function isNavActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
+function isNavItemActive(
+  pathname: string,
+  searchParams: URLSearchParams,
+  href: string,
+): boolean {
+  const [targetPath, targetQuery = ""] = href.split("?");
+  if (!isNavActive(pathname, targetPath ?? href)) return false;
+
+  const targetTab = new URLSearchParams(targetQuery).get("tab");
+  if (targetTab) return searchParams.get("tab") === targetTab;
+  return true;
+}
+
 // Stable empty arrays for query defaults. Using an inline `= []` default on
 // `useQuery` creates a new array reference on every render when `data` is
 // undefined (e.g. query disabled or loading) — which in turn breaks any
@@ -143,6 +156,21 @@ type NavLabelKey =
   | "skills"
   | "settings";
 
+type WorkspaceNavItem = {
+  key: NavKey;
+  labelKey: NavLabelKey;
+  primary?: boolean;
+};
+
+type WorkspaceDomain = {
+  labelKey:
+    | "collaboration_group"
+    | "agent_group"
+    | "runtime_group"
+    | "configuration_group";
+  items: WorkspaceNavItem[];
+};
+
 // Nav icons are NOT declared here: they are derived from each item's
 // destination path at render time, so the sidebar and the desktop tab bar
 // always agree. See route-icon-components.tsx.
@@ -152,21 +180,36 @@ const personalNav: { key: NavKey; labelKey: NavLabelKey }[] = [
   { key: "myIssues", labelKey: "my_issues" },
 ];
 
-const workspaceNav: { key: NavKey; labelKey: NavLabelKey }[] = [
-  { key: "issues", labelKey: "issues" },
-  { key: "projects", labelKey: "projects" },
-  { key: "autopilots", labelKey: "autopilots" },
-  { key: "agents", labelKey: "agents" },
-  { key: "squads", labelKey: "squads" },
-  { key: "usage", labelKey: "usage" },
-  { key: "sites", labelKey: "sites" },
-];
-
-const configureNav: { key: NavKey; labelKey: NavLabelKey }[] = [
-  { key: "runtimes", labelKey: "runtimes" },
-  { key: "runners", labelKey: "runners" },
-  { key: "skills", labelKey: "skills" },
-  { key: "settings", labelKey: "settings" },
+const workspaceDomains: WorkspaceDomain[] = [
+  {
+    labelKey: "collaboration_group",
+    items: [
+      { key: "issues", labelKey: "issues" },
+      { key: "projects", labelKey: "projects" },
+      { key: "autopilots", labelKey: "autopilots" },
+      { key: "usage", labelKey: "usage" },
+      { key: "sites", labelKey: "sites" },
+    ],
+  },
+  {
+    labelKey: "agent_group",
+    items: [
+      { key: "agents", labelKey: "agents", primary: true },
+      { key: "squads", labelKey: "squads" },
+      { key: "skills", labelKey: "skills" },
+    ],
+  },
+  {
+    labelKey: "runtime_group",
+    items: [
+      { key: "runtimes", labelKey: "runtimes" },
+      { key: "runners", labelKey: "runners" },
+    ],
+  },
+  {
+    labelKey: "configuration_group",
+    items: [{ key: "settings", labelKey: "settings" }],
+  },
 ];
 
 function DraftDot() {
@@ -425,7 +468,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname, push } = useNavigation();
+  const { pathname, searchParams, push } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
@@ -826,55 +869,54 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             </Collapsible>
           )}
 
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.sidebar.workspace_group)}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {workspaceNav.map((item) => {
-                  const href = p[item.key]();
-                  const Icon = routeIconForPath(href);
-                  const isActive = !isActivePinnedRoute && isNavActive(pathname, href);
-                  return (
-                    <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <Icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-
-          <SidebarGroup>
-            <SidebarGroupLabel>{t(($) => $.sidebar.configure_group)}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu className="gap-0.5">
-                {configureNav.map((item) => {
-                  const href = p[item.key]();
-                  const Icon = routeIconForPath(href);
-                  const isActive = isNavActive(pathname, href);
-                  return (
-                    <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
-                        isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <Icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
+          {workspaceDomains.map((domain) => (
+            <SidebarGroup key={domain.labelKey} className="py-0.5">
+              <SidebarGroupLabel
+                data-testid="sidebar-domain"
+                className="mb-0.5 h-5 text-micro font-semibold text-muted-foreground/80"
+              >
+                {t(($) => $.sidebar[domain.labelKey])}
+              </SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu className="gap-0.5">
+                  {domain.items.map((item) => {
+                    const href = p[item.key]();
+                    const Icon = routeIconForPath(href);
+                    const isActive = !isActivePinnedRoute && isNavItemActive(
+                      pathname,
+                      searchParams,
+                      href,
+                    );
+                    return (
+                      <SidebarMenuItem key={item.key}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          render={<AppLink href={href} />}
+                          className={cn(
+                            "text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground",
+                            item.primary &&
+                              "font-semibold text-foreground data-active:font-semibold",
+                          )}
+                        >
+                          {item.primary ? (
+                            <span
+                              data-primary-agent-entry
+                              className="flex size-6 shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand [&_svg]:size-4"
+                            >
+                              <Icon />
+                            </span>
+                          ) : (
+                            <Icon />
+                          )}
+                          <span>{t(($) => $.nav[item.labelKey])}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ))}
         </SidebarContent>
 
         <SidebarFooter className="p-2">

@@ -52,7 +52,7 @@
     "capabilities": "能力",
     "tools": "工具",
     "version": "v{{version}}",
-    "tool_count": "{{count}} 个工具",
+    "tool_count_other": "{{count}} 个工具",
     "no_description": "该 MCP Server 未提供说明。",
     "no_tool_description": "未提供工具说明。",
     "no_tools": "该 MCP Server 未上报工具。",

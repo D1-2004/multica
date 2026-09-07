@@ -1,7 +1,7 @@
 // Package agent provides a unified interface for executing prompts via
 // coding agents (Claude Code, CodeBuddy, Codex, Copilot, OpenCode, DevEco Code,
-// OpenClaw, Hermes, Pi, Oh-My-Pi, Cursor, Kimi, Reasonix, Kiro, Antigravity, Qoder,
-// Trae, Grok, Qwen Code, QwenPaw). It
+// OpenClaw, Hermes, Pi, Oh-My-Pi, Cursor, Kimi, Reasonix, DeepSeek Harness, Kiro,
+// Antigravity, Qoder, Trae, Grok, Qwen Code, QwenPaw). It
 // mirrors the happy-cli AgentBackend pattern, translated to idiomatic Go.
 package agent
 
@@ -198,12 +198,12 @@ const CostUSDTicksPerUSD = 10_000_000_000
 
 // Result is the final outcome after an agent session completes.
 type Result struct {
-	Status        string // "completed", "failed", "aborted", "timeout", "cancelled"
-	Output        string // final user-facing output selected by the backend
-	Error         string // error message if failed
-	DurationMs    int64
-	SessionID     string
-	Usage         map[string]TokenUsage // keyed by model name
+	Status     string // "completed", "failed", "aborted", "timeout", "cancelled"
+	Output     string // final user-facing output selected by the backend
+	Error      string // error message if failed
+	DurationMs int64
+	SessionID  string
+	Usage      map[string]TokenUsage // keyed by model name
 	// ResumeRejected is positive evidence that this run's requested resume
 	// was itself refused — the transcript is gone, the session belongs to
 	// another provider account, OR the session still exists but its history
@@ -240,7 +240,7 @@ type Result struct {
 
 // Config configures a Backend instance.
 type Config struct {
-	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, openclaw, hermes, pi, cursor, kimi, reasonix, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw)
+	ExecutablePath string            // path to CLI binary (claude, codebuddy, codex, copilot, opencode, openclaw, hermes, pi, cursor, kimi, reasonix, dsh, kiro-cli, agy, qodercli, qoderclicn, traecli, grok, qwen, qwenpaw)
 	CLIVersion     string            // detected version paired with ExecutablePath; observation only, never used to choose behavior
 	Env            map[string]string // extra environment variables
 	Logger         *slog.Logger
@@ -261,7 +261,7 @@ type Config struct {
 }
 
 // New creates a Backend for the given agent type.
-// Supported types: "claude", "codebuddy", "codex", "copilot", "opencode", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "reasonix", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw".
+// Supported types: "claude", "codebuddy", "codex", "copilot", "opencode", "deveco", "openclaw", "hermes", "pi", "cursor", "kimi", "reasonix", "dsh", "kiro", "antigravity", "qoder", "qoderclicn", "traecli", "grok", "qwen", "qwenpaw".
 //
 // SupportedTypes is the canonical whitelist of agent types eligible to back a
 // custom runtime profile. It MUST stay in lockstep with the
@@ -269,7 +269,7 @@ type Config struct {
 // migration 134 to add qoder, migration 136 to add traecli, migration 175 to
 // add deveco, migration 179 to add grok, migration 202 to add qwen,
 // migration 242 to add qoderclicn, migration 253 to add qwenpaw,
-// migration 254 to add reasonix): a
+// migration 254 to add reasonix, and fork-owned migration 9128 to add dsh): a
 // custom runtime profile may only
 // be based on a backend Multica officially supports.
 // qoder and qoderclicn share the same ACP backend; keeping both provider keys
@@ -292,6 +292,7 @@ var SupportedTypes = []string{
 	"cursor",
 	"kimi",
 	"reasonix",
+	"dsh",
 	"kiro",
 	"antigravity",
 	"qoder",
@@ -371,6 +372,8 @@ func New(agentType string, cfg Config) (Backend, error) {
 		return &kimiBackend{cfg: cfg}, nil
 	case "reasonix":
 		return &reasonixBackend{cfg: cfg}, nil
+	case "dsh":
+		return &dshBackend{cfg: cfg}, nil
 	case "kiro":
 		return &kiroBackend{cfg: cfg}, nil
 	case "antigravity":
@@ -412,6 +415,7 @@ var launchHeaders = map[string]string{
 	"hermes":      "hermes acp",
 	"kimi":        "kimi acp",
 	"reasonix":    "reasonix acp",
+	"dsh":         "dsh --profile multica (stdio)",
 	"kiro":        "kiro-cli acp",
 	"openclaw":    "openclaw agent (json)",
 	"opencode":    "opencode run (json)",

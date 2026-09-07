@@ -182,7 +182,7 @@ describe("LocalRunnerTab", () => {
     expect(screen.getByText("2 agent bindings")).toBeInTheDocument();
     expect(screen.getByText("/Users/dev/code")).toBeInTheDocument();
     expect(screen.getByText("/Users/dev/review")).toBeInTheDocument();
-    expect(screen.getByText("Install and use Local Runner")).toBeInTheDocument();
+    expect(screen.getByText("Connect and use your computer")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Pair machine" }),
     ).toBeInTheDocument();
@@ -406,7 +406,7 @@ describe("LocalRunnerTab", () => {
     };
     const { unmount } = renderTab();
     expect(
-      screen.getByText("No Local Runner machines bound"),
+      screen.getByText("No computers connected"),
     ).toBeInTheDocument();
     unmount();
 
@@ -420,10 +420,10 @@ describe("LocalRunnerTab", () => {
     const user = userEvent.setup();
     renderTab();
     expect(
-      screen.getByText(/Couldn't load your Local Runner exposure/),
+      screen.getByText(/Couldn't load your connected computers/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("No Local Runner machines bound"),
+      screen.queryByText("No computers connected"),
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Try again" }));
@@ -444,7 +444,7 @@ describe("LocalRunnerTab", () => {
       screen.getByRole("heading", { name: "studio-mac" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Couldn't load your Local Runner exposure/),
+      screen.queryByText(/Couldn't load your connected computers/),
     ).not.toBeInTheDocument();
   });
 

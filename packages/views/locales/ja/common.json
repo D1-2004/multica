@@ -52,7 +52,7 @@
     "capabilities": "機能",
     "tools": "ツール",
     "version": "v{{version}}",
-    "tool_count": "{{count}} 個のツール",
+    "tool_count_other": "{{count}} 個のツール",
     "no_description": "この MCP Server には説明がありません。",
     "no_tool_description": "ツールの説明はありません。",
     "no_tools": "この MCP Server はツールを報告していません。",

@@ -123,12 +123,12 @@ describe("SettingsPage MCP connections tab", () => {
   });
 });
 
-describe("SettingsPage Local Runner tab", () => {
-  it("exposes the account-wide Runner inventory under My Account", () => {
+describe("SettingsPage My Computer tab", () => {
+  it("exposes connected computers under My Account", () => {
     renderWithI18n(<SettingsPage />);
 
     expect(
-      screen.getByRole("tab", { name: "Local Runner" }),
+      screen.getByRole("tab", { name: "My Computer" }),
     ).toBeInTheDocument();
   });
 });

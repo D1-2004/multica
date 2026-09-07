@@ -61,54 +61,67 @@ export function RunnerTab({ agent, canBind, mode = "all" }: { agent: Agent; canB
 
   return (
     <div className="space-y-6">
-	  {mode !== "mcp" && (
-        <Select
-          items={runnerItems}
-          value={mounted?.machineId ?? "__none__"}
-          onValueChange={(machineId) => {
-            if (machineId) void selectMachine(machineId);
-          }}
-          disabled={
-            !canBind ||
-            account.isLoading ||
-            mounts.isLoading ||
-            mountMachine.isPending ||
-            revokeMount.isPending
-          }
-        >
-          <SelectTrigger
-            className="w-full"
-            aria-label={t(($) => $.tab_body.runner.execution_title)}
+      {mode !== "mcp" ? (
+        <section className="space-y-3">
+          <div>
+            <h3 className="text-body font-medium text-pretty">
+              {t(($) => $.tab_body.runner.execution_title)}
+            </h3>
+            <p className="mt-1 text-caption leading-5 text-muted-foreground text-pretty">
+              {t(($) => $.tab_body.runner.execution_hint)}
+            </p>
+          </div>
+          <Select
+            items={runnerItems}
+            value={mounted?.machineId ?? "__none__"}
+            onValueChange={(machineId) => {
+              if (machineId) void selectMachine(machineId);
+            }}
+            disabled={
+              !canBind ||
+              account.isLoading ||
+              mounts.isLoading ||
+              mountMachine.isPending ||
+              revokeMount.isPending
+            }
           >
-            {account.isLoading || mounts.isLoading ? (
-              <span className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" aria-hidden />
-                {t(($) => $.tab_body.runner.loading)}
-              </span>
-            ) : mounted ? (
-              <RunnerMachineStatus
-                name={mounted.name}
-                online={mounted.online}
-              />
-            ) : (
-              <SelectValue />
-            )}
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__none__">
-              {t(($) => $.tab_body.runner.none)}
-            </SelectItem>
-            {selectableMachines.map((machine) => (
-              <SelectItem key={machine.machineId} value={machine.machineId}>
+            <SelectTrigger
+              className="w-full"
+              aria-label={t(($) => $.tab_body.runner.execution_title)}
+            >
+              {account.isLoading || mounts.isLoading ? (
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2
+                    className="size-4 animate-spin motion-reduce:animate-none"
+                    aria-hidden
+                  />
+                  {t(($) => $.tab_body.runner.loading)}
+                </span>
+              ) : mounted ? (
                 <RunnerMachineStatus
-                  name={machine.name}
-                  online={machine.online}
+                  name={mounted.name}
+                  online={mounted.online}
                 />
+              ) : (
+                <SelectValue />
+              )}
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">
+                {t(($) => $.tab_body.runner.none)}
               </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
+              {selectableMachines.map((machine) => (
+                <SelectItem key={machine.machineId} value={machine.machineId}>
+                  <RunnerMachineStatus
+                    name={machine.name}
+                    online={machine.online}
+                  />
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </section>
+      ) : null}
 	  {mode !== "execution" && <section className="space-y-3">
         <div><p className="text-body font-medium">{t(($) => $.tab_body.runner.local_mcp_title)}</p><p className="text-caption text-muted-foreground">{t(($) => $.tab_body.runner.local_mcp_hint)}</p></div>
         {!mounted ? <RunnerMcpNotice text={t(($) => $.tab_body.runner.mount_first)} /> : mounted.mcpServers.length === 0 ? <RunnerMcpNotice text={mounted.online ? t(($) => $.tab_body.runner.mcp_empty) : t(($) => $.tab_body.runner.mcp_offline)} /> : (

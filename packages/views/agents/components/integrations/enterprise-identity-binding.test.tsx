@@ -143,7 +143,7 @@ describe("EnterpriseIdentityBindingCard", () => {
     window.history.replaceState(
       null,
       "",
-      "/acme/agents/agent-1?view=identity&enterprise_identity=authorize",
+      "/acme/agents/agent-1?view=digital_employee&enterprise_identity=authorize",
     );
 
     renderCard(true);
@@ -152,10 +152,10 @@ describe("EnterpriseIdentityBindingCard", () => {
       expect(beginBinding).toHaveBeenCalledWith(
         "workspace-1",
         "agent-1",
-        "/acme/agents/agent-1?view=identity",
+        "/acme/agents/agent-1?view=digital_employee",
       );
     });
-    expect(window.location.search).toBe("?view=identity");
+    expect(window.location.search).toBe("?view=digital_employee");
   });
 
   it("does not start binding from a shared link for a user who cannot manage the agent", async () => {
@@ -167,7 +167,7 @@ describe("EnterpriseIdentityBindingCard", () => {
     window.history.replaceState(
       null,
       "",
-      "/acme/agents/agent-1?view=identity&enterprise_identity=authorize",
+      "/acme/agents/agent-1?view=digital_employee&enterprise_identity=authorize",
     );
 
     renderCard(false);
@@ -176,6 +176,6 @@ describe("EnterpriseIdentityBindingCard", () => {
       await screen.findByText(/Only the agent owner and workspace owners\/admins/),
     ).toBeInTheDocument();
     expect(beginBinding).not.toHaveBeenCalled();
-    expect(window.location.search).toBe("?view=identity");
+    expect(window.location.search).toBe("?view=digital_employee");
   });
 });
