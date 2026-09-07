@@ -1,6 +1,6 @@
 # 统一响应开启后未回钉钉：HTTP 入站修复
 
-状态：根因已复现，修复已部署预发并恢复员工开关；等待新入站验证实际发送回执。
+状态：根因已复现，修复已部署预发并恢复员工开关；部署后的真实新入站已确认钉钉送达及接待表情清理。
 
 ## 现象与证据
 
@@ -28,6 +28,17 @@
 2. 两条故障消息通过受认证的 Router 响应回执接口人工结束接待：state=failed、errorCode=http_response_policy_dropped，action/request前缀 `incident-20260908-policy-drop:`。这是人工故障清理，不代表调用过DWS或已送达；未补发旧正文。两条记录均确认 clear_requested=true、clear_done=true。
 3. 当前预发另有渐进上下文改动的冲突。先等待其作者更新release到786231f9，再仅合入本次修复，形成1bcec3536；未覆盖对方合并或引入重复临时解决。
 4. CR36002276 / Run3107156896 的快照包含b8fecbac；构建、预发部署、集成测试全部SUCCESS，部署于2026-09-08 00:47:33 +08:00完成。未发布生产服务。
-5. 已恢复员工统一响应为true，员工revision10；Router同步回managed模式。实际消息送达需下一条新入站单独验证，不能用部署或执行完成替代。
+5. 已恢复员工统一响应为true，员工revision10；Router同步回managed模式。随后已通过新的真实入站独立验证发送回执，见下文。
 
 临时处置记录 `/tmp/response-http-incident-state.json` 不含凭据。诊断读取的临时Aone配置文件已删除，未输出或保留Secret到本报告。
+
+## 部署后真实验证
+
+新入站“你有哪些 skill？”产生 Dispatch `21c8012a-3475-4c1e-8f77-e5cdcfd4a4b1`，任务创建于2026-09-08 00:57:46 +08:00，冻结策略为multica_coordinator / revision11。
+
+- Coordinator 回复当前安装的预发测试 skill 信息。
+- 平台响应动作 `response-d8159afdd898e0d1aee8eeb2506f7dd7c9fb6923f15625960e58dd2dff4dff64` 获得 provider task `wxjdMfBFdUh4W9dckEK83lBEbrDHeTD1juMT6Pl/tQU=`。
+- Router于00:58:01收到 `state=delivered`，实际 message ID 为 `msgwK7GP2y7hFmO7Bt1E+L3zw==`，目标会话与原入站一致。此证据是服务端独立查询后的投递回执，不是assistant正文或执行完成状态。
+- 对应接待记录 `240e91ee-7a9c-4a86-b60a-879666e598e8` 的 read_done、set_done、clear_requested、clear_done均为true，last_error为空。
+
+此次直接回复漏回故障已完成真实验证；不将单条消息的结果泛化为所有场景的性能分位数验收。

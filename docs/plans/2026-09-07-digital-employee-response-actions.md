@@ -99,7 +99,7 @@ Runtime 能力名 `dws_message_policy_v1`。任务下发可选 `dingtalk_message
 - [x] 在 HTTP DTO 与 DispatchCommand 转换中保留策略，缺失字段仍保持 legacy。
 - [x] 从真实 JSON/HTTP 入口回归到路由注册及发送动作；验证错误策略被拒绝，避免仅构造内部 DispatchCommand 的测试遗漏边界。
 - [x] 修复 b8fecbac 已通过 Run3107156896 部署预发，恢复员工统一响应为true；两条旧故障接待已按failed人工清理，未补发旧正文。Router/Runtime 无需改代码。
-- [ ] 等待部署后新入站核验真实平台发送与送达回执。完整证据见 [本次HTTP修复记录](2026-09-08-unified-response-http-fix.md)。
+- [x] 部署后的“你有哪些 skill？”已获得真实delivered回执和message ID，接待记录全部清理完成。完整证据见 [本次HTTP修复记录](2026-09-08-unified-response-http-fix.md)。
 
 1. 数据库与部署阻塞已解除：通过当前 CR 的 prepub#APP#1 配置项定位连接，在目标库完成 024 预演回滚、024/025 正式应用及结构复核。绑定仍87条、新接待表0行；Router预发健康接口和受认证的v1能力接口均HTTP200。流水线仅停留正常人工预发验证，未发布生产服务。
 2. 本机配角身份此前遭PAT_ORG_POLICY_DENIED；用户指定东翔测试号后，改用其平台已绑定身份在真实沙箱正常完成get-self、建群、发送和回读，此历史拒绝不再阻塞沙箱验收。AI角标仍须客户端展示证据：原始回读的messageAiSendFlag两种策略均为DWS，不能用来源字段宣称视觉效果通过。
