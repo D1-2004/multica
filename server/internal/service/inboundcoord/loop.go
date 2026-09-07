@@ -987,6 +987,11 @@ func requireRecallBeforeFinish(
 		return nil
 	}
 	ids := extractConversationIDs(turn.Message)
+	// A fresh dispatch id is not a new business request. Before creating
+	// work, inspect this scene for an already accepted copy of the ask.
+	if action == ActionIssue && strings.TrimSpace(turn.ConversationID) != "" {
+		ids = append(ids, strings.TrimSpace(turn.ConversationID))
+	}
 	if len(ids) == 0 && !asksSceneQuestion(turn.Message) {
 		return nil
 	}
