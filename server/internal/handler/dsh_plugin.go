@@ -442,6 +442,17 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 	// import, and the recorded digest would then make the sandbox refuse to
 	// run — re-resolving in place is the only way to adopt the new content.
 	if req.Source != nil && strings.TrimSpace(*req.Source) != "" {
+		// Same gate as an overwriting import, because this is the same act:
+		// re-resolving replaces the stored bytes, and every agent bound to this
+		// plugin runs the new ones on its next claim. Import refuses that to a
+		// non-admin (see the OnConflict branch in persistDshPlugin); leaving
+		// this route open made that refusal decorative.
+		//
+		// Only when a source is supplied. Editing a display name or a config is
+		// ordinary member work and stays open.
+		if !h.dshPluginActorMayReplace(w, r, row.WorkspaceID) {
+			return
+		}
 		source, err := dshplugin.ParseSource(*req.Source)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
