@@ -28,17 +28,21 @@ import (
 )
 
 const (
-	decisionTimeout      = 45 * time.Second
-	dwsHistoryTimeout    = 12 * time.Second
-	coordinatorModel     = "qwen3.7-plus"
-	historyLimit         = 4
-	dingtalkHistoryLimit = 10
-	instructionsBudget   = 400
-	personaBudget        = 400
-	toneBudget           = 200
-	titleBudget          = 80
-	temperature          = 0.3
-	maxCompletionTokens  = 512
+	decisionTimeout         = 45 * time.Second
+	dwsHistoryTimeout       = 12 * time.Second
+	coordinatorModel        = "qwen3.7-plus"
+	historyLimit            = 4
+	dingtalkHistoryLimit    = 10
+	instructionsBudget      = 400
+	personaBudget           = 400
+	toneBudget              = 200
+	skillSnapshotLimit      = 24
+	skillSnapshotNameBudget = 48
+	skillSnapshotDescBudget = 80
+	skillSnapshotsBudget    = 1200
+	titleBudget             = 80
+	temperature             = 0.3
+	maxCompletionTokens     = 512
 )
 
 // Action is the short-loop verdict.
@@ -84,6 +88,7 @@ type Turn struct {
 	Instructions         string
 	Persona              string
 	ReplyTone            string
+	Skills               []SkillSnapshot
 	Busy                 bool
 	History              []HistoryLine
 	DingTalkHistory      []HistoryLine
@@ -197,6 +202,14 @@ type historyReader interface {
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 	GetAgentVoice(ctx context.Context, id pgtype.UUID) (db.GetAgentVoiceRow, error)
 	GetAgentSceneMemoryFlags(ctx context.Context, id pgtype.UUID) (db.AgentSceneMemoryFlags, error)
+	ListEnabledAgentSkillCardMetadata(ctx context.Context, agentID pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error)
+}
+
+// SkillSnapshot is the Coordinator-facing catalog row for one enabled skill.
+// Name and description only; never SKILL.md.
+type SkillSnapshot struct {
+	Name        string
+	Description string
 }
 
 // Coordinator runs the bounded assoc tool loop in loop.go.
@@ -240,17 +253,52 @@ func (c *Coordinator) SetIssueCommentWriter(writer IssueCommentWriter) {
 	}
 }
 
-// FillVoice copies Instructions-tab persona and reply tone onto the turn.
+// FillVoice copies Digital-Employee-tab persona, reply tone, and enabled
+// skill snapshots onto the turn. Skill load failures leave Skills empty
+// rather than blocking Decide.
 func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 	if c == nil || c.Queries == nil || turn == nil || !turn.AgentID.Valid {
 		return
 	}
 	voice, err := c.Queries.GetAgentVoice(ctx, turn.AgentID)
+	if err == nil {
+		turn.Persona = voice.Persona
+		turn.ReplyTone = voice.ReplyTone
+	}
+	c.FillSkills(ctx, turn)
+}
+
+// FillSkills copies enabled skill name+description snapshots onto the turn.
+func (c *Coordinator) FillSkills(ctx context.Context, turn *Turn) {
+	if c == nil || c.Queries == nil || turn == nil || !turn.AgentID.Valid {
+		return
+	}
+	rows, err := c.Queries.ListEnabledAgentSkillCardMetadata(ctx, turn.AgentID)
 	if err != nil {
 		return
 	}
-	turn.Persona = voice.Persona
-	turn.ReplyTone = voice.ReplyTone
+	turn.Skills = skillSnapshotsFromRows(rows)
+}
+
+func skillSnapshotsFromRows(rows []db.ListEnabledAgentSkillCardMetadataRow) []SkillSnapshot {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]SkillSnapshot, 0, len(rows))
+	for _, row := range rows {
+		name := strings.TrimSpace(row.Name)
+		if name == "" {
+			continue
+		}
+		out = append(out, SkillSnapshot{
+			Name:        name,
+			Description: strings.TrimSpace(row.Description),
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func hostSilence(turn Turn, reason string) Decision {

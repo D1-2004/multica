@@ -52,6 +52,11 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 		"purpose names no event or goal",
 		"do not recite workflow states",
 		"do not output that question again",
+		"agent_skills",
+		"listed skill covers",
+		"dingtalk-minutes",
+		"Ignore agent_skills on this loop",
+		"你会什么",
 	} {
 		if !strings.Contains(systemPrompt, rule) {
 			t.Errorf("systemPrompt missing routing rule %q", rule)

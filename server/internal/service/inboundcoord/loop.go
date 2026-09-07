@@ -618,6 +618,7 @@ func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
 			"busy", turn.Busy,
 			"persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
 			"reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget),
+			"skill_count", len(turn.Skills),
 			"dingtalk_history_count", len(turn.DingTalkHistory),
 			"multica_history_count", len(turn.History),
 			"scene_memory_revision", turn.SceneMemoryRevision,

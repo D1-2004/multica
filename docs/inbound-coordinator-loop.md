@@ -17,13 +17,13 @@ Coordinator Loop 是入站消息进沙箱之前的短接待。它不是第二个
 
 1. **按基础人设快速接待。** `finish.text` 要像同事在 IM 里说话，不像工单机器人。人设只定声音，不定路由。
 2. **把场域和事情连上。** 场域是钉钉 `openConversationId`（`cid…`），事情是 Issue。图查询是 `assoc_recall`；把已有 Issue 绑到本 cid 用 `assoc_bind`（必须带 `issue_id`）。新建事项不要悬空 bind：`finish action=issue` 且不带 `issue_id`，带上 `delegator` / `purpose` / `intent`，服务端先建 Issue 再 Associate。时间用卡片上的 `last_touched` / `last_comment`，不要让模型自己算。
-3. **需要持续跟的，交给 Issue。** 联系人、DWS、搜索、文件、写入、评论线程、追踪，都不是这轮直接做完的事。`action=issue` 开新 Issue 或续已召回的 Issue，沙箱再跑慢循环。
+3. **需要持续跟的，交给 Issue。** 联系人、DWS、搜索、文件、写入、评论线程、追踪，以及当前 Agent 已启用 Skill 能覆盖的工作，都不是这轮直接做完的事。`action=issue` 开新 Issue 或续已召回的 Issue，沙箱再跑慢循环。
 
 双循环：
 
 | 循环 | 延迟 | 上下文 | 出口 |
 |---|---|---|---|
-| Coordinator（快） | 45s 墙钟，最多 8 轮 tool call | 人设、本场景最近 IM、图召回 | `reply` / `issue` / `silence` |
+| Coordinator（快） | 45s 墙钟，最多 8 轮 tool call | 人设、Skill Snapshots、本场景最近 IM、图召回 | `reply` / `issue` / `silence` |
 | Sandbox Task（慢） | 一次 Issue 任务 | Agent Instructions、Diamond、Router Context、DWS 回读命令 | 评论、出站、状态、产物 |
 
 快循环不暴露 DWS / 搜索 / 新闻给模型。服务端在第一轮模型之前自己拉当前 cid 的钉钉历史。沙箱 ContextToken 不用。
@@ -58,11 +58,12 @@ Chat timeline 展示 DWS 历史拉取、模型判断、tool use、tool result �
 
 | 字段 | UI | 库 | 给谁用 | 是否改路由 |
 |---|---|---|---|---|
-| 基础人设 `persona` | Instructions 页 | `agent.persona`，最多 400 字 | Coordinator `finish.text` 的「我是谁」 | 否 |
+| 基础人设 `persona` | 数字员工 Tab | `agent.persona`，最多 400 字 | Coordinator `finish.text` 的「我是谁」 | 否 |
 | 回复语气 `reply_tone` | 同上 | `agent.reply_tone`，最多 200 字 | Coordinator `finish.text` 怎么说 | 否 |
-| System Prompt `instructions` | 同上下方 | `agent.instructions` | **沙箱**工作规则 | 否 |
+| Skill Snapshots | Skills Tab（已启用） | `agent_skill` + `skill.name/description` | Coordinator 判断「这是 Agent 该干的活」时必须 `action=issue` | **是**（只改向沙箱分派，不在快循环执行 Skill） |
+| System Prompt `instructions` | 指令 Tab | `agent.instructions` | **沙箱**工作规则 | 否 |
 
-抽取按钮把 `instructions` 里的声音抽到人设/语气，不改路由合同。
+抽取按钮把 `instructions` 里的角色与沟通风格抽到人设/语气，不改路由合同，也不把工具、Skill、SOP 写进人设。
 
 空人设、空语气时，快循环默认「简洁同事」：短句、不客套、不重复用户的话。禁止「收到 / 正在处理 / 稍等 / 好的我马上」。
 
@@ -79,6 +80,7 @@ user    ← buildUserPrompt(turn)
           agent_name
           agent_persona          ← 人设（clip 400，与 UI 一致）
           agent_reply_tone       ← 语气（clip 200，与 UI 一致）
+          agent_skills           ← 已启用 Skill 的 name + description 快照（最多 24 条）；匹配则必须 issue
           identity_note
           conversation_id / person_id
           agent_instructions     ← 工作规则 clip 400；不得改 action，不得抄进回复
@@ -89,15 +91,15 @@ user    ← buildUserPrompt(turn)
 
 模型：`qwen3.7-plus`，thinking 关，`tool_choice=required`，温度 0.3，最多 512 completion tokens。最后一轮只能 `finish`。裁决只认 `finish`，不认模型自由文本。
 
-人设出现在 **user 段的 `agent_persona` / `agent_reply_tone`**，由 system 规定「只定声音、不定 action」。不要把人设写进 system 常量，也不要写进沙箱 Diamond。
+人设出现在 **user 段的 `agent_persona` / `agent_reply_tone`**，由 system 规定「只定声音、不定 action」。Skill Snapshots 出现在 **user 段的 `agent_skills`**，由 system 规定「匹配 listed skill 的活必须 `action=issue`」。不要把人设写进 system 常量，也不要写进沙箱 Diamond。快循环不读 SKILL.md 正文。
 
-### 2.2 谁把人设填进 Turn
+### 2.2 谁把人设和 Skill Snapshots 填进 Turn
 
-| 入站 | 代码 | 人设 |
-|---|---|---|
-| 网页 Chat | `chat.go` → `TurnFromChatSession` | `GetAgentVoice`，有 |
-| 机器人 Channel Engine | `channel/engine/router.go` → `TurnFromChatSession` | 有 |
-| 数字员工 Dispatch V2 | `decideDispatchCoordinator` 手拼 Turn 后 `FillVoice` | `GetAgentVoice`，有 |
+| 入站 | 代码 | 人设 | Skills |
+|---|---|---|---|
+| 网页 Chat | `chat.go` → `TurnFromChatSession` | `GetAgentVoice` | `ListEnabledAgentSkillCardMetadata` |
+| 机器人 Channel Engine | `channel/engine/router.go` → `TurnFromChatSession` | 有 | 有 |
+| 数字员工 Dispatch V2 | `decideDispatchCoordinator` 手拼 Turn 后 `FillVoice` | 有 | 有（`FillVoice` 内加载） |
 
 ### 2.3 沙箱里的人设
 
@@ -384,7 +386,7 @@ Loop 的 10 条 clip 历史 **不是** 沙箱的权威会话。沙箱的 Router 
 
 ### 刻意不做（仍归沙箱）
 
-- Loop 里调 DWS 发消息、搜联系人、读文件、跑 skill。
+- Loop 里调 DWS 发消息、搜联系人、读文件、跑 skill。Skill Snapshots 只决定要不要分派，不在快循环执行。
 - 用 `chat_session` UUID 当场域键。
 - 入站 ACK 路径写关联边。
 - 把 Coordinator 扩成第二个沙箱。
