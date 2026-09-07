@@ -92,7 +92,7 @@ func TestPlanFlushRetriesWhenClaimedEvidenceMissing(t *testing.T) {
 		LeaseTargetThroughAt:         timestamptz(cutoff),
 		LeaseTargetThroughEvidenceID: "msg-inbound",
 	}
-	_, err := planFlush(row, []HistoryEvent{{
+	_, err := planCompleteFlush(row, []HistoryEvent{{
 		EvidenceID: "older",
 		OccurredAt: cutoff.Add(-time.Minute),
 		Content:    "灌水",
@@ -110,7 +110,7 @@ func TestPlanFlushCaughtUpWhenClaimedEvidenceVisible(t *testing.T) {
 		SourceCursorAt:               timestamptz(cutoff.Add(-time.Hour)),
 		SourceCursorEvidenceID:       "old",
 	}
-	plan, err := planFlush(row, []HistoryEvent{{
+	plan, err := planCompleteFlush(row, []HistoryEvent{{
 		EvidenceID: "msg-inbound",
 		OccurredAt: cutoff,
 		Content:    "记住：ALPHA-7749 是会议室预约脚本",
@@ -131,7 +131,7 @@ func TestPlanFlushIncludesTriggerBeforeCursor(t *testing.T) {
 		SourceCursorAt:               timestamptz(cutoff.Add(time.Second)),
 		SourceCursorEvidenceID:       "zzz",
 	}
-	plan, err := planFlush(row, []HistoryEvent{{
+	plan, err := planCompleteFlush(row, []HistoryEvent{{
 		EvidenceID: "msg-new",
 		OccurredAt: cutoff,
 		Content:    "纠正：DELTA-5520 是排班表",
@@ -154,7 +154,7 @@ func TestPlanFlushMergesEarlierTriggerWhenLeaseTargetIsLater(t *testing.T) {
 	later := time.Date(2026, 9, 2, 12, 0, 1, 0, time.UTC)
 	earlier := later.Add(-time.Second)
 	row := claimedAfterLaterThenEarlier(later, "msg-later", earlier, "msg-early")
-	plan, err := planFlush(row, []HistoryEvent{
+	plan, err := planCompleteFlush(row, []HistoryEvent{
 		{EvidenceID: "msg-early", OccurredAt: earlier, Content: "纠正：DELTA-5520 是排班表"},
 		{EvidenceID: "msg-later", OccurredAt: later, Content: "灌水"},
 	})
@@ -172,40 +172,11 @@ func TestPlanFlushMergesEarlierTriggerWhenLeaseTargetIsLater(t *testing.T) {
 	}
 }
 
-func TestPlanFlushAdvancesWhenOldPendingIsBehindPartialWindow(t *testing.T) {
-	now := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
-	oldPending := now.Add(-48 * time.Hour)
-	cursor := now.Add(-72 * time.Hour)
-	row := db.SceneMemory{
-		LeaseTargetThroughAt:         timestamptz(now),
-		LeaseTargetThroughEvidenceID: "msg-new",
-		LastTriggerAt:                timestamptz(now),
-		LastTriggerEvidenceID:        "msg-new",
-		PendingFromAt:                timestamptz(oldPending),
-		PendingFromEvidenceID:        "msg-stale-pending",
-		SourceCursorAt:               timestamptz(cursor),
-		SourceCursorEvidenceID:       "msg-old-cursor",
-	}
-	plan, err := planFlush(row, []HistoryEvent{
-		{EvidenceID: "msg-mid", OccurredAt: now.Add(-time.Minute), Content: "OwnerGraph 近况"},
-		{EvidenceID: "msg-new", OccurredAt: now, Content: "PoC主链路Demo筹备群口径"},
-	})
-	if err != nil {
-		t.Fatalf("old pending outside newest window must not block: %v", err)
-	}
-	if !containsEvidence(plan.batch, "msg-new") {
-		t.Fatalf("visible newest events must merge: %+v", plan)
-	}
-	if !plan.caughtUp || plan.cursorEv != "msg-new" {
-		t.Fatalf("cursor must advance through the visible window: %+v", plan)
-	}
-}
-
 func TestPlanFlushIncompleteWhenEarlierTriggerMissingEvenIfCovered(t *testing.T) {
 	later := time.Date(2026, 9, 2, 12, 0, 1, 0, time.UTC)
 	earlier := later.Add(-time.Second)
 	row := claimedAfterLaterThenEarlier(later, "msg-later", earlier, "msg-early")
-	_, err := planFlush(row, []HistoryEvent{{
+	_, err := planCompleteFlush(row, []HistoryEvent{{
 		EvidenceID: "msg-later",
 		OccurredAt: later,
 		Content:    "灌水",
@@ -229,7 +200,7 @@ func TestPlanFlushMergesAllLateTriggersInWindow(t *testing.T) {
 		SourceCursorAt:               timestamptz(later),
 		SourceCursorEvidenceID:       "msg-later",
 	}
-	plan, err := planFlush(row, []HistoryEvent{
+	plan, err := planCompleteFlush(row, []HistoryEvent{
 		{EvidenceID: "msg-early", OccurredAt: early, Content: "late A"},
 		{EvidenceID: "msg-mid", OccurredAt: mid, Content: "late B"},
 		{EvidenceID: "msg-later", OccurredAt: later, Content: "high-water"},
@@ -245,7 +216,7 @@ func TestPlanFlushMergesAllLateTriggersInWindow(t *testing.T) {
 func TestPlanFlushSameSecondSmallerEvidence(t *testing.T) {
 	at := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	row := claimedAfterLaterThenEarlier(at, "zzz", at, "aaa")
-	plan, err := planFlush(row, []HistoryEvent{
+	plan, err := planCompleteFlush(row, []HistoryEvent{
 		{EvidenceID: "aaa", OccurredAt: at, Content: "纠正：同一秒更小 id"},
 		{EvidenceID: "zzz", OccurredAt: at, Content: "灌水"},
 	})
@@ -272,7 +243,7 @@ func claimedAfterLaterThenEarlier(laterAt time.Time, laterEv string, earlierAt t
 }
 
 func TestPlanFlushEmptyDeltaWithoutCutoffIsCaughtUp(t *testing.T) {
-	plan, err := planFlush(db.SceneMemory{}, nil)
+	plan, err := planCompleteFlush(db.SceneMemory{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

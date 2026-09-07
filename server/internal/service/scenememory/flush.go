@@ -47,7 +47,7 @@ func formatFlushStamp(t time.Time) string {
 }
 
 type HistorySource interface {
-	Read(ctx context.Context, row db.SceneMemory) ([]HistoryEvent, error)
+	Read(ctx context.Context, row db.SceneMemory) (HistoryPage, error)
 }
 
 type MemoryFlusher struct {
@@ -67,7 +67,7 @@ type AgentReader interface {
 }
 
 func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err error) {
-	if f == nil || f.Store == nil {
+	if f == nil || f.Store == nil || f.History == nil {
 		return &FlushError{Code: ErrorConfig, Err: fmt.Errorf("scene memory flusher is not configured")}
 	}
 	ctx, cancel := context.WithTimeout(ctx, flushTimeout)
@@ -79,21 +79,13 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err erro
 	if err := f.Store.Renew(ctx, row); err != nil {
 		return err
 	}
-	var events []HistoryEvent
-	if f.History != nil {
-		historyObs := traceHistoryRead(flushTrace, row)
-		got, err := f.History.Read(ctx, row)
-		endHistoryRead(historyObs, got, err)
-		if err != nil {
-			var gap *HistoryGapError
-			if errors.As(err, &gap) && !gap.Oldest.IsZero() {
-				_ = f.Store.SetHistoryResume(ctx, row, gap.Oldest)
-			}
-			return classifyHistory(err)
-		}
-		events = got
+	historyObs := traceHistoryRead(flushTrace, row)
+	page, err := f.History.Read(ctx, row)
+	endHistoryRead(historyObs, page.Events, err)
+	if err != nil {
+		return classifyHistory(err)
 	}
-	plan, err := planFlush(row, events)
+	plan, err := planFlush(row, page)
 	if err != nil {
 		return err
 	}
@@ -121,6 +113,7 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err erro
 		"caught_up":            plan.caughtUp,
 		"replace":              replace,
 		"llm_timeout_fallback": fallback,
+		"history_progress":     plan.progress,
 	})
 	committed, err := f.Store.CommitBatch(ctx, row, CommitBatch{
 		ReplaceText:            replace,
@@ -147,6 +140,8 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err erro
 		"cursor_at", cursorLog,
 		"event_count", len(plan.batch),
 		"caught_up", plan.caughtUp,
+		"history_after", plan.progress.After.UTC().Format(time.RFC3339Nano),
+		"history_dirty_revision", plan.progress.DirtyRevision,
 	)
 	if plan.caughtUp {
 		return f.Store.FinishClaim(ctx, row)
@@ -159,106 +154,83 @@ type flushPlan struct {
 	caughtUp bool
 	cursorAt time.Time
 	cursorEv string
+	progress historyProgress
 }
 
-func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
+func planFlush(row db.SceneMemory, page HistoryPage) (flushPlan, error) {
+	if !page.PaginationKnown {
+		return flushPlan{}, &FlushError{Code: ErrorIncomplete, Err: fmt.Errorf("DWS history page is missing pagination metadata")}
+	}
 	cutoffAt := time.Time{}
 	if row.LeaseTargetThroughAt.Valid {
 		cutoffAt = row.LeaseTargetThroughAt.Time
 	}
 	cutoffEv := strings.TrimSpace(row.LeaseTargetThroughEvidenceID)
 	triggerEv := strings.TrimSpace(row.LastTriggerEvidenceID)
-	pendingAt, pendingEv := pendingFrom(row)
-	events = filterUntil(events, cutoffAt, cutoffEv)
+	_, pendingEv := pendingFrom(row)
 	cursorAt := time.Time{}
 	if row.SourceCursorAt.Valid {
 		cursorAt = row.SourceCursorAt.Time
 	}
 	cursorEv := row.SourceCursorEvidenceID
-	delta := afterCursor(events, cursorAt, cursorEv)
-	// dirty_through/lease_target never move backward. A debounce window can
-	// contain several late messages; pending_from is the oldest of them.
-	delta = includePendingWindow(delta, events, pendingAt, pendingEv, cursorAt, cursorEv)
-	delta = forceIncludeEvidence(delta, events, cutoffEv)
-	delta = forceIncludeEvidence(delta, events, triggerEv)
-	delta = forceIncludeEvidence(delta, events, pendingEv)
-	covered := CursorCovers(cursorAt, cursorEv, cutoffAt, cutoffEv)
-	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered &&
-		!missingEvidenceBehindWindow(events, cursorAt, cutoffAt) {
-		return flushPlan{}, &FlushError{
-			Code: ErrorIncomplete,
-			Err:  fmt.Errorf("claimed evidence is not visible yet"),
+	progress, resumed := restoredHistoryProgress(row)
+	if !resumed {
+		progress.DirtyRevision = claimedDirtyRevision(row)
+		progress.CutoffSeen = cutoffEv == "" || CursorCovers(cursorAt, cursorEv, cutoffAt, cutoffEv)
+		progress.TriggerSeen = triggerEv == ""
+		progress.PendingSeen = pendingEv == ""
+	}
+	for _, evidence := range page.EvidenceIDs {
+		if evidence == cutoffEv {
+			progress.CutoffSeen = true
+		}
+		if evidence == triggerEv {
+			progress.TriggerSeen = true
+		}
+		if evidence == pendingEv {
+			progress.PendingSeen = true
 		}
 	}
-	triggerAt := time.Time{}
-	if row.LastTriggerAt.Valid {
-		triggerAt = row.LastTriggerAt.Time
+	// DWS owns the exclusive continuation at millisecond precision. Event
+	// display times and opaque IDs cannot reconstruct a transport cursor.
+	if page.HasMore && (page.NextCursor.IsZero() || (resumed && !page.NextCursor.After(progress.After))) {
+		return flushPlan{}, &FlushError{Code: ErrorIncomplete, Err: fmt.Errorf("DWS history continuation did not advance")}
 	}
-	if triggerEv != "" && !containsEvidence(events, triggerEv) &&
-		!missingEvidenceBehindWindow(events, cursorAt, triggerAt) {
-		return flushPlan{}, &FlushError{
-			Code: ErrorIncomplete,
-			Err:  fmt.Errorf("pending trigger evidence is not visible yet"),
+	progress.After = page.NextCursor
+	// Read the entire cutoff second: opaque evidence IDs do not describe
+	// temporal order within a second, and a second may span several pages.
+	caughtUp := !page.HasMore || (!cutoffAt.IsZero() && !page.NextCursor.Before(cutoffAt.Truncate(time.Second).Add(time.Second)))
+	if caughtUp {
+		for _, required := range []struct {
+			seen bool
+			name string
+		}{
+			{progress.CutoffSeen, "claimed"},
+			{progress.TriggerSeen, "pending trigger"},
+			{progress.PendingSeen, "pending window"},
+		} {
+			if !required.seen {
+				return flushPlan{}, &FlushError{Code: ErrorIncomplete, Err: fmt.Errorf("%s evidence is not visible yet", required.name)}
+			}
 		}
 	}
-	if pendingEv != "" && !containsEvidence(events, pendingEv) &&
-		!missingEvidenceBehindWindow(events, cursorAt, pendingAt) {
-		return flushPlan{}, &FlushError{
-			Code: ErrorIncomplete,
-			Err:  fmt.Errorf("pending window evidence is not visible yet"),
-		}
-	}
-	plan := flushPlan{batch: delta, cursorAt: cursorAt, cursorEv: cursorEv}
-	if plan.cursorAt.IsZero() {
-		plan.cursorAt = cutoffAt
-		plan.cursorEv = cutoffEv
-	}
+	batch := sortHistoryEvents(filterUntil(page.Events, cutoffAt))
 	limit := flushBatchEvents
 	if row.SceneKind == KindGroup {
 		limit = flushGroupBatchEvents
 	}
-	if len(plan.batch) > limit {
-		plan.batch = plan.batch[:limit]
+	// Never truncate a page then persist its end cursor: that drops its tail.
+	if len(batch) > limit {
+		return flushPlan{}, &FlushError{Code: ErrorIncomplete, Err: fmt.Errorf("DWS history page exceeds memory batch budget")}
 	}
-	if len(delta) == 0 {
-		plan.caughtUp = cutoffEv == "" || containsEvidence(events, cutoffEv) || covered
-		plan.cursorAt, plan.cursorEv = maxCursor(plan.cursorAt, plan.cursorEv, cutoffAt, cutoffEv)
-	} else {
-		last := plan.batch[len(plan.batch)-1]
-		plan.cursorAt, plan.cursorEv = maxCursor(plan.cursorAt, plan.cursorEv, last.OccurredAt, last.EvidenceID)
-		plan.caughtUp = len(plan.batch) == len(delta) &&
-			(cutoffEv == "" || containsEvidence(events, cutoffEv) || covered ||
-				CursorCovers(plan.cursorAt, plan.cursorEv, cutoffAt, cutoffEv))
-		if plan.caughtUp {
-			plan.cursorAt, plan.cursorEv = maxCursor(plan.cursorAt, plan.cursorEv, cutoffAt, cutoffEv)
-		}
+	if len(batch) > 0 {
+		last := batch[len(batch)-1]
+		cursorAt, cursorEv = maxCursor(cursorAt, cursorEv, last.OccurredAt, last.EvidenceID)
 	}
-	return plan, nil
-}
-
-func missingEvidenceBehindWindow(events []HistoryEvent, cursorAt, evidenceAt time.Time) bool {
-	if evidenceAt.IsZero() || cursorAt.IsZero() {
-		return false
+	if caughtUp {
+		cursorAt, cursorEv = maxCursor(cursorAt, cursorEv, cutoffAt, cutoffEv)
 	}
-	oldest, ok := oldestHistoryEvent(events)
-	if !ok {
-		return false
-	}
-	return oldest.OccurredAt.After(cursorAt) && oldest.OccurredAt.After(evidenceAt)
-}
-
-func oldestHistoryEvent(events []HistoryEvent) (HistoryEvent, bool) {
-	if len(events) == 0 {
-		return HistoryEvent{}, false
-	}
-	oldest := events[0]
-	for _, event := range events[1:] {
-		if event.OccurredAt.Before(oldest.OccurredAt) ||
-			(event.OccurredAt.Equal(oldest.OccurredAt) && event.EvidenceID < oldest.EvidenceID) {
-			oldest = event
-		}
-	}
-	return oldest, true
+	return flushPlan{batch: batch, caughtUp: caughtUp, cursorAt: cursorAt, cursorEv: cursorEv, progress: progress}, nil
 }
 
 func pendingFrom(row db.SceneMemory) (time.Time, string) {

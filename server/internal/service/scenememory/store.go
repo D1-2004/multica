@@ -260,21 +260,6 @@ func (s *Store) Reset(ctx context.Context, id Identity, cutoff DirtyTrigger) (db
 	})
 }
 
-func (s *Store) SetHistoryResume(ctx context.Context, row db.SceneMemory, oldest time.Time) error {
-	n, err := s.queries.SetSceneMemoryHistoryResume(ctx, db.SetSceneMemoryHistoryResumeParams{
-		HistoryResumeBefore: timestamptz(oldest),
-		ID:                  row.ID,
-		LeaseToken:          row.LeaseToken,
-	})
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return ErrLeaseLost
-	}
-	return nil
-}
-
 func (s *Store) CountValidLeases(ctx context.Context) (int64, error) {
 	return s.queries.CountValidSceneMemoryLeases(ctx)
 }

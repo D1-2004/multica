@@ -1,7 +1,6 @@
 package scenememory
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -9,30 +8,15 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestHistoryPageStopKeepsPartialOnDeadline(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	time.Sleep(30 * time.Millisecond)
-	stop, err := historyPageStop(ctx, 3)
-	if !stop || err != nil {
-		t.Fatalf("partial timeout must keep events: stop=%v err=%v", stop, err)
-	}
-	stop, err = historyPageStop(ctx, 0)
-	if stop || err == nil {
-		t.Fatalf("empty timeout must surface: stop=%v err=%v", stop, err)
-	}
-}
-
-func TestHistoryPageStopReservesTimeWhenEventsExist(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), historyPageReserve/2)
-	defer cancel()
-	stop, err := historyPageStop(ctx, 2)
-	if !stop || err != nil {
-		t.Fatalf("near-deadline with events must stop paging: stop=%v err=%v", stop, err)
-	}
-	stop, err = historyPageStop(context.Background(), 2)
-	if stop || err != nil {
-		t.Fatalf("open context must keep paging: stop=%v err=%v", stop, err)
+func TestParseDWSPageKeepsPaginationWithProjectedMessages(t *testing.T) {
+	for _, cursor := range []string{`1788450204970`, `"1788450204970"`} {
+		page, err := parseDWSPage([]byte(`{"success":true,"messages":[{"messageId":"m1","content":""}],"result":{"hasMore":true,"nextCursor":`+cursor+`}}`), "", "")
+		if err != nil || !page.PaginationKnown || !page.HasMore || page.NextCursor.UnixMilli() != 1788450204970 {
+			t.Fatalf("cursor=%s page=%+v err=%v", cursor, page, err)
+		}
+		if len(page.Events) != 0 || len(page.EvidenceIDs) != 1 || page.EvidenceIDs[0] != "m1" {
+			t.Fatalf("empty text must keep transport evidence: %+v", page)
+		}
 	}
 }
 
@@ -247,33 +231,6 @@ func TestHistoryLookbackBootstrapIncludesOlderPendingTrigger(t *testing.T) {
 	}
 }
 
-func TestHistoryHasGap(t *testing.T) {
-	cursor := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	row := db.SceneMemory{SourceCursorAt: timestamptz(cursor)}
-	if !historyHasGap(row, cursor.Add(time.Hour), true) {
-		t.Fatal("page cap above cursor is a gap")
-	}
-	if historyHasGap(row, cursor.Add(-time.Minute), true) {
-		t.Fatal("reached cursor is not a gap")
-	}
-	if historyHasGap(row, cursor.Add(time.Hour), false) {
-		t.Fatal("no page cap is not a gap")
-	}
-}
-
-func TestHistoryStartBeforeUsesResume(t *testing.T) {
-	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	resume := now.Add(-time.Hour)
-	got := historyStartBefore(db.SceneMemory{}, now)
-	if !got.Equal(now.Add(time.Minute)) {
-		t.Fatalf("fresh read starts near now, got %s", got)
-	}
-	got = historyStartBefore(db.SceneMemory{HistoryResumeBefore: timestamptz(resume)}, now)
-	if !got.Equal(resume) {
-		t.Fatalf("page-cap resume must continue older, got %s", got)
-	}
-}
-
 func TestHistoryLookbackIncludesPendingTriggerBeforeCursor(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	cursor := now.Add(-time.Hour)
@@ -294,21 +251,6 @@ func TestHistoryLookbackIncludesPendingTriggerBeforeCursor(t *testing.T) {
 	}, lookback)
 	if len(got) != 2 || got[0].EvidenceID != "msg-early" || got[1].EvidenceID != "after-cursor" {
 		t.Fatalf("pending trigger must survive lookback filter: %#v", got)
-	}
-}
-
-func TestHistoryHasGapUsesPendingTrigger(t *testing.T) {
-	cursor := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	trigger := cursor.Add(-time.Hour)
-	row := db.SceneMemory{
-		SourceCursorAt: timestamptz(cursor),
-		LastTriggerAt:  timestamptz(trigger),
-	}
-	if !historyHasGap(row, cursor.Add(-time.Minute), true) {
-		t.Fatal("page cap above the pending trigger is a gap")
-	}
-	if historyHasGap(row, trigger.Add(-time.Minute), true) {
-		t.Fatal("reached pending trigger is not a gap")
 	}
 }
 
