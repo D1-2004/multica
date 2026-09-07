@@ -94,14 +94,15 @@ func overlayDispatchSender(command DispatchCommand, delegator string) DispatchCo
 	if name == "" {
 		return command
 	}
-	if strings.TrimSpace(command.Event.Data.Sender.DisplayName) == name {
-		return command
-	}
 	sender := DispatchSender{DisplayName: name}
+	if strings.TrimSpace(command.Event.Data.Sender.DisplayName) == name {
+		sender = command.Event.Data.Sender
+	}
 	for _, msg := range command.Event.Data.Messages {
 		if strings.TrimSpace(msg.SenderDisplayName) != name {
 			continue
 		}
+		sender = DispatchSender{DisplayName: name}
 		sender.UID = strings.TrimSpace(msg.SenderUID)
 		if openID := strings.TrimSpace(msg.SenderOpenDingTalkID); openID != "" {
 			sender.OpenDingTalkID = openID

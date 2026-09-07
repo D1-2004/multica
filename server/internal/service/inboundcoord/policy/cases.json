@@ -1,0 +1,195 @@
+{
+  "status": "behavior_contracts_not_execution_results",
+  "cases": [
+    {
+      "id": "f01_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "员工问甲是否同意后的甲回答",
+      "context_b": "乙对群友说可以",
+      "expected_effects": "不得串委托或执行身份；不得因员工自发消息重入",
+      "verification": "not_run"
+    },
+    {
+      "id": "f02_contrast",
+      "rule_ids": [
+        "COORD.F02"
+      ],
+      "context_a": "刚问现在发吗，当前回答好",
+      "context_b": "旧催促窗口重试时才出现现在发吗",
+      "expected_effects": "前者恢复问题；后者不推断新授权",
+      "verification": "not_run"
+    },
+    {
+      "id": "f03_contrast",
+      "rule_ids": [
+        "COORD.F03"
+      ],
+      "context_a": "召回成功但当前48小时无事项",
+      "context_b": "历史查询失败",
+      "expected_effects": "前者仅陈述限定范围；后者不能断言没有上下文",
+      "verification": "not_run"
+    },
+    {
+      "id": "f04_contrast",
+      "rule_ids": [
+        "COORD.F04"
+      ],
+      "context_a": "你会什么，有哪些skill",
+      "context_b": "用这个skill整理会议",
+      "expected_effects": "前者零执行；后者先召回再处理实际工作",
+      "verification": "not_run"
+    },
+    {
+      "id": "f05_contrast",
+      "rule_ids": [
+        "COORD.F05"
+      ],
+      "context_a": "最终结果之后说好",
+      "context_b": "确认问题之后说好",
+      "expected_effects": "前者无新工作；后者在原授权范围推进",
+      "verification": "not_run"
+    },
+    {
+      "id": "f06_contrast",
+      "rule_ids": [
+        "COORD.F06"
+      ],
+      "context_a": "给须莫发条消息，未说明内容",
+      "context_b": "接着说就说明天三点",
+      "expected_effects": "前者问内容；后者恢复对象后执行",
+      "verification": "not_run"
+    },
+    {
+      "id": "f07_contrast",
+      "rule_ids": [
+        "COORD.F07"
+      ],
+      "context_a": "同人问洗脚时间后改问打球",
+      "context_b": "跨天明确回答上周会议问题",
+      "expected_effects": "前者新工作；后者可按对应证据续接",
+      "verification": "not_run"
+    },
+    {
+      "id": "f08_contrast",
+      "rule_ids": [
+        "COORD.F08"
+      ],
+      "context_a": "问本群会议记录",
+      "context_b": "明确给另一个CID查询",
+      "expected_effects": "分别用指定scope；不互借记忆历史",
+      "verification": "not_run"
+    },
+    {
+      "id": "f09_contrast",
+      "rule_ids": [
+        "COORD.F09"
+      ],
+      "context_a": "两槽忙时你在吗",
+      "context_b": "两槽忙时第三项真实工作",
+      "expected_effects": "前者及时回复；后者判断后持久排队，不报完成",
+      "verification": "not_run"
+    },
+    {
+      "id": "f10_contrast",
+      "rule_ids": [
+        "COORD.F10"
+      ],
+      "context_a": "旧事补充加新工作加谢谢",
+      "context_b": "同一消息三个交付物",
+      "expected_effects": "每项有来源与去向；不得首个终结或批量截断",
+      "verification": "not_run"
+    },
+    {
+      "id": "f11_contrast",
+      "rule_ids": [
+        "COORD.F11"
+      ],
+      "context_a": "撤回事实后盘点记忆",
+      "context_b": "历史仍含员工旧复述",
+      "expected_effects": "不从旧复述重建；不得声称另一群已重置",
+      "verification": "not_run"
+    },
+    {
+      "id": "f12_contrast",
+      "rule_ids": [
+        "COORD.F12"
+      ],
+      "context_a": "本结果已发当前群",
+      "context_b": "只向联系人问过、当前群未获新答案",
+      "expected_effects": "前者静默；后者按必要增量回报",
+      "verification": "not_run"
+    },
+    {
+      "id": "f13_contrast",
+      "rule_ids": [
+        "COORD.F13"
+      ],
+      "context_a": "已召回目标并有当前实质补充",
+      "context_b": "乱造ID或无Issue悬空bind",
+      "expected_effects": "前者受校验提交；后者拒绝不写",
+      "verification": "not_run"
+    },
+    {
+      "id": "f14_contrast",
+      "rule_ids": [
+        "COORD.F14"
+      ],
+      "context_a": "短在场询问",
+      "context_b": "要求完整能力或记忆清单",
+      "expected_effects": "前者短句；后者完整范围或说明缺失",
+      "verification": "not_run"
+    },
+    {
+      "id": "f15_contrast",
+      "rule_ids": [
+        "COORD.F15"
+      ],
+      "context_a": "写消息先别发",
+      "context_b": "按确认稿发出去",
+      "expected_effects": "草稿阶段无外发；确认后遵守真实范围",
+      "verification": "not_run"
+    },
+    {
+      "id": "f16_contrast",
+      "rule_ids": [
+        "COORD.F16"
+      ],
+      "context_a": "历史读取失败但当前明确请求在吗",
+      "context_b": "预算耗尽仍缺续接依据",
+      "expected_effects": "前者仍判断；后者保留未决，不盲派",
+      "verification": "not_run"
+    },
+    {
+      "id": "f17_contrast",
+      "rule_ids": [
+        "COORD.F17"
+      ],
+      "context_a": "第一项成功第二项失败后恢复",
+      "context_b": "模型选择执行但提交失败",
+      "expected_effects": "前者只重试剩余；后者不报已办成",
+      "verification": "not_run"
+    },
+    {
+      "id": "f18_contrast",
+      "rule_ids": [
+        "COORD.F18"
+      ],
+      "context_a": "这个文件且有真实附件引用",
+      "context_b": "附件读取暂失败",
+      "expected_effects": "恢复对象或留具体缺口，不忽略附件、不二派",
+      "verification": "not_run"
+    },
+    {
+      "id": "f19_contrast",
+      "rule_ids": [
+        "COORD.F19"
+      ],
+      "context_a": "所有源规则有映射",
+      "context_b": "真实IM因权限阻塞",
+      "expected_effects": "前者只证明来源结构；后者仍BLOCKED不能报PASS",
+      "verification": "not_run"
+    }
+  ]
+}

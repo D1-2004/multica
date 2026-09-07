@@ -45,9 +45,10 @@ type Router struct {
 	mu   sync.RWMutex
 	sets map[channel.Type]ResolverSet
 
-	issues IssueCreator
-	tasks  TaskEnqueuer
-	reader SessionReader
+	issues        IssueCreator
+	tasks         TaskEnqueuer
+	reader        SessionReader
+	issueComments *service.IssueCommentService
 
 	// bus is optional (nil is valid). When wired, a committed inbound message
 	// broadcasts chat:message — the same event the web send path publishes
@@ -122,6 +123,14 @@ func (r *Router) SetEventBus(bus *events.Bus) {
 func (r *Router) SetInboundCoordinator(coordinator *inboundcoord.Coordinator) {
 	if r != nil {
 		r.coordinator = coordinator
+	}
+}
+
+// SetIssueCommentService supplies the normal continuation service. Production
+// routers can also derive it from their shared TaskService and Queries.
+func (r *Router) SetIssueCommentService(comments *service.IssueCommentService) {
+	if r != nil {
+		r.issueComments = comments
 	}
 }
 
@@ -564,7 +573,14 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	coordinatorIssue := false
 	skipSandboxPrepare := false
 	var coordAgentID pgtype.UUID
-	if r.coordinator != nil && !issueCommandRequested && msg.Source.ChannelType == "dingtalk" {
+	hasMedia := set.Media != nil && set.Media.HasMedia(msg)
+	coordinatorPlan := false
+	// Media is routed before the short loop: its existing durable path owns
+	// attachment resolution. Never replace a plan after it has committed.
+	if r.coordinator != nil && !issueCommandRequested && hasMedia && msg.Source.ChannelType == "dingtalk" {
+		r.logger.Info("channel coordinator media routed to attachment pipeline", "event", "channel_coordinator_media_bypass")
+	}
+	if r.coordinator != nil && !issueCommandRequested && !hasMedia && msg.Source.ChannelType == "dingtalk" {
 		session, sessionErr := r.reader.GetChatSession(ctx, sessionID)
 		if sessionErr != nil {
 			return Result{}, finalizeRelease, fmt.Errorf("load chat session for coordinator: %w", sessionErr)
@@ -588,29 +604,45 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		turn.IssueDispatchContext = taskContext
 		turn.DWSUID, turn.DWSOrgID = coordinatorDWSIdentity(taskContext)
 		turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
+		// InboundMessage carries a durable admission timestamp, but no message
+		// timestamp. Never present admission time as the speaker's send time.
+		turn.HistoryBefore = inboundcoord.HistoryBeforeFromContext(ctx)
+		if turn.HistoryBefore.IsZero() {
+			if msg.TraceStartedAtUnixMS > 0 {
+				turn.HistoryBefore = time.UnixMilli(msg.TraceStartedAtUnixMS)
+			} else {
+				turn.HistoryBefore = time.UnixMilli(trace.StartedAtUnixMS)
+				r.logger.Info("channel coordinator uses attempt history watermark", "event", "channel_coordinator_history_watermark", "durable", false)
+			}
+		}
+		restoreCoordinatorWindow(&turn, taskContext, msg)
 		// The coordinator turn shares the inbound chat trace so its Langfuse
 		// trace and the task it may start are one tree.
 		turn.TraceID = trace.TraceID
-		coordDecision = r.coordinator.Decide(ctx, turn)
+		restored, found, restoreErr := r.restoreChannelCoordinatorPlan(ctx, inst, msg)
+		if restoreErr != nil {
+			return Result{}, finalizeRelease, restoreErr
+		}
+		if found {
+			coordDecision = restored
+		} else {
+			coordDecision = r.coordinator.Decide(ctx, turn)
+		}
 		switch coordDecision.Action {
-		case inboundcoord.ActionRetry:
+		case inboundcoord.ActionRetry, inboundcoord.ActionDeferred:
 			return Result{}, finalizeRelease, service.ErrIssueDispatchPending
 		case inboundcoord.ActionIssue:
-			taskContext, err = inboundcoord.IndependentIssueTaskContext(
-				taskContext,
-				inboundcoord.CoordinatorIssueTriggerCreate,
-			)
-			if err != nil {
-				return Result{}, finalizeRelease, fmt.Errorf("prepare coordinator issue task context: %w", err)
+			if err := r.materializeChannelCoordinatorPlan(ctx, inst, identity, set.OriginType, msg, taskContext, &coordDecision); err != nil {
+				return Result{}, finalizeRelease, fmt.Errorf("materialize channel coordinator plan: %w", err)
 			}
-			coordinatorIssue = true
-			issueCommand = &IssueCommand{
-				Title:       inboundcoord.IssueTitle(coordDecision, msg.Text),
-				Description: inboundcoord.IssueDescription(coordDecision, msg.Text),
-			}
-			issueCommandRequested = true
+			coordinatorPlan = true
+			skipSandboxPrepare = true
 		case inboundcoord.ActionReply, inboundcoord.ActionSilence:
 			skipSandboxPrepare = true
+		case inboundcoord.ActionContinue:
+			// Explicitly disabled Coordinator retains the existing chat path.
+		default:
+			return Result{}, finalizeRelease, fmt.Errorf("unsupported coordinator action %q", coordDecision.Action)
 		}
 		if len(coordDecision.Steps) > 0 {
 			// The task (Issue or chat continuation) records which coordinator
@@ -620,7 +652,6 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		}
 	}
 	issueNeedsUsage := issueCommandRequested && issueCommand.Title == "" && !set.DurableRuns
-	hasMedia := set.Media != nil && set.Media.HasMedia(msg)
 	resolveMedia := !issueNeedsUsage && hasMedia
 	localMediaDeadline := time.Now().Add(r.mediaTimeout)
 	mediaPendingSeconds := 0.0
@@ -726,6 +757,16 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	}
 	var mediaIssue db.Issue
 	var deferredIssueTaskID pgtype.UUID
+
+	if coordinatorPlan {
+		if err := applyChannelCoordinatorResult(&res, coordDecision); err != nil {
+			return Result{}, postAppendFinalize, err
+		}
+		if err := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision); err != nil {
+			r.logger.Warn("channel router: persist coordinator plan reply failed", "chat_session_id", uuidString(sessionID), "error", err)
+		}
+		return res, postAppendFinalize, nil
+	}
 
 	// 7. /issue command, if present. chat_message is already durable; all
 	//    error returns from here signal finalizeNone (or the defensive Mark).

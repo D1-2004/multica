@@ -1,0 +1,41 @@
+{
+  "id": "coordinator-progressive-smoke",
+  "status": "READY_NOT_RUN",
+  "environment": "pre",
+  "agent_id": "e2293e9e-1e79-4926-b0e6-da4cb693add0",
+  "workspace_id": "d4f9ceed-d114-4312-bb30-dd791aee039b",
+  "profile": "collect-pre-942f",
+  "sender_role": "主角",
+  "conversation_id": "cid+bEFv7ngm9n79Q1vL9HYJw==",
+  "required_policy_version": "2026-09-07.3",
+  "required_replica_marker": "[coordinator-plan:window-plan-v1]",
+  "cases": [
+    {
+      "id": "capability_inventory",
+      "ask": "你有哪些 skill？",
+      "expect": "one reply from installed catalog; no work item; no history read; active policy manifest"
+    },
+    {
+      "id": "missing_payload",
+      "ask": "给 dxxh 发条消息。",
+      "expect": "clarify content; no Issue or continuation"
+    },
+    {
+      "id": "sandbox_echo",
+      "ask": "取消刚才给 dxxh 发消息的请求。这是一项独立预发测试：实际执行 printf <UNIQUE_OUTPUT>，把输出发到当前会话，只发一次。",
+      "expect": "new work plan then one real task; output independently visible in this conversation; no duplicate wrap-up"
+    },
+    {
+      "id": "presence",
+      "ask": "你在吗？",
+      "expect": "useful presence reply; no new work; does not wait for sandbox capacity"
+    }
+  ],
+  "evidence": [
+    "Aone deployed source and all live replica markers",
+    "Langfuse actual system policy/version, tool path and input usage",
+    "Multica actual Issue/Task outcomes",
+    "DWS same-cid readback"
+  ],
+  "limits": "Simple smoke, not a claim that all 19 historical live scenarios were replayed. If the echo completes before presence arrives, presence passes but busy coverage is unproven."
+}

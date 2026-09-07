@@ -111,6 +111,12 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if w == nil || w.handler == nil || w.handler.Queries == nil {
 		return false, nil
 	}
+	if c := w.handler.InboundCoordinator; c != nil && c.Ready != nil {
+		ready, err := c.Ready(ctx)
+		if err != nil || !ready {
+			return false, err
+		}
+	}
 	job, err := w.handler.Queries.ClaimInboundCoordinatorJob(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -179,6 +185,10 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	// Memory trigger recorded at enqueue time (coord_trace_id = job id) and
 	// the turn's SLS/Langfuse trace resolve to the same identifier.
 	jobCtx = inboundcoord.ContextWithTraceID(jobCtx, util.UUIDToString(job.ID))
+	jobCtx, err = w.handler.coordinatorCheckpointContext(jobCtx, job)
+	if err != nil {
+		return true, w.retry(ctx, job, err)
+	}
 	var recordedDecision *inboundcoord.Decision
 	jobCtx = inboundcoord.WithDecisionObserver(jobCtx, func(decision inboundcoord.Decision) {
 		copied := decision

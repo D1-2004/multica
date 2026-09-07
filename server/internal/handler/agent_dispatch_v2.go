@@ -210,6 +210,7 @@ type DispatchCompletionCallback struct {
 }
 
 type DispatchCommand struct {
+	WindowEvidenceID         string                        `json:"-"`
 	SchemaVersion            string                        `json:"schemaVersion"`
 	AgentID                  string                        `json:"agentId,omitempty"`
 	Continuation             *AgentDispatchContinuation    `json:"continuation"`
