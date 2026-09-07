@@ -15,6 +15,7 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -32,6 +33,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	ensureTurnTraceID(&turn)
 	userPrompt := buildUserPrompt(turn)
 	logCoordinatorLLMRequest(turn, userPrompt)
+	lt := langfuse.TraceFromContext(ctx)
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(systemPrompt),
 		openai.UserMessage(userPrompt),
@@ -55,14 +57,20 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(out, 1600), Error: true})
 		messages = append(messages, openai.ToolMessage(out, call.ID))
 		logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, out, true, reason)
+		traceToolReject(lt, round, call, out, reason)
 	}
 	for round := 0; round < maxLoopRounds; round++ {
-		completion, err := c.complete(ctx, messages, toolsForRound(round))
+		tools := toolsForRound(round)
+		generation := traceRoundGeneration(lt, round, messages, tools)
+		completion, err := c.complete(ctx, messages, tools)
+		endRoundGeneration(generation, completion, err)
 		if err != nil {
 			return fail(err)
 		}
 		if len(completion.Choices) == 0 {
-			return fail(fmt.Errorf("coordinator loop: no choices"))
+			err := fmt.Errorf("coordinator loop: no choices")
+			traceLoopFailure(lt, round, err)
+			return fail(err)
 		}
 		msg := completion.Choices[0].Message
 		if content := clipRunes(strings.TrimSpace(msg.Content), 800); content != "" {
@@ -72,8 +80,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		calls := functionToolCalls(msg)
 		if len(calls) == 0 {
 			logCoordinatorLLMNudge(turn, round, msg.Content)
+			traceNudge(lt, round, msg.Content)
 			if round >= maxLoopRounds-1 {
-				return fail(fmt.Errorf("coordinator loop: no finish"))
+				err := fmt.Errorf("coordinator loop: no finish")
+				traceLoopFailure(lt, round, err)
+				return fail(err)
 			}
 			messages = append(messages, msg.ToParam())
 			messages = append(messages, openai.UserMessage(toolRequiredNudge))
@@ -104,6 +115,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				decision.ToolRounds = round + 1
 				decision.ToolsUsed = used
 				logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
+				traceToolEnd(traceToolStart(lt, round, call), finishToolOutput(decision), nil, "terminal")
 				if reason := clipRunes(strings.TrimSpace(decision.Reason), 800); reason != "" {
 					appendStep(protocol.ChatCoordinatorStep{Type: "thinking", Content: reason})
 				}
@@ -121,10 +133,12 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				reject(turn, round, call, reqErr, "issue_not_recalled")
 				continue
 			}
+			toolObs := traceToolStart(lt, round, call)
 			result, callErr := c.callTool(ctx, turn, call.Name, call.Arguments)
 			if errors.Is(callErr, ErrIssueBusy) {
 				appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: callErr.Error(), Error: true})
 				logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, callErr.Error(), true, "issue_busy")
+				traceToolEnd(toolObs, callErr.Error(), callErr, "issue_busy")
 				if !shouldRetryBusyIssueComment(turn) {
 					return Decision{
 						Action:     ActionReply,
@@ -151,6 +165,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 1600)})
 					replyText := issueCommentReplyText(call.Arguments)
 					if replyText == "" {
+						traceToolEnd(toolObs, result, nil, "reply_text_required")
 						reject(turn, round, call, hintErr("reply_text is required", hintReplyText), "reply_text_required")
 						continue
 					}
@@ -169,15 +184,37 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					applyBindSpec(&decision, bind)
 					logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, false, "terminal")
 					logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
+					traceToolEnd(toolObs, result, nil, "terminal")
 					return decision, nil
 				}
 			}
 			appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 1600), Error: callErr != nil})
 			messages = append(messages, openai.ToolMessage(result, call.ID))
 			logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, callErr != nil, "")
+			traceToolEnd(toolObs, result, callErr, "")
 		}
 	}
-	return fail(fmt.Errorf("coordinator loop: exceeded %d rounds", maxLoopRounds))
+	err := fmt.Errorf("coordinator loop: exceeded %d rounds", maxLoopRounds)
+	traceLoopFailure(lt, maxLoopRounds-1, err)
+	return fail(err)
+}
+
+// finishToolOutput is the Langfuse view of a finish call: the parsed verdict
+// rather than the raw arguments, so a reviewer sees what the server acted on.
+func finishToolOutput(decision Decision) string {
+	raw, err := json.Marshal(map[string]any{
+		"action":    string(decision.Action),
+		"issue_id":  strings.TrimSpace(decision.IssueID),
+		"text":      clipRunes(strings.TrimSpace(decision.UserText), traceOutputTextBudget),
+		"look_into": clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
+		"purpose":   clipRunes(strings.TrimSpace(decision.Purpose), llmLogFieldBudget),
+		"intent":    strings.TrimSpace(decision.Intent),
+		"reason":    clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
+	})
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) (*openai.ChatCompletion, error) {
@@ -484,11 +521,16 @@ func ensureTurnTraceID(turn *Turn) {
 	}
 }
 
+// conversationName is the human-readable scene name used by the SLS index and
+// the Langfuse metadata: the channel title, else the Scene Memory title, else
+// the sender (which channel adapters may pass as a bare id).
 func conversationName(turn Turn) string {
-	if name := strings.TrimSpace(turn.ConversationTitle); name != "" {
-		return clipRunes(name, llmLogNameBudget)
+	for _, candidate := range []string{turn.ConversationTitle, turn.SceneTitle, turn.SenderName} {
+		if name := strings.TrimSpace(candidate); name != "" {
+			return clipRunes(name, llmLogNameBudget)
+		}
 	}
-	return clipRunes(strings.TrimSpace(turn.SenderName), llmLogNameBudget)
+	return ""
 }
 
 func coordinatorLogIndex(turn Turn) []any {

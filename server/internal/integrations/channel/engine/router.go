@@ -577,7 +577,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			msg.AddressedToBot || msg.Source.ChatType == channel.ChatTypeP2P,
 			string(msg.Source.ChatType),
 			"",
-			msg.Source.SenderID,
+			coordinatorSenderName(taskContext, msg.Source.SenderID),
 			msg.Text,
 		)
 		turn.ConversationID = strings.TrimSpace(msg.Source.ChatID)
@@ -588,6 +588,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		turn.IssueDispatchContext = taskContext
 		turn.DWSUID, turn.DWSOrgID = coordinatorDWSIdentity(taskContext)
 		turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
+		// The coordinator turn shares the inbound chat trace so its Langfuse
+		// trace and the task it may start are one tree.
+		turn.TraceID = trace.TraceID
 		coordDecision = r.coordinator.Decide(ctx, turn)
 		switch coordDecision.Action {
 		case inboundcoord.ActionRetry:
@@ -608,6 +611,12 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			issueCommandRequested = true
 		case inboundcoord.ActionReply, inboundcoord.ActionSilence:
 			skipSandboxPrepare = true
+		}
+		if len(coordDecision.Steps) > 0 {
+			// The task (Issue or chat continuation) records which coordinator
+			// turn looked at it and repeats its trace tags; both share the
+			// inbound chat trace already.
+			taskContext = inboundcoord.StampCoordinatorTrace(taskContext, coordDecision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS))
 		}
 	}
 	issueNeedsUsage := issueCommandRequested && issueCommand.Title == "" && !set.DurableRuns
@@ -1354,6 +1363,31 @@ func coordinatorDWSIdentity(taskContext []byte) (string, string) {
 		return "", ""
 	}
 	return uid, orgID
+}
+
+// coordinatorSenderName is the sender's display name from the dispatch event
+// carried in the task context, so the coordinator turn (and its Langfuse
+// trace) names the person rather than the DingTalk open id; the id is the
+// fallback when the event carries no name.
+func coordinatorSenderName(taskContext []byte, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if len(taskContext) == 0 {
+		return fallback
+	}
+	var payload struct {
+		EventData struct {
+			Sender struct {
+				DisplayName string `json:"displayName"`
+			} `json:"sender"`
+		} `json:"dispatch_event_data"`
+	}
+	if json.Unmarshal(taskContext, &payload) != nil {
+		return fallback
+	}
+	if name := strings.TrimSpace(payload.EventData.Sender.DisplayName); name != "" {
+		return name
+	}
+	return fallback
 }
 
 // ErrDedupFinalize marks a failed post-pipeline dedup transition. Callers must

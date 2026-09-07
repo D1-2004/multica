@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -694,6 +695,15 @@ func (h *Handler) createAgentDispatchChatV2(
 		}
 		options.ChatSessionOverride = &chatSessionID
 	}
+	// A durable coordinator job pins its id as the turn's trace id; give the
+	// channel engine that id as the inbound chat trace so the coordinator
+	// trace, the task's chat trace, and the Scene Memory trigger recorded at
+	// enqueue time all resolve to the same identifier.
+	if traceID := inboundcoord.TraceIDFromContext(r.Context()); traceID != "" && strings.TrimSpace(message.TraceID) == "" {
+		message.TraceID = traceID
+		message.TraceChannel = string(message.Source.ChannelType)
+		message.TraceStartedAtUnixMS = time.Now().UnixMilli()
+	}
 	result, err := h.ChannelRouter.HandleResultWithOptions(r.Context(), message, options)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
@@ -1099,7 +1109,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
 			return
 		}
-		overrides.DispatchContext = independentContext
+		overrides.DispatchContext = inboundcoord.StampCoordinatorTrace(independentContext, decision, "dingtalk", time.Now())
 	}
 	createParams := buildAgentDispatchIssueCreateParams(
 		c,

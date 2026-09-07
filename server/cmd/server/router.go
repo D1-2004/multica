@@ -42,6 +42,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/managedagent"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -329,6 +330,10 @@ type RouterOptions struct {
 	SandboxRelay    func(http.Handler) http.Handler
 	RuntimeConfig   *appRuntimeConfig
 	DeploymentFence *deploymentfence.Service
+	// Langfuse is the LLM trace exporter shared by the inbound coordinator,
+	// the scene memory flusher, and the agent task lifecycle. Nil disables
+	// every export.
+	Langfuse *langfuse.Client
 }
 
 // NewRouterWithOptions builds the fully-configured Chi router and
@@ -778,7 +783,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			BaseURLProvider: agentIdentityControlBaseURLProvider,
 			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
 		}),
-		LLM: h.LLM,
+		LLM:    h.LLM,
+		Agents: queries,
+	}
+	// Langfuse tracing: the coordinator loop, the memory loop, and the agent
+	// task lifecycle share one exporter. The sandbox LLM relay fans out to it
+	// too, and capable FC runtime images capture model bodies for every task
+	// once the exporter exists (docs/langfuse-observability.md).
+	if opts.Langfuse.Enabled() {
+		coordinator.Langfuse = opts.Langfuse
+		sceneFlusher.Langfuse = opts.Langfuse
+		h.TaskService.Langfuse = opts.Langfuse
+		h.LLMTraceObserver = handler.NewLangfuseLLMTraceObserver(opts.Langfuse)
+		if h.FCE2BLauncher != nil {
+			h.FCE2BLauncher.LLMTraceCaptureAlways = true
+		}
 	}
 	h.SceneMemoryWorker = scenememory.NewWorker(h.SceneMemoryStore, sceneFlusher, func() bool {
 		if opts.DeploymentFence == nil {

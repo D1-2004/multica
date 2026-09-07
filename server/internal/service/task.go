@@ -22,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -54,9 +55,12 @@ type TaskService struct {
 	EmptyClaim *EmptyClaimCache
 	// RuntimeLauncher is optional. When set, it may start server-managed
 	// runtimes for a newly queued task; local runtimes simply no-op there.
-	RuntimeLauncher       TaskRuntimeLauncher
-	CompletionNotifier    TaskCompletionNotifier
-	A2AStateObserver      A2ATaskStateObserver
+	RuntimeLauncher    TaskRuntimeLauncher
+	CompletionNotifier TaskCompletionNotifier
+	A2AStateObserver   A2ATaskStateObserver
+	// Langfuse exports one trace per finished agent task (see
+	// task_langfuse.go). Nil disables the export.
+	Langfuse              *langfuse.Client
 	runtimeLaunchLeases   taskRuntimeLaunchLeaseStore
 	a2aHumanRealtimeRoute func(context.Context, pgtype.UUID) (workspaceID, recipientUserID string, err error)
 	// Composio computes the per-task MCP overlay (Stage 3 of the Composio
@@ -772,6 +776,7 @@ func (s *TaskService) captureTaskStarted(ctx context.Context, task db.AgentTaskQ
 }
 
 func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTaskQueue) {
+	s.observeTaskTerminal(ctx, task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
@@ -779,6 +784,7 @@ func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTas
 }
 
 func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQueue) {
+	s.observeTaskTerminal(ctx, task)
 	failureReason := taskFailureReason(task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
@@ -788,6 +794,7 @@ func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQu
 }
 
 func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTaskQueue) {
+	s.observeTaskTerminal(ctx, task)
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
