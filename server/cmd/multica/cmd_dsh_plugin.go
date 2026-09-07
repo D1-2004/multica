@@ -33,7 +33,8 @@ var dshPluginCmd = &cobra.Command{
 		"tarball — or uploaded as a .zip or .tgz. Either way the server validates that\n" +
 		"the package is something DeepSeek Harness can actually load before recording it.\n\n" +
 		"Commands that take <plugin> accept either the package name `list` prints or\n" +
-		"the plugin id.",
+		"the plugin id. Importing a plugin does not make it run: bind it to an agent\n" +
+		"with `dsh-plugin bind <agent> <plugin>`.",
 }
 
 var dshPluginListCmd = &cobra.Command{

@@ -351,13 +351,17 @@ func (h *Handler) persistDshPlugin(w http.ResponseWriter, r *http.Request, in ds
 				ArtifactKey:         in.ArtifactKey,
 				ArtifactSize:        in.ArtifactSize,
 			})
-			// The replaced version's bytes are no longer referenced by any
-			// row, so leaving them would accumulate silently.
-			h.dropDshPluginArtifact(r.Context(), prior.ArtifactKey, in.ArtifactKey)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to update the DSH plugin")
 				return
 			}
+			// Only now. The row still pointed at prior.ArtifactKey until that
+			// update succeeded, and dropping first would have left it pointing
+			// at bytes that no longer exist — every task for every agent bound
+			// to this plugin failing to fetch it, permanently, until someone
+			// re-imported. DeleteDshPlugin already spells out the rule; these
+			// two update paths were the ones breaking it.
+			h.dropDshPluginArtifact(r.Context(), prior.ArtifactKey, in.ArtifactKey)
 			writeJSON(w, http.StatusOK, map[string]any{
 				"status":   "updated",
 				"plugin":   dshPluginToResponse(updated),
@@ -425,6 +429,9 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 	sourceSpec := row.SourceSpec
 	sourceKind := row.SourceKind
 	artifactKey := row.ArtifactKey
+	// Set when a new source replaces the stored bytes; dropped only after the
+	// row has been updated to stop referring to them.
+	supersededKey := ""
 	artifactSize := row.ArtifactSize
 	version := row.ResolvedVersion
 	integrity := row.Integrity
@@ -480,7 +487,10 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 		pinned := pinnedSource(source, resolved)
 		if key, err := h.storeDshPluginArtifact(
 			r.Context(), row.WorkspaceID, resolved.PackageName, resolved.Archive); err == nil && key != "" {
-			h.dropDshPluginArtifact(r.Context(), artifactKey, key)
+			// Remembered, not dropped: the row keeps pointing at the old key
+			// until the update below commits, and this function can still fail
+			// several ways before it gets there.
+			supersededKey = artifactKey
 			artifactKey = key
 			artifactSize = int64(len(resolved.Archive))
 		} else if err != nil {
@@ -556,6 +566,7 @@ func (h *Handler) UpdateDshPlugin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update the DSH plugin")
 		return
 	}
+	h.dropDshPluginArtifact(r.Context(), supersededKey, artifactKey)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"plugin":   dshPluginToResponse(updated),
 		"warnings": orEmptyStrings(warnings),
@@ -696,6 +707,13 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Which plugins an agent boots with decides what code runs inside it, so
+	// this is managing the agent, not reading it — the same gate UpdateAgent
+	// uses. loadAgentForUser only proves the caller can SEE the agent, which
+	// every workspace member can for a public one.
+	if !h.canManageAgent(w, r, agent) {
+		return
+	}
 	var req SetAgentDshPluginsRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -782,6 +800,13 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) RemoveAgentDshPlugin(w http.ResponseWriter, r *http.Request) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
 	if !ok {
+		return
+	}
+	// Which plugins an agent boots with decides what code runs inside it, so
+	// this is managing the agent, not reading it — the same gate UpdateAgent
+	// uses. loadAgentForUser only proves the caller can SEE the agent, which
+	// every workspace member can for a public one.
+	if !h.canManageAgent(w, r, agent) {
 		return
 	}
 	pluginUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "pluginId"), "pluginId")
