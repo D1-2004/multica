@@ -11,6 +11,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/llm"
@@ -19,10 +22,12 @@ import (
 )
 
 const (
-	flushModel       = "qwen3.7-plus"
-	flushTimeout     = 50 * time.Second
-	flushBatchEvents = 24
-	flushMaxRounds   = 4
+	flushModel            = "qwen3.7-plus"
+	flushTimeout          = 120 * time.Second
+	flushLLMTimeout       = 50 * time.Second
+	flushBatchEvents      = 24
+	flushGroupBatchEvents = 40
+	flushMaxRounds        = 4
 )
 
 var flushClock = func() *time.Location {
@@ -49,20 +54,36 @@ type MemoryFlusher struct {
 	Store   *Store
 	History HistorySource
 	LLM     *llm.Client
+	// Langfuse exports one trace per claimed flush. Nil disables tracing.
+	Langfuse *langfuse.Client
+	// Agents resolves the agent name for trace metadata. Optional.
+	Agents AgentReader
 }
 
-func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
+// AgentReader is the subset of db.Queries the flusher needs for trace
+// metadata.
+type AgentReader interface {
+	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
+}
+
+func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err error) {
 	if f == nil || f.Store == nil {
 		return &FlushError{Code: ErrorConfig, Err: fmt.Errorf("scene memory flusher is not configured")}
 	}
 	ctx, cancel := context.WithTimeout(ctx, flushTimeout)
 	defer cancel()
+	outcome := &flushOutcome{MemoryRevision: row.MemoryRevision}
+	flushTrace := f.startFlushTrace(ctx, row, time.Now())
+	ctx = langfuse.ContextWithTrace(ctx, flushTrace)
+	defer func() { finishFlushTrace(flushTrace, outcome, err) }()
 	if err := f.Store.Renew(ctx, row); err != nil {
 		return err
 	}
 	var events []HistoryEvent
 	if f.History != nil {
+		historyObs := traceHistoryRead(flushTrace, row)
 		got, err := f.History.Read(ctx, row)
+		endHistoryRead(historyObs, got, err)
 		if err != nil {
 			var gap *HistoryGapError
 			if errors.As(err, &gap) && !gap.Oldest.IsZero() {
@@ -76,13 +97,16 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 	if err != nil {
 		return err
 	}
+	outcome.EventCount, outcome.CaughtUp, outcome.CursorAt = len(plan.batch), plan.caughtUp, plan.cursorAt
 	newText := row.MemoryText
 	replace := false
+	fallback := false
 	if len(plan.batch) > 0 {
-		merged, err := f.merge(ctx, row, plan.batch)
+		merged, usedFallback, err := f.merge(ctx, row, plan.batch)
 		if err != nil {
 			return err
 		}
+		fallback = usedFallback
 		merged = redactSecrets(merged)
 		if merged != row.MemoryText {
 			if !ValidateMemoryText(merged) {
@@ -93,13 +117,15 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 		}
 	}
 	meta, _ := json.Marshal(map[string]any{
-		"event_count": len(plan.batch),
-		"caught_up":   plan.caughtUp,
-		"replace":     replace,
+		"event_count":          len(plan.batch),
+		"caught_up":            plan.caughtUp,
+		"replace":              replace,
+		"llm_timeout_fallback": fallback,
 	})
 	committed, err := f.Store.CommitBatch(ctx, row, CommitBatch{
 		ReplaceText:            replace,
 		MemoryText:             newText,
+		SceneTitle:             LocatingTitle(newText),
 		SourceCursorAt:         plan.cursorAt,
 		SourceCursorEvidenceID: plan.cursorEv,
 		FlushMeta:              meta,
@@ -108,6 +134,7 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) error {
 	if err != nil {
 		return err
 	}
+	outcome.Replace, outcome.MemoryText, outcome.MemoryRevision = replace, newText, committed.MemoryRevision
 	cursorLog := ""
 	if !plan.cursorAt.IsZero() {
 		cursorLog = plan.cursorAt.UTC().Format(time.RFC3339)
@@ -156,19 +183,26 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 	delta = forceIncludeEvidence(delta, events, triggerEv)
 	delta = forceIncludeEvidence(delta, events, pendingEv)
 	covered := CursorCovers(cursorAt, cursorEv, cutoffAt, cutoffEv)
-	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered {
+	if cutoffEv != "" && !containsEvidence(events, cutoffEv) && !covered &&
+		!missingEvidenceBehindWindow(events, cursorAt, cutoffAt) {
 		return flushPlan{}, &FlushError{
 			Code: ErrorIncomplete,
 			Err:  fmt.Errorf("claimed evidence is not visible yet"),
 		}
 	}
-	if triggerEv != "" && !containsEvidence(events, triggerEv) {
+	triggerAt := time.Time{}
+	if row.LastTriggerAt.Valid {
+		triggerAt = row.LastTriggerAt.Time
+	}
+	if triggerEv != "" && !containsEvidence(events, triggerEv) &&
+		!missingEvidenceBehindWindow(events, cursorAt, triggerAt) {
 		return flushPlan{}, &FlushError{
 			Code: ErrorIncomplete,
 			Err:  fmt.Errorf("pending trigger evidence is not visible yet"),
 		}
 	}
-	if pendingEv != "" && !containsEvidence(events, pendingEv) {
+	if pendingEv != "" && !containsEvidence(events, pendingEv) &&
+		!missingEvidenceBehindWindow(events, cursorAt, pendingAt) {
 		return flushPlan{}, &FlushError{
 			Code: ErrorIncomplete,
 			Err:  fmt.Errorf("pending window evidence is not visible yet"),
@@ -179,8 +213,12 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 		plan.cursorAt = cutoffAt
 		plan.cursorEv = cutoffEv
 	}
-	if len(plan.batch) > flushBatchEvents {
-		plan.batch = plan.batch[:flushBatchEvents]
+	limit := flushBatchEvents
+	if row.SceneKind == KindGroup {
+		limit = flushGroupBatchEvents
+	}
+	if len(plan.batch) > limit {
+		plan.batch = plan.batch[:limit]
 	}
 	if len(delta) == 0 {
 		plan.caughtUp = cutoffEv == "" || containsEvidence(events, cutoffEv) || covered
@@ -198,6 +236,31 @@ func planFlush(row db.SceneMemory, events []HistoryEvent) (flushPlan, error) {
 	return plan, nil
 }
 
+func missingEvidenceBehindWindow(events []HistoryEvent, cursorAt, evidenceAt time.Time) bool {
+	if evidenceAt.IsZero() || cursorAt.IsZero() {
+		return false
+	}
+	oldest, ok := oldestHistoryEvent(events)
+	if !ok {
+		return false
+	}
+	return oldest.OccurredAt.After(cursorAt) && oldest.OccurredAt.After(evidenceAt)
+}
+
+func oldestHistoryEvent(events []HistoryEvent) (HistoryEvent, bool) {
+	if len(events) == 0 {
+		return HistoryEvent{}, false
+	}
+	oldest := events[0]
+	for _, event := range events[1:] {
+		if event.OccurredAt.Before(oldest.OccurredAt) ||
+			(event.OccurredAt.Equal(oldest.OccurredAt) && event.EvidenceID < oldest.EvidenceID) {
+			oldest = event
+		}
+	}
+	return oldest, true
+}
+
 func pendingFrom(row db.SceneMemory) (time.Time, string) {
 	if row.PendingFromAt.Valid && !row.PendingFromAt.Time.IsZero() {
 		return row.PendingFromAt.Time, strings.TrimSpace(row.PendingFromEvidenceID)
@@ -208,50 +271,70 @@ func pendingFrom(row db.SceneMemory) (time.Time, string) {
 	return time.Time{}, strings.TrimSpace(row.LastTriggerEvidenceID)
 }
 
-func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []HistoryEvent) (string, error) {
+func (f *MemoryFlusher) merge(ctx context.Context, row db.SceneMemory, batch []HistoryEvent) (string, bool, error) {
 	if f.LLM == nil || !f.LLM.Enabled() {
-		return "", &FlushError{Code: ErrorConfig, Err: fmt.Errorf("memory flush LLM is not configured")}
+		return "", false, &FlushError{Code: ErrorConfig, Err: fmt.Errorf("memory flush LLM is not configured")}
 	}
+	llmCtx, cancel := context.WithTimeout(ctx, flushLLMTimeout)
+	defer cancel()
 	user := buildFlushUserPrompt(row, batch)
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(flushSystemPrompt),
 		openai.UserMessage(user),
 	}
+	lt := langfuse.TraceFromContext(ctx)
 	for round := 0; round < flushMaxRounds; round++ {
-		completion, err := f.LLM.Chat(ctx, openai.ChatCompletionNewParams{
+		generation := traceFlushGeneration(lt, round, messages)
+		completion, err := f.LLM.Chat(llmCtx, openai.ChatCompletionNewParams{
 			Model:    flushModel,
 			Messages: messages,
 			Tools:    []openai.ChatCompletionToolUnionParam{flushCommitTool()},
 		})
+		endFlushGeneration(generation, completion, err)
 		if err != nil {
-			return "", err
+			if dwsclient.IsTimeout(err) {
+				slog.Warn("scene memory flush llm timed out; holding dirty batch",
+					"event", "scene_memory_flush_timeout",
+					"scene_key", row.SceneKey,
+					"reason", "llm_timeout",
+					"event_count", len(batch),
+				)
+				return "", false, &FlushError{Code: ErrorIncomplete, Err: fmt.Errorf("memory flush llm timed out")}
+			}
+			return "", false, err
 		}
 		if len(completion.Choices) == 0 {
-			return "", fmt.Errorf("memory flush: no choices")
+			return "", false, fmt.Errorf("memory flush: no choices")
 		}
 		msg := completion.Choices[0].Message
 		if len(msg.ToolCalls) == 0 {
+			traceFlushNudge(lt, round, msg.Content)
 			messages = append(messages, msg.ToParam(), openai.UserMessage("Call memory_flush_commit."))
 			continue
 		}
 		call := msg.ToolCalls[0]
 		if strings.TrimSpace(call.Function.Name) != "memory_flush_commit" {
+			traceFlushCommit(lt, round, call.ID, call.Function.Arguments, false, "unexpected tool "+strings.TrimSpace(call.Function.Name))
 			messages = append(messages, msg.ToParam(), openai.ToolMessage(`{"error":"only memory_flush_commit is allowed"}`, call.ID))
 			continue
 		}
 		text, err := parseFlushCommit(row.MemoryText, call.Function.Arguments)
 		if err != nil {
+			traceFlushCommit(lt, round, call.ID, call.Function.Arguments, false, err.Error())
 			messages = append(messages, msg.ToParam(), openai.ToolMessage(err.Error(), call.ID))
 			continue
 		}
 		text = sanitizeFlushText(text, batch)
 		if !ValidateMemoryText(text) {
+			traceFlushCommit(lt, round, call.ID, call.Function.Arguments, false, "text exceeds 1600 code points after dropping self-sourced lines")
 			messages = append(messages, msg.ToParam(), openai.ToolMessage("text exceeds 1600 code points after dropping self-sourced lines", call.ID))
 			continue
 		}
-		return text, nil
+		traceFlushCommit(lt, round, call.ID, call.Function.Arguments, true, "committed")
+		lt.AddMetadata(map[string]any{"rounds": round + 1})
+		return text, false, nil
 	}
-	return "", fmt.Errorf("memory flush: no commit")
+	return "", false, fmt.Errorf("memory flush: no commit")
 }
 
 func fallbackMerge(old string, batch []HistoryEvent) string {
@@ -345,6 +428,11 @@ When they say 整理记忆: compact — drop stale 待确认 and process notes; 
 
 Still skip: secrets, issue ids, tasks to execute, another scene, insults with no factual payload, health/pay/performance.
 Events tagged [self] are this digital employee. Never write them into 纠正信号, 稳定知识与约定, or 待确认 — not as a citation (来自{this agent}…), not as a fact. If current_memory already has such a bullet, delete it. [self] is only context for understanding [peer] humans.
+Match self_speakers loosely: 菲迪 and 菲迪-FDE教练 are the same speaker.
+On a DM, 成员 is the other human. Never cite self_speakers, or any name not in 成员, as the source of 稳定知识.
+On a group, still never cite self_speakers even if 成员 lists this agent.
+Do not copy this agent's recitation of how it will talk (回复偏好, 回复风格, 我会遵循这些偏好) into Scene Text unless a human [peer] stated that preference. Those lines belong in agent_instructions.
+Do not keep this agent's operational limits ("每次只能回一条", "无法一次发两条") as standing knowledge — that is a coordinator bug, not a scene fact.
 
 Cite every kept fact at the end of its line as (来自{speaker}, {M}月{D}日 {HH:mm}的发言) using the event clock printed below (Asia/Shanghai). Copy speaker and stamp; do not invent. Keep an older citation unless a newer event rewrites the fact.
 
@@ -463,8 +551,16 @@ func selfSpeakerNames(batch []HistoryEvent) []string {
 
 func citesSelfSpeaker(line string, names []string) bool {
 	for _, name := range names {
-		if name != "" && strings.Contains(line, "来自"+name) {
+		if name == "" {
+			continue
+		}
+		if strings.Contains(line, "来自"+name) {
 			return true
+		}
+		for _, alias := range agentNameAliases(name) {
+			if alias != "" && strings.Contains(line, "来自"+alias) {
+				return true
+			}
 		}
 	}
 	return false
@@ -474,8 +570,152 @@ func isFlushTaskBullet(line string) bool {
 	return strings.Contains(line, "需从") || strings.Contains(line, "执行情况")
 }
 
+func looksLikeAgentReplyStyle(line string) bool {
+	return strings.Contains(line, "回复偏好") ||
+		strings.Contains(line, "回复风格") ||
+		strings.Contains(line, "我会遵循这些偏好")
+}
+
+func looksLikeCoordinatorSelfLimit(line string) bool {
+	return strings.Contains(line, "每次触发只能回复一条") ||
+		strings.Contains(line, "无法一次发两条")
+}
+
+func locatingMembers(text string) []string {
+	in := false
+	seen := map[string]struct{}{}
+	var members []string
+	add := func(name string) {
+		name = strings.TrimSpace(strings.TrimPrefix(name, "[推断]"))
+		name = strings.TrimSpace(name)
+		if name == "" || strings.HasPrefix(name, "用途") {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		members = append(members, name)
+	}
+	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "## ") {
+			heading := strings.TrimSpace(strings.TrimPrefix(line, "## "))
+			if heading == "场域定位" {
+				in = true
+				continue
+			}
+			if in {
+				break
+			}
+			continue
+		}
+		if !in || line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "成员") {
+			rest := line
+			for _, prefix := range []string{"成员：", "成员:"} {
+				if strings.HasPrefix(rest, prefix) {
+					rest = strings.TrimSpace(strings.TrimPrefix(rest, prefix))
+					break
+				}
+			}
+			for _, part := range strings.FieldsFunc(rest, func(r rune) bool {
+				return r == '、' || r == ',' || r == '，' || r == '/'
+			}) {
+				add(part)
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "用途") || strings.HasPrefix(line, "-") {
+			continue
+		}
+		add(line)
+	}
+	return members
+}
+
+func citationSpeaker(line string) string {
+	idx := strings.Index(line, "来自")
+	if idx < 0 {
+		return ""
+	}
+	rest := line[idx+len("来自"):]
+	cut := len(rest)
+	for i, r := range rest {
+		if r == ',' || r == '，' || r == ' ' || r == ')' || r == '）' {
+			cut = i
+			break
+		}
+	}
+	return strings.TrimSpace(rest[:cut])
+}
+
+func citesOutsideMembers(line string, members []string) bool {
+	if len(members) != 1 {
+		return false
+	}
+	speaker := citationSpeaker(line)
+	if speaker == "" {
+		return false
+	}
+	peer := members[0]
+	if speaker == peer || strings.Contains(peer, speaker) || strings.Contains(speaker, peer) {
+		return false
+	}
+	return true
+}
+
+func isSinglePeerScene(text string, members []string) bool {
+	if len(members) != 1 {
+		return false
+	}
+	return !strings.Contains(text, "用途：") && !strings.Contains(text, "用途:")
+}
+
+// SanitizeMemoryText drops Flush debris that must never reach the inbound
+// judge: self-citations, git/pipeline notes, issue tombstones, and on a DM
+// any 稳定知识 cited from someone who is not the other person.
+func SanitizeMemoryText(text string, batch []HistoryEvent) string {
+	return sanitizeFlushText(text, batch)
+}
+
+// SanitizeMemoryTextForAgent drops this agent's own citations from Host
+// inject even when Flush has no [self] batch (typical for groups).
+func SanitizeMemoryTextForAgent(text, agentName string) string {
+	batch := []HistoryEvent{}
+	if name := strings.TrimSpace(agentName); name != "" {
+		batch = []HistoryEvent{{Self: true, Speaker: name}}
+	}
+	return sanitizeFlushText(text, batch)
+}
+
 func sanitizeFlushText(text string, batch []HistoryEvent) string {
 	names := selfSpeakerNames(batch)
+	expanded := make([]string, 0, len(names)*2)
+	seen := map[string]struct{}{}
+	addName := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			return
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		expanded = append(expanded, name)
+	}
+	for _, name := range names {
+		addName(name)
+		for _, alias := range agentNameAliases(name) {
+			addName(alias)
+		}
+	}
+	names = expanded
+	members := locatingMembers(text)
+	singlePeer := isSinglePeerScene(text, members)
 	heading := ""
 	var b strings.Builder
 	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
@@ -498,6 +738,15 @@ func sanitizeFlushText(text string, batch []HistoryEvent) string {
 				continue
 			}
 			if (heading == "纠正信号" || heading == "待确认") && isFlushTaskBullet(trimmed) {
+				continue
+			}
+			if singlePeer && citesOutsideMembers(trimmed, members) {
+				continue
+			}
+			if looksLikeCoordinatorSelfLimit(trimmed) {
+				continue
+			}
+			if heading == "稳定知识与约定" && looksLikeAgentReplyStyle(trimmed) && citationSpeaker(trimmed) == "" {
 				continue
 			}
 		}

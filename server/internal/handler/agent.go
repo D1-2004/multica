@@ -27,6 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/mcpprotocol"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -91,6 +92,9 @@ type AgentResponse struct {
 	// immediately or opens an Issue. Off by default for new and existing
 	// agents; only an explicit owner on switch enables it.
 	InboundCoordinator bool `json:"inbound_coordinator"`
+	// TaskFinishedLoop runs coordinator again after a coordinator-created
+	// Issue task completes, so the original delegator gets a human wrap-up.
+	TaskFinishedLoopEnabled bool `json:"task_finished_loop_enabled"`
 	// Scene-memory flags are independent of InboundCoordinator and default
 	// false. Dedicated queries hydrate them so sqlc Agent SELECT * stays
 	// unchanged.
@@ -191,6 +195,16 @@ func (h *Handler) hydrateInboundCoordinator(ctx context.Context, resp *AgentResp
 	}
 }
 
+func (h *Handler) hydrateTaskFinishedLoop(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	if resp == nil {
+		return
+	}
+	enabled, err := h.Queries.GetAgentTaskFinishedLoop(ctx, agentID)
+	if err == nil {
+		resp.TaskFinishedLoopEnabled = enabled
+	}
+}
+
 func (h *Handler) hydrateSceneMemoryFlags(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
 	if resp == nil {
 		return
@@ -241,6 +255,35 @@ func (h *Handler) hydrateAgentsChatSessionResume(ctx context.Context, resps []Ag
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].ChatSessionResume = row.ChatSessionResume
+		}
+	}
+}
+
+func (h *Handler) hydrateAgentsTaskFinishedLoop(ctx context.Context, resps []AgentResponse) {
+	if len(resps) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(resps))
+	index := make(map[string]int, len(resps))
+	for i, resp := range resps {
+		id, err := util.ParseUUID(resp.ID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		index[resp.ID] = i
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListAgentTaskFinishedLoopByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("hydrate task_finished_loop for agent list failed", "error", err, "count", len(ids))
+		return
+	}
+	for _, row := range rows {
+		if i, ok := index[uuidToString(row.ID)]; ok {
+			resps[i].TaskFinishedLoopEnabled = row.TaskFinishedLoopEnabled
 		}
 	}
 }
@@ -879,6 +922,7 @@ type TaskAgentData struct {
 	CustomEnv             map[string]string           `json:"custom_env,omitempty"`
 	CustomArgs            []string                    `json:"custom_args,omitempty"`
 	McpConfig             json.RawMessage             `json:"mcp_config,omitempty"`
+	McpRelayRoutes        map[string]MCPRelayRoute    `json:"mcp_relay_routes,omitempty"`
 	Model                 string                      `json:"model,omitempty"`
 	ThinkingLevel         string                      `json:"thinking_level,omitempty"`
 	ServiceTier           string                      `json:"service_tier,omitempty"`
@@ -890,6 +934,8 @@ type TaskAgentData struct {
 	// raw so the daemon can evolve its schema without a server roundtrip.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
+
+type MCPRelayRoute = mcpprotocol.RelayRoute
 
 // taskToResponse maps a queue row to its wire shape. workspaceID is threaded
 // in because the row itself doesn't carry one (workspace lives on the agent
@@ -1261,6 +1307,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	h.hydrateAgentsChatSessionResume(r.Context(), visible)
 	h.hydrateAgentsInboundCoordinator(r.Context(), visible)
+	h.hydrateAgentsTaskFinishedLoop(r.Context(), visible)
 	h.hydrateAgentsSceneMemoryFlags(r.Context(), visible)
 	h.hydrateAgentsVoice(r.Context(), visible)
 
@@ -1286,6 +1333,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	resp := h.agentToResponse(agent)
 	h.hydrateChatSessionResume(r.Context(), &resp, agent.ID)
 	h.hydrateInboundCoordinator(r.Context(), &resp, agent.ID)
+	h.hydrateTaskFinishedLoop(r.Context(), &resp, agent.ID)
 	h.hydrateSceneMemoryFlags(r.Context(), &resp, agent.ID)
 	h.hydrateAgentVoice(r.Context(), &resp, agent.ID)
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
@@ -1676,6 +1724,7 @@ type UpdateAgentRequest struct {
 	DispatchAlwaysNewIssue      *bool              `json:"dispatch_always_new_issue"`
 	ChatSessionResume           *bool              `json:"chat_session_resume"`
 	InboundCoordinator          *bool              `json:"inbound_coordinator"`
+	TaskFinishedLoopEnabled     *bool              `json:"task_finished_loop_enabled"`
 	SceneMemoryWriteEnabled     *bool              `json:"scene_memory_write_enabled"`
 	SceneMemoryRecallEnabled    *bool              `json:"scene_memory_recall_enabled"`
 	SceneMemoryUIEnabled        *bool              `json:"scene_memory_ui_enabled"`
@@ -2328,6 +2377,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.TaskFinishedLoopEnabled != nil {
+		if err := h.Queries.UpdateAgentTaskFinishedLoop(r.Context(), updated.ID, *req.TaskFinishedLoopEnabled); err != nil {
+			slog.Warn("update agent task_finished_loop failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update task finished loop")
+			return
+		}
+	}
 	if req.SceneMemoryWriteEnabled != nil || req.SceneMemoryRecallEnabled != nil ||
 		req.SceneMemoryUIEnabled != nil || req.SceneMemoryBootstrapEnabled != nil {
 		params := db.UpdateAgentSceneMemoryFlagsParams{ID: updated.ID}
@@ -2376,6 +2432,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	resp := h.agentToResponse(updated)
 	h.hydrateChatSessionResume(r.Context(), &resp, updated.ID)
 	h.hydrateInboundCoordinator(r.Context(), &resp, updated.ID)
+	h.hydrateTaskFinishedLoop(r.Context(), &resp, updated.ID)
 	h.hydrateSceneMemoryFlags(r.Context(), &resp, updated.ID)
 	h.hydrateAgentVoice(r.Context(), &resp, updated.ID)
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, updated.ID); err != nil {

@@ -95,7 +95,31 @@ func TestDecideLoadsDWSHistoryForRobotAndDigitalEmployee(t *testing.T) {
 	}
 }
 
-func TestDecideDWSHistoryFailureContinuesWithoutLLM(t *testing.T) {
+func TestDecideDWSHistoryTimeoutStillRunsLLM(t *testing.T) {
+	loader := &dwsHistoryStub{err: context.DeadlineExceeded}
+	var calls atomic.Int32
+	var prompt string
+	c := &Coordinator{LLM: decisionLLM(t, &calls, &prompt), DWSHistory: loader}
+	got := c.Decide(context.Background(), Turn{
+		Source:            SourceDigitalEmployee,
+		Addressed:         true,
+		ChatType:          "group",
+		ConversationTitle: "OwnerGraph",
+		Message:           "刚才口径是什么",
+		AgentID:           testAgentID(),
+		ConversationID:    "cid-ownergraph",
+		DWSUID:            "24710833",
+		DWSOrgID:          "439446171",
+	})
+	if got.Action == ActionContinue || calls.Load() != 1 || loader.calls != 1 {
+		t.Fatalf("timeout must still judge: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	}
+	if strings.Contains(prompt, "recent_dingtalk_history") {
+		t.Fatalf("timed-out last-N must not appear: %q", prompt)
+	}
+}
+
+func TestDecideDWSHistoryFailureStillRunsLLM(t *testing.T) {
 	loader := &dwsHistoryStub{err: errors.New("read failed")}
 	var calls atomic.Int32
 	var prompt string
@@ -110,10 +134,13 @@ func TestDecideDWSHistoryFailureContinuesWithoutLLM(t *testing.T) {
 		DWSUID:         "24710833",
 		DWSOrgID:       "439446171",
 	})
-	if got.Action != ActionContinue || calls.Load() != 0 || loader.calls != 1 {
-		t.Fatalf("decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	if got.Action == ActionContinue || calls.Load() != 1 || loader.calls != 1 {
+		t.Fatalf("read_failed must still judge: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
 	}
-	if len(got.Steps) != 2 || !got.Steps[1].Error || got.Steps[1].Tool != "dws_chat_history" {
+	if strings.Contains(prompt, "recent_dingtalk_history") {
+		t.Fatalf("failed last-N must not appear: %q", prompt)
+	}
+	if len(got.Steps) < 2 || !got.Steps[1].Error || got.Steps[1].Tool != "dws_chat_history" {
 		t.Fatalf("DWS failure timeline=%#v", got.Steps)
 	}
 }
@@ -234,6 +261,48 @@ func TestDWSHistoryLoaderIsolatesConcurrentCallsAndKeepsLatestTen(t *testing.T) 
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
 			t.Fatalf("DWS config dir was not removed: %s", dir)
 		}
+	}
+}
+
+func TestParseDWSHistoryAcceptsTopLevelMessages(t *testing.T) {
+	raw := []byte(`{
+		"success":true,
+		"messages":[
+			{"content":"上一句","openMessageId":"prev","sender":"冬翔"}
+		]
+	}`)
+	history, err := parseDWSHistory(raw, "current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 || history[0].Content != "上一句" || history[0].EvidenceID != "prev" {
+		t.Fatalf("history=%#v", history)
+	}
+}
+
+func TestParseDWSHistoryRejectedIncludesErrorMsg(t *testing.T) {
+	_, err := parseDWSHistory([]byte(`{
+		"success":false,
+		"errorCode":null,
+		"errorMsg":"无权限查看会话"
+	}`), "current")
+	if err == nil {
+		t.Fatal("rejected envelope must error")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "operation_failed") || !strings.Contains(got, "无权限查看会话") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestParseDWSHistoryKeepsMessagesWhenSuccessFalse(t *testing.T) {
+	history, err := parseDWSHistory([]byte(`{
+		"success":false,
+		"errorCode":null,
+		"messages":[{"content":"仍可用","openMessageId":"m1","sender":"冬翔"}]
+	}`), "current")
+	if err != nil || len(history) != 1 || history[0].Content != "仍可用" {
+		t.Fatalf("history=%#v err=%v", history, err)
 	}
 }
 

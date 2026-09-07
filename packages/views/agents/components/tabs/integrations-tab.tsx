@@ -17,37 +17,19 @@ import { SlackAgentBindButton } from "../../../settings/components/slack-tab";
 import { WecomAgentBindButton } from "../../../settings/components/wecom-tab";
 import { WecomMark } from "../../../settings/components/wecom-mark";
 import { useT } from "../../../i18n";
-import { DingTalkAccountBindingCard } from "../integrations/dingtalk-account-binding";
 import { DispatchPromptDialog } from "../integrations/dispatch-prompt-dialog";
-import { AgentMCPLinkCard } from "../integrations/mcp-link-card";
 
 /**
- * Integrations tab on the agent detail page. Surfaces the same external-
- * channel bind entry point as the inspector's "Integrations" section
- * (Lark Bot today) — scan-to-bind when unbound, connected info when bound —
- * but with the room a tab affords for a heading, a description, and the
- * not-configured / coming-soon / members-only states the cramped sidebar
- * section has no space for.
- *
- * The actionable affordance is the shared `LarkAgentBindButton`, the single
- * source of truth for "scan to bind vs. already connected". This tab only
- * adds the explanatory chrome around it, so the two entry points can never
- * drift.
+ * Bot-only connection surface. Employee accounts and execution identities
+ * live in Digital Employee; inbound MCP and A2A have their own pages.
+ * Platform bind buttons remain the source of truth for connected state.
  */
 export function IntegrationsTab({
   agent,
-  showMcpLink = false,
-  platformIntegrationsConfigured = true,
-  canOperateDingTalkBinding,
-  dingTalkBindingPermissionLoading,
   onUpdate,
   canEdit = false,
 }: {
   agent: Agent;
-  showMcpLink?: boolean;
-  platformIntegrationsConfigured?: boolean;
-  canOperateDingTalkBinding: boolean;
-  dingTalkBindingPermissionLoading: boolean;
   onUpdate?: (id: string, data: Record<string, unknown>) => Promise<void>;
   canEdit?: boolean;
 }) {
@@ -118,16 +100,6 @@ export function IntegrationsTab({
   // `dingtalkConfigured`. DingTalkAgentBindButton picks scan vs. manual.
   const dingtalkConfigured = dingtalkListing?.configured === true;
 
-  if (showMcpLink && !platformIntegrationsConfigured) {
-    return (
-      <div className="space-y-6">
-        <p className="text-caption text-muted-foreground">
-          {t(($) => $.tab_body.integrations.intro)}
-        </p>
-        <AgentMCPLinkCard agent={agent} />
-      </div>
-    );
-  }
   const wecomConfigured = wecomListing?.configured === true;
   const wecomInstallSupported = wecomListing?.install_supported === true;
   const wecomHasActiveInstall =
@@ -150,13 +122,6 @@ export function IntegrationsTab({
         <p className="text-caption text-muted-foreground">
           {t(($) => $.tab_body.integrations.intro)}
         </p>
-        <DingTalkAccountBindingCard
-          agentId={agent.id}
-          agentName={agent.name}
-          bindingMode="message"
-          canOperate={canOperateDingTalkBinding}
-          permissionLoading={dingTalkBindingPermissionLoading}
-        />
         <p className="text-caption text-muted-foreground">
           {t(($) => $.tab_body.integrations.members_note)}
         </p>
@@ -169,16 +134,6 @@ export function IntegrationsTab({
       <p className="text-caption text-muted-foreground">
         {t(($) => $.tab_body.integrations.intro)}
       </p>
-
-      {showMcpLink && <AgentMCPLinkCard agent={agent} />}
-
-      <DingTalkAccountBindingCard
-        agentId={agent.id}
-        agentName={agent.name}
-        bindingMode="message"
-        canOperate={canOperateDingTalkBinding}
-        permissionLoading={dingTalkBindingPermissionLoading}
-      />
 
       {onUpdate && (
         <section className="rounded-lg border">

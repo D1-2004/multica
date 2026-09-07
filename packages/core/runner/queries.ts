@@ -13,7 +13,13 @@ export const runnerBindingKeys = {
 export function accountRunnerBindingsOptions(userId: string) {
   return queryOptions({
     queryKey: runnerBindingKeys.account(userId),
-    queryFn: () => api.listAccountRunnerBindings(),
+    queryFn: async () => {
+      const inventory = await api.listAccountRunnerBindings();
+      if (inventory === null) {
+        throw new Error("Runner inventory response is invalid");
+      }
+      return inventory;
+    },
     enabled: !!userId,
     refetchInterval: 5_000,
     refetchOnWindowFocus: "always" as const,

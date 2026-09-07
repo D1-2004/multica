@@ -291,8 +291,168 @@ func TestClassifyAlwaysReturnsAgentSide(t *testing.T) {
 	for _, s := range samples {
 		got := Classify(s)
 		if !got.IsAgentError() {
-			t.Errorf("Classify(%q) = %q, must be agent_error.* (in-flight classifier never returns platform-side reasons)", s, got)
+			t.Errorf("Classify(%q) = %q, must be agent_error.* (an agent error string describes the agent process)", s, got)
 		}
+	}
+}
+
+// TestClassifyDshPluginPreparation pins the one deliberate exception to the
+// rule above, with the two error strings that produced it.
+//
+// Both were observed on 预发 and both were classified wrongly, in opposite
+// directions, by rules that scan the whole text for status codes:
+//
+//   - the fetch failure carries "403", so rule 3 called it provider_auth_or_
+//     access and told the operator to re-authenticate a model account that was
+//     working perfectly;
+//   - the mount failure carries a Node stack trace, and one of its line numbers
+//     read as a capacity code, so rule 5 called it provider_capacity_or_rate_
+//     limit, which reads as "the provider is busy, try later".
+//
+// Neither failure involves the model at all: the process dies before the first
+// request, and no amount of waiting or re-authenticating changes that. Platform-
+// side is the honest bucket, and it is why this classifies ahead of every
+// digit-scanning rule.
+func TestClassifyDshPluginPreparation(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "fetch failure, carrying the HTTP status it failed with",
+			raw: "failed to fetch plugin dsh-mcp-lens-uploaded: " +
+				"HTTP Error 403: Forbidden",
+		},
+		{
+			name: "mount failure, carrying a Node stack trace",
+			raw: "plugin tree failed to load: failed to apply loader entry " +
+				"include (cordis:include): failed to import loader entry " +
+				"mcp-lens (dsh-mcp-lens): Cannot find package 'dsh-mcp-lens'\n" +
+				"    at packageResolve (node:internal/modules/esm/resolve:429:9)\n" +
+				"    at moduleResolve (node:internal/modules/esm/resolve:529:18)",
+		},
+		{name: "digest mismatch", raw: "plugin demo integrity mismatch: got sha256-abc"},
+		{name: "unreadable manifest", raw: "plugin demo has invalid package.json"},
+		{name: "absent manifest", raw: "plugin demo has no package.json"},
+		{name: "unresolvable source", raw: "npm: plugin source must pin a version: npm:demo"},
+		{name: "missing local file", raw: "plugin file not found: /tmp/demo.tgz"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := Classify(c.raw)
+			if got != ReasonDshPluginUnavailable {
+				t.Errorf("Classify(%q) = %q, want %q", c.raw, got, ReasonDshPluginUnavailable)
+			}
+			if got.IsAgentError() {
+				t.Errorf("%q must be platform-side: the model was never called", got)
+			}
+		})
+	}
+}
+
+// TestClassifyDshPluginWitnessesAreSpecific guards the other direction, and it
+// is the more important direction.
+//
+// One caller hands Classify the agent's own comment text (the MUL-2946 branch
+// in daemon/daemon.go), which is prose a model wrote about whatever it was
+// working on. "the repo has no package.json" is an ordinary sentence there. A
+// witness loose enough to match it would relabel that agent's real failure as a
+// plugin failure — moving it off the retry path and pointing the operator at a
+// plugin that had nothing to do with it. A missed plugin failure costs a wrong
+// label; a stolen agent failure costs a retry, so the witnesses are written to
+// be precise rather than generous.
+// TestContextOverflowOutranksThePluginGuard pins the one ordering the guard
+// must lose.
+//
+// A backend that has already proven the context is exhausted appends the
+// model's own text to its error, and that text can say anything — including
+// something that reads like a plugin problem. Losing context_overflow there
+// would cost more than a label: it is on the resume blacklist and
+// dsh_plugin_unavailable is not, so the exhausted session would stay pinned as
+// the resume pointer and every later turn would replay the same overflow.
+func TestContextOverflowOutranksThePluginGuard(t *testing.T) {
+	t.Parallel()
+
+	raw := "agent terminated (terminal_reason=prompt_too_long): prompt is too long. " +
+		"detail: plugin tree failed to load"
+	if got := Classify(raw); got != ReasonAgentContextOverflow {
+		t.Errorf("Classify(%q) = %q, want %q", raw, got, ReasonAgentContextOverflow)
+	}
+}
+
+func TestClassifyDshPluginWitnessesAreSpecific(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		raw  string
+		want Reason
+	}{
+		// Provider failures must still reach their own rules.
+		{"provider auth", "401 Unauthorized", ReasonAgentProviderAuthOrAccess},
+		{"provider capacity", "429 rate limit exceeded", ReasonAgentProviderCapacityOrRateLimit},
+
+		// Prose an agent plausibly writes about a repository it is working in.
+		{
+			name: "an agent describing a repo without a manifest",
+			raw:  "I looked at the project and it has no package.json, so I could not run the build",
+			want: ReasonAgentUnknown,
+		},
+		{
+			name: "an agent describing a malformed manifest",
+			raw:  "the checkout has invalid package.json and npm refused to install",
+			want: ReasonAgentUnknown,
+		},
+		{
+			name: "an agent describing a lockfile problem",
+			raw:  "npm ci stopped on an integrity mismatch in the lockfile",
+			want: ReasonAgentUnknown,
+		},
+		{
+			name: "an agent talking about plugins generally",
+			raw:  "the plugin worked fine but the test harness did not",
+			want: ReasonAgentUnknown,
+		},
+
+		// Near misses on the loader wording.
+		{"generic load failure", "failed to load the file", ReasonAgentUnknown},
+		{"generic import failure", "could not import the module", ReasonAgentUnknown},
+
+		// Both of these matched an earlier draft of the witness. They are the
+		// reason each alternative now carries the rest of the adapter's
+		// sentence rather than its most memorable phrase.
+		{
+			name: "an npm package whose name happens to contain \"plugin\"",
+			raw:  "the build failed because plugin eslint-plugin-import declares an incompatible peer dependency",
+			want: ReasonAgentUnknown,
+		},
+		{
+			name: "a different runner failing to fetch its own plugin",
+			raw:  "opencode failed to fetch plugin @acme/opencode-tools: connection reset by peer",
+			want: ReasonAgentUnknown,
+		},
+		{
+			// The same shape over a witness rule 7 does recognise. Misrouting
+			// this one costs more than a label: provider_network is the only
+			// agent-side reason on the auto-retry allowlist, so claiming it
+			// would take away the retry it exists to trigger.
+			name: "a different runner's plugin fetch, over a transient cut",
+			raw:  "opencode failed to fetch plugin @acme/opencode-tools: connection closed",
+			want: ReasonAgentProviderNetwork,
+		},
+	}
+	for _, c := range cases {
+		name := c.name
+		if name == "" {
+			name = c.raw
+		}
+		t.Run(name, func(t *testing.T) {
+			if got := Classify(c.raw); got != c.want {
+				t.Errorf("Classify(%q) = %q, want %q", c.raw, got, c.want)
+			}
+		})
 	}
 }
 
@@ -450,5 +610,80 @@ func TestNormalizeDaemonReason_UpgradedReasonIsPlatformSide(t *testing.T) {
 	got := NormalizeDaemonReason(string(ReasonAgentUnknown), "resolve skill bundles: context deadline exceeded")
 	if got.IsAgentError() {
 		t.Errorf("%q must be platform-side: the agent process never started", got)
+	}
+}
+
+// TestNormalizeDaemonReasonUpgradesADshPluginFailure covers the mixed-version
+// gap for plugin preparation.
+//
+// The daemon classifies the failure itself and sends a confident
+// agent_error.*, so FailTask's "classify when empty" branch never runs — a
+// server-only deploy would keep persisting the wrong label until every host
+// updated. That matters more here than for a vague bucket: the label is what
+// tells the operator to look at a plugin instead of at their model account.
+func TestNormalizeDaemonReasonUpgradesADshPluginFailure(t *testing.T) {
+	t.Parallel()
+
+	fetchErr := "failed to fetch plugin dsh-mcp-lens-uploaded: HTTP Error 403: Forbidden"
+	mountErr := "plugin tree failed to load: failed to import loader entry mcp-lens"
+
+	cases := []struct {
+		name   string
+		reason string
+		raw    string
+		want   Reason
+	}{
+		{
+			name:   "the 403 an old daemon read as a provider auth failure",
+			reason: string(ReasonAgentProviderAuthOrAccess),
+			raw:    fetchErr,
+			want:   ReasonDshPluginUnavailable,
+		},
+		{
+			name:   "the stack trace an old daemon read as a rate limit",
+			reason: string(ReasonAgentProviderCapacityOrRateLimit),
+			raw:    mountErr,
+			want:   ReasonDshPluginUnavailable,
+		},
+		{
+			name:   "the catchall",
+			reason: string(ReasonAgentUnknown),
+			raw:    mountErr,
+			want:   ReasonDshPluginUnavailable,
+		},
+		{
+			name:   "the pre-MUL-1949 coarse reason",
+			reason: "agent_error",
+			raw:    fetchErr,
+			want:   ReasonDshPluginUnavailable,
+		},
+		{
+			name:   "a current daemon already sends the right reason",
+			reason: string(ReasonDshPluginUnavailable),
+			raw:    fetchErr,
+			want:   ReasonDshPluginUnavailable,
+		},
+		{
+			// The daemon knew something the text does not say. A witness
+			// somewhere in the blob is weaker evidence than that.
+			name:   "a reason no digit-scanning rule could have produced is kept",
+			reason: string(ReasonAgentTimeout),
+			raw:    mountErr,
+			want:   ReasonAgentTimeout,
+		},
+		{
+			name:   "no witness, nothing to upgrade",
+			reason: string(ReasonAgentProviderAuthOrAccess),
+			raw:    "401 Unauthorized",
+			want:   ReasonAgentProviderAuthOrAccess,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := NormalizeDaemonReason(c.reason, c.raw); got != c.want {
+				t.Errorf("NormalizeDaemonReason(%q, %q) = %q, want %q",
+					c.reason, c.raw, got, c.want)
+			}
+		})
 	}
 }

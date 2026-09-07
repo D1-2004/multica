@@ -60,7 +60,23 @@ WHERE task.agent_id = @agent_id
   AND task.parent_task_id IS NULL
   AND task.context #>> '{dispatch_idempotency_key}' = @idempotency_key::text
   AND task.context #>> '{dispatch_endpoint_id}' = @endpoint_id::text
-  AND task.context #>> '{completion_callback,url}' = @callback_url::text
-  AND task.context #>> '{completion_callback,target}' = @target_identity::text
+  AND (
+    task.context #>> '{completion_callback,url}' = @callback_url::text
+    OR task.context #>> '{coordinator_wrapup_callback,url}' = @callback_url::text
+  )
+  AND (
+    task.context #>> '{completion_callback,target}' = @target_identity::text
+    OR task.context #>> '{coordinator_wrapup_callback,target}' = @target_identity::text
+  )
+ORDER BY task.created_at ASC
+LIMIT 1;
+
+-- name: GetAgentDispatchRootTaskByIdempotency :one
+SELECT task.*
+FROM agent_task_queue task
+WHERE task.agent_id = @agent_id
+  AND task.parent_task_id IS NULL
+  AND task.context #>> '{dispatch_idempotency_key}' = @idempotency_key::text
+  AND task.context #>> '{dispatch_endpoint_id}' = @endpoint_id::text
 ORDER BY task.created_at ASC
 LIMIT 1;

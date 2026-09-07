@@ -8,21 +8,6 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../../locales/en/common.json";
 import enAgents from "../../../locales/en/agents.json";
 
-const extractAgentVoice = vi.fn();
-
-vi.mock("@multica/core/api", () => ({
-  api: {
-    extractAgentVoice: (...args: unknown[]) => extractAgentVoice(...args),
-  },
-}));
-
-vi.mock("sonner", () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}));
-
 import { InstructionsTab } from "./instructions-tab";
 
 const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
@@ -77,52 +62,33 @@ describe("InstructionsTab", () => {
     vi.clearAllMocks();
   });
 
-  it("applies a persona template", async () => {
-    const user = userEvent.setup();
+  it("keeps employee voice out of task instructions", () => {
     renderTab();
 
-    await user.click(screen.getByRole("button", { name: "Teammate" }));
-    expect(
-      screen.getByDisplayValue(/You are a reliable teammate/),
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/System prompt/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Persona")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Reply tone")).not.toBeInTheDocument();
   });
 
-  it("saves persona and tone without rewriting github-managed instructions", async () => {
+  it("saves only the System Prompt", async () => {
     const user = userEvent.setup();
-    const { onSave } = renderTab(
-      { instructions: "managed", persona: "", reply_tone: "" },
+    const { onSave } = renderTab();
+
+    await user.clear(screen.getByLabelText(/System prompt/i));
+    await user.type(screen.getByLabelText(/System prompt/i), "New prompt");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSave).toHaveBeenCalledWith({ instructions: "New prompt" });
+  });
+
+  it("keeps source-managed instructions read-only", () => {
+    renderTab(
+      { instructions: "managed" },
       vi.fn().mockResolvedValue(undefined),
       { instructionsLocked: true },
     );
 
-    await user.click(screen.getByRole("button", { name: "Direct" }));
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(onSave).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reply_tone: expect.stringContaining("Short sentences"),
-      }),
-    );
-    expect(onSave.mock.calls[0][0].instructions).toBeUndefined();
-  });
-
-  it("extracts persona and tone from the current instructions", async () => {
-    const user = userEvent.setup();
-    extractAgentVoice.mockResolvedValue({
-      persona: "A calm coordinator.",
-      reply_tone: "Direct.",
-    });
-    renderTab();
-
-    await user.click(
-      screen.getByRole("button", { name: "Extract from instructions" }),
-    );
-
-    expect(extractAgentVoice).toHaveBeenCalledWith(
-      "agent-1",
-      "You are a frontend engineer.",
-    );
-    expect(screen.getByDisplayValue("A calm coordinator.")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Direct.")).toBeInTheDocument();
+    expect(screen.getByLabelText(/System prompt/i)).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
   });
 });

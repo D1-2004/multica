@@ -80,6 +80,7 @@
         "runtimes",
         "runners",
         "skills",
+        "dsh-plugins",
         "settings",
         "workspaces",
         "teams"

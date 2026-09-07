@@ -1420,6 +1420,107 @@ func TestRouter_DurableIssueCommand_ActiveDuplicateIsTerminalProductOutcome(t *t
 	}
 }
 
+func TestAllowIssueTitleDuplicate(t *testing.T) {
+	scheduled := channel.InboundMessage{Text: "周期任务触发 · 每日生成并投递运营日报\n‍ @菲迪 ‍"}
+	tokenJob := channel.InboundMessage{Text: "每日Token消耗统计任务已触发 ‍ @菲迪 ‍"}
+	human := p2pMessage(t)
+	opts := HandleOptions{}
+	if !allowIssueTitleDuplicate(scheduled, opts, false) {
+		t.Fatal("AI Table scheduled trigger must allow yesterday's title")
+	}
+	if !allowIssueTitleDuplicate(tokenJob, opts, false) {
+		t.Fatal("scheduled 任务已触发 inbound must allow yesterday's title")
+	}
+	if allowIssueTitleDuplicate(human, opts, false) {
+		t.Fatal("ordinary inbound must keep the active-title duplicate guard")
+	}
+	if !allowIssueTitleDuplicate(human, HandleOptions{DisableControlCommands: true}, false) {
+		t.Fatal("dispatch chat titles are Coordinator labels, not idempotency keys")
+	}
+	if !allowIssueTitleDuplicate(human, opts, true) {
+		t.Fatal("Coordinator ActionIssue must allow a same-title new day's Issue")
+	}
+}
+
+func TestRouter_IssueCommand_ScheduledBotAllowsTitleDuplicate(t *testing.T) {
+	h := newHarness(t)
+	h.binder.appendResult = AppendResult{
+		MessageID:   uuidFromString(t, "77777777-7777-4777-8777-777777777777"),
+		DedupMarked: true,
+		IssueCommand: &IssueCommand{
+			Title: "每日生成并投递运营日报委托：采集今日数据，撰写判断，生成图文并投递给冬翔及指定群组，完成存档与留痕",
+		},
+	}
+	issueID := uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	taskID := uuidFromString(t, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+	h.issues.result = service.IssueCreateResult{
+		Issue: db.Issue{
+			ID:     issueID,
+			Number: 12,
+			Title:  "每日生成并投递运营日报委托：采集今日数据，撰写判断，生成图文并投递给冬翔及指定群组，完成存档与留痕",
+		},
+		EnqueuedTask: &db.AgentTaskQueue{ID: taskID},
+	}
+	msg := p2pMessage(t)
+	msg.Text = "周期任务触发 · 每日生成并投递运营日报\n‍ @菲迪 ‍"
+	msg.CommandText = msg.Text
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if !h.issues.called {
+		t.Fatal("scheduled bot issue must call IssueService.Create")
+	}
+	if !h.issues.params.AllowDuplicate {
+		t.Fatal("scheduled bot inbound must allow an Issue with yesterday's title")
+	}
+}
+
+func TestRouter_IssueCommand_DispatchControlsAllowTitleDuplicate(t *testing.T) {
+	h := newHarness(t)
+	h.binder.appendResult = AppendResult{
+		MessageID:    uuidFromString(t, "77777777-7777-4777-8777-777777777777"),
+		DedupMarked:  true,
+		IssueCommand: &IssueCommand{Title: "向 dxxh 确认明天开会的时间与形式"},
+	}
+	h.issues.result = service.IssueCreateResult{
+		Issue:        db.Issue{ID: uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), Number: 3, Title: "向 dxxh 确认明天开会的时间与形式"},
+		EnqueuedTask: &db.AgentTaskQueue{ID: uuidFromString(t, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")},
+	}
+	identity := ResolvedIdentity{PrincipalUserID: h.inst.inst.InstallerUserID}
+	if _, err := h.router.HandleResultWithOptions(context.Background(), p2pMessage(t), HandleOptions{
+		IdentityOverride:       &identity,
+		DisableControlCommands: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !h.issues.called {
+		t.Fatal("dispatch chat issue must call IssueService.Create")
+	}
+	if !h.issues.params.AllowDuplicate {
+		t.Fatal("dispatch chat issue titles are Coordinator labels; window idempotency is the acceptance key")
+	}
+}
+
+func TestRouter_DurableIssueCommand_ScheduledBotAllowsTitleDuplicate(t *testing.T) {
+	h := newHarness(t)
+	enableDurableRuns(h)
+	h.reader.session = db.ChatSession{ID: h.binder.ensureID, AgentID: h.inst.inst.AgentID}
+	h.reader.originErr = pgx.ErrNoRows
+	h.issues.result = service.IssueCreateResult{
+		Issue:        db.Issue{ID: uuidFromString(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), Number: 7, Title: "每日生成并投递运营日报委托：采集今日数据"},
+		EnqueuedTask: &db.AgentTaskQueue{ID: uuidFromString(t, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")},
+	}
+	msg := p2pMessage(t)
+	msg.Text = "周期任务触发 · 每日生成并投递运营日报"
+	msg.CommandText = "/issue 每日生成并投递运营日报委托：采集今日数据"
+	if err := h.router.Handle(context.Background(), msg); err != nil {
+		t.Fatalf("handle: %v", err)
+	}
+	if !h.issues.params.AllowDuplicate {
+		t.Fatal("durable scheduled-bot issue must allow yesterday's title")
+	}
+}
+
 func TestRouter_IssueCommand_ActiveDuplicateFinalizesWithoutWaitingForSessionMedia(t *testing.T) {
 	h := newHarness(t)
 	firstStarted := make(chan struct{})
@@ -2377,6 +2478,22 @@ func TestCoordinatorDWSIdentityReadsPrivateTaskContext(t *testing.T) {
 	}`))
 	if uid != "24710833" || orgID != "439446171" {
 		t.Fatalf("DWS identity = %q/%q", uid, orgID)
+	}
+}
+
+func TestCoordinatorSenderNamePrefersDispatchDisplayName(t *testing.T) {
+	got := coordinatorSenderName([]byte(`{"dispatch_event_data":{"sender":{"displayName":" 冬翔 ","staffId":"Dv6W"}}}`), "Dv6W")
+	if got != "冬翔" {
+		t.Fatalf("sender name = %q", got)
+	}
+	for _, raw := range [][]byte{
+		nil,
+		[]byte(`not-json`),
+		[]byte(`{"dispatch_event_data":{"sender":{"staffId":"Dv6W"}}}`),
+	} {
+		if got := coordinatorSenderName(raw, " Dv6W "); got != "Dv6W" {
+			t.Fatalf("fallback sender name = %q for %s", got, raw)
+		}
 	}
 }
 

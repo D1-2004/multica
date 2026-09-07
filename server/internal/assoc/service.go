@@ -72,3 +72,14 @@ func (s *Service) ListEventsByScene(ctx context.Context, workspaceID, agentID, s
 func (s *Service) Store() Store {
 	return s.store
 }
+
+func (s *Service) ListTasksByIssue(ctx context.Context, workspaceID, agentID, issueID string, since, until time.Time) ([]Task, error) {
+	if s == nil || s.store == nil {
+		return nil, fmt.Errorf("%w: association store is not configured", ErrInvalidQuery)
+	}
+	issueID = strings.TrimSpace(issueID)
+	if strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(agentID) == "" || issueID == "" {
+		return nil, fmt.Errorf("%w: workspace_id, agent_id, and issue_id are required", ErrInvalidQuery)
+	}
+	return s.store.ListTasksByIssue(ctx, workspaceID, agentID, issueID, since, until)
+}

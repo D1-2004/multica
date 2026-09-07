@@ -1,5 +1,10 @@
 package realtime
 
+import (
+	"context"
+	"time"
+)
+
 // Scope types recognised by the broadcaster. Producers and consumers should
 // use these constants rather than raw strings so a typo can never silently
 // route an event to a non-existent room.
@@ -62,6 +67,11 @@ type RunnerMachineDeliverer interface {
 type RunnerMachineScopeSubscriber interface {
 	SubscribeRunnerMachine(scopeID string)
 	UnsubscribeRunnerMachine(scopeID string)
+}
+
+type RunnerInventoryCache interface {
+	StoreRunnerInventory(context.Context, string, []byte, time.Duration) error
+	LoadRunnerInventory(context.Context, string) ([]byte, bool, error)
 }
 
 // Compile-time assertion that *Hub continues to satisfy Broadcaster.

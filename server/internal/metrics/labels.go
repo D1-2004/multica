@@ -142,6 +142,7 @@ var (
 		"kiro":          "kiro",
 		"kimi":          "kimi",
 		"reasonix":      "reasonix",
+		"dsh":           "dsh",
 		"multica_agent": "multica_agent",
 		"openclaw":      "openclaw",
 		"opencode":      "opencode",

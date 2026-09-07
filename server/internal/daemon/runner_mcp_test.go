@@ -56,3 +56,52 @@ func TestRebaseManagedRunnerMCPRejectsInvalidDaemonURL(t *testing.T) {
 		t.Fatal("invalid daemon URL was accepted")
 	}
 }
+
+func TestRebaseManagedRunnerMCPRewritesEveryMarkedMountAndKeepsPath(t *testing.T) {
+	raw := json.RawMessage(`{"mcpServers":{"filesystem":{"url":"https://pre.example/api/runner-mcp/mounts/111/servers/filesystem","headers":{"Authorization":"Bearer mat_task","X-Multica-Runner-MCP":"v1"}},"browser":{"url":"https://pre.example/api/runner-mcp/mounts/111/servers/browser","headers":{"X-Multica-Runner-MCP":"v1"}}}}`)
+	got, err := rebaseManagedRunnerMCP(raw, "http://127.0.0.1:39123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct{ MCPServers map[string]struct{ URL string `json:"url"`; Headers map[string]string `json:"headers"` } `json:"mcpServers"` }
+	if err := json.Unmarshal(got, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document.MCPServers["filesystem"].URL != "http://127.0.0.1:39123/api/runner-mcp/mounts/111/servers/filesystem" {
+		t.Fatalf("filesystem URL = %q", document.MCPServers["filesystem"].URL)
+	}
+	if document.MCPServers["browser"].URL != "http://127.0.0.1:39123/api/runner-mcp/mounts/111/servers/browser" {
+		t.Fatalf("browser URL = %q", document.MCPServers["browser"].URL)
+	}
+}
+
+func TestRebaseManagedMCPUsesRouteMapAndPreservesUnroutedEntries(t *testing.T) {
+	raw := json.RawMessage(`{"mcpServers":{"wiki":{"command":"node","args":["wiki.js"],"env":{"TOKEN":"secret"},"vendor":{"keep":true}},"direct":{"url":"https://direct.example/mcp","headers":{"X-Direct":"yes"}}}}`)
+	routes := map[string]mcpRelayRoute{
+		"wiki": {Path: "/api/runner-mcp/mounts/binding/servers/wiki", Authorization: "Bearer task-token"},
+	}
+
+	got, err := rebaseManagedMCP(raw, routes, "http://127.0.0.1:39123")
+	if err != nil {
+		t.Fatalf("rebase managed MCP: %v", err)
+	}
+	var document struct {
+		MCPServers map[string]map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(got, &document); err != nil {
+		t.Fatal(err)
+	}
+	wiki := document.MCPServers["wiki"]
+	if string(wiki["url"]) != `"http://127.0.0.1:39123/api/runner-mcp/mounts/binding/servers/wiki"` {
+		t.Fatalf("wiki relay URL = %s", wiki["url"])
+	}
+	if _, exists := wiki["command"]; exists {
+		t.Fatal("Runner-local command reached runtime-facing relay config")
+	}
+	if string(wiki["vendor"]) != `{"keep":true}` {
+		t.Fatalf("non-transport field changed: %s", wiki["vendor"])
+	}
+	if string(document.MCPServers["direct"]["url"]) != `"https://direct.example/mcp"` {
+		t.Fatalf("direct MCP was changed: %s", got)
+	}
+}

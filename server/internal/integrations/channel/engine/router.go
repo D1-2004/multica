@@ -577,7 +577,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			msg.AddressedToBot || msg.Source.ChatType == channel.ChatTypeP2P,
 			string(msg.Source.ChatType),
 			"",
-			msg.Source.SenderID,
+			coordinatorSenderName(taskContext, msg.Source.SenderID),
 			msg.Text,
 		)
 		turn.ConversationID = strings.TrimSpace(msg.Source.ChatID)
@@ -588,6 +588,9 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		turn.IssueDispatchContext = taskContext
 		turn.DWSUID, turn.DWSOrgID = coordinatorDWSIdentity(taskContext)
 		turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
+		// The coordinator turn shares the inbound chat trace so its Langfuse
+		// trace and the task it may start are one tree.
+		turn.TraceID = trace.TraceID
 		coordDecision = r.coordinator.Decide(ctx, turn)
 		switch coordDecision.Action {
 		case inboundcoord.ActionRetry:
@@ -608,6 +611,12 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			issueCommandRequested = true
 		case inboundcoord.ActionReply, inboundcoord.ActionSilence:
 			skipSandboxPrepare = true
+		}
+		if len(coordDecision.Steps) > 0 {
+			// The task (Issue or chat continuation) records which coordinator
+			// turn looked at it and repeats its trace tags; both share the
+			// inbound chat trace already.
+			taskContext = inboundcoord.StampCoordinatorTrace(taskContext, coordDecision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS))
 		}
 	}
 	issueNeedsUsage := issueCommandRequested && issueCommand.Title == "" && !set.DurableRuns
@@ -640,6 +649,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		issueRes, _, err := r.createOrRecoverDurableIssue(
 			ctx, inst, set.OriginType, identity.PrincipalUserID, msg.MessageID,
 			resolvedCommand, taskContext, prefix, assignedRunFireAt,
+			allowIssueTitleDuplicate(msg, options, coordinatorIssue),
 		)
 		if err != nil && !(errors.Is(err, service.ErrActiveDuplicate) && issueRes.DuplicateIssue != nil) {
 			return Result{}, finalizeRelease, fmt.Errorf("create durable issue command: %w", err)
@@ -759,7 +769,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			issueRes = *durableIssueResult
 			err = durableIssueErr
 		} else {
-			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *command, taskContext, prefix, assignedRunFireAt)
+			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *command, taskContext, prefix, assignedRunFireAt, allowIssueTitleDuplicate(msg, options, coordinatorIssue))
 		}
 		if errors.Is(err, service.ErrActiveDuplicate) && issueRes.DuplicateIssue != nil {
 			duplicate := *issueRes.DuplicateIssue
@@ -1356,6 +1366,31 @@ func coordinatorDWSIdentity(taskContext []byte) (string, string) {
 	return uid, orgID
 }
 
+// coordinatorSenderName is the sender's display name from the dispatch event
+// carried in the task context, so the coordinator turn (and its Langfuse
+// trace) names the person rather than the DingTalk open id; the id is the
+// fallback when the event carries no name.
+func coordinatorSenderName(taskContext []byte, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if len(taskContext) == 0 {
+		return fallback
+	}
+	var payload struct {
+		EventData struct {
+			Sender struct {
+				DisplayName string `json:"displayName"`
+			} `json:"sender"`
+		} `json:"dispatch_event_data"`
+	}
+	if json.Unmarshal(taskContext, &payload) != nil {
+		return fallback
+	}
+	if name := strings.TrimSpace(payload.EventData.Sender.DisplayName); name != "" {
+		return name
+	}
+	return fallback
+}
+
 // ErrDedupFinalize marks a failed post-pipeline dedup transition. Callers must
 // retry it only after the 60-second stale-claim window; an immediate retry
 // would observe the still-live claim as a duplicate and could incorrectly
@@ -1386,7 +1421,7 @@ func (r *Router) drop(ctx context.Context, set ResolverSet, msg channel.InboundM
 	return Result{Outcome: OutcomeDropped, DropReason: reason, InstallationID: instID}
 }
 
-func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand, taskContext []byte, issuePrefix string, assignedRunFireAt time.Time) (service.IssueCreateResult, error) {
+func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand, taskContext []byte, issuePrefix string, assignedRunFireAt time.Time, allowDuplicate bool) (service.IssueCreateResult, error) {
 	if cmd.Title == "" {
 		return service.IssueCreateResult{}, ErrEmptyIssueTitle
 	}
@@ -1406,6 +1441,7 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 		CreatorID:                 creatorUserID,
 		OriginType:                pgtype.Text{String: originType, Valid: originType != ""},
 		OriginID:                  originID,
+		AllowDuplicate:            allowDuplicate,
 		AgentIdentityContextToken: identityContextToken,
 		DispatchContext:           append([]byte(nil), taskContext...),
 	}
@@ -1458,6 +1494,7 @@ func (r *Router) createOrRecoverDurableIssue(
 	taskContext []byte,
 	issuePrefix string,
 	assignedRunFireAt time.Time,
+	allowDuplicate bool,
 ) (service.IssueCreateResult, bool, error) {
 	if strings.TrimSpace(messageID) == "" {
 		return service.IssueCreateResult{}, false, errors.New("durable issue command has no message id")
@@ -1478,8 +1515,29 @@ func (r *Router) createOrRecoverDurableIssue(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return service.IssueCreateResult{}, false, fmt.Errorf("lookup issue by durable origin: %w", err)
 	}
-	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd, taskContext, issuePrefix, assignedRunFireAt)
+	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd, taskContext, issuePrefix, assignedRunFireAt, allowDuplicate)
 	return created, false, err
+}
+
+// allowIssueTitleDuplicate reports whether this inbound may create another
+// active Issue with the same title. Dispatch Command V2 already treats titles
+// as Coordinator labels rather than idempotency keys (the issue-surface path
+// sets AllowDuplicate for the same reason). DingTalk AI Table scheduled bots
+// reuse one purpose string every day while yesterday's Issue stays in_review;
+// blocking that create leaves the Router callback without a TaskID and stamps
+// 处理失败 on the inbound.
+func allowIssueTitleDuplicate(msg channel.InboundMessage, options HandleOptions, coordinatorIssue bool) bool {
+	return coordinatorIssue || options.DisableControlCommands || inboundScheduledBotTrigger(msg)
+}
+
+func inboundScheduledBotTrigger(msg channel.InboundMessage) bool {
+	body := strings.TrimSpace(msg.CommandText)
+	if body == "" {
+		body = strings.TrimSpace(msg.Text)
+	} else if text := strings.TrimSpace(msg.Text); text != "" && text != body {
+		body = body + "\n" + text
+	}
+	return strings.Contains(body, "周期任务触发") || strings.Contains(body, "任务已触发")
 }
 
 func taskIdentityContextToken(taskContext []byte) (string, error) {

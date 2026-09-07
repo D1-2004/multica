@@ -249,6 +249,77 @@ func TestRecallMergesQuotedConversationIDs(t *testing.T) {
 	}
 }
 
+func TestRecallWaitingOnForeignSceneIsNotOnThisScene(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := NewMemory()
+	now := time.Now().UTC()
+	task := mustInsertTask(t, store, Task{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		IssueID:       "issue-schedule",
+		Purpose:       "冬翔委托：向 dxxh 确认下周排期",
+		Status:        StatusWaiting,
+		LastTouchedAt: now.Add(-20 * time.Minute),
+	})
+	if _, err := store.InsertEdge(ctx, Edge{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		SrcType:       NodeTask,
+		SrcID:         task.ID,
+		DstType:       NodeScene,
+		DstID:         "cid-g2",
+		Rel:           RelTaskScene,
+		LastTouchedAt: now.Add(-20 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.InsertEdge(ctx, Edge{
+		WorkspaceID:   "ws",
+		AgentID:       "ag",
+		SrcType:       NodeTask,
+		SrcID:         task.ID,
+		DstType:       NodeScene,
+		DstID:         "cid-r9b",
+		Rel:           RelWaitingOn,
+		LastTouchedAt: now.Add(-20 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	foreign, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-r9b",
+		Since:          now.Add(-48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(foreign.Items) != 1 {
+		t.Fatalf("r9b items=%+v", foreign.Items)
+	}
+	if foreign.Items[0].OnThisScene {
+		t.Fatalf("waiting_on R9B must not mark G2 排期 as R9B's matter: %+v", foreign.Items[0])
+	}
+	if foreign.Items[0].WhyListed != "其他会话" {
+		t.Fatalf("why_listed=%q", foreign.Items[0].WhyListed)
+	}
+
+	home, err := Recall(ctx, store, Query{
+		WorkspaceID:    "ws",
+		AgentID:        "ag",
+		ConversationID: "cid-g2",
+		Since:          now.Add(-48 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(home.Items) != 1 || !home.Items[0].OnThisScene {
+		t.Fatalf("g2 should still own the 排期: %+v", home.Items)
+	}
+}
+
 func TestRecallWindowKeywordIsNotOnThisScene(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

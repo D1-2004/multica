@@ -1,12 +1,16 @@
 package scenememory
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
 func TestParseFlushCommit(t *testing.T) {
@@ -32,6 +36,32 @@ func TestParseFlushCommit(t *testing.T) {
 	redacted, err := parseFlushCommit(old, `{"decision":"replace","full_text":"token Bearer abcdefghijklmnop"}`)
 	if err != nil || !strings.Contains(redacted, "[REDACTED]") || strings.Contains(redacted, "abcdefghijklmnop") {
 		t.Fatalf("replace must redact secrets: %q err=%v", redacted, err)
+	}
+}
+
+func TestMergeFallsBackOnLLMTimeoutForBusyGroups(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(150 * time.Millisecond):
+		}
+		w.WriteHeader(http.StatusGatewayTimeout)
+	}))
+	t.Cleanup(server.Close)
+	f := &MemoryFlusher{LLM: llm.New(llm.Config{APIKey: "test", BaseURL: server.URL, MaxRetries: -1})}
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	old := strings.Join([]string{
+		"## 场域定位",
+		"OwnerGraph",
+		"## 稳定知识与约定",
+		"- 主链路跳转顺序已冻结 (来自圆畅, 9月3日 20:44的发言)",
+	}, "\n")
+	got, fallback, err := f.merge(ctx, db.SceneMemory{SceneKey: "cid-ownergraph", MemoryText: old}, []HistoryEvent{
+		{Speaker: "圆畅", Content: "PoC主链路Demo筹备群口径不变"},
+	})
+	if err == nil || fallback {
+		t.Fatalf("timeout must hold the dirty batch, not commit: fallback=%v err=%v got=%q", fallback, err, got)
 	}
 }
 
@@ -139,6 +169,35 @@ func TestPlanFlushMergesEarlierTriggerWhenLeaseTargetIsLater(t *testing.T) {
 	}
 	if !CursorCovers(plan.cursorAt, plan.cursorEv, later, "msg-later") {
 		t.Fatalf("cursor must stay at the later high-water: %+v", plan)
+	}
+}
+
+func TestPlanFlushAdvancesWhenOldPendingIsBehindPartialWindow(t *testing.T) {
+	now := time.Date(2026, 9, 4, 10, 0, 0, 0, time.UTC)
+	oldPending := now.Add(-48 * time.Hour)
+	cursor := now.Add(-72 * time.Hour)
+	row := db.SceneMemory{
+		LeaseTargetThroughAt:         timestamptz(now),
+		LeaseTargetThroughEvidenceID: "msg-new",
+		LastTriggerAt:                timestamptz(now),
+		LastTriggerEvidenceID:        "msg-new",
+		PendingFromAt:                timestamptz(oldPending),
+		PendingFromEvidenceID:        "msg-stale-pending",
+		SourceCursorAt:               timestamptz(cursor),
+		SourceCursorEvidenceID:       "msg-old-cursor",
+	}
+	plan, err := planFlush(row, []HistoryEvent{
+		{EvidenceID: "msg-mid", OccurredAt: now.Add(-time.Minute), Content: "OwnerGraph 近况"},
+		{EvidenceID: "msg-new", OccurredAt: now, Content: "PoC主链路Demo筹备群口径"},
+	})
+	if err != nil {
+		t.Fatalf("old pending outside newest window must not block: %v", err)
+	}
+	if !containsEvidence(plan.batch, "msg-new") {
+		t.Fatalf("visible newest events must merge: %+v", plan)
+	}
+	if !plan.caughtUp || plan.cursorEv != "msg-new" {
+		t.Fatalf("cursor must advance through the visible window: %+v", plan)
 	}
 }
 
@@ -319,6 +378,15 @@ func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
 	if !strings.Contains(flushSystemPrompt, "Never write them into 纠正信号") {
 		t.Fatal("flush must forbid digital-employee speech in 纠正信号 and 稳定知识")
 	}
+	if !strings.Contains(flushSystemPrompt, "回复偏好") {
+		t.Fatal("flush must not copy this agent's recitation of reply style")
+	}
+	if !strings.Contains(flushSystemPrompt, "any name not in 成员") {
+		t.Fatal("flush must not cite the digital employee as a DM source")
+	}
+	if !strings.Contains(flushSystemPrompt, "每次只能回一条") {
+		t.Fatal("flush must not keep coordinator one-reply limits as scene facts")
+	}
 }
 
 func TestSanitizeFlushTextDropsSelfCitationsAndProcessDebris(t *testing.T) {
@@ -355,6 +423,103 @@ func TestSanitizeFlushTextDropsSelfCitationsAndProcessDebris(t *testing.T) {
 	}
 	if !strings.Contains(got, "markdown 无序列表") {
 		t.Fatalf("human preference must stay: %q", got)
+	}
+}
+
+func TestMessageIsSelfMatchesDisplayAlias(t *testing.T) {
+	if !messageIsSelf(nil, false, "", "菲迪-FDE教练", "", "", "菲迪") {
+		t.Fatal("菲迪 must match 菲迪-FDE教练")
+	}
+	if messageIsSelf(nil, false, "", "菲迪-FDE教练", "", "", "新之助") {
+		t.Fatal("peer must not match agent alias")
+	}
+}
+
+func TestSanitizeFlushTextDropsGroupSelfLimitEvenWithoutSelfTag(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"黑客松项目群",
+		"成员：新之助、菲迪（菲迪-FDE教练）",
+		"用途：黑客松项目交流",
+		"## 稳定知识与约定",
+		"- 菲迪每次触发只能回复一条消息，无法一次发两条 (来自菲迪, 9月3日 15:39的发言)",
+		"- 听记命名规范：统一增加犇犇犇-前缀 (来自新之助, 9月3日 23:33的发言)",
+		"## 纠正信号",
+		"## 待确认",
+	}, "\n")
+	got := sanitizeFlushText(raw, []HistoryEvent{
+		{Speaker: "菲迪-FDE教练", Self: true, Content: "我每次只能回一条"},
+		{Speaker: "新之助", Content: "听记加前缀"},
+	})
+	if strings.Contains(got, "每次触发只能回复一条") || strings.Contains(got, "无法一次发两条") {
+		t.Fatalf("self operational limit must drop: %q", got)
+	}
+	if !strings.Contains(got, "听记命名规范") {
+		t.Fatalf("human fact must stay: %q", got)
+	}
+}
+
+func TestSanitizeFlushTextDropsDMSelfCitationWithoutSelfTag(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"冬翔",
+		"成员：冬翔",
+		"## 稳定知识与约定",
+		"- 多件事情沟通时使用 markdown 无序列表格式 (来自冬翔, 9月3日 13:34的发言)",
+		"- 回复偏好：简短直接不啰嗦 (来自东翔测试号, 9月3日 17:27的发言)",
+		"- 回复偏好：未注明来源的自我复述",
+		"## 纠正信号",
+		"## 待确认",
+	}, "\n")
+	got := sanitizeFlushText(raw, nil)
+	if strings.Contains(got, "东翔测试号") {
+		t.Fatalf("DM citation outside 成员 must drop: %q", got)
+	}
+	if strings.Contains(got, "未注明来源") {
+		t.Fatalf("uncited 回复偏好 must drop: %q", got)
+	}
+	if !strings.Contains(got, "markdown 无序列表") {
+		t.Fatalf("human peer fact must stay: %q", got)
+	}
+}
+
+func TestSanitizeMemoryTextForAgentDropsGroupSelfCites(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"PoC主链路Demo筹备群",
+		"成员：明明就、菲迪、润新",
+		"## 稳定知识与约定",
+		"- 首屏只露结论 (来自菲迪, 9月3日 19:43的发言)",
+		"- 主链路跳转顺序已冻结 (来自圆畅, 9月3日 20:44的发言)",
+	}, "\n")
+	got := SanitizeMemoryTextForAgent(raw, "菲迪")
+	if strings.Contains(got, "来自菲迪") {
+		t.Fatalf("group self-cite must drop on host inject: %q", got)
+	}
+	if !strings.Contains(got, "来自圆畅") {
+		t.Fatalf("peer cite must stay: %q", got)
+	}
+}
+
+func TestSanitizeMemoryTextStripsProcessDebrisForHost(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"冬翔",
+		"成员：冬翔",
+		"## 稳定知识与约定",
+		"- feat/agentic-memory-view 已合入 commit d2d5c86ed，阶段 A→D 完成",
+		"- 多件事情沟通时使用 markdown 无序列表格式 (来自冬翔, 9月3日 13:34的发言)",
+		"## 纠正信号",
+		"- 需从冬翔机器中移除 GoalMate 相关内容 (来自冬翔, 9月3日 14:32的发言)",
+		"## 待确认",
+		"- 从冬翔机器中移除 GoalMate 相关内容的执行情况 (来自冬翔, 9月3日 14:32的发言)",
+	}, "\n")
+	got := SanitizeMemoryText(raw, nil)
+	if strings.Contains(got, "d2d5c86ed") || strings.Contains(got, "需从") || strings.Contains(got, "执行情况") {
+		t.Fatalf("host inject must not see debris: %q", got)
+	}
+	if !strings.Contains(got, "markdown 无序列表") {
+		t.Fatalf("human fact must reach host: %q", got)
 	}
 }
 

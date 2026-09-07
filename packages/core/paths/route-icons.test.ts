@@ -16,7 +16,11 @@ import {
 describe("workspace page coverage", () => {
   // `root` aliases `issues` (same segment) and is never rendered as its own
   // nav item; the parameterized detail routes are resources, not pages.
-  const EXCLUDED_METHODS = new Set(["root", "settingsLabels"]);
+  const EXCLUDED_METHODS = new Set([
+    "root",
+    "settingsIntegrations",
+    "settingsLabels",
+  ]);
   const KNOWN_SEGMENTS = new Set(
     (Object.keys(WORKSPACE_PAGES) as WorkspacePageKey[]).map(
       (k) => WORKSPACE_PAGES[k].segment,
@@ -62,6 +66,7 @@ describe("resolveRouteIconName", () => {
     expect(resolveRouteIconName("/acme/squads")).toBe("Users");
     expect(resolveRouteIconName("/acme/usage")).toBe("BarChart3");
     expect(resolveRouteIconName("/acme/sites")).toBe("Globe2");
+    expect(resolveRouteIconName("/acme/runners")).toBe("Laptop");
     expect(resolveRouteIconName("/acme/my-issues")).toBe("CircleUser");
   });
 

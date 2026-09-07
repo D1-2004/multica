@@ -1,12 +1,40 @@
 package scenememory
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestHistoryPageStopKeepsPartialOnDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	time.Sleep(30 * time.Millisecond)
+	stop, err := historyPageStop(ctx, 3)
+	if !stop || err != nil {
+		t.Fatalf("partial timeout must keep events: stop=%v err=%v", stop, err)
+	}
+	stop, err = historyPageStop(ctx, 0)
+	if stop || err == nil {
+		t.Fatalf("empty timeout must surface: stop=%v err=%v", stop, err)
+	}
+}
+
+func TestHistoryPageStopReservesTimeWhenEventsExist(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), historyPageReserve/2)
+	defer cancel()
+	stop, err := historyPageStop(ctx, 2)
+	if !stop || err != nil {
+		t.Fatalf("near-deadline with events must stop paging: stop=%v err=%v", stop, err)
+	}
+	stop, err = historyPageStop(context.Background(), 2)
+	if stop || err != nil {
+		t.Fatalf("open context must keep paging: stop=%v err=%v", stop, err)
+	}
+}
 
 func TestParseDWSEventsSkipsEmptyContent(t *testing.T) {
 	raw := []byte(`{
@@ -31,8 +59,19 @@ func TestParseDWSEventsSkipsEmptyContent(t *testing.T) {
 }
 
 func TestParseDWSEventsRejected(t *testing.T) {
-	if _, err := parseDWSEvents([]byte(`{"success":false,"errorCode":"auth_failed"}`)); err == nil {
+	_, err := parseDWSEvents([]byte(`{"success":false,"errorCode":"auth_failed"}`))
+	if err == nil {
 		t.Fatal("rejected history must error")
+	}
+	if !strings.Contains(err.Error(), "auth_failed") {
+		t.Fatalf("got %v", err)
+	}
+	_, err = parseDWSEvents([]byte(`{"success":false,"errorCode":null,"errorMsg":"无权限查看会话"}`))
+	if err == nil {
+		t.Fatal("rejected history with errorMsg must error")
+	}
+	if !strings.Contains(err.Error(), "operation_failed") || !strings.Contains(err.Error(), "无权限查看会话") {
+		t.Fatalf("got %v", err)
 	}
 	if _, err := parseDWSEvents([]byte(`not-json`)); err == nil {
 		t.Fatal("invalid json must error")

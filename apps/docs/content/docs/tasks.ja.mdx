@@ -95,6 +95,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 | `iteration_limit` | 実行の反復回数の上限に達した | イシューの範囲を狭める |
 | `agent_blocked` | エージェントが続行できないと自ら報告した | エージェントがコメントで求めた情報を補う |
 | `api_invalid_request` | プラットフォーム API が不正なリクエストを拒否した | リトライし、繰り返し発生する場合は問題を報告する |
+| `dsh_plugin_unavailable` | エージェントに紐づく DSH プラグインを取得・読み込みできず、実行が開始されなかった | エージェントの「プラグイン」タブで確認するか無効にする。リトライだけでは解決しない |
 | `codex_semantic_inactivity` | Codex が長時間有効な出力を出さず、停滞と判定された | リトライするか、Codex の停滞タイムアウトを調整する |
 
 **ツール側（`agent_error.*`、接頭辞は省略）**

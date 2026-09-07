@@ -426,8 +426,18 @@ export const AgentTaskSchema: z.ZodType<AgentTask> = z.object({
   // `omitempty` on a custom string-typed enum). Normalize that to `undefined`
   // so downstream truthy checks (`if (task.failure_reason)`) don't have to
   // special-case both null/undefined AND "".
+  //
+  // An open string, not an enum. This held the six pre-MUL-1949 coarse values,
+  // and `.catch("")` turns anything else into `undefined` — so every refined
+  // reason the backend has written since (`agent_error.*`,
+  // `skill_bundle_unavailable`, `dsh_plugin_unavailable`) arrived as "no
+  // reason", and the label maps in lib/failure-reason-label.ts and
+  // components/issue/run-row.tsx never saw a key to look up. That is the
+  // "never silently drop a category" rule in this app's CLAUDE.md, and the
+  // reason both of those maps are already keyed by raw wire value with a
+  // fallback: the closed enum here was the only thing still narrowing it.
   failure_reason: z
-    .enum(["agent_error", "timeout", "runtime_offline", "runtime_recovery", "manual", ""])
+    .string()
     .optional()
     .catch("")
     .transform((v) => (v === "" ? undefined : v)),

@@ -27,6 +27,7 @@ describe("paths.workspace(slug)", () => {
     );
     expect(ws.myIssues()).toBe("/acme/my-issues");
     expect(ws.runtimes()).toBe("/acme/runtimes");
+    expect(ws.runners()).toBe("/acme/runners");
     expect(ws.stableRuntimes()).toBe("/acme/runtimes/stable");
     expect(ws.runtimeSettings("machine/runtime", "runtime one")).toBe(
       "/acme/runtimes/machine%2Fruntime/runtime/runtime%20one",
@@ -36,6 +37,9 @@ describe("paths.workspace(slug)", () => {
     expect(ws.squads()).toBe("/acme/squads");
     expect(ws.squadDetail("sq_1")).toBe("/acme/squads/sq_1");
     expect(ws.settings()).toBe("/acme/settings");
+    expect(ws.settingsIntegrations()).toBe(
+      "/acme/settings?tab=integrations",
+    );
     expect(ws.settingsLabels()).toBe("/acme/settings?tab=labels");
     expect(ws.labelUsage("label/one")).toBe("/acme/settings/labels/label%2Fone");
     expect(ws.attachmentPreview("att_42")).toBe("/acme/attachments/att_42/preview");

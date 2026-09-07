@@ -812,6 +812,12 @@ var thinkingDynamicCatalogProviders = map[string]bool{
 	"codex":    true,
 	"opencode": true,
 	"kimi":     true,
+	// DSH advertises the effort vocabulary per model through its own
+	// `--list-models` catalog (dshModelFrame.Thinking), and the bundle
+	// validates the requested effort against that model's supported levels
+	// before the turn starts. It is not ACP, so it belongs here rather than in
+	// acpCatalogThinkingProviders.
+	"dsh": true,
 }
 
 // acpCatalogThinkingProviders are the ACP runtimes that discover their effort

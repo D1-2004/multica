@@ -107,6 +107,26 @@ func Classify(rawError string) Reason {
 		strings.Contains(lower, "token") && strings.Contains(lower, "limit"):
 		return ReasonAgentContextOverflow
 
+	// 1.5 DSH plugin preparation. These failures happen before the model is
+	//     ever called, so no provider rule below can be right about them — and
+	//     rules 2-6 scan for status codes anywhere in the text, which both
+	//     observed shapes satisfy by accident: a fetch failure carries the HTTP
+	//     status it failed with, and a mount failure carries a Node stack trace
+	//     whose `file.js:429:11` line numbers read as one. See
+	//     ReasonDshPluginUnavailable for what that cost in practice.
+	//
+	//     After rule 1, not before it, and the ordering is load-bearing in both
+	//     directions. Rule 1 matches phrases rather than numbers, so it cannot
+	//     misfire the way the rules below do; and a backend that has already
+	//     PROVEN the context is exhausted appends the model's own text to the
+	//     error (see the terminal_reason wrapper in pkg/agent/claude.go), which
+	//     can say anything at all — including something plugin-shaped. Losing
+	//     context_overflow there would cost more than a label: it is on the
+	//     resume blacklist and this reason is not, so the exhausted session
+	//     would stay pinned as the resume pointer and replay the overflow.
+	case dshPluginWitnessRe.MatchString(lower):
+		return ReasonDshPluginUnavailable
+
 	// 2. Missing config / API key. Checked before auth because
 	//    "missing API key" partly overlaps with "invalid api key"
 	//    wording but is structurally a config error, not an auth
@@ -373,6 +393,75 @@ var legacyOpencodeStreamEndedReasons = map[string]bool{
 	"agent_error":                     true,
 }
 
+// dshPluginWitnessRe identifies a failure to prepare or mount a DSH plugin.
+//
+// A regex rather than a substring list, and the reason is the input. One caller
+// classifies the agent's own comment text (see the MUL-2946 branch in
+// daemon/daemon.go), which is prose a model wrote. "has no package.json" is a
+// sentence a coding agent writes about a repository all the time; matching it
+// bare would relabel that agent's genuine failure as a plugin failure and
+// suppress the retry it should have had. So each alternative carries the
+// structure of the message it comes from, not just its most memorable phrase.
+//
+// The first group is the runtime adapter's own wording for every way a plugin
+// can fail before DSH starts (scripts/multica-dsh in the runtime image): a
+// source it cannot resolve, a fetch that failed, a tarball too big or whose
+// digest does not match, and a package whose manifest or declared patch file is
+// missing or unreadable. Its per-plugin messages all read "plugin <name>
+// <what went wrong>", and requiring the name is what makes them unambiguous.
+//
+// The second group is DSH's own, raised by its loader when a patch names a
+// module it cannot import — the shape a package gets when its cordis.patch.yml
+// and its package.json disagree about the package name. Multica cannot change
+// that text, only recognise it.
+//
+// Matched against the lowercased error, so the pattern is lowercase.
+var dshPluginWitnessRe = regexp.MustCompile(strings.Join([]string{
+	// Runtime adapter (Multica-owned), per-plugin. Each alternative carries
+	// enough of the adapter's sentence to be its signature rather than a
+	// phrase about plugins in general: "plugin eslint-plugin-import declares
+	// an incompatible peer dependency" is an ordinary build failure, and
+	// matching it would point the operator at a DSH plugin that is fine.
+	`plugin \S+ integrity mismatch: got sha256-`,
+	`plugin \S+ exceeds \d+ bytes`,
+	`plugin \S+ has no package\.json`,
+	`plugin \S+ has invalid package\.json`,
+	`plugin \S+ declares .{0,300}but the file is missing`,
+	// The fetch failure, ending in the urllib error the adapter appends.
+	// Without that tail this matches any other runner's plugin fetch failure
+	// too, and one of those ("connection reset by peer") is retryable as
+	// provider_network — a retry this reason would silently take away.
+	`failed to fetch plugin \S+: (?:http error \d|<urlopen error)`,
+	// Runtime adapter, the shapes that name no plugin.
+	`plugin file not found:`,
+	`plugin source must `,
+	// DSH loader (upstream-owned).
+	`plugin tree failed to load`,
+	`failed to (?:apply|import) loader entry`,
+}, "|"))
+
+// legacyDshPluginReasons are the buckets a plugin preparation failure lands in
+// when the daemon classifying it predates ReasonDshPluginUnavailable.
+//
+// All five are reachable from the same text. The four provider reasons come
+// from rules 2-6 scanning for a status code anywhere in the message — a fetch
+// failure carries the one it failed with, and a Node stack trace carries line
+// numbers that read as one — and the catchall covers a message no rule matched.
+// Both shapes were observed on 预发, landing in provider_auth_or_access and
+// provider_capacity_or_rate_limit respectively.
+//
+// Anything outside this set is left alone: a daemon that reported, say,
+// agent_timeout knew something the error text does not say, and a witness
+// appearing somewhere in the blob is weaker evidence than that.
+var legacyDshPluginReasons = map[string]bool{
+	string(ReasonAgentProviderAuthOrAccess):        true,
+	string(ReasonAgentProviderQuotaLimit):          true,
+	string(ReasonAgentProviderCapacityOrRateLimit): true,
+	string(ReasonAgentProviderServerError):         true,
+	string(ReasonAgentUnknown):                     true,
+	"agent_error":                                  true,
+}
+
 // NormalizeDaemonReason upgrades a failure_reason reported by an older daemon
 // onto the taxonomy this server understands, using the raw error text as the
 // witness. It returns the reason unchanged when nothing applies.
@@ -416,6 +505,22 @@ func NormalizeDaemonReason(reason, rawError string) Reason {
 	if legacyOpencodeStreamEndedReasons[reason] &&
 		strings.HasPrefix(strings.ToLower(strings.TrimSpace(rawError)), opencodeStreamEndedPrefix) {
 		return ReasonAgentProviderNetwork
+	}
+	// The same gap for DSH plugin preparation, and here the daemon's reason is
+	// never empty: it classified the failure itself and sent a confident
+	// agent_error.*, so FailTask's "classify when empty" branch never runs and
+	// the wrong label is what lands. Without this rule the fix reaches only
+	// hosts that happen to have updated — and the label is the whole point,
+	// since it is what tells the operator to look at a plugin rather than at
+	// their model account.
+	//
+	// Not gated on a set of prior reasons, unlike the three rules above. Those
+	// upgrade a bucket that was merely vague; this one overrides a bucket that
+	// was actively wrong, and the witness says which. It is deliberately
+	// narrower than Classify's: only the reasons a digit-scanning rule can
+	// produce, so a daemon that already reported something better keeps it.
+	if legacyDshPluginReasons[reason] && dshPluginWitnessRe.MatchString(strings.ToLower(rawError)) {
+		return ReasonDshPluginUnavailable
 	}
 	return Reason(reason)
 }

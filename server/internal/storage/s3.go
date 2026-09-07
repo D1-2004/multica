@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,6 +27,10 @@ type S3Storage struct {
 	cdnDomain    string // if set, returned URLs use this instead of bucket name
 	endpointURL  string // custom S3-compatible endpoint (e.g. MinIO)
 	usePathStyle bool   // controls path-style S3 addressing
+	// presignClient signs URLs against an endpoint reachable from outside the
+	// server's own network. Nil when that is the same endpoint the client uses.
+	presignClient   *s3.Client
+	presignEndpoint string
 }
 
 // NewS3StorageFromEnv creates an S3Storage from environment variables.
@@ -36,6 +41,10 @@ type S3Storage struct {
 //   - S3_REGION (default: us-west-2)
 //   - AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (optional; falls back to default credential chain)
 //   - AWS_ENDPOINT_URL (optional S3-compatible endpoint)
+//   - AWS_PRESIGN_ENDPOINT_URL (optional; the endpoint presigned URLs are
+//     signed against, for deployments whose own endpoint is VPC-internal.
+//     Defaults to AWS_ENDPOINT_URL with an "-internal" region suffix removed,
+//     which is Aliyun OSS's own naming convention.)
 //   - S3_USE_PATH_STYLE (optional; defaults to true when AWS_ENDPOINT_URL is set)
 //
 // S3Option customizes the storage built from the environment.
@@ -122,16 +131,51 @@ func NewS3StorageFromEnv(opts ...S3Option) *S3Storage {
 		})
 	}
 
-	slog.Info("S3 storage initialized", "bucket", bucket, "region", region, "cdn_domain", cdnDomain,
-		"endpoint_url", endpointURL, "use_path_style", usePathStyle, "credentials", credentialSource)
-	return &S3Storage{
-		client:       s3.NewFromConfig(cfg, s3Opts...),
-		bucket:       bucket,
-		region:       region,
-		cdnDomain:    cdnDomain,
-		endpointURL:  endpointURL,
-		usePathStyle: usePathStyle,
+	presignEndpoint := strings.TrimSpace(os.Getenv("AWS_PRESIGN_ENDPOINT_URL"))
+	if presignEndpoint == "" {
+		presignEndpoint = publicEndpointFor(endpointURL)
 	}
+	storage := &S3Storage{
+		client:          s3.NewFromConfig(cfg, s3Opts...),
+		bucket:          bucket,
+		region:          region,
+		cdnDomain:       cdnDomain,
+		endpointURL:     endpointURL,
+		usePathStyle:    usePathStyle,
+		presignEndpoint: presignEndpoint,
+	}
+	if presignEndpoint != "" && presignEndpoint != endpointURL {
+		presignOpts := []func(*s3.Options){func(o *s3.Options) {
+			o.BaseEndpoint = aws.String(presignEndpoint)
+			o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+			o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+			o.UsePathStyle = usePathStyle
+		}}
+		storage.presignClient = s3.NewFromConfig(cfg, presignOpts...)
+	}
+
+	slog.Info("S3 storage initialized", "bucket", bucket, "region", region, "cdn_domain", cdnDomain,
+		"endpoint_url", endpointURL, "presign_endpoint_url", presignEndpoint,
+		"use_path_style", usePathStyle, "credentials", credentialSource)
+	return storage
+}
+
+// internalEndpointPattern matches Aliyun OSS's VPC-internal host form, e.g.
+// oss-cn-zhangjiakou-internal.aliyuncs.com.
+var internalEndpointPattern = regexp.MustCompile(`^(https?://[^/]*?)-internal(\.[^/]+)$`)
+
+// publicEndpointFor derives the externally reachable endpoint from a
+// VPC-internal one, and returns "" when the endpoint is already public or is
+// not a shape this understands.
+func publicEndpointFor(endpointURL string) string {
+	endpointURL = strings.TrimRight(strings.TrimSpace(endpointURL), "/")
+	if endpointURL == "" {
+		return ""
+	}
+	if match := internalEndpointPattern.FindStringSubmatch(endpointURL); match != nil {
+		return match[1] + match[2]
+	}
+	return ""
 }
 
 func (s *S3Storage) CdnDomain() string {
@@ -324,7 +368,11 @@ func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key st
 	if contentDisposition != "" {
 		input.ResponseContentDisposition = aws.String(contentDisposition)
 	}
-	out, err := s3.NewPresignClient(s.client).PresignGetObject(ctx, input, func(opts *s3.PresignOptions) {
+	signer := s.client
+	if s.presignClient != nil {
+		signer = s.presignClient
+	}
+	out, err := s3.NewPresignClient(signer).PresignGetObject(ctx, input, func(opts *s3.PresignOptions) {
 		opts.Expires = ttl
 	})
 	if err != nil {

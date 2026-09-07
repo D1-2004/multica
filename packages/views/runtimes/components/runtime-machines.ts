@@ -4,6 +4,7 @@ import { formatDeviceInfo } from "../utils";
 
 export type RuntimeMachineSection = "local" | "remote" | "cloud";
 export type RuntimeMachineFilter = "all" | "online" | "issues";
+export type RuntimeOwnershipScope = "mine" | "all";
 
 export interface RuntimeWorkloadSummary {
   runningCount: number;
@@ -175,6 +176,34 @@ export function filterRuntimeMachines(
 
     return haystack.includes(q);
   });
+}
+
+export function filterRuntimesByOwnership(
+  runtimes: AgentRuntime[],
+  options: {
+    scope: RuntimeOwnershipScope;
+    currentUserId?: string | null;
+    ownerId?: string | null;
+  },
+): AgentRuntime[] {
+  if (options.scope === "mine") {
+    if (!options.currentUserId) return [];
+    return runtimes.filter(
+      (runtime) => runtime.owner_id === options.currentUserId,
+    );
+  }
+  if (!options.ownerId) return runtimes;
+  return runtimes.filter((runtime) => runtime.owner_id === options.ownerId);
+}
+
+export function runtimeMachineOwnerIds(machine: RuntimeMachine): string[] {
+  return Array.from(
+    new Set(
+      machine.runtimes.flatMap((runtime) =>
+        runtime.owner_id ? [runtime.owner_id] : [],
+      ),
+    ),
+  );
 }
 
 export function runtimeMachineCounts(machines: RuntimeMachine[]): {

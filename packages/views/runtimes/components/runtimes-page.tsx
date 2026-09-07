@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   ChevronRight,
   Cloud,
@@ -42,7 +48,7 @@ import {
   agentListOptions,
   memberListOptions,
 } from "@multica/core/workspace/queries";
-import type { AgentRuntime } from "@multica/core/types";
+import type { AgentRuntime, MemberWithUser } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -71,6 +77,7 @@ import {
 } from "../../layout/collection-page";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
+import { ActorAvatar } from "../../common/actor-avatar";
 import { getMikaOnboarding, pickContentLang } from "../../onboarding/templates";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
 import { CloudRuntimeDialog } from "./cloud-runtime-dialog";
@@ -78,12 +85,20 @@ import { FCE2BRuntimeDialog } from "./fc-e2b-runtime-dialog";
 import { StableFCE2BReleaseDialog } from "./stable-fc-e2b-release-dialog";
 import { ProviderLogo } from "./provider-logo";
 import { buildWorkloadIndex, RuntimeList } from "./runtime-list";
+import { RuntimeListToolbar } from "./runtime-list-toolbar";
 import { pendingRuntimeFromProfile } from "./pending-runtime";
 import {
   canCreateFCE2BRuntime,
   canCreatePublicFCE2BRuntime,
 } from "./runtime-access";
-import { buildRuntimeMachines, type RuntimeMachine } from "./runtime-machines";
+import {
+  buildRuntimeMachines,
+  filterRuntimeMachines,
+  filterRuntimesByOwnership,
+  runtimeMachineOwnerIds,
+  type RuntimeMachine,
+  type RuntimeOwnershipScope,
+} from "./runtime-machines";
 import { HealthDot, HealthIcon, useHealthLabel } from "./shared";
 import { useT, useTimeAgo } from "../../i18n";
 import { daemonRuntimesDocsHref } from "./runtime-docs";
@@ -124,6 +139,7 @@ export function RuntimesPage({
   bootstrapping,
   cloudRuntimeEnabled = false,
 }: RuntimesPageProps = {}) {
+  const { t } = useT("runtimes");
   const isAuthLoading = useAuthStore((state) => state.isLoading);
   const currentUserId = useAuthStore((state) => state.user?.id);
   const wsId = useWorkspaceId();
@@ -132,6 +148,10 @@ export function RuntimesPage({
   const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
   const [showFCE2BRuntimeDialog, setShowFCE2BRuntimeDialog] = useState(false);
   const [showStableReleaseDialog, setShowStableReleaseDialog] = useState(false);
+  const [runtimeScope, setRuntimeScope] = useState<RuntimeOwnershipScope>("mine");
+  const [runtimeSearch, setRuntimeSearch] = useState("");
+  const [ownerId, setOwnerId] = useState<string | null>(null);
+  const deferredRuntimeSearch = useDeferredValue(runtimeSearch);
   const navigation = useNavigation();
   const runtimeView = runtimeViewFromSearch(
     navigation.searchParams.get("backend"),
@@ -145,6 +165,7 @@ export function RuntimesPage({
     const search = new URLSearchParams(navigation.searchParams);
     search.set("backend", view);
     navigation.replace(`${navigation.pathname}?${search.toString()}`);
+    setOwnerId(null);
     setShowFCE2BRuntimeDialog(false);
     setShowStableReleaseDialog(false);
   };
@@ -175,7 +196,7 @@ export function RuntimesPage({
   const canCreateFCE2B = canCreateFCE2BRuntime(currentMember?.role);
   const canCreatePublicFCE2B = canCreatePublicFCE2BRuntime(currentMember?.role);
 
-  const visibleRuntimes = useMemo(
+  const viewRuntimes = useMemo(
     () =>
       isPhysicalView
         ? filterPhysicalRuntimes(runtimes)
@@ -193,9 +214,9 @@ export function RuntimesPage({
     [agents, snapshot],
   );
   const now = useNowTick();
-  const machines = useMemo(
+  const allMachines = useMemo(
     () =>
-      buildRuntimeMachines(visibleRuntimes, {
+      buildRuntimeMachines(viewRuntimes, {
         now,
         localDaemonId,
         localMachineName,
@@ -204,7 +225,7 @@ export function RuntimesPage({
         ensureLocalMachine: isPhysicalView && hasLocalMachine,
       }),
     [
-      visibleRuntimes,
+      viewRuntimes,
       now,
       localDaemonId,
       localMachineName,
@@ -214,9 +235,9 @@ export function RuntimesPage({
       isPhysicalView,
     ],
   );
-  const orphanProfileRuntimes = useMemo(() => {
+  const allOrphanProfileRuntimes = useMemo(() => {
     if (!isPhysicalView) return [];
-    if (machines.some((machine) => machine.mode === "local")) return [];
+    if (allMachines.some((machine) => machine.mode === "local")) return [];
     return runtimeProfiles.map((profile) => {
       const createdAt = Date.parse(profile.created_at);
       return pendingRuntimeFromProfile({
@@ -225,22 +246,149 @@ export function RuntimesPage({
         fallbackMachineName: "Unassigned",
       });
     });
-  }, [isPhysicalView, machines, runtimeProfiles]);
+  }, [isPhysicalView, allMachines, runtimeProfiles]);
+
+  const mineRuntimes = useMemo(
+    () =>
+      filterRuntimesByOwnership(viewRuntimes, {
+        scope: "mine",
+        currentUserId,
+      }),
+    [viewRuntimes, currentUserId],
+  );
+  const mineMachines = useMemo(
+    () =>
+      buildRuntimeMachines(mineRuntimes, {
+        now,
+        localDaemonId,
+        localMachineName,
+        currentUserId,
+        workloadByRuntimeId: workloadIndex,
+        ensureLocalMachine: isPhysicalView && hasLocalMachine,
+      }),
+    [
+      mineRuntimes,
+      now,
+      localDaemonId,
+      localMachineName,
+      currentUserId,
+      workloadIndex,
+      isPhysicalView,
+      hasLocalMachine,
+    ],
+  );
+  const scopedRuntimes = useMemo(
+    () =>
+      filterRuntimesByOwnership(viewRuntimes, {
+        scope: runtimeScope,
+        currentUserId,
+        ownerId,
+      }),
+    [viewRuntimes, runtimeScope, currentUserId, ownerId],
+  );
+  const scopedMachines = useMemo(() => {
+    if (runtimeScope === "all" && !ownerId) return allMachines;
+    if (runtimeScope === "mine") return mineMachines;
+    return buildRuntimeMachines(scopedRuntimes, {
+      now,
+      localDaemonId,
+      localMachineName,
+      currentUserId,
+      workloadByRuntimeId: workloadIndex,
+      ensureLocalMachine: false,
+    });
+  }, [
+    runtimeScope,
+    ownerId,
+    allMachines,
+    mineMachines,
+    scopedRuntimes,
+    now,
+    localDaemonId,
+    localMachineName,
+    currentUserId,
+    workloadIndex,
+  ]);
+  const machines = useMemo(
+    () => filterRuntimeMachines(scopedMachines, deferredRuntimeSearch, "all"),
+    [scopedMachines, deferredRuntimeSearch],
+  );
+
+  const ownerOptions = useMemo(() => {
+    const memberById = new Map(members.map((member) => [member.user_id, member]));
+    const counts = new Map<string, number>();
+    for (const machine of allMachines) {
+      for (const id of runtimeMachineOwnerIds(machine)) {
+        counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    }
+    for (const runtime of allOrphanProfileRuntimes) {
+      if (runtime.owner_id) {
+        counts.set(runtime.owner_id, (counts.get(runtime.owner_id) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .map(([id, count]) => ({
+        id,
+        count,
+        name: memberById.get(id)?.name ?? id.slice(0, 8),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [allMachines, allOrphanProfileRuntimes, members]);
+
+  const orphanProfileRuntimes = useMemo(() => {
+    const owned = filterRuntimesByOwnership(allOrphanProfileRuntimes, {
+      scope: runtimeScope,
+      currentUserId,
+      ownerId,
+    });
+    const query = deferredRuntimeSearch.trim().toLowerCase();
+    if (!query) return owned;
+    return owned.filter((runtime) =>
+      [runtime.name, runtime.custom_name, runtime.provider, runtime.device_info]
+        .filter(Boolean)
+        .some((value) => value?.toLowerCase().includes(query)),
+    );
+  }, [
+    allOrphanProfileRuntimes,
+    runtimeScope,
+    currentUserId,
+    ownerId,
+    deferredRuntimeSearch,
+  ]);
+
+  const scopeCounts = useMemo(
+    () => ({
+      mine: mineMachines.length +
+        filterRuntimesByOwnership(allOrphanProfileRuntimes, {
+          scope: "mine",
+          currentUserId,
+        }).length,
+      all: allMachines.length + allOrphanProfileRuntimes.length,
+    }),
+    [mineMachines, allMachines, allOrphanProfileRuntimes, currentUserId],
+  );
+
+  useEffect(() => {
+    if (ownerId && !ownerOptions.some((owner) => owner.id === ownerId)) {
+      setOwnerId(null);
+    }
+  }, [ownerId, ownerOptions]);
 
   if (isAuthLoading || runtimesLoading || profilesLoading) {
     return <RuntimesPageSkeleton />;
   }
 
   const showEmpty =
-    machines.length === 0 &&
-    orphanProfileRuntimes.length === 0 &&
+    allMachines.length === 0 &&
+    allOrphanProfileRuntimes.length === 0 &&
     (!isPhysicalView || !bootstrapping) &&
     (!isPhysicalView || hasLocalMachine !== true);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeaderBar
-        totalCount={machines.length}
+        totalCount={scopeCounts.all}
         onConnectRemote={() => setShowConnectDialog(true)}
         cloudRuntimeEnabled={cloudRuntimeEnabled}
         onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
@@ -262,34 +410,60 @@ export function RuntimesPage({
           />
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-[1440px] flex-col p-4 sm:p-6">
-            {!agentsLoading &&
-              !chatSessionsLoading &&
-              memberNeedsMikaSetup(agents, chatSessions) &&
-              runtimes.length > 0 && (
-                <MikaSetupCard
-                  workspaceId={wsId}
-                  runtimes={runtimes}
-                  runtimesLoading={runtimesLoading}
-                  currentUserId={currentUserId ?? null}
+        <>
+          <RuntimeListToolbar
+            scope={runtimeScope}
+            onScopeChange={(scope) => {
+              setRuntimeScope(scope);
+              if (scope === "mine") setOwnerId(null);
+            }}
+            scopeCounts={scopeCounts}
+            search={runtimeSearch}
+            onSearchChange={setRuntimeSearch}
+            ownerId={ownerId}
+            onOwnerChange={setOwnerId}
+            ownerOptions={ownerOptions}
+            visibleCount={machines.length + orphanProfileRuntimes.length}
+          />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto flex w-full max-w-[1440px] flex-col p-4 sm:p-6">
+              {!agentsLoading &&
+                !chatSessionsLoading &&
+                memberNeedsMikaSetup(agents, chatSessions) &&
+                runtimes.length > 0 && (
+                  <MikaSetupCard
+                    workspaceId={wsId}
+                    runtimes={runtimes}
+                    runtimesLoading={runtimesLoading}
+                    currentUserId={currentUserId ?? null}
+                  />
+                )}
+              {(machines.length > 0 || bootstrapping) && (
+                <MachineList
+                  machines={machines}
+                  members={members}
+                  bootstrapping={isPhysicalView && bootstrapping}
                 />
               )}
-            {(machines.length > 0 || bootstrapping) && (
-              <MachineList
-                machines={machines}
-                bootstrapping={isPhysicalView && bootstrapping}
-              />
-            )}
-            {orphanProfileRuntimes.length > 0 && (
-              <OrphanRuntimeProfiles
-                runtimes={orphanProfileRuntimes}
-                now={now}
-                hasMachines={machines.length > 0}
-              />
-            )}
+              {orphanProfileRuntimes.length > 0 && (
+                <OrphanRuntimeProfiles
+                  runtimes={orphanProfileRuntimes}
+                  now={now}
+                  hasMachines={machines.length > 0}
+                />
+              )}
+              {machines.length === 0 &&
+                orphanProfileRuntimes.length === 0 &&
+                !bootstrapping && (
+                  <CollectionPageState
+                    icon={Server}
+                    title={t(($) => $.page.no_matches.title)}
+                    description={t(($) => $.page.no_matches.try_widening).trim()}
+                  />
+                )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {isPhysicalView && showConnectDialog && (
@@ -586,9 +760,11 @@ function PageHeaderBar({
 
 function MachineList({
   machines,
+  members,
   bootstrapping,
 }: {
   machines: RuntimeMachine[];
+  members: MemberWithUser[];
   bootstrapping?: boolean;
 }) {
   const { t } = useT("runtimes");
@@ -614,14 +790,20 @@ function MachineList({
     <div className="overflow-hidden rounded-lg border bg-card">
       <div className="divide-y">
         {machines.map((machine) => (
-          <MachineRow key={machine.id} machine={machine} />
+          <MachineRow key={machine.id} machine={machine} members={members} />
         ))}
       </div>
     </div>
   );
 }
 
-function MachineRow({ machine }: { machine: RuntimeMachine }) {
+function MachineRow({
+  machine,
+  members,
+}: {
+  machine: RuntimeMachine;
+  members: MemberWithUser[];
+}) {
   const { t } = useT("runtimes");
   const healthLabel = useHealthLabel();
   const timeAgo = useTimeAgo();
@@ -661,6 +843,7 @@ function MachineRow({ machine }: { machine: RuntimeMachine }) {
         <HealthIcon health={machine.health} />
         <span>{healthLabel(machine.health)}</span>
       </span>
+      <MachineOwnerCell machine={machine} members={members} />
       <span className="hidden w-40 shrink-0 flex-col gap-1 lg:flex">
         <span className="text-caption text-muted-foreground">
           {t(($) => $.machine.runtime_count, {
@@ -696,6 +879,45 @@ function MachineRow({ machine }: { machine: RuntimeMachine }) {
     >
       {body}
     </AppLink>
+  );
+}
+
+function MachineOwnerCell({
+  machine,
+  members,
+}: {
+  machine: RuntimeMachine;
+  members: MemberWithUser[];
+}) {
+  const ownerIds = runtimeMachineOwnerIds(machine);
+  const primaryOwnerId = ownerIds[0];
+  const primaryOwner = primaryOwnerId
+    ? members.find((member) => member.user_id === primaryOwnerId) ?? null
+    : null;
+  if (!primaryOwnerId) {
+    return (
+      <span className="hidden w-36 shrink-0 text-caption text-faint-foreground lg:block">
+        —
+      </span>
+    );
+  }
+  return (
+    <span className="hidden w-36 shrink-0 items-center gap-1.5 lg:flex">
+      <ActorAvatar
+        actorType="member"
+        actorId={primaryOwnerId}
+        size="sm"
+        profileLink={false}
+      />
+      <span className="min-w-0 truncate text-caption text-muted-foreground">
+        {primaryOwner?.name ?? primaryOwnerId.slice(0, 8)}
+      </span>
+      {ownerIds.length > 1 && (
+        <span className="shrink-0 text-caption tabular-nums text-faint-foreground">
+          +{ownerIds.length - 1}
+        </span>
+      )}
+    </span>
   );
 }
 

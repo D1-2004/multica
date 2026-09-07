@@ -11,7 +11,9 @@
     "usage": "分析",
     "sites": "ウェブサイト",
     "runtimes": "ランタイム",
+    "runners": "マイコンピューター",
     "skills": "スキル",
+    "dsh_plugins": "DSH プラグイン",
     "settings": "設定"
   },
   "tab": {
@@ -22,6 +24,7 @@
     "member": "メンバー",
     "squad": "スクワッド",
     "skill": "スキル",
+    "dsh_plugin": "DSH プラグイン",
     "machine": "マシン",
     "runtime": "ランタイム",
     "attachment": "添付ファイル",
@@ -53,6 +56,10 @@
     "new_issue_shortcut": "C",
     "pinned_label": "ピン留め済み",
     "workspace_group": "ワークスペース",
+    "collaboration_group": "コラボレーション",
+    "agent_group": "Agent",
+    "runtime_group": "ランタイム",
+    "configuration_group": "設定",
     "configure_group": "設定",
     "unread_overflow": "99+",
     "discord_card": {

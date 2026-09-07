@@ -1737,7 +1737,16 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 			} else {
 				receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), task, deliveredCommentIDs, commentBackedTask)
 				if ferr == nil {
-					if err := h.injectDEAPA2ARunnerMCP(r.Context(), rt, task, parseUUID(resp.WorkspaceID), resp.Agent); err != nil {
+					if err := h.injectDEAPA2ARunnerMCP(r.Context(), rt, task, parseUUID(resp.WorkspaceID), resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
+						if errors.Is(err, errRunnerMCPMountsUnsupported) {
+							slog.Error("batch claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
+								"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
+							if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+								slog.Error("batch claim: cancel after Runner MCP daemon capability mismatch failed",
+									"task_id", uuidToString(task.ID), "error", cancelErr)
+							}
+							continue
+						}
 						if errors.Is(err, errRunnerMCPRuntimeUnsupported) {
 							slog.Error("batch claim: Runner MCP requires an MCP-capable Pi runtime; cancelling task",
 								"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
@@ -1760,7 +1769,16 @@ func (h *Handler) ClaimTasksByRuntime(w http.ResponseWriter, r *http.Request) {
 		default:
 			tokenStr, ferr = auth.GenerateAgentTaskToken()
 			if ferr == nil {
-				if err := h.injectRunnerMCP(r.Context(), rt, task.AgentID, tokenStr, resp.Agent); err != nil {
+				if err := h.injectRunnerMCP(r.Context(), rt, task.AgentID, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
+					if errors.Is(err, errRunnerMCPMountsUnsupported) {
+						slog.Error("batch claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
+							"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
+						if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+							slog.Error("batch claim: cancel after Runner MCP daemon capability mismatch failed",
+								"task_id", uuidToString(task.ID), "error", cancelErr)
+						}
+						continue
+					}
 					if errors.Is(err, errRunnerMCPRuntimeUnsupported) {
 						slog.Error("batch claim: Runner MCP requires an MCP-capable Pi runtime; cancelling task",
 							"task_id", uuidToString(task.ID), "runtime_id", uuidToString(task.RuntimeID))
@@ -1965,6 +1983,23 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			// during session/set_model, which discards MCP tools registered during
 			// session/new.
 			model = ""
+		}
+		// DSH plugins the workspace manages are composed into the same
+		// environment variable an operator used to set by hand, so the daemon,
+		// the sandbox and the image need no change to honour them.
+		var dshPluginErr error
+		customEnv, dshPluginErr = h.applyAgentDshPluginSet(
+			r.Context(), runtime.Provider, service.IsA2ATaskOrigin(task.Context),
+			agent.ID, agent.WorkspaceID, customEnv)
+		if dshPluginErr != nil {
+			slog.Error("failed to compose the agent's DSH plugin set",
+				"agent_id", uuidToString(agent.ID), "error", dshPluginErr)
+			return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount,
+				&claimBuildFailure{
+					outcome: "error_dsh_plugin_set",
+					status:  http.StatusInternalServerError,
+					message: "failed to compose the agent's DSH plugin set",
+				}
 		}
 		resp.Agent = &TaskAgentData{
 			ID:                    uuidToString(agent.ID),
@@ -3285,7 +3320,18 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		} else {
 			receipt, ferr = h.TaskService.FinalizeTaskClaimWithoutToken(r.Context(), *task, deliveredCommentIDs, commentBackedTask)
 			if ferr == nil {
-				if err := h.injectDEAPA2ARunnerMCP(r.Context(), runtime, *task, parseUUID(resp.WorkspaceID), resp.Agent); err != nil {
+				if err := h.injectDEAPA2ARunnerMCP(r.Context(), runtime, *task, parseUUID(resp.WorkspaceID), resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
+					if errors.Is(err, errRunnerMCPMountsUnsupported) {
+						outcome = "error_daemon_capability"
+						slog.Error("task claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
+							"task_id", uuidToString(task.ID), "runtime_id", runtimeID)
+						if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+							slog.Error("task claim: cancel after Runner MCP daemon capability mismatch failed",
+								"task_id", uuidToString(task.ID), "error", cancelErr)
+						}
+						writeError(w, http.StatusConflict, "sandbox template does not support dynamic Runner MCP mounts; rebuild it with the current Multica CLI")
+						return
+					}
 					if errors.Is(err, errRunnerMCPRuntimeUnsupported) {
 						outcome = "error_runtime_capability"
 						slog.Error("task claim: Runner MCP requires an MCP-capable Pi runtime; cancelling task",
@@ -3309,7 +3355,18 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	default:
 		tokenStr, ferr = auth.GenerateAgentTaskToken()
 		if ferr == nil {
-			if err := h.injectRunnerMCP(r.Context(), runtime, task.AgentID, tokenStr, resp.Agent); err != nil {
+			if err := h.injectRunnerMCP(r.Context(), runtime, task.AgentID, tokenStr, resp.Agent, requestHasDaemonCapability(r, protocol.DaemonCapabilityRunnerMCPMountsV1), requestHasDaemonCapability(r, protocol.DaemonCapabilityManagedMCPRelayRoutesV1)); err != nil {
+				if errors.Is(err, errRunnerMCPMountsUnsupported) {
+					outcome = "error_daemon_capability"
+					slog.Error("task claim: sandbox daemon cannot route dynamic Runner MCP mounts; cancelling task",
+						"task_id", uuidToString(task.ID), "runtime_id", runtimeID)
+					if _, cancelErr := h.TaskService.CancelTask(r.Context(), task.ID); cancelErr != nil {
+						slog.Error("task claim: cancel after Runner MCP daemon capability mismatch failed",
+							"task_id", uuidToString(task.ID), "error", cancelErr)
+					}
+					writeError(w, http.StatusConflict, "sandbox template does not support dynamic Runner MCP mounts; rebuild it with the current Multica CLI")
+					return
+				}
 				if errors.Is(err, errRunnerMCPRuntimeUnsupported) {
 					outcome = "error_runtime_capability"
 					slog.Error("task claim: Runner MCP requires an MCP-capable Pi runtime; cancelling task",
@@ -3916,8 +3973,8 @@ type TaskCompleteRequest struct {
 	// (GH #6066). Distinct from an empty SessionID, which only means "nothing
 	// to report" — this says "never hand this id to a later run". Older
 	// daemons omit it, which is exactly the pre-fix behaviour.
-	RetiredSessionID string `json:"retired_session_id,omitempty"`
-	ReplyDecision *protocol.ReplyDecision `json:"reply_decision,omitempty"`
+	RetiredSessionID string                  `json:"retired_session_id,omitempty"`
+	ReplyDecision    *protocol.ReplyDecision `json:"reply_decision,omitempty"`
 }
 
 func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -3989,6 +4046,15 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// by the existing per-(issue, agent) dedup, and terminating because the
 	// triggering comment always predates the follow-up run's started_at.
 	h.reconcileCommentsOnCompletion(r.Context(), task)
+	if err := h.enqueueTaskFinishedLoop(r.Context(), task); err != nil {
+		slog.Error("task finished loop enqueue failed",
+			"event", "task_finished_loop_enqueue_failed",
+			"task_id", uuidToString(task.ID),
+			"error", err,
+		)
+		writeError(w, http.StatusInternalServerError, "failed to persist task-finished loop")
+		return
+	}
 	if h.ManagedAgent != nil {
 		if err := h.ManagedAgent.ReconcileAgent(r.Context(), task.AgentID); err != nil {
 			slog.Warn("complete task: managed Agent reconciliation failed", "agent_id", uuidToString(task.AgentID), "error", err)
@@ -4672,6 +4738,15 @@ func (h *Handler) failTask(w http.ResponseWriter, r *http.Request, taskID, works
 		return
 	}
 	h.reconcileCommentsOnCompletion(r.Context(), task)
+	if err := h.enqueueTaskFinishedLoop(r.Context(), task); err != nil {
+		slog.Error("task finished loop enqueue failed",
+			"event", "task_finished_loop_enqueue_failed",
+			"task_id", uuidToString(task.ID),
+			"error", err,
+		)
+		writeError(w, http.StatusInternalServerError, "failed to persist task-finished loop")
+		return
+	}
 	if h.ManagedAgent != nil {
 		if err := h.ManagedAgent.ReconcileAgent(r.Context(), task.AgentID); err != nil {
 			slog.Warn("fail task: managed Agent reconciliation failed", "agent_id", uuidToString(task.AgentID), "error", err)
@@ -5010,6 +5085,15 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Warn("cancel task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.enqueueTaskFinishedLoop(r.Context(), task); err != nil {
+		slog.Error("task finished loop enqueue failed",
+			"event", "task_finished_loop_enqueue_failed",
+			"task_id", uuidToString(task.ID),
+			"error", err,
+		)
+		writeError(w, http.StatusInternalServerError, "failed to persist task-finished loop")
 		return
 	}
 

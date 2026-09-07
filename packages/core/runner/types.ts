@@ -6,10 +6,32 @@ export interface RunnerMachineBinding {
   arch: string;
   clientVersion: string;
   roots: string[];
+	 enabledMcpServers: Record<string, string>;
+	 mcpServers: RunnerMcpServer[];
+	 inventoryRevision: string;
   online: boolean;
   disconnected: boolean;
   lastSeenAt: string | null;
   boundAt: string;
+}
+
+export interface RunnerMcpServer {
+  name: string;
+  title?: string;
+  description?: string;
+  version?: string;
+  transport: "stdio" | "http";
+  availability: string;
+  detailStatus?: "available" | "unavailable";
+  capabilities: string[];
+  tools: RunnerMcpTool[];
+  fingerprint: string;
+}
+
+export interface RunnerMcpTool {
+  name: string;
+  title?: string;
+  description?: string;
 }
 
 export interface CreateRunnerReconnectCommandResponse {
@@ -42,6 +64,8 @@ export interface AccountRunnerMachine {
   online: boolean;
   lastSeenAt: string | null;
   bindings: AccountRunnerBinding[];
+	 mcpServers: RunnerMcpServer[];
+	 inventoryRevision: string;
 }
 
 export interface AccountRunnerBindingList {
@@ -63,12 +87,9 @@ export interface CreateRunnerPairingResponse {
 export interface RunnerDeviceAuthorization {
   userCode: string;
   state: "device_pending" | "approved" | "denied" | "consumed";
-  agentId: string;
-  agentName: string;
   machineName: string;
   os: string;
   arch: string;
-  roots: string[];
   expiresAt: string;
 }
 

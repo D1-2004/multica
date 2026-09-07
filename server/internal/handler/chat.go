@@ -1046,6 +1046,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	)
 	webTurn.UserID = parseUUID(userID)
 	webTurn.IdentityNote = inboundcoord.IdentityNote(inboundcoord.SourceWeb, "", "")
+	// Share the chat trace with the coordinator so the web turn's Langfuse
+	// trace and the task it may start are one tree.
+	webTurn.TraceID = trace.TraceID
 	decision := coord.Decide(r.Context(), webTurn)
 	if len(attachmentIDs) > 0 && decision.Action != inboundcoord.ActionContinue {
 		decision.Action = inboundcoord.ActionContinue
@@ -1072,6 +1075,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 				CreatorType:    "member",
 				CreatorID:      parseUUID(userID),
 				AllowDuplicate: true,
+				// The Issue task inherits the turn's chat trace so its Langfuse
+				// trace is the coordinator's, not a separate one.
+				DispatchContext: inboundcoord.StampCoordinatorTrace(nil, decision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS)),
 			}, service.IssueCreateOpts{
 				ActorID:          userID,
 				AnalyticsAgentID: uuidToString(session.AgentID),
@@ -1139,7 +1145,13 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	// creator-only), so they are the task initiator — surfaced to the agent
 	// under `## Task Initiator`. actorType/actorID were resolved above for the
 	// invoke gate.
-	sent, err := h.TaskService.SendDirectChatMessage(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), trace)
+	// A turn the coordinator looked at and handed to the sandbox keeps the
+	// coordinator's trace id on the task so the two share one Langfuse trace.
+	var coordinatorContext []byte
+	if len(decision.Steps) > 0 {
+		coordinatorContext = inboundcoord.StampCoordinatorTrace(nil, decision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS))
+	}
+	sent, err := h.TaskService.SendDirectChatMessageWithContext(r.Context(), session, agent, parseUUID(userID), req.Content, attachmentIDs, actorType, parseUUID(actorID), coordinatorContext, trace)
 	if err != nil {
 		switch {
 		case errors.Is(err, service.ErrChatSessionArchived):

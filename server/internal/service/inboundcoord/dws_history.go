@@ -186,21 +186,23 @@ func (c *osDWSHistoryCLI) ListMessages(ctx context.Context, configDir, conversat
 	})
 }
 
+type dwsHistoryMessage struct {
+	Content       string `json:"content"`
+	CreateTime    string `json:"createTime"`
+	OpenMessageID string `json:"openMessageId"`
+	Sender        string `json:"sender"`
+	QuotedMessage *struct {
+		Content string `json:"content"`
+		Sender  string `json:"sender"`
+	} `json:"quotedMessage"`
+}
+
 type dwsMessageListResponse struct {
-	Success   bool   `json:"success"`
-	ErrorCode string `json:"errorCode"`
-	Result    struct {
-		Messages []struct {
-			Content       string `json:"content"`
-			CreateTime    string `json:"createTime"`
-			OpenMessageID string `json:"openMessageId"`
-			Sender        string `json:"sender"`
-			QuotedMessage *struct {
-				Content string `json:"content"`
-				Sender  string `json:"sender"`
-			} `json:"quotedMessage"`
-		} `json:"messages"`
-	} `json:"result"`
+	Success   bool                `json:"success"`
+	ErrorCode string              `json:"errorCode"`
+	ErrorMsg  string              `json:"errorMsg"`
+	Messages  []dwsHistoryMessage `json:"messages"`
+	Result    json.RawMessage     `json:"result"`
 }
 
 func parseDWSHistory(raw []byte, currentMessageID string) ([]HistoryLine, error) {
@@ -208,12 +210,21 @@ func parseDWSHistory(raw []byte, currentMessageID string) ([]HistoryLine, error)
 	if json.Unmarshal(raw, &payload) != nil {
 		return nil, errors.New("decode DWS conversation history response")
 	}
-	if !payload.Success {
-		return nil, fmt.Errorf("DWS conversation history query rejected: %s", dwsclient.SafeCode(payload.ErrorCode))
+	messages := payload.Messages
+	if len(messages) == 0 && len(payload.Result) > 0 && payload.Result[0] == '{' {
+		var nested struct {
+			Messages []dwsHistoryMessage `json:"messages"`
+		}
+		if json.Unmarshal(payload.Result, &nested) == nil {
+			messages = nested.Messages
+		}
+	}
+	if !payload.Success && len(messages) == 0 {
+		return nil, dwsclient.HistoryRejected(payload.ErrorCode, payload.ErrorMsg)
 	}
 	currentMessageID = strings.TrimSpace(currentMessageID)
 	newestFirst := make([]HistoryLine, 0, dingtalkHistoryLimit)
-	for _, message := range payload.Result.Messages {
+	for _, message := range messages {
 		if currentMessageID != "" && strings.TrimSpace(message.OpenMessageID) == currentMessageID {
 			continue
 		}

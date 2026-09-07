@@ -3,7 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"errors"
 	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/multica-ai/multica/server/pkg/runnerprotocol"
 )
 
@@ -231,6 +238,49 @@ func TestRunnerConnectionStateTracksMultipleMachines(t *testing.T) {
 	clearRunnerConnectionMachine(os.Getpid(), "machine-2")
 	if runnerConnectionActive(os.Getpid(), "machine-2") {
 		t.Fatal("last machine should be cleared")
+	}
+}
+
+func TestRunnerConnectionStaysOnlineWithoutAgentMounts(t *testing.T) {
+	connected := make(chan struct{}, 1)
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/runner/machines/machine-1/challenges":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"challenge_id":"challenge-1","challenge":"sign-me","active_binding_count":0}`))
+		case "/api/runner/ws":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			connected <- struct{}{}
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	_, privateKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err = runRunnerConnection(ctx, runnerServerBinding{ServerURL: server.URL, MachineID: "machine-1"}, privateKey, runnerprotocol.MCPInventory{Type: runnerprotocol.MessageInventory, Servers: []runnerprotocol.MCPServerSummary{}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if errors.Is(err, errRunnerHasNoBindings) {
+		t.Fatal("zero mounts stopped the Runner connection")
+	}
+	select {
+	case <-connected:
+	default:
+		t.Fatal("Runner did not open its WebSocket with zero mounts")
 	}
 }
 

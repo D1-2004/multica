@@ -13,7 +13,7 @@ Each Bot is bound **one-to-one** to a single Multica agent. Binding a second age
 
 | Surface | Behavior |
 |---|---|
-| **Agent → Integrations** | The agent detail page has an **Integrations** tab (and a matching section in the left sidebar). Owners and admins see **Bind to Lark** there; once bound it flips to a **Connected to Lark** badge with a **Manage in Lark** link. |
+| **Agent → Configuration → Bot Connections** | The agent detail page keeps chat bots in **Bot Connections**, separate from Digital Employee identity. Owners and admins see **Bind to Lark** there; once bound it flips to a **Connected to Lark** badge with a **Manage in Lark** link. |
 | **DM the Bot** | A workspace member messages the Bot directly in Lark. Each conversation becomes a Multica [chat](/chat) session with the agent; the agent answers in-thread. |
 | **@-mention in a group** | Add the Bot to a Lark group and @-mention it. Only the mentioning message is read — the Bot does not listen to the whole group. |
 | **`/issue` command** | Typing `/issue <title>` (optionally with a body) creates a new Multica issue in the workspace, attributed to you. |
@@ -25,7 +25,7 @@ Each Bot is bound **one-to-one** to a single Multica agent. Binding a second age
 Binding uses a scan-to-install flow — no app secrets to copy, no developer console steps.
 
 1. Open the agent in **Agents → _your agent_**.
-2. Go to the **Integrations** tab (or use the **Integrations** section in the left sidebar) and click **Bind to Lark**.
+2. Go to **Configuration → Bot Connections** and click **Bind to Lark**.
 3. A QR code appears. On your phone, open **Lark → Scan**, then authorize the new PersonalAgent Bot.
 4. When the scan completes the dialog closes and the agent shows **Connected to Lark**. Your own Lark identity is bound to your Multica account automatically, so you can start chatting with the Bot right away.
 
