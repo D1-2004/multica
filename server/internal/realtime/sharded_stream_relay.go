@@ -107,6 +107,24 @@ func NewShardedStreamRelay(hub *Hub, writeRDB, readRDB *redis.Client, config Sha
 
 func (r *ShardedStreamRelay) NodeID() string { return r.nodeID }
 
+func (r *ShardedStreamRelay) StoreRunnerInventory(ctx context.Context, machineID string, inventory []byte, ttl time.Duration) error {
+	if r.writeRDB == nil || machineID == "" || ttl <= 0 {
+		return errors.New("Runner inventory cache unavailable")
+	}
+	return r.writeRDB.Set(ctx, RunnerInventoryKey(machineID), inventory, ttl).Err()
+}
+
+func (r *ShardedStreamRelay) LoadRunnerInventory(ctx context.Context, machineID string) ([]byte, bool, error) {
+	if r.writeRDB == nil || machineID == "" {
+		return nil, false, nil
+	}
+	raw, err := r.writeRDB.Get(ctx, RunnerInventoryKey(machineID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, false, nil
+	}
+	return raw, err == nil, err
+}
+
 func (r *ShardedStreamRelay) SetDaemonRuntimeDeliverer(d DaemonRuntimeDeliverer) {
 	r.deliverMu.Lock()
 	r.daemonRuntime = d

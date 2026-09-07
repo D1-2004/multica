@@ -564,6 +564,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg:                 cfg,
 	}
 	h.RunnerHub.SetHandlers(h.handleRunnerConnected, h.handleRunnerDisconnected, h.handleRunnerHeartbeat, h.handleRunnerResult)
+	h.RunnerHub.SetInventoryHandler(h.handleRunnerInventory)
 	if pool, ok := txStarter.(*pgxpool.Pool); ok {
 		h.FCE2BStable = service.NewFCE2BStableService(
 			pool,

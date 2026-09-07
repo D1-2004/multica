@@ -69,10 +69,11 @@ RETURNING *;
 
 -- name: CreateAgentRunnerBinding :one
 INSERT INTO agent_runner_binding (
-    workspace_id, agent_id, machine_id, bound_by, roots
-) VALUES ($1, $2, $3, $4, $5)
+    workspace_id, agent_id, machine_id, bound_by, roots, enabled_mcp_servers
+) VALUES ($1, $2, $3, $4, $5, '{}'::jsonb)
 ON CONFLICT (agent_id, machine_id) WHERE revoked_at IS NULL DO UPDATE
 SET roots = EXCLUDED.roots,
+    enabled_mcp_servers = '{}'::jsonb,
     bound_by = EXCLUDED.bound_by,
     disconnected_at = NULL,
     disconnected_by = NULL,
@@ -93,6 +94,7 @@ SELECT
     m.arch,
     m.client_version,
     b.roots,
+    b.enabled_mcp_servers,
     b.disconnected_at,
     m.last_seen_at,
     m.connection_id,
@@ -104,6 +106,43 @@ WHERE b.workspace_id = $1
   AND b.revoked_at IS NULL
   AND m.revoked_at IS NULL
 ORDER BY b.created_at DESC;
+
+-- name: MountAgentRunnerMachine :one
+INSERT INTO agent_runner_binding (
+    workspace_id, agent_id, machine_id, bound_by, roots, enabled_mcp_servers
+)
+SELECT
+    sqlc.arg(workspace_id), sqlc.arg(agent_id), m.id,
+    sqlc.arg(actor_id), '[]'::jsonb, '{}'::jsonb
+FROM runner_machine m
+WHERE m.id = sqlc.arg(machine_id)
+  AND m.owner_id = sqlc.arg(actor_id)
+  AND m.revoked_at IS NULL
+ON CONFLICT (agent_id, machine_id) WHERE revoked_at IS NULL DO UPDATE
+SET bound_by = EXCLUDED.bound_by,
+    roots = '[]'::jsonb,
+    enabled_mcp_servers = '{}'::jsonb,
+    disconnected_at = NULL,
+    disconnected_by = NULL,
+    updated_at = now()
+RETURNING *;
+
+-- name: RevokeOtherAgentRunnerMounts :many
+UPDATE agent_runner_binding
+SET revoked_at = now(), revoked_by = sqlc.arg(actor_id), updated_at = now()
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND agent_id = sqlc.arg(agent_id)
+  AND machine_id <> sqlc.arg(machine_id)
+  AND revoked_at IS NULL
+RETURNING *;
+
+-- name: SnapshotRunnerMCPServersForMachine :exec
+UPDATE agent_runner_binding
+SET enabled_mcp_servers = sqlc.arg(enabled_mcp_servers), updated_at = now()
+WHERE machine_id = sqlc.arg(machine_id)
+  AND revoked_at IS NULL
+  AND enabled_mcp_servers IS DISTINCT FROM sqlc.arg(enabled_mcp_servers)
+  AND jsonb_typeof(sqlc.arg(enabled_mcp_servers)) = 'object';
 
 -- name: ListRunnerBindingsForOwner :many
 SELECT
@@ -124,12 +163,11 @@ SELECT
     b.disconnected_at,
     b.created_at AS bound_at
 FROM runner_machine m
-JOIN agent_runner_binding b ON b.machine_id = m.id
-JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id
-JOIN workspace w ON w.id = b.workspace_id
+LEFT JOIN agent_runner_binding b ON b.machine_id = m.id AND b.revoked_at IS NULL
+LEFT JOIN agent a ON a.id = b.agent_id AND a.workspace_id = b.workspace_id
+LEFT JOIN workspace w ON w.id = b.workspace_id
 WHERE m.owner_id = $1
   AND m.revoked_at IS NULL
-  AND b.revoked_at IS NULL
 ORDER BY m.created_at DESC, m.id, b.created_at DESC, b.id;
 
 -- name: GetRunnerBindingForOwner :one
@@ -153,6 +191,7 @@ SELECT
     m.arch,
     m.client_version,
     b.roots,
+    b.enabled_mcp_servers,
     b.disconnected_at,
     m.last_seen_at,
     m.connection_id
@@ -199,6 +238,30 @@ WHERE b.id = $1
 
 -- name: GetRunnerMachine :one
 SELECT * FROM runner_machine WHERE id = $1 AND revoked_at IS NULL;
+
+-- name: RenameRunnerMachineForOwner :one
+UPDATE runner_machine
+SET name = sqlc.arg(name), updated_at = now()
+WHERE id = sqlc.arg(machine_id)
+  AND owner_id = sqlc.arg(owner_id)
+  AND revoked_at IS NULL
+RETURNING *;
+
+-- name: RevokeRunnerMachineForOwner :one
+UPDATE runner_machine
+SET revoked_at = now(), revoked_by = sqlc.arg(owner_id),
+    connection_id = NULL, connected_at = NULL, updated_at = now()
+WHERE id = sqlc.arg(machine_id)
+  AND owner_id = sqlc.arg(owner_id)
+  AND revoked_at IS NULL
+RETURNING *;
+
+-- name: RevokeRunnerBindingsForMachine :many
+UPDATE agent_runner_binding
+SET revoked_at = now(), revoked_by = sqlc.arg(owner_id), updated_at = now()
+WHERE machine_id = sqlc.arg(machine_id)
+  AND revoked_at IS NULL
+RETURNING *;
 
 -- name: ActivateRunnerMachineConnection :one
 UPDATE runner_machine
@@ -280,6 +343,11 @@ WHERE b.workspace_id = sqlc.arg(workspace_id)
   AND b.revoked_at IS NULL
   AND b.disconnected_at IS NULL
   AND m.revoked_at IS NULL
+  AND (
+      sqlc.arg(tool_name)::varchar(64) <> 'mcp'
+      OR b.enabled_mcp_servers ->> (sqlc.arg(arguments)::jsonb ->> 'server_name')
+         = (sqlc.arg(arguments)::jsonb ->> 'fingerprint')
+  )
 FOR SHARE OF b
 RETURNING *;
 

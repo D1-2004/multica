@@ -26,6 +26,7 @@ import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
 import { StableFCE2BRuntimeOverviewPage } from "@multica/views/runtimes";
+import { LocalRunnersPage } from "@multica/views/runner";
 import { DesktopAgentsPage } from "./components/desktop-agents-page";
 import {
   AiCreateAgentPage,
@@ -179,6 +180,11 @@ export const appRoutes: RouteObject[] = [
             path: "runtimes",
             element: <DesktopRuntimesPage />,
             handle: { title: "Runtimes" },
+          },
+          {
+            path: "runners",
+            element: <LocalRunnersPage />,
+            handle: { title: "Local Runner" },
           },
           {
             path: "runtimes/stable",

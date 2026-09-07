@@ -35,6 +35,7 @@ import {
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
+import { RunnerTab } from "./tabs/runner-tab";
 
 interface InspectorProps {
   agent: Agent;
@@ -261,6 +262,17 @@ export function AgentDetailInspector({
                   service_tier: "",
                 })
               }
+            />
+          </SettingsRow>
+          <SettingsRow
+            label={t(($) => $.tab_body.runner.execution_title)}
+            description={t(($) => $.tab_body.runner.execution_hint)}
+            size="select-wide"
+          >
+            <RunnerTab
+              agent={agent}
+              mode="execution"
+              canBind={canEdit && !!currentUserId && agent.owner_id === currentUserId}
             />
           </SettingsRow>
           <SettingsRow

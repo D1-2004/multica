@@ -1,6 +1,6 @@
 # Multica MCP 客户端接入指南
 
-本文说明如何在沙箱内通过 Multica CLI 调用服务端 MCP，以及如何在 Codex、Claude Code、Qoder 和 QoderWork 中显式接入 Multica 自托管 MCP。Multica 不会在执行任务（task）claim 时改写智能体或沙箱的 MCP 配置。
+本文说明 Multica 如何把任务 MCP 动态挂载到沙箱，以及如何在 Codex、Claude Code、Qoder 和 QoderWork 中显式接入 Multica 自托管 MCP。任务内不再提供 `multica mcp` CLI；Agent 通过 Runtime 原生 MCP 工具面调用。
 
 协议和业务约束分别见：
 
@@ -42,47 +42,13 @@ PAT 代表用户本人，但不绕过业务权限：服务端仍校验 Workspace
 
 本机接入前，在 Multica Web 的 **Settings → Personal Access Tokens → New token** 创建 PAT；完整 token 只在创建时展示一次。客户端不需要配置 Workspace header。
 
-Task Token 仍由 Multica 在任务 claim 时生成，并作为 `MULTICA_TOKEN` 注入当前 Agent 进程；Multica 不会自动生成或改写 MCP 客户端配置。它适合 A 对话把回答转交给 B 对话等任务内协作，不应作为本机长期凭据。
+Task Token 仍由 Multica 在任务 claim 时生成，并作为 `MULTICA_TOKEN` 注入当前 Agent 进程。Multica 同时下发完整 MCP 配置和独立 relay 路由元数据；它适合 A 对话把回答转交给 B 对话等任务内协作，不应作为本机长期凭据。
 
-## 3. 沙箱内通过 CLI 动态调用
+## 3. 沙箱内动态挂载
 
-沙箱无法访问预发或正式环境的公网 MCP endpoint 时，不要给 Codex、Claude Code、Qoder 或 QoderWork 注入远程 MCP 配置。改用 daemon 已经为当前 task 注入的 `MULTICA_SERVER_URL`、`MULTICA_TOKEN`、`MULTICA_AGENT_ID` 和 `MULTICA_TASK_ID`，通过通用 CLI 命令访问同一服务端能力。
+任务 claim 会合并 Agent MCP、任务级 MCP、全部 Multica 后端托管 MCP，以及所选 Local Runner 最后一次上报的完整 MCP 配置。合并不探测 Runner 是否在线，也不执行 `initialize` 或 `tools/list`；不可用状态在 Runtime 初始化或实际调用时返回。
 
-先动态获取服务端当前发布的全部工具定义：
-
-```bash
-multica mcp tools --output json
-```
-
-输出保留服务端 `tools/list` 中每个工具的 description、input schema、output schema 和 annotations，并自动沿 `nextCursor` 拉取和合并全部分页。CLI 不保存工具名或参数结构，因此服务端新增工具后不需要重新构建沙箱镜像。
-
-根据发现结果调用工具：
-
-```bash
-multica mcp call \
-  --method search_agents \
-  --arguments '{"keyword":"探针"}' \
-  --output json
-```
-
-无参数工具省略 `--arguments`，CLI 默认发送空对象：
-
-```bash
-multica mcp call --method list_agents --output json
-```
-
-复杂参数可以通过标准输入或文件提供：
-
-```bash
-multica mcp call --method chat_send_message --arguments-stdin --output json < arguments.json
-multica mcp call --method chat_send_message --arguments-file arguments.json --output json
-```
-
-`--arguments`、`--arguments-stdin` 和 `--arguments-file` 互斥，内容必须是一个 JSON object。`--method` 是服务端返回的任意工具名，不是 CLI 内置子命令：禁止为 `search_agents`、`list_agents` 等具体工具增加 CLI command 或本地枚举。
-
-这两个命令采用 one-shot 模式：每次执行只发送当前操作对应的 `tools/list` 或 `tools/call`，输出结果后退出，不要求用户执行或理解 `initialize`。Multica 的 `/api/mcp` 明确支持这套无状态直接调用契约；CLI 当前携带服务端支持的 MCP 协议版本，协议适配不会暴露成命令。鉴权和 task 来源继续沿用现有 CLI 请求头。MCP endpoint 由 token 或目标资源解析工作区，因此这两个命令不会发送 `X-Workspace-ID`。
-
-`mcp call` 不自动重试。服务端返回 JSON-RPC error 或 tool result 的 `isError=true` 时，CLI 使用非零退出码；后者的完整 result 仍写入 stdout，方便调用方读取结构化错误。
+配置和路由分开下发：原始 MCP Server 条目不靠 URL、Header、Command 或 Env 推断来源；独立路由表只列出必须通过沙箱 loopback relay 的 Multica/Runner Server 名称。Agent 与任务直接配置的 MCP 保持 Runtime 原生直连。Agent 应从原生工具面发现和调用 MCP，不应读取 `~/.config/opencode/opencode.json` 等磁盘文件来判断任务 MCP，也不应调用 Multica CLI 探测。
 
 `prepare_static_site_deploy` 返回的公网 `upload_url` 在沙箱中可能不可达。此时使用 `${MULTICA_SERVER_URL}${upload_path}` 发起原始 ZIP `PUT`：`Authorization` 保持当前 `MULTICA_TOKEN` 的 `mat_` Task Token，并把返回的 `upload_token` 原样放入返回字段 `upload_token_header` 指定的头（当前为 `X-Multica-Site-Upload-Token`）。不要把 `mhs_` capability 替换进 `Authorization`，也不要把它放进 URL、日志或 MCP JSON。公网可达的客户端可以直接请求 `upload_url`，只发送 `Authorization: Bearer <upload_token>`。
 
@@ -383,6 +349,7 @@ curl --fail-with-body --silent --show-error \
 | 日期 | 变更 | 原因 |
 | --- | --- | --- |
 | 2026-08-29 | Site Hosting 工具改为按鉴权用户持有资源，并支持现有 `mul_` API Token；保留 `/api/mcp` 和 Task Token 沙箱调用。 | 解除网站资源与 Agent/Task/Workspace 所有权模型的架构耦合，同时继续复用已有 MCP endpoint 和认证体系。 |
+| 2026-09-04 | 移除任务内 `multica mcp` CLI，改为 claim 动态合并全部来源并通过 Runtime 原生 MCP 工具面暴露；只有 Multica 后端与 Local Runner 来源走沙箱 relay。 | CLI 只能发现 Multica 自身工具，无法代表 Agent 的完整 MCP 集合，导致 Agent 错误报告“没有 MCP”。 |
 | 2026-08-29 | 为两个 Site Hosting 工具发布正式 `outputSchema`。 | 与已有稳定返回 `structuredContent` 的 MCP 工具保持一致，让 Codex、Claude Code、Qoder 等客户端能直接解析上传能力和部署状态。 |
 | 2026-08-29 | 补充沙箱内静态 Site 上传的 `upload_path` 与专用 capability 头用法，并说明公网直连兼容形式。 | 本地 relay 使用 `mat_` Task Token 做路由鉴权，Site upload handler 使用 `mhs_` 单次能力；必须分离两个凭据，避免单个 `Authorization` 头冲突。 |
 | 2026-08-29 | 增加 `prepare_static_site_deploy` 和 `get_static_site_deploy`，并链接独立的 [Agent 静态网站托管协议](static-site-hosting.md)。 | 让运行中的 Agent 通过 Task Token 准备独立 Site revision，再用 MCP 之外的原始 ZIP PUT 流式发布静态产物，避免突破 MCP 1 MiB JSON 限制或复用附件协议。 |

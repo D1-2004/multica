@@ -47,6 +47,18 @@
   "delete": "删除",
   "confirm": "确认",
   "loading": "加载中...",
+  "mcp_details": {
+    "open": "查看 {{name}} 的详情",
+    "capabilities": "能力",
+    "tools": "工具",
+    "version": "v{{version}}",
+    "tool_count": "{{count}} 个工具",
+    "no_description": "该 MCP Server 未提供说明。",
+    "no_tool_description": "未提供工具说明。",
+    "no_tools": "该 MCP Server 未上报工具。",
+    "details_unavailable": "暂时无法获取详情。",
+    "details_unavailable_hint": "Runner 无法读取该服务的协议详情。请确认 MCP 服务可在本机启动后重启 Runner。"
+  },
   "time": {
     "just_now": "刚刚",
     "minutes_ago": "{{count}} 分钟前",

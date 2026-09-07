@@ -270,7 +270,7 @@ func writeAvailableCommands(b *strings.Builder, ctx TaskContextForEnv) {
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("Prefer `--output json` for structured data. The default brief lists only the core agent loop and common issue create/update tasks; for everything else run `multica --help` or `multica <command> --help`.\n\n")
 	b.WriteString("### Core\n")
-	writeMCPDiscoveryCommands(b)
+	writeNativeMCPTools(b)
 	b.WriteString("- `multica issue get <id> --output json` — full issue.\n")
 	b.WriteString("- `multica issue comment list <issue-id> [--roots-only] [--summary] [--thread <comment-id> [--tail N] | --recent N] [--since <RFC3339>] --output json` — thread-aware comment reads. Bound a wide read with `--roots-only --summary` (roots plus `reply_count` / `last_activity_at`, clipped bodies); bound a deep one with `--thread <id> --tail N`; add `--compact` to any JSON read to drop echoed/null/bookkeeping fields. Careful with `--recent N`: it caps THREADS, not comments, and can return the whole history on a small issue. Resolved-thread folding, paging cursors, and full flag semantics: `--help`.\n")
 	b.WriteString("- `multica issue create --title \"...\" [--description-file <path>] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--stage N] [--project <project-id>] [--due-date <YYYY-MM-DD>] [--attachment <path>]` — create an issue. For agent-authored long descriptions prefer `--description-file <path>` (heredoc stdin can swallow trailing flags, #4182). Write that file inside your working directory (e.g. `./description.md`), never `/tmp` or shared paths — same workdir rule as `## Comment Formatting`.\n")
@@ -318,13 +318,11 @@ func writeBackgroundIssueDelegation(b *strings.Builder) {
 	b.WriteString("`multica issue delegate --issue <id> --content-file <path> --output json` continues one; `multica issue delegate --title \"...\" --description-file <path> --assignee-id <agent-id> --output json` creates one. `multica issue create` and `multica issue comment add` are NOT substitutes: only delegation transfers completion responsibility, and only it keeps callback URLs and context tokens away from the model. Once the call returns `release_parent: true`, the server owns completion: this is a transfer of responsibility, not a background process you are waiting on, so ending the turn here is the correct finish and not the \"standing by\" that `## Background Task Safety` forbids. Say in one line that the work moved to the background and stop — never keep doing the delegated work here. If the call fails, responsibility never moved: report the failure and do not claim a background run started.\n\n")
 }
 
-// writeMCPDiscoveryCommands emits the two MCP bullets shared by every
-// Available Commands variant that has an MCP surface at all. Held in one
-// function because the pair is a protocol contract — discover, then call what
-// discovery returned — and two hand-maintained copies of a contract drift.
-func writeMCPDiscoveryCommands(b *strings.Builder) {
-	b.WriteString("- `multica mcp tools --output json` — discover the MCP tools and schemas currently published by the server; tool names are not compiled into the CLI.\n")
-	b.WriteString("- `multica mcp call --method <name> [--arguments '<json>' | --arguments-file <path> | --arguments-stdin] --output json` — call a method returned by `mcp tools`; do not guess method names or arguments.\n")
+// writeNativeMCPTools records the native MCP contract shared by every
+// runtime brief. MCP discovery belongs to the runtime's tool surface, never a
+// Multica CLI or an on-disk config probe.
+func writeNativeMCPTools(b *strings.Builder) {
+	b.WriteString("- MCP Servers are mounted as native runtime tools for this task; use the runtime tool surface directly, and do not inspect disk configuration or use a CLI to infer availability.\n")
 }
 
 // writeAvailableCommandsChat emits the chat-scoped Available Commands section.
@@ -336,7 +334,7 @@ func writeMCPDiscoveryCommands(b *strings.Builder) {
 // dead weight, and worse than dead — a model handed a comment API in a room with
 // no issue reaches for it, then reports the failure as an answer.
 //
-// What a chat turn actually reaches for is kept: MCP discovery, finding and
+// What a chat turn actually reaches for is kept: native MCP tools, finding and
 // reading issues, creating or updating one, and checking out a repo. Delegation
 // commands are NOT duplicated here; `## Background Issue Delegation` owns them,
 // because the flags only mean anything alongside the policy that governs them.
@@ -344,7 +342,7 @@ func writeAvailableCommandsChat(b *strings.Builder) {
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("Prefer `--output json` for structured data. Listed here are only the commands a chat turn normally reaches for; for everything else run `multica --help` or `multica <command> --help` rather than guessing a flag.\n\n")
 	b.WriteString("### Core\n")
-	writeMCPDiscoveryCommands(b)
+	writeNativeMCPTools(b)
 	b.WriteString("- `multica issue list [--status X] [--assignee X] [--metadata \"<key>=<value>\"] [--limit N] --output json` — find issues; `multica issue get <id> --output json` reads one in full.\n")
 	b.WriteString("- `multica issue create --title \"...\" [--description-file <path>] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--project <project-id>] [--due-date <YYYY-MM-DD>] [--attachment <path>]` — create an issue. For agent-authored long descriptions prefer `--description-file <path>` (heredoc stdin can swallow trailing flags, #4182). Write that file inside your working directory (e.g. `./description.md`), never `/tmp` or shared paths.\n")
 	b.WriteString("- `multica issue update <id> [--title X] [--description-file <path>] [--priority X] [--status X] [--assignee X]` and `multica issue status <id> <status>` — change fields, or flip status (todo / in_progress / in_review / done / blocked / backlog / cancelled).\n")

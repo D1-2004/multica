@@ -1070,8 +1070,7 @@ func TestInjectRuntimeConfigAvailableCommandsCoreOnly(t *testing.T) {
 		"## Available Commands",
 		"core agent loop and common issue create/update tasks",
 		"`multica <command> --help`",
-		"multica mcp tools --output json",
-		"multica mcp call --method <name>",
+		"MCP Servers are mounted as native runtime tools for this task",
 		"multica issue get <id> --output json",
 		"multica issue comment list <issue-id>",
 		"multica issue create --title",
@@ -1085,6 +1084,11 @@ func TestInjectRuntimeConfigAvailableCommandsCoreOnly(t *testing.T) {
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("AGENTS.md missing core command/help text %q\n---\n%s", want, s)
+		}
+	}
+	for _, banned := range []string{"multica mcp tools", "multica mcp call"} {
+		if strings.Contains(s, banned) {
+			t.Errorf("AGENTS.md still advertises removed command %q\n---\n%s", banned, s)
 		}
 	}
 

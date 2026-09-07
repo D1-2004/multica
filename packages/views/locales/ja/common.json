@@ -47,6 +47,18 @@
   "delete": "削除",
   "confirm": "確認",
   "loading": "読み込み中...",
+  "mcp_details": {
+    "open": "{{name}} の詳細を表示",
+    "capabilities": "機能",
+    "tools": "ツール",
+    "version": "v{{version}}",
+    "tool_count": "{{count}} 個のツール",
+    "no_description": "この MCP Server には説明がありません。",
+    "no_tool_description": "ツールの説明はありません。",
+    "no_tools": "この MCP Server はツールを報告していません。",
+    "details_unavailable": "詳細はまだ利用できません。",
+    "details_unavailable_hint": "Runner はこのサービスのプロトコル詳細を取得できませんでした。MCP サービスがローカルで起動できることを確認して Runner を再起動してください。"
+  },
   "time": {
     "just_now": "たった今",
     "minutes_ago": "{{count}}分前",

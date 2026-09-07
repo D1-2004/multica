@@ -8,6 +8,8 @@ import {
   Bot,
   Laptop,
   Loader2,
+	Plus,
+	Pencil,
   Power,
   RefreshCw,
   Trash2,
@@ -19,6 +21,9 @@ import { useAuthStore } from "@multica/core/auth";
 import { paths } from "@multica/core/paths";
 import {
   accountRunnerBindingsOptions,
+	useCreateAccountRunnerPairing,
+	useRenameAccountRunnerMachine,
+	useRevokeAccountRunnerMachine,
   useCreateAccountRunnerReconnectCommand,
   useDisconnectAccountRunnerBinding,
   useRevokeAccountRunnerBinding,
@@ -26,6 +31,7 @@ import {
   type AccountRunnerBindingTarget,
   type AccountRunnerMachine,
   type CreateRunnerReconnectCommandResponse,
+	type CreateRunnerPairingResponse,
 } from "@multica/core/runner";
 import {
   AlertDialog,
@@ -42,6 +48,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink } from "../../navigation";
 import { RunnerCommandDialog } from "../../runner/runner-command-dialog";
+import { McpServerDetailsList } from "../../runner/mcp-server-details-list";
 import { useT, useTimeAgo } from "../../i18n";
 import { SettingsSection, SettingsTab } from "./settings-layout";
 
@@ -49,6 +56,23 @@ interface BindingSelection {
   machine: AccountRunnerMachine;
   binding: AccountRunnerBinding;
 }
+
+const RUNNER_MCP_CONFIG_PATH = "~/.multica/runner/mcp.json";
+const RUNNER_MCP_CONFIG_EXAMPLE = `{
+  "mcpServers": {
+    "my_mcp": {
+      "command": "npx",
+      "args": ["-y", "your-mcp-package"]
+    }
+  }
+}`;
+const RUNNER_COMMANDS = [
+  "~/.multica/runner/bin/multica runner start",
+  "~/.multica/runner/bin/multica runner stop",
+  "~/.multica/runner/bin/multica runner status",
+];
+const RUNNER_FILE_ACCESS_COMMAND =
+  "~/.multica/runner/bin/multica runner configure --directory /absolute/path";
 
 function mutationTarget(binding: AccountRunnerBinding): AccountRunnerBindingTarget {
   return {
@@ -62,6 +86,9 @@ export function LocalRunnerTab() {
   const { t } = useT("settings");
   const userId = useAuthStore((state) => state.user?.id ?? "");
   const bindingsQuery = useQuery(accountRunnerBindingsOptions(userId));
+	const createPairing = useCreateAccountRunnerPairing();
+	const renameMachine = useRenameAccountRunnerMachine(userId);
+	const revokeMachine = useRevokeAccountRunnerMachine(userId);
   const disconnectBinding = useDisconnectAccountRunnerBinding(userId);
   const createReconnectCommand =
     useCreateAccountRunnerReconnectCommand(userId);
@@ -73,6 +100,29 @@ export function LocalRunnerTab() {
   );
   const [reconnectCommand, setReconnectCommand] =
     useState<CreateRunnerReconnectCommandResponse | null>(null);
+	const [pairing, setPairing] = useState<CreateRunnerPairingResponse | null>(null);
+	const [revokeMachineTarget, setRevokeMachineTarget] = useState<AccountRunnerMachine | null>(null);
+
+	const handleCreatePairing = async () => {
+		try {
+			setPairing(await createPairing.mutateAsync());
+		} catch (error) {
+			toast.error(error instanceof Error ? error.message : t(($) => $.local_runner.load_failed));
+		}
+	};
+
+	const handleRenameMachine = async (machine: AccountRunnerMachine) => {
+		const name = window.prompt(t(($) => $.local_runner.rename_prompt), machine.name)?.trim();
+		if (!name || name === machine.name) return;
+		try { await renameMachine.mutateAsync({ machineId: machine.machineId, name }); }
+		catch (error) { toast.error(error instanceof Error ? error.message : t(($) => $.local_runner.rename_failed)); }
+	};
+
+	const handleRevokeMachine = async () => {
+		if (!revokeMachineTarget) return;
+		try { await revokeMachine.mutateAsync(revokeMachineTarget.machineId); setRevokeMachineTarget(null); }
+		catch (error) { toast.error(error instanceof Error ? error.message : t(($) => $.local_runner.machine_revoke_failed)); }
+	};
 
   const handleDisconnect = async () => {
     if (!disconnectTarget) return;
@@ -124,7 +174,9 @@ export function LocalRunnerTab() {
     }
   };
 
-  const loadFailed = bindingsQuery.isError || bindingsQuery.data === null;
+  const loadFailed =
+    bindingsQuery.data === null ||
+    (bindingsQuery.isError && bindingsQuery.data === undefined);
   const machines = bindingsQuery.data?.machines ?? [];
 
   return (
@@ -194,13 +246,129 @@ export function LocalRunnerTab() {
                   void handleReconnect({ machine, binding })
                 }
                 onRevoke={(binding) => setRevokeTarget({ machine, binding })}
+				onRenameMachine={() => void handleRenameMachine(machine)}
+				onRevokeMachine={() => setRevokeMachineTarget(machine)}
               />
             ))}
           </ul>
         )}
       </SettingsSection>
 
+      <SettingsSection
+        title={t(($) => $.local_runner.add_guide_title)}
+        description={t(($) => $.local_runner.add_guide_description)}
+      >
+        <ol className="space-y-3">
+          <li className="flex gap-3 rounded-lg border border-surface-border bg-muted/20 p-4">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-foreground text-micro font-semibold text-background">
+              1
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-body font-medium">
+                    {t(($) => $.local_runner.install_step_title)}
+                  </p>
+                  <p className="mt-1 text-caption text-muted-foreground">
+                    {t(($) => $.local_runner.install_step_description)}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => void handleCreatePairing()}
+                  disabled={createPairing.isPending}
+                >
+                  {createPairing.isPending ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <Plus className="size-4" />
+                  )}
+                  {t(($) => $.local_runner.add_machine)}
+                </Button>
+              </div>
+            </div>
+          </li>
+
+          <li className="flex gap-3 rounded-lg border border-surface-border p-4">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-micro font-semibold">
+              2
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-body font-medium">
+                {t(($) => $.local_runner.mcp_step_title)}
+              </p>
+              <p className="mt-1 text-caption text-muted-foreground">
+                {t(($) => $.local_runner.mcp_step_description)}
+              </p>
+              <code className="mt-3 block break-all rounded bg-muted px-3 py-2 font-mono text-micro">
+                {RUNNER_MCP_CONFIG_PATH}
+              </code>
+              <pre className="mt-2 overflow-x-auto rounded bg-muted px-3 py-2 font-mono text-micro leading-5">
+                <code>{RUNNER_MCP_CONFIG_EXAMPLE}</code>
+              </pre>
+              <p className="mt-2 text-caption text-muted-foreground">
+                {t(($) => $.local_runner.mcp_restart_hint)}
+              </p>
+            </div>
+          </li>
+
+          <li className="flex gap-3 rounded-lg border border-surface-border p-4">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-micro font-semibold">
+              3
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-body font-medium">
+                {t(($) => $.local_runner.lifecycle_step_title)}
+              </p>
+              <p className="mt-1 text-caption text-muted-foreground">
+                {t(($) => $.local_runner.lifecycle_step_description)}
+              </p>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {RUNNER_COMMANDS.map((command) => (
+                  <code
+                    key={command}
+                    className="rounded bg-muted px-3 py-2 font-mono text-micro"
+                  >
+                    {command}
+                  </code>
+                ))}
+              </div>
+            </div>
+          </li>
+
+          <li className="flex gap-3 rounded-lg border border-surface-border p-4">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-micro font-semibold">
+              4
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-body font-medium">
+                {t(($) => $.local_runner.file_access_directories)}
+              </p>
+              <p className="mt-1 text-caption text-muted-foreground">
+                {t(($) => $.local_runner.file_access_description)}
+              </p>
+              <code className="mt-3 block break-all rounded bg-muted px-3 py-2 font-mono text-micro">
+                {RUNNER_FILE_ACCESS_COMMAND}
+              </code>
+            </div>
+          </li>
+        </ol>
+      </SettingsSection>
+
       <RunnerCommandDialog
+		command={pairing?.installCommand ?? null}
+		title={t(($) => $.local_runner.install_command_title)}
+		description={t(($) => $.local_runner.install_command_description)}
+		expiry={t(($) => $.local_runner.reconnect_command_expiry)}
+		copiedToast={t(($) => $.local_runner.reconnect_copied_toast)}
+		copyAria={t(($) => $.local_runner.copy_aria)}
+		closeLabel={t(($) => $.local_runner.close)}
+		onClose={() => setPairing(null)}
+	  />
+
+	  <RunnerCommandDialog
         command={reconnectCommand?.reconnectCommand ?? null}
         title={t(($) => $.local_runner.reconnect_command_title)}
         description={t(($) => $.local_runner.reconnect_command_description)}
@@ -215,6 +383,13 @@ export function LocalRunnerTab() {
       />
 
       <AlertDialog
+		open={revokeMachineTarget !== null}
+		onOpenChange={(open) => { if (!open && !revokeMachine.isPending) setRevokeMachineTarget(null); }}
+	  >
+		<AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t(($) => $.local_runner.machine_revoke_title, { machine: revokeMachineTarget?.name ?? "" })}</AlertDialogTitle><AlertDialogDescription>{t(($) => $.local_runner.machine_revoke_description)}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={revokeMachine.isPending}>{t(($) => $.local_runner.cancel)}</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={revokeMachine.isPending} onClick={(event) => { event.preventDefault(); void handleRevokeMachine(); }}>{t(($) => $.local_runner.machine_revoke_confirm)}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
+	  </AlertDialog>
+
+	  <AlertDialog
         open={disconnectTarget !== null}
         onOpenChange={(open) => {
           if (!open && !disconnectBinding.isPending) setDisconnectTarget(null);
@@ -300,12 +475,16 @@ function MachineCard({
   onDisconnect,
   onReconnect,
   onRevoke,
+	onRenameMachine,
+	onRevokeMachine,
 }: {
   machine: AccountRunnerMachine;
   reconnectPendingId?: string;
   onDisconnect: (binding: AccountRunnerBinding) => void;
   onReconnect: (binding: AccountRunnerBinding) => void;
   onRevoke: (binding: AccountRunnerBinding) => void;
+	onRenameMachine: () => void;
+	onRevokeMachine: () => void;
 }) {
   const { t } = useT("settings");
   const timeAgo = useTimeAgo();
@@ -363,12 +542,14 @@ function MachineCard({
             ) : null}
           </div>
         </div>
-        <Badge variant="outline" className="text-micro">
-          {t(($) => $.local_runner.binding_count, {
-            count: machine.bindings.length,
-          })}
-        </Badge>
+		<div className="flex items-center gap-1"><Badge variant="outline" className="text-micro">{t(($) => $.local_runner.binding_count, { count: machine.bindings.length })}</Badge><Button type="button" size="icon-sm" variant="ghost" onClick={onRenameMachine} aria-label={t(($) => $.local_runner.rename_machine)}><Pencil className="size-3.5" /></Button><Button type="button" size="icon-sm" variant="ghost" onClick={onRevokeMachine} aria-label={t(($) => $.local_runner.revoke_machine)}><Trash2 className="size-3.5" /></Button></div>
       </div>
+	  {machine.mcpServers.length > 0 && (
+        <div className="space-y-2 border-t px-4 py-3">
+          <p className="text-micro font-medium text-muted-foreground">{t(($) => $.local_runner.mcp_services)}</p>
+          <McpServerDetailsList servers={machine.mcpServers} online={machine.online} />
+        </div>
+      )}
 
       <ul className="divide-y divide-surface-border">
         {machine.bindings.map((binding) => {
@@ -465,7 +646,7 @@ function MachineCard({
 
               <div>
                 <p className="mb-1 text-micro font-medium text-muted-foreground">
-                  {t(($) => $.local_runner.file_roots)}
+                  {t(($) => $.local_runner.file_access_directories)}
                 </p>
                 <div className="space-y-1">
                   {binding.roots.map((root) => (

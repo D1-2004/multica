@@ -47,6 +47,19 @@
   "delete": "Delete",
   "confirm": "Confirm",
   "loading": "Loading...",
+  "mcp_details": {
+    "open": "View details for {{name}}",
+    "capabilities": "Capabilities",
+    "tools": "Tools",
+    "version": "v{{version}}",
+    "tool_count_one": "{{count}} tool",
+    "tool_count_other": "{{count}} tools",
+    "no_description": "This MCP server did not provide a description.",
+    "no_tool_description": "No tool description provided.",
+    "no_tools": "This MCP server did not report any tools.",
+    "details_unavailable": "Details are not available yet.",
+    "details_unavailable_hint": "Runner could not read this server's protocol details. Restart Runner after confirming the MCP service can start locally."
+  },
   "time": {
     "just_now": "just now",
     "minutes_ago": "{{count}}m ago",

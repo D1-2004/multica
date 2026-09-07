@@ -1896,6 +1896,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/api/workspace-access/self", h.GetWorkspaceAccessSelf)
 		r.With(handler.RequireHumanActor).Patch("/api/me", h.UpdateMe)
 		r.With(handler.RequireHumanActor).Get("/api/me/runner-bindings", h.ListMyRunnerBindings)
+		r.With(handler.RequireHumanActor).Post("/api/me/runner-pairings", h.CreateMyRunnerPairing)
+		r.With(handler.RequireHumanActor).Patch("/api/me/runner-machines/{machineId}", h.RenameMyRunnerMachine)
+		r.With(handler.RequireHumanActor).Delete("/api/me/runner-machines/{machineId}", h.RevokeMyRunnerMachine)
 		r.With(handler.RequireHumanActor).Post("/api/me/runner-bindings/{bindingId}/disconnect", h.DisconnectMyRunnerBinding)
 		r.With(handler.RequireHumanActor).Post("/api/me/runner-bindings/{bindingId}/reconnect-command", h.CreateMyRunnerReconnectCommand)
 		r.With(handler.RequireHumanActor).Delete("/api/me/runner-bindings/{bindingId}", h.RevokeMyRunnerBinding)
@@ -1972,6 +1975,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
 		r.Handle("/api/runner-mcp", http.HandlerFunc(h.RunnerMCP))
+		r.Post("/api/runner-mcp/mounts/{mountId}/servers/{serverName}", h.RunnerMountedMCP)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -2514,6 +2518,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/env", h.GetAgentEnv)
 					r.Put("/env", h.UpdateAgentEnv)
 					r.With(handler.RequireHumanActor).Get("/runner-bindings", h.ListAgentRunnerBindings)
+					r.With(handler.RequireHumanActor).Put("/runner-mount", h.MountAgentRunnerMachine)
 					r.With(handler.RequireHumanActor).Post("/runner-pairings", h.CreateAgentRunnerPairing)
 					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/disconnect", h.DisconnectAgentRunnerBinding)
 					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/reconnect-command", h.CreateAgentRunnerReconnectCommand)
