@@ -365,50 +365,44 @@ func TestBuildFlushUserPromptPrintsShanghaiStamp(t *testing.T) {
 }
 
 func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
-	if !strings.Contains(flushSystemPrompt, "Do not write analysis, reasoning, or a reply") {
-		t.Fatal("flush must not spend completion tokens on analysis")
-	}
-	if !strings.Contains(flushSystemPrompt, "(来自{speaker}, {M}月{D}日 {HH:mm}的发言)") {
-		t.Fatal("flush must ask for a simple provenance citation")
-	}
-	if !strings.Contains(flushSystemPrompt, "inbound judge") {
-		t.Fatal("flush must keep background the next Coordinator turn needs")
-	}
-	if !strings.Contains(flushSystemPrompt, "这个群是做什么的") {
-		t.Fatal("flush must keep what a group is for")
-	}
-	if !strings.Contains(flushSystemPrompt, "For a DM, do not invent a purpose") {
-		t.Fatal("flush must not invent a DM purpose")
-	}
-	if !strings.Contains(flushSystemPrompt, `A human [peer] "记住 …"`) {
-		t.Fatal("flush must keep an explicit 记住 from a human")
-	}
-	if !strings.Contains(flushSystemPrompt, "If unsure, write one [待确认] line instead of dropping the fact") {
-		t.Fatal("flush must not drop borderline facts")
-	}
-	if !strings.Contains(flushSystemPrompt, `delete matching bullets`) {
-		t.Fatal("flush must drop a fact the human retracts, not tombstone it")
-	}
-	if !strings.Contains(flushSystemPrompt, "Git SHAs") {
-		t.Fatal("flush must not keep git/pipeline e2e debris as standing knowledge")
-	}
-	if !strings.Contains(flushSystemPrompt, "Never write them into 纠正信号") {
-		t.Fatal("flush must forbid digital-employee speech in 纠正信号 and 稳定知识")
-	}
-	if !strings.Contains(flushSystemPrompt, "even when this batch has no [self] event") {
-		t.Fatal("flush must know this digital employee without a self event in the batch")
-	}
-	if !strings.Contains(flushSystemPrompt, "keep the fact and drop only the self citation") {
-		t.Fatal("flush must keep human facts that were also restated by this digital employee")
-	}
-	if !strings.Contains(flushSystemPrompt, "回复偏好") {
-		t.Fatal("flush must not copy this agent's recitation of reply style")
-	}
-	if !strings.Contains(flushSystemPrompt, "any name not in 成员") {
-		t.Fatal("flush must not cite the digital employee as a DM source")
-	}
-	if !strings.Contains(flushSystemPrompt, "每次只能回一条") {
-		t.Fatal("flush must not keep coordinator one-reply limits as scene facts")
+	for _, tt := range []struct {
+		name string
+		text string
+	}{
+		{"commit tool only", "Call memory_flush_commit only"},
+		{"no analysis or reply", "Do not write analysis, reasoning, or a reply"},
+		{"no issue IDs", "No issue IDs"},
+		{"memory budget", "1600 Unicode code points"},
+		{"next-turn background", "inbound judge's next turn"},
+		{"locating section", "## 场域定位"},
+		{"knowledge section", "## 稳定知识与约定"},
+		{"corrections section", "## 纠正信号"},
+		{"uncertainty section", "## 待确认"},
+		{"group purpose", "For a group, add a short 用途：… after 成员 answering 这个群是做什么的"},
+		{"DM purpose", "For a DM, do not invent a purpose"},
+		{"DM human provenance", "Cite only that human as a DM source"},
+		{"durable human background", "Keep people, standing preferences, terms, explicit human corrections"},
+		{"human remember requests", `human [peer] "记住" facts`},
+		{"uncertain background", "Mark uncertainty [推断] or [待确认] rather than dropping useful background"},
+		{"human retractions", "delete matching bullets from every section, without tombstones"},
+		{"process debris", "Drop Git SHAs/commit IDs, pipeline/CI/deploy status, e2e/SLS debris"},
+		{"tasks and sensitive facts", "open tasks, secrets, health/pay/performance"},
+		{"self identity", "[self] events and self_speakers (including aliases) identify this digital employee"},
+		{"self sources forbidden", "never use its speech as facts or citations in any section"},
+		{"existing self content", "remove existing self-sourced content"},
+		{"mixed provenance", "For mixed human+self citations, retain only the human-supported fact and human citation"},
+		{"DE reply-style recitation", "Exclude DE recitation of 回复偏好/回复风格 unless stated by a human"},
+		{"DE operational limits", "operational limits such as 每次只能回一条"},
+		{"citation format", "(来自{speaker}, {M}月{D}日 {HH:mm}的发言)"},
+		{"citation clock", "Copy speaker and Asia/Shanghai stamp from the events; never invent them"},
+		{"older provenance", "Preserve older citations unless a newer event rewrites the fact"},
+		{"unchanged text", "unchanged must equal the old text exactly"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if !strings.Contains(flushSystemPrompt, tt.text) {
+				t.Fatalf("flush prompt missing %q", tt.text)
+			}
+		})
 	}
 }
 
