@@ -157,6 +157,9 @@ func coordinatorReplayFixtures() []coordinatorReplayFixture {
 	}
 	meeting := replayCard{ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", Purpose: "小周委托：向小林发送已经写好的周五三点会议通知", Status: "waiting", Comment: "通知已起草，等待小周确认是否发送；尚未发送。"}
 	document := replayCard{ID: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", Purpose: "小周委托：整理项目方案文档并补齐评审内容", Status: "in_progress", Comment: "文档初稿已保存，还可以补充内容。"}
+	missing := base("给小林发条消息。")
+	supplied := base("给小林发个你好。")
+	oldGreeting := replayCard{ID: "cccccccc-cccc-cccc-cccc-cccccccccccc", Purpose: "向小林发送打招呼消息", Status: "waiting", Comment: "昨天已经发送你好并确认送达。"}
 	capabilities := base("你会什么，有哪些 skill？")
 	capabilities.SkillsStatus = "loaded"
 	capabilities.Skills = []SkillSnapshot{{Name: "会议整理", Description: "读取指定会议记录，整理结论和行动项"}}
@@ -183,6 +186,8 @@ func coordinatorReplayFixtures() []coordinatorReplayFixture {
 	inventory := memory
 	inventory.Message = "你手头还有哪些事情没办完？"
 	return []coordinatorReplayFixture{
+		{ID: "missing_message_payload", ContractID: "f05_contrast", Turn: missing, Cards: []replayCard{meeting, oldGreeting}, Actions: []Action{ActionReply}},
+		{ID: "supplied_message_payload", ContractID: "f05_contrast", Turn: supplied, Actions: []Action{ActionIssue}, RequireRecall: true, Items: []replayExpectedItem{{Refs: []string{"u1"}, Basis: "new_request"}}},
 		{ID: "capability_inventory", ContractID: "f04_contrast", Turn: capabilities, Actions: []Action{ActionReply}, ForbidReads: true},
 		{ID: "capability_execution", ContractID: "f04_contrast", Turn: execute, Actions: []Action{ActionIssue}, RequireRecall: true, Items: []replayExpectedItem{{Refs: []string{"u1"}, Basis: "new_request"}}},
 		{ID: "approval_good", ContractID: "f05_contrast", Turn: approval, History: history("给小林的周五三点会议通知已经起草好了。现在按这版发给小林吗？"), Cards: []replayCard{meeting}, Actions: []Action{ActionIssue}, RequireHistory: true, RequireRecall: true, Items: []replayExpectedItem{{IssueID: meeting.ID, Refs: []string{"u1"}, Basis: "answer"}}},
@@ -516,7 +521,7 @@ func TestCoordinatorPolicyReplayFixtures(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 11 {
-		t.Fatalf("minimum replay suite has %d cases, want 11", len(seen))
+	if len(seen) != 13 {
+		t.Fatalf("minimum replay suite has %d cases, want 13", len(seen))
 	}
 }

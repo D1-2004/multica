@@ -22,13 +22,13 @@ func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
 	}
 	fn := shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("Finish this conversation turn with ONE complete window plan. reply answers or clarifies without execution; silence is intentional non-interruption. issue plans all requested work: new items omit issue_id; continuations copy a recalled issue_id and require substantive current input. Host commits afterwards; do not claim delivery. Every source_ref must occur in items or non_work_refs. At most 8 planned items, executed in batches of 2. Never hide an unhandled request as non-work. Read missing context before answering a previous question."),
+		Description: openai.String("Finish this conversation turn with ONE complete window plan. reply answers or clarifies without execution; silence is intentional non-interruption. issue plans all requested work: new items omit issue_id; continuations copy a recalled issue_id and require substantive current input. Host commits afterwards; do not claim delivery. For issue, every source_ref must occur in executable items or non_work_refs. A request awaiting necessary clarification is covered by your question and non_work_refs, never by a speculative work item. At most 8 planned items, executed in batches of 2. Never silently drop an unhandled request. Read missing context before answering a previous question."),
 		Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"action"}, "properties": map[string]any{
 			"action":        map[string]any{"type": "string", "enum": actions},
 			"text":          map[string]any{"type": "string", "description": "Required for reply/issue: a useful natural response for the whole window, with no unsupported completion claims."},
 			"reason":        map[string]any{"type": "string"},
-			"non_work_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only source_refs requiring no work, e.g. a greeting mixed with a real ask. Never omit a real ask."},
-			"items": map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Required for issue. One item per deliverable; source_refs copy u1 etc. from current_message.", "items": map[string]any{
+			"non_work_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Source refs requiring no execution now: greetings or requests explicitly addressed by a necessary clarification in text. Do not silently discard requests."},
+			"items": map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Required for issue. One item per executable deliverable with sufficient intent and payload; no item for work still awaiting clarification; source_refs copy u1 etc. from current_message.", "items": map[string]any{
 				"type": "object", "additionalProperties": false, "required": []string{"source_refs", "purpose", "intent", "basis"}, "properties": map[string]any{
 					"source_refs": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}},
 					"issue_id":    map[string]any{"type": "string", "description": "Existing recalled Issue UUID for continuation; omit for a new deliverable."},
@@ -41,7 +41,7 @@ func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
 		}},
 	}
 	if !canPlanWork {
-		fn.Description = openai.String("Finish a reply or intentional silence only. Work cannot be submitted yet: call assoc_recall on this conversation first. If a short answer may respond to your earlier question, read context_read(kind=history) before deciding whether to acknowledge or be silent. No items or execution at this stage.")
+		fn.Description = openai.String("Finish a reply or intentional silence only. Work cannot be submitted yet: call assoc_recall on this conversation first. If a short answer may respond to your earlier question, read context_read(kind=history) before deciding whether to acknowledge or be silent. For any executable request (including sending a short greeting), recall first; a reply promising action does not execute it. No items at this stage.")
 		props := fn.Parameters["properties"].(map[string]any)
 		delete(props, "items")
 		delete(props, "non_work_refs")
