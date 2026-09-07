@@ -527,17 +527,18 @@ func bindDispatchCompletionTarget(
 // AgentDispatchV2Request preserves the exact Router JSON contract while the
 // internal DispatchCommand owns validation and execution semantics.
 type AgentDispatchV2Request struct {
-	SchemaVersion      string                        `json:"schemaVersion"`
-	AgentID            string                        `json:"agentId,omitempty"`
-	Continuation       *AgentDispatchContinuation    `json:"continuation"`
-	Source             DispatchSource                `json:"source"`
-	Event              DispatchEvent                 `json:"event"`
-	Surface            DispatchSurface               `json:"surface"`
-	Outbound           DispatchOutbound              `json:"outbound"`
-	Control            *DispatchControl              `json:"control,omitempty"`
-	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
-	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
-	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
+	SchemaVersion      string                           `json:"schemaVersion"`
+	AgentID            string                           `json:"agentId,omitempty"`
+	Continuation       *AgentDispatchContinuation       `json:"continuation"`
+	Source             DispatchSource                   `json:"source"`
+	Event              DispatchEvent                    `json:"event"`
+	Surface            DispatchSurface                  `json:"surface"`
+	Outbound           DispatchOutbound                 `json:"outbound"`
+	Control            *DispatchControl                 `json:"control,omitempty"`
+	ContextPrompt      string                           `json:"contextPrompt,omitempty"`
+	ResponsePolicy     *protocol.DingTalkResponsePolicy `json:"responsePolicy,omitempty"`
+	ExternalIdentity   AgentDispatchExternalIdentity    `json:"externalIdentity"`
+	CompletionCallback *DispatchCompletionCallback      `json:"completionCallback,omitempty"`
 }
 
 func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
@@ -551,6 +552,7 @@ func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
 		Outbound:           r.Outbound,
 		Control:            r.Control,
 		ContextPrompt:      r.ContextPrompt,
+		ResponsePolicy:     r.ResponsePolicy,
 		ExternalIdentity:   r.ExternalIdentity,
 		CompletionCallback: r.CompletionCallback,
 	}

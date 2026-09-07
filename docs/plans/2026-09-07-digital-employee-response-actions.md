@@ -92,6 +92,14 @@ Runtime 能力名 `dws_message_policy_v1`。任务下发可选 `dingtalk_message
 
 ## 阻塞与下一步
 
+### 2026-09-08 HTTP 入站策略丢失修复
+
+用户报告开启统一响应后钉钉没有收到回复。Router 23:55 的两个 dispatch（90d3ac36、5438b50e）确实发送了 responsePolicy 与 responseUrl，Coordinator 生成了 reply，但执行回调没有 managed 标志或响应回执。代码定位为 AgentDispatchV2Request 漏声明并透传 responsePolicy，HTTP 解码后模式丢失。
+
+- [ ] 在 HTTP DTO 与 DispatchCommand 转换中保留策略，缺失字段仍保持 legacy。
+- [ ] 从真实 JSON/HTTP 入口回归到路由注册及发送动作；验证错误策略被拒绝，避免仅构造内部 DispatchCommand 的测试遗漏边界。
+- [ ] 部署 Multica 预发并验证真实平台发送及回执，保留原幂等与冻结归属，不盲目重发结果未知的消息。Router/Runtime 无需改代码。
+
 1. 数据库与部署阻塞已解除：通过当前 CR 的 prepub#APP#1 配置项定位连接，在目标库完成 024 预演回滚、024/025 正式应用及结构复核。绑定仍87条、新接待表0行；Router预发健康接口和受认证的v1能力接口均HTTP200。流水线仅停留正常人工预发验证，未发布生产服务。
 2. 本机配角身份此前遭PAT_ORG_POLICY_DENIED；用户指定东翔测试号后，改用其平台已绑定身份在真实沙箱正常完成get-self、建群、发送和回读，此历史拒绝不再阻塞沙箱验收。AI角标仍须客户端展示证据：原始回读的messageAiSendFlag两种策略均为DWS，不能用来源字段宣称视觉效果通过。
 3. 本机候选CLI曾返回SIGKILL/137；用户已明确取消本机验证，此项不再作为本次验收阻塞，保留历史事实。
