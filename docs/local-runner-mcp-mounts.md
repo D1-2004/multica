@@ -97,8 +97,12 @@ The sandbox daemon advertises `runner-mcp-mounts-v1`. For each injected server,
 it preserves the dynamic server name and path while rewriting only the public
 Multica origin to the sandbox localhost relay. The relay then uses the existing
 daemon/server channel; no MCP name, command, URL, or secret is baked into the
-sandbox image. A stale daemon fails the claim before provider startup instead
-of leaving OpenCode to time out against the public URL.
+sandbox image. Daemons without mount routing use the legacy composition path:
+tasks with no effective dynamic mounts keep their Agent-owned MCP configuration
+and can still run. If that path produces a dynamic mount, a stale daemon fails
+the claim before provider startup instead of leaving OpenCode to time out against
+the public URL. Daemons supporting both mount routing and managed relay routes
+continue to receive the native managed configuration.
 
 Runner verifies the fingerprint again before using its effective configuration.
 The built-in `local_machine` Server executes JSON-RPC in the CLI process. Other
