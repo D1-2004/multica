@@ -154,6 +154,7 @@ SET memory_text = CASE WHEN @replace_text::boolean THEN @memory_text ELSE memory
     last_flush_meta = @last_flush_meta,
     last_flushed_at = now(),
     history_resume_before = NULL,
+    attempt_count = 0,
     updated_at = now()
 WHERE id = @id
   AND lease_token = @lease_token

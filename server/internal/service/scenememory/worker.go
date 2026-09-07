@@ -132,7 +132,7 @@ func (w *Worker) ProcessNext(ctx context.Context) (bool, error) {
 			}
 			return true, err
 		}
-		if retryErr := w.store.Retry(ctx, row, RetryDelay(row.AttemptCount), code, err.Error()); retryErr != nil && !errors.Is(retryErr, ErrLeaseLost) {
+		if retryErr := w.store.Retry(ctx, row, RetryDelayFor(code, row.AttemptCount), code, err.Error()); retryErr != nil && !errors.Is(retryErr, ErrLeaseLost) {
 			return true, retryErr
 		}
 		return true, err

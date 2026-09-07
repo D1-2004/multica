@@ -27,6 +27,7 @@ const (
 	ErrorRouteInactive = "ROUTE_INACTIVE"
 	ErrorConfig        = "CONFIG"
 	ErrorIncomplete    = "INCOMPLETE"
+	ErrorLLMTimeout    = "LLM_TIMEOUT"
 )
 
 // KindFromChatType maps a DingTalk/dispatch chat type onto a Scene kind.

@@ -212,12 +212,19 @@ func traceFlushGeneration(t *langfuse.Trace, round int, messages []openai.ChatCo
 		return nil
 	}
 	return t.StartObservation(langfuse.ObservationOptions{
-		Type:            langfuse.TypeGeneration,
-		Name:            fmt.Sprintf("memory_flush.round.%d", round+1),
-		Model:           flushModel,
-		ModelParameters: map[string]any{"tools": []string{"memory_flush_commit"}},
-		Input:           messages,
-		Metadata:        map[string]any{"round": round + 1},
+		Type:  langfuse.TypeGeneration,
+		Name:  fmt.Sprintf("memory_flush.round.%d", round+1),
+		Model: flushModel,
+		ModelParameters: map[string]any{
+			"tools":                 []string{"memory_flush_commit"},
+			"enable_thinking":       false,
+			"tool_choice":           "required",
+			"reasoning_effort":      "none",
+			"max_completion_tokens": flushMaxCompletionTokens,
+			"temperature":           flushTemperature,
+		},
+		Input:    messages,
+		Metadata: map[string]any{"round": round + 1},
 	})
 }
 

@@ -57,6 +57,9 @@ func TestMemoryFlusherResumesPageAndOnlyFinishesAtTarget(t *testing.T) {
 	if middle.DirtyRevision == middle.FlushedRevision || middle.HistoryResumeBefore.Valid || middle.MemoryText != "existing fact" {
 		t.Fatalf("first page lost pending/text state: %+v", middle)
 	}
+	if middle.AttemptCount != 0 {
+		t.Fatalf("successful page must reset attempt_count, got %d", middle.AttemptCount)
+	}
 	// A new flusher/store instance has no process-local history from page one.
 	store = NewStore(db.New(pool))
 	row, err = store.Claim(ctx)
