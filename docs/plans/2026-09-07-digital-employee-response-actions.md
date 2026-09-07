@@ -1,6 +1,6 @@
 # 数字员工统一响应 Action 与 AI 标识控制
 
-状态：代码实施完成，Multica 预发与 FC 基础验收通过；Router 迁移、真实钉钉链路和本机 Daemon 实机门禁受阻。Coordinator 默认值未修改，新响应策略仍关闭。
+状态：代码实施完成，Multica 预发与 FC 基础验收通过；东翔测试号真实沙箱已验证发送、引用回复及任务间策略刷新，完整响应链路仍待 Router 迁移与部署。用户明确取消本机 Daemon 实机验证。Coordinator 默认值未修改，新响应策略仍关闭。
 
 ## 目标与执行归属
 
@@ -30,12 +30,13 @@ Runtime 能力名 `dws_message_policy_v1`。任务下发可选 `dingtalk_message
 - [x] Multica dispatch：短循环/Issue ACK/静默/失败/合窗/降级/任务结束接入。
 - [x] Daemon/Runtime：DWS 参数 hook、回执与能力声明、候选构建；FC 冷启动和热复用 canary 通过。
 - [x] 跨项目契约文档、定向测试、构建和 FC 基础兼容验证。
-- [ ] 本机旧/新 Daemon 实机矩阵：本机候选 CLI 启动被 macOS 终止，尚未通过。
+- [x] 验收范围调整：按用户要求不再运行本机 Daemon 实机矩阵；不将 FC 结果表述为本机矩阵通过。
+- [x] 真实沙箱外发：东翔测试号成功发送并独立回读，覆盖普通消息、引用回复、冲突参数及热任务策略刷新；详细证据见 [沙箱验收记录](2026-09-07-response-actions-sandbox-verification.md)。
 - [ ] 预发能力/消息回读与延迟对照，满足门禁后才启用。
 
 ## 验收
 
-首次已读/思考中 P95 不劣于同环境基线；202 路径只有接单持久化，不执行 DWS/模型。覆盖单群聊、reply/issue/silence、失败取消、合窗忙窗、重复 callback、并发领取和重启、未知发送不重复、AI 标识和正文保真。旧/新 Daemon 与候选 FC Runtime 分别验证。实际未执行或受环境阻塞的门禁原样记录，不能以构建成功代替真实投递。
+首次已读/思考中 P95 不劣于同环境基线；202 路径只有接单持久化，不执行 DWS/模型。覆盖单群聊、reply/issue/silence、失败取消、合窗忙窗、重复 callback、并发领取和重启、未知发送不重复、AI 标识和正文保真。本轮按用户调整，以东翔测试号绑定的预发测试智能体在候选 FC Runtime 验证真实沙箱：先检查可信策略、身份与权限，再发送独立探针并回读，切换标识开关验证下一任务策略刷新，完成后恢复测试员工原配置。实际未执行或受环境阻塞的门禁原样记录，不能以构建成功代替真实投递。
 
 ## 结果与遗留
 
@@ -55,8 +56,8 @@ Runtime 能力名 `dws_message_policy_v1`。任务下发可选 `dingtalk_message
 - Multica feature：819fc10e7026a68c96c7ad73dbf29d004f007584，已推送内网Code；CR 36002276，预发 Run 3107073778。
 - 预发 release 在独立 worktree 保留已有 collect 修复，合并为 9e4f354a5194a57dd4b6a11dcc05c1296a265ad9，构建和8项DB定向测试通过，已推送并确认 CODE_MERGE_RESOLVE_CONFLICT。
 - Router：222845d2ef47bed446c38670b3c54498e6cd69a0，已推送；CR 36002519。171项测试（含4项真实PG故障恢复/非阻塞投递测试）通过。新增SQL 024–029，部署前须迁移；当前缺少迁移连接配置位置，已询问用户，未部署Router。
-- Runtime：3c7abe73c165030f1fa06b661134d0b4dc07e1e5，Pipeline 297979 / Run 69575286，独立分支PUSH触发，固定Multica feature提交；构建进行中。
-- DWS 环境仍为原prod，没有真实发消息或切换。新响应策略默认关闭。
+- Runtime 初次候选 Run 69575286 在清理 sandbox 时失败，已修复并由 Run 69597298 构建成功，详见下文。
+- 本机 DWS 环境恢复为原prod；后续真实外发在预发平台绑定员工的 FC 沙箱中完成。新响应策略默认关闭。
 
 ## 当前交付状态
 
@@ -65,13 +66,13 @@ Runtime 能力名 `dws_message_policy_v1`。任务下发可选 `dingtalk_message
 - 私有候选 Runtime c59f8a53-6590-4c1b-b959-866b8f728af7 位于测试空间 d4f9ceed-d114-4312-bb30-dd791aee039b；模板、provider、channel、visibility、能力均已读回。
 - 三条真实 FC 任务完成，均实际调用终端且exit_code=0：冷启动932f8de8-337b-4286-b49f-f4dcfc0d7a8e，热状态写入8cf2dcf7-f9a0-4169-b7b1-b9c0e8b75b34，热状态读取/清理e9c89742-314d-4ff1-a525-d7d2ed0f2a9d。后两轮随机哨兵一致、Task ID每轮更新；canary员工d9cdd8d5-9a9b-423b-8778-8fbd53717b75已归档，临时文件已删除。
 - 正确预发 Diamond unit为pre，已确认监听仅两台预发主机；只增加dd95d8b615567a87的provider映射及消息策略能力allowlist，两个监听均确认推送。response_policy_enabled仍false，未修改生产配置。
-- 原测试员工e2293e9e-1e79-4926-b0e6-da4cb693add0保持原Runtime48ac8d56-8c72-4a11-8f8d-ee5a27c28635，AI标识false、Coordinator及task-finished原值保持不变。
+- 用户明确授权后，使用测试员工e2293e9e-1e79-4926-b0e6-da4cb693add0切候选Runtime完成真实沙箱验收，五条探针均送达且各出现一次；程序出站参数与false/true/false策略一致。原Runtime、热会话和AI标识设置已恢复并读回；Coordinator及task-finished未修改，完整响应策略仍关闭，过程与证据见沙箱验收记录。
 
 ## 阻塞与下一步
 
 1. Router SQL024–029尚未执行，CR36002519尚未提交部署；已请求用户提供迁移用数据库连接配置的文件位置或Keychain条目，不要求在聊天中提供密码。
-2. DWS新建隔离测试会话在写入前被PAT_ORG_POLICY_DENIED拒绝，scope=contact.user:get-self、tool=get_current_user_profile；需要组织管理员授权后才能继续真实外发/标识回读。未绕过策略或改用其他身份发送。
-3. 本机候选CLI --version返回SIGKILL/137，AMFI记录过CT签名错误；签名验证及正常开发证书重签后仍未能启动，未完成真实本地Daemon矩阵。未修改系统安全设置。
-4. 因此未声称平台回复、思考中撤除、真实AI标识及P50/P95全链路已验收；保持新响应开关关闭。
+2. 本机配角身份此前遭PAT_ORG_POLICY_DENIED；用户指定东翔测试号后，改用其平台已绑定身份在真实沙箱正常完成get-self、建群、发送和回读，此历史拒绝不再阻塞沙箱验收。AI角标仍须客户端展示证据：原始回读的messageAiSendFlag两种策略均为DWS，不能用来源字段宣称视觉效果通过。
+3. 本机候选CLI曾返回SIGKILL/137；用户已明确取消本机验证，此项不再作为本次验收阻塞，保留历史事实。
+4. 未声称服务端业务回复、思考中撤除、客户端AI角标及P50/P95全链路已验收；保持新响应开关关闭。
 
-收到缺失配置并解除组织策略后：先执行Router新增迁移并部署CR，再在已确认的测试员工/新会话上验证端到端与延迟；按修订号启用仅候选Runtime支持的新策略。
+收到缺失数据库配置后：先执行Router新增迁移并部署CR，再在已确认的测试员工/新会话上验证完整响应链路与延迟；满足门禁后按修订号启用仅候选Runtime支持的新策略。
