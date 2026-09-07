@@ -19,6 +19,7 @@ export type DetailTab =
   | "instructions"
   | "okr"
   | "skills"
+  | "dsh_plugins"
   | "mcp_config"
   | "composio_mcp"
   | "integrations"
@@ -41,6 +42,7 @@ export type AgentTabLabelKey =
   | "instructions"
   | "okr"
   | "skills"
+  | "dsh_plugins"
   | "mcp_config"
   | "composio_mcp"
   | "integrations"
@@ -80,6 +82,7 @@ export const AGENT_CONFIG_GROUPS: readonly AgentConfigGroup[] = [
     labelKey: "capabilities",
     items: [
       { id: "skills", labelKey: "skills" },
+      { id: "dsh_plugins", labelKey: "dsh_plugins" },
       { id: "mcp_config", labelKey: "mcp_config" },
       { id: "composio_mcp", labelKey: "composio_mcp" },
     ],

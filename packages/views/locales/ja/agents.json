@@ -299,6 +299,7 @@
     "instructions": "指示",
     "okr": "OKR",
     "skills": "スキル",
+    "dsh_plugins": "プラグイン",
     "environment": "環境",
     "custom_args": "カスタム引数",
     "mcp_config": "MCP ツール",
@@ -943,6 +944,24 @@
       "add_dialog_confirm_other": "スキル {{count}} 件を追加",
       "add_dialog_cancel": "キャンセル",
       "add_failed_toast": "スキルを追加できませんでした"
+    },
+    "dsh_plugins": {
+      "intro": "このエージェントの DeepSeek Harness プロファイルがタスク開始時に読み込むプラグイン。まずワークスペースに導入し、その中から起動時に使うものを紐付けてください。",
+      "attached_title": "紐付け済みプラグイン",
+      "attached_hint": "{{runtime}} でタスクが始まるときにプロファイルのバンドル一覧へ組み込まれます。",
+      "add_action": "紐付け",
+      "add_title": "プラグインを紐付け",
+      "add_description": "このワークスペースに導入済みのプラグインから選びます。",
+      "add_none_available": "導入済みのプラグインはすべて紐付け済みです。",
+      "attach_action": "紐付け",
+      "loading": "紐付け済みプラグインを読み込み中…",
+      "empty_title": "紐付けられたプラグインはありません",
+      "empty_hint": "紐付けると、このエージェントの起動時に読み込まれます。",
+      "empty_hint_none_imported": "このワークスペースにはまだプラグインが導入されていません。DSH プラグインのページから導入してください。",
+      "no_description": "説明なし",
+      "toggle_aria": "{{name}} を有効化",
+      "remove_aria": "{{name}} の紐付けを解除",
+      "save_failed_toast": "エージェントのプラグインを更新できませんでした。"
     },
     "integrations": {
       "intro": "このエージェントを Bot として外部チャットプラットフォームに接続します。デジタル従業員アカウントは別に管理します。",

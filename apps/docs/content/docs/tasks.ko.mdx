@@ -95,6 +95,7 @@ heartbeat가 정상인 런타임은 장시간 태스크도 실행할 수 있으�
 | `iteration_limit` | 실행 반복 횟수 상한에 도달함 | 이슈 범위 축소 |
 | `agent_blocked` | 에이전트가 계속 진행할 수 없다고 직접 보고함 | 댓글의 설명에 따라 정보 보충 |
 | `api_invalid_request` | 플랫폼 API가 잘못된 요청을 거부함 | 재시도하고 반복되면 문제 신고 |
+| `dsh_plugin_unavailable` | 에이전트에 연결된 DSH 플러그인을 내려받거나 불러오지 못해 실행이 시작되지 않음 | 에이전트의 '플러그인' 탭에서 확인하거나 끄기. 재시도만으로는 해결되지 않음 |
 | `codex_semantic_inactivity` | Codex가 오랫동안 유효한 출력을 내지 않아 멈춘 것으로 판단됨 | 재시도하거나 Codex 정체 timeout 조정 |
 
 **도구 측(`agent_error.*`, 접두사 생략)**

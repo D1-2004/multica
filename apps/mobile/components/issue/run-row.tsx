@@ -169,6 +169,7 @@ const FAILURE_REASON_LABEL: Record<string, string> = {
   agent_blocked: "Needs input",
   api_invalid_request: "Request rejected",
   skill_bundle_unavailable: "Skill download failed",
+  dsh_plugin_unavailable: "Plugin load failed",
 
   "agent_error.provider_auth_or_access": "Auth failed",
   "agent_error.provider_quota_limit": "Quota exhausted",

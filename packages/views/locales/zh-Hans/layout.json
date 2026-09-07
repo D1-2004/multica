@@ -13,6 +13,7 @@
     "runtimes": "运行时",
     "runners": "我的电脑",
     "skills": "Skills",
+    "dsh_plugins": "DSH 插件",
     "settings": "设置"
   },
   "tab": {
@@ -23,6 +24,7 @@
     "member": "成员",
     "squad": "小队",
     "skill": "Skill",
+    "dsh_plugin": "DSH 插件",
     "machine": "机器",
     "runtime": "运行时",
     "attachment": "附件",

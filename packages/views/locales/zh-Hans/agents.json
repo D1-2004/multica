@@ -307,6 +307,7 @@
     "instructions": "指令",
     "okr": "OKR",
     "skills": "Skills",
+    "dsh_plugins": "插件",
     "environment": "环境变量",
     "custom_args": "自定义参数",
     "mcp_config": "MCP 工具",
@@ -1087,6 +1088,24 @@
       "add_dialog_confirm_other": "添加 {{count}} 个 skill",
       "add_dialog_cancel": "取消",
       "add_failed_toast": "添加 skill 失败"
+    },
+    "dsh_plugins": {
+      "intro": "这个智能体的 DeepSeek Harness Profile 在每次任务开始时加载的插件。请先把插件导入工作区，再在这里挂载需要随该智能体启动的插件。",
+      "attached_title": "已挂载的插件",
+      "attached_hint": "任务在 {{runtime}} 上启动时会组装进 Profile 的 bundle 列表。",
+      "add_action": "挂载",
+      "add_title": "挂载插件",
+      "add_description": "从已导入这个工作区的插件里选择。",
+      "add_none_available": "已导入的插件都已经挂载到这个智能体了。",
+      "attach_action": "挂载",
+      "loading": "正在读取已挂载的插件…",
+      "empty_title": "还没有挂载插件",
+      "empty_hint": "挂载一个，这个智能体启动时就会带上它。",
+      "empty_hint_none_imported": "这个工作区还没有导入任何插件，请先到 DSH 插件页面导入。",
+      "no_description": "没有描述",
+      "toggle_aria": "启用 {{name}}",
+      "remove_aria": "移除 {{name}}",
+      "save_failed_toast": "更新智能体的插件失败。"
     },
     "integrations": {
       "intro": "将智能体作为机器人接入外部聊天平台。数字员工账号在“数字员工”中单独管理。",

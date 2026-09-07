@@ -56,6 +56,8 @@ function workspaceScoped(slug: string) {
       `${ws}/runtimes/${encode(machineId)}/runtime/${encode(runtimeId)}`,
     skills: () => `${ws}/skills`,
     skillDetail: (id: string) => `${ws}/skills/${encode(id)}`,
+    dshPlugins: () => `${ws}/dsh-plugins`,
+    dshPluginDetail: (id: string) => `${ws}/dsh-plugins/${encode(id)}`,
     settings: () => `${ws}/settings`,
     settingsIntegrations: () => `${ws}/settings?tab=integrations`,
     settingsLabels: () => `${ws}/settings?tab=labels`,

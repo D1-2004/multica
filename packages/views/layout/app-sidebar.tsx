@@ -136,6 +136,7 @@ type NavKey =
   | "runtimes"
   | "runners"
   | "skills"
+  | "dshPlugins"
   | "settings";
 
 // Static schema (key only) — labels resolved at render via useT("layout"),
@@ -154,6 +155,7 @@ type NavLabelKey =
   | "runtimes"
   | "runners"
   | "skills"
+  | "dsh_plugins"
   | "settings";
 
 type WorkspaceNavItem = {
@@ -204,6 +206,7 @@ const workspaceDomains: WorkspaceDomain[] = [
     items: [
       { key: "runtimes", labelKey: "runtimes" },
       { key: "runners", labelKey: "runners" },
+      { key: "dshPlugins", labelKey: "dsh_plugins" },
     ],
   },
   {

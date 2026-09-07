@@ -95,6 +95,7 @@ The failure reasons shown in the execution log and usage stats fall into two gro
 | `iteration_limit` | Hit the iteration cap for a run | Narrow the issue scope |
 | `agent_blocked` | The agent reported it cannot proceed | Provide what its comment asked for |
 | `api_invalid_request` | The platform API rejected an invalid request | Retry; report the problem if it recurs |
+| `dsh_plugin_unavailable` | A DSH plugin bound to the agent could not be fetched or loaded, so the run never started | Check or turn off the plugin in the agent's Plugins tab; retrying alone will not help |
 | `codex_semantic_inactivity` | Codex produced no meaningful output for too long and was judged stalled | Retry, or adjust the Codex inactivity timeout |
 
 **Tool side (`agent_error.*`, prefix omitted)**

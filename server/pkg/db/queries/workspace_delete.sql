@@ -85,6 +85,9 @@ ws_skills AS MATERIALIZED (
 ws_squads AS MATERIALIZED (
     SELECT id FROM squad WHERE workspace_id = $1
 ),
+ws_dsh_plugins AS MATERIALIZED (
+    SELECT id FROM dsh_plugin WHERE workspace_id = $1
+),
 ws_tasks AS MATERIALIZED (
     SELECT id
     FROM agent_task_queue
@@ -215,6 +218,17 @@ deleted_agent_skills AS (
 deleted_skill_files AS (
     DELETE FROM skill_file
     WHERE skill_id IN (SELECT id FROM ws_skills)
+),
+-- DSH plugins carry no foreign keys, so their rows and the agent bindings that
+-- reference them have to be removed here or they outlive the workspace.
+deleted_agent_dsh_plugins AS (
+    DELETE FROM agent_dsh_plugin
+    WHERE agent_id IN (SELECT id FROM ws_agents)
+       OR dsh_plugin_id IN (SELECT id FROM ws_dsh_plugins)
+),
+deleted_dsh_plugins AS (
+    DELETE FROM dsh_plugin
+    WHERE workspace_id = $1
 ),
 deleted_daemon_connections AS (
     DELETE FROM daemon_connection

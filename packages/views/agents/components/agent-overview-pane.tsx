@@ -35,6 +35,7 @@ import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
+import { DshPluginsTab } from "./tabs/dsh-plugins-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { LLMTraceTab } from "./tabs/llm-trace-tab";
@@ -171,6 +172,7 @@ export function AgentOverviewPane({
       ...group,
       items: group.items.filter((item) => {
         if (item.id === "mcp_config") return showMcp;
+        if (item.id === "dsh_plugins") return runtime?.provider === "dsh";
         if (item.id === "composio_mcp") return showComposioMcp;
         if (item.id === "integrations") return botIntegrationsConfigured;
         if (item.id === "mcp_access" || item.id === "a2a") {
@@ -468,6 +470,13 @@ export function AgentOverviewPane({
                   )}
                   {effectiveView === "skills" && (
                     <SkillsTab
+                      agent={agent}
+                      runtime={runtime}
+                      canEdit={canEdit}
+                    />
+                  )}
+                  {effectiveView === "dsh_plugins" && (
+                    <DshPluginsTab
                       agent={agent}
                       runtime={runtime}
                       canEdit={canEdit}

@@ -1690,6 +1690,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// unchanged — this one is purely additive.
 	r.Get("/api/attachments/{id}/signed-download", h.DownloadAttachmentWithCapability)
 
+	// A stored DSH plugin package, fetched by a sandbox process that sends no
+	// Authorization header. Same reasoning as the capability download above:
+	// the short-lived, single-plugin signature in the query is the credential,
+	// and it is only minted while composing a task for an agent already bound
+	// to that plugin.
+	r.Get("/api/dsh-plugins/{id}/artifact", h.DownloadDshPluginArtifact)
+
 	// Avatar serving. Public for the same reason as the capability download
 	// above: the auth cookie is SameSite=Strict, so an auth-gated URL cannot
 	// be a native <img src> from Desktop / mobile webview or a split-origin
@@ -2491,6 +2498,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)
+					// Which DSH plugins this agent boots with. The daemon
+					// composes these into the profile the sandbox builds.
+					r.Get("/dsh-plugins", h.ListAgentDshPlugins)
+					r.Put("/dsh-plugins", h.SetAgentDshPlugins)
+					r.Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
 					// OKRs materialize as workspace labels the agent tags
 					// issues with; the catalog is injected into its prompt.
 					r.Get("/okrs", h.ListAgentOKRs)
@@ -2543,6 +2555,33 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Autosaved configuration, including edits the user has typed
 				// but not sent. Read back through the list above.
 				r.Put("/{sessionId}/draft", h.SaveAgentBuilderDraft)
+			})
+
+			// DSH plugins. DeepSeek Harness has no registry of its own —
+			// `dsh plugin add` forwards to pnpm — so browse reads a cached
+			// community index plus the npm registry's own search endpoint,
+			// and import records a pinned package reference.
+			r.Route("/api/dsh-plugins", func(r chi.Router) {
+				r.Get("/", h.ListDshPlugins)
+				r.Post("/", h.ImportDshPlugin)
+				r.Get("/bindings", h.ListDshPluginBindings)
+				r.Get("/catalog", h.BrowseDshPluginCatalog)
+				r.Get("/catalog/categories", h.ListDshPluginCatalogCategories)
+				r.With(handler.RequireHumanActor).Post("/catalog/refresh", h.RefreshDshPluginCatalog)
+				r.Get("/registry-search", h.SearchDshPluginRegistry)
+				// A package that arrives as a file rather than a reference.
+				r.Post("/upload", h.UploadDshPlugin)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetDshPlugin)
+					r.Put("/", h.UpdateDshPlugin)
+					r.Delete("/", h.DeleteDshPlugin)
+					r.Get("/update", h.CheckDshPluginUpdate)
+					// What is actually inside the package. Read from the
+					// stored bytes, so a viewer and the sandbox can never
+					// disagree about what was imported.
+					r.Get("/files", h.ListDshPluginFiles)
+					r.Get("/file", h.GetDshPluginFile)
+				})
 			})
 
 			// Skills

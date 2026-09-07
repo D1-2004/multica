@@ -13,6 +13,7 @@
     "runtimes": "Runtimes",
     "runners": "My Computer",
     "skills": "Skills",
+    "dsh_plugins": "DSH Plugins",
     "settings": "Settings"
   },
   "tab": {
@@ -23,6 +24,7 @@
     "member": "Member",
     "squad": "Squad",
     "skill": "Skill",
+    "dsh_plugin": "DSH Plugin",
     "machine": "Machine",
     "runtime": "Runtime",
     "attachment": "Attachment",

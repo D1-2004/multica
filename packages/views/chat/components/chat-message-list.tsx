@@ -1052,6 +1052,9 @@ function FailureBubble({
     skill_bundle_unavailable: t(
       ($) => $.message_list.failure.skill_bundle_unavailable,
     ),
+    dsh_plugin_unavailable: t(
+      ($) => $.message_list.failure.dsh_plugin_unavailable,
+    ),
     "agent_error.provider_network": t(
       ($) => $.message_list.failure.provider_network,
     ),

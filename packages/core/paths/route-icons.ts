@@ -34,6 +34,7 @@ export type RouteIconName =
   | "Laptop"
   | "Server"
   | "BookOpenText"
+  | "Blocks"
   | "Settings"
   | "File"
   | "FileText"
@@ -59,6 +60,7 @@ export type NavLabelKey =
   | "runtimes"
   | "runners"
   | "skills"
+  | "dsh_plugins"
   | "settings";
 
 /** Stable identifier for each workspace navigation page. */
@@ -76,6 +78,7 @@ export type WorkspacePageKey =
   | "runtimes"
   | "runners"
   | "skills"
+  | "dshPlugins"
   | "settings";
 
 export interface WorkspacePage {
@@ -105,6 +108,11 @@ export const WORKSPACE_PAGES: Record<WorkspacePageKey, WorkspacePage> = {
   runtimes: { segment: "runtimes", icon: "Monitor", navKey: "runtimes" },
   runners: { segment: "runners", icon: "Laptop", navKey: "runners" },
   skills: { segment: "skills", icon: "BookOpenText", navKey: "skills" },
+  dshPlugins: {
+    segment: "dsh-plugins",
+    icon: "Blocks",
+    navKey: "dsh_plugins",
+  },
   settings: { segment: "settings", icon: "Settings", navKey: "settings" },
 };
 
