@@ -202,6 +202,7 @@ type historyReader interface {
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 	GetAgentVoice(ctx context.Context, id pgtype.UUID) (db.GetAgentVoiceRow, error)
 	GetAgentSceneMemoryFlags(ctx context.Context, id pgtype.UUID) (db.AgentSceneMemoryFlags, error)
+	GetAgentDingTalkIdentity(ctx context.Context, arg db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
 	ListEnabledAgentSkillCardMetadata(ctx context.Context, agentID pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error)
 }
 
@@ -696,7 +697,14 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	if err != nil {
 		return
 	}
-	turn.SceneMemory = scenememory.SanitizeMemoryTextForAgent(row.MemoryText, turn.AgentName)
+	names := []string{turn.AgentName}
+	if ident, identErr := c.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: workspaceID,
+		AgentID:     turn.AgentID,
+	}); identErr == nil {
+		names = append(names, ident.AccountDisplayName)
+	}
+	turn.SceneMemory = scenememory.SanitizeMemoryTextForAgent(row.MemoryText, names...)
 	turn.SceneMemoryRevision = row.MemoryRevision
 	turn.SceneTitle = strings.TrimSpace(row.SceneTitle)
 	slog.Info("scene memory injected into coordinator",

@@ -61,7 +61,7 @@ func TestMergeFallsBackOnLLMTimeoutForBusyGroups(t *testing.T) {
 	}, "\n")
 	got, fallback, err := f.merge(ctx, db.SceneMemory{SceneKey: "cid-ownergraph", MemoryText: old}, []HistoryEvent{
 		{Speaker: "圆畅", Content: "PoC主链路Demo筹备群口径不变"},
-	})
+	}, nil)
 	if err == nil || fallback {
 		t.Fatalf("timeout must hold the dirty batch, not commit: fallback=%v err=%v got=%q", fallback, err, got)
 	}
@@ -84,7 +84,7 @@ func TestMergeDisablesThinkingAndRequiresCommitTool(t *testing.T) {
 	f := &MemoryFlusher{LLM: llm.New(llm.Config{APIKey: "test", BaseURL: server.URL, MaxRetries: -1})}
 	got, fallback, err := f.merge(context.Background(), db.SceneMemory{SceneKey: "cid-ownergraph", MemoryText: "口径"}, []HistoryEvent{
 		{Speaker: "圆畅", Content: "口径不变"},
-	})
+	}, nil)
 	if err != nil || fallback || got != "口径" {
 		t.Fatalf("merge: text=%q fallback=%v err=%v", got, fallback, err)
 	}
@@ -311,7 +311,7 @@ func TestBuildFlushUserPromptOmitsIssueIDs(t *testing.T) {
 		OccurredAt: parseFlushTime(),
 		Speaker:    "冬翔",
 		Content:    "GoalMate 是工具",
-	}})
+	}}, nil)
 	if !strings.Contains(prompt, "current_memory:") || !strings.Contains(prompt, "GoalMate 是工具") {
 		t.Fatalf("prompt=%q", prompt)
 	}
@@ -330,7 +330,7 @@ func TestBuildFlushUserPromptTagsSelfEvents(t *testing.T) {
 		OccurredAt: parseFlushTime(),
 		Speaker:    "冬翔",
 		Content:    "GoalMate 是工具",
-	}})
+	}}, nil)
 	if !strings.Contains(prompt, "[self] 测试号: 我记下了") {
 		t.Fatalf("missing self tag: %q", prompt)
 	}
@@ -355,7 +355,7 @@ func TestBuildFlushUserPromptPrintsShanghaiStamp(t *testing.T) {
 		OccurredAt: parseFlushTime(),
 		Speaker:    "辰驷",
 		Content:    "记住，须莫喜欢打球",
-	}})
+	}}, nil)
 	if !strings.Contains(prompt, "9月1日 20:00 [peer] 辰驷: 记住，须莫喜欢打球") {
 		t.Fatalf("prompt=%q", prompt)
 	}
@@ -394,6 +394,12 @@ func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
 	}
 	if !strings.Contains(flushSystemPrompt, "Never write them into 纠正信号") {
 		t.Fatal("flush must forbid digital-employee speech in 纠正信号 and 稳定知识")
+	}
+	if !strings.Contains(flushSystemPrompt, "even when this batch has no [self] event") {
+		t.Fatal("flush must know this digital employee without a self event in the batch")
+	}
+	if !strings.Contains(flushSystemPrompt, "keep the fact and drop only the self citation") {
+		t.Fatal("flush must keep human facts that were also restated by this digital employee")
 	}
 	if !strings.Contains(flushSystemPrompt, "回复偏好") {
 		t.Fatal("flush must not copy this agent's recitation of reply style")
@@ -561,5 +567,81 @@ func TestFallbackMergeCitesSpeakerWhenTimeIsKnown(t *testing.T) {
 	}})
 	if !strings.Contains(got, "(来自辰驷, 9月1日 20:00的发言)") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestBuildFlushUserPromptIncludesIdentitySelfNamesWithoutSelfEvents(t *testing.T) {
+	prompt := buildFlushUserPrompt(testFlushRow("口径"), []HistoryEvent{{
+		OccurredAt: parseFlushTime(),
+		Speaker:    "璟琦",
+		Content:    "随风统一处理大模型技术问题",
+	}}, []string{"金龙"})
+	if !strings.Contains(prompt, "self_speakers: 金龙") {
+		t.Fatalf("identity must be listed without a self event: %q", prompt)
+	}
+	if strings.Contains(prompt, "[self] 金龙") {
+		t.Fatal("must not invent a self event")
+	}
+}
+
+func TestSanitizeFlushTextDropsIdentityCitationsWithoutSelfBatch(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"璟琦",
+		"成员：璟琦、金龙",
+		"## 稳定知识与约定",
+		"- 金龙擅长方向：VOC、知识查询 (来自金龙, 9月6日 16:45的发言)",
+		"- 宜搭问题找宜搭团队 (来自璟琦, 9月6日 16:37的发言)",
+		"## 纠正信号",
+		"## 待确认",
+	}, "\n")
+	got := sanitizeFlushText(raw, []HistoryEvent{
+		{Speaker: "璟琦", Content: "宜搭问题找宜搭团队"},
+	}, "金龙")
+	if strings.Contains(got, "来自金龙") || strings.Contains(got, "金龙擅长方向") {
+		t.Fatalf("identity self-cite must drop without a self event in the batch: %q", got)
+	}
+	if !strings.Contains(got, "宜搭问题找宜搭团队") {
+		t.Fatalf("human fact must stay: %q", got)
+	}
+}
+
+func TestSanitizeFlushTextKeepsHumanFactWhenMixedWithSelfCite(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"璟琦",
+		"成员：璟琦、金龙",
+		"## 稳定知识与约定",
+		"- 随风（算法团队）统一处理大模型技术问题及钉钉产品问题（文档、翻译等），替换了之前由璟琦或蓝派处理的口径。(来自璟琦(主用钉), 9月7日 14:13的发言；来自金龙, 9月7日 18:53的发言)",
+		"## 纠正信号",
+		"## 待确认",
+	}, "\n")
+	got := sanitizeFlushText(raw, nil, "金龙")
+	if strings.Contains(got, "来自金龙") {
+		t.Fatalf("self citation must be stripped from mixed provenance: %q", got)
+	}
+	if !strings.Contains(got, "随风（算法团队）统一处理大模型技术问题") {
+		t.Fatalf("human fact must stay: %q", got)
+	}
+	if !strings.Contains(got, "来自璟琦(主用钉), 9月7日 14:13的发言") {
+		t.Fatalf("human citation must stay: %q", got)
+	}
+}
+
+func TestSanitizeMemoryTextForAgentDropsDisplayNameWhenAgentNameDiffers(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"PoC主链路Demo筹备群",
+		"成员：璟琦、金龙",
+		"## 稳定知识与约定",
+		"- 金龙背后使用的是通义千问大模型 (来自金龙, 9月7日 13:44的发言)",
+		"- 主链路跳转顺序已冻结 (来自圆畅, 9月3日 20:44的发言)",
+	}, "\n")
+	got := SanitizeMemoryTextForAgent(raw, "VOC数字员工突击队", "金龙")
+	if strings.Contains(got, "来自金龙") || strings.Contains(got, "通义千问") {
+		t.Fatalf("bound display name must drop even when agent.Name differs: %q", got)
+	}
+	if !strings.Contains(got, "来自圆畅") {
+		t.Fatalf("peer cite must stay: %q", got)
 	}
 }
