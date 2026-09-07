@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -44,10 +43,8 @@ type DWSRangeReader struct {
 }
 
 const (
-	maxHistoryPages    = 8
 	historyLookback    = 14 * 24 * time.Hour
 	historyReadTimeout = 40 * time.Second
-	historyPageReserve = 3 * time.Second
 )
 
 func NewDWSRangeReader(cfg DWSRangeConfig) *DWSRangeReader {
@@ -72,9 +69,9 @@ func NewDWSRangeReader(cfg DWSRangeConfig) *DWSRangeReader {
 	}
 }
 
-func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]HistoryEvent, error) {
+func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) (HistoryPage, error) {
 	if r == nil || r.queries == nil || r.issuer == nil {
-		return nil, errors.New("scene memory DWS reader is not configured")
+		return HistoryPage{}, errors.New("scene memory DWS reader is not configured")
 	}
 	readCtx, cancel := context.WithTimeout(ctx, historyReadTimeout)
 	defer cancel()
@@ -83,15 +80,15 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, &FlushError{
+			return HistoryPage{}, &FlushError{
 				Code: ErrorRouteInactive,
 				Err:  fmt.Errorf("DWS identity is not bound"),
 			}
 		}
-		return nil, fmt.Errorf("resolve DWS identity: %w", err)
+		return HistoryPage{}, fmt.Errorf("resolve DWS identity: %w", err)
 	}
 	if strings.TrimSpace(identity.OrgID) != strings.TrimSpace(row.OrgID) {
-		return nil, &FlushError{
+		return HistoryPage{}, &FlushError{
 			Code: ErrorRouteInactive,
 			Err:  fmt.Errorf("DWS identity org does not match scene"),
 		}
@@ -106,125 +103,63 @@ func (r *DWSRangeReader) Read(ctx context.Context, row db.SceneMemory) ([]Histor
 		UID:    identity.DwsUid, OrgID: identity.OrgID, TTLSeconds: 120,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("issue DWS history identity: %w", err)
+		return HistoryPage{}, fmt.Errorf("issue DWS history identity: %w", err)
 	}
 	credential, err := r.redeem.Redeem(readCtx, issued.ContextToken)
 	if err != nil {
-		return nil, err
+		return HistoryPage{}, err
 	}
 	dir, err := os.MkdirTemp("", "multica-scene-memory-dws-")
 	if err != nil {
-		return nil, errors.New("create isolated DWS history directory")
+		return HistoryPage{}, errors.New("create isolated DWS history directory")
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	if err := os.Chmod(dir, 0o700); err != nil {
-		return nil, errors.New("secure isolated DWS history directory")
+		return HistoryPage{}, errors.New("secure isolated DWS history directory")
 	}
 	if err := r.cli.Exchange(readCtx, dir, credential); err != nil {
-		return nil, err
+		return HistoryPage{}, err
 	}
-	const limit = 30
-	now := time.Now().UTC()
+	// A claim commits one DWS page. Its exact continuation is committed with
+	// the memory, so a page limit or a restart never loses newer evidence.
+	limit := flushBatchEvents
+	if row.SceneKind == KindGroup {
+		limit = 30
+	}
 	bootstrap := false
 	if flags, flagErr := r.queries.GetAgentSceneMemoryFlags(readCtx, row.AgentID); flagErr == nil {
 		bootstrap = flags.BootstrapEnabled
 	}
-	lookback := HistoryLookback(row, bootstrap, now)
-	before := historyStartBefore(row, now)
-	seen := make(map[string]struct{})
-	out := make([]HistoryEvent, 0, limit)
-	oldest := before
-	hitPageCap := false
-	for page := 0; page < maxHistoryPages; page++ {
-		if stop, retErr := historyPageStop(readCtx, len(out)); stop {
-			if retErr != nil {
-				return nil, retErr
-			}
-			slog.Warn("scene memory history stopping with partial pages",
-				"event", "scene_memory_history_partial",
-				"scene_key", row.SceneKey,
-				"pages", page,
-				"event_count", len(out),
-				"reason", "deadline",
-			)
-			hitPageCap = true
-			break
-		}
-		raw, err := r.cli.List(readCtx, dir, dwsclient.ListRequest{
-			ConversationID: row.SceneKey,
-			Before:         before,
-			Direction:      "older",
-			Limit:          limit,
-		})
-		if err != nil {
-			if len(out) > 0 && dwsclient.IsTimeout(err) {
-				slog.Warn("scene memory history list timed out; flushing newest pages",
-					"event", "scene_memory_history_partial",
-					"scene_key", row.SceneKey,
-					"pages", page,
-					"event_count", len(out),
-					"reason", "list_timeout",
-				)
-				hitPageCap = true
-				break
-			}
-			return nil, err
-		}
-		parsed, err := parseDWSPage(raw, identity.DwsUid, identity.AccountDisplayName)
-		if err != nil {
-			return nil, err
-		}
-		if parsed.RawCount == 0 {
-			break
-		}
-		for _, event := range parsed.Events {
-			if event.EvidenceID != "" {
-				if _, ok := seen[event.EvidenceID]; ok {
-					continue
-				}
-				seen[event.EvidenceID] = struct{}{}
-			}
-			out = append(out, event)
-		}
-		if !parsed.Oldest.IsZero() && parsed.Oldest.Before(oldest) {
-			oldest = parsed.Oldest
-		}
-		if parsed.RawCount < limit || !oldest.After(lookback) {
-			break
-		}
-		if page == maxHistoryPages-1 {
-			hitPageCap = true
-			break
-		}
-		before = oldest
+	after := historyStartAfter(row, bootstrap, time.Now().UTC())
+	raw, err := r.cli.List(readCtx, dir, dwsclient.ListRequest{
+		ConversationID: row.SceneKey,
+		Before:         after,
+		Direction:      "newer",
+		Limit:          limit,
+	})
+	if err != nil {
+		return HistoryPage{}, err
 	}
-	if historyHasGap(row, oldest, hitPageCap) {
-		return nil, &HistoryGapError{
-			FlushError: FlushError{
-				Code: ErrorIncomplete,
-				Err:  fmt.Errorf("history page cap left a gap behind the cursor"),
-			},
-			Oldest: oldest,
-		}
+	page, err := parseDWSPage(raw, identity.DwsUid, identity.AccountDisplayName)
+	if err != nil {
+		return HistoryPage{}, err
 	}
-	return filterAfterLookback(out, lookback), nil
+	if !page.PaginationKnown {
+		return HistoryPage{}, &FlushError{Code: ErrorIncomplete, Err: errors.New("DWS history page is missing pagination metadata")}
+	}
+	if page.HasMore && !page.NextCursor.After(after) {
+		return HistoryPage{}, &FlushError{Code: ErrorIncomplete, Err: errors.New("DWS history continuation did not advance")}
+	}
+	return page, nil
 }
 
-func historyPageStop(ctx context.Context, have int) (bool, error) {
-	if ctx == nil {
-		return false, nil
+func historyStartAfter(row db.SceneMemory, bootstrap bool, now time.Time) time.Time {
+	if progress, ok := restoredHistoryProgress(row); ok {
+		return progress.After
 	}
-	if ctx.Err() != nil {
-		if have > 0 {
-			return true, nil
-		}
-		return false, ctx.Err()
-	}
-	remaining, ok := deadlineRemaining(ctx)
-	if ok && remaining < historyPageReserve && have > 0 {
-		return true, nil
-	}
-	return false, nil
+	// Native message times have second precision; include the entire first
+	// second, including a late trigger behind the monotonic source cursor.
+	return HistoryLookback(row, bootstrap, now).Truncate(time.Second).Add(-time.Second)
 }
 
 func deadlineRemaining(ctx context.Context) (time.Duration, bool) {
@@ -236,16 +171,6 @@ func deadlineRemaining(ctx context.Context) (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Until(deadline), true
-}
-
-func historyStartBefore(row db.SceneMemory, now time.Time) time.Time {
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	if row.HistoryResumeBefore.Valid && !row.HistoryResumeBefore.Time.IsZero() {
-		return row.HistoryResumeBefore.Time.UTC()
-	}
-	return now.UTC().Add(time.Minute)
 }
 
 func filterAfterLookback(events []HistoryEvent, lookback time.Time) []HistoryEvent {
@@ -308,24 +233,24 @@ func historyNeedReach(row db.SceneMemory) time.Time {
 			need = at
 		}
 	}
+	// A bootstrap page can contain only non-text messages, leaving the source
+	// cursor empty. A new revision must still visit the remaining old range.
+	if progress, ok := storedHistoryProgress(row); ok && (need.IsZero() || progress.After.Before(need)) {
+		need = progress.After
+	}
 	return need
 }
 
-func historyHasGap(row db.SceneMemory, oldest time.Time, hitPageCap bool) bool {
-	if !hitPageCap {
-		return false
-	}
-	need := historyNeedReach(row)
-	if need.IsZero() {
-		return false
-	}
-	return oldest.After(need)
-}
-
-type dwsPage struct {
-	Events   []HistoryEvent
-	RawCount int
-	Oldest   time.Time
+// HistoryPage is one forward DWS page, including transport continuation and
+// evidence from messages with no textual content.
+type HistoryPage struct {
+	Events          []HistoryEvent
+	EvidenceIDs     []string
+	RawCount        int
+	Oldest          time.Time
+	NextCursor      time.Time
+	HasMore         bool
+	PaginationKnown bool
 }
 
 func parseDWSEvents(raw []byte) ([]HistoryEvent, error) {
@@ -349,34 +274,62 @@ type dwsListMessage struct {
 	Self          bool   `json:"self"`
 }
 
-func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (dwsPage, error) {
+func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (HistoryPage, error) {
 	var payload struct {
-		Success   bool             `json:"success"`
-		ErrorCode string           `json:"errorCode"`
-		ErrorMsg  string           `json:"errorMsg"`
-		Messages  []dwsListMessage `json:"messages"`
-		Result    json.RawMessage  `json:"result"`
+		Success    bool             `json:"success"`
+		ErrorCode  string           `json:"errorCode"`
+		ErrorMsg   string           `json:"errorMsg"`
+		Messages   []dwsListMessage `json:"messages"`
+		Result     json.RawMessage  `json:"result"`
+		HasMore    *bool            `json:"hasMore"`
+		NextCursor json.RawMessage  `json:"nextCursor"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
-		return dwsPage{}, errors.New("decode DWS conversation history response")
+		return HistoryPage{}, errors.New("decode DWS conversation history response")
 	}
 	messages := payload.Messages
-	if len(messages) == 0 && len(payload.Result) > 0 && payload.Result[0] == '{' {
+	if len(payload.Result) > 0 && payload.Result[0] == '{' {
 		var nested struct {
-			Messages []dwsListMessage `json:"messages"`
+			Messages   []dwsListMessage `json:"messages"`
+			HasMore    *bool            `json:"hasMore"`
+			NextCursor json.RawMessage  `json:"nextCursor"`
 		}
 		if json.Unmarshal(payload.Result, &nested) == nil {
-			messages = nested.Messages
+			if len(messages) == 0 {
+				messages = nested.Messages
+			}
+			if payload.HasMore == nil {
+				payload.HasMore = nested.HasMore
+				payload.NextCursor = nested.NextCursor
+			}
 		}
 	}
 	if !payload.Success && len(messages) == 0 {
-		return dwsPage{}, dwsclient.HistoryRejected(payload.ErrorCode, payload.ErrorMsg)
+		return HistoryPage{}, dwsclient.HistoryRejected(payload.ErrorCode, payload.ErrorMsg)
 	}
-	page := dwsPage{RawCount: len(messages)}
+	page := HistoryPage{RawCount: len(messages), PaginationKnown: payload.HasMore != nil}
+	if payload.HasMore != nil {
+		page.HasMore = *payload.HasMore
+	}
+	if len(payload.NextCursor) > 0 {
+		var milliseconds json.Number
+		if json.Unmarshal(payload.NextCursor, &milliseconds) == nil {
+			if value, err := milliseconds.Int64(); err == nil && value > 0 {
+				page.NextCursor = time.UnixMilli(value).UTC()
+			}
+		}
+	}
 	for _, message := range messages {
 		occurred := parseDWSTime(message.CreateTime)
 		if page.Oldest.IsZero() || occurred.Before(page.Oldest) {
 			page.Oldest = occurred
+		}
+		evidenceID := strings.TrimSpace(message.OpenMessageID)
+		if evidenceID == "" {
+			evidenceID = strings.TrimSpace(message.MessageID)
+		}
+		if evidenceID != "" {
+			page.EvidenceIDs = append(page.EvidenceIDs, evidenceID)
 		}
 		content := strings.TrimSpace(message.Content)
 		if content == "" {
@@ -389,10 +342,6 @@ func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (dwsPage, error
 		speaker := strings.Join(strings.Fields(message.Sender), " ")
 		if speaker == "" {
 			speaker = "dingtalk"
-		}
-		evidenceID := strings.TrimSpace(message.OpenMessageID)
-		if evidenceID == "" {
-			evidenceID = strings.TrimSpace(message.MessageID)
 		}
 		page.Events = append(page.Events, HistoryEvent{
 			EvidenceID: evidenceID,

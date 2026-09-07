@@ -29,7 +29,7 @@ type HistoryEvent struct {
 	Self       bool
 }
 
-func filterUntil(events []HistoryEvent, cutoffAt time.Time, cutoffEvidence string) []HistoryEvent {
+func filterUntil(events []HistoryEvent, cutoffAt time.Time) []HistoryEvent {
 	if cutoffAt.IsZero() {
 		return events
 	}
@@ -38,51 +38,9 @@ func filterUntil(events []HistoryEvent, cutoffAt time.Time, cutoffEvidence strin
 		if event.OccurredAt.After(cutoffAt) {
 			continue
 		}
-		if event.OccurredAt.Equal(cutoffAt) && event.EvidenceID > cutoffEvidence {
-			continue
-		}
 		out = append(out, event)
 	}
 	return out
-}
-
-func afterCursor(events []HistoryEvent, cursorAt time.Time, cursorEvidence string) []HistoryEvent {
-	events = sortHistoryEvents(events)
-	out := make([]HistoryEvent, 0, len(events))
-	for _, event := range events {
-		if cursorAt.IsZero() {
-			out = append(out, event)
-			continue
-		}
-		if event.OccurredAt.After(cursorAt) || (event.OccurredAt.Equal(cursorAt) && event.EvidenceID > cursorEvidence) {
-			out = append(out, event)
-		}
-	}
-	return out
-}
-
-func includePendingWindow(delta, events []HistoryEvent, fromAt time.Time, fromEv string, cursorAt time.Time, cursorEv string) []HistoryEvent {
-	// Events at or behind the source cursor were already merged. Re-adding
-	// them recaps the 24/40 batch and stalls the cursor into an LLM loop.
-	_ = events
-	_ = fromAt
-	_ = fromEv
-	_ = cursorAt
-	_ = cursorEv
-	return delta
-}
-
-func forceIncludeEvidence(delta, events []HistoryEvent, evidence string) []HistoryEvent {
-	evidence = strings.TrimSpace(evidence)
-	if evidence == "" || containsEvidence(delta, evidence) || !containsEvidence(events, evidence) {
-		return delta
-	}
-	for _, event := range events {
-		if event.EvidenceID == evidence {
-			return sortHistoryEvents(append([]HistoryEvent{event}, delta...))
-		}
-	}
-	return delta
 }
 
 func sortHistoryEvents(events []HistoryEvent) []HistoryEvent {

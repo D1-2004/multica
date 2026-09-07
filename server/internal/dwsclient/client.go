@@ -110,7 +110,9 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 	if before.IsZero() {
 		before = time.Now()
 	}
-	queryTime := before.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04:05")
+	// DWS nextCursor carries milliseconds. Rounding it to a displayed second
+	// replays or skips messages at the page boundary.
+	queryTime := before.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006-01-02 15:04:05.000")
 	cmd := exec.CommandContext(ctx, c.path(),
 		"chat", "message", "list",
 		"--group", req.ConversationID,
