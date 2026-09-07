@@ -649,6 +649,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		issueRes, _, err := r.createOrRecoverDurableIssue(
 			ctx, inst, set.OriginType, identity.PrincipalUserID, msg.MessageID,
 			resolvedCommand, taskContext, prefix, assignedRunFireAt,
+			allowIssueTitleDuplicate(msg, options, coordinatorIssue),
 		)
 		if err != nil && !(errors.Is(err, service.ErrActiveDuplicate) && issueRes.DuplicateIssue != nil) {
 			return Result{}, finalizeRelease, fmt.Errorf("create durable issue command: %w", err)
@@ -768,7 +769,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			issueRes = *durableIssueResult
 			err = durableIssueErr
 		} else {
-			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *command, taskContext, prefix, assignedRunFireAt)
+			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *command, taskContext, prefix, assignedRunFireAt, allowIssueTitleDuplicate(msg, options, coordinatorIssue))
 		}
 		if errors.Is(err, service.ErrActiveDuplicate) && issueRes.DuplicateIssue != nil {
 			duplicate := *issueRes.DuplicateIssue
@@ -1420,7 +1421,7 @@ func (r *Router) drop(ctx context.Context, set ResolverSet, msg channel.InboundM
 	return Result{Outcome: OutcomeDropped, DropReason: reason, InstallationID: instID}
 }
 
-func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand, taskContext []byte, issuePrefix string, assignedRunFireAt time.Time) (service.IssueCreateResult, error) {
+func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand, taskContext []byte, issuePrefix string, assignedRunFireAt time.Time, allowDuplicate bool) (service.IssueCreateResult, error) {
 	if cmd.Title == "" {
 		return service.IssueCreateResult{}, ErrEmptyIssueTitle
 	}
@@ -1440,6 +1441,7 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 		CreatorID:                 creatorUserID,
 		OriginType:                pgtype.Text{String: originType, Valid: originType != ""},
 		OriginID:                  originID,
+		AllowDuplicate:            allowDuplicate,
 		AgentIdentityContextToken: identityContextToken,
 		DispatchContext:           append([]byte(nil), taskContext...),
 	}
@@ -1492,6 +1494,7 @@ func (r *Router) createOrRecoverDurableIssue(
 	taskContext []byte,
 	issuePrefix string,
 	assignedRunFireAt time.Time,
+	allowDuplicate bool,
 ) (service.IssueCreateResult, bool, error) {
 	if strings.TrimSpace(messageID) == "" {
 		return service.IssueCreateResult{}, false, errors.New("durable issue command has no message id")
@@ -1512,8 +1515,29 @@ func (r *Router) createOrRecoverDurableIssue(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return service.IssueCreateResult{}, false, fmt.Errorf("lookup issue by durable origin: %w", err)
 	}
-	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd, taskContext, issuePrefix, assignedRunFireAt)
+	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd, taskContext, issuePrefix, assignedRunFireAt, allowDuplicate)
 	return created, false, err
+}
+
+// allowIssueTitleDuplicate reports whether this inbound may create another
+// active Issue with the same title. Dispatch Command V2 already treats titles
+// as Coordinator labels rather than idempotency keys (the issue-surface path
+// sets AllowDuplicate for the same reason). DingTalk AI Table scheduled bots
+// reuse one purpose string every day while yesterday's Issue stays in_review;
+// blocking that create leaves the Router callback without a TaskID and stamps
+// 处理失败 on the inbound.
+func allowIssueTitleDuplicate(msg channel.InboundMessage, options HandleOptions, coordinatorIssue bool) bool {
+	return coordinatorIssue || options.DisableControlCommands || inboundScheduledBotTrigger(msg)
+}
+
+func inboundScheduledBotTrigger(msg channel.InboundMessage) bool {
+	body := strings.TrimSpace(msg.CommandText)
+	if body == "" {
+		body = strings.TrimSpace(msg.Text)
+	} else if text := strings.TrimSpace(msg.Text); text != "" && text != body {
+		body = body + "\n" + text
+	}
+	return strings.Contains(body, "周期任务触发") || strings.Contains(body, "任务已触发")
 }
 
 func taskIdentityContextToken(taskContext []byte) (string, error) {

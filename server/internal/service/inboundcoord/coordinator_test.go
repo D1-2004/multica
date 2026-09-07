@@ -139,6 +139,67 @@ func TestParseDecisionSilenceAllowedForDigitalEmployee(t *testing.T) {
 	}
 }
 
+func TestParseDecisionSilenceAllowedForAddressedGroupFlood(t *testing.T) {
+	got := parseDecision(`{"action":"silence","text":""}`, Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
+		Message: "R9-P8-FLOOD-3 unrelated noise",
+	})
+	if got.Action != ActionSilence {
+		t.Fatalf("addressed group flood may silence, got %s", got.Action)
+	}
+}
+
+func TestParseDecisionSilenceAllowedForDMFloodNoise(t *testing.T) {
+	got := parseDecision(`{"action":"silence","text":""}`, Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p",
+		Message: "R9-P8-FLOOD-7 unrelated noise",
+	})
+	if got.Action != ActionSilence {
+		t.Fatalf("DM numbered flood may silence, got %s", got.Action)
+	}
+}
+
+func TestParseDecisionSilenceAllowedForAddressedEmojiAndThanks(t *testing.T) {
+	emoji := parseDecision(`{"action":"silence","text":""}`, Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
+		Message: "👍",
+	})
+	if emoji.Action != ActionSilence {
+		t.Fatalf("addressed emoji may silence, got %s", emoji.Action)
+	}
+	thanks := parseDecision(`{"action":"reply","text":"嗯"}`, Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
+		Message: "谢谢",
+	})
+	if thanks.Action != ActionReply || thanks.UserText != "嗯" {
+		t.Fatalf("addressed thanks should stay a short reply, got %#v", thanks)
+	}
+}
+
+func TestSystemPromptHumanGroupFloodRules(t *testing.T) {
+	must := []string{
+		"You are a colleague in the group, not a minute-taker",
+		"Never one Issue per flood line",
+		"Addressed sticker, emoji-only",
+		"Addressed 在吗 / 你好 / 还在吗",
+		"Addressed thanks / 谢谢 / 好的 / 辛苦了",
+		"A collected current_message that mixes flood and one real ask",
+		"current_message may be several inbound lines collected while the person was still typing",
+		"Two colleagues talking to each other",
+		"Do not volunteer 我来帮你们建事项",
+		"我去问 dxxh 周五三点",
+		"a real teammate, not a helpdesk",
+		"Default action=silence",
+		"Never say 已发到群里",
+		"Never invent 私信 vs 群",
+	}
+	for _, needle := range must {
+		if !strings.Contains(systemPrompt, needle) {
+			t.Fatalf("system prompt missing human/flood rule %q", needle)
+		}
+	}
+}
+
 func TestGroupUnaddressedSilenceWithoutLLM(t *testing.T) {
 	c := &Coordinator{LLM: llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"})}
 	got := c.Decide(context.Background(), Turn{
@@ -149,6 +210,21 @@ func TestGroupUnaddressedSilenceWithoutLLM(t *testing.T) {
 	})
 	if got.Action != ActionSilence {
 		t.Fatalf("got %s", got.Action)
+	}
+}
+
+func TestDecideTaskFinishedAlreadyToldSceneWithoutLLM(t *testing.T) {
+	c := &Coordinator{LLM: llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"})}
+	got := c.Decide(context.Background(), Turn{
+		Loop:             LoopTaskFinished,
+		Source:           SourceDigitalEmployee,
+		Addressed:        true,
+		ChatType:         "group",
+		Message:          "任务已完成，请向委托人汇报。",
+		AlreadyToldScene: true,
+	})
+	if got.Action != ActionSilence || got.Reason != "already_told_scene" {
+		t.Fatalf("got %#v", got)
 	}
 }
 
@@ -203,6 +279,17 @@ func TestIssueTitleAndDescription(t *testing.T) {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("description missing %q: %q", want, desc)
 		}
+	}
+	two := Decision{
+		Action:   ActionIssue,
+		UserText: "我去问",
+		Items:    []WindowItem{{Delegator: "测试号", LookInto: "周五三点"}, {Delegator: "dxxh", LookInto: "今日token"}},
+	}
+	onlyFirst := two
+	onlyFirst.Items = []WindowItem{two.Items[0]}
+	got := IssueDescription(onlyFirst, "窗口")
+	if !strings.Contains(got, "委托人=测试号") || strings.Contains(got, "委托人=dxxh") {
+		t.Fatalf("item body must not list the sibling: %q", got)
 	}
 }
 
@@ -402,8 +489,8 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	if !strings.Contains(systemPrompt, "finish action=reply from scene_memory only") {
 		t.Fatal("system prompt must allow scene_memory to answer scene questions")
 	}
-	if !strings.Contains(systemPrompt, "do not call issue_comment_add") {
-		t.Fatal("system prompt must not comment onto a busy Issue")
+	if !strings.Contains(systemPrompt, "Host parks the window") {
+		t.Fatal("system prompt must park busy follow-ups instead of a user-facing busy line")
 	}
 	if !strings.Contains(systemPrompt, "Teaching or correcting this scene") {
 		t.Fatal("system prompt must not open an Issue for scene teaching")
@@ -416,6 +503,48 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	}
 	if !strings.Contains(systemPrompt, "手头有哪些事情") {
 		t.Fatal("system prompt must not list scene_memory bullets as open work")
+	}
+	if !strings.Contains(systemPrompt, "当前记忆为空") {
+		t.Fatal("system prompt must not claim Host memory is empty while 稳定知识 remains")
+	}
+	if !strings.Contains(systemPrompt, "给X发一条消息") {
+		t.Fatal("system prompt must ask for a missing send payload instead of opening an Issue")
+	}
+	if !strings.Contains(systemPrompt, "交付物一条笑话") {
+		t.Fatal("system prompt must pack a job brief, not dump scene_memory, for a complete send")
+	}
+	if !strings.Contains(systemPrompt, "short burst") {
+		t.Fatal("system prompt must answer a collected burst in one reply")
+	}
+	if !strings.Contains(systemPrompt, "since=7d") {
+		t.Fatal("system prompt must recall older work beyond the default 48h window")
+	}
+}
+
+func TestParseDecisionCoercesMissingSendPayloadToReply(t *testing.T) {
+	got := parseDecision(`{"action":"issue","text":"我去给须莫发消息，请问要说什么？","look_into":"冬翔委托：向须莫发送消息","delegator":"冬翔","purpose":"向须莫发送消息","intent":"other","reason":"要发消息"}`, Turn{
+		Source:     SourceDigitalEmployee,
+		SenderName: "冬翔",
+		ChatType:   "p2p",
+		Message:    "给须莫发一条消息",
+	})
+	if got.Action != ActionReply {
+		t.Fatalf("missing payload must reply, got %s", got.Action)
+	}
+	if got.LookInto != "" {
+		t.Fatalf("reply must not keep look_into=%q", got.LookInto)
+	}
+	if !strings.Contains(got.UserText, "要说什么") {
+		t.Fatalf("text=%q", got.UserText)
+	}
+
+	joke := parseDecision(`{"action":"issue","text":"我去给须莫发个笑话","look_into":"委托人冬翔；对象须莫；交付物一条笑话","delegator":"冬翔","purpose":"向须莫发送一个笑话","intent":"other"}`, Turn{
+		Source:     SourceDigitalEmployee,
+		SenderName: "冬翔",
+		Message:    "发个笑话给他",
+	})
+	if joke.Action != ActionIssue {
+		t.Fatalf("named payload must stay issue, got %s", joke.Action)
 	}
 }
 
@@ -492,6 +621,44 @@ func TestPrefetchSceneMemoryInjectsMatchingSceneOnly(t *testing.T) {
 	}
 	if mem.last.SceneKind != scenememory.KindGroup || mem.last.SceneKey != "cid-b" {
 		t.Fatalf("lookup identity=%+v", mem.last)
+	}
+}
+
+func TestPrefetchSceneMemorySanitizesHostDebris(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: strings.Join([]string{
+			"## 场域定位",
+			"冬翔",
+			"成员：冬翔",
+			"## 稳定知识与约定",
+			"- feat/agentic-memory-view 已合入 commit d2d5c86ed",
+			"- 多件事情沟通时使用 markdown 无序列表格式 (来自冬翔, 9月3日 13:34的发言)",
+			"- 回复偏好：简短直接 (来自东翔测试号, 9月3日 17:27的发言)",
+			"## 纠正信号",
+			"## 待确认",
+		}, "\n"), MemoryRevision: 18},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}},
+		SceneMemory: mem,
+	}
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ChatType:       "p2p",
+		AgentID:        testAgentID(),
+		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		ConversationID: "cid-a",
+		DWSOrgID:       "org-1",
+	}
+	c.prefetchSceneMemory(context.Background(), &turn)
+	if strings.Contains(turn.SceneMemory, "d2d5c86ed") || strings.Contains(turn.SceneMemory, "东翔测试号") {
+		t.Fatalf("host inject leaked debris: %q", turn.SceneMemory)
+	}
+	if !strings.Contains(turn.SceneMemory, "markdown 无序列表") {
+		t.Fatalf("human fact stripped: %q", turn.SceneMemory)
+	}
+	if turn.SceneMemoryRevision != 18 {
+		t.Fatalf("revision=%d", turn.SceneMemoryRevision)
 	}
 }
 

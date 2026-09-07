@@ -188,6 +188,8 @@
     "prop_chat_session_resume_hint": "关闭时每一轮都新起 provider 会话，从不续接。开启后仅单聊生效：沙箱仍热、上次回答完成不超过 20 分钟，且提示词、Skill 和运行时都没变时，接着上一轮 Claude/Codex 会话继续。连续提问更快、更省 token；不满足条件时自动用完整历史重开。",
     "prop_inbound_coordinator": "入站先判断",
     "prop_inbound_coordinator_hint": "打开后，钉钉和网页消息会先判断能否直接回话；只有需要工具、查资料或持续跟进的事才开沙箱。关掉则每条都进沙箱。",
+    "prop_task_finished_loop": "事情完成再判断",
+    "prop_task_finished_loop_hint": "打开后，入站判断派出去的事在沙箱做完会回到 Coordinator：给委托人一句人话小结或建议，不把事项里上百人的评论当成这一趟。关掉则事情结束不再走这层判断，只看沙箱自己的回复。",
     "prop_scene_memory_write": "写入场域记忆",
     "prop_scene_memory_write_hint": "打开后，绑定号数字员工的入站会把该群或单聊标脏，后台异步更新场域记忆。关掉则不再写入。",
     "prop_scene_memory_recall": "召回场域记忆",

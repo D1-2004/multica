@@ -59,3 +59,52 @@ func (q *Queries) ListAgentInboundCoordinatorByIDs(ctx context.Context, ids []pg
 	}
 	return items, nil
 }
+
+const getAgentTaskFinishedLoop = `-- name: GetAgentTaskFinishedLoop :one
+SELECT task_finished_loop_enabled FROM agent WHERE id = $1
+`
+
+func (q *Queries) GetAgentTaskFinishedLoop(ctx context.Context, id pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, getAgentTaskFinishedLoop, id)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
+}
+
+const updateAgentTaskFinishedLoop = `-- name: UpdateAgentTaskFinishedLoop :exec
+UPDATE agent SET task_finished_loop_enabled = $2, updated_at = now() WHERE id = $1
+`
+
+func (q *Queries) UpdateAgentTaskFinishedLoop(ctx context.Context, id pgtype.UUID, enabled bool) error {
+	_, err := q.db.Exec(ctx, updateAgentTaskFinishedLoop, id, enabled)
+	return err
+}
+
+const listAgentTaskFinishedLoopByIDs = `-- name: ListAgentTaskFinishedLoopByIDs :many
+SELECT id, task_finished_loop_enabled FROM agent WHERE id = ANY($1::uuid[])
+`
+
+type ListAgentTaskFinishedLoopByIDsRow struct {
+	ID                      pgtype.UUID `json:"id"`
+	TaskFinishedLoopEnabled bool        `json:"task_finished_loop_enabled"`
+}
+
+func (q *Queries) ListAgentTaskFinishedLoopByIDs(ctx context.Context, ids []pgtype.UUID) ([]ListAgentTaskFinishedLoopByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listAgentTaskFinishedLoopByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentTaskFinishedLoopByIDsRow{}
+	for rows.Next() {
+		var i ListAgentTaskFinishedLoopByIDsRow
+		if err := rows.Scan(&i.ID, &i.TaskFinishedLoopEnabled); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

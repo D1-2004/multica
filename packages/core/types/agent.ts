@@ -478,6 +478,13 @@ export interface Agent {
    */
   inbound_coordinator?: boolean;
   /**
+   * When true, an Issue opened by the inbound judge comes back to
+   * Coordinator after the sandbox finishes so the original requester
+   * gets a wrap-up. Optional because older backends omit it; treat
+   * `undefined` as false.
+   */
+  task_finished_loop_enabled?: boolean;
+  /**
    * Scene-memory flags. Optional because older backends omit them; treat
    * `undefined` as false. Only an explicit true turns a flag on.
    */
@@ -817,6 +824,7 @@ export interface UpdateAgentRequest {
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  task_finished_loop_enabled?: boolean;
   scene_memory_write_enabled?: boolean;
   scene_memory_recall_enabled?: boolean;
   scene_memory_ui_enabled?: boolean;

@@ -110,8 +110,8 @@ func TestLoopIssueCommentBusyLongMessageDoesNotRetryStorm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Action != ActionReply {
-		t.Fatalf("long unrelated inbound must not 409-retry, decision=%#v", decision)
+	if decision.Action != ActionSilence {
+		t.Fatalf("busy flood must silence, decision=%#v", decision)
 	}
 }
 
@@ -131,8 +131,8 @@ func TestLoopIssueCommentAlreadyBusyDoesNotRetryStorm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decision.Action != ActionReply {
-		t.Fatalf("known-busy inbound must not 409-retry, decision=%#v", decision)
+	if decision.Action != ActionRetry {
+		t.Fatalf("known-busy inbound must park for the next window, decision=%#v", decision)
 	}
 }
 
@@ -145,8 +145,8 @@ func TestShouldRetryBusyIssueComment(t *testing.T) {
 	if shouldRetryBusyIssueComment(Turn{Message: "可以，三点没问题"}) != true {
 		t.Fatal("short confirmation sentence should retry")
 	}
-	if shouldRetryBusyIssueComment(Turn{Message: "番茄", Busy: true}) {
-		t.Fatal("already-busy prompt must not 409-retry")
+	if !shouldRetryBusyIssueComment(Turn{Message: "番茄", Busy: true}) {
+		t.Fatal("already-busy confirmation must park for the next window")
 	}
 	if shouldRetryBusyIssueComment(Turn{Message: flood}) {
 		t.Fatal("flood filler must not 409-retry")
@@ -753,10 +753,8 @@ func TestFinishToolRoutesUnavailableCapabilitiesToIssue(t *testing.T) {
 	}
 	description := fn.Description.Value
 	for _, rule := range []string{
-		"Use reply when current_message is a greeting or does not advance a recalled purpose",
-		"do not reply with the same question",
-		"Use issue for contacts, DWS, search, files",
-		"Never use reply to say you cannot complete the request",
+		"Use reply when the window is a greeting or does not advance a recalled purpose",
+		"items holds 1-2 deliverables",
 		"issue_comment_add",
 		"never with finish issue_id",
 	} {
@@ -901,6 +899,151 @@ func TestBuildUserPromptIncludesConversationID(t *testing.T) {
 		"conversation_id: cid-dongxiang",
 		"person_id: 123456",
 		"identity_note: digital-employee inbound: conversation_id and uid are complete",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestLoopIssueBusyAckSilences(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
+		assistantTool("comment", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"谢谢","reply_text":"没事"}`),
+	}}
+	tools := &stubTools{
+		recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认GoalMate含义","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`,
+		errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy},
+	}
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "谢谢", ConversationID: "cid-v6", Busy: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionSilence {
+		t.Fatalf("busy ack must silence, decision=%#v", decision)
+	}
+}
+
+func TestLoopTaskFinishedAllowsIssueGetWithoutRecall(t *testing.T) {
+	t.Parallel()
+	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("get", toolIssueGet, `{"issue_id":"`+issueID+`"}`),
+		assistantTool("finish", toolFinish, `{"action":"reply","text":"已经问过须莫，周五三点可以。"}`),
+	}}
+	tools := &stubTools{}
+	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
+		Loop:       LoopTaskFinished,
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "p2p",
+		Message:    "任务已完成，请向委托人汇报。",
+		IssueID:    issueID,
+		TaskResult: "须莫说周五三点可以开会。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionReply {
+		t.Fatalf("decision=%#v", decision)
+	}
+	if len(tools.calls) == 0 || !strings.HasPrefix(tools.calls[0], toolIssueGet) {
+		t.Fatalf("expected issue_get, calls=%v", tools.calls)
+	}
+}
+
+func TestLoopTaskFinishedSilencesRedundantWrapup(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("finish", toolFinish, `{"action":"reply","text":"劳动合同法第三条的大白话解释已发到群里，你查收一下。"}`),
+	}}
+	decision, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
+		Loop:       LoopTaskFinished,
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "group",
+		Message:    "任务已完成，请向委托人汇报。",
+		IssueID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		TaskResult: "已向当前钉钉会话发送劳动合同法第三条解释。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionSilence || strings.TrimSpace(decision.UserText) != "" {
+		t.Fatalf("redundant wrap-up must silence, decision=%#v", decision)
+	}
+}
+
+func TestLoopTaskFinishedSilencesAskedStatusPing(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("finish", toolFinish, `{"action":"reply","text":"已问 dxxh 明天开会时间，等他回。"}`),
+	}}
+	decision, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
+		Loop:       LoopTaskFinished,
+		Source:     SourceDigitalEmployee,
+		Addressed:  true,
+		ChatType:   "group",
+		Message:    "任务已完成，请向委托人汇报。",
+		IssueID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		TaskResult: "已向 dxxh 确认明天线上开会。",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Action != ActionSilence || strings.TrimSpace(decision.UserText) != "" {
+		t.Fatalf("status-ping wrap-up must silence, decision=%#v", decision)
+	}
+}
+
+func TestToolsForTurnTaskFinishedOmitsAssocRecall(t *testing.T) {
+	t.Parallel()
+	defs := toolsForTurn(Turn{Loop: LoopTaskFinished}, 0)
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
+		fn := def.GetFunction()
+		if fn == nil {
+			t.Fatal("tool missing function")
+		}
+		names = append(names, fn.Name)
+	}
+	joined := strings.Join(names, ",")
+	if strings.Contains(joined, toolAssocRecall) || strings.Contains(joined, toolIssueCommentAdd) {
+		t.Fatalf("task-finished tools must not include scene-wide recall or comment add: %v", names)
+	}
+	if !strings.Contains(joined, toolIssueGet) || !strings.Contains(joined, toolFinish) {
+		t.Fatalf("task-finished tools=%v", names)
+	}
+	defs = toolsForTurn(Turn{Loop: LoopTaskFinished}, 0)
+	for _, def := range defs {
+		fn := def.GetFunction()
+		if fn == nil || fn.Name != toolFinish {
+			continue
+		}
+		if !strings.Contains(fn.Description.Or(""), "Default action=silence") {
+			t.Fatalf("finish tool should default to silence: %s", fn.Description.Or(""))
+		}
+	}
+}
+
+func TestBuildUserPromptIncludesTaskFinishedWindow(t *testing.T) {
+	t.Parallel()
+	prompt := buildUserPrompt(Turn{
+		Loop:           LoopTaskFinished,
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ConversationID: "cid-dongxiang",
+		IssueID:        "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		TaskResult:     "须莫说周五三点可以。",
+		Message:        "任务已完成，请向委托人汇报。",
+	})
+	for _, want := range []string{
+		"loop: task_finished",
+		"issue_id: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		"须莫说周五三点可以。",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)

@@ -586,6 +586,45 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	return ids
 }
 
+func bindWindowItemEvidence(command *DispatchCommand, item inboundcoord.WindowItem, used map[string]struct{}) {
+	if command == nil {
+		return
+	}
+	delegator := strings.TrimSpace(item.Delegator)
+	for i := range command.Event.Data.Messages {
+		message := command.Event.Data.Messages[i]
+		if message.Reaction != nil || strings.TrimSpace(message.Text) == "" {
+			continue
+		}
+		sender := strings.TrimSpace(message.SenderDisplayName)
+		if delegator != "" && sender != "" && sender != delegator {
+			continue
+		}
+		evidence := strings.TrimSpace(message.OpenMsgID)
+		if evidence != "" {
+			if _, ok := used[evidence]; ok {
+				continue
+			}
+			used[evidence] = struct{}{}
+		}
+		if sender != "" {
+			command.Event.Data.Sender.DisplayName = sender
+		}
+		if openID := strings.TrimSpace(message.SenderOpenDingTalkID); openID != "" {
+			command.Event.Data.Sender.OpenDingTalkID = openID
+			command.Event.Data.Sender.SenderOpenDingTalkID = openID
+		}
+		if staff := strings.TrimSpace(message.SenderStaffID); staff != "" {
+			command.Event.Data.Sender.StaffID = staff
+		}
+		if uid := strings.TrimSpace(message.SenderUID); uid != "" {
+			command.Event.Data.Sender.UID = uid
+		}
+		command.Event.Data.Messages = []DispatchMessage{message}
+		return
+	}
+}
+
 func lastInboundTextMessage(command DispatchCommand) (DispatchMessage, bool) {
 	for i := len(command.Event.Data.Messages) - 1; i >= 0; i-- {
 		message := command.Event.Data.Messages[i]

@@ -26,6 +26,8 @@ const (
 	inboundCoordinatorWorkerConcurrency  = 8
 	inboundCoordinatorWorkerPollInterval = 500 * time.Millisecond
 	inboundCoordinatorWorkerMaxAttempts  = 6
+	inboundCoordinatorSceneParkDelay     = 5 * time.Second
+	inboundCoordinatorSceneBusyDelay     = 500 * time.Millisecond
 )
 
 // InboundCoordinatorJobWorker executes accepted short loops from PostgreSQL.
@@ -127,6 +129,21 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.fail(ctx, job, command, "invalid persisted dispatch command")
 	}
+	if strings.TrimSpace(command.TaskFinishedTaskID) != "" {
+		if runErr := w.handler.runPersistedTaskFinishedLoop(ctx, command.TaskFinishedTaskID); runErr != nil {
+			return true, w.retry(ctx, job, runErr)
+		}
+		return true, w.complete(ctx, job)
+	}
+	command, err = w.absorbPendingSameScene(ctx, job, command)
+	if err != nil {
+		return true, w.retry(ctx, job, fmt.Errorf("collect same-scene jobs: %w", err))
+	}
+	if parked, parkErr := w.parkIfSceneWindowBusy(ctx, job, command); parkErr != nil {
+		return true, parkErr
+	} else if parked {
+		return true, nil
+	}
 	dispatchContext := agentDispatchContext{
 		EndpointID:          job.DispatchEndpointID,
 		EndpointNamespaceID: job.EndpointNamespaceID,
@@ -153,7 +170,7 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if recoverErr != nil {
 		return true, w.retry(ctx, job, fmt.Errorf("recover dispatch result: %w", recoverErr))
 	}
-	if recoveredOK {
+	if recoveredOK && !coordinatorIssueReplayRequired(recovered) {
 		decision := recoveredCoordinatorDecision(command, recovered)
 		if err := w.handler.persistCoordinatorJobChat(ctx, job, decision); err != nil {
 			return true, w.retry(ctx, job, fmt.Errorf("persist recovered coordinator Chat: %w", err))
@@ -187,7 +204,14 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 		return true, w.complete(ctx, job)
 	}
 	if response.Status() == http.StatusConflict || response.Status() >= http.StatusInternalServerError {
-		return true, w.retry(ctx, job, fmt.Errorf("%s", dispatchRejectReason(response)))
+		reason := dispatchRejectReason(response)
+		if shouldSilenceCoordinatorBusyPark(response.Status(), reason) {
+			// ActionRetry parks until the recalled issue is free. Clear the
+			// inbound 处理中 now; do not 500/fail which stamps 处理失败.
+			w.silenceParkedInbound(ctx, job, command)
+			return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, reason)
+		}
+		return true, w.retry(ctx, job, fmt.Errorf("%s", reason))
 	}
 	return true, w.fail(ctx, job, command, dispatchRejectReason(response))
 }
@@ -207,6 +231,127 @@ func dispatchRejectReason(response *bufferedDispatchResponse) string {
 		return fmt.Sprintf("dispatch rejected with HTTP %d", status)
 	}
 	return fmt.Sprintf("dispatch rejected with HTTP %d: %s", status, body)
+}
+
+func (w *InboundCoordinatorJobWorker) absorbPendingSameScene(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) (DispatchCommand, error) {
+	if w == nil || w.handler == nil || w.handler.Queries == nil {
+		return command, nil
+	}
+	cid := dispatchConversationID(command)
+	persist := func(q *db.Queries, merged DispatchCommand) error {
+		raw, err := json.Marshal(merged)
+		if err != nil {
+			return err
+		}
+		n, err := q.UpdateInboundCoordinatorJobCommand(ctx, db.UpdateInboundCoordinatorJobCommandParams{
+			ID: job.ID, Command: raw,
+		})
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("persist coalesced command: job is not running")
+		}
+		return nil
+	}
+	if cid == "" || w.handler.TxStarter == nil {
+		if err := persist(w.handler.Queries, command); err != nil {
+			return command, err
+		}
+		return command, nil
+	}
+	tx, err := w.handler.TxStarter.Begin(ctx)
+	if err != nil {
+		return command, err
+	}
+	defer tx.Rollback(ctx)
+	qtx := w.handler.Queries.WithTx(tx)
+	siblings, err := qtx.ListPendingInboundCoordinatorJobsForConversation(ctx, db.ListPendingInboundCoordinatorJobsForConversationParams{
+		WorkspaceID:    job.WorkspaceID,
+		AgentID:        job.AgentID,
+		ExcludeID:      job.ID,
+		ConversationID: cid,
+	})
+	if err != nil {
+		return command, err
+	}
+	absorbed := make([]db.InboundCoordinatorJob, 0, len(siblings))
+	for _, sib := range siblings {
+		extra, restoreErr := restoreInboundCoordinatorCommand(
+			sib.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity,
+		)
+		if restoreErr != nil {
+			return command, restoreErr
+		}
+		if !sameCoordinatorCollectKind(command, extra) {
+			slog.Info("inbound coordinator job absorb skipped different kind",
+				"event", "inbound_coordinator_job_absorb_skipped",
+				"job_id", util.UUIDToString(job.ID),
+				"skipped_job_id", util.UUIDToString(sib.ID),
+				"job_ack", commandIsWindowAck(command),
+				"sibling_ack", commandIsWindowAck(extra),
+			)
+			continue
+		}
+		command = mergeDispatchCommands(command, extra)
+		absorbed = append(absorbed, sib)
+	}
+	if err := persist(qtx, command); err != nil {
+		return command, err
+	}
+	for _, sib := range absorbed {
+		n, completeErr := qtx.CompleteCoalescedInboundCoordinatorJob(ctx, sib.ID)
+		if completeErr != nil {
+			return command, completeErr
+		}
+		if n != 1 {
+			return command, fmt.Errorf("coalesce sibling %s: no longer pending", util.UUIDToString(sib.ID))
+		}
+		slog.Info("inbound coordinator job coalesced",
+			"event", "inbound_coordinator_job_coalesced",
+			"job_id", util.UUIDToString(job.ID),
+			"absorbed_job_id", util.UUIDToString(sib.ID),
+		)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return command, err
+	}
+	w.closeCoalescedRouterCallbacks(ctx, job, absorbed)
+	return command, nil
+}
+
+func (w *InboundCoordinatorJobWorker) closeCoalescedRouterCallbacks(ctx context.Context, job db.InboundCoordinatorJob, siblings []db.InboundCoordinatorJob) {
+	if w == nil || w.handler == nil {
+		return
+	}
+	for _, sib := range siblings {
+		extra, err := restoreInboundCoordinatorCommand(
+			sib.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity,
+		)
+		if err != nil {
+			continue
+		}
+		w.handler.enqueueCoordinatorSilenceCallback(ctx, extra.CompletionCallback, job.AgentID,
+			"inbound_coordinator_job_coalesced_silence_failed", util.UUIDToString(sib.ID))
+	}
+}
+
+func (h *Handler) enqueueCoordinatorSilenceCallback(
+	ctx context.Context,
+	callback *DispatchCompletionCallback,
+	agentID pgtype.UUID,
+	logEvent, jobID string,
+) {
+	if h == nil || h.TaskService == nil || callback == nil {
+		return
+	}
+	if err := h.TaskService.EnqueueSynchronousSilence(ctx, callback.URL, callback.Target, agentID); err != nil {
+		slog.Warn("coordinator silence callback failed",
+			"event", logEvent,
+			"job_id", jobID,
+			"error", err,
+		)
+	}
 }
 
 func restoreInboundCoordinatorCommand(raw []byte, endpointID pgtype.UUID, targetIdentity string) (DispatchCommand, error) {
@@ -233,7 +378,130 @@ func (w *InboundCoordinatorJobWorker) complete(ctx context.Context, job db.Inbou
 		"job_id", util.UUIDToString(job.ID),
 		"attempt", job.AttemptCount,
 	)
+	w.Notify()
 	return nil
+}
+
+func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) (bool, error) {
+	cid := dispatchConversationID(command)
+	if cid == "" || w.handler == nil || w.handler.Queries == nil {
+		return false, nil
+	}
+	running, err := w.handler.Queries.CountRunningInboundCoordinatorJobsForConversation(ctx, db.CountRunningInboundCoordinatorJobsForConversationParams{
+		WorkspaceID: job.WorkspaceID, AgentID: job.AgentID, ExcludeID: job.ID, ConversationID: cid,
+	})
+	if err != nil {
+		return false, w.retry(ctx, job, fmt.Errorf("count running scene window: %w", err))
+	}
+	if running > 0 {
+		// Half-second mutex wait: keep the Router callback so the next
+		// window can still speak. Do not close 处理中 here.
+		return true, w.park(ctx, job, inboundCoordinatorSceneBusyDelay, "scene window already running")
+	}
+	if commandIsWindowAck(command) {
+		return false, nil
+	}
+	active, err := w.handler.Queries.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{
+		WorkspaceID: job.WorkspaceID, AgentID: job.AgentID, ConversationID: cid,
+	})
+	if err != nil {
+		return false, w.retry(ctx, job, fmt.Errorf("count scene active tasks: %w", err))
+	}
+	if shouldParkSceneCapacity(command, active) {
+		w.silenceParkedInbound(ctx, job, command)
+		return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, "scene already has two in-flight matters")
+	}
+	return false, nil
+}
+
+// silenceParkedInbound closes the Router dispatch without IM so 处理中
+// drops while the job waits for the next window. A colleague does not leave
+// a spinning confirmation on a message they are not answering yet.
+func (w *InboundCoordinatorJobWorker) silenceParkedInbound(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) {
+	if w == nil || w.handler == nil {
+		return
+	}
+	w.handler.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, job.AgentID,
+		"inbound_coordinator_busy_park_silence_failed", util.UUIDToString(job.ID))
+	w.handler.closeExtraCoordinatorCallbacks(ctx, command, job.AgentID)
+}
+
+func commandIsWindowAck(command DispatchCommand) bool {
+	return inboundcoord.AllWindowAck(inboundcoord.Turn{
+		SenderName: strings.TrimSpace(command.Event.Data.Sender.DisplayName),
+		Utterances: windowUtterancesFromCommand(command),
+	})
+}
+
+func shouldParkSceneCapacity(command DispatchCommand, active int64) bool {
+	if active < int64(inboundcoord.SceneWindowMaxItems) {
+		return false
+	}
+	return !commandIsWindowAck(command)
+}
+
+func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentID pgtype.UUID, cid string) int {
+	slots := inboundcoord.SceneWindowMaxItems
+	if h == nil || h.Queries == nil || strings.TrimSpace(cid) == "" {
+		return slots
+	}
+	params := db.CountActiveTasksForConversationParams{
+		WorkspaceID: workspaceID, AgentID: agentID, ConversationID: cid,
+	}
+	active, err := h.Queries.CountActiveTasksForConversation(ctx, params)
+	if err != nil {
+		return slots
+	}
+	used := active
+	left := slots - int(used)
+	if left < 0 {
+		return 0
+	}
+	return left
+}
+
+func (w *InboundCoordinatorJobWorker) park(ctx context.Context, job db.InboundCoordinatorJob, delay time.Duration, reason string) error {
+	slog.Info("inbound coordinator job parked for next window",
+		"event", "inbound_coordinator_job_parked",
+		"job_id", util.UUIDToString(job.ID),
+		"attempt", job.AttemptCount,
+		"delay_ms", delay.Milliseconds(),
+		"reason", reason,
+	)
+	rows, err := w.handler.Queries.ParkInboundCoordinatorJob(ctx, db.ParkInboundCoordinatorJobParams{
+		ID: job.ID, LeaseToken: job.LeaseToken,
+		AvailableAt: pgtype.Timestamptz{Time: time.Now().Add(delay), Valid: true},
+		LastError:   pgtype.Text{String: reason, Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return fmt.Errorf("park inbound coordinator job: lease no longer owned")
+	}
+	return nil
+}
+
+func isCoordinatorBusyParkReason(reason string) bool {
+	return strings.Contains(reason, "pending agent task") ||
+		strings.Contains(reason, "already has an active task") ||
+		strings.Contains(reason, "issue_busy") ||
+		strings.Contains(reason, "active duplicate")
+}
+
+func shouldSilenceCoordinatorBusyPark(status int, reason string) bool {
+	return status == http.StatusConflict && isCoordinatorBusyParkReason(reason)
+}
+
+func coordinatorIssueReplayRequired(response *bufferedDispatchResponse) bool {
+	if response == nil {
+		return false
+	}
+	var dispatchResponse AgentDispatchResponse
+	if json.Unmarshal(response.body.Bytes(), &dispatchResponse) != nil {
+		return false
+	}
+	return dispatchResponse.Continuation.Kind == "issue"
 }
 
 func recoveredCoordinatorDecision(command DispatchCommand, response *bufferedDispatchResponse) inboundcoord.Decision {
@@ -389,6 +657,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if h == nil || h.TxStarter == nil {
 		return nil, job, errors.New("coordinator job store is not configured")
 	}
+	stampDispatchMessageSenders(&command)
 	rawCommand, err := json.Marshal(command)
 	if err != nil {
 		return nil, job, err
@@ -401,6 +670,87 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
+	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
+	if cid := dispatchConversationID(command); cid != "" {
+		lockName := uuidToString(dispatchContext.WorkspaceID) + ":" + uuidToString(dispatchContext.AgentID) + ":" + cid
+		if _, lockErr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockName); lockErr != nil {
+			return nil, job, lockErr
+		}
+		pending, listErr := qtx.ListPendingInboundCoordinatorJobsForConversationCollect(ctx, db.FindPendingInboundCoordinatorJobForConversationParams{
+			WorkspaceID:    dispatchContext.WorkspaceID,
+			AgentID:        dispatchContext.AgentID,
+			ConversationID: cid,
+		})
+		if listErr != nil {
+			return nil, job, listErr
+		}
+		var splitKind bool
+		for _, existing := range pending {
+			base, restoreErr := restoreJobCommand(existing)
+			if restoreErr != nil {
+				return nil, job, restoreErr
+			}
+			if !sameCoordinatorCollectKind(base, command) {
+				splitKind = true
+				continue
+			}
+			merged := mergeDispatchCommands(base, command)
+			mergedRaw, marshalErr := json.Marshal(merged)
+			if marshalErr != nil {
+				return nil, job, marshalErr
+			}
+			job, err = qtx.UpdateInboundCoordinatorJobCollect(ctx, db.UpdateInboundCoordinatorJobCollectParams{
+				ID:          existing.ID,
+				Command:     mergedRaw,
+				AvailableAt: pgtype.Timestamptz{Time: collectAt, Valid: true},
+			})
+			if err != nil {
+				return nil, job, err
+			}
+			content := firstNonEmpty(strings.TrimSpace(buildDingTalkChannelDisplay(merged)), coordinatorJobMessage(merged))
+			if _, err := qtx.AppendCoordinatorUserMessage(ctx, db.AppendCoordinatorUserMessageParams{
+				ID: existing.UserMessageID, Content: content,
+			}); err != nil {
+				return nil, job, err
+			}
+			_, err = qtx.CompleteAgentDispatchAcceptance(ctx, db.CompleteAgentDispatchAcceptanceParams{
+				ResponseStatus:      pgtype.Int4{Int32: int32(response.Status()), Valid: true},
+				ResponseContentType: pgtype.Text{String: response.header.Get("Content-Type"), Valid: true},
+				ResponseBody:        append([]byte{}, response.body.Bytes()...),
+				ID:                  acceptance.ID,
+				LeaseToken:          acceptance.LeaseToken,
+			})
+			if err != nil {
+				return nil, job, err
+			}
+			h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job, idempotencyKey)
+			if err := tx.Commit(ctx); err != nil {
+				return nil, job, err
+			}
+			if h.SceneMemoryWorker != nil {
+				h.SceneMemoryWorker.Notify()
+			}
+			// Collect merges extra inbounds onto the pending job and drops
+			// their CompletionCallback. Close those Router dispatches now or
+			// the extra @ lines stay 处理中 after the window finishes.
+			h.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, dispatchContext.AgentID,
+				"inbound_coordinator_job_collected_silence_failed", util.UUIDToString(job.ID))
+			slog.Info("inbound coordinator job collected",
+				"event", "inbound_coordinator_job_collected",
+				"job_id", util.UUIDToString(job.ID),
+				"source", command.Source.Type,
+				"message_count", len(merged.Event.Data.Messages),
+			)
+			return response, job, nil
+		}
+		if splitKind {
+			slog.Info("inbound coordinator job collect split ack and work",
+				"event", "inbound_coordinator_job_collect_split",
+				"source", command.Source.Type,
+				"incoming_ack", commandIsWindowAck(command),
+			)
+		}
+	}
 	session, err := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
 		WorkspaceID: dispatchContext.WorkspaceID,
 		AgentID:     dispatchContext.AgentID,
@@ -430,6 +780,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		Command:             rawCommand,
 		ChatSessionID:       session.ID,
 		UserMessageID:       userMessage.ID,
+		AvailableAt:         pgtype.Timestamptz{Time: collectAt, Valid: true},
 	})
 	if err != nil {
 		return nil, job, err
@@ -444,7 +795,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	if err != nil {
 		return nil, job, err
 	}
-	h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job)
+	h.markSceneMemoryDirty(ctx, qtx, command, dispatchContext, job, idempotencyKey)
 	if err := tx.Commit(ctx); err != nil {
 		return nil, job, err
 	}
@@ -541,6 +892,7 @@ func (h *Handler) markSceneMemoryDirty(
 	command DispatchCommand,
 	dispatchContext agentDispatchContext,
 	job db.InboundCoordinatorJob,
+	idempotencyKey string,
 ) {
 	if h == nil || h.SceneMemoryStore == nil || qtx == nil {
 		return
@@ -585,7 +937,7 @@ func (h *Handler) markSceneMemoryDirty(
 		EvidenceID:     ids.EvidenceID,
 		JobID:          job.ID,
 		CoordTraceID:   util.UUIDToString(job.ID),
-		IdempotencyKey: job.IdempotencyKey,
+		IdempotencyKey: firstNonEmpty(strings.TrimSpace(idempotencyKey), job.IdempotencyKey),
 	})
 	if err != nil {
 		slog.Warn("scene memory mark dirty failed",
@@ -601,7 +953,7 @@ func (h *Handler) markSceneMemoryDirty(
 		"agent_id", util.UUIDToString(dispatchContext.AgentID),
 		"scene_key", ids.ConversationID,
 		"dirty_revision", row.DirtyRevision,
-		"idempotency", job.IdempotencyKey,
+		"idempotency", firstNonEmpty(strings.TrimSpace(idempotencyKey), job.IdempotencyKey),
 		"scene_memory_id", util.UUIDToString(row.ID),
 	)
 }

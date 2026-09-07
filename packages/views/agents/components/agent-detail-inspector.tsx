@@ -338,6 +338,13 @@ export function AgentDetailInspector({
             canEdit={canEdit}
             onSave={(next) => update({ inbound_coordinator: next })}
           />
+          <TaskFinishedLoopField
+            agentId={agent.id}
+            enabled={agent.task_finished_loop_enabled === true}
+            inboundEnabled={agent.inbound_coordinator === true}
+            canEdit={canEdit}
+            onSave={(next) => update({ task_finished_loop_enabled: next })}
+          />
         </SettingsCard>
       </SettingsSection>
     </div>
@@ -380,6 +387,49 @@ function InboundCoordinatorField({
             .finally(() => setSaving(false));
         }}
         aria-label={t(($) => $.inspector.prop_inbound_coordinator)}
+      />
+    </SettingsRow>
+  );
+}
+
+function TaskFinishedLoopField({
+  agentId,
+  enabled,
+  inboundEnabled,
+  canEdit,
+  onSave,
+}: {
+  agentId: string;
+  enabled: boolean;
+  inboundEnabled: boolean;
+  canEdit: boolean;
+  onSave: (next: boolean) => Promise<void>;
+}) {
+  const { t } = useT("agents");
+  const [draft, setDraft] = useState(enabled);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft(enabled);
+  }, [agentId, enabled]);
+
+  return (
+    <SettingsRow
+      label={t(($) => $.inspector.prop_task_finished_loop)}
+      description={t(($) => $.inspector.prop_task_finished_loop_hint)}
+      align="start"
+    >
+      <Switch
+        checked={draft}
+        disabled={!canEdit || saving || !inboundEnabled}
+        onCheckedChange={(checked) => {
+          setDraft(checked);
+          setSaving(true);
+          void onSave(checked)
+            .catch(() => setDraft(!checked))
+            .finally(() => setSaving(false));
+        }}
+        aria-label={t(($) => $.inspector.prop_task_finished_loop)}
       />
     </SettingsRow>
   );

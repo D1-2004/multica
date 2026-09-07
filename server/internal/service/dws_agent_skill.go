@@ -19,6 +19,8 @@ Before any DWS operation, check the command shape with ` + "`dws <path> --help`"
 Treat the sender identity as a user-visible product choice for every request to send, forward, reply to, or share a DingTalk message:
 
 - Default to the current-user identity and use ` + "`dws chat message send`" + `. This default applies to both group chats and direct messages.
+- Current-user sends must include ` + "`--ai-tag=false`" + ` so the message has no AI badge. You are sending as a colleague.
+- After a real reply exists in the conversation, remove processing/complete emotions from the inbound message that triggered this run (` + "`dws chat +messages-remove-text-emotion`" + ` / ` + "`dws chat +messages-remove-emoji`" + ` for 处理中, 已完成, 思考中, 🤔思考中). Never add 已完成 as a stamp.
 - Only use bot identity when the user explicitly asks to send as a bot or robot; then use ` + "`dws chat message send-by-bot`" + `.
 - A group-chat target, an existing robot in the conversation, or the availability of a robot code does not imply bot identity. Do not search for or choose a robot unless bot identity is required by the user's request.
 - Do not switch to bot identity because current-user sending fails, is denied, or appears less convenient. Report the exact current-user error instead.

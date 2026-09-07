@@ -10,25 +10,39 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-var replyDecisionBlockPattern = regexp.MustCompile("(?ms)^```multica-reply-decision\\r?\\n(.*?)\\r?\\n```[ \\t]*(?:\\r?\\n|$)")
+var replyDecisionBlockPattern = regexp.MustCompile("(?ms)^```multica-reply-decision(?:\\s+|\\r?\\n)(.*?)\\s*```[ \\t]*(?:\\r?\\n|$)")
+var optionalJSONFencePattern = regexp.MustCompile("(?ms)^```(?:json)?\\r?\\n(\\s*\\{[\\s\\S]*?\\}\\s*)\\r?\\n```[ \\t]*(?:\\r?\\n|$)")
 
-// NormalizeReplyDecisionOutput removes internal reply-decision fences from
-// user-visible output. The last strictly valid fenced decision wins; when no
-// valid fenced decision exists, fallback is retained for rolling compatibility
+// NormalizeReplyDecisionOutput removes internal reply-decision control data
+// from user-visible output. The last strictly valid decision wins; when no
+// valid decision exists, fallback is retained for rolling compatibility
 // with daemons that already send reply_decision separately.
+//
+// Models often omit the protocol fence and dump {"shouldReply":true} as
+// trailing JSON. That JSON is Host control data and must never reach IM.
 func NormalizeReplyDecisionOutput(output string, fallback *protocol.ReplyDecision) (string, *protocol.ReplyDecision) {
-	matches := replyDecisionBlockPattern.FindAllStringSubmatchIndex(output, -1)
-	if len(matches) == 0 {
-		return output, fallback
-	}
+	visible, decision := stripReplyDecisionFences(output, fallback, replyDecisionBlockPattern, true)
+	visible, decision = stripReplyDecisionFences(visible, decision, optionalJSONFencePattern, false)
+	visible, decision = stripTrailingReplyDecisionJSON(visible, decision)
+	return strings.TrimRightFunc(visible, unicode.IsSpace), decision
+}
 
+func stripReplyDecisionFences(output string, decision *protocol.ReplyDecision, pattern *regexp.Regexp, removeInvalid bool) (string, *protocol.ReplyDecision) {
+	matches := pattern.FindAllStringSubmatchIndex(output, -1)
+	if len(matches) == 0 {
+		return output, decision
+	}
 	var visible strings.Builder
 	visible.Grow(len(output))
 	cursor := 0
-	decision := fallback
 	for _, match := range matches {
+		body := output[match[2]:match[3]]
+		parsed := parseReplyDecisionJSON(strings.TrimSpace(body))
+		if parsed == nil && !removeInvalid {
+			continue
+		}
 		visible.WriteString(output[cursor:match[0]])
-		if parsed := parseReplyDecisionJSON(output[match[2]:match[3]]); parsed != nil {
+		if parsed != nil {
 			decision = parsed
 		}
 		cursor = match[1]
@@ -37,7 +51,67 @@ func NormalizeReplyDecisionOutput(output string, fallback *protocol.ReplyDecisio
 		}
 	}
 	visible.WriteString(output[cursor:])
-	return strings.TrimRightFunc(visible.String(), unicode.IsSpace), decision
+	return visible.String(), decision
+}
+
+func stripTrailingReplyDecisionJSON(output string, decision *protocol.ReplyDecision) (string, *protocol.ReplyDecision) {
+	for {
+		start := strings.LastIndexByte(output, '{')
+		if start < 0 {
+			return output, decision
+		}
+		end, ok := matchingObjectEnd(output, start)
+		if !ok {
+			return output, decision
+		}
+		if strings.TrimSpace(output[end+1:]) != "" {
+			return output, decision
+		}
+		parsed := parseReplyDecisionJSON(output[start : end+1])
+		if parsed == nil {
+			return output, decision
+		}
+		decision = parsed
+		output = strings.TrimRightFunc(output[:start], unicode.IsSpace)
+	}
+}
+
+func matchingObjectEnd(s string, start int) (int, bool) {
+	if start >= len(s) || s[start] != '{' {
+		return 0, false
+	}
+	depth := 0
+	inString := false
+	escape := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			if escape {
+				escape = false
+				continue
+			}
+			if c == '\\' {
+				escape = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
 }
 
 func normalizeTaskCompletionResult(result []byte) []byte {

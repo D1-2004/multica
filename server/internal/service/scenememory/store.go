@@ -61,7 +61,7 @@ func (s *Store) GetByID(ctx context.Context, workspaceID, agentID, memoryID pgty
 
 func (s *Store) List(ctx context.Context, workspaceID, agentID pgtype.UUID, limit int32) ([]db.SceneMemory, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 200
 	}
 	return s.queries.ListSceneMemoryByAgent(ctx, db.ListSceneMemoryByAgentParams{
 		WorkspaceID: workspaceID,
@@ -126,6 +126,7 @@ func (s *Store) CommitBatch(ctx context.Context, row db.SceneMemory, batch Commi
 	updated, err := s.queries.CommitSceneMemoryBatch(ctx, db.CommitSceneMemoryBatchParams{
 		ReplaceText:            batch.ReplaceText,
 		MemoryText:             batch.MemoryText,
+		SceneTitle:             strings.TrimSpace(batch.SceneTitle),
 		SourceCursorAt:         timestamptz(batch.SourceCursorAt),
 		SourceCursorEvidenceID: strings.TrimSpace(batch.SourceCursorEvidenceID),
 		LastFlushMeta:          meta,

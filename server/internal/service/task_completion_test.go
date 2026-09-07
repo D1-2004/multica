@@ -904,6 +904,47 @@ func TestReconcileTaskCompletionsRepairsCancelledTask(t *testing.T) {
 	}
 }
 
+func TestEnqueueSynchronousSilenceCompletesWithoutFailureStamp(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	svc := NewTaskService(queries, pool, nil, events.New())
+	agentID := pgtype.UUID{Bytes: [16]byte{22}, Valid: true}
+	callback := "/api/v1/dispatch-tasks/router-coord-silence/execution-result"
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `
+			DELETE FROM task_completion_outbox
+			WHERE request_id = 'multica-terminal:sync-silence:router-coord-silence'
+		`)
+	})
+	if err := svc.EnqueueSynchronousSilence(ctx, callback, taskCompletionTestTarget, agentID); err != nil {
+		t.Fatal(err)
+	}
+	var status, result string
+	var summary []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT execution_status, result_message, execution_summary
+		FROM task_completion_outbox
+		WHERE request_id = 'multica-terminal:sync-silence:router-coord-silence'
+	`).Scan(&status, &result, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" || result != "" {
+		t.Fatalf("silence must complete with empty IM, status=%q result=%q", status, result)
+	}
+	var frozen map[string]any
+	if err := json.Unmarshal(summary, &frozen); err != nil {
+		t.Fatal(err)
+	}
+	decision, _ := frozen["_multica_reply_decision"].(map[string]any)
+	if decision == nil {
+		t.Fatalf("missing reply decision: %s", summary)
+	}
+	if decision["shouldReply"] != false {
+		t.Fatalf("shouldReply=%v want false", decision["shouldReply"])
+	}
+}
+
 func TestEnqueueSynchronousTaskCompletionDurablyClosesNeedsBinding(t *testing.T) {
 	ctx := context.Background()
 	pool := newTaskClaimRacePool(t)
