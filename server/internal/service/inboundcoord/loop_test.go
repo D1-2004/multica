@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	openai "github.com/openai/openai-go/v3"
 
@@ -899,6 +900,73 @@ func TestBuildUserPromptIncludesPersonaAndTone(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
+	}
+	if strings.Contains(prompt, "agent_skills:") {
+		t.Fatalf("empty skills must be omitted:\n%s", prompt)
+	}
+}
+
+func TestBuildUserPromptIncludesSkillSnapshots(t *testing.T) {
+	t.Parallel()
+	prompt := buildUserPrompt(Turn{
+		Source:    SourceDigitalEmployee,
+		Addressed: true,
+		Skills: []SkillSnapshot{
+			{Name: "dingtalk-minutes", Description: "查询听记并整理行动项"},
+			{Name: "  ", Description: "skip empty name"},
+			{Name: "dingtalk-calendar", Description: "约会议、查日程"},
+		},
+		Message: "把今天下午那场会的听记整理成待办",
+	})
+	for _, want := range []string{
+		"agent_skills:",
+		"- dingtalk-minutes: 查询听记并整理行动项",
+		"- dingtalk-calendar: 约会议、查日程",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "skip empty name") {
+		t.Fatalf("empty skill names must be omitted:\n%s", prompt)
+	}
+}
+
+func TestFormatSkillSnapshotsClipsAndCaps(t *testing.T) {
+	t.Parallel()
+	longDesc := strings.Repeat("听记", skillSnapshotDescBudget)
+	got := formatSkillSnapshots([]SkillSnapshot{{Name: "minutes", Description: longDesc + "多余"}})
+	wantDesc := clipRunes(longDesc, skillSnapshotDescBudget)
+	if !strings.Contains(got, "- minutes: "+wantDesc) {
+		t.Fatalf("clipped snapshot=%q", got)
+	}
+	if strings.Contains(got, "多余") {
+		t.Fatalf("description must clip: %q", got)
+	}
+
+	many := make([]SkillSnapshot, skillSnapshotLimit+4)
+	for i := range many {
+		many[i] = SkillSnapshot{Name: fmt.Sprintf("s%02d", i), Description: "can"}
+	}
+	got = formatSkillSnapshots(many)
+	if strings.Contains(got, fmt.Sprintf("s%02d", skillSnapshotLimit)) {
+		t.Fatalf("must cap at %d skills:\n%s", skillSnapshotLimit, got)
+	}
+	if !strings.Contains(got, "s00: can") || !strings.Contains(got, fmt.Sprintf("s%02d: can", skillSnapshotLimit-1)) {
+		t.Fatalf("expected first %d skills:\n%s", skillSnapshotLimit, got)
+	}
+
+	heavy := make([]SkillSnapshot, 20)
+	desc := strings.Repeat("能", skillSnapshotDescBudget)
+	for i := range heavy {
+		heavy[i] = SkillSnapshot{Name: fmt.Sprintf("skill-%02d", i), Description: desc}
+	}
+	got = formatSkillSnapshots(heavy)
+	if n := utf8.RuneCountInString(got); n > skillSnapshotsBudget {
+		t.Fatalf("snapshot budget %d, got %d", skillSnapshotsBudget, n)
+	}
+	if !strings.Contains(got, "skill-00") || strings.Contains(got, "skill-19") {
+		t.Fatalf("budget should keep early skills and drop later ones:\n%s", got)
 	}
 }
 
