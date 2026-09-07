@@ -234,6 +234,14 @@ func reclaimASBSandboxForCredential(
 	excludedTaskID pgtype.UUID,
 	conn *pgxpool.Conn,
 ) (bool, error) {
+	started := time.Now()
+	defer func() {
+		slog.Info("ASB tenant capacity reclaim finished",
+			"event", "asb_capacity_reclaim_finished",
+			"requesting_runtime_id", util.UUIDToString(requestingRuntimeID),
+			"duration_ms", time.Since(started).Milliseconds(),
+		)
+	}()
 	scopedCredentials := *credentials
 	scopedCredentials.Store = queries
 	runtimeIDs, err := scopedCredentials.RuntimeIDsSharingAPIKey(ctx, requestingRuntimeID)
@@ -250,7 +258,11 @@ func reclaimASBSandboxForCredential(
 		return false, fmt.Errorf("query real-time ASB sandboxes before capacity reclaim: %w", err)
 	}
 	runningCount := 0
+	// An empty but non-nil filter must match no sessions. Missing inventory
+	// entries are not proof of termination and must not change stored state.
+	liveSandboxIDs := make([]string, 0, len(liveSandboxes))
 	for _, sandbox := range liveSandboxes {
+		liveSandboxIDs = append(liveSandboxIDs, sandbox.ID)
 		if strings.EqualFold(strings.TrimSpace(sandbox.Status.State), "running") {
 			runningCount++
 		}
@@ -266,6 +278,7 @@ func reclaimASBSandboxForCredential(
 		db.ListIdleASBSandboxSessionsByRuntimesParams{
 			RuntimeIds:     runtimeIDs,
 			ExcludedTaskID: excludedTaskID,
+			SandboxIds:     liveSandboxIDs,
 		},
 	)
 	if err != nil {
@@ -503,6 +516,7 @@ func isIdleASBSandboxCandidate(
 		db.ListIdleASBSandboxSessionsByRuntimesParams{
 			RuntimeIds:     runtimeIDs,
 			ExcludedTaskID: excludedTaskID,
+			SandboxIds:     []string{candidate.SandboxID},
 		},
 	)
 	if err != nil {

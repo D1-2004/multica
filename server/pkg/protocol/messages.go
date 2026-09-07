@@ -265,12 +265,23 @@ type ChatMessagePayload struct {
 // ChatCoordinatorTrace is the short-loop decision shown next to a coordinator
 // Chat reply. Additive: older clients ignore the field.
 type ChatCoordinatorTrace struct {
-	Action    string                `json:"action"`
-	LookInto  string                `json:"look_into,omitempty"`
-	Reason    string                `json:"reason,omitempty"`
-	ElapsedMs int64                 `json:"elapsed_ms,omitempty"`
-	Source    string                `json:"source,omitempty"`
-	Steps     []ChatCoordinatorStep `json:"steps,omitempty"`
+	Action       string                       `json:"action"`
+	LookInto     string                       `json:"look_into,omitempty"`
+	Reason       string                       `json:"reason,omitempty"`
+	ElapsedMs    int64                        `json:"elapsed_ms,omitempty"`
+	Source       string                       `json:"source,omitempty"`
+	Steps        []ChatCoordinatorStep        `json:"steps,omitempty"`
+	IssueResults []ChatCoordinatorIssueResult `json:"issue_results,omitempty"`
+}
+
+// ChatCoordinatorIssueResult records a committed side effect, never model intent.
+type ChatCoordinatorIssueResult struct {
+	Action          string `json:"action"`
+	IssueID         string `json:"issue_id"`
+	IssueIdentifier string `json:"issue_identifier,omitempty"`
+	IssueTitle      string `json:"issue_title,omitempty"`
+	CommentID       string `json:"comment_id,omitempty"`
+	TaskID          string `json:"task_id,omitempty"`
 }
 
 // ChatCoordinatorStep is one visible short-loop model/tool timeline item.

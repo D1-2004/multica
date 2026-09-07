@@ -42,6 +42,7 @@ import type { AgentAvailability } from "@multica/core/agents";
 import { resolveFailureReasonKey } from "@multica/core/agents";
 import type {
   ChatMessage,
+  ChatCoordinatorTrace,
   ChatPendingTask,
   ChatQuickAction,
   TaskMessagePayload,
@@ -56,6 +57,7 @@ import { splitTimeline, extractCopyText } from "../lib/copy-text";
 import { stripChatQuickActionsProtocol } from "../lib/quick-actions";
 import { useT } from "../../i18n";
 import { ChatReplyReceipt } from "./chat-reply-receipt";
+import { CoordinatorFinish } from "./coordinator-finish";
 
 // ─── Public component ────────────────────────────────────────────────────
 
@@ -614,6 +616,7 @@ function AssistantMessage({
           attachments={message?.attachments}
           phase={phase}
           isStreaming={!message}
+          coordinator={isCoordinator ? (message?.coordinator ?? {}) : undefined}
         />
       )}
       {isNoResponse ? (
@@ -1139,13 +1142,31 @@ function TimelineView({
   isStreaming,
   attachments,
   phase = "settled",
+  coordinator,
 }: {
   items: ChatTimelineItem[];
   isStreaming?: boolean;
   attachments?: import("@multica/core/types").Attachment[];
   phase?: "streaming" | "settled";
+  coordinator?: ChatCoordinatorTrace;
 }) {
-  const { preface, middle, final } = splitTimeline(items);
+  // Lift only the terminal, accepted finish out of the process fold. Rejected
+  // attempts and their errors remain in the original timeline for diagnosis.
+  const finishIndex = coordinator
+    ? items.reduce(
+        (index, item, i) =>
+          item.type === "tool_use" && item.tool === "finish" ? i : index,
+        -1,
+      )
+    : -1;
+  const hasTerminalFinish =
+    finishIndex >= 0 &&
+    !items.slice(finishIndex + 1).some(
+      (item) => item.type === "error" || item.type === "tool_use",
+    );
+  const { preface, middle, final } = splitTimeline(
+    hasTerminalFinish ? items.filter((_, index) => index !== finishIndex) : items,
+  );
 
   return (
     <>
@@ -1164,6 +1185,12 @@ function TimelineView({
           isStreaming={!!isStreaming}
           attachments={attachments}
           phase={phase}
+        />
+      )}
+      {coordinator && (
+        <CoordinatorFinish
+          trace={coordinator}
+          input={hasTerminalFinish ? items[finishIndex]?.input : undefined}
         />
       )}
       {final.length > 0 && (

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Blocks, Loader2, Plus, Trash2 } from "lucide-react";
+import { Blocks, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Agent, AgentRuntime } from "@multica/core/types";
@@ -107,11 +107,31 @@ export function DshPluginsTab({
     setShowAdd(false);
   };
 
+  // Plugins are composed by the sandbox image's adapter. A local daemon runs
+  // server/pkg/agent/dsh.go, which has no plugin awareness at all, so a binding
+  // made here is stored, listed as enabled, and never loaded.
+  //
+  // Said rather than hidden. Hiding the tab would strand whatever is already
+  // bound — invisible, unremovable, and live again the moment the agent moves
+  // back to a cloud runtime. The controls stay usable so a binding made before
+  // the move can be taken off.
+  const runsPlugins = agent.runtime_mode === "cloud";
+
   return (
     <div className="space-y-8">
       <p className="text-body leading-6 text-muted-foreground">
         {t(($) => $.tab_body.dsh_plugins.intro)}
       </p>
+
+      {runsPlugins ? null : (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-dashed px-4 py-3 text-caption leading-5 text-muted-foreground"
+        >
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{t(($) => $.tab_body.dsh_plugins.local_runtime_notice)}</span>
+        </div>
+      )}
 
       <section className="space-y-3">
         <div className="flex items-start justify-between gap-4">

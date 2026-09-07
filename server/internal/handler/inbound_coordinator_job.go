@@ -135,10 +135,6 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 		}
 		return true, w.complete(ctx, job)
 	}
-	command, err = w.absorbPendingSameScene(ctx, job, command)
-	if err != nil {
-		return true, w.retry(ctx, job, fmt.Errorf("collect same-scene jobs: %w", err))
-	}
 	if parked, parkErr := w.parkIfSceneWindowBusy(ctx, job, command); parkErr != nil {
 		return true, parkErr
 	} else if parked {
@@ -197,6 +193,7 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	w.handler.executeAgentDispatchV2(response, req, command, plan, dispatchContext)
 	if response.Status() >= http.StatusOK && response.Status() < http.StatusMultipleChoices {
 		if recordedDecision != nil {
+			*recordedDecision = coordinatorDecisionWithDispatchResult(*recordedDecision, response)
 			if err := w.handler.persistCoordinatorJobChat(jobCtx, job, *recordedDecision); err != nil {
 				return true, w.retry(ctx, job, fmt.Errorf("persist coordinator Chat: %w", err))
 			}
@@ -205,15 +202,17 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	}
 	if response.Status() == http.StatusConflict || response.Status() >= http.StatusInternalServerError {
 		reason := dispatchRejectReason(response)
-		if shouldSilenceCoordinatorBusyPark(response.Status(), reason) {
-			// ActionRetry parks until the recalled issue is free. Clear the
-			// inbound 处理中 now; do not 500/fail which stamps 处理失败.
-			w.silenceParkedInbound(ctx, job, command)
+		if shouldParkCoordinatorBusyResponse(response.Status(), reason) {
+			// Retain the callback until this sealed window actually finishes.
+			// A capacity wait is not a successful, silent execution.
 			return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, reason)
+		}
+		if job.AttemptCount >= inboundCoordinatorWorkerMaxAttempts {
+			return true, w.failWithDecision(ctx, job, command, reason, recordedDecision)
 		}
 		return true, w.retry(ctx, job, fmt.Errorf("%s", reason))
 	}
-	return true, w.fail(ctx, job, command, dispatchRejectReason(response))
+	return true, w.failWithDecision(ctx, job, command, dispatchRejectReason(response), recordedDecision)
 }
 
 func dispatchRejectReason(response *bufferedDispatchResponse) string {
@@ -231,109 +230,6 @@ func dispatchRejectReason(response *bufferedDispatchResponse) string {
 		return fmt.Sprintf("dispatch rejected with HTTP %d", status)
 	}
 	return fmt.Sprintf("dispatch rejected with HTTP %d: %s", status, body)
-}
-
-func (w *InboundCoordinatorJobWorker) absorbPendingSameScene(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) (DispatchCommand, error) {
-	if w == nil || w.handler == nil || w.handler.Queries == nil {
-		return command, nil
-	}
-	cid := dispatchConversationID(command)
-	persist := func(q *db.Queries, merged DispatchCommand) error {
-		raw, err := json.Marshal(merged)
-		if err != nil {
-			return err
-		}
-		n, err := q.UpdateInboundCoordinatorJobCommand(ctx, db.UpdateInboundCoordinatorJobCommandParams{
-			ID: job.ID, Command: raw,
-		})
-		if err != nil {
-			return err
-		}
-		if n != 1 {
-			return fmt.Errorf("persist coalesced command: job is not running")
-		}
-		return nil
-	}
-	if cid == "" || w.handler.TxStarter == nil {
-		if err := persist(w.handler.Queries, command); err != nil {
-			return command, err
-		}
-		return command, nil
-	}
-	tx, err := w.handler.TxStarter.Begin(ctx)
-	if err != nil {
-		return command, err
-	}
-	defer tx.Rollback(ctx)
-	qtx := w.handler.Queries.WithTx(tx)
-	siblings, err := qtx.ListPendingInboundCoordinatorJobsForConversation(ctx, db.ListPendingInboundCoordinatorJobsForConversationParams{
-		WorkspaceID:    job.WorkspaceID,
-		AgentID:        job.AgentID,
-		ExcludeID:      job.ID,
-		ConversationID: cid,
-	})
-	if err != nil {
-		return command, err
-	}
-	absorbed := make([]db.InboundCoordinatorJob, 0, len(siblings))
-	for _, sib := range siblings {
-		extra, restoreErr := restoreInboundCoordinatorCommand(
-			sib.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity,
-		)
-		if restoreErr != nil {
-			return command, restoreErr
-		}
-		if !sameCoordinatorCollectKind(command, extra) {
-			slog.Info("inbound coordinator job absorb skipped different kind",
-				"event", "inbound_coordinator_job_absorb_skipped",
-				"job_id", util.UUIDToString(job.ID),
-				"skipped_job_id", util.UUIDToString(sib.ID),
-				"job_ack", commandIsWindowAck(command),
-				"sibling_ack", commandIsWindowAck(extra),
-			)
-			continue
-		}
-		command = mergeDispatchCommands(command, extra)
-		absorbed = append(absorbed, sib)
-	}
-	if err := persist(qtx, command); err != nil {
-		return command, err
-	}
-	for _, sib := range absorbed {
-		n, completeErr := qtx.CompleteCoalescedInboundCoordinatorJob(ctx, sib.ID)
-		if completeErr != nil {
-			return command, completeErr
-		}
-		if n != 1 {
-			return command, fmt.Errorf("coalesce sibling %s: no longer pending", util.UUIDToString(sib.ID))
-		}
-		slog.Info("inbound coordinator job coalesced",
-			"event", "inbound_coordinator_job_coalesced",
-			"job_id", util.UUIDToString(job.ID),
-			"absorbed_job_id", util.UUIDToString(sib.ID),
-		)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return command, err
-	}
-	w.closeCoalescedRouterCallbacks(ctx, job, absorbed)
-	return command, nil
-}
-
-func (w *InboundCoordinatorJobWorker) closeCoalescedRouterCallbacks(ctx context.Context, job db.InboundCoordinatorJob, siblings []db.InboundCoordinatorJob) {
-	if w == nil || w.handler == nil {
-		return
-	}
-	for _, sib := range siblings {
-		extra, err := restoreInboundCoordinatorCommand(
-			sib.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity,
-		)
-		if err != nil {
-			continue
-		}
-		w.handler.enqueueCoordinatorSilenceCallback(ctx, extra.CompletionCallback, job.AgentID,
-			"inbound_coordinator_job_coalesced_silence_failed", util.UUIDToString(sib.ID))
-	}
 }
 
 func (h *Handler) enqueueCoordinatorSilenceCallback(
@@ -364,6 +260,19 @@ func restoreInboundCoordinatorCommand(raw []byte, endpointID pgtype.UUID, target
 }
 
 func (w *InboundCoordinatorJobWorker) complete(ctx context.Context, job db.InboundCoordinatorJob) error {
+	// Cover every successful materializer, including the sandbox fallback.
+	// Duplicate outbox enqueues are idempotent; failures keep the job retryable.
+	command, err := restoreInboundCoordinatorCommand(job.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity)
+	if err != nil {
+		return err
+	}
+	if w.handler.TaskService != nil {
+		for _, callback := range command.ExtraCompletionCallbacks {
+			if err := w.handler.TaskService.EnqueueSynchronousSilence(ctx, callback.URL, callback.Target, job.AgentID); err != nil {
+				return fmt.Errorf("settle collected callback: %w", err)
+			}
+		}
+	}
 	rows, err := w.handler.Queries.CompleteInboundCoordinatorJob(ctx, db.CompleteInboundCoordinatorJobParams{
 		ID: job.ID, LeaseToken: job.LeaseToken,
 	})
@@ -398,7 +307,9 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 		// window can still speak. Do not close 处理中 here.
 		return true, w.park(ctx, job, inboundCoordinatorSceneBusyDelay, "scene window already running")
 	}
-	if commandIsWindowAck(command) {
+	// New windows must be understood even at capacity: a status request
+	// or presence check needs no sandbox. Only previously judged work waits.
+	if !job.LastError.Valid || !isCoordinatorBusyParkReason(job.LastError.String) {
 		return false, nil
 	}
 	active, err := w.handler.Queries.CountActiveTasksForConversation(ctx, db.CountActiveTasksForConversationParams{
@@ -408,22 +319,9 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 		return false, w.retry(ctx, job, fmt.Errorf("count scene active tasks: %w", err))
 	}
 	if shouldParkSceneCapacity(command, active) {
-		w.silenceParkedInbound(ctx, job, command)
 		return true, w.park(ctx, job, inboundCoordinatorSceneParkDelay, "scene already has two in-flight matters")
 	}
 	return false, nil
-}
-
-// silenceParkedInbound closes the Router dispatch without IM so 处理中
-// drops while the job waits for the next window. A colleague does not leave
-// a spinning confirmation on a message they are not answering yet.
-func (w *InboundCoordinatorJobWorker) silenceParkedInbound(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand) {
-	if w == nil || w.handler == nil {
-		return
-	}
-	w.handler.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, job.AgentID,
-		"inbound_coordinator_busy_park_silence_failed", util.UUIDToString(job.ID))
-	w.handler.closeExtraCoordinatorCallbacks(ctx, command, job.AgentID)
 }
 
 func commandIsWindowAck(command DispatchCommand) bool {
@@ -486,10 +384,11 @@ func isCoordinatorBusyParkReason(reason string) bool {
 	return strings.Contains(reason, "pending agent task") ||
 		strings.Contains(reason, "already has an active task") ||
 		strings.Contains(reason, "issue_busy") ||
-		strings.Contains(reason, "active duplicate")
+		strings.Contains(reason, "active duplicate") ||
+		strings.Contains(reason, "scene already has two in-flight matters")
 }
 
-func shouldSilenceCoordinatorBusyPark(status int, reason string) bool {
+func shouldParkCoordinatorBusyResponse(status int, reason string) bool {
 	return status == http.StatusConflict && isCoordinatorBusyParkReason(reason)
 }
 
@@ -513,7 +412,7 @@ func recoveredCoordinatorDecision(command DispatchCommand, response *bufferedDis
 		action = inboundcoord.ActionIssue
 		text = "已恢复到原 Issue 继续处理。"
 	}
-	return inboundcoord.Decision{
+	return coordinatorDecisionWithDispatchResult(inboundcoord.Decision{
 		Action:   action,
 		UserText: text,
 		Reason:   "recovered durable dispatch result",
@@ -523,7 +422,32 @@ func recoveredCoordinatorDecision(command DispatchCommand, response *bufferedDis
 		}, {
 			Seq: 2, Type: "text", Content: text,
 		}},
+	}, response)
+}
+
+// Supplement a verdict from a successful materializer response. Multiple window
+// results and terminal tool effects already carry more precise evidence.
+func coordinatorDecisionWithDispatchResult(decision inboundcoord.Decision, response *bufferedDispatchResponse) inboundcoord.Decision {
+	if len(decision.IssueResults) > 0 || decision.IssueComment != nil || response == nil ||
+		response.Status() < http.StatusOK || response.Status() >= http.StatusMultipleChoices {
+		return decision
 	}
+	var result AgentDispatchResponse
+	if json.Unmarshal(response.body.Bytes(), &result) != nil || result.Continuation.Kind != "issue" ||
+		strings.TrimSpace(result.Continuation.IssueID) == "" {
+		return decision
+	}
+	action := "issue_linked"
+	if result.CommentID != "" {
+		action = "issue_commented"
+	} else if response.Status() == http.StatusCreated {
+		action = "issue_created"
+	}
+	decision.IssueResults = []protocol.ChatCoordinatorIssueResult{{
+		Action: action, IssueID: result.Continuation.IssueID,
+		IssueIdentifier: result.IssueIdentifier, CommentID: result.CommentID, TaskID: result.TaskID,
+	}}
+	return decision
 }
 
 func (w *InboundCoordinatorJobWorker) retry(ctx context.Context, job db.InboundCoordinatorJob, cause error) error {
@@ -555,18 +479,35 @@ func (w *InboundCoordinatorJobWorker) retry(ctx context.Context, job db.InboundC
 }
 
 func (w *InboundCoordinatorJobWorker) fail(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand, reason string) error {
-	if command.CompletionCallback != nil && w.handler.TaskService != nil {
-		_ = w.handler.TaskService.EnqueueSynchronousTaskCompletion(
-			ctx, command.CompletionCallback.URL, command.CompletionCallback.Target,
-			job.AgentID, reason, "coordinator_job_failed",
-		)
+	return w.failWithDecision(ctx, job, command, reason, nil)
+}
+
+func failedCoordinatorDecision(command DispatchCommand, reason string, observed *inboundcoord.Decision) inboundcoord.Decision {
+	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue, Source: coordinatorSource(command)}
+	if observed != nil {
+		decision = *observed
 	}
-	decision := inboundcoord.Decision{
-		Action: inboundcoord.ActionContinue,
-		Reason: reason,
-		Source: coordinatorSource(command),
-		Steps:  []protocol.ChatCoordinatorStep{{Seq: 1, Type: "error", Content: reason, Error: true}},
+	decision.UserText = "本轮处理失败。"
+	decision.Reason = reason
+	decision.Steps = append(append([]protocol.ChatCoordinatorStep{}, decision.Steps...), protocol.ChatCoordinatorStep{
+		Seq: len(decision.Steps) + 1, Type: "error", Content: reason, Error: true,
+	})
+	return decision
+}
+
+func (w *InboundCoordinatorJobWorker) failWithDecision(ctx context.Context, job db.InboundCoordinatorJob, command DispatchCommand, reason string, observed *inboundcoord.Decision) error {
+	if w.handler.TaskService != nil {
+		callbacks := append([]DispatchCompletionCallback{}, command.ExtraCompletionCallbacks...)
+		if command.CompletionCallback != nil {
+			callbacks = append(callbacks, *command.CompletionCallback)
+		}
+		for _, callback := range callbacks {
+			if err := w.handler.TaskService.EnqueueSynchronousTaskCompletion(ctx, callback.URL, callback.Target, job.AgentID, reason, "coordinator_job_failed"); err != nil {
+				return fmt.Errorf("fail collected callback: %w", err)
+			}
+		}
 	}
+	decision := failedCoordinatorDecision(command, reason, observed)
 	if err := w.handler.persistCoordinatorJobChat(ctx, job, decision); err != nil {
 		slog.Error("persist failed coordinator Chat failed", "job_id", util.UUIDToString(job.ID), "error", err)
 	}
@@ -676,7 +617,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		if _, lockErr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockName); lockErr != nil {
 			return nil, job, lockErr
 		}
-		pending, listErr := qtx.ListPendingInboundCoordinatorJobsForConversationCollect(ctx, db.FindPendingInboundCoordinatorJobForConversationParams{
+		pending, listErr := qtx.ListPendingInboundCoordinatorJobsForConversationCollect(ctx, db.ListPendingInboundCoordinatorJobsForConversationCollectParams{
 			WorkspaceID:    dispatchContext.WorkspaceID,
 			AgentID:        dispatchContext.AgentID,
 			ConversationID: cid,
@@ -702,7 +643,7 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			job, err = qtx.UpdateInboundCoordinatorJobCollect(ctx, db.UpdateInboundCoordinatorJobCollectParams{
 				ID:          existing.ID,
 				Command:     mergedRaw,
-				AvailableAt: pgtype.Timestamptz{Time: collectAt, Valid: true},
+				AvailableAt: pgtype.Timestamptz{Time: coordinatorCollectDeadline(existing.CreatedAt.Time, time.Now().UTC()), Valid: true},
 			})
 			if err != nil {
 				return nil, job, err
@@ -730,16 +671,15 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if h.SceneMemoryWorker != nil {
 				h.SceneMemoryWorker.Notify()
 			}
-			// Collect merges extra inbounds onto the pending job and drops
-			// their CompletionCallback. Close those Router dispatches now or
-			// the extra @ lines stay 处理中 after the window finishes.
-			h.enqueueCoordinatorSilenceCallback(ctx, command.CompletionCallback, dispatchContext.AgentID,
-				"inbound_coordinator_job_collected_silence_failed", util.UUIDToString(job.ID))
+			// Every callback is durable in the merged command. Settle extras
+			// only when the complete window has actually been handled.
 			slog.Info("inbound coordinator job collected",
 				"event", "inbound_coordinator_job_collected",
 				"job_id", util.UUIDToString(job.ID),
 				"source", command.Source.Type,
 				"message_count", len(merged.Event.Data.Messages),
+				"collect_until", job.AvailableAt.Time,
+				"collect_age_ms", time.Since(job.CreatedAt.Time).Milliseconds(),
 			)
 			return response, job, nil
 		}

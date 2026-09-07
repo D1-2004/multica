@@ -12,7 +12,21 @@ import (
 // inbound IMs on the same scene become one Decide, like a person reading
 // the chat before answering. Each new line on a pending job re-arms this
 // window. Parallel creates serialize on an advisory lock so they merge.
-const inboundCoordinatorCollectWindow = 4 * time.Second
+const (
+	inboundCoordinatorCollectWindow  = 4 * time.Second
+	inboundCoordinatorCollectMaxWait = 12 * time.Second
+)
+
+// coordinatorCollectDeadline bounds typing debounce independently of task
+// capacity, retries, and worker scheduling. A sealed window never reopens.
+func coordinatorCollectDeadline(createdAt, now time.Time) time.Time {
+	quiet := now.Add(inboundCoordinatorCollectWindow)
+	maximum := createdAt.Add(inboundCoordinatorCollectMaxWait)
+	if quiet.After(maximum) {
+		return maximum
+	}
+	return quiet
+}
 
 func dispatchConversationID(command DispatchCommand) string {
 	return strings.TrimSpace(command.Event.Data.Conversation.OpenConversationID)

@@ -123,3 +123,23 @@ func TestPickDshPluginSaysWhatIsImported(t *testing.T) {
 		t.Errorf("error %q does not distinguish an empty workspace", err)
 	}
 }
+
+// SetAgentDshPlugins looks ids up in a map keyed by uuidToString(row.ID) — a
+// plain string compare — so `bind` must send the canonical spelling. Widening
+// looksLikeDshPluginID to accept the undashed and uppercase forms made that a
+// real way to get "unknown DSH plugin" for a plugin that is right there.
+func TestCanonicalUUIDMatchesWhatTheServerStores(t *testing.T) {
+	t.Parallel()
+
+	const want = "f6039cff-0a61-4861-8d8f-87344d2eb793"
+	for _, spelling := range []string{
+		"f6039cff-0a61-4861-8d8f-87344d2eb793",
+		"F6039CFF-0A61-4861-8D8F-87344D2EB793",
+		"f6039cff0a6148618d8f87344d2eb793",
+		"F6039CFF0A6148618D8F87344D2EB793",
+	} {
+		if got := canonicalUUID(spelling); got != want {
+			t.Errorf("canonicalUUID(%q) = %q, want %q", spelling, got, want)
+		}
+	}
+}

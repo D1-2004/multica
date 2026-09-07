@@ -139,6 +139,7 @@ type Decision struct {
 	IssueComment *IssueCommentEffect
 	Items        []WindowItem
 	Steps        []protocol.ChatCoordinatorStep
+	IssueResults []protocol.ChatCoordinatorIssueResult
 	// TraceID is the coordinator trace id of the Decide call that produced
 	// this verdict (coord_trace_id in SLS, the Langfuse trace id).
 	TraceID string
@@ -473,13 +474,23 @@ func mergeCoordinatorSteps(groups ...[]protocol.ChatCoordinatorStep) []protocol.
 
 // Trace is the user-visible short-loop record persisted with the Chat reply.
 func (d Decision) Trace() protocol.ChatCoordinatorTrace {
+	results := d.IssueResults
+	if len(results) == 0 && d.IssueComment != nil {
+		effect := d.IssueComment
+		results = []protocol.ChatCoordinatorIssueResult{{
+			Action: "issue_commented", IssueID: effect.IssueID,
+			IssueIdentifier: effect.IssueIdentifier,
+			CommentID:       effect.CommentID, TaskID: effect.TaskID,
+		}}
+	}
 	return protocol.ChatCoordinatorTrace{
-		Action:    string(d.Action),
-		LookInto:  d.LookInto,
-		Reason:    d.Reason,
-		ElapsedMs: d.ElapsedMs,
-		Source:    string(d.Source),
-		Steps:     d.Steps,
+		Action:       string(d.Action),
+		LookInto:     d.LookInto,
+		Reason:       d.Reason,
+		ElapsedMs:    d.ElapsedMs,
+		Source:       string(d.Source),
+		Steps:        d.Steps,
+		IssueResults: results,
 	}
 }
 

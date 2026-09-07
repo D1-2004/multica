@@ -58,6 +58,29 @@ func TestListAttachesStderrWhenCLIExitsWithoutJSON(t *testing.T) {
 	}
 }
 
+func TestListPreservesDWSMillisecondContinuation(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dws")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$DWS_CONFIG_DIR/args\"\necho '{\"success\":true}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (CLI{Path: bin}).List(context.Background(), dir, ListRequest{
+		ConversationID: "cid-test", Direction: "newer", Limit: 30,
+		Before: time.Date(2026, 9, 3, 15, 43, 24, 970000000, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(filepath.Join(dir, "args"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "--time\n2026-09-03 23:43:24.970\n--direction\nnewer\n") {
+		t.Fatalf("lost native continuation precision: %s", args)
+	}
+}
+
 func TestCommandEnvIsolatesSecrets(t *testing.T) {
 	t.Setenv("DWS_CLIENT_SECRET", "should-not-leak")
 	t.Setenv("DWS_AUTH_CODE", "should-not-leak")

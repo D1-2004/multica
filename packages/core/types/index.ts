@@ -188,6 +188,8 @@ export type {
   CancelTaskResponse,
   ChatDraftRestore,
   ChatDraftRestoresResponse,
+  ChatCoordinatorTrace,
+  ChatCoordinatorIssueResult,
 } from "./chat";
 export type { StorageAdapter } from "./storage";
 export type * from "./workspace-access";

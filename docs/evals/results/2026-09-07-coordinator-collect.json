@@ -1,0 +1,81 @@
+{
+  "case": "coordinator-collect-1404",
+  "recorded_at": "2026-09-07T07:54:56.182257+00:00",
+  "status": "BLOCKED_LIVE_E2E",
+  "environment": "staging",
+  "source_revision": "c18d8d0ff1b79d681e3054437767b457daa01477",
+  "release_revision": "626ee98eb36fa990cd003f2888437dd8f3144061",
+  "deployment": {
+    "cr_id": 36000322,
+    "run_id": 3107058477,
+    "url": "https://cd.aone.alibaba-inc.com/unite/micro/publish/app/342160?flowId=1005452",
+    "code_merge": "SUCCESS",
+    "build": "SUCCESS",
+    "artifact_scan": "SUCCESS",
+    "pre_deploy": "SUCCESS",
+    "pre_deploy_completed_at": "2026-09-07T15:52:17+08:00",
+    "platform_integration": "SUCCESS",
+    "manual_verification": "WAITING"
+  },
+  "regression": {
+    "baseline_revision": "a6f2d8c3e",
+    "baseline_result": "FAIL_EXPECTED",
+    "baseline_assertion": "fresh 你干了吗？ must reach Decide at capacity: parked=true err=<nil>",
+    "fixed_result": "PASS",
+    "tests": [
+      "Coordinator 4-second quiet deadline and 12-second cap",
+      "Real acceptance/job/outbox collect and expired-window boundaries",
+      "Parked windows do not absorb later messages",
+      "Fresh claimed windows reach decision with two real active scene tasks",
+      "Classified work still parks at capacity without terminal receipt",
+      "Successful and failed windows settle every collected callback",
+      "Current-scene recall required before new Issue"
+    ],
+    "race": "PASS",
+    "server_build": "PASS",
+    "release_merge_race_and_build": "PASS"
+  },
+  "smoke": {
+    "at": "2026-09-07T07:53:05.139302+00:00",
+    "checks": [
+      {
+        "path": "/api/config",
+        "status": 200,
+        "bytes": 476,
+        "server_version": null
+      },
+      {
+        "path": "/",
+        "status": 200,
+        "bytes": 334331
+      }
+    ]
+  },
+  "fixture": {
+    "agent_id": "e2293e9e-1e79-4926-b0e6-da4cb693add0",
+    "workspace_id": "d4f9ceed-d114-4312-bb30-dd791aee039b",
+    "inbound_coordinator": true,
+    "verified_after_deploy": true
+  },
+  "live_e2e": {
+    "status": "BLOCKED",
+    "rounds_completed": 0,
+    "rounds_required": 3,
+    "code": "PAT_ORG_POLICY_DENIED",
+    "scope": "chat.message:list",
+    "policy": "OPEN_SOURCE_ORG_SCOPE_FORBIDDEN",
+    "roles_checked": [
+      "主角",
+      "配角"
+    ],
+    "messages_sent": 0,
+    "reason": "Independent DingTalk readback is denied by organization policy. Preflight stops before sending test work.",
+    "next": "Organization administrator enables scope; run prepare/pings/burst/continuous/third/observe with a fresh directory per round, review Router and same-cid DWS evidence."
+  },
+  "known_baseline_failure": {
+    "test": "TestHandleAgentDispatchV2CreatesSafeIssueWithoutRequestIdentity",
+    "assertion": "instruction must equal ROUTER CONTEXT although current code appends DingTalk Conversation",
+    "reproduced_on_unmodified_head": true
+  },
+  "coverage_note": "Local database integration and pre-release deployment/smoke are not substitutes for real DingTalk e2e. No production rollout or Agent configuration changes."
+}

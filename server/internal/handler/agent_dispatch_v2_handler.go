@@ -1074,6 +1074,8 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		dispatchContext.UserID,
 		dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
 	)
+	// Publish committed results after materialization, not just the model verdict.
+	defer func() { inboundcoord.RecordDecision(r.Context(), decision) }()
 	if len(c.Event.Data.Messages) > 0 {
 		for _, m := range c.Event.Data.Messages {
 			if m.Reaction == nil && len(m.Attachments) > 0 && decision.Action != inboundcoord.ActionContinue {
@@ -1094,6 +1096,14 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		if writeDispatchCoordinatorTerminal(w, r.Context(), h, c, dispatchContext, decision) {
 			return
 		}
+	}
+	// Classification is independent of sandbox capacity. Enforce capacity
+	// only on execution, including the LLM-unavailable fallback.
+	if decision.Action == inboundcoord.ActionContinue && c.CompletionCallback != nil &&
+		c.Event.Domain == "channel" && c.Event.Type == "message.created" &&
+		sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c)) <= 0 {
+		writeError(w, http.StatusConflict, "scene already has two in-flight matters")
+		return
 	}
 
 	attachments := make([]AgentDispatchAttachment, 0)
@@ -1140,7 +1150,8 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if len(items) > slots {
-			items = items[:slots]
+			writeError(w, http.StatusConflict, "scene already has two in-flight matters")
+			return
 		}
 		var firstIssueID, firstTaskID, firstIdentifier string
 		var firstIssue db.Issue
@@ -1168,6 +1179,10 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				r.Context(), agent.ID, itemKey, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID,
 			); ok {
 				keepAttachments = true
+				decision.IssueResults = append(decision.IssueResults, protocol.ChatCoordinatorIssueResult{
+					Action: "issue_created", IssueID: uuidToString(existingIssue.ID),
+					IssueIdentifier: existingIdent, IssueTitle: existingIssue.Title, TaskID: uuidToString(existingTask.ID),
+				})
 				if created == 0 {
 					firstIssueID, firstTaskID, firstIdentifier = uuidToString(existingIssue.ID), uuidToString(existingTask.ID), existingIdent
 					firstIssue, firstTask = existingIssue, existingTask
@@ -1204,6 +1219,10 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 					r.Context(), agent.ID, itemKey, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID,
 				); ok {
 					keepAttachments = true
+					decision.IssueResults = append(decision.IssueResults, protocol.ChatCoordinatorIssueResult{
+						Action: "issue_created", IssueID: uuidToString(existingIssue.ID),
+						IssueIdentifier: existingIdent, IssueTitle: existingIssue.Title, TaskID: uuidToString(existingTask.ID),
+					})
 					if created == 0 {
 						firstIssueID, firstTaskID, firstIdentifier = uuidToString(existingIssue.ID), uuidToString(existingTask.ID), existingIdent
 						firstIssue, firstTask = existingIssue, existingTask
@@ -1227,6 +1246,15 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				break
 			}
 			keepAttachments = true
+			issueResult := protocol.ChatCoordinatorIssueResult{
+				Action: "issue_created", IssueID: uuidToString(result.Issue.ID),
+				IssueIdentifier: service.IssueIdentifier(h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID), result.Issue.Number),
+				IssueTitle:      result.Issue.Title,
+			}
+			if result.EnqueuedTask != nil {
+				issueResult.TaskID = uuidToString(result.EnqueuedTask.ID)
+			}
+			decision.IssueResults = append(decision.IssueResults, issueResult)
 			if result.EnqueuedTask == nil {
 				if created == 0 {
 					writeError(w, http.StatusInternalServerError, "issue created but agent task was not enqueued")
@@ -1853,6 +1881,14 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 	issueIDString := uuidToString(issue.ID)
 	commentID := uuidToString(result.Comment.ID)
 	taskID := uuidToString(result.Task.ID)
+	if coordinatorDecision != nil {
+		coordinatorDecision.IssueResults = []protocol.ChatCoordinatorIssueResult{{
+			Action: "issue_commented", IssueID: issueIDString,
+			IssueIdentifier: service.IssueIdentifier(h.getIssuePrefix(r.Context(), issue.WorkspaceID), issue.Number),
+			IssueTitle:      issue.Title, CommentID: commentID, TaskID: taskID,
+		}}
+		inboundcoord.RecordDecision(r.Context(), *coordinatorDecision)
+	}
 	assocDecision := inboundcoord.Decision{}
 	if coordinatorDecision != nil {
 		assocDecision = *coordinatorDecision
