@@ -20,17 +20,13 @@ type ResponsePolicyNotifier interface {
 }
 
 type ResponsePolicySyncConfig struct {
-	// A mode switch must use a higher rollout revision on all new replicas.
-	Enabled         func() bool
-	RolloutRevision func() int64
 	// Resolve from trusted runtime metadata, never from agent custom_env. The
 	// argument contains only ID, WorkspaceID, and RuntimeID from the source row.
 	RuntimeSupportsPolicy func(context.Context, db.Agent) (bool, error)
 }
 
 type ResponsePolicySyncStore interface {
-	ObserveResponsePolicyRollout(context.Context, db.ObserveResponsePolicyRolloutParams) (db.DingtalkResponsePolicyRollout, error)
-	HasResponsePolicySyncTarget(context.Context, string) (bool, error)
+	EnsureAgentResponsePolicyTarget(context.Context, string) (db.DingtalkResponsePolicyRollout, error)
 	ListResponsePolicySyncCandidates(context.Context, db.ListResponsePolicySyncCandidatesParams) ([]db.ListResponsePolicySyncCandidatesRow, error)
 	UpsertResponsePolicySync(context.Context, db.UpsertResponsePolicySyncParams) (db.DingtalkResponsePolicySync, error)
 	ClaimResponsePolicySync(context.Context, string) (db.DingtalkResponsePolicySync, error)
@@ -130,32 +126,14 @@ func (w *ResponsePolicySyncWorker) Reconcile(ctx context.Context) error {
 	if w == nil || w.store == nil || w.client == nil {
 		return nil
 	}
-	enabled := w.config.Enabled != nil && w.config.Enabled()
-	revision := int64(1)
-	if w.config.RolloutRevision != nil {
-		revision = w.config.RolloutRevision()
-	}
-	if revision < 1 {
-		return errors.New("response policy rollout revision must be positive")
-	}
-	fence, err := w.store.ObserveResponsePolicyRollout(ctx, db.ObserveResponsePolicyRolloutParams{
-		TargetIdentity: w.targetIdentity, Revision: revision, Enabled: enabled,
-	})
+	fence, err := w.store.EnsureAgentResponsePolicyTarget(ctx, w.targetIdentity)
 	if err != nil {
 		return err
 	}
-	if fence.Revision != revision || fence.Enabled != enabled {
-		return errors.New("response policy rollout configuration is stale or conflicts with its revision")
+	if fence.Revision < 2 || !fence.Enabled {
+		return errors.New("employee response policy migration is not active")
 	}
-	if !enabled {
-		managedBefore, err := w.store.HasResponsePolicySyncTarget(ctx, w.targetIdentity)
-		if err != nil {
-			return err
-		}
-		if !managedBefore {
-			return nil
-		}
-	}
+	revision := fence.Revision
 	supported, err := w.client.SupportsResponsePolicy(ctx)
 	if err != nil {
 		return err
@@ -165,14 +143,14 @@ func (w *ResponsePolicySyncWorker) Reconcile(ctx context.Context) error {
 	}
 	after := pgtype.UUID{Valid: true}
 	for {
-		rows, err := w.store.ListResponsePolicySyncCandidates(ctx, db.ListResponsePolicySyncCandidatesParams{AfterID: after, BatchSize: 100})
+		rows, err := w.store.ListResponsePolicySyncCandidates(ctx, db.ListResponsePolicySyncCandidatesParams{AfterID: after, BatchSize: 100, TargetIdentity: w.targetIdentity})
 		if err != nil {
 			return err
 		}
 		for _, row := range rows {
 			agent := db.Agent{ID: row.AgentID, WorkspaceID: row.WorkspaceID, RuntimeID: row.RuntimeID}
 			capable := false
-			if enabled && row.InboundCoordinator && row.RuntimeID.Valid && w.config.RuntimeSupportsPolicy != nil {
+			if row.DingtalkResponseEnabled && row.InboundCoordinator && row.RuntimeID.Valid && w.config.RuntimeSupportsPolicy != nil {
 				capable, err = w.config.RuntimeSupportsPolicy(ctx, agent)
 				if err != nil {
 					// An unavailable capability resolver is not evidence for rollback.
@@ -180,7 +158,7 @@ func (w *ResponsePolicySyncWorker) Reconcile(ctx context.Context) error {
 					continue
 				}
 			}
-			policy := desiredResponsePolicy(row, enabled && capable)
+			policy := desiredResponsePolicy(row, capable)
 			_, err = w.store.UpsertResponsePolicySync(ctx, db.UpsertResponsePolicySyncParams{
 				TargetIdentity: w.targetIdentity, SourceID: row.SourceID, InstallationID: row.InstallationID,
 				WorkspaceID: row.WorkspaceID, AgentID: row.AgentID, AgentRevision: row.DingtalkResponsePolicyRevision,
@@ -198,9 +176,9 @@ func (w *ResponsePolicySyncWorker) Reconcile(ctx context.Context) error {
 	}
 }
 
-func desiredResponsePolicy(row db.ListResponsePolicySyncCandidatesRow, runtimeAndRolloutReady bool) protocol.DingTalkResponsePolicy {
+func desiredResponsePolicy(row db.ListResponsePolicySyncCandidatesRow, runtimeReady bool) protocol.DingTalkResponsePolicy {
 	mode := protocol.DingTalkResponseModeLegacy
-	if runtimeAndRolloutReady && row.InboundCoordinator {
+	if row.DingtalkResponseEnabled && row.InboundCoordinator && runtimeReady {
 		mode = protocol.DingTalkResponseModeCoordinator
 	}
 	return protocol.DingTalkResponsePolicy{

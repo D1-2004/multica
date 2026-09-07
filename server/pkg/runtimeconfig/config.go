@@ -62,6 +62,7 @@ type WebConfig struct {
 }
 
 type IntegrationsConfig struct {
+	// Decode-only compatibility for old snapshots; employee settings now own response mode.
 	DingTalkResponsePolicyEnabled   bool   `json:"dingtalk_response_policy_enabled,omitempty"`
 	DingTalkResponsePolicyRevision  int64  `json:"dingtalk_response_policy_revision,omitempty"`
 	AgentMessageRouterInternalURL   string `json:"agent_message_router_internal_url"`
@@ -268,9 +269,6 @@ func (c WebConfig) validate() error {
 }
 
 func (c IntegrationsConfig) validate() error {
-	if c.DingTalkResponsePolicyRevision < 0 {
-		return fmt.Errorf("dingtalk_response_policy_revision must be non-negative")
-	}
 	for name, raw := range map[string]string{
 		"agent_message_router_internal_url":  c.AgentMessageRouterInternalURL,
 		"dingtalk_dbase_binding_origin":      c.DingTalkDBaseBindingOrigin,

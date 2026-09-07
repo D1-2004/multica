@@ -26,6 +26,13 @@ func TestAgentDingTalkResponsePolicyDefaultsAndHydration(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("get agent: %d: %s", w.Code, w.Body.String())
 		}
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := raw["dingtalk_response_enabled"]; !present {
+			t.Fatal("detail omitted the explicit default-off switch")
+		}
 		var response AgentResponse
 		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 			t.Fatal(err)
@@ -34,15 +41,15 @@ func TestAgentDingTalkResponsePolicyDefaultsAndHydration(t *testing.T) {
 	}
 
 	initial := get()
-	if initial.DingTalkShowAITag || initial.InboundCoordinator || initial.DingTalkResponsePolicyRevision != 1 {
+	if initial.DingTalkResponseEnabled || initial.DingTalkShowAITag || initial.InboundCoordinator || initial.DingTalkResponsePolicyRevision != 1 {
 		t.Fatalf("unexpected initial response policy: %+v", initial)
 	}
-	w := updateAgentForTest(t, agentID, map[string]any{"dingtalk_show_ai_tag": true})
+	w := updateAgentForTest(t, agentID, map[string]any{"dingtalk_show_ai_tag": true, "dingtalk_response_enabled": true})
 	if w.Code != http.StatusOK {
 		t.Fatalf("update: %d: %s", w.Code, w.Body.String())
 	}
 	detail := get()
-	if !detail.DingTalkShowAITag || detail.InboundCoordinator || detail.DingTalkResponsePolicyRevision != 2 {
+	if !detail.DingTalkResponseEnabled || !detail.DingTalkShowAITag || detail.InboundCoordinator || detail.DingTalkResponsePolicyRevision != 2 {
 		t.Fatalf("unexpected updated detail response policy: %+v", detail)
 	}
 
@@ -57,7 +64,7 @@ func TestAgentDingTalkResponsePolicyDefaultsAndHydration(t *testing.T) {
 	}
 	for _, agent := range agents {
 		if agent.ID == agentID {
-			if !agent.DingTalkShowAITag || agent.InboundCoordinator || agent.DingTalkResponsePolicyRevision != 2 {
+			if !agent.DingTalkResponseEnabled || !agent.DingTalkShowAITag || agent.InboundCoordinator || agent.DingTalkResponsePolicyRevision != 2 {
 				t.Fatalf("list response policy differs from detail: %+v", agent)
 			}
 			return
@@ -72,19 +79,23 @@ func TestUpdateAgentDingTalkResponsePolicyRevision(t *testing.T) {
 	}
 	agentID := createHandlerTestAgent(t, "dingtalk-policy-revision", nil)
 	cases := []struct {
-		name        string
-		body        map[string]any
-		revision    int64
-		showAITag   bool
-		coordinator bool
+		name            string
+		body            map[string]any
+		revision        int64
+		showAITag       bool
+		coordinator     bool
+		responseEnabled bool
 	}{
-		{"unchanged defaults", map[string]any{"dingtalk_show_ai_tag": false, "inbound_coordinator": false}, 1, false, false},
-		{"both switches change once", map[string]any{"dingtalk_show_ai_tag": true, "inbound_coordinator": true}, 2, true, true},
-		{"duplicate settings", map[string]any{"dingtalk_show_ai_tag": true, "inbound_coordinator": true}, 2, true, true},
-		{"unrelated edit", map[string]any{"description": "Changed description"}, 2, true, true},
-		{"AI switch only", map[string]any{"dingtalk_show_ai_tag": false}, 3, false, true},
-		{"coordinator switch only", map[string]any{"inbound_coordinator": false}, 4, false, false},
-		{"client cannot set revision", map[string]any{"dingtalk_response_policy_revision": 99}, 4, false, false},
+		{"unchanged defaults", map[string]any{"dingtalk_show_ai_tag": false, "inbound_coordinator": false, "dingtalk_response_enabled": false}, 1, false, false, false},
+		{"response switch independent", map[string]any{"dingtalk_response_enabled": true}, 2, false, false, true},
+		{"other switches change once", map[string]any{"dingtalk_show_ai_tag": true, "inbound_coordinator": true}, 3, true, true, true},
+		{"duplicate settings", map[string]any{"dingtalk_show_ai_tag": true, "inbound_coordinator": true, "dingtalk_response_enabled": true}, 3, true, true, true},
+		{"unrelated edit", map[string]any{"description": "Changed description"}, 3, true, true, true},
+		{"AI switch only", map[string]any{"dingtalk_show_ai_tag": false}, 4, false, true, true},
+		{"response switch off", map[string]any{"dingtalk_response_enabled": false}, 5, false, true, false},
+		{"coordinator switch only", map[string]any{"inbound_coordinator": false}, 6, false, false, false},
+		{"all switches change once", map[string]any{"dingtalk_show_ai_tag": true, "inbound_coordinator": true, "dingtalk_response_enabled": true}, 7, true, true, true},
+		{"client cannot set revision", map[string]any{"dingtalk_response_policy_revision": 99}, 7, true, true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,7 +107,7 @@ func TestUpdateAgentDingTalkResponsePolicyRevision(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 				t.Fatal(err)
 			}
-			if response.DingTalkShowAITag != tc.showAITag || response.InboundCoordinator != tc.coordinator || response.DingTalkResponsePolicyRevision != tc.revision {
+			if response.DingTalkResponseEnabled != tc.responseEnabled || response.DingTalkShowAITag != tc.showAITag || response.InboundCoordinator != tc.coordinator || response.DingTalkResponsePolicyRevision != tc.revision {
 				t.Fatalf("unexpected response policy: %+v", response)
 			}
 		})
@@ -112,6 +123,7 @@ func TestUpdateAgentDingTalkResponsePolicyConcurrentPartialUpdates(t *testing.T)
 	params := []db.UpdateAgentDingTalkResponsePolicyParams{
 		{ID: agentID, InboundCoordinator: pgtype.Bool{Bool: true, Valid: true}},
 		{ID: agentID, ShowAiTag: pgtype.Bool{Bool: true, Valid: true}},
+		{ID: agentID, ResponseEnabled: pgtype.Bool{Bool: true, Valid: true}},
 	}
 	queries := make([]*db.Queries, len(params))
 	for i := range params {
@@ -146,7 +158,7 @@ func TestUpdateAgentDingTalkResponsePolicyConcurrentPartialUpdates(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !policy.InboundCoordinator || !policy.DingtalkShowAiTag || policy.DingtalkResponsePolicyRevision != 3 {
+	if !policy.DingtalkResponseEnabled || !policy.InboundCoordinator || !policy.DingtalkShowAiTag || policy.DingtalkResponsePolicyRevision != 4 {
 		t.Fatalf("concurrent updates lost a setting or revision: %+v", policy)
 	}
 }
@@ -156,9 +168,13 @@ func TestUpdateAgentDingTalkResponsePolicyRejectsMalformedBoolean(t *testing.T) 
 		t.Skip("database not available")
 	}
 	agentID := createHandlerTestAgent(t, "dingtalk-policy-malformed", nil)
-	w := updateAgentForTest(t, agentID, map[string]any{"dingtalk_show_ai_tag": "false"})
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected malformed boolean to fail: %d: %s", w.Code, w.Body.String())
+	for _, field := range []string{"dingtalk_response_enabled", "dingtalk_show_ai_tag", "inbound_coordinator"} {
+		for _, value := range []any{"false", 1, []bool{true}} {
+			w := updateAgentForTest(t, agentID, map[string]any{field: value})
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected malformed %s=%v to fail: %d: %s", field, value, w.Code, w.Body.String())
+			}
+		}
 	}
 }
 
@@ -179,7 +195,7 @@ func TestUpdateAgentDingTalkResponsePolicyRequiresManageAccess(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			req := withURLParam(newRequestAs(tc.userID, http.MethodPut, "/api/agents/"+agentID, map[string]any{
-				"dingtalk_show_ai_tag": true,
+				"dingtalk_response_enabled": true,
 			}), "id", agentID)
 			testHandler.UpdateAgent(w, req)
 			if w.Code != tc.status {

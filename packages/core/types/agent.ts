@@ -489,6 +489,8 @@ export interface Agent {
    * `undefined` as false. Only an explicit true turns it on.
    */
   inbound_coordinator?: boolean;
+  /** Let the platform own DingTalk replies and thinking reactions; off when omitted. */
+  dingtalk_response_enabled?: boolean;
   /** Show the AI sender label on platform and sandbox DingTalk messages. */
   dingtalk_show_ai_tag?: boolean;
   /** Monotonic response policy revision; older backends omit it. */
@@ -840,6 +842,7 @@ export interface UpdateAgentRequest {
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  dingtalk_response_enabled?: boolean;
   dingtalk_show_ai_tag?: boolean;
   task_finished_loop_enabled?: boolean;
   scene_memory_write_enabled?: boolean;

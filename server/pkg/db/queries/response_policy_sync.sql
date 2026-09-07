@@ -12,9 +12,16 @@ RETURNING *;
 -- name: HasResponsePolicySyncTarget :one
 SELECT EXISTS (SELECT 1 FROM dingtalk_response_policy_sync WHERE target_identity = @target_identity)::boolean;
 
+-- name: EnsureAgentResponsePolicyTarget :one
+-- The database epoch fences old configuration-driven workers; it is not a feature switch.
+INSERT INTO dingtalk_response_policy_rollout (target_identity, revision, enabled)
+VALUES (@target_identity, 2, true)
+ON CONFLICT (target_identity) DO UPDATE SET target_identity = EXCLUDED.target_identity
+RETURNING *;
+
 -- name: ListResponsePolicySyncCandidates :many
 SELECT a.id AS agent_id, a.workspace_id, a.runtime_id, a.inbound_coordinator,
-    a.dingtalk_show_ai_tag, a.dingtalk_response_policy_revision,
+    a.dingtalk_show_ai_tag, a.dingtalk_response_enabled, a.dingtalk_response_policy_revision,
     ci.id AS installation_id,
     (ci.config->>'router_source_id')::text AS source_id,
     GREATEST(a.updated_at, ci.updated_at, r.updated_at)::timestamptz AS source_updated_at
@@ -23,6 +30,10 @@ JOIN agent a ON a.id = ci.agent_id AND a.workspace_id = ci.workspace_id
 LEFT JOIN agent_runtime r ON r.id = a.runtime_id AND r.workspace_id = a.workspace_id
 WHERE ci.channel_type = 'dingtalk_account' AND ci.status = 'active' AND a.archived_at IS NULL
   AND COALESCE(ci.config->>'router_source_id', '') <> ''
+  AND (a.dingtalk_response_enabled OR EXISTS (
+      SELECT 1 FROM dingtalk_response_policy_sync sync
+      WHERE sync.target_identity = @target_identity AND sync.source_id = ci.config->>'router_source_id'
+  ))
   AND ci.id > @after_id::uuid
 ORDER BY ci.id
 LIMIT @batch_size;

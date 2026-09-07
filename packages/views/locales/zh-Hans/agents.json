@@ -184,6 +184,8 @@
     "prop_speed": "速度",
     "prop_visibility": "可见性",
     "prop_concurrency": "并发",
+    "prop_dingtalk_response_enabled": "统一响应",
+    "prop_dingtalk_response_enabled_hint": "由平台统一回复钉钉消息并管理\"思考中\"表情。默认关闭，需要开启\"入站先判断\"并使用兼容的运行环境。修改后对新收到的消息生效。",
     "prop_dingtalk_show_ai_tag": "显示 AI 发送标识",
     "prop_dingtalk_show_ai_tag_hint": "在数字员工的钉钉回复和工作中主动发送的消息上显示 AI 发送标识。默认关闭，修改后对新接收的工作生效。",
     "prop_chat_session_resume": "续接上一轮会话",

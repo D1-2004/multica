@@ -88,6 +88,26 @@ func (q *Queries) CompleteResponsePolicySync(ctx context.Context, arg CompleteRe
 	return result.RowsAffected(), nil
 }
 
+const ensureAgentResponsePolicyTarget = `-- name: EnsureAgentResponsePolicyTarget :one
+INSERT INTO dingtalk_response_policy_rollout (target_identity, revision, enabled)
+VALUES ($1, 2, true)
+ON CONFLICT (target_identity) DO UPDATE SET target_identity = EXCLUDED.target_identity
+RETURNING target_identity, revision, enabled, updated_at
+`
+
+// The database epoch fences old configuration-driven workers; it is not a feature switch.
+func (q *Queries) EnsureAgentResponsePolicyTarget(ctx context.Context, targetIdentity string) (DingtalkResponsePolicyRollout, error) {
+	row := q.db.QueryRow(ctx, ensureAgentResponsePolicyTarget, targetIdentity)
+	var i DingtalkResponsePolicyRollout
+	err := row.Scan(
+		&i.TargetIdentity,
+		&i.Revision,
+		&i.Enabled,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const hasResponsePolicySyncTarget = `-- name: HasResponsePolicySyncTarget :one
 SELECT EXISTS (SELECT 1 FROM dingtalk_response_policy_sync WHERE target_identity = $1)::boolean
 `
@@ -101,7 +121,7 @@ func (q *Queries) HasResponsePolicySyncTarget(ctx context.Context, targetIdentit
 
 const listResponsePolicySyncCandidates = `-- name: ListResponsePolicySyncCandidates :many
 SELECT a.id AS agent_id, a.workspace_id, a.runtime_id, a.inbound_coordinator,
-    a.dingtalk_show_ai_tag, a.dingtalk_response_policy_revision,
+    a.dingtalk_show_ai_tag, a.dingtalk_response_enabled, a.dingtalk_response_policy_revision,
     ci.id AS installation_id,
     (ci.config->>'router_source_id')::text AS source_id,
     GREATEST(a.updated_at, ci.updated_at, r.updated_at)::timestamptz AS source_updated_at
@@ -110,14 +130,19 @@ JOIN agent a ON a.id = ci.agent_id AND a.workspace_id = ci.workspace_id
 LEFT JOIN agent_runtime r ON r.id = a.runtime_id AND r.workspace_id = a.workspace_id
 WHERE ci.channel_type = 'dingtalk_account' AND ci.status = 'active' AND a.archived_at IS NULL
   AND COALESCE(ci.config->>'router_source_id', '') <> ''
-  AND ci.id > $1::uuid
+  AND (a.dingtalk_response_enabled OR EXISTS (
+      SELECT 1 FROM dingtalk_response_policy_sync sync
+      WHERE sync.target_identity = $1 AND sync.source_id = ci.config->>'router_source_id'
+  ))
+  AND ci.id > $2::uuid
 ORDER BY ci.id
-LIMIT $2
+LIMIT $3
 `
 
 type ListResponsePolicySyncCandidatesParams struct {
-	AfterID   pgtype.UUID `json:"after_id"`
-	BatchSize int32       `json:"batch_size"`
+	TargetIdentity string      `json:"target_identity"`
+	AfterID        pgtype.UUID `json:"after_id"`
+	BatchSize      int32       `json:"batch_size"`
 }
 
 type ListResponsePolicySyncCandidatesRow struct {
@@ -126,6 +151,7 @@ type ListResponsePolicySyncCandidatesRow struct {
 	RuntimeID                      pgtype.UUID        `json:"runtime_id"`
 	InboundCoordinator             bool               `json:"inbound_coordinator"`
 	DingtalkShowAiTag              bool               `json:"dingtalk_show_ai_tag"`
+	DingtalkResponseEnabled        bool               `json:"dingtalk_response_enabled"`
 	DingtalkResponsePolicyRevision int64              `json:"dingtalk_response_policy_revision"`
 	InstallationID                 pgtype.UUID        `json:"installation_id"`
 	SourceID                       string             `json:"source_id"`
@@ -133,7 +159,7 @@ type ListResponsePolicySyncCandidatesRow struct {
 }
 
 func (q *Queries) ListResponsePolicySyncCandidates(ctx context.Context, arg ListResponsePolicySyncCandidatesParams) ([]ListResponsePolicySyncCandidatesRow, error) {
-	rows, err := q.db.Query(ctx, listResponsePolicySyncCandidates, arg.AfterID, arg.BatchSize)
+	rows, err := q.db.Query(ctx, listResponsePolicySyncCandidates, arg.TargetIdentity, arg.AfterID, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +173,7 @@ func (q *Queries) ListResponsePolicySyncCandidates(ctx context.Context, arg List
 			&i.RuntimeID,
 			&i.InboundCoordinator,
 			&i.DingtalkShowAiTag,
+			&i.DingtalkResponseEnabled,
 			&i.DingtalkResponsePolicyRevision,
 			&i.InstallationID,
 			&i.SourceID,

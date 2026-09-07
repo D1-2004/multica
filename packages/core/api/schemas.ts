@@ -2737,6 +2737,7 @@ export const AgentInvocationTargetsSchema = z
 export const AgentResponseSchema = z
   .object({
     id: z.string(),
+    dingtalk_response_enabled: z.boolean().catch(false).default(false),
     dingtalk_show_ai_tag: z.boolean().catch(false).default(false),
     dingtalk_response_policy_revision: z
       .number()
@@ -2773,6 +2774,7 @@ export const EMPTY_AGENT_RESPONSE: Agent = {
   updated_at: "",
   archived_at: null,
   archived_by: null,
+  dingtalk_response_enabled: false,
   dingtalk_show_ai_tag: false,
   dingtalk_response_policy_revision: 1,
 };

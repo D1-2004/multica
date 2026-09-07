@@ -19,7 +19,7 @@ Router 接收 HSF/HTTP 事件后校验订阅、绑定、去重和群聊提及资
 
 ## 策略与能力
 
-Agent 的 `dingtalk_show_ai_tag` 默认 false；`dingtalk_response_policy_revision` 从 1 开始，仅 AI 标识或 Coordinator 设置真实变化时递增。现有 Coordinator 默认关闭的语义不变。
+Agent 的 `dingtalk_response_enabled`（统一响应）和 `dingtalk_show_ai_tag`（显示 AI 发送标识）均默认 false，彼此独立。统一响应在员工详情 → 数字员工 → 会话与跟进中设置。`dingtalk_response_policy_revision` 从 1 开始，仅统一响应、AI 标识或 Coordinator 设置真实变化时递增；现有 Coordinator 默认关闭的语义不变。
 
 Router 注册、订阅读取、策略 PATCH 和 dispatch 使用同一可选快照：
 
@@ -27,9 +27,9 @@ Router 注册、订阅读取、策略 PATCH 和 dispatch 使用同一可选快�
 {"version":1,"mode":"multica_coordinator","revision":2,"showAiTag":false}
 ```
 
-`mode` 也可为 `legacy`。缺失字段走旧实现。只有 digital_employee、dws、channel/message.created、非 cancel 的组合采用新响应归属。窗口不跨策略或修订合并，任务中途的配置变化不改变已冻结的归属。
+`mode` 也可为 `legacy`。缺失字段走旧实现。只有员工开启统一响应、Coordinator 开启、运行环境具备能力，且 digital_employee、dws、channel/message.created、非 cancel 的组合采用新响应归属。窗口不跨策略或修订合并，任务中途的配置变化不改变已冻结的归属。
 
-`PATCH /api/subscriptions/{sourceId}/response-policy` 使用现有 Multica 服务凭据，输入 `{agentId,responsePolicy}`，不会重建上游订阅。能力探测为 `GET /api/subscriptions/response-policy-capabilities`。同步 worker 持久化 desired policy，PATCH 后 GET 回读；旧修订不能覆盖新值，部署开关也使用单调 revision 隔离滚动副本。
+`PATCH /api/subscriptions/{sourceId}/response-policy` 使用现有 Multica 服务凭据，输入 `{agentId,responsePolicy}`，不会重建上游订阅。能力探测为 `GET /api/subscriptions/response-policy-capabilities`。同步 worker 持久化 desired policy，PATCH 后 GET 回读；旧修订不能覆盖新值，修订号由平台维护。关闭的员工若从未同步过，不创建 Router 策略记录；曾启用过的员工关闭后会同步为 legacy。
 
 Daemon 在任务领取时声明 `dws_message_policy_v1`，Windows 不声明。FC 必须同时具备精确模板指纹的能力证明；不能因为 provider 名称相同就给旧镜像加能力。任务的 `dingtalk_message_policy` 含 `show_ai_tag` 和 `platform_managed_lifecycle`，缺失时 wrapper 保持旧行为。
 
@@ -78,11 +78,11 @@ task-finished 遇到 pending/accepted/unknown 时延期，不将其当作“已�
 
 ## 部署、验证与回滚
 
-默认不启用新归属。Diamond 主配置的 `integrations.dingtalk_response_policy_enabled` 默认 false，`dingtalk_response_policy_revision` 缺省按 1 处理；每次启用或关闭都提升部署 revision。无 Diamond 的启动支持同名 `MULTICA_DINGTALK_RESPONSE_POLICY_ENABLED/REVISION` 环境变量。
+统一响应由员工页面的开关控制，默认关闭，不再依赖 Diamond 或环境变量总开关。旧 Diamond 两字段仅为兼容既有配置快照而接受解析，不参与行为判断；无需修改 Diamond。9158 迁移新增员工开关并提高既有数据库同步版本，防止滚动期间旧配置驱动副本覆盖员工设置；此版本由平台维护，不是第二个配置开关。
 
 FC 能力使用 `runtime.fc_e2b.dws_message_policy_fingerprints` 精确 allowlist；无 Diamond 时使用 `MULTICA_FC_E2B_DWS_MESSAGE_POLICY_FINGERPRINTS` JSON 数组。候选镜像当前指纹为 `dd95d8b615567a87`；仍须在 Runtime provider catalog 中注册该指纹对应的 providers。
 
-先部署兼容 Router API/SQL、Multica 服务及候选 Runtime，再用隔离员工验证能力、实际 DWS 状态格式、消息回读和延迟。回滚提升 revision 并切 legacy，仅影响新入站；已有动作按冻结归属完成。待发送动作、回执和沙箱查询计入部署 drain。
+先部署兼容 Router API/SQL、Multica 服务及候选 Runtime，再用隔离员工验证能力、实际 DWS 状态格式、消息回读和延迟。开关保存后异步同步到 Router，确认回读后才表示路由已切换。回滚应用前先关闭员工开关并确认 Router 同步为 legacy，仅影响新入站；已有动作按冻结归属完成。待发送动作、回执和沙箱查询计入部署 drain。
 
 延迟分别度量接收→已读、接收→思考中、接单 202、裁决→发起发送、发送→清理。首次接待 P95 不劣于同环境基线；202 不运行 DWS/模型；队列提交后立即通知，轮询只作重启/丢通知补偿。
 

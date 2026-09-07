@@ -94,7 +94,9 @@ type AgentResponse struct {
 	InboundCoordinator bool `json:"inbound_coordinator"`
 	// DingTalkShowAITag controls the sender label for platform and sandbox DWS sends.
 	DingTalkShowAITag bool `json:"dingtalk_show_ai_tag"`
-	// DingTalkResponsePolicyRevision changes only when either response switch changes.
+	// DingTalkResponseEnabled opts this employee into platform-owned replies and reception cleanup.
+	DingTalkResponseEnabled bool `json:"dingtalk_response_enabled"`
+	// DingTalkResponsePolicyRevision changes only when a response setting changes.
 	DingTalkResponsePolicyRevision int64 `json:"dingtalk_response_policy_revision"`
 	// TaskFinishedLoop runs coordinator again after a coordinator-created
 	// Issue task completes, so the original delegator gets a human wrap-up.
@@ -214,6 +216,7 @@ func (h *Handler) hydrateDingTalkResponsePolicy(ctx context.Context, resp *Agent
 	}
 	resp.InboundCoordinator = policy.InboundCoordinator
 	resp.DingTalkShowAITag = policy.DingtalkShowAiTag
+	resp.DingTalkResponseEnabled = policy.DingtalkResponseEnabled
 	resp.DingTalkResponsePolicyRevision = policy.DingtalkResponsePolicyRevision
 }
 
@@ -387,6 +390,7 @@ func (h *Handler) hydrateAgentsDingTalkResponsePolicy(ctx context.Context, resps
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].InboundCoordinator = row.InboundCoordinator
 			resps[i].DingTalkShowAITag = row.DingtalkShowAiTag
+			resps[i].DingTalkResponseEnabled = row.DingtalkResponseEnabled
 			resps[i].DingTalkResponsePolicyRevision = row.DingtalkResponsePolicyRevision
 		}
 	}
@@ -1772,6 +1776,7 @@ type UpdateAgentRequest struct {
 	ChatSessionResume           *bool              `json:"chat_session_resume"`
 	InboundCoordinator          *bool              `json:"inbound_coordinator"`
 	DingTalkShowAITag           *bool              `json:"dingtalk_show_ai_tag"`
+	DingTalkResponseEnabled     *bool              `json:"dingtalk_response_enabled"`
 	TaskFinishedLoopEnabled     *bool              `json:"task_finished_loop_enabled"`
 	SceneMemoryWriteEnabled     *bool              `json:"scene_memory_write_enabled"`
 	SceneMemoryRecallEnabled    *bool              `json:"scene_memory_recall_enabled"`
@@ -2418,13 +2423,16 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.InboundCoordinator != nil || req.DingTalkShowAITag != nil {
+	if req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
 		policyParams := db.UpdateAgentDingTalkResponsePolicyParams{ID: updated.ID}
 		if req.InboundCoordinator != nil {
 			policyParams.InboundCoordinator = pgtype.Bool{Bool: *req.InboundCoordinator, Valid: true}
 		}
 		if req.DingTalkShowAITag != nil {
 			policyParams.ShowAiTag = pgtype.Bool{Bool: *req.DingTalkShowAITag, Valid: true}
+		}
+		if req.DingTalkResponseEnabled != nil {
+			policyParams.ResponseEnabled = pgtype.Bool{Bool: *req.DingTalkResponseEnabled, Valid: true}
 		}
 		if _, err := h.Queries.UpdateAgentDingTalkResponsePolicy(r.Context(), policyParams); err != nil {
 			slog.Warn("update agent DingTalk response policy failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)

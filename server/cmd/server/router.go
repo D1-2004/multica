@@ -539,7 +539,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 		h.TaskCompletionTargetIdentity = routerClient.TargetIdentity()
 		h.TaskService.CompletionNotifier = h.TaskCompletionWorker
-		h.DingTalkResponsePolicySync = newDingTalkResponsePolicyWorker(queries, routerClient, opts.RuntimeConfig)
+		h.DingTalkResponsePolicySync = newDingTalkResponsePolicyWorker(queries, routerClient)
 		h.DingTalkResponsePolicyNotifier = h.DingTalkResponsePolicySync
 		h.DingTalkBindingTeardownRouter = routerClient
 	}

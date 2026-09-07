@@ -192,6 +192,8 @@
     "prop_speed": "Speed",
     "prop_visibility": "Visibility",
     "prop_concurrency": "Concurrency",
+    "prop_dingtalk_response_enabled": "Unified responses",
+    "prop_dingtalk_response_enabled_hint": "Let the platform send DingTalk replies and manage thinking reactions. Off by default. Requires inbound judging and a compatible runtime. Changes apply to new incoming messages.",
     "prop_dingtalk_show_ai_tag": "Show AI sender label",
     "prop_dingtalk_show_ai_tag_hint": "Show an AI sender label on this digital employee's DingTalk replies and messages sent while working. Off by default. Changes apply to new work.",
     "prop_chat_session_resume": "Resume last session",

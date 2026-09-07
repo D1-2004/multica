@@ -395,11 +395,3 @@ func (p runtimeFeatureFlagProvider) Lookup(_ context.Context, key string) (featu
 }
 
 func (runtimeFeatureFlagProvider) Name() string { return "runtime-diamond" }
-
-func (c *appRuntimeConfig) dingtalkResponsePolicyEnabled() bool {
-	return c.current().Integrations.DingTalkResponsePolicyEnabled
-}
-
-func (c *appRuntimeConfig) dingtalkResponsePolicyRevision() int64 {
-	return max(c.current().Integrations.DingTalkResponsePolicyRevision, 1)
-}

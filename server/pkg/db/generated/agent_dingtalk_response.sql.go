@@ -12,7 +12,7 @@ import (
 )
 
 const getAgentDingTalkResponsePolicy = `-- name: GetAgentDingTalkResponsePolicy :one
-SELECT inbound_coordinator, dingtalk_show_ai_tag, dingtalk_response_policy_revision
+SELECT inbound_coordinator, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision
 FROM agent
 WHERE id = $1
 `
@@ -20,18 +20,24 @@ WHERE id = $1
 type GetAgentDingTalkResponsePolicyRow struct {
 	InboundCoordinator             bool  `json:"inbound_coordinator"`
 	DingtalkShowAiTag              bool  `json:"dingtalk_show_ai_tag"`
+	DingtalkResponseEnabled        bool  `json:"dingtalk_response_enabled"`
 	DingtalkResponsePolicyRevision int64 `json:"dingtalk_response_policy_revision"`
 }
 
 func (q *Queries) GetAgentDingTalkResponsePolicy(ctx context.Context, id pgtype.UUID) (GetAgentDingTalkResponsePolicyRow, error) {
 	row := q.db.QueryRow(ctx, getAgentDingTalkResponsePolicy, id)
 	var i GetAgentDingTalkResponsePolicyRow
-	err := row.Scan(&i.InboundCoordinator, &i.DingtalkShowAiTag, &i.DingtalkResponsePolicyRevision)
+	err := row.Scan(
+		&i.InboundCoordinator,
+		&i.DingtalkShowAiTag,
+		&i.DingtalkResponseEnabled,
+		&i.DingtalkResponsePolicyRevision,
+	)
 	return i, err
 }
 
 const listAgentDingTalkResponsePoliciesByIDs = `-- name: ListAgentDingTalkResponsePoliciesByIDs :many
-SELECT id, inbound_coordinator, dingtalk_show_ai_tag, dingtalk_response_policy_revision
+SELECT id, inbound_coordinator, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision
 FROM agent
 WHERE id = ANY($1::uuid[])
 `
@@ -40,6 +46,7 @@ type ListAgentDingTalkResponsePoliciesByIDsRow struct {
 	ID                             pgtype.UUID `json:"id"`
 	InboundCoordinator             bool        `json:"inbound_coordinator"`
 	DingtalkShowAiTag              bool        `json:"dingtalk_show_ai_tag"`
+	DingtalkResponseEnabled        bool        `json:"dingtalk_response_enabled"`
 	DingtalkResponsePolicyRevision int64       `json:"dingtalk_response_policy_revision"`
 }
 
@@ -56,6 +63,7 @@ func (q *Queries) ListAgentDingTalkResponsePoliciesByIDs(ctx context.Context, id
 			&i.ID,
 			&i.InboundCoordinator,
 			&i.DingtalkShowAiTag,
+			&i.DingtalkResponseEnabled,
 			&i.DingtalkResponsePolicyRevision,
 		); err != nil {
 			return nil, err
@@ -72,31 +80,45 @@ const updateAgentDingTalkResponsePolicy = `-- name: UpdateAgentDingTalkResponseP
 UPDATE agent SET
     inbound_coordinator = COALESCE($1::boolean, inbound_coordinator),
     dingtalk_show_ai_tag = COALESCE($2::boolean, dingtalk_show_ai_tag),
+    dingtalk_response_enabled = COALESCE($3::boolean, dingtalk_response_enabled),
     dingtalk_response_policy_revision = dingtalk_response_policy_revision + CASE
         WHEN inbound_coordinator IS DISTINCT FROM COALESCE($1::boolean, inbound_coordinator)
           OR dingtalk_show_ai_tag IS DISTINCT FROM COALESCE($2::boolean, dingtalk_show_ai_tag)
+          OR dingtalk_response_enabled IS DISTINCT FROM COALESCE($3::boolean, dingtalk_response_enabled)
         THEN 1 ELSE 0 END,
     updated_at = now()
-WHERE id = $3
-RETURNING inbound_coordinator, dingtalk_show_ai_tag, dingtalk_response_policy_revision
+WHERE id = $4
+RETURNING inbound_coordinator, dingtalk_show_ai_tag, dingtalk_response_enabled, dingtalk_response_policy_revision
 `
 
 type UpdateAgentDingTalkResponsePolicyParams struct {
 	InboundCoordinator pgtype.Bool `json:"inbound_coordinator"`
 	ShowAiTag          pgtype.Bool `json:"show_ai_tag"`
+	ResponseEnabled    pgtype.Bool `json:"response_enabled"`
 	ID                 pgtype.UUID `json:"id"`
 }
 
 type UpdateAgentDingTalkResponsePolicyRow struct {
 	InboundCoordinator             bool  `json:"inbound_coordinator"`
 	DingtalkShowAiTag              bool  `json:"dingtalk_show_ai_tag"`
+	DingtalkResponseEnabled        bool  `json:"dingtalk_response_enabled"`
 	DingtalkResponsePolicyRevision int64 `json:"dingtalk_response_policy_revision"`
 }
 
 func (q *Queries) UpdateAgentDingTalkResponsePolicy(ctx context.Context, arg UpdateAgentDingTalkResponsePolicyParams) (UpdateAgentDingTalkResponsePolicyRow, error) {
-	row := q.db.QueryRow(ctx, updateAgentDingTalkResponsePolicy, arg.InboundCoordinator, arg.ShowAiTag, arg.ID)
+	row := q.db.QueryRow(ctx, updateAgentDingTalkResponsePolicy,
+		arg.InboundCoordinator,
+		arg.ShowAiTag,
+		arg.ResponseEnabled,
+		arg.ID,
+	)
 	var i UpdateAgentDingTalkResponsePolicyRow
-	err := row.Scan(&i.InboundCoordinator, &i.DingtalkShowAiTag, &i.DingtalkResponsePolicyRevision)
+	err := row.Scan(
+		&i.InboundCoordinator,
+		&i.DingtalkShowAiTag,
+		&i.DingtalkResponseEnabled,
+		&i.DingtalkResponsePolicyRevision,
+	)
 	return i, err
 }
 
