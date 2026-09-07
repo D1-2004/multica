@@ -45,18 +45,18 @@ export function AgentConfigNav({
 
   return (
     <>
-      <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-surface-border bg-muted/20 px-3 py-6 md:block">
+      <aside className="hidden w-56 shrink-0 overflow-y-auto border-r border-sidebar-border bg-sidebar py-2 md:block">
         <nav aria-label={t(($) => $.tabs.section_navigation_aria)}>
           {groups.map((group) => {
             return (
-              <section key={group.id} className="mb-6 last:mb-0">
+              <section key={group.id} className="px-2 py-0.5">
                 <h3
-                  className="px-3 pb-1 text-micro font-semibold leading-5 text-muted-foreground/75 text-pretty"
+                  className="mb-0.5 flex h-5 items-center rounded-md px-2 text-micro font-semibold text-muted-foreground/80"
                 >
                   {t(($) => $.tabs[group.labelKey])}
                 </h3>
                 <div
-                  className="mt-1 space-y-1"
+                  className="flex min-w-0 flex-col gap-0.5"
                   role="tablist"
                   aria-label={t(($) => $.tabs[group.labelKey])}
                 >
@@ -70,10 +70,10 @@ export function AgentConfigNav({
                         aria-selected={active}
                         onClick={() => onSelect(item.id)}
                         className={cn(
-                          "relative flex min-h-10 w-full min-w-0 items-center rounded-lg px-3 text-left text-body transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          "flex h-8 w-full min-w-0 items-center gap-2 overflow-hidden rounded-md p-2 text-left text-body ring-sidebar-ring outline-hidden transition-colors focus-visible:ring-2",
                           active
-                            ? "bg-surface-selected font-semibold text-surface-selected-foreground shadow-xs before:absolute before:inset-y-2.5 before:left-0 before:w-0.5 before:rounded-full before:bg-brand hover:bg-surface-selected"
-                            : "text-foreground/70 hover:bg-surface-hover hover:text-foreground",
+                            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground hover:bg-sidebar-accent"
+                            : "text-muted-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
                         )}
                       >
                         <span className="min-w-0 truncate">

@@ -66,6 +66,6 @@ describe("AgentConfigNav", () => {
     ).toHaveClass("text-micro", "font-semibold");
     expect(
       screen.getByRole("tab", { name: "Digital Employee" }),
-    ).toHaveClass("min-h-10", "text-body");
+    ).toHaveClass("h-8", "text-body");
   });
 });
