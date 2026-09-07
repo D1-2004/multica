@@ -1095,6 +1095,14 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
+	// Classification is independent of sandbox capacity. Enforce capacity
+	// only on execution, including the LLM-unavailable fallback.
+	if decision.Action == inboundcoord.ActionContinue && c.CompletionCallback != nil &&
+		c.Event.Domain == "channel" && c.Event.Type == "message.created" &&
+		sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c)) <= 0 {
+		writeError(w, http.StatusConflict, "scene already has two in-flight matters")
+		return
+	}
 
 	attachments := make([]AgentDispatchAttachment, 0)
 	for _, m := range c.Event.Data.Messages {
@@ -1140,7 +1148,8 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		if len(items) > slots {
-			items = items[:slots]
+			writeError(w, http.StatusConflict, "scene already has two in-flight matters")
+			return
 		}
 		var firstIssueID, firstTaskID, firstIdentifier string
 		var firstIssue db.Issue

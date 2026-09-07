@@ -20,6 +20,23 @@ type scriptedCompleter struct {
 	params []openai.ChatCompletionNewParams
 }
 
+func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "帮我沉淀这条决策"}
+	finish := `{"action":"issue"}`
+	if err := requireRecallBeforeFinish(turn, nil, nil, nil, BindSpec{}, finish); err == nil {
+		t.Fatal("new dispatch must not bypass scene recall and create duplicate work")
+	}
+	if err := requireRecallBeforeFinish(turn, []recallCall{{ConversationID: "cid-other"}}, nil, nil, BindSpec{}, finish); err == nil {
+		t.Fatal("another scene's recall does not check duplicate work here")
+	}
+	if err := requireRecallBeforeFinish(turn, []recallCall{{ConversationID: "cid-current"}}, nil, nil, BindSpec{}, finish); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireRecallBeforeFinish(Turn{ConversationID: "cid-current", Message: "你说话"}, nil, nil, nil, BindSpec{}, `{"action":"reply"}`); err != nil {
+		t.Fatalf("presence replies do not need a work lookup: %v", err)
+	}
+}
+
 func (s *scriptedCompleter) Chat(_ context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	s.params = append(s.params, params)
 	if s.calls >= len(s.rounds) {

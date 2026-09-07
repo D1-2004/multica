@@ -1,0 +1,53 @@
+{
+  "id": "coordinator-collect-1404",
+  "primary": "conversation-contract",
+  "environment": "staging",
+  "incident": {
+    "date": "2026-09-07",
+    "coordinatorTraceId": "484e6052-c666-48fb-843f-e5d5e20419ef",
+    "failure": "A pending capacity wait absorbed six messages over seven minutes and sent successful silence receipts before any decision."
+  },
+  "fixture": {
+    "agentId": "e2293e9e-1e79-4926-b0e6-da4cb693add0",
+    "workspaceId": "d4f9ceed-d114-4312-bb30-dd791aee039b",
+    "workspaceSlug": "sombrero-galaxy-zleb",
+    "conversationId": "cid52dllVmkRJLpUZPwxi0jtw==",
+    "senderRole": "主角",
+    "atOpenDingTalkId": "DIBwz3Bm4ugAGaaIaZvSXyAiEiE",
+    "requiredActiveMatters": 2,
+    "requireIndependentDeliveryReadback": true
+  },
+  "cases": [
+    {
+      "id": "busy-progress-pings",
+      "steps": ["你干了吗？", "你没干活啊", "你说话", "你", "说话", "你好"],
+      "minimumGapSeconds": 6,
+      "expected": "Distinct sealed windows; meaningful progress/presence replies within 30 seconds while two tasks remain active; no new Issue or member comment task.",
+      "failIf": ["A later ping is collected into an expired or parked window", "A ping waits for a sandbox slot before Decide", "A Router sync-silence completes the ping before its window is handled", "Any ping starts another task", "No same-cid visible reply to a direct request to speak"]
+    },
+    {
+      "id": "typing-burst",
+      "steps": ["你", "说话"],
+      "maximumServerArrivalGapSeconds": 4,
+      "expected": "One window and one reply; all callbacks settle only at terminal handling.",
+      "failIf": ["No valid less-than-4-second arrival fixture but reported PASS", "Separate replies for one collected sentence"]
+    },
+    {
+      "id": "continuous-typing-cap",
+      "expected": "Repeated arrivals below the quiet timeout cannot keep collect open past 12 seconds from job creation.",
+      "failIf": ["Collect deadline exceeds created_at plus 12 seconds"]
+    },
+    {
+      "id": "repeat-accepted-work",
+      "expected": "Repeat the exact first task request; recall the current scene, retain one Issue for that deliverable, reply with known progress, and do not trigger another task."
+    },
+    {
+      "id": "third-work-and-ack",
+      "expected": "Third real deliverable is judged then waits durably; later ACK and pings are separate windows; after capacity frees it executes once. ACK is silent."
+    }
+  ],
+  "observations": ["SLS accepted/collected/claimed/decided/parked", "Router trace receivedAt, completion time, firstReply, sync-silence", "DWS same-cid readback", "Issue and task counts"],
+  "roundsRequired": 3,
+  "runner": ".agents/skills/scene-memory-e2e/scripts/run-collect-regression.py",
+  "evidenceRule": "Missing authorization, fixture capacity, server arrival timing, or independent delivery evidence is BLOCKED or INCOMPLETE, never PASS."
+}

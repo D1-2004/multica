@@ -4,13 +4,21 @@ Date: 2026-09-05
 Branch: `feat/scene-memory-optimize`
 Trigger: FDE教练 (菲迪) production day 2026-09-04 — 328 Decide loops, 68 user-facing busy lines, two-@ storms, cross-scene minutes leak.
 
-This is the Host contract for inbound Coordinator after that day. It is not a prompt patch list.
+This is the Host contract for inbound Coordinator after that day. The 2026-09-07 collect incident amendment below supersedes the original busy-window behavior.
+
+## 2026-09-07 amendment
+
+See `docs/plans/2026-09-07-coordinator-collect-window.md` and `docs/evals/coordinator-collect-e2e.json`. Collect closes after 4 seconds of silence, with a 12-second absolute limit. A claimed, expired, retried, or parked window never absorbs another inbound. The worker no longer coalesces independent due windows.
+
+New windows always reach Decide even when two sandbox matters are active. Only classified work waits for execution capacity. Progress/presence and repeated accepted requests are replied to without spawning work. Creating a new Issue requires current-scene recall. A multi-item window waits until all its items fit instead of dropping an item.
+
+Collect and capacity parking retain Router callbacks; they are settled only when the sealed window is actually handled. The old “clear 处理中 via sync-silence while queued” rule is withdrawn. Historical test rows below describe the old deployment, not acceptance criteria for this amendment.
 
 ## Problem
 
 `inbound_coordinator_job` already persisted every inbound. The 4s collect only merged **pending** jobs. Once a window was `running` or had just finished with a busy canned reply, the next @ started another Decide. Busy was encoded as user-visible text (`这条先不并进正在处理的事项`). `finish` could emit only one issue, so two @s from two people could not be one window.
 
-## Contract
+## Original contract (superseded where amended)
 
 Scene key: `workspace_id + agent_id + openConversationId`.
 

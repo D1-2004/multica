@@ -6,6 +6,21 @@
 
 dws 保持预发。演员只有 冬翔 / 东翔测试号 / dxxh。不用菲迪。
 
+## 2026-09-07 collect 回归（优先于下方历史忙时标准）
+
+当前合同与验收：`docs/plans/2026-09-07-coordinator-collect-window.md`、`docs/evals/coordinator-collect-e2e.json`。
+4 秒静默、12 秒收集上限；封窗后不再吸收新消息；忙时催促仍需及时回应；collect/park 不提前发送完成回执。下方历史 H-busy 的“忙时静默清确认态”不再是过线标准。
+
+固定 Agent 未删除；它属于草帽星系 workspace `d4f9ceed-d114-4312-bb30-dd791aee039b`。`pre-fde` 若指向浴发空间会返回 404。为草帽星系配置独立的预发 profile，再运行：
+
+```bash
+python3 .agents/skills/scene-memory-e2e/scripts/run-collect-regression.py preflight --profile <草帽星系预发profile> --out /tmp/COLLECT-ROUND-1 --deployment-run <run-id> --revision <deployed-sha>
+# 同参数依次 prepare、等两项在途、pings、observe；每轮新 out，至少三轮。
+# burst 用 Router 服务端到达间隔证明 <4s；third 单独造两项在途后执行。
+```
+
+Runner 的 `CAPTURED_REVIEW_REQUIRED` 仅代表证据采集，必须逐项回读消息、核对 Router 和 SLS 后才能写 PASS。组织权限拒绝、两槽夹具未成立、时序不满足都不能算过线。
+
 ## 固定场景
 
 | 资产 | cid | 用途 |
