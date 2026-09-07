@@ -307,6 +307,30 @@ func TestCommitBatchDoesNotFalselyClean(t *testing.T) {
 	}
 }
 
+func TestCommitBatchResetsAttemptCount(t *testing.T) {
+	ctx := context.Background()
+	pool := openPool(t)
+	store := NewStore(db.New(pool))
+	row := claimReady(t, pool, store, testIdentity(t))
+	if row.AttemptCount < 1 {
+		t.Fatalf("claim should increment attempt, got %d", row.AttemptCount)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET attempt_count = 800 WHERE id = $1`, row.ID); err != nil {
+		t.Fatalf("inflate attempts: %v", err)
+	}
+	updated, err := store.CommitBatch(ctx, row, CommitBatch{
+		SourceCursorAt:         row.LeaseTargetThroughAt.Time,
+		SourceCursorEvidenceID: row.LeaseTargetThroughEvidenceID,
+		ExpectedMemoryRevision: row.MemoryRevision,
+	})
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if updated.AttemptCount != 0 {
+		t.Fatalf("successful batch must clear attempt_count, got %d", updated.AttemptCount)
+	}
+}
+
 func TestFinishClaimOnlyAfterCaughtUp(t *testing.T) {
 	ctx := context.Background()
 	pool := openPool(t)

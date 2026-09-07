@@ -2,6 +2,8 @@ package scenememory
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,6 +64,47 @@ func TestMergeFallsBackOnLLMTimeoutForBusyGroups(t *testing.T) {
 	})
 	if err == nil || fallback {
 		t.Fatalf("timeout must hold the dirty batch, not commit: fallback=%v err=%v got=%q", fallback, err, got)
+	}
+	if FlushErrorCode(err) != ErrorLLMTimeout {
+		t.Fatalf("timeout code = %q, want %s", FlushErrorCode(err), ErrorLLMTimeout)
+	}
+}
+
+func TestMergeDisablesThinkingAndRequiresCommitTool(t *testing.T) {
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if err := json.Unmarshal(raw, &body); err != nil {
+			t.Errorf("decode flush request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"commit","type":"function","function":{"name":"memory_flush_commit","arguments":"{\"decision\":\"unchanged\"}"}}]}}]}`))
+	}))
+	t.Cleanup(server.Close)
+	f := &MemoryFlusher{LLM: llm.New(llm.Config{APIKey: "test", BaseURL: server.URL, MaxRetries: -1})}
+	got, fallback, err := f.merge(context.Background(), db.SceneMemory{SceneKey: "cid-ownergraph", MemoryText: "口径"}, []HistoryEvent{
+		{Speaker: "圆畅", Content: "口径不变"},
+	})
+	if err != nil || fallback || got != "口径" {
+		t.Fatalf("merge: text=%q fallback=%v err=%v", got, fallback, err)
+	}
+	if body["enable_thinking"] != false {
+		t.Fatalf("enable_thinking = %#v, want false", body["enable_thinking"])
+	}
+	if body["tool_choice"] != "required" {
+		t.Fatalf("tool_choice = %#v, want required", body["tool_choice"])
+	}
+	if body["reasoning_effort"] != "none" {
+		t.Fatalf("reasoning_effort = %#v, want none", body["reasoning_effort"])
+	}
+	if body["max_completion_tokens"] != float64(flushMaxCompletionTokens) {
+		t.Fatalf("max_completion_tokens = %#v, want %d", body["max_completion_tokens"], flushMaxCompletionTokens)
+	}
+	if body["temperature"] != flushTemperature {
+		t.Fatalf("temperature = %#v, want %v", body["temperature"], flushTemperature)
+	}
+	if body["model"] != flushModel {
+		t.Fatalf("model = %#v, want %s", body["model"], flushModel)
 	}
 }
 
@@ -322,6 +365,9 @@ func TestBuildFlushUserPromptPrintsShanghaiStamp(t *testing.T) {
 }
 
 func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
+	if !strings.Contains(flushSystemPrompt, "Do not write analysis, reasoning, or a reply") {
+		t.Fatal("flush must not spend completion tokens on analysis")
+	}
 	if !strings.Contains(flushSystemPrompt, "(来自{speaker}, {M}月{D}日 {HH:mm}的发言)") {
 		t.Fatal("flush must ask for a simple provenance citation")
 	}

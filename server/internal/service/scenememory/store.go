@@ -303,14 +303,32 @@ func leaseOwned(current, claimed db.SceneMemory) bool {
 }
 
 func RetryDelay(attempt int32) time.Duration {
+	return retryDelayWithCap(attempt, 15*time.Minute)
+}
+
+// RetryDelayFor keeps history/evidence gaps on the long backoff, but an LLM
+// timeout must not inherit a catch-up attempt_count and park the scene for
+// 15 minutes. Successful pages reset attempt_count; consecutive timeouts still
+// climb, capped at one minute.
+func RetryDelayFor(code string, attempt int32) time.Duration {
+	if code == ErrorLLMTimeout {
+		return retryDelayWithCap(attempt, time.Minute)
+	}
+	return RetryDelay(attempt)
+}
+
+func retryDelayWithCap(attempt int32, capDelay time.Duration) time.Duration {
 	if attempt < 1 {
 		attempt = 1
+	}
+	if capDelay < 5*time.Second {
+		return 5 * time.Second
 	}
 	delay := 5 * time.Second
 	for i := int32(1); i < attempt; i++ {
 		delay *= 2
-		if delay >= 15*time.Minute {
-			return 15 * time.Minute
+		if delay >= capDelay {
+			return capDelay
 		}
 	}
 	return delay

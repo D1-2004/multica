@@ -84,6 +84,9 @@ func TestFlushErrorCode(t *testing.T) {
 	if TerminalFlushCode(ErrorIncomplete) {
 		t.Fatal("incomplete history must retry")
 	}
+	if TerminalFlushCode(ErrorLLMTimeout) {
+		t.Fatal("llm timeout must retry")
+	}
 }
 
 func TestRetryDelayCaps(t *testing.T) {
@@ -95,5 +98,17 @@ func TestRetryDelayCaps(t *testing.T) {
 	}
 	if RetryDelay(100) != 15*time.Minute {
 		t.Fatalf("cap = %s", RetryDelay(100))
+	}
+}
+
+func TestRetryDelayForLLMTimeoutDoesNotInheritCatchUpBackoff(t *testing.T) {
+	if RetryDelayFor(ErrorLLMTimeout, 1) != 5*time.Second {
+		t.Fatalf("first timeout = %s", RetryDelayFor(ErrorLLMTimeout, 1))
+	}
+	if RetryDelayFor(ErrorLLMTimeout, 800) != time.Minute {
+		t.Fatalf("catch-up attempt must not park 15m after an llm timeout, got %s", RetryDelayFor(ErrorLLMTimeout, 800))
+	}
+	if RetryDelayFor(ErrorIncomplete, 800) != 15*time.Minute {
+		t.Fatalf("history gaps keep the long cap, got %s", RetryDelayFor(ErrorIncomplete, 800))
 	}
 }
