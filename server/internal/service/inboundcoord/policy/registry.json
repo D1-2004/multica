@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-08.1",
+  "policy_version": "2026-09-08.2",
   "assembly_version": "1",
   "modules": [
     {
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "3",
+      "version": "4",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -58,8 +58,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 4073,
-      "content_sha256": "6b5cf1fcd7144fabed7a379eb3943eb41a835849f231481d4f32585e28f3c94f"
+      "budget_characters": 4278,
+      "content_sha256": "2436da17e6adcab376ef8597f6a279823cd16eab588c89997812b83fb78c8773"
     },
     {
       "id": "channel",
