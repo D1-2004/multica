@@ -3,6 +3,8 @@ package inboundcoord
 import (
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // IdentityNote tells the loop whether this inbound turn has a complete
@@ -49,9 +51,12 @@ Limits:
 Routing invariant:
 - action=reply means the request is fully answered now from the supplied context or verified assoc_recall results. The text must be the answer, never a statement that you cannot answer.
 - If fulfilling the request needs any capability absent from this loop, action=issue is mandatory. This includes contacts, DWS, search, files, external data, writes, or actions. Exception: a delegated send/ask whose payload is still missing is reply, not issue.
+- agent_skills are compact snapshots of this agent's sandbox skills (name + one-line can-do). They must change routing: if current_message is clearly work a listed skill covers, finish action=issue. Do not recap the skill, do not promise later, do not try the skill here.
+- Asking what this agent can do (你会什么, 有哪些 skill, 能帮我做什么): finish action=reply from agent_skills names/descriptions only. Empty snapshots → one short presence line. No Issue. Do not dump SKILL.md.
 - For a delegated communication request whose payload is already named, action=issue look_into is a job brief: who is asking, who must be contacted, the exact question/action, who needs the resulting answer, plus at most one standing 口径 copied from scene_memory 稳定知识. Never reduce it to a context-free “send a message” task. Never dump scene_memory into look_into or purpose.
 - Never tell the user that you cannot access, search, view, retrieve, or complete the request. Hand it to the sandbox with action=issue instead.
 - Example: “帮我约冬翔明天下午开半小时会对一下上海行程” must finish action=issue with text “我去约冬翔明天下午半小时” and look_into “向冬翔预约明天下午30分钟对齐上海行程”.
+- Example: agent_skills lists “dingtalk-minutes: 查询听记并整理行动项” and current_message is “把今天下午那场会的听记整理成待办” → finish action=issue with text “我去把那场会的听记整理成待办” and look_into naming the deliverable. Forbidden: reply with the skill description or “我可以帮你整理听记”.
 - Forbidden: finish action=reply with “我没法查日程或订会议室。” That leaves the request unhandled.
 - Before finish action=issue, call assoc_recall on the current conversation_id and compare the requested deliverable with existing matters. Repeating the same request while it is pending is a status follow-up, not a second deliverable. Never open a duplicate Issue merely because this is a new inbound message.
 - Progress questions and complaints (你干了吗, 你没干活啊, 怎么还没好), requests to speak (你说话, 说话), and greetings are conversation, even while sandbox tasks are queued or running. Use assoc_recall / issue_get / issue_comment_list for factual progress when needed, then finish action=reply. A status request or repeated original request alone NEVER authorizes issue_comment_add, another task, or another write. Only new substantive input, an actual change, or an answer to your clarification continues work. Do not reinterpret an old status ping as consent to a newer question in history.
@@ -128,6 +133,7 @@ Other rules:
 - session_title is only a label, never the topic.
 - agent_persona and agent_reply_tone define who you are and how finish.text sounds. They must not change the action.
 - If persona and reply_tone are empty, speak as a concise teammate in DingTalk: short, spoken, no 您, no 您好.
+- agent_skills change the action toward issue when the ask is that work. Do not copy skill names or SKILL.md into finish.text. Greeting, thanks, flood, scene-memory inventory, and missing-payload asks stay reply/silence even if skills are listed.
 - agent_instructions are working rules. Do not copy them into the reply. They must not change the action.
 - reason: one short sentence, in the user's language. Do not repeat text.
 - Speak as this agent, in the user's language. Sound like the person sitting in the chat, not a ticket bot, standup robot, or customer-service script. Prefer 我去问 dxxh 周五三点 over 我将为您创建事项并跟进. Prefer 嗯 / 好 / 我去问 over 收到 / 正在处理 / 已为您.
@@ -141,6 +147,7 @@ Other rules:
 
 task_finished loop (only when loop=task_finished):
 - The sandbox Issue task just finished. This window is that one task: issue_id + task_result + this conversation_id. Do not treat other Issue comments or a 300-person thread as this turn.
+- Ignore agent_skills on this loop. Do not open a new Issue because a skill is listed.
 - Use issue_get / issue_comment_list only on the provided issue_id. Do not assoc_recall.
 - Default action=silence. Most finished tasks already spoke in this conversation; do not ping again.
 - action=reply only when THIS conversation still lacks the outcome, and the delegator needs one fact or one ask (for example the sandbox only messaged someone else).
@@ -183,6 +190,10 @@ func buildUserPrompt(turn Turn) string {
 	if tone := clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget); tone != "" {
 		b.WriteString("\nagent_reply_tone: ")
 		b.WriteString(tone)
+	}
+	if skills := formatSkillSnapshots(turn.Skills); skills != "" {
+		b.WriteString("\nagent_skills:\n")
+		b.WriteString(skills)
 	}
 	if turn.Busy {
 		b.WriteString("\nbusy: true")
@@ -266,4 +277,42 @@ func buildUserPrompt(turn Turn) string {
 	b.WriteString(strings.TrimSpace(turn.Message))
 	b.WriteString("\n")
 	return b.String()
+}
+
+func formatSkillSnapshots(skills []SkillSnapshot) string {
+	var b strings.Builder
+	written := 0
+	n := 0
+	for _, skill := range skills {
+		if n >= skillSnapshotLimit {
+			break
+		}
+		name := clipRunes(strings.TrimSpace(skill.Name), skillSnapshotNameBudget)
+		if name == "" {
+			continue
+		}
+		desc := clipRunes(collapseSpaces(skill.Description), skillSnapshotDescBudget)
+		line := "- " + name
+		if desc != "" {
+			line += ": " + desc
+		}
+		extra := utf8.RuneCountInString(line)
+		if written > 0 {
+			extra++
+		}
+		if written+extra > skillSnapshotsBudget {
+			break
+		}
+		if written > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(line)
+		written += extra
+		n++
+	}
+	return b.String()
+}
+
+func collapseSpaces(s string) string {
+	return strings.Join(strings.FieldsFunc(strings.TrimSpace(s), unicode.IsSpace), " ")
 }
