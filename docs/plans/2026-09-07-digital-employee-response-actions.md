@@ -1,6 +1,6 @@
 # 数字员工统一响应 Action 与 AI 标识控制
 
-状态：代码实施完成，Multica 预发与 FC 基础验收通过；东翔测试号真实沙箱已验证发送、引用回复及任务间策略刷新，完整响应链路仍待 Router 迁移与部署。用户明确取消本机 Daemon 实机验证。Coordinator 默认值未修改，新响应策略仍关闭。
+状态：Router 已按用户要求精简并提交：一张接待表、绑定表一个策略字段、一个待处理查询索引；旧模式不新增接待记录，回执和目标复用任务元数据。177 项回归与最终 9 项真实数据库复验通过。Multica 预发和东翔测试号真实沙箱证据保留；Router 尚未迁移或部署，新响应策略仍关闭。
 
 ## 目标与执行归属
 
@@ -21,9 +21,17 @@ Router dispatch 的 completionCallback 新增可选 `responseUrl=/api/v1/dispatc
 
 Runtime 能力名 `dws_message_policy_v1`。任务下发可选 `dingtalk_message_policy:{show_ai_tag:boolean,platform_managed_lifecycle:boolean}`；缺失不改 CLI 行为。平台受管变量在 custom_env 之后覆盖，热任务隔离。
 
+## Router 精简结果
+
+- `response_policy` 合入 `agent_binding.response_policy`，在绑定行锁下校验修订，换绑其他员工时清空。
+- `response_receipt` 合入 `dispatch_task.metadata.responseReceipts`，在任务行锁下幂等合并，保留其他身份/执行元数据。
+- `response_reception_task` 删除，合窗创建任务时一次写入 `metadata.responseInboundEventIds`；按目标主键及 agent/environment 清理，不依赖已过期窗口成员，也不需要事后挂接写入。
+- 只保留 managed 入站的 `response_reception` 和一个 pending 扫描器；投递失败与清理意图同事务提交，无第二个失败恢复扫描器。
+- HTTP/Dispatch/Runtime 合同不变，因此本轮不改 Multica 执行代码或 Runtime 镜像；旧真实沙箱验收仍对应既有发送实现，不能替代尚未完成的 Router 全链路验收。
+
 ## 工作分工与进度
 
-- [x] Router：策略存储/更新/快照、即时接待、持久化回执清理、legacy 隔离与定向验证。
+- [x] Router：按精简方案复用绑定/任务，只新增一张接待表；即时接待、幂等回执清理、legacy 零接待写入与原合窗键验证通过。
 - [x] Multica Agent：字段/API/UI、修订号与任务快照。
 - [x] Multica policy sync：持久化对账、Router 客户端、能力门禁。
 - [x] Multica response service：DWS send/status、持久化动作 worker 与回执。
@@ -55,7 +63,7 @@ Runtime 能力名 `dws_message_policy_v1`。任务下发可选 `dingtalk_message
 
 - Multica feature：819fc10e7026a68c96c7ad73dbf29d004f007584，已推送内网Code；CR 36002276，预发 Run 3107073778。
 - 预发 release 在独立 worktree 保留已有 collect 修复，合并为 9e4f354a5194a57dd4b6a11dcc05c1296a265ad9，构建和8项DB定向测试通过，已推送并确认 CODE_MERGE_RESOLVE_CONFLICT。
-- Router：222845d2ef47bed446c38670b3c54498e6cd69a0，已推送；CR 36002519。171项测试（含4项真实PG故障恢复/非阻塞投递测试）通过。新增SQL 024–029，部署前须迁移；当前缺少迁移连接配置位置，已询问用户，未部署Router。
+- Router 精简提交：f1354513fcf56a50c5c3e6ad1106dcc5fef173d1，已推送；原 CR 36002519 尚未部署。177 项回归通过，最终清理 SQL 再跑 9 项真实 PostgreSQL 测试通过，最终构建成功。仅需执行新 024/025：一个绑定策略字段、一张接待表和一个查询索引。初版 222845d 的 026–029 未迁移，已删除。
 - Runtime 初次候选 Run 69575286 在清理 sandbox 时失败，已修复并由 Run 69597298 构建成功，详见下文。
 - 本机 DWS 环境恢复为原prod；后续真实外发在预发平台绑定员工的 FC 沙箱中完成。新响应策略默认关闭。
 
@@ -70,7 +78,7 @@ Runtime 能力名 `dws_message_policy_v1`。任务下发可选 `dingtalk_message
 
 ## 阻塞与下一步
 
-1. Router SQL024–029尚未执行，CR36002519尚未提交部署；已请求用户提供迁移用数据库连接配置的文件位置或Keychain条目，不要求在聊天中提供密码。
+1. Router 精简后的 SQL 024/025 尚未执行，原 CR36002519 尚未提交部署；迁移仍需要数据库连接配置位置。已经删除未执行的 026–029，不应再执行旧稿。
 2. 本机配角身份此前遭PAT_ORG_POLICY_DENIED；用户指定东翔测试号后，改用其平台已绑定身份在真实沙箱正常完成get-self、建群、发送和回读，此历史拒绝不再阻塞沙箱验收。AI角标仍须客户端展示证据：原始回读的messageAiSendFlag两种策略均为DWS，不能用来源字段宣称视觉效果通过。
 3. 本机候选CLI曾返回SIGKILL/137；用户已明确取消本机验证，此项不再作为本次验收阻塞，保留历史事实。
 4. 未声称服务端业务回复、思考中撤除、客户端AI角标及P50/P95全链路已验收；保持新响应开关关闭。

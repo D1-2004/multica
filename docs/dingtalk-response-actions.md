@@ -66,6 +66,8 @@ state 为 delivered/silent/failed/cancelled/unknown。Router ACK 的 data 回显
 
 Router 的本地终态阻止晚到 worker 再次添加表情。HSF 没有远端版本栅栏，因此远程添加超时场景使用持久化、有限退避的重复撤除补偿；它提供最终一致性，不能宣称远端强顺序。补偿耗尽保留明确的不确定观测。
 
+Router 只新增一张 `response_reception` 接待表，记录合窗前的策略、目标及动作进度；仅命中新模式的消息落表，legacy 保持原合窗键。策略保存在已有 `agent_binding.response_policy`，换绑其他员工时清空。响应回执保存在 `dispatch_task.metadata.responseReceipts`，任务行锁保护幂等合并并保留其他元数据；合窗创建任务时一次写入 `metadata.responseInboundEventIds`，清理按可信快照定位全部消息。失败与清理意图在同一事务提交，由一个 pending 扫描器恢复，无独立策略表、回执表或关联表。
+
 ## 沙箱 Hook
 
 当前用户发送命令在执行真实 DWS 前由 Go 参数解析器统一设置 `--ai-tag`。支持原子 send/reply 和当前 Runtime 的快捷命令，保留正文、附件、目标与幂等键；帮助、读取、Bot/Webhook 不改写。Runtime 的固定路径入口也委派到同一解析器，保留既有 DEAP 身份保护。
