@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/go-chi/chi/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -36,11 +36,11 @@ var errRunnerMCPRuntimeUnsupported = errors.New("runtime does not support manage
 var errRunnerMCPMountsUnsupported = errors.New("sandbox daemon does not support dynamic Runner MCP mounts")
 
 type runnerMountedMCPArguments struct {
-	ServerName  string          `json:"server_name"`
-	Fingerprint string          `json:"fingerprint"`
-	SessionKey  string          `json:"session_key"`
-	ProtocolVersion string      `json:"protocol_version,omitempty"`
-	Request     json.RawMessage `json:"request"`
+	ServerName      string          `json:"server_name"`
+	Fingerprint     string          `json:"fingerprint"`
+	SessionKey      string          `json:"session_key"`
+	ProtocolVersion string          `json:"protocol_version,omitempty"`
+	Request         json.RawMessage `json:"request"`
 }
 
 // RunnerMountedMCP is a task-token-scoped transparent JSON-RPC relay. The
@@ -102,9 +102,9 @@ func (h *Handler) RunnerMountedMCP(w http.ResponseWriter, r *http.Request) {
 	}
 	arguments, _ := json.Marshal(runnerMountedMCPArguments{
 		ServerName: serverName, Fingerprint: expectedFingerprint,
-		SessionKey: strings.Join([]string{r.Header.Get("X-Task-ID"), uuidToString(bindingID), serverName}, "/"),
+		SessionKey:      strings.Join([]string{r.Header.Get("X-Task-ID"), uuidToString(bindingID), serverName}, "/"),
 		ProtocolVersion: strings.TrimSpace(r.Header.Get("MCP-Protocol-Version")),
-		Request: body,
+		Request:         body,
 	})
 	result, callErr := h.callRunnerMCP(r, binding, "mcp", arguments)
 	if callErr != nil {
@@ -299,11 +299,8 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	if agentData == nil {
 		return errors.New("claimed task is missing Agent data")
 	}
-	if !supportsRunnerMCPMounts {
-		return errRunnerMCPMountsUnsupported
-	}
-	if !supportsManagedRelayRoutes {
-		return h.injectLegacyRunnerMCP(ctx, runtime, agentID, taskToken, agentData)
+	if !supportsRunnerMCPMounts || !supportsManagedRelayRoutes {
+		return h.injectLegacyRunnerMCP(ctx, runtime, agentID, taskToken, agentData, supportsRunnerMCPMounts)
 	}
 	if runnerMCPRuntimeUnsupported(runtime) {
 		return errRunnerMCPRuntimeUnsupported
@@ -362,7 +359,7 @@ func (h *Handler) injectRunnerMCP(ctx context.Context, runtime db.AgentRuntime, 
 	return nil
 }
 
-func (h *Handler) injectLegacyRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData) error {
+func (h *Handler) injectLegacyRunnerMCP(ctx context.Context, runtime db.AgentRuntime, agentID pgtype.UUID, taskToken string, agentData *TaskAgentData, supportsRunnerMCPMounts bool) error {
 	bindings, err := h.Queries.ListAgentRunnerBindings(ctx, db.ListAgentRunnerBindingsParams{WorkspaceID: runtime.WorkspaceID, AgentID: agentID})
 	if err != nil {
 		return err
@@ -400,6 +397,11 @@ func (h *Handler) injectLegacyRunnerMCP(ctx context.Context, runtime db.AgentRun
 	}
 	if len(overlayServers) == 0 {
 		return nil
+	}
+	// Old daemons can still execute tasks that need no dynamic Runner mounts.
+	// Require mount routing only once an effective mount would be injected.
+	if !supportsRunnerMCPMounts {
+		return errRunnerMCPMountsUnsupported
 	}
 	if runnerMCPRuntimeUnsupported(runtime) {
 		return errRunnerMCPRuntimeUnsupported
