@@ -490,6 +490,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	if asbRuntime != nil {
 		h.ASBLauncher = asbRuntime.Launcher
+		// Every cold launch, including initial task admission, uses the same
+		// tenant cooldown. A missing/unavailable Redis keeps tasks queued.
+		h.ASBLauncher.Credentials.CapacityGate = service.NewASBCapacityGate(rdb)
 		h.EnterpriseIdentity = asbRuntime.Identity
 		if opts.RuntimeConfig != nil {
 			if err := asbRuntime.SetConfigProviders(opts.RuntimeConfig.asb, opts.RuntimeConfig.enterpriseIdentity); err != nil {

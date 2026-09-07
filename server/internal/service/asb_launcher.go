@@ -533,6 +533,9 @@ func (l *ASBLauncher) LaunchTask(ctx context.Context, task db.AgentTaskQueue) er
 		locked.Common = &common
 	}
 	submission, deferred, err := locked.submitTaskUnderRuntimeLock(ctx, task, runtimeLockConn, identity, trace, attempt)
+	if isASBRateLimited(err) && !errors.Is(err, ErrASBCapacityUnavailable) {
+		err = recordASBCapacityResult(ctx, client, runtimeID, err)
+	}
 	releaseRuntimeLock()
 	lockHeld = false
 	if err != nil {
@@ -857,6 +860,12 @@ func (l *ASBLauncher) resolveSandbox(
 ) (string, bool, ASBResolvedIdentity, error) {
 	if err := identity.validate(); err != nil {
 		return "", false, ASBResolvedIdentity{}, err
+	}
+	if l.Client.CapacityGate != nil {
+		delay, err := l.Client.CapacityGate.throttleDelay(ctx, l.Client)
+		if err != nil || delay > 0 {
+			return "", false, ASBResolvedIdentity{}, errors.Join(ErrASBCapacityUnavailable, err)
+		}
 	}
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
