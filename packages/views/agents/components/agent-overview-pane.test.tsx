@@ -60,6 +60,9 @@ vi.mock("./tabs/llm-trace-tab", () => ({
 vi.mock("./tabs/a2a-tab", () => ({
   A2ATab: () => <div>a2a-tab</div>,
 }));
+vi.mock("./tabs/dsh-plugins-tab", () => ({
+  DshPluginsTab: () => <div>dsh-plugins-tab</div>,
+}));
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
@@ -519,6 +522,36 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     openConfiguration();
     expect(
       screen.queryByRole("tab", { name: /^A2A$/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("AgentOverviewPane Plugins tab visibility", () => {
+  it("shows Plugins for a DSH agent running in the cloud", () => {
+    renderPane([makeRuntime("dsh")], { agentOverrides: { runtime_mode: "cloud" } });
+    openConfiguration();
+    expect(
+      screen.getByRole("tab", { name: /^Plugins$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("still shows Plugins for a DSH agent on a local daemon", () => {
+    // A local daemon does not load plugins, but hiding the tab would strand
+    // whatever is already bound: invisible, unremovable, and live again the
+    // moment the agent moves back to a cloud runtime. The tab stays and says
+    // so instead — see the notice test in dsh-plugins-tab.test.tsx.
+    renderPane([makeRuntime("dsh")], { agentOverrides: { runtime_mode: "local" } });
+    openConfiguration();
+    expect(
+      screen.getByRole("tab", { name: /^Plugins$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides Plugins for a cloud agent on any other provider", () => {
+    renderPane([makeRuntime("claude")], { agentOverrides: { runtime_mode: "cloud" } });
+    openConfiguration();
+    expect(
+      screen.queryByRole("tab", { name: /^Plugins$/i }),
     ).not.toBeInTheDocument();
   });
 });
