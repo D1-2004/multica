@@ -289,6 +289,7 @@ SET memory_text = CASE WHEN $1::boolean THEN $2 ELSE memory_text END,
     last_flush_meta = $6,
     last_flushed_at = now(),
     history_resume_before = NULL,
+    attempt_count = 0,
     updated_at = now()
 WHERE id = $7
   AND lease_token = $8

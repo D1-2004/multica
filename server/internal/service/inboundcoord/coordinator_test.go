@@ -19,6 +19,8 @@ type coordQueriesStub struct {
 	inbound    bool
 	persona    string
 	replyTone  string
+	skills     []db.ListEnabledAgentSkillCardMetadataRow
+	skillsErr  error
 	page       []db.ChatMessage
 	listErr    error
 	lastList   db.ListChatMessagesPageParams
@@ -53,6 +55,13 @@ func (s *coordQueriesStub) GetAgentVoice(context.Context, pgtype.UUID) (db.GetAg
 
 func (s *coordQueriesStub) GetAgentSceneMemoryFlags(context.Context, pgtype.UUID) (db.AgentSceneMemoryFlags, error) {
 	return s.sceneFlags, nil
+}
+
+func (s *coordQueriesStub) ListEnabledAgentSkillCardMetadata(context.Context, pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error) {
+	if s.skillsErr != nil {
+		return nil, s.skillsErr
+	}
+	return s.skills, nil
 }
 
 type sceneMemoryStub struct {
@@ -363,16 +372,69 @@ func TestFillVoiceCopiesPersonaAndTone(t *testing.T) {
 	}
 }
 
+func TestFillVoiceCopiesSkillSnapshots(t *testing.T) {
+	t.Parallel()
+	c := &Coordinator{Queries: &coordQueriesStub{skills: []db.ListEnabledAgentSkillCardMetadataRow{
+		{Name: "dingtalk-minutes", Description: "查询听记并整理行动项"},
+		{Name: "  ", Description: "ignored"},
+		{Name: "dingtalk-calendar", Description: "约会议、查日程"},
+	}}}
+	turn := Turn{AgentID: testAgentID()}
+	c.FillVoice(context.Background(), &turn)
+	if len(turn.Skills) != 2 {
+		t.Fatalf("skills=%v", turn.Skills)
+	}
+	if turn.Skills[0].Name != "dingtalk-minutes" || turn.Skills[1].Name != "dingtalk-calendar" {
+		t.Fatalf("skills=%v", turn.Skills)
+	}
+}
+
+func TestFillSkillsDoesNotOverwriteOnError(t *testing.T) {
+	t.Parallel()
+	c := &Coordinator{Queries: &coordQueriesStub{skillsErr: context.Canceled}}
+	turn := Turn{AgentID: testAgentID(), Skills: []SkillSnapshot{{Name: "stale"}}}
+	c.FillSkills(context.Background(), &turn)
+	if len(turn.Skills) != 1 || turn.Skills[0].Name != "stale" {
+		t.Fatalf("failed load must not wipe caller-provided skills: %v", turn.Skills)
+	}
+}
+
+func TestFillVoiceKeepsPersonaWhenSkillsFail(t *testing.T) {
+	t.Parallel()
+	c := &Coordinator{Queries: &coordQueriesStub{
+		persona: "靠谱同事", replyTone: "短句", skillsErr: context.Canceled,
+	}}
+	turn := Turn{AgentID: testAgentID()}
+	c.FillVoice(context.Background(), &turn)
+	if turn.Persona != "靠谱同事" || turn.ReplyTone != "短句" {
+		t.Fatalf("voice=%q / %q", turn.Persona, turn.ReplyTone)
+	}
+	if len(turn.Skills) != 0 {
+		t.Fatalf("skills=%v", turn.Skills)
+	}
+}
+
 func TestTurnFromChatSessionLoadsVoice(t *testing.T) {
-	q := &coordQueriesStub{persona: "靠谱同事", replyTone: "短句、不客套"}
+	q := &coordQueriesStub{
+		persona: "靠谱同事", replyTone: "短句、不客套",
+		skills: []db.ListEnabledAgentSkillCardMetadataRow{
+			{Name: "dingtalk-minutes", Description: "查询听记并整理行动项"},
+		},
+	}
 	c := &Coordinator{Queries: q}
 	turn := c.TurnFromChatSession(context.Background(), testSession(), SourceRobot, true, "p2p", "", "", "你好")
 	if turn.Persona != "靠谱同事" || turn.ReplyTone != "短句、不客套" {
 		t.Fatalf("voice=%q / %q", turn.Persona, turn.ReplyTone)
 	}
+	if len(turn.Skills) != 1 || turn.Skills[0].Name != "dingtalk-minutes" {
+		t.Fatalf("skills=%v", turn.Skills)
+	}
 	prompt := buildUserPrompt(turn)
 	if !strings.Contains(prompt, "agent_persona: 靠谱同事") || !strings.Contains(prompt, "agent_reply_tone: 短句、不客套") {
 		t.Fatalf("prompt=%q", prompt)
+	}
+	if !strings.Contains(prompt, "agent_skills:\n- dingtalk-minutes: 查询听记并整理行动项") {
+		t.Fatalf("prompt missing skill snapshots:\n%s", prompt)
 	}
 }
 

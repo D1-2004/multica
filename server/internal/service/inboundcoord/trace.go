@@ -76,6 +76,7 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 		"related_tasks":          clipRunes(strings.TrimSpace(turn.RelatedTasks), llmLogFieldBudget),
 		"persona":                clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
 		"reply_tone":             clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget),
+		"skill_count":            len(turn.Skills),
 	}
 	if turn.SceneMemoryRevision > 0 {
 		rootMetadata["scene_memory"] = clipRunes(strings.TrimSpace(turn.SceneMemory), traceOutputTextBudget)
