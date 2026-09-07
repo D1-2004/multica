@@ -114,14 +114,18 @@ function plugin(id: string, packageName: string, enabled = true) {
   };
 }
 
-function renderTab(canEdit = true) {
+function renderTab(canEdit = true, agentOverrides: Partial<Agent> = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
-        <DshPluginsTab agent={agent} runtime={dshRuntime} canEdit={canEdit} />
+        <DshPluginsTab
+          agent={{ ...agent, ...agentOverrides }}
+          runtime={dshRuntime}
+          canEdit={canEdit}
+        />
       </QueryClientProvider>
     </I18nProvider>,
   );
@@ -224,5 +228,33 @@ describe("DshPluginsTab", () => {
     expect(
       screen.queryByRole("button", { name: "Detach dsh-mcp-lens" }),
     ).toBeNull();
+  });
+});
+
+describe("DshPluginsTab on a runtime that does not load plugins", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockListDshPlugins.mockResolvedValue([]);
+    mockListAgentDshPlugins.mockResolvedValue([]);
+  });
+
+  // The alternative was hiding the tab, which strands whatever is already
+  // bound: invisible, unremovable, and live again as soon as the agent moves
+  // back to a cloud runtime. Saying it keeps the bindings reachable.
+  it("says so when the agent runs on a local daemon", async () => {
+    renderTab(true, { runtime_mode: "local" });
+    expect(
+      await screen.findByText(
+        enAgents.tab_body.dsh_plugins.local_runtime_notice,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing of the sort on a cloud agent", async () => {
+    renderTab(true, { runtime_mode: "cloud" });
+    await screen.findByText(enAgents.tab_body.dsh_plugins.empty_title);
+    expect(
+      screen.queryByText(enAgents.tab_body.dsh_plugins.local_runtime_notice),
+    ).not.toBeInTheDocument();
   });
 });
