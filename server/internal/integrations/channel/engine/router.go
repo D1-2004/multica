@@ -820,6 +820,14 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			runID = res.TaskID
 		}
 		r.associateIssueConversation(ctx, inst, msg, issueRes.Issue, runID)
+		if coordinatorIssue {
+			coordDecision.IssueResults = []protocol.ChatCoordinatorIssueResult{{
+				Action: "issue_created", IssueID: util.UUIDToString(issueRes.Issue.ID),
+				IssueIdentifier: res.IssueIdentifier, IssueTitle: issueRes.Issue.Title,
+				TaskID: util.UUIDToString(res.TaskID),
+			}}
+			inboundcoord.RecordDecision(ctx, coordDecision)
+		}
 		if coordDecision.UserText != "" {
 			if persistErr := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision); persistErr != nil {
 				r.logger.Warn("channel router: persist coordinator issue ack failed",

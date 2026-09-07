@@ -1064,7 +1064,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "issue service is not configured")
 				return
 			}
-			if _, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
+			result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
 				WorkspaceID:    session.WorkspaceID,
 				Title:          inboundcoord.IssueTitle(decision, req.Content),
 				Description:    pgtype.Text{String: inboundcoord.IssueDescription(decision, req.Content), Valid: true},
@@ -1082,10 +1082,20 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 				ActorID:          userID,
 				AnalyticsAgentID: uuidToString(session.AgentID),
 				Platform:         "web",
-			}); err != nil {
+			})
+			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to create issue: "+err.Error())
 				return
 			}
+			issueResult := protocol.ChatCoordinatorIssueResult{
+				Action: "issue_created", IssueID: uuidToString(result.Issue.ID),
+				IssueIdentifier: service.IssueIdentifier(h.getIssuePrefix(r.Context(), session.WorkspaceID), result.Issue.Number),
+				IssueTitle:      result.Issue.Title,
+			}
+			if result.EnqueuedTask != nil {
+				issueResult.TaskID = uuidToString(result.EnqueuedTask.ID)
+			}
+			decision.IssueResults = []protocol.ChatCoordinatorIssueResult{issueResult}
 		}
 		tracePayload := decision.Trace()
 		turn, persistErr := h.TaskService.PersistCoordinatorChatTurn(

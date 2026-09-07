@@ -1219,6 +1219,33 @@ const ChatCoordinatorStepSchema = z
   })
   .loose();
 
+const ChatCoordinatorIssueResultSchema = z
+  .object({
+    action: z.string().catch("unknown"),
+    issue_id: z.string().uuid(),
+    issue_identifier: z.string().catch("").optional(),
+    issue_title: z.string().catch("").optional(),
+    comment_id: z.string().uuid().catch("").optional(),
+    task_id: z.string().uuid().catch("").optional(),
+  })
+  .loose();
+
+export const ChatCoordinatorTraceSchema = z
+  .object({
+    action: z.string().optional(),
+    look_into: z.string().optional(),
+    reason: z.string().optional(),
+    elapsed_ms: z.number().optional(),
+    source: z.string().optional(),
+    steps: z.array(ChatCoordinatorStepSchema).catch([]).optional(),
+    issue_results: z
+      .array(ChatCoordinatorIssueResultSchema.nullable().catch(null))
+      .catch([])
+      .transform((items) => items.filter((item) => item != null))
+      .optional(),
+  })
+  .loose();
+
 export const ChatMessageSchema = z
   .object({
     id: z.string(),
@@ -1240,16 +1267,7 @@ export const ChatMessageSchema = z
       ])
       .catch("message")
       .optional(),
-    coordinator: z
-      .object({
-        action: z.string().optional(),
-        look_into: z.string().optional(),
-        reason: z.string().optional(),
-        elapsed_ms: z.number().optional(),
-        source: z.string().optional(),
-        steps: z.array(ChatCoordinatorStepSchema).catch([]).optional(),
-      })
-      .optional(),
+    coordinator: ChatCoordinatorTraceSchema.optional(),
     // Optional additive data degrades independently: a malformed suggestion
     // must not hide the assistant reply that contains it.
     quick_actions: z
@@ -2493,16 +2511,7 @@ export const SendChatMessageResponseSchema: z.ZodType<SendChatMessageResponse> =
           "coordinator",
         ])
         .optional(),
-      coordinator: z
-        .object({
-          action: z.string().optional(),
-          look_into: z.string().optional(),
-          reason: z.string().optional(),
-          elapsed_ms: z.number().optional(),
-          source: z.string().optional(),
-          steps: z.array(ChatCoordinatorStepSchema).catch([]).optional(),
-        })
-        .optional(),
+      coordinator: ChatCoordinatorTraceSchema.optional(),
     })
     .loose();
 
