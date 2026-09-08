@@ -6,9 +6,24 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
+
+func TestPortableSchemaValidationReportsFieldBeforeReadingFiles(t *testing.T) {
+	for _, invalid := range []string{
+		`{"$schema":"agent.schema.json","version":"multica.agent/v1","name":"Reviewer","instructions":"missing.md","skills":[{"path":"skills/review","name":"review","enabled":"false"}]}`,
+		`{"$schema":"agent.schema.json","version":"multica.agent/v1","name":"Reviewer","instructions":"missing.md","skills":[{"path":"skills/review","name":"review"}]}`,
+	} {
+		client, err := newFSRepositoryClient(fstest.MapFS{PortableManifestPath:{Data:[]byte(invalid)}})
+		if err != nil { t.Fatal(err) }
+		_, err = compilePortable(context.Background(), client, Source{})
+		if err == nil || !strings.Contains(err.Error(), "manifest schema") || !strings.Contains(err.Error(), "/skills/0") {
+			t.Fatalf("expected schema field error before file resolution, got %v", err)
+		}
+	}
+}
 
 func TestPortableExportRoundTrip(t *testing.T) {
 	for _, skills := range [][]Skill{nil, {{SourcePath:"skills/helper", Name:"helper", Description:"Current description", Content:"---\nname: old-name\n---\nHelp", Disabled:true, Files:[]File{{Path:"references/guide.md", Content:"Guide"}}}}} {
@@ -27,6 +42,7 @@ func TestPortableExportRoundTrip(t *testing.T) {
 		snapshot, err := ReadDTARepository(context.Background(), client, Source{})
 		if err != nil { t.Fatal(err) }
 		bundle := snapshot.Definition
+		if bundle.PortableConfig == nil || bundle.PortableConfig.Version != "multica.agent/v1" { t.Fatal("source export must remain v1 until the v2 adapter is implemented") }
 		if bundle.Instructions != "Be helpful" || bundle.Manifest.Metadata.Name != "测试 Agent" || len(bundle.Skills) != len(skills) { t.Fatalf("round trip: %#v", bundle) }
 		if len(skills) > 0 && (!bundle.Skills[0].Disabled || bundle.Skills[0].Name != "helper" || bundle.Skills[0].Content != skills[0].Content || bundle.Skills[0].Files[0].Content != "Guide") { t.Fatalf("skill changed: %#v", bundle.Skills[0]) }
 		if err := ValidateBundle(bundle); err != nil { t.Fatal(err) }
@@ -52,4 +68,18 @@ func TestPortableRejectsUnknownFieldsAndAmbiguousManifests(t *testing.T) {
 	files[DTAProjectPath] = &fstest.MapFile{Data:[]byte("{}")}
 	client, _ = newFSRepositoryClient(files)
 	if _, err := ReadDTARepository(context.Background(), client, Source{}); err == nil { t.Fatal("accepted ambiguous manifests") }
+}
+
+func TestPortableRejectsUnmaterializedVersion(t *testing.T) {
+	for _, configuration := range []map[string]any{nil, {"inbound_coordinator":true, "persona":"Reviewer"}} {
+		manifest := map[string]any{"$schema":PortableSchemaPath, "version":"multica.agent/v2", "name":"Reviewer", "instructions":"AGENTS.md", "skills":[]any{}}
+		if configuration != nil { manifest["configuration"] = configuration }
+		content, err := json.Marshal(manifest)
+		if err != nil { t.Fatal(err) }
+		client, err := newFSRepositoryClient(fstest.MapFS{PortableManifestPath:{Data:content}, "AGENTS.md":{Data:[]byte("Review changes")}})
+		if err != nil { t.Fatal(err) }
+		if _, err := ReadDTARepository(context.Background(), client, Source{}); err == nil {
+			t.Fatal("v2 must not be materialized with partially applied configuration")
+		}
+	}
 }

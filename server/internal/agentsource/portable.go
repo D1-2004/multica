@@ -8,11 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"path"
 	"sort"
 	"strings"
-	"unicode/utf8"
 )
 
 const PortableManifestPath = "agent.json"
@@ -47,57 +45,39 @@ func (m PortableManifest) internalManifest() Manifest {
 }
 
 func (m PortableManifest) validate() error {
-	if m.Schema != PortableSchemaPath || m.Version != PortableVersion || m.Skills == nil { return errors.New("invalid agent.json schema, version or skills array") }
-	if err := validateManifest(m.internalManifest()); err != nil { return err }
-	for i, skill := range m.Skills {
-		if strings.HasPrefix(m.Instructions, skill.Path + "/") { return errors.New("instructions cannot be inside a skill directory") }
-		for j, other := range m.Skills {
-			if i != j && strings.HasPrefix(skill.Path, other.Path + "/") { return errors.New("skill directories must not overlap") }
-		}
-		if skill.Enabled == nil || strings.TrimSpace(skill.Name) == "" || utf8.RuneCountInString(skill.Name) > MaxAgentNameLength || len(skill.Description) > MaxDescriptionSize { return fmt.Errorf("invalid metadata or enabled state for skill %q", skill.Path) }
-	}
-	return nil
+	content, err := json.Marshal(m)
+	if err != nil { return err }
+	if _, err := ValidateManifestJSON(content); err != nil { return err }
+	if m.Version != PortableVersion { return errors.New("this manifest version requires the v2 configuration materializer") }
+	return validatePortableLayout(m)
 }
 
 func compilePortable(ctx context.Context, client RepositoryClient, source Source) (Bundle, error) {
-	tree, err := client.GetTree(ctx, source.InstallationID, source.Owner, source.Repository, source.CommitSHA)
+	parsed, err := parseAgentPackageRepository(ctx, client, source)
 	if err != nil { return Bundle{}, err }
-	entries := repositoryEntries(tree)
-	content, err := loadRequiredText(ctx, client, source, entries, PortableManifestPath)
-	if err != nil { return Bundle{}, err }
-	decoder := json.NewDecoder(bytes.NewReader(content)); decoder.DisallowUnknownFields()
-	var manifest PortableManifest
-	if err := decoder.Decode(&manifest); err != nil { return Bundle{}, fmt.Errorf("decode agent.json: %w", err) }
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) { return Bundle{}, errors.New("agent.json must contain exactly one JSON object") }
-	var raw struct { Description json.RawMessage `json:"description"`; Skills []struct { Description json.RawMessage `json:"description"` } `json:"skills"` }
-	if err := json.Unmarshal(content, &raw); err != nil { return Bundle{}, err }
-	if string(raw.Description) == "null" { return Bundle{}, errors.New("description must be a string") }
-	for _, item := range raw.Skills { if string(item.Description) == "null" { return Bundle{}, errors.New("skill description must be a string") } }
-	if err := manifest.validate(); err != nil { return Bundle{}, err }
-	instructions, err := loadRequiredText(ctx, client, source, entries, manifest.Instructions)
-	if err != nil { return Bundle{}, err }
-	bundle := Bundle{Manifest:manifest.internalManifest(), PortableConfig:&manifest, Instructions:string(instructions), Skills:[]Skill{}, Warnings:[]string{}}
-	total := len(content) + len(instructions)
-	for _, ref := range manifest.Skills {
-		compiled, warnings, size, err := compileSkill(ctx, client, source, entries, ref.Path)
-		if err != nil { return Bundle{}, err }
-		compiled.Name = ref.Name; compiled.Description = ref.Description; compiled.Disabled = !*ref.Enabled
-		bundle.Skills = append(bundle.Skills, compiled); bundle.Warnings = append(bundle.Warnings, warnings...)
-		total += size
-		if total > MaxBundleSize { return Bundle{}, errors.New("agent source exceeds total size limit") }
-	}
-	sort.Slice(bundle.Skills, func(i, j int) bool { return bundle.Skills[i].SourcePath < bundle.Skills[j].SourcePath })
+	manifest := parsed.header
+	if manifest.Version != PortableVersion { return Bundle{}, errors.New("this manifest version requires the v2 configuration materializer") }
+	bundle := Bundle{Manifest:manifest.internalManifest(), PortableConfig:&manifest, Instructions:parsed.Instructions, Skills:parsed.Skills, Warnings:parsed.Warnings}
 	bundle.Hash = hashBundle(bundle)
 	if err := ValidateBundle(bundle); err != nil { return Bundle{}, err }
 	return bundle, nil
 }
 
-// ExportSource creates an editable source directory archive, and reimports it
-// through the real repository compiler before allowing the download.
+// ExportSource retains the v1 source format for repository compiler callers.
 func ExportSource(ctx context.Context, name, description, instructions string, skills []Skill, instructionPaths ...string) ([]byte, error) {
-	manifest := PortableManifest{Schema:PortableSchemaPath, Version:PortableVersion, Name:name, Description:description, Instructions:"AGENTS.md", Skills:[]PortableSkill{}}
-	if len(instructionPaths) > 0 { manifest.Instructions = instructionPaths[0] }
+	instructionsPath := "AGENTS.md"
+	if len(instructionPaths) > 0 { instructionsPath = instructionPaths[0] }
+	return ExportAgentPackage(ctx, map[string]any{"$schema":PortableSchemaPath, "version":PortableVersion, "name":name, "description":description, "instructions":instructionsPath}, instructions, skills, nil)
+}
+
+// ExportAgentPackage packages a platform snapshot and verifies it through the
+// same schema and file parser used by uploaded packages before downloading.
+func ExportAgentPackage(ctx context.Context, definition map[string]any, instructions string, skills []Skill, notes []byte) ([]byte, error) {
+	content, err := json.Marshal(definition)
+	if err != nil { return nil, err }
+	var manifest PortableManifest
+	if err := json.Unmarshal(content, &manifest); err != nil { return nil, err }
+	manifest.Skills = []PortableSkill{}
 	if err := validateRepositoryPath(manifest.Instructions, "instructions"); err != nil { return nil, err }
 	if manifest.Instructions == PortableSchemaPath || manifest.Instructions == PortableManifestPath { return nil, errors.New("instructions conflict with the manifest") }
 	files := map[string][]byte{PortableSchemaPath:PortableSchema, manifest.Instructions:[]byte(instructions)}
@@ -111,6 +91,9 @@ func ExportSource(ctx context.Context, name, description, instructions string, s
 		files[filePath] = []byte(content)
 		return nil
 	}
+	if notes != nil {
+		if err := add("EXPORT-NOTES.json", string(notes)); err != nil { return nil, err }
+	}
 	for _, skill := range skills {
 		if err := validateRepositoryPath(skill.SourcePath, "skill path"); err != nil { return nil, err }
 		enabled := !skill.Disabled
@@ -122,9 +105,12 @@ func ExportSource(ctx context.Context, name, description, instructions string, s
 			if err := add(skill.SourcePath + "/" + file.Path, file.Content); err != nil { return nil, err }
 		}
 	}
-	content, err := json.MarshalIndent(manifest, "", "  ")
+	definition["skills"] = manifest.Skills
+	content, err = json.MarshalIndent(definition, "", "  ")
 	if err != nil { return nil, err }
+	if _, err := ValidateManifestJSON(content); err != nil { return nil, err }
 	files[PortableManifestPath] = append(content, '\n')
+	if total + len(files[PortableManifestPath]) > MaxBundleSize { return nil, errors.New("agent package exceeds total size limit") }
 	var buffer bytes.Buffer
 	archive := zip.NewWriter(&buffer)
 	paths := make([]string, 0, len(files)); for p := range files { paths = append(paths, p) }; sort.Strings(paths)
@@ -133,11 +119,7 @@ func ExportSource(ctx context.Context, name, description, instructions string, s
 		if _, err := writer.Write(files[p]); err != nil { return nil, err }
 	}
 	if err := archive.Close(); err != nil { return nil, err }
-	reader, err := zip.NewReader(bytes.NewReader(buffer.Bytes()), int64(buffer.Len()))
-	if err != nil { return nil, err }
-	client, err := newFSRepositoryClient(reader)
-	if err != nil { return nil, err }
-	compiled, err := compilePortable(ctx, client, Source{})
+	compiled, err := ParseAgentPackage(ctx, buffer.Bytes())
 	if err != nil { return nil, err }
 	if len(compiled.Warnings) > 0 { return nil, fmt.Errorf("source export would lose files: %s", strings.Join(compiled.Warnings, "; ")) }
 	return buffer.Bytes(), nil

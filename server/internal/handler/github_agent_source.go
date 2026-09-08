@@ -724,6 +724,7 @@ func parseUUIDValue(value string) (pgtype.UUID, error) {
 }
 
 func writeGitHubSourceError(w http.ResponseWriter, err error) {
+	if writeManifestSchemaError(w, err) { return }
 	var apiErr *githubapp.APIError
 	var requestErr *gitSourceRequestError
 	switch {

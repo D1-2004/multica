@@ -2081,6 +2081,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/github/branches", h.ListGitHubAgentBranches)
 					r.Post("/github/agent-preview", h.PreviewGitHubAgent)
 					r.Post("/github/agents", h.CreateGitHubAgent)
+					r.Post("/agent-packages/preview", h.PreviewAgentPackage)
 				})
 				// Owner-only access
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)
@@ -2485,6 +2486,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			// Agents
+			r.Get("/api/agent-schema", h.DownloadAgentSchema)
 			r.Route("/api/agents", func(r chi.Router) {
 				r.Get("/", h.ListAgents)
 				r.Post("/", h.CreateAgent)

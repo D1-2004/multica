@@ -57,11 +57,13 @@ func (h *Handler) ExportAgent(w http.ResponseWriter, r *http.Request) {
 		for _, file := range files { compiled.Files = append(compiled.Files, agentsource.File{Path:file.Path, Content:file.Content}) }
 		skills = append(skills, compiled)
 	}
+	manifest, notes, err := buildAgentExportManifest(r.Context(), queries, agent, instructionsPath)
+	if err != nil { writeError(w, http.StatusInternalServerError, "failed to read complete agent configuration"); return }
 	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to finish agent snapshot"); return }
-	archive, err := agentsource.ExportSource(r.Context(), agent.Name, agent.Description, agent.Instructions, skills, instructionsPath)
+	archive, err := agentsource.ExportAgentPackage(r.Context(), manifest, agent.Instructions, skills, notes)
 	if err != nil { writeError(w, http.StatusUnprocessableEntity, err.Error()); return }
 	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="agent-%s-source.zip"`, uuidToString(agent.ID)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="agent-%s.zip"`, uuidToString(agent.ID)))
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(archive)
