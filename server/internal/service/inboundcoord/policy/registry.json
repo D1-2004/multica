@@ -623,7 +623,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f13_contrast"
+        "f13_contrast",
+        "f13_finish_hint_fields"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -637,7 +638,9 @@
         "server/internal/service/inboundcoord/policy/recall_match.md",
         "server/internal/service/inboundcoord/policy/completion.md",
         "server/internal/service/inboundcoord/loop.go",
-        "server/internal/service/inboundcoord/tools.go"
+        "server/internal/service/inboundcoord/tools.go",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/assoc/purpose.go"
       ],
       "case_file": "cases.json"
     },

@@ -154,6 +154,16 @@
       "verification": "not_run"
     },
     {
+      "id": "f13_finish_hint_fields",
+      "rule_ids": [
+        "COORD.F13"
+      ],
+      "context_a": "finish action=issue 已有完整 items，仅缺 spoken text；purpose 点名 DWS身份",
+      "context_b": "purpose 粘贴 dws chat data-auth 或 openConversationId",
+      "expected_effects": "前者 hint 只修 text 并允许提交；后者拒绝 CLI/auth 且 hint 指向工具泄漏，不误伤产品名",
+      "verification": "scripted_host"
+    },
+    {
       "id": "f14_contrast",
       "rule_ids": [
         "COORD.F14"

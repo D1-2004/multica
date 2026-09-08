@@ -332,6 +332,11 @@ const (
 	hintReplyText       = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
 	hintRecallFirst     = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
 	hintNewDeliverable  = "This inbound is a different deliverable from that Issue. finish action=issue without issue_id. Do not issue_comment_add."
+	hintIssueSpokenText = "Set finish.text to a short spoken line for this window, such as 我去查环境并汇报简略结果. Complete items without text cannot submit."
+	hintIssueWorkItems  = "Use finish.items with source_refs, purpose, intent, basis; all requests must have a disposition."
+	hintIssueItemLimit  = "Keep at most 8 planned items; never drop later requests."
+	hintPurposeTooling  = "Purpose may name the requested object, including DWS身份 / MCP / Skills. Do not paste CLI commands, data-auth, or openConversationId. Rewrite as {委托人}委托：{事件与目的}."
+	hintPurposeRepair   = "Rewrite purpose as {委托人}委托：{事件与目的}, naming the concrete event and deliverable. Do not paste the inbound envelope."
 )
 
 type toolHintError struct {
