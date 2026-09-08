@@ -58,7 +58,6 @@ func parseAgentPackageRepository(ctx context.Context, client RepositoryClient, s
 	tree, err := client.GetTree(ctx, source.InstallationID, source.Owner, source.Repository, source.CommitSHA)
 	if err != nil { return ParsedAgentPackage{}, err }
 	entries := repositoryEntries(tree)
-	if _, exists := entries[DTAProjectPath]; exists { return ParsedAgentPackage{}, errors.New("Agent package must contain only agent.json as its manifest") }
 	content, err := loadRequiredText(ctx, client, source, entries, PortableManifestPath)
 	if err != nil { return ParsedAgentPackage{}, err }
 	fields, err := ValidateManifestJSON(content)

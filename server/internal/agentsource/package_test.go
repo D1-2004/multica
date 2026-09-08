@@ -36,6 +36,28 @@ func TestParseAgentPackagePreservesV2ConfigurationAndFiles(t *testing.T) {
 	if string(config["inbound_coordinator"]) != "false" || !bytes.Contains(config["custom_env"], []byte("secret_ref")) || parsed.Manifest["access"] == nil { t.Fatal("v2 configuration was lost") }
 }
 
+func TestZIPAndRepositoryPrepareIdenticalV2Bundle(t *testing.T) {
+	files := map[string]string{
+		"agent.json":`{"$schema":"agent.schema.json","version":"multica.agent/v2","name":"Package parity","instructions":"AGENTS.md","skills":[{"path":"skills/check","name":"check","enabled":false}],"configuration":{"persona":"Review carefully","max_concurrent_tasks":3},"okrs":[{"objective":"Check packages","key_results":["Keep all files"]}]}`,
+		"AGENTS.md":"Inspect supplied documents.", "skills/check/SKILL.md":"Check package data.", "skills/check/references/rules.md":"Preserve all declared files.",
+	}
+	archive, err := ParseAgentPackage(context.Background(), packageZIP(t, files))
+	if err != nil { t.Fatal(err) }
+	fsys := fstest.MapFS{}
+	for name, content := range files { fsys[name] = &fstest.MapFile{Data:[]byte(content)} }
+	client, err := newFSRepositoryClient(fsys)
+	if err != nil { t.Fatal(err) }
+	repository, err := ReadDTARepository(context.Background(), client, Source{})
+	if err != nil { t.Fatal(err) }
+	local, err := archive.Bundle()
+	if err != nil { t.Fatal(err) }
+	a, _ := json.Marshal(local); b, _ := json.Marshal(repository.Definition)
+	if !bytes.Equal(a,b) { t.Fatalf("ZIP and repository bundles differ: %s / %s",a,b) }
+	if !bytes.Contains(a, []byte(`"okrs"`)) || !bytes.Contains(a, []byte(`"persona"`)) { t.Fatal("bundle lost v2 configuration") }
+	local.Definition["configuration"] = json.RawMessage(`{"max_concurrent_tasks":4}`)
+	if ValidateBundle(local) == nil { t.Fatal("modified persisted configuration passed the bundle hash") }
+}
+
 func TestParseAgentPackageUsesEmbeddedSchema(t *testing.T) {
 	archive := packageZIP(t, map[string]string{
 		"agent.json":`{"$schema":"agent.schema.json","version":"multica.agent/v2","name":"Reviewer","instructions":"missing.md","skills":[],"configuration":{"persona":123}}`,

@@ -9,9 +9,14 @@ import (
 	"sort"
 
 	"github.com/multica-ai/multica/server/internal/agentsource"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type AgentPackagePreviewResponse struct {
+	Definition map[string]any `json:"definition"`
+	PreviewID string `json:"preview_id"`
+	ExpiresAt string `json:"expires_at"`
+	Requirements PackageRequirements `json:"requirements"`
 	ManifestVersion string `json:"manifest_version"`
 	PackageHash string `json:"package_hash"`
 	Name string `json:"name"`
@@ -52,12 +57,18 @@ func (h *Handler) PreviewAgentPackage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	bundle, err := parsed.Bundle()
+	if err != nil { writeGitHubSourceError(w, err); return }
+	resolved := preparedAgentSource{bundle:bundle, sha:bundle.Hash, snapshot:agentsource.RepositorySnapshot{Definition:bundle}}
+	preview, err := h.saveAgentSourcePreview(r, parseUUID(workspaceID), db.Agent{}, db.AgentSource{}, resolved, "")
+	if err != nil { writeError(w, http.StatusInternalServerError, "failed to save package preview"); return }
 	var header agentsource.PortableManifest
 	encoded, err := json.Marshal(parsed.Manifest)
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to read parsed manifest"); return }
 	if err := json.Unmarshal(encoded, &header); err != nil { writeError(w, http.StatusInternalServerError, "failed to read parsed manifest"); return }
 	response := AgentPackagePreviewResponse{
-		ManifestVersion:header.Version, PackageHash:parsed.Hash, Name:header.Name, Description:header.Description,
+		Definition:packageDefinitionPreview(bundle), PreviewID:uuidToString(preview.ID), ExpiresAt:timestampToString(preview.ExpiresAt), Requirements:packageRequirements(bundle),
+		ManifestVersion:header.Version, PackageHash:bundle.Hash, Name:header.Name, Description:header.Description,
 		Instructions:parsed.Instructions, Skills:[]GitHubAgentSkillPreview{}, ManifestFields:[]string{}, ConfigurationFields:[]string{}, Warnings:parsed.Warnings,
 	}
 	for name := range parsed.Manifest { response.ManifestFields = append(response.ManifestFields, name) }

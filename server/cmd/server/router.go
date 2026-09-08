@@ -2082,6 +2082,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/github/agent-preview", h.PreviewGitHubAgent)
 					r.Post("/github/agents", h.CreateGitHubAgent)
 					r.Post("/agent-packages/preview", h.PreviewAgentPackage)
+					r.Post("/agent-packages", h.CreateAgentFromPackage)
 				})
 				// Owner-only access
 				r.With(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner")).Delete("/", h.DeleteWorkspace)

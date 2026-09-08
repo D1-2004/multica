@@ -93,7 +93,7 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 		"This package contains the Agent definition currently stored in Multica. Runtime history, platform system instructions and credentials are not included.",
 		"Resource aliases require explicit binding in the destination workspace. Secret references replace environment values, argument values, headers and unclassified provider strings; this file never contains their values.",
 		"GitHub execution identity is managed by the external identity service and must be checked and rebound separately. Git repository connections and release history are not Agent configuration.",
-		"Multica currently validates and previews v2 packages; applying v2 configuration during creation or publishing is not yet supported.",
+		"Local ZIP and Git creation use the same validated package. Select the destination runtime, supply secret references and explicitly acknowledge external bindings that will be configured after creation.",
 	}}
 	config := map[string]any{
 		"avatar_url":agent.AvatarUrl.String, "model":agent.Model.String, "thinking_level":agent.ThinkingLevel.String, "service_tier":agent.ServiceTier.String,
@@ -202,10 +202,14 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 		var cardSkills any = []any{}
 		if len(endpoint.CardSkills) > 0 { if err := json.Unmarshal(endpoint.CardSkills, &cardSkills); err != nil { return nil, nil, errors.New("invalid stored A2A card skills") } }
 		clients, err := q.ListAgentA2AClientsForOwner(ctx, db.ListAgentA2AClientsForOwnerParams{OwnerUserID:agent.OwnerID, WorkspaceID:agent.WorkspaceID, AgentID:agent.ID}); if err != nil { return nil, nil, err }
+		mappings, err := readPackageClientMappings(ctx, q, agent.ID); if err != nil { return nil, nil, err }
+		keys := map[string]string{}
+		for key, clientID := range mappings { keys[clientID] = key }
 		clientSpecs := []map[string]any{}
 		for _, client := range clients {
 			digest := sha256.Sum256([]byte(uuidToString(client.ID)))
-			clientSpecs = append(clientSpecs, map[string]any{"key":fmt.Sprintf("client-%x", digest[:8]), "name":client.Name, "status":client.Status, "scopes":client.Scopes, "rate_limit_per_minute":client.RateLimitPerMinute, "max_concurrent_tasks":client.MaxConcurrentTasks})
+			key := keys[uuidToString(client.ID)]; if key == "" { key = fmt.Sprintf("client-%x", digest[:8]) }
+			clientSpecs = append(clientSpecs, map[string]any{"key":key, "name":client.Name, "status":client.Status, "scopes":client.Scopes, "rate_limit_per_minute":client.RateLimitPerMinute, "max_concurrent_tasks":client.MaxConcurrentTasks})
 		}
 		manifest["a2a"] = map[string]any{"enabled":endpoint.Enabled, "card_name":endpoint.CardName, "card_description":endpoint.CardDescription, "card_version":endpoint.CardVersion, "card_skills":cardSkills, "clients":clientSpecs}
 	} else if !errors.Is(err, pgx.ErrNoRows) { return nil, nil, err } else { manifest["a2a"] = map[string]any{"enabled":false, "clients":[]any{}} }

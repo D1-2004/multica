@@ -42,7 +42,7 @@ func newGitSourceFixture(t *testing.T) *gitSourceFixture {
 	}
 	for index, sha := range []string{gitSourceSHA1, gitSourceSHA2} {
 		f.files[sha] = map[string]string{
-			"dingtalk-agent.json": `{"$schema":"dingtalk-agent/project@1","name":"source-reviewer","dtaVersion":"^0.1.5","agent":{"definition":"agent/AGENTS.md","skillsRoot":"agent/skills","skills":["dta-basic-behavior"]},"workspaces":{}}`,
+			"agent.json": `{"$schema":"agent.schema.json","version":"multica.agent/v1","name":"source-reviewer","instructions":"agent/AGENTS.md","skills":[{"path":"agent/skills/dta-basic-behavior","name":"dta-basic-behavior","description":"Base behavior","enabled":true}]}`,
 			"agent/AGENTS.md": fmt.Sprintf("Review code v%d", index + 1),
 			"agent/skills/dta-basic-behavior/SKILL.md": "---\nname: dta-basic-behavior\ndescription: Base behavior\n---\nBe helpful.",
 			"agent/skills/dta-basic-behavior/references/check.md": fmt.Sprintf("Checklist v%d", index + 1),
@@ -326,7 +326,7 @@ func TestGitHubSourcePublishRenamedSkillDirectory(t *testing.T) {
 	f := newGitSourceFixture(t)
 	agentID := f.create(t)
 	files := f.files[gitSourceSHA2]
-	files["dingtalk-agent.json"] = strings.ReplaceAll(files["dingtalk-agent.json"], "agent/skills", "new/skills")
+	files["agent.json"] = strings.ReplaceAll(files["agent.json"], "agent/skills", "new/skills")
 	for p, content := range files {
 		if strings.HasPrefix(p, "agent/skills/") { files[strings.Replace(p, "agent/skills/", "new/skills/", 1)] = content; delete(files, p) }
 	}

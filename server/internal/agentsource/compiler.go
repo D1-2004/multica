@@ -87,6 +87,7 @@ type Skill struct {
 }
 
 type Bundle struct {
+	Definition map[string]json.RawMessage `json:"definition,omitempty"`
 	PortableConfig *PortableManifest `json:"portable_config,omitempty"`
 	Manifest     Manifest `json:"manifest"`
 	Instructions string   `json:"instructions"`
@@ -414,6 +415,14 @@ func hashBundle(bundle Bundle) string {
 		hash.Write([]byte{0}); hash.Write(encoded)
 		for _, item := range bundle.Skills { encoded, _ = json.Marshal(item); hash.Write([]byte{0}); hash.Write(encoded) }
 	}
+	if bundle.Definition != nil {
+		encoded, _ := json.Marshal(bundle.Definition)
+		var canonical any
+		decoder := json.NewDecoder(bytes.NewReader(encoded)); decoder.UseNumber()
+		_ = decoder.Decode(&canonical)
+		encoded, _ = json.Marshal(canonical)
+		hash.Write([]byte{0}); hash.Write(encoded)
+	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
@@ -421,7 +430,13 @@ func hashBundle(bundle Bundle) string {
 // canonical hash excludes warnings and is shared with Compile and CompileFS.
 func ValidateBundle(bundle Bundle) error {
 	if bundle.PortableConfig != nil {
-		if err := bundle.PortableConfig.validate(); err != nil { return err }
+		if bundle.Definition != nil {
+			encoded, err := json.Marshal(bundle.Definition); if err != nil { return err }; if _, err := ValidateManifestJSON(encoded); err != nil { return err }
+			var header PortableManifest; if err := json.Unmarshal(encoded, &header); err != nil { return err }
+			actual, _ := json.Marshal(bundle.PortableConfig); expected, _ := json.Marshal(header)
+			if !bytes.Equal(actual, expected) { return errors.New("bundle manifest header does not match definition") }
+			if err := validatePortableLayout(header); err != nil { return err }
+		} else if err := bundle.PortableConfig.validate(); err != nil { return err }
 	} else {
 		for _, item := range bundle.Skills { if item.Disabled { return errors.New("disabled source skills require a portable manifest") } }
 	}

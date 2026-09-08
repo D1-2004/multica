@@ -55,9 +55,16 @@ func (m PortableManifest) validate() error {
 func compilePortable(ctx context.Context, client RepositoryClient, source Source) (Bundle, error) {
 	parsed, err := parseAgentPackageRepository(ctx, client, source)
 	if err != nil { return Bundle{}, err }
+	return parsed.Bundle()
+}
+
+// Bundle is the source-independent, validated input to preview and creation.
+// Retain v2 fields in the immutable snapshot and its hash; never reconstruct
+// the configuration from the limited legacy manifest header.
+func (parsed ParsedAgentPackage) Bundle() (Bundle, error) {
 	manifest := parsed.header
-	if manifest.Version != PortableVersion { return Bundle{}, errors.New("this manifest version requires the v2 configuration materializer") }
 	bundle := Bundle{Manifest:manifest.internalManifest(), PortableConfig:&manifest, Instructions:parsed.Instructions, Skills:parsed.Skills, Warnings:parsed.Warnings}
+	if manifest.Version == "multica.agent/v2" { bundle.Definition = parsed.Manifest }
 	bundle.Hash = hashBundle(bundle)
 	if err := ValidateBundle(bundle); err != nil { return Bundle{}, err }
 	return bundle, nil
