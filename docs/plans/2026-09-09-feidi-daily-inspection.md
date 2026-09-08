@@ -32,4 +32,9 @@
 
 ## 结果与遗留
 
-待回填。
+- 完成：巡检证据、开发面Skill、查询工具及确定性修复已提交到codex/feidi-daily-inspection；应用提交423b434e8。
+- 预发发布：CR36035346，run3107363464，构建job171082354；集成提交b419ad5bc包含应用修复，2026-09-09 01:25:25+08:00部署SUCCESS，/health与/status.taobao均200；停在人工预发验证。
+- 冲突：仅两份policy JSON的新增案例/引用冲突，在隔离release worktree语义合并，保留预发现有finish/purpose修复；集成后4包验证与policy结构检查通过。巡检分支未混入其他CR。
+- 完整报告：docs/reports/2026-09-08-feidi-daily-inspection.md。
+- 遗留：截断后的名单补造、One-One关系语义、菲迪3群DWS根因、claimed evidence不可见、SLS8000字提示词截断；详见报告。未做E2E，未宣称正式环境恢复。
+- 最终报告/Skill补充说明为文档提交，不更改已部署应用代码。

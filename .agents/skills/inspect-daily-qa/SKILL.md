@@ -51,6 +51,8 @@ scripts/query-langfuse.sh --env production --trace "$COORD_TRACE_ID" --raw
 
 SLS stderr `possibly_truncated=true` 时保持窗口和 query，按 `next_offset` 翻页，合并原数组；取满一页不能称全量。中文关键词先按 agent/时间取数后本地匹配。环境 tag 不能省。
 
+SLS有裁决而Langfuse精确ID为404时，先看`switch_off=true`或`already_told_scene`等Host短路；这些可能在startTurnTrace之前返回。将无模型短路与真实导出失败分开，空coord_trace_id单列，不把所有差集都叫丢trace。
+
 Langfuse 先用 `agent-UUID`、session/CID、trace ID 或 idx 事件缩小范围，不扫全项目后猜用户。脚本 `--to` 固定结束时间；需要覆盖统计用 `--stats`，分页/扫描/水合达到预算时必须披露。列表有同 ID 多版本：保留 raw_count、unique_count、duplicate_rows；以 ID 去重后的统计才是 trace 数。一个 trace 内可能有多次 Coordinator 重试，重试数再数根 observation。
 
 **共享 trace 顶层 input/output/timestamp 可能由后续 agent_task 覆盖。** 原始问答读 `observations[name=inbound_coordinator]`，逐次尝试看根输入和 `coordinator.round.N`；沙箱读 `agent_task` 和 `llm.call.N`。模型参数、显式 reasoning 字段和工具参数才是推理证据；没有的推理不要补造。
@@ -62,6 +64,8 @@ Langfuse 先用 `agent-UUID`、session/CID、trace ID 或 idx 事件缩小范围
 3. **数据与回答**：召回是否覆盖对象和时间；重发名单是否忠于原数据；未加载/截断是否被说成空；“谁和她聊”是否回答成“她是谁”。Host 校验拒绝与供应商失败分开统计。
 4. **执行与送达**：finish 是意图，任务状态是执行证据，同 CID 的 DWS 消息才是实际回话。查 outbox 或 Router 时按 `inspect-fde-llm-trace`，不以 assistant 自述证明外部已发送。
 5. **场域记忆**：看 scene_key、attempt、dirty/flushed revision、输入的已提交水位、history page、commit拒绝、最后失败；再找后续同场景 SLS user_prompt 中 `current_message` 之前的 scene_memory。当前原文里的重复不能充当召回证据。
+
+先比较SLS的`user_prompt_runes`与实际返回长度。现行日志上限8000字，长岗位说明可截断记忆尾部甚至整个`current_message`分界；此时只能证明可见的revision/前缀，不得据此判定完整召回或未召回。用同coord_trace_id的Langfuse generation确认完整模型输入，报告注明SLS证据不完整；后续可改观测字段，不能靠加大模型prompt解决日志截断。
 
 记忆工具 accepted 仅表示 draft 通过校验；根 `committed=true`、新 revision 才证明数据库提交。旧 trace 没有 committed 时读最终状态；`planned_cursor_at` 不是 `cursor_at`。旧版 oldest/newest 可能来自倒序首尾，应回看事件。`INCOMPLETE` 且 claimed evidence 不可见不能跳过水位，更不能用 reset-memory 掩盖问题。统计持续重试热点（如数百次），区分超长、超时、DWS错误、证据不可见。
 
