@@ -1,3 +1,4 @@
+import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
 import type {
   Issue,
   IssuePriority,
@@ -481,6 +482,7 @@ import {
   EMPTY_SYNC_AGENT_SOURCE_RESPONSE,
   BeginDingTalkAccountBindingResponseSchema,
   DingTalkAccountBindingsResponseSchema,
+  ReusableDingTalkIdentitiesSchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
   FDEOnboardingStateSchema,
@@ -5794,6 +5796,20 @@ export class ApiClient {
   }
 
   // DingTalk account binding (independent from the DingTalk bot installation)
+  async listReusableDingTalkIdentities(workspaceId: string, agentId: string): Promise<ReusableDingTalkIdentity[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/execution-identities?agent_id=${encodeURIComponent(agentId)}`,
+    );
+    return parseWithFallback(raw, ReusableDingTalkIdentitiesSchema, [], { endpoint: "listReusableDingTalkIdentities" });
+  }
+
+  async reuseDingTalkIdentity(workspaceId: string, agentId: string, sourceAgentId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/dingtalk/execution-identities/reuse`, {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, source_agent_id: sourceAgentId }),
+    });
+  }
+
   async listDingTalkAccountBindings(
     workspaceId: string,
   ): Promise<DingTalkAccountBindingsResponse> {

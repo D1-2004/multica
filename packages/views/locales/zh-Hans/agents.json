@@ -1255,7 +1255,15 @@
       "enterprise_identity_connect_failed": "无法发起员工身份授权。",
       "enterprise_identity_revoke": "解除绑定",
       "enterprise_identity_revoked": "员工身份已解除绑定。",
-      "enterprise_identity_revoke_failed": "无法解除员工身份绑定。"
+      "enterprise_identity_revoke_failed": "无法解除员工身份绑定。",
+      "dingtalk_identity_reuse_select": "使用已有身份",
+      "dingtalk_identity_reuse_placeholder": "选择身份",
+      "dingtalk_identity_reuse_apply": "使用此身份",
+      "dingtalk_identity_reuse_hint": "选择你已在当前空间绑定的身份，无需再次扫码。",
+      "dingtalk_identity_reuse_empty": "暂无可复用身份，请扫码绑定新账号。",
+      "dingtalk_identity_reuse_load_failed": "无法加载已有身份，仅智能体所有者可使用此功能。",
+      "dingtalk_identity_reuse_retry": "重试",
+      "dingtalk_identity_reuse_failed": "复用身份失败，请刷新后重试。"
     },
     "activity": {
       "status": {

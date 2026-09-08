@@ -1111,7 +1111,15 @@
       "enterprise_identity_connect_failed": "従業員認証を開始できませんでした。",
       "enterprise_identity_revoke": "連携解除",
       "enterprise_identity_revoked": "従業員 ID の連携を解除しました。",
-      "enterprise_identity_revoke_failed": "従業員 ID の連携を解除できませんでした。"
+      "enterprise_identity_revoke_failed": "従業員 ID の連携を解除できませんでした。",
+      "dingtalk_identity_reuse_select": "既存の実行 ID を使用",
+      "dingtalk_identity_reuse_placeholder": "実行 ID を選択",
+      "dingtalk_identity_reuse_apply": "この実行 ID を使用",
+      "dingtalk_identity_reuse_hint": "このワークスペースで連携済みの実行 ID を選択します。再スキャンは不要です。",
+      "dingtalk_identity_reuse_empty": "再利用できる実行 ID がありません。スキャンして連携してください。",
+      "dingtalk_identity_reuse_load_failed": "実行 ID を読み込めません。このエージェントの所有者のみ利用できます。",
+      "dingtalk_identity_reuse_retry": "再試行",
+      "dingtalk_identity_reuse_failed": "実行 ID を再利用できません。更新して再試行してください。"
     },
     "activity": {
       "status": {
