@@ -375,6 +375,18 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if turn.Source != SourceWeb && !turn.Addressed && strings.EqualFold(turn.ChatType, "group") {
 		return Decision{Action: ActionSilence}
 	}
+	// The owner switch skips the whole short loop, including Host ACK
+	// silence. Auto-mode sandbox still has to see the original IM.
+	if turn.Loop != LoopTaskFinished && c.coordinatorOff(ctx, turn) {
+		slog.Info("inbound coordinator skipped; agent switch off",
+			append(coordinatorLogIndex(turn),
+				"event", "inbound_coordinator_decided",
+				"action", string(ActionContinue),
+				"fail_open", false,
+				"switch_off", true,
+			)...)
+		return Decision{Action: ActionContinue}
+	}
 	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
 		return hostSilence(turn, "window_ack")
 	}
@@ -386,16 +398,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
-	if turn.Loop != LoopTaskFinished && c.coordinatorOff(ctx, turn) {
-		slog.Info("inbound coordinator skipped; agent switch off",
-			append(coordinatorLogIndex(turn),
-				"event", "inbound_coordinator_decided",
-				"action", string(ActionContinue),
-				"fail_open", false,
-				"switch_off", true,
-			)...)
-		return Decision{Action: ActionContinue}
-	}
 
 	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
 	defer cancel()

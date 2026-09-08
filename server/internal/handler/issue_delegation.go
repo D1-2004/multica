@@ -72,6 +72,22 @@ func issueDelegationSessionLabel(chatSessionID string) string {
 	return "chat:" + hex.EncodeToString(sum[:10])
 }
 
+// mergeDelegatedInboundContent keeps the original IM on the background Issue.
+// Auto mode without inbound coordinator still delegates through Chat; the
+// Agent-authored description is routing, not a replacement for the source
+// utterance. Coordinator-on IssueDescription always copies that utterance.
+func mergeDelegatedInboundContent(agentText, inboundText string) string {
+	agentText = strings.TrimSpace(agentText)
+	inboundText = strings.TrimSpace(inboundText)
+	if inboundText == "" {
+		return agentText
+	}
+	if agentText == "" || strings.Contains(agentText, inboundText) {
+		return firstNonEmpty(agentText, inboundText)
+	}
+	return agentText + "\n\n原始入站消息：\n" + inboundText
+}
+
 func (h *Handler) loadIssueDelegationSource(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -363,7 +379,7 @@ func (h *Handler) createDelegatedIssue(
 	}
 
 	command.AgentID = req.AssigneeID
-	prompt.DisplayContent = req.Description
+	prompt.DisplayContent = mergeDelegatedInboundContent(req.Description, prompt.DisplayContent)
 	metadata, _ := json.Marshal(map[string]string{
 		"multica.chat_session_id":         uuidToString(sourceTask.ChatSessionID),
 		"multica.delegated_from_task_id":  req.SourceTaskID,
@@ -381,7 +397,7 @@ func (h *Handler) createDelegatedIssue(
 		"",
 		agentDispatchIssueCreateOverrides{
 			Title:                  req.Title,
-			DisplayContent:         req.Description,
+			DisplayContent:         prompt.DisplayContent,
 			DispatchContext:        privateContext,
 			Metadata:               metadata,
 			SystemLabelName:        issueDelegationSessionLabel(uuidToString(sourceTask.ChatSessionID)),
@@ -497,7 +513,7 @@ func (h *Handler) continueDelegatedIssue(
 		Kind:    "issue",
 		IssueID: req.IssueID,
 	}
-	prompt.DisplayContent = req.Content
+	prompt.DisplayContent = mergeDelegatedInboundContent(req.Content, prompt.DisplayContent)
 	params := buildAgentDispatchIssueFollowUpParams(
 		command,
 		prompt,
