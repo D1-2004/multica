@@ -168,6 +168,8 @@ export {
 } from "./attachment-url";
 export type {
   ChatSession,
+  CoordinatorConversation,
+  CoordinatorConversationsPage,
   ChatLastMessage,
   ChatPinnedAgent,
   ChatMessage,

@@ -341,3 +341,20 @@ export interface ChatPendingTask {
    */
   queued_tasks?: ChatQueuedTask[];
 }
+
+/** Read-only projection of inbound judgments sharing an external conversation. */
+export interface CoordinatorConversation {
+  id: string;
+  session_id: string;
+  title: string;
+  conversation_type: string;
+  source: string;
+  session_count: number;
+  updated_at: string;
+}
+
+export interface CoordinatorConversationsPage {
+  conversations: CoordinatorConversation[];
+  has_more: boolean;
+  next_offset: number;
+}

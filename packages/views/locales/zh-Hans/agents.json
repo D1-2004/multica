@@ -326,7 +326,8 @@
     "discard_keep": "继续编辑",
     "discard_confirm": "放弃修改",
     "identity": "身份",
-    "llm_trace": "LLM Trace"
+    "llm_trace": "LLM Trace",
+    "inbound": "入站会话"
   },
   "creation_studio": {
     "title": "创建智能体",
@@ -1369,7 +1370,14 @@
       "relations_clear": "解除本会话事项关联",
       "relations_clear_confirm": "解除该会话上的事项关联？记忆文本会保留。",
       "relations_cleared": "已解除该会话的事项关联",
-      "relations_clear_failed": "解除事项关联失败"
+      "relations_clear_failed": "解除事项关联失败",
+      "grouped_hint": "同一群聊或单聊合并展示，点开查看连续记录。",
+      "judgment_count": "{{count}} 次判断",
+      "load_more": "加载更多会话",
+      "source_employee": "数字员工",
+      "source_robot": "机器人",
+      "source_unknown": "其他来源",
+      "refresh": "刷新"
     },
     "memory": {
       "flags_hint": "写入、召回和预热控制后台怎么记；显示列表控制这里看不看得见。",

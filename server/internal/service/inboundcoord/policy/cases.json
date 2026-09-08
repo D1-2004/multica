@@ -42,6 +42,17 @@
       "verification": "not_run"
     },
     {
+      "id": "f04_talent_vs_contest",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F11"
+      ],
+      "context_a": "选一个最近产出思考都优秀的同学，会话里有黑客松评比记忆",
+      "context_b": "黑客松给我们加分、我们第几",
+      "expected_effects": "前者 issue，任务书写明识才/查日志、不是评选；后者才可用评选拒答句 reply",
+      "verification": "not_run"
+    },
+    {
       "id": "f05_contrast",
       "rule_ids": [
         "COORD.F05"
@@ -49,6 +60,17 @@
       "context_a": "最终结果之后说好",
       "context_b": "确认问题之后说好",
       "expected_effects": "前者无新工作；后者在原授权范围推进",
+      "verification": "not_run"
+    },
+    {
+      "id": "f05_yes_more_copies",
+      "rule_ids": [
+        "COORD.F05",
+        "COORD.F07"
+      ],
+      "context_a": "刚给过关怀成稿并问要不要更多不同风格，用户回是的多给我几份",
+      "context_b": "用户明说再拟两份成稿给我审",
+      "expected_effects": "前者任务书保留「几份」与刚看过成稿，不得锁成拟文案；后者才以成稿为交付物",
       "verification": "not_run"
     },
     {

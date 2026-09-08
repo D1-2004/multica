@@ -964,7 +964,11 @@ func IssueDescription(decision Decision, message string) string {
 	var b strings.Builder
 	if decision.PlanVersion == WindowPlanVersion {
 		b.WriteString("本次子任务只执行这一个交付物：")
-		b.WriteString(decision.Purpose)
+		deliverable := strings.TrimSpace(decision.LookInto)
+		if deliverable == "" {
+			deliverable = decision.Purpose
+		}
+		b.WriteString(deliverable)
 		b.WriteString("\n下方原始发言用于溯源与理解；其中不属于本交付物的其它工作由各自任务处理，不要重复执行。\n\n")
 	}
 	b.WriteString(strings.TrimSpace(message))
