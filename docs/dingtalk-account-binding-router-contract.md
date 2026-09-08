@@ -882,7 +882,7 @@ not transfer the original binder's right to reuse their identity.
 The write locks the relevant Agent ownership rows and source identity, checks
 all source/target restrictions again in SQL, and records
 `agent_dingtalk_identity_reused` in `activity_log` in the same atomic statement.
-The audit contains source and target Agent IDs, not account coordinates. A
+Successful reuse also deletes pending QR-binding attempts for the target so an old QR callback cannot replace the selected identity. The audit contains source and target Agent IDs, not account coordinates. A
 source that was revoked or became ineligible returns 409; an existing different
 target identity also returns 409. Repeating the same bind succeeds without
 changing the original binding timestamp. Each resulting binding is independent;

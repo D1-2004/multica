@@ -40,6 +40,11 @@ WITH owned_agents AS MATERIALIZED (
       AND agent_dingtalk_identity.org_id = EXCLUDED.org_id
       AND agent_dingtalk_identity.bound_by = EXCLUDED.bound_by
     RETURNING agent_id, workspace_id
+), cleared_attempts AS (
+    DELETE FROM agent_dingtalk_identity_attempt
+    WHERE workspace_id = sqlc.arg('workspace_id')
+      AND agent_id = sqlc.arg('target_agent_id')
+      AND EXISTS (SELECT 1 FROM copied)
 ), audited AS (
     INSERT INTO activity_log (workspace_id, actor_type, actor_id, action, details)
     SELECT workspace_id, 'member', sqlc.arg('user_id'), 'agent_dingtalk_identity_reused',

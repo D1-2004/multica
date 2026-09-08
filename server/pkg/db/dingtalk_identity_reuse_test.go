@@ -28,6 +28,7 @@ func TestDingTalkIdentityReuse(t *testing.T) {
 	}
 	exec(`CREATE TEMP TABLE agent(id uuid PRIMARY KEY,workspace_id uuid,owner_id uuid,name text,archived_at timestamptz);
  CREATE TEMP TABLE agent_dingtalk_identity(agent_id uuid PRIMARY KEY,workspace_id uuid,dws_uid text,org_id text,organization_name text,account_display_name text,account_avatar_url text,bound_by uuid,bound_at timestamptz,updated_at timestamptz);
+ CREATE TEMP TABLE agent_dingtalk_identity_attempt(agent_id uuid,workspace_id uuid);
  CREATE TEMP TABLE activity_log(id uuid DEFAULT gen_random_uuid(),workspace_id uuid,actor_type text,actor_id uuid,action text,details jsonb);`)
 	uid := func(n byte) pgtype.UUID { return pgtype.UUID{Bytes: [16]byte{15: n}, Valid: true} }
 	ws, user, other, source, target, duplicate, foreign, archived := uid(1), uid(2), uid(3), uid(4), uid(5), uid(6), uid(7), uid(8)
@@ -76,9 +77,13 @@ func TestDingTalkIdentityReuse(t *testing.T) {
 		t.Fatal("identity survived failed audit")
 	}
 	exec(`ALTER TABLE activity_log DROP CONSTRAINT deny_audit`)
+	exec(`INSERT INTO agent_dingtalk_identity_attempt VALUES($1,$2)`, target, ws)
 	got, err := q.ReuseDingTalkIdentity(ctx, p)
 	if err != nil || got != target {
 		t.Fatalf("reuse: %v %v", got, err)
+	}
+	if err := conn.QueryRow(ctx, `SELECT count(*) FROM agent_dingtalk_identity_attempt WHERE agent_id=$1`, target).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("pending QR attempt survived reuse: %d %v", n, err)
 	}
 	var boundAt string
 	conn.QueryRow(ctx, `SELECT bound_at::text FROM agent_dingtalk_identity WHERE agent_id=$1`, target).Scan(&boundAt)

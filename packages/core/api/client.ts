@@ -5892,7 +5892,7 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/dingtalk/execution-identities?agent_id=${encodeURIComponent(agentId)}`,
     );
-    return parseWithFallback(raw, ReusableDingTalkIdentitiesSchema, [], { endpoint: "listReusableDingTalkIdentities" });
+    return parseWithFallback(raw, ReusableDingTalkIdentitiesSchema, [], { endpoint: "listReusableDingTalkIdentities", includeReceived: false });
   }
 
   async reuseDingTalkIdentity(workspaceId: string, agentId: string, sourceAgentId: string): Promise<void> {
