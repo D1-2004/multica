@@ -2653,6 +2653,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Put("/owner", h.TransferRuntimeOwner)
 					r.Patch("/fc-e2b-template", h.UpdateFCE2BRuntimeTemplate)
 					r.Patch("/cloud-sandbox-artifact", h.UpdateCloudSandboxRuntimeArtifact)
+					r.Get("/asb-network-policy", h.GetASBRuntimeNetworkPolicy)
+					r.Put("/asb-network-policy", h.UpdateASBRuntimeNetworkPolicy)
 					r.Get("/asb-credential", h.GetASBRuntimeCredential)
 					r.Patch("/asb-credential", h.UpdateASBRuntimeCredential)
 					r.Get("/usage", h.GetRuntimeUsage)

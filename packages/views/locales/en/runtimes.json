@@ -217,7 +217,23 @@
     "running_chip_one": "· {{count}} running",
     "running_chip_other": "· {{count}} running",
     "queued_chip_one": "· {{count}} queued",
-    "queued_chip_other": "· {{count}} queued"
+    "queued_chip_other": "· {{count}} queued",
+    "asb_network": {
+      "title": "Network allowlist",
+      "description": "Outbound connections are denied unless the destination is allowed. Required services and configured Agent endpoints are included automatically.",
+      "loading": "Loading network policy...",
+      "load_failed": "Unable to load the network policy. Reload before editing.",
+      "retry": "Retry",
+      "defaults": "Default destinations ({{count}})",
+      "custom": "Additional destinations",
+      "hint": "One exact domain or IP per line. URLs, wildcards and CIDR ranges are not supported. Up to 256 entries.",
+      "applies": "Changes apply when the next task starts. A sandbox with an older policy is replaced; files stored only inside it will not carry over. Running tasks finish with their current policy.",
+      "save": "Save",
+      "saving": "Saving...",
+      "cancel": "Cancel",
+      "saved": "Network allowlist saved. It will apply to the next task.",
+      "save_failed": "Unable to save the network allowlist."
+    }
   },
   "detail_page": {
     "not_found_title": "Runtime not found",

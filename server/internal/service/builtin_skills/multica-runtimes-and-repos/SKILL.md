@@ -88,3 +88,14 @@ Workspace repos and project resources are not the same thing:
 Do not add a project resource just because `repo checkout` failed. First determine whether the user asked for durable project context or just a task checkout.
 
 More source-backed details: `references/runtimes-and-repos-source-map.md`.
+
+### ASB network allowlist
+
+ASB sandboxes deny outbound connections unless the destination is allowed.
+Required platform services and configured Agent MCP/service hosts are included
+automatically. Workspace owners/admins can add exact domains or individual IPs
+in the Runtime details page. Wildcards, URLs and CIDR ranges are rejected.
+Changes apply at the next task launch: sandboxes using an older policy are
+replaced, so files stored only in that sandbox do not carry over. Active tasks
+finish with their existing policy. Ask the user to configure a missing
+destination; do not try to bypass the sandbox network policy.

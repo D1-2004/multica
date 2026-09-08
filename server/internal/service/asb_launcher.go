@@ -49,6 +49,8 @@ const (
 // ASBConfig is the deployment-owned configuration for the Aone Sandbox
 // backend. Tenant API keys are Runtime-owned encrypted credentials.
 type ASBConfig struct {
+	NetworkAllowlist      []string
+	NetworkServiceURLs    []string
 	Enabled               bool
 	APIURL                string
 	ServerURL             string
@@ -67,6 +69,7 @@ type ASBConfig struct {
 
 func ASBConfigFromEnv() ASBConfig {
 	cfg := ASBConfig{
+		NetworkServiceURLs:    []string{os.Getenv("MULTICA_AGENT_IDENTITY_SANDBOX_BASE_URL"), os.Getenv("MULTICA_AGENT_IDENTITY_BASE_URL"), os.Getenv("MULTICA_AGENT_IDENTITY_CONTROL_BASE_URL")},
 		Enabled:               envBool("MULTICA_ASB_ENABLED"),
 		APIURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_API_URL")), "/"),
 		ServerURL:             strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_ASB_SERVER_URL")), "/"),
@@ -79,6 +82,12 @@ func ASBConfigFromEnv() ASBConfig {
 		ResourceCPU:           firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_CPU"), defaultASBResourceCPU),
 		ResourceMemory:        firstNonEmptyString(os.Getenv("MULTICA_ASB_RESOURCE_MEMORY"), defaultASBResourceMemory),
 		WireGuardCredentials:  strings.TrimSpace(os.Getenv("MULTICA_ASB_WG_CLIENT_CREDENTIALS")),
+	}
+	targets, targetErr := parseStringListEnv("MULTICA_ASB_NETWORK_ALLOWLIST", os.Getenv("MULTICA_ASB_NETWORK_ALLOWLIST"))
+	if targetErr != nil {
+		cfg.ParseError = errors.Join(cfg.ParseError, targetErr)
+	} else {
+		cfg.NetworkAllowlist = targets
 	}
 	models, err := parseStringListEnv("MULTICA_ASB_OPENAI_MODELS", os.Getenv("MULTICA_ASB_OPENAI_MODELS"))
 	if err != nil {
@@ -136,6 +145,9 @@ func parsePositiveDurationEnv(name string, target *time.Duration, parseErr *erro
 }
 
 func (c ASBConfig) Validate() error {
+	if _, err := NormalizeASBNetworkTargets(c.NetworkAllowlist); err != nil {
+		return err
+	}
 	if c.ParseError != nil {
 		return c.ParseError
 	}
@@ -867,6 +879,18 @@ func (l *ASBLauncher) resolveSandbox(
 			return "", false, ASBResolvedIdentity{}, errors.Join(ErrASBCapacityUnavailable, err)
 		}
 	}
+	settings, policyErr := l.RuntimeNetworkPolicy(ctx, runtime)
+	if policyErr != nil {
+		return "", false, ASBResolvedIdentity{}, policyErr
+	}
+	if excludedTaskID.Valid {
+		task, err := l.Queries.GetAgentTask(ctx, excludedTaskID)
+		if err != nil {
+			return "", false, ASBResolvedIdentity{}, err
+		}
+		settings.EffectiveTargets = uniqueASBTargets(append(settings.EffectiveTargets, asbConfiguredURLTargets(task.RuntimeMcpOverlay)...))
+	}
+	policy := settings.Policy()
 	if scoped {
 		release, err := l.lockSandboxScopeOnConnection(ctx, runtime, scope, runtimeLockConn)
 		if err != nil {
@@ -888,7 +912,7 @@ func (l *ASBLauncher) resolveSandbox(
 			if err != nil {
 				return "", false, ASBResolvedIdentity{}, fmt.Errorf("load ASB sandbox session: %w", err)
 			}
-			reusable, state, err := inspectReusableASBSandbox(ctx, l.Client, session.SandboxID)
+			reusable, state, err := inspectReusableASBSandbox(ctx, l.Client, session.SandboxID, policy.Fingerprint())
 			if err != nil {
 				return "", false, ASBResolvedIdentity{}, fmt.Errorf(
 					"query reusable ASB sandbox: %w",
@@ -969,6 +993,7 @@ func (l *ASBLauncher) resolveSandbox(
 			excludedTaskID,
 			runtimeLockConn,
 			ASBCreateSandboxInput{
+				NetworkPolicy:  policy,
 				ImageURI:       metadata.ArtifactRef,
 				TimeoutSeconds: l.Config.TimeoutSeconds,
 				ResourceCPU:    l.Config.ResourceCPU,
@@ -1061,6 +1086,7 @@ func inspectReusableASBSandbox(
 	ctx context.Context,
 	client *ASBClient,
 	sandboxID string,
+	expectedPolicy string,
 ) (bool, string, error) {
 	live, exists, err := getLiveASBSandbox(ctx, client, sandboxID)
 	if err != nil {
@@ -1071,6 +1097,9 @@ func inspectReusableASBSandbox(
 	}
 	state := strings.TrimSpace(live.Status.State)
 	reusable := !isTerminalASBSandboxState(state) && !strings.EqualFold(state, "failed")
+	if reusable && (expectedPolicy == "" || live.Metadata[asbNetworkPolicyFingerprintKey] != expectedPolicy) {
+		return false, "network_policy_changed", nil
+	}
 	return reusable, state, nil
 }
 
