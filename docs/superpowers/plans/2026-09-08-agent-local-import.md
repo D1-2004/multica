@@ -17,7 +17,7 @@
 - [x] Add local import route, upload/preview/runtime/confirmation UI and shared API contracts.
 - [x] Update Builder instructions and creation skill to explain schema, package layout and confirmation boundaries.
 - [x] Author a complete test Agent with enabled/disabled skills, supporting scripts and reference files.
-- [ ] Run isolated database/API tests, frontend checks and upload verification; report Builder's actual skill set and chain.
+- [x] Run isolated database/API tests, frontend checks and upload verification; report Builder's actual skill set and chain.
 
 ## Validation
 
@@ -29,3 +29,7 @@ Use the isolated `multica_agent_source_915f` database only. Cover malformed arch
 - Web typecheck, core API/path tests (19), views creation/publication/i18n tests (18), schema tests (17), builtin skill conformance, backend build, npm lint and git diff --check passed. Lint retained existing warnings.
 - sqlc v1.31.1 generated the new query code using the isolated database schema. Whole-repository generation is blocked by the pre-existing migration 271 referencing task_completion_outbox before that relation is created; unrelated generated models were not overwritten.
 - Browser upload acceptance follows the preprod deployment and is tracked separately from these local checks.
+
+## Browser acceptance
+
+Real Chrome UI upload created Agent `52eb6d30-40ee-43ac-b71b-35e1bd952905` in the preprod yufa workspace. Downloaded export passed the authoritative schema and preserved all seven instruction/skill content files. UI checks confirmed configuration, skill enablement, OKRs and disabled A2A. Acceptance found and fixed local-source overview labeling and empty toolkit selection normalization; the latter has a failing/passing regression. Final deployment of those fixes is tracked in `docs/plans/2026-09-08-agent-package-builder-and-acceptance.md`.
