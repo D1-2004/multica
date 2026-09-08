@@ -371,7 +371,8 @@ Confirm with `POST /api/agents/{id}/source/sync`, passing the `preview_id` and a
 explicit secret/binding choices. Omitted configuration stays unmanaged, while
 explicit false/empty/null values are applied. Expired or stale previews require
 previewing again. Skills stay exclusive, editable and deletable. Publication
-preserves the platform name and description and the selected runtime.
+preserves the selected runtime. v1 preserves the instance name and description;
+v2 publishes the manifest name and its description when declared.
 
 `GET /api/agents/{id}/export` downloads a ZIP of the current platform definition,
 including disabled skills and supporting files. Secrets become references;
