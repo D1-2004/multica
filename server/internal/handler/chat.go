@@ -1033,83 +1033,55 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		hadUserMessage = existed
 	}
 
-	coord := h.inboundCoordinator()
-	webTurn := coord.TurnFromChatSession(
-		r.Context(),
-		session,
-		inboundcoord.SourceWeb,
-		true,
-		"p2p",
-		session.Title,
-		"",
-		req.Content,
-	)
-	webTurn.UserID = parseUUID(userID)
-	webTurn.IdentityNote = inboundcoord.IdentityNote(inboundcoord.SourceWeb, "", "")
-	// Share the chat trace with the coordinator so the web turn's Langfuse
-	// trace and the task it may start are one tree.
-	webTurn.TraceID = trace.TraceID
-	decision := coord.Decide(r.Context(), webTurn)
-	if len(attachmentIDs) > 0 && decision.Action != inboundcoord.ActionContinue {
-		decision.Action = inboundcoord.ActionContinue
+	// Media must enter the existing attachment-aware chat path before any
+	// Coordinator plan is produced. Never rewrite a completed decision.
+	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue}
+	if len(attachmentIDs) == 0 {
+		coord := h.inboundCoordinator()
+		webTurn := coord.TurnFromChatSession(
+			r.Context(),
+			session,
+			inboundcoord.SourceWeb,
+			true,
+			"p2p",
+			session.Title,
+			"",
+			req.Content,
+		)
+		webTurn.UserID = parseUUID(userID)
+		webTurn.PersonID = userID
+		webTurn.HistoryBefore = time.UnixMilli(trace.StartedAtUnixMS)
+		webTurn.IdentityNote = inboundcoord.IdentityNote(inboundcoord.SourceWeb, "", "")
+		// Share the chat trace with the coordinator so the web turn's Langfuse
+		// trace and the task it may start are one tree.
+		webTurn.TraceID = trace.TraceID
+		decision = coord.Decide(r.Context(), webTurn)
+	}
+	if decision.Action == inboundcoord.ActionDeferred {
+		writeError(w, http.StatusServiceUnavailable, "coordinator could not safely decide this message; please retry")
+		return
 	}
 	if decision.Action == inboundcoord.ActionRetry {
 		writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
 		return
 	}
+	if decision.Action != inboundcoord.ActionContinue && decision.Action != inboundcoord.ActionReply && decision.Action != inboundcoord.ActionIssue {
+		writeError(w, http.StatusServiceUnavailable, "coordinator returned an unsupported chat decision")
+		return
+	}
 
 	if decision.Action == inboundcoord.ActionReply || decision.Action == inboundcoord.ActionIssue {
-		if decision.Action == inboundcoord.ActionIssue {
-			if h.IssueService == nil {
-				writeError(w, http.StatusInternalServerError, "issue service is not configured")
-				return
-			}
-			result, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-				WorkspaceID:    session.WorkspaceID,
-				Title:          inboundcoord.IssueTitle(decision, req.Content),
-				Description:    pgtype.Text{String: inboundcoord.IssueDescription(decision, req.Content), Valid: true},
-				Status:         "todo",
-				Priority:       "none",
-				AssigneeType:   pgtype.Text{String: "agent", Valid: true},
-				AssigneeID:     session.AgentID,
-				CreatorType:    "member",
-				CreatorID:      parseUUID(userID),
-				AllowDuplicate: true,
-				// The Issue task inherits the turn's chat trace so its Langfuse
-				// trace is the coordinator's, not a separate one.
-				DispatchContext: inboundcoord.StampCoordinatorTrace(nil, decision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS)),
-			}, service.IssueCreateOpts{
-				ActorID:          userID,
-				AnalyticsAgentID: uuidToString(session.AgentID),
-				Platform:         "web",
-			})
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to create issue: "+err.Error())
-				return
-			}
-			issueResult := protocol.ChatCoordinatorIssueResult{
-				Action: "issue_created", IssueID: uuidToString(result.Issue.ID),
-				IssueIdentifier: service.IssueIdentifier(h.getIssuePrefix(r.Context(), session.WorkspaceID), result.Issue.Number),
-				IssueTitle:      result.Issue.Title,
-			}
-			if result.EnqueuedTask != nil {
-				issueResult.TaskID = uuidToString(result.EnqueuedTask.ID)
-			}
-			decision.IssueResults = []protocol.ChatCoordinatorIssueResult{issueResult}
-		}
-		tracePayload := decision.Trace()
-		turn, persistErr := h.TaskService.PersistCoordinatorChatTurn(
-			r.Context(),
-			session,
-			req.Content,
-			decision.UserText,
-			decision.ElapsedMs,
-			decision.TraceJSON(),
-		)
+		turn, committedDecision, persistErr := h.persistWebCoordinatorPlan(r.Context(), session, parseUUID(userID), req.Content, decision, trace)
 		if persistErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to persist chat reply: "+persistErr.Error())
+			status := http.StatusInternalServerError
+			if errors.Is(persistErr, service.ErrIssueDispatchPending) {
+				status = http.StatusConflict
+			}
+			writeError(w, status, "failed to commit coordinator turn: "+persistErr.Error())
 			return
 		}
+		decision = committedDecision
+		tracePayload := decision.Trace()
 		resolvedSessionID := uuidToString(session.ID)
 		h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
 			ChatSessionID: resolvedSessionID,

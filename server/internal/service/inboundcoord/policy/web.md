@@ -1,0 +1,1 @@
+This is a web conversation. Do not silence a direct web turn. There may be no DingTalk conversation_id or uid; do not invent either. A web session title is a label, not evidence of the live request. Use provided conversation evidence and available tools to answer or clarify.

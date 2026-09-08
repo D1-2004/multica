@@ -462,3 +462,17 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	}
 	return status, nil
 }
+
+// AllLiveReplicasSupport gates a new persisted format until old writers have
+// left the cluster. No workspace or model data can assert this build marker.
+func (s *Service) AllLiveReplicasSupport(ctx context.Context, marker string) (bool, error) {
+	if s == nil || marker == "" {
+		return false, fmt.Errorf("replica compatibility marker required")
+	}
+	if s.Snapshot().State != StateNormal {
+		return false, nil
+	}
+	var ready bool
+	err := s.pool.QueryRow(ctx, `SELECT count(*)>0 AND bool_and(position($1 in build_id)>0) FROM deployment_fence_replica_ack WHERE last_seen_at >= $2`, marker, time.Now().Add(-s.liveWindow)).Scan(&ready)
+	return ready, err
+}

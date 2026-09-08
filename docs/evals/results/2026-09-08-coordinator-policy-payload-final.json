@@ -1,0 +1,602 @@
+{
+  "policy_version": "2026-09-08.1",
+  "assembly_version": "1",
+  "started_at": "2026-09-07T16:42:31.579536Z",
+  "completed_at": "2026-09-07T16:43:01.993061Z",
+  "status": "PASS",
+  "safety": "Real model, synthetic frozen dialogue, fake read-only tools and history; no Host submission or business effects.",
+  "assertion_scope": "Assertions cover action/work count, continuation target, source attribution, work basis and disclosure path; answer prose requires separate human review.",
+  "cases": [
+    {
+      "id": "missing_message_payload",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "1b01098f0f0a61f96a24b1807ef58b815798858ad252e08da56d0f6f5164e8e6",
+      "repeat": 1,
+      "status": "PASS",
+      "action": "reply",
+      "reply_for_manual_review": "要发什么内容？",
+      "planned_items": null,
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "2cc29e95ca7641182fe68e87c0b188d2fc9f1df2dd04d76a4476a1917e44d16d",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2280,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3588,
+          "output_tokens": 37
+        }
+      ],
+      "input_tokens": 5868,
+      "output_tokens": 68,
+      "elapsed_ms": 3282,
+      "assertions": [
+        "action must be one of [reply]",
+        "work item count must be 0"
+      ],
+      "failures": []
+    },
+    {
+      "id": "supplied_message_payload",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "1e770cba02da3b870c44c4ab123c34e8dd59f8ac536121c03a1a10b7dd338a3c",
+      "repeat": 1,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，我去给小林发个“你好”。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n给小林发个你好。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：给小林发送消息“你好”",
+          "Intent": "notify",
+          "LookInto": "小周委托：给小林发送消息“你好”\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "2cc29e95ca7641182fe68e87c0b188d2fc9f1df2dd04d76a4476a1917e44d16d",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2280,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3457,
+          "output_tokens": 77
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3593,
+          "output_tokens": 88
+        }
+      ],
+      "input_tokens": 9330,
+      "output_tokens": 196,
+      "elapsed_ms": 7025,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    },
+    {
+      "id": "missing_message_payload",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "1b01098f0f0a61f96a24b1807ef58b815798858ad252e08da56d0f6f5164e8e6",
+      "repeat": 2,
+      "status": "PASS",
+      "action": "reply",
+      "reply_for_manual_review": "要发什么内容？",
+      "planned_items": null,
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "2cc29e95ca7641182fe68e87c0b188d2fc9f1df2dd04d76a4476a1917e44d16d",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2280,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3588,
+          "output_tokens": 37
+        }
+      ],
+      "input_tokens": 5868,
+      "output_tokens": 68,
+      "elapsed_ms": 3590,
+      "assertions": [
+        "action must be one of [reply]",
+        "work item count must be 0"
+      ],
+      "failures": []
+    },
+    {
+      "id": "supplied_message_payload",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "1e770cba02da3b870c44c4ab123c34e8dd59f8ac536121c03a1a10b7dd338a3c",
+      "repeat": 2,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，我去给小林发个“你好”。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n给小林发个你好。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：给小林发送消息“你好”",
+          "Intent": "notify",
+          "LookInto": "小周委托：给小林发送消息“你好”\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "2cc29e95ca7641182fe68e87c0b188d2fc9f1df2dd04d76a4476a1917e44d16d",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2280,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3457,
+          "output_tokens": 77
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3593,
+          "output_tokens": 88
+        }
+      ],
+      "input_tokens": 9330,
+      "output_tokens": 196,
+      "elapsed_ms": 7142,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    },
+    {
+      "id": "missing_message_payload",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "1b01098f0f0a61f96a24b1807ef58b815798858ad252e08da56d0f6f5164e8e6",
+      "repeat": 3,
+      "status": "PASS",
+      "action": "reply",
+      "reply_for_manual_review": "要发什么内容？",
+      "planned_items": null,
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "2cc29e95ca7641182fe68e87c0b188d2fc9f1df2dd04d76a4476a1917e44d16d",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2280,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3588,
+          "output_tokens": 37
+        }
+      ],
+      "input_tokens": 5868,
+      "output_tokens": 68,
+      "elapsed_ms": 3407,
+      "assertions": [
+        "action must be one of [reply]",
+        "work item count must be 0"
+      ],
+      "failures": []
+    },
+    {
+      "id": "supplied_message_payload",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "1e770cba02da3b870c44c4ab123c34e8dd59f8ac536121c03a1a10b7dd338a3c",
+      "repeat": 3,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，我去给小林发个“你好”。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n给小林发个你好。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：给小林发送消息“你好”",
+          "Intent": "notify",
+          "LookInto": "小周委托：给小林发送消息“你好”\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "2cc29e95ca7641182fe68e87c0b188d2fc9f1df2dd04d76a4476a1917e44d16d",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2280,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3457,
+          "output_tokens": 77
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "bb024c06b1fac721c2601a185b6281544d53f361e7989a8640561bbefb9b247e",
+          "tool_schema_hash": "9de816e1de040b0567bb17da67c2e1ec0603373d064f02b1b056a504e55dfa33",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3593,
+          "output_tokens": 88
+        }
+      ],
+      "input_tokens": 9330,
+      "output_tokens": 196,
+      "elapsed_ms": 5963,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    }
+  ]
+}

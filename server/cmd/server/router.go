@@ -770,6 +770,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
 	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
+	if opts.DeploymentFence != nil {
+		coordinator.Ready = func(ctx context.Context) (bool, error) {
+			return opts.DeploymentFence.AllLiveReplicasSupport(ctx, inboundcoord.ReplicaPlanMarker)
+		}
+	}
 	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
 	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
 		AgentIdentity:   agentidentityhsf.NewClient(),

@@ -382,6 +382,16 @@ func (h *Handler) executeAgentDispatchV2(
 		return
 	}
 	if plan.MaterializerType == protocol.DispatchSurfaceTypeChat {
+		_, hasSavedPlan := inboundcoord.RestoredPlan(r.Context())
+		coordinatorOn, coordinatorFlagErr := h.Queries.GetAgentInboundCoordinator(r.Context(), dispatchContext.AgentID)
+		if inboundcoord.HasPlanCheckpoint(r.Context()) && (hasSavedPlan || (coordinatorFlagErr == nil && coordinatorOn)) && command.Event.Domain == "channel" && command.Event.Type == "message.created" {
+			agent, ok := h.resolveAgentDispatchAgent(w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, dispatchContext.AgentID)
+			if !ok {
+				return
+			}
+			h.createAgentDispatchIssueV2(w, r, command, plan.Prompt, dispatchContext, agent)
+			return
+		}
 		if command.Continuation != nil &&
 			(command.Continuation.Kind != "chat" || strings.TrimSpace(command.Continuation.ChatSessionID) == "") {
 			writeError(w, http.StatusBadRequest, "continuation must identify a chat")
@@ -1081,20 +1091,25 @@ func recoverDuplicateAgentChatDispatch(
 }
 
 func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
-	decision := decideDispatchCoordinator(
-		r.Context(), h, c, agent, prompt.DisplayContent,
-		dispatchContext.UserID,
-		dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
-	)
+	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue, Reason: "attachment_execution_path"}
+	hasAttachments := false
+	for _, message := range c.Event.Data.Messages {
+		if message.Reaction == nil && len(message.Attachments) > 0 {
+			hasAttachments = true
+		}
+	}
+	if !hasAttachments {
+		decision = decideDispatchCoordinator(
+			r.Context(), h, c, agent, prompt.DisplayContent,
+			dispatchContext.UserID,
+			dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
+		)
+	}
 	// Publish committed results after materialization, not just the model verdict.
 	defer func() { inboundcoord.RecordDecision(r.Context(), decision) }()
-	if len(c.Event.Data.Messages) > 0 {
-		for _, m := range c.Event.Data.Messages {
-			if m.Reaction == nil && len(m.Attachments) > 0 && decision.Action != inboundcoord.ActionContinue {
-				decision.Action = inboundcoord.ActionContinue
-				break
-			}
-		}
+	if decision.Action == inboundcoord.ActionDeferred {
+		writeError(w, http.StatusServiceUnavailable, "coordinator has not decided this window; retry without executing")
+		return
 	}
 	if decision.Action == inboundcoord.ActionRetry {
 		writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
@@ -1156,22 +1171,74 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		}}
 	}
 	if decision.Action == inboundcoord.ActionIssue && len(items) > 0 {
-		slots := sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c))
-		if slots <= 0 {
-			writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
-			return
+		for i := range items {
+			if items[i].ActionKey == "" {
+				items[i].ActionKey = fmt.Sprintf("item-%d", i+1)
+			}
 		}
-		if len(items) > slots {
+		decision.Items = items
+		pending := 0
+		newNeeded := 0
+		for i, item := range items {
+			if planItemCompleted(decision, item.ActionKey) {
+				continue
+			}
+			if pending >= inboundcoord.SceneWindowMaxItems {
+				break
+			}
+			pending++
+			key := windowItemKey(idempotencyKey, item, i)
+			if item.IssueID != "" {
+				_, lookupErr := h.Queries.GetExternalIssueFollowUpTaskID(r.Context(), db.GetExternalIssueFollowUpTaskIDParams{WorkspaceID: dispatchContext.WorkspaceID, AgentID: agent.ID, IdempotencyKey: key})
+				if lookupErr == nil {
+					continue
+				}
+				if !errors.Is(lookupErr, pgx.ErrNoRows) {
+					writeError(w, 500, "cannot verify continuation admission")
+					return
+				}
+			} else {
+				itemCommand := windowItemCommand(c, item)
+				if _, _, _, ok := h.lookupCoordinatorWindowItem(r.Context(), agent.ID, key, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID); ok {
+					continue
+				}
+			}
+			newNeeded++
+		}
+		slots := sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c))
+		if newNeeded > slots {
 			writeError(w, http.StatusConflict, "scene already has two in-flight matters")
 			return
 		}
 		var firstIssueID, firstTaskID, firstIdentifier string
 		var firstIssue db.Issue
 		var firstTask db.AgentTaskQueue
-		created := 0
+		created := len(decision.CompletedActionKeys)
+		if created > 0 && len(decision.IssueResults) > 0 {
+			prior := decision.IssueResults[0]
+			firstIssueID, firstTaskID, firstIdentifier = prior.IssueID, prior.TaskID, prior.IssueIdentifier
+			firstIssue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: parseUUID(prior.IssueID), WorkspaceID: dispatchContext.WorkspaceID})
+			if err != nil {
+				writeError(w, 500, "cannot recover committed issue")
+				return
+			}
+			firstTask, err = h.Queries.GetAgentTask(r.Context(), parseUUID(prior.TaskID))
+			if err != nil {
+				writeError(w, 500, "cannot recover committed task")
+				return
+			}
+		}
 		incomplete := false
+		processed := 0
 		usedEvidence := map[string]struct{}{}
 		for i, item := range items {
+			if planItemCompleted(decision, item.ActionKey) {
+				continue
+			}
+			if processed >= inboundcoord.SceneWindowMaxItems {
+				break
+			}
+			processed++
 			itemDecision := decision
 			itemDecision.Purpose = item.Purpose
 			itemDecision.Intent = item.Intent
@@ -1179,22 +1246,44 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			itemDecision.Items = []inboundcoord.WindowItem{item}
 			overrides := agentDispatchIssueCreateOverrides{
 				Title:          inboundcoord.IssueTitle(itemDecision, prompt.DisplayContent),
-				DisplayContent: inboundcoord.IssueDescription(itemDecision, prompt.DisplayContent),
+				DisplayContent: inboundcoord.IssueDescription(itemDecision, firstNonEmpty(item.Content, prompt.DisplayContent)),
 			}
-			itemKey := idempotencyKey
-			if i > 0 {
-				itemKey = idempotencyKey + ":window-item:" + fmt.Sprintf("%d", i)
-			}
-			itemCommand := overlayDispatchSender(c, item.Delegator)
+			itemKey := windowItemKey(idempotencyKey, item, i)
+			itemCommand := windowItemCommand(c, item)
 			bindWindowItemEvidence(&itemCommand, item, usedEvidence)
+			if item.IssueID != "" {
+				issue, task, result, followErr := h.materializeWindowContinuation(r.Context(), itemCommand, dispatchContext, item, itemKey, itemDecision)
+				if followErr != nil {
+					if errors.Is(followErr, service.ErrIssueDispatchPending) {
+						writeError(w, 409, "recalled issue already has a pending agent task")
+					} else {
+						writeError(w, 500, "failed to commit coordinator continuation")
+					}
+					return
+				}
+				if err := recordPlanItem(r.Context(), &decision, item, result); err != nil {
+					writeError(w, 500, "failed to checkpoint continuation")
+					return
+				}
+				if created == 0 {
+					firstIssueID, firstTaskID, firstIdentifier = result.IssueID, result.TaskID, result.IssueIdentifier
+					firstIssue, firstTask = issue, task
+				}
+				created++
+				continue
+			}
 			if existingIssue, existingTask, existingIdent, ok := h.lookupCoordinatorWindowItem(
 				r.Context(), agent.ID, itemKey, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID,
 			); ok {
 				keepAttachments = true
-				decision.IssueResults = append(decision.IssueResults, protocol.ChatCoordinatorIssueResult{
-					Action: "issue_created", IssueID: uuidToString(existingIssue.ID),
-					IssueIdentifier: existingIdent, IssueTitle: existingIssue.Title, TaskID: uuidToString(existingTask.ID),
-				})
+				if err := h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, uuidToString(existingIssue.ID), existingIssue.Title, uuidToString(existingTask.ID), item.Content, itemDecision); err != nil {
+					writeError(w, 500, "failed to bind committed coordinator issue")
+					return
+				}
+				if err := recordPlanItem(r.Context(), &decision, item, protocol.ChatCoordinatorIssueResult{Action: "issue_created", IssueID: uuidToString(existingIssue.ID), IssueIdentifier: existingIdent, IssueTitle: existingIssue.Title, TaskID: uuidToString(existingTask.ID)}); err != nil {
+					writeError(w, 500, "failed to checkpoint recovered issue")
+					return
+				}
 				if created == 0 {
 					firstIssueID, firstTaskID, firstIdentifier = uuidToString(existingIssue.ID), uuidToString(existingTask.ID), existingIdent
 					firstIssue, firstTask = existingIssue, existingTask
@@ -1231,10 +1320,14 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 					r.Context(), agent.ID, itemKey, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID,
 				); ok {
 					keepAttachments = true
-					decision.IssueResults = append(decision.IssueResults, protocol.ChatCoordinatorIssueResult{
-						Action: "issue_created", IssueID: uuidToString(existingIssue.ID),
-						IssueIdentifier: existingIdent, IssueTitle: existingIssue.Title, TaskID: uuidToString(existingTask.ID),
-					})
+					if err := h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, uuidToString(existingIssue.ID), existingIssue.Title, uuidToString(existingTask.ID), item.Content, itemDecision); err != nil {
+						writeError(w, 500, "failed to bind committed coordinator issue")
+						return
+					}
+					if err := recordPlanItem(r.Context(), &decision, item, protocol.ChatCoordinatorIssueResult{Action: "issue_created", IssueID: uuidToString(existingIssue.ID), IssueIdentifier: existingIdent, IssueTitle: existingIssue.Title, TaskID: uuidToString(existingTask.ID)}); err != nil {
+						writeError(w, 500, "failed to checkpoint recovered issue")
+						return
+					}
 					if created == 0 {
 						firstIssueID, firstTaskID, firstIdentifier = uuidToString(existingIssue.ID), uuidToString(existingTask.ID), existingIdent
 						firstIssue, firstTask = existingIssue, existingTask
@@ -1266,7 +1359,18 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			if result.EnqueuedTask != nil {
 				issueResult.TaskID = uuidToString(result.EnqueuedTask.ID)
 			}
-			decision.IssueResults = append(decision.IssueResults, issueResult)
+			if result.EnqueuedTask != nil {
+				if err := h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, uuidToString(result.Issue.ID), result.Issue.Title, uuidToString(result.EnqueuedTask.ID), item.Content, itemDecision); err != nil {
+					writeError(w, 500, "failed to bind committed coordinator issue")
+					return
+				}
+				if err := recordPlanItem(r.Context(), &decision, item, issueResult); err != nil {
+					writeError(w, 500, "failed to checkpoint created issue")
+					return
+				}
+			} else {
+				decision.IssueResults = append(decision.IssueResults, issueResult)
+			}
 			if result.EnqueuedTask == nil {
 				if created == 0 {
 					writeError(w, http.StatusInternalServerError, "issue created but agent task was not enqueued")
@@ -1279,7 +1383,6 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			issueID := uuidToString(result.Issue.ID)
 			taskID := uuidToString(result.EnqueuedTask.ID)
 			issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
-			h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, issueID, result.Issue.Title, taskID, prompt.DisplayContent, itemDecision)
 			if created == 0 {
 				firstIssueID, firstTaskID, firstIdentifier = issueID, taskID, issueIdentifier
 				firstIssue = result.Issue
@@ -1291,8 +1394,16 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusInternalServerError, "failed to create issue")
 			return
 		}
-		if incomplete || created < len(items) {
-			writeError(w, http.StatusInternalServerError, "failed to create remaining scene items")
+		if incomplete {
+			writeError(w, 500, "failed to commit remaining scene items")
+			return
+		}
+		if created < len(items) {
+			if err := inboundcoord.SavePlan(r.Context(), decision); err != nil {
+				writeError(w, 500, "failed to retain remaining scene items")
+				return
+			}
+			writeError(w, 409, "scene already has two in-flight matters; remaining plan retained")
 			return
 		}
 		if h.TaskService != nil && c.CompletionCallback != nil {
@@ -1477,6 +1588,15 @@ func decideDispatchCoordinator(
 		IssueDispatchContext: issueDispatchContext,
 		Utterances:           windowUtterancesFromCommand(command),
 	}
+	turn.HistoryBefore = inboundcoord.HistoryBeforeFromContext(ctx)
+	for _, u := range turn.Utterances {
+		if u.Timestamp.After(turn.MessageTimestamp) {
+			turn.MessageTimestamp = u.Timestamp
+		}
+	}
+	if !turn.MessageTimestamp.IsZero() {
+		turn.HistoryBefore = turn.MessageTimestamp
+	}
 	turn.DWSUID, turn.DWSOrgID = dispatchCoordinatorDWSIdentity(command)
 	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
 		turn.Busy = true
@@ -1500,7 +1620,22 @@ func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowU
 		if sender == "" {
 			sender = fallback
 		}
-		out = append(out, inboundcoord.WindowUtterance{Sender: sender, Text: text})
+		senderID := firstNonEmpty(message.SenderUID, message.SenderOpenDingTalkID)
+		if senderID == "" && (message.SenderDisplayName == "" || sender == fallback) {
+			senderID = firstNonEmpty(command.Event.Data.Sender.UID, command.Event.Data.Sender.OpenDingTalkID)
+		}
+		at := time.Time{}
+		if message.OccurredAt > 0 {
+			at = time.UnixMilli(message.OccurredAt).UTC()
+		}
+		ref := ""
+		refContent, refSenderID := "", ""
+		if message.ReferencedMessage != nil {
+			refContent = message.ReferencedMessage.Text
+			refSenderID = message.ReferencedMessage.SenderUID
+			ref = firstNonEmpty(message.ReferencedMessage.OpenMsgID, message.ReferencedMessage.MessageID)
+		}
+		out = append(out, inboundcoord.WindowUtterance{Sender: sender, Text: text, EvidenceID: message.OpenMsgID, Timestamp: at, SenderID: senderID, ReplyToEvidenceID: ref, ReplyToContent: refContent, ReplyToSenderID: refSenderID})
 	}
 	return out
 }

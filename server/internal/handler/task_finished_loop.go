@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ const taskFinishedLoopTimeout = 55 * time.Second
 
 var errTaskFinishedResponsePending = errors.New("task-finished response receipt is unresolved")
 
-func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTaskQueue) {
+func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTaskQueue) (loopErr error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			taskID := ""
@@ -35,14 +36,18 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 				"task_id", taskID,
 				"panic", rec,
 			)
+			loopErr = fmt.Errorf("task finished loop panicked: %v", rec)
+		}
+		if loopErr != nil && task != nil {
+			slog.Warn("task finished loop failed", "event", "task_finished_loop_failed", "task_id", uuidToString(task.ID), "error", loopErr)
 		}
 	}()
 	if h == nil || task == nil || !task.AgentID.Valid {
-		return
+		return nil
 	}
 	status := strings.TrimSpace(task.Status)
 	if status != "completed" && status != "failed" && status != "cancelled" {
-		return
+		return nil
 	}
 	// Completing a sandbox task frees a scene slot. Wake parked inbound
 	// windows even when the wrap-up switch is off; otherwise they wait
@@ -53,30 +58,72 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 	ctx, cancel := context.WithTimeout(ctx, taskFinishedLoopTimeout)
 	defer cancel()
 	on, err := h.Queries.GetAgentTaskFinishedLoop(ctx, task.AgentID)
-	if err != nil || !on {
-		return
+	if err != nil {
+		return fmt.Errorf("read task finished setting: %w", err)
+	}
+	if !on {
+		return nil
 	}
 	if !coordinatorIssueFollowUp(task.Context) {
-		return
+		return nil
 	}
-	if status != "completed" {
-		h.deliverTaskFinishedDecision(ctx, task, inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "task_" + status})
-		return
+	if status == "cancelled" {
+		return h.deliverTaskFinishedDecision(ctx, task, inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "task_" + status})
 	}
 	envelope, ok := parseTaskFinishedEnvelope(task.Context)
 	if !ok {
-		return
+		return fmt.Errorf("task finished dispatch context is invalid")
 	}
 	cid := strings.TrimSpace(envelope.EventData.Conversation.OpenConversationID)
 	if cid == "" {
-		return
+		return fmt.Errorf("task finished conversation is missing")
 	}
 	agent, err := h.Queries.GetAgent(ctx, task.AgentID)
 	if err != nil {
 		slog.Warn("task finished loop: load agent failed", "agent_id", uuidToString(task.AgentID), "error", err)
-		return
+		return fmt.Errorf("load task finished agent: %w", err)
 	}
-	result := clipTaskCompleteOutput(task.Result, 800)
+	if status == "failed" && task.IssueID.Valid {
+		active, lookupErr := h.Queries.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{IssueID: task.IssueID, AgentID: task.AgentID})
+		if lookupErr != nil {
+			slog.Warn("task finished retry state unavailable", "task_id", uuidToString(task.ID))
+			return fmt.Errorf("read task finished retry state: %w", lookupErr)
+		}
+		if active {
+			return h.deliverTaskFinishedDecision(ctx, task, inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "retry_still_active"})
+		}
+	}
+	fullResult := clipTaskCompleteOutput(task.Result, 0)
+	if status == "failed" {
+		fullResult = "本次执行已失败，未确认业务完成。"
+	}
+
+	managedState, managed, stateErr := h.taskFinishedManagedResponseState(ctx, task, agent, cid)
+	if stateErr != nil {
+		return stateErr
+	}
+	if managed && (managedState == "pending" || managedState == "provider_accepted" || managedState == "unknown") {
+		// Preserve the response ledger's unresolved-delivery park. Neither an
+		// optimistic tool result nor a loop failure authorizes another send.
+		if task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) > 24*time.Hour {
+			return h.deliverTaskFinishedDecision(ctx, task, inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "delivery_unresolved"})
+		}
+		return errTaskFinishedResponsePending
+	}
+	delivery := newTaskDeliveryContext(task)
+	alreadyTold := false
+	if managed {
+		// Managed response actions register before sending; only their verified
+		// server ledger is authoritative. Do not fall back to CLI stdout or
+		// issue-wide Assoc events when that ledger has no delivered response.
+		delivery.Status = "loaded"
+		delivery.Coverage = "managed_response_ledger_current_task_current_scene"
+		alreadyTold = managedState == "delivered" && status == "completed"
+	} else {
+		delivery = h.taskFinishedDeliveryContext(ctx, task)
+		alreadyTold = inboundcoord.TaskFinishedResultAlreadyDelivered(fullResult, cid, delivery)
+	}
+	deliveryJSON, _ := json.Marshal(delivery)
 	turn := inboundcoord.Turn{
 		Loop:                 inboundcoord.LoopTaskFinished,
 		Source:               inboundcoord.SourceDigitalEmployee,
@@ -84,16 +131,17 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		ChatType:             coordinatorChatType(envelope.EventData.Conversation.Type),
 		ConversationTitle:    strings.TrimSpace(envelope.EventData.Conversation.Title),
 		SenderName:           strings.TrimSpace(envelope.EventData.Sender.DisplayName),
-		Message:              "任务已完成，请向委托人汇报。",
+		Message:              "任务结束事件，状态=" + status + "。判断当前会话是否还缺一条有用的结果或失败说明。",
 		AgentID:              agent.ID,
 		AgentName:            agent.Name,
 		Instructions:         agent.Instructions,
 		WorkspaceID:          uuidToString(agent.WorkspaceID),
 		ConversationID:       cid,
 		IssueID:              uuidToString(task.IssueID),
-		TaskResult:           result,
+		TaskResult:           fullResult,
+		TaskDeliveryContext:  string(deliveryJSON),
 		IssueDispatchContext: task.Context,
-		AlreadyToldScene:     h.taskFinishedSceneAlreadyTold(ctx, task, agent, cid),
+		AlreadyToldScene:     alreadyTold,
 	}
 	if envelope.ExternalIdentity != nil && envelope.ExternalIdentity.DWS != nil {
 		turn.DWSUID = strings.TrimSpace(envelope.ExternalIdentity.DWS.UID)
@@ -111,108 +159,79 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		"reason", decision.Reason,
 		"text", clipRunes(decision.UserText, 80),
 	)
-	h.deliverTaskFinishedDecision(ctx, task, decision)
+	if decision.Action == inboundcoord.ActionDeferred {
+		return fmt.Errorf("task finished decision is deferred: %s", decision.Reason)
+	}
+	return h.deliverTaskFinishedDecision(ctx, task, decision)
 }
 
-func (h *Handler) taskFinishedSceneAlreadyTold(ctx context.Context, task *db.AgentTaskQueue, agent db.Agent, cid string) bool {
-	if h == nil || h.Assoc == nil || task == nil {
-		return false
+// taskFinishedManagedResponseState keeps response-actions delivery evidence
+// independent of the legacy tool transcript. Unknown availability is retriable,
+// never proof that a result has been delivered.
+func (h *Handler) taskFinishedManagedResponseState(ctx context.Context, task *db.AgentTaskQueue, agent db.Agent, cid string) (string, bool, error) {
+	stored, present := parsePersistedDispatchContext(task.Context)
+	if !present || !stored.ResponsePolicy.Managed() {
+		return "", false, nil
 	}
-	if stored, present := parsePersistedDispatchContext(task.Context); present && stored.ResponsePolicy.Managed() {
-		// A missing/unknown receipt is not proof that an attempted send failed.
-		// Managed sends register before the side effect, including unresolved DM targets.
-		if h.DingTalkResponses == nil {
-			return true
-		}
-		state, err := h.DingTalkResponses.SandboxResponseState(ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), uuidToString(task.IssueID), uuidToString(task.ID), cid)
-		if err != nil {
-			slog.Warn("task finished loop: response ledger unavailable", "task_id", uuidToString(task.ID), "error", err)
-			return true
-		}
-		if state == "delivered" {
-			return true
-		}
-		// Only the verified ledger owns delivery evidence in the new mode.
-		return false
+	if h.DingTalkResponses == nil {
+		return "", true, fmt.Errorf("%w: response service unavailable", errTaskFinishedResponsePending)
 	}
-	var issueCreated time.Time
-	if task.IssueID.Valid && h.Queries != nil {
-		issue, err := h.Queries.GetIssue(ctx, task.IssueID)
-		if err == nil && issue.CreatedAt.Valid {
-			issueCreated = issue.CreatedAt.Time
-		}
-	}
-	since := inboundcoord.WrapupAlreadyToldSince(task.CreatedAt.Time, issueCreated)
-	events, err := h.Assoc.ListEventsByScene(ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), cid, since, 20)
+	state, err := h.DingTalkResponses.SandboxResponseState(ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), uuidToString(task.IssueID), uuidToString(task.ID), cid)
 	if err != nil {
-		return false
+		return "", true, fmt.Errorf("%w: %v", errTaskFinishedResponsePending, err)
 	}
-	matterIDs := []string{uuidToString(task.ID)}
-	if task.IssueID.Valid {
-		assocTasks, listErr := h.Assoc.ListTasksByIssue(
-			ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), uuidToString(task.IssueID), time.Time{}, time.Time{},
-		)
-		if listErr == nil {
-			for _, at := range assocTasks {
-				if id := strings.TrimSpace(at.ID); id != "" {
-					matterIDs = append(matterIDs, id)
-				}
-			}
-		}
-	}
-	return inboundcoord.TaskFinishedAlreadyToldScene(events, cid, matterIDs)
+	return state, true, nil
 }
 
-func (h *Handler) deliverTaskFinishedDecision(ctx context.Context, task *db.AgentTaskQueue, decision inboundcoord.Decision) {
+// taskFinishedSceneAlreadyTold is a read-only delivery predicate. Legacy tasks
+// require this run's exact result receipt; managed tasks require verified
+// response-actions delivery. Pending and unavailable are never delivered.
+func (h *Handler) taskFinishedSceneAlreadyTold(ctx context.Context, task *db.AgentTaskQueue, agent db.Agent, cid string) bool {
+	if h == nil || task == nil {
+		return false
+	}
+	state, managed, err := h.taskFinishedManagedResponseState(ctx, task, agent, cid)
+	if managed {
+		return err == nil && state == "delivered"
+	}
+	return inboundcoord.TaskFinishedResultAlreadyDelivered(clipTaskCompleteOutput(task.Result, 0), cid, h.taskFinishedDeliveryContext(ctx, task))
+}
+
+func (h *Handler) deliverTaskFinishedDecision(ctx context.Context, task *db.AgentTaskQueue, decision inboundcoord.Decision) (deliveryErr error) {
+	if task == nil {
+		return fmt.Errorf("task finished delivery task is missing")
+	}
+	defer func() {
+		if deliveryErr != nil {
+			slog.Warn("task finished loop: delivery failed", "event", "task_finished_loop_delivery_failed", "task_id", uuidToString(task.ID), "error", deliveryErr)
+		}
+	}()
+	if decision.Action != inboundcoord.ActionReply && decision.Action != inboundcoord.ActionSilence {
+		return fmt.Errorf("task finished decision is not terminal: %s", decision.Action)
+	}
 	decision.UserText = stripReplyDecisionLeak(decision.UserText)
-	if decision.Action == inboundcoord.ActionReply && decision.UserText == "" {
-		decision.Action = inboundcoord.ActionSilence
-	}
-	filtered := inboundcoord.FilterTaskFinishedWrapup(decision)
-	if filtered.Action != decision.Action || filtered.UserText != decision.UserText {
-		slog.Info("task finished loop skipped wrap-up delivery",
-			"event", "task_finished_loop_skip_delivery",
-			"task_id", uuidToString(task.ID),
-			"reason", "redundant_wrapup",
-		)
-	}
-	decision = filtered
+	decision = inboundcoord.FilterTaskFinishedWrapup(decision)
 	text := strings.TrimSpace(decision.UserText)
-	if h.TaskService == nil {
-		return
-	}
-	if decision.Action != inboundcoord.ActionReply || text == "" {
-		callbackURL, target, ok := inboundcoord.WrapupCallback(task.Context)
-		if !ok {
-			return
-		}
-		if err := h.TaskService.EnqueueSynchronousSilence(ctx, callbackURL, target, task.AgentID); err != nil {
-			slog.Warn("task finished loop: enqueue wrap-up silence failed",
-				"event", "task_finished_loop_delivery_failed",
-				"task_id", uuidToString(task.ID),
-				"error", err,
-			)
-		}
-		return
-	}
 	callbackURL, target, ok := inboundcoord.WrapupCallback(task.Context)
 	if !ok {
-		slog.Info("task finished loop skipped wrap-up delivery",
-			"event", "task_finished_loop_skip_delivery",
-			"task_id", uuidToString(task.ID),
-			"reason", "no_wrapup_callback",
-		)
-		return
+		if decision.Action == inboundcoord.ActionReply {
+			return fmt.Errorf("required task finished reply has no callback target")
+		}
+		return nil
 	}
-	if err := h.TaskService.EnqueueSynchronousWrapup(
-		ctx, callbackURL, target, task.AgentID, text, uuidToString(task.ID),
-	); err != nil {
-		slog.Warn("task finished loop: enqueue wrap-up failed",
-			"event", "task_finished_loop_delivery_failed",
-			"task_id", uuidToString(task.ID),
-			"error", err,
-		)
+	if h == nil || h.TaskService == nil {
+		return fmt.Errorf("task finished delivery service unavailable")
 	}
+	if decision.Action == inboundcoord.ActionSilence {
+		if err := h.TaskService.EnqueueSynchronousSilence(ctx, callbackURL, target, task.AgentID); err != nil {
+			return fmt.Errorf("enqueue task finished silence: %w", err)
+		}
+		return nil
+	}
+	if err := h.TaskService.EnqueueSynchronousWrapup(ctx, callbackURL, target, task.AgentID, text, uuidToString(task.ID)); err != nil {
+		return fmt.Errorf("enqueue task finished reply: %w", err)
+	}
+	return nil
 }
 
 func coordinatorIssueFollowUp(raw []byte) bool {
@@ -271,35 +290,7 @@ func (h *Handler) runPersistedTaskFinishedLoop(ctx context.Context, taskID strin
 	if err != nil {
 		return err
 	}
-	if stored, present := parsePersistedDispatchContext(task.Context); present && stored.ResponsePolicy.Managed() && task.Status == "completed" {
-		enabled, err := h.Queries.GetAgentTaskFinishedLoop(ctx, task.AgentID)
-		if err != nil {
-			return err
-		}
-		if !enabled {
-			return nil
-		}
-		if h.DingTalkResponses == nil {
-			return errTaskFinishedResponsePending
-		}
-		agent, err := h.Queries.GetAgent(ctx, task.AgentID)
-		if err != nil {
-			return err
-		}
-		state, err := h.DingTalkResponses.SandboxResponseState(ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), uuidToString(task.IssueID), taskID, stored.EventData.Conversation.OpenConversationID)
-		if err != nil {
-			return errTaskFinishedResponsePending
-		}
-		if state == "pending" || state == "provider_accepted" || state == "unknown" {
-			if task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) > 24*time.Hour {
-				h.deliverTaskFinishedDecision(ctx, &task, inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "delivery_unresolved"})
-				return nil
-			}
-			return errTaskFinishedResponsePending
-		}
-	}
-	h.maybeRunTaskFinishedLoop(ctx, &task)
-	return nil
+	return h.maybeRunTaskFinishedLoop(ctx, &task)
 }
 
 func (h *Handler) enqueueTaskFinishedLoop(ctx context.Context, task *db.AgentTaskQueue) error {

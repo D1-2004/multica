@@ -13,19 +13,20 @@ The platform graph tags each send/reply with a DingTalk `openConversationId`
 Outreach to another person is not the reply the platform delivers back to the
 waiting sender.
 
-The inbound coordinator (web Chat and DingTalk `message.created`) is a short
-tool loop with `assoc_recall`, `assoc_bind`, `issue_get`, `issue_comment_list`,
-`issue_comment_add`, and `finish`. It may bind this scene to an existing Issue
-and leave a reception note before opening a sandbox. DWS still belongs to the
-sandbox, not the coordinator. Sandbox CLI `multica issue comment *` remains
-for Issue tasks.
+The inbound coordinator is a read-only decision loop: `assoc_recall`,
+`context_read` for bounded conversation history, and recalled-issue readers.
+It submits a complete plan through `finish.items`: new items omit `issue_id`;
+continuations carry a recalled `issue_id` plus the current source references.
+Host commits the normal Issue/member-comment operations after validation and
+keeps retries idempotent. Coordinator does not expose write tools. Business
+DWS operations and full skills still run in the sandbox.
 
 ## Identity
 
 The trusted DingTalk dispatch event is authoritative for business identity:
 
 - On a new Issue, the current DingTalk sender is the task delegator/requester.
-- On an inbound reply projected through `issue_comment_add`, the current sender
+- On an inbound reply projected through a continuation plan, the current sender
   is the actual DingTalk speaker for that message. Find the original delegator
   from the Issue's original DingTalk task scene and association graph.
 - The Multica Issue creator or member-comment author only identifies the
@@ -53,13 +54,11 @@ Bind those. Never invent a cid for web inbound.
 multica assoc bind --conversation <openConversationId> [--evidence <openMsgId>] [--person <uid>] --output json
 ```
 
-Or MCP / coordinator tool `assoc_bind`. Coordinator `assoc_bind` must copy
-`issue_id` from `assoc_recall` and attach this scene to that existing Issue.
-It must also inject `delegator`, `purpose` (event + goal), and `intent`
-(`ask` / `confirm` / `notify` / `lookup` / `wait` / `other`). Stored purpose
-is `{委托人}委托：{事件与目的}`. Place is optional. Never bind without an
-Issue. A new matter is `finish action=issue` without `issue_id`, with
-`delegator` / `purpose` / `intent`; the server creates the Issue then binds.
+Or use the sandbox MCP `assoc_bind` for the current Issue. Never invent an
+Issue or a conversation ID. Coordinator itself does not call this write tool:
+Host binds a newly committed Issue to its source scene. An existing matter is
+continued only when the current message adds substantive input to that same
+deliverable, not merely because a candidate matched.
 
 ## Recall before treating a chat as a new matter
 

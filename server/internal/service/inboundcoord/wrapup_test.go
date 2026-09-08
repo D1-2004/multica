@@ -1,102 +1,56 @@
 package inboundcoord
 
-import (
-	"testing"
-	"time"
+import "testing"
 
-	"github.com/multica-ai/multica/server/internal/assoc"
-)
-
-func TestTaskFinishedAlreadyToldScene(t *testing.T) {
+func TestTaskFinishedResultAlreadyDelivered(t *testing.T) {
 	t.Parallel()
-	cid := "cid52dllVmkRJLpUZPwxi0jtw=="
-	taskID := "87d0a35b-1e88-47a4-80e7-c63968aba9cb"
-	other := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	events := []assoc.Event{
-		{Direction: assoc.DirInbound, SceneKey: cid, TaskID: taskID},
-		{Direction: assoc.DirOutbound, SceneKey: cid, TaskID: taskID},
+	const result = "已确认周五三点线上开会。"
+	const cid = "cid-current"
+	base := TaskDeliveryContext{Status: "loaded", TaskID: "current-run", Scope: "current_task", Deliveries: []TaskDeliveryEvidence{{
+		ConversationID: cid, MessageID: "real-message", SentText: result, TextComplete: true,
+	}}}
+	if !TaskFinishedResultAlreadyDelivered(result, cid, base) {
+		t.Fatal("the same result with this run's successful receipt should not be repeated")
 	}
-	if !TaskFinishedAlreadyToldScene(events, cid, []string{taskID}) {
-		t.Fatal("same-scene outbound from this task must skip wrap-up")
+	for _, tc := range []struct{ name, result, cid string }{
+		{"new result", "已确认周五改为四点。", cid},
+		{"different recipient", result, "cid-other"},
+		{"empty result", "", cid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if TaskFinishedResultAlreadyDelivered(tc.result, tc.cid, base) {
+				t.Fatal("receipt does not establish this result reached this recipient")
+			}
+		})
 	}
-	if TaskFinishedAlreadyToldScene(events, cid, []string{other}) {
-		t.Fatal("another Issue's outbound on this cid must not silence this wrap-up")
-	}
-	dm := []assoc.Event{
-		{Direction: assoc.DirOutbound, SceneKey: "cid-dxxh-dm", TaskID: taskID},
-	}
-	if TaskFinishedAlreadyToldScene(dm, cid, []string{taskID}) {
-		t.Fatal("DM to someone else is not telling this group")
-	}
-	if TaskFinishedAlreadyToldScene(nil, cid, []string{taskID}) {
-		t.Fatal("no events means wrap-up may still speak")
-	}
-}
-
-func TestWrapupAlreadyToldSinceUsesIssueCreatedAt(t *testing.T) {
-	t.Parallel()
-	issueCreated := time.Date(2026, 9, 6, 4, 30, 0, 0, time.UTC)
-	followUpCreated := time.Date(2026, 9, 6, 4, 35, 0, 0, time.UTC)
-	got := WrapupAlreadyToldSince(followUpCreated, issueCreated)
-	if !got.Equal(issueCreated) {
-		t.Fatalf("since=%s want issue created_at so prior sandbox outbound is visible", got)
-	}
-	onlyTask := WrapupAlreadyToldSince(followUpCreated, time.Time{})
-	if !onlyTask.Equal(followUpCreated) {
-		t.Fatalf("no issue timestamp should keep task created_at, got %s", onlyTask)
-	}
-}
-
-func TestTaskFinishedWrapupRedundant(t *testing.T) {
-	t.Parallel()
-	redundant := []string{
-		"劳动合同法第三条的大白话解释已发到群里，你查收一下。",
-		"@冬翔 W5B-SLOT-1102 没查到匹配机票，已私信你确认编号或补充航班细节。",
-		"已私信向你确认周五下午三点开会。",
-		"结果已发送，请看群。",
-		"已问 dxxh 明天开会时间，等他回。",
-		"已私信 dxxh 询问下周排期，等他回复。",
-		"已确认线上开会，等待 dxxh。",
-		"已补充告知线上开会时间。",
-	}
-	for _, text := range redundant {
-		if !TaskFinishedWrapupRedundant(text) {
-			t.Fatalf("want redundant: %q", text)
+	for _, status := range []string{"unavailable", "not_loaded"} {
+		unknown := base
+		unknown.Status = status
+		if TaskFinishedResultAlreadyDelivered(result, cid, unknown) {
+			t.Fatal("unknown evidence must not suppress a new result")
 		}
 	}
-	keep := []string{
+	base.Deliveries[0].TextComplete = false
+	if TaskFinishedResultAlreadyDelivered(result, cid, base) {
+		t.Fatal("a clipped prefix cannot establish exact result delivery")
+	}
+}
+
+func TestFilterTaskFinishedWrapupPreservesUsefulPhrases(t *testing.T) {
+	t.Parallel()
+	for _, text := range []string{
+		"已确认周五三点线上开会。",
+		"我已问 dxxh，等他回；你不用再联系了。",
+		"请查收银行发来的验证码，再继续付款。",
 		"机票没查到，需要航班号或航司。",
-		"会议室系统里没有这个编号，换一个？",
-	}
-	for _, text := range keep {
-		if TaskFinishedWrapupRedundant(text) {
-			t.Fatalf("must keep useful wrap-up: %q", text)
+	} {
+		got := FilterTaskFinishedWrapup(Decision{Action: ActionReply, UserText: text})
+		if got.Action != ActionReply || got.UserText != text {
+			t.Fatalf("phrases cannot replace delivery evidence: %#v", got)
 		}
 	}
-}
-
-func TestFilterTaskFinishedWrapup(t *testing.T) {
-	t.Parallel()
-	got := FilterTaskFinishedWrapup(Decision{
-		Action: ActionReply, UserText: "解释已发到群里，你查收一下。",
-	})
-	if got.Action != ActionSilence || got.UserText != "" {
-		t.Fatalf("got %#v", got)
-	}
-	kept := FilterTaskFinishedWrapup(Decision{
-		Action: ActionReply, UserText: "机票没查到，需要航班号或航司。",
-	})
-	if kept.Action != ActionReply || kept.UserText == "" {
-		t.Fatalf("kept %#v", kept)
-	}
-	statusPing := FilterTaskFinishedWrapup(Decision{
-		Action: ActionReply, UserText: "已问 dxxh 明天开会时间，等他回。",
-	})
-	if statusPing.Action != ActionSilence || statusPing.UserText != "" {
-		t.Fatalf("status ping %#v", statusPing)
-	}
-	silent := FilterTaskFinishedWrapup(Decision{Action: ActionSilence})
-	if silent.Action != ActionSilence {
-		t.Fatalf("silence %#v", silent)
+	empty := FilterTaskFinishedWrapup(Decision{Action: ActionReply, UserText: "  "})
+	if empty.Action != ActionSilence || empty.UserText != "" || empty.Reason != "empty_wrapup" {
+		t.Fatalf("empty: %#v", empty)
 	}
 }

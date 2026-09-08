@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
@@ -450,7 +451,7 @@ func main() {
 		slog.Error("deployment fence instance identity failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
-	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit)
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker)
 	if err != nil {
 		slog.Error("deployment fence initialization failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)

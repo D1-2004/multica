@@ -191,27 +191,34 @@ func TestParseDecisionSilenceAllowedForAddressedEmojiAndThanks(t *testing.T) {
 }
 
 func TestSystemPromptHumanGroupFloodRules(t *testing.T) {
-	must := []string{
-		"You are a colleague in the group, not a minute-taker",
-		"Never one Issue per flood line",
-		"Addressed sticker, emoji-only",
-		"Addressed 在吗 / 你好 / 还在吗",
-		"Addressed thanks / 谢谢 / 好的 / 辛苦了",
-		"A collected current_message that mixes flood and one real ask",
-		"current_message may be several inbound lines collected while the person was still typing",
-		"Two colleagues talking to each other",
-		"Do not volunteer 我来帮你们建事项",
-		"我去问 dxxh 周五三点",
-		"a real teammate, not a helpdesk",
-		"Default action=silence",
-		"Never say 已发到群里",
-		"Never invent 私信 vs 群",
+	turn := Turn{
+		Source: SourceDigitalEmployee, ChatType: "group", Addressed: true,
+		Utterances: []WindowUtterance{
+			{Sender: "小明", Text: "哈哈哈"},
+			{Sender: "小红", Text: "问一下 dxxh 周五三点有没有空"},
+			{Sender: "小红", Text: "谢谢"},
+		},
 	}
-	for _, needle := range must {
-		if !strings.Contains(systemPrompt, needle) {
-			t.Fatalf("system prompt missing human/flood rule %q", needle)
+	// F01/F02 retain response eligibility and speaker/context boundaries;
+	// F05/F06 distinguish noise from an answer; F10/F17 retain all real work;
+	// F14/F15 own the colleague voice. This checks disclosure, not model intent.
+	assertDisclosedObligations(t, turn, false, map[string][]string{
+		"group":   {"COORD.F01", "COORD.F02", "COORD.F05", "COORD.F06", "COORD.F14"},
+		"window":  {"COORD.F01", "COORD.F02", "COORD.F10", "COORD.F17"},
+		"voice":   {"COORD.F14", "COORD.F15"},
+		"inbound": {"COORD.F04", "COORD.F05", "COORD.F06", "COORD.F09"},
+	}, []string{"completion", "recall_match"})
+	prompt := buildUserPrompt(turn)
+	for _, utterance := range turn.Utterances {
+		if strings.Count(prompt, utterance.Text) != 1 {
+			t.Errorf("flood/thanks must not strip or duplicate current words %q", utterance.Text)
 		}
 	}
+	turn.ChatType = "p2p"
+	assertDisclosedObligations(t, turn, false, map[string][]string{
+		"channel": {"COORD.F01", "COORD.F14"},
+		"window":  {"COORD.F10", "COORD.F17"},
+	}, []string{"group", "completion"})
 }
 
 func TestGroupUnaddressedSilenceWithoutLLM(t *testing.T) {
@@ -242,11 +249,14 @@ func TestDecideTaskFinishedAlreadyToldSceneWithoutLLM(t *testing.T) {
 	}
 }
 
-func TestDecideContinueWhenLLMDisabled(t *testing.T) {
+func TestDecideDefersWhenLLMDisabled(t *testing.T) {
 	c := &Coordinator{LLM: llm.New(llm.Config{})}
 	got := c.Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, Message: "你好"})
-	if got.Action != ActionContinue {
-		t.Fatalf("got %s", got.Action)
+	if got.Action != ActionDeferred || got.Reason != "coordinator_model_unavailable" {
+		t.Fatalf("missing model must preserve unresolved input without starting sandbox work: %#v", got)
+	}
+	if got.UserText != "" || got.IssueID != "" || len(got.Items) != 0 || got.IssueComment != nil {
+		t.Fatalf("missing model must not invent a response or work effect: %#v", got)
 	}
 }
 
@@ -289,21 +299,29 @@ func TestIssueTitleAndDescription(t *testing.T) {
 		t.Fatalf("title = %q", IssueTitle(d, "长正文"))
 	}
 	desc := IssueDescription(d, "帮我看截止时间")
-	for _, want := range []string{"前台已对用户说", "帮我看截止时间", "当前可信钉钉派发事件里的发信人", "Issue 创建人或评论人只表示谁执行了 Issue 工具", "协助者", "数字员工事件", "机器人事件", "消息接收人", "当前能解除阻塞", "不要固定回复委托人", "必须实际给一个明确的人发送", "不得写“任务完成”"} {
+	for _, want := range []string{"本轮拟向用户说明", "不是完成或送达证据", "帮我看截止时间", "当前可信钉钉派发事件里的发信人", "Issue 创建人或评论人只表示谁执行了 Issue 工具", "协助者", "数字员工事件", "机器人事件", "消息接收人", "当前能解除阻塞", "不要固定回复委托人", "必须实际给一个明确的人发送", "不得写“任务完成”"} {
 		if !strings.Contains(desc, want) {
 			t.Fatalf("description missing %q: %q", want, desc)
 		}
 	}
+	if strings.Contains(desc, "前台已对用户说") {
+		t.Fatal("planned reception speech must not become delivery evidence for the sandbox")
+	}
 	two := Decision{
-		Action:   ActionIssue,
-		UserText: "我去问",
-		Items:    []WindowItem{{Delegator: "测试号", LookInto: "周五三点"}, {Delegator: "dxxh", LookInto: "今日token"}},
+		Action:      ActionIssue,
+		PlanVersion: WindowPlanVersion,
+		Purpose:     "向同事确认周五三点是否方便开会",
+		UserText:    "我去问",
+		Items:       []WindowItem{{Delegator: "测试号", LookInto: "周五三点"}, {Delegator: "dxxh", LookInto: "今日token"}},
 	}
 	onlyFirst := two
 	onlyFirst.Items = []WindowItem{two.Items[0]}
 	got := IssueDescription(onlyFirst, "窗口")
 	if !strings.Contains(got, "委托人=测试号") || strings.Contains(got, "委托人=dxxh") {
 		t.Fatalf("item body must not list the sibling: %q", got)
+	}
+	if !strings.HasPrefix(got, "本次子任务只执行这一个交付物："+onlyFirst.Purpose) || !strings.Contains(got, "其它工作由各自任务处理，不要重复执行") {
+		t.Fatalf("shared source wording must not expand a child task beyond its own deliverable: %q", got)
 	}
 }
 
@@ -484,7 +502,7 @@ func TestBuildUserPromptOmitsTitleForRobotAndDigitalEmployee(t *testing.T) {
 				{Role: "assistant", Content: "我先去搜一下今天的热点新闻。"},
 			},
 		})
-		if strings.Contains(prompt, "session_title:") || strings.Contains(prompt, stale) || strings.Contains(prompt, "\nconversation: ") {
+		if strings.Contains(prompt, "session_title") || strings.Contains(prompt, stale) || strings.Contains(prompt, "\nconversation: ") {
 			t.Fatalf("%s prompt leaked dingTalk title: %q", src, prompt)
 		}
 		if !strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "看看今天的新闻") {
@@ -498,7 +516,7 @@ func TestBuildUserPromptOmitsTitleForRobotAndDigitalEmployee(t *testing.T) {
 		Message:           "你好",
 		History:           []HistoryLine{{Role: "user", Content: "昨天那个表"}},
 	})
-	if !strings.Contains(web, "session_title: 网页会话标题") {
+	if !strings.Contains(web, "session_title (label only): 网页会话标题") {
 		t.Fatalf("web may keep session title, prompt=%q", web)
 	}
 }
@@ -513,7 +531,7 @@ func TestTurnFromChatSessionRobotAndDigitalEmployeeDropTitle(t *testing.T) {
 			t.Fatalf("%s ConversationTitle = %q, want empty", src, turn.ConversationTitle)
 		}
 		prompt := buildUserPrompt(turn)
-		if strings.Contains(prompt, stale) || strings.Contains(prompt, "session_title:") {
+		if strings.Contains(prompt, stale) || strings.Contains(prompt, "session_title") {
 			t.Fatalf("%s loaded title into prompt: %q", src, prompt)
 		}
 	}
@@ -536,56 +554,39 @@ func TestBuildUserPromptDingTalkHistoryNewestFirst(t *testing.T) {
 }
 
 func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
-	prompt := buildUserPrompt(Turn{
-		Source:              SourceDigitalEmployee,
-		Addressed:           true,
-		ChatType:            "p2p",
+	turn := Turn{
+		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p",
 		Message:             "GoalMate 是什么",
 		SceneMemory:         "## 稳定知识与约定\n- GoalMate 是工具，不是数字员工",
 		SceneMemoryRevision: 4,
-	})
-	if !strings.Contains(prompt, "scene_memory_revision: 4") {
-		t.Fatalf("missing revision: %q", prompt)
 	}
-	if !strings.Contains(prompt, "Host-provided") || !strings.Contains(prompt, "GoalMate 是工具，不是数字员工") {
-		t.Fatalf("missing scene memory: %q", prompt)
+	prompt := buildUserPrompt(turn)
+	for _, field := range []string{
+		"scene_memory_status: loaded; scope=this_conversation; version=4",
+		"scene_memory_revision: 4",
+		"scene_memory (Host-provided, this Scene only; never a source of issue_id):",
+		turn.SceneMemory,
+	} {
+		if !strings.Contains(prompt, field) {
+			t.Errorf("missing committed-scene source contract %q", field)
+		}
 	}
-	if !strings.Contains(systemPrompt, "assoc_recall remains the only Issue truth") {
-		t.Fatal("system prompt must keep assoc as the only issue truth")
+	host, history, current := splitCoordinatorPrompt(prompt)
+	if !strings.Contains(host, turn.SceneMemory) || strings.Contains(history, turn.SceneMemory) || strings.Contains(current, turn.SceneMemory) {
+		t.Fatal("stable memory must remain separate from dialogue evidence and current input")
 	}
-	if !strings.Contains(systemPrompt, "finish action=reply from scene_memory only") {
-		t.Fatal("system prompt must allow scene_memory to answer scene questions")
-	}
-	if !strings.Contains(systemPrompt, "Host parks the window") {
-		t.Fatal("system prompt must park busy follow-ups instead of a user-facing busy line")
-	}
-	if !strings.Contains(systemPrompt, "Teaching or correcting this scene") {
-		t.Fatal("system prompt must not open an Issue for scene teaching")
-	}
-	if !strings.Contains(systemPrompt, "从记忆里去掉 X") {
-		t.Fatal("system prompt must treat dropping a scene fact as memory rewrite, not an Issue")
-	}
-	if !strings.Contains(systemPrompt, "reply from scene_memory only") {
-		t.Fatal("system prompt must answer 有哪些记忆 from scene_memory only")
-	}
-	if !strings.Contains(systemPrompt, "手头有哪些事情") {
-		t.Fatal("system prompt must not list scene_memory bullets as open work")
-	}
-	if !strings.Contains(systemPrompt, "当前记忆为空") {
-		t.Fatal("system prompt must not claim Host memory is empty while 稳定知识 remains")
-	}
-	if !strings.Contains(systemPrompt, "给X发一条消息") {
-		t.Fatal("system prompt must ask for a missing send payload instead of opening an Issue")
-	}
-	if !strings.Contains(systemPrompt, "交付物一条笑话") {
-		t.Fatal("system prompt must pack a job brief, not dump scene_memory, for a complete send")
-	}
-	if !strings.Contains(systemPrompt, "short burst") {
-		t.Fatal("system prompt must answer a collected burst in one reply")
-	}
-	if !strings.Contains(systemPrompt, "since=7d") {
-		t.Fatal("system prompt must recall older work beyond the default 48h window")
-	}
+	// F03/F11 preserve memory inventory, correction and retraction obligations.
+	// Missing payload and job briefs remain inbound; capacity waits cannot silence
+	// communication (F09). Older-work matching is disclosed only after recall.
+	assertDisclosedObligations(t, turn, false, map[string][]string{
+		"core":    {"COORD.F03", "COORD.F11", "COORD.F13", "COORD.F17"},
+		"memory":  {"COORD.F03", "COORD.F11"},
+		"inbound": {"COORD.F04", "COORD.F06", "COORD.F07", "COORD.F09", "COORD.F13", "COORD.F17"},
+	}, []string{"recall_match", "completion"})
+	assertDisclosedObligations(t, turn, true, map[string][]string{
+		"memory":       {"COORD.F03", "COORD.F11"},
+		"recall_match": {"COORD.F02", "COORD.F03", "COORD.F07", "COORD.F08", "COORD.F17"},
+	}, []string{"completion"})
 }
 
 func TestParseDecisionCoercesMissingSendPayloadToReply(t *testing.T) {
@@ -826,16 +827,16 @@ func splitCoordinatorPrompt(prompt string) (host, history, current string) {
 	return
 }
 
-func TestBuildUserPromptOmitsSceneMemoryWhenUnset(t *testing.T) {
-	prompt := buildUserPrompt(Turn{
-		Source:    SourceDigitalEmployee,
-		Addressed: true,
-		ChatType:  "p2p",
-		Message:   "你好",
-	})
-	if strings.Contains(prompt, "scene_memory") {
-		t.Fatalf("unset memory must not appear: %q", prompt)
+func TestBuildUserPromptMarksSceneMemoryNotLoadedWhenUnset(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "你好"}
+	prompt := buildUserPrompt(turn)
+	if !strings.Contains(prompt, "scene_memory_status: not_loaded; scope=this_conversation; version=0") {
+		t.Fatalf("unset memory must explicitly retain the missing-state distinction: %q", prompt)
 	}
+	if strings.Contains(prompt, "scene_memory_revision:") || strings.Contains(prompt, "scene_memory (Host-provided") || strings.Contains(prompt, "(empty)") {
+		t.Fatalf("an absent snapshot must not be presented as a known-empty memory: %q", prompt)
+	}
+	assertDisclosedObligations(t, turn, false, map[string][]string{"core": {"COORD.F03"}}, []string{"memory"})
 }
 
 func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {

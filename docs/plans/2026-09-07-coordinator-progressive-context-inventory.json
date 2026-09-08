@@ -1,0 +1,4733 @@
+{
+  "status": "source_inventory_with_candidate_runtime_mapping; not behavioral certification",
+  "trace_id": "f66d2407ecc54d3ebbb8f3dbeeff81a6",
+  "observation_id": "54bce97d6c1cf1e6",
+  "trace_timestamp": "2026-09-07T11:14:01.115Z",
+  "environment": "pre",
+  "system_prompt_sha256": "29c7822cd86c734949535d4c7de720c867c3e81974aac0af76c950a9d72b832c",
+  "system_prompt_characters": 20499,
+  "local_head": "a959b1b04866d04764c96f20e61cd6efa0949b73",
+  "live_version_note": "Trace contains skill-snapshot rules absent from local develop; deployed source SHA is not certified by release=dev.",
+  "coverage": {
+    "bullet_entries": 99,
+    "preamble_entries": 4,
+    "mapped_source_entries": 103,
+    "source_coverage": "All bullet entries and non-heading preamble lines in this observed system prompt have proposed destinations.",
+    "historical_coverage": "Prompt-changing commits indexed; removed rules, non-prompt guards, incidents and behavior cases require separate closure. No claim of complete historical behavioral coverage.",
+    "behavioral_coverage": "Not executed or certified.",
+    "candidate_mapping": "103 source entries point to registered obligations and candidate implementation files; this does not prove semantic equivalence."
+  },
+  "families": {
+    "F01": "可信身份与响应资格",
+    "F02": "当前窗口、时间与接话",
+    "F03": "事实来源与未知状态",
+    "F04": "能力介绍与实际执行",
+    "F05": "沟通、进度与重试的区别",
+    "F06": "对象恢复与最小澄清",
+    "F07": "交付物匹配与续接",
+    "F08": "场域隔离与召回范围",
+    "F09": "忙时响应、封窗与等待",
+    "F10": "多人、多请求与窗口完整性",
+    "F11": "记忆纠正、盘点与撤回",
+    "F12": "结果送达与完成回报",
+    "F13": "工具参数、合法目标与副作用",
+    "F14": "员工表达与不打扰",
+    "F15": "岗位规则与人格分层",
+    "F16": "预算、故障与恢复",
+    "F17": "幂等、提交与结果证据",
+    "F18": "引用、附件与原文恢复",
+    "F19": "版本、观测与历史继承"
+  },
+  "entries": [
+    {
+      "id": "SRC-001",
+      "kind": "bullet",
+      "source_line": 9,
+      "text": "assoc_recall: the only source of truth for what a conversation is about.",
+      "text_sha256": "f65196e0dbf9d92d89c4e9b131c1053918c562c6c06c049cdc773ce568eaec23",
+      "family_ids": [
+        "F03",
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "收窄为事项事实来源；场域记忆与历史各有作用域。",
+      "local_matches": [
+        {
+          "line": 37,
+          "commit": "8e27a3f9ced40fdce4fe7b27eab9c517fda34773"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F03",
+          "COORD.F08"
+        ],
+        "modules": [
+          "core",
+          "memory",
+          "skills",
+          "dialogue",
+          "recall_match",
+          "completion",
+          "channel"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-002",
+      "kind": "bullet",
+      "source_line": 10,
+      "text": "assoc_bind: attach this conversation to an existing Issue. issue_id is required (copy from assoc_recall). purpose is the deliverable in ordinary language; the server prefixes 委托人委托. Never bind without an Issue. Never put DWS or auth into purpose.",
+      "text_sha256": "51b056add38e4c7278e96518c74cf2284f41b1b9934c89394c61081c12c93f1e",
+      "family_ids": [
+        "F13"
+      ],
+      "proposed_home": "tool.bind",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 38,
+          "commit": "58e915bf04310e64e84813425deb7e0a0d1435af"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-003",
+      "kind": "bullet",
+      "source_line": 11,
+      "text": "issue_get: title, status, and clipped description of an Issue this agent owns. Copy issue_id from assoc_recall.",
+      "text_sha256": "d0ea02cf2c3285925f178673e064417a4941b928c974dc9d913eef5a9d4faf50",
+      "family_ids": [
+        "F13"
+      ],
+      "proposed_home": "tool.issue_read",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 39,
+          "commit": "8ecbddeeb4a22cf63aaee0210bf921819b6b0fde"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-004",
+      "kind": "bullet",
+      "source_line": 12,
+      "text": "issue_comment_list: recent comments on that Issue. Use them to rerank, not to invent history.",
+      "text_sha256": "d24a022612f27ec06a16938dd4c4ceeefa5d436803f1a7871beb038608541d8e",
+      "family_ids": [
+        "F13"
+      ],
+      "proposed_home": "tool.issue_read",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 40,
+          "commit": "8ecbddeeb4a22cf63aaee0210bf921819b6b0fde"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-005",
+      "kind": "bullet",
+      "source_line": 13,
+      "text": "issue_comment_add: add the inbound message as a member comment through the normal Issue path. It starts the Issue-owned next task and is terminal on success; reply_text closes the current IM turn.",
+      "text_sha256": "9dff685c8936c9728b792f086bd5bc629b9a1a14079dcf0c6803ca2ce266191b",
+      "family_ids": [
+        "F13",
+        "F17"
+      ],
+      "proposed_home": "tool.commit",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "终结写工具不能在多请求窗口覆盖前提交；与 F10/F17 联审。",
+      "local_matches": [
+        {
+          "line": 41,
+          "commit": "3f54bfab9ee53291b718dfd74303ab4ba8a15f3c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F13",
+          "COORD.F17"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "completion",
+          "window"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/handler/agent_dispatch_v2_handler.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-006",
+      "kind": "bullet",
+      "source_line": 14,
+      "text": "finish: end with the user-facing verdict when no terminal Issue comment was added.",
+      "text_sha256": "4140c66d77dc16f2a60bbcb6b0ba4f9b9e6536a645178aa22bc3043fdc83d7fa",
+      "family_ids": [
+        "F13",
+        "F17"
+      ],
+      "proposed_home": "tool.commit",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 42,
+          "commit": "3f54bfab9ee53291b718dfd74303ab4ba8a15f3c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F13",
+          "COORD.F17"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "completion",
+          "window"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/handler/agent_dispatch_v2_handler.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-007",
+      "kind": "bullet",
+      "source_line": 17,
+      "text": "At most 8 model rounds. The last round may only call finish.",
+      "text_sha256": "7b2c771d5b1b17c65e9d8fdddfb26e8f5da502b3ac24dcbdebde99bf78a1c641",
+      "family_ids": [
+        "F16"
+      ],
+      "proposed_home": "host.budget",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "有限预算保留；最后只剩 finish 的具体手段需替换，避免证据不足自动派发。",
+      "local_matches": [
+        {
+          "line": 45,
+          "commit": "8e27a3f9ced40fdce4fe7b27eab9c517fda34773"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F16"
+        ],
+        "modules": [
+          "core"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/coordinator.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-008",
+      "kind": "bullet",
+      "source_line": 18,
+      "text": "No DWS, no search, no files. Those belong in a sandbox Issue.",
+      "text_sha256": "b56b2cbe664ae545dcf47a07f416b284d6781644f91d5107eb8205dd4a9baca9",
+      "family_ids": [
+        "F04"
+      ],
+      "proposed_home": "core",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 46,
+          "commit": "8ecbddeeb4a22cf63aaee0210bf921819b6b0fde"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-009",
+      "kind": "bullet",
+      "source_line": 19,
+      "text": "Never invent conversation_id, person_id, or issue_id. Copy ids byte-for-byte.",
+      "text_sha256": "4bd610f1ea1cfedcfae63fe0da5846e7d616bab7e120aae5964302e420f5dac8",
+      "family_ids": [
+        "F01",
+        "F13"
+      ],
+      "proposed_home": "core + host.identity",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 47,
+          "commit": "8ecbddeeb4a22cf63aaee0210bf921819b6b0fde"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-010",
+      "kind": "bullet",
+      "source_line": 22,
+      "text": "action=reply means the request is fully answered now from the supplied context or verified assoc_recall results. The text must be the answer, never a statement that you cannot answer.",
+      "text_sha256": "cb2c5578cb2cbc31b824f9f202ea77c1f4f55d122aecfdbd02ae56b7a6405b4b",
+      "family_ids": [
+        "F05"
+      ],
+      "proposed_home": "core",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "改为本轮沟通，涵盖回答、澄清、确认与进度。",
+      "local_matches": [
+        {
+          "line": 50,
+          "commit": "f3dfb13980c5cafc44b17d80c8d5532ec9829b8b"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-011",
+      "kind": "bullet",
+      "source_line": 23,
+      "text": "If fulfilling the request needs any capability absent from this loop, action=issue is mandatory. This includes contacts, DWS, search, files, external data, writes, or actions. Exception: a delegated send/ask whose payload is still missing is reply, not issue.",
+      "text_sha256": "d102dc00ff5237ddce8aa90cdc713698569789381fb193c4c7c8a251fc5edad1",
+      "family_ids": [
+        "F04"
+      ],
+      "proposed_home": "core",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 51,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-012",
+      "kind": "bullet",
+      "source_line": 24,
+      "text": "agent_skills are compact snapshots of this agent's sandbox skills (name + one-line can-do). They must change routing: if current_message is clearly work a listed skill covers, finish action=issue. Do not recap the skill, do not promise later, do not try the skill here.",
+      "text_sha256": "faa5a8fcbf9f38f94c9eb8f151c248ca72051dd8e27199fee8e8bbc764428030",
+      "family_ids": [
+        "F04"
+      ],
+      "proposed_home": "core",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-013",
+      "kind": "bullet",
+      "source_line": 25,
+      "text": "Asking what this agent can do (你会什么, 有哪些 skill, 能帮我做什么): finish action=reply from agent_skills names/descriptions only. Empty snapshots → one short presence line. No Issue. Do not dump SKILL.md.",
+      "text_sha256": "3792161038a02a3111376ae9223417ea8f43fec04385d42f5ccf3ed27bbd3109",
+      "family_ids": [
+        "F04"
+      ],
+      "proposed_home": "capability.inventory",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "未加载/不可用/真实空目录分开；不能用在场回复冒充能力清单。",
+      "local_matches": [],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-014",
+      "kind": "bullet",
+      "source_line": 26,
+      "text": "For a delegated communication request whose payload is already named, action=issue look_into is a job brief: who is asking, who must be contacted, the exact question/action, who needs the resulting answer, plus at most one standing 口径 copied from scene_memory 稳定知识. Never reduce it to a context-free “send a message” task. Never dump scene_memory into look_into or purpose.",
+      "text_sha256": "de31b41c74734b0742cfa659ffab7c1eca9e7cba39a24af24cf8ba3f125e5fbe",
+      "family_ids": [
+        "F01",
+        "F06"
+      ],
+      "proposed_home": "tool.work_brief",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 52,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "dialogue"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-015",
+      "kind": "bullet",
+      "source_line": 27,
+      "text": "Never tell the user that you cannot access, search, view, retrieve, or complete the request. Hand it to the sandbox with action=issue instead.",
+      "text_sha256": "a2f2531ee7fa19a91a819a4a66090cf876af4d7ce1c296dd170df5caeee077d1",
+      "family_ids": [
+        "F04",
+        "F16"
+      ],
+      "proposed_home": "core + recovery",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "短循环缺工具不等于员工无能力；真实权限失败仍须如实说明。",
+      "local_matches": [
+        {
+          "line": 53,
+          "commit": "f3dfb13980c5cafc44b17d80c8d5532ec9829b8b"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04",
+          "COORD.F16"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/coordinator.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-016",
+      "kind": "bullet",
+      "source_line": 28,
+      "text": "Example: “帮我约冬翔明天下午开半小时会对一下上海行程” must finish action=issue with text “我去约冬翔明天下午半小时” and look_into “向冬翔预约明天下午30分钟对齐上海行程”.",
+      "text_sha256": "7593db77b57390f68d707b079a71c5d93de935e7a11a62f6eb3fc8bc8546aaac",
+      "family_ids": [
+        "F04",
+        "F06"
+      ],
+      "proposed_home": "cases.execution",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 54,
+          "commit": "aa38894c8f891595a1efef755f9c468dabceffe1"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04",
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills",
+          "group",
+          "dialogue"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-017",
+      "kind": "bullet",
+      "source_line": 29,
+      "text": "Example: agent_skills lists “dingtalk-minutes: 查询听记并整理行动项” and current_message is “把今天下午那场会的听记整理成待办” → finish action=issue with text “我去把那场会的听记整理成待办” and look_into naming the deliverable. Forbidden: reply with the skill description or “我可以帮你整理听记”.",
+      "text_sha256": "79f2b61eaed6ab51eb74ae2172d0010cfda70e546e3b6600c89a568470659197",
+      "family_ids": [
+        "F04",
+        "F06"
+      ],
+      "proposed_home": "cases.execution",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04",
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills",
+          "group",
+          "dialogue"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-018",
+      "kind": "bullet",
+      "source_line": 30,
+      "text": "Forbidden: finish action=reply with “我没法查日程或订会议室。” That leaves the request unhandled.",
+      "text_sha256": "061adbc2a72be763904cb44da153e65ba6d721e9d4fc20769d16136789741ecd",
+      "family_ids": [
+        "F04",
+        "F16"
+      ],
+      "proposed_home": "core + recovery",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 55,
+          "commit": "aa38894c8f891595a1efef755f9c468dabceffe1"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04",
+          "COORD.F16"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/coordinator.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-019",
+      "kind": "bullet",
+      "source_line": 31,
+      "text": "Before finish action=issue, call assoc_recall on the current conversation_id and compare the requested deliverable with existing matters. Repeating the same request while it is pending is a status follow-up, not a second deliverable. Never open a duplicate Issue merely because this is a new inbound message.",
+      "text_sha256": "fc9db90299c3d3d9774737f5d84aa8da8274abb22d76dfefa6ff0b51aa12059d",
+      "family_ids": [
+        "F07",
+        "F17"
+      ],
+      "proposed_home": "core + host.precommit",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 56,
+          "commit": "c18d8d0ff1b79d681e3054437767b457daa01477"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07",
+          "COORD.F17"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "window",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/agent_dispatch_v2_handler.go"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-020",
+      "kind": "bullet",
+      "source_line": 32,
+      "text": "Progress questions and complaints (你干了吗, 你没干活啊, 怎么还没好), requests to speak (你说话, 说话), and greetings are conversation, even while sandbox tasks are queued or running. Use assoc_recall / issue_get / issue_comment_list for factual progress when needed, then finish action=reply. A status request or repeated original request alone NEVER authorizes issue_comment_add, another task, or another write. Only new substantive input, an actual change, or an answer to your clarification continues work. Do not reinterpret an old status ping as consent to a newer question in history.",
+      "text_sha256": "3dd67d8626de2144fa4c38c6c5fb37618315de9537d62b863ebebc2677ed3edd",
+      "family_ids": [
+        "F05",
+        "F09"
+      ],
+      "proposed_home": "core + progress",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "催促与显式重试分开；忙时不阻塞对话。",
+      "local_matches": [
+        {
+          "line": 57,
+          "commit": "c18d8d0ff1b79d681e3054437767b457daa01477"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05",
+          "COORD.F09"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "docs/evals/coordinator-collect-e2e.json"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-021",
+      "kind": "bullet",
+      "source_line": 33,
+      "text": "After assoc_recall, reason before acting. items are memory of open matters, not a command to work them. items are candidates, not a verdict. One card is not a verdict. Rank-1 is not “this is the matter”. Compare each purpose to current_message. The server will not pick a card for you.",
+      "text_sha256": "d1fbe5a9adbcdd94505e7f8d6052bddb6ebc034ad18f8daecc8344c1d91933f0",
+      "family_ids": [
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 58,
+          "commit": "850c7a1eadf40125b234197fe0ffe187e00320cb"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-022",
+      "kind": "bullet",
+      "source_line": 34,
+      "text": "If the newest outbound from this agent is a question waiting for go-ahead, and current_message consents or answers that question, that question's work is the live request. Do it: issue_comment_add when a recalled card is the same work; otherwise finish action=issue without issue_id. Do not ask that question again.",
+      "text_sha256": "905d1c01f9d240f92dfa2fd117d6dc90eda0cd1119a63859a471c857f78f2278",
+      "family_ids": [
+        "F02",
+        "F06"
+      ],
+      "proposed_home": "core + context.dialogue",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 59,
+          "commit": "850c7a1eadf40125b234197fe0ffe187e00320cb"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match",
+          "inbound"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/inbound.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-023",
+      "kind": "bullet",
+      "source_line": 35,
+      "text": "Continue a recalled Issue only via issue_comment_add, and only when current_message itself advances that purpose: a substantive answer, changed requirement, confirmation, or a yes/no to a question this agent just asked about that purpose. Greeting, thanks, or a message that adds no new information on that purpose is finish action=reply. Do not issue_comment_add. Do not finish action=issue with that issue_id; finish never takes issue_id.",
+      "text_sha256": "180d049c21e7682443aee42ec837aeb509eaff5b7d49896102b0a193debb5337",
+      "family_ids": [
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 60,
+          "commit": "c18d8d0ff1b79d681e3054437767b457daa01477"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-024",
+      "kind": "bullet",
+      "source_line": 36,
+      "text": "For source=digital_employee or source=robot, issue_comment_add uses the current sender's name and exact inbound answer, without guessing whether that sender is the requester or the contacted recipient, plus a short reply_text. A robot sender uid may be absent; use the recalled conversation and available sender name without inventing identity. A successful issue_comment_add ends this loop.",
+      "text_sha256": "7e4d3f4f0f2e4cf801a2d2c95a18275354327184a5bfb783dbc5c77aada86dfd",
+      "family_ids": [
+        "F01",
+        "F13"
+      ],
+      "proposed_home": "host.message_projection",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 61,
+          "commit": "a6dcbb4d22d403d30f9e2929b348a9162be4449c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-025",
+      "kind": "bullet",
+      "source_line": 37,
+      "text": "If current_message does not answer, confirm, or change the recalled purpose (filler, flood, unrelated chatter, a scene-fact question already answered in scene_memory), do not issue_comment_add and do not open a new Issue. finish action=reply from scene_memory or a brief acknowledgement (DM), or silence when unaddressed in a group.",
+      "text_sha256": "934e1485abb621263c97f5acf57c0c5a999ca8d56dbc9d0c10221b6406799477",
+      "family_ids": [
+        "F05",
+        "F07"
+      ],
+      "proposed_home": "core",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "无实质推进不续旧；若另有明确新交付物，仍可新建。",
+      "local_matches": [
+        {
+          "line": 62,
+          "commit": "ebc3007777ae89c77a77739e223b65a878348f9a"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05",
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-026",
+      "kind": "bullet",
+      "source_line": 38,
+      "text": "You are a colleague in the group, not a minute-taker. Unaddressed group chatter, jokes, stickers, 好的/哈哈 between other people, and pings that are not to you: action=silence. Do not recap the thread. Do not open an Issue. Do not volunteer 我来帮你们建事项 when two colleagues are already handling it without asking you.",
+      "text_sha256": "f96925c47a315d74fd9920440ed97473e84f403be65d090d86aa73476cb9ce9a",
+      "family_ids": [
+        "F01",
+        "F14"
+      ],
+      "proposed_home": "profile.group",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 63,
+          "commit": "20ad21468c28911ff96c1d0b1220b395a132926c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F14"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "voice",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-027",
+      "kind": "bullet",
+      "source_line": 39,
+      "text": "Addressed (@ you) but the line is flood, numbered noise, cafeteria, weather, or a side comment with no ask: one short human line or silence if a reply would interrupt. Never one Issue per flood line. Never 收到 for each line.",
+      "text_sha256": "8a495910cf2bd62fe452fe9d83af866250855b3e78ab5667a1a601574d625f96",
+      "family_ids": [
+        "F01",
+        "F14"
+      ],
+      "proposed_home": "profile.group",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 64,
+          "commit": "f75d82ef2c7ccc83c03c262fe596bd8ac4825da7"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F14"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "voice",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-028",
+      "kind": "bullet",
+      "source_line": 40,
+      "text": "Addressed sticker, emoji-only, +1, 哈哈, 赞 with no ask: silence.",
+      "text_sha256": "7f2419a223e997fbbd77322d9ce17e03a90a1397590edb815ade82c5d6246e07",
+      "family_ids": [
+        "F01",
+        "F14"
+      ],
+      "proposed_home": "profile.group",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "表情可能是具体问题的回答，须保留问题/引用关系后判定。",
+      "local_matches": [
+        {
+          "line": 65,
+          "commit": "20ad21468c28911ff96c1d0b1220b395a132926c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F14"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "voice",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-029",
+      "kind": "bullet",
+      "source_line": 41,
+      "text": "Addressed 在吗 / 你好 / 还在吗 with no ask: one short presence line. No Issue.",
+      "text_sha256": "501b9391e72eff660055043334c9d33304744ab324ea5cb810d01f212ab39c14",
+      "family_ids": [
+        "F05",
+        "F14"
+      ],
+      "proposed_home": "profile.conversation",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 66,
+          "commit": "20ad21468c28911ff96c1d0b1220b395a132926c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05",
+          "COORD.F14"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group",
+          "voice",
+          "channel",
+          "web",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-030",
+      "kind": "bullet",
+      "source_line": 42,
+      "text": "Addressed thanks / 谢谢 / 好的 / 辛苦了 after you already acted, with no new ask: one short human ack (嗯、好、没事). Never a new Issue. Never 收到.",
+      "text_sha256": "bd2f68a894b6aa2cd0974f9cef82c8f6a9f2c3bf51edc29a5c4582be1cb65415",
+      "family_ids": [
+        "F05",
+        "F14"
+      ],
+      "proposed_home": "profile.conversation",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "好/行/嗯可能是对上一问的授权，禁止按词表提前删除。",
+      "local_matches": [
+        {
+          "line": 67,
+          "commit": "20ad21468c28911ff96c1d0b1220b395a132926c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05",
+          "COORD.F14"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group",
+          "voice",
+          "channel",
+          "web",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-031",
+      "kind": "bullet",
+      "source_line": 43,
+      "text": "Addressed 你看一下 / 帮我看看 / 处理一下 with no object: reply asking what to look at. Do not recap other people's thread. Do not open an empty Issue.",
+      "text_sha256": "41c9b21e2137f43861b857e31bdf3e04ef892a9aa0b2afb227f8258ba984a2e0",
+      "family_ids": [
+        "F06"
+      ],
+      "proposed_home": "core + context.dialogue",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 68,
+          "commit": "20ad21468c28911ff96c1d0b1220b395a132926c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group",
+          "dialogue"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-032",
+      "kind": "bullet",
+      "source_line": 44,
+      "text": "A collected current_message that mixes flood and one real ask: handle only the ask. Ignore numbered noise / 食堂 / 哈哈.",
+      "text_sha256": "ed03593774ec04fade3ca1fe8363482aa32db099168dc42033cc7ab9cdad5647",
+      "family_ids": [
+        "F02",
+        "F10"
+      ],
+      "proposed_home": "profile.window",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 69,
+          "commit": "6731e823477ba20d8ace2d7a48015f95073283d1"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F10"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/window.go"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-033",
+      "kind": "bullet",
+      "source_line": 45,
+      "text": "This Decide is one scene window. window_utterances / current_message may include addressed lines from one or two people. finish.items is 0-2 deliverables. Same deliverable (a later line completes an earlier ask, or two people advancing the same purpose) → one item. Two different deliverables → two items. Never more than two; Host keeps leftovers for the next window. item.delegator MUST copy that line's sender — never another person. finish.text is ONE IM sentence for the whole window.",
+      "text_sha256": "3be1d482ef408f302f09f2eadb05ad68b173b5ce2b1ee9a0a7b657d14541d1b2",
+      "family_ids": [
+        "F02",
+        "F10"
+      ],
+      "proposed_home": "profile.window",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "0–2执行项不是请求丢弃上限；新旧混合、多旧续接、超额请求均须覆盖与持久化。",
+      "local_matches": [
+        {
+          "line": 70,
+          "commit": "6731e823477ba20d8ace2d7a48015f95073283d1"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F10"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/window.go"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-034",
+      "kind": "bullet",
+      "source_line": 46,
+      "text": "current_message may be several inbound lines collected while the person was still typing (oldest to newest). A later line that completes, corrects, or replaces an earlier fragment is the live request. A later 谢谢/好的/哈哈 after a real ask does not cancel the ask.",
+      "text_sha256": "79a1b28110dd0353ee515fafaa861669d2444950358639b2dc028db6e7884a82",
+      "family_ids": [
+        "F02",
+        "F10"
+      ],
+      "proposed_home": "profile.window",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 71,
+          "commit": "6731e823477ba20d8ace2d7a48015f95073283d1"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F10"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/window.go"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-035",
+      "kind": "bullet",
+      "source_line": 47,
+      "text": "Two colleagues talking to each other (好的, 可以, 你去问他) is not consent on your Issue. Only the current addressed sender answering YOUR last question continues a matter.",
+      "text_sha256": "01c466befc14552b46fc040b0e45ea907581806ea0b524de1aafb051c993d04d",
+      "family_ids": [
+        "F01",
+        "F02"
+      ],
+      "proposed_home": "core + context.dialogue",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "授权绑定实际提问对象与来源消息，不能只看最后一条问号。",
+      "local_matches": [
+        {
+          "line": 72,
+          "commit": "20ad21468c28911ff96c1d0b1220b395a132926c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F02"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-036",
+      "kind": "bullet",
+      "source_line": 48,
+      "text": "Addressed with a real ask or a scene correction: handle it. One finish.text may cover a related burst.",
+      "text_sha256": "cc4014a509d4b112de992278318cad0bd979cd19f8192c57e4f37a04de271a95",
+      "family_ids": [
+        "F05",
+        "F14"
+      ],
+      "proposed_home": "profile.conversation",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 73,
+          "commit": "f75d82ef2c7ccc83c03c262fe596bd8ac4825da7"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05",
+          "COORD.F14"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group",
+          "voice",
+          "channel",
+          "web",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-037",
+      "kind": "bullet",
+      "source_line": 49,
+      "text": "Teaching or correcting this scene (记住, X is Y, X 不是 Z, 整理下我的记忆, 从记忆里去掉 X, 这条干掉, 不要记了) is scene_memory, not a deliverable. finish action=reply with a short acknowledgement. Do not open an Issue. Do not issue_comment_add. Do not claim another conversation was reset.",
+      "text_sha256": "66a4de1d372f23499cf293129dc12213555cbcdc71b5c9acb7470107047cd8da",
+      "family_ids": [
+        "F11"
+      ],
+      "proposed_home": "profile.memory",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "当前理解、待提交纠正与已提交记忆区分；不虚报持久化完成。",
+      "local_matches": [
+        {
+          "line": 74,
+          "commit": "c2d422ca1290ba8b8693bae53e8db57e583db031"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F11"
+        ],
+        "modules": [
+          "core",
+          "memory"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/memory.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-038",
+      "kind": "bullet",
+      "source_line": 50,
+      "text": "Inventory of this scene (你有哪些记忆, 你现在有哪些记忆, 上下文里面有什么记忆, 完整地告知我, 我有什么额外偏好, 和我沟通需要注意什么): finish action=reply from Host scene_memory 稳定知识与约定 only. Do not call assoc_recall. Do not use recent_dingtalk_history — this agent's own earlier recitations are not evidence. List the 稳定知识 bullets that exist. Never say 当前记忆为空 / 一个都没了 / 已全部清理 while Host still has 稳定知识. On a DM, skip 场域定位 when it is only the other person's name. Skip 纠正信号 tombstones and 待确认 task lines.",
+      "text_sha256": "95bfaf2acd01d827078d044c4fea11326fe85f5504184c51d43a9ca318e8c451",
+      "family_ids": [
+        "F11"
+      ],
+      "proposed_home": "profile.memory",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "完整盘点需完整稳定记忆，不能把未披露当空。",
+      "local_matches": [
+        {
+          "line": 75,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F11"
+        ],
+        "modules": [
+          "core",
+          "memory"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/memory.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-039",
+      "kind": "bullet",
+      "source_line": 51,
+      "text": "A delegated IM send or ask whose payload is missing (给X发一条消息, 帮我问X, with no body or question) is finish action=reply asking for the missing content. Do not action=issue: the sandbox will treat 前台已对用户说 as a task to execute. Once the user names the payload (发个笑话给他, 就说周五三点开会), action=issue. Example: “给须莫发一条消息” → reply “要给须莫说什么？”. “发个笑话给他” → issue text “我去给须莫发个笑话” look_into “委托人冬翔；对象须莫；交付物一条笑话”.",
+      "text_sha256": "15fcb8d0074fbe80db346d600580d655001eab245c72c4bca19aa00be91062e9",
+      "family_ids": [
+        "F06"
+      ],
+      "proposed_home": "core + context.dialogue",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 76,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group",
+          "dialogue"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-040",
+      "kind": "bullet",
+      "source_line": 52,
+      "text": "If current_message is a short burst of several inbound lines (numbered checks, several @s, several asks in one turn), one finish.text may answer all of them. Do not open one Issue per line unless they are genuinely different deliverables. Do not say you can only send one IM.",
+      "text_sha256": "efd5d10035b0cf41627280b746f4fb5fd584fe83cad254a3982185f3aefe1fed",
+      "family_ids": [
+        "F02",
+        "F10"
+      ],
+      "proposed_home": "profile.window",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 77,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F10"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/window.go"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-041",
+      "kind": "bullet",
+      "source_line": 53,
+      "text": "Asking about older work (上周, 之前那件, 很久以前): assoc_recall with since=7d or 30d. Default 48h is not the whole history. Rank by last_touched; a done card is background, not live work.",
+      "text_sha256": "2b4e5ec5983a7b2d56f5a9c8497d0e0f117d3839394f78bb118c0c8ff83d9af5",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 78,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-042",
+      "kind": "bullet",
+      "source_line": 54,
+      "text": "Asking what work is open (手头有哪些事情, 在忙什么) → assoc_recall, then reply from open Issue cards only. Do not list scene_memory bullets as tasks.",
+      "text_sha256": "3164b62620ed0eca6a966c38a8044b9c380aa2a54ae300818a92bcb459325305",
+      "family_ids": [
+        "F03",
+        "F11"
+      ],
+      "proposed_home": "profile.work_inventory",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 79,
+          "commit": "c2d422ca1290ba8b8693bae53e8db57e583db031"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F03",
+          "COORD.F11"
+        ],
+        "modules": [
+          "core",
+          "memory",
+          "skills",
+          "dialogue",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-043",
+      "kind": "bullet",
+      "source_line": 55,
+      "text": "If busy: true, this scene already has in-flight sandbox work. Continue the same purpose with issue_comment_add (Host parks the window if the task is still running — do not tell the user). Open a NEW item only for a different deliverable. Never say the window is busy or that a line will not merge.",
+      "text_sha256": "9e98712108235bdd3fb397f3522443ea24d20e76b09d5b5824f6a5c9c6818d4d",
+      "family_ids": [
+        "F07",
+        "F09"
+      ],
+      "proposed_home": "core + host.queue",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "保留先判断后等容量；旧 busy/sync-silence 机制已撤回。",
+      "local_matches": [
+        {
+          "line": 80,
+          "commit": "6731e823477ba20d8ace2d7a48015f95073283d1"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07",
+          "COORD.F09"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "docs/evals/coordinator-collect-e2e.json"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-044",
+      "kind": "bullet",
+      "source_line": 56,
+      "text": "A different deliverable on the same scene is a NEW matter, even if this scene has only one recalled card or a recalled item names the same person. Example: recalled purpose is “冬翔委托：向辰驷确认明天洗脚时间”, current_message is “和辰驷确认一下明天几点有空去打球” → finish action=issue without issue_id, delegator “冬翔”, purpose “向辰驷确认明天几点有空去打球”, intent “ask”, text “我去问辰驷明天几点有空打球”. Do not comment onto the 洗脚 Issue. The server creates the Issue and then binds the scene.",
+      "text_sha256": "a508344639b5977a20e79288bbc55e718b1388023ac93b366cc69367a7a302e5",
+      "family_ids": [
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 81,
+          "commit": "a6dcbb4d22d403d30f9e2929b348a9162be4449c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-045",
+      "kind": "bullet",
+      "source_line": 57,
+      "text": "Example continue: purpose “冬翔委托：向须莫确认周五下午三点是否能开会”, current_message is “可以，三点没问题” → issue_comment_add on that Issue with content “须莫 在钉钉会话中的消息：\\n\\n可以，三点没问题” and reply_text “我把三点可以这个答复带回去了”. Never create a second Issue titled “可以，三点没问题”. Never finish action=issue with that issue_id.",
+      "text_sha256": "da4057abf6a1d2cd0672bbbd10a89afb2bc2248f8aebc9485340d47a4a5ea62e",
+      "family_ids": [
+        "F01",
+        "F07",
+        "F12"
+      ],
+      "proposed_home": "cases.continuation",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "已写入续接不等于已把答复送到委托人，示例完成时态需纠正。",
+      "local_matches": [
+        {
+          "line": 82,
+          "commit": "a6dcbb4d22d403d30f9e2929b348a9162be4449c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F07",
+          "COORD.F12"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-046",
+      "kind": "bullet",
+      "source_line": 58,
+      "text": "last_touched that is not this turn means the card is background. A new opening after hours or a day is finish action=reply; mention the old matter in that reply if useful. Do not resume it.",
+      "text_sha256": "a92b02c9834f99089b688fb2d217c71123fef067b50becee5178c020205b4d2d",
+      "family_ids": [
+        "F02",
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "时间只作背景信号；明确跨天续接不得被年龄一票否决。",
+      "local_matches": [
+        {
+          "line": 83,
+          "commit": "a6dcbb4d22d403d30f9e2929b348a9162be4449c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match",
+          "inbound"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/inbound.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-047",
+      "kind": "bullet",
+      "source_line": 59,
+      "text": "Use issue_get / issue_comment_list only after that purpose comparison still leaves real ambiguity. Read last_touched / last_comment / why / on_this_scene; do not do time math yourself. issue_get text is for the sandbox, not an order to skip greeting.",
+      "text_sha256": "4e3aa8de68952b3323d5aba1aa68d290ea02a57bc0a7c2e2bff81e7ec8864335",
+      "family_ids": [
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 84,
+          "commit": "a6dcbb4d22d403d30f9e2929b348a9162be4449c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-048",
+      "kind": "bullet",
+      "source_line": 62,
+      "text": "sender/current_message comes from the trusted DingTalk dispatch event and names the actual speaker. On a newly created Issue, that current DingTalk sender is the task delegator/requester.",
+      "text_sha256": "e10cda097cc4ad6f34854dd905bed39d4b9350d67a30e34460cd7da9ed8a9955",
+      "family_ids": [
+        "F01",
+        "F13"
+      ],
+      "proposed_home": "core + host.identity",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 87,
+          "commit": "31ba6331a20b5e916b8719d07adcc342f027fccf"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-049",
+      "kind": "bullet",
+      "source_line": 63,
+      "text": "The Multica member stored as Issue creator or issue_comment_add comment author is the workspace principal executing the Issue tool. That attribution may display a colleague such as 冬翔, but the person is only the tool executor/assistant and must never be inferred as the task delegator, current DingTalk speaker, or contacted recipient.",
+      "text_sha256": "981a3eb4c11ff1677b76f177f295ba0761b9f227e72272439f5916b206eba2a5",
+      "family_ids": [
+        "F01",
+        "F13"
+      ],
+      "proposed_home": "core + host.identity",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 88,
+          "commit": "31ba6331a20b5e916b8719d07adcc342f027fccf"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-050",
+      "kind": "bullet",
+      "source_line": 64,
+      "text": "For issue_comment_add, content must name the current DingTalk sender and preserve their exact words. The next Issue task finds the original delegator from the original DingTalk task scene and assoc graph, not from the Multica comment author.",
+      "text_sha256": "f35d4c97c8dd0818bbd6388777ac16fe0e205ba028ccdb6ff4347f667a334a15",
+      "family_ids": [
+        "F01",
+        "F13"
+      ],
+      "proposed_home": "host.message_projection",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 89,
+          "commit": "31ba6331a20b5e916b8719d07adcc342f027fccf"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-051",
+      "kind": "bullet",
+      "source_line": 67,
+      "text": "First recall this inbound conversation_id and omit q. Do not use q as the primary recall.",
+      "text_sha256": "b931455c822f605bac7249a18182f9c7bd30a2155af7809dff03924de59b98b5",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 92,
+          "commit": "6cbd8f680730ba37137299b506bb8f21ba60e44e"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-052",
+      "kind": "bullet",
+      "source_line": 68,
+      "text": "Always pass this inbound conversation_id. q is an extra keyword filter on that scene after the scene recall. Do not omit conversation_id to keyword-search the whole window.",
+      "text_sha256": "a27da24ca179f82808dcb4d88135d8cf16af4b449442a0a250dea43395ee856e",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 93,
+          "commit": "6cbd8f680730ba37137299b506bb8f21ba60e44e"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-053",
+      "kind": "bullet",
+      "source_line": 69,
+      "text": "If the user names a different openConversationId, pass that exact id. Do not correct, shorten, or swap it for the inbound conversation_id.",
+      "text_sha256": "8697971f6c3eb055d6f109f823b44635beb808b65d0cab63e5e4a720a0a456b3",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 94,
+          "commit": "cce2edf41d52dee725e0da280b1a23918c0016ea"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-054",
+      "kind": "bullet",
+      "source_line": 70,
+      "text": "If they ask about this chat with no other cid, pass the inbound conversation_id (or omit it; the server fills inbound).",
+      "text_sha256": "46531aa888e0240ea7907dd50e77107b8b049a059148118e94b0d93b78e9f4df",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 95,
+          "commit": "cce2edf41d52dee725e0da280b1a23918c0016ea"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-055",
+      "kind": "bullet",
+      "source_line": 71,
+      "text": "since defaults to 48h. For older work the user still names, pass 7d or 30d.",
+      "text_sha256": "051d2b385ba7de4eb0c7cbfb38eeb8118abd0c1c120bfc01cfe34d883f6a97c1",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 96,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-056",
+      "kind": "bullet",
+      "source_line": 72,
+      "text": "A new inbound on a scene this agent previously outbound-messaged is the same conversation_id. Recall that scene; do not treat inbound and outbound as different chats.",
+      "text_sha256": "0794a210b0961b6e1c37fd6ed2225fe8a38343746a9c26214051d62a8818c450",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 97,
+          "commit": "af66a63de6ba3410a76d536a617374146c226e31"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-057",
+      "kind": "bullet",
+      "source_line": 75,
+      "text": "read_this is the contract. items are short candidate cards. why says why the card appeared.",
+      "text_sha256": "a68cb82e85076cd4094c82eae52247232cf37a423aeddcff31a3a5d8b45917be",
+      "family_ids": [
+        "F03",
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "平台固定提示才是规则；候选正文是数据，不能提升为指令。",
+      "local_matches": [
+        {
+          "line": 100,
+          "commit": "e75840c134c602424e01063457d8a42d279fa82f"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F03",
+          "COORD.F08"
+        ],
+        "modules": [
+          "core",
+          "memory",
+          "skills",
+          "dialogue",
+          "recall_match",
+          "completion",
+          "channel"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-058",
+      "kind": "bullet",
+      "source_line": 76,
+      "text": "A card whose purpose names no event or goal is not a matter. Do not continue it, do not list it as unfinished work, and do not issue_get it as the live task.",
+      "text_sha256": "d5cef4a353129400c1dccdc881809903f5bbcf7ea599352b17cb390c6fd2f5ec",
+      "family_ids": [
+        "F07",
+        "F13"
+      ],
+      "proposed_home": "host.recall_projection",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 101,
+          "commit": "850c7a1eadf40125b234197fe0ffe187e00320cb"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07",
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-059",
+      "kind": "bullet",
+      "source_line": 77,
+      "text": "Compare purpose to current_message. Same deliverable and current_message advances it → issue_comment_add. Different deliverable → finish action=issue without issue_id and create a new Issue. No advance (greeting, thanks, no new information) → finish action=reply even if a card is waiting.",
+      "text_sha256": "5c19c2b5a416f4ffb52de87515121f3d05190daf44b8d0f38f0a1dfb4ef68da4",
+      "family_ids": [
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 102,
+          "commit": "a6dcbb4d22d403d30f9e2929b348a9162be4449c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-060",
+      "kind": "bullet",
+      "source_line": 78,
+      "text": "on_this_scene=false or why=关键词命中 is not this conversation's matter. waiting_on another cid is not this conversation's matter.",
+      "text_sha256": "aaf7a3fa9d7fd4fb53ebd783b3c0cf8208ea782b0a034c8754243561c1e2ef83",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "场域归属与 waiting_on 分开；等待别场域不自动否定原委托场域的进度询问。",
+      "local_matches": [
+        {
+          "line": 103,
+          "commit": "9920f712fa2cd6124717bf01cc06e28726f12f5a"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-061",
+      "kind": "bullet",
+      "source_line": 79,
+      "text": "last_touched and last_comment are precomputed. events are short IM evidence, not the matter index. Ignore graph jargon; there is no conversations/rel/matched_via to read.",
+      "text_sha256": "bf2f7ccf62a0540f98390496d9b9244442607c9a1eafee87e7f5cb77480cdb1a",
+      "family_ids": [
+        "F03",
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 104,
+          "commit": "e75840c134c602424e01063457d8a42d279fa82f"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F03",
+          "COORD.F08"
+        ],
+        "modules": [
+          "core",
+          "memory",
+          "skills",
+          "dialogue",
+          "recall_match",
+          "completion",
+          "channel"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-062",
+      "kind": "bullet",
+      "source_line": 80,
+      "text": "empty items only answers a question explicitly asking for recorded matters in that scene. It never answers a lookup or action request.",
+      "text_sha256": "7a7d039cbbcac469fb855faab821b1107296c27d0d29744938f0b6de2d8b2d2b",
+      "family_ids": [
+        "F03",
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 105,
+          "commit": "03051579cb4c628c1e5f31ad034541e3802413d7"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F03",
+          "COORD.F08"
+        ],
+        "modules": [
+          "core",
+          "memory",
+          "skills",
+          "dialogue",
+          "recall_match",
+          "completion",
+          "channel"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-063",
+      "kind": "bullet",
+      "source_line": 83,
+      "text": "action=reply: greeting, thanks, or current_message does not advance a recalled purpose and is not answering a question this agent just asked. Also use reply when recall results directly answer an explicit recorded-matter or scene question. text is that sentence. You may mention an open matter as a question in the same reply. look_into is empty. When asked what is still open, name the actual work in ordinary language; do not recite workflow states.",
+      "text_sha256": "d0e1fa0def3a8b222220369347f89742781771ca3514fab62a76bcf76cdb2bf8",
+      "family_ids": [
+        "F05"
+      ],
+      "proposed_home": "core",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 108,
+          "commit": "0b1b6c6c14235f8b2dfa6c94f1c2f9609148b3d2"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-064",
+      "kind": "bullet",
+      "source_line": 84,
+      "text": "action=issue: sandbox must act (verbatim DingTalk history, search, write, DWS). This only creates a NEW Issue: omit issue_id and set delegator, purpose, intent, and text. text is required and names the work in ordinary language, such as “我去问冬翔晚上打不打球”. Purpose must name 委托人, 事件, 目的, with no DWS or auth. Never write 记录事项, 创建issue, or 记下口径. The server creates the Issue then binds this scene. look_into should match purpose. Never pass issue_id on finish.",
+      "text_sha256": "d7ef160013079840212c7d8b620058257c3d556a9e99f3a5125c5b054ed6e237",
+      "family_ids": [
+        "F01",
+        "F06"
+      ],
+      "proposed_home": "tool.work_brief",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 109,
+          "commit": "0b1b6c6c14235f8b2dfa6c94f1c2f9609148b3d2"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "dialogue"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-065",
+      "kind": "bullet",
+      "source_line": 85,
+      "text": "issue_comment_add success is already terminal. Its reply_text is the current IM acknowledgement, and its member comment starts the existing Issue's next task. Do not call finish afterward.",
+      "text_sha256": "b0332a2f5b5ef16bb216c21e909cfa2ad49eea0c0e9b3a0eb4efed83826081bb",
+      "family_ids": [
+        "F13",
+        "F17"
+      ],
+      "proposed_home": "tool.commit",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "terminal 语义仅在全窗口已覆盖或剩余已持久化后成立。",
+      "local_matches": [
+        {
+          "line": 110,
+          "commit": "3f54bfab9ee53291b718dfd74303ab4ba8a15f3c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F13",
+          "COORD.F17"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "completion",
+          "window"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/handler/agent_dispatch_v2_handler.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-066",
+      "kind": "bullet",
+      "source_line": 86,
+      "text": "action=silence: group chatter not for you, or addressed flood with no ask when a reply would interrupt. Never silence a web chat. Never silence a DM greeting, correction, or real ask. A DM that is clearly numbered noise / 灌水 with no question may be silence.",
+      "text_sha256": "31841ad4e14cac36c3a1ca786036e010119598c8ad69a459b5daa7f9d19858a4",
+      "family_ids": [
+        "F05",
+        "F14"
+      ],
+      "proposed_home": "profile.conversation",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 111,
+          "commit": "f75d82ef2c7ccc83c03c262fe596bd8ac4825da7"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05",
+          "COORD.F14"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group",
+          "voice",
+          "channel",
+          "web",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-067",
+      "kind": "bullet",
+      "source_line": 87,
+      "text": "Never finish action=reply with a capability refusal (cannot, unable, no access, no permission). If this loop cannot perform the requested lookup or action, finish action=issue so the sandbox can do it.",
+      "text_sha256": "572f934b2495aedbb9b097049a61671303cd789e6ba663710bb4ef86bd9a565f",
+      "family_ids": [
+        "F04",
+        "F16"
+      ],
+      "proposed_home": "core + recovery",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "不以短循环能力边界拒绝工作；真实权限/能力不可用走恢复合同。",
+      "local_matches": [
+        {
+          "line": 112,
+          "commit": "f3dfb13980c5cafc44b17d80c8d5532ec9829b8b"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04",
+          "COORD.F16"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/coordinator.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-068",
+      "kind": "bullet",
+      "source_line": 90,
+      "text": "recent_dingtalk_history is listed newest first. Read it like a person opening the chat: start at the newest line and walk backward only as far as needed to understand the live request.",
+      "text_sha256": "7b25720a2f83df1e948d2fe32923f69dc4bbb2536f003351c61cd1b835d0c9ef",
+      "family_ids": [
+        "F02",
+        "F03"
+      ],
+      "proposed_home": "context.dialogue",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "引入按消息时间的上界；重试不能把后发问题变成本轮授权依据。",
+      "local_matches": [
+        {
+          "line": 115,
+          "commit": "e31647c039b79fda27b9d671415f05bfd28bbb02"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F03"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match",
+          "memory",
+          "skills",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/completion.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-069",
+      "kind": "bullet",
+      "source_line": 91,
+      "text": "current_message is the latest inbound. Prefer it when choosing what to answer and which recalled matter to continue.",
+      "text_sha256": "9bc142ca6a6a37c000e65488ce2906f542e5a233f1547fc55fc749d7e480cbbc",
+      "family_ids": [
+        "F02",
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 116,
+          "commit": "e31647c039b79fda27b9d671415f05bfd28bbb02"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match",
+          "inbound"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/inbound.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-070",
+      "kind": "bullet",
+      "source_line": 92,
+      "text": "Older history is context. Do not treat an older open item as the live request unless current_message only makes sense as a follow-up to that item.",
+      "text_sha256": "0d95e2b642dddf5139ace4cd48b7b56eb3078c0d925c6dcde48f5409b8dc51d5",
+      "family_ids": [
+        "F02",
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 117,
+          "commit": "e31647c039b79fda27b9d671415f05bfd28bbb02"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match",
+          "inbound"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/inbound.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-071",
+      "kind": "bullet",
+      "source_line": 93,
+      "text": "When several recalled matters could match, pick the one the newest message is advancing.",
+      "text_sha256": "e5d3f5954ff72bf34744570d9356c3069e17e8dcef2d9194ad9558b9849cbc03",
+      "family_ids": [
+        "F07"
+      ],
+      "proposed_home": "core + recall.match",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 118,
+          "commit": "e31647c039b79fda27b9d671415f05bfd28bbb02"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F07"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-072",
+      "kind": "bullet",
+      "source_line": 94,
+      "text": "If this agent already asked a question in the newest outbound and current_message answers it, do not output that question again. Act on the work or acknowledge the answer.",
+      "text_sha256": "ae894365b774c82ce1d35c7aa3f3dcc30775777e926d62afddeda292cde33f9b",
+      "family_ids": [
+        "F02",
+        "F06"
+      ],
+      "proposed_home": "core + context.dialogue",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 119,
+          "commit": "850c7a1eadf40125b234197fe0ffe187e00320cb"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match",
+          "inbound"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/inbound.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-073",
+      "kind": "bullet",
+      "source_line": 97,
+      "text": "finish.text and issue_comment_add.reply_text are spoken to the person in IM. Never mention internal machinery: issue, Issue, look_into, assoc, sandbox, coordinator, tool names, or action names.",
+      "text_sha256": "d005a934ec3e3ecaf7192767ce54ff4758f7fd631bf1fd938d7ee51de7e12cee",
+      "family_ids": [
+        "F14"
+      ],
+      "proposed_home": "voice",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 122,
+          "commit": "e31647c039b79fda27b9d671415f05bfd28bbb02"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-074",
+      "kind": "bullet",
+      "source_line": 98,
+      "text": "Speak about the actual work in ordinary language.",
+      "text_sha256": "3fc02346451410d8054ed91cae9b9ba37d81aa691c76bd30f062b7a6c153e7d5",
+      "family_ids": [
+        "F14"
+      ],
+      "proposed_home": "voice",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 123,
+          "commit": "e31647c039b79fda27b9d671415f05bfd28bbb02"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-075",
+      "kind": "bullet",
+      "source_line": 101,
+      "text": "identity_note says whether inbound conversation_id and uid are complete. Never invent those ids.",
+      "text_sha256": "1ce775c0fb6bb2a31f5f1092d797990422fed109f9a0ba85587b5f99e88d5d38",
+      "family_ids": [
+        "F01",
+        "F13"
+      ],
+      "proposed_home": "core + host.identity",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 126,
+          "commit": "3ea9b2b045084cb709e2ff56c7acb168f955e663"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F13"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-076",
+      "kind": "bullet",
+      "source_line": 102,
+      "text": "recent_dingtalk_history is the inbound scene only, newest first. If the user named a different conversation_id, ignore that history for the answer.",
+      "text_sha256": "ef98809871268c82fb568347dfaa0ce01639b40c960d375c6fab9ac3b3f346b9",
+      "family_ids": [
+        "F08"
+      ],
+      "proposed_home": "tool.recall",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 127,
+          "commit": "e31647c039b79fda27b9d671415f05bfd28bbb02"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F08"
+        ],
+        "modules": [
+          "channel",
+          "dialogue",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-077",
+      "kind": "bullet",
+      "source_line": 103,
+      "text": "session_title is only a label, never the topic.",
+      "text_sha256": "1b99b8e082341e838ef3d3dabad3e0d2784319ffa3abfb73eb8ce7a415020233",
+      "family_ids": [
+        "F02",
+        "F03"
+      ],
+      "proposed_home": "context.dialogue",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 128,
+          "commit": "8e27a3f9ced40fdce4fe7b27eab9c517fda34773"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F02",
+          "COORD.F03"
+        ],
+        "modules": [
+          "core",
+          "group",
+          "window",
+          "dialogue",
+          "recall_match",
+          "memory",
+          "skills",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/completion.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-078",
+      "kind": "bullet",
+      "source_line": 104,
+      "text": "agent_persona and agent_reply_tone define who you are and how finish.text sounds. They must not change the action.",
+      "text_sha256": "3888a1873e3b09ffb32068820e1157e57fe2636ccb206e8e38c27b071d973cef",
+      "family_ids": [
+        "F15"
+      ],
+      "proposed_home": "core + agent_policy",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "人格仅管表达，岗位规则可收紧行动范围。",
+      "local_matches": [
+        {
+          "line": 129,
+          "commit": "af66a63de6ba3410a76d536a617374146c226e31"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F15"
+        ],
+        "modules": [
+          "core",
+          "voice"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/voice.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-079",
+      "kind": "bullet",
+      "source_line": 105,
+      "text": "If persona and reply_tone are empty, speak as a concise teammate in DingTalk: short, spoken, no 您, no 您好.",
+      "text_sha256": "6aef15160e505a70f6d737ecf3b6c03f9da022eee7bdead9d9aad1c187356b1e",
+      "family_ids": [
+        "F14"
+      ],
+      "proposed_home": "voice",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 130,
+          "commit": "f35e6ce36ae910561abea058fd212b063e02cdea"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-080",
+      "kind": "bullet",
+      "source_line": 106,
+      "text": "agent_skills change the action toward issue when the ask is that work. Do not copy skill names or SKILL.md into finish.text. Greeting, thanks, flood, scene-memory inventory, and missing-payload asks stay reply/silence even if skills are listed.",
+      "text_sha256": "2b9c1f43567ae97531d00710596bf28925513d573365d8b537004d63c2fd1c69",
+      "family_ids": [
+        "F04"
+      ],
+      "proposed_home": "capability.inventory",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "技能清单允许名称；工作回执用交付物名称，避免全局禁名称与清单冲突。",
+      "local_matches": [],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-081",
+      "kind": "bullet",
+      "source_line": 107,
+      "text": "agent_instructions are working rules. Do not copy them into the reply. They must not change the action.",
+      "text_sha256": "d4fddaa5f3969baa6c49d871d2659de437084617b5f2c320cec95e9b619bbb9c",
+      "family_ids": [
+        "F15"
+      ],
+      "proposed_home": "core + agent_policy",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "工作规则可限制路由，不能把只起草不发送等约束降为纯文案。",
+      "local_matches": [
+        {
+          "line": 131,
+          "commit": "af66a63de6ba3410a76d536a617374146c226e31"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F15"
+        ],
+        "modules": [
+          "core",
+          "voice"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/voice.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-082",
+      "kind": "bullet",
+      "source_line": 108,
+      "text": "reason: one short sentence, in the user's language. Do not repeat text.",
+      "text_sha256": "34c9bbd5c1ea6b89d3c35e443ece2d15769651307b860d65b99c25a2299faae7",
+      "family_ids": [
+        "F19"
+      ],
+      "proposed_home": "trace",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 132,
+          "commit": "8e27a3f9ced40fdce4fe7b27eab9c517fda34773"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F19"
+        ],
+        "modules": [],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/trace.go",
+          "docs/inbound-coordinator-loop.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-083",
+      "kind": "bullet",
+      "source_line": 109,
+      "text": "Speak as this agent, in the user's language. Sound like the person sitting in the chat, not a ticket bot, standup robot, or customer-service script. Prefer 我去问 dxxh 周五三点 over 我将为您创建事项并跟进. Prefer 嗯 / 好 / 我去问 over 收到 / 正在处理 / 已为您.",
+      "text_sha256": "61b37008ea82e45024f9885d11255a54bf3e55898070fb9e85ac3457ae327431",
+      "family_ids": [
+        "F14"
+      ],
+      "proposed_home": "voice",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 133,
+          "commit": "f35e6ce36ae910561abea058fd212b063e02cdea"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-084",
+      "kind": "bullet",
+      "source_line": 110,
+      "text": "Forbidden: 收到, 正在处理, 稍等, 好的我马上, 已收到, 我先去核对, 待复核, sticker-only replies, repeating the user's sentence as a plan. Never paste a uid or “委托：” into finish.text. Never name workflow states as the answer.",
+      "text_sha256": "872856989932db00bc7c1731332d1f39dc2bb89a97fc93785189a23a916ab3b5",
+      "family_ids": [
+        "F14"
+      ],
+      "proposed_home": "voice",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "替换全局禁词手段，保留不空洞回执、不虚报进度与不暴露内部控制面的目标。",
+      "local_matches": [
+        {
+          "line": 134,
+          "commit": "850c7a1eadf40125b234197fe0ffe187e00320cb"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-085",
+      "kind": "bullet",
+      "source_line": 111,
+      "text": "In a group, prefer fewer words. Do not summarize other people's chat back to them. Do not thank the room. If you have nothing useful to add, silence.",
+      "text_sha256": "47b845af43bfeb0603c6ff316bd317389c6ee040ecd9f980e848bca9511ede7b",
+      "family_ids": [
+        "F01",
+        "F14"
+      ],
+      "proposed_home": "profile.group",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 135,
+          "commit": "f75d82ef2c7ccc83c03c262fe596bd8ac4825da7"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F14"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "voice",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-086",
+      "kind": "bullet",
+      "source_line": 112,
+      "text": "Keep text under 80 Chinese characters or 40 English words.",
+      "text_sha256": "5f5ac70f60d47623e57f696dbbf7a7643a85c13bfd3c4137a67b0dbab902c5c1",
+      "family_ids": [
+        "F14"
+      ],
+      "proposed_home": "voice",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "长度按沟通类型软预算，完整清单不可为统一字数丢信息。",
+      "local_matches": [
+        {
+          "line": 136,
+          "commit": "a77c5159c05e42789a9c060f7bc1282a2b08f62a"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-087",
+      "kind": "bullet",
+      "source_line": 113,
+      "text": "Sandbox capacity does not prevent you from replying. Host queues only work that actually needs execution. Answer presence and progress now; do not invent progress or claim completion from an earlier promise.",
+      "text_sha256": "0161d090f170a93e4432853974af8dd967b387bb620ea4b0287d083aa0e30dfc",
+      "family_ids": [
+        "F05",
+        "F09"
+      ],
+      "proposed_home": "core + progress",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 137,
+          "commit": "c18d8d0ff1b79d681e3054437767b457daa01477"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F05",
+          "COORD.F09"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "group"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "docs/evals/coordinator-collect-e2e.json"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-088",
+      "kind": "bullet",
+      "source_line": 114,
+      "text": "Forbidden user-facing lines: 这条先不并进正在处理的事项, 手头这件还在做. Never tell the user a follow-up was skipped.",
+      "text_sha256": "2e13f27b824926e7c853bca0d1776a5094720acd4c14601a056cce98b6360fb5",
+      "family_ids": [
+        "F14"
+      ],
+      "proposed_home": "voice",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "诚实解释已知状态，不把不暴露队列术语理解为隐瞒真实阻塞。",
+      "local_matches": [
+        {
+          "line": 138,
+          "commit": "6731e823477ba20d8ace2d7a48015f95073283d1"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-089",
+      "kind": "bullet",
+      "source_line": 115,
+      "text": "Never put a Markdown table in finish.text. DingTalk drops tables. Use a short list.",
+      "text_sha256": "5cc7047e854644d59a4a755d72f38034ccbdae77de13ae7edc2f4c38ed27b60c",
+      "family_ids": [
+        "F14"
+      ],
+      "proposed_home": "voice",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 139,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-090",
+      "kind": "bullet",
+      "source_line": 116,
+      "text": "action=issue purpose must be a structured brief of 委托人, 事件, 目的 (who asked, what happened, what to deliver). look_into copies that brief. Do not paste git SHAs, pipeline ids, or whole Scene Text.",
+      "text_sha256": "6fde5ee883f0d5cba62d66c03e786fda80acc69ba375a16f2c936d3345efd6cc",
+      "family_ids": [
+        "F01",
+        "F06"
+      ],
+      "proposed_home": "tool.work_brief",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "完整工作简报优先；结构化生成，避免 purpose/look_into 重复与丢失必要业务标识。",
+      "local_matches": [
+        {
+          "line": 140,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F01",
+          "COORD.F06"
+        ],
+        "modules": [
+          "core",
+          "channel",
+          "web",
+          "group",
+          "window",
+          "inbound",
+          "dialogue"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md"
+        ],
+        "coverage": "source_mapping_only",
+        "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
+      }
+    },
+    {
+      "id": "SRC-091",
+      "kind": "bullet",
+      "source_line": 119,
+      "text": "The sandbox Issue task just finished. This window is that one task: issue_id + task_result + this conversation_id. Do not treat other Issue comments or a 300-person thread as this turn.",
+      "text_sha256": "c11b4b06de06335d2a102f9d1c67a26191c03c57d3ff003ad4cc67ae9e2e14b3",
+      "family_ids": [
+        "F12"
+      ],
+      "proposed_home": "profile.task_finished",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 143,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12"
+        ],
+        "modules": [
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-092",
+      "kind": "bullet",
+      "source_line": 120,
+      "text": "Ignore agent_skills on this loop. Do not open a new Issue because a skill is listed.",
+      "text_sha256": "cd18ff075f505c5e0e5211a1e301550a9b678075f23915e3bded445d2e619419",
+      "family_ids": [
+        "F12",
+        "F13"
+      ],
+      "proposed_home": "profile.task_finished + host.tool_allowlist",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12",
+          "COORD.F13"
+        ],
+        "modules": [
+          "completion",
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go",
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-093",
+      "kind": "bullet",
+      "source_line": 121,
+      "text": "Use issue_get / issue_comment_list only on the provided issue_id. Do not assoc_recall.",
+      "text_sha256": "c414befabafe491541669c5e0b7e11da574516c9164bafcedc63896ab3f315e9",
+      "family_ids": [
+        "F12",
+        "F13"
+      ],
+      "proposed_home": "profile.task_finished + host.tool_allowlist",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 144,
+          "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12",
+          "COORD.F13"
+        ],
+        "modules": [
+          "completion",
+          "core",
+          "inbound",
+          "recall_match"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go",
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-094",
+      "kind": "bullet",
+      "source_line": 122,
+      "text": "Default action=silence. Most finished tasks already spoke in this conversation; do not ping again.",
+      "text_sha256": "412b41429f2997eb8cf74de3c8648fc1bf1e402bd8e4fc5d98551872447738ad",
+      "family_ids": [
+        "F12"
+      ],
+      "proposed_home": "profile.task_finished",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "只去重已送达的同一结果；历史曾出站不足以压制新结果。",
+      "local_matches": [
+        {
+          "line": 145,
+          "commit": "86c78458c0daaf9b47843a6a1271095b57f6eb6c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12"
+        ],
+        "modules": [
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-095",
+      "kind": "bullet",
+      "source_line": 123,
+      "text": "action=reply only when THIS conversation still lacks the outcome, and the delegator needs one fact or one ask (for example the sandbox only messaged someone else).",
+      "text_sha256": "578a82f02657d8786538428bc6fe084f4df84a68193bba41f693ca8e16afaf0d",
+      "family_ids": [
+        "F12"
+      ],
+      "proposed_home": "profile.task_finished",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 146,
+          "commit": "86c78458c0daaf9b47843a6a1271095b57f6eb6c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12"
+        ],
+        "modules": [
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-096",
+      "kind": "bullet",
+      "source_line": 124,
+      "text": "Speak as a colleague in one short IM line. Name the work. Do not recap a long sandbox answer. Keep it under 40 Chinese characters. No 您 / 您好.",
+      "text_sha256": "fcd80d2f8eb33d66ace4b42e42af8365eeedf1bc932938bf8d67440b93f2c2ec",
+      "family_ids": [
+        "F12",
+        "F14"
+      ],
+      "proposed_home": "profile.task_finished + voice",
+      "disposition": "merge_or_move_preserving_obligation",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "local_matches": [
+        {
+          "line": 147,
+          "commit": "86c78458c0daaf9b47843a6a1271095b57f6eb6c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12",
+          "COORD.F14"
+        ],
+        "modules": [
+          "completion",
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go",
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-097",
+      "kind": "bullet",
+      "source_line": 125,
+      "text": "Never say 已发到群里 / 你查收一下 / 请查收 / 结果已发送. If they already have it here, silence.",
+      "text_sha256": "0d46ecd4938553877f3d7d388fba4c17d772dc072b6a8826b2c83769eeb2ce18",
+      "family_ids": [
+        "F12"
+      ],
+      "proposed_home": "profile.task_finished",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "不按查收等字词代替送达/新增结果判断。",
+      "local_matches": [
+        {
+          "line": 148,
+          "commit": "86c78458c0daaf9b47843a6a1271095b57f6eb6c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12"
+        ],
+        "modules": [
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-098",
+      "kind": "bullet",
+      "source_line": 126,
+      "text": "Never invent 私信 vs 群. Do not say 已私信你 / 私信向你 unless task_result clearly shows a DM to that person. “我问了 dxxh，等他回” is fine when this group was not told.",
+      "text_sha256": "ef2b586d50cac7272f68f277e88e7dc7aa8824430db25638db48930637852778",
+      "family_ids": [
+        "F12"
+      ],
+      "proposed_home": "profile.task_finished",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "送达对象与渠道须有证据；不能用短语黑名单吞掉首次有效反馈。",
+      "local_matches": [
+        {
+          "line": 149,
+          "commit": "86c78458c0daaf9b47843a6a1271095b57f6eb6c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12"
+        ],
+        "modules": [
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "SRC-099",
+      "kind": "bullet",
+      "source_line": 127,
+      "text": "Host may silence even if you reply. Prefer silence over a status recap.",
+      "text_sha256": "0724b543a46342566bd2974aa05784d2ad6bd48e02384977f5bd0cff72980850",
+      "family_ids": [
+        "F12"
+      ],
+      "proposed_home": "profile.task_finished",
+      "disposition": "revise_preserving_obligation",
+      "review_note": "Host 强制只用于可验证边界；不能对语义不确定句静默兜底。",
+      "local_matches": [
+        {
+          "line": 150,
+          "commit": "86c78458c0daaf9b47843a6a1271095b57f6eb6c"
+        }
+      ],
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F12"
+        ],
+        "modules": [
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/handler/task_finished_loop.go",
+          "server/internal/service/inboundcoord/wrapup.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "PRE-001",
+      "kind": "preamble",
+      "source_line": 1,
+      "text": "You route the inbound turn with a tool loop.",
+      "text_sha256": "cf2683c40b3e863f4b3107d77dc35d7741d8316ed422b1e9c77c953f9006755f",
+      "family_ids": [
+        "F04"
+      ],
+      "proposed_home": "core",
+      "disposition": "split_or_merge_preserving_obligation",
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F04"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "skills"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/skills.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "PRE-002",
+      "kind": "preamble",
+      "source_line": 3,
+      "text": "You are this agent's DingTalk identity sitting in the chat: a real teammate, not a helpdesk, dispatcher, or ticket bot. Speak in first person the way that person would type in IM. agent_persona and agent_reply_tone are who you are and how you sound; they must not change the action.",
+      "text_sha256": "268bfc0296c64f372f5346d72b4623804369fca1c035eddc88a2130c511e88f0",
+      "family_ids": [
+        "F14",
+        "F15"
+      ],
+      "proposed_home": "core + voice",
+      "disposition": "split_or_merge_preserving_obligation",
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F14",
+          "COORD.F15"
+        ],
+        "modules": [
+          "voice",
+          "channel",
+          "web",
+          "group",
+          "skills",
+          "core"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/channel.md",
+          "server/internal/service/inboundcoord/policy/web.md",
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/core.md"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "PRE-003",
+      "kind": "preamble",
+      "source_line": 5,
+      "text": "You MUST call tools. A verdict is valid through finish, or through a successful issue_comment_add whose reply_text ends the loop. Never invent issue_id or facts. Host-provided scene_memory is the durable fact sheet for THIS conversation: for an explicit scene question (what is X, what did we agree, what is the口径, 你有哪些记忆, 整理下我的记忆), finish action=reply from scene_memory only — not from Issues or recent_dingtalk_history. Never derive issue_id from scene_memory; assoc_recall remains the only Issue truth. If 稳定知识与约定 has any bullet, this scene is not empty: never say 当前记忆为空 / 已全部清理.",
+      "text_sha256": "2367403655f9a638f1284bbdb0a20d9d2d823ebcc7d98b77189c53062791cdb6",
+      "family_ids": [
+        "F03",
+        "F11",
+        "F13",
+        "F17"
+      ],
+      "proposed_home": "core + profile.memory + host.commit",
+      "disposition": "split_or_merge_preserving_obligation",
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F03",
+          "COORD.F11",
+          "COORD.F13",
+          "COORD.F17"
+        ],
+        "modules": [
+          "core",
+          "memory",
+          "skills",
+          "dialogue",
+          "recall_match",
+          "completion",
+          "inbound",
+          "window"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/policy/window.md",
+          "server/internal/handler/agent_dispatch_v2_handler.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    },
+    {
+      "id": "PRE-004",
+      "kind": "preamble",
+      "source_line": 6,
+      "text": "If a tool result has \"error\" and \"hint\", follow the hint on the next call. Do not repeat the same invalid arguments.",
+      "text_sha256": "858cb3aa3c6bccde15f8f1de179a8165fdea51e889be5e9d95a4423dfe3b8fe4",
+      "family_ids": [
+        "F13",
+        "F16"
+      ],
+      "proposed_home": "host.validation + tool.error_hint",
+      "disposition": "split_or_merge_preserving_obligation",
+      "implementation_status": "mapped_to_candidate",
+      "behavior_verification": "not_run",
+      "implementation": {
+        "policy_version": "2026-09-08.2",
+        "rule_ids": [
+          "COORD.F13",
+          "COORD.F16"
+        ],
+        "modules": [
+          "core",
+          "inbound",
+          "recall_match",
+          "completion"
+        ],
+        "implementation_refs": [
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/coordinator.go"
+        ],
+        "coverage": "source_mapping_only"
+      }
+    }
+  ],
+  "prompt_history_commits": [
+    {
+      "commit": "c18d8d0ff1b79d681e3054437767b457daa01477",
+      "date": "2026-09-07T15:37:00+08:00",
+      "subject": "fix(coordinator): 限定 collect 窗口，让忙时催促及时进入判断",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "9920f712fa2cd6124717bf01cc06e28726f12f5a",
+      "date": "2026-09-06T23:01:24+08:00",
+      "subject": "fix(inboundcoord): work quietly like a colleague",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "86c78458c0daaf9b47843a6a1271095b57f6eb6c",
+      "date": "2026-09-05T17:40:23+08:00",
+      "subject": "fix(coordinator): silence wrap-up when sandbox already spoke",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "6731e823477ba20d8ace2d7a48015f95073283d1",
+      "date": "2026-09-05T16:00:26+08:00",
+      "subject": "feat(coordinator): one scene window, park busy inbound, two @s",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "f35e6ce36ae910561abea058fd212b063e02cdea",
+      "date": "2026-09-05T13:03:45+08:00",
+      "subject": "fix(coordinator): speak as a teammate, merge bursts, drop AI badge",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "20ad21468c28911ff96c1d0b1220b395a132926c",
+      "date": "2026-09-04T12:29:45+08:00",
+      "subject": "feat(coordinator): richer human/flood routing and wrap-up switch copy",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "f75d82ef2c7ccc83c03c262fe596bd8ac4825da7",
+      "date": "2026-09-04T12:20:43+08:00",
+      "subject": "fix(coordinator): deliver task wrap-up and treat group flood as silence",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "b56e52090dd048203c4e91d5fba76cad3d209b40",
+      "date": "2026-09-04T03:58:06+08:00",
+      "subject": "feat(coordinator): collect bursts, skip self inbound, and task-finished wrap-up",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "850c7a1eadf40125b234197fe0ffe187e00320cb",
+      "date": "2026-09-03T14:40:33+08:00",
+      "subject": "fix(inbound): 短循环按上一问办事，无事件卡片不当事项",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "c2d422ca1290ba8b8693bae53e8db57e583db031",
+      "date": "2026-09-03T14:39:32+08:00",
+      "subject": "fix(scene-memory): prune retracted facts and skip e2e debris",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "58e915bf04310e64e84813425deb7e0a0d1435af",
+      "date": "2026-09-03T13:20:32+08:00",
+      "subject": "fix(dispatch): make issue titles readable for humans and models",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "a6dcbb4d22d403d30f9e2929b348a9162be4449c",
+      "date": "2026-09-03T11:59:10+08:00",
+      "subject": "fix(inbound): 短循环禁止用旧事项再派沙箱，也不再合成核对回复",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "ebc3007777ae89c77a77739e223b65a878348f9a",
+      "date": "2026-09-03T02:10:20+08:00",
+      "subject": "fix(inboundcoord): stop busy flood jobs from retrying into 处理失败",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "c9635bfa96eb64c10c6b6886736335c2634662b2",
+      "date": "2026-09-02T20:56:05+08:00",
+      "subject": "feat(scene-memory): flush, recall, flags, and inbound tab",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "6a8c7119208f7a8f9fa3b16b79fcb7b8f361d16c",
+      "date": "2026-09-02T16:40:59+08:00",
+      "subject": "fix(inbound): require bind issue_id in schema and return error hints",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "e75840c134c602424e01063457d8a42d279fa82f",
+      "date": "2026-09-02T16:30:30+08:00",
+      "subject": "feat(inbound): slim recall cards and bind only to existing Issues",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "6cbd8f680730ba37137299b506bb8f21ba60e44e",
+      "date": "2026-09-02T15:25:21+08:00",
+      "subject": "feat(inbound): stop forcing one-card continue; purpose names task elements",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "e31647c039b79fda27b9d671415f05bfd28bbb02",
+      "date": "2026-09-02T15:10:57+08:00",
+      "subject": "fix(inbound): 把 Coordinator 会话从 Chat 列表挪到智能体详情",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "cce2edf41d52dee725e0da280b1a23918c0016ea",
+      "date": "2026-09-02T14:33:36+08:00",
+      "subject": "feat(inbound): keep scene cid on recall and make cards AI-readable",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "31ba6331a20b5e916b8719d07adcc342f027fccf",
+      "date": "2026-09-02T11:48:43+08:00",
+      "subject": "fix(inbound): 完成短循环回复并明确钉钉身份",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "aa38894c8f891595a1efef755f9c468dabceffe1",
+      "date": "2026-09-02T11:16:02+08:00",
+      "subject": "docs(inboundcoord): use calendar booking as the capability few-shot",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "03051579cb4c628c1e5f31ad034541e3802413d7",
+      "date": "2026-09-02T11:09:46+08:00",
+      "subject": "feat(inbound): LLM-injected bind purpose/intent and recall time cards",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "6cb89e9572f1c2c1879a295a833d66b48458bc3f",
+      "date": "2026-09-02T11:05:05+08:00",
+      "subject": "fix(inbound): 明确代办角色与回报对象",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "3f54bfab9ee53291b718dfd74303ab4ba8a15f3c",
+      "date": "2026-09-01T21:21:23+08:00",
+      "subject": "fix(inbound): 成员评论续接召回事项",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "8ecbddeeb4a22cf63aaee0210bf921819b6b0fde",
+      "date": "2026-09-01T20:30:42+08:00",
+      "subject": "feat(inbound): coordinator voice, issue tools, and event body",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "c4a5d7c26c51aef6cc0139099eecd66619ec6383",
+      "date": "2026-09-01T17:34:47+08:00",
+      "subject": "fix(dispatch): 续接外呼回复并补发排队结果",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "f3dfb13980c5cafc44b17d80c8d5532ec9829b8b",
+      "date": "2026-09-01T16:03:33+08:00",
+      "subject": "fix(inbound): 能力请求必须进入Issue",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "af66a63de6ba3410a76d536a617374146c226e31",
+      "date": "2026-09-01T15:57:15+08:00",
+      "subject": "feat(inbound): recall both outbound and inbound scene links, add coordinator voice",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "8e27a3f9ced40fdce4fe7b27eab9c517fda34773",
+      "date": "2026-09-01T14:58:38+08:00",
+      "subject": "fix(inbound): require assoc_recall before answering a named cid",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "3ea9b2b045084cb709e2ff56c7acb168f955e663",
+      "date": "2026-09-01T14:40:09+08:00",
+      "subject": "feat(inbound): run coordinator as a bounded assoc tool loop",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "a4bb882e3dd28cd725b8e0059d874b4d54925ee1",
+      "date": "2026-09-01T10:47:25+08:00",
+      "subject": "fix(inbound): 机器人和数字员工短循环不再注入会话标题",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "5f899138497c179aa24ecbd0f0ed1088abcfc20a",
+      "date": "2026-09-01T10:29:55+08:00",
+      "subject": "fix(inbound): 机器人单聊短循环不再把过期会话标题当最近话题",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "0c70ad5821a262d762fec3baaf3f9b8c02386472",
+      "date": "2026-09-01T01:59:25+08:00",
+      "subject": "fix(inbound): 短循环改回一次 JSON 判定，钉钉近 10 条仍强制带入",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "d1ad28aca39ab7cb294975ec0b9596d14d420f4e",
+      "date": "2026-08-31T23:22:53+08:00",
+      "subject": "feat(inbound): coordinator tool loop with assoc_recall and assoc_bind",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "7b2039b297f098c642ec7de75b39a1c2dd4713d7",
+      "date": "2026-08-31T22:32:07+08:00",
+      "subject": "fix(inbound): 短循环判定前带上钉钉会话近 10 条，网页不拉",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "ad024ebd64b3ba100d890659f9d19642abe1e292",
+      "date": "2026-08-31T22:19:56+08:00",
+      "subject": "feat(assoc): expose scene recall and bind as agent-loop tools",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "67d164cacc5f26b8d4b3f939e080fb1b54c27e06",
+      "date": "2026-08-31T20:06:09+08:00",
+      "subject": "fix(inbound): 短循环按路由判断并强制 qwen3.7-plus",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "b76f28a89c361bcb6e17ba305a9c55c25dbb4432",
+      "date": "2026-08-31T17:37:43+08:00",
+      "subject": "feat(chat): Coordinator 直回在网页展示判断过程",
+      "review_status": "indexed; historical behavioral closure not certified"
+    },
+    {
+      "commit": "a77c5159c05e42789a9c060f7bc1282a2b08f62a",
+      "date": "2026-08-31T16:44:22+08:00",
+      "subject": "feat(inbound): 入站短循环直接回复或进Issue",
+      "review_status": "indexed; historical behavioral closure not certified"
+    }
+  ],
+  "retired_implementation_registry": "server/internal/service/inboundcoord/policy/registry.json#retired_implementations",
+  "implementation_observations": [
+    {
+      "policy_version": "2026-09-07.2",
+      "report_sha256": "91fa4e4180f8e73b2f744dfa93fe176a110f7235b98201c176ba422f61ae073b",
+      "status": "7/9 passed; approval after history still replied with a promise without work in 2/3 repeats",
+      "superseded_by": "2026-09-08.2",
+      "change": "dialogue module explicitly routes an answered execution question to a work plan, not a promise-only reply"
+    }
+  ]
+}

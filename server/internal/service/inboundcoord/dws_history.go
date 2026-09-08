@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -44,7 +46,7 @@ type dwsCredentialRedeemer interface {
 
 type dwsHistoryCLI interface {
 	Exchange(context.Context, string, dwsCredential) error
-	ListMessages(context.Context, string, string, int) ([]byte, error)
+	ListMessages(context.Context, string, string, time.Time, int) ([]byte, error)
 }
 
 // DWSHistoryConfig wires the server-side, per-request DWS history reader.
@@ -102,6 +104,9 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 	if conversationID == "" || uid == "" || orgID == "" || !turn.AgentID.Valid {
 		return nil, errors.New("DWS history identity or conversation is incomplete")
 	}
+	if turn.HistoryBefore.IsZero() {
+		return nil, errors.New("DWS history requires a fixed window cutoff")
+	}
 
 	runID := "inbound-dws-" + uuid.NewString()
 	issued, err := l.issuer.CreateContext(ctx, agentidentityhsf.CreateContextRequest{
@@ -140,11 +145,11 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 	if err := l.cli.Exchange(ctx, dir, credential); err != nil {
 		return nil, err
 	}
-	raw, err := l.cli.ListMessages(ctx, dir, conversationID, dwsHistoryQueryLimit)
+	raw, err := l.cli.ListMessages(ctx, dir, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
 	if err != nil {
 		return nil, err
 	}
-	return parseDWSHistory(raw, turn.EvidenceID)
+	return parseDWSHistory(raw, turn)
 }
 
 type httpDWSCredentialRedeemer struct {
@@ -177,58 +182,89 @@ func (c *osDWSHistoryCLI) Exchange(ctx context.Context, configDir string, creden
 	})
 }
 
-func (c *osDWSHistoryCLI) ListMessages(ctx context.Context, configDir, conversationID string, limit int) ([]byte, error) {
+func (c *osDWSHistoryCLI) ListMessages(ctx context.Context, configDir, conversationID string, before time.Time, limit int) ([]byte, error) {
+	if before.IsZero() {
+		return nil, errors.New("DWS history requires a fixed window cutoff")
+	}
 	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret}.List(ctx, configDir, dwsclient.ListRequest{
 		ConversationID: conversationID,
-		Before:         time.Now().Add(time.Minute),
+		Before:         before,
 		Direction:      "older",
 		Limit:          limit,
 	})
 }
 
 type dwsHistoryMessage struct {
-	Content       string `json:"content"`
-	CreateTime    string `json:"createTime"`
-	OpenMessageID string `json:"openMessageId"`
-	Sender        string `json:"sender"`
+	Content       string          `json:"content"`
+	CreateTime    json.RawMessage `json:"createTime"`
+	OpenMessageID string          `json:"openMessageId"`
+	Sender        string          `json:"sender"`
+	SenderUID     string          `json:"senderUid"`
+	SenderID      string          `json:"senderId"`
 	QuotedMessage *struct {
-		Content string `json:"content"`
-		Sender  string `json:"sender"`
+		Content       string `json:"content"`
+		Sender        string `json:"sender"`
+		SenderUID     string `json:"senderUid"`
+		SenderID      string `json:"senderId"`
+		OpenMessageID string `json:"openMessageId"`
 	} `json:"quotedMessage"`
 }
 
 type dwsMessageListResponse struct {
-	Success   bool                `json:"success"`
-	ErrorCode string              `json:"errorCode"`
-	ErrorMsg  string              `json:"errorMsg"`
-	Messages  []dwsHistoryMessage `json:"messages"`
-	Result    json.RawMessage     `json:"result"`
+	Success   bool            `json:"success"`
+	ErrorCode string          `json:"errorCode"`
+	ErrorMsg  string          `json:"errorMsg"`
+	Messages  json.RawMessage `json:"messages"`
+	Result    json.RawMessage `json:"result"`
 }
 
-func parseDWSHistory(raw []byte, currentMessageID string) ([]HistoryLine, error) {
+func parseDWSHistory(raw []byte, turn Turn) ([]HistoryLine, error) {
 	var payload dwsMessageListResponse
 	if json.Unmarshal(raw, &payload) != nil {
 		return nil, errors.New("decode DWS conversation history response")
 	}
-	messages := payload.Messages
-	if len(messages) == 0 && len(payload.Result) > 0 && payload.Result[0] == '{' {
+	messagesRaw := payload.Messages
+	if len(messagesRaw) == 0 && len(payload.Result) > 0 && payload.Result[0] == '{' {
 		var nested struct {
-			Messages []dwsHistoryMessage `json:"messages"`
+			Messages json.RawMessage `json:"messages"`
 		}
-		if json.Unmarshal(payload.Result, &nested) == nil {
-			messages = nested.Messages
+		if err := json.Unmarshal(payload.Result, &nested); err != nil {
+			return nil, errors.New("decode nested DWS conversation history response")
+		}
+		messagesRaw = nested.Messages
+	}
+	var messages []dwsHistoryMessage
+	if len(messagesRaw) > 0 && string(messagesRaw) != "null" {
+		if err := json.Unmarshal(messagesRaw, &messages); err != nil {
+			return nil, errors.New("decode DWS conversation history messages")
 		}
 	}
 	if !payload.Success && len(messages) == 0 {
 		return nil, dwsclient.HistoryRejected(payload.ErrorCode, payload.ErrorMsg)
 	}
-	currentMessageID = strings.TrimSpace(currentMessageID)
+	if len(messagesRaw) == 0 || string(messagesRaw) == "null" {
+		return nil, errors.New("DWS conversation history response is missing messages")
+	}
+	windowMessageIDs := make(map[string]struct{})
+	if turn.EvidenceID != "" {
+		windowMessageIDs[turn.EvidenceID] = struct{}{}
+	}
+	for _, utterance := range turn.Utterances {
+		if utterance.EvidenceID != "" {
+			windowMessageIDs[utterance.EvidenceID] = struct{}{}
+		}
+	}
 	newestFirst := make([]HistoryLine, 0, dingtalkHistoryLimit)
 	for _, message := range messages {
-		if currentMessageID != "" && strings.TrimSpace(message.OpenMessageID) == currentMessageID {
+		if _, current := windowMessageIDs[message.OpenMessageID]; current {
 			continue
 		}
-		content := clipRunes(strings.TrimSpace(message.Content), 160)
+		timestamp, timestampRaw := parseHistoryTimestamp(message.CreateTime)
+		if !turn.HistoryBefore.IsZero() && !timestamp.IsZero() && !timestamp.Before(turn.HistoryBefore) {
+			continue
+		}
+		contentRaw := strings.TrimSpace(message.Content)
+		content := clipRunes(contentRaw, 160)
 		if content == "" {
 			continue
 		}
@@ -236,8 +272,17 @@ func parseDWSHistory(raw []byte, currentMessageID string) ([]HistoryLine, error)
 		if role == "" {
 			role = "dingtalk"
 		}
+		line := HistoryLine{
+			Role: role, EvidenceID: message.OpenMessageID,
+			Timestamp: timestamp, TimestampRaw: timestampRaw,
+			SenderID:         firstNonEmpty(message.SenderUID, message.SenderID),
+			ContentTruncated: utf8.RuneCountInString(contentRaw) > 160,
+		}
 		if message.QuotedMessage != nil {
+			line.ReplyToEvidenceID = message.QuotedMessage.OpenMessageID
+			line.ReplyToSenderID = firstNonEmpty(message.QuotedMessage.SenderUID, message.QuotedMessage.SenderID)
 			quotedContent := clipRunes(strings.TrimSpace(message.QuotedMessage.Content), 160)
+			line.ContentTruncated = line.ContentTruncated || utf8.RuneCountInString(strings.TrimSpace(message.QuotedMessage.Content)) > 160
 			if quotedContent != "" {
 				quotedSender := clipRunes(strings.Join(strings.Fields(message.QuotedMessage.Sender), " "), 40)
 				if quotedSender == "" {
@@ -246,11 +291,8 @@ func parseDWSHistory(raw []byte, currentMessageID string) ([]HistoryLine, error)
 				content += "\n  引用消息（" + quotedSender + "）：" + quotedContent
 			}
 		}
-		newestFirst = append(newestFirst, HistoryLine{
-			Role:       role,
-			Content:    content,
-			EvidenceID: strings.TrimSpace(message.OpenMessageID),
-		})
+		line.Content = content
+		newestFirst = append(newestFirst, line)
 		if len(newestFirst) == dingtalkHistoryLimit {
 			break
 		}
@@ -259,4 +301,35 @@ func parseDWSHistory(raw []byte, currentMessageID string) ([]HistoryLine, error)
 		newestFirst[i], newestFirst[j] = newestFirst[j], newestFirst[i]
 	}
 	return newestFirst, nil
+}
+
+// parseHistoryTimestamp keeps the source value even when it cannot be placed
+// on a timeline. A display time without a timezone is not an authorization
+// ordering anchor and must never be interpreted using the server's timezone.
+func parseHistoryTimestamp(raw json.RawMessage) (time.Time, string) {
+	value := strings.TrimSpace(string(raw))
+	if value == "" || value == "null" {
+		return time.Time{}, ""
+	}
+	if strings.HasPrefix(value, "\"") {
+		var decoded string
+		if json.Unmarshal(raw, &decoded) != nil {
+			return time.Time{}, value
+		}
+		value = decoded
+	}
+	if timestamp, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return timestamp, value
+	}
+	if len(value) == 13 {
+		if millis, err := strconv.ParseInt(value, 10, 64); err == nil && millis > 0 {
+			return time.UnixMilli(millis).UTC(), value
+		}
+	}
+	if len(value) == 10 {
+		if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 {
+			return time.Unix(seconds, 0).UTC(), value
+		}
+	}
+	return time.Time{}, value
 }

@@ -1,0 +1,53 @@
+{
+  "id": "coordinator-progressive-smoke",
+  "status": "PASS",
+  "environment": "pre",
+  "agent_id": "e2293e9e-1e79-4926-b0e6-da4cb693add0",
+  "workspace_id": "d4f9ceed-d114-4312-bb30-dd791aee039b",
+  "profile": "collect-pre-942f",
+  "sender_role": "主角",
+  "conversation_id": "cid+bEFv7ngm9n79Q1vL9HYJw==",
+  "required_policy_version": "2026-09-08.2",
+  "required_replica_marker": "[coordinator-plan:window-plan-v1]",
+  "cases": [
+    {
+      "id": "capability_inventory",
+      "ask": "你有哪些 skill？",
+      "expect": "one reply from installed catalog; no work item; no history read; active policy manifest",
+      "status": "PASS",
+      "trace_url": "https://unify-aipilot.dingtalk.com/project/cmbio3oju0007l23kgk4f9li8/traces?peek=db03484cc34b4e3ea0fcc97dc4c97955"
+    },
+    {
+      "id": "missing_payload",
+      "ask": "给 dxxh 发条消息。",
+      "expect": "clarify content; no Issue or continuation",
+      "status": "PASS",
+      "trace_url": "https://unify-aipilot.dingtalk.com/project/cmbio3oju0007l23kgk4f9li8/traces?peek=f190140433ad48948616a591a3595709"
+    },
+    {
+      "id": "sandbox_echo",
+      "ask": "这是一项独立预发测试：实际执行 printf PGCTX_OK_0908_0116，把命令输出发到当前会话，只发一次。",
+      "expect": "new work plan then one real task; output independently visible in this conversation; no duplicate wrap-up",
+      "status": "PASS",
+      "trace_url": "https://unify-aipilot.dingtalk.com/project/cmbio3oju0007l23kgk4f9li8/traces?peek=4cde2db376b14600bcefe536e664a643"
+    },
+    {
+      "id": "presence",
+      "ask": "你在吗？",
+      "expect": "useful presence reply; no new work; does not wait for sandbox capacity",
+      "status": "PASS",
+      "trace_url": "https://unify-aipilot.dingtalk.com/project/cmbio3oju0007l23kgk4f9li8/traces?peek=1304d84fcd4a4be392f5ac4d79652448"
+    }
+  ],
+  "evidence": [
+    "Aone deployed source and all live replica markers",
+    "Langfuse actual system policy/version, tool path and input usage",
+    "Multica actual Issue/Task outcomes",
+    "DWS same-cid readback"
+  ],
+  "limits": "Four live smoke cases, including presence while busy; not all 19 historical live scenarios. Initial failures and recovered Runtime send preflight are retained in the result report.",
+  "completed_at": "2026-09-08T01:24:00+08:00",
+  "source_commit": "e42375e5bb3f52d3a37991b1dc9ec26441255e77",
+  "deployed_release_commit": "d6fe8447e44946a5d3757dc0de3f42038e034497",
+  "pipeline_run_id": 3107158566
+}
