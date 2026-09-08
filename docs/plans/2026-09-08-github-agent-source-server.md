@@ -1,6 +1,6 @@
 # GitHub Agent 创建与确认同步
 
-支持 DTA `dingtalk-agent/project@1` 以及可导出的 `multica.agent/v1` JSON manifest，直接读取仓库中的定义文件。开发者修改仓库并正常提交代码；Multica 读取固定 commit，预览后创建或同步 Agent。没有 CLI 构建、上传 Bundle 的步骤。
+Git 创建与同步支持 DTA `dingtalk-agent/project@1` 以及 `multica.agent/v1` JSON manifest，直接读取仓库中的定义文件。开发者修改仓库并正常提交代码；Multica 读取固定 commit，预览后创建或同步 Agent。平台当前配置另可导出为 v2 Agent ZIP；上传包已支持校验预览，v2 配置写入待接入。两种来源都不要求 CLI 构建 Bundle。
 
 ## 已实现范围
 
@@ -104,11 +104,13 @@
 
 旧的无 body `/source/sync` 不再直接更新。包括旧 DTA Git deploy 调用在内的 API 客户端，必须升级为预览再确认；创建的 SHA 请求兼容性不代表旧同步协议仍可用。
 
-## 源码导出与 JSON manifest
+## Agent 包导出与 JSON manifest
 
-`GET /api/agents/{agentId}/export`：Agent 所有者或工作区 owner/admin 可以下载当前配置的源码 ZIP；普通访问者拒绝。返回 `application/zip`、附件文件名和 `Cache-Control: no-store`。只读 repeatable-read 事务读取一个一致的 Agent/skill/文件快照。
+`GET /api/agents/{agentId}/export`：Agent 所有者或工作区 owner/admin 可以下载当前配置的 Agent ZIP；普通访问者拒绝。返回 `application/zip`、附件文件名和 `Cache-Control: no-store`。只读 repeatable-read 事务读取一个一致的 Agent 配置、关联策略、skill 和文件快照。
 
-导出包含 `agent.json`、`agent.schema.json`、指令文件、全部已分配 skills 的 SKILL.md 和配套文本文件。保留停用状态。Git 来源保持已知指令路径和 skill 目录；手动添加的 skill 使用独立 `workspace-skills/<id>` 目录避免名称碰撞。来源 skill 去除服务端隔离名称后缀；内容原样保留，manifest 的 skill name/description 是导入时的元数据来源。
+导出把平台当前保存的 Agent 内容整理为 ZIP，包含 v2 `agent.json`、`agent.schema.json`、指令文件、全部已分配 skills 的 SKILL.md 和配套文本文件，以及待绑定资源/值说明 `EXPORT-NOTES.json`。保留停用状态。Git 来源保持已知指令路径和 skill 目录；手动添加的 skill 使用独立 `workspace-skills/<id>` 目录避免名称碰撞。来源 skill 去除服务端隔离名称后缀；内容原样保留，manifest 的 skill name/description 是导入时的元数据来源。内容来自同一次平台数据库快照，Git 记录只提供目录布局，不使用历史版本覆盖平台修改。
+
+以下为现有 Git 创建流程仍支持的最小 v1 示例；平台导出的 v2 配置包示例见 [Agent manifest 文档](../agent-manifest.md)。
 
 ```json
 {
@@ -125,11 +127,13 @@
 
 权威 JSON Schema 在 `server/internal/agentsource/agent.schema.json`，随每份导出提供；服务端使用固定版本契约验证，绝不读取仓库声明的任意远端 schema。`skills: []` 合法，不自动注入 DTA 基础 skill。预览响应的每个 skill 增加 `enabled`；旧响应省略时客户端不推断停用。
 
+Schema 后续扩充了 `multica.agent/v2` 的完整配置契约，见 [Agent 仓库 Manifest](../agent-manifest.md)。服务端实际使用该 Schema 校验 `agent.json`，再解析引用文件；ZIP 包上传预览与 Git 共用解析器。当前平台导出使用 v2；v2 包可以校验、解析，配置写入尚未接入，Git 创建与发布仍明确拒绝 v2。创建页顶部提供“下载 Schema”，通过 `GET /api/agent-schema` 下载服务端内置的同一份文件。
+
 仓库根只允许一个入口：`agent.json` 或 `dingtalk-agent.json`，同时存在时拒绝，避免选错定义。既有 YAML 不作为 Git 导入的自动回退。两个格式共用固定 SHA、预览确认、权限重查、事务落库和 diff 流程。
 
-导出不读取环境变量、运行配置、MCP 凭据、账号绑定、权限授予或聊天任务记忆；skill 正文和配套文件是用户编写的内容，按原文导出。所有导入 skill 都成为新 Agent 的专属工作区 skill。源码导出完成前会经过真实导入器校验；路径冲突、二进制、超限或会被跳过的文件返回 422，避免下载后才发现无法恢复。沿用最多 20 skills、单文件 1 MiB、单 skill 8 MiB、总计 32 MiB 等导入限制。
+导出读取当前运行配置、数字员工行为、环境变量结构、MCP 配置、OKR、访问权限、资源关联与 A2A 策略；凭据和无法分类的配置值使用 `secret_ref`，不下载真实值。运行时、插件、身份、账号和电脑使用待绑定资源引用。外部服务托管的 GitHub 执行身份需要另外检查和绑定。聊天、任务和记忆记录不属于此配置包；skill 正文和配套文件按原文导出。所有导入 skill 都成为新 Agent 的专属工作区 skill。压缩包完成前会经过统一 Schema 和包解析器校验；路径冲突、二进制、超限或会被跳过的文件返回 422。沿用最多 20 skills、单文件 1 MiB、单 skill 8 MiB、总计 32 MiB 等导入限制。
 
-ZIP 只用于下载源码目录，解压后正常提交到 Git；创建和发布始终直接读取 Git，无 CLI build/bundle 或上传产物阶段。后续目录移动在同一事务内先移除旧路径，再创建新路径，支持保留 skill 名称；失败整体回滚。
+ZIP 是 Agent manifest 和数据文件的传输包，可用于下载和上传校验预览；Git 流程直接读取相同目录内容，不经过 CLI build/bundle。当前实际创建和发布仍为 v1 Git 流程；其中目录移动在同一事务内先移除旧路径，再创建新路径，支持保留 skill 名称，失败整体回滚。
 
 滚动部署时，新版能读取旧 DTA 预览；包含新 JSON manifest 的预览带额外配置摘要，旧服务端会拒绝而不会按旧格式错误应用。若请求碰到旧副本，待发布完成后重新预览即可。本轮不新增数据库迁移。
 
@@ -165,3 +169,9 @@ ZIP 只用于下载源码目录，解压后正常提交到 Git；创建和发布
 - 2026-09-08 发布适配：合入 develop 的配置导航，将导入导出接到管理分组；将尚未发布的新增迁移改用 9159–9162，避开主干已有编号。
 
 - 2026-09-08 创建与管理补齐：新增从 Git 创建页面、源码导出接口及 JSON Schema，管理拆为导出和发布。原因：补齐创建可发现性与可往返导出，支持普通 Agent 没有 DTA 基础 skill 的场景；保留启停状态和来源路径，修复改目录后的同名 skill 发布冲突。
+
+- 2026-09-08 Schema 扩充：新增 `multica.agent/v2` 配置契约和逐项映射，保留 v1 导入、导出、发布行为。原因：v1 无法表达当前数字员工行为、工具、执行参数、OKR 和接入策略；先定义完整 Schema、资源引用与清空语义，再接入服务端适配器，避免新字段被部分应用。
+
+- 2026-09-08 导出语义修正：将平台导出改为当前数据库快照的 v2 Agent ZIP，补齐配置、OKR、权限、资源关联及 A2A 策略；创建页面提供权威 Schema 下载。原因：导出应保存平台当前 Agent，不能仅导出指令和 skills，也不能要求先有 Git 仓库；不改变仍只支持 v1 写入的 Git 创建和发布接口。
+
+- 2026-09-08 包解析：接入内置 JSON Schema 结构校验及 ZIP 上传预览，Git 的 JSON manifest 使用同一个解析器；提供字段路径错误，延迟读取引用文件。原因：统一“先校验 manifest，再按 JSON 解析包内数据”的实际代码链路；ZIP 用于传输源码包，不要求 CLI 构建产物。
