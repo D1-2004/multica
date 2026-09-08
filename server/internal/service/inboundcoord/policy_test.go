@@ -96,6 +96,9 @@ func TestPolicyManifestMatchesActualPromptAndModuleBudgets(t *testing.T) {
 	if manifest.Characters > 9500 {
 		t.Fatalf("direct-answer system prompt regressed to %d characters", manifest.Characters)
 	}
+	if !strings.Contains(prompt, "must assoc_recall this scene then finish action=issue") {
+		t.Fatal("inbound policy lost the default dispatch-and-associate rule")
+	}
 	for _, module := range coordinatorPolicy.Modules {
 		if policyHash(policyModuleBody(module)) != module.ContentHash {
 			t.Errorf("module %s content changed without updating registered provenance", module.ID)

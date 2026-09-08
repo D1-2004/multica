@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-08.5",
+  "policy_version": "2026-09-08.6",
   "assembly_version": "2",
   "modules": [
     {
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "7",
+      "version": "8",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -58,8 +58,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 4729,
-      "content_sha256": "0d9338eb690a45e1a8d79ffd40b4c95ff97aaa06f1d91ae196f13f1bf932e84f"
+      "budget_characters": 4747,
+      "content_sha256": "d4da3c3b10aa5e9801780647ef97201b813bc8c12e4cd12220e9222ed2af9e2e"
     },
     {
       "id": "channel",
@@ -147,7 +147,7 @@
     },
     {
       "id": "skills",
-      "version": "3",
+      "version": "4",
       "file": "skills.md",
       "applies_when": "skill_snapshots_available",
       "requires": [
@@ -159,8 +159,8 @@
         "COORD.F04",
         "COORD.F14"
       ],
-      "budget_characters": 690,
-      "content_sha256": "74093cf3fd84d19e81d9c7bbf873995a2e015f173636f4c87cf4952b9b7ea0f3"
+      "budget_characters": 709,
+      "content_sha256": "9adbde565b27802f3d3a2b562ed0bc58ea8cdf91fc2cda63b8cefe782932752f"
     },
     {
       "id": "dialogue",
