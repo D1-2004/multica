@@ -678,7 +678,7 @@ func TestCoordinatorWindowPlanContinuationPreservesTokenAndSingleDeliverable(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(comment.Content, "本次续接只推进这一个交付物：把原会议改到三点\n") || !strings.Contains(comment.Content, "其它已分派工作不属于本次执行范围") || !strings.Contains(comment.Content, f.command.Event.Data.Messages[0].Text) {
+	if !strings.HasPrefix(comment.Content, "本次续接只推进这一个交付物：仅调整原会议时间\n") || !strings.Contains(comment.Content, "其它已分派工作不属于本次执行范围") || !strings.Contains(comment.Content, f.command.Event.Data.Messages[0].Text) {
 		t.Fatal("continuation lost its single scope or original evidence")
 	}
 }
