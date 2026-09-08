@@ -1,3 +1,4 @@
+import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
 import type {
   Issue,
   IssuePriority,
@@ -2250,6 +2251,18 @@ export class ApiClient {
         body: JSON.stringify(data),
       },
     );
+  }
+
+  async getASBNetworkPolicy(runtimeId: string) {
+    const endpoint = `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-network-policy`;
+    const raw = await this.fetch<unknown>(endpoint);
+    return parseWithFallback(raw, ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY, { endpoint });
+  }
+
+  async updateASBNetworkPolicy(runtimeId: string, customTargets: string[]) {
+    const endpoint = `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-network-policy`;
+    const raw = await this.fetch<unknown>(endpoint, { method: "PUT", body: JSON.stringify({ custom_targets: customTargets }) });
+    return parseWithFallback(raw, ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY, { endpoint });
   }
 
   async validateASBRuntimeCredential(

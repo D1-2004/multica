@@ -207,7 +207,23 @@
     "toast_deleted": "已删除运行时",
     "toast_delete_failed": "删除运行时失败",
     "running_chip_other": "· {{count}} 个进行中",
-    "queued_chip_other": "· {{count}} 个排队中"
+    "queued_chip_other": "· {{count}} 个排队中",
+    "asb_network": {
+      "title": "网络白名单",
+      "description": "默认拒绝未放行的出站连接。必需服务和智能体已配置的服务地址会自动加入白名单。",
+      "loading": "正在加载网络策略...",
+      "load_failed": "无法加载网络策略，请重新加载后编辑。",
+      "retry": "重试",
+      "defaults": "默认放行地址（{{count}}）",
+      "custom": "追加放行地址",
+      "hint": "每行一个精确域名或 IP，最多 256 条。不支持 URL、通配符和 CIDR 网段。",
+      "applies": "修改从下次任务启动时生效。旧策略沙箱会被替换，仅保存在沙箱内的文件不会保留。正在运行的任务使用原策略完成。",
+      "save": "保存",
+      "saving": "正在保存...",
+      "cancel": "取消",
+      "saved": "网络白名单已保存，将在下次任务启动时生效。",
+      "save_failed": "无法保存网络白名单。"
+    }
   },
   "detail_page": {
     "not_found_title": "未找到运行时",

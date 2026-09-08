@@ -65,6 +65,7 @@ type ASBImageSpec struct {
 }
 
 type ASBCreateSandboxInput struct {
+	NetworkPolicy  ASBNetworkPolicy
 	ImageURI       string
 	TimeoutSeconds int
 	ResourceCPU    string
@@ -76,6 +77,7 @@ type ASBCreateSandboxInput struct {
 }
 
 type asbCreateSandboxRequest struct {
+	NetworkPolicy  ASBNetworkPolicy  `json:"networkPolicy"`
 	Image          ASBImageSpec      `json:"image"`
 	Timeout        int               `json:"timeout"`
 	ResourceLimits map[string]string `json:"resourceLimits"`
@@ -339,9 +341,28 @@ func (c *ASBClient) CreateSandbox(ctx context.Context, input ASBCreateSandboxInp
 		return nil, errors.New("ASB wireguard.lazyAuth and wireguard.worker extensions are mutually exclusive")
 	}
 
+	// An omitted policy is fail-closed at the lowest creation boundary.
+	if input.NetworkPolicy.DefaultAction == "" {
+		input.NetworkPolicy.DefaultAction = "deny"
+	}
+	if input.NetworkPolicy.DefaultAction != "deny" {
+		return nil, errors.New("ASB network policy must default to deny")
+	}
+	if input.NetworkPolicy.Egress == nil {
+		input.NetworkPolicy.Egress = []ASBNetworkRule{}
+	}
+	for _, rule := range input.NetworkPolicy.Egress {
+		if rule.Action != "allow" || strings.TrimSpace(rule.Target) == "" {
+			return nil, errors.New("ASB network rules must explicitly allow targets")
+		}
+		if _, err := NormalizeASBNetworkTargets([]string{rule.Target}); err != nil {
+			return nil, err
+		}
+	}
 	request := asbCreateSandboxRequest{
-		Image:   ASBImageSpec{URI: input.ImageURI},
-		Timeout: input.TimeoutSeconds,
+		NetworkPolicy: input.NetworkPolicy,
+		Image:         ASBImageSpec{URI: input.ImageURI},
+		Timeout:       input.TimeoutSeconds,
 		ResourceLimits: map[string]string{
 			"cpu":    input.ResourceCPU,
 			"memory": input.ResourceMemory,
@@ -351,6 +372,10 @@ func (c *ASBClient) CreateSandbox(ctx context.Context, input ASBCreateSandboxInp
 		Entrypoint: append([]string(nil), input.Entrypoint...),
 		Extensions: cloneStringMap(input.Extensions),
 	}
+	if request.Metadata == nil {
+		request.Metadata = map[string]string{}
+	}
+	request.Metadata[asbNetworkPolicyFingerprintKey] = input.NetworkPolicy.Fingerprint()
 	var sandbox ASBSandbox
 	if err := c.doLifecycleJSON(ctx, "create_sandbox", http.MethodPost, "/sandboxes", nil, request, &sandbox, http.StatusCreated, http.StatusOK, http.StatusAccepted); err != nil {
 		return nil, err

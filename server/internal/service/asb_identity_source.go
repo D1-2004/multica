@@ -109,7 +109,12 @@ func (m *ASBIdentitySourceManager) Create(
 	if err != nil {
 		return EnterpriseIdentitySourceAvailability{}, err
 	}
+	settings, err := asbNetworkSettings(config, runtime, nil)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
 	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
+		NetworkPolicy:  settings.Policy(),
 		ImageURI:       metadata.ArtifactRef,
 		TimeoutSeconds: asbMaxCreateTimeout,
 		ResourceCPU:    config.ResourceCPU,
@@ -245,7 +250,12 @@ func (m *ASBIdentitySourceManager) Rotate(
 		}
 		predecessorPresent = false
 	}
+	settings, err := asbNetworkSettings(config, runtime, nil)
+	if err != nil {
+		return EnterpriseIdentitySourceAvailability{}, err
+	}
 	sandbox, err := m.Capacity.Create(ctx, runtimeID, client, ASBCreateSandboxInput{
+		NetworkPolicy:  settings.Policy(),
 		ImageURI:       metadata.ArtifactRef,
 		TimeoutSeconds: asbMaxCreateTimeout,
 		ResourceCPU:    config.ResourceCPU,

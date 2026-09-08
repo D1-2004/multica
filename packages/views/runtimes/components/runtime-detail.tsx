@@ -51,6 +51,7 @@ import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
 import { UpdateSection } from "./update-section";
 import { UpdateFCE2BRuntimeTemplateDialog } from "./update-fc-e2b-runtime-template-dialog";
+import { ASBNetworkPolicySection } from "./asb-network-policy-section";
 import { ASBRuntimeCredentialSection } from "./asb-runtime-credential-section";
 import { runtimeRowLabel } from "./runtime-machines";
 import { useT, useTimeAgo } from "../../i18n";
@@ -242,7 +243,10 @@ export function RuntimeDetail({
               agentHref={(id) => paths.agentDetail(id)}
             />
             {isAdmin && isASBRuntime(runtime) && (
-              <ASBRuntimeCredentialSection runtimeId={runtime.id} />
+              <>
+<ASBRuntimeCredentialSection runtimeId={runtime.id} />
+<ASBNetworkPolicySection key={runtime.id} runtimeId={runtime.id} />
+</>
             )}
             <DiagnosticsCard
               runtime={runtime}
