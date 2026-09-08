@@ -38,6 +38,39 @@ func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
 	}
 }
 
+func TestRequireNoFakeWorkReplyRejectsClaimedSandboxEffects(t *testing.T) {
+	reportTurn := Turn{
+		Message: "你好，今天主要工作是对顺丰的风景台进行需求调研",
+		Skills:  []SkillSnapshot{{Name: "work-report-operator", Description: "当用户提交或更新本人日报时使用"}},
+	}
+	if err := requireNoFakeWorkReply(reportTurn, `{"action":"reply","text":"收到。顺丰风景台的需求调研已记录，今天会重点跟进这块工作。"}`); err == nil {
+		t.Fatal("claimed 已记录 must not pass as reply")
+	}
+	if err := requireNoFakeWorkReply(reportTurn, `{"action":"reply","text":"好，等你把今天的日报正文发过来。"}`); err != nil {
+		t.Fatalf("asking for the report body is a legal reply: %v", err)
+	}
+	if err := requireNoFakeWorkReply(reportTurn, `{"action":"issue","text":"我去把今天这段记进日报","delegator":"G酱","purpose":"提交G酱今日日报：顺丰风景台需求调研","intent":"other"}`); err != nil {
+		t.Fatalf("issue path must pass: %v", err)
+	}
+
+	lookupTurn := Turn{
+		Message: "平台方是否应对AI练货底层模型稳定性进行兜底及透出底层日志",
+		Skills:  []SkillSnapshot{{Name: "knowledge-query", Description: "查询 Semantica 中当前生效的正式口径"}},
+	}
+	if err := requireNoFakeWorkReply(lookupTurn, `{"action":"reply","text":"这个问题涉及平台责任边界和技术透明度，我需要先查一下咱们内部有没有相关的正式口径或历史决策。\n\n我查一下现有记录里有没有类似情况的处理先例，稍后给你更具体的建议。"}`); err == nil {
+		t.Fatal("我先查一下 / 稍后给你 must not pass as reply")
+	}
+	if err := requireNoFakeWorkReply(lookupTurn, `{"action":"reply","text":"我看了下，目前内网 VOC 数据获取确实存在被动和不同步的情况。要解决这个问题，建议从这几个方向入手：建立主动订阅机制。"}`); err == nil {
+		t.Fatal("fabricated consulting plan must not pass as reply")
+	}
+	if err := requireNoFakeWorkReply(Turn{Message: "在吗"}, `{"action":"reply","text":"在，有事直接说。"}`); err != nil {
+		t.Fatalf("presence reply must pass: %v", err)
+	}
+	if _, err := parseValidatedWindowPlan(`{"action":"reply","text":"收到。顺丰风景台的需求调研已记录，今天会重点跟进这块工作。"}`, reportTurn, nil, nil); err == nil {
+		t.Fatal("window plan must reject the claimed-record reply")
+	}
+}
+
 func (s *scriptedCompleter) Chat(_ context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
 	s.params = append(s.params, params)
 	if s.calls >= len(s.rounds) {
