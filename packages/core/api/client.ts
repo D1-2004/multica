@@ -5552,6 +5552,16 @@ export class ApiClient {
     );
   }
 
+  async exportAgent(agentId: string): Promise<Blob> {
+    const response = await this.fetchRaw(`/api/agents/${encodeURIComponent(agentId)}/export`);
+    if (response.headers.get("content-type")?.split(";")[0] !== "application/zip") {
+      throw new Error("Invalid agent export response");
+    }
+    const blob = await response.blob();
+    if (blob.size === 0) throw new Error("Empty agent export response");
+    return blob;
+  }
+
   async getAgentSource(agentId: string): Promise<AgentSource> {
     const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source`);
     return parseWithFallback(raw, AgentSourceSchema, EMPTY_AGENT_SOURCE, {

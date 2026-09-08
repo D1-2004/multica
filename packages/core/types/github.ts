@@ -165,6 +165,7 @@ export interface ListGitHubAgentRepositoriesResponse {
 }
 
 export interface GitHubAgentSkillPreview {
+  enabled?: boolean;
   source_path: string;
   name: string;
   description: string;

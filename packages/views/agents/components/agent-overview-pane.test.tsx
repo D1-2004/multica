@@ -66,8 +66,9 @@ vi.mock("./tabs/dsh-plugins-tab", () => ({
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
-vi.mock("./tabs/import-export-tab", () => ({
-  ImportExportTab: () => <div>import-export-tab</div>,
+vi.mock("./tabs/export-tab", () => ({ ExportTab: () => <div>export-tab</div> }));
+vi.mock("./tabs/publish-tab", () => ({
+  PublishTab: () => <div>publish-tab</div>,
 }));
 vi.mock("./tabs/scene-memory-tab", () => ({
   SceneMemoryTab: () => <div>scene-memory-tab</div>,
@@ -561,7 +562,7 @@ describe("AgentOverviewPane Plugins tab visibility", () => {
   });
 });
 
-it("shows import and export in Configuration for a Git-created Agent", () => {
+it("shows publishing in Configuration for a Git-created Agent", () => {
   renderPane([], { source: {
     agent_id: "agent-1", source_type: "github", installation_id: "installation",
     repository: "acme/agent", ref: "main", manifest_path: "dingtalk-agent.json",
@@ -569,12 +570,14 @@ it("shows import and export in Configuration for a Git-created Agent", () => {
     last_sync_attempt_at: null, last_synced_at: "", github_connected: true,
   } });
   openConfiguration();
-  fireEvent.click(screen.getByRole("tab", { name: "Import / Export" }));
-  expect(screen.getByText("import-export-tab")).toBeDefined();
+  fireEvent.click(screen.getByRole("tab", { name: "Publish" }));
+  expect(screen.getByText("publish-tab")).toBeDefined();
 });
 
-it("does not show the Git import and export tab on a manually created Agent", () => {
+it("shows separate export and publish sections on a manually created Agent", () => {
   renderPane([]);
   openConfiguration();
-  expect(screen.queryByRole("tab", { name: "Import / Export" })).toBeNull();
+  expect(screen.getByRole("tab", { name: "Publish" })).toBeDefined();
+  fireEvent.click(screen.getByRole("tab", { name: "Export" }));
+  expect(screen.getByText("export-tab")).toBeDefined();
 });

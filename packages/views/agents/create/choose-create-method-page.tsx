@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronRight, FileText, MessageSquare } from "lucide-react";
+import { ChevronRight, FileText, GitBranch, MessageSquare } from "lucide-react";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { cn } from "@multica/ui/lib/utils";
 import { AppLink, useBackOrReplace, useNavigation } from "../../navigation";
@@ -34,6 +34,7 @@ export function ChooseCreateMethodPage() {
         <CreateMethodChooser
           blankHref={withSquadParam(paths.newAgentManual(), squadId)}
           aiHref={withSquadParam(paths.newAgentAi(), squadId)}
+          gitHref={withSquadParam(paths.newAgentGit(), squadId)}
         />
       </main>
     </AgentCreateShell>
@@ -43,12 +44,20 @@ export function ChooseCreateMethodPage() {
 export function CreateMethodChooser({
   blankHref,
   aiHref,
+  gitHref,
 }: {
   blankHref: string;
   aiHref: string;
+  gitHref: string;
 }) {
   const { t } = useT("agents");
   const modes = [
+    {
+      icon: GitBranch,
+      title: t(($) => $.creation_studio.modes.git.title),
+      description: t(($) => $.creation_studio.modes.git.description),
+      href: gitHref,
+    },
     {
       icon: FileText,
       title: t(($) => $.creation_studio.modes.blank.title),
@@ -76,7 +85,7 @@ export function CreateMethodChooser({
           {t(($) => $.creation_studio.choose_description)}
         </p>
       </div>
-      <div className="mx-auto mt-9 grid max-w-3xl gap-4 md:grid-cols-2">
+      <div className="mx-auto mt-9 grid max-w-5xl gap-4 md:grid-cols-3">
           {modes.map(
             ({ icon: Icon, title, description, href, recommended }) => (
               <AppLink

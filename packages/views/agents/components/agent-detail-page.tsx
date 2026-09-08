@@ -237,7 +237,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     }
   };
 
-  const handleSourceSync = () => setTabNavIntent("import_export");
+  const handleSourceSync = () => setTabNavIntent("publish");
 
   // --- Loading ---
   if (agentsLoading && !agent) {

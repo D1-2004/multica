@@ -298,7 +298,8 @@
     "clear_full": "Clear selection (use provider default)"
   },
   "tabs": {
-    "import_export": "Import / Export",
+    "export": "Export",
+    "publish": "Publish",
     "overview": "Overview",
     "work": "Work",
     "memory": "Memory",
@@ -339,6 +340,17 @@
     "llm_trace": "LLM Trace"
   },
   "creation_studio": {
+    "git": {
+      "disabled_skill": "Disabled",
+      "step": "Select a repository and preview",
+      "description": "Select a workspace GitHub connection, paste the repository URL, then choose a branch. Review the pinned version before creating the agent.",
+      "connection_required": "A workspace owner or admin must connect GitHub and grant access to the repository.",
+      "manage_connections": "Manage connections",
+      "connection": "GitHub connection",
+      "default_branch": "Repository default branch",
+      "preview": "Preview agent",
+      "confirm_hint": "Creates a private agent with the reviewed instructions and skills. Runtime and access can be changed in Configuration."
+    },
     "title": "Create an agent",
     "squad_title": "Create an agent for this squad",
     "duplicate_title": "Duplicate {{name}}",
@@ -352,6 +364,10 @@
     "step_configure": "Review and configure",
     "step_ai": "Build through conversation",
     "modes": {
+      "git": {
+        "title": "From Git",
+        "description": "Import instructions and skills from a GitHub repository."
+      },
       "blank": {
         "title": "Start blank",
         "description": "Configure every field yourself. Best when you already know exactly how this agent should work."
@@ -541,7 +557,16 @@
     }
   },
   "tab_body": {
-    "import_export": {
+    "export": {
+      "description": "Download the current instructions, skills (including enabled state), and supporting files as a source directory ZIP. Includes a JSON manifest and its schema. Credentials, runtime settings, access grants, and run history are excluded.",
+      "download": "Download source",
+      "downloading": "Exporting...",
+      "hint": "Extract the ZIP into a Git repository. Commit the files, then use From Git to create an agent. Git-created agents publish updates from their selected branch.",
+      "unavailable": "Only the agent owner or a workspace admin can export this agent.",
+      "failed": "Could not export agent"
+    },
+    "publish": {
+      "no_source": "This agent has no Git source. Export its source, commit it to a GitHub repository, then use From Git to create a linked agent. Publishing updates the linked agent after you review the changes.",
       "description": "Manage the Git repository used by this agent. Sync updates instructions, exclusive skills and their files.",
       "repository": "Agent repository",
       "deployed": "Published branch and commit",

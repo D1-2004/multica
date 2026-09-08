@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { AgentSource, AgentSourceSyncPreview } from "@multica/core/types";
 import enAgents from "../../../locales/en/agents.json";
-import { ImportExportTab } from "./import-export-tab";
+import { PublishTab } from "./publish-tab";
 
 const mocked = vi.hoisted(() => ({
   branches: vi.fn(), preview: vi.fn(), confirm: vi.fn(), error: vi.fn(), success: vi.fn(),
@@ -33,7 +33,7 @@ const preview: AgentSourceSyncPreview = {
 function mount(canEdit = true) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
     <I18nProvider locale="en" resources={{ en: { agents: enAgents } }}>
-      <ImportExportTab source={source} canEdit={canEdit} />
+      <PublishTab source={source} canEdit={canEdit} />
     </I18nProvider>
   </QueryClientProvider>);
 }

@@ -46,7 +46,8 @@ import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { SceneMemoryTab } from "./tabs/scene-memory-tab";
-import { ImportExportTab } from "./tabs/import-export-tab";
+import { ExportTab } from "./tabs/export-tab";
+import { PublishTab } from "./tabs/publish-tab";
 import { DigitalEmployeeTab } from "./tabs/digital-employee-tab";
 import { AgentMCPAccessTab } from "./tabs/mcp-access-tab";
 import { useT } from "../../i18n";
@@ -172,7 +173,6 @@ export function AgentOverviewPane({
     return AGENT_CONFIG_GROUPS.map((group) => ({
       ...group,
       items: group.items.filter((item) => {
-        if (item.id === "import_export") return source != null;
         if (item.id === "mcp_config") return showMcp;
         if (item.id === "dsh_plugins") return runtime?.provider === "dsh";
         if (item.id === "composio_mcp") return showComposioMcp;
@@ -198,7 +198,6 @@ export function AgentOverviewPane({
     composioMCPAppsEnabled,
     isAgentOwner,
     runtime,
-    source,
   ]);
 
   const visibleViews = useMemo(
@@ -527,8 +526,9 @@ export function AgentOverviewPane({
                       }
                     />
                   )}
-                  {effectiveView === "import_export" && source && (
-                    <ImportExportTab key={`${source.agent_id}:${source.ref}:${source.synced_commit_sha}`} source={source} canEdit={canEdit} />
+                  {effectiveView === "export" && <ExportTab agentId={agent.id} canEdit={canEdit} />}
+                  {effectiveView === "publish" && (
+                    <PublishTab key={`${agent.id}:${source?.ref}:${source?.synced_commit_sha}`} source={source} canEdit={canEdit} />
                   )}
                   {effectiveView === "access" && (
                     <AgentAccessSettings

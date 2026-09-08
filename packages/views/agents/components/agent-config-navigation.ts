@@ -30,7 +30,8 @@ export type DetailTab =
   | "env"
   | "custom_args"
   | "runtime_config"
-  | "import_export"
+  | "export"
+  | "publish"
   | "access"
   | "llm_trace";
 
@@ -54,7 +55,8 @@ export type AgentTabLabelKey =
   | "environment"
   | "custom_args"
   | "runtime_config"
-  | "import_export"
+  | "export"
+  | "publish"
   | "access"
   | "llm_trace";
 
@@ -113,7 +115,8 @@ export const AGENT_CONFIG_GROUPS: readonly AgentConfigGroup[] = [
     id: "management",
     labelKey: "management",
     items: [
-      { id: "import_export", labelKey: "import_export" },
+      { id: "export", labelKey: "export" },
+      { id: "publish", labelKey: "publish" },
       { id: "access", labelKey: "access" },
       { id: "llm_trace", labelKey: "llm_trace" },
     ],
@@ -134,6 +137,7 @@ const DETAIL_VIEWS = new Set<DetailTab>([
 ]);
 
 export function normalizeDetailView(value: string | null): DetailTab | null {
+  if (value === "import_export") return "publish";
   if (value === "identity") return "digital_employee";
   if (value !== null && DETAIL_VIEWS.has(value as DetailTab)) {
     return value as DetailTab;

@@ -289,7 +289,8 @@
     "clear_full": "清除选择（使用提供方默认）"
   },
   "tabs": {
-    "import_export": "导入导出",
+    "export": "导出",
+    "publish": "发布",
     "overview": "概览",
     "work": "工作",
     "memory": "记忆",
@@ -330,6 +331,17 @@
     "llm_trace": "LLM Trace"
   },
   "creation_studio": {
+    "git": {
+      "disabled_skill": "已停用",
+      "step": "选择仓库并预览",
+      "description": "选择工作区 GitHub 连接，填写仓库地址并选择分支。确认该版本的内容后创建智能体。",
+      "connection_required": "需要工作区 owner 或 admin 连接 GitHub，并授予仓库访问权限。",
+      "manage_connections": "管理连接",
+      "connection": "GitHub 连接",
+      "default_branch": "仓库默认分支",
+      "preview": "预览智能体",
+      "confirm_hint": "按预览内容创建私有智能体，导入指令和 skills。运行时和访问权限可在配置中调整。"
+    },
     "title": "创建智能体",
     "squad_title": "为小队创建智能体",
     "duplicate_title": "复制 {{name}}",
@@ -343,6 +355,10 @@
     "step_configure": "检查并配置",
     "step_ai": "通过对话创建",
     "modes": {
+      "git": {
+        "title": "从 Git 创建",
+        "description": "从 GitHub 仓库导入指令和 skills。"
+      },
       "blank": {
         "title": "从空白开始",
         "description": "自己配置每个字段。适合已经明确知道智能体应该如何工作的用户。"
@@ -531,7 +547,16 @@
     }
   },
   "tab_body": {
-    "import_export": {
+    "export": {
+      "description": "将当前指令、skills（含启停状态）和配套文件下载为源码目录 ZIP，包含 JSON manifest 和 JSON Schema。账号凭据、运行时设置、访问权限及运行记录不导出。",
+      "download": "下载源码",
+      "downloading": "正在导出...",
+      "hint": "解压到 Git 仓库并提交文件，即可通过\"从 Git 创建\"导入。Git 来源智能体在\"发布\"中选择分支更新。",
+      "unavailable": "仅智能体所有者或工作区 admin 可以导出。",
+      "failed": "无法导出智能体"
+    },
+    "publish": {
+      "no_source": "此智能体尚未关联 Git 仓库。可先导出源码，提交到 GitHub，再通过\"从 Git 创建\"生成关联仓库的智能体。后续在此预览变更并发布。",
       "description": "管理智能体关联的 Git 仓库。同步会更新指令、专属 skill 及其文件。",
       "repository": "智能体仓库地址",
       "deployed": "已发布分支与提交",

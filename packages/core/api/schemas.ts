@@ -2902,6 +2902,7 @@ export const EMPTY_GITHUB_INSTALLATIONS: ListGitHubInstallationsResponse = {
 
 const GitHubAgentSkillPreviewSchema = z
   .object({
+    enabled: z.boolean().optional(),
     source_path: z.string(),
     name: z.string(),
     description: z.string().default(""),

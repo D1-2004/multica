@@ -281,7 +281,8 @@
     "clear_full": "選択をクリア（プロバイダーのデフォルトを使用）"
   },
   "tabs": {
-    "import_export": "インポート / エクスポート",
+    "export": "エクスポート",
+    "publish": "公開",
     "overview": "概要",
     "work": "作業",
     "memory": "記憶",
@@ -387,7 +388,16 @@
     }
   },
   "tab_body": {
-    "import_export": {
+    "export": {
+      "description": "現在の指示、skills（有効状態を含む）、関連ファイルをソース ZIP としてダウンロードします。JSON manifest と Schema を含み、認証情報、ランタイム設定、アクセス権、実行履歴は含みません。",
+      "download": "ソースをダウンロード",
+      "downloading": "エクスポート中...",
+      "hint": "Git リポジトリに展開してコミットし、「Git から作成」でインポートします。Git 由来のエージェントは「公開」でブランチを選択して更新します。",
+      "unavailable": "所有者またはワークスペースの admin のみエクスポートできます。",
+      "failed": "エージェントをエクスポートできません"
+    },
+    "publish": {
+      "no_source": "このエージェントには Git ソースがありません。ソースをエクスポートして GitHub にコミットし、「Git から作成」で関連付けます。以降はここで変更を確認して公開できます。",
       "description": "エージェントの Git リポジトリを管理します。同期すると指示、専用 skill とそのファイルが更新されます。",
       "repository": "エージェントのリポジトリ",
       "deployed": "公開済みのブランチとコミット",
@@ -1422,6 +1432,17 @@
     "section_model": "モデル"
   },
   "creation_studio": {
+    "git": {
+      "disabled_skill": "無効",
+      "step": "リポジトリを選択してプレビュー",
+      "description": "ワークスペースの GitHub 接続、リポジトリ URL、ブランチを選択し、内容を確認して作成します。",
+      "connection_required": "ワークスペースの owner または admin が GitHub を接続し、リポジトリへのアクセスを許可する必要があります。",
+      "manage_connections": "接続を管理",
+      "connection": "GitHub 接続",
+      "default_branch": "リポジトリの既定ブランチ",
+      "preview": "エージェントをプレビュー",
+      "confirm_hint": "確認した指示と skills で非公開エージェントを作成します。ランタイムとアクセスは設定で変更できます。"
+    },
     "title": "エージェントを作成",
     "squad_title": "このスクワッド用のエージェントを作成",
     "duplicate_title": "{{name}} を複製",
@@ -1435,6 +1456,10 @@
     "step_configure": "確認して設定",
     "step_ai": "会話で作成",
     "modes": {
+      "git": {
+        "title": "Git から作成",
+        "description": "GitHub リポジトリから指示と skills をインポートします。"
+      },
       "blank": {
         "title": "空白から始める",
         "description": "すべての項目を自分で設定します。エージェントの動作が明確に決まっている場合に最適です。"

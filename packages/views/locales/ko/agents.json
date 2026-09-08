@@ -289,7 +289,8 @@
     "clear_full": "선택 지우기(제공자 기본값 사용)"
   },
   "tabs": {
-    "import_export": "가져오기 / 내보내기",
+    "export": "내보내기",
+    "publish": "게시",
     "overview": "개요",
     "work": "작업",
     "memory": "기억",
@@ -395,7 +396,16 @@
     }
   },
   "tab_body": {
-    "import_export": {
+    "export": {
+      "description": "현재 지침, skills(활성 상태 포함), 관련 파일을 소스 ZIP으로 다운로드합니다. JSON manifest와 Schema를 포함하며, 자격 증명, 런타임 설정, 접근 권한, 실행 기록은 제외합니다.",
+      "download": "소스 다운로드",
+      "downloading": "내보내는 중...",
+      "hint": "Git 저장소에 압축을 풀고 커밋한 다음 Git에서 만들기로 가져오세요. Git 에이전트는 게시에서 브랜치를 선택하여 업데이트합니다.",
+      "unavailable": "소유자 또는 워크스페이스 admin만 내보낼 수 있습니다.",
+      "failed": "에이전트를 내보낼 수 없습니다"
+    },
+    "publish": {
+      "no_source": "이 에이전트에는 Git 소스가 없습니다. 소스를 내보내 GitHub에 커밋한 뒤 Git에서 만들기로 연결된 에이전트를 만드세요. 이후 여기에서 변경 사항을 검토하고 게시할 수 있습니다.",
       "description": "에이전트의 Git 저장소를 관리합니다. 동기화하면 지침, 전용 skill 및 해당 파일이 업데이트됩니다.",
       "repository": "에이전트 저장소",
       "deployed": "게시된 브랜치와 커밋",
@@ -1422,6 +1432,17 @@
     "section_model": "모델"
   },
   "creation_studio": {
+    "git": {
+      "disabled_skill": "비활성",
+      "step": "저장소 선택 및 미리보기",
+      "description": "워크스페이스 GitHub 연결, 저장소 URL, 브랜치를 선택한 뒤 내용을 확인하고 에이전트를 만드세요.",
+      "connection_required": "워크스페이스 owner 또는 admin이 GitHub를 연결하고 저장소 접근을 허용해야 합니다.",
+      "manage_connections": "연결 관리",
+      "connection": "GitHub 연결",
+      "default_branch": "저장소 기본 브랜치",
+      "preview": "에이전트 미리보기",
+      "confirm_hint": "검토한 지침과 skills로 비공개 에이전트를 만듭니다. 런타임과 접근 권한은 설정에서 변경할 수 있습니다."
+    },
     "title": "에이전트 만들기",
     "squad_title": "이 스쿼드용 에이전트 만들기",
     "duplicate_title": "{{name}} 복제",
@@ -1435,6 +1456,10 @@
     "step_configure": "검토 및 설정",
     "step_ai": "대화로 만들기",
     "modes": {
+      "git": {
+        "title": "Git에서 만들기",
+        "description": "GitHub 저장소에서 지침과 skills를 가져옵니다."
+      },
       "blank": {
         "title": "빈 상태로 시작",
         "description": "모든 항목을 직접 설정합니다. 에이전트의 동작 방식을 정확히 알고 있을 때 적합합니다."
