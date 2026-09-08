@@ -14,7 +14,7 @@ export function ExportTab({ agentId, canEdit }: { agentId: string; canEdit: bool
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `agent-${agentId}-source.zip`;
+      link.download = `agent-${agentId}.zip`;
       document.body.append(link);
       link.click();
       link.remove();

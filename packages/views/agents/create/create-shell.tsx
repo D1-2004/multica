@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { useT } from "../../i18n";
+import { DownloadAgentSchema } from "./download-agent-schema";
 
 /**
  * Chrome shared by every agent-creation route: the back control, the flow
@@ -45,11 +46,12 @@ export function AgentCreateShell({
           <h1 className="truncate text-body font-semibold">{title}</h1>
           <p className="truncate text-caption text-muted-foreground">{step}</p>
         </div>
-        {chips ? (
-          <div className="ml-auto hidden items-center gap-2 text-caption text-muted-foreground sm:flex">
+        <div className="ml-auto flex shrink-0 items-center gap-3">
+          {chips ? <div className="hidden items-center gap-2 text-caption text-muted-foreground sm:flex">
             {chips}
-          </div>
-        ) : null}
+          </div> : null}
+          <DownloadAgentSchema />
+        </div>
       </header>
       {children}
     </div>

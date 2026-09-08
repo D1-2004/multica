@@ -5,6 +5,16 @@ import { GitHubAgentPreviewSchema } from "./schemas";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Agent source export boundary", () => {
+  it("downloads the server schema without changing its contents", async () => {
+    const schema = JSON.stringify({ $schema: "https://json-schema.org/draft/2020-12/schema", $defs: { v1: {}, v2: {} }, oneOf: [{ $ref: "#/$defs/v1" }, { $ref: "#/$defs/v2" }] });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(schema, { headers: { "Content-Type": "application/schema+json" } })));
+    const blob = await new ApiClient("https://api.example.test").downloadAgentSchema();
+    expect(await blob.text()).toBe(schema);
+  });
+  it.each(["{}", "null", "<html>Login</html>"])("rejects an invalid schema download: %s", async (content) => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(content, { headers: { "Content-Type": "application/schema+json" } })));
+    await expect(new ApiClient("https://api.example.test").downloadAgentSchema()).rejects.toThrow("Invalid agent schema response");
+  });
   it("downloads a source archive", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("PK source archive", { headers: { "Content-Type": "application/zip" } })));
     const result = await new ApiClient("https://api.example.test").exportAgent("agent-1");

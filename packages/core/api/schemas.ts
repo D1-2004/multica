@@ -2951,6 +2951,12 @@ export const EMPTY_GITHUB_AGENT_PREVIEW: GitHubAgentPreview = {
   blockers: [],
 };
 
+export const AgentManifestSchemaDownloadSchema = z.object({
+  $schema: z.literal("https://json-schema.org/draft/2020-12/schema"),
+  $defs: z.record(z.string(), z.record(z.string(), z.unknown())),
+  oneOf: z.array(z.object({ $ref: z.string().min(1) })).min(1),
+}).passthrough();
+
 export const AgentSourceSchema = z
   .object({
     repository_url: z.string().optional(),

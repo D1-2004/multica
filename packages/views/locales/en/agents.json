@@ -340,6 +340,11 @@
     "llm_trace": "LLM Trace"
   },
   "creation_studio": {
+    "schema": {
+      "download": "Download Schema",
+      "downloading": "Downloading...",
+      "failed": "Could not download agent schema"
+    },
     "git": {
       "disabled_skill": "Disabled",
       "step": "Select a repository and preview",
@@ -558,15 +563,15 @@
   },
   "tab_body": {
     "export": {
-      "description": "Download the current instructions, skills (including enabled state), and supporting files as a source directory ZIP. Includes a JSON manifest and its schema. Credentials, runtime settings, access grants, and run history are excluded.",
-      "download": "Download source",
+      "description": "Download a ZIP of the agent configuration, instructions, skills (including enabled state), and supporting files currently saved in Multica, with a manifest and JSON Schema.",
+      "download": "Download agent package",
       "downloading": "Exporting...",
-      "hint": "Extract the ZIP into a Git repository. Commit the files, then use From Git to create an agent. Git-created agents publish updates from their selected branch.",
+      "hint": "Credentials and environment resources are recorded as references to bind. v2 packages support download and validation preview; importing to create or publish is not yet available.",
       "unavailable": "Only the agent owner or a workspace admin can export this agent.",
       "failed": "Could not export agent"
     },
     "publish": {
-      "no_source": "This agent has no Git source. Export its source, commit it to a GitHub repository, then use From Git to create a linked agent. Publishing updates the linked agent after you review the changes.",
+      "no_source": "This agent is not linked to a Git repository. You can download its current agent package from Export.",
       "description": "Manage the Git repository used by this agent. Sync updates instructions, exclusive skills and their files.",
       "repository": "Agent repository",
       "deployed": "Published branch and commit",

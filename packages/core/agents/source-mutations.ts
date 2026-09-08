@@ -38,3 +38,7 @@ export function useSyncAgentSource(wsId: string, agentId: string) {
 export function useExportAgent(agentId: string) {
   return useMutation({ mutationFn: () => api.exportAgent(agentId) });
 }
+
+export function useDownloadAgentSchema() {
+  return useMutation({ mutationFn: () => api.downloadAgentSchema() });
+}

@@ -397,15 +397,15 @@
   },
   "tab_body": {
     "export": {
-      "description": "현재 지침, skills(활성 상태 포함), 관련 파일을 소스 ZIP으로 다운로드합니다. JSON manifest와 Schema를 포함하며, 자격 증명, 런타임 설정, 접근 권한, 실행 기록은 제외합니다.",
-      "download": "소스 다운로드",
+      "description": "Multica에 현재 저장된 설정, 지침, skills(활성 상태 포함), 관련 파일을 manifest와 JSON Schema가 포함된 ZIP으로 다운로드합니다.",
+      "download": "에이전트 패키지 다운로드",
       "downloading": "내보내는 중...",
-      "hint": "Git 저장소에 압축을 풀고 커밋한 다음 Git에서 만들기로 가져오세요. Git 에이전트는 게시에서 브랜치를 선택하여 업데이트합니다.",
+      "hint": "자격 증명과 환경 리소스는 다시 연결할 참조로 기록됩니다. v2 패키지는 다운로드와 검증 미리보기를 지원하며, 가져오기를 통한 생성 및 게시는 아직 지원하지 않습니다.",
       "unavailable": "소유자 또는 워크스페이스 admin만 내보낼 수 있습니다.",
       "failed": "에이전트를 내보낼 수 없습니다"
     },
     "publish": {
-      "no_source": "이 에이전트에는 Git 소스가 없습니다. 소스를 내보내 GitHub에 커밋한 뒤 Git에서 만들기로 연결된 에이전트를 만드세요. 이후 여기에서 변경 사항을 검토하고 게시할 수 있습니다.",
+      "no_source": "이 에이전트는 Git 저장소에 연결되지 않았습니다. 내보내기에서 현재 패키지를 다운로드할 수 있습니다.",
       "description": "에이전트의 Git 저장소를 관리합니다. 동기화하면 지침, 전용 skill 및 해당 파일이 업데이트됩니다.",
       "repository": "에이전트 저장소",
       "deployed": "게시된 브랜치와 커밋",
@@ -1432,6 +1432,11 @@
     "section_model": "모델"
   },
   "creation_studio": {
+    "schema": {
+      "download": "Schema 다운로드",
+      "downloading": "다운로드 중...",
+      "failed": "에이전트 Schema를 다운로드할 수 없습니다"
+    },
     "git": {
       "disabled_skill": "비활성",
       "step": "저장소 선택 및 미리보기",

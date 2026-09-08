@@ -473,6 +473,7 @@ import {
   ListGitHubInstallationsResponseSchema,
   ListGitHubAgentRepositoriesResponseSchema,
   AgentSourceSchema,
+  AgentManifestSchemaDownloadSchema,
   AgentSourceSyncPreviewSchema,
   AgentSourceBranchesSchema,
   EMPTY_AGENT_SOURCE_SYNC_PREVIEW,
@@ -5560,6 +5561,19 @@ export class ApiClient {
     const blob = await response.blob();
     if (blob.size === 0) throw new Error("Empty agent export response");
     return blob;
+  }
+
+  async downloadAgentSchema(): Promise<Blob> {
+    const response = await this.fetchRaw("/api/agent-schema");
+    if (response.headers.get("content-type")?.split(";")[0] !== "application/schema+json") {
+      throw new Error("Invalid agent schema response");
+    }
+    const content = await response.text();
+    let raw: unknown;
+    try { raw = JSON.parse(content); } catch { throw new Error("Invalid agent schema response"); }
+    const schema = parseWithFallback<Record<string, unknown> | null>(raw, AgentManifestSchemaDownloadSchema, null, { endpoint: "GET /api/agent-schema", includeReceived: false });
+    if (!schema) throw new Error("Invalid agent schema response");
+    return new Blob([content], { type: "application/schema+json" });
   }
 
   async getAgentSource(agentId: string): Promise<AgentSource> {

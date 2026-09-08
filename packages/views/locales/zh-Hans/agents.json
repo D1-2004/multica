@@ -331,6 +331,11 @@
     "llm_trace": "LLM Trace"
   },
   "creation_studio": {
+    "schema": {
+      "download": "下载 Schema",
+      "downloading": "正在下载...",
+      "failed": "无法下载智能体 Schema"
+    },
     "git": {
       "disabled_skill": "已停用",
       "step": "选择仓库并预览",
@@ -548,15 +553,15 @@
   },
   "tab_body": {
     "export": {
-      "description": "将当前指令、skills（含启停状态）和配套文件下载为源码目录 ZIP，包含 JSON manifest 和 JSON Schema。账号凭据、运行时设置、访问权限及运行记录不导出。",
-      "download": "下载源码",
+      "description": "将平台当前保存的智能体配置、指令、skills（含启停状态）和配套文件整理为 ZIP，包含 manifest 和 JSON Schema。",
+      "download": "下载智能体包",
       "downloading": "正在导出...",
-      "hint": "解压到 Git 仓库并提交文件，即可通过\"从 Git 创建\"导入。Git 来源智能体在\"发布\"中选择分支更新。",
+      "hint": "凭据和环境资源以待绑定引用记录。v2 包目前支持下载和校验预览，导入创建及发布尚未接通。",
       "unavailable": "仅智能体所有者或工作区 admin 可以导出。",
       "failed": "无法导出智能体"
     },
     "publish": {
-      "no_source": "此智能体尚未关联 Git 仓库。可先导出源码，提交到 GitHub，再通过\"从 Git 创建\"生成关联仓库的智能体。后续在此预览变更并发布。",
+      "no_source": "此智能体尚未关联 Git 仓库。当前可在“导出”中下载智能体包。",
       "description": "管理智能体关联的 Git 仓库。同步会更新指令、专属 skill 及其文件。",
       "repository": "智能体仓库地址",
       "deployed": "已发布分支与提交",
