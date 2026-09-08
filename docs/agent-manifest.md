@@ -6,12 +6,12 @@
 
 | 版本 | Schema | Git 创建、导出、发布 |
 | --- | --- | --- |
-| `multica.agent/v1` | 已有契约，字段与约束保持兼容 | Git 创建和发布已实现：名称、描述、指令、skills 和配套文本文件 |
-| `multica.agent/v2` | 已定义，表达当前 Multica 的可配置特性 | 平台当前配置导出、包解析、上传预览支持；实际创建和发布的配置写入尚未接入 |
+| `multica.agent/v1` | 已有契约，字段与约束保持兼容 | 本地 / Git 创建；发布指令、skills 和配套文件，保留实例名称/描述 |
+| `multica.agent/v2` | 表达当前 Multica 的可配置特性 | 本地 ZIP / Git 统一创建、配置写入、平台导出和 Git 发布 |
 
-服务端通过内置 JSON Schema 执行实际结构校验，然后按 manifest 解析包内数据。Schema 校验通过仅代表文档结构合法，不代表资源可用、调用者有授权或配置写入已经完成。平台导出生成 v2；Git 创建和发布会明确拒绝尚未实现配置写入的 v2，禁止接受 v2 后只应用其中的 v1 字段。
+服务端通过内置 JSON Schema 执行实际结构校验，然后按 manifest 解析包内数据。Schema 校验通过仅代表文档结构合法，不代表资源可用、调用者有授权或配置写入已经完成。平台导出生成 v2；本地与 Git 获取文件后都产生完整 bundle，通过同一预览确认接口写入配置。
 
-v1 已部署，新增配置需要新的版本边界，避免旧导入器静默丢失字段。`dingtalk-agent.json` 的 DTA 兼容入口继续独立存在，与 `agent.json` 不能同时放在仓库根目录。DTA CLI 的 `init` 不属于这次改动。
+新建源码智能体以 `agent.json` 为唯一入口，Git 与 ZIP 均不依赖 DTA 格式或 CLI 构建产物。v1 保留最小配置契约，新包应使用 v2。内部旧托管模板的 DTA 读取器不参与公开导入流程。
 
 ## 导出当前 Agent 与下载 Schema
 
@@ -25,7 +25,7 @@ ZIP 包含 `agent.json`（v2）、`agent.schema.json`、指令文件、skill 文
 
 Agent 创建页面共用顶部栏提供 **下载 Schema**，选择创建方式、手动创建、AI 创建和从 Git 创建页面均可见。`GET /api/agent-schema` 返回服务端实际内置的完整 Schema，下载文件名为 `agent.schema.json`；无需先创建 Agent 或选择 Git 连接。前端验证响应类型和 Schema 外层结构，下载原始内容。
 
-导出完成前使用统一包解析器校验，不返回静默丢字段或文件的包。当前 v2 包可下载、校验和预览；上传创建、v2 配置落库与 Git 发布尚未接通，页面明确显示该限制。
+导出完成前使用统一包解析器校验，不返回静默丢字段或文件的包。当前 v2 包支持下载、校验、预览和确认创建。创建页提供“从本地导入”；Git 和本地共用配置预览、运行时选择及确认表单。
 
 ## 统一包解析流程
 
@@ -39,10 +39,11 @@ Agent 包是包含 manifest 和其引用文件的 ZIP 源码目录，不需要 C
     → 按 instructions、skills[].path 读取文件
     → 校验文件关系、内容与大小
     → 生成完整 ParsedAgentPackage
-    → 后续资源解析、预览确认、配置写入（待接入）
+    → Bundle（完整定义、引用文件、规范化内容摘要）
+    → 持久预览、目标环境选择、确认创建事务
 ```
 
-实现入口：`ValidateManifestJSON`、`ParseAgentPackage`、`ParseAgentPackageFS`。Git `agent.json` 编译与 ZIP 使用相同的 `parseAgentPackageRepository`，文件内容延迟读取；manifest 不合法时不会读取其引用的指令和 skill 内容。旧 DTA 入口仍走其独立兼容解析器。
+实现入口：`ValidateManifestJSON`、`ParseAgentPackage`、`ParseAgentPackageFS`。Git `agent.json` 编译与 ZIP 使用相同的 `parseAgentPackageRepository`，文件内容延迟读取；manifest 不合法时不会读取其引用的指令和 skill 内容。Git 的公开入口 `ReadAgentRepository` 同样要求 `agent.json`。
 
 `ParsedAgentPackage.Manifest` 保存全部已通过 Schema 校验的 JSON 字段，包括 v2 的配置、绑定、权限和 A2A 定义；`Instructions`、`Skills` 保存解析后的内容，`Warnings` 保存跳过文件等提示。不会将 v2 强制转换为只含 v1 字段的最终 Agent。`Hash` 覆盖完整 manifest 与已解析内容，仅表示解析结果摘要，不是创建授权或持久预览 ID。
 
@@ -57,7 +58,13 @@ file: agent.zip
 
 也支持 `Content-Type: application/zip`，请求体直接为 ZIP。权限与 Git 导入预览一致，要求工作区 owner/admin；multipart 只能包含一个名为 `file` 的文件。限制压缩包 40 MiB、声明解压总量 32 MiB、最多 8192 个条目；拒绝重复路径、路径穿越和符号链接，不解压到服务器磁盘。
 
-成功返回 `manifest_version/package_hash/name/description/instructions/skills/manifest_fields/configuration_fields/warnings`。Skills 提供路径、名称、描述、启停和配套文件数量；配置部分仅返回字段清单，不回显环境变量、网关、MCP 等配置值。此接口只验证和解析，不保存 Agent、不保存持久预览，也不执行包内脚本。上传界面和确认创建接口待下一步接入。
+成功返回 `preview_id/expires_at/manifest_version/package_hash/name/description/instructions/skills/manifest_fields/configuration_fields/definition/requirements/warnings`。预览归当前用户和工作区所有，30 分钟有效；快照包含完整 bundle。`definition` 提供可审阅的配置，环境变量、网关、MCP 等敏感值脱敏。预览不创建 Agent、不执行包内脚本。
+
+两种来源统一确认：`POST /api/workspaces/{workspaceId}/agent-packages`，请求包含 `preview_id`、`runtime_id`，可覆盖 `name/description`。配置以包为准；Agent、配置、OKR、A2A 策略、专属 workspace skills 和文件在一笔事务中创建。确认会重新检查用户权限，Git 还会重查仓库权限，但不会重新解析移动后的分支；重复确认返回原 Agent。
+
+`requirements.secrets` 列出待填写的值别名，通过确认请求的 `secrets` 映射提供。`requirements.deferred_bindings` 列出需要创建后另行配置的身份、机器人、电脑、插件、跨环境授权或其他运行时的 skill 选择；用户必须逐项或整体明确确认延后。延后的成员授权创建为私有；未确认或缺少必需值返回 422，不能半成功。绑定运行时的禁用 skill 会映射到所选运行时。环境绑定不从旧平台 UUID 自动迁移。当前适配器将账号/电脑的 null 解绑请求也列为待配置，确认延后表示此次不执行该绑定变更；创建时保持未绑定，发布时保留原绑定。
+
+OKR 沿用平台标签独占规则，同一工作区已有同名目标/关键结果会返回 409，整笔导入回滚；请修改包内目标后再导入。A2A 只导入卡片和客户端策略，不生成访问凭据；撤销的客户端不能通过包重新激活。
 
 结构错误返回 422，例如：
 
@@ -85,7 +92,7 @@ my-agent/
         └── scripts/check.py
 ```
 
-完整样例：[`examples/agent-manifest-v2.json`](examples/agent-manifest-v2.json)。使用时复制为仓库根目录的 `agent.json`，复制权威 Schema，并提供指令和 skill 文件。样例中的地址与资源别名是占位数据，需要在目标环境配置。
+可直接上传的完整测试目录：[`examples/package-inspector-agent`](examples/package-inspector-agent/README.md)。扩展字段说明样例：[`examples/agent-manifest-v2.json`](examples/agent-manifest-v2.json)。使用时复制为仓库根目录的 `agent.json`，复制权威 Schema，并提供指令和 skill 文件。样例中的地址与资源别名是占位数据，需要在目标环境配置。
 
 | 顶层字段 | 内容 |
 | --- | --- |
@@ -105,7 +112,7 @@ my-agent/
 
 ## 与当前配置界面的映射
 
-下表定义 v2 与平台配置的映射。导出已读取平台保存的内容；导入写入和 Git 发布仍待接入，外部资源通过引用重新绑定。
+下表定义 v2 与平台配置的映射。配置写入与导出使用当前平台数据；外部资源引用通过目标环境设置处理。
 
 | 界面分区 | v2 字段 | 现有模型与边界 |
 | --- | --- | --- |
@@ -177,7 +184,7 @@ Schema 对已知网关 Token 等位置强制使用引用；provider 扩展允许
 
 ## 发布与清空语义
 
-以下规则是 v2 的约定，后续适配器需要统一用于导出、预览、创建和发布：
+以下规则用于 v2 的导出、预览、创建和发布；跨环境绑定按上述明确延后机制处理：
 
 1. `name`、`instructions`、`skills` 是必填的仓库管理内容，发布时按仓库更新。名称不再沿用 v1 的“仅创建时使用”规则；`description` 出现时也按仓库更新。
 2. 可选配置字段省略表示仓库不管理该字段：新建时用目标平台默认值，发布时保留现有值。为了完整恢复，导出器需要显式输出能够读取的配置值，不能把 `false`、空字符串或空数组省略。
@@ -186,7 +193,7 @@ Schema 对已知网关 Token 等位置强制使用引用；provider 扩展允许
 5. `mcp_config: null` 表示恢复 provider 默认 MCP 配置；`composio_toolkit_allowlist: null` 表示清除托管选择。可为空的账号、电脑绑定使用 `null` 明确解绑。其余位置不接受 `null`。A2A 客户端两个限额允许 `null`，表示清除限额。
 6. skills 只增删改当前来源管理的专属 skills，保留手动添加的其他工作区 skills；导出则包含当前全部已分配 skills 及启停状态，重新创建时转为新 Agent 的专属 skills。
 7. A2A 客户端使用 manifest 内稳定的 `key` 建立来源映射，避免每次发布重复创建。`clients: []` 只清理来源管理的客户端策略，保留手动客户端。省略仍表示不管理；撤销、凭据轮换遵循现有生命周期，不能自动恢复已撤销凭据。
-8. 权限和绑定变更必须出现在预览里，确认时重查原有 owner、workspace 和资源权限；不能通过普通 Agent 更新接口绕过 env、Composio、账号、A2A 等独立权限与审计要求。预览应区分 Git 文件差异、实际配置覆盖、待绑定资源，不显示密钥值。
+8. 权限和绑定变更必须出现在预览里，确认时重查原有 owner、workspace 和资源权限；不能通过普通 Agent 更新接口绕过 env、Composio、账号、A2A 等独立权限与审计要求。A2A 导入只允许人类调用方，策略记录使用当前操作人的身份。预览应区分 Git 文件差异、实际配置覆盖、待绑定资源，不显示密钥值。
 
 ## 结构校验与运行校验
 
@@ -217,3 +224,5 @@ GOTOOLCHAIN=auto go test ./internal/agentsource
 | 2026-09-08 | 在同一自包含 Schema 中保留 v1 并新增 v2；补齐当前 Agent 配置、资源引用、权限和 A2A/MCP 策略的定义与字段映射 | v1 仅覆盖指令和 skills，不能表达配置完整的 Agent；先冻结扩展契约，避免旧导入器静默丢字段 |
 | 2026-09-08 | 接入 Go JSON Schema 校验器、统一 ZIP/Git 解析、延迟读取文件和上传预览；路径正则改为 Go/JS/Python 共用语法，保留原有路径约束 | 让实际代码直接执行 Schema 契约，按 manifest 解析 Agent 包；避免手写结构规则漂移与校验前读取引用内容 |
 | 2026-09-08 | 平台导出改为当前数据库快照的 v2 Agent ZIP，增加配置、策略和待绑定引用说明；MCP 字符串命令支持整体密钥引用；创建页增加权威 Schema 下载入口 | 明确导出对象是平台当前 Agent，补齐旧源码导出遗漏的配置，并让创建者直接获取校验契约 |
+
+- 2026-09-08：补齐本地 ZIP 创建入口，Git 与本地统一为 bundle 预览和事务创建；接入 v2 配置发布、目标环境引用选择、完整测试包和 Builder 协议说明。原因：以平台上传包为唯一公开契约，取消对 DTA 构建产物的依赖，并避免新字段在创建或发布时丢失。
