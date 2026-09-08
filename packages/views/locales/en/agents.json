@@ -354,7 +354,7 @@
       "connection": "GitHub connection",
       "default_branch": "Repository default branch",
       "preview": "Preview agent",
-      "confirm_hint": "Creates a private agent with the reviewed instructions and skills. Runtime and access can be changed in Configuration."
+      "confirm_hint": "Confirmation creates an Agent with the manifest configuration, instructions and exclusive skills."
     },
     "title": "Create an agent",
     "squad_title": "Create an agent for this squad",
@@ -362,7 +362,7 @@
     "back": "Go back",
     "eyebrow": "Agent creation",
     "choose_title": "How would you like to start?",
-    "choose_description": "Start with full control, adapt a proven template, or describe what you need and build it through conversation.",
+    "choose_description": "Upload an Agent ZIP, import from Git, configure manually, or build with AI.",
     "recommended": "Recommended",
     "continue": "Continue",
     "step_choose": "Choose a starting point",
@@ -371,7 +371,7 @@
     "modes": {
       "git": {
         "title": "From Git",
-        "description": "Import instructions and skills from a GitHub repository."
+        "description": "Import Agent configuration from a GitHub repository containing agent.json and its referenced files."
       },
       "blank": {
         "title": "Start blank",
@@ -387,7 +387,11 @@
       },
       "github": {
         "title": "Import from GitHub",
-        "description": "Create from a versioned DTA Agent Project containing dingtalk-agent.json, its definition, skills, and supporting files."
+        "description": "Import Agent configuration from a GitHub repository containing agent.json and its referenced files."
+      },
+      "local": {
+        "title": "Import from local",
+        "description": "Upload an Agent ZIP containing its manifest and files"
       }
     },
     "sections": {
@@ -465,7 +469,7 @@
     "step_github": "Import from GitHub",
     "github": {
       "source_title": "GitHub source",
-      "source_hint": "Select a repository and ref, then validate its dingtalk-agent.json before creating the agent.",
+      "source_hint": "Select a repository and branch, then validate and preview agent.json and its referenced files.",
       "not_configured": "GitHub agent sources are not configured",
       "admin_required": "Workspace admin access is required",
       "admin_required_hint": "Only workspace owners and admins can preview private repository contents or create GitHub-backed agents.",
@@ -493,6 +497,19 @@
       "skills": "Included skills",
       "instructions": "Instructions",
       "use": "Use this template"
+    },
+    "local": {
+      "step": "Upload · Preview · Create",
+      "description": "Upload an Agent ZIP, with agent.json and its referenced instructions and skill files at the archive root. Maximum 40 MiB.",
+      "file": "Agent ZIP package",
+      "preview": "Upload and preview",
+      "admin_required": "Only workspace owners and admins can import Agents.",
+      "runtime_required": "Select a {{provider}} runtime.",
+      "secret": "Configuration value: {{ref}}",
+      "bindings_required": "Set up these resources in the destination workspace:",
+      "defer_bindings": "Skip these bindings and configure them later. Member-based access on a new Agent stays private.",
+      "confirm_hint": "Confirmation creates a new Agent with the package configuration, instructions and exclusive skills.",
+      "configuration": "Review imported configuration"
     }
   },
   "create_dialog": {
@@ -566,13 +583,13 @@
       "description": "Download a ZIP of the agent configuration, instructions, skills (including enabled state), and supporting files currently saved in Multica, with a manifest and JSON Schema.",
       "download": "Download agent package",
       "downloading": "Exporting...",
-      "hint": "Credentials and environment resources are recorded as references to bind. v2 packages support download and validation preview; importing to create or publish is not yet available.",
+      "hint": "Choose the destination runtime, provide configuration values, and review resources to reconnect when importing. ZIP and Git use the same manifest and configuration flow.",
       "unavailable": "Only the agent owner or a workspace admin can export this agent.",
       "failed": "Could not export agent"
     },
     "publish": {
       "no_source": "This agent is not linked to a Git repository. You can download its current agent package from Export.",
-      "description": "Manage the Git repository used by this agent. Sync updates instructions, exclusive skills and their files.",
+      "description": "Manage the Agent Git repository. Publication updates declared configuration, instructions, exclusive skills and supporting files.",
       "repository": "Agent repository",
       "deployed": "Published branch and commit",
       "unavailable": "Source syncing is unavailable for this agent or your current permissions.",

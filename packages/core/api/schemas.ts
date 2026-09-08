@@ -2915,8 +2915,32 @@ const NullableStringArraySchema = z
   .nullish()
   .transform((value) => value ?? []);
 
+export const AgentPackageRequirementsSchema = z.object({
+  secrets: NullableStringArraySchema,
+  deferred_bindings: NullableStringArraySchema,
+  runtime_provider: z.string().default(""),
+});
+
+export const AgentPackagePreviewSchema = z.object({
+  definition: z.record(z.string(), z.unknown()).optional(),
+  preview_id: z.string().min(1),
+  expires_at: z.string().min(1),
+  package_hash: z.string().min(1),
+  manifest_version: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().default(""),
+  instructions: z.string().default(""),
+  skills: z.array(GitHubAgentSkillPreviewSchema).default([]),
+  manifest_fields: NullableStringArraySchema,
+  configuration_fields: NullableStringArraySchema,
+  warnings: NullableStringArraySchema,
+  requirements: AgentPackageRequirementsSchema,
+});
+
 export const GitHubAgentPreviewSchema = z
   .object({
+    requirements: AgentPackageRequirementsSchema.optional(),
+    definition: z.record(z.string(), z.unknown()).optional(),
     preview_id: z.string().optional(),
     expires_at: z.string().optional(),
     repository_url: z.string().optional(),
@@ -3031,6 +3055,7 @@ const ImmutableGitCommitSchema = z.string().regex(/^[0-9a-fA-F]{40}([0-9a-fA-F]{
 const AgentSourceChangesSchema = z.array(AgentSourceFileChangeSchema).nullish().transform((value) => value ?? []);
 
 export const AgentSourceSyncPreviewSchema = z.object({
+  requirements: AgentPackageRequirementsSchema.optional(),
   preview_id: z.string().uuid(),
   expires_at: z.string(),
   repository_url: z.string(),

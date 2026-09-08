@@ -392,13 +392,13 @@
       "description": "Multica に現在保存されている設定、指示、skills（有効状態を含む）、関連ファイルを ZIP にまとめます。manifest と JSON Schema を含みます。",
       "download": "エージェントパッケージをダウンロード",
       "downloading": "エクスポート中...",
-      "hint": "認証情報と環境リソースは再設定用の参照として記録されます。v2 パッケージはダウンロードと検証プレビューに対応し、作成や公開へのインポートは未対応です。",
+      "hint": "インポート時に実行環境を選択し、設定値と再接続するリソースを確認してください。ZIP と Git は同じマニフェストと設定処理を使います。",
       "unavailable": "所有者またはワークスペースの admin のみエクスポートできます。",
       "failed": "エージェントをエクスポートできません"
     },
     "publish": {
       "no_source": "このエージェントは Git リポジトリに関連付けられていません。「エクスポート」で現在のパッケージをダウンロードできます。",
-      "description": "エージェントの Git リポジトリを管理します。同期すると指示、専用 skill とそのファイルが更新されます。",
+      "description": "Agent の Git リポジトリを管理します。公開すると、宣言された設定、指示、専属スキル、補助ファイルを更新します。",
       "repository": "エージェントのリポジトリ",
       "deployed": "公開済みのブランチとコミット",
       "unavailable": "このエージェントまたは現在の権限では手動同期を利用できません。",
@@ -1446,7 +1446,7 @@
       "connection": "GitHub 接続",
       "default_branch": "リポジトリの既定ブランチ",
       "preview": "エージェントをプレビュー",
-      "confirm_hint": "確認した指示と skills で非公開エージェントを作成します。ランタイムとアクセスは設定で変更できます。"
+      "confirm_hint": "確認後、マニフェストの設定、指示、専属スキルを使って作成します。"
     },
     "title": "エージェントを作成",
     "squad_title": "このスクワッド用のエージェントを作成",
@@ -1454,7 +1454,7 @@
     "back": "戻る",
     "eyebrow": "エージェント作成",
     "choose_title": "どの方法で始めますか？",
-    "choose_description": "すべて自分で設定するか、実績のあるテンプレートを調整するか、必要なものを説明して会話から作成できます。",
+    "choose_description": "Agent ZIP のアップロード、Git からのインポート、手動設定、AI 対話から作成できます。",
     "recommended": "おすすめ",
     "continue": "続ける",
     "step_choose": "開始方法を選択",
@@ -1463,7 +1463,7 @@
     "modes": {
       "git": {
         "title": "Git から作成",
-        "description": "GitHub リポジトリから指示と skills をインポートします。"
+        "description": "agent.json と参照ファイルを含む GitHub リポジトリから設定をインポートします。"
       },
       "blank": {
         "title": "空白から始める",
@@ -1479,7 +1479,11 @@
       },
       "github": {
         "title": "GitHub からインポート",
-        "description": "dingtalk-agent.json、エージェント定義、スキル、補助ファイルを含むバージョン管理された DTA Agent Project から作成します。"
+        "description": "agent.json と参照ファイルを含む GitHub リポジトリから設定をインポートします。"
+      },
+      "local": {
+        "title": "ローカルからインポート",
+        "description": "マニフェストとファイルを含む ZIP をアップロード"
       }
     },
     "sections": {
@@ -1557,7 +1561,7 @@
     "step_github": "GitHub からインポート",
     "github": {
       "source_title": "GitHub ソース",
-      "source_hint": "リポジトリと ref を選択し、作成前に dingtalk-agent.json を検証してプレビューします。",
+      "source_hint": "リポジトリとブランチを選び、agent.json と参照ファイルを検証してプレビューします。",
       "not_configured": "GitHub エージェントソースが設定されていません",
       "admin_required": "ワークスペース admin 権限が必要です",
       "admin_required_hint": "非公開リポジトリのプレビューと GitHub ベースのエージェント作成は owner または admin のみ利用できます。",
@@ -1585,6 +1589,19 @@
       "skills": "含まれるスキル",
       "instructions": "指示",
       "use": "このテンプレートを使用"
+    },
+    "local": {
+      "step": "アップロード · 確認 · 作成",
+      "description": "agent.json と参照する指示・skill ファイルをルートに含む ZIP をアップロードします。最大 40 MiB。",
+      "file": "エージェントの ZIP パッケージ",
+      "preview": "アップロードして確認",
+      "admin_required": "ワークスペースのオーナーと管理者のみインポートできます。",
+      "runtime_required": "{{provider}} ランタイムを選択してください。",
+      "secret": "設定値：{{ref}}",
+      "bindings_required": "移行先で再設定する項目：",
+      "defer_bindings": "これらの接続は後で設定します。新しいエージェントのメンバー権限は非公開にします。",
+      "confirm_hint": "確認すると、パッケージの設定・指示・専用 skills を持つ新しいエージェントを作成します。",
+      "configuration": "インポートする設定を確認"
     }
   },
   "actions": {
