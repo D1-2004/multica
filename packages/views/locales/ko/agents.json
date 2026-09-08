@@ -289,6 +289,8 @@
     "clear_full": "선택 지우기(제공자 기본값 사용)"
   },
   "tabs": {
+    "export": "내보내기",
+    "publish": "게시",
     "overview": "개요",
     "work": "작업",
     "memory": "기억",
@@ -395,6 +397,33 @@
     }
   },
   "tab_body": {
+    "export": {
+      "description": "Multica에 현재 저장된 설정, 지침, skills(활성 상태 포함), 관련 파일을 manifest와 JSON Schema가 포함된 ZIP으로 다운로드합니다.",
+      "download": "에이전트 패키지 다운로드",
+      "downloading": "내보내는 중...",
+      "hint": "자격 증명과 환경 리소스는 다시 연결할 참조로 기록됩니다. v2 패키지는 다운로드와 검증 미리보기를 지원하며, 가져오기를 통한 생성 및 게시는 아직 지원하지 않습니다.",
+      "unavailable": "소유자 또는 워크스페이스 admin만 내보낼 수 있습니다.",
+      "failed": "에이전트를 내보낼 수 없습니다"
+    },
+    "publish": {
+      "no_source": "이 에이전트는 Git 저장소에 연결되지 않았습니다. 내보내기에서 현재 패키지를 다운로드할 수 있습니다.",
+      "description": "에이전트의 Git 저장소를 관리합니다. 동기화하면 지침, 전용 skill 및 해당 파일이 업데이트됩니다.",
+      "repository": "에이전트 저장소",
+      "deployed": "게시된 브랜치와 커밋",
+      "unavailable": "이 에이전트 또는 현재 권한으로는 수동 동기화를 사용할 수 없습니다.",
+      "branch": "브랜치 또는 커밋",
+      "loading": "미리보기 준비 중...",
+      "preview": "변경 미리보기",
+      "branches_failed": "브랜치를 불러올 수 없습니다. 브랜치 또는 커밋을 직접 입력할 수 있습니다.",
+      "preview_failed": "미리보기를 준비할 수 없습니다",
+      "git_changes": "Git 파일 변경",
+      "configuration_changes": "설정 변경",
+      "confirm_hint": "확인하면 이 커밋이 게시됩니다. 위 변경에는 덮어쓸 로컬 skill 수정 사항도 포함됩니다.",
+      "publishing": "게시 중...",
+      "confirm": "게시 확인",
+      "before": "변경 전",
+      "after": "변경 후"
+    },
     "common": {
       "save": "저장",
       "add": "추가",
@@ -1411,6 +1440,22 @@
     "section_model": "모델"
   },
   "creation_studio": {
+    "schema": {
+      "download": "Schema 다운로드",
+      "downloading": "다운로드 중...",
+      "failed": "에이전트 Schema를 다운로드할 수 없습니다"
+    },
+    "git": {
+      "disabled_skill": "비활성",
+      "step": "저장소 선택 및 미리보기",
+      "description": "워크스페이스 GitHub 연결, 저장소 URL, 브랜치를 선택한 뒤 내용을 확인하고 에이전트를 만드세요.",
+      "connection_required": "워크스페이스 owner 또는 admin이 GitHub를 연결하고 저장소 접근을 허용해야 합니다.",
+      "manage_connections": "연결 관리",
+      "connection": "GitHub 연결",
+      "default_branch": "저장소 기본 브랜치",
+      "preview": "에이전트 미리보기",
+      "confirm_hint": "검토한 지침과 skills로 비공개 에이전트를 만듭니다. 런타임과 접근 권한은 설정에서 변경할 수 있습니다."
+    },
     "title": "에이전트 만들기",
     "squad_title": "이 스쿼드용 에이전트 만들기",
     "duplicate_title": "{{name}} 복제",
@@ -1424,6 +1469,10 @@
     "step_configure": "검토 및 설정",
     "step_ai": "대화로 만들기",
     "modes": {
+      "git": {
+        "title": "Git에서 만들기",
+        "description": "GitHub 저장소에서 지침과 skills를 가져옵니다."
+      },
       "blank": {
         "title": "빈 상태로 시작",
         "description": "모든 항목을 직접 설정합니다. 에이전트의 동작 방식을 정확히 알고 있을 때 적합합니다."

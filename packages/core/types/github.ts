@@ -165,6 +165,7 @@ export interface ListGitHubAgentRepositoriesResponse {
 }
 
 export interface GitHubAgentSkillPreview {
+  enabled?: boolean;
   source_path: string;
   name: string;
   description: string;
@@ -178,6 +179,9 @@ export interface GitHubAgentPreviewRequest {
 }
 
 export interface GitHubAgentPreview {
+  preview_id?: string;
+  expires_at?: string;
+  repository_url?: string;
   installation_id: string;
   repository: string;
   ref: string;
@@ -192,13 +196,17 @@ export interface GitHubAgentPreview {
 }
 
 export interface CreateGitHubAgentRequest extends CreateAgentRequest {
-  installation_id: string;
-  repository: string;
-  ref: string;
-  resolved_sha: string;
+  preview_id?: string;
+  installation_id?: string;
+  repository?: string;
+  ref?: string;
+  resolved_sha?: string;
 }
 
 export interface AgentSource {
+  repository_url?: string;
+  can_sync?: boolean;
+  configuration_scope?: string[];
   agent_id: string;
   source_type: "github" | string;
   installation_id: string | null;
@@ -223,6 +231,37 @@ export interface SyncAgentSourceResponse {
   source: AgentSource;
   changed: boolean;
   warnings: string[];
+}
+
+export interface AgentSourceFileChange {
+  path: string;
+  status: string;
+  before: string | null;
+  after: string | null;
+  before_sha?: string;
+  after_sha?: string;
+  before_mode?: string;
+  after_mode?: string;
+}
+
+export interface AgentSourceSyncPreview {
+  preview_id: string;
+  expires_at: string;
+  repository_url: string;
+  ref: string;
+  base_sha: string;
+  resolved_sha: string;
+  git_changes: AgentSourceFileChange[];
+  configuration_changes: AgentSourceFileChange[];
+  warnings: string[];
+  changed: boolean;
+}
+
+export interface AgentSourceBranches {
+  repository: string;
+  repository_url: string;
+  default_branch: string;
+  branches: { name: string; commit: { sha: string }; protected: boolean }[];
 }
 
 export interface GitHubRepository {

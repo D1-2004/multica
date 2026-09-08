@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, AgentRuntime } from "@multica/core/types";
+import type { Agent, AgentRuntime, AgentSource } from "@multica/core/types";
 
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
@@ -67,7 +67,10 @@ vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
 vi.mock("./tabs/coordinator-sessions-tab", () => ({ CoordinatorSessionsTab: () => <div>coordinator-sessions-tab</div> }));
-
+vi.mock("./tabs/export-tab", () => ({ ExportTab: () => <div>export-tab</div> }));
+vi.mock("./tabs/publish-tab", () => ({
+  PublishTab: () => <div>publish-tab</div>,
+}));
 vi.mock("./tabs/scene-memory-tab", () => ({
   SceneMemoryTab: () => <div>scene-memory-tab</div>,
 }));
@@ -179,6 +182,7 @@ function renderPane(
     agentOverrides?: Partial<Agent>;
     canEdit?: boolean;
     initialView?: string;
+    source?: AgentSource;
   } = {},
 ) {
   const queryClient = new QueryClient({
@@ -204,6 +208,7 @@ function renderPane(
             }
             runtime={runtimes[0] ?? null}
             owner={null}
+            source={options.source}
             runtimes={runtimes}
             members={[]}
             onUpdate={vi.fn().mockResolvedValue(undefined)}
@@ -558,4 +563,24 @@ describe("AgentOverviewPane Plugins tab visibility", () => {
       screen.queryByRole("tab", { name: /^Plugins$/i }),
     ).not.toBeInTheDocument();
   });
+});
+
+it("shows publishing in Configuration for a Git-created Agent", () => {
+  renderPane([], { source: {
+    agent_id: "agent-1", source_type: "github", installation_id: "installation",
+    repository: "acme/agent", ref: "main", manifest_path: "dingtalk-agent.json",
+    synced_commit_sha: "a".repeat(40), sync_status: "ready", last_sync_error: null,
+    last_sync_attempt_at: null, last_synced_at: "", github_connected: true,
+  } });
+  openConfiguration();
+  fireEvent.click(screen.getByRole("tab", { name: "Publish" }));
+  expect(screen.getByText("publish-tab")).toBeDefined();
+});
+
+it("shows separate export and publish sections on a manually created Agent", () => {
+  renderPane([]);
+  openConfiguration();
+  expect(screen.getByRole("tab", { name: "Publish" })).toBeDefined();
+  fireEvent.click(screen.getByRole("tab", { name: "Export" }));
+  expect(screen.getByText("export-tab")).toBeDefined();
 });

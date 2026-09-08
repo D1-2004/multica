@@ -425,6 +425,26 @@ type AgentSource struct {
 	ManagedSourceKey     pgtype.Text        `json:"managed_source_key"`
 }
 
+type AgentSourcePreview struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	AgentID              pgtype.UUID        `json:"agent_id"`
+	AgentSourceID        pgtype.UUID        `json:"agent_source_id"`
+	GithubInstallationID pgtype.UUID        `json:"github_installation_id"`
+	Repository           string             `json:"repository"`
+	Ref                  string             `json:"ref"`
+	ResolvedSha          string             `json:"resolved_sha"`
+	ExpectedSourceSha    string             `json:"expected_source_sha"`
+	ExpectedStateHash    string             `json:"expected_state_hash"`
+	Snapshot             []byte             `json:"snapshot"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt            pgtype.Timestamptz `json:"expires_at"`
+	AppliedAt            pgtype.Timestamptz `json:"applied_at"`
+	AppliedSource        []byte             `json:"applied_source"`
+	AppliedChanged       bool               `json:"applied_changed"`
+}
+
 type AgentSourceSkill struct {
 	AgentSourceID pgtype.UUID        `json:"agent_source_id"`
 	SkillID       pgtype.UUID        `json:"skill_id"`

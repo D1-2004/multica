@@ -5,3 +5,5 @@ export {
   AiCreateAgentPage,
   AiBuilderSessionPage,
 } from "./create";
+
+export { GitCreateAgentPage } from "./create/git-create-agent-page";

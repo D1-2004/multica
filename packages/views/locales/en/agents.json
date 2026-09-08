@@ -298,6 +298,8 @@
     "clear_full": "Clear selection (use provider default)"
   },
   "tabs": {
+    "export": "Export",
+    "publish": "Publish",
     "overview": "Overview",
     "work": "Work",
     "memory": "Memory",
@@ -339,6 +341,22 @@
     "inbound": "Inbound conversations"
   },
   "creation_studio": {
+    "schema": {
+      "download": "Download Schema",
+      "downloading": "Downloading...",
+      "failed": "Could not download agent schema"
+    },
+    "git": {
+      "disabled_skill": "Disabled",
+      "step": "Select a repository and preview",
+      "description": "Select a workspace GitHub connection, paste the repository URL, then choose a branch. Review the pinned version before creating the agent.",
+      "connection_required": "A workspace owner or admin must connect GitHub and grant access to the repository.",
+      "manage_connections": "Manage connections",
+      "connection": "GitHub connection",
+      "default_branch": "Repository default branch",
+      "preview": "Preview agent",
+      "confirm_hint": "Creates a private agent with the reviewed instructions and skills. Runtime and access can be changed in Configuration."
+    },
     "title": "Create an agent",
     "squad_title": "Create an agent for this squad",
     "duplicate_title": "Duplicate {{name}}",
@@ -352,6 +370,10 @@
     "step_configure": "Review and configure",
     "step_ai": "Build through conversation",
     "modes": {
+      "git": {
+        "title": "From Git",
+        "description": "Import instructions and skills from a GitHub repository."
+      },
       "blank": {
         "title": "Start blank",
         "description": "Configure every field yourself. Best when you already know exactly how this agent should work."
@@ -541,6 +563,33 @@
     }
   },
   "tab_body": {
+    "export": {
+      "description": "Download a ZIP of the agent configuration, instructions, skills (including enabled state), and supporting files currently saved in Multica, with a manifest and JSON Schema.",
+      "download": "Download agent package",
+      "downloading": "Exporting...",
+      "hint": "Credentials and environment resources are recorded as references to bind. v2 packages support download and validation preview; importing to create or publish is not yet available.",
+      "unavailable": "Only the agent owner or a workspace admin can export this agent.",
+      "failed": "Could not export agent"
+    },
+    "publish": {
+      "no_source": "This agent is not linked to a Git repository. You can download its current agent package from Export.",
+      "description": "Manage the Git repository used by this agent. Sync updates instructions, exclusive skills and their files.",
+      "repository": "Agent repository",
+      "deployed": "Published branch and commit",
+      "unavailable": "Source syncing is unavailable for this agent or your current permissions.",
+      "branch": "Branch or commit",
+      "loading": "Preparing preview...",
+      "preview": "Preview changes",
+      "branches_failed": "Could not load branches. You can still enter a branch or commit.",
+      "preview_failed": "Could not prepare the source preview",
+      "git_changes": "Git file changes",
+      "configuration_changes": "Configuration changes",
+      "confirm_hint": "Confirm to apply this exact commit. The changes above include any local skill edits that will be overwritten.",
+      "publishing": "Publishing...",
+      "confirm": "Confirm publication",
+      "before": "Before",
+      "after": "After"
+    },
     "common": {
       "save": "Save",
       "add": "Add",

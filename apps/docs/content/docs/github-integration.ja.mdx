@@ -62,11 +62,13 @@ PR をマージ**せずに**クローズした場合は、PR カードの状態�
 
 ## リポジトリからエージェントを作成する
 
-GitHub App に **Contents: Read-only** 権限があり、App の認証情報が設定されている場合、**Agents → エージェントを作成 → GitHub からインポート**を利用できます。リポジトリは定義のバージョン管理されたソースであり、ランタイムの作業ディレクトリではありません。
+GitHub App に **Contents: Read-only** 権限があり、認証情報が設定されている場合、ワークスペースの owner/admin は GitHub Agent API にリポジトリ URL、接続、ブランチを指定してプレビューと作成を実行できます。このサーバー開発段階には作成画面の Git 入口は含まれません。
 
 ルートには `dingtalk-agent/project@1` の DTA `dingtalk-agent.json` が必要です。`agent.definition` は配信する定義ファイルを指し、`agent.skillsRoot` は必須で、`agent.skills` は `dta-basic-behavior` を明示的に含めます。Basic を含むすべてのスキルは `<skillsRoot>/<name>` に配置し、各 `SKILL.md` の frontmatter `name` を宣言名と一致させます。ルートの `AGENTS.md` はリポジトリ開発ルールに利用でき、インポートされるのは `agent.definition` が指すファイルだけです。
 
-Multica は `project@1` の安定フィールドを検証し、追加の DTA 拡張フィールドと `workspaces` の内部定義は解釈しません。選択した commit の定義とリポジトリスキルをスナップショット化しますが、作成後に Multica で編集した名前と説明は同期時も保持します。従来の `multica-agent.yaml` にはフォールバックしません。変更は自動反映されず、エージェント Overview の **今すぐ同期**で明示的に同期します。
+Multica は `project@1` の安定フィールドを検証し、追加の DTA 拡張フィールドと `workspaces` の内部定義は解釈しません。選択した commit の定義とリポジトリスキルをスナップショット化しますが、作成後に Multica で編集した名前と説明は同期時も保持します。従来の `multica-agent.yaml` にはフォールバックしません。
+
+変更は自動適用されません。Git エージェントの **設定 → インポート / エクスポート** でブランチを選択し、Git と設定の差分を確認して公開します。確認済みのコミットが適用され、プレビュー後のブランチ更新には追従しません。ローカル skill の編集と削除も差分に含まれます。
 
 ## 連携解除
 
@@ -202,3 +204,7 @@ curl -i -X POST https://<api-host>/api/webhooks/github \
 - [イシュー](/issues) — PR から参照されるイシュー識別子（`MUL-123`）
 - [ワークスペース](/workspaces) — ワークスペース固有のイシュー prefix を設定する場所
 - [環境変数](/environment-variables) — 上記の GitHub 変数を含む env の完全なリファレンス
+
+## プロトコル履歴
+
+- 2026-09-08: リポジトリ URL API と、固定コミットのプレビュー後に確認する同期手順を追記しました。

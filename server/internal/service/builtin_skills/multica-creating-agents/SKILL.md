@@ -336,6 +336,28 @@ State-changing (require an explicit instruction — do not run speculatively):
 
 ## References
 
+Git repository sources use the existing DTA `dingtalk-agent/project@1` files
+directly. Workspace owners/admins can preview a GitHub repository URL with
+`POST /api/workspaces/{id}/github/agent-preview`, then create with the returned
+`preview_id` and the chosen `runtime_id`. The ID fixes the Git commit and makes
+confirmation retries idempotent; no CLI-built archive is required.
+
+For an existing Git Agent, first call `POST /api/agents/{id}/source/preview`
+with `{"ref":"<branch>"}` and review both `git_changes` and
+`configuration_changes`. Only after the user confirms, call
+`POST /api/agents/{id}/source/sync` with `{"preview_id":"<id>"}`. Bodyless sync
+now returns 428. An expired preview or changed local source configuration
+returns 409 and requires a fresh preview. This path imports instructions,
+declared skills and their text files; model, runtime, credentials, identities
+and instance permissions remain configured in Multica. Source skills are
+exclusive to the Agent but may be edited/deleted by their authorized managers.
+
 `references/creating-agents-source-map.md` maps every contract above to its
 `file:line` on the current tree, the runtime effect, and a safe read-only
 verification command.
+
+## Protocol history
+
+- 2026-09-08: Added repository URL creation and preview-ID source confirmation.
+  Replaced unreviewed source sync with fixed-commit Git/configuration previews,
+  and allowed ordinary source skill edits/deletion while retaining exclusivity.

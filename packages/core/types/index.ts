@@ -235,6 +235,9 @@ export type {
   CreateGitHubAgentRequest,
   CreateGitHubAgentResponse,
   AgentSource,
+  AgentSourceSyncPreview,
+  AgentSourceFileChange,
+  AgentSourceBranches,
   SyncAgentSourceResponse,
 } from "./github";
 export type {

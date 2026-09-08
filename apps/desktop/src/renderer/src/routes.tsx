@@ -34,6 +34,7 @@ import {
   AiCreateAgentPage,
   ChooseCreateMethodPage,
   ManualCreateAgentPage,
+  GitCreateAgentPage,
 } from "@multica/views/agents";
 import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads/components";
 import { InboxPage } from "@multica/views/inbox";
@@ -223,6 +224,11 @@ export const appRoutes: RouteObject[] = [
           {
             path: "agents/new",
             element: <ChooseCreateMethodPage />,
+            handle: { title: "Create Agent" },
+          },
+          {
+            path: "agents/new/git",
+            element: <GitCreateAgentPage />,
             handle: { title: "Create Agent" },
           },
           {

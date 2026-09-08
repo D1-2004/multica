@@ -31,6 +31,7 @@ vi.mock("../../i18n", () => ({
           modes: {
             blank: { title: string; description: string };
             ai: { title: string; description: string };
+            git: { title: string; description: string };
           };
           create_and_open: string;
           create_and_add: string;
@@ -51,6 +52,7 @@ vi.mock("../../i18n", () => ({
           recommended: "Recommended",
           continue: "Continue",
           modes: {
+            git: { title: "From Git", description: "Import a repository" },
             blank: {
               title: "Start blank",
               description: "Configure every field yourself.",
@@ -209,10 +211,12 @@ describe("Agent creation method chooser", () => {
         children: createElement(CreateMethodChooser, {
           blankHref: "/acme/agents/new/manual",
           aiHref: "/acme/agents/new/ai",
+          gitHref: "/acme/agents/new/git",
         }),
       }),
     );
 
+    expect(screen.getByText("From Git").closest("a")).toHaveAttribute("href", "/acme/agents/new/git");
     expect(screen.getByText("Start blank")).toBeInTheDocument();
     expect(screen.getByText("Build with AI")).toBeInTheDocument();
     expect(

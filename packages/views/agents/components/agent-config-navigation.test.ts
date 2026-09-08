@@ -20,6 +20,9 @@ describe("agent configuration navigation", () => {
     expect(groupForConfigView("integrations")).toBe("connections");
     expect(groupForConfigView("general")).toBe("execution");
     expect(groupForConfigView("llm_trace")).toBe("management");
+    expect(groupForConfigView("publish")).toBe("management");
+    expect(groupForConfigView("export")).toBe("management");
+    expect(sectionForView("publish")).toBe("configuration");
   });
 
   it("moves legacy identity links into Digital Employee", () => {

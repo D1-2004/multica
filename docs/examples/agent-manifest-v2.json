@@ -1,0 +1,112 @@
+{
+  "$schema": "agent.schema.json",
+  "version": "multica.agent/v2",
+  "name": "代码审查助手",
+  "description": "根据团队规范审查变更并跟进结果",
+  "instructions": "AGENTS.md",
+  "skills": [
+    {
+      "path": "skills/code-review",
+      "name": "code-review",
+      "description": "审查规则、脚本与报告模板",
+      "enabled": true
+    }
+  ],
+  "configuration": {
+    "avatar_url": "🔍",
+    "persona": "你是团队的代码审查同事，先理解目标，再提出有依据的建议。",
+    "reply_tone": "使用简短、直接的中文，说明发现和下一步。",
+    "inbound_coordinator": true,
+    "dingtalk_response_enabled": true,
+    "dingtalk_show_ai_tag": true,
+    "dispatch_always_new_issue": false,
+    "chat_session_resume": true,
+    "task_finished_loop_enabled": true,
+    "scene_memory_write_enabled": true,
+    "scene_memory_recall_enabled": true,
+    "scene_memory_ui_enabled": true,
+    "scene_memory_bootstrap_enabled": false,
+    "dispatch_prompt_overrides": {},
+    "model": "",
+    "thinking_level": "",
+    "service_tier": "",
+    "max_concurrent_tasks": 6,
+    "custom_args": [],
+    "custom_env": {
+      "REVIEW_LANGUAGE": "zh-CN",
+      "REVIEW_API_TOKEN": { "secret_ref": "review-api-token" }
+    },
+    "runtime_config": {
+      "llm_trace": {
+        "enabled": true,
+        "sink_url": "https://trace.example.test/ingest"
+      }
+    },
+    "mcp_config": {
+      "mcpServers": {
+        "review-rules": {
+          "type": "http",
+          "url": "https://tools.example.test/mcp",
+          "headers": {
+            "Authorization": { "secret_ref": "review-mcp-authorization" }
+          },
+          "enabled": true
+        }
+      }
+    },
+    "composio_toolkit_allowlist": []
+  },
+  "disabled_runtime_skills": [],
+  "dsh_plugins": [],
+  "okrs": [
+    {
+      "objective": "让重要变更在合并前完成审查",
+      "key_results": ["为每次审查提供可定位的问题和验证建议"]
+    }
+  ],
+  "bindings": {
+    "runtime": {
+      "ref": "review-runtime",
+      "provider": "codex",
+      "runtime_mode": "cloud"
+    },
+    "runner": { "ref": "review-machine" },
+    "enterprise_identity": { "ref": "review-employee" },
+    "github_identity": { "ref": "review-github-account" },
+    "dingtalk_account": { "ref": "review-dingtalk-account" },
+    "bots": [
+      { "platform": "dingtalk", "ref": "review-bot" }
+    ]
+  },
+  "access": {
+    "permission_mode": "private",
+    "invocation_targets": []
+  },
+  "a2a": {
+    "enabled": false,
+    "card_name": "代码审查助手",
+    "card_description": "接受代码审查任务",
+    "card_version": "1.0.0",
+    "card_skills": [
+      {
+        "id": "code-review",
+        "name": "代码审查",
+        "description": "审查代码并提供修改建议",
+        "tags": ["review"],
+        "examples": ["审查这次提交"],
+        "inputModes": ["text/plain"],
+        "outputModes": ["text/plain"]
+      }
+    ],
+    "clients": [
+      {
+        "key": "local-coding-agent",
+        "name": "Local Coding Agent",
+        "status": "disabled",
+        "scopes": ["send", "read"],
+        "rate_limit_per_minute": 30,
+        "max_concurrent_tasks": 2
+      }
+    ]
+  }
+}

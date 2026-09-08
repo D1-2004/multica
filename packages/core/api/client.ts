@@ -182,6 +182,8 @@ import type {
   CreateGitHubAgentRequest,
   CreateGitHubAgentResponse,
   AgentSource,
+  AgentSourceSyncPreview,
+  AgentSourceBranches,
   SyncAgentSourceResponse,
   ListVCSConnectionsResponse,
   ConnectVCSRequest,
@@ -474,6 +476,11 @@ import {
   ListGitHubInstallationsResponseSchema,
   ListGitHubAgentRepositoriesResponseSchema,
   AgentSourceSchema,
+  AgentManifestSchemaDownloadSchema,
+  AgentSourceSyncPreviewSchema,
+  AgentSourceBranchesSchema,
+  EMPTY_AGENT_SOURCE_SYNC_PREVIEW,
+  EMPTY_AGENT_SOURCE_BRANCHES,
   CreateGitHubAgentResponseSchema,
   SyncAgentSourceResponseSchema,
   EMPTY_GITHUB_AGENT_PREVIEW,
@@ -5600,6 +5607,29 @@ export class ApiClient {
     );
   }
 
+  async exportAgent(agentId: string): Promise<Blob> {
+    const response = await this.fetchRaw(`/api/agents/${encodeURIComponent(agentId)}/export`);
+    if (response.headers.get("content-type")?.split(";")[0] !== "application/zip") {
+      throw new Error("Invalid agent export response");
+    }
+    const blob = await response.blob();
+    if (blob.size === 0) throw new Error("Empty agent export response");
+    return blob;
+  }
+
+  async downloadAgentSchema(): Promise<Blob> {
+    const response = await this.fetchRaw("/api/agent-schema");
+    if (response.headers.get("content-type")?.split(";")[0] !== "application/schema+json") {
+      throw new Error("Invalid agent schema response");
+    }
+    const content = await response.text();
+    let raw: unknown;
+    try { raw = JSON.parse(content); } catch { throw new Error("Invalid agent schema response"); }
+    const schema = parseWithFallback<Record<string, unknown> | null>(raw, AgentManifestSchemaDownloadSchema, null, { endpoint: "GET /api/agent-schema", includeReceived: false });
+    if (!schema) throw new Error("Invalid agent schema response");
+    return new Blob([content], { type: "application/schema+json" });
+  }
+
   async getAgentSource(agentId: string): Promise<AgentSource> {
     const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source`);
     return parseWithFallback(raw, AgentSourceSchema, EMPTY_AGENT_SOURCE, {
@@ -5607,11 +5637,36 @@ export class ApiClient {
     });
   }
 
-  async syncAgentSource(agentId: string): Promise<SyncAgentSourceResponse> {
+  async listAgentSourceBranches(agentId: string): Promise<AgentSourceBranches> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source/branches`);
+    return parseWithFallback(raw, AgentSourceBranchesSchema, EMPTY_AGENT_SOURCE_BRANCHES, {
+      endpoint: "GET /api/agents/:id/source/branches",
+    });
+  }
+
+  async listGitHubAgentBranches(workspaceId: string, installationId: string, repository: string): Promise<AgentSourceBranches> {
+    const params = new URLSearchParams({ installation_id: installationId, repository });
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/branches?${params}`);
+    return parseWithFallback(raw, AgentSourceBranchesSchema, EMPTY_AGENT_SOURCE_BRANCHES, {
+      endpoint: "GET /api/workspaces/:id/github/branches",
+    });
+  }
+
+  async previewAgentSourceSync(agentId: string, ref: string): Promise<AgentSourceSyncPreview> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source/preview`, {
+      method: "POST", body: JSON.stringify({ ref }),
+    });
+    return parseWithFallback(raw, AgentSourceSyncPreviewSchema, EMPTY_AGENT_SOURCE_SYNC_PREVIEW, {
+      endpoint: "POST /api/agents/:id/source/preview",
+    });
+  }
+
+  async syncAgentSource(agentId: string, previewId: string): Promise<SyncAgentSourceResponse> {
     const raw = await this.fetch<unknown>(
       `/api/agents/${agentId}/source/sync`,
       {
         method: "POST",
+        body: JSON.stringify({ preview_id: previewId }),
       },
     );
     return parseWithFallback(

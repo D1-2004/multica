@@ -1,0 +1,1055 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Multica Agent Manifest",
+  "description": "Self-contained manifest schema for Agent packages and repositories. v1 is the deployed Git source protocol; v2 includes platform configuration exports.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/v1"
+    },
+    {
+      "$ref": "#/$defs/v2"
+    }
+  ],
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\\\x00-\\x1f]+(/[^/\\\\\\x00-\\x1f]+)*$",
+      "not": { "pattern": "(^|/)\\.{1,2}(/|$)" },
+      "description": "Relative repository path. The importer also checks unique and non-overlapping skill paths, text content and UTF-8 byte limits."
+    },
+    "v1": {
+      "title": "Multica Agent Source v1",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "$schema",
+        "version",
+        "name",
+        "instructions",
+        "skills"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "agent.schema.json"
+        },
+        "version": {
+          "const": "multica.agent/v1"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "\\S"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "instructions": {
+          "$ref": "#/$defs/path"
+        },
+        "skills": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "name",
+              "enabled"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "pattern": "\\S"
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "alias": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "Logical deployment binding name; never a resolved credential or an implicit resource lookup."
+    },
+    "secretRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secret_ref"
+      ],
+      "properties": {
+        "secret_ref": {
+          "$ref": "#/$defs/alias"
+        }
+      },
+      "description": "Resolve in the target environment. The manifest never stores the resolved secret."
+    },
+    "stringValue": {
+      "oneOf": [
+        {
+          "type": "string",
+          "not": {
+            "enum": [
+              "***",
+              "****"
+            ]
+          }
+        },
+        {
+          "$ref": "#/$defs/secretRef"
+        }
+      ],
+      "description": "A non-secret literal or a secret reference. Mask sentinels are not portable values."
+    },
+    "resourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/alias"
+        }
+      },
+      "description": "Required target-environment resource binding when present. Omission preserves an existing binding; null explicitly detaches where allowed."
+    },
+    "runtimeRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/alias"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "runtime_mode": {
+          "enum": [
+            "local",
+            "cloud"
+          ]
+        }
+      },
+      "description": "Maps to runtime_id after permission and provider checks. Mode is a compatibility constraint, not an editable Runtime record."
+    },
+    "configValue": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "boolean",
+            "null"
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/configValue"
+          }
+        },
+        {
+          "$ref": "#/$defs/configObject"
+        },
+        {
+          "$ref": "#/$defs/secretRef"
+        }
+      ]
+    },
+    "configObject": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "const": "secret_ref"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/configValue"
+      },
+      "description": "Provider-owned JSON extension data. Known secret values must use secret_ref; arbitrary string values are not automatically classified as secrets."
+    },
+    "stringMap": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/stringValue"
+      }
+    },
+    "environment": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/stringValue"
+      },
+      "description": "Whole-map custom_env replacement through the env-specific permission and audit boundary. Empty object clears; missing leaves unmanaged."
+    },
+    "mcpConfig": {
+      "type": "object",
+      "properties": {
+        "mcpServers": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/mcpServer"
+          }
+        },
+        "mcp": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/mcpServer"
+          }
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/configValue"
+      },
+      "description": "Preserves both currently supported MCP containers and provider-native extensions. Resolve secret refs before applying; validate transport and provider compatibility at deployment."
+    },
+    "mcpServer": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "command": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/secretRef"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "\\S"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/stringValue"
+              },
+              "minItems": 1
+            }
+          ]
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stringValue"
+          }
+        },
+        "url": {
+          "$ref": "#/$defs/stringValue"
+        },
+        "env": {
+          "$ref": "#/$defs/environment"
+        },
+        "environment": {
+          "$ref": "#/$defs/environment"
+        },
+        "headers": {
+          "$ref": "#/$defs/stringMap"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "timeout": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "token": {
+          "$ref": "#/$defs/secretRef"
+        },
+        "api_key": {
+          "$ref": "#/$defs/secretRef"
+        },
+        "password": {
+          "$ref": "#/$defs/secretRef"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/configValue"
+      }
+    },
+    "llmTrace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "sink_url": {
+          "oneOf": [
+            {
+              "const": ""
+            },
+            {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^https?://"
+            },
+            {
+              "$ref": "#/$defs/secretRef"
+            }
+          ]
+        }
+      },
+      "description": "Maps to runtime_config.llm_trace; meaningful only for supported cloud runtimes."
+    },
+    "runtimeConfig": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "local",
+            "gateway"
+          ]
+        },
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "host": {
+              "$ref": "#/$defs/stringValue"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "token": {
+              "$ref": "#/$defs/secretRef"
+            },
+            "tls": {
+              "type": "boolean"
+            }
+          }
+        },
+        "llm_trace": {
+          "$ref": "#/$defs/llmTrace"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/configValue"
+      },
+      "description": "Provider-native runtime configuration. OpenClaw mode/gateway and cloud llm_trace have typed contracts; other provider extensions are retained."
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "avatar_url": {
+          "type": "string",
+          "description": "Current avatar_url representation, including supported emoji or URL values. Empty string clears. Asset upload/URL resolution is a deployment concern."
+        },
+        "persona": {
+          "type": "string",
+          "maxLength": 400,
+          "description": "Coordinator persona. Independent from task instructions."
+        },
+        "reply_tone": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Coordinator reply style."
+        },
+        "inbound_coordinator": {
+          "type": "boolean",
+          "description": "Decide how to handle inbound chat before dispatch."
+        },
+        "dingtalk_response_enabled": {
+          "type": "boolean",
+          "description": "Platform-managed DingTalk replies and thinking reactions."
+        },
+        "dingtalk_show_ai_tag": {
+          "type": "boolean",
+          "description": "Show the AI sender label."
+        },
+        "dispatch_always_new_issue": {
+          "type": "boolean",
+          "description": "Create a new Issue for each ordinary inbound message."
+        },
+        "chat_session_resume": {
+          "type": "boolean",
+          "description": "Allow eligible provider chat session reuse."
+        },
+        "task_finished_loop_enabled": {
+          "type": "boolean",
+          "description": "Return task completion to Coordinator for follow-up."
+        },
+        "scene_memory_write_enabled": {
+          "type": "boolean",
+          "description": "Enable scene-memory writes; does not include memory records."
+        },
+        "scene_memory_recall_enabled": {
+          "type": "boolean",
+          "description": "Enable scene-memory recall."
+        },
+        "scene_memory_ui_enabled": {
+          "type": "boolean",
+          "description": "Enable the scene-memory UI."
+        },
+        "scene_memory_bootstrap_enabled": {
+          "type": "boolean",
+          "description": "Enable scene-memory bootstrap."
+        },
+        "dispatch_prompt_overrides": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "policy",
+              "reply_formatting",
+              "enterprise_identity",
+              "scene_graph"
+            ]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 32000
+          },
+          "description": "Whole-map replacements for current customizable dispatch segments. Blank values restore managed text; context and dingtalk_conversation cannot be overridden."
+        },
+        "model": {
+          "type": "string",
+          "description": "Runtime-native model ID. Empty clears the override; live catalog validation is required."
+        },
+        "thinking_level": {
+          "type": "string",
+          "description": "Runtime-native reasoning value; deliberately not a cross-provider enum. Empty clears."
+        },
+        "service_tier": {
+          "type": "string",
+          "description": "Runtime-native service tier. Empty clears; check the selected provider/model."
+        },
+        "max_concurrent_tasks": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50
+        },
+        "custom_args": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/stringValue"
+          },
+          "description": "Whole-array provider CLI arguments. Secret references may replace entire arguments."
+        },
+        "custom_env": {
+          "$ref": "#/$defs/environment"
+        },
+        "runtime_config": {
+          "$ref": "#/$defs/runtimeConfig"
+        },
+        "mcp_config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/mcpConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "composio_toolkit_allowlist": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              },
+              "uniqueItems": true,
+              "description": "Toolkit slugs; does not transfer owner OAuth connections or grant new authorization."
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "description": "Portable Agent configuration using the current API field names. Missing fields stay unmanaged; explicit false, empty values and documented nulls retain their distinct meanings."
+    },
+    "runtimeSkill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime_ref",
+        "provider",
+        "root",
+        "key"
+      ],
+      "properties": {
+        "runtime_ref": {
+          "$ref": "#/$defs/alias"
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S"
+        },
+        "root": {
+          "enum": [
+            "provider",
+            "universal",
+            "plugin"
+          ]
+        },
+        "key": {
+          "$ref": "#/$defs/path",
+          "maxLength": 512,
+          "description": "Runtime-relative skill key; additionally bounded to 512 UTF-8 bytes at deployment."
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "plugin": {
+          "type": "string"
+        }
+      },
+      "description": "A disabled runtime-local skill. Resolve runtime_ref before mapping to disabled_runtime_skills.runtime_id.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "root": {
+                "const": "plugin"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "plugin"
+            ],
+            "properties": {
+              "plugin": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "\\S"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "dshPlugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "enabled"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/alias"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "description": "Binding to a workspace DSH plugin plus its assignment state. Does not bundle plugin artifacts or install a plugin."
+    },
+    "okr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "objective",
+        "key_results"
+      ],
+      "properties": {
+        "objective": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "maxLength": 120
+        },
+        "key_results": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S",
+            "maxLength": 120
+          },
+          "maxItems": 10,
+          "uniqueItems": true
+        }
+      },
+      "description": "Matches SetAgentOKRsRequest. Array order determines position; label IDs, colors and usage are generated or runtime-owned."
+    },
+    "botBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "ref"
+      ],
+      "properties": {
+        "platform": {
+          "enum": [
+            "dingtalk",
+            "lark",
+            "slack",
+            "wecom"
+          ]
+        },
+        "ref": {
+          "$ref": "#/$defs/alias"
+        }
+      },
+      "description": "Map an authorized bot integration in the target workspace. Does not create a bot or take over an existing binding automatically."
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "runtime": {
+          "$ref": "#/$defs/runtimeRef"
+        },
+        "runner": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "enterprise_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "github_identity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dingtalk_account": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/resourceRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/botBinding"
+          },
+          "uniqueItems": true
+        }
+      },
+      "description": "Target-environment requirements. Declarations do not themselves authorize account binding, credential creation or takeover. Git source access is selected separately in the import form."
+    },
+    "invocationTarget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target_type"
+          ],
+          "properties": {
+            "target_type": {
+              "const": "workspace"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target_type",
+            "ref"
+          ],
+          "properties": {
+            "target_type": {
+              "const": "member"
+            },
+            "ref": {
+              "$ref": "#/$defs/alias"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target_type",
+            "ref"
+          ],
+          "properties": {
+            "target_type": {
+              "const": "team"
+            },
+            "ref": {
+              "$ref": "#/$defs/alias"
+            }
+          },
+          "description": "Reserved in the current Multica permission model; must remain inert, never expanded into grants."
+        }
+      ]
+    },
+    "access": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "permission_mode",
+        "invocation_targets"
+      ],
+      "properties": {
+        "permission_mode": {
+          "enum": [
+            "private",
+            "public_to"
+          ]
+        },
+        "invocation_targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/invocationTarget"
+          },
+          "uniqueItems": true
+        }
+      },
+      "description": "Owner-authorized invocation policy. Owner identity and legacy derived visibility are not serialized.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "permission_mode": {
+                "const": "private"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "invocation_targets": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "invocation_targets": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "a2aCardSkill": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "description",
+        "tags"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "\\S"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "\\S"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "pattern": "\\S"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inputModes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "text/plain",
+              "application/json",
+              "application/octet-stream",
+              "image/*",
+              "audio/*",
+              "video/*"
+            ]
+          }
+        },
+        "outputModes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "text/plain",
+              "application/json",
+              "application/octet-stream",
+              "image/*",
+              "audio/*",
+              "video/*"
+            ]
+          }
+        },
+        "securityRequirements": false
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/configValue"
+      },
+      "description": "Standard Agent Card skill metadata, distinct from executable workspace skills. Per-skill securityRequirements are not configurable in Multica; endpoint security is generated. Media modes still require live endpoint capability checks."
+    },
+    "a2aClient": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "name",
+        "status",
+        "scopes"
+      ],
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/alias"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "maxLength": 200
+        },
+        "status": {
+          "enum": [
+            "active",
+            "disabled",
+            "revoked"
+          ]
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "send",
+              "read",
+              "list",
+              "cancel"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "rate_limit_per_minute": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "max_concurrent_tasks": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      },
+      "description": "Desired A2A/MCP client policy keyed by a portable logical identity. No credential records, tokens, public endpoint IDs or generated URLs. Revocation remains subject to existing lifecycle rules."
+    },
+    "a2a": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "card_name": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "maxLength": 200
+        },
+        "card_description": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "card_version": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "\\S",
+          "maxLength": 64
+        },
+        "card_skills": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/a2aCardSkill"
+          },
+          "maxItems": 64
+        },
+        "clients": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/a2aClient"
+          }
+        }
+      },
+      "description": "Shared inbound A2A and hosted MCP access configuration. MCP has no separate enable/credential system. Public Agent Card endpoints and capabilities are generated by the target platform."
+    },
+    "v2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "$schema",
+        "version",
+        "name",
+        "instructions",
+        "skills"
+      ],
+      "properties": {
+        "$schema": {
+          "const": "agent.schema.json"
+        },
+        "version": {
+          "const": "multica.agent/v2"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "pattern": "\\S"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4000,
+          "description": "Also limited to 4000 UTF-8 bytes by the source compiler."
+        },
+        "instructions": {
+          "$ref": "#/$defs/path"
+        },
+        "skills": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "name",
+              "enabled"
+            ],
+            "properties": {
+              "path": {
+                "$ref": "#/$defs/path"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "pattern": "\\S"
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 4000
+              },
+              "enabled": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        },
+        "disabled_runtime_skills": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/runtimeSkill"
+          },
+          "uniqueItems": true
+        },
+        "dsh_plugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/dshPlugin"
+          },
+          "uniqueItems": true
+        },
+        "okrs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/okr"
+          },
+          "maxItems": 10
+        },
+        "bindings": {
+          "$ref": "#/$defs/bindings"
+        },
+        "access": {
+          "$ref": "#/$defs/access"
+        },
+        "a2a": {
+          "$ref": "#/$defs/a2a"
+        }
+      },
+      "title": "Multica Agent Source v2",
+      "description": "Expanded configuration contract. Schema support does not imply import/export/publish adapter support; the currently deployed source adapter accepts v1 only."
+    }
+  }
+}
