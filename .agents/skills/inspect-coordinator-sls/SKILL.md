@@ -38,6 +38,8 @@ scripts/query-coordinator-sls.sh --env prod --agent 金龙 --message VOC
 
 脚本自己调 `normandy log list`。加 `--raw` 看原始 JSON。
 
+日巡检固定 `--from` 和 `--to`，用 `--offset` 翻页。stderr 的 `possibly_truncated=true` 表示取满一页，保持query和窗口，按 `next_offset` 继续；不能把单页当全量。`--raw` 仍为原始数组（中文过滤需自行处理）。大prompt通过临时文件解析，不塞进命令参数，以免超过系统参数长度限制。
+
 ## 直接 Normandy
 
 预发主机 tag 是 `acni_ag_dt-fde-multica_default_prehost`：
