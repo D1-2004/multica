@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -32,7 +33,22 @@ type sceneMemoryResponse struct {
 	LastFlushedAt  string `json:"last_flushed_at,omitempty"`
 }
 
-func sceneMemoryToResponse(row db.SceneMemory) sceneMemoryResponse {
+func (h *Handler) sceneMemorySelfNames(ctx context.Context, agent db.Agent) []string {
+	names := []string{agent.Name}
+	if h == nil || h.Queries == nil {
+		return names
+	}
+	ident, err := h.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: agent.WorkspaceID,
+		AgentID:     agent.ID,
+	})
+	if err != nil {
+		return names
+	}
+	return append(names, ident.AccountDisplayName)
+}
+
+func sceneMemoryToResponse(row db.SceneMemory, selfNames ...string) sceneMemoryResponse {
 	resp := sceneMemoryResponse{
 		ID:             uuidToString(row.ID),
 		WorkspaceID:    uuidToString(row.WorkspaceID),
@@ -41,7 +57,7 @@ func sceneMemoryToResponse(row db.SceneMemory) sceneMemoryResponse {
 		SceneKey:       row.SceneKey,
 		SceneKind:      row.SceneKind,
 		SceneTitle:     scenememory.DisplayTitle(row.SceneTitle, row.MemoryText),
-		MemoryText:     row.MemoryText,
+		MemoryText:     scenememory.SanitizeMemoryTextForAgent(row.MemoryText, selfNames...),
 		MemoryRevision: row.MemoryRevision,
 		Status:         scenememory.StatusOf(row),
 		LastError:      row.LastError,
@@ -81,8 +97,9 @@ func (h *Handler) ListAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]sceneMemoryResponse, 0, len(rows))
+	names := h.sceneMemorySelfNames(r.Context(), agent)
 	for _, row := range rows {
-		out = append(out, sceneMemoryToResponse(row))
+		out = append(out, sceneMemoryToResponse(row, names...))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -118,7 +135,7 @@ func (h *Handler) loadManagedSceneMemory(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) UpdateAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
-	_, row, ok := h.loadManagedSceneMemory(w, r)
+	agent, row, ok := h.loadManagedSceneMemory(w, r)
 	if !ok {
 		return
 	}
@@ -130,6 +147,8 @@ func (h *Handler) UpdateAgentSceneMemory(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
+	names := h.sceneMemorySelfNames(r.Context(), agent)
+	body.MemoryText = scenememory.SanitizeMemoryTextForAgent(body.MemoryText, names...)
 	updated, err := h.SceneMemoryStore.ReplaceText(
 		r.Context(), row.WorkspaceID, row.AgentID, row.ID, body.ExpectedRevision, body.MemoryText,
 	)
@@ -150,7 +169,7 @@ func (h *Handler) UpdateAgentSceneMemory(w http.ResponseWriter, r *http.Request)
 		"scene_key", updated.SceneKey,
 		"memory_revision", updated.MemoryRevision,
 	)
-	writeJSON(w, http.StatusOK, sceneMemoryToResponse(updated))
+	writeJSON(w, http.StatusOK, sceneMemoryToResponse(updated, names...))
 }
 
 func (h *Handler) ResetAgentSceneMemory(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +214,7 @@ func (h *Handler) ResetAgentSceneMemory(w http.ResponseWriter, r *http.Request) 
 		"closed_edges", closedEdges,
 		"unlinked_events", unlinkedEvents,
 	)
-	writeJSON(w, http.StatusOK, sceneMemoryToResponse(updated))
+	writeJSON(w, http.StatusOK, sceneMemoryToResponse(updated, h.sceneMemorySelfNames(r.Context(), agent)...))
 }
 
 func (h *Handler) ClearAgentSceneRelations(w http.ResponseWriter, r *http.Request) {

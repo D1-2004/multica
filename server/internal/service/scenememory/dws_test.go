@@ -173,6 +173,59 @@ func TestParseDWSPageMarksSelfByUID(t *testing.T) {
 	}
 }
 
+func TestParseDWSPageRecordsSelfNamesFromDisplayName(t *testing.T) {
+	page, err := parseDWSPage([]byte(`{"success":true,"messages":[{"content":"记一下","createTime":"2026-09-01 12:00:00","openMessageId":"m1","sender":"璟琦"}]}`), "", "金龙")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Self {
+		t.Fatalf("peer must not be self: %+v", page.Events)
+	}
+	if len(page.SelfNames) == 0 || page.SelfNames[0] != "金龙" {
+		t.Fatalf("page must carry identity names without a self event: %+v", page.SelfNames)
+	}
+}
+
+func TestParseDWSPageMarksOtherDigitalEmployeeNonHuman(t *testing.T) {
+	raw := []byte(`{
+		"success": true,
+		"result": {
+			"messages": [
+				{"content":"我记下了","createTime":"2026-09-01 12:00:00","openMessageId":"m1","sender":"随风","senderType":"digital_employee"},
+				{"content":"GoalMate 是工具","createTime":"2026-09-01 12:01:00","openMessageId":"m2","sender":"璟琦","senderType":"user"}
+			]
+		}
+	}`)
+	page, err := parseDWSPage(raw, "", "金龙")
+	if err != nil || len(page.Events) != 2 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	if page.Events[0].Self || !page.Events[0].NonHuman {
+		t.Fatalf("other DE must be non-human, not self: %+v", page.Events[0])
+	}
+	if page.Events[1].Self || page.Events[1].NonHuman {
+		t.Fatalf("human must stay peer: %+v", page.Events[1])
+	}
+}
+
+func TestParseDWSPageSenderTypeDoesNotOverrideIdentity(t *testing.T) {
+	raw := []byte(`{
+		"success": true,
+		"result": {
+			"messages": [
+				{"content":"我记下了","createTime":"2026-09-01 12:00:00","openMessageId":"m1","sender":"金龙","senderType":"digital_employee"}
+			]
+		}
+	}`)
+	page, err := parseDWSPage(raw, "", "金龙")
+	if err != nil || len(page.Events) != 1 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	if !page.Events[0].Self || page.Events[0].NonHuman {
+		t.Fatalf("bound DE must be self, not other-agent: %+v", page.Events[0])
+	}
+}
+
 func TestParseDWSPageMarksSelfByDisplayName(t *testing.T) {
 	raw := []byte(`{
 		"success": true,

@@ -101,6 +101,35 @@ Aone 预发部署 SUCCESS
 
 ---
 
+## P12 数字员工自己的话不能进记忆
+
+前置：write + recall 打开。冬翔单聊 cid。先 `/reset-memory`，等 `scene_memory_reset`。
+
+数字员工（绑定号/测试号）的回复、复述、自我介绍不能写成稳定知识，也不能出现在出处里。人类口径可以留下。
+
+**本轮（写入）** 冬翔 → 测试号：「R12-HUMAN-3391 is the standing code for the weekly standup. Remember that. 下次别搞错。」
+
+员工通常会回复并复述探针。等 Flush。
+
+| 面 | 过线 |
+|---|---|
+| 钉钉 | SUCCESS；测试号可以有回复（只证明活着） |
+| 库 `memory_text` | 含 `R12-HUMAN-3391`；**不得** `来自东翔测试号`、`来自测试号` |
+| 库 citation | 口径出处是冬翔 |
+| log | `mark_dirty` 然后 `flush_commit` |
+
+**下一轮（验证召回）** 冬翔 → 测试号：「R12-HUMAN-3391 是什么」
+
+| 面 | 过线 |
+|---|---|
+| 下一轮 SLS `user_prompt` Host | 有 `R12-HUMAN-3391` |
+| 下一轮 Host | **没有** `来自东翔测试号` / `来自测试号` |
+| 下一轮 `decided` | `reply`；不得把这句评到旧 Issue |
+
+若 Flush 把人类口径和员工复述写成一条混合出处，库和 Host 都只保留冬翔，丢掉员工。
+
+---
+
 ## P2 冬翔让员工去问 dxxh：下一轮事项召回
 
 **本轮（下单）** 冬翔 → 测试号：「帮我私聊 dxxh，问他明天上午有没有空。就说是冬翔让你问的。」

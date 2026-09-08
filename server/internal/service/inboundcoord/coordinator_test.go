@@ -16,16 +16,17 @@ import (
 )
 
 type coordQueriesStub struct {
-	inbound    bool
-	persona    string
-	replyTone  string
-	skills     []db.ListEnabledAgentSkillCardMetadataRow
-	skillsErr  error
-	page       []db.ChatMessage
-	listErr    error
-	lastList   db.ListChatMessagesPageParams
-	listCalls  int
-	sceneFlags db.AgentSceneMemoryFlags
+	inbound            bool
+	persona            string
+	replyTone          string
+	skills             []db.ListEnabledAgentSkillCardMetadataRow
+	skillsErr          error
+	page               []db.ChatMessage
+	listErr            error
+	lastList           db.ListChatMessagesPageParams
+	listCalls          int
+	sceneFlags         db.AgentSceneMemoryFlags
+	accountDisplayName string
 }
 
 func (s *coordQueriesStub) ListChatMessagesPage(_ context.Context, arg db.ListChatMessagesPageParams) ([]db.ChatMessage, error) {
@@ -55,6 +56,10 @@ func (s *coordQueriesStub) GetAgentVoice(context.Context, pgtype.UUID) (db.GetAg
 
 func (s *coordQueriesStub) GetAgentSceneMemoryFlags(context.Context, pgtype.UUID) (db.AgentSceneMemoryFlags, error) {
 	return s.sceneFlags, nil
+}
+
+func (s *coordQueriesStub) GetAgentDingTalkIdentity(context.Context, db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error) {
+	return db.AgentDingtalkIdentity{AccountDisplayName: s.accountDisplayName}, nil
 }
 
 func (s *coordQueriesStub) ListEnabledAgentSkillCardMetadata(context.Context, pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error) {
@@ -721,6 +726,42 @@ func TestPrefetchSceneMemorySanitizesHostDebris(t *testing.T) {
 	}
 	if turn.SceneMemoryRevision != 18 {
 		t.Fatalf("revision=%d", turn.SceneMemoryRevision)
+	}
+}
+
+func TestPrefetchSceneMemoryDropsDigitalEmployeeCitesOnGroup(t *testing.T) {
+	mem := &sceneMemoryStub{rows: map[string]db.SceneMemory{
+		"cid-a": {SceneKey: "cid-a", MemoryText: strings.Join([]string{
+			"## 场域定位",
+			"VOC群",
+			"成员：璟琦、金龙",
+			"用途：客户声音",
+			"## 稳定知识与约定",
+			"- 金龙擅长方向：VOC (来自金龙, 9月6日 16:45的发言)",
+			"- 随风统一处理大模型技术问题 (来自璟琦, 9月7日 14:13的发言)",
+			"## 纠正信号",
+			"## 待确认",
+		}, "\n"), MemoryRevision: 7},
+	}}
+	c := &Coordinator{
+		Queries:     &coordQueriesStub{sceneFlags: db.AgentSceneMemoryFlags{RecallEnabled: true}, accountDisplayName: "金龙"},
+		SceneMemory: mem,
+	}
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ChatType:       "group",
+		AgentID:        testAgentID(),
+		AgentName:      "VOC数字员工突击队",
+		WorkspaceID:    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+		ConversationID: "cid-a",
+		DWSOrgID:       "org-1",
+	}
+	c.prefetchSceneMemory(context.Background(), &turn)
+	if strings.Contains(turn.SceneMemory, "来自金龙") || strings.Contains(turn.SceneMemory, "金龙擅长方向") {
+		t.Fatalf("host inject leaked digital-employee speech: %q", turn.SceneMemory)
+	}
+	if !strings.Contains(turn.SceneMemory, "随风统一处理大模型技术问题") {
+		t.Fatalf("human fact stripped: %q", turn.SceneMemory)
 	}
 }
 
