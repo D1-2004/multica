@@ -21,6 +21,8 @@ import (
 
 const taskFinishedLoopTimeout = 55 * time.Second
 
+var errTaskFinishedResponsePending = errors.New("task-finished response receipt is unresolved")
+
 func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTaskQueue) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -114,6 +116,23 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 
 func (h *Handler) taskFinishedSceneAlreadyTold(ctx context.Context, task *db.AgentTaskQueue, agent db.Agent, cid string) bool {
 	if h == nil || h.Assoc == nil || task == nil {
+		return false
+	}
+	if stored, present := parsePersistedDispatchContext(task.Context); present && stored.ResponsePolicy.Managed() {
+		// A missing/unknown receipt is not proof that an attempted send failed.
+		// Managed sends register before the side effect, including unresolved DM targets.
+		if h.DingTalkResponses == nil {
+			return true
+		}
+		state, err := h.DingTalkResponses.SandboxResponseState(ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), uuidToString(task.IssueID), uuidToString(task.ID), cid)
+		if err != nil {
+			slog.Warn("task finished loop: response ledger unavailable", "task_id", uuidToString(task.ID), "error", err)
+			return true
+		}
+		if state == "delivered" {
+			return true
+		}
+		// Only the verified ledger owns delivery evidence in the new mode.
 		return false
 	}
 	var issueCreated time.Time
@@ -251,6 +270,33 @@ func (h *Handler) runPersistedTaskFinishedLoop(ctx context.Context, taskID strin
 	task, err := h.Queries.GetAgentTask(ctx, id)
 	if err != nil {
 		return err
+	}
+	if stored, present := parsePersistedDispatchContext(task.Context); present && stored.ResponsePolicy.Managed() && task.Status == "completed" {
+		enabled, err := h.Queries.GetAgentTaskFinishedLoop(ctx, task.AgentID)
+		if err != nil {
+			return err
+		}
+		if !enabled {
+			return nil
+		}
+		if h.DingTalkResponses == nil {
+			return errTaskFinishedResponsePending
+		}
+		agent, err := h.Queries.GetAgent(ctx, task.AgentID)
+		if err != nil {
+			return err
+		}
+		state, err := h.DingTalkResponses.SandboxResponseState(ctx, uuidToString(agent.WorkspaceID), uuidToString(task.AgentID), uuidToString(task.IssueID), taskID, stored.EventData.Conversation.OpenConversationID)
+		if err != nil {
+			return errTaskFinishedResponsePending
+		}
+		if state == "pending" || state == "provider_accepted" || state == "unknown" {
+			if task.CreatedAt.Valid && time.Since(task.CreatedAt.Time) > 24*time.Hour {
+				h.deliverTaskFinishedDecision(ctx, &task, inboundcoord.Decision{Action: inboundcoord.ActionSilence, Reason: "delivery_unresolved"})
+				return nil
+			}
+			return errTaskFinishedResponsePending
+		}
 	}
 	h.maybeRunTaskFinishedLoop(ctx, &task)
 	return nil

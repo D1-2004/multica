@@ -48,6 +48,9 @@ func coordinatorCollectKind(command DispatchCommand) string {
 // sameCoordinatorCollectKind is false when one side is thanks/OK and the
 // other is a real ask, or when wrap-up would merge with inbound work.
 func sameCoordinatorCollectKind(base, extra DispatchCommand) bool {
+	if !sameDingTalkResponsePolicy(base.ResponsePolicy, extra.ResponsePolicy) {
+		return false
+	}
 	return coordinatorCollectKind(base) == coordinatorCollectKind(extra)
 }
 

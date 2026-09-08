@@ -336,6 +336,9 @@ import {
   AddDingTalkWorkspaceMembersResponseSchema,
   DingTalkUserSearchResponseSchema,
   CreateAgentFromTemplateResponseSchema,
+  AgentResponseSchema,
+  AgentResponseListSchema,
+  EMPTY_AGENT_RESPONSE,
   AgentBuilderRuntimeSwitchSchema,
   AgentBuilderSessionSchema,
   AgentBuilderSessionListSchema,
@@ -1555,17 +1558,26 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.include_archived) search.set("include_archived", "true");
-    return this.fetch(`/api/agents?${search}`);
+    const raw = await this.fetch<unknown>(`/api/agents?${search}`);
+    return parseWithFallback<Agent[]>(raw, AgentResponseListSchema, [], {
+      endpoint: "GET /api/agents",
+    });
   }
 
   async getAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}`);
+    const raw = await this.fetch<unknown>(`/api/agents/${id}`);
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "GET /api/agents/:id",
+    });
   }
 
   async createAgent(data: CreateAgentRequest): Promise<Agent> {
-    return this.fetch("/api/agents", {
+    const raw = await this.fetch<unknown>("/api/agents", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "POST /api/agents",
     });
   }
 
@@ -1722,16 +1734,22 @@ export class ApiClient {
     );
   }
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "PUT /api/agents/:id",
     });
   }
 
   async transferAgentOwner(id: string, ownerId: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/owner`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/owner`, {
       method: "PUT",
       body: JSON.stringify({ owner_id: ownerId }),
+    });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "PUT /api/agents/:id/owner",
     });
   }
 
@@ -1838,7 +1856,10 @@ export class ApiClient {
   }
 
   async archiveAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/archive`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/archive`, { method: "POST" });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "POST /api/agents/:id/archive",
+    });
   }
 
   /**
@@ -1870,7 +1891,10 @@ export class ApiClient {
   }
 
   async restoreAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/restore`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/restore`, { method: "POST" });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "POST /api/agents/:id/restore",
+    });
   }
 
   async listAgentRunnerBindings(

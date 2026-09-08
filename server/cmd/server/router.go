@@ -49,6 +49,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
@@ -538,6 +539,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 		h.TaskCompletionTargetIdentity = routerClient.TargetIdentity()
 		h.TaskService.CompletionNotifier = h.TaskCompletionWorker
+		h.DingTalkResponsePolicySync = newDingTalkResponsePolicyWorker(queries, routerClient)
+		h.DingTalkResponsePolicyNotifier = h.DingTalkResponsePolicySync
 		h.DingTalkBindingTeardownRouter = routerClient
 	}
 	dispatchKeysRaw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_KEYS"))
@@ -577,13 +580,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			agentDispatchEndpoints = endpointService
 		}
 		bindingServiceConfig := agentmessagerouter.ServiceConfig{
-			PublicBaseURL:   signupConfig.PublicURL,
-			DBaseBindingURL: dbaseBindingURL,
-			Keyring:         keyring,
-			Random:          rand.Reader,
-			IdentityStore:   queries,
-			Endpoints:       endpointService,
-			Metrics:         opts.BusinessMetrics,
+			ResponsePolicyNotifier: h.DingTalkResponsePolicyNotifier,
+			PublicBaseURL:          signupConfig.PublicURL,
+			DBaseBindingURL:        dbaseBindingURL,
+			Keyring:                keyring,
+			Random:                 rand.Reader,
+			IdentityStore:          queries,
+			Endpoints:              endpointService,
+			Metrics:                opts.BusinessMetrics,
 		}
 		if opts.RuntimeConfig != nil {
 			bindingServiceConfig.PublicBaseURLProvider = opts.RuntimeConfig.publicURL
@@ -772,6 +776,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	if agentMessageRouterClient != nil {
+		h.DingTalkResponses = dingtalkresponse.NewService(pool, dingtalkresponse.NewDWSProvider(dingtalkresponse.DWSConfig{
+			AgentIdentity:   agentidentityhsf.NewClient(),
+			BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
+			BaseURLProvider: agentIdentityControlBaseURLProvider,
+			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+		}), handler.RouterResponseReceiptSender{Client: agentMessageRouterClient, Handler: h})
+		h.TaskCompletionWorker.ResponseActions = h
+		h.DingTalkResponses.OnSandboxDelivered = h.BindVerifiedDingTalkSend
+	}
 	h.SceneMemoryStore = scenememory.NewStore(queries)
 	coordinator.SceneMemory = h.SceneMemoryStore
 	sceneFlusher := &scenememory.MemoryFlusher{
@@ -2244,6 +2258,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/assoc/recall", h.RecallAssoc)
 			r.Get("/api/assoc/events", h.ListAssocEvents)
 			r.Post("/api/assoc/bind-outbound", h.BindAssocOutbound)
+			r.Post("/api/tasks/{taskID}/dingtalk-send-receipts", h.RecordDingTalkSendReceipt)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {

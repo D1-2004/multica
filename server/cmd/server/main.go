@@ -542,6 +542,12 @@ func main() {
 	if h.TaskCompletionWorker != nil {
 		go h.TaskCompletionWorker.Run(sweepCtx)
 	}
+	if h.DingTalkResponses != nil {
+		go h.DingTalkResponses.Run(sweepCtx)
+	}
+	if h.DingTalkResponsePolicySync != nil {
+		go h.DingTalkResponsePolicySync.Run(sweepCtx)
+	}
 	if h.InboundCoordinatorWorker != nil {
 		go h.InboundCoordinatorWorker.Run(sweepCtx)
 	}
@@ -674,6 +680,12 @@ func main() {
 	}
 	if h.TaskCompletionWorker != nil && !h.TaskCompletionWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("task completion worker did not exit within shutdown timeout")
+	}
+	if h.DingTalkResponses != nil && !h.DingTalkResponses.WaitWithTimeout(context.Background(), 5*time.Second) {
+		slog.Warn("DingTalk response worker did not exit within shutdown timeout")
+	}
+	if h.DingTalkResponsePolicySync != nil && !h.DingTalkResponsePolicySync.WaitWithTimeout(5*time.Second) {
+		slog.Warn("DingTalk response policy worker did not exit within shutdown timeout")
 	}
 	if h.InboundCoordinatorWorker != nil && !h.InboundCoordinatorWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("inbound coordinator worker did not exit within shutdown timeout")

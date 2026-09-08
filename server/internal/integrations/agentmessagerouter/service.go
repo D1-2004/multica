@@ -285,6 +285,7 @@ type ServiceConfig struct {
 	IdentityStore           IdentityStore
 	Endpoints               *DispatchEndpointService
 	Metrics                 *obsmetrics.BusinessMetrics
+	ResponsePolicyNotifier  ResponsePolicyNotifier
 }
 
 type Service struct {
@@ -301,6 +302,7 @@ type Service struct {
 	identityStore           IdentityStore
 	endpoints               *DispatchEndpointService
 	metrics                 *obsmetrics.BusinessMetrics
+	responsePolicyNotifier  ResponsePolicyNotifier
 }
 
 type BeginWorkspace struct {
@@ -419,6 +421,7 @@ func NewService(store Store, router Router, config ServiceConfig) (*Service, err
 		identityStore:           config.IdentityStore,
 		endpoints:               config.Endpoints,
 		metrics:                 config.Metrics,
+		responsePolicyNotifier:  config.ResponsePolicyNotifier,
 	}, nil
 }
 
@@ -983,6 +986,9 @@ func (s *Service) completeCallback(ctx context.Context, params CallbackParams, r
 	}
 	if err := s.cleanupPreviousAccountProjection(ctx, activated, params.MessageBinding); err != nil {
 		return PublicDingTalkAccountBinding{}, err
+	}
+	if s.responsePolicyNotifier != nil {
+		s.responsePolicyNotifier.NotifyResponsePolicyChanged()
 	}
 	return s.publicBinding(ctx, activated)
 }

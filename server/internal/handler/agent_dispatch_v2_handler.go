@@ -127,6 +127,9 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	if c.Control != nil {
 		payload["dispatch_control"] = c.Control
 	}
+	if c.ResponsePolicy != nil {
+		payload["dispatch_response_policy"] = c.ResponsePolicy
+	}
 	if strings.TrimSpace(c.ContextPrompt) != "" {
 		payload[protocol.DispatchContextPromptJSONKey] = c.ContextPrompt
 	}
@@ -149,6 +152,9 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		}
 		if c.CompletionCallback.UpdateURL != "" {
 			callback["update_url"] = c.CompletionCallback.UpdateURL
+		}
+		if c.CompletionCallback.ResponseURL != "" {
+			callback["response_url"] = c.CompletionCallback.ResponseURL
 		}
 		if c.CompletionCallback.TelemetryURL != "" {
 			callback["telemetry_url"] = c.CompletionCallback.TelemetryURL
@@ -194,6 +200,10 @@ func (h *Handler) handleAgentDispatchV2(
 	command, err := bindDispatchCompletionTarget(command, h.TaskCompletionTargetIdentity)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
+		return
+	}
+	if managedDingTalkResponse(command) && (h.DingTalkResponses == nil || h.InboundCoordinatorWorker == nil) {
+		writeError(w, http.StatusServiceUnavailable, "managed DingTalk response service is unavailable")
 		return
 	}
 	if command.Control != nil && command.Control.Action == "cancel" {
@@ -517,17 +527,18 @@ func bindDispatchCompletionTarget(
 // AgentDispatchV2Request preserves the exact Router JSON contract while the
 // internal DispatchCommand owns validation and execution semantics.
 type AgentDispatchV2Request struct {
-	SchemaVersion      string                        `json:"schemaVersion"`
-	AgentID            string                        `json:"agentId,omitempty"`
-	Continuation       *AgentDispatchContinuation    `json:"continuation"`
-	Source             DispatchSource                `json:"source"`
-	Event              DispatchEvent                 `json:"event"`
-	Surface            DispatchSurface               `json:"surface"`
-	Outbound           DispatchOutbound              `json:"outbound"`
-	Control            *DispatchControl              `json:"control,omitempty"`
-	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
-	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
-	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
+	SchemaVersion      string                           `json:"schemaVersion"`
+	AgentID            string                           `json:"agentId,omitempty"`
+	Continuation       *AgentDispatchContinuation       `json:"continuation"`
+	Source             DispatchSource                   `json:"source"`
+	Event              DispatchEvent                    `json:"event"`
+	Surface            DispatchSurface                  `json:"surface"`
+	Outbound           DispatchOutbound                 `json:"outbound"`
+	Control            *DispatchControl                 `json:"control,omitempty"`
+	ContextPrompt      string                           `json:"contextPrompt,omitempty"`
+	ResponsePolicy     *protocol.DingTalkResponsePolicy `json:"responsePolicy,omitempty"`
+	ExternalIdentity   AgentDispatchExternalIdentity    `json:"externalIdentity"`
+	CompletionCallback *DispatchCompletionCallback      `json:"completionCallback,omitempty"`
 }
 
 func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
@@ -541,6 +552,7 @@ func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
 		Outbound:           r.Outbound,
 		Control:            r.Control,
 		ContextPrompt:      r.ContextPrompt,
+		ResponsePolicy:     r.ResponsePolicy,
 		ExternalIdentity:   r.ExternalIdentity,
 		CompletionCallback: r.CompletionCallback,
 	}
@@ -1726,6 +1738,11 @@ func writeDispatchCoordinatorTerminal(
 }
 
 func (h *Handler) closeExtraCoordinatorCallbacks(ctx context.Context, command DispatchCommand, agentID pgtype.UUID) {
+	if managedDingTalkResponse(command) {
+		// The response receipt closes the entire collected window after
+		// actual delivery; persisting a model result is too early.
+		return
+	}
 	for i := range command.ExtraCompletionCallbacks {
 		cb := command.ExtraCompletionCallbacks[i]
 		h.enqueueCoordinatorSilenceCallback(ctx, &cb, agentID, "inbound_coordinator_extra_silence_failed", "")

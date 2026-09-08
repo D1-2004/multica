@@ -19,6 +19,9 @@ func TestMiddlewareHonorsFenceState(t *testing.T) {
 		{name: "draining health", state: StateDraining, method: http.MethodGet, path: "/healthz", wantStatus: http.StatusNoContent},
 		{name: "draining write", state: StateDraining, method: http.MethodPost, path: "/api/issues", wantStatus: http.StatusServiceUnavailable},
 		{name: "draining daemon completion", state: StateDraining, method: http.MethodPost, path: "/api/daemon/tasks/task-1/complete", wantStatus: http.StatusNoContent},
+		{name: "draining send receipt", state: StateDraining, method: http.MethodPost, path: "/api/tasks/task-1/dingtalk-send-receipts", wantStatus: http.StatusNoContent},
+		{name: "frozen send receipt", state: StateFrozen, method: http.MethodPost, path: "/api/tasks/task-1/dingtalk-send-receipts", wantStatus: http.StatusServiceUnavailable},
+		{name: "draining other task write", state: StateDraining, method: http.MethodPost, path: "/api/tasks/task-1/cancel", wantStatus: http.StatusServiceUnavailable},
 		{name: "frozen daemon completion", state: StateFrozen, method: http.MethodPost, path: "/api/daemon/tasks/task-1/complete", wantStatus: http.StatusServiceUnavailable},
 		{name: "frozen control", state: StateFrozen, method: http.MethodPut, path: "/api/internal/deployment-fence", wantStatus: http.StatusNoContent},
 	}
@@ -53,5 +56,13 @@ func TestValidTransition(t *testing.T) {
 	}
 	if validTransition(StateNormal, StateFrozen) {
 		t.Fatal("normal -> frozen must require an explicit draining phase")
+	}
+}
+
+func TestOutstandingResponsesPreventFreeze(t *testing.T) {
+	for _, counts := range []WorkCounts{{ResponseActions: 1}, {SandboxSendReceipts: 1}, {ResponseActions: 2, SandboxSendReceipts: 3}} {
+		if counts.Total() == 0 {
+			t.Fatalf("response work omitted from drain: %+v", counts)
+		}
 	}
 }

@@ -462,9 +462,10 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			status = "offline"
 		}
 		metadata, _ := json.Marshal(map[string]any{
-			"version":     runtime.Version,
-			"cli_version": req.CLIVersion,
-			"launched_by": req.LaunchedBy,
+			"version":             runtime.Version,
+			"cli_version":         req.CLIVersion,
+			"launched_by":         req.LaunchedBy,
+			"client_capabilities": localDingTalkClientCapabilities(r.Header.Get("X-Client-Capabilities")),
 		})
 
 		var registered db.AgentRuntime
@@ -667,6 +668,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 					"runtime_profile_registration_error": true,
 					"runtime_profile_failure_reason":     reason,
 					"command_name":                       resolvedCommandName,
+					"client_capabilities":                localDingTalkClientCapabilities(r.Header.Get("X-Client-Capabilities")),
 				})
 				return db.UpsertAgentRuntimeWithProfileParams{
 					WorkspaceID: wsUUID,
@@ -1006,6 +1008,11 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	authMs = time.Since(start).Milliseconds()
 
+	if err := h.persistLocalDingTalkClientCapabilities(r.Context(), rt, r.Header.Get("X-Client-Capabilities")); err != nil {
+		outcome = "error_capabilities"
+		writeError(w, http.StatusInternalServerError, "failed to update runtime capabilities")
+		return
+	}
 	ack, m, err := h.processHeartbeat(r.Context(), rt, req.SupportsBatchImport)
 	updateMs = m.UpdateMs
 	probeModelMs = m.ProbeModelMs
@@ -1078,6 +1085,9 @@ func (h *Handler) HandleDaemonWSHeartbeat(ctx context.Context, identity daemonws
 	}
 	if !identity.AllowsWorkspace(uuidToString(rt.WorkspaceID)) {
 		return nil, fmt.Errorf("runtime not in connection workspace")
+	}
+	if err := h.persistLocalDingTalkClientCapabilities(ctx, rt, identity.Capabilities); err != nil {
+		return nil, fmt.Errorf("update runtime capabilities: %w", err)
 	}
 	ack, _, err := h.processHeartbeat(ctx, rt, supportsBatchImport)
 	return ack, err
@@ -1902,6 +1912,12 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 	); failure != nil {
 		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
 	}
+	messagePolicy, policyErr := resolveDingTalkTaskPolicy(r.Context(), h.Queries, *task, runtime, dingTalkTaskPolicyCapable(r, runtime))
+	if policyErr != nil {
+		failure := h.failDingTalkTaskPolicyClaim(r.Context(), *task, policyErr)
+		return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
+	}
+	resp.DingTalkMessagePolicy = messagePolicy
 	if agentLoadErr == nil {
 		useSkillRefs := requestHasClientCapability(r, protocol.DaemonCapabilitySkillBundlesV1)
 		var customEnv map[string]string
@@ -2027,11 +2043,11 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 			resp.Agent.Instructions = service.ComposeMikaInstructions(agent.Name, agent.Instructions)
 		}
 		if useSkillRefs {
-			_, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend)
+			_, skillRefs := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend, messagePolicy)
 			agentSkillCount = len(skillRefs)
 			resp.Agent.SkillRefs = skillRefs
 		} else {
-			skills := h.TaskService.LoadAgentExecutionSkills(r.Context(), task.AgentID, runtime, taskBackend)
+			skills := h.TaskService.LoadAgentExecutionSkills(r.Context(), task.AgentID, runtime, taskBackend, messagePolicy)
 			agentSkillCount = len(skills)
 			builtinSkills := h.TaskService.BuiltinSkills()
 			builtinSkillCount = len(builtinSkills)
@@ -3487,6 +3503,13 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		return
 	}
 	bundles, _ := h.TaskService.LoadAgentSkillBundles(r.Context(), task.AgentID, runtime, taskBackend)
+	var policyBundle *service.AgentSkillData
+	if dingTalkTaskPolicyCapable(r, runtime) && !service.IsA2ATaskOrigin(task.Context) {
+		// There are exactly two DWS documents. Preserve the static policy-aware
+		// hash selected at claim even if an account is unbound before resolution.
+		managed, _ := service.BuildAgentSkillBundles([]service.AgentSkillData{service.DWSAgentSkillForPolicy(&protocol.DingTalkMessagePolicy{})})
+		policyBundle = &managed[0]
+	}
 	allowed := make(map[string]service.AgentSkillData, len(bundles))
 	for _, bundle := range bundles {
 		allowed[bundle.Source+"\x00"+bundle.ID] = bundle
@@ -3502,6 +3525,9 @@ func (h *Handler) ResolveTaskSkillBundles(w http.ResponseWriter, r *http.Request
 		if !ok {
 			writeError(w, http.StatusNotFound, "skill bundle not found")
 			return
+		}
+		if policyBundle != nil && ref.ID == policyBundle.ID && ref.Source == policyBundle.Source && ref.Hash == policyBundle.Hash {
+			bundle = *policyBundle
 		}
 		resolved = append(resolved, bundle)
 	}

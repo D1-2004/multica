@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // AgentEntry describes a single available agent CLI.
@@ -114,6 +115,9 @@ type Task struct {
 	QuickCreateDueDate            string                 `json:"quick_create_due_date,omitempty"`            // explicit calendar due date selected in quick-create
 	QuickCreateAttachmentIDs      []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
 	HandoffNote                   string                 `json:"handoff_note,omitempty"`                     // assignment handoff instruction; rendered into the opening prompt + issue_context.md
+
+	// DingTalkMessagePolicy is an optional server-attested snapshot for this task.
+	DingTalkMessagePolicy *protocol.DingTalkMessagePolicy `json:"dingtalk_message_policy,omitempty"`
 
 	// Sanitized original channel callbacks for the current input batch.
 	ChatMessageSourcePayloads []ChatMessageSourcePayload `json:"chat_message_source_payloads,omitempty"`
