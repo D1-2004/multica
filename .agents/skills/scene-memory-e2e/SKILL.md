@@ -5,7 +5,7 @@ description: >
   /reset-memory 清空本 cid、用下一轮 SLS 证明召回或隔离。用户说「场域记忆 e2e」
   「造场景」「拉群隔离」「reset-memory」「跑剧本」「验证 scene memory」
   或 /scene-memory-e2e 时必须用。
-compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
+compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy. Langfuse 凭证 ~/.grok/langfuse.env。
 ---
 
 # Scene Memory e2e
@@ -16,18 +16,19 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
 
 造群/单聊步骤：[references/create-scene.md](references/create-scene.md)。
 `/reset-memory`：[references/reset-memory.md](references/reset-memory.md)。
+场景窗 W3/W5/W7/wrap-up 固定夹具：[references/scene-window-plays.md](references/scene-window-plays.md)，重跑 `scripts/run-window-plays.py`。
 
 ## 铁律
 
 1. dws 保持预发。`python3 "$HOME/.agents/skills/dws-env/scripts/dws_env.py" status`
 2. 演员只有 冬翔 / 东翔测试号 / dxxh。每条 `dws` 都经 `as 主角|测试号|配角`。不用菲迪。
 3. 冬翔→测试号单聊禁止 `+dm --to 东翔测试号`。cid 以 e2e 文档为准。
-4. 召回只认 **下一轮** Coordinator SLS `user_prompt`，不是本轮 IM、不是 Router LLM trace。
+4. 召回只认 **下一轮** Coordinator SLS `user_prompt`，不是本轮 IM、不是 Router LLM trace。Langfuse `inbound_coordinator` generation 可补 UTF-8；沙箱看见什么看 Langfuse `loop=agent_task`，不能当 Host 召回。
 5. 探针用 ASCII id（如 `R7-ALPHA-4821`）。SLS 会把 CJK 弄乱；不要用中文当唯一证据。
 6. 证明 Host vs last-N：把 `user_prompt` 在 `current_message:` 处切开。Host = 切开前；`recent_dingtalk_history` = 切开后到 `current_message:` 之前。探针必须在 Host 且不在 history 段，才算记忆召回。
 7. 预发二进制以最近一次 Aone SUCCESS 为准。未部署的本地 commit 不能拿预发 SLS 当它已生效。
 
-发消息、查 SLS：`dws-env` + `inspect-coordinator-sls`。部署：`aone-deploy`。
+发消息、查 SLS：`dws-env` + `inspect-coordinator-sls`。查 generation / 沙箱：`inspect-langfuse`。部署：`aone-deploy`。
 
 ## 跑一条
 
@@ -37,6 +38,7 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
 4. 发下一轮（问句或第二群）。
 5. 拉该 cid 的 `inbound_coordinator_llm_request`，按上面第 6 条切开 `user_prompt`。
 6. 事项类另看下一轮 `assoc_recall`，不要用记忆 Text 里的句子当 issue_id。
+7. 需要看沙箱或 generation 原文时：`scripts/query-langfuse.sh --trace <coord_trace_id> --observations`。
 
 ## 回归优先
 
@@ -45,9 +47,12 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy.
 | 要证什么 | 文档 |
 |---|---|
 | 口径进下一轮 Host | P1 |
+| 数字员工自己的话不进记忆 / Host | P12 |
 | 两群不串 | P4 / P7（P7 是从零建群） |
 | last-N 灌水后 Host 仍有探针 | P8 |
 | `/reset-memory` 清本 cid，其它 cid 还在 | P5 / P10 / P11 |
 | reset 后立刻新口径，旧口径不回 | P9 |
+| 忙时下一窗不丢第三件 @；ACK 不并进停驻事项 | W5 / W7（scene-window-plays） |
+| 沙箱已在本 cid 说过则 wrap-up Host 静默 | WRAP |
 
-隔离必须 **建群 + 跑证明** 一起做，不要只用旧群名口头说「应该隔离」。
+隔离必须 **建群 + 跑证明** 一起做，不要只用旧群名口头说「应该隔离」。场景窗优先用 G1/G2 固定 cid，不要另造群。

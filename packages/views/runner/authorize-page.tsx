@@ -161,30 +161,6 @@ export function RunnerAuthorizePage({ code }: { code: string | null }) {
           </div>
         </div>
 
-        <dl className="space-y-3 rounded-lg border p-4 text-sm">
-          <div className="grid gap-1 sm:grid-cols-[110px_1fr]">
-            <dt className="text-muted-foreground">
-              {t(($) => $.tab_body.runner.authorize_agent)}
-            </dt>
-            <dd className="font-medium">{pending.agentName}</dd>
-          </div>
-          <div className="grid gap-1 sm:grid-cols-[110px_1fr]">
-            <dt className="text-muted-foreground">
-              {t(($) => $.tab_body.runner.file_roots)}
-            </dt>
-            <dd className="space-y-1">
-              {pending.roots.map((root) => (
-                <code
-                  key={root}
-                  className="block break-all rounded bg-muted px-2 py-1 font-mono text-xs"
-                >
-                  {root}
-                </code>
-              ))}
-            </dd>
-          </div>
-        </dl>
-
         <div
           role="alert"
           className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-700 dark:text-amber-400"

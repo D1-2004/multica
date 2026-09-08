@@ -133,7 +133,7 @@ func TestAssocToolsRecallOmitsPurposeWithoutEvent(t *testing.T) {
 		WorkspaceID:   "ws",
 		AgentID:       agentID,
 		IssueID:       "issue-empty",
-		Purpose:       "某人委托：",
+		Purpose:       "某人委托：待确认事项占位",
 		Status:        assoc.StatusWaiting,
 		LastTouchedAt: now,
 	})
@@ -436,6 +436,38 @@ func TestMarshalCoordinatorRecallIsSlim(t *testing.T) {
 		if strings.Contains(raw, banned) {
 			t.Fatalf("slim recall leaked %s: %s", banned, raw)
 		}
+	}
+}
+
+func TestMarshalCoordinatorRecallDropsForeignScene(t *testing.T) {
+	t.Parallel()
+	raw, err := marshalCoordinatorRecall(assoc.Result{
+		ConversationID: "cid-r9b",
+		Items: []assoc.Item{
+			{
+				IssueID:     "issue-paper",
+				Purpose:     "记下本群纪要 PAPER-A",
+				OnThisScene: true,
+				WhyListed:   "本会话事项",
+			},
+			{
+				IssueID:     "issue-schedule",
+				Purpose:     "冬翔委托：向 dxxh 确认下周排期",
+				OnThisScene: false,
+				WhyListed:   "其他会话",
+				WaitingOn:   []assoc.WaitingRef{{ConversationID: "cid-r9b"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view coordinatorRecallView
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Items) != 1 || view.Items[0].IssueID != "issue-paper" {
+		t.Fatalf("coordinator cards must stay on this cid, got %+v", view.Items)
 	}
 }
 

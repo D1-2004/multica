@@ -8,6 +8,8 @@
     "search_placeholder": "搜索运行时...",
     "scope_mine": "我的",
     "scope_all": "全部",
+    "owner_filter": "所有者",
+    "all_owners": "全部所有者",
     "live": "实时",
     "live_tooltip": "实时更新 · 离线检测 75 秒以内",
     "filter_all": "全部",

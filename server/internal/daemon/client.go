@@ -184,13 +184,20 @@ func (c *Client) setIdentityHeaders(req *http.Request) {
 // coalesced-comments, task instructions) as the HTTP path. rpc-v1 advertises
 // WS request/response support (MUL-4257).
 func daemonClientCapabilities() string {
-	return strings.Join([]string{
+	capabilities := []string{
 		protocol.DaemonCapabilitySkillBundlesV1,
 		protocol.DaemonCapabilityCoalescedCommentsV1,
 		protocol.DaemonCapabilityTaskInstructionV1,
 		protocol.DaemonCapabilityRPCV1,
 		protocol.DaemonCapabilityA2AInvocationV2,
-	}, ",")
+		protocol.DaemonCapabilityRunnerMCPMountsV1,
+		protocol.DaemonCapabilityManagedMCPRelayRoutesV1,
+	}
+	// Windows does not install the Unix DWS shim and must not attest it.
+	if runtime.GOOS != "windows" {
+		capabilities = append(capabilities, protocol.DWSMessagePolicyCapability)
+	}
+	return strings.Join(capabilities, ",")
 }
 
 // SetToken sets the auth token for authenticated requests.

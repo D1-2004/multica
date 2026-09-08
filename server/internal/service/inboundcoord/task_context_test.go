@@ -2,6 +2,7 @@ package inboundcoord
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,9 @@ func TestIndependentIssueTaskContext(t *testing.T) {
 	}
 	if _, present := got["completion_callback"]; present {
 		t.Fatal("consumed Router callback survived in the independent Issue task")
+	}
+	if _, present := got[coordinatorWrapupCallbackContextKey]; !present {
+		t.Fatal("inbound Router callback was not stashed for task-finished wrap-up")
 	}
 	for _, key := range []string{"dispatch_event_data", "external_identity"} {
 		if _, present := got[key]; !present {
@@ -105,5 +109,31 @@ func TestIndependentIssueTaskContextRejectsMissingOrInvalidContext(t *testing.T)
 	}
 	if _, err := IndependentIssueTaskContext([]byte(`{}`), CoordinatorIssueTrigger("unknown")); err == nil {
 		t.Fatal("invalid coordinator Issue trigger was accepted")
+	}
+}
+
+func TestWrapupCallbackReadsStashedInboundUpdate(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{
+		"dispatch_source":{"platform":"dingtalk","type":"digital_employee"},
+		"completion_callback":{
+			"url":"/api/v1/dispatch-tasks/router-task/execution-result",
+			"update_url":"/api/v1/dispatch-tasks/router-task/execution-update",
+			"target":"router-target:v1:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		}
+	}`)
+	encoded, err := IndependentIssueTaskContext(raw, CoordinatorIssueTriggerCreate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	callbackURL, target, ok := WrapupCallback(encoded)
+	if !ok {
+		t.Fatal("wrap-up callback missing after IndependentIssueTaskContext")
+	}
+	if callbackURL != "/api/v1/dispatch-tasks/router-task/execution-result" {
+		t.Fatalf("callbackURL=%q", callbackURL)
+	}
+	if !strings.HasPrefix(target, "router-target:v1:sha256:") {
+		t.Fatalf("target=%q", target)
 	}
 }

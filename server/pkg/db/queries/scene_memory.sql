@@ -144,12 +144,17 @@ WHERE id = @id
 UPDATE scene_memory
 SET memory_text = CASE WHEN @replace_text::boolean THEN @memory_text ELSE memory_text END,
     memory_revision = CASE WHEN @replace_text::boolean THEN memory_revision + 1 ELSE memory_revision END,
+    scene_title = CASE
+        WHEN NULLIF(btrim(@scene_title), '') IS NOT NULL THEN @scene_title
+        ELSE scene_title
+    END,
     source_cursor_at = @source_cursor_at,
     source_cursor_evidence_id = @source_cursor_evidence_id,
     bootstrapped_at = COALESCE(bootstrapped_at, now()),
     last_flush_meta = @last_flush_meta,
     last_flushed_at = now(),
     history_resume_before = NULL,
+    attempt_count = 0,
     updated_at = now()
 WHERE id = @id
   AND lease_token = @lease_token

@@ -47,6 +47,7 @@ type asbRuntimeCredentialWriter interface {
 // client for one Runtime. The plaintext key only exists while creating the
 // client and is never copied into Runtime metadata or sandbox environments.
 type ASBRuntimeClientProvider struct {
+	CapacityGate   *ASBCapacityGate
 	Store          asbRuntimeCredentialReader
 	Secrets        *secretbox.Box
 	Config         ASBConfig
@@ -223,6 +224,7 @@ func (p *ASBRuntimeClientProvider) clientForCredential(
 	if err != nil {
 		return nil, fmt.Errorf("build ASB Runtime client: %w", err)
 	}
+	client.CapacityGate = p.CapacityGate
 	return client, nil
 }
 

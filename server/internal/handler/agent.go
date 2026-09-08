@@ -27,6 +27,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/mcpprotocol"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -91,6 +92,15 @@ type AgentResponse struct {
 	// immediately or opens an Issue. Off by default for new and existing
 	// agents; only an explicit owner on switch enables it.
 	InboundCoordinator bool `json:"inbound_coordinator"`
+	// DingTalkShowAITag controls the sender label for platform and sandbox DWS sends.
+	DingTalkShowAITag bool `json:"dingtalk_show_ai_tag"`
+	// DingTalkResponseEnabled opts this employee into platform-owned replies and reception cleanup.
+	DingTalkResponseEnabled bool `json:"dingtalk_response_enabled"`
+	// DingTalkResponsePolicyRevision changes only when a response setting changes.
+	DingTalkResponsePolicyRevision int64 `json:"dingtalk_response_policy_revision"`
+	// TaskFinishedLoop runs coordinator again after a coordinator-created
+	// Issue task completes, so the original delegator gets a human wrap-up.
+	TaskFinishedLoopEnabled bool `json:"task_finished_loop_enabled"`
 	// Scene-memory flags are independent of InboundCoordinator and default
 	// false. Dedicated queries hydrate them so sqlc Agent SELECT * stays
 	// unchanged.
@@ -182,13 +192,32 @@ func (h *Handler) hydrateChatSessionResume(ctx context.Context, resp *AgentRespo
 }
 
 func (h *Handler) hydrateInboundCoordinator(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	h.hydrateDingTalkResponsePolicy(ctx, resp, agentID)
+}
+
+func (h *Handler) hydrateTaskFinishedLoop(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
 	if resp == nil {
 		return
 	}
-	enabled, err := h.Queries.GetAgentInboundCoordinator(ctx, agentID)
+	enabled, err := h.Queries.GetAgentTaskFinishedLoop(ctx, agentID)
 	if err == nil {
-		resp.InboundCoordinator = enabled
+		resp.TaskFinishedLoopEnabled = enabled
 	}
+}
+
+func (h *Handler) hydrateDingTalkResponsePolicy(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
+	if resp == nil {
+		return
+	}
+	policy, err := h.Queries.GetAgentDingTalkResponsePolicy(ctx, agentID)
+	if err != nil {
+		slog.Warn("hydrate agent DingTalk response policy failed", "error", err, "agent_id", uuidToString(agentID))
+		return
+	}
+	resp.InboundCoordinator = policy.InboundCoordinator
+	resp.DingTalkShowAITag = policy.DingtalkShowAiTag
+	resp.DingTalkResponseEnabled = policy.DingtalkResponseEnabled
+	resp.DingTalkResponsePolicyRevision = policy.DingtalkResponsePolicyRevision
 }
 
 func (h *Handler) hydrateSceneMemoryFlags(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) {
@@ -241,6 +270,35 @@ func (h *Handler) hydrateAgentsChatSessionResume(ctx context.Context, resps []Ag
 	for _, row := range rows {
 		if i, ok := index[uuidToString(row.ID)]; ok {
 			resps[i].ChatSessionResume = row.ChatSessionResume
+		}
+	}
+}
+
+func (h *Handler) hydrateAgentsTaskFinishedLoop(ctx context.Context, resps []AgentResponse) {
+	if len(resps) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(resps))
+	index := make(map[string]int, len(resps))
+	for i, resp := range resps {
+		id, err := util.ParseUUID(resp.ID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		index[resp.ID] = i
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListAgentTaskFinishedLoopByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("hydrate task_finished_loop for agent list failed", "error", err, "count", len(ids))
+		return
+	}
+	for _, row := range rows {
+		if i, ok := index[uuidToString(row.ID)]; ok {
+			resps[i].TaskFinishedLoopEnabled = row.TaskFinishedLoopEnabled
 		}
 	}
 }
@@ -302,6 +360,38 @@ func (h *Handler) hydrateAgentsSceneMemoryFlags(ctx context.Context, resps []Age
 			resps[i].SceneMemoryRecallEnabled = row.RecallEnabled
 			resps[i].SceneMemoryUIEnabled = row.UIEnabled
 			resps[i].SceneMemoryBootstrapEnabled = row.BootstrapEnabled
+		}
+	}
+}
+
+func (h *Handler) hydrateAgentsDingTalkResponsePolicy(ctx context.Context, resps []AgentResponse) {
+	if len(resps) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(resps))
+	index := make(map[string]int, len(resps))
+	for i, resp := range resps {
+		id, err := util.ParseUUID(resp.ID)
+		if err != nil {
+			continue
+		}
+		ids = append(ids, id)
+		index[resp.ID] = i
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.Queries.ListAgentDingTalkResponsePoliciesByIDs(ctx, ids)
+	if err != nil {
+		slog.Warn("hydrate DingTalk response policy for agent list failed", "error", err, "count", len(ids))
+		return
+	}
+	for _, row := range rows {
+		if i, ok := index[uuidToString(row.ID)]; ok {
+			resps[i].InboundCoordinator = row.InboundCoordinator
+			resps[i].DingTalkShowAITag = row.DingtalkShowAiTag
+			resps[i].DingTalkResponseEnabled = row.DingtalkResponseEnabled
+			resps[i].DingTalkResponsePolicyRevision = row.DingtalkResponsePolicyRevision
 		}
 	}
 }
@@ -385,41 +475,42 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	composioAllowlist := a.ComposioToolkitAllowlist
 
 	return AgentResponse{
-		ID:                       uuidToString(a.ID),
-		WorkspaceID:              uuidToString(a.WorkspaceID),
-		RuntimeID:                uuidToString(a.RuntimeID),
-		RuntimeBound:             a.RuntimeID.Valid,
-		Name:                     a.Name,
-		Description:              a.Description,
-		Instructions:             a.Instructions,
-		SystemKey:                a.SystemKey.String,
-		SystemInstructions:       systemInstructionsFor(a),
-		DispatchPromptOverrides:  parseDispatchPromptOverrides(a.DispatchPromptOverrides),
-		DispatchAlwaysNewIssue:   a.DispatchAlwaysNewIssue,
-		InboundCoordinator:       false,
-		AvatarURL:                h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
-		RuntimeMode:              a.RuntimeMode,
-		RuntimeConfig:            rc,
-		CustomArgs:               customArgs,
-		McpConfig:                mcpConfig,
-		HasCustomEnv:             envKeyCount > 0,
-		CustomEnvKeyCount:        envKeyCount,
-		Visibility:               a.Visibility,
-		PermissionMode:           a.PermissionMode,
-		InvocationTargets:        []AgentInvocationTargetDTO{},
-		Status:                   a.Status,
-		MaxConcurrentTasks:       a.MaxConcurrentTasks,
-		Model:                    a.Model.String,
-		ThinkingLevel:            a.ThinkingLevel.String,
-		ServiceTier:              a.ServiceTier.String,
-		ComposioToolkitAllowlist: composioAllowlist,
-		OwnerID:                  uuidToPtr(a.OwnerID),
-		Skills:                   []AgentSkillSummary{},
-		DisabledRuntimeSkills:    decodeDisabledRuntimeSkills(a.DisabledRuntimeSkills),
-		CreatedAt:                timestampToString(a.CreatedAt),
-		UpdatedAt:                timestampToString(a.UpdatedAt),
-		ArchivedAt:               timestampToPtr(a.ArchivedAt),
-		ArchivedBy:               uuidToPtr(a.ArchivedBy),
+		ID:                             uuidToString(a.ID),
+		WorkspaceID:                    uuidToString(a.WorkspaceID),
+		RuntimeID:                      uuidToString(a.RuntimeID),
+		RuntimeBound:                   a.RuntimeID.Valid,
+		Name:                           a.Name,
+		Description:                    a.Description,
+		Instructions:                   a.Instructions,
+		SystemKey:                      a.SystemKey.String,
+		SystemInstructions:             systemInstructionsFor(a),
+		DispatchPromptOverrides:        parseDispatchPromptOverrides(a.DispatchPromptOverrides),
+		DispatchAlwaysNewIssue:         a.DispatchAlwaysNewIssue,
+		InboundCoordinator:             false,
+		DingTalkResponsePolicyRevision: 1,
+		AvatarURL:                      h.resolveAvatarURLPtr(textToPtr(a.AvatarUrl)),
+		RuntimeMode:                    a.RuntimeMode,
+		RuntimeConfig:                  rc,
+		CustomArgs:                     customArgs,
+		McpConfig:                      mcpConfig,
+		HasCustomEnv:                   envKeyCount > 0,
+		CustomEnvKeyCount:              envKeyCount,
+		Visibility:                     a.Visibility,
+		PermissionMode:                 a.PermissionMode,
+		InvocationTargets:              []AgentInvocationTargetDTO{},
+		Status:                         a.Status,
+		MaxConcurrentTasks:             a.MaxConcurrentTasks,
+		Model:                          a.Model.String,
+		ThinkingLevel:                  a.ThinkingLevel.String,
+		ServiceTier:                    a.ServiceTier.String,
+		ComposioToolkitAllowlist:       composioAllowlist,
+		OwnerID:                        uuidToPtr(a.OwnerID),
+		Skills:                         []AgentSkillSummary{},
+		DisabledRuntimeSkills:          decodeDisabledRuntimeSkills(a.DisabledRuntimeSkills),
+		CreatedAt:                      timestampToString(a.CreatedAt),
+		UpdatedAt:                      timestampToString(a.UpdatedAt),
+		ArchivedAt:                     timestampToPtr(a.ArchivedAt),
+		ArchivedBy:                     uuidToPtr(a.ArchivedBy),
 	}
 }
 
@@ -515,6 +606,8 @@ type AgentTaskResponse struct {
 	Instruction          string `json:"instruction,omitempty"` // daemon-claim only: trusted per-task instruction prepended to the generated task prompt
 	TraceID              string `json:"trace_id,omitempty"`
 	TraceStartedAtUnixMS int64  `json:"trace_started_at_unix_ms,omitempty"`
+	// DingTalkMessagePolicy is a trusted per-claim snapshot, independent of custom_env.
+	DingTalkMessagePolicy *protocol.DingTalkMessagePolicy `json:"dingtalk_message_policy,omitempty"`
 	// WorkspaceContext is the workspace-level system prompt set in workspace
 	// settings (`workspace.context` DB column). Injected into the agent brief
 	// as `## Workspace Context` so every agent running in this workspace —
@@ -879,6 +972,7 @@ type TaskAgentData struct {
 	CustomEnv             map[string]string           `json:"custom_env,omitempty"`
 	CustomArgs            []string                    `json:"custom_args,omitempty"`
 	McpConfig             json.RawMessage             `json:"mcp_config,omitempty"`
+	McpRelayRoutes        map[string]MCPRelayRoute    `json:"mcp_relay_routes,omitempty"`
 	Model                 string                      `json:"model,omitempty"`
 	ThinkingLevel         string                      `json:"thinking_level,omitempty"`
 	ServiceTier           string                      `json:"service_tier,omitempty"`
@@ -890,6 +984,8 @@ type TaskAgentData struct {
 	// raw so the daemon can evolve its schema without a server roundtrip.
 	RuntimeConfig json.RawMessage `json:"runtime_config,omitempty"`
 }
+
+type MCPRelayRoute = mcpprotocol.RelayRoute
 
 // taskToResponse maps a queue row to its wire shape. workspaceID is threaded
 // in because the row itself doesn't carry one (workspace lives on the agent
@@ -1260,7 +1356,8 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 		visible = append(visible, resp)
 	}
 	h.hydrateAgentsChatSessionResume(r.Context(), visible)
-	h.hydrateAgentsInboundCoordinator(r.Context(), visible)
+	h.hydrateAgentsDingTalkResponsePolicy(r.Context(), visible)
+	h.hydrateAgentsTaskFinishedLoop(r.Context(), visible)
 	h.hydrateAgentsSceneMemoryFlags(r.Context(), visible)
 	h.hydrateAgentsVoice(r.Context(), visible)
 
@@ -1285,7 +1382,8 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := h.agentToResponse(agent)
 	h.hydrateChatSessionResume(r.Context(), &resp, agent.ID)
-	h.hydrateInboundCoordinator(r.Context(), &resp, agent.ID)
+	h.hydrateDingTalkResponsePolicy(r.Context(), &resp, agent.ID)
+	h.hydrateTaskFinishedLoop(r.Context(), &resp, agent.ID)
 	h.hydrateSceneMemoryFlags(r.Context(), &resp, agent.ID)
 	h.hydrateAgentVoice(r.Context(), &resp, agent.ID)
 	if !h.enrichAgentResponseWithTargetsHTTP(w, r, &resp, agent.ID) {
@@ -1614,6 +1712,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := h.agentToResponse(created)
+	h.hydrateDingTalkResponsePolicy(r.Context(), &resp, created.ID)
 	if err := h.attachAgentSkills(r.Context(), &resp, created.ID); err != nil {
 		slog.Warn("create agent: load skills for response failed", append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(created.ID))...)
 	}
@@ -1676,6 +1775,9 @@ type UpdateAgentRequest struct {
 	DispatchAlwaysNewIssue      *bool              `json:"dispatch_always_new_issue"`
 	ChatSessionResume           *bool              `json:"chat_session_resume"`
 	InboundCoordinator          *bool              `json:"inbound_coordinator"`
+	DingTalkShowAITag           *bool              `json:"dingtalk_show_ai_tag"`
+	DingTalkResponseEnabled     *bool              `json:"dingtalk_response_enabled"`
+	TaskFinishedLoopEnabled     *bool              `json:"task_finished_loop_enabled"`
 	SceneMemoryWriteEnabled     *bool              `json:"scene_memory_write_enabled"`
 	SceneMemoryRecallEnabled    *bool              `json:"scene_memory_recall_enabled"`
 	SceneMemoryUIEnabled        *bool              `json:"scene_memory_ui_enabled"`
@@ -2321,10 +2423,30 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.InboundCoordinator != nil {
-		if err := h.Queries.UpdateAgentInboundCoordinator(r.Context(), updated.ID, *req.InboundCoordinator); err != nil {
-			slog.Warn("update agent inbound_coordinator failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to update inbound coordinator")
+	if req.InboundCoordinator != nil || req.DingTalkShowAITag != nil || req.DingTalkResponseEnabled != nil {
+		policyParams := db.UpdateAgentDingTalkResponsePolicyParams{ID: updated.ID}
+		if req.InboundCoordinator != nil {
+			policyParams.InboundCoordinator = pgtype.Bool{Bool: *req.InboundCoordinator, Valid: true}
+		}
+		if req.DingTalkShowAITag != nil {
+			policyParams.ShowAiTag = pgtype.Bool{Bool: *req.DingTalkShowAITag, Valid: true}
+		}
+		if req.DingTalkResponseEnabled != nil {
+			policyParams.ResponseEnabled = pgtype.Bool{Bool: *req.DingTalkResponseEnabled, Valid: true}
+		}
+		if _, err := h.Queries.UpdateAgentDingTalkResponsePolicy(r.Context(), policyParams); err != nil {
+			slog.Warn("update agent DingTalk response policy failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update DingTalk response policy")
+			return
+		}
+		if h.DingTalkResponsePolicyNotifier != nil {
+			h.DingTalkResponsePolicyNotifier.NotifyResponsePolicyChanged()
+		}
+	}
+	if req.TaskFinishedLoopEnabled != nil {
+		if err := h.Queries.UpdateAgentTaskFinishedLoop(r.Context(), updated.ID, *req.TaskFinishedLoopEnabled); err != nil {
+			slog.Warn("update agent task_finished_loop failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+			writeError(w, http.StatusInternalServerError, "failed to update task finished loop")
 			return
 		}
 	}
@@ -2375,7 +2497,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 
 	resp := h.agentToResponse(updated)
 	h.hydrateChatSessionResume(r.Context(), &resp, updated.ID)
-	h.hydrateInboundCoordinator(r.Context(), &resp, updated.ID)
+	h.hydrateDingTalkResponsePolicy(r.Context(), &resp, updated.ID)
+	h.hydrateTaskFinishedLoop(r.Context(), &resp, updated.ID)
 	h.hydrateSceneMemoryFlags(r.Context(), &resp, updated.ID)
 	h.hydrateAgentVoice(r.Context(), &resp, updated.ID)
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &resp, updated.ID); err != nil {
@@ -2552,6 +2675,7 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	wsID := uuidToString(archived.WorkspaceID)
 	slog.Info("agent archived", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
 	resp := h.agentToResponse(archived)
+	h.hydrateDingTalkResponsePolicy(r.Context(), &resp, archived.ID)
 	if err := h.attachAgentSkills(r.Context(), &resp, archived.ID); err != nil {
 		slog.Warn("load agent skills after archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
@@ -2587,6 +2711,7 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 	wsID := uuidToString(restored.WorkspaceID)
 	slog.Info("agent restored", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
 	resp := h.agentToResponse(restored)
+	h.hydrateDingTalkResponsePolicy(r.Context(), &resp, restored.ID)
 	if err := h.attachAgentSkills(r.Context(), &resp, restored.ID); err != nil {
 		slog.Warn("load agent skills after restore failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")

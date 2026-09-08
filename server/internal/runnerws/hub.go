@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type ConnectHandler func(context.Context, Identity)
 type DisconnectHandler func(Identity)
 type HeartbeatHandler func(context.Context, Identity, runnerprotocol.Heartbeat)
 type ResultHandler func(context.Context, Identity, runnerprotocol.Result)
+type InventoryHandler func(context.Context, Identity, runnerprotocol.MCPInventory)
 
 type client struct {
 	hub      *Hub
@@ -57,12 +59,14 @@ type Hub struct {
 
 	mu        sync.RWMutex
 	byMachine map[string]*client
+	inventory map[string]runnerprotocol.MCPInventory
 
 	handlerMu    sync.RWMutex
 	onConnect    ConnectHandler
 	onDisconnect DisconnectHandler
 	onHeartbeat  HeartbeatHandler
 	onResult     ResultHandler
+	onInventory  InventoryHandler
 }
 
 func NewHub() *Hub {
@@ -71,6 +75,7 @@ func NewHub() *Hub {
 			CheckOrigin: func(*http.Request) bool { return true },
 		},
 		byMachine: make(map[string]*client),
+		inventory: make(map[string]runnerprotocol.MCPInventory),
 	}
 }
 
@@ -80,6 +85,12 @@ func (h *Hub) SetHandlers(onConnect ConnectHandler, onDisconnect DisconnectHandl
 	h.onDisconnect = onDisconnect
 	h.onHeartbeat = onHeartbeat
 	h.onResult = onResult
+	h.handlerMu.Unlock()
+}
+
+func (h *Hub) SetInventoryHandler(onInventory InventoryHandler) {
+	h.handlerMu.Lock()
+	h.onInventory = onInventory
 	h.handlerMu.Unlock()
 }
 
@@ -201,6 +212,7 @@ func (c *client) readPump(parent context.Context) {
 		c.hub.mu.Lock()
 		if c.hub.byMachine[c.identity.MachineID] == c {
 			delete(c.hub.byMachine, c.identity.MachineID)
+			delete(c.hub.inventory, c.identity.MachineID)
 		}
 		c.hub.mu.Unlock()
 		c.stop()
@@ -242,8 +254,60 @@ func (c *client) readPump(parent context.Context) {
 			if json.Unmarshal(raw, &result) == nil && onResult != nil {
 				onResult(ctx, c.identity, result)
 			}
+		case runnerprotocol.MessageInventory:
+			var inventory runnerprotocol.MCPInventory
+			if json.Unmarshal(raw, &inventory) == nil && c.hub.storeMCPInventory(c.identity.MachineID, inventory) {
+				c.hub.handlerMu.RLock()
+				onInventory := c.hub.onInventory
+				c.hub.handlerMu.RUnlock()
+				if onInventory != nil {
+					onInventory(ctx, c.identity, inventory)
+				}
+			}
 		}
 	}
+}
+
+func (h *Hub) storeMCPInventory(machineID string, inventory runnerprotocol.MCPInventory) bool {
+	if strings.TrimSpace(inventory.Revision) == "" || len(inventory.Servers) > 256 || len(inventory.Config) > 1<<20 || (len(inventory.Config) > 0 && !json.Valid(inventory.Config)) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(inventory.Servers))
+	for _, server := range inventory.Servers {
+		if strings.TrimSpace(server.Name) == "" || strings.TrimSpace(server.Fingerprint) == "" {
+			return false
+		}
+		if _, exists := seen[server.Name]; exists {
+			return false
+		}
+		seen[server.Name] = struct{}{}
+	}
+	copyInventory := cloneMCPInventory(inventory)
+	h.mu.Lock()
+	h.inventory[machineID] = copyInventory
+	h.mu.Unlock()
+	return true
+}
+
+func (h *Hub) MCPInventory(machineID string) (runnerprotocol.MCPInventory, bool) {
+	h.mu.RLock()
+	inventory, ok := h.inventory[machineID]
+	h.mu.RUnlock()
+	if !ok {
+		return runnerprotocol.MCPInventory{}, false
+	}
+	return cloneMCPInventory(inventory), true
+}
+
+func cloneMCPInventory(inventory runnerprotocol.MCPInventory) runnerprotocol.MCPInventory {
+	cloned := inventory
+	cloned.Servers = append([]runnerprotocol.MCPServerSummary(nil), inventory.Servers...)
+	for index := range cloned.Servers {
+		cloned.Servers[index].Capabilities = append([]string(nil), inventory.Servers[index].Capabilities...)
+		cloned.Servers[index].Tools = append([]runnerprotocol.MCPToolSummary(nil), inventory.Servers[index].Tools...)
+	}
+	cloned.Config = append([]byte(nil), inventory.Config...)
+	return cloned
 }
 
 func (c *client) writePump() {

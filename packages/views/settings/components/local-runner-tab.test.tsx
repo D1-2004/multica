@@ -35,6 +35,7 @@ const revokeMutation = vi.hoisted(() => ({
   isPending: false,
   variables: undefined as { bindingId: string } | undefined,
 }));
+const simpleMutation = vi.hoisted(() => ({ mutateAsync: vi.fn(), isPending: false }));
 const runnerOptions = vi.hoisted(() => vi.fn());
 const disconnectHook = vi.hoisted(() => vi.fn());
 const reconnectHook = vi.hoisted(() => vi.fn());
@@ -69,6 +70,9 @@ vi.mock("@multica/core/runner", () => ({
     revokeHook(userId);
     return revokeMutation;
   },
+	useCreateAccountRunnerPairing: () => simpleMutation,
+	useRenameAccountRunnerMachine: () => simpleMutation,
+	useRevokeAccountRunnerMachine: () => simpleMutation,
 }));
 
 vi.mock("sonner", () => ({
@@ -93,6 +97,8 @@ const machine = {
   clientVersion: "0.2.0",
   online: true,
   lastSeenAt: "2026-08-24T08:00:00Z",
+	mcpServers: [],
+	inventoryRevision: "",
   bindings: [
     {
       bindingId,
@@ -176,6 +182,39 @@ describe("LocalRunnerTab", () => {
     expect(screen.getByText("2 agent bindings")).toBeInTheDocument();
     expect(screen.getByText("/Users/dev/code")).toBeInTheDocument();
     expect(screen.getByText("/Users/dev/review")).toBeInTheDocument();
+    expect(screen.getByText("Connect and use your computer")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Pair machine" }),
+    ).toBeInTheDocument();
+  });
+
+  it("explains installation, MCP configuration, lifecycle commands, and local file access", () => {
+    renderTab();
+
+    expect(
+      screen.getByText(/starts Runner automatically after browser approval/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Configure MCP services")).toBeInTheDocument();
+    expect(screen.getByText("~/.multica/runner/mcp.json")).toBeInTheDocument();
+    expect(screen.getAllByText(/local_machine/).length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("~/.multica/runner/bin/multica runner start"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("~/.multica/runner/bin/multica runner stop"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("~/.multica/runner/bin/multica runner status"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Local file access directories").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getByText(
+        "~/.multica/runner/bin/multica runner configure --directory /absolute/path",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Exposed file roots")).not.toBeInTheDocument();
   });
 
   it("shows an enabled binding as offline when its machine is offline", () => {
@@ -204,6 +243,38 @@ describe("LocalRunnerTab", () => {
       ),
     ).toBe(true);
     expect(screen.queryByText("Disconnected")).not.toBeInTheDocument();
+  });
+
+  it("shows protocol details for MCP servers exposed by a machine", async () => {
+    const user = userEvent.setup();
+    queryState.current = {
+      data: {
+        machines: [{
+          ...machine,
+          mcpServers: [{
+            name: "llm-wiki",
+            title: "LLM Wiki Desktop",
+            description: "Search and read the local knowledge base.",
+            version: "1.2.0",
+            transport: "stdio",
+            availability: "available",
+            detailStatus: "available",
+            fingerprint: "sha256:wiki",
+            tools: [{ name: "search_wiki", title: "Search wiki", description: "Search pages in LLM Wiki." }],
+          }],
+        }],
+      },
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    };
+
+    renderTab();
+    await user.click(screen.getByRole("button", { name: /llm-wiki/i }));
+
+    expect(screen.getByText("Search and read the local knowledge base.")).toBeInTheDocument();
+    expect(screen.getByText("Search pages in LLM Wiki.")).toBeInTheDocument();
+    expect(screen.getByText("v1.2.0")).toBeInTheDocument();
   });
 
   it("does not render an invalid last-seen timestamp", () => {
@@ -335,7 +406,7 @@ describe("LocalRunnerTab", () => {
     };
     const { unmount } = renderTab();
     expect(
-      screen.getByText("No Local Runner machines bound"),
+      screen.getByText("No computers connected"),
     ).toBeInTheDocument();
     unmount();
 
@@ -349,14 +420,32 @@ describe("LocalRunnerTab", () => {
     const user = userEvent.setup();
     renderTab();
     expect(
-      screen.getByText(/Couldn't load your Local Runner exposure/),
+      screen.getByText(/Couldn't load your connected computers/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText("No Local Runner machines bound"),
+      screen.queryByText("No computers connected"),
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the last successful machine list visible during a refresh error", () => {
+    queryState.current = {
+      data: { machines: [machine] },
+      isLoading: false,
+      isError: true,
+      refetch: vi.fn(),
+    };
+
+    renderTab();
+
+    expect(
+      screen.getByRole("heading", { name: "studio-mac" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Couldn't load your connected computers/),
+    ).not.toBeInTheDocument();
   });
 
   it("scopes account queries and mutations to the signed-in user", () => {

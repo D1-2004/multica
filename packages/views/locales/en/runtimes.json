@@ -8,6 +8,8 @@
     "search_placeholder": "Search runtimes…",
     "scope_mine": "Mine",
     "scope_all": "All",
+    "owner_filter": "Owner",
+    "all_owners": "All owners",
     "live": "Live",
     "live_tooltip": "Real-time updates · offline detection up to 75s",
     "filter_all": "All",

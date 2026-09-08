@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen } from "@testing-library/react";
+import { cleanup, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentDetailInspector } from "./agent-detail-inspector";
@@ -36,6 +36,12 @@ vi.mock("./inspector/service-tier-setting-field", () => ({
   ServiceTierSettingField: () => <div data-testid="service-tier-field" />,
 }));
 
+vi.mock("./integrations/github-identity-binding", () => ({
+  GitHubIdentityBindingCard: () => (
+    <section aria-label="GitHub sandbox identity" />
+  ),
+}));
+
 const agent = {
   id: "agent-1",
   workspace_id: "workspace-1",
@@ -63,37 +69,14 @@ describe("AgentDetailInspector labels", () => {
       />,
     );
 
-    // Sanity check: the profile card actually rendered.
-    expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    // Sanity check: runtime configuration actually rendered.
+    expect(screen.getByTestId("runtime-picker")).toBeInTheDocument();
 
     expect(screen.queryByTestId("resource-label-picker")).toBeNull();
     expect(screen.queryByText("Labels")).toBeNull();
   });
 
-  it("saves chat session resume independently of other execution fields", async () => {
-    const onUpdate = vi.fn(async () => {});
-    renderWithI18n(
-      <AgentDetailInspector
-        agent={{ ...agent, chat_session_resume: false }}
-        runtime={null}
-        runtimes={[]}
-        members={[]}
-        currentUserId="user-1"
-        canEdit
-        onUpdate={onUpdate}
-      />,
-    );
-
-    const toggle = screen.getByLabelText("Resume last session");
-    fireEvent.click(toggle);
-    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
-      chat_session_resume: true,
-    });
-    expect(toggle).toBeChecked();
-  });
-
-  it("defaults inbound coordinator off and saves an explicit on", () => {
-    const onUpdate = vi.fn(async () => {});
+  it("keeps Local Runner out of runtime configuration", () => {
     renderWithI18n(
       <AgentDetailInspector
         agent={agent}
@@ -102,17 +85,30 @@ describe("AgentDetailInspector labels", () => {
         members={[]}
         currentUserId="user-1"
         canEdit
-        onUpdate={onUpdate}
+        onUpdate={vi.fn(async () => {})}
       />,
     );
 
-    const toggle = screen.getByLabelText("Judge before sandbox");
-    expect(toggle).not.toBeChecked();
-    fireEvent.click(toggle);
-    expect(onUpdate).toHaveBeenCalledWith("agent-1", {
-      inbound_coordinator: true,
-    });
-    expect(toggle).toBeChecked();
+    expect(screen.queryByText("Local Runner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("runner-picker")).not.toBeInTheDocument();
+  });
+
+  it("places GitHub sandbox identity with runtime configuration", () => {
+    renderWithI18n(
+      <AgentDetailInspector
+        agent={agent}
+        runtime={null}
+        runtimes={[]}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        onUpdate={vi.fn(async () => {})}
+      />,
+    );
+
+    expect(
+      screen.getByRole("region", { name: "GitHub sandbox identity" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps scene memory flags off the settings form", () => {

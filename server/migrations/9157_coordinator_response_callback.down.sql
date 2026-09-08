@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS inbound_coordinator_response_callback_idx;

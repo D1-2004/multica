@@ -11,7 +11,9 @@
     "usage": "분석",
     "sites": "웹사이트",
     "runtimes": "런타임",
+    "runners": "내 컴퓨터",
     "skills": "스킬",
+    "dsh_plugins": "DSH 플러그인",
     "settings": "설정"
   },
   "tab": {
@@ -22,6 +24,7 @@
     "member": "멤버",
     "squad": "스쿼드",
     "skill": "스킬",
+    "dsh_plugin": "DSH 플러그인",
     "machine": "머신",
     "runtime": "런타임",
     "attachment": "첨부파일",
@@ -53,6 +56,10 @@
     "new_issue_shortcut": "C",
     "pinned_label": "고정됨",
     "workspace_group": "워크스페이스",
+    "collaboration_group": "협업",
+    "agent_group": "Agent",
+    "runtime_group": "런타임",
+    "configuration_group": "설정",
     "configure_group": "설정",
     "unread_overflow": "99+",
     "discord_card": {

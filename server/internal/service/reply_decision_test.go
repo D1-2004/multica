@@ -99,3 +99,33 @@ func TestNormalizeReplyDecisionOutputInvalidFenceRetainsStructuredFallback(t *te
 		t.Fatalf("NormalizeReplyDecisionOutput() = %q, %#v", visible, decision)
 	}
 }
+
+func TestNormalizeReplyDecisionOutputStripsBareShouldReplyJSON(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in, want string
+		reply    bool
+	}{
+		{`{"shouldReply":true}`, "", true},
+		{"配额已查到。\n{\"shouldReply\":true}", "配额已查到。", true},
+		{"配额已查到。{\"shouldReply\":true}", "配额已查到。", true},
+		{"```json\n{\"shouldReply\":false,\"reason\":\"echo\"}\n```\n", "", false},
+		{"说明如下\n\n```json\n{\"shouldReply\":true}\n```", "说明如下", true},
+		{"```json\n{\"visible\":true}\n```", "```json\n{\"visible\":true}\n```", false},
+	}
+	for _, tc := range cases {
+		visible, decision := NormalizeReplyDecisionOutput(tc.in, nil)
+		if visible != tc.want {
+			t.Fatalf("in=%q visible=%q want=%q", tc.in, visible, tc.want)
+		}
+		if tc.in == "```json\n{\"visible\":true}\n```" {
+			if decision != nil {
+				t.Fatalf("ordinary json fence must keep decision unset, got %#v", decision)
+			}
+			continue
+		}
+		if decision == nil || decision.ShouldReply != tc.reply {
+			t.Fatalf("in=%q decision=%#v", tc.in, decision)
+		}
+	}
+}

@@ -174,8 +174,14 @@ WHERE task.agent_id = $1
   AND task.parent_task_id IS NULL
   AND task.context #>> '{dispatch_idempotency_key}' = $2::text
   AND task.context #>> '{dispatch_endpoint_id}' = $3::text
-  AND task.context #>> '{completion_callback,url}' = $4::text
-  AND task.context #>> '{completion_callback,target}' = $5::text
+  AND (
+    task.context #>> '{completion_callback,url}' = $4::text
+    OR task.context #>> '{coordinator_wrapup_callback,url}' = $4::text
+  )
+  AND (
+    task.context #>> '{completion_callback,target}' = $5::text
+    OR task.context #>> '{coordinator_wrapup_callback,target}' = $5::text
+  )
 ORDER BY task.created_at ASC
 LIMIT 1
 `
@@ -196,6 +202,84 @@ func (q *Queries) GetAgentDispatchRootTaskByAcceptance(ctx context.Context, arg 
 		arg.CallbackUrl,
 		arg.TargetIdentity,
 	)
+	var i AgentTaskQueue
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.IssueID,
+		&i.Status,
+		&i.Priority,
+		&i.DispatchedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.Result,
+		&i.Error,
+		&i.CreatedAt,
+		&i.Context,
+		&i.RuntimeID,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.TriggerCommentID,
+		&i.ChatSessionID,
+		&i.AutopilotRunID,
+		&i.Attempt,
+		&i.MaxAttempts,
+		&i.ParentTaskID,
+		&i.FailureReason,
+		&i.TriggerSummary,
+		&i.ForceFreshSession,
+		&i.IsLeaderTask,
+		&i.WaitReason,
+		&i.InitiatorUserID,
+		&i.HandoffNote,
+		&i.PrepareLeaseExpiresAt,
+		&i.SquadID,
+		&i.RuntimeMcpOverlay,
+		&i.EscalationForTaskID,
+		&i.FireAt,
+		&i.OriginatorUserID,
+		&i.RuntimeConnectedApps,
+		&i.CoalescedCommentIds,
+		&i.DeliveredCommentIds,
+		&i.ChatInputTaskID,
+		&i.ChatFinalizeDeferredAt,
+		&i.OriginatorSource,
+		&i.DelegatedFromTaskID,
+		&i.RetryOfTaskID,
+		&i.RerunOfTaskID,
+		&i.RuleVersionID,
+		&i.TriggerEvidenceKind,
+		&i.TriggerEvidenceRefID,
+		&i.AccountableUserID,
+		&i.SessionRolloutMissing,
+		&i.RetiredSessionID,
+		&i.QuickActionsDisabled,
+		&i.RegenerateQuickActionsFor,
+		&i.RuntimeLaunchLeaseToken,
+		&i.RuntimeLaunchLeaseExpiresAt,
+	)
+	return i, err
+}
+
+const getAgentDispatchRootTaskByIdempotency = `-- name: GetAgentDispatchRootTaskByIdempotency :one
+SELECT task.id, task.agent_id, task.issue_id, task.status, task.priority, task.dispatched_at, task.started_at, task.completed_at, task.result, task.error, task.created_at, task.context, task.runtime_id, task.session_id, task.work_dir, task.trigger_comment_id, task.chat_session_id, task.autopilot_run_id, task.attempt, task.max_attempts, task.parent_task_id, task.failure_reason, task.trigger_summary, task.force_fresh_session, task.is_leader_task, task.wait_reason, task.initiator_user_id, task.handoff_note, task.prepare_lease_expires_at, task.squad_id, task.runtime_mcp_overlay, task.escalation_for_task_id, task.fire_at, task.originator_user_id, task.runtime_connected_apps, task.coalesced_comment_ids, task.delivered_comment_ids, task.chat_input_task_id, task.chat_finalize_deferred_at, task.originator_source, task.delegated_from_task_id, task.retry_of_task_id, task.rerun_of_task_id, task.rule_version_id, task.trigger_evidence_kind, task.trigger_evidence_ref_id, task.accountable_user_id, task.session_rollout_missing, task.retired_session_id, task.quick_actions_disabled, task.regenerate_quick_actions_for, task.runtime_launch_lease_token, task.runtime_launch_lease_expires_at
+FROM agent_task_queue task
+WHERE task.agent_id = $1
+  AND task.parent_task_id IS NULL
+  AND task.context #>> '{dispatch_idempotency_key}' = $2::text
+  AND task.context #>> '{dispatch_endpoint_id}' = $3::text
+ORDER BY task.created_at ASC
+LIMIT 1
+`
+
+type GetAgentDispatchRootTaskByIdempotencyParams struct {
+	AgentID        pgtype.UUID `json:"agent_id"`
+	IdempotencyKey string      `json:"idempotency_key"`
+	EndpointID     string      `json:"endpoint_id"`
+}
+
+func (q *Queries) GetAgentDispatchRootTaskByIdempotency(ctx context.Context, arg GetAgentDispatchRootTaskByIdempotencyParams) (AgentTaskQueue, error) {
+	row := q.db.QueryRow(ctx, getAgentDispatchRootTaskByIdempotency, arg.AgentID, arg.IdempotencyKey, arg.EndpointID)
 	var i AgentTaskQueue
 	err := row.Scan(
 		&i.ID,

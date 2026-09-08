@@ -42,12 +42,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/orgemphsf"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/managedagent"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/sitehosting"
@@ -329,6 +331,10 @@ type RouterOptions struct {
 	SandboxRelay    func(http.Handler) http.Handler
 	RuntimeConfig   *appRuntimeConfig
 	DeploymentFence *deploymentfence.Service
+	// Langfuse is the LLM trace exporter shared by the inbound coordinator,
+	// the scene memory flusher, and the agent task lifecycle. Nil disables
+	// every export.
+	Langfuse *langfuse.Client
 }
 
 // NewRouterWithOptions builds the fully-configured Chi router and
@@ -485,6 +491,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	if asbRuntime != nil {
 		h.ASBLauncher = asbRuntime.Launcher
+		// Every cold launch, including initial task admission, uses the same
+		// tenant cooldown. A missing/unavailable Redis keeps tasks queued.
+		h.ASBLauncher.Credentials.CapacityGate = service.NewASBCapacityGate(rdb)
 		h.EnterpriseIdentity = asbRuntime.Identity
 		if opts.RuntimeConfig != nil {
 			if err := asbRuntime.SetConfigProviders(opts.RuntimeConfig.asb, opts.RuntimeConfig.enterpriseIdentity); err != nil {
@@ -533,6 +542,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 		h.TaskCompletionTargetIdentity = routerClient.TargetIdentity()
 		h.TaskService.CompletionNotifier = h.TaskCompletionWorker
+		h.DingTalkResponsePolicySync = newDingTalkResponsePolicyWorker(queries, routerClient)
+		h.DingTalkResponsePolicyNotifier = h.DingTalkResponsePolicySync
 		h.DingTalkBindingTeardownRouter = routerClient
 	}
 	dispatchKeysRaw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_DISPATCH_KEYS"))
@@ -572,13 +583,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			agentDispatchEndpoints = endpointService
 		}
 		bindingServiceConfig := agentmessagerouter.ServiceConfig{
-			PublicBaseURL:   signupConfig.PublicURL,
-			DBaseBindingURL: dbaseBindingURL,
-			Keyring:         keyring,
-			Random:          rand.Reader,
-			IdentityStore:   queries,
-			Endpoints:       endpointService,
-			Metrics:         opts.BusinessMetrics,
+			ResponsePolicyNotifier: h.DingTalkResponsePolicyNotifier,
+			PublicBaseURL:          signupConfig.PublicURL,
+			DBaseBindingURL:        dbaseBindingURL,
+			Keyring:                keyring,
+			Random:                 rand.Reader,
+			IdentityStore:          queries,
+			Endpoints:              endpointService,
+			Metrics:                opts.BusinessMetrics,
 		}
 		if opts.RuntimeConfig != nil {
 			bindingServiceConfig.PublicBaseURLProvider = opts.RuntimeConfig.publicURL
@@ -758,6 +770,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	channelRouter := engine.NewRouter(h.IssueService, h.TaskService, queries, engine.RouterConfig{Logger: slog.Default()})
 	coordinator := inboundcoord.New(h.LLM, queries, h.Assoc)
+	if opts.DeploymentFence != nil {
+		coordinator.Ready = func(ctx context.Context) (bool, error) {
+			return opts.DeploymentFence.AllLiveReplicasSupport(ctx, inboundcoord.ReplicaPlanMarker)
+		}
+	}
 	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
 	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
 		AgentIdentity:   agentidentityhsf.NewClient(),
@@ -767,6 +784,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	})
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
+	if agentMessageRouterClient != nil {
+		h.DingTalkResponses = dingtalkresponse.NewService(pool, dingtalkresponse.NewDWSProvider(dingtalkresponse.DWSConfig{
+			AgentIdentity:   agentidentityhsf.NewClient(),
+			BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
+			BaseURLProvider: agentIdentityControlBaseURLProvider,
+			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+		}), handler.RouterResponseReceiptSender{Client: agentMessageRouterClient, Handler: h})
+		h.TaskCompletionWorker.ResponseActions = h
+		h.DingTalkResponses.OnSandboxDelivered = h.BindVerifiedDingTalkSend
+	}
 	h.SceneMemoryStore = scenememory.NewStore(queries)
 	coordinator.SceneMemory = h.SceneMemoryStore
 	sceneFlusher := &scenememory.MemoryFlusher{
@@ -778,7 +805,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			BaseURLProvider: agentIdentityControlBaseURLProvider,
 			ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
 		}),
-		LLM: h.LLM,
+		LLM:    h.LLM,
+		Agents: queries,
+	}
+	// Langfuse tracing: the coordinator loop, the memory loop, and the agent
+	// task lifecycle share one exporter. The sandbox LLM relay fans out to it
+	// too, and capable FC runtime images capture model bodies for every task
+	// once the exporter exists (docs/langfuse-observability.md).
+	if opts.Langfuse.Enabled() {
+		coordinator.Langfuse = opts.Langfuse
+		sceneFlusher.Langfuse = opts.Langfuse
+		h.TaskService.Langfuse = opts.Langfuse
+		h.LLMTraceObserver = handler.NewLangfuseLLMTraceObserver(opts.Langfuse)
+		if h.FCE2BLauncher != nil {
+			h.FCE2BLauncher.LLMTraceCaptureAlways = true
+		}
 	}
 	h.SceneMemoryWorker = scenememory.NewWorker(h.SceneMemoryStore, sceneFlusher, func() bool {
 		if opts.DeploymentFence == nil {
@@ -1671,6 +1712,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// unchanged — this one is purely additive.
 	r.Get("/api/attachments/{id}/signed-download", h.DownloadAttachmentWithCapability)
 
+	// A stored DSH plugin package, fetched by a sandbox process that sends no
+	// Authorization header. Same reasoning as the capability download above:
+	// the short-lived, single-plugin signature in the query is the credential,
+	// and it is only minted while composing a task for an agent already bound
+	// to that plugin.
+	r.Get("/api/dsh-plugins/{id}/artifact", h.DownloadDshPluginArtifact)
+
 	// Avatar serving. Public for the same reason as the capability download
 	// above: the auth cookie is SameSite=Strict, so an auth-gated URL cannot
 	// be a native <img src> from Desktop / mobile webview or a split-origin
@@ -1877,6 +1925,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Get("/api/workspace-access/self", h.GetWorkspaceAccessSelf)
 		r.With(handler.RequireHumanActor).Patch("/api/me", h.UpdateMe)
 		r.With(handler.RequireHumanActor).Get("/api/me/runner-bindings", h.ListMyRunnerBindings)
+		r.With(handler.RequireHumanActor).Post("/api/me/runner-pairings", h.CreateMyRunnerPairing)
+		r.With(handler.RequireHumanActor).Patch("/api/me/runner-machines/{machineId}", h.RenameMyRunnerMachine)
+		r.With(handler.RequireHumanActor).Delete("/api/me/runner-machines/{machineId}", h.RevokeMyRunnerMachine)
 		r.With(handler.RequireHumanActor).Post("/api/me/runner-bindings/{bindingId}/disconnect", h.DisconnectMyRunnerBinding)
 		r.With(handler.RequireHumanActor).Post("/api/me/runner-bindings/{bindingId}/reconnect-command", h.CreateMyRunnerReconnectCommand)
 		r.With(handler.RequireHumanActor).Delete("/api/me/runner-bindings/{bindingId}", h.RevokeMyRunnerBinding)
@@ -1953,6 +2004,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// the handler, so generic MCP clients need no custom workspace header.
 		r.Handle("/api/mcp", http.HandlerFunc(h.MulticaMCP))
 		r.Handle("/api/runner-mcp", http.HandlerFunc(h.RunnerMCP))
+		r.Post("/api/runner-mcp/mounts/{mountId}/servers/{serverName}", h.RunnerMountedMCP)
 
 		r.Route("/api/workspaces", func(r chi.Router) {
 			r.Get("/", h.ListWorkspaces)
@@ -2215,6 +2267,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/assoc/recall", h.RecallAssoc)
 			r.Get("/api/assoc/events", h.ListAssocEvents)
 			r.Post("/api/assoc/bind-outbound", h.BindAssocOutbound)
+			r.Post("/api/tasks/{taskID}/dingtalk-send-receipts", h.RecordDingTalkSendReceipt)
 
 			// Issues
 			r.Route("/api/issues", func(r chi.Router) {
@@ -2471,6 +2524,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/skills", h.ListAgentSkills)
 					r.Put("/skills", h.SetAgentSkills)
 					r.Post("/skills/add", h.AddAgentSkills)
+					// Which DSH plugins this agent boots with. The daemon
+					// composes these into the profile the sandbox builds.
+					r.Get("/dsh-plugins", h.ListAgentDshPlugins)
+					r.Put("/dsh-plugins", h.SetAgentDshPlugins)
+					r.Delete("/dsh-plugins/{pluginId}", h.RemoveAgentDshPlugin)
 					// OKRs materialize as workspace labels the agent tags
 					// issues with; the catalog is injected into its prompt.
 					r.Get("/okrs", h.ListAgentOKRs)
@@ -2498,6 +2556,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/env", h.GetAgentEnv)
 					r.Put("/env", h.UpdateAgentEnv)
 					r.With(handler.RequireHumanActor).Get("/runner-bindings", h.ListAgentRunnerBindings)
+					r.With(handler.RequireHumanActor).Put("/runner-mount", h.MountAgentRunnerMachine)
 					r.With(handler.RequireHumanActor).Post("/runner-pairings", h.CreateAgentRunnerPairing)
 					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/disconnect", h.DisconnectAgentRunnerBinding)
 					r.With(handler.RequireHumanActor).Post("/runner-bindings/{bindingId}/reconnect-command", h.CreateAgentRunnerReconnectCommand)
@@ -2522,6 +2581,33 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Autosaved configuration, including edits the user has typed
 				// but not sent. Read back through the list above.
 				r.Put("/{sessionId}/draft", h.SaveAgentBuilderDraft)
+			})
+
+			// DSH plugins. DeepSeek Harness has no registry of its own —
+			// `dsh plugin add` forwards to pnpm — so browse reads a cached
+			// community index plus the npm registry's own search endpoint,
+			// and import records a pinned package reference.
+			r.Route("/api/dsh-plugins", func(r chi.Router) {
+				r.Get("/", h.ListDshPlugins)
+				r.Post("/", h.ImportDshPlugin)
+				r.Get("/bindings", h.ListDshPluginBindings)
+				r.Get("/catalog", h.BrowseDshPluginCatalog)
+				r.Get("/catalog/categories", h.ListDshPluginCatalogCategories)
+				r.With(handler.RequireHumanActor).Post("/catalog/refresh", h.RefreshDshPluginCatalog)
+				r.Get("/registry-search", h.SearchDshPluginRegistry)
+				// A package that arrives as a file rather than a reference.
+				r.Post("/upload", h.UploadDshPlugin)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetDshPlugin)
+					r.Put("/", h.UpdateDshPlugin)
+					r.Delete("/", h.DeleteDshPlugin)
+					r.Get("/update", h.CheckDshPluginUpdate)
+					// What is actually inside the package. Read from the
+					// stored bytes, so a viewer and the sandbox can never
+					// disagree about what was imported.
+					r.Get("/files", h.ListDshPluginFiles)
+					r.Get("/file", h.GetDshPluginFile)
+				})
 			})
 
 			// Skills

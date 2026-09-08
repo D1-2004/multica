@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // AgentEntry describes a single available agent CLI.
@@ -115,6 +116,9 @@ type Task struct {
 	QuickCreateAttachmentIDs      []string               `json:"quick_create_attachment_ids,omitempty"`      // attachments uploaded in the quick-create prompt and bound by issue create
 	HandoffNote                   string                 `json:"handoff_note,omitempty"`                     // assignment handoff instruction; rendered into the opening prompt + issue_context.md
 
+	// DingTalkMessagePolicy is an optional server-attested snapshot for this task.
+	DingTalkMessagePolicy *protocol.DingTalkMessagePolicy `json:"dingtalk_message_policy,omitempty"`
+
 	// Sanitized original channel callbacks for the current input batch.
 	ChatMessageSourcePayloads []ChatMessageSourcePayload `json:"chat_message_source_payloads,omitempty"`
 
@@ -206,6 +210,7 @@ type AgentData struct {
 	CustomEnv             map[string]string          `json:"custom_env,omitempty"`
 	CustomArgs            []string                   `json:"custom_args,omitempty"`
 	McpConfig             json.RawMessage            `json:"mcp_config,omitempty"`
+	McpRelayRoutes        map[string]mcpRelayRoute   `json:"mcp_relay_routes,omitempty"`
 	Model                 string                     `json:"model,omitempty"`
 	ThinkingLevel         string                     `json:"thinking_level,omitempty"`
 	ServiceTier           string                     `json:"service_tier,omitempty"`

@@ -1,6 +1,25 @@
 package handler
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestExtractVoicePromptSeparatesRoleAndStyle(t *testing.T) {
+	t.Parallel()
+	for _, want := range []string{
+		"persona is 角色",
+		"reply_tone is 沟通风格",
+		"Persona never decides whether a message becomes an Issue",
+		"Prefer concrete IM habits",
+		"No helpdesk scripts",
+		"Drop: tools, skills, workflows",
+	} {
+		if !strings.Contains(extractVoiceSystemPrompt, want) {
+			t.Errorf("extractVoiceSystemPrompt missing %q", want)
+		}
+	}
+}
 
 func TestParseExtractedVoice(t *testing.T) {
 	t.Parallel()

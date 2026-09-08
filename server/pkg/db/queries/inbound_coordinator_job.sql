@@ -1,26 +1,47 @@
 -- name: CreateInboundCoordinatorJob :one
 INSERT INTO inbound_coordinator_job (
     acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id,
-    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id
+    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id,
+    available_at
 ) VALUES (
     @acceptance_id, @workspace_id, @agent_id, @user_id, @endpoint_namespace_id,
-    @dispatch_endpoint_id, @idempotency_key, @command, @chat_session_id, @user_message_id
+    @dispatch_endpoint_id, @idempotency_key, @command, @chat_session_id, @user_message_id,
+    @available_at
 )
 RETURNING *;
 
 -- name: GetInboundCoordinatorJobByAcceptance :one
 SELECT * FROM inbound_coordinator_job WHERE acceptance_id = @acceptance_id;
 
+-- name: GetInboundCoordinatorJobByIdempotency :one
+SELECT * FROM inbound_coordinator_job
+WHERE workspace_id = @workspace_id
+  AND agent_id = @agent_id
+  AND idempotency_key = @idempotency_key
+ORDER BY created_at ASC
+LIMIT 1;
+
 -- name: ClaimInboundCoordinatorJob :one
 WITH candidate AS (
-    SELECT id
-    FROM inbound_coordinator_job
+    SELECT job.id
+    FROM inbound_coordinator_job job
     WHERE (
-        status = 'pending' AND available_at <= now()
-    ) OR (
-        status = 'running' AND lease_expires_at <= now()
+        (job.status = 'pending' AND job.available_at <= now())
+        OR (job.status = 'running' AND job.lease_expires_at <= now())
     )
-    ORDER BY available_at, created_at
+    AND NOT EXISTS (
+        SELECT 1
+        FROM inbound_coordinator_job running
+        WHERE running.workspace_id = job.workspace_id
+          AND running.agent_id = job.agent_id
+          AND running.status = 'running'
+          AND running.lease_expires_at > now()
+          AND running.id IS DISTINCT FROM job.id
+          AND COALESCE(job.command #>> '{event,data,conversation,openConversationId}', '') <> ''
+          AND running.command #>> '{event,data,conversation,openConversationId}'
+            = job.command #>> '{event,data,conversation,openConversationId}'
+    )
+    ORDER BY job.available_at, job.created_at
     FOR UPDATE SKIP LOCKED
     LIMIT 1
 )
@@ -84,3 +105,93 @@ SELECT EXISTS (
       AND role = 'assistant'
       AND message_kind = 'coordinator'
 ) AS exists;
+
+-- name: ListPendingInboundCoordinatorJobsForConversationCollect :many
+SELECT *
+FROM inbound_coordinator_job
+WHERE workspace_id = @workspace_id
+  AND agent_id = @agent_id
+  AND status = 'pending'
+  AND attempt_count = 0
+  AND last_error IS NULL
+  AND available_at > statement_timestamp()
+  AND command #>> '{event,data,conversation,openConversationId}' = @conversation_id
+ORDER BY created_at DESC
+FOR UPDATE;
+
+-- name: UpdateInboundCoordinatorJobCollect :one
+UPDATE inbound_coordinator_job
+SET command = @command,
+    available_at = @available_at,
+    updated_at = now()
+WHERE id = @id AND status = 'pending'
+RETURNING *;
+
+-- name: AppendCoordinatorUserMessage :execrows
+UPDATE chat_message
+SET content = @content
+WHERE id = @id AND role = 'user';
+
+-- name: CountRunningInboundCoordinatorJobsForConversation :one
+SELECT count(*)::bigint
+FROM inbound_coordinator_job
+WHERE workspace_id = @workspace_id
+  AND agent_id = @agent_id
+  AND status = 'running'
+  AND lease_expires_at > now()
+  AND id <> @exclude_id
+  AND command #>> '{event,data,conversation,openConversationId}' = @conversation_id;
+
+-- name: CountActiveTasksForConversation :one
+SELECT count(DISTINCT assoc_task.issue_id)::bigint
+FROM assoc_edge
+JOIN assoc_task
+  ON assoc_task.workspace_id = assoc_edge.workspace_id
+ AND assoc_task.agent_id = assoc_edge.agent_id
+ AND (
+    (assoc_edge.src_type = 'task' AND assoc_edge.src_id = assoc_task.id::text)
+    OR (assoc_edge.dst_type = 'task' AND assoc_edge.dst_id = assoc_task.id::text)
+ )
+JOIN agent_task_queue
+  ON agent_task_queue.issue_id = assoc_task.issue_id
+ AND agent_task_queue.agent_id = assoc_edge.agent_id
+WHERE assoc_edge.workspace_id = @workspace_id
+  AND assoc_edge.agent_id = @agent_id
+  AND assoc_edge.rel = 'task_scene'
+  AND assoc_edge.status = 'open'
+  AND (
+    (assoc_edge.dst_type = 'scene' AND assoc_edge.dst_id = @conversation_id)
+    OR (assoc_edge.src_type = 'scene' AND assoc_edge.src_id = @conversation_id)
+  )
+  AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred');
+
+-- name: CountOpenSceneMattersForConversation :one
+SELECT count(DISTINCT assoc_task.issue_id)::bigint
+FROM assoc_edge
+JOIN assoc_task
+  ON assoc_task.workspace_id = assoc_edge.workspace_id
+ AND assoc_task.agent_id = assoc_edge.agent_id
+ AND (
+    (assoc_edge.src_type = 'task' AND assoc_edge.src_id = assoc_task.id::text)
+    OR (assoc_edge.dst_type = 'task' AND assoc_edge.dst_id = assoc_task.id::text)
+ )
+WHERE assoc_edge.workspace_id = @workspace_id
+  AND assoc_edge.agent_id = @agent_id
+  AND assoc_edge.rel = 'task_scene'
+  AND assoc_edge.status = 'open'
+  AND assoc_task.status IN ('open', 'waiting')
+  AND (
+    (assoc_edge.dst_type = 'scene' AND assoc_edge.dst_id = @conversation_id)
+    OR (assoc_edge.src_type = 'scene' AND assoc_edge.src_id = @conversation_id)
+  );
+
+-- name: ParkInboundCoordinatorJob :execrows
+UPDATE inbound_coordinator_job
+SET status = 'pending',
+    available_at = @available_at,
+    lease_token = NULL,
+    lease_expires_at = NULL,
+    last_error = @last_error,
+    attempt_count = GREATEST(attempt_count - 1, 0),
+    updated_at = now()
+WHERE id = @id AND status = 'running' AND lease_token = @lease_token;

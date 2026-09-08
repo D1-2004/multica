@@ -224,8 +224,12 @@ func marshalCoordinatorRecall(result assoc.Result) (string, error) {
 		Items:          make([]coordinatorRecallItem, 0, len(result.Items)),
 		Events:         make([]coordinatorRecallEvent, 0, len(result.Events)),
 	}
+	sceneCID := assoc.NormalizeConversationID(result.ConversationID)
 	for _, item := range result.Items {
 		if !assoc.PurposeNamesEvent(item.Purpose) {
+			continue
+		}
+		if sceneCID != "" && !item.OnThisScene {
 			continue
 		}
 		waiting := ""
@@ -504,6 +508,9 @@ func (t *AssocTools) issueCommentAdd(ctx context.Context, turn Turn, raw string)
 	}
 	if !turn.UserID.Valid {
 		return "", fmt.Errorf("member identity is required")
+	}
+	if !CurrentAdvancesIssue(turn.Message, issue.Title, issue.Description.String) {
+		return "", hintErr("this inbound is a new deliverable; finish action=issue without issue_id", hintNewDeliverable)
 	}
 	if t == nil || t.CommentWriter == nil {
 		return "", fmt.Errorf("issue comment writer is not configured")

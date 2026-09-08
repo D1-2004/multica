@@ -26,7 +26,15 @@ vi.mock("./agent-access-settings", () => ({
   AgentAccessSettings: () => <div>agent-access-settings</div>,
 }));
 vi.mock("./tabs/instructions-tab", () => ({
-  InstructionsTab: () => <div>instructions-tab</div>,
+  InstructionsTab: ({
+    onDirtyChange,
+  }: {
+    onDirtyChange?: (dirty: boolean) => void;
+  }) => (
+    <button type="button" onClick={() => onDirtyChange?.(true)}>
+      Mark instructions dirty
+    </button>
+  ),
 }));
 vi.mock("./tabs/okr-tab", () => ({
   OKRTab: () => <div>okr-tab</div>,
@@ -46,26 +54,29 @@ vi.mock("./tabs/mcp-config-tab", () => ({
 vi.mock("./tabs/integrations-tab", () => ({
   IntegrationsTab: () => <div>integrations-tab</div>,
 }));
-vi.mock("./tabs/identity-tab", () => ({
-  IdentityTab: () => <div>identity-tab</div>,
-}));
 vi.mock("./tabs/llm-trace-tab", () => ({
   LLMTraceTab: () => <div>llm-trace-tab</div>,
 }));
 vi.mock("./tabs/a2a-tab", () => ({
   A2ATab: () => <div>a2a-tab</div>,
 }));
+vi.mock("./tabs/dsh-plugins-tab", () => ({
+  DshPluginsTab: () => <div>dsh-plugins-tab</div>,
+}));
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
-vi.mock("./tabs/coordinator-sessions-tab", () => ({
-  CoordinatorSessionsTab: () => <div>coordinator-sessions-tab</div>,
+vi.mock("./tabs/import-export-tab", () => ({
+  ImportExportTab: () => <div>import-export-tab</div>,
 }));
 vi.mock("./tabs/scene-memory-tab", () => ({
   SceneMemoryTab: () => <div>scene-memory-tab</div>,
 }));
-vi.mock("./tabs/import-export-tab", () => ({
-  ImportExportTab: () => <div>import-export-tab</div>,
+vi.mock("./tabs/digital-employee-tab", () => ({
+  DigitalEmployeeTab: () => <div>digital-employee-tab</div>,
+}));
+vi.mock("./tabs/mcp-access-tab", () => ({
+  AgentMCPAccessTab: () => <div>mcp-access-tab</div>,
 }));
 
 // The pane now reads workspace context to decide whether the Integrations
@@ -80,9 +91,6 @@ const slackListingRef = vi.hoisted(() => ({
 }));
 const dingtalkListingRef = vi.hoisted(() => ({
   current: { installations: [] as unknown[], configured: false },
-}));
-const dingtalkAccountListingRef = vi.hoisted(() => ({
-  current: { bindings: [] as unknown[], configured: false },
 }));
 const wecomListingRef = vi.hoisted(() => ({
   current: { installations: [] as unknown[], configured: false },
@@ -108,12 +116,6 @@ vi.mock("@multica/core/dingtalk", () => ({
     queryFn: () => Promise.resolve(dingtalkListingRef.current),
   }),
 }));
-vi.mock("@multica/core/dingtalk-account-bindings", () => ({
-  dingtalkAccountBindingsOptions: () => ({
-    queryKey: ["dingtalk-account-bindings", "list"],
-    queryFn: () => Promise.resolve(dingtalkAccountListingRef.current),
-  }),
-}));
 vi.mock("@multica/core/wecom", () => ({
   wecomInstallationsOptions: () => ({
     queryKey: ["wecom", "installations"],
@@ -122,6 +124,8 @@ vi.mock("@multica/core/wecom", () => ({
 }));
 
 import { AgentOverviewPane } from "./agent-overview-pane";
+
+vi.mock("./tabs/runner-tab", () => ({ RunnerTab: () => <div>Execution machine</div> }));
 
 const baseAgent: Agent = {
   id: "agent-1",
@@ -168,22 +172,6 @@ function makeRuntime(provider: string, capabilities?: string[]): AgentRuntime {
   };
 }
 
-function makeASBRuntime(): AgentRuntime {
-  const digest = `sha256:${"a".repeat(64)}`;
-  return {
-    ...makeRuntime("hermes"),
-    runtime_mode: "cloud",
-    metadata: {
-      kind: "cloud-sandbox",
-      sandbox_backend: "asb",
-      provider: "hermes",
-      artifact_kind: "oci_image",
-      artifact_ref: `registry.example/runtime@${digest}`,
-      artifact_digest: digest,
-    },
-  };
-}
-
 function renderPane(
   runtimes: AgentRuntime[],
   options: {
@@ -191,6 +179,7 @@ function renderPane(
     agent?: Agent;
     agentOverrides?: Partial<Agent>;
     canEdit?: boolean;
+    initialView?: string;
     source?: AgentSource;
   } = {},
 ) {
@@ -202,10 +191,12 @@ function renderPane(
     replace: vi.fn(),
     back: vi.fn(),
     pathname: "/acme/agents/agent-1",
-    searchParams: new URLSearchParams(),
+    searchParams: new URLSearchParams(
+      options.initialView ? { view: options.initialView } : undefined,
+    ),
     getShareableUrl: (path) => path,
   };
-  return render(
+  const tree = () => (
     <I18nProvider locale="en" resources={TEST_RESOURCES}>
       <NavigationProvider value={navigation}>
         <QueryClientProvider client={queryClient}>
@@ -215,6 +206,7 @@ function renderPane(
             }
             runtime={runtimes[0] ?? null}
             owner={null}
+            source={options.source}
             runtimes={runtimes}
             members={[]}
             onUpdate={vi.fn().mockResolvedValue(undefined)}
@@ -222,46 +214,51 @@ function renderPane(
             canOperateDingTalkBinding
             dingTalkBindingPermissionLoading={false}
             currentUserId={options.currentUserId}
-            source={options.source}
           />
         </QueryClientProvider>
       </NavigationProvider>
-    </I18nProvider>,
+    </I18nProvider>
   );
+  const result = render(tree());
+  return {
+    ...result,
+    navigation,
+    rerenderPane: () => result.rerender(tree()),
+  };
 }
 
-function openCapabilities() {
-  fireEvent.click(screen.getByRole("tab", { name: /^Capabilities$/i }));
+function openConfiguration() {
+  fireEvent.click(screen.getByRole("tab", { name: /^Configuration$/i }));
 }
-
-function openSettings() {
-  fireEvent.click(screen.getByRole("tab", { name: /^Settings$/i }));
-}
-
-it("shows import and export in Settings for a Git-created Agent", () => {
-  renderPane([], { source: {
-    agent_id: "agent-1", source_type: "github", installation_id: "installation",
-    repository: "acme/agent", ref: "main", manifest_path: "dingtalk-agent.json",
-    synced_commit_sha: "a".repeat(40), sync_status: "ready", last_sync_error: null,
-    last_sync_attempt_at: null, last_synced_at: "", github_connected: true,
-  } });
-  openSettings();
-  fireEvent.click(screen.getByRole("tab", { name: "Import / Export" }));
-  expect(screen.getByText("import-export-tab")).toBeDefined();
-});
-
-it("does not show the Git import and export tab on a manually created Agent", () => {
-  renderPane([]);
-  openSettings();
-  expect(screen.queryByRole("tab", { name: "Import / Export" })).toBeNull();
-});
 
 beforeEach(() => {
   larkListingRef.current = { installations: [], configured: false };
   slackListingRef.current = { installations: [], configured: false };
   dingtalkListingRef.current = { installations: [], configured: false };
-  dingtalkAccountListingRef.current = { bindings: [], configured: false };
   wecomListingRef.current = { installations: [], configured: false };
+});
+
+describe("AgentOverviewPane primary navigation", () => {
+  it("shows four plain-language destinations", () => {
+    renderPane([makeRuntime("claude")]);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Overview",
+      "Work",
+      "Memory",
+      "Configuration",
+    ]);
+  });
+
+  it("returns removed inbound links to Overview", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "inbound",
+    });
+
+    expect(screen.getByText("activity-tab")).toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledWith(
+      "/acme/agents/agent-1",
+    );
+  });
 });
 
 describe("AgentOverviewPane MCP tab visibility", () => {
@@ -278,9 +275,9 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     "renders the MCP tab when the agent runs on the %s runtime",
     (_label, provider) => {
       renderPane([makeRuntime(provider)]);
-      openCapabilities();
+      openConfiguration();
       expect(
-        screen.getByRole("tab", { name: /^MCP$/i }),
+        screen.getByRole("tab", { name: /^MCP Tools$/i }),
       ).toBeInTheDocument();
     },
   );
@@ -289,24 +286,24 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     // Saving an MCP config on e.g. Gemini would be a silent no-op at run
     // time — that's the bug this hiding logic is meant to prevent.
     renderPane([makeRuntime("gemini")]);
-    openCapabilities();
+    openConfiguration();
     expect(
-      screen.queryByRole("tab", { name: /^MCP$/i }),
+      screen.queryByRole("tab", { name: /^MCP Tools$/i }),
     ).not.toBeInTheDocument();
   });
 
   it("shows MCP only for Pi runtimes whose template declares the capability", () => {
     const { unmount } = renderPane([makeRuntime("pi", ["pi", "mcp"])]);
-    openCapabilities();
+    openConfiguration();
     expect(
-      screen.getByRole("tab", { name: /^MCP$/i }),
+      screen.getByRole("tab", { name: /^MCP Tools$/i }),
     ).toBeInTheDocument();
     unmount();
 
     renderPane([makeRuntime("pi", ["pi", "dws"])]);
-    openCapabilities();
+    openConfiguration();
     expect(
-      screen.queryByRole("tab", { name: /^MCP$/i }),
+      screen.queryByRole("tab", { name: /^MCP Tools$/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -315,106 +312,137 @@ describe("AgentOverviewPane MCP tab visibility", () => {
     // the runtimes query resolving. Hiding the tab would flicker it off and
     // then back on, which reads as a bug.
     renderPane([]);
-    openCapabilities();
-    expect(screen.getByRole("tab", { name: /^MCP$/i })).toBeInTheDocument();
+    openConfiguration();
+    expect(
+      screen.getByRole("tab", { name: /^MCP Tools$/i }),
+    ).toBeInTheDocument();
   });
 });
 
-describe("AgentOverviewPane Integrations tab visibility", () => {
-  it("shows Integrations to the agent owner for MCP export even without channel integrations", () => {
+describe("AgentOverviewPane connection visibility", () => {
+  it("separates owner-only MCP access from bot connections", () => {
     renderPane([makeRuntime("claude")], { currentUserId: "user-1" });
 
-    openCapabilities();
+    openConfiguration();
 
     expect(
-      screen.getByRole("tab", { name: /^Integrations$/i }),
+      screen.queryByRole("tab", { name: /^Bot Connections$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /^MCP Access$/i }),
     ).toBeInTheDocument();
   });
 
-  it("shows the Integrations tab once the deployment has Lark configured", async () => {
+  it("shows Bot Connections once the deployment has Lark configured", async () => {
     larkListingRef.current = { installations: [], configured: true };
     renderPane([makeRuntime("claude")]);
-    openCapabilities();
+    openConfiguration();
     expect(
-      await screen.findByRole("tab", { name: /^Integrations$/i }),
+      await screen.findByRole("tab", { name: /^Bot Connections$/i }),
     ).toBeInTheDocument();
   });
 
-  it("shows the Integrations tab when only Slack is configured (Lark off)", async () => {
+  it("shows Bot Connections when only Slack is configured", async () => {
     // Regression: the tab gate must consider Slack too, not just Lark —
     // a Slack-only deployment was hiding the tab (and its bind entry).
     slackListingRef.current = { installations: [], configured: true };
     renderPane([makeRuntime("claude")]);
-    openCapabilities();
+    openConfiguration();
     expect(
-      await screen.findByRole("tab", { name: /^Integrations$/i }),
+      await screen.findByRole("tab", { name: /^Bot Connections$/i }),
     ).toBeInTheDocument();
   });
 
-  it("shows the Integrations tab when only enterprise digital employee binding is configured", async () => {
-    dingtalkAccountListingRef.current = { bindings: [], configured: true };
+  it("keeps Digital Employee separate when no bot connection exists", () => {
     renderPane([makeRuntime("claude")]);
-    openCapabilities();
+    openConfiguration();
     expect(
-      await screen.findByRole("tab", { name: /^Integrations$/i }),
+      screen.queryByRole("tab", { name: /^Bot Connections$/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /^Identity & Goals/i }),
     ).toBeInTheDocument();
   });
 
-  it("hides the Integrations tab when no integration is configured", () => {
+  it("hides Bot Connections when no bot platform is configured", () => {
     // Default refs are configured:false; the tab must not appear on
     // deployments without either integration, the common case.
     renderPane([makeRuntime("claude")]);
-    openCapabilities();
+    openConfiguration();
     expect(
-      screen.queryByRole("tab", { name: /^Integrations$/i }),
+      screen.queryByRole("tab", { name: /^Bot Connections$/i }),
     ).not.toBeInTheDocument();
   });
 });
 
-describe("AgentOverviewPane Identity tab", () => {
-  it("places Identity after Integrations and opens the identity-only page", async () => {
-    dingtalkAccountListingRef.current = { bindings: [], configured: true };
+describe("AgentOverviewPane Digital Employee tab", () => {
+  it("opens Digital Employee as the default configuration page", () => {
     renderPane([makeRuntime("claude")]);
 
-    openCapabilities();
-
-    await screen.findByRole("tab", { name: /^Integrations$/i });
-    const capabilityTabs = screen.getAllByRole("tab");
-    expect(capabilityTabs.map((tab) => tab.textContent)).toEqual([
-      "Overview",
-      "Work",
-      "Inbound",
-      "Memory",
-      "Capabilities",
-      "Settings",
-      "Instructions",
-      "Skills",
-      "MCP",
-      "Local Runner",
-      "Integrations",
-      "Identity",
-    ]);
-
-    fireEvent.click(screen.getByRole("tab", { name: /^Identity$/i }));
-    expect(screen.getByText("identity-tab")).toBeInTheDocument();
-  });
-
-  it("shows Identity for an ASB runtime even when DingTalk account binding is not configured", () => {
-    renderPane([makeASBRuntime()], {
-      agentOverrides: { runtime_mode: "cloud" },
-    });
-    openCapabilities();
-
-    expect(screen.getByRole("tab", { name: /^Identity$/i })).toBeInTheDocument();
-  });
-
-  it("hides Identity when account binding is not configured and the runtime is not ASB", () => {
-    renderPane([makeRuntime("claude")]);
-    openCapabilities();
+    openConfiguration();
 
     expect(
       screen.queryByRole("tab", { name: /^Identity$/i }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: /^Digital Employee$/i }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("migrates legacy identity links to Digital Employee", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], {
+      initialView: "identity",
+    });
+
+    expect(screen.getByText("digital-employee-tab")).toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledWith(
+      "/acme/agents/agent-1?view=digital_employee",
+    );
+  });
+
+  it("returns to the last configuration page during the same visit", () => {
+    renderPane([makeRuntime("claude")]);
+    openConfiguration();
+    fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Work" }));
+    openConfiguration();
+
+    expect(
+      screen.getByRole("tab", { name: "Instructions" }),
+    ).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("protects unsaved configuration when the page closes", () => {
+    renderPane([makeRuntime("claude")]);
+    openConfiguration();
+    fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Mark instructions dirty" }),
+    );
+    const event = new Event("beforeunload", { cancelable: true });
+
+    window.dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("protects unsaved configuration from browser history changes", () => {
+    const { navigation, rerenderPane } = renderPane([makeRuntime("claude")]);
+    openConfiguration();
+    fireEvent.click(screen.getByRole("tab", { name: "Instructions" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Mark instructions dirty" }),
+    );
+
+    navigation.searchParams.set("view", "work");
+    rerenderPane();
+
+    expect(
+      screen.getByText("Discard unsaved changes?"),
+    ).toBeInTheDocument();
+    expect(navigation.replace).toHaveBeenCalledWith(
+      "/acme/agents/agent-1?view=instructions",
+    );
   });
 });
 
@@ -437,13 +465,13 @@ describe("AgentOverviewPane Memory tab", () => {
 describe("AgentOverviewPane Settings navigation", () => {
   it("gives Access its own settings tab", () => {
     renderPane([makeRuntime("claude")]);
-    openSettings();
+    openConfiguration();
     expect(screen.getByRole("tab", { name: /^Access$/i })).toBeInTheDocument();
   });
 
   it("shows LLM Trace only for cloud agents", () => {
     const { unmount } = renderPane([makeRuntime("hermes")]);
-    openSettings();
+    openConfiguration();
     expect(
       screen.queryByRole("tab", { name: /^LLM Trace$/i }),
     ).not.toBeInTheDocument();
@@ -452,7 +480,7 @@ describe("AgentOverviewPane Settings navigation", () => {
     renderPane([makeRuntime("hermes")], {
       agentOverrides: { runtime_mode: "cloud" },
     });
-    openSettings();
+    openConfiguration();
     expect(
       screen.getByRole("tab", { name: /^LLM Trace$/i }),
     ).toBeInTheDocument();
@@ -460,9 +488,17 @@ describe("AgentOverviewPane Settings navigation", () => {
 });
 
 describe("AgentOverviewPane Environment tab visibility", () => {
+  it("keeps My Computer as its own execution tab", () => {
+    renderPane([makeRuntime("claude")]);
+    openConfiguration();
+
+    fireEvent.click(screen.getByRole("tab", { name: /^My Computer$/i }));
+    expect(screen.getByText("Execution machine")).toBeInTheDocument();
+  });
+
   it("shows the Environment tab to someone who can manage the agent", () => {
     renderPane([makeRuntime("claude")]);
-    openSettings();
+    openConfiguration();
     expect(
       screen.getByRole("tab", { name: /^Environment$/i }),
     ).toBeInTheDocument();
@@ -472,8 +508,8 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     // The env endpoints admit the agent owner or a workspace owner/admin
     // (MUL-5438) — the rule `canEdit` already encodes. Anyone else who opens
     // the tab hits a guaranteed 403 on "Reveal & edit".
-		renderPane([makeRuntime("claude")], { canEdit: false });
-    openSettings();
+    renderPane([makeRuntime("claude")], { canEdit: false });
+    openConfiguration();
     expect(
       screen.queryByRole("tab", { name: /^Environment$/i }),
     ).not.toBeInTheDocument();
@@ -483,14 +519,62 @@ describe("AgentOverviewPane Environment tab visibility", () => {
     const { unmount } = renderPane([makeRuntime("claude")], {
       currentUserId: "user-1",
     });
-    openSettings();
+    openConfiguration();
     expect(screen.getByRole("tab", { name: /^A2A$/i })).toBeInTheDocument();
     unmount();
 
     renderPane([makeRuntime("claude")], { currentUserId: "user-2" });
-    openSettings();
+    openConfiguration();
     expect(
       screen.queryByRole("tab", { name: /^A2A$/i }),
     ).not.toBeInTheDocument();
   });
+});
+
+describe("AgentOverviewPane Plugins tab visibility", () => {
+  it("shows Plugins for a DSH agent running in the cloud", () => {
+    renderPane([makeRuntime("dsh")], { agentOverrides: { runtime_mode: "cloud" } });
+    openConfiguration();
+    expect(
+      screen.getByRole("tab", { name: /^Plugins$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("still shows Plugins for a DSH agent on a local daemon", () => {
+    // A local daemon does not load plugins, but hiding the tab would strand
+    // whatever is already bound: invisible, unremovable, and live again the
+    // moment the agent moves back to a cloud runtime. The tab stays and says
+    // so instead — see the notice test in dsh-plugins-tab.test.tsx.
+    renderPane([makeRuntime("dsh")], { agentOverrides: { runtime_mode: "local" } });
+    openConfiguration();
+    expect(
+      screen.getByRole("tab", { name: /^Plugins$/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides Plugins for a cloud agent on any other provider", () => {
+    renderPane([makeRuntime("claude")], { agentOverrides: { runtime_mode: "cloud" } });
+    openConfiguration();
+    expect(
+      screen.queryByRole("tab", { name: /^Plugins$/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+it("shows import and export in Configuration for a Git-created Agent", () => {
+  renderPane([], { source: {
+    agent_id: "agent-1", source_type: "github", installation_id: "installation",
+    repository: "acme/agent", ref: "main", manifest_path: "dingtalk-agent.json",
+    synced_commit_sha: "a".repeat(40), sync_status: "ready", last_sync_error: null,
+    last_sync_attempt_at: null, last_synced_at: "", github_connected: true,
+  } });
+  openConfiguration();
+  fireEvent.click(screen.getByRole("tab", { name: "Import / Export" }));
+  expect(screen.getByText("import-export-tab")).toBeDefined();
+});
+
+it("does not show the Git import and export tab on a manually created Agent", () => {
+  renderPane([]);
+  openConfiguration();
+  expect(screen.queryByRole("tab", { name: "Import / Export" })).toBeNull();
 });

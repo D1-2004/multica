@@ -529,9 +529,9 @@ func (h *Handler) recordAssocInboundEvent(ctx context.Context, command DispatchC
 	}
 }
 
-func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext, issueID, issueTitle, runID, purposeExtra string, decision inboundcoord.Decision) {
+func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext, issueID, issueTitle, runID, purposeExtra string, decision inboundcoord.Decision) error {
 	if h.Assoc == nil || issueID == "" {
-		return
+		return nil
 	}
 	ids := dispatchAssocIDs(command)
 	purpose := strings.TrimSpace(decision.Purpose)
@@ -557,7 +557,9 @@ func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCo
 		Kind:           ids.Kind,
 	}); err != nil {
 		slog.Error("assoc issue conversation not linked", "error", err, "issue_id", issueID)
+		return err
 	}
+	return nil
 }
 
 type dispatchAssocIdentity struct {
@@ -576,6 +578,9 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	if message, ok := lastInboundTextMessage(command); ok {
 		ids.EvidenceID = strings.TrimSpace(message.OpenMsgID)
 	}
+	if command.WindowEvidenceID != "" {
+		ids.EvidenceID = command.WindowEvidenceID
+	}
 	openID := strings.TrimSpace(command.Event.Data.Sender.OpenDingTalkID)
 	if openID == "" {
 		openID = strings.TrimSpace(command.Event.Data.Sender.SenderOpenDingTalkID)
@@ -584,6 +589,22 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	ids.PersonID, ids.PersonAliases = assoc.CanonicalPersonKey(staffID, openID)
 	fillDispatchAssocIDsFromRouterContext(&ids, command.ContextPrompt)
 	return ids
+}
+
+func bindWindowItemEvidence(command *DispatchCommand, item inboundcoord.WindowItem, _ map[string]struct{}) {
+	if command == nil {
+		return
+	}
+	for _, message := range command.Event.Data.Messages {
+		if message.Reaction != nil || strings.TrimSpace(message.Text) == "" {
+			continue
+		}
+		command.WindowEvidenceID = strings.TrimSpace(message.OpenMsgID)
+		if strings.TrimSpace(message.SenderDisplayName) != "" {
+			command.Event.Data.Sender = DispatchSender{DisplayName: strings.TrimSpace(message.SenderDisplayName), UID: strings.TrimSpace(message.SenderUID), StaffID: strings.TrimSpace(message.SenderStaffID), OpenDingTalkID: strings.TrimSpace(message.SenderOpenDingTalkID), SenderOpenDingTalkID: strings.TrimSpace(message.SenderOpenDingTalkID)}
+		}
+		return
+	}
 }
 
 func lastInboundTextMessage(command DispatchCommand) (DispatchMessage, bool) {

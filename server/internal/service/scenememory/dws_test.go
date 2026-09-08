@@ -8,6 +8,18 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestParseDWSPageKeepsPaginationWithProjectedMessages(t *testing.T) {
+	for _, cursor := range []string{`1788450204970`, `"1788450204970"`} {
+		page, err := parseDWSPage([]byte(`{"success":true,"messages":[{"messageId":"m1","content":""}],"result":{"hasMore":true,"nextCursor":`+cursor+`}}`), "", "")
+		if err != nil || !page.PaginationKnown || !page.HasMore || page.NextCursor.UnixMilli() != 1788450204970 {
+			t.Fatalf("cursor=%s page=%+v err=%v", cursor, page, err)
+		}
+		if len(page.Events) != 0 || len(page.EvidenceIDs) != 1 || page.EvidenceIDs[0] != "m1" {
+			t.Fatalf("empty text must keep transport evidence: %+v", page)
+		}
+	}
+}
+
 func TestParseDWSEventsSkipsEmptyContent(t *testing.T) {
 	raw := []byte(`{
 		"success": true,
@@ -31,8 +43,19 @@ func TestParseDWSEventsSkipsEmptyContent(t *testing.T) {
 }
 
 func TestParseDWSEventsRejected(t *testing.T) {
-	if _, err := parseDWSEvents([]byte(`{"success":false,"errorCode":"auth_failed"}`)); err == nil {
+	_, err := parseDWSEvents([]byte(`{"success":false,"errorCode":"auth_failed"}`))
+	if err == nil {
 		t.Fatal("rejected history must error")
+	}
+	if !strings.Contains(err.Error(), "auth_failed") {
+		t.Fatalf("got %v", err)
+	}
+	_, err = parseDWSEvents([]byte(`{"success":false,"errorCode":null,"errorMsg":"无权限查看会话"}`))
+	if err == nil {
+		t.Fatal("rejected history with errorMsg must error")
+	}
+	if !strings.Contains(err.Error(), "operation_failed") || !strings.Contains(err.Error(), "无权限查看会话") {
+		t.Fatalf("got %v", err)
 	}
 	if _, err := parseDWSEvents([]byte(`not-json`)); err == nil {
 		t.Fatal("invalid json must error")
@@ -150,6 +173,59 @@ func TestParseDWSPageMarksSelfByUID(t *testing.T) {
 	}
 }
 
+func TestParseDWSPageRecordsSelfNamesFromDisplayName(t *testing.T) {
+	page, err := parseDWSPage([]byte(`{"success":true,"messages":[{"content":"记一下","createTime":"2026-09-01 12:00:00","openMessageId":"m1","sender":"璟琦"}]}`), "", "金龙")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 1 || page.Events[0].Self {
+		t.Fatalf("peer must not be self: %+v", page.Events)
+	}
+	if len(page.SelfNames) == 0 || page.SelfNames[0] != "金龙" {
+		t.Fatalf("page must carry identity names without a self event: %+v", page.SelfNames)
+	}
+}
+
+func TestParseDWSPageMarksOtherDigitalEmployeeNonHuman(t *testing.T) {
+	raw := []byte(`{
+		"success": true,
+		"result": {
+			"messages": [
+				{"content":"我记下了","createTime":"2026-09-01 12:00:00","openMessageId":"m1","sender":"随风","senderType":"digital_employee"},
+				{"content":"GoalMate 是工具","createTime":"2026-09-01 12:01:00","openMessageId":"m2","sender":"璟琦","senderType":"user"}
+			]
+		}
+	}`)
+	page, err := parseDWSPage(raw, "", "金龙")
+	if err != nil || len(page.Events) != 2 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	if page.Events[0].Self || !page.Events[0].NonHuman {
+		t.Fatalf("other DE must be non-human, not self: %+v", page.Events[0])
+	}
+	if page.Events[1].Self || page.Events[1].NonHuman {
+		t.Fatalf("human must stay peer: %+v", page.Events[1])
+	}
+}
+
+func TestParseDWSPageSenderTypeDoesNotOverrideIdentity(t *testing.T) {
+	raw := []byte(`{
+		"success": true,
+		"result": {
+			"messages": [
+				{"content":"我记下了","createTime":"2026-09-01 12:00:00","openMessageId":"m1","sender":"金龙","senderType":"digital_employee"}
+			]
+		}
+	}`)
+	page, err := parseDWSPage(raw, "", "金龙")
+	if err != nil || len(page.Events) != 1 {
+		t.Fatalf("page=%+v err=%v", page, err)
+	}
+	if !page.Events[0].Self || page.Events[0].NonHuman {
+		t.Fatalf("bound DE must be self, not other-agent: %+v", page.Events[0])
+	}
+}
+
 func TestParseDWSPageMarksSelfByDisplayName(t *testing.T) {
 	raw := []byte(`{
 		"success": true,
@@ -208,33 +284,6 @@ func TestHistoryLookbackBootstrapIncludesOlderPendingTrigger(t *testing.T) {
 	}
 }
 
-func TestHistoryHasGap(t *testing.T) {
-	cursor := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	row := db.SceneMemory{SourceCursorAt: timestamptz(cursor)}
-	if !historyHasGap(row, cursor.Add(time.Hour), true) {
-		t.Fatal("page cap above cursor is a gap")
-	}
-	if historyHasGap(row, cursor.Add(-time.Minute), true) {
-		t.Fatal("reached cursor is not a gap")
-	}
-	if historyHasGap(row, cursor.Add(time.Hour), false) {
-		t.Fatal("no page cap is not a gap")
-	}
-}
-
-func TestHistoryStartBeforeUsesResume(t *testing.T) {
-	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	resume := now.Add(-time.Hour)
-	got := historyStartBefore(db.SceneMemory{}, now)
-	if !got.Equal(now.Add(time.Minute)) {
-		t.Fatalf("fresh read starts near now, got %s", got)
-	}
-	got = historyStartBefore(db.SceneMemory{HistoryResumeBefore: timestamptz(resume)}, now)
-	if !got.Equal(resume) {
-		t.Fatalf("page-cap resume must continue older, got %s", got)
-	}
-}
-
 func TestHistoryLookbackIncludesPendingTriggerBeforeCursor(t *testing.T) {
 	now := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
 	cursor := now.Add(-time.Hour)
@@ -255,21 +304,6 @@ func TestHistoryLookbackIncludesPendingTriggerBeforeCursor(t *testing.T) {
 	}, lookback)
 	if len(got) != 2 || got[0].EvidenceID != "msg-early" || got[1].EvidenceID != "after-cursor" {
 		t.Fatalf("pending trigger must survive lookback filter: %#v", got)
-	}
-}
-
-func TestHistoryHasGapUsesPendingTrigger(t *testing.T) {
-	cursor := time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)
-	trigger := cursor.Add(-time.Hour)
-	row := db.SceneMemory{
-		SourceCursorAt: timestamptz(cursor),
-		LastTriggerAt:  timestamptz(trigger),
-	}
-	if !historyHasGap(row, cursor.Add(-time.Minute), true) {
-		t.Fatal("page cap above the pending trigger is a gap")
-	}
-	if historyHasGap(row, trigger.Add(-time.Minute), true) {
-		t.Fatal("reached pending trigger is not a gap")
 	}
 }
 

@@ -29,13 +29,21 @@ type CompletionReconciler interface {
 	ReconcileTaskCompletions(context.Context, string, int32) (int, error)
 }
 
+// ResponseActionInterceptor durably hands managed replies to their owner
+// before acknowledging the execution callback. It must be idempotent.
+type ResponseActionInterceptor interface {
+	PrepareExecutionResult(context.Context, string, ExecutionResultRequest) (bool, error)
+	PrepareExecutionUpdate(context.Context, string, ExecutionUpdateRequest) (bool, error)
+}
+
 type CompletionWorker struct {
-	queries        *db.Queries
-	client         *Client
-	targetIdentity string
-	reconciler     CompletionReconciler
-	notify         chan struct{}
-	done           chan struct{}
+	queries         *db.Queries
+	client          *Client
+	targetIdentity  string
+	reconciler      CompletionReconciler
+	ResponseActions ResponseActionInterceptor
+	notify          chan struct{}
+	done            chan struct{}
 }
 
 func NewCompletionWorker(
@@ -191,7 +199,12 @@ func (w *CompletionWorker) processNextExecutionUpdate(ctx context.Context) (bool
 			TargetAgentID:   util.UUIDToString(executionUpdate.TargetAgentID),
 		},
 	}
-	err = w.client.SubmitExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
+	if w.ResponseActions != nil {
+		_, err = w.ResponseActions.PrepareExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
+	}
+	if err == nil {
+		err = w.client.SubmitExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
+	}
 	if err == nil {
 		_, completeErr := w.queries.CompleteTaskExecutionUpdate(ctx, db.CompleteTaskExecutionUpdateParams{
 			ID:         executionUpdate.ID,
@@ -300,7 +313,18 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 			"failureReason":  completion.FailureReason.String,
 		},
 	}
-	err = w.client.SubmitExecutionResult(ctx, completion.CallbackUrl, result)
+	if w.ResponseActions != nil {
+		var managed bool
+		managed, err = w.ResponseActions.PrepareExecutionResult(ctx, completion.CallbackUrl, result)
+		if managed {
+			shouldReply := false
+			result.ShouldReply = &shouldReply
+			result.ReplyReason = "multica_managed_response"
+		}
+	}
+	if err == nil {
+		err = w.client.SubmitExecutionResult(ctx, completion.CallbackUrl, result)
+	}
 	if err == nil {
 		_, completeErr := w.queries.CompleteTaskCompletion(ctx, db.CompleteTaskCompletionParams{
 			ID:         completion.ID,

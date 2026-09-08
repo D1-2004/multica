@@ -27,9 +27,11 @@ type HistoryEvent struct {
 	Speaker    string
 	Content    string
 	Self       bool
+	// NonHuman is another bot or digital employee, not this bound account.
+	NonHuman bool
 }
 
-func filterUntil(events []HistoryEvent, cutoffAt time.Time, cutoffEvidence string) []HistoryEvent {
+func filterUntil(events []HistoryEvent, cutoffAt time.Time) []HistoryEvent {
 	if cutoffAt.IsZero() {
 		return events
 	}
@@ -38,99 +40,9 @@ func filterUntil(events []HistoryEvent, cutoffAt time.Time, cutoffEvidence strin
 		if event.OccurredAt.After(cutoffAt) {
 			continue
 		}
-		if event.OccurredAt.Equal(cutoffAt) && event.EvidenceID > cutoffEvidence {
-			continue
-		}
 		out = append(out, event)
 	}
 	return out
-}
-
-func afterCursor(events []HistoryEvent, cursorAt time.Time, cursorEvidence string) []HistoryEvent {
-	events = sortHistoryEvents(events)
-	out := make([]HistoryEvent, 0, len(events))
-	for _, event := range events {
-		if cursorAt.IsZero() {
-			out = append(out, event)
-			continue
-		}
-		if event.OccurredAt.After(cursorAt) || (event.OccurredAt.Equal(cursorAt) && event.EvidenceID > cursorEvidence) {
-			out = append(out, event)
-		}
-	}
-	return out
-}
-
-func includePendingWindow(delta, events []HistoryEvent, fromAt time.Time, fromEv string, cursorAt time.Time, cursorEv string) []HistoryEvent {
-	fromEv = strings.TrimSpace(fromEv)
-	if fromAt.IsZero() && fromEv == "" {
-		return delta
-	}
-	seen := make(map[string]struct{}, len(delta))
-	for _, event := range delta {
-		if event.EvidenceID != "" {
-			seen[event.EvidenceID] = struct{}{}
-		}
-	}
-	extra := make([]HistoryEvent, 0)
-	for _, event := range events {
-		if event.EvidenceID != "" {
-			if _, ok := seen[event.EvidenceID]; ok {
-				continue
-			}
-		}
-		if !atOrAfterPending(event, fromAt, fromEv) {
-			continue
-		}
-		if eventIsAfterCursor(event, cursorAt, cursorEv) {
-			continue
-		}
-		extra = append(extra, event)
-		if event.EvidenceID != "" {
-			seen[event.EvidenceID] = struct{}{}
-		}
-	}
-	if len(extra) == 0 {
-		return delta
-	}
-	return sortHistoryEvents(append(extra, delta...))
-}
-
-func atOrAfterPending(event HistoryEvent, fromAt time.Time, fromEv string) bool {
-	fromEv = strings.TrimSpace(fromEv)
-	if fromEv != "" && event.EvidenceID == fromEv {
-		return true
-	}
-	if fromAt.IsZero() {
-		return fromEv == ""
-	}
-	if event.OccurredAt.After(fromAt) {
-		return true
-	}
-	return event.OccurredAt.Equal(fromAt) && event.EvidenceID >= fromEv
-}
-
-func eventIsAfterCursor(event HistoryEvent, cursorAt time.Time, cursorEv string) bool {
-	if cursorAt.IsZero() {
-		return true
-	}
-	if event.OccurredAt.After(cursorAt) {
-		return true
-	}
-	return event.OccurredAt.Equal(cursorAt) && event.EvidenceID > cursorEv
-}
-
-func forceIncludeEvidence(delta, events []HistoryEvent, evidence string) []HistoryEvent {
-	evidence = strings.TrimSpace(evidence)
-	if evidence == "" || containsEvidence(delta, evidence) || !containsEvidence(events, evidence) {
-		return delta
-	}
-	for _, event := range events {
-		if event.EvidenceID == evidence {
-			return sortHistoryEvents(append([]HistoryEvent{event}, delta...))
-		}
-	}
-	return delta
 }
 
 func sortHistoryEvents(events []HistoryEvent) []HistoryEvent {

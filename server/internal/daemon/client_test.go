@@ -38,10 +38,15 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 			protocol.DaemonCapabilityCoalescedCommentsV1,
 			protocol.DaemonCapabilityTaskInstructionV1,
 			protocol.DaemonCapabilityA2AInvocationV2,
+			protocol.DaemonCapabilityRunnerMCPMountsV1,
+			protocol.DaemonCapabilityManagedMCPRelayRoutesV1,
 		} {
 			if !capabilities[want] {
 				t.Errorf("X-Client-Capabilities missing %q: %v", want, capabilities)
 			}
+		}
+		if got, want := capabilities[protocol.DWSMessagePolicyCapability], runtime.GOOS != "windows"; got != want {
+			t.Errorf("DWS policy capability = %v, want %v", got, want)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"ok": "1"})

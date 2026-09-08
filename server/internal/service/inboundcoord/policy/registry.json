@@ -1,0 +1,889 @@
+{
+  "policy_version": "2026-09-08.2",
+  "assembly_version": "1",
+  "modules": [
+    {
+      "id": "core",
+      "version": "1",
+      "file": "core.md",
+      "applies_when": "always",
+      "requires": [],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F02",
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F05",
+        "COORD.F06",
+        "COORD.F07",
+        "COORD.F11",
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16",
+        "COORD.F17",
+        "COORD.F18"
+      ],
+      "budget_characters": 1669,
+      "content_sha256": "e05dcfd68c2a27cada0b147e62e75395f2d3d7396db9fe43f00719ba7cfa9d86"
+    },
+    {
+      "id": "voice",
+      "version": "1",
+      "file": "voice.md",
+      "applies_when": "always",
+      "requires": [
+        "core"
+      ],
+      "owns_rule_ids": [
+        "COORD.F14",
+        "COORD.F15"
+      ],
+      "budget_characters": 869,
+      "content_sha256": "b84575395d2f8925bdc4daefcf9650f347e7179e03a86a1ff8785aebf6ae3482"
+    },
+    {
+      "id": "inbound",
+      "version": "4",
+      "file": "inbound.md",
+      "applies_when": "inbound",
+      "requires": [
+        "core"
+      ],
+      "owns_rule_ids": [
+        "COORD.F04",
+        "COORD.F05",
+        "COORD.F06",
+        "COORD.F07",
+        "COORD.F09",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "budget_characters": 4278,
+      "content_sha256": "2436da17e6adcab376ef8597f6a279823cd16eab588c89997812b83fb78c8773"
+    },
+    {
+      "id": "channel",
+      "version": "1",
+      "file": "channel.md",
+      "applies_when": "dingtalk",
+      "requires": [
+        "core"
+      ],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F08",
+        "COORD.F14"
+      ],
+      "budget_characters": 678,
+      "content_sha256": "13b55c8059c5b88665a10e72d5c13b19f644908ef676ff73b111fec2e813b9dc"
+    },
+    {
+      "id": "web",
+      "version": "1",
+      "file": "web.md",
+      "applies_when": "web",
+      "requires": [
+        "core"
+      ],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F14"
+      ],
+      "budget_characters": 376,
+      "content_sha256": "377423302bee821d7462436b267fd4e2402a482b7a195112a33adeaa83d80b12"
+    },
+    {
+      "id": "group",
+      "version": "1",
+      "file": "group.md",
+      "applies_when": "group",
+      "requires": [
+        "core",
+        "channel"
+      ],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F02",
+        "COORD.F05",
+        "COORD.F06",
+        "COORD.F14"
+      ],
+      "budget_characters": 764,
+      "content_sha256": "730109173ba49c5d3b25891aa56b40726c53db5f193ba7b2fc48531cfda2355e"
+    },
+    {
+      "id": "window",
+      "version": "1",
+      "file": "window.md",
+      "applies_when": "multiple_utterances",
+      "requires": [
+        "core",
+        "inbound"
+      ],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F02",
+        "COORD.F10",
+        "COORD.F17"
+      ],
+      "budget_characters": 832,
+      "content_sha256": "a432cfaf9a157c2daac74d1ff332f22f142c436d8d38108b9f56e772232dcdd7"
+    },
+    {
+      "id": "memory",
+      "version": "1",
+      "file": "memory.md",
+      "applies_when": "scene_memory_available",
+      "requires": [
+        "core",
+        "inbound"
+      ],
+      "owns_rule_ids": [
+        "COORD.F03",
+        "COORD.F11"
+      ],
+      "budget_characters": 841,
+      "content_sha256": "a9e1a05b5195c59775f801c1d50052891381900c542d8d6b609f0cf817746c56"
+    },
+    {
+      "id": "skills",
+      "version": "1",
+      "file": "skills.md",
+      "applies_when": "skill_snapshots_available",
+      "requires": [
+        "core",
+        "inbound"
+      ],
+      "owns_rule_ids": [
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F14"
+      ],
+      "budget_characters": 546,
+      "content_sha256": "7507fd2ab5f4fffb59ace9507c78941e41fc445f073e358d8d218265becee03a"
+    },
+    {
+      "id": "dialogue",
+      "version": "2",
+      "file": "dialogue.md",
+      "applies_when": "dialogue_available",
+      "requires": [
+        "core",
+        "inbound"
+      ],
+      "owns_rule_ids": [
+        "COORD.F02",
+        "COORD.F03",
+        "COORD.F06",
+        "COORD.F08",
+        "COORD.F18"
+      ],
+      "budget_characters": 1194,
+      "content_sha256": "625977d31193fc5d562dae672d2e62fdb7beb73edc2a7e643c9ee8a934545cc2"
+    },
+    {
+      "id": "recall_match",
+      "version": "2",
+      "file": "recall_match.md",
+      "applies_when": "recalled",
+      "requires": [
+        "core",
+        "inbound"
+      ],
+      "owns_rule_ids": [
+        "COORD.F02",
+        "COORD.F03",
+        "COORD.F07",
+        "COORD.F08",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "budget_characters": 1757,
+      "content_sha256": "6ccd70cdb70cb6c2881dbffcbd372fa5edbe6dd3051ac644503b8c09041075d4"
+    },
+    {
+      "id": "completion",
+      "version": "1",
+      "file": "completion.md",
+      "applies_when": "task_finished",
+      "requires": [
+        "core"
+      ],
+      "owns_rule_ids": [
+        "COORD.F03",
+        "COORD.F12",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "budget_characters": 938,
+      "content_sha256": "3ae6e7db28656645958712eb8d13b99d1134af5902ca15662a51a95b313e3fe6"
+    }
+  ],
+  "obligations": [
+    {
+      "id": "COORD.F01",
+      "family": "F01",
+      "obligation": "可信消息决定说话人、逐句委托与作用域；未被叫到不接管群聊，自发事件不自激；缺失身份不猜。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "channel",
+        "web",
+        "group",
+        "window"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f01_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/channel.md",
+        "server/internal/service/inboundcoord/policy/web.md",
+        "server/internal/service/inboundcoord/policy/group.md",
+        "server/internal/service/inboundcoord/policy/window.md",
+        "server/internal/service/inboundcoord/window.go"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F02",
+      "family": "F02",
+      "obligation": "按原窗口及引用时间理解本轮；补充与纠正优先；已答上一问不重复追问，后发问题不能授权旧消息。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "group",
+        "window",
+        "dialogue",
+        "recall_match"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f02_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "regression_observed; candidate_fix_pending_replay",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/group.md",
+        "server/internal/service/inboundcoord/policy/window.md",
+        "server/internal/service/inboundcoord/policy/dialogue.md",
+        "server/internal/service/inboundcoord/policy/recall_match.md"
+      ],
+      "case_file": "cases.json",
+      "model_replay_observations": [
+        {
+          "policy_version": "2026-09-07.1",
+          "result": "FAIL",
+          "cases": [
+            "approval_good",
+            "closing_good"
+          ],
+          "report_sha256": "8cc077a605a7fd106a0b86adb9c96f91dca66ebe5b4aabda920d7343d1ad3384",
+          "candidate_policy_version": "2026-09-07.2",
+          "candidate_verification": "pending_replay"
+        }
+      ]
+    },
+    {
+      "id": "COORD.F03",
+      "family": "F03",
+      "obligation": "稳定事实、对话、工作与送达分别由对应来源证明；未加载、失败、过期、截断不是空结果；承诺不是完成。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "memory",
+        "skills",
+        "dialogue",
+        "recall_match",
+        "completion"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f03_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/memory.md",
+        "server/internal/service/inboundcoord/policy/skills.md",
+        "server/internal/service/inboundcoord/policy/dialogue.md",
+        "server/internal/service/inboundcoord/policy/recall_match.md",
+        "server/internal/service/inboundcoord/policy/completion.md"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F04",
+      "family": "F04",
+      "obligation": "能力介绍按已装技能快照直接答；请求实际工作使用正常执行链，不能因快循环缺工具误拒绝或用介绍代替行动。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "inbound",
+        "skills"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f04_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/service/inboundcoord/policy/skills.md"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F05",
+      "family": "F05",
+      "obligation": "问候、状态询问与重复已接受请求不授权重做；含糊短答根据正在回答的问题判断；明确重试不机械再确认。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "inbound",
+        "group"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f05_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "regression_observed; candidate_fix_pending_replay",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/service/inboundcoord/policy/group.md"
+      ],
+      "case_file": "cases.json",
+      "model_replay_observations": [
+        {
+          "policy_version": "2026-09-07.1",
+          "result": "FAIL",
+          "cases": [
+            "approval_good",
+            "closing_good"
+          ],
+          "report_sha256": "8cc077a605a7fd106a0b86adb9c96f91dca66ebe5b4aabda920d7343d1ad3384",
+          "candidate_policy_version": "2026-09-07.2",
+          "candidate_verification": "pending_replay"
+        }
+      ]
+    },
+    {
+      "id": "COORD.F06",
+      "family": "F06",
+      "obligation": "优先恢复已知对象、引用、正文；关键缺口无法恢复才最小澄清；补齐后推进，不派空通信任务。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "inbound",
+        "group",
+        "dialogue"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f06_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "regression_observed; candidate_fix_pending_replay",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/service/inboundcoord/policy/group.md",
+        "server/internal/service/inboundcoord/policy/dialogue.md"
+      ],
+      "case_file": "cases.json",
+      "model_replay_observations": [
+        {
+          "policy_version": "2026-09-07.1",
+          "result": "FAIL",
+          "cases": [
+            "same_person_different_work"
+          ],
+          "report_sha256": "8cc077a605a7fd106a0b86adb9c96f91dca66ebe5b4aabda920d7343d1ad3384",
+          "candidate_policy_version": "2026-09-07.2",
+          "candidate_verification": "pending_replay"
+        }
+      ]
+    },
+    {
+      "id": "COORD.F07",
+      "family": "F07",
+      "obligation": "续接必须同一交付物且当前实质推进；单卡、同人、排名、忙、旧承诺都不充分；时间本身不否决明确续接。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "inbound",
+        "recall_match"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f07_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "regression_observed; candidate_fix_pending_replay",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/service/inboundcoord/policy/recall_match.md"
+      ],
+      "case_file": "cases.json",
+      "model_replay_observations": [
+        {
+          "policy_version": "2026-09-07.1",
+          "result": "FAIL",
+          "cases": [
+            "same_person_different_work"
+          ],
+          "report_sha256": "8cc077a605a7fd106a0b86adb9c96f91dca66ebe5b4aabda920d7343d1ad3384",
+          "candidate_policy_version": "2026-09-07.2",
+          "candidate_verification": "pending_replay"
+        }
+      ]
+    },
+    {
+      "id": "COORD.F08",
+      "family": "F08",
+      "obligation": "保持明确scene及CID，关键词不能扩大范围；他群材料不代答本群；有限时间窗不得冒充全部历史。",
+      "status": "active",
+      "runtime_modules": [
+        "channel",
+        "dialogue",
+        "recall_match"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f08_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/channel.md",
+        "server/internal/service/inboundcoord/policy/dialogue.md",
+        "server/internal/service/inboundcoord/policy/recall_match.md",
+        "server/internal/service/inboundcoord/tools.go"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F09",
+      "family": "F09",
+      "obligation": "收集有4秒静默及12秒上限；封窗后不吸收；先判断后容量等待，忙时聊天及时；真实处理前不结完成。",
+      "status": "active",
+      "runtime_modules": [
+        "inbound"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f09_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/handler/inbound_coordinator_job.go",
+        "docs/evals/coordinator-collect-e2e.json"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F10",
+      "family": "F10",
+      "obligation": "整窗原文与逐句来源完整，合并同交付物、区分不同工作；尾部感谢不取消；超额或部分成功不能丢余项。",
+      "status": "active",
+      "runtime_modules": [
+        "window"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f10_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/window.md",
+        "server/internal/service/inboundcoord/window.go"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F11",
+      "family": "F11",
+      "obligation": "教学、纠正、盘点及撤回属于场域记忆；盘点只列稳定知识，旧复述/tombstone不复活事实，待写不冒充已提交。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "memory"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f11_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/memory.md"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F12",
+      "family": "F12",
+      "obligation": "按当前工作、结果及接收场域确认送达；已覆盖不二刷，旧问询出站不能压新答案；不猜DM或群。",
+      "status": "active",
+      "runtime_modules": [
+        "completion"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f12_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/completion.md",
+        "server/internal/handler/task_finished_loop.go",
+        "server/internal/service/inboundcoord/wrapup.go"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F13",
+      "family": "F13",
+      "obligation": "只用合法目标和可信原文；schema、工具与提示合同一致；错误hint可修复，副作用前须已披露所需规则。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "inbound",
+        "recall_match",
+        "completion"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f13_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/service/inboundcoord/policy/recall_match.md",
+        "server/internal/service/inboundcoord/policy/completion.md",
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/tools.go"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F14",
+      "family": "F14",
+      "obligation": "以同事口吻说有用信息，不逐条收到或叙述内部路由；按答复类型定长度，不用短语黑名单吞有效反馈。",
+      "status": "active",
+      "runtime_modules": [
+        "voice",
+        "channel",
+        "web",
+        "group",
+        "skills"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f14_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/voice.md",
+        "server/internal/service/inboundcoord/policy/channel.md",
+        "server/internal/service/inboundcoord/policy/web.md",
+        "server/internal/service/inboundcoord/policy/group.md",
+        "server/internal/service/inboundcoord/policy/skills.md"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F15",
+      "family": "F15",
+      "obligation": "人格与语气只管表达；岗位规则可以收紧行为；它们不能扩大Host权限或覆盖用户当前限制。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "voice"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f15_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/voice.md"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F16",
+      "family": "F16",
+      "obligation": "辅助读取或模型失败不绕过判断扩大执行；未知状态保留未决输入；有限预算留修复空间，不虚构沉默成功。",
+      "status": "active",
+      "runtime_modules": [
+        "core"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f16_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/coordinator.go"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F17",
+      "family": "F17",
+      "obligation": "整窗计划在校验后提交，实际效果区别于模型意图；部分提交持久化，重试不重放已成功项，回调与工作独立。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "inbound",
+        "window",
+        "recall_match",
+        "completion"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f17_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/service/inboundcoord/policy/window.md",
+        "server/internal/service/inboundcoord/policy/recall_match.md",
+        "server/internal/service/inboundcoord/policy/completion.md",
+        "server/internal/handler/agent_dispatch_v2_handler.go"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F18",
+      "family": "F18",
+      "obligation": "当前引用与附件正证据在路由前可见；读失败不当作不存在；写入后不得再因附件覆盖路由二次派发。",
+      "status": "active",
+      "runtime_modules": [
+        "core",
+        "dialogue"
+      ],
+      "enforcement_home": "semantic_decision_and_host",
+      "case_ids": [
+        "f18_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/policy/core.md",
+        "server/internal/service/inboundcoord/policy/dialogue.md",
+        "server/internal/handler/agent_dispatch_v2_handler.go"
+      ],
+      "case_file": "cases.json"
+    },
+    {
+      "id": "COORD.F19",
+      "family": "F19",
+      "obligation": "只有一份现行合同；旧手段保存继承关系；记录精确装配版本；结构检查、模型行为和真实送达分别证明。",
+      "status": "active",
+      "runtime_modules": [],
+      "enforcement_home": "host",
+      "case_ids": [
+        "f19_contrast"
+      ],
+      "verification": {
+        "source_mapping": "mapped",
+        "runtime_path": "structural_checks",
+        "model_replay": "pending",
+        "live_delivery": "pending"
+      },
+      "implementation_refs": [
+        "server/internal/service/inboundcoord/trace.go",
+        "docs/inbound-coordinator-loop.md"
+      ],
+      "case_file": "cases.json"
+    }
+  ],
+  "effect_dependencies": {
+    "work_submission": [
+      "core",
+      "inbound",
+      "recall_match"
+    ],
+    "task_finished_reply": [
+      "core",
+      "completion"
+    ],
+    "direct_reply": [
+      "core"
+    ]
+  },
+  "retired_implementations": [
+    {
+      "id": "LEGACY.CAPACITY_BEFORE_DECIDE",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F09"
+      ],
+      "reason": "9月7日事故证明容量不能阻塞聊天判断；只有执行等待。",
+      "incident_refs": [
+        "c18d8d0ff"
+      ]
+    },
+    {
+      "id": "LEGACY.PARK_SYNC_SILENCE",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F09",
+        "COORD.F17"
+      ],
+      "reason": "提前静默结单虽清处理中，却虚报完成；所有回调保留到真实处理。",
+      "incident_refs": [
+        "7a695c26c",
+        "c18d8d0ff"
+      ]
+    },
+    {
+      "id": "LEGACY.ONE_CARD_CONTINUE",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F07"
+      ],
+      "reason": "同人单卡仍可能不同交付物；不得强制续接。",
+      "incident_refs": [
+        "6cbd8f680",
+        "a6dcbb4d2"
+      ]
+    },
+    {
+      "id": "LEGACY.ACK_WORD_AUTHORITY",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F02",
+        "COORD.F05"
+      ],
+      "reason": "好/行/嗯可为对员工上一问的真实答复；词表不足以证明无工作。",
+      "incident_refs": [
+        "850c7a1ea",
+        "99921f42e"
+      ]
+    },
+    {
+      "id": "LEGACY.ANY_OUTBOUND_COMPLETES_RESULT",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F12"
+      ],
+      "reason": "旧阶段或别的任务出站不能证明当前结果已送达。",
+      "incident_refs": [
+        "86c78458c",
+        "7a695c26c",
+        "7ce27ae56"
+      ]
+    },
+    {
+      "id": "LEGACY.AGE_VETO",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F02",
+        "COORD.F07"
+      ],
+      "reason": "时间仅为证据；明确回答旧问题仍可推进，问候不能自动恢复工作。",
+      "incident_refs": [
+        "a6dcbb4d2",
+        "b56e52090"
+      ]
+    }
+  ]
+}

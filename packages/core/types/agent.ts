@@ -118,6 +118,7 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
   "cursor",
   "kimi",
   "reasonix",
+  "dsh",
   "kiro",
   "antigravity",
   "qoder",
@@ -174,9 +175,13 @@ export interface UpdateRuntimeProfileRequest {
   enabled?: boolean;
 }
 
-// Coarse classifier set by the backend when a task transitions to "failed".
-// Mirrors the migration-055 enum in agent_task_queue.failure_reason. Used by
-// the agent presence derivation and the UI failure-message lookup.
+// The coarse classifier the backend set when a task transitioned to "failed",
+// as migration 055 defined it. It is NOT the whole set any more: MUL-1949 split
+// "agent_error" into fourteen `agent_error.*` sub-reasons and the platform side
+// has kept growing (skill_bundle_unavailable, dsh_plugin_unavailable), so the
+// wire value is an open string that an installed build will meet values it
+// predates. Kept as a named union for autocomplete on the values that have been
+// there longest; `AgentTask.failure_reason` widens it to accept the rest.
 export type TaskFailureReason =
   | "agent_error"
   | "timeout"
@@ -297,7 +302,14 @@ export interface AgentTask {
   error: string | null;
   // Empty string when the task is not in a failed state (the backend uses
   // `omitempty`, so the field may also be missing on non-failed tasks).
-  failure_reason?: TaskFailureReason | "";
+  //
+  // `string & {}` keeps autocomplete for the named values while accepting every
+  // reason the classifier has grown since. Narrowing this to the union alone
+  // made the mobile task schema reject a refined reason and report "no reason"
+  // instead, which is the "never silently drop a category" rule in
+  // apps/mobile/CLAUDE.md; the label maps on both clients already key off the
+  // raw wire value and fall back on an unrecognised one.
+  failure_reason?: TaskFailureReason | (string & {}) | "";
   created_at: string;
   /** A private DSH native event ledger is available through the task-scoped viewer. */
   dsh_trajectory_available?: boolean;
@@ -477,6 +489,19 @@ export interface Agent {
    * `undefined` as false. Only an explicit true turns it on.
    */
   inbound_coordinator?: boolean;
+  /** Let the platform own DingTalk replies and thinking reactions; off when omitted. */
+  dingtalk_response_enabled?: boolean;
+  /** Show the AI sender label on platform and sandbox DingTalk messages. */
+  dingtalk_show_ai_tag?: boolean;
+  /** Monotonic response policy revision; older backends omit it. */
+  dingtalk_response_policy_revision?: number;
+  /**
+   * When true, an Issue opened by the inbound judge comes back to
+   * Coordinator after the sandbox finishes so the original requester
+   * gets a wrap-up. Optional because older backends omit it; treat
+   * `undefined` as false.
+   */
+  task_finished_loop_enabled?: boolean;
   /**
    * Scene-memory flags. Optional because older backends omit them; treat
    * `undefined` as false. Only an explicit true turns a flag on.
@@ -817,6 +842,9 @@ export interface UpdateAgentRequest {
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  dingtalk_response_enabled?: boolean;
+  dingtalk_show_ai_tag?: boolean;
+  task_finished_loop_enabled?: boolean;
   scene_memory_write_enabled?: boolean;
   scene_memory_recall_enabled?: boolean;
   scene_memory_ui_enabled?: boolean;

@@ -2,8 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -14,6 +19,7 @@ import (
 )
 
 var ErrIssueDispatchPending = errors.New("issue already has a pending dispatch")
+var ErrIssueFollowUpIdempotencyConflict = errors.New("issue follow-up idempotency key has different content")
 
 type IssueCommentService struct {
 	Queries     *db.Queries
@@ -34,6 +40,10 @@ type IssueCommentCreateParams struct {
 	DispatchContext           []byte
 	ParentTaskID              pgtype.UUID
 	ParentID                  pgtype.UUID
+	// IdempotencyKey atomically binds an ordinary external follow-up's
+	// comment and task. Retries return the original result, even after the
+	// task finishes. Delegation uses its separate source-task contract.
+	IdempotencyKey string
 	// AgentMCPClaimID makes an external MCP follow-up recoverable across a
 	// process crash between comment creation and task binding.
 	AgentMCPClaimID pgtype.UUID
@@ -66,6 +76,12 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
 		return IssueCommentCreateResult{}, errors.New("issue is not assigned to an agent")
+	}
+	if strings.TrimSpace(params.IdempotencyKey) != "" {
+		if params.Delegation != nil {
+			return IssueCommentCreateResult{}, errors.New("explicit follow-up idempotency is not supported for delegation")
+		}
+		return s.createIdempotentExternalFollowUp(ctx, params, opts)
 	}
 	if params.Delegation != nil {
 		return s.createDelegatedExternalFollowUp(ctx, params, opts)
@@ -144,6 +160,146 @@ func (s *IssueCommentService) CreateExternalFollowUp(ctx context.Context, params
 		return IssueCommentCreateResult{Comment: comment, Attachments: attachments}, fmt.Errorf("enqueue issue follow-up: %w", err)
 	}
 	return IssueCommentCreateResult{Comment: comment, Attachments: attachments, Task: task}, nil
+}
+
+const (
+	issueFollowUpKeyField         = "issue_follow_up_idempotency_key"
+	issueFollowUpFingerprintField = "issue_follow_up_request_fingerprint"
+)
+
+// createIdempotentExternalFollowUp commits the comment, attachment bindings,
+// and normal issue task together. The task's private context is the durable
+// receipt; no process-local cache or success response is needed for recovery.
+func (s *IssueCommentService) createIdempotentExternalFollowUp(ctx context.Context, params IssueCommentCreateParams, opts IssueCommentCreateOpts) (IssueCommentCreateResult, error) {
+	if s.TaskService.TxStarter == nil {
+		return IssueCommentCreateResult{}, errors.New("issue follow-up transaction starter is not configured")
+	}
+	key := strings.TrimSpace(params.IdempotencyKey)
+	fingerprint := issueFollowUpFingerprint(params)
+	dispatchContext, err := issueFollowUpDispatchContext(params.DispatchContext, key, fingerprint)
+	if err != nil {
+		return IssueCommentCreateResult{}, err
+	}
+	tx, err := s.TaskService.TxStarter.Begin(ctx)
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("begin issue follow-up: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := s.Queries.WithTx(tx)
+	lockKey := "external-issue-follow-up:" + util.UUIDToString(params.Issue.WorkspaceID) + ":" + util.UUIDToString(params.Issue.AssigneeID) + ":" + key
+	if err := qtx.LockExternalIssueFollowUp(ctx, lockKey); err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("lock issue follow-up: %w", err)
+	}
+	taskID, err := qtx.GetExternalIssueFollowUpTaskID(ctx, db.GetExternalIssueFollowUpTaskIDParams{
+		WorkspaceID: params.Issue.WorkspaceID, AgentID: params.Issue.AssigneeID, IdempotencyKey: key,
+	})
+	if err == nil {
+		task, loadErr := qtx.GetAgentTask(ctx, taskID)
+		if loadErr != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("recover issue follow-up task: %w", loadErr)
+		}
+		var private map[string]json.RawMessage
+		if err := json.Unmarshal(task.Context, &private); err != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("decode issue follow-up receipt: %w", err)
+		}
+		var storedFingerprint string
+		if json.Unmarshal(private[issueFollowUpFingerprintField], &storedFingerprint) != nil || storedFingerprint != fingerprint {
+			return IssueCommentCreateResult{}, ErrIssueFollowUpIdempotencyConflict
+		}
+		comment, loadErr := qtx.GetCommentInWorkspace(ctx, db.GetCommentInWorkspaceParams{ID: task.TriggerCommentID, WorkspaceID: params.Issue.WorkspaceID})
+		if loadErr != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("recover issue follow-up comment: %w", loadErr)
+		}
+		attachments, loadErr := qtx.ListAttachmentsByComment(ctx, db.ListAttachmentsByCommentParams{CommentID: comment.ID, WorkspaceID: params.Issue.WorkspaceID})
+		if loadErr != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("recover issue follow-up attachments: %w", loadErr)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return IssueCommentCreateResult{}, fmt.Errorf("commit issue follow-up recovery: %w", err)
+		}
+		// A prior process may have committed before notifying the runtime.
+		// Wakeup is repeatable; the durable task and comment are not recreated.
+		if task.Status == "queued" {
+			s.TaskService.NotifyTaskEnqueued(ctx, task)
+		}
+		return IssueCommentCreateResult{Comment: comment, Attachments: attachments, Task: task}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return IssueCommentCreateResult{}, fmt.Errorf("find issue follow-up receipt: %w", err)
+	}
+	if _, err := qtx.LockIssueForExternalFollowUp(ctx, db.LockIssueForExternalFollowUpParams{ID: params.Issue.ID, WorkspaceID: params.Issue.WorkspaceID}); err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("lock follow-up issue: %w", err)
+	}
+	issue, err := qtx.GetIssue(ctx, params.Issue.ID)
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("reload follow-up issue: %w", err)
+	}
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || issue.AssigneeID != params.Issue.AssigneeID {
+		return IssueCommentCreateResult{}, errors.New("issue assignee changed before follow-up")
+	}
+	active, err := qtx.HasActiveTaskForIssueAndAgent(ctx, db.HasActiveTaskForIssueAndAgentParams{IssueID: issue.ID, AgentID: issue.AssigneeID})
+	if err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("check active issue task: %w", err)
+	}
+	if active {
+		return IssueCommentCreateResult{}, ErrIssueDispatchPending
+	}
+	// Keep the established comment/task path, including attribution, runtime
+	// overlay, trigger summary and identity context. The transaction service
+	// has an isolated event bus and no wakeup, analytics or launcher before
+	// commit. Construct it explicitly instead of copying TaskService's mutexes
+	// and sync.Map.
+	txTasks := &TaskService{Queries: qtx, Bus: events.New(), FeatureFlags: s.TaskService.FeatureFlags, Composio: s.TaskService.Composio}
+	txComments := &IssueCommentService{Queries: qtx, TaskService: txTasks}
+	params.Issue = issue
+	params.IdempotencyKey = ""
+	params.DispatchContext = dispatchContext
+	result, err := txComments.CreateExternalFollowUp(ctx, params, IssueCommentCreateOpts{})
+	if err != nil {
+		if isDuplicatePendingTaskErr(err) {
+			return IssueCommentCreateResult{}, ErrIssueDispatchPending
+		}
+		return IssueCommentCreateResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return IssueCommentCreateResult{}, fmt.Errorf("commit issue follow-up: %w", err)
+	}
+	s.publishExternalFollowUpComment(params, opts, result.Comment, result.Attachments)
+	s.TaskService.publishIssueTaskEnqueued(ctx, result.Task)
+	return result, nil
+}
+
+func issueFollowUpFingerprint(params IssueCommentCreateParams) string {
+	attachments := make([]string, 0, len(params.AttachmentIDs))
+	for _, id := range params.AttachmentIDs {
+		attachments = append(attachments, util.UUIDToString(id))
+	}
+	sort.Strings(attachments)
+	raw, _ := json.Marshal(struct {
+		Workspace, Issue, Agent, Author, Content, Parent, ParentTask, MCPClaim string
+		Attachments                                                            []string
+	}{
+		util.UUIDToString(params.Issue.WorkspaceID), util.UUIDToString(params.Issue.ID), util.UUIDToString(params.Issue.AssigneeID),
+		util.UUIDToString(params.AuthorID), params.Content, util.UUIDToString(params.ParentID), util.UUIDToString(params.ParentTaskID),
+		util.UUIDToString(params.AgentMCPClaimID), attachments,
+	})
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
+}
+
+func issueFollowUpDispatchContext(raw []byte, key, fingerprint string) ([]byte, error) {
+	private := make(map[string]json.RawMessage)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &private); err != nil {
+			return nil, fmt.Errorf("decode issue follow-up dispatch context: %w", err)
+		}
+	}
+	if private == nil {
+		private = make(map[string]json.RawMessage)
+	}
+	private[issueFollowUpKeyField], _ = json.Marshal(key)
+	private[issueFollowUpFingerprintField], _ = json.Marshal(fingerprint)
+	return json.Marshal(private)
 }
 
 func (s *IssueCommentService) createDelegatedExternalFollowUp(ctx context.Context, params IssueCommentCreateParams, opts IssueCommentCreateOpts) (IssueCommentCreateResult, error) {

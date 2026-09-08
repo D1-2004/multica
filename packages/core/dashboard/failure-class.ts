@@ -65,6 +65,11 @@ const REASON_CLASS: Record<string, FailureClass> = {
   // operator response is "check the daemon's link to Multica", the same as a
   // daemon that went offline — the model provider is not involved.
   skill_bundle_unavailable: "runtime",
+  // Same grouping, same reasoning: a DSH plugin that could not be fetched or
+  // mounted stops the run before the model is called, and the operator fixes
+  // it in Multica -- by correcting or unbinding the plugin -- not at the
+  // provider.
+  dsh_plugin_unavailable: "runtime",
 
   // The agent process itself produced the failure.
   "agent_error.process_failure": "agent",

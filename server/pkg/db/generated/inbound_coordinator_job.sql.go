@@ -28,27 +28,29 @@ type pgxRow interface {
 const inboundCoordinatorJobColumns = `id, acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id, dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id, status, attempt_count, available_at, lease_token, lease_expires_at, last_error, created_at, updated_at`
 
 type CreateInboundCoordinatorJobParams struct {
-	AcceptanceID        pgtype.UUID `json:"acceptance_id"`
-	WorkspaceID         pgtype.UUID `json:"workspace_id"`
-	AgentID             pgtype.UUID `json:"agent_id"`
-	UserID              pgtype.UUID `json:"user_id"`
-	EndpointNamespaceID pgtype.UUID `json:"endpoint_namespace_id"`
-	DispatchEndpointID  string      `json:"dispatch_endpoint_id"`
-	IdempotencyKey      string      `json:"idempotency_key"`
-	Command             []byte      `json:"command"`
-	ChatSessionID       pgtype.UUID `json:"chat_session_id"`
-	UserMessageID       pgtype.UUID `json:"user_message_id"`
+	AcceptanceID        pgtype.UUID        `json:"acceptance_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	AgentID             pgtype.UUID        `json:"agent_id"`
+	UserID              pgtype.UUID        `json:"user_id"`
+	EndpointNamespaceID pgtype.UUID        `json:"endpoint_namespace_id"`
+	DispatchEndpointID  string             `json:"dispatch_endpoint_id"`
+	IdempotencyKey      string             `json:"idempotency_key"`
+	Command             []byte             `json:"command"`
+	ChatSessionID       pgtype.UUID        `json:"chat_session_id"`
+	UserMessageID       pgtype.UUID        `json:"user_message_id"`
+	AvailableAt         pgtype.Timestamptz `json:"available_at"`
 }
 
 func (q *Queries) CreateInboundCoordinatorJob(ctx context.Context, arg CreateInboundCoordinatorJobParams) (InboundCoordinatorJob, error) {
 	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
 INSERT INTO inbound_coordinator_job (
     acceptance_id, workspace_id, agent_id, user_id, endpoint_namespace_id,
-    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id
-) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+    dispatch_endpoint_id, idempotency_key, command, chat_session_id, user_message_id,
+    available_at
+) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 RETURNING `+inboundCoordinatorJobColumns,
 		arg.AcceptanceID, arg.WorkspaceID, arg.AgentID, arg.UserID, arg.EndpointNamespaceID,
-		arg.DispatchEndpointID, arg.IdempotencyKey, arg.Command, arg.ChatSessionID, arg.UserMessageID))
+		arg.DispatchEndpointID, arg.IdempotencyKey, arg.Command, arg.ChatSessionID, arg.UserMessageID, arg.AvailableAt))
 }
 
 func (q *Queries) GetInboundCoordinatorJobByAcceptance(ctx context.Context, acceptanceID pgtype.UUID) (InboundCoordinatorJob, error) {
@@ -56,20 +58,148 @@ func (q *Queries) GetInboundCoordinatorJobByAcceptance(ctx context.Context, acce
 		`SELECT `+inboundCoordinatorJobColumns+` FROM inbound_coordinator_job WHERE acceptance_id = $1`, acceptanceID))
 }
 
+type GetInboundCoordinatorJobByIdempotencyParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	IdempotencyKey string      `json:"idempotency_key"`
+}
+
+func (q *Queries) GetInboundCoordinatorJobByIdempotency(ctx context.Context, arg GetInboundCoordinatorJobByIdempotencyParams) (InboundCoordinatorJob, error) {
+	return scanInboundCoordinatorJob(q.db.QueryRow(ctx,
+		`SELECT `+inboundCoordinatorJobColumns+` FROM inbound_coordinator_job
+WHERE workspace_id = $1 AND agent_id = $2 AND idempotency_key = $3
+ORDER BY created_at ASC LIMIT 1`,
+		arg.WorkspaceID, arg.AgentID, arg.IdempotencyKey))
+}
+
 func (q *Queries) ClaimInboundCoordinatorJob(ctx context.Context) (InboundCoordinatorJob, error) {
 	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
 WITH candidate AS (
-    SELECT id FROM inbound_coordinator_job
-    WHERE (status = 'pending' AND available_at <= now())
-       OR (status = 'running' AND lease_expires_at <= now())
-    ORDER BY available_at, created_at
-    FOR UPDATE SKIP LOCKED LIMIT 1
+    SELECT job.id
+    FROM inbound_coordinator_job job
+    WHERE (
+        (job.status = 'pending' AND job.available_at <= now())
+        OR (job.status = 'running' AND job.lease_expires_at <= now())
+    )
+    AND NOT EXISTS (
+        SELECT 1
+        FROM inbound_coordinator_job running
+        WHERE running.workspace_id = job.workspace_id
+          AND running.agent_id = job.agent_id
+          AND running.status = 'running'
+          AND running.lease_expires_at > now()
+          AND running.id IS DISTINCT FROM job.id
+          AND COALESCE(job.command #>> '{event,data,conversation,openConversationId}', '') <> ''
+          AND running.command #>> '{event,data,conversation,openConversationId}'
+            = job.command #>> '{event,data,conversation,openConversationId}'
+    )
+    ORDER BY job.available_at, job.created_at
+    FOR UPDATE SKIP LOCKED
+    LIMIT 1
 )
 UPDATE inbound_coordinator_job AS job
 SET status='running', attempt_count=job.attempt_count+1,
     lease_token=gen_random_uuid(), lease_expires_at=now()+interval '1 minute', updated_at=now()
 FROM candidate WHERE job.id=candidate.id
 RETURNING job.`+inboundCoordinatorJobColumns))
+}
+
+type CountRunningInboundCoordinatorJobsForConversationParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	ExcludeID      pgtype.UUID `json:"exclude_id"`
+	ConversationID string      `json:"conversation_id"`
+}
+
+func (q *Queries) CountRunningInboundCoordinatorJobsForConversation(ctx context.Context, arg CountRunningInboundCoordinatorJobsForConversationParams) (int64, error) {
+	row := q.db.QueryRow(ctx, `
+SELECT count(*)::bigint
+FROM inbound_coordinator_job
+WHERE workspace_id=$1 AND agent_id=$2 AND status='running' AND lease_expires_at>now()
+  AND id<>$3
+  AND command #>> '{event,data,conversation,openConversationId}'=$4`,
+		arg.WorkspaceID, arg.AgentID, arg.ExcludeID, arg.ConversationID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+type CountActiveTasksForConversationParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	ConversationID string      `json:"conversation_id"`
+}
+
+func (q *Queries) CountActiveTasksForConversation(ctx context.Context, arg CountActiveTasksForConversationParams) (int64, error) {
+	row := q.db.QueryRow(ctx, `
+SELECT count(DISTINCT assoc_task.issue_id)::bigint
+FROM assoc_edge
+JOIN assoc_task
+  ON assoc_task.workspace_id = assoc_edge.workspace_id
+ AND assoc_task.agent_id = assoc_edge.agent_id
+ AND (
+    (assoc_edge.src_type = 'task' AND assoc_edge.src_id = assoc_task.id::text)
+    OR (assoc_edge.dst_type = 'task' AND assoc_edge.dst_id = assoc_task.id::text)
+ )
+JOIN agent_task_queue
+  ON agent_task_queue.issue_id = assoc_task.issue_id
+ AND agent_task_queue.agent_id = assoc_edge.agent_id
+WHERE assoc_edge.workspace_id=$1
+  AND assoc_edge.agent_id=$2
+  AND assoc_edge.rel='task_scene'
+  AND assoc_edge.status='open'
+  AND (
+    (assoc_edge.dst_type='scene' AND assoc_edge.dst_id=$3)
+    OR (assoc_edge.src_type='scene' AND assoc_edge.src_id=$3)
+  )
+  AND agent_task_queue.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory', 'deferred')`,
+		arg.WorkspaceID, arg.AgentID, arg.ConversationID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+func (q *Queries) CountOpenSceneMattersForConversation(ctx context.Context, arg CountActiveTasksForConversationParams) (int64, error) {
+	row := q.db.QueryRow(ctx, `
+SELECT count(DISTINCT assoc_task.issue_id)::bigint
+FROM assoc_edge
+JOIN assoc_task
+  ON assoc_task.workspace_id = assoc_edge.workspace_id
+ AND assoc_task.agent_id = assoc_edge.agent_id
+ AND (
+    (assoc_edge.src_type = 'task' AND assoc_edge.src_id = assoc_task.id::text)
+    OR (assoc_edge.dst_type = 'task' AND assoc_edge.dst_id = assoc_task.id::text)
+ )
+WHERE assoc_edge.workspace_id=$1
+  AND assoc_edge.agent_id=$2
+  AND assoc_edge.rel='task_scene'
+  AND assoc_edge.status='open'
+  AND assoc_task.status IN ('open', 'waiting')
+  AND (
+    (assoc_edge.dst_type='scene' AND assoc_edge.dst_id=$3)
+    OR (assoc_edge.src_type='scene' AND assoc_edge.src_id=$3)
+  )`,
+		arg.WorkspaceID, arg.AgentID, arg.ConversationID)
+	var n int64
+	err := row.Scan(&n)
+	return n, err
+}
+
+type ParkInboundCoordinatorJobParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	LeaseToken  pgtype.UUID        `json:"lease_token"`
+	AvailableAt pgtype.Timestamptz `json:"available_at"`
+	LastError   pgtype.Text        `json:"last_error"`
+}
+
+func (q *Queries) ParkInboundCoordinatorJob(ctx context.Context, arg ParkInboundCoordinatorJobParams) (int64, error) {
+	tag, err := q.db.Exec(ctx, `
+UPDATE inbound_coordinator_job
+SET status='pending', available_at=$3, lease_token=NULL, lease_expires_at=NULL,
+    last_error=$4, attempt_count=GREATEST(attempt_count-1, 0), updated_at=now()
+WHERE id=$1 AND status='running' AND lease_token=$2`,
+		arg.ID, arg.LeaseToken, arg.AvailableAt, arg.LastError)
+	return tag.RowsAffected(), err
 }
 
 type CompleteInboundCoordinatorJobParams struct {
@@ -129,4 +259,59 @@ func (q *Queries) CoordinatorChatMessageExists(ctx context.Context, chatSessionI
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+type ListPendingInboundCoordinatorJobsForConversationCollectParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	AgentID        pgtype.UUID `json:"agent_id"`
+	ConversationID string      `json:"conversation_id"`
+}
+
+func (q *Queries) ListPendingInboundCoordinatorJobsForConversationCollect(ctx context.Context, arg ListPendingInboundCoordinatorJobsForConversationCollectParams) ([]InboundCoordinatorJob, error) {
+	rows, err := q.db.Query(ctx, `
+SELECT `+inboundCoordinatorJobColumns+`
+FROM inbound_coordinator_job
+WHERE workspace_id=$1 AND agent_id=$2 AND status='pending'
+  AND attempt_count=0 AND last_error IS NULL
+  AND available_at>statement_timestamp()
+  AND command #>> '{event,data,conversation,openConversationId}'=$3
+ORDER BY created_at DESC
+FOR UPDATE`, arg.WorkspaceID, arg.AgentID, arg.ConversationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []InboundCoordinatorJob
+	for rows.Next() {
+		item, err := scanInboundCoordinatorJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+type UpdateInboundCoordinatorJobCollectParams struct {
+	ID          pgtype.UUID        `json:"id"`
+	Command     []byte             `json:"command"`
+	AvailableAt pgtype.Timestamptz `json:"available_at"`
+}
+
+func (q *Queries) UpdateInboundCoordinatorJobCollect(ctx context.Context, arg UpdateInboundCoordinatorJobCollectParams) (InboundCoordinatorJob, error) {
+	return scanInboundCoordinatorJob(q.db.QueryRow(ctx, `
+UPDATE inbound_coordinator_job
+SET command=$2, available_at=$3, updated_at=now()
+WHERE id=$1 AND status='pending'
+RETURNING `+inboundCoordinatorJobColumns, arg.ID, arg.Command, arg.AvailableAt))
+}
+
+type AppendCoordinatorUserMessageParams struct {
+	ID      pgtype.UUID `json:"id"`
+	Content string      `json:"content"`
+}
+
+func (q *Queries) AppendCoordinatorUserMessage(ctx context.Context, arg AppendCoordinatorUserMessageParams) (int64, error) {
+	tag, err := q.db.Exec(ctx, `UPDATE chat_message SET content=$2 WHERE id=$1 AND role='user'`, arg.ID, arg.Content)
+	return tag.RowsAffected(), err
 }

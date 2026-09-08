@@ -137,6 +137,24 @@ describe("ApiClient Runner contracts", () => {
   const pairingId = "33333333-3333-4333-8333-333333333333";
   const agentId = "44444444-4444-4444-8444-444444444444";
 
+	it("keeps account pairing and Agent mounting as separate calls", async () => {
+		const fetchMock = vi.fn()
+			.mockResolvedValueOnce(new Response(JSON.stringify({ id: pairingId, install_command: "install runner", expires_at: "2026-09-03T10:10:00Z" }), { status: 201, headers: { "Content-Type": "application/json" } }))
+			.mockResolvedValue(new Response(null, { status: 204 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const client = new ApiClient("https://api.example.test");
+		await client.createAccountRunnerPairing();
+		await client.mountAgentRunnerMachine(agentId, machineId);
+		await client.renameAccountRunnerMachine(machineId, "Studio Mac");
+		await client.revokeAccountRunnerMachine(machineId);
+		expect(fetchMock.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+			["https://api.example.test/api/me/runner-pairings", "POST"],
+			[`https://api.example.test/api/agents/${agentId}/runner-mount`, "PUT"],
+			[`https://api.example.test/api/me/runner-machines/${machineId}`, "PATCH"],
+			[`https://api.example.test/api/me/runner-machines/${machineId}`, "DELETE"],
+		]);
+	});
+
   it("validates and maps every human-facing Runner endpoint", async () => {
     const fetchMock = vi
       .fn()
@@ -156,6 +174,18 @@ describe("ApiClient Runner contracts", () => {
                 disconnected: false,
                 last_seen_at: "2026-08-12T10:00:00Z",
                 bound_at: "2026-08-12T09:00:00Z",
+                mcp_servers: [{
+                  name: "wiki",
+                  title: "Company Wiki",
+                  description: "Search company knowledge.",
+                  version: "2.0.0",
+                  transport: "stdio",
+                  availability: "available",
+                  detail_status: "available",
+                  capabilities: ["tools"],
+                  tools: [{ name: "search", title: "Search", description: "Search pages." }],
+                  fingerprint: "sha256:wiki",
+                }],
               },
             ],
           }),
@@ -177,12 +207,9 @@ describe("ApiClient Runner contracts", () => {
           JSON.stringify({
             user_code: "ABCD-EFGH",
             state: "device_pending",
-            agent_id: agentId,
-            agent_name: "Coder",
             machine_name: "build-mac",
             os: "darwin",
             arch: "arm64",
-            roots: ["/Users/dev/project"],
             expires_at: "2026-08-12T10:10:00Z",
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -220,6 +247,12 @@ describe("ApiClient Runner contracts", () => {
           machineId,
           name: "build-mac",
           online: true,
+          mcpServers: [expect.objectContaining({
+            name: "wiki",
+            title: "Company Wiki",
+            detailStatus: "available",
+            tools: [{ name: "search", title: "Search", description: "Search pages." }],
+          })],
         }),
       ],
     });
@@ -232,7 +265,6 @@ describe("ApiClient Runner contracts", () => {
       client.getRunnerDeviceAuthorization("ABCD-EFGH"),
     ).resolves.toMatchObject({
       userCode: "ABCD-EFGH",
-      agentId,
       machineName: "build-mac",
     });
     await expect(
@@ -300,6 +332,7 @@ describe("ApiClient Runner contracts", () => {
                 online: false,
                 last_seen_at: null,
                 bound_at: "2026-08-12T09:00:00Z",
+                mcp_servers: null,
               },
             ],
           }),
@@ -310,7 +343,9 @@ describe("ApiClient Runner contracts", () => {
 
     await expect(
       new ApiClient("https://api.example.test").listAgentRunnerBindings(agentId),
-    ).resolves.toMatchObject({ machines: [{ disconnected: false }] });
+    ).resolves.toMatchObject({
+      machines: [{ disconnected: false, mcpServers: [] }],
+    });
   });
 
   it("maps account Runner machines separately from their Agent bindings", async () => {
@@ -331,6 +366,7 @@ describe("ApiClient Runner contracts", () => {
                 client_version: "0.2.0",
                 online: true,
                 last_seen_at: "2026-08-12T10:00:00Z",
+                mcp_servers: null,
                 bindings: [
                   {
                     binding_id: bindingId,
@@ -381,6 +417,7 @@ describe("ApiClient Runner contracts", () => {
         expect.objectContaining({
           machineId,
           online: true,
+          mcpServers: [],
           bindings: [
             expect.objectContaining({
               bindingId,

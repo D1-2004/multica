@@ -1,0 +1,933 @@
+{
+  "policy_version": "2026-09-07.2",
+  "assembly_version": "1",
+  "started_at": "2026-09-07T14:02:39.92038Z",
+  "completed_at": "2026-09-07T14:03:27.827756Z",
+  "status": "FAIL",
+  "safety": "Real model, synthetic frozen dialogue, fake read-only tools and history; no Host submission or business effects.",
+  "assertion_scope": "Assertions cover action/work count, continuation target, source attribution, work basis and disclosure path; answer prose requires separate human review.",
+  "cases": [
+    {
+      "id": "approval_good",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "ddf26361bfe944551dff19e706b191d0be7c5a08b07d22f0c866c5138f76762d",
+      "repeat": 1,
+      "status": "FAIL",
+      "action": "reply",
+      "reply_for_manual_review": "好，我现在把会议通知发给小林。",
+      "planned_items": null,
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": null,
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2178,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "25b2f0a5ca2e66d6a9f9c79c8c7a0e05f5c31cba9eba96f68bfd6124464cbdf2",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "dialogue"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 2378,
+          "output_tokens": 41
+        }
+      ],
+      "input_tokens": 4556,
+      "output_tokens": 63,
+      "elapsed_ms": 3068,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "work plan must include target=\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\" refs=[u1] basis=answer",
+        "original dialogue must be read before interpreting this short answer",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "work plan must include target=\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\" refs=[u1] basis=answer",
+        "current-scene recall must establish work evidence"
+      ]
+    },
+    {
+      "id": "closing_good",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "7075110ac2ebe395b75182734c1d295409d497d87fd7c75153206ca03ea8d63f",
+      "repeat": 1,
+      "status": "PASS",
+      "action": "silence",
+      "reply_for_manual_review": "",
+      "planned_items": null,
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": null,
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2178,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "25b2f0a5ca2e66d6a9f9c79c8c7a0e05f5c31cba9eba96f68bfd6124464cbdf2",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "dialogue"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 2377,
+          "output_tokens": 63
+        }
+      ],
+      "input_tokens": 4555,
+      "output_tokens": 85,
+      "elapsed_ms": 4017,
+      "assertions": [
+        "action must be one of [reply silence]",
+        "work item count must be 0",
+        "original dialogue must be read before interpreting this short answer"
+      ],
+      "failures": []
+    },
+    {
+      "id": "same_person_different_work",
+      "contract_id": "f07_contrast",
+      "fixture_hash": "5a50c5348bd8d98cc621023d96edba8476a2998ccc72772c4d615467421ec13c",
+      "repeat": 1,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，我去和小林确认明天打球的时间，有消息了告诉你。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n和小林确认一下明天几点有空去打球，得到答复后告诉我。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：向小林确认明天几点有空去打球，得到答复后告诉小周。",
+          "Intent": "ask",
+          "LookInto": "小周委托：向小林确认明天几点有空去打球，得到答复后告诉小周。\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2192,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2177,
+          "output_tokens": 31
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "8981127c58fbb292597e85371bca4fa54d5c88c165c893edc240215472a5d0c1",
+          "tool_schema_hash": "951457c8eb47d978f7a95b97b27008f4af1d3d62992e24b199379541f50dd388",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3401,
+          "output_tokens": 90
+        },
+        {
+          "round": 4,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "8981127c58fbb292597e85371bca4fa54d5c88c165c893edc240215472a5d0c1",
+          "tool_schema_hash": "951457c8eb47d978f7a95b97b27008f4af1d3d62992e24b199379541f50dd388",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3550,
+          "output_tokens": 106
+        }
+      ],
+      "input_tokens": 11320,
+      "output_tokens": 249,
+      "elapsed_ms": 8196,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    },
+    {
+      "id": "approval_good",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "ddf26361bfe944551dff19e706b191d0be7c5a08b07d22f0c866c5138f76762d",
+      "repeat": 2,
+      "status": "FAIL",
+      "action": "reply",
+      "reply_for_manual_review": "好的，我现在把会议通知发给小林。",
+      "planned_items": null,
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": null,
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2178,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "25b2f0a5ca2e66d6a9f9c79c8c7a0e05f5c31cba9eba96f68bfd6124464cbdf2",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "dialogue"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 2378,
+          "output_tokens": 41
+        }
+      ],
+      "input_tokens": 4556,
+      "output_tokens": 63,
+      "elapsed_ms": 3272,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "work plan must include target=\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\" refs=[u1] basis=answer",
+        "original dialogue must be read before interpreting this short answer",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "work plan must include target=\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\" refs=[u1] basis=answer",
+        "current-scene recall must establish work evidence"
+      ]
+    },
+    {
+      "id": "closing_good",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "7075110ac2ebe395b75182734c1d295409d497d87fd7c75153206ca03ea8d63f",
+      "repeat": 2,
+      "status": "PASS",
+      "action": "silence",
+      "reply_for_manual_review": "",
+      "planned_items": null,
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": null,
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2178,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "25b2f0a5ca2e66d6a9f9c79c8c7a0e05f5c31cba9eba96f68bfd6124464cbdf2",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "dialogue"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 2377,
+          "output_tokens": 58
+        }
+      ],
+      "input_tokens": 4555,
+      "output_tokens": 80,
+      "elapsed_ms": 3126,
+      "assertions": [
+        "action must be one of [reply silence]",
+        "work item count must be 0",
+        "original dialogue must be read before interpreting this short answer"
+      ],
+      "failures": []
+    },
+    {
+      "id": "same_person_different_work",
+      "contract_id": "f07_contrast",
+      "fixture_hash": "5a50c5348bd8d98cc621023d96edba8476a2998ccc72772c4d615467421ec13c",
+      "repeat": 2,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，我去和小林确认明天打球的时间，有消息了告诉你。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n和小林确认一下明天几点有空去打球，得到答复后告诉我。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：向小林确认明天几点有空去打球，得到答复后告诉小周。",
+          "Intent": "ask",
+          "LookInto": "小周委托：向小林确认明天几点有空去打球，得到答复后告诉小周。\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2192,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2177,
+          "output_tokens": 31
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "8981127c58fbb292597e85371bca4fa54d5c88c165c893edc240215472a5d0c1",
+          "tool_schema_hash": "951457c8eb47d978f7a95b97b27008f4af1d3d62992e24b199379541f50dd388",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3401,
+          "output_tokens": 106
+        }
+      ],
+      "input_tokens": 7770,
+      "output_tokens": 159,
+      "elapsed_ms": 6132,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    },
+    {
+      "id": "approval_good",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "ddf26361bfe944551dff19e706b191d0be7c5a08b07d22f0c866c5138f76762d",
+      "repeat": 3,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，我现在就把通知发给小林。",
+      "planned_items": [
+        {
+          "issue_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "answer",
+          "content": "小周 在钉钉会话中的消息：\n\n好",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：向小林发送已经写好的周五三点会议通知",
+          "Intent": "confirm",
+          "LookInto": "小周回复“好”，确认发送之前起草好的周五三点会议通知给小林。\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2178,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "25b2f0a5ca2e66d6a9f9c79c8c7a0e05f5c31cba9eba96f68bfd6124464cbdf2",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "dialogue"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2378,
+          "output_tokens": 31
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "98718dfe545b221dd39ee9fc9f688a0a15b421415e696143e5ff1f18d2f1918d",
+          "tool_schema_hash": "951457c8eb47d978f7a95b97b27008f4af1d3d62992e24b199379541f50dd388",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "dialogue",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3609,
+          "output_tokens": 119
+        },
+        {
+          "round": 4,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "98718dfe545b221dd39ee9fc9f688a0a15b421415e696143e5ff1f18d2f1918d",
+          "tool_schema_hash": "951457c8eb47d978f7a95b97b27008f4af1d3d62992e24b199379541f50dd388",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "dialogue",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3787,
+          "output_tokens": 128
+        }
+      ],
+      "input_tokens": 11952,
+      "output_tokens": 300,
+      "elapsed_ms": 8966,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\" refs=[u1] basis=answer",
+        "original dialogue must be read before interpreting this short answer",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    },
+    {
+      "id": "closing_good",
+      "contract_id": "f05_contrast",
+      "fixture_hash": "7075110ac2ebe395b75182734c1d295409d497d87fd7c75153206ca03ea8d63f",
+      "repeat": 3,
+      "status": "PASS",
+      "action": "silence",
+      "reply_for_manual_review": "",
+      "planned_items": null,
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": null,
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2178,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "25b2f0a5ca2e66d6a9f9c79c8c7a0e05f5c31cba9eba96f68bfd6124464cbdf2",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "dialogue"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 2377,
+          "output_tokens": 55
+        }
+      ],
+      "input_tokens": 4555,
+      "output_tokens": 77,
+      "elapsed_ms": 3481,
+      "assertions": [
+        "action must be one of [reply silence]",
+        "work item count must be 0",
+        "original dialogue must be read before interpreting this short answer"
+      ],
+      "failures": []
+    },
+    {
+      "id": "same_person_different_work",
+      "contract_id": "f07_contrast",
+      "fixture_hash": "5a50c5348bd8d98cc621023d96edba8476a2998ccc72772c4d615467421ec13c",
+      "repeat": 3,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，我去和小林确认明天打球的时间。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n和小林确认一下明天几点有空去打球，得到答复后告诉我。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：向小林确认明天几点有空去打球，得到答复后告诉小周",
+          "Intent": "ask",
+          "LookInto": "小周委托：向小林确认明天几点有空去打球，得到答复后告诉小周\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 1,
+      "fake_read_calls": [
+        "assoc_recall",
+        "issue_get"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "93cbdb680fb6b8353172220e677f031b5273567dc229548fe2cf9353f91eeefd",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "context_read"
+          ],
+          "input_tokens": 2192,
+          "output_tokens": 22
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "141c7cccbd4160a1d0f117b56a855bed3e4bc053bcc32cdeab196fe228653256",
+          "tool_schema_hash": "6d08ed49a5a302b7d0f9f631815a75f44319f5bb1d2df0139f257af0c19abf4c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2177,
+          "output_tokens": 31
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "8981127c58fbb292597e85371bca4fa54d5c88c165c893edc240215472a5d0c1",
+          "tool_schema_hash": "951457c8eb47d978f7a95b97b27008f4af1d3d62992e24b199379541f50dd388",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "finish"
+          ],
+          "called_tools": [
+            "issue_get"
+          ],
+          "input_tokens": 3401,
+          "output_tokens": 33
+        },
+        {
+          "round": 4,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "8981127c58fbb292597e85371bca4fa54d5c88c165c893edc240215472a5d0c1",
+          "tool_schema_hash": "951457c8eb47d978f7a95b97b27008f4af1d3d62992e24b199379541f50dd388",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3501,
+          "output_tokens": 100
+        }
+      ],
+      "input_tokens": 11271,
+      "output_tokens": 186,
+      "elapsed_ms": 7642,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    }
+  ]
+}

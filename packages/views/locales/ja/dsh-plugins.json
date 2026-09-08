@@ -1,0 +1,71 @@
+{
+  "page": {
+    "title": "DSH プラグイン",
+    "tagline": "DeepSeek Harness がエージェントのプロファイルに読み込むプラグイン。",
+    "tab_installed": "導入済み",
+    "tab_market": "一覧",
+    "import": "プラグインを導入",
+    "refresh_catalog": "更新",
+    "search_installed": "導入済みプラグインを検索",
+    "search_market": "プラグイン索引を検索",
+    "all_categories": "すべてのカテゴリ"
+  },
+  "catalog": {
+    "community_notice": "{{repo}} のコミュニティ索引（{{license}}）。DeepSeek 公式のカタログは存在しないため、いずれも公式ではありません。",
+    "state": "{{count}} 件、カタログ {{version}}",
+    "never_refreshed": "プラグイン索引はまだ取得されていません。",
+    "refresh_now": "索引を取得",
+    "refreshing": "取得中…",
+    "refresh_failed": "プラグイン索引を取得できませんでした。",
+    "stars": "スター {{count}}",
+    "installed": "導入済み",
+    "install": "導入",
+    "installing": "導入中…",
+    "empty_title": "該当するプラグインがありません",
+    "empty_description": "検索語を変えるか、カテゴリの絞り込みを解除してください。"
+  },
+  "installed": {
+    "empty_title": "まだプラグインがありません",
+    "empty_description": "一覧から導入するか、npm の指定・GitHub の参照・tarball の URL を貼り付けてください。",
+    "error_title": "プラグインを読み込めませんでした",
+    "error_retry": "再試行",
+    "version": "バージョン",
+    "source": "取得元",
+    "rows": "ローダー行",
+    "used_by": "使用中",
+    "used_by_none": "どのエージェントにも未接続",
+    "used_by_count": "{{count}} エージェント",
+    "remove": "削除",
+    "remove_confirm": "{{name}} をワークスペースから削除しますか？使用中のエージェントは読み込まなくなります。",
+    "pinned": "バージョン固定",
+    "unpinned": "未固定"
+  },
+  "import_dialog": {
+    "title": "DSH プラグインを導入",
+    "description": "プラグインは manifest に bundle patch を宣言した npm パッケージです。`dsh plugin add` に渡す内容をそのまま貼り付けてください。",
+    "source_label": "パッケージ",
+    "source_placeholder": "npm:dsh-mcp-lens@0.1.0-rc.9",
+    "source_help": "npm:名前@バージョン、github:owner/repo#ref、https の tarball URL に対応します。",
+    "submit": "導入",
+    "submitting": "解決中…",
+    "cancel": "キャンセル",
+    "success": "{{name}} を導入しました",
+    "conflict": "{{name}} は導入済みです。",
+    "failed": "導入に失敗しました",
+    "upload_label": "またはパッケージをアップロード",
+    "upload_help": ".zip か .tgz。npm pack の出力、GitHub のダウンロード、素のフォルダのいずれでも構いません。",
+    "uploading": "{{name}} をアップロード中…"
+  },
+  "detail": {
+    "back": "プラグイン一覧",
+    "rows": "ローダー行: {{rows}}",
+    "pick_a_file": "ファイルを選ぶと中身を表示します。",
+    "not_viewable": "このファイルはバイナリか、大きすぎて表示できません。",
+    "no_files": "保存されたパッケージがありません",
+    "no_files_hint": "パッケージを保存するようになる前に導入されたため、中身を表示できません。導入し直すと読めます。",
+    "files_error": "パッケージを読み込めませんでした",
+    "files_error_hint": "保存されたパッケージを開けませんでした。",
+    "file_error": "このファイルを読み込めませんでした。",
+    "truncated": "先頭のファイルのみ表示しています。"
+  }
+}

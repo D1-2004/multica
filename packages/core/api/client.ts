@@ -274,6 +274,19 @@ import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
+import type {
+  AgentDshPlugin,
+  DshPlugin,
+  DshPluginBinding,
+  DshPluginCatalogCategory,
+  DshPluginCatalogPage,
+  DshPluginRegistryResult,
+  DshPluginFileContent,
+  DshPluginFileListing,
+  DshPluginUpdate,
+  ImportDshPluginRequest,
+  ImportDshPluginResult,
+} from "../dsh-plugins/types";
 import {
   AgentTaskListSchema,
   AgentSceneMemoryListSchema,
@@ -283,6 +296,17 @@ import {
   EMPTY_AGENT_SCENE_MEMORY_LIST,
   EMPTY_AGENT_SCENE_RELATION_LIST,
   HostedSiteListSchema,
+  AgentDshPluginListSchema,
+  DshPluginBindingListSchema,
+  DshPluginCatalogCategoryListSchema,
+  DshPluginCatalogPageSchema,
+  DshPluginListSchema,
+  DshPluginRegistrySearchSchema,
+  DshPluginFileContentSchema,
+  DshPluginFileListingSchema,
+  DshPluginUpdateSchema,
+  DshPluginSchema,
+  ImportDshPluginResultSchema,
   AgentTemplateSchema,
   AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
@@ -314,6 +338,9 @@ import {
   AddDingTalkWorkspaceMembersResponseSchema,
   DingTalkUserSearchResponseSchema,
   CreateAgentFromTemplateResponseSchema,
+  AgentResponseSchema,
+  AgentResponseListSchema,
+  EMPTY_AGENT_RESPONSE,
   AgentBuilderRuntimeSwitchSchema,
   AgentBuilderSessionSchema,
   AgentBuilderSessionListSchema,
@@ -1537,17 +1564,26 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.include_archived) search.set("include_archived", "true");
-    return this.fetch(`/api/agents?${search}`);
+    const raw = await this.fetch<unknown>(`/api/agents?${search}`);
+    return parseWithFallback<Agent[]>(raw, AgentResponseListSchema, [], {
+      endpoint: "GET /api/agents",
+    });
   }
 
   async getAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}`);
+    const raw = await this.fetch<unknown>(`/api/agents/${id}`);
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "GET /api/agents/:id",
+    });
   }
 
   async createAgent(data: CreateAgentRequest): Promise<Agent> {
-    return this.fetch("/api/agents", {
+    const raw = await this.fetch<unknown>("/api/agents", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "POST /api/agents",
     });
   }
 
@@ -1704,16 +1740,22 @@ export class ApiClient {
     );
   }
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "PUT /api/agents/:id",
     });
   }
 
   async transferAgentOwner(id: string, ownerId: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/owner`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/owner`, {
       method: "PUT",
       body: JSON.stringify({ owner_id: ownerId }),
+    });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "PUT /api/agents/:id/owner",
     });
   }
 
@@ -1820,7 +1862,10 @@ export class ApiClient {
   }
 
   async archiveAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/archive`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/archive`, { method: "POST" });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "POST /api/agents/:id/archive",
+    });
   }
 
   /**
@@ -1852,7 +1897,10 @@ export class ApiClient {
   }
 
   async restoreAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/restore`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/restore`, { method: "POST" });
+    return parseWithFallback(raw, AgentResponseSchema, EMPTY_AGENT_RESPONSE, {
+      endpoint: "POST /api/agents/:id/restore",
+    });
   }
 
   async listAgentRunnerBindings(
@@ -1885,6 +1933,26 @@ export class ApiClient {
       { method: "POST" },
     );
     return CreateRunnerPairingResponseSchema.parse(raw);
+  }
+
+  async createAccountRunnerPairing(): Promise<CreateRunnerPairingResponse> {
+    const raw = await this.fetch<unknown>("/api/me/runner-pairings", { method: "POST" });
+    return CreateRunnerPairingResponseSchema.parse(raw);
+  }
+
+  async mountAgentRunnerMachine(agentId: string, machineId: string): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/runner-mount`, {
+      method: "PUT",
+      body: JSON.stringify({ machine_id: machineId }),
+    });
+  }
+
+  async renameAccountRunnerMachine(machineId: string, name: string): Promise<void> {
+    await this.fetch(`/api/me/runner-machines/${machineId}`, { method: "PATCH", body: JSON.stringify({ name }) });
+  }
+
+  async revokeAccountRunnerMachine(machineId: string): Promise<void> {
+    await this.fetch(`/api/me/runner-machines/${machineId}`, { method: "DELETE" });
   }
 
   async revokeAgentRunnerBinding(
@@ -3323,6 +3391,287 @@ export class ApiClient {
 
   async deleteWorkspace(workspaceId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}`, {
+      method: "DELETE",
+    });
+  }
+
+  // DSH plugins
+  //
+  // DeepSeek Harness ships no plugin registry, so browse reads a cached
+  // community index plus the npm registry's own search endpoint, and import
+  // records a pinned package reference.
+
+  async listDshPlugins(): Promise<DshPlugin[]> {
+    const raw = await this.fetch<unknown>("/api/dsh-plugins");
+    return parseWithFallback(raw, DshPluginListSchema, [] as DshPlugin[], {
+      endpoint: "GET /api/dsh-plugins",
+    });
+  }
+
+  async getDshPlugin(id: string): Promise<DshPlugin | null> {
+    const raw = await this.fetch<unknown>(`/api/dsh-plugins/${id}`);
+    return parseWithFallback(raw, DshPluginSchema, null as DshPlugin | null, {
+      endpoint: "GET /api/dsh-plugins/{id}",
+    });
+  }
+
+  async importDshPlugin(
+    data: ImportDshPluginRequest,
+  ): Promise<ImportDshPluginResult> {
+    const raw = await this.fetch<unknown>("/api/dsh-plugins", {
+      method: "POST",
+      body: JSON.stringify({
+        source: data.source,
+        display_name: data.displayName,
+        config_row: data.configRow,
+        config: data.config,
+        catalog: data.catalog,
+        on_conflict: data.onConflict,
+      }),
+    });
+    return parseWithFallback(
+      raw,
+      ImportDshPluginResultSchema,
+      {
+        status: "",
+        plugin: null,
+        warnings: [],
+        existingPlugin: null,
+        error: "",
+      } as ImportDshPluginResult,
+      { endpoint: "POST /api/dsh-plugins" },
+    );
+  }
+
+  async updateDshPlugin(
+    id: string,
+    data: {
+      displayName?: string;
+      configRow?: string;
+      config?: Record<string, unknown>;
+      source?: string;
+    },
+  ): Promise<ImportDshPluginResult> {
+    const raw = await this.fetch<unknown>(`/api/dsh-plugins/${id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        display_name: data.displayName,
+        config_row: data.configRow,
+        config: data.config,
+        source: data.source,
+      }),
+    });
+    return parseWithFallback(
+      raw,
+      ImportDshPluginResultSchema,
+      {
+        status: "",
+        plugin: null,
+        warnings: [],
+        existingPlugin: null,
+        error: "",
+      } as ImportDshPluginResult,
+      { endpoint: "PUT /api/dsh-plugins/{id}" },
+    );
+  }
+
+  async deleteDshPlugin(id: string): Promise<void> {
+    await this.fetch(`/api/dsh-plugins/${id}`, { method: "DELETE" });
+  }
+
+  async uploadDshPlugin(
+    file: File,
+    opts?: { onConflict?: "fail" | "overwrite" | "skip"; displayName?: string },
+  ): Promise<ImportDshPluginResult> {
+    const formData = new FormData();
+    formData.append("file", file);
+    if (opts?.onConflict) formData.append("on_conflict", opts.onConflict);
+    if (opts?.displayName) formData.append("display_name", opts.displayName);
+
+    // Multipart, so the body must not carry a JSON content type — the browser
+    // sets the boundary itself.
+    const res = await fetch(`${this.baseUrl}/api/dsh-plugins/upload`, {
+      method: "POST",
+      headers: this.authHeaders(),
+      body: formData,
+      credentials: "include",
+    });
+    if (!res.ok) {
+      if (res.status === 401) this.handleUnauthorized();
+      let message = `Upload failed (${res.status})`;
+      try {
+        const parsed: unknown = await res.json();
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof (parsed as { error?: unknown }).error === "string"
+        ) {
+          message = (parsed as { error: string }).error;
+        }
+      } catch {
+        // Keep the status-based message.
+      }
+      throw new ApiError(message, res.status, res.statusText);
+    }
+    const raw: unknown = await res.json();
+    return parseWithFallback(
+      raw,
+      ImportDshPluginResultSchema,
+      {
+        status: "",
+        plugin: null,
+        warnings: [],
+        existingPlugin: null,
+        error: "",
+      } as ImportDshPluginResult,
+      { endpoint: "POST /api/dsh-plugins/upload" },
+    );
+  }
+
+  async checkDshPluginUpdate(id: string): Promise<DshPluginUpdate> {
+    const raw = await this.fetch<unknown>(`/api/dsh-plugins/${id}/update`);
+    return parseWithFallback(
+      raw,
+      DshPluginUpdateSchema,
+      {
+        packageName: "",
+        currentVersion: "",
+        latestVersion: "",
+        updateAvailable: false,
+        checkable: false,
+        reason: "",
+        sourceSpec: "",
+      } as DshPluginUpdate,
+      { endpoint: "GET /api/dsh-plugins/{id}/update" },
+    );
+  }
+
+  async listDshPluginFiles(id: string): Promise<DshPluginFileListing> {
+    const raw = await this.fetch<unknown>(`/api/dsh-plugins/${id}/files`);
+    return parseWithFallback(
+      raw,
+      DshPluginFileListingSchema,
+      {
+        packageName: "",
+        resolvedVersion: "",
+        files: [],
+        truncated: false,
+      } as DshPluginFileListing,
+      { endpoint: "GET /api/dsh-plugins/{id}/files" },
+    );
+  }
+
+  async getDshPluginFile(id: string, path: string): Promise<DshPluginFileContent> {
+    const raw = await this.fetch<unknown>(
+      `/api/dsh-plugins/${id}/file?path=${encodeURIComponent(path)}`,
+    );
+    return parseWithFallback(
+      raw,
+      DshPluginFileContentSchema,
+      { path, size: 0, content: "" } as DshPluginFileContent,
+      { endpoint: "GET /api/dsh-plugins/{id}/file" },
+    );
+  }
+
+  async listDshPluginBindings(): Promise<DshPluginBinding[]> {
+    const raw = await this.fetch<unknown>("/api/dsh-plugins/bindings");
+    return parseWithFallback(
+      raw,
+      DshPluginBindingListSchema,
+      [] as DshPluginBinding[],
+      { endpoint: "GET /api/dsh-plugins/bindings" },
+    );
+  }
+
+  async browseDshPluginCatalog(params: {
+    query?: string;
+    category?: string;
+    limit?: number;
+    offset?: number;
+    installableOnly?: boolean;
+  }): Promise<DshPluginCatalogPage> {
+    const search = new URLSearchParams();
+    if (params.query) search.set("q", params.query);
+    if (params.category) search.set("category", params.category);
+    if (params.limit) search.set("limit", String(params.limit));
+    if (params.offset) search.set("offset", String(params.offset + 1));
+    if (params.installableOnly === false) search.set("installable_only", "false");
+    const suffix = search.toString() ? `?${search.toString()}` : "";
+    const raw = await this.fetch<unknown>(`/api/dsh-plugins/catalog${suffix}`);
+    return parseWithFallback(
+      raw,
+      DshPluginCatalogPageSchema,
+      {
+        entries: [],
+        total: 0,
+        limit: 0,
+        offset: 0,
+        state: {
+          catalog: "",
+          catalogVersion: "",
+          entryCount: 0,
+          refreshedAt: "",
+          sourcePackage: "",
+          sourceRepo: "",
+          sourceSite: "",
+          license: "",
+          official: false,
+        },
+      } as DshPluginCatalogPage,
+      { endpoint: "GET /api/dsh-plugins/catalog" },
+    );
+  }
+
+  async listDshPluginCatalogCategories(): Promise<DshPluginCatalogCategory[]> {
+    const raw = await this.fetch<unknown>("/api/dsh-plugins/catalog/categories");
+    return parseWithFallback(
+      raw,
+      DshPluginCatalogCategoryListSchema,
+      [] as DshPluginCatalogCategory[],
+      { endpoint: "GET /api/dsh-plugins/catalog/categories" },
+    );
+  }
+
+  async refreshDshPluginCatalog(): Promise<void> {
+    await this.fetch("/api/dsh-plugins/catalog/refresh", { method: "POST" });
+  }
+
+  async searchDshPluginRegistry(
+    query: string,
+  ): Promise<DshPluginRegistryResult[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/dsh-plugins/registry-search?q=${encodeURIComponent(query)}`,
+    );
+    return parseWithFallback(
+      raw,
+      DshPluginRegistrySearchSchema,
+      [] as DshPluginRegistryResult[],
+      { endpoint: "GET /api/dsh-plugins/registry-search" },
+    );
+  }
+
+  async listAgentDshPlugins(agentId: string): Promise<AgentDshPlugin[]> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/dsh-plugins`);
+    return parseWithFallback(
+      raw,
+      AgentDshPluginListSchema,
+      [] as AgentDshPlugin[],
+      { endpoint: "GET /api/agents/{id}/dsh-plugins" },
+    );
+  }
+
+  async setAgentDshPlugins(
+    agentId: string,
+    plugins: { id: string; enabled?: boolean }[],
+  ): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/dsh-plugins`, {
+      method: "PUT",
+      body: JSON.stringify({ plugins }),
+    });
+  }
+
+  async removeAgentDshPlugin(agentId: string, pluginId: string): Promise<void> {
+    await this.fetch(`/api/agents/${agentId}/dsh-plugins/${pluginId}`, {
       method: "DELETE",
     });
   }

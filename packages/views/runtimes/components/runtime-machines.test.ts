@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentRuntime } from "@multica/core/types";
 import {
   buildRuntimeMachines,
+  filterRuntimesByOwnership,
   filterRuntimeMachines,
+  runtimeMachineOwnerIds,
   runtimeMachineCounts,
   runtimeRowLabel,
   sharedCustomName,
@@ -33,6 +35,53 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 }
 
 describe("runtime machine grouping", () => {
+  it("filters runtime instances by the mine scope or an owner selected from all", () => {
+    const runtimes = [
+      makeRuntime({ id: "mine", owner_id: "user-1" }),
+      makeRuntime({ id: "theirs", owner_id: "user-2" }),
+      makeRuntime({ id: "unowned", owner_id: null }),
+    ];
+
+    expect(
+      filterRuntimesByOwnership(runtimes, {
+        scope: "mine",
+        currentUserId: "user-1",
+        ownerId: "user-2",
+      }).map((runtime) => runtime.id),
+    ).toEqual(["mine"]);
+    expect(
+      filterRuntimesByOwnership(runtimes, {
+        scope: "all",
+        currentUserId: "user-1",
+        ownerId: "user-2",
+      }).map((runtime) => runtime.id),
+    ).toEqual(["theirs"]);
+    expect(
+      filterRuntimesByOwnership(runtimes, {
+        scope: "all",
+        currentUserId: "user-1",
+        ownerId: null,
+      }),
+    ).toEqual(runtimes);
+  });
+
+  it("reports each machine owner once for the overview owner column", () => {
+    const [machine] = buildRuntimeMachines(
+      [
+        makeRuntime({ id: "mine-claude", owner_id: "user-1" }),
+        makeRuntime({ id: "mine-codex", provider: "codex", owner_id: "user-1" }),
+        makeRuntime({ id: "theirs", provider: "copilot", owner_id: "user-2" }),
+        makeRuntime({ id: "unowned", provider: "qwen", owner_id: null }),
+      ],
+      { now: NOW },
+    );
+
+    expect(machine && runtimeMachineOwnerIds(machine)).toEqual([
+      "user-1",
+      "user-2",
+    ]);
+  });
+
   it("groups multiple provider runtimes by daemon id", () => {
     const machines = buildRuntimeMachines(
       [

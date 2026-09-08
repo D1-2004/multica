@@ -17,12 +17,14 @@ import (
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
+	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
@@ -449,14 +451,34 @@ func main() {
 		slog.Error("deployment fence instance identity failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
-	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit)
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker)
 	if err != nil {
 		slog.Error("deployment fence initialization failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
 	go deploymentFence.Run(relayCtx)
 
+	// Langfuse export is optional and fail-open: missing keys disable it, and
+	// a malformed base URL only logs so observability can never block boot.
+	langfuseConfig := langfuse.ConfigFromEnv()
+	langfuseConfig.Release = version
+	langfuseClient, err := langfuse.New(ctx, langfuseConfig)
+	if err != nil {
+		slog.Warn("langfuse tracing disabled: invalid configuration", "event", "langfuse_config_invalid", "error", err)
+		langfuseClient = nil
+	}
+	if langfuseClient.Enabled() {
+		slog.Info("langfuse tracing enabled",
+			"event", "langfuse_enabled",
+			"endpoint", langfuseClient.Endpoint(),
+			"environment", langfuseClient.Environment(),
+		)
+	} else {
+		slog.Info("langfuse tracing disabled", "event", "langfuse_disabled")
+	}
+
 	r, h := NewRouterWithOptions(pool, hub, bus, analyticsClient, storeRedis, RouterOptions{
+		Langfuse:           langfuseClient,
 		HTTPMetrics:        httpMetrics,
 		BusinessMetrics:    businessMetrics,
 		WecomMetrics:       wecomMetrics,
@@ -520,6 +542,12 @@ func main() {
 	}
 	if h.TaskCompletionWorker != nil {
 		go h.TaskCompletionWorker.Run(sweepCtx)
+	}
+	if h.DingTalkResponses != nil {
+		go h.DingTalkResponses.Run(sweepCtx)
+	}
+	if h.DingTalkResponsePolicySync != nil {
+		go h.DingTalkResponsePolicySync.Run(sweepCtx)
 	}
 	if h.InboundCoordinatorWorker != nil {
 		go h.InboundCoordinatorWorker.Run(sweepCtx)
@@ -654,6 +682,12 @@ func main() {
 	if h.TaskCompletionWorker != nil && !h.TaskCompletionWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("task completion worker did not exit within shutdown timeout")
 	}
+	if h.DingTalkResponses != nil && !h.DingTalkResponses.WaitWithTimeout(context.Background(), 5*time.Second) {
+		slog.Warn("DingTalk response worker did not exit within shutdown timeout")
+	}
+	if h.DingTalkResponsePolicySync != nil && !h.DingTalkResponsePolicySync.WaitWithTimeout(5*time.Second) {
+		slog.Warn("DingTalk response policy worker did not exit within shutdown timeout")
+	}
 	if h.InboundCoordinatorWorker != nil && !h.InboundCoordinatorWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("inbound coordinator worker did not exit within shutdown timeout")
 	}
@@ -699,6 +733,15 @@ func main() {
 			slog.Error("metrics server forced to shutdown", "error", err)
 		}
 		metricsShutdownCancel()
+	}
+	if langfuseClient.Enabled() {
+		// Every producer has stopped above; push the last batched spans before
+		// the process exits so a rolling deploy never drops the final turns.
+		langfuseShutdownCtx, langfuseShutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := langfuseClient.Shutdown(langfuseShutdownCtx); err != nil {
+			slog.Warn("langfuse exporter did not flush within shutdown timeout", "event", "langfuse_shutdown_timeout", "error", err)
+		}
+		langfuseShutdownCancel()
 	}
 	_ = flags.Close()
 	_ = remoteRuntimeConfig.Close()

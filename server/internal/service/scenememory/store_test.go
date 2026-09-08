@@ -2,6 +2,7 @@ package scenememory
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -15,6 +16,81 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestHistoryProgressCommitsWithMemoryAndSurvivesNewLease(t *testing.T) {
+	ctx := context.Background()
+	pool := openPool(t)
+	store := NewStore(db.New(pool))
+	id := testIdentity(t)
+	dirtyReady(t, pool, store, id)
+	row, err := store.Claim(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := row.LeaseTargetThroughAt.Time.Add(-time.Second).Truncate(time.Millisecond)
+	progress := historyProgress{DirtyRevision: row.LeaseTargetDirtyRevision.Int64, After: after, PendingSeen: true}
+	meta, _ := json.Marshal(map[string]any{"history_progress": progress})
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, err = store.WithTx(tx).CommitBatch(ctx, row, CommitBatch{ReplaceText: true, MemoryText: "page one", SourceCursorAt: after, SourceCursorEvidenceID: "page-one", FlushMeta: meta, ExpectedMemoryRevision: row.MemoryRevision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.MemoryText != "" {
+		t.Fatal("rolled-back memory leaked")
+	}
+	if _, ok := restoredHistoryProgress(unchanged); ok {
+		t.Fatal("rolled-back cursor leaked")
+	}
+	_, err = store.CommitBatch(ctx, row, CommitBatch{ReplaceText: true, MemoryText: "page one", SourceCursorAt: after, SourceCursorEvidenceID: "page-one", FlushMeta: meta, ExpectedMemoryRevision: row.MemoryRevision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.ReleasePending(ctx, row); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := store.Claim(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := restoredHistoryProgress(claimed)
+	if !ok || !got.After.Equal(after) || claimed.MemoryText != "page one" || claimed.LeaseToken == row.LeaseToken {
+		t.Fatalf("new lease lost atomic progress: %+v, ok=%v", got, ok)
+	}
+	// Simulate a new inbound arriving while the second lease is active.
+	_, err = store.MarkDirty(ctx, id, DirtyTrigger{OccurredAt: after.Add(-time.Hour), EvidenceID: "late-after-claim", IdempotencyKey: "new-dirty"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, _ = json.Marshal(map[string]any{"history_progress": historyProgress{DirtyRevision: claimed.LeaseTargetDirtyRevision.Int64, After: after.Add(time.Millisecond)}})
+	_, err = store.CommitBatch(ctx, claimed, CommitBatch{MemoryText: "page one", SourceCursorAt: after, SourceCursorEvidenceID: "page-one", FlushMeta: meta, ExpectedMemoryRevision: claimed.MemoryRevision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.ReleasePending(ctx, claimed); err != nil {
+		t.Fatal(err)
+	}
+	next, err := store.Claim(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := restoredHistoryProgress(next); ok {
+		t.Fatal("new dirty revision inherited old evidence coverage")
+	}
+	if got := historyStartAfter(next, false, time.Now()); got.After(after.Add(-time.Hour)) {
+		t.Fatal("concurrent late inbound was skipped")
+	}
+}
 
 func openPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -228,6 +304,30 @@ func TestCommitBatchDoesNotFalselyClean(t *testing.T) {
 	}
 	if err := store.FinishClaim(ctx, row); !errors.Is(err, ErrNotCaughtUp) {
 		t.Fatalf("finish before cutoff: %v", err)
+	}
+}
+
+func TestCommitBatchResetsAttemptCount(t *testing.T) {
+	ctx := context.Background()
+	pool := openPool(t)
+	store := NewStore(db.New(pool))
+	row := claimReady(t, pool, store, testIdentity(t))
+	if row.AttemptCount < 1 {
+		t.Fatalf("claim should increment attempt, got %d", row.AttemptCount)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE scene_memory SET attempt_count = 800 WHERE id = $1`, row.ID); err != nil {
+		t.Fatalf("inflate attempts: %v", err)
+	}
+	updated, err := store.CommitBatch(ctx, row, CommitBatch{
+		SourceCursorAt:         row.LeaseTargetThroughAt.Time,
+		SourceCursorEvidenceID: row.LeaseTargetThroughEvidenceID,
+		ExpectedMemoryRevision: row.MemoryRevision,
+	})
+	if err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if updated.AttemptCount != 0 {
+		t.Fatalf("successful batch must clear attempt_count, got %d", updated.AttemptCount)
 	}
 }
 
@@ -781,7 +881,7 @@ func TestMarkDirtyThenPlanFlushIncludesEarlierTrigger(t *testing.T) {
 	if row.SourceCursorEvidenceID != "msg-later" {
 		t.Fatalf("cursor must still be the flushed high-water, got %q", row.SourceCursorEvidenceID)
 	}
-	plan, err := planFlush(row, []HistoryEvent{
+	plan, err := planCompleteFlush(row, []HistoryEvent{
 		{EvidenceID: "msg-early", OccurredAt: earlier, Content: "纠正：DELTA-5520 是排班表"},
 		{EvidenceID: "msg-later", OccurredAt: later, Content: "灌水"},
 	})

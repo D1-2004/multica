@@ -114,6 +114,12 @@ describe("proxy legacy workspace route redirects", () => {
     expect(redirectLocation("/acme/squads", sessionCookies)).toBeNull();
   });
 
+  it("does not treat the global Runner authorization page as a legacy workspace route", () => {
+    expect(
+      redirectLocation("/runners/authorize?code=ULRZ-B4ZA", sessionCookies),
+    ).toBeNull();
+  });
+
   it("redirects app-host root URLs to the last workspace", () => {
     expect(redirectLocation("/", sessionCookies)).toBe(
       "https://app.multica.test/acme/issues",

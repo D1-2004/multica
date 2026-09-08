@@ -182,6 +182,35 @@ WHERE existing.root_task_id IS NULL
   AND existing.failure_reason IS NOT DISTINCT FROM EXCLUDED.failure_reason
 RETURNING *;
 
+-- name: EnqueueSynchronousSilenceTaskCompletion :one
+INSERT INTO task_completion_outbox AS existing (
+    root_task_id,
+    terminal_task_id,
+    callback_url,
+    target_identity,
+    request_id,
+    agent_id,
+    execution_status,
+    result_message,
+    error,
+    failure_reason,
+    execution_summary
+) VALUES (
+    NULL, NULL, $1, $2, $3, $4, 'completed', '', NULL, NULL, $5
+)
+ON CONFLICT (request_id) DO UPDATE
+SET updated_at = existing.updated_at
+WHERE existing.root_task_id IS NULL
+  AND existing.terminal_task_id IS NULL
+  AND existing.callback_url = EXCLUDED.callback_url
+  AND existing.target_identity = EXCLUDED.target_identity
+  AND existing.agent_id = EXCLUDED.agent_id
+  AND existing.execution_status = EXCLUDED.execution_status
+  AND existing.result_message = EXCLUDED.result_message
+  AND existing.error IS NOT DISTINCT FROM EXCLUDED.error
+  AND existing.failure_reason IS NOT DISTINCT FROM EXCLUDED.failure_reason
+RETURNING *;
+
 -- name: EnqueueSynchronousCompletedTaskCompletion :one
 INSERT INTO task_completion_outbox AS existing (
     root_task_id,

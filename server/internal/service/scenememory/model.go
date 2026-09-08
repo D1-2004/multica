@@ -27,6 +27,7 @@ const (
 	ErrorRouteInactive = "ROUTE_INACTIVE"
 	ErrorConfig        = "CONFIG"
 	ErrorIncomplete    = "INCOMPLETE"
+	ErrorLLMTimeout    = "LLM_TIMEOUT"
 )
 
 // KindFromChatType maps a DingTalk/dispatch chat type onto a Scene kind.
@@ -59,6 +60,7 @@ type DirtyTrigger struct {
 type CommitBatch struct {
 	ReplaceText            bool
 	MemoryText             string
+	SceneTitle             string
 	SourceCursorAt         time.Time
 	SourceCursorEvidenceID string
 	FlushMeta              []byte
@@ -118,20 +120,6 @@ func FlushErrorCode(err error) string {
 		return fe.Code
 	}
 	return ""
-}
-
-// HistoryGapError is INCOMPLETE with the oldest page we did reach, so the
-// next claim can resume older instead of rereading the same newest pages.
-type HistoryGapError struct {
-	FlushError
-	Oldest time.Time
-}
-
-func (e *HistoryGapError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return &e.FlushError
 }
 
 func TerminalFlushCode(code string) bool {

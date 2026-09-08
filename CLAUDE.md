@@ -240,9 +240,13 @@ Do not claim verification passed unless you ran it. If you skip checks because t
 
 ## Domain Reminders
 
+- Before any Coordinator-related change in `inboundcoord`, handlers/dispatch/callbacks, assoc, scenememory, or trace, read `docs/inbound-coordinator-loop.md` (current behavior contract) and `server/internal/service/inboundcoord/policy/registry.json` (versioned obligations, modules, and superseded incident safeguards). Update source mapping, relevant tool/Host contracts, contrast cases, and evidence status together; run `python3 scripts/check-coordinator-policy.py`. Historical Plans are evidence, not a competing current contract.
+
 - All queries filter by `workspace_id`; membership gates access; `X-Workspace-ID` selects the workspace.
 - Issue assignees are polymorphic: `assignee_type` plus `assignee_id` can reference a member or an agent.
 - Coordinator Scene Memory e2e plays and next-turn SLS checks: `docs/plans/2026-09-02-coordinator-scene-memory-e2e.md`. How to send/query: skill `scene-memory-e2e`.
+- Langfuse traces for the Coordinator loop, the memory loop, and agent tasks are produced server-side by `server/internal/langfuse` and gated by `LANGFUSE_*` keys (whitelisted in `src/main.sh`); the daemon and the FC image need no rebuild for them. Keep the SLS lookup keys as trace metadata when adding spans: `docs/langfuse-observability.md`.
+- Coordinator scene window (busy → next window, 2 @s, delegator per utterance): `docs/plans/2026-09-05-coordinator-scene-window.md`.
 
 ## Aone Fork
 

@@ -2,6 +2,7 @@ package runtimeconfig
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -61,6 +62,9 @@ type WebConfig struct {
 }
 
 type IntegrationsConfig struct {
+	// Decode-only compatibility for old snapshots; employee settings now own response mode.
+	DingTalkResponsePolicyEnabled   bool   `json:"dingtalk_response_policy_enabled,omitempty"`
+	DingTalkResponsePolicyRevision  int64  `json:"dingtalk_response_policy_revision,omitempty"`
 	AgentMessageRouterInternalURL   string `json:"agent_message_router_internal_url"`
 	DingTalkDBaseBindingOrigin      string `json:"dingtalk_dbase_binding_origin"`
 	DingTalkDBaseBindingPageURL     string `json:"dingtalk_dbase_binding_page_url"`
@@ -86,14 +90,15 @@ type LLMConfig struct {
 }
 
 type FCE2BConfig struct {
-	Enabled                bool     `json:"enabled"`
-	StablePublisherUserIDs []string `json:"stable_publisher_user_ids"`
-	Template               string   `json:"template"`
-	ServerURL              string   `json:"server_url"`
-	APIURL                 string   `json:"api_url"`
-	Domain                 string   `json:"domain"`
-	TimeoutSeconds         int      `json:"timeout_seconds"`
-	SandboxReadyTimeout    Duration `json:"sandbox_ready_timeout"`
+	DWSMessagePolicyFingerprints []string `json:"dws_message_policy_fingerprints,omitempty"`
+	Enabled                      bool     `json:"enabled"`
+	StablePublisherUserIDs       []string `json:"stable_publisher_user_ids"`
+	Template                     string   `json:"template"`
+	ServerURL                    string   `json:"server_url"`
+	APIURL                       string   `json:"api_url"`
+	Domain                       string   `json:"domain"`
+	TimeoutSeconds               int      `json:"timeout_seconds"`
+	SandboxReadyTimeout          Duration `json:"sandbox_ready_timeout"`
 }
 
 type ASBConfig struct {
@@ -201,6 +206,7 @@ func (c Config) normalized() Config {
 	c.Runtime.LLM.DefaultModel = strings.TrimSpace(c.Runtime.LLM.DefaultModel)
 	c.Runtime.FCE2B.Template = strings.TrimSpace(c.Runtime.FCE2B.Template)
 	c.Runtime.FCE2B.StablePublisherUserIDs = normalizedUnique(c.Runtime.FCE2B.StablePublisherUserIDs)
+	c.Runtime.FCE2B.DWSMessagePolicyFingerprints = normalizedUnique(c.Runtime.FCE2B.DWSMessagePolicyFingerprints)
 	c.Runtime.FCE2B.ServerURL = trimURL(c.Runtime.FCE2B.ServerURL)
 	c.Runtime.FCE2B.APIURL = trimURL(c.Runtime.FCE2B.APIURL)
 	c.Runtime.FCE2B.Domain = strings.TrimSpace(c.Runtime.FCE2B.Domain)
@@ -301,6 +307,11 @@ func (c IntegrationsConfig) validate() error {
 }
 
 func (c RuntimeConfig) validate() error {
+	for _, fingerprint := range c.FCE2B.DWSMessagePolicyFingerprints {
+		if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != 16 || fingerprint != strings.ToLower(fingerprint) {
+			return fmt.Errorf("fc_e2b.dws_message_policy_fingerprints must contain exact lowercase 16-character fingerprints")
+		}
+	}
 	if err := validateHTTPURL(c.LLM.BaseURL, true); err != nil {
 		return fmt.Errorf("llm.base_url: %w", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -126,6 +127,9 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 	if c.Control != nil {
 		payload["dispatch_control"] = c.Control
 	}
+	if c.ResponsePolicy != nil {
+		payload["dispatch_response_policy"] = c.ResponsePolicy
+	}
 	if strings.TrimSpace(c.ContextPrompt) != "" {
 		payload[protocol.DispatchContextPromptJSONKey] = c.ContextPrompt
 	}
@@ -148,6 +152,9 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		}
 		if c.CompletionCallback.UpdateURL != "" {
 			callback["update_url"] = c.CompletionCallback.UpdateURL
+		}
+		if c.CompletionCallback.ResponseURL != "" {
+			callback["response_url"] = c.CompletionCallback.ResponseURL
 		}
 		if c.CompletionCallback.TelemetryURL != "" {
 			callback["telemetry_url"] = c.CompletionCallback.TelemetryURL
@@ -193,6 +200,10 @@ func (h *Handler) handleAgentDispatchV2(
 	command, err := bindDispatchCompletionTarget(command, h.TaskCompletionTargetIdentity)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
+		return
+	}
+	if managedDingTalkResponse(command) && (h.DingTalkResponses == nil || h.InboundCoordinatorWorker == nil) {
+		writeError(w, http.StatusServiceUnavailable, "managed DingTalk response service is unavailable")
 		return
 	}
 	if command.Control != nil && command.Control.Action == "cancel" {
@@ -309,7 +320,10 @@ func (h *Handler) handleAgentDispatchV2(
 		recovered.Forward(w)
 		return
 	}
-	if h.InboundCoordinatorWorker != nil && shouldDeferInboundCoordinator(command, plan) {
+	if h.InboundCoordinatorWorker != nil &&
+		shouldDeferInboundCoordinator(command, plan) &&
+		!dispatchIsAgentSelfMessage(command) &&
+		!dispatchIsAgentSelfEmotion(command) {
 		response, _, enqueueErr := h.enqueueInboundCoordinatorJob(
 			r.Context(), acceptance, command, dispatchContext, idempotencyKey, plan.Prompt.DisplayContent,
 		)
@@ -352,9 +366,9 @@ func (h *Handler) executeAgentDispatchV2(
 		return
 	}
 
-	if dispatchIsAgentSelfEmotion(command) {
+	if dispatchIsAgentSelfMessage(command) || dispatchIsAgentSelfEmotion(command) {
 		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
-			"outcome", "skipped_self_emotion",
+			"outcome", "skipped_self_inbound",
 			"protocol", "dispatch_command_v2",
 			"eventType", command.Event.Type,
 			"sourceType", command.Source.Type,
@@ -368,6 +382,16 @@ func (h *Handler) executeAgentDispatchV2(
 		return
 	}
 	if plan.MaterializerType == protocol.DispatchSurfaceTypeChat {
+		_, hasSavedPlan := inboundcoord.RestoredPlan(r.Context())
+		coordinatorOn, coordinatorFlagErr := h.Queries.GetAgentInboundCoordinator(r.Context(), dispatchContext.AgentID)
+		if inboundcoord.HasPlanCheckpoint(r.Context()) && (hasSavedPlan || (coordinatorFlagErr == nil && coordinatorOn)) && command.Event.Domain == "channel" && command.Event.Type == "message.created" {
+			agent, ok := h.resolveAgentDispatchAgent(w, r, dispatchContext.UserID, dispatchContext.WorkspaceID, dispatchContext.AgentID)
+			if !ok {
+				return
+			}
+			h.createAgentDispatchIssueV2(w, r, command, plan.Prompt, dispatchContext, agent)
+			return
+		}
 		if command.Continuation != nil &&
 			(command.Continuation.Kind != "chat" || strings.TrimSpace(command.Continuation.ChatSessionID) == "") {
 			writeError(w, http.StatusBadRequest, "continuation must identify a chat")
@@ -492,33 +516,39 @@ func bindDispatchCompletionTarget(
 	command DispatchCommand,
 	targetIdentity string,
 ) (DispatchCommand, error) {
-	if command.CompletionCallback == nil {
+	targetIdentity = strings.TrimSpace(targetIdentity)
+	if command.CompletionCallback == nil && len(command.ExtraCompletionCallbacks) == 0 {
 		return command, nil
 	}
-	targetIdentity = strings.TrimSpace(targetIdentity)
 	if !routerCompletionTargetPattern.MatchString(targetIdentity) {
 		return DispatchCommand{}, errors.New("task completion target is not configured")
 	}
-	callback := *command.CompletionCallback
-	callback.Target = targetIdentity
-	command.CompletionCallback = &callback
+	if command.CompletionCallback != nil {
+		callback := *command.CompletionCallback
+		callback.Target = targetIdentity
+		command.CompletionCallback = &callback
+	}
+	for i := range command.ExtraCompletionCallbacks {
+		command.ExtraCompletionCallbacks[i].Target = targetIdentity
+	}
 	return command, nil
 }
 
 // AgentDispatchV2Request preserves the exact Router JSON contract while the
 // internal DispatchCommand owns validation and execution semantics.
 type AgentDispatchV2Request struct {
-	SchemaVersion      string                        `json:"schemaVersion"`
-	AgentID            string                        `json:"agentId,omitempty"`
-	Continuation       *AgentDispatchContinuation    `json:"continuation"`
-	Source             DispatchSource                `json:"source"`
-	Event              DispatchEvent                 `json:"event"`
-	Surface            DispatchSurface               `json:"surface"`
-	Outbound           DispatchOutbound              `json:"outbound"`
-	Control            *DispatchControl              `json:"control,omitempty"`
-	ContextPrompt      string                        `json:"contextPrompt,omitempty"`
-	ExternalIdentity   AgentDispatchExternalIdentity `json:"externalIdentity"`
-	CompletionCallback *DispatchCompletionCallback   `json:"completionCallback,omitempty"`
+	SchemaVersion      string                           `json:"schemaVersion"`
+	AgentID            string                           `json:"agentId,omitempty"`
+	Continuation       *AgentDispatchContinuation       `json:"continuation"`
+	Source             DispatchSource                   `json:"source"`
+	Event              DispatchEvent                    `json:"event"`
+	Surface            DispatchSurface                  `json:"surface"`
+	Outbound           DispatchOutbound                 `json:"outbound"`
+	Control            *DispatchControl                 `json:"control,omitempty"`
+	ContextPrompt      string                           `json:"contextPrompt,omitempty"`
+	ResponsePolicy     *protocol.DingTalkResponsePolicy `json:"responsePolicy,omitempty"`
+	ExternalIdentity   AgentDispatchExternalIdentity    `json:"externalIdentity"`
+	CompletionCallback *DispatchCompletionCallback      `json:"completionCallback,omitempty"`
 }
 
 func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
@@ -532,6 +562,7 @@ func (r AgentDispatchV2Request) DispatchCommand() DispatchCommand {
 		Outbound:           r.Outbound,
 		Control:            r.Control,
 		ContextPrompt:      r.ContextPrompt,
+		ResponsePolicy:     r.ResponsePolicy,
 		ExternalIdentity:   r.ExternalIdentity,
 		CompletionCallback: r.CompletionCallback,
 	}
@@ -694,8 +725,21 @@ func (h *Handler) createAgentDispatchChatV2(
 		}
 		options.ChatSessionOverride = &chatSessionID
 	}
+	// A durable coordinator job pins its id as the turn's trace id; give the
+	// channel engine that id as the inbound chat trace so the coordinator
+	// trace, the task's chat trace, and the Scene Memory trigger recorded at
+	// enqueue time all resolve to the same identifier.
+	if traceID := inboundcoord.TraceIDFromContext(r.Context()); traceID != "" && strings.TrimSpace(message.TraceID) == "" {
+		message.TraceID = traceID
+		message.TraceChannel = string(message.Source.ChannelType)
+		message.TraceStartedAtUnixMS = time.Now().UnixMilli()
+	}
 	result, err := h.ChannelRouter.HandleResultWithOptions(r.Context(), message, options)
 	if err != nil {
+		if errors.Is(err, service.ErrIssueDispatchPending) {
+			writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to dispatch dingtalk chat")
 		return
 	}
@@ -825,11 +869,14 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 			return true
 		}
 		if command.CompletionCallback != nil {
-			if err := h.TaskService.EnqueueSynchronousCompleted(
+			if err := h.enqueueCoordinatorIssueAckOrComplete(
 				ctx,
-				command.CompletionCallback.URL,
-				command.CompletionCallback.Target,
+				command,
+				dispatchContext,
 				dispatchContext.AgentID,
+				db.AgentTaskQueue{ID: result.TaskID, AgentID: dispatchContext.AgentID},
+				db.Issue{ID: result.IssueID},
+				result.IssueIdentifier,
 				result.ReplyText,
 			); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
@@ -858,12 +905,26 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 	}
 	switch result.Outcome {
 	case engine.OutcomeCoordinatorReply:
+		visible := stripReplyDecisionLeak(result.ReplyText)
+		if visible == "" {
+			if err := h.TaskService.EnqueueSynchronousSilence(
+				ctx,
+				command.CompletionCallback.URL,
+				command.CompletionCallback.Target,
+				dispatchContext.AgentID,
+			); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
+				return true
+			}
+			w.WriteHeader(http.StatusAccepted)
+			return true
+		}
 		if err := h.TaskService.EnqueueSynchronousCompleted(
 			ctx,
 			command.CompletionCallback.URL,
 			command.CompletionCallback.Target,
 			dispatchContext.AgentID,
-			result.ReplyText,
+			visible,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
 			return true
@@ -874,13 +935,11 @@ func (h *Handler) writeAgentChatCoordinatorOutcomeV2(
 		})
 		return true
 	case engine.OutcomeCoordinatorSilence:
-		if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+		if err := h.TaskService.EnqueueSynchronousSilence(
 			ctx,
 			command.CompletionCallback.URL,
 			command.CompletionCallback.Target,
 			dispatchContext.AgentID,
-			"coordinator silence",
-			string(engine.OutcomeCoordinatorSilence),
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
 			return true
@@ -1032,18 +1091,25 @@ func recoverDuplicateAgentChatDispatch(
 }
 
 func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext, agent db.Agent) {
-	decision := decideDispatchCoordinator(
-		r.Context(), h, c, agent, prompt.DisplayContent,
-		dispatchContext.UserID,
-		dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
-	)
-	if len(c.Event.Data.Messages) > 0 {
-		for _, m := range c.Event.Data.Messages {
-			if m.Reaction == nil && len(m.Attachments) > 0 && decision.Action != inboundcoord.ActionContinue {
-				decision.Action = inboundcoord.ActionContinue
-				break
-			}
+	decision := inboundcoord.Decision{Action: inboundcoord.ActionContinue, Reason: "attachment_execution_path"}
+	hasAttachments := false
+	for _, message := range c.Event.Data.Messages {
+		if message.Reaction == nil && len(message.Attachments) > 0 {
+			hasAttachments = true
 		}
+	}
+	if !hasAttachments {
+		decision = decideDispatchCoordinator(
+			r.Context(), h, c, agent, prompt.DisplayContent,
+			dispatchContext.UserID,
+			dispatchRuntimeContext(c, dispatchIdempotencyKey(r, c)),
+		)
+	}
+	// Publish committed results after materialization, not just the model verdict.
+	defer func() { inboundcoord.RecordDecision(r.Context(), decision) }()
+	if decision.Action == inboundcoord.ActionDeferred {
+		writeError(w, http.StatusServiceUnavailable, "coordinator has not decided this window; retry without executing")
+		return
 	}
 	if decision.Action == inboundcoord.ActionRetry {
 		writeError(w, http.StatusConflict, "recalled issue already has a pending agent task")
@@ -1057,6 +1123,14 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		if writeDispatchCoordinatorTerminal(w, r.Context(), h, c, dispatchContext, decision) {
 			return
 		}
+	}
+	// Classification is independent of sandbox capacity. Enforce capacity
+	// only on execution, including the LLM-unavailable fallback.
+	if decision.Action == inboundcoord.ActionContinue && c.CompletionCallback != nil &&
+		c.Event.Domain == "channel" && c.Event.Type == "message.created" &&
+		sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c)) <= 0 {
+		writeError(w, http.StatusConflict, "scene already has two in-flight matters")
+		return
 	}
 
 	attachments := make([]AgentDispatchAttachment, 0)
@@ -1087,20 +1161,281 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	}()
 
 	idempotencyKey := dispatchIdempotencyKey(r, c)
-	overrides := agentDispatchIssueCreateOverrides{}
-	if decision.Action == inboundcoord.ActionIssue {
-		overrides.Title = inboundcoord.IssueTitle(decision, prompt.DisplayContent)
-		overrides.DisplayContent = inboundcoord.IssueDescription(decision, prompt.DisplayContent)
-		independentContext, contextErr := inboundcoord.IndependentIssueTaskContext(
-			dispatchRuntimeContext(c, idempotencyKey),
-			inboundcoord.CoordinatorIssueTriggerCreate,
-		)
-		if contextErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
+	items := decision.Items
+	if decision.Action == inboundcoord.ActionIssue && len(items) == 0 {
+		items = []inboundcoord.WindowItem{{
+			Delegator: strings.TrimSpace(c.Event.Data.Sender.DisplayName),
+			Purpose:   decision.Purpose,
+			Intent:    decision.Intent,
+			LookInto:  decision.LookInto,
+		}}
+	}
+	if decision.Action == inboundcoord.ActionIssue && len(items) > 0 {
+		for i := range items {
+			if items[i].ActionKey == "" {
+				items[i].ActionKey = fmt.Sprintf("item-%d", i+1)
+			}
+		}
+		decision.Items = items
+		pending := 0
+		newNeeded := 0
+		for i, item := range items {
+			if planItemCompleted(decision, item.ActionKey) {
+				continue
+			}
+			if pending >= inboundcoord.SceneWindowMaxItems {
+				break
+			}
+			pending++
+			key := windowItemKey(idempotencyKey, item, i)
+			if item.IssueID != "" {
+				_, lookupErr := h.Queries.GetExternalIssueFollowUpTaskID(r.Context(), db.GetExternalIssueFollowUpTaskIDParams{WorkspaceID: dispatchContext.WorkspaceID, AgentID: agent.ID, IdempotencyKey: key})
+				if lookupErr == nil {
+					continue
+				}
+				if !errors.Is(lookupErr, pgx.ErrNoRows) {
+					writeError(w, 500, "cannot verify continuation admission")
+					return
+				}
+			} else {
+				itemCommand := windowItemCommand(c, item)
+				if _, _, _, ok := h.lookupCoordinatorWindowItem(r.Context(), agent.ID, key, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID); ok {
+					continue
+				}
+			}
+			newNeeded++
+		}
+		slots := sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c))
+		if newNeeded > slots {
+			writeError(w, http.StatusConflict, "scene already has two in-flight matters")
 			return
 		}
-		overrides.DispatchContext = independentContext
+		var firstIssueID, firstTaskID, firstIdentifier string
+		var firstIssue db.Issue
+		var firstTask db.AgentTaskQueue
+		created := len(decision.CompletedActionKeys)
+		if created > 0 && len(decision.IssueResults) > 0 {
+			prior := decision.IssueResults[0]
+			firstIssueID, firstTaskID, firstIdentifier = prior.IssueID, prior.TaskID, prior.IssueIdentifier
+			firstIssue, err = h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{ID: parseUUID(prior.IssueID), WorkspaceID: dispatchContext.WorkspaceID})
+			if err != nil {
+				writeError(w, 500, "cannot recover committed issue")
+				return
+			}
+			firstTask, err = h.Queries.GetAgentTask(r.Context(), parseUUID(prior.TaskID))
+			if err != nil {
+				writeError(w, 500, "cannot recover committed task")
+				return
+			}
+		}
+		incomplete := false
+		processed := 0
+		usedEvidence := map[string]struct{}{}
+		for i, item := range items {
+			if planItemCompleted(decision, item.ActionKey) {
+				continue
+			}
+			if processed >= inboundcoord.SceneWindowMaxItems {
+				break
+			}
+			processed++
+			itemDecision := decision
+			itemDecision.Purpose = item.Purpose
+			itemDecision.Intent = item.Intent
+			itemDecision.LookInto = item.LookInto
+			itemDecision.Items = []inboundcoord.WindowItem{item}
+			overrides := agentDispatchIssueCreateOverrides{
+				Title:          inboundcoord.IssueTitle(itemDecision, prompt.DisplayContent),
+				DisplayContent: inboundcoord.IssueDescription(itemDecision, firstNonEmpty(item.Content, prompt.DisplayContent)),
+			}
+			itemKey := windowItemKey(idempotencyKey, item, i)
+			itemCommand := windowItemCommand(c, item)
+			bindWindowItemEvidence(&itemCommand, item, usedEvidence)
+			if item.IssueID != "" {
+				issue, task, result, followErr := h.materializeWindowContinuation(r.Context(), itemCommand, dispatchContext, item, itemKey, itemDecision)
+				if followErr != nil {
+					if errors.Is(followErr, service.ErrIssueDispatchPending) {
+						writeError(w, 409, "recalled issue already has a pending agent task")
+					} else {
+						writeError(w, 500, "failed to commit coordinator continuation")
+					}
+					return
+				}
+				if err := recordPlanItem(r.Context(), &decision, item, result); err != nil {
+					writeError(w, 500, "failed to checkpoint continuation")
+					return
+				}
+				if created == 0 {
+					firstIssueID, firstTaskID, firstIdentifier = result.IssueID, result.TaskID, result.IssueIdentifier
+					firstIssue, firstTask = issue, task
+				}
+				created++
+				continue
+			}
+			if existingIssue, existingTask, existingIdent, ok := h.lookupCoordinatorWindowItem(
+				r.Context(), agent.ID, itemKey, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID,
+			); ok {
+				keepAttachments = true
+				if err := h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, uuidToString(existingIssue.ID), existingIssue.Title, uuidToString(existingTask.ID), item.Content, itemDecision); err != nil {
+					writeError(w, 500, "failed to bind committed coordinator issue")
+					return
+				}
+				if err := recordPlanItem(r.Context(), &decision, item, protocol.ChatCoordinatorIssueResult{Action: "issue_created", IssueID: uuidToString(existingIssue.ID), IssueIdentifier: existingIdent, IssueTitle: existingIssue.Title, TaskID: uuidToString(existingTask.ID)}); err != nil {
+					writeError(w, 500, "failed to checkpoint recovered issue")
+					return
+				}
+				if created == 0 {
+					firstIssueID, firstTaskID, firstIdentifier = uuidToString(existingIssue.ID), uuidToString(existingTask.ID), existingIdent
+					firstIssue, firstTask = existingIssue, existingTask
+				}
+				created++
+				continue
+			}
+			independentContext, contextErr := inboundcoord.IndependentIssueTaskContext(
+				dispatchRuntimeContext(itemCommand, itemKey),
+				inboundcoord.CoordinatorIssueTriggerCreate,
+			)
+			if contextErr != nil {
+				if created == 0 {
+					writeError(w, http.StatusInternalServerError, "failed to prepare coordinator issue context")
+					return
+				}
+				incomplete = true
+				break
+			}
+			overrides.DispatchContext = inboundcoord.StampCoordinatorTrace(independentContext, itemDecision, "dingtalk", time.Now())
+			createParams := buildAgentDispatchIssueCreateParams(
+				itemCommand, prompt, dispatchContext, agent, itemKey, overrides,
+			)
+			if i == 0 {
+				createParams.AttachmentIDs = attachmentIDs(imported)
+			}
+			result, err := h.IssueService.Create(r.Context(), createParams, service.IssueCreateOpts{
+				ActorID:          uuidToString(dispatchContext.UserID),
+				AnalyticsAgentID: uuidToString(agent.ID),
+				Platform:         "webhook",
+			})
+			if errors.Is(err, service.ErrActiveDuplicate) {
+				if existingIssue, existingTask, existingIdent, ok := h.lookupCoordinatorWindowItem(
+					r.Context(), agent.ID, itemKey, dispatchIdempotencyEndpointID(itemCommand, dispatchContext), dispatchContext.WorkspaceID,
+				); ok {
+					keepAttachments = true
+					if err := h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, uuidToString(existingIssue.ID), existingIssue.Title, uuidToString(existingTask.ID), item.Content, itemDecision); err != nil {
+						writeError(w, 500, "failed to bind committed coordinator issue")
+						return
+					}
+					if err := recordPlanItem(r.Context(), &decision, item, protocol.ChatCoordinatorIssueResult{Action: "issue_created", IssueID: uuidToString(existingIssue.ID), IssueIdentifier: existingIdent, IssueTitle: existingIssue.Title, TaskID: uuidToString(existingTask.ID)}); err != nil {
+						writeError(w, 500, "failed to checkpoint recovered issue")
+						return
+					}
+					if created == 0 {
+						firstIssueID, firstTaskID, firstIdentifier = uuidToString(existingIssue.ID), uuidToString(existingTask.ID), existingIdent
+						firstIssue, firstTask = existingIssue, existingTask
+					}
+					created++
+					continue
+				}
+				if created == 0 {
+					writeError(w, http.StatusConflict, service.ErrActiveDuplicate.Error())
+					return
+				}
+				incomplete = true
+				break
+			}
+			if err != nil {
+				if created == 0 {
+					writeError(w, http.StatusInternalServerError, "failed to create issue")
+					return
+				}
+				incomplete = true
+				break
+			}
+			keepAttachments = true
+			issueResult := protocol.ChatCoordinatorIssueResult{
+				Action: "issue_created", IssueID: uuidToString(result.Issue.ID),
+				IssueIdentifier: service.IssueIdentifier(h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID), result.Issue.Number),
+				IssueTitle:      result.Issue.Title,
+			}
+			if result.EnqueuedTask != nil {
+				issueResult.TaskID = uuidToString(result.EnqueuedTask.ID)
+			}
+			if result.EnqueuedTask != nil {
+				if err := h.associateDispatchIssue(r.Context(), itemCommand, dispatchContext, uuidToString(result.Issue.ID), result.Issue.Title, uuidToString(result.EnqueuedTask.ID), item.Content, itemDecision); err != nil {
+					writeError(w, 500, "failed to bind committed coordinator issue")
+					return
+				}
+				if err := recordPlanItem(r.Context(), &decision, item, issueResult); err != nil {
+					writeError(w, 500, "failed to checkpoint created issue")
+					return
+				}
+			} else {
+				decision.IssueResults = append(decision.IssueResults, issueResult)
+			}
+			if result.EnqueuedTask == nil {
+				if created == 0 {
+					writeError(w, http.StatusInternalServerError, "issue created but agent task was not enqueued")
+					return
+				}
+				incomplete = true
+				break
+			}
+			prefix := h.getIssuePrefix(r.Context(), dispatchContext.WorkspaceID)
+			issueID := uuidToString(result.Issue.ID)
+			taskID := uuidToString(result.EnqueuedTask.ID)
+			issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
+			if created == 0 {
+				firstIssueID, firstTaskID, firstIdentifier = issueID, taskID, issueIdentifier
+				firstIssue = result.Issue
+				firstTask = *result.EnqueuedTask
+			}
+			created++
+		}
+		if created == 0 {
+			writeError(w, http.StatusInternalServerError, "failed to create issue")
+			return
+		}
+		if incomplete {
+			writeError(w, 500, "failed to commit remaining scene items")
+			return
+		}
+		if created < len(items) {
+			if err := inboundcoord.SavePlan(r.Context(), decision); err != nil {
+				writeError(w, 500, "failed to retain remaining scene items")
+				return
+			}
+			writeError(w, 409, "scene already has two in-flight matters; remaining plan retained")
+			return
+		}
+		if h.TaskService != nil && c.CompletionCallback != nil {
+			spoken := stripReplyDecisionLeak(decision.UserText)
+			if spoken != "" {
+				if err := h.enqueueCoordinatorIssueAckOrComplete(
+					r.Context(), c, dispatchContext, agent.ID,
+					firstTask, firstIssue, firstIdentifier, spoken,
+				); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
+					return
+				}
+			}
+		}
+		slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
+			"outcome", "created_issue",
+			"protocol", "dispatch_command_v2",
+			"httpStatus", http.StatusCreated,
+			"continuationReturned", true,
+			"window_items", created,
+			"continuationFingerprint", agentDispatchIdentifierFingerprint(firstIssueID),
+			"taskFingerprint", agentDispatchIdentifierFingerprint(firstTaskID),
+		)
+		h.closeExtraCoordinatorCallbacks(r.Context(), c, agent.ID)
+		writeJSON(w, http.StatusCreated, AgentDispatchResponse{
+			Continuation:    AgentDispatchContinuation{Kind: "issue", IssueID: firstIssueID},
+			IssueIdentifier: firstIdentifier,
+			TaskID:          firstTaskID,
+		})
+		return
 	}
+	overrides := agentDispatchIssueCreateOverrides{}
 	createParams := buildAgentDispatchIssueCreateParams(
 		c,
 		prompt,
@@ -1133,21 +1468,6 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	taskID := uuidToString(result.EnqueuedTask.ID)
 	issueIdentifier := prefix + "-" + formatIssueNumber(result.Issue.Number)
 	h.associateDispatchIssue(r.Context(), c, dispatchContext, issueID, result.Issue.Title, taskID, prompt.DisplayContent, decision)
-	if decision.Action == inboundcoord.ActionIssue &&
-		h.TaskService != nil &&
-		c.CompletionCallback != nil &&
-		strings.TrimSpace(decision.UserText) != "" {
-		if err := h.TaskService.EnqueueSynchronousCompleted(
-			r.Context(),
-			c.CompletionCallback.URL,
-			c.CompletionCallback.Target,
-			dispatchContext.AgentID,
-			decision.UserText,
-		); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to persist coordinator issue reply")
-			return
-		}
-	}
 	slog.Info("MULTICA_AGENT_DISPATCH_REQUEST",
 		"outcome", "created_issue",
 		"protocol", "dispatch_command_v2",
@@ -1161,6 +1481,43 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		IssueIdentifier: issueIdentifier,
 		TaskID:          taskID,
 	})
+}
+
+func (h *Handler) enqueueCoordinatorIssueAckOrComplete(
+	ctx context.Context,
+	command DispatchCommand,
+	dispatchContext agentDispatchContext,
+	agentID pgtype.UUID,
+	issueTask db.AgentTaskQueue,
+	issue db.Issue,
+	issueIdentifier string,
+	text string,
+) error {
+	if command.CompletionCallback == nil {
+		return errors.New("coordinator issue callback is required")
+	}
+	wrapupOn := false
+	if on, err := h.Queries.GetAgentTaskFinishedLoop(ctx, agentID); err == nil {
+		wrapupOn = on
+	}
+	if wrapupOn && strings.TrimSpace(command.CompletionCallback.UpdateURL) != "" {
+		return h.TaskService.EnqueueCoordinatorIssueAck(
+			ctx,
+			issueTask,
+			issue,
+			issueIdentifier,
+			command.CompletionCallback.UpdateURL,
+			command.CompletionCallback.Target,
+			text,
+		)
+	}
+	return h.TaskService.EnqueueSynchronousCompleted(
+		ctx,
+		command.CompletionCallback.URL,
+		command.CompletionCallback.Target,
+		dispatchContext.AgentID,
+		text,
+	)
 }
 
 func coordinatorRecalledIssueContinuation(
@@ -1229,6 +1586,16 @@ func decideDispatchCoordinator(
 		EvidenceID:           ids.EvidenceID,
 		Kind:                 ids.Kind,
 		IssueDispatchContext: issueDispatchContext,
+		Utterances:           windowUtterancesFromCommand(command),
+	}
+	turn.HistoryBefore = inboundcoord.HistoryBeforeFromContext(ctx)
+	for _, u := range turn.Utterances {
+		if u.Timestamp.After(turn.MessageTimestamp) {
+			turn.MessageTimestamp = u.Timestamp
+		}
+	}
+	if !turn.MessageTimestamp.IsZero() {
+		turn.HistoryBefore = turn.MessageTimestamp
 	}
 	turn.DWSUID, turn.DWSOrgID = dispatchCoordinatorDWSIdentity(command)
 	if n, err := h.Queries.CountRunningTasks(ctx, agent.ID); err == nil && n > 0 {
@@ -1236,6 +1603,41 @@ func decideDispatchCoordinator(
 	}
 	coord.FillVoice(ctx, &turn)
 	return coord.Decide(ctx, turn)
+}
+
+func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowUtterance {
+	fallback := strings.TrimSpace(command.Event.Data.Sender.DisplayName)
+	out := make([]inboundcoord.WindowUtterance, 0, len(command.Event.Data.Messages))
+	for _, message := range command.Event.Data.Messages {
+		if message.Reaction != nil {
+			continue
+		}
+		text := strings.TrimSpace(message.Text)
+		if text == "" {
+			continue
+		}
+		sender := strings.TrimSpace(message.SenderDisplayName)
+		if sender == "" {
+			sender = fallback
+		}
+		senderID := firstNonEmpty(message.SenderUID, message.SenderOpenDingTalkID)
+		if senderID == "" && (message.SenderDisplayName == "" || sender == fallback) {
+			senderID = firstNonEmpty(command.Event.Data.Sender.UID, command.Event.Data.Sender.OpenDingTalkID)
+		}
+		at := time.Time{}
+		if message.OccurredAt > 0 {
+			at = time.UnixMilli(message.OccurredAt).UTC()
+		}
+		ref := ""
+		refContent, refSenderID := "", ""
+		if message.ReferencedMessage != nil {
+			refContent = message.ReferencedMessage.Text
+			refSenderID = message.ReferencedMessage.SenderUID
+			ref = firstNonEmpty(message.ReferencedMessage.OpenMsgID, message.ReferencedMessage.MessageID)
+		}
+		out = append(out, inboundcoord.WindowUtterance{Sender: sender, Text: text, EvidenceID: message.OpenMsgID, Timestamp: at, SenderID: senderID, ReplyToEvidenceID: ref, ReplyToContent: refContent, ReplyToSenderID: refSenderID})
+	}
+	return out
 }
 
 func dispatchCoordinatorDWSIdentity(command DispatchCommand) (string, string) {
@@ -1410,6 +1812,11 @@ func (h *Handler) tryDispatchResetMemory(
 	return true
 }
 
+func stripReplyDecisionLeak(text string) string {
+	visible, _ := service.NormalizeReplyDecisionOutput(text, nil)
+	return strings.TrimSpace(visible)
+}
+
 func writeDispatchCoordinatorTerminal(
 	w http.ResponseWriter,
 	ctx context.Context,
@@ -1421,6 +1828,11 @@ func writeDispatchCoordinatorTerminal(
 	if h.TaskService == nil || command.CompletionCallback == nil {
 		return false
 	}
+	visible := stripReplyDecisionLeak(decision.UserText)
+	if decision.Action == inboundcoord.ActionReply && visible == "" {
+		decision.Action = inboundcoord.ActionSilence
+		decision.UserText = ""
+	}
 	switch decision.Action {
 	case inboundcoord.ActionReply:
 		if err := h.TaskService.EnqueueSynchronousCompleted(
@@ -1428,7 +1840,7 @@ func writeDispatchCoordinatorTerminal(
 			command.CompletionCallback.URL,
 			command.CompletionCallback.Target,
 			dispatchContext.AgentID,
-			decision.UserText,
+			visible,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator reply")
 			return true
@@ -1439,25 +1851,77 @@ func writeDispatchCoordinatorTerminal(
 			response.IssueIdentifier = decision.IssueComment.IssueIdentifier
 			response.CommentID = decision.IssueComment.CommentID
 		}
+		h.closeExtraCoordinatorCallbacks(ctx, command, dispatchContext.AgentID)
 		writeJSON(w, http.StatusAccepted, response)
 		return true
 	case inboundcoord.ActionSilence:
-		if err := h.TaskService.EnqueueSynchronousTaskCompletion(
+		if err := h.TaskService.EnqueueSynchronousSilence(
 			ctx,
 			command.CompletionCallback.URL,
 			command.CompletionCallback.Target,
 			dispatchContext.AgentID,
-			"coordinator silence",
-			string(engine.OutcomeCoordinatorSilence),
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist coordinator silence")
 			return true
 		}
+		h.closeExtraCoordinatorCallbacks(ctx, command, dispatchContext.AgentID)
 		w.WriteHeader(http.StatusAccepted)
 		return true
 	default:
 		return false
 	}
+}
+
+func (h *Handler) closeExtraCoordinatorCallbacks(ctx context.Context, command DispatchCommand, agentID pgtype.UUID) {
+	if managedDingTalkResponse(command) {
+		// The response receipt closes the entire collected window after
+		// actual delivery; persisting a model result is too early.
+		return
+	}
+	for i := range command.ExtraCompletionCallbacks {
+		cb := command.ExtraCompletionCallbacks[i]
+		h.enqueueCoordinatorSilenceCallback(ctx, &cb, agentID, "inbound_coordinator_extra_silence_failed", "")
+	}
+}
+
+// dispatchIdempotencyEndpointID is the value stored on the task as
+// dispatch_endpoint_id. V2 snapshots the namespace UUID, not the public
+// endpoint id; lookup must use the same string or retry creates a second Issue.
+func dispatchIdempotencyEndpointID(command DispatchCommand, dispatchContext agentDispatchContext) string {
+	if id := strings.TrimSpace(command.DispatchEndpointID); id != "" {
+		return id
+	}
+	if dispatchContext.EndpointNamespaceID.Valid {
+		return uuidToString(dispatchContext.EndpointNamespaceID)
+	}
+	return strings.TrimSpace(dispatchContext.EndpointID)
+}
+
+func (h *Handler) lookupCoordinatorWindowItem(
+	ctx context.Context,
+	agentID pgtype.UUID,
+	itemKey, endpointID string,
+	workspaceID pgtype.UUID,
+) (db.Issue, db.AgentTaskQueue, string, bool) {
+	var noneIssue db.Issue
+	var noneTask db.AgentTaskQueue
+	if h == nil || h.Queries == nil || strings.TrimSpace(itemKey) == "" {
+		return noneIssue, noneTask, "", false
+	}
+	existing, err := h.Queries.GetAgentDispatchRootTaskByIdempotency(ctx, db.GetAgentDispatchRootTaskByIdempotencyParams{
+		AgentID:        agentID,
+		IdempotencyKey: itemKey,
+		EndpointID:     endpointID,
+	})
+	if err != nil || !existing.IssueID.Valid {
+		return noneIssue, noneTask, "", false
+	}
+	issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: existing.IssueID, WorkspaceID: workspaceID})
+	if err != nil {
+		return noneIssue, noneTask, "", false
+	}
+	ident := h.getIssuePrefix(ctx, workspaceID) + "-" + formatIssueNumber(issue.Number)
+	return issue, existing, ident, true
 }
 
 func (h *Handler) createAgentDispatchCommentV2(w http.ResponseWriter, r *http.Request, c DispatchCommand, prompt DispatchPrompt, dispatchContext agentDispatchContext) {
@@ -1569,6 +2033,14 @@ func (h *Handler) createAgentDispatchCommentWithCoordinatorV2(
 	issueIDString := uuidToString(issue.ID)
 	commentID := uuidToString(result.Comment.ID)
 	taskID := uuidToString(result.Task.ID)
+	if coordinatorDecision != nil {
+		coordinatorDecision.IssueResults = []protocol.ChatCoordinatorIssueResult{{
+			Action: "issue_commented", IssueID: issueIDString,
+			IssueIdentifier: service.IssueIdentifier(h.getIssuePrefix(r.Context(), issue.WorkspaceID), issue.Number),
+			IssueTitle:      issue.Title, CommentID: commentID, TaskID: taskID,
+		}}
+		inboundcoord.RecordDecision(r.Context(), *coordinatorDecision)
+	}
 	assocDecision := inboundcoord.Decision{}
 	if coordinatorDecision != nil {
 		assocDecision = *coordinatorDecision

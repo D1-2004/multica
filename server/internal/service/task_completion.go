@@ -508,12 +508,84 @@ func (s *TaskService) EnqueueSynchronousTaskCompletion(
 	return nil
 }
 
+// EnqueueSynchronousSilence closes a Router dispatch as completed with no IM.
+// Coordinator silence must not use EnqueueSynchronousTaskCompletion: that
+// path is execution_status=failed and stamps 处理失败 on the inbound.
+func (s *TaskService) EnqueueSynchronousSilence(
+	ctx context.Context,
+	callbackURL string,
+	targetIdentity string,
+	agentID pgtype.UUID,
+) error {
+	const prefix = "/api/v1/dispatch-tasks/"
+	const suffix = "/execution-result"
+	dispatchTaskID := strings.TrimSuffix(strings.TrimPrefix(callbackURL, prefix), suffix)
+	if !strings.HasPrefix(callbackURL, prefix) ||
+		!strings.HasSuffix(callbackURL, suffix) ||
+		!synchronousCompletionCallbackPattern.MatchString(dispatchTaskID) ||
+		!routerTargetIdentityPattern.MatchString(targetIdentity) ||
+		!agentID.Valid {
+		return errors.New("synchronous silence target is invalid")
+	}
+	summary, err := json.Marshal(map[string]any{
+		protocol.TaskReplyDecisionSummaryKey: protocol.ReplyDecision{
+			ShouldReply: false,
+			Reason:      "coordinator_silence",
+		},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = s.Queries.EnqueueSynchronousSilenceTaskCompletion(ctx, db.EnqueueSynchronousSilenceTaskCompletionParams{
+		CallbackUrl:      callbackURL,
+		TargetIdentity:   targetIdentity,
+		RequestID:        "multica-terminal:sync-silence:" + dispatchTaskID,
+		AgentID:          agentID,
+		ExecutionSummary: summary,
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue synchronous silence: %w", err)
+	}
+	if s.CompletionNotifier != nil {
+		s.CompletionNotifier.NotifyTaskCompletion()
+	}
+	return nil
+}
+
 func (s *TaskService) EnqueueSynchronousCompleted(
 	ctx context.Context,
 	callbackURL string,
 	targetIdentity string,
 	agentID pgtype.UUID,
 	resultMessage string,
+) error {
+	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-completed")
+}
+
+// EnqueueSynchronousWrapup delivers the task-finished Coordinator reply on the
+// original inbound Router callback without colliding with the issue-create ACK.
+func (s *TaskService) EnqueueSynchronousWrapup(
+	ctx context.Context,
+	callbackURL string,
+	targetIdentity string,
+	agentID pgtype.UUID,
+	resultMessage string,
+	taskID string,
+) error {
+	suffix := strings.TrimSpace(taskID)
+	if suffix == "" {
+		return errors.New("synchronous wrap-up task id is required")
+	}
+	return s.enqueueSynchronousCompleted(ctx, callbackURL, targetIdentity, agentID, resultMessage, "sync-wrapup:"+suffix)
+}
+
+func (s *TaskService) enqueueSynchronousCompleted(
+	ctx context.Context,
+	callbackURL string,
+	targetIdentity string,
+	agentID pgtype.UUID,
+	resultMessage string,
+	requestKind string,
 ) error {
 	const prefix = "/api/v1/dispatch-tasks/"
 	const suffix = "/execution-result"
@@ -525,14 +597,19 @@ func (s *TaskService) EnqueueSynchronousCompleted(
 		!agentID.Valid {
 		return errors.New("synchronous completed task target is invalid")
 	}
-	message := strings.TrimSpace(resultMessage)
+	message, _ := NormalizeReplyDecisionOutput(resultMessage, nil)
+	message = strings.TrimSpace(message)
 	if message == "" {
 		return errors.New("synchronous completed result message is required")
+	}
+	kind := strings.TrimSpace(requestKind)
+	if kind == "" {
+		kind = "sync-completed"
 	}
 	_, err := s.Queries.EnqueueSynchronousCompletedTaskCompletion(ctx, db.EnqueueSynchronousCompletedTaskCompletionParams{
 		CallbackUrl:    callbackURL,
 		TargetIdentity: targetIdentity,
-		RequestID:      "multica-terminal:sync-completed:" + dispatchTaskID,
+		RequestID:      "multica-terminal:" + kind + ":" + dispatchTaskID,
 		AgentID:        agentID,
 		ResultMessage:  redact.Text(message),
 	})

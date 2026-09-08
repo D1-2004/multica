@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS dingtalk_response_policy_sync_id_idx;

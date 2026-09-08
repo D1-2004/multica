@@ -35,9 +35,9 @@ const (
 	MinPurposeRunes   = 8
 	EventBodyMaxRunes = 160
 	EventCardLimit    = 8
-	RecencyTau        = 6 * time.Hour
+	RecencyTau        = 48 * time.Hour
 
-	RecallReadThis = "候选。purpose 对得上才续，对不上就新建 Issue。"
+	RecallReadThis = "候选。先判断本条是否需要执行：同交付物且有实质推进才续接；催促、收尾只沟通；不同交付物作为新计划项。"
 )
 
 type Task struct {

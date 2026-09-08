@@ -268,6 +268,7 @@ WHERE id = $1 AND lease_token = $2 AND lease_expires_at > now()`, arg.ID, arg.Le
 type CommitSceneMemoryBatchParams struct {
 	ReplaceText            bool               `json:"replace_text"`
 	MemoryText             string             `json:"memory_text"`
+	SceneTitle             string             `json:"scene_title"`
 	SourceCursorAt         pgtype.Timestamptz `json:"source_cursor_at"`
 	SourceCursorEvidenceID string             `json:"source_cursor_evidence_id"`
 	LastFlushMeta          []byte             `json:"last_flush_meta"`
@@ -281,19 +282,21 @@ func (q *Queries) CommitSceneMemoryBatch(ctx context.Context, arg CommitSceneMem
 UPDATE scene_memory
 SET memory_text = CASE WHEN $1::boolean THEN $2 ELSE memory_text END,
     memory_revision = CASE WHEN $1::boolean THEN memory_revision + 1 ELSE memory_revision END,
-    source_cursor_at = $3,
-    source_cursor_evidence_id = $4,
+    scene_title = CASE WHEN NULLIF(btrim($3), '') IS NOT NULL THEN $3 ELSE scene_title END,
+    source_cursor_at = $4,
+    source_cursor_evidence_id = $5,
     bootstrapped_at = COALESCE(bootstrapped_at, now()),
-    last_flush_meta = $5,
+    last_flush_meta = $6,
     last_flushed_at = now(),
     history_resume_before = NULL,
+    attempt_count = 0,
     updated_at = now()
-WHERE id = $6
-  AND lease_token = $7
+WHERE id = $7
+  AND lease_token = $8
   AND lease_expires_at > now()
-  AND memory_revision = $8
+  AND memory_revision = $9
 RETURNING *`,
-		arg.ReplaceText, arg.MemoryText, arg.SourceCursorAt, arg.SourceCursorEvidenceID, arg.LastFlushMeta,
+		arg.ReplaceText, arg.MemoryText, arg.SceneTitle, arg.SourceCursorAt, arg.SourceCursorEvidenceID, arg.LastFlushMeta,
 		arg.ID, arg.LeaseToken, arg.ExpectedMemoryRevision))
 }
 

@@ -22,16 +22,24 @@ const (
 	extractVoiceTemperature  = 0.2
 )
 
-const extractVoiceSystemPrompt = `You extract an agent's persona and reply tone from their instructions. Reply with a JSON object only.
+const extractVoiceSystemPrompt = `You extract two Coordinator voice fields from the agent's instructions. Reply with a JSON object only.
 
 The JSON shape is:
 {"persona":"...","reply_tone":"..."}
 
-Rules:
-- persona: who this agent is, 1-3 sentences, in the same language as the instructions. No tools, no workflow, no secrets, no action policy.
-- reply_tone: how they speak in chat, 1-2 sentences. Cover length, formality, and what to avoid.
-- Do not copy the full instructions. Do not invent duties that change what the agent does.
-- If the instructions do not describe a person or tone, write a concise professional colleague persona and a short, direct work-chat tone.
+persona is 角色: who this colleague is in IM. 1-3 sentences, same language as the instructions.
+- Keep: identity, stance, what they value when speaking, how they relate to the team.
+- Drop: tools, skills, workflows, SOPs, routing rules, secrets, and work they will go do.
+- Do not write job duties as a work order. Persona never decides whether a message becomes an Issue.
+
+reply_tone is 沟通风格: how they type in DingTalk. 1-2 sentences.
+- Keep: length, formality, punctuation, 您 vs 你, emoji, how they open and close, what they refuse to sound like.
+- Prefer concrete IM habits ("短句、先结论、不客套、不复读对方") over adjectives ("专业、友好").
+- No helpdesk scripts: 收到, 正在处理, 稍等, 已为您.
+
+Shared:
+- Compress. Do not copy the full instructions. Do not invent a new character.
+- If the instructions do not describe a person or tone, write a concise DingTalk teammate (a real colleague, not a helpdesk or dispatcher) and a short spoken work-chat tone. No 您.
 `
 
 type extractAgentVoiceRequest struct {

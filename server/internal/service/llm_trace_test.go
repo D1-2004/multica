@@ -77,10 +77,30 @@ func TestLLMTraceEnvUsesAgentRuntimeConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := llmTraceEnv(llmTraceTestRuntime(LLMTraceCapability), []byte(tt.runtimeConfig), []byte(tt.taskContext), relayBaseURL, taskID); !reflect.DeepEqual(got, tt.want) {
+			if got := llmTraceEnv(llmTraceTestRuntime(LLMTraceCapability), []byte(tt.runtimeConfig), []byte(tt.taskContext), relayBaseURL, taskID, false); !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("llmTraceEnv(%s, %s) = %#v, want %#v", tt.runtimeConfig, tt.taskContext, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLLMTraceEnvCaptureAlwaysRelaysWithoutCallbackOrSink(t *testing.T) {
+	got := llmTraceEnv(
+		llmTraceTestRuntime(LLMTraceCapability),
+		[]byte(`{}`),
+		[]byte(`{}`),
+		"https://pre-fde-workbench.example.test",
+		"11111111-1111-1111-1111-111111111111",
+		true,
+	)
+	want := map[string]string{
+		"MULTICA_LLM_TRACE_ENABLED":    "true",
+		"MULTICA_LLM_TRACE_SINK_URL":   "https://pre-fde-workbench.example.test/api/daemon/tasks/11111111-1111-1111-1111-111111111111/llm-traces",
+		"MULTICA_LLM_TRACE_TOKEN":      "",
+		"MULTICA_LLM_TRACE_EXPIRES_AT": "",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("llmTraceEnv(captureAlways) = %#v, want %#v", got, want)
 	}
 }
 
@@ -91,6 +111,7 @@ func TestLLMTraceEnvSkipsRuntimeWithoutCapability(t *testing.T) {
 		[]byte(`{"completion_callback":{"telemetry_url":"/api/v1/dispatch-tasks/task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786377600000}}`),
 		"https://pre-fde-workbench.example.test",
 		"11111111-1111-1111-1111-111111111111",
+		true,
 	)
 	if len(got) != 0 {
 		t.Fatalf("unsupported runtime received LLM trace env: %#v", got)
@@ -104,6 +125,7 @@ func TestLLMTraceEnvKeysAreAllowedForCloudRunner(t *testing.T) {
 		[]byte(`{"completion_callback":{"telemetry_url":"/api/v1/dispatch-tasks/task-1/llm-traces","telemetry_token":"task-capability","telemetry_expires_at":1786377600000}}`),
 		"https://pre-fde-workbench.example.test",
 		"11111111-1111-1111-1111-111111111111",
+		false,
 	)
 	for key := range env {
 		if !isAllowedFCE2BRunnerExtraEnv(key) {

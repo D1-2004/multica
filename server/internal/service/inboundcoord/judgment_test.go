@@ -2,67 +2,97 @@ package inboundcoord
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
-// TestRoutingContractUsesToolLoop locks the shipped prompt: Decide is a
-// bounded assoc tool loop. DWS/search still live in the sandbox.
+// These checks preserve the disclosure and Host-tool contracts behind earlier
+// incidents. They do not substitute for real-model judgment replays.
 func TestRoutingContractUsesToolLoop(t *testing.T) {
-	for _, rule := range []string{
-		"assoc_recall",
-		"assoc_bind",
-		"issue_get",
-		"issue_comment_list",
-		"issue_comment_add",
-		"finish",
-		"You MUST call tools",
-		"At most 8 model rounds",
-		"No DWS, no search, no files",
-		"Never finish action=reply with a capability refusal",
-		"帮我约冬翔明天下午开半小时会对一下上海行程",
-		"我没法查日程或订会议室",
-		"pass that exact id",
-		"empty items only answers a question explicitly asking for recorded matters",
-		"Never invent conversation_id, person_id, or issue_id",
-		"who is asking, who must be contacted",
-		"without guessing whether that sender is the requester or the contacted recipient",
-		"source=digital_employee or source=robot",
-		"A robot sender uid may be absent",
-		"Issue identity invariant",
-		"Issue creator or issue_comment_add comment author",
-		"tool executor/assistant",
-		"original DingTalk task scene and assoc graph",
-		"Always pass this inbound conversation_id",
-		"First recall this inbound conversation_id and omit q",
-		"items are candidates, not a verdict",
-		"The server will not pick a card for you",
-		"Never bind without an Issue",
-		`If a tool result has "error" and "hint"`,
-		"委托人",
-		"purpose",
-		"Read it like a person opening the chat",
-		"Never mention internal machinery",
-		"items are memory of open matters",
-		"finish never takes issue_id",
-		"Do not finish action=issue with that issue_id",
-		"Do not ask that question again",
-		"purpose names no event or goal",
-		"do not recite workflow states",
-		"do not output that question again",
+	inbound := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", HistoryStatus: "not_loaded", Message: "你会什么"}
+	inbound.Skills = []SkillSnapshot{{Name: "dingtalk-minutes", Description: "查询听记并整理行动项"}}
+	for _, tc := range []struct {
+		name     string
+		turn     Turn
+		recalled bool
+		modules  map[string][]string
+		absent   []string
+		tools    []string
+	}{
+		{
+			name: "capabilities_before_recall", turn: inbound,
+			modules: map[string][]string{
+				"core":    {"COORD.F01", "COORD.F03", "COORD.F13", "COORD.F17"},
+				"inbound": {"COORD.F04", "COORD.F05", "COORD.F06", "COORD.F07"},
+				"channel": {"COORD.F01", "COORD.F08"},
+				"skills":  {"COORD.F03", "COORD.F04", "COORD.F14"},
+				"voice":   {"COORD.F14", "COORD.F15"},
+			},
+			absent: []string{"recall_match", "dialogue", "completion"},
+			tools:  []string{toolAssocRecall, toolContextRead, toolFinish},
+		},
+		{
+			name: "candidate_comparison_before_work_submission", turn: inbound, recalled: true,
+			modules: map[string][]string{"recall_match": {"COORD.F02", "COORD.F03", "COORD.F07", "COORD.F08", "COORD.F13", "COORD.F17"}},
+			absent:  []string{"completion"},
+			tools:   []string{toolAssocRecall, toolContextRead, toolIssueGet, toolIssueCommentList, toolFinish},
+		},
+		{
+			name: "previous_question_before_short_answer", turn: Turn{Source: SourceRobot, HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "assistant", Content: "周五三点可以吗？"}}, Message: "可以，三点没问题"},
+			modules: map[string][]string{"dialogue": {"COORD.F02", "COORD.F03", "COORD.F06", "COORD.F08", "COORD.F18"}},
+			absent:  []string{"recall_match", "skills", "completion"},
+			tools:   []string{toolAssocRecall, toolFinish},
+		},
+		{
+			name: "completion_isolated_from_inbound", turn: Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, Skills: inbound.Skills, SceneMemory: "unrelated fact"},
+			modules: map[string][]string{"core": {"COORD.F03", "COORD.F13", "COORD.F17"}, "voice": {"COORD.F14"}, "completion": {"COORD.F03", "COORD.F12", "COORD.F13", "COORD.F17"}},
+			absent:  []string{"inbound", "channel", "skills", "memory", "recall_match", "dialogue"},
+			tools:   []string{toolIssueGet, toolIssueCommentList, toolFinish},
+		},
 	} {
-		if !strings.Contains(systemPrompt, rule) {
-			t.Errorf("systemPrompt missing routing rule %q", rule)
+		t.Run(tc.name, func(t *testing.T) {
+			assertDisclosedObligations(t, tc.turn, tc.recalled, tc.modules, tc.absent)
+			got := toolParamNames(toolsForDisclosure(tc.turn, 0, tc.recalled))
+			slices.Sort(got)
+			slices.Sort(tc.tools)
+			if !slices.Equal(got, tc.tools) {
+				t.Fatalf("tool boundary = %v, want %v; writes and external execution belong to Host/sandbox", got, tc.tools)
+			}
+		})
+	}
+}
+
+// assertDisclosedObligations checks that a historical obligation is actually
+// supplied by its registered module in this stage, rather than merely existing
+// somewhere in the policy repository. Prompt wording is intentionally not frozen.
+func assertDisclosedObligations(t *testing.T, turn Turn, recalled bool, want map[string][]string, absent []string) {
+	t.Helper()
+	manifest := policyManifestForStage(turn, recalled)
+	selected := map[string]policyModule{}
+	for _, module := range selectedPolicyModules(turn, recalled) {
+		selected[module.ID] = module
+	}
+	for moduleID, rules := range want {
+		module, ok := selected[moduleID]
+		if !ok {
+			t.Errorf("stage omitted historical obligations in %s", moduleID)
+			continue
+		}
+		for _, rule := range rules {
+			if !slices.Contains(module.OwnsRuleIDs, rule) || !slices.Contains(manifest.ActiveRuleIDs, rule) {
+				t.Errorf("%s obligation %s is not owned and active in this stage", moduleID, rule)
+			}
+		}
+		if strings.TrimSpace(policyModuleBody(module)) == "" {
+			t.Errorf("%s has metadata but no model-visible policy", moduleID)
 		}
 	}
-	for _, banned := range []string{
-		"You have no tools",
-		"This loop's lack of tools is never a reason to reply",
-	} {
-		if strings.Contains(systemPrompt, banned) {
-			t.Errorf("systemPrompt must not keep short-router wording %q", banned)
+	for _, moduleID := range absent {
+		if _, ok := selected[moduleID]; ok {
+			t.Errorf("stage prematurely disclosed %s", moduleID)
 		}
 	}
 }
@@ -221,10 +251,10 @@ func TestJudgmentDecideDeterministic(t *testing.T) {
 			want: ActionSilence,
 		},
 		{
-			name: "llm_disabled_continue",
+			name: "llm_disabled_defers_without_execution",
 			c:    &Coordinator{LLM: disabledLLM},
 			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},
-			want: ActionContinue,
+			want: ActionDeferred,
 		},
 		{
 			name: "switch_off_continue",

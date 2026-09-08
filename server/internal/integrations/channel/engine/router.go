@@ -45,9 +45,10 @@ type Router struct {
 	mu   sync.RWMutex
 	sets map[channel.Type]ResolverSet
 
-	issues IssueCreator
-	tasks  TaskEnqueuer
-	reader SessionReader
+	issues        IssueCreator
+	tasks         TaskEnqueuer
+	reader        SessionReader
+	issueComments *service.IssueCommentService
 
 	// bus is optional (nil is valid). When wired, a committed inbound message
 	// broadcasts chat:message — the same event the web send path publishes
@@ -122,6 +123,14 @@ func (r *Router) SetEventBus(bus *events.Bus) {
 func (r *Router) SetInboundCoordinator(coordinator *inboundcoord.Coordinator) {
 	if r != nil {
 		r.coordinator = coordinator
+	}
+}
+
+// SetIssueCommentService supplies the normal continuation service. Production
+// routers can also derive it from their shared TaskService and Queries.
+func (r *Router) SetIssueCommentService(comments *service.IssueCommentService) {
+	if r != nil {
+		r.issueComments = comments
 	}
 }
 
@@ -564,7 +573,14 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	coordinatorIssue := false
 	skipSandboxPrepare := false
 	var coordAgentID pgtype.UUID
-	if r.coordinator != nil && !issueCommandRequested && msg.Source.ChannelType == "dingtalk" {
+	hasMedia := set.Media != nil && set.Media.HasMedia(msg)
+	coordinatorPlan := false
+	// Media is routed before the short loop: its existing durable path owns
+	// attachment resolution. Never replace a plan after it has committed.
+	if r.coordinator != nil && !issueCommandRequested && hasMedia && msg.Source.ChannelType == "dingtalk" {
+		r.logger.Info("channel coordinator media routed to attachment pipeline", "event", "channel_coordinator_media_bypass")
+	}
+	if r.coordinator != nil && !issueCommandRequested && !hasMedia && msg.Source.ChannelType == "dingtalk" {
 		session, sessionErr := r.reader.GetChatSession(ctx, sessionID)
 		if sessionErr != nil {
 			return Result{}, finalizeRelease, fmt.Errorf("load chat session for coordinator: %w", sessionErr)
@@ -577,7 +593,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			msg.AddressedToBot || msg.Source.ChatType == channel.ChatTypeP2P,
 			string(msg.Source.ChatType),
 			"",
-			msg.Source.SenderID,
+			coordinatorSenderName(taskContext, msg.Source.SenderID),
 			msg.Text,
 		)
 		turn.ConversationID = strings.TrimSpace(msg.Source.ChatID)
@@ -588,30 +604,54 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		turn.IssueDispatchContext = taskContext
 		turn.DWSUID, turn.DWSOrgID = coordinatorDWSIdentity(taskContext)
 		turn.IdentityNote = inboundcoord.IdentityNote(turn.Source, turn.ConversationID, turn.PersonID)
-		coordDecision = r.coordinator.Decide(ctx, turn)
+		// InboundMessage carries a durable admission timestamp, but no message
+		// timestamp. Never present admission time as the speaker's send time.
+		turn.HistoryBefore = inboundcoord.HistoryBeforeFromContext(ctx)
+		if turn.HistoryBefore.IsZero() {
+			if msg.TraceStartedAtUnixMS > 0 {
+				turn.HistoryBefore = time.UnixMilli(msg.TraceStartedAtUnixMS)
+			} else {
+				turn.HistoryBefore = time.UnixMilli(trace.StartedAtUnixMS)
+				r.logger.Info("channel coordinator uses attempt history watermark", "event", "channel_coordinator_history_watermark", "durable", false)
+			}
+		}
+		restoreCoordinatorWindow(&turn, taskContext, msg)
+		// The coordinator turn shares the inbound chat trace so its Langfuse
+		// trace and the task it may start are one tree.
+		turn.TraceID = trace.TraceID
+		restored, found, restoreErr := r.restoreChannelCoordinatorPlan(ctx, inst, msg)
+		if restoreErr != nil {
+			return Result{}, finalizeRelease, restoreErr
+		}
+		if found {
+			coordDecision = restored
+		} else {
+			coordDecision = r.coordinator.Decide(ctx, turn)
+		}
 		switch coordDecision.Action {
-		case inboundcoord.ActionRetry:
+		case inboundcoord.ActionRetry, inboundcoord.ActionDeferred:
 			return Result{}, finalizeRelease, service.ErrIssueDispatchPending
 		case inboundcoord.ActionIssue:
-			taskContext, err = inboundcoord.IndependentIssueTaskContext(
-				taskContext,
-				inboundcoord.CoordinatorIssueTriggerCreate,
-			)
-			if err != nil {
-				return Result{}, finalizeRelease, fmt.Errorf("prepare coordinator issue task context: %w", err)
+			if err := r.materializeChannelCoordinatorPlan(ctx, inst, identity, set.OriginType, msg, taskContext, &coordDecision); err != nil {
+				return Result{}, finalizeRelease, fmt.Errorf("materialize channel coordinator plan: %w", err)
 			}
-			coordinatorIssue = true
-			issueCommand = &IssueCommand{
-				Title:       inboundcoord.IssueTitle(coordDecision, msg.Text),
-				Description: inboundcoord.IssueDescription(coordDecision, msg.Text),
-			}
-			issueCommandRequested = true
+			coordinatorPlan = true
+			skipSandboxPrepare = true
 		case inboundcoord.ActionReply, inboundcoord.ActionSilence:
 			skipSandboxPrepare = true
+		case inboundcoord.ActionContinue:
+			// Explicitly disabled Coordinator retains the existing chat path.
+		default:
+			return Result{}, finalizeRelease, fmt.Errorf("unsupported coordinator action %q", coordDecision.Action)
+		}
+		if len(coordDecision.Steps) > 0 {
+			// The task (Issue or chat continuation) records which coordinator
+			// turn looked at it and repeats its trace tags; both share the
+			// inbound chat trace already.
+			taskContext = inboundcoord.StampCoordinatorTrace(taskContext, coordDecision, trace.Channel, time.UnixMilli(trace.StartedAtUnixMS))
 		}
 	}
 	issueNeedsUsage := issueCommandRequested && issueCommand.Title == "" && !set.DurableRuns
-	hasMedia := set.Media != nil && set.Media.HasMedia(msg)
 	resolveMedia := !issueNeedsUsage && hasMedia
 	localMediaDeadline := time.Now().Add(r.mediaTimeout)
 	mediaPendingSeconds := 0.0
@@ -640,6 +680,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 		issueRes, _, err := r.createOrRecoverDurableIssue(
 			ctx, inst, set.OriginType, identity.PrincipalUserID, msg.MessageID,
 			resolvedCommand, taskContext, prefix, assignedRunFireAt,
+			allowIssueTitleDuplicate(msg, options, coordinatorIssue),
 		)
 		if err != nil && !(errors.Is(err, service.ErrActiveDuplicate) && issueRes.DuplicateIssue != nil) {
 			return Result{}, finalizeRelease, fmt.Errorf("create durable issue command: %w", err)
@@ -717,6 +758,16 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 	var mediaIssue db.Issue
 	var deferredIssueTaskID pgtype.UUID
 
+	if coordinatorPlan {
+		if err := applyChannelCoordinatorResult(&res, coordDecision); err != nil {
+			return Result{}, postAppendFinalize, err
+		}
+		if err := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision); err != nil {
+			r.logger.Warn("channel router: persist coordinator plan reply failed", "chat_session_id", uuidString(sessionID), "error", err)
+		}
+		return res, postAppendFinalize, nil
+	}
+
 	// 7. /issue command, if present. chat_message is already durable; all
 	//    error returns from here signal finalizeNone (or the defensive Mark).
 	if appendRes.IssueCommand != nil || durableIssueResult != nil {
@@ -759,7 +810,7 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			issueRes = *durableIssueResult
 			err = durableIssueErr
 		} else {
-			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *command, taskContext, prefix, assignedRunFireAt)
+			issueRes, err = r.createIssue(ctx, inst, set.OriginType, identity.PrincipalUserID, sessionID, *command, taskContext, prefix, assignedRunFireAt, allowIssueTitleDuplicate(msg, options, coordinatorIssue))
 		}
 		if errors.Is(err, service.ErrActiveDuplicate) && issueRes.DuplicateIssue != nil {
 			duplicate := *issueRes.DuplicateIssue
@@ -810,6 +861,14 @@ func (r *Router) processClaimed(ctx context.Context, set ResolverSet, msg channe
 			runID = res.TaskID
 		}
 		r.associateIssueConversation(ctx, inst, msg, issueRes.Issue, runID)
+		if coordinatorIssue {
+			coordDecision.IssueResults = []protocol.ChatCoordinatorIssueResult{{
+				Action: "issue_created", IssueID: util.UUIDToString(issueRes.Issue.ID),
+				IssueIdentifier: res.IssueIdentifier, IssueTitle: issueRes.Issue.Title,
+				TaskID: util.UUIDToString(res.TaskID),
+			}}
+			inboundcoord.RecordDecision(ctx, coordDecision)
+		}
 		if coordDecision.UserText != "" {
 			if persistErr := r.persistCoordinatorAssistant(ctx, inst.WorkspaceID, sessionID, coordAgentID, coordDecision); persistErr != nil {
 				r.logger.Warn("channel router: persist coordinator issue ack failed",
@@ -1356,6 +1415,31 @@ func coordinatorDWSIdentity(taskContext []byte) (string, string) {
 	return uid, orgID
 }
 
+// coordinatorSenderName is the sender's display name from the dispatch event
+// carried in the task context, so the coordinator turn (and its Langfuse
+// trace) names the person rather than the DingTalk open id; the id is the
+// fallback when the event carries no name.
+func coordinatorSenderName(taskContext []byte, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
+	if len(taskContext) == 0 {
+		return fallback
+	}
+	var payload struct {
+		EventData struct {
+			Sender struct {
+				DisplayName string `json:"displayName"`
+			} `json:"sender"`
+		} `json:"dispatch_event_data"`
+	}
+	if json.Unmarshal(taskContext, &payload) != nil {
+		return fallback
+	}
+	if name := strings.TrimSpace(payload.EventData.Sender.DisplayName); name != "" {
+		return name
+	}
+	return fallback
+}
+
 // ErrDedupFinalize marks a failed post-pipeline dedup transition. Callers must
 // retry it only after the 60-second stale-claim window; an immediate retry
 // would observe the still-live claim as a duplicate and could incorrectly
@@ -1386,7 +1470,7 @@ func (r *Router) drop(ctx context.Context, set ResolverSet, msg channel.InboundM
 	return Result{Outcome: OutcomeDropped, DropReason: reason, InstallationID: instID}
 }
 
-func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand, taskContext []byte, issuePrefix string, assignedRunFireAt time.Time) (service.IssueCreateResult, error) {
+func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, originType string, creatorUserID, originID pgtype.UUID, cmd IssueCommand, taskContext []byte, issuePrefix string, assignedRunFireAt time.Time, allowDuplicate bool) (service.IssueCreateResult, error) {
 	if cmd.Title == "" {
 		return service.IssueCreateResult{}, ErrEmptyIssueTitle
 	}
@@ -1406,6 +1490,7 @@ func (r *Router) createIssue(ctx context.Context, inst ResolvedInstallation, ori
 		CreatorID:                 creatorUserID,
 		OriginType:                pgtype.Text{String: originType, Valid: originType != ""},
 		OriginID:                  originID,
+		AllowDuplicate:            allowDuplicate,
 		AgentIdentityContextToken: identityContextToken,
 		DispatchContext:           append([]byte(nil), taskContext...),
 	}
@@ -1458,6 +1543,7 @@ func (r *Router) createOrRecoverDurableIssue(
 	taskContext []byte,
 	issuePrefix string,
 	assignedRunFireAt time.Time,
+	allowDuplicate bool,
 ) (service.IssueCreateResult, bool, error) {
 	if strings.TrimSpace(messageID) == "" {
 		return service.IssueCreateResult{}, false, errors.New("durable issue command has no message id")
@@ -1478,8 +1564,29 @@ func (r *Router) createOrRecoverDurableIssue(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return service.IssueCreateResult{}, false, fmt.Errorf("lookup issue by durable origin: %w", err)
 	}
-	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd, taskContext, issuePrefix, assignedRunFireAt)
+	created, err := r.createIssue(ctx, inst, originType, creatorUserID, originID, cmd, taskContext, issuePrefix, assignedRunFireAt, allowDuplicate)
 	return created, false, err
+}
+
+// allowIssueTitleDuplicate reports whether this inbound may create another
+// active Issue with the same title. Dispatch Command V2 already treats titles
+// as Coordinator labels rather than idempotency keys (the issue-surface path
+// sets AllowDuplicate for the same reason). DingTalk AI Table scheduled bots
+// reuse one purpose string every day while yesterday's Issue stays in_review;
+// blocking that create leaves the Router callback without a TaskID and stamps
+// 处理失败 on the inbound.
+func allowIssueTitleDuplicate(msg channel.InboundMessage, options HandleOptions, coordinatorIssue bool) bool {
+	return coordinatorIssue || options.DisableControlCommands || inboundScheduledBotTrigger(msg)
+}
+
+func inboundScheduledBotTrigger(msg channel.InboundMessage) bool {
+	body := strings.TrimSpace(msg.CommandText)
+	if body == "" {
+		body = strings.TrimSpace(msg.Text)
+	} else if text := strings.TrimSpace(msg.Text); text != "" && text != body {
+		body = body + "\n" + text
+	}
+	return strings.Contains(body, "周期任务触发") || strings.Contains(body, "任务已触发")
 }
 
 func taskIdentityContextToken(taskContext []byte) (string, error) {

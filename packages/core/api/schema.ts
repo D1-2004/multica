@@ -46,7 +46,11 @@ export function parseWithFallback<T>(
 ): T {
   const result = schema.safeParse(data);
   if (result.success) return result.data as T;
-  schemaLogger.warn(`API response failed schema validation: ${opts.endpoint}`, {
+  const issueSummary = result.error.issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.join(".") || "<root>"}:${issue.code}`)
+    .join(", ");
+  schemaLogger.warn(`API response failed schema validation: ${opts.endpoint} [${issueSummary}]`, {
     endpoint: opts.endpoint,
     issues: result.error.issues,
     ...(opts.includeReceived === false ? {} : { received: data }),

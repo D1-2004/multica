@@ -9,7 +9,7 @@
 - 已有 Git Agent 可以选择新分支，查看 Git 文件差异和当前配置将被覆盖的差异，再确认同步。
 - 来源、分支、已发布 SHA，以及发布回执保存在 PostgreSQL。预览有效期为 30 分钟，限定工作区、创建者及目标 Agent；确认时重新检查 Git 权限。
 - 普通 Git Agent 的专属 skill 仍在工作区 skill 表和文件表中，允许管理者修改、删除，禁止分配到其他 Agent。`agent_source_skill` 是归属校验的权威关系，新增来源 skill 的 `config.exclusive_agent_id` 提供归属元数据；修改 config 会保留服务端来源信息。平台自动管理 Agent 的 skill 保持保护。
-- Git 来源 Agent 的设置区域增加“导入导出”子 tab。原概览同步按钮进入此页，通过预览和确认发布。Web/Desktop 共用此页面。
+- Git 来源 Agent 的配置区域增加“导入导出”子 tab。原概览同步按钮进入此页，通过预览和确认发布。Web/Desktop 共用此页面。
 
 本轮同步的字段边界：
 
@@ -23,7 +23,7 @@
 | 身份、账号授权、调用权限、owner | 保留 |
 | 聊天、任务、记忆、运行数据 | 保留 |
 
-这些是 Agent 定义配置，但界面中的指令、skills 当前位于“能力”，其他设置位于“设置”。“导入导出”是来源与发布入口，不表示整个“设置”区域都被序列化或覆盖。
+合入最新主干后，指令、skills 和“导入导出”统一位于“配置”区域，“导入导出”属于管理分组。导入操作的是 Agent 定义配置；这个入口不表示整个“配置”区域都被序列化或覆盖。
 
 本轮不包括创建页 Git 入口、源码导出接口、DTA CLI 的 `init` 改造、完整运行配置 Schema 扩展、普通资源目录及二进制资产导入。现有 DTA 编译器仍限制为指令和 skill 目录内的文本文件，并对跳过的二进制文件给出 warnings。`dta init` 的模板仓库能力需在 DTA 项目中单独实施。
 
@@ -121,11 +121,13 @@
 
 - 30 项相关 handler 测试通过，其中 11 项覆盖新 Git 流程，包括固定 SHA、幂等与并发创建、同提交恢复删除 skill、预览过期、跨用户/Agent 拒绝、竞争发布冲突、权限重查和事务回滚。补齐了既有 Git 来源测试 fixture 的必填 `workspace_id`。
 - `internal/agentsource`、`internal/githubapp` 全部测试通过；服务端构建和相关包 `go vet` 通过。
-- 38 项相关界面测试、7 项接口 schema 测试通过；改动 TypeScript 文件的 ESLint 和 core 类型检查通过。
-- views 类型检查仍在未改动的 `instructions-tab.test.tsx:106` 报 `Object is possibly 'undefined'`；本轮未修复该既有测试类型问题，也未声称全仓检查通过。
+- 53 项相关界面及配置导航测试、7 项接口 schema 测试通过；全仓 `npm run lint`（只有既有 warnings）和 core/views 类型检查通过。
+- 初始基线的 `instructions-tab.test.tsx:106` 类型问题已在合入的主干中修复；发布前 core/views 类型检查均通过。
 
 当前基线有独立于本改动的问题：全新库按文件顺序迁移时，`271_task_completion_canceled_status` 依赖尚未创建的 `9025_task_completion_outbox`；迁移编号 lint 还会报告已有的 `9093` 重号。测试库先执行了既有 `9025` 再继续迁移。sqlc 生成使用临时 schema 副本将同一前置文件排到 `271` 前，仅拷回新增查询与模型；没有修改或重排仓库中的既有迁移。
 
 ## 历史记录
 
 - 2026-09-08：增加 GitHub 链接创建、固定预览确认、换分支同步和导入导出来源页。原因：让 Git 仓库直接作为 Agent 定义来源，并在覆盖前呈现可确认的 Git 与本地配置差异；取消无预览的同步写入。
+
+- 2026-09-08 发布适配：合入 develop 的配置导航，将导入导出接到管理分组；将尚未发布的新增迁移改用 9159–9162，避开主干已有编号。

@@ -142,7 +142,7 @@ func createASBSandboxWithCapacityOnConnection(
 	excludedTaskID pgtype.UUID,
 	conn *pgxpool.Conn,
 	input ASBCreateSandboxInput,
-) (*ASBSandbox, error) {
+) (sandboxResult *ASBSandbox, resultErr error) {
 	if queries == nil || credentials == nil || client == nil || conn == nil {
 		return nil, errors.New("ASB tenant capacity coordination is unavailable")
 	}
@@ -151,6 +151,24 @@ func createASBSandboxWithCapacityOnConnection(
 		return nil, err
 	}
 	defer releaseCapacity()
+	if client.CapacityGate != nil {
+		delay, gateErr := client.CapacityGate.admit(ctx, client)
+		if gateErr != nil {
+			// Fail closed: loss of shared coordination must not cause a burst of
+			// upstream requests from every replica. Keep the task queued.
+			return nil, errors.Join(ErrASBCapacityUnavailable, fmt.Errorf("check ASB shared capacity cooldown: %w", gateErr))
+		}
+		if delay > 0 {
+			slog.Info("ASB task reused tenant capacity wait", "event", "asb_capacity_cooldown_hit",
+				"runtime_id", util.UUIDToString(runtimeID), "retry_after_ms", delay.Milliseconds())
+			return nil, ErrASBCapacityUnavailable
+		}
+	}
+	// Run before releasing the tenant lock, so the next replica observes the
+	// cached verdict. A cache hit must not extend its own cooldown indefinitely.
+	defer func() {
+		resultErr = recordASBCapacityResult(ctx, client, util.UUIDToString(runtimeID), resultErr)
+	}()
 
 	quotaExhausted, err := asbTenantQuotaExhausted(ctx, client)
 	if err != nil {
@@ -234,6 +252,14 @@ func reclaimASBSandboxForCredential(
 	excludedTaskID pgtype.UUID,
 	conn *pgxpool.Conn,
 ) (bool, error) {
+	started := time.Now()
+	defer func() {
+		slog.Info("ASB tenant capacity reclaim finished",
+			"event", "asb_capacity_reclaim_finished",
+			"requesting_runtime_id", util.UUIDToString(requestingRuntimeID),
+			"duration_ms", time.Since(started).Milliseconds(),
+		)
+	}()
 	scopedCredentials := *credentials
 	scopedCredentials.Store = queries
 	runtimeIDs, err := scopedCredentials.RuntimeIDsSharingAPIKey(ctx, requestingRuntimeID)
@@ -250,7 +276,11 @@ func reclaimASBSandboxForCredential(
 		return false, fmt.Errorf("query real-time ASB sandboxes before capacity reclaim: %w", err)
 	}
 	runningCount := 0
+	// An empty but non-nil filter must match no sessions. Missing inventory
+	// entries are not proof of termination and must not change stored state.
+	liveSandboxIDs := make([]string, 0, len(liveSandboxes))
 	for _, sandbox := range liveSandboxes {
+		liveSandboxIDs = append(liveSandboxIDs, sandbox.ID)
 		if strings.EqualFold(strings.TrimSpace(sandbox.Status.State), "running") {
 			runningCount++
 		}
@@ -266,6 +296,7 @@ func reclaimASBSandboxForCredential(
 		db.ListIdleASBSandboxSessionsByRuntimesParams{
 			RuntimeIds:     runtimeIDs,
 			ExcludedTaskID: excludedTaskID,
+			SandboxIds:     liveSandboxIDs,
 		},
 	)
 	if err != nil {
@@ -503,6 +534,7 @@ func isIdleASBSandboxCandidate(
 		db.ListIdleASBSandboxSessionsByRuntimesParams{
 			RuntimeIds:     runtimeIDs,
 			ExcludedTaskID: excludedTaskID,
+			SandboxIds:     []string{candidate.SandboxID},
 		},
 	)
 	if err != nil {

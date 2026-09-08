@@ -61,7 +61,7 @@ func (s *Store) GetByID(ctx context.Context, workspaceID, agentID, memoryID pgty
 
 func (s *Store) List(ctx context.Context, workspaceID, agentID pgtype.UUID, limit int32) ([]db.SceneMemory, error) {
 	if limit <= 0 {
-		limit = 50
+		limit = 200
 	}
 	return s.queries.ListSceneMemoryByAgent(ctx, db.ListSceneMemoryByAgentParams{
 		WorkspaceID: workspaceID,
@@ -126,6 +126,7 @@ func (s *Store) CommitBatch(ctx context.Context, row db.SceneMemory, batch Commi
 	updated, err := s.queries.CommitSceneMemoryBatch(ctx, db.CommitSceneMemoryBatchParams{
 		ReplaceText:            batch.ReplaceText,
 		MemoryText:             batch.MemoryText,
+		SceneTitle:             strings.TrimSpace(batch.SceneTitle),
 		SourceCursorAt:         timestamptz(batch.SourceCursorAt),
 		SourceCursorEvidenceID: strings.TrimSpace(batch.SourceCursorEvidenceID),
 		LastFlushMeta:          meta,
@@ -259,21 +260,6 @@ func (s *Store) Reset(ctx context.Context, id Identity, cutoff DirtyTrigger) (db
 	})
 }
 
-func (s *Store) SetHistoryResume(ctx context.Context, row db.SceneMemory, oldest time.Time) error {
-	n, err := s.queries.SetSceneMemoryHistoryResume(ctx, db.SetSceneMemoryHistoryResumeParams{
-		HistoryResumeBefore: timestamptz(oldest),
-		ID:                  row.ID,
-		LeaseToken:          row.LeaseToken,
-	})
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return ErrLeaseLost
-	}
-	return nil
-}
-
 func (s *Store) CountValidLeases(ctx context.Context) (int64, error) {
 	return s.queries.CountValidSceneMemoryLeases(ctx)
 }
@@ -317,14 +303,32 @@ func leaseOwned(current, claimed db.SceneMemory) bool {
 }
 
 func RetryDelay(attempt int32) time.Duration {
+	return retryDelayWithCap(attempt, 15*time.Minute)
+}
+
+// RetryDelayFor keeps history/evidence gaps on the long backoff, but an LLM
+// timeout must not inherit a catch-up attempt_count and park the scene for
+// 15 minutes. Successful pages reset attempt_count; consecutive timeouts still
+// climb, capped at one minute.
+func RetryDelayFor(code string, attempt int32) time.Duration {
+	if code == ErrorLLMTimeout {
+		return retryDelayWithCap(attempt, time.Minute)
+	}
+	return RetryDelay(attempt)
+}
+
+func retryDelayWithCap(attempt int32, capDelay time.Duration) time.Duration {
 	if attempt < 1 {
 		attempt = 1
+	}
+	if capDelay < 5*time.Second {
+		return 5 * time.Second
 	}
 	delay := 5 * time.Second
 	for i := int32(1); i < attempt; i++ {
 		delay *= 2
-		if delay >= 15*time.Minute {
-			return 15 * time.Minute
+		if delay >= capDelay {
+			return capDelay
 		}
 	}
 	return delay

@@ -1247,6 +1247,24 @@ describe("chat quick-actions supplement flow", () => {
 });
 
 describe("applyChatMessageToCache", () => {
+  it("validates coordinator results before placing a live reply in the cache", () => {
+    const qc = createQueryClient();
+    qc.setQueryData<ChatMessage[]>(messagesKey, []);
+    const result = {
+      action: "issue_created",
+      issue_id: "9275c40d-7309-4f48-9a1e-5f751636b28a",
+      issue_identifier: "MUL-17",
+    };
+    applyChatMessageToCache(qc, messagePayload({
+      role: "assistant", message_kind: "coordinator", task_id: undefined,
+      coordinator: {
+        action: "issue",
+        issue_results: [result, { action: "issue_created", issue_id: "invalid" }],
+      },
+    }));
+    expect(qc.getQueryData<ChatMessage[]>(messagesKey)?.[0]?.coordinator?.issue_results).toEqual([result]);
+  });
+
   function messagePayload(
     overrides: Partial<ChatMessageEventPayload> = {},
   ): ChatMessageEventPayload {

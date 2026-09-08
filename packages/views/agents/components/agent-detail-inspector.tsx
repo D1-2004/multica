@@ -8,25 +8,18 @@ import type {
   MemberWithUser,
 } from "@multica/core/types";
 import {
-  AGENT_DESCRIPTION_MAX_LENGTH,
   AGENT_MAX_CONCURRENT_TASKS_MAX,
   AGENT_MAX_CONCURRENT_TASKS_MIN,
 } from "@multica/core/agents";
 import { runtimeModelsOptions } from "@multica/core/runtimes";
 import { isImeComposing } from "@multica/core/utils";
 import { Input } from "@multica/ui/components/ui/input";
-import { Switch } from "@multica/ui/components/ui/switch";
-import { Textarea } from "@multica/ui/components/ui/textarea";
-import { AvatarUploadControl } from "../../common/avatar-upload-control";
 import {
   SettingsCard,
   SettingsRow,
-  SettingsSaveState,
   SettingsSection,
 } from "../../settings/components/settings-layout";
-import { useAutoSave } from "../../settings/components/use-auto-save";
 import { useT } from "../../i18n";
-import { CharCounter } from "./char-counter";
 import { ModelPicker } from "./inspector/model-picker";
 import {
   buildModelChangeUpdate,
@@ -35,6 +28,7 @@ import {
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { ThinkingSettingField } from "./inspector/thinking-prop-row";
 import { ServiceTierSettingField } from "./inspector/service-tier-setting-field";
+import { GitHubIdentityBindingCard } from "./integrations/github-identity-binding";
 
 interface InspectorProps {
   agent: Agent;
@@ -47,19 +41,10 @@ interface InspectorProps {
   onUpdate: (id: string, data: Record<string, unknown>) => Promise<void>;
 }
 
-interface ProfileDraft {
-  name: string;
-  description: string;
-}
-
-function profileDraftsEqual(left: ProfileDraft, right: ProfileDraft) {
-  return left.name === right.name && left.description === right.description;
-}
-
 /**
- * Full-width General settings form. Every editable value is presented as an
- * explicit field; compact inspector chips are used only through their
- * settings-field variants, where the whole control is a visible click target.
+ * Runtime settings form. Employee profile and communication behavior live in
+ * Digital Employee; this component owns only execution choices and sandbox
+ * identity.
  */
 export function AgentDetailInspector({
   agent,
@@ -71,53 +56,12 @@ export function AgentDetailInspector({
   onUpdate,
 }: InspectorProps) {
   const { t } = useT("agents");
-  const { t: ts } = useT("settings");
   const update = useCallback(
     (data: Record<string, unknown>) => onUpdate(agent.id, data),
     [agent.id, onUpdate],
   );
 
-  const [name, setName] = useState(agent.name);
-  const [description, setDescription] = useState(agent.description ?? "");
-
-  useEffect(() => {
-    setName(agent.name);
-    setDescription(agent.description ?? "");
-    // Reset only when moving to another agent. Cache updates from this form
-    // must not erase a newer local draft while an autosave is in flight.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent.id]);
-
-  const profileDraft = useMemo(
-    () => ({ name: name.trim(), description }),
-    [description, name],
-  );
-  const savedProfile = useMemo(
-    () => ({
-      name: agent.name,
-      description: agent.description ?? "",
-    }),
-    [agent.description, agent.name],
-  );
-  const saveProfile = useCallback(
-    async (next: ProfileDraft) => {
-      await update({ name: next.name, description: next.description });
-    },
-    [update],
-  );
-  const profileAutoSave = useAutoSave({
-    value: profileDraft,
-    savedValue: savedProfile,
-    onSave: saveProfile,
-    enabled:
-      canEdit &&
-      profileDraft.name.length > 0 &&
-      profileDraft.description.length <= AGENT_DESCRIPTION_MAX_LENGTH,
-    isEqual: profileDraftsEqual,
-  });
-
   const isOnline = runtime?.status === "online";
-  const nameInvalid = name.trim().length === 0;
 
   // Same query the Thinking / Speed fields already use, so switching model
   // costs no extra request. `null` = not authoritative (offline runtime, still
@@ -150,89 +94,6 @@ export function AgentDetailInspector({
 
   return (
     <div className="space-y-8">
-      <SettingsSection
-        title={t(($) => $.inspector.section_profile)}
-        description={t(($) => $.inspector.section_profile_hint)}
-        action={
-          <SettingsSaveState
-            status={profileAutoSave.status}
-            savingLabel={ts(($) => $.auto_save.saving)}
-            savedLabel={ts(($) => $.auto_save.saved)}
-            errorLabel={ts(($) => $.auto_save.failed)}
-          />
-        }
-      >
-        <SettingsCard>
-          <SettingsRow
-            label={t(($) => $.inspector.avatar_label)}
-            description={t(($) => $.inspector.avatar_hint)}
-            size="none"
-          >
-            <div className="flex justify-start sm:justify-end">
-              <AvatarUploadControl
-                variant="agent"
-                value={agent.avatar_url ?? null}
-                name={agent.name}
-                size={56}
-                disabled={!canEdit}
-                onUploaded={(url) => update({ avatar_url: url })}
-                onEmojiSelected={(value) => update({ avatar_url: value })}
-              />
-            </div>
-          </SettingsRow>
-
-          <SettingsRow
-            label={t(($) => $.inspector.name_label)}
-            size="text"
-          >
-            <div>
-              <Input
-                type="text"
-                name="agent-name"
-                autoComplete="off"
-                aria-label={t(($) => $.inspector.name_label)}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                onBlur={profileAutoSave.flush}
-                disabled={!canEdit}
-                aria-invalid={nameInvalid || undefined}
-              />
-              {nameInvalid ? (
-                <p className="mt-1 text-caption text-destructive">
-                  {t(($) => $.inspector.rename_required)}
-                </p>
-              ) : null}
-            </div>
-          </SettingsRow>
-
-          <SettingsRow
-            label={t(($) => $.inspector.description_label)}
-            size="text"
-            align="start"
-          >
-            <div>
-              <Textarea
-                name="agent-description"
-                autoComplete="off"
-                aria-label={t(($) => $.inspector.description_label)}
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                onBlur={profileAutoSave.flush}
-                disabled={!canEdit}
-                rows={5}
-                maxLength={AGENT_DESCRIPTION_MAX_LENGTH}
-                className="resize-y"
-                placeholder={t(($) => $.inspector.description_placeholder)}
-              />
-              <CharCounter
-                length={[...description].length}
-                max={AGENT_DESCRIPTION_MAX_LENGTH}
-              />
-            </div>
-          </SettingsRow>
-        </SettingsCard>
-      </SettingsSection>
-
       <SettingsSection
         title={t(($) => $.inspector.section_execution)}
         description={t(($) => $.inspector.section_execution_hint)}
@@ -314,103 +175,10 @@ export function AgentDetailInspector({
               onSave={(next) => update({ max_concurrent_tasks: next })}
             />
           </SettingsRow>
-          <ChatSessionResumeField
-            agentId={agent.id}
-            enabled={agent.chat_session_resume === true}
-            canEdit={canEdit}
-            onSave={(next) => update({ chat_session_resume: next })}
-          />
-          <InboundCoordinatorField
-            agentId={agent.id}
-            enabled={agent.inbound_coordinator === true}
-            canEdit={canEdit}
-            onSave={(next) => update({ inbound_coordinator: next })}
-          />
         </SettingsCard>
       </SettingsSection>
+      <GitHubIdentityBindingCard agentId={agent.id} canManage={canEdit} />
     </div>
-  );
-}
-
-function InboundCoordinatorField({
-  agentId,
-  enabled,
-  canEdit,
-  onSave,
-}: {
-  agentId: string;
-  enabled: boolean;
-  canEdit: boolean;
-  onSave: (next: boolean) => Promise<void>;
-}) {
-  const { t } = useT("agents");
-  const [draft, setDraft] = useState(enabled);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setDraft(enabled);
-  }, [agentId, enabled]);
-
-  return (
-    <SettingsRow
-      label={t(($) => $.inspector.prop_inbound_coordinator)}
-      description={t(($) => $.inspector.prop_inbound_coordinator_hint)}
-      align="start"
-    >
-      <Switch
-        checked={draft}
-        disabled={!canEdit || saving}
-        onCheckedChange={(checked) => {
-          setDraft(checked);
-          setSaving(true);
-          void onSave(checked)
-            .catch(() => setDraft(!checked))
-            .finally(() => setSaving(false));
-        }}
-        aria-label={t(($) => $.inspector.prop_inbound_coordinator)}
-      />
-    </SettingsRow>
-  );
-}
-
-function ChatSessionResumeField({
-  agentId,
-  enabled,
-  canEdit,
-  onSave,
-}: {
-  agentId: string;
-  enabled: boolean;
-  canEdit: boolean;
-  onSave: (next: boolean) => Promise<void>;
-}) {
-  const { t } = useT("agents");
-  const [draft, setDraft] = useState(enabled);
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setDraft(enabled);
-  }, [agentId, enabled]);
-
-  return (
-    <SettingsRow
-      label={t(($) => $.inspector.prop_chat_session_resume)}
-      description={t(($) => $.inspector.prop_chat_session_resume_hint)}
-      align="start"
-    >
-      <Switch
-        checked={draft}
-        disabled={!canEdit || saving}
-        onCheckedChange={(checked) => {
-          setDraft(checked);
-          setSaving(true);
-          void onSave(checked)
-            .catch(() => setDraft(!checked))
-            .finally(() => setSaving(false));
-        }}
-        aria-label={t(($) => $.inspector.prop_chat_session_resume)}
-      />
-    </SettingsRow>
   );
 }
 

@@ -44,6 +44,9 @@ describe("parseWithFallback sensitive responses", () => {
 
     expect(parsed).toEqual({ installation_id: "" });
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain(
+      "installation_id:invalid_type",
+    );
     const warningMetadata = warn.mock.calls[0]?.[1];
     expect(warningMetadata).not.toHaveProperty("received");
     expect(JSON.stringify(warningMetadata)).not.toContain("router-secret");

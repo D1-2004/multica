@@ -9,12 +9,10 @@ import type {
   MemberWithUser,
 } from "@multica/core/types";
 import { runtimeSupportsMcpConfig } from "@multica/core/agents";
-import { isASBRuntime } from "@multica/core/runtimes";
 import { useFeatureEnabled } from "@multica/core/config";
 import { COMPOSIO_MCP_APPS_FLAG } from "@multica/core/feature-flags";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
-import { dingtalkAccountBindingsOptions } from "@multica/core/dingtalk-account-bindings";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import { slackInstallationsOptions } from "@multica/core/slack";
 import { wecomInstallationsOptions } from "@multica/core/wecom";
@@ -37,122 +35,41 @@ import { EnvTab } from "./tabs/env-tab";
 import { CustomArgsTab } from "./tabs/custom-args-tab";
 import { McpConfigTab } from "./tabs/mcp-config-tab";
 import { AgentMcpTab } from "./tabs/agent-mcp-tab";
+import { DshPluginsTab } from "./tabs/dsh-plugins-tab";
 import { IntegrationsTab } from "./tabs/integrations-tab";
-import { IdentityTab } from "./tabs/identity-tab";
 import { RuntimeConfigTab } from "./tabs/runtime-config-tab";
 import { LLMTraceTab } from "./tabs/llm-trace-tab";
-import { RunnerTab } from "./tabs/runner-tab";
 import { A2ATab } from "./tabs/a2a-tab";
+import { RunnerTab } from "./tabs/runner-tab";
 import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
-import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
 import { SceneMemoryTab } from "./tabs/scene-memory-tab";
 import { ImportExportTab } from "./tabs/import-export-tab";
+import { DigitalEmployeeTab } from "./tabs/digital-employee-tab";
+import { AgentMCPAccessTab } from "./tabs/mcp-access-tab";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
+import { AgentConfigNav } from "./agent-config-nav";
+import {
+  AGENT_CONFIG_GROUPS,
+  type AgentConfigGroup,
+  type DetailSection,
+  type DetailTab,
+  isConfigView,
+  normalizeDetailView,
+  sectionForView,
+} from "./agent-config-navigation";
 
-type DetailSection = "overview" | "work" | "inbound" | "memory" | "capabilities" | "settings";
-
-export type DetailTab =
-  | "overview"
-  | "work"
-  | "inbound"
-  | "memory"
-  | "instructions"
-  | "okr"
-  | "skills"
-  | "mcp_config"
-  | "runner"
-  | "composio_mcp"
-  | "integrations"
-  | "identity"
-  | "general"
-  | "import_export"
-  | "access"
-  | "env"
-  | "custom_args"
-  | "runtime_config"
-  | "llm_trace"
-  | "a2a";
-
-type SecondaryTab = {
-  id: DetailTab;
-  labelKey:
-    | "instructions"
-    | "okr"
-  | "okr"
-      | "skills"
-    | "mcp_config"
-    | "runner"
-    | "composio_mcp"
-    | "integrations"
-    | "identity"
-    | "general"
-    | "import_export"
-    | "access"
-    | "environment"
-    | "custom_args"
-    | "runtime_config"
-    | "llm_trace"
-    | "a2a";
-};
-
-const CAPABILITY_TABS: SecondaryTab[] = [
-  { id: "instructions", labelKey: "instructions" },
-  { id: "skills", labelKey: "skills" },
-  { id: "mcp_config", labelKey: "mcp_config" },
-  { id: "runner", labelKey: "runner" },
-  { id: "composio_mcp", labelKey: "composio_mcp" },
-  { id: "integrations", labelKey: "integrations" },
-  { id: "identity", labelKey: "identity" },
-];
-
-const SETTINGS_TABS: SecondaryTab[] = [
-  { id: "general", labelKey: "general" },
-  { id: "import_export", labelKey: "import_export" },
-  { id: "okr", labelKey: "okr" },
-  { id: "access", labelKey: "access" },
-  { id: "env", labelKey: "environment" },
-  { id: "custom_args", labelKey: "custom_args" },
-  { id: "runtime_config", labelKey: "runtime_config" },
-  { id: "llm_trace", labelKey: "llm_trace" },
-  { id: "a2a", labelKey: "a2a" },
-];
+export type { DetailTab } from "./agent-config-navigation";
 
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "overview", labelKey: "overview" },
   { id: "work", labelKey: "work" },
-  { id: "inbound", labelKey: "inbound" },
   { id: "memory", labelKey: "memory" },
-  { id: "capabilities", labelKey: "capabilities" },
-  { id: "settings", labelKey: "settings" },
+  { id: "configuration", labelKey: "configuration" },
 ];
-
-const CAPABILITY_IDS = new Set<DetailTab>(CAPABILITY_TABS.map((tab) => tab.id));
-const SETTINGS_IDS = new Set<DetailTab>(SETTINGS_TABS.map((tab) => tab.id));
-const DETAIL_VIEWS = new Set<DetailTab>([
-  "overview",
-  "work",
-  "inbound",
-  "memory",
-  ...CAPABILITY_TABS.map((tab) => tab.id),
-  ...SETTINGS_TABS.map((tab) => tab.id),
-]);
-
-function isDetailTab(value: string | null): value is DetailTab {
-  return value !== null && DETAIL_VIEWS.has(value as DetailTab);
-}
-
-function sectionForView(view: DetailTab): DetailSection {
-  if (view === "overview") return "overview";
-  if (view === "work") return "work";
-  if (view === "inbound") return "inbound";
-  if (view === "memory") return "memory";
-  if (CAPABILITY_IDS.has(view)) return "capabilities";
-  return "settings";
-}
 
 interface AgentOverviewPaneProps {
   agent: Agent;
@@ -177,10 +94,9 @@ interface AgentOverviewPaneProps {
 /**
  * Agent workbench organised around user intent instead of backend fields.
  * Overview answers "what is happening now?", Work owns the issue surface,
- * Inbound lists short-loop channel transcripts, Memory holds scene text,
- * issue links, and the write/recall switches, Capabilities describes what
- * the agent can do, and Settings describes how it runs. The lower-level
- * editors stay intact so the reorganisation does not alter persistence or
+ * Conversations lists short-loop channel transcripts, Memory holds scene
+ * text and issue links, and Configuration groups identity, capabilities,
+ * connections, execution, and management without changing persistence or
  * permission semantics.
  */
 export function AgentOverviewPane({
@@ -210,8 +126,10 @@ export function AgentOverviewPane({
     COMPOSIO_MCP_APPS_FLAG,
     false,
   );
-  const [activeView, setActiveView] = useState<DetailTab>(() =>
-    isDetailTab(urlView) ? urlView : "overview",
+  const initialView = normalizeDetailView(urlView) ?? "overview";
+  const [activeView, setActiveView] = useState<DetailTab>(() => initialView);
+  const lastConfigViewRef = useRef<DetailTab>(
+    isConfigView(initialView) ? initialView : "digital_employee",
   );
   const [activeDirty, setActiveDirty] = useState(false);
   const [pendingView, setPendingView] = useState<DetailTab | null>(null);
@@ -229,101 +147,84 @@ export function AgentOverviewPane({
     ...dingtalkInstallationsOptions(wsId),
     enabled: !!wsId,
   });
-  const { data: dingtalkAccountListing } = useQuery({
-    ...dingtalkAccountBindingsOptions(wsId),
-    enabled: !!wsId,
-  });
   const { data: wecomListing } = useQuery({
     ...wecomInstallationsOptions(wsId),
     enabled: !!wsId,
   });
 
-  const integrationsConfigured =
+  const botIntegrationsConfigured =
     larkListing?.configured === true ||
     slackListing?.configured === true ||
     dingtalkListing?.configured === true ||
-    dingtalkAccountListing?.configured === true ||
     wecomListing?.configured === true;
-  const showMcpIntegration =
+  const isAgentOwner =
     !!currentUserId &&
     !!agent.owner_id &&
     agent.owner_id === currentUserId;
 
-  const visibleCapabilityTabs = useMemo(() => {
+  const visibleConfigGroups = useMemo<AgentConfigGroup[]>(() => {
     const showMcp = runtime
       ? runtimeSupportsMcpConfig(runtime.provider, runtime.metadata)
       : true;
     const showComposioMcp =
-      composioMCPAppsEnabled &&
-      !!currentUserId &&
-      !!agent.owner_id &&
-      agent.owner_id === currentUserId;
+      composioMCPAppsEnabled && isAgentOwner;
 
-    return CAPABILITY_TABS.filter((tab) => {
-      if (tab.id === "mcp_config") return showMcp;
-      if (tab.id === "runner") return canEdit;
-      if (tab.id === "composio_mcp") return showComposioMcp;
-      if (tab.id === "integrations") {
-        return integrationsConfigured || showMcpIntegration;
-      }
-      if (tab.id === "identity") {
-        return dingtalkAccountListing?.configured === true || isASBRuntime(runtime);
-      }
-      return true;
-    });
-  }, [
-    agent.owner_id,
-    composioMCPAppsEnabled,
-    currentUserId,
-    canEdit,
-    dingtalkAccountListing?.configured,
-    integrationsConfigured,
-    runtime,
-    showMcpIntegration,
-  ]);
-
-  const visibleSettingsTabs = useMemo(
-    () =>
-      SETTINGS_TABS.filter((tab) => {
-        if (tab.id === "import_export") return source != null;
-        if (tab.id === "env") return canEdit;
-        if (tab.id === "runtime_config") {
+    return AGENT_CONFIG_GROUPS.map((group) => ({
+      ...group,
+      items: group.items.filter((item) => {
+        if (item.id === "import_export") return source != null;
+        if (item.id === "mcp_config") return showMcp;
+        if (item.id === "dsh_plugins") return runtime?.provider === "dsh";
+        if (item.id === "composio_mcp") return showComposioMcp;
+        if (item.id === "integrations") return botIntegrationsConfigured;
+        if (item.id === "mcp_access" || item.id === "a2a") {
+          return isAgentOwner;
+        }
+        if (item.id === "runner") return canEdit;
+        if (item.id === "env") return canEdit;
+        if (item.id === "runtime_config") {
           return runtime?.provider === "openclaw";
         }
-        if (tab.id === "llm_trace") return agent.runtime_mode === "cloud";
-        if (tab.id === "a2a") {
-          return !!currentUserId && agent.owner_id === currentUserId;
+        if (item.id === "llm_trace") {
+          return agent.runtime_mode === "cloud";
         }
         return true;
       }),
-    [
-      agent.owner_id,
-      agent.runtime_mode,
-      canEdit,
-      currentUserId,
-      runtime?.provider,
-      source,
-    ],
-  );
+    })).filter((group) => group.items.length > 0);
+  }, [
+    agent.runtime_mode,
+    botIntegrationsConfigured,
+    canEdit,
+    composioMCPAppsEnabled,
+    isAgentOwner,
+    runtime,
+    source,
+  ]);
 
   const visibleViews = useMemo(
     () =>
       new Set<DetailTab>([
         "overview",
         "work",
-        "inbound",
         ...(canEdit ? (["memory"] as const) : []),
-        ...visibleCapabilityTabs.map((tab) => tab.id),
-        ...visibleSettingsTabs.map((tab) => tab.id),
+        ...visibleConfigGroups.flatMap((group) =>
+          group.items.map((item) => item.id),
+        ),
       ]),
-    [canEdit, visibleCapabilityTabs, visibleSettingsTabs],
+    [canEdit, visibleConfigGroups],
   );
 
-  const effectiveView = visibleViews.has(activeView) ? activeView : "overview";
+  const defaultConfigView = visibleConfigGroups[0]?.items[0]?.id;
+  const effectiveView = visibleViews.has(activeView)
+    ? activeView
+    : isConfigView(activeView) && defaultConfigView
+      ? defaultConfigView
+      : "overview";
   const activeSection = sectionForView(effectiveView);
 
   const commitView = useCallback(
     (next: DetailTab) => {
+      if (isConfigView(next)) lastConfigViewRef.current = next;
       setActiveView(next);
       const params = new URLSearchParams(navigation.searchParams);
       if (next === "overview") params.delete("view");
@@ -350,22 +251,17 @@ export function AgentOverviewPane({
     if (
       section === "overview" ||
       section === "work" ||
-      section === "inbound" ||
       section === "memory"
     ) {
       requestView(section);
       return;
     }
-    if (section === "capabilities") {
-      const current = CAPABILITY_IDS.has(effectiveView)
-        ? effectiveView
-        : visibleCapabilityTabs[0]?.id;
-      if (current) requestView(current);
-      return;
-    }
-    const current = SETTINGS_IDS.has(effectiveView)
+    const previousConfigView = lastConfigViewRef.current;
+    const current = isConfigView(effectiveView)
       ? effectiveView
-      : visibleSettingsTabs[0]?.id;
+      : visibleViews.has(previousConfigView)
+        ? previousConfigView
+        : defaultConfigView;
     if (current) requestView(current);
   };
 
@@ -379,14 +275,47 @@ export function AgentOverviewPane({
   useEffect(() => {
     if (urlView === lastUrlViewRef.current) return;
     lastUrlViewRef.current = urlView;
-    if (urlView === null) {
-      setActiveView("overview");
+    const nextView =
+      urlView === null ? "overview" : normalizeDetailView(urlView);
+    if (!nextView || !visibleViews.has(nextView)) return;
+
+    if (activeDirty && nextView !== effectiveView) {
+      setPendingView(nextView);
+      const params = new URLSearchParams(navigation.searchParams);
+      if (effectiveView === "overview") params.delete("view");
+      else params.set("view", effectiveView);
+      const query = params.toString();
+      navigation.replace(
+        `${navigation.pathname}${query ? `?${query}` : ""}`,
+      );
       return;
     }
-    if (isDetailTab(urlView) && visibleViews.has(urlView)) {
-      setActiveView(urlView);
+    if (isConfigView(nextView)) lastConfigViewRef.current = nextView;
+    setActiveView(nextView);
+  }, [activeDirty, effectiveView, navigation, urlView, visibleViews]);
+
+  useEffect(() => {
+    if (urlView !== "identity") return;
+    const params = new URLSearchParams(navigation.searchParams);
+    params.set("view", "digital_employee");
+    navigation.replace(`${navigation.pathname}?${params.toString()}`);
+  }, [navigation, urlView]);
+
+  useEffect(() => {
+    if (
+      urlView === null ||
+      urlView === "identity" ||
+      normalizeDetailView(urlView) !== null
+    ) {
+      return;
     }
-  }, [urlView, visibleViews]);
+    const params = new URLSearchParams(navigation.searchParams);
+    params.delete("view");
+    const query = params.toString();
+    navigation.replace(
+      `${navigation.pathname}${query ? `?${query}` : ""}`,
+    );
+  }, [navigation, urlView]);
 
   useEffect(() => {
     if (navIntent == null) return;
@@ -394,12 +323,20 @@ export function AgentOverviewPane({
     onNavIntentHandled?.();
   }, [navIntent, onNavIntentHandled, requestView, visibleViews]);
 
+  useEffect(() => {
+    if (!activeDirty) return;
+    const preventUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventUnload);
+    return () => window.removeEventListener("beforeunload", preventUnload);
+  }, [activeDirty]);
+
   const secondaryTabs =
-    activeSection === "capabilities"
-      ? visibleCapabilityTabs
-      : activeSection === "settings"
-        ? visibleSettingsTabs
-        : [];
+    activeSection === "configuration"
+      ? visibleConfigGroups.flatMap((group) => group.items)
+      : [];
   const activeSecondaryTab = secondaryTabs.find(
     (tab) => tab.id === effectiveView,
   );
@@ -445,7 +382,7 @@ export function AgentOverviewPane({
           "min-h-0 flex-1",
           isSecondaryLayout
             ? "overflow-y-auto md:overflow-hidden"
-            : effectiveView === "inbound" || effectiveView === "memory"
+            : effectiveView === "memory"
               ? "overflow-hidden"
               : "overflow-y-auto",
         )}
@@ -476,12 +413,6 @@ export function AgentOverviewPane({
           </div>
         )}
 
-        {effectiveView === "inbound" && (
-          <div className="flex h-full min-h-0 flex-1 flex-col">
-            <CoordinatorSessionsTab agent={agent} />
-          </div>
-        )}
-
         {effectiveView === "memory" && (
           <div className="flex h-full min-h-0 flex-1 flex-col">
             <SceneMemoryTab
@@ -494,37 +425,11 @@ export function AgentOverviewPane({
 
         {secondaryTabs.length > 0 && activeSecondaryTab && (
           <div className="flex min-h-full flex-col md:h-full md:flex-row">
-            {/* Content-surface color, no shell tint — same rule as the settings
-                nav: in-card panels must not break the desktop tab merge (MUL-4439). */}
-            <aside className="shrink-0 overflow-x-auto border-b border-surface-border p-2 md:w-52 md:overflow-y-auto md:border-b-0 md:border-r md:p-4">
-              <div
-                className="flex w-max min-w-full items-center gap-1 md:w-full md:flex-col md:items-stretch"
-                role="tablist"
-                aria-orientation="vertical"
-                aria-label={t(($) => $.tabs.section_navigation_aria)}
-              >
-                {secondaryTabs.map((tab) => {
-                  const active = effectiveView === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      role="tab"
-                      aria-selected={active}
-                      onClick={() => requestView(tab.id)}
-                      className={cn(
-                        "flex h-8 shrink-0 items-center rounded-md px-2.5 text-left text-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:w-full",
-                        active
-                          ? "bg-surface-selected font-medium text-surface-selected-foreground hover:bg-surface-selected"
-                          : "text-muted-foreground hover:bg-surface-hover hover:text-foreground",
-                      )}
-                    >
-                      {t(($) => $.tabs[tab.labelKey])}
-                    </button>
-                  );
-                })}
-              </div>
-            </aside>
+            <AgentConfigNav
+              groups={visibleConfigGroups}
+              activeView={effectiveView}
+              onSelect={requestView}
+            />
 
             <section className="min-w-0 flex-1 md:overflow-y-auto">
               <div className="mx-auto w-full max-w-3xl p-4 sm:p-6 md:p-8">
@@ -535,6 +440,21 @@ export function AgentOverviewPane({
                 </header>
 
                 <div className="mt-6">
+                  {effectiveView === "digital_employee" && (
+                    <DigitalEmployeeTab
+                      agent={agent}
+                      runtime={runtime}
+                      members={members}
+                      currentUserId={currentUserId ?? null}
+                      canEdit={canEdit}
+                      canOperateDingTalkBinding={canOperateDingTalkBinding}
+                      dingTalkBindingPermissionLoading={
+                        dingTalkBindingPermissionLoading
+                      }
+                      onUpdate={onUpdate}
+                      onDirtyChange={setActiveDirty}
+                    />
+                  )}
                   {effectiveView === "instructions" && (
                     <InstructionsTab
                       agent={agent}
@@ -558,20 +478,20 @@ export function AgentOverviewPane({
                       canEdit={canEdit}
                     />
                   )}
+                  {effectiveView === "dsh_plugins" && (
+                    <DshPluginsTab
+                      agent={agent}
+                      runtime={runtime}
+                      canEdit={canEdit}
+                    />
+                  )}
                   {effectiveView === "mcp_config" && (
                     <McpConfigTab
                       agent={agent}
                       runtime={runtime}
                       onSave={(updates) => onUpdate(agent.id, updates)}
                       onDirtyChange={setActiveDirty}
-                    />
-                  )}
-                  {effectiveView === "runner" && (
-                    <RunnerTab
-                      agent={agent}
-                      canBind={
-                        !!currentUserId && agent.owner_id === currentUserId
-                      }
+					  canEdit={canEdit}
                     />
                   )}
                   {effectiveView === "composio_mcp" && (
@@ -582,23 +502,10 @@ export function AgentOverviewPane({
                       agent={agent}
                       onUpdate={onUpdate}
                       canEdit={canEdit}
-                      showMcpLink={showMcpIntegration}
-                      platformIntegrationsConfigured={integrationsConfigured}
-                      canOperateDingTalkBinding={canOperateDingTalkBinding}
-                      dingTalkBindingPermissionLoading={
-                        dingTalkBindingPermissionLoading
-                      }
                     />
                   )}
-                  {effectiveView === "identity" && (
-                    <IdentityTab
-                      agent={agent}
-                      runtime={runtime}
-                      canOperateDingTalkBinding={canOperateDingTalkBinding}
-                      dingTalkBindingPermissionLoading={
-                        dingTalkBindingPermissionLoading
-                      }
-                    />
+                  {effectiveView === "mcp_access" && (
+                    <AgentMCPAccessTab agent={agent} />
                   )}
                   {effectiveView === "general" && (
                     <AgentDetailInspector
@@ -611,6 +518,17 @@ export function AgentOverviewPane({
                       sourceManaged={source != null}
                       onUpdate={onUpdate}
                     />
+                  )}
+                  {effectiveView === "runner" && (
+                    <RunnerTab
+                      agent={agent}
+                      canBind={
+                        !!currentUserId && agent.owner_id === currentUserId
+                      }
+                    />
+                  )}
+                  {effectiveView === "import_export" && source && (
+                    <ImportExportTab key={`${source.agent_id}:${source.ref}:${source.synced_commit_sha}`} source={source} canEdit={canEdit} />
                   )}
                   {effectiveView === "access" && (
                     <AgentAccessSettings
@@ -647,9 +565,6 @@ export function AgentOverviewPane({
                     />
                   )}
                   {effectiveView === "a2a" && <A2ATab agent={agent} />}
-                  {effectiveView === "import_export" && source && (
-                    <ImportExportTab key={`${agent.id}:${source.ref}:${source.synced_commit_sha}`} source={source} canEdit={canEdit} />
-                  )}
                 </div>
               </div>
             </section>

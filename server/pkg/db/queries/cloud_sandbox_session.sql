@@ -112,6 +112,12 @@ SELECT session.*
 FROM fc_e2b_sandbox_session AS session
 WHERE session.runtime_id = ANY(sqlc.arg('runtime_ids')::uuid[])
   AND session.sandbox_backend = 'asb'
+  -- Capacity reclaim restricts candidates to the live control-plane inventory.
+  -- A NULL filter preserves full inventory reads used by Runtime rotation.
+  AND (
+      sqlc.narg('sandbox_ids')::text[] IS NULL
+      OR session.sandbox_id = ANY(sqlc.narg('sandbox_ids')::text[])
+  )
   -- A Runtime artifact or API-key rotation marks the database row stale
   -- before the old ASB instance actually exits. Keep that resource visible
   -- to the quota reclaimer until the control-plane sandbox is deleted.

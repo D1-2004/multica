@@ -6,6 +6,8 @@ import { chatKeys } from "@multica/core/chat/queries";
 import type { TaskMessagePayload } from "@multica/core/types";
 import type { ReactElement } from "react";
 import enChat from "../../locales/en/chat.json";
+import { WorkspaceSlugProvider } from "@multica/core/paths";
+import { NavigationProvider } from "../../navigation";
 
 // The live timeline is a real list row rather than Virtuoso chrome (MUL-4922),
 // so it shares one identity with the persisted assistant row and keeps its
@@ -192,6 +194,44 @@ describe("ChatMessageList live timeline (MUL-3960 regression)", () => {
 });
 
 describe("ChatMessageList Coordinator timeline", () => {
+  it("keeps Finish and the real issue link visible while tool steps are folded", () => {
+    const push = vi.fn();
+    render(
+      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <QueryClientProvider client={new QueryClient()}>
+          <WorkspaceSlugProvider slug="acme">
+            <NavigationProvider value={{ push, replace: vi.fn(), back: vi.fn(), pathname: "/acme/chat", searchParams: new URLSearchParams(), getShareableUrl: (path) => path }}>
+              <ChatMessageList
+                messages={[{
+                  id: "result", chat_session_id: "chat", role: "assistant", content: "Sending 123.",
+                  task_id: null, created_at: new Date(0).toISOString(), message_kind: "coordinator",
+                  coordinator: {
+                    action: "issue",
+                    issue_results: [{ action: "issue_created", issue_id: "real-issue", issue_identifier: "MUL-19" }],
+                    steps: [
+                      { seq: 1, type: "tool_use", tool: "dws_chat_history", input: "{}" },
+                      { seq: 2, type: "tool_use", tool: "finish", input: '{"action":"issue","purpose":"Send 123"}' },
+                      { seq: 3, type: "text", content: "Sending 123." },
+                    ],
+                  },
+                }]}
+                pendingTask={null}
+                availability="online"
+              />
+            </NavigationProvider>
+          </WorkspaceSlugProvider>
+        </QueryClientProvider>
+      </I18nProvider>,
+    );
+    expect(screen.getByText("Finish")).toBeVisible();
+    expect(screen.getByText("Created issue")).toBeVisible();
+    expect(screen.getByText("Sending 123.")).toBeVisible();
+    expect(screen.queryByText("dws_chat_history")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "MUL-19" }));
+    expect(push).toHaveBeenCalledWith("/acme/issues/real-issue");
+    expect(screen.getByText("Decision input").closest("details")?.textContent).toContain("Send 123");
+  });
+
   it("renders persisted DWS and tool steps like an ordinary Chat run", async () => {
     render(
       <I18nProvider locale="en" resources={TEST_RESOURCES}>
@@ -448,6 +488,17 @@ describe("ChatMessageList failure copy (MUL-5370 regression)", () => {
     renderFailure("skill_bundle_unavailable");
     expect(
       await screen.findByText(enChat.message_list.failure.skill_bundle_unavailable),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
+  });
+
+  // Without its own copy this reason falls back to the generic bubble, which
+  // says nothing about a plugin -- and the operator has no way to learn that a
+  // package they bound is what stopped the run.
+  it("renders dedicated copy for a DSH plugin that could not load", async () => {
+    renderFailure("dsh_plugin_unavailable");
+    expect(
+      await screen.findByText(enChat.message_list.failure.dsh_plugin_unavailable),
     ).toBeInTheDocument();
     expect(screen.queryByText(FALLBACK)).not.toBeInTheDocument();
   });

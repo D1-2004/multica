@@ -11,7 +11,9 @@
     "usage": "统计",
     "sites": "网站",
     "runtimes": "运行时",
+    "runners": "我的电脑",
     "skills": "Skills",
+    "dsh_plugins": "DSH 插件",
     "settings": "设置"
   },
   "tab": {
@@ -22,6 +24,7 @@
     "member": "成员",
     "squad": "小队",
     "skill": "Skill",
+    "dsh_plugin": "DSH 插件",
     "machine": "机器",
     "runtime": "运行时",
     "attachment": "附件",
@@ -53,6 +56,10 @@
     "new_issue_shortcut": "C",
     "pinned_label": "固定",
     "workspace_group": "工作区",
+    "collaboration_group": "协作",
+    "agent_group": "Agent",
+    "runtime_group": "运行时",
+    "configuration_group": "配置",
     "configure_group": "配置",
     "unread_overflow": "99+",
     "discord_card": {

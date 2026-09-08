@@ -99,7 +99,7 @@ The repository root must contain a DTA `dingtalk-agent.json` using the `dingtalk
 
 Multica validates the stable `project@1` fields and materializes the selected commit into its database as a snapshot. It accepts additional DTA extension fields and does not interpret workspace definitions. The display name is only the creation default; later syncs update the definition and repository skills while preserving the name and description edited in Multica. Runtime, model, access, and additional workspace skills also remain Multica-managed. GitHub import does not fall back to the legacy `multica-agent.yaml` format.
 
-Repository changes are **not applied automatically**. Open the Git Agent’s **Settings → Import / Export**, select a branch, review the Git and configuration changes, and confirm publication. The exact previewed commit is applied; a moved branch does not change the confirmed version. Local skill edits and deletions are included in the configuration preview. The overview sync button opens this page. Disconnecting the installation leaves the active configuration intact but disables further syncs.
+Repository changes are **not applied automatically**. Open the Git Agent’s **Configuration → Import / Export**, select a branch, review the Git and configuration changes, and confirm publication. The exact previewed commit is applied; a moved branch does not change the confirmed version. Local skill edits and deletions are included in the configuration preview. The overview sync button opens this page. Disconnecting the installation leaves the active configuration intact but disables further syncs.
 
 ## Disconnecting
 

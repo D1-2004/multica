@@ -1,0 +1,293 @@
+{
+  "policy_version": "2026-09-08.2",
+  "assembly_version": "1",
+  "started_at": "2026-09-07T17:03:32.266023Z",
+  "completed_at": "2026-09-07T17:03:46.294386Z",
+  "status": "PASS",
+  "safety": "Real model, synthetic frozen dialogue, fake read-only tools and history; no Host submission or business effects.",
+  "assertion_scope": "Assertions cover action/work count, continuation target, source attribution, work basis and disclosure path; answer prose requires separate human review.",
+  "cases": [
+    {
+      "id": "sandbox_command_handoff",
+      "contract_id": "f04_contrast",
+      "fixture_hash": "71052412125a6726d3db8b1bb14dfb17f8671b753de34abe64c859a4f9b16899",
+      "repeat": 1,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，已取消之前的请求。现在执行测试命令并将结果发到当前会话。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n取消刚才给小林发消息的请求。这是一项独立预发测试：实际执行 printf PGCTX_SYNTHETIC_OK，把命令输出发到当前会话，只发一次。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：执行命令 printf PGCTX_SYNTHETIC_OK 并将输出发送到当前会话 cidReplaySyntheticSceneA==",
+          "Intent": "notify",
+          "LookInto": "小周委托：执行命令 printf PGCTX_SYNTHETIC_OK 并将输出发送到当前会话 cidReplaySyntheticSceneA==\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "1f79435785e0fe6eb3d59935f612be1ae76535442dfd57b53978f812aa9b9363",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2351,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "aae799a48d67fdcd3dc00c6e7a0534a080c1e1e2314e04d80b48b2faee95940c",
+          "tool_schema_hash": "5bd3f62c34924c77d19808cfbf4e8eaa30ed1f80c1eac60ca659997c6816dc05",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3539,
+          "output_tokens": 112
+        }
+      ],
+      "input_tokens": 5890,
+      "output_tokens": 143,
+      "elapsed_ms": 4988,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    },
+    {
+      "id": "sandbox_command_handoff",
+      "contract_id": "f04_contrast",
+      "fixture_hash": "71052412125a6726d3db8b1bb14dfb17f8671b753de34abe64c859a4f9b16899",
+      "repeat": 2,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，已取消之前的请求。现在执行测试命令并将结果发到当前会话。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n取消刚才给小林发消息的请求。这是一项独立预发测试：实际执行 printf PGCTX_SYNTHETIC_OK，把命令输出发到当前会话，只发一次。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：执行命令 printf PGCTX_SYNTHETIC_OK 并将输出发送到当前会话 cidReplaySyntheticSceneA==",
+          "Intent": "notify",
+          "LookInto": "小周委托：执行命令 printf PGCTX_SYNTHETIC_OK 并将输出发送到当前会话 cidReplaySyntheticSceneA==\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "1f79435785e0fe6eb3d59935f612be1ae76535442dfd57b53978f812aa9b9363",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2351,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "aae799a48d67fdcd3dc00c6e7a0534a080c1e1e2314e04d80b48b2faee95940c",
+          "tool_schema_hash": "5bd3f62c34924c77d19808cfbf4e8eaa30ed1f80c1eac60ca659997c6816dc05",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3539,
+          "output_tokens": 112
+        }
+      ],
+      "input_tokens": 5890,
+      "output_tokens": 143,
+      "elapsed_ms": 3999,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    },
+    {
+      "id": "sandbox_command_handoff",
+      "contract_id": "f04_contrast",
+      "fixture_hash": "71052412125a6726d3db8b1bb14dfb17f8671b753de34abe64c859a4f9b16899",
+      "repeat": 3,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "好的，已取消之前的请求。现在执行测试命令并将结果发到当前会话。",
+      "planned_items": [
+        {
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "小周 在钉钉会话中的消息：\n\n取消刚才给小林发消息的请求。这是一项独立预发测试：实际执行 printf PGCTX_SYNTHETIC_OK，把命令输出发到当前会话，只发一次。",
+          "action_key": "item-1",
+          "Delegator": "小周",
+          "Purpose": "小周委托：执行命令 printf PGCTX_SYNTHETIC_OK 并将输出发送到当前会话 cidReplaySyntheticSceneA==",
+          "Intent": "notify",
+          "LookInto": "小周委托：执行命令 printf PGCTX_SYNTHETIC_OK 并将输出发送到当前会话 cidReplaySyntheticSceneA==\nscene_cid=cidReplaySyntheticSceneA=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "1f79435785e0fe6eb3d59935f612be1ae76535442dfd57b53978f812aa9b9363",
+          "tool_schema_hash": "70551db03f66d71b02cb8381b8b6277ffcdb533f5c609efe7bdd612db7de3cb9",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 2351,
+          "output_tokens": 31
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "aae799a48d67fdcd3dc00c6e7a0534a080c1e1e2314e04d80b48b2faee95940c",
+          "tool_schema_hash": "5bd3f62c34924c77d19808cfbf4e8eaa30ed1f80c1eac60ca659997c6816dc05",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "issue_get",
+            "issue_comment_list",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 3539,
+          "output_tokens": 112
+        }
+      ],
+      "input_tokens": 5890,
+      "output_tokens": 143,
+      "elapsed_ms": 5039,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    }
+  ]
+}

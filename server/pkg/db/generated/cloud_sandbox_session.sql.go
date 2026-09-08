@@ -174,6 +174,12 @@ SELECT session.id, session.workspace_id, session.runtime_id, session.scope_type,
 FROM fc_e2b_sandbox_session AS session
 WHERE session.runtime_id = ANY($1::uuid[])
   AND session.sandbox_backend = 'asb'
+  -- Capacity reclaim restricts candidates to the live control-plane inventory.
+  -- A NULL filter preserves full inventory reads used by Runtime rotation.
+  AND (
+      $2::text[] IS NULL
+      OR session.sandbox_id = ANY($2::text[])
+  )
   -- A Runtime artifact or API-key rotation marks the database row stale
   -- before the old ASB instance actually exits. Keep that resource visible
   -- to the quota reclaimer until the control-plane sandbox is deleted.
@@ -182,7 +188,7 @@ WHERE session.runtime_id = ANY($1::uuid[])
       SELECT 1
       FROM agent_task_queue AS task
       WHERE task.runtime_id = session.runtime_id
-        AND task.id IS DISTINCT FROM $2::uuid
+        AND task.id IS DISTINCT FROM $3::uuid
         -- Reclaim only when every matching task is explicitly terminal. This
         -- fail-closed predicate also fences any future non-terminal status that
         -- an older binary does not yet know about during a rolling deploy.
@@ -202,11 +208,12 @@ ORDER BY
 
 type ListIdleASBSandboxSessionsByRuntimesParams struct {
 	RuntimeIds     []pgtype.UUID `json:"runtime_ids"`
+	SandboxIds     []string      `json:"sandbox_ids"`
 	ExcludedTaskID pgtype.UUID   `json:"excluded_task_id"`
 }
 
 func (q *Queries) ListIdleASBSandboxSessionsByRuntimes(ctx context.Context, arg ListIdleASBSandboxSessionsByRuntimesParams) ([]FcE2bSandboxSession, error) {
-	rows, err := q.db.Query(ctx, listIdleASBSandboxSessionsByRuntimes, arg.RuntimeIds, arg.ExcludedTaskID)
+	rows, err := q.db.Query(ctx, listIdleASBSandboxSessionsByRuntimes, arg.RuntimeIds, arg.SandboxIds, arg.ExcludedTaskID)
 	if err != nil {
 		return nil, err
 	}

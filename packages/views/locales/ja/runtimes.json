@@ -8,6 +8,8 @@
     "search_placeholder": "ランタイムを検索…",
     "scope_mine": "自分のもの",
     "scope_all": "すべて",
+    "owner_filter": "所有者",
+    "all_owners": "すべての所有者",
     "live": "ライブ",
     "live_tooltip": "リアルタイム更新 · オフライン検出は最大 75 秒",
     "filter_all": "すべて",
