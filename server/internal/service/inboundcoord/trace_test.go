@@ -115,7 +115,7 @@ func TestDecideExportsOneLangfuseTracePerTurn(t *testing.T) {
 	if got, _ := spanAttr(root, "langfuse.user.id"); got.AsString() != "02000000-0000-0000-0000-000000000000" {
 		t.Errorf("user id = %q", got.AsString())
 	}
-	wantTags := "inbound_coordinator,source-web,kind-p2p,agent-01000000-0000-0000-0000-000000000000,workspace-ws-1,user-02000000-0000-0000-0000-000000000000"
+	wantTags := "inbound_coordinator,source-web,kind-p2p,agent-01000000-0000-0000-0000-000000000000,agent_name-FDE教练,workspace-ws-1,user-02000000-0000-0000-0000-000000000000"
 	if got, _ := spanAttr(root, "langfuse.trace.tags"); strings.Join(got.AsStringSlice(), ",") != wantTags {
 		t.Errorf("tags = %v", got.AsStringSlice())
 	}

@@ -31,9 +31,12 @@ unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
 scripts/query-langfuse.sh --name inbound_coordinator
 scripts/query-langfuse.sh --trace '<coord_trace_id>'
 scripts/query-langfuse.sh --issue '<issue-uuid>' --observations
-scripts/query-langfuse.sh --agent '预发测试智能体' --from 2026-09-03T00:00:00Z
+scripts/query-langfuse.sh --agent 3141dfdb-d567-46ca-93d4-a754292fc16e --message 练货
+scripts/query-langfuse.sh --agent 金龙 --from 7d
 scripts/query-langfuse.sh --loop agent_task --limit 20
 ```
+
+`--agent` 是 UUID 时走 `tags=agent-<uuid>`（不要对全项目 recent 20 条做 metadata 过滤）。`--message` 会 hydrate 列表里 `input` 为空的 trace 再按子串匹配。带 `--agent` / `--message` 时默认窗口 7 天。更完整的 search 走 `inspect-langfuse-trace` 的 `langfuse_lookup.py search`。
 
 `--raw` 打 JSON。`--observations` 拉第一条命中的 spans/events。
 

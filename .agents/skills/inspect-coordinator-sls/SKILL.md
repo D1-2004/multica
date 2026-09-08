@@ -30,7 +30,11 @@ scripts/query-coordinator-sls.sh --env pre --name 冬翔
 scripts/query-coordinator-sls.sh --env pre --cid 'cid+bEFv7ngm9n79Q1vL9HYJw=='
 scripts/query-coordinator-sls.sh --env pre --trace '<coord_trace_id>'
 scripts/query-coordinator-sls.sh --env pre --event inbound_coordinator_llm_request --message 上海
+scripts/query-coordinator-sls.sh --env prod --agent 3141dfdb-d567-46ca-93d4-a754292fc16e --message 练货
+scripts/query-coordinator-sls.sh --env prod --agent 金龙 --message VOC
 ```
+
+`--agent` 是 UUID 时查 `agent_id=`，否则查 `agent_name=`。ASCII `--message` 进 SLS 查询；中文子串（如 `练货`）SLS 分词命中不了 quoted `current_message`，脚本改为按 agent/时间拉日志再本地过滤。
 
 脚本自己调 `normandy log list`。加 `--raw` 看原始 JSON。
 
@@ -79,5 +83,6 @@ Generation 原文、token、沙箱 `agent_task`：skill `inspect-langfuse`（`sc
 - 用 Router `get_observability_llm_trace` 当 Coordinator 上下文。那是沙箱模型。
 - 用 Langfuse `agent_task` 当 Scene Text 召回证据。那是沙箱 Run。
 - 查询 `inbound_coordinator` 或 `event: inbound_coordinator*`。前者匹配不到带后缀的 event 名；后者当 JSON 字段，这一路不是 JSON。
+- `--agent` 传 UUID 却写成 `agent_name=`，或 `--message 练货` 不带引号/wildcard：CJK 子串会 miss。
 - 不带预发 tag，把正式和预发混在一起。
 - 不 unset HTTP 代理。

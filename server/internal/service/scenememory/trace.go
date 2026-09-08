@@ -96,6 +96,7 @@ func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) 
 	for _, tag := range []string{
 		langfuse.Tag("kind", row.SceneKind),
 		langfuse.Tag("agent", util.UUIDToString(row.AgentID)),
+		langfuse.Tag("agent_name", agentName),
 		langfuse.Tag("workspace", util.UUIDToString(row.WorkspaceID)),
 	} {
 		if tag != "" {

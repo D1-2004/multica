@@ -132,6 +132,7 @@ func coordinatorTraceTags(turn Turn) []string {
 	// Ids the Langfuse API can only filter through tags on this deployment.
 	tags = append(tags,
 		langfuse.Tag("agent", util.UUIDToString(turn.AgentID)),
+		langfuse.Tag("agent_name", strings.TrimSpace(turn.AgentName)),
 		langfuse.Tag("workspace", turn.WorkspaceID),
 		langfuse.Tag("user", coordinatorTraceUserID(turn)),
 	)

@@ -22,7 +22,17 @@ export LANGFUSE_PUBLIC_KEY=… LANGFUSE_SECRET_KEY=… LANGFUSE_BASE_URL=https:/
 LF=.agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py
 ```
 
-可选 `LANGFUSE_QUERY_ENVIRONMENT=pre` 让 trace 列表只看一个环境。加 `--json` 拿原始 JSON。
+可选 `LANGFUSE_QUERY_ENVIRONMENT=pre` 让 trace 列表只看一个环境。全局 flag：`--json`、`--limit N`、`--from 7d|24h|ISO`、`--environment pre|production`。`--limit` 必须当 flag 传，不能跟在 tag 后面当位置参数（多 tag 是 AND，会变成搜不到）。
+
+只知道 agent id / 花名 / 入站原文时用 `search`，不要用 `recent` 再人肉翻：
+
+```bash
+python3 $LF search --agent 3141dfdb-d567-46ca-93d4-a754292fc16e --text 练货
+python3 $LF search --agent 金龙 --text VOC --from 7d
+python3 $LF tag 3141dfdb-d567-46ca-93d4-a754292fc16e --limit 20
+```
+
+`search` 会按 `agent-<uuid>` tag 拉列表，列表 payload 经常没有 `input`，再按需 hydrate 后在正文里做子串匹配。裸 UUID 会自动加上 `agent-` 前缀。
 
 ## 这台 Langfuse 的查询边界（实测，别按官方文档假设）
 
@@ -37,7 +47,7 @@ LF=.agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py
 
 因此导出侧给每条 trace 加了两层索引：
 
-1. 静态 tag：`inbound_coordinator` / `scene_memory` / `agent_task`、`source-*`、`kind-*`、`runtime-*`、`provider-*`、`channel-*`、`agent-<agent_id>`、`workspace-<workspace_id>`、`user-<id>`，任务自有 trace 还有 `task-<task_id>`、`issue-<issue_id>`。
+1. 静态 tag：`inbound_coordinator` / `scene_memory` / `agent_task`、`source-*`、`kind-*`、`runtime-*`、`provider-*`、`channel-*`、`agent-<agent_id>`、`agent_name-<花名>`（2026-09-08 之后的新 trace）、`workspace-<workspace_id>`、`user-<id>`，任务自有 trace 还有 `task-<task_id>`、`issue-<issue_id>`。旧 trace 没有 `agent_name-` tag：用 `search --agent 金龙` 扫 metadata，不要只 `tag agent_name-金龙`。
 2. 索引事件：只给 tag、session、trace id 都覆盖不到的 id 建索引，每个 id 一个零时长 DEBUG event，名字 `idx.<key>.<value>`（`value` 中冒号和空白换成 `_`），统一挂在根 observation 下的一个 DEBUG `index` 节点里（节点 metadata 列出全部 id，树上只占一行），用 observations `name=` 精确命中后取 `traceId`。Coordinator 回合索引 `evidence_id`、`chat_session_id`（有会话时）和 `user-` tag 之外的用户 id；记忆刷新索引 `scene_memory_id`、`coord_trace_id`（job id 不同时再加 `job_id`）；任务索引 `runtime_id`、`session_id`、`parent_task_id`、`autopilot_run_id`、`trigger_comment_id`，加入 Coordinator trace 的任务再加 `task_id`、`issue_id`。`key` 子命令对 tag / session / trace id 覆盖的 key 会自动改走对应查法，所以下表任何 key 都能 `key <key> <值>`。
 
 ## id → 查法
@@ -51,7 +61,8 @@ LF=.agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py
 | Web chat session id | `python3 $LF session <chat_session_id>` 或 `key chat_session_id <id>` | Web 回合 session 就是 chat session id |
 | 钉钉用户 uid（`Dv6…`）/ dws_uid | `python3 $LF tag user-<uid>` 或 `key person_id <uid>` / `key dws_uid <uid>` | 详情里 `userId` 也是它，但列表过滤用 tag |
 | Multica user id | `python3 $LF tag user-<uuid>` 或 `key user_id <uuid>` | Web 回合；任务用 `key initiator_user_id` / `key originator_user_id` |
-| `agent_id` | `python3 $LF tag agent-<agent_id>` 或 `key agent_id <agent_id>` | `agent_name` 只在 metadata，UI 里可看不可过滤 |
+| `agent_id` | `python3 $LF tag <agent_id>` 或 `tag agent-<agent_id>` 或 `key agent_id <agent_id>` | 裸 UUID 自动加 `agent-`。不要写成 `tag agent-… --limit 30` 把 `--limit` 当成 AND tag |
+| `agent_name` / 入站原文 | `python3 $LF search --agent 金龙 --text 练货` | 列表接口经常不带 input；`search` 会 hydrate 再按子串匹配。新 trace 另有 `agent_name-<花名>` tag |
 | `workspace_id` | `python3 $LF tag workspace-<workspace_id>` | 配合 `--json` 再按 metadata 过滤 |
 | `evidence_id`（openMsgId） | `python3 $LF key evidence_id '<openMsgId>'` | 仅 Coordinator 回合 |
 | `scene_memory_id` / 触发 job | `key scene_memory_id <id>` / `key job_id <id>` | 记忆刷新 |
@@ -79,6 +90,6 @@ python3 $LF related <任意上述 id>
 
 ## 注意
 
-- 用 Langfuse UI 时：trace 详情右侧 "Metadata" 里的 key 就是上表的 id；列表页只有 tags / session / name / environment 过滤可靠。
-- 旧 trace 不会按新规则回填；2026-09-04 之前的预发数据 tags 仍是冒号形式。
+- 用 Langfuse UI 时：trace 详情右侧 "Metadata" 里的 key 就是上表的 id；列表页只有 tags / session / name / environment 过滤可靠。在搜索框贴 agent UUID 或「练货」**匹配不到**（`filter=` 不生效，列表也常常没有 input）。
+- 旧 trace 不会按新规则回填；2026-09-04 之前的预发数据 tags 仍是冒号形式。`agent_name-<花名>` 只出现在带这个 tag 的新导出里。
 - 正式环境投递依赖 `LANGFUSE_*` 变量随发布生效；沙箱模型 body 依赖镜像 `llm_trace_v1` 能力。

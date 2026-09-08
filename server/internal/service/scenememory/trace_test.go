@@ -28,7 +28,7 @@ func TestFlushTraceOptionsCarryLookupKeys(t *testing.T) {
 	if opts.Name != flushTraceName || opts.SessionID != "cid+abc==" {
 		t.Fatalf("name/session = %q/%q", opts.Name, opts.SessionID)
 	}
-	if strings.Join(opts.Tags, ",") != "scene_memory,kind-dm,agent-03000000-0000-0000-0000-000000000000,workspace-02000000-0000-0000-0000-000000000000" {
+	if strings.Join(opts.Tags, ",") != "scene_memory,kind-dm,agent-03000000-0000-0000-0000-000000000000,agent_name-预发测试智能体,workspace-02000000-0000-0000-0000-000000000000" {
 		t.Fatalf("tags = %v", opts.Tags)
 	}
 	keys := flushIndexKeys(row)
