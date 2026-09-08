@@ -73,3 +73,10 @@ export interface BeginDingTalkAccountBindingResponse {
 }
 
 export type DingTalkBindingMode = "message" | "identity";
+
+export interface ReusableDingTalkIdentity {
+  sourceAgentId: string;
+  sourceAgentName: string;
+  accountDisplayName: string;
+  organizationName: string;
+}

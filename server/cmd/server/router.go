@@ -2142,6 +2142,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/install/{sessionId}/status", h.GetDingTalkInstallStatus)
 					r.Post("/dingtalk/install/manual", h.ManualInstallDingTalk)
 					r.Get("/dingtalk/account-bindings", h.ListDingTalkAccountBindings)
+					r.With(handler.RequireHumanActor).Get("/dingtalk/execution-identities", h.ListReusableDingTalkIdentities)
+					r.With(handler.RequireHumanActor).Post("/dingtalk/execution-identities/reuse", h.ReuseDingTalkIdentity)
 					r.Get("/dingtalk/account-bindings/{agentId}/status", h.GetDingTalkAccountBindingStatus)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
