@@ -2501,6 +2501,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
+					r.Get("/export", h.ExportAgent)
 					r.Get("/source/branches", h.ListAgentSourceBranches)
 					r.Post("/source/preview", h.PreviewAgentSourceSync)
 					// The composed inbound prompt structure for this agent.

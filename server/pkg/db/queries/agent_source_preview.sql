@@ -47,7 +47,7 @@ DELETE FROM agent_source_preview WHERE workspace_id = $1;
 
 -- name: MarkAgentSourceBranchSyncSucceeded :one
 UPDATE agent_source
-SET ref = $2, synced_commit_sha = $3, sync_status = 'ready',
+SET ref = $2, synced_commit_sha = $3, manifest_path = $4, sync_status = 'ready',
     last_sync_error = NULL, last_sync_attempt_at = now(),
     last_synced_at = now(), updated_at = now()
 WHERE id = $1

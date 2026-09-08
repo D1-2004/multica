@@ -75,7 +75,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	updatedSource, err := queries.MarkAgentSourceBranchSyncSucceeded(r.Context(), db.MarkAgentSourceBranchSyncSucceededParams{
-		ID:lockedSource.ID, Ref:resolved.ref, SyncedCommitSha:resolved.sha,
+		ID:lockedSource.ID, Ref:resolved.ref, SyncedCommitSha:resolved.sha, ManifestPath:agentsource.SourceManifestPath(resolved.bundle),
 	})
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to record source version"); return }
 	if err := markSourcePreviewApplied(r.Context(), queries, preview, updatedSource, changed); err != nil {
@@ -95,6 +95,17 @@ func applySourceSkills(ctx context.Context, queries *db.Queries, agent db.Agent,
 	if err != nil { return err }
 	byPath := map[string]db.AgentSourceSkill{}
 	for _, mapping := range mappings { byPath[mapping.SourcePath] = mapping }
+	targetPaths := map[string]bool{}
+	for _, compiled := range resolved.bundle.Skills { targetPaths[compiled.SourcePath] = true }
+	// Remove obsolete paths first so a renamed directory can retain its skill
+	// name without colliding with the old row. The enclosing transaction rolls
+	// these deletions back if any later creation fails.
+	for sourcePath, removed := range byPath {
+		if targetPaths[sourcePath] { continue }
+		if err := queries.DeleteSkillDependents(ctx, removed.SkillID); err != nil { return err }
+		if err := queries.DeleteSkill(ctx, db.DeleteSkillParams{ID:removed.SkillID, WorkspaceID:agent.WorkspaceID}); err != nil { return err }
+		delete(byPath, sourcePath)
+	}
 	for _, compiled := range resolved.bundle.Skills {
 		mapping, exists := byPath[compiled.SourcePath]
 		skillID := mapping.SkillID
@@ -108,11 +119,7 @@ func applySourceSkills(ctx context.Context, queries *db.Queries, agent db.Agent,
 			if _, err := queries.CreateAgentSourceSkill(ctx, db.CreateAgentSourceSkillParams{AgentSourceID:source.ID, SkillID:skillID, SourcePath:compiled.SourcePath}); err != nil { return err }
 		}
 		if err := queries.AddAgentSkill(ctx, db.AddAgentSkillParams{AgentID:agent.ID, SkillID:skillID}); err != nil { return err }
-		if _, err := queries.SetAgentSkillEnabled(ctx, db.SetAgentSkillEnabledParams{AgentID:agent.ID, SkillID:skillID, Enabled:true}); err != nil { return err }
-	}
-	for _, removed := range byPath {
-		if err := queries.DeleteSkillDependents(ctx, removed.SkillID); err != nil { return err }
-		if err := queries.DeleteSkill(ctx, db.DeleteSkillParams{ID:removed.SkillID, WorkspaceID:agent.WorkspaceID}); err != nil { return err }
+		if _, err := queries.SetAgentSkillEnabled(ctx, db.SetAgentSkillEnabledParams{AgentID:agent.ID, SkillID:skillID, Enabled:!compiled.Disabled}); err != nil { return err }
 	}
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -77,6 +78,7 @@ type File struct {
 }
 
 type Skill struct {
+	Disabled bool `json:"disabled,omitempty"`
 	SourcePath  string `json:"source_path"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -85,6 +87,7 @@ type Skill struct {
 }
 
 type Bundle struct {
+	PortableConfig *PortableManifest `json:"portable_config,omitempty"`
 	Manifest     Manifest `json:"manifest"`
 	Instructions string   `json:"instructions"`
 	Skills       []Skill  `json:"skills"`
@@ -167,7 +170,7 @@ func validateManifest(manifest Manifest) error {
 }
 
 func validateRepositoryPath(value, field string) error {
-	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
+	if strings.IndexFunc(value, func(r rune) bool { return r < 32 }) >= 0 || value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
 		return fmt.Errorf("%s must be a non-empty relative repository path", field)
 	}
 	cleaned := path.Clean(value)
@@ -406,12 +409,22 @@ func hashBundle(bundle Bundle) string {
 			hash.Write([]byte(file.Content))
 		}
 	}
+	if bundle.PortableConfig != nil {
+		encoded, _ := json.Marshal(bundle.PortableConfig)
+		hash.Write([]byte{0}); hash.Write(encoded)
+		for _, item := range bundle.Skills { encoded, _ = json.Marshal(item); hash.Write([]byte{0}); hash.Write(encoded) }
+	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // ValidateBundle verifies a persisted bundle before it is materialized. The
 // canonical hash excludes warnings and is shared with Compile and CompileFS.
 func ValidateBundle(bundle Bundle) error {
+	if bundle.PortableConfig != nil {
+		if err := bundle.PortableConfig.validate(); err != nil { return err }
+	} else {
+		for _, item := range bundle.Skills { if item.Disabled { return errors.New("disabled source skills require a portable manifest") } }
+	}
 	if err := validateManifest(bundle.Manifest); err != nil {
 		return err
 	}

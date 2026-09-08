@@ -321,3 +321,17 @@ func TestGitHubSourceSyncRollsBackAllConfigurationOnSkillFailure(t *testing.T) {
 	source, err := testHandler.Queries.GetAgentSourceByAgentID(t.Context(), agent.ID)
 	if err != nil || source.SyncedCommitSha != gitSourceSHA1 { t.Fatal("source version escaped rollback") }
 }
+
+func TestGitHubSourcePublishRenamedSkillDirectory(t *testing.T) {
+	f := newGitSourceFixture(t)
+	agentID := f.create(t)
+	files := f.files[gitSourceSHA2]
+	files["dingtalk-agent.json"] = strings.ReplaceAll(files["dingtalk-agent.json"], "agent/skills", "new/skills")
+	for p, content := range files {
+		if strings.HasPrefix(p, "agent/skills/") { files[strings.Replace(p, "agent/skills/", "new/skills/", 1)] = content; delete(files, p) }
+	}
+	preview := f.request(t, f.handler.PreviewAgentSourceSync, agentID, map[string]any{"ref":"release/v2"}, http.StatusOK)
+	f.request(t, f.handler.SyncAgentSource, agentID, map[string]any{"preview_id":rawString(t, preview["preview_id"])}, http.StatusOK)
+	skills, err := testHandler.Queries.ListAgentSkills(t.Context(), parseUUID(agentID))
+	if err != nil || len(skills) != 1 { t.Fatalf("renamed skill: %#v %v", skills, err) }
+}

@@ -2,6 +2,7 @@ package agentsource
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"github.com/multica-ai/multica/server/internal/githubapp"
@@ -29,12 +30,14 @@ type FileChange struct {
 type recordingRepository struct {
 	RepositoryClient
 	tree githubapp.Tree
+	treeLoaded bool
 	blobs map[string]string
 }
 
 func (r *recordingRepository) GetTree(ctx context.Context, installationID int64, owner, repo, sha string) (githubapp.Tree, error) {
+	if r.treeLoaded { return r.tree, nil }
 	tree, err := r.RepositoryClient.GetTree(ctx, installationID, owner, repo, sha)
-	if err == nil { r.tree = tree }
+	if err == nil { r.tree = tree; r.treeLoaded = true }
 	return tree, err
 }
 
@@ -46,7 +49,14 @@ func (r *recordingRepository) GetBlob(ctx context.Context, installationID int64,
 
 func ReadDTARepository(ctx context.Context, client RepositoryClient, source Source) (RepositorySnapshot, error) {
 	recorder := &recordingRepository{RepositoryClient:client, blobs:map[string]string{}}
-	definition, err := CompileDTAProject(ctx, recorder, source)
+	tree, err := recorder.GetTree(ctx, source.InstallationID, source.Owner, source.Repository, source.CommitSHA)
+	if err != nil { return RepositorySnapshot{}, err }
+	entries := repositoryEntries(tree)
+	_, portable := entries[PortableManifestPath]
+	_, dta := entries[DTAProjectPath]
+	if portable && dta { return RepositorySnapshot{}, errors.New("repository must contain only one agent manifest: agent.json or dingtalk-agent.json") }
+	var definition Bundle
+	if portable { definition, err = compilePortable(ctx, recorder, source) } else { definition, err = CompileDTAProject(ctx, recorder, source) }
 	if err != nil { return RepositorySnapshot{}, err }
 	files := map[string]string{}
 	for _, entry := range recorder.tree.Entries {

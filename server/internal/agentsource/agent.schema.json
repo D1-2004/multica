@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Multica Agent Source v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "version",
+    "name",
+    "instructions",
+    "skills"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "agent.schema.json"
+    },
+    "version": {
+      "const": "multica.agent/v1"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "\\S"
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "instructions": {
+      "$ref": "#/$defs/path"
+    },
+    "skills": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "name",
+          "enabled"
+        ],
+        "properties": {
+          "path": {
+            "$ref": "#/$defs/path"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "pattern": "\\S"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*[\\u0000-\\u001f]).+(?<!/)$",
+      "description": "Relative repository path. The importer also checks unique and non-overlapping skill paths, text content and UTF-8 byte limits."
+    }
+  }
+}

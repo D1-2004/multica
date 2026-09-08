@@ -64,6 +64,7 @@ type GitHubAgentPreviewResponse struct {
 }
 
 type GitHubAgentSkillPreview struct {
+	Enabled bool `json:"enabled"`
 	SourcePath  string `json:"source_path"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -209,7 +210,7 @@ func sourceSkillPreviews(skills []agentsource.Skill) []GitHubAgentSkillPreview {
 	for _, compiled := range skills {
 		previews = append(previews, GitHubAgentSkillPreview{
 			SourcePath: compiled.SourcePath, Name: compiled.Name,
-			Description: compiled.Description, FileCount: len(compiled.Files),
+			Description: compiled.Description, FileCount: len(compiled.Files), Enabled:!compiled.Disabled,
 		})
 	}
 	return previews
@@ -382,7 +383,7 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		source, createErr = qtx.CreateAgentSource(r.Context(), db.CreateAgentSourceParams{
 			AgentID: created.ID, WorkspaceID: wsUUID, GithubInstallationID: resolved.installation.ID,
 			RepoOwner: ownerFromFullName(resolved.repository.FullName), RepoName: repoFromFullName(resolved.repository.FullName),
-			Ref: resolved.ref, ManifestPath: agentsource.DTAProjectPath, SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
+			Ref: resolved.ref, ManifestPath: agentsource.SourceManifestPath(resolved.bundle), SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
 		})
 		if createErr != nil {
 			return createErr
@@ -395,6 +396,7 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 			if createErr = qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{AgentID: created.ID, SkillID: skillRow.ID}); createErr != nil {
 				return createErr
 			}
+			if _, createErr = qtx.SetAgentSkillEnabled(r.Context(), db.SetAgentSkillEnabledParams{AgentID:created.ID, SkillID:skillRow.ID, Enabled:!compiledSkill.Disabled}); createErr != nil { return createErr }
 			if _, createErr = qtx.CreateAgentSourceSkill(r.Context(), db.CreateAgentSourceSkillParams{AgentSourceID: source.ID, SkillID: skillRow.ID, SourcePath: compiledSkill.SourcePath}); createErr != nil {
 				return createErr
 			}

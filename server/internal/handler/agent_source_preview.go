@@ -169,7 +169,7 @@ func sourceDefinitionFiles(bundle agentsource.Bundle) map[string]string {
 		prefix := "skills/" + skill.SourcePath + "/"
 		files[prefix + "name"] = skill.Name
 		files[prefix + "description"] = skill.Description
-		files[prefix + "enabled"] = "true"
+		files[prefix + "enabled"] = strconv.FormatBool(!skill.Disabled)
 		files[prefix + "SKILL.md"] = skill.Content
 		for _, file := range skill.Files { files[prefix + "files/" + file.Path] = file.Content }
 	}
