@@ -119,6 +119,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		runtimeProviders = c.remote.RuntimeProviders()
 	}
 	return service.FCE2BConfig{
+		SandboxRenewalEnabled:              raw.Runtime.FCE2B.SandboxRenewalEnabled,
 		Enabled:                           raw.Runtime.FCE2B.Enabled,
 		Template:                          raw.Runtime.FCE2B.Template,
 		ServerURL:                         raw.Runtime.FCE2B.ServerURL,

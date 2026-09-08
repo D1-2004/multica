@@ -474,6 +474,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.FCE2BLauncher.ConfigProvider = opts.RuntimeConfig.fce2b
 	}
 	h.FCE2BLauncher.SetSandboxRelaySigner(opts.SandboxRelaySigner)
+	h.FCE2BLauncher.SetLifecycleRedis(rdb)
 	asbRuntime, err := service.NewASBEnterpriseRuntimeFromConfig(
 		queries,
 		h.TaskService,
