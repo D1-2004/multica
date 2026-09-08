@@ -23,7 +23,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
@@ -102,7 +101,6 @@ const (
 )
 
 type FCE2BConfig struct {
-	SandboxRenewalEnabled             bool
 	Enabled                           bool
 	Template                          string
 	ServerURL                         string
@@ -138,7 +136,6 @@ func FCE2BConfigFromEnv() FCE2BConfig {
 		sandboxAgentIdentityBaseURL = legacyAgentIdentityBaseURL
 	}
 	cfg := FCE2BConfig{
-		SandboxRenewalEnabled:             envBool("MULTICA_FC_E2B_SANDBOX_RENEWAL_ENABLED"),
 		Enabled:                           envBool("MULTICA_FC_E2B_ENABLED"),
 		Template:                          strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_TEMPLATE")),
 		ServerURL:                         strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_FC_E2B_SERVER_URL")), "/"),
@@ -287,9 +284,6 @@ func agentIdentityContextDebugEnvironmentValueAllowed(raw string) bool {
 }
 
 func (c FCE2BConfig) Validate() error {
-	if c.SandboxRenewalEnabled && c.TimeoutSeconds < 300 {
-		return errors.New("FC sandbox renewal requires timeout_seconds >= 300")
-	}
 	if c.ParseError != nil {
 		return c.ParseError
 	}
@@ -932,7 +926,6 @@ func firstString(obj map[string]any, keys ...string) string {
 }
 
 type FCE2BLauncher struct {
-	LifecycleRedis     *redis.Client
 	Queries            *db.Queries
 	Tasks              *TaskService
 	Config             FCE2BConfig
@@ -2444,9 +2437,6 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 }
 
 func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string, runtimeLockConn *pgxpool.Conn, trace chattrace.Trace) (string, bool, error) {
-	if l.Config.SandboxRenewalEnabled && l.LifecycleRedis == nil {
-		return "", false, errors.New("FC sandbox renewal requires Redis")
-	}
 	if scoped {
 		// Serialize the lookup-or-create with the other replicas before reading:
 		// a check outside the lock is exactly the race that orphans sandboxes.
@@ -2456,27 +2446,12 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 		}
 		defer release()
 
-		var session db.FcE2bSandboxSession
-		if l.Config.SandboxRenewalEnabled {
-			session.SandboxID, err = l.Queries.GetFCE2BSessionSandboxForLifecycle(ctx, db.GetFCE2BSessionSandboxForLifecycleParams{
-				RuntimeID: rt.ID, ScopeType: scope.typ, ScopeID: scope.id, Template: template,
-			})
-		} else {
-			session, err = l.Queries.GetActiveFCE2BSandboxSession(ctx, db.GetActiveFCE2BSandboxSessionParams{
-				RuntimeID: rt.ID, ScopeType: scope.typ, ScopeID: scope.id, Template: template,
-			})
-		}
-		if err == nil {
-			err = l.ensureSandboxLifetime(ctx, rt.ID, session.SandboxID, runtimeLockConn)
-			if errors.Is(err, errFCE2BSandboxNotFound) {
-				if err := l.Queries.MarkFCE2BSandboxSessionMissing(ctx, db.MarkFCE2BSandboxSessionMissingParams{RuntimeID: rt.ID, SandboxID: session.SandboxID}); err != nil {
-					return "", false, errors.New("invalidate missing FC warm sandbox failed")
-				}
-				err = pgx.ErrNoRows
-			} else if err != nil {
-				return "", false, fmt.Errorf("ensure FC/E2B warm sandbox lifetime: %w", err)
-			}
-		}
+		session, err := l.Queries.GetActiveFCE2BSandboxSession(ctx, db.GetActiveFCE2BSandboxSessionParams{
+			RuntimeID: rt.ID,
+			ScopeType: scope.typ,
+			ScopeID:   scope.id,
+			Template:  template,
+		})
 		if err == nil {
 			readyStarted := time.Now()
 			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "checking", "sandbox_id", session.SandboxID, "cold_start", false)
@@ -2513,15 +2488,6 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 		return "", true, err
 	}
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "succeeded", "sandbox_id", sandboxID, "cold_start", true, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds())
-	expiresAt := time.Now().Add(time.Duration(l.Config.TimeoutSeconds)*time.Second)
-	if l.Config.SandboxRenewalEnabled {
-		minimum, target := l.renewalWindow()
-		info, err := newFCE2BSandboxClient(l.Config).ensureTTL(ctx, sandboxID, minimum, target)
-		if err != nil {
-			return "", true, fmt.Errorf("confirm FC/E2B sandbox lifetime: %w", err)
-		}
-		expiresAt = info.EndAt
-	}
 	if scoped {
 		_, err = l.Queries.UpsertFCE2BSandboxSession(ctx, db.UpsertFCE2BSandboxSessionParams{
 			WorkspaceID: rt.WorkspaceID,
@@ -2530,7 +2496,7 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 			ScopeID:     scope.id,
 			SandboxID:   sandboxID,
 			Template:    template,
-			ExpiresAt:   pgtype.Timestamptz{Time: expiresAt, Valid: true},
+			ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Duration(l.Config.TimeoutSeconds) * time.Second), Valid: true},
 		})
 		if err != nil {
 			return "", true, fmt.Errorf("record FC/E2B sandbox session: %w", err)

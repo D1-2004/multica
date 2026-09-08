@@ -90,7 +90,6 @@ type LLMConfig struct {
 }
 
 type FCE2BConfig struct {
-	SandboxRenewalEnabled bool `json:"sandbox_renewal_enabled,omitempty"`
 	DWSMessagePolicyFingerprints []string `json:"dws_message_policy_fingerprints,omitempty"`
 	Enabled                      bool     `json:"enabled"`
 	StablePublisherUserIDs       []string `json:"stable_publisher_user_ids"`
@@ -308,9 +307,6 @@ func (c IntegrationsConfig) validate() error {
 }
 
 func (c RuntimeConfig) validate() error {
-	if c.FCE2B.SandboxRenewalEnabled && c.FCE2B.TimeoutSeconds < 300 {
-		return fmt.Errorf("fc_e2b sandbox renewal requires timeout_seconds >= 300")
-	}
 	for _, fingerprint := range c.FCE2B.DWSMessagePolicyFingerprints {
 		if _, err := hex.DecodeString(fingerprint); err != nil || len(fingerprint) != 16 || fingerprint != strings.ToLower(fingerprint) {
 			return fmt.Errorf("fc_e2b.dws_message_policy_fingerprints must contain exact lowercase 16-character fingerprints")

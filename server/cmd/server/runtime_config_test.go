@@ -33,22 +33,6 @@ func TestAppRuntimeConfigReadsCurrentSiteConnectSrc(t *testing.T) {
 	}
 }
 
-func TestAppRuntimeConfigFCE2BSandboxRenewalToggle(t *testing.T) {
-	raw, err := os.ReadFile("../../../docs/runtime-config.example.json")
-	if err != nil { t.Fatal(err) }
-	cfg, err := runtimeconfig.ParseStrict(raw, true)
-	if err != nil { t.Fatal(err) }
-	remote, err := runtimeconfig.NewStatic(cfg)
-	if err != nil { t.Fatal(err) }
-	app := &appRuntimeConfig{remote: remote}
-	if app.fce2b().SandboxRenewalEnabled { t.Fatal("renewal must default off") }
-	updated := strings.Replace(string(raw), `"sandbox_renewal_enabled": false`, `"sandbox_renewal_enabled": true`, 1)
-	if _, err := remote.ApplyJSON([]byte(updated)); err != nil { t.Fatal(err) }
-	if !app.fce2b().SandboxRenewalEnabled { t.Fatal("accepted config did not enable renewal") }
-	if _, err := remote.ApplyJSON(raw); err != nil { t.Fatal(err) }
-	if app.fce2b().SandboxRenewalEnabled { t.Fatal("accepted config did not disable renewal") }
-}
-
 func TestAppRuntimeConfigReadsCurrentRuntimeProviderSnapshot(t *testing.T) {
 	raw, err := os.ReadFile("../../../docs/runtime-config.example.json")
 	if err != nil {
