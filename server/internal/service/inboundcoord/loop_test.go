@@ -828,6 +828,66 @@ func TestWindowPlanCannotIntroduceUnrecalledTarget(t *testing.T) {
 	}
 }
 
+func TestWindowPlanEmptyTextHintDistinctFromItems(t *testing.T) {
+	t.Parallel()
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"}
+	recalls := []recallCall{{ConversationID: turn.ConversationID}}
+	items := `[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]`
+	_, err := parseValidatedWindowPlan(`{"action":"issue","text":"","items":`+items+`}`, turn, recalls, nil)
+	if err == nil {
+		t.Fatal("empty spoken text must fail even with complete items")
+	}
+	raw := marshalToolFailure(err)
+	if !strings.Contains(raw, `"error":"issue needs spoken text"`) || !strings.Contains(raw, hintIssueSpokenText) {
+		t.Fatalf("empty text must name text, not items: %s", raw)
+	}
+	if strings.Contains(raw, hintIssueWorkItems) {
+		t.Fatalf("complete items must not reuse the items hint: %s", raw)
+	}
+	got, err := parseValidatedWindowPlan(`{"action":"issue","text":"我去查环境变量、DWS身份和已装 MCP/Skills，然后给你简略汇报。","items":`+items+`}`, turn, recalls, nil)
+	if err != nil || got.Action != ActionIssue || len(got.Items) != 1 {
+		t.Fatalf("DWS身份 as the deliverable must submit: plan=%#v err=%v", got, err)
+	}
+}
+
+func TestWindowPlanToolingPurposeStillHinted(t *testing.T) {
+	t.Parallel()
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "冬翔", Message: "帮我约明天开会"}
+	_, err := parseValidatedWindowPlan(`{"action":"issue","text":"我去约明天的会","items":[{"source_refs":["u1"],"purpose":"向须莫v6询问明早有没有会议，dws要用dws chat data-auth","intent":"ask","basis":"new_request"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
+	if err == nil {
+		t.Fatal("CLI/auth leakage in purpose must still fail")
+	}
+	raw := marshalToolFailure(err)
+	if !strings.Contains(raw, `"hint"`) || !strings.Contains(raw, "data-auth") || !strings.Contains(raw, "DWS身份") {
+		t.Fatalf("tooling rejection must repair without banning DWS身份: %s", raw)
+	}
+}
+
+func TestFinishEmptyTextHintReachesNextModelRound(t *testing.T) {
+	t.Parallel()
+	empty := `{"action":"issue","text":"","items":[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]}`
+	complete := `{"action":"issue","text":"我去查环境变量、DWS身份和已装 MCP/Skills，然后给你简略汇报。","items":[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]}`
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("r0", toolAssocRecall, `{"conversation_id":"cid-env"}`),
+		assistantTool("f0", toolFinish, empty),
+		assistantTool("f1", toolFinish, complete),
+	}}
+	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201",
+		Message: "看下你的环境变量和dws身份 mcp和skills有什么",
+	})
+	if err != nil || got.Action != ActionIssue || chat.calls != 3 {
+		t.Fatalf("after a text hint the same items must submit: action=%s calls=%d err=%v", got.Action, chat.calls, err)
+	}
+	if len(chat.params) < 3 {
+		t.Fatalf("missing next-round params: %d", len(chat.params))
+	}
+	raw, _ := json.Marshal(chat.params[2].Messages)
+	if !strings.Contains(string(raw), "issue needs spoken text") || !strings.Contains(string(raw), hintIssueSpokenText) {
+		t.Fatalf("repair hint must enter the next model round: %s", raw)
+	}
+}
+
 func TestMarshalToolFailureIncludesHint(t *testing.T) {
 	t.Parallel()
 	_, err := parseValidatedWindowPlan(`{"action":"issue","text":"我把这个答复带过去","items":[{"source_refs":["u1"],"purpose":"确认须莫周五三点是否方便开会","intent":"confirm","basis":"answer"}]}`, Turn{Source: SourceDigitalEmployee, SenderName: "须莫", Message: "可以", HistoryStatus: "not_loaded"}, nil, nil)
