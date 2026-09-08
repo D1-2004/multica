@@ -44,6 +44,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	}
 	steps := make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2)
 	appendStep := func(step protocol.ChatCoordinatorStep) { step.Seq = len(steps) + 1; steps = append(steps, step) }
+	fakeWorkHinted := false
 	fail := func(err error) (Decision, error) {
 		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
 		return Decision{Action: ActionDeferred, Reason: "coordinator_undecided", Steps: steps}, err
@@ -108,7 +109,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 				} else {
 					var decision Decision
-					decision, callErr = parseValidatedWindowPlan(call.Arguments, turn, recalls, recalledIssues)
+					decision, callErr = parseValidatedWindowPlanHinted(call.Arguments, turn, recalls, recalledIssues, fakeWorkHinted)
+					if isFakeWorkReplyHint(callErr) {
+						fakeWorkHinted = true
+					}
 					if callErr == nil {
 						decision.Steps = steps
 						decision.ToolRounds = round + 1

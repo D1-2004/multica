@@ -2,16 +2,27 @@ package inboundcoord
 
 import (
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 )
 
-const hintFakeWorkReply = "action=reply cannot claim 已记录/已保存/我先查/稍后给你. This loop does not write or search. finish action=issue with items so the sandbox (work-report-operator, knowledge-query, …) does the work. Spoken text names the work, such as 我去把今天的日报记上."
+const hintFakeWorkReply = "This loop cannot write or search, so action=reply must not claim 已记录/已保存/我先查一下/稍后给你. Two paths: if this is skill work (daily-report submit, knowledge lookup, …), call assoc_recall for this conversation first, then finish action=issue with items so the sandbox runs it (spoken text like 我去把今天的日报记上). If this is only conversation, keep action=reply without those claims. Status questions stay reply."
 
-var fakeWorkReplyClaim = regexp.MustCompile(`已记录|已保存|已写入|已记入|记进日报|记入日报|先查一下|稍后给你更具体|今天会重点跟进|建议从这几个方向入手`)
+// Only high-precision false-completion claims. Routing (日报 submit vs 日报 status,
+// knowledge lookup vs opinion) belongs in policy, not this Host check.
+var fakeWorkReplyClaim = regexp.MustCompile(`已记录|已保存|已写入|已记入|已记下|先查一下|稍后给你更具体`)
+
+var fakeWorkClaimNegation = []string{"尚未", "还没", "没有", "未"}
+
+var errFakeWorkReply = errors.New("action=reply claimed a sandbox effect this loop cannot perform")
 
 func requireNoFakeWorkReply(turn Turn, finishRaw string) error {
+	return requireNoFakeWorkReplyOnce(turn, finishRaw, false)
+}
+
+func requireNoFakeWorkReplyOnce(turn Turn, finishRaw string, alreadyHinted bool) error {
 	if turn.Loop == LoopTaskFinished {
 		return nil
 	}
@@ -24,56 +35,44 @@ func requireNoFakeWorkReply(turn Turn, finishRaw string) error {
 		return nil
 	}
 	text := strings.TrimSpace(parsed.Text)
-	if fakeWorkReplyClaim.MatchString(text) {
-		return hintErr("action=reply claimed a sandbox effect this loop cannot perform", hintFakeWorkReply)
+	if text == "" || replyLooksLikeQuestion(text) {
+		return nil
 	}
-	if hasSkillNamed(turn, "work-report-operator", "日报") && looksLikeSelfReportSubmit(turn.Message) && !replyAsksForReportBody(text) {
-		return hintErr("current_message is a self daily-report submit; finish action=issue for work-report-operator", hintFakeWorkReply)
+	loc := fakeWorkReplyClaim.FindStringIndex(text)
+	if loc == nil || claimIsNegated(text, loc[0]) {
+		return nil
 	}
-	if hasSkillNamed(turn, "knowledge-query") && looksLikeKnowledgeLookup(turn.Message) && !replyIsShortClarification(text) {
-		return hintErr("current_message needs knowledge-query; finish action=issue, do not answer from the coordinator", hintFakeWorkReply)
+	if alreadyHinted {
+		slog.Info("inbound coordinator fake-work reply accepted after hint",
+			append(coordinatorLogIndex(turn),
+				"event", "inbound_coordinator_fake_work_reply_pass",
+			)...)
+		return nil
 	}
-	return nil
+	return hintWrap("", hintFakeWorkReply, errFakeWorkReply)
 }
 
-func hasSkillNamed(turn Turn, needles ...string) bool {
-	for _, skill := range turn.Skills {
-		blob := strings.ToLower(strings.TrimSpace(skill.Name) + " " + strings.TrimSpace(skill.Description))
-		for _, needle := range needles {
-			if needle = strings.ToLower(strings.TrimSpace(needle)); needle != "" && strings.Contains(blob, needle) {
-				return true
-			}
+func isFakeWorkReplyHint(err error) bool {
+	return errors.Is(err, errFakeWorkReply)
+}
+
+func replyLooksLikeQuestion(text string) bool {
+	return strings.Contains(text, "？") || strings.Contains(text, "?")
+}
+
+func claimIsNegated(text string, claimStart int) bool {
+	if claimStart <= 0 {
+		return false
+	}
+	prefix := []rune(text[:claimStart])
+	if len(prefix) > 8 {
+		prefix = prefix[len(prefix)-8:]
+	}
+	s := string(prefix)
+	for _, neg := range fakeWorkClaimNegation {
+		if strings.HasSuffix(s, neg) {
+			return true
 		}
 	}
 	return false
-}
-
-func looksLikeSelfReportSubmit(msg string) bool {
-	msg = strings.TrimSpace(msg)
-	if msg == "" {
-		return false
-	}
-	if strings.Contains(msg, "今天主要工作") || strings.Contains(msg, "今日主要工作") || strings.Contains(msg, "日报日期") {
-		return true
-	}
-	if strings.Contains(msg, "日报") && !strings.Contains(msg, "如何") && !strings.Contains(msg, "怎么") {
-		return true
-	}
-	return false
-}
-
-func replyAsksForReportBody(text string) bool {
-	return strings.Contains(text, "正文") || strings.Contains(text, "注明日") || strings.Contains(text, "发过来")
-}
-
-func looksLikeKnowledgeLookup(msg string) bool {
-	return strings.Contains(msg, "如何解决") || strings.Contains(msg, "是否应对") || strings.Contains(msg, "正式口径")
-}
-
-func replyIsShortClarification(text string) bool {
-	text = strings.TrimSpace(text)
-	if text == "" || utf8.RuneCountInString(text) > 40 {
-		return false
-	}
-	return strings.Contains(text, "？") || strings.Contains(text, "?")
 }

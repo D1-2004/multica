@@ -22,7 +22,7 @@ func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
 	}
 	fn := shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("Finish this conversation turn with ONE complete window plan. reply answers or clarifies without execution; silence is intentional non-interruption. Never reply claiming 已记录/已保存/我先查一下/稍后给你 — this loop cannot write or search. issue plans all requested work: new items omit issue_id; continuations copy a recalled issue_id and require substantive current input. Host commits and launches sandbox execution afterwards (commands, files, external tools); do not claim delivery. For issue, every source_ref must occur in executable items or non_work_refs. A request awaiting necessary clarification is covered by your question and non_work_refs, never by a speculative work item. At most 8 planned items, executed in batches of 2. Never silently drop an unhandled request. Read missing context before answering a previous question."),
+		Description: openai.String("Finish this conversation turn with ONE complete window plan. reply answers or clarifies without execution; silence is intentional non-interruption. Never reply claiming 已记录/已保存/我先查一下/稍后给你 — this loop cannot write or search. Skill work the employee can execute (daily-report submit, knowledge lookup, …) is action=issue, not an in-loop consulting answer; status questions stay reply. issue plans all requested work: new items omit issue_id; continuations copy a recalled issue_id and require substantive current input. Host commits and launches sandbox execution afterwards (commands, files, external tools); do not claim delivery. For issue, every source_ref must occur in executable items or non_work_refs. A request awaiting necessary clarification is covered by your question and non_work_refs, never by a speculative work item. At most 8 planned items, executed in batches of 2. Never silently drop an unhandled request. Read missing context before answering a previous question."),
 		Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"action"}, "properties": map[string]any{
 			"action":        map[string]any{"type": "string", "enum": actions},
 			"text":          map[string]any{"type": "string", "description": "Required for reply/issue: a useful natural response for the whole window, with no unsupported completion claims."},
@@ -50,6 +50,10 @@ func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
 }
 
 func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recalled map[string]struct{}) (Decision, error) {
+	return parseValidatedWindowPlanHinted(raw, turn, recalls, recalled, false)
+}
+
+func parseValidatedWindowPlanHinted(raw string, turn Turn, recalls []recallCall, recalled map[string]struct{}, fakeWorkHinted bool) (Decision, error) {
 	var input struct {
 		Action      string   `json:"action"`
 		Text        string   `json:"text"`
@@ -101,7 +105,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 		if d.Action == ActionSilence && turn.Source == SourceWeb {
 			return Decision{}, fmt.Errorf("web chat requires a reply")
 		}
-		if err := requireNoFakeWorkReply(turn, raw); err != nil {
+		if err := requireNoFakeWorkReplyOnce(turn, raw, fakeWorkHinted); err != nil {
 			return Decision{}, err
 		}
 		return d, nil

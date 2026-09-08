@@ -93,7 +93,7 @@ func TestPolicyManifestMatchesActualPromptAndModuleBudgets(t *testing.T) {
 	if manifest.PolicyVersion == "" || manifest.AssemblyVersion == "" || len(manifest.ActiveRuleIDs) == 0 {
 		t.Fatalf("manifest lacks provenance: %+v", manifest)
 	}
-	if manifest.Characters > 9200 {
+	if manifest.Characters > 9500 {
 		t.Fatalf("direct-answer system prompt regressed to %d characters", manifest.Characters)
 	}
 	for _, module := range coordinatorPolicy.Modules {
