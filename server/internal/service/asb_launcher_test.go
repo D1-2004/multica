@@ -408,7 +408,7 @@ func TestInspectReusableASBSandboxRejectsUnavailableStates(t *testing.T) {
 		response.Header().Set("Content-Type", "application/json")
 		switch request.URL.Path {
 		case "/v1/sandboxes/running":
-			_, _ = io.WriteString(response, `{"id":"running","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z"}`)
+			_, _ = io.WriteString(response, `{"id":"running","status":{"state":"Running"},"createdAt":"2026-08-04T08:00:00Z","metadata":{"multica.network_policy_sha256":"expected"}}`)
 		case "/v1/sandboxes/terminated":
 			_, _ = io.WriteString(response, `{"id":"terminated","status":{"state":"Terminated"},"createdAt":"2026-08-04T08:00:00Z"}`)
 		case "/v1/sandboxes/failed":
@@ -440,6 +440,7 @@ func TestInspectReusableASBSandboxRejectsUnavailableStates(t *testing.T) {
 				context.Background(),
 				client,
 				test.sandboxID,
+				"expected",
 			)
 			if err != nil {
 				t.Fatalf("inspect reusable sandbox: %v", err)

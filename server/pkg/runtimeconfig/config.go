@@ -102,6 +102,7 @@ type FCE2BConfig struct {
 }
 
 type ASBConfig struct {
+	NetworkAllowlist      []string `json:"network_allowlist,omitempty"`
 	Enabled               bool     `json:"enabled"`
 	APIURL                string   `json:"api_url"`
 	ServerURL             string   `json:"server_url"`
