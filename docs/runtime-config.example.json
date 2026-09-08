@@ -35,6 +35,7 @@
       "default_model": "default-model"
     },
     "fc_e2b": {
+      "sandbox_renewal_enabled": false,
       "enabled": false,
       "stable_publisher_user_ids": [],
       "template": "",

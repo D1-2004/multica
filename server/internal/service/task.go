@@ -4563,6 +4563,7 @@ const (
 
 type failTaskOptions struct {
 	terminateA2ARuntimeStartAttempt bool
+	fcE2BExecution *db.AgentTaskRuntimeStartAttempt
 }
 
 // FailA2ATaskForExecutionSafety is the terminal path for an A2A task rejected
@@ -4665,6 +4666,19 @@ func (s *TaskService) failTask(
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		if err := lockChatSessionForTaskWrite(ctx, qtx, taskID); err != nil {
 			return err
+		}
+		if execution := options.fcE2BExecution; execution != nil {
+			// Lock the task first, then re-read its execution in a fresh statement
+			// so a superseding launcher cannot race the missing-sandbox result.
+			if _, err := qtx.GetAgentTaskForCompletionFinalization(ctx, taskID); err != nil {
+				return err
+			}
+			if _, err := qtx.LockFCE2BSandboxExecutionTask(ctx, db.LockFCE2BSandboxExecutionTaskParams{
+				TaskID: taskID, RuntimeID: execution.RuntimeID,
+				AttemptID: execution.ID, SandboxID: execution.SandboxID,
+			}); err != nil {
+				return err
+			}
 		}
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:                    taskID,
