@@ -47,14 +47,25 @@ func (r *recordingRepository) GetBlob(ctx context.Context, installationID int64,
 	return content, err
 }
 
+// ReadAgentRepository uses the same agent.json protocol as uploaded ZIPs.
+func ReadAgentRepository(ctx context.Context, client RepositoryClient, source Source) (RepositorySnapshot, error) {
+	return readRepository(ctx, client, source, true)
+}
+
+// ReadDTARepository is retained only for pre-existing internal managed templates.
 func ReadDTARepository(ctx context.Context, client RepositoryClient, source Source) (RepositorySnapshot, error) {
+	return readRepository(ctx, client, source, false)
+}
+
+func readRepository(ctx context.Context, client RepositoryClient, source Source, requireAgentManifest bool) (RepositorySnapshot, error) {
 	recorder := &recordingRepository{RepositoryClient:client, blobs:map[string]string{}}
 	tree, err := recorder.GetTree(ctx, source.InstallationID, source.Owner, source.Repository, source.CommitSHA)
 	if err != nil { return RepositorySnapshot{}, err }
 	entries := repositoryEntries(tree)
 	_, portable := entries[PortableManifestPath]
 	_, dta := entries[DTAProjectPath]
-	if portable && dta { return RepositorySnapshot{}, errors.New("repository must contain only one agent manifest: agent.json or dingtalk-agent.json") }
+	if portable && dta && !requireAgentManifest { return RepositorySnapshot{}, errors.New("repository must contain only one agent manifest: agent.json or dingtalk-agent.json") }
+	if requireAgentManifest && !portable { return RepositorySnapshot{}, errors.New("required file agent.json is missing; use the Multica Agent package schema") }
 	var definition Bundle
 	if portable { definition, err = compilePortable(ctx, recorder, source) } else { definition, err = CompileDTAProject(ctx, recorder, source) }
 	if err != nil { return RepositorySnapshot{}, err }

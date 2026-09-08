@@ -31,6 +31,7 @@ function workspaceScoped(slug: string) {
     // The creation methods behind the chooser. Each is a real route so a
     // half-filled form survives a refresh and can be linked to directly.
     newAgentGit: () => `${ws}/agents/new/git`,
+    newAgentLocal: () => `${ws}/agents/new/local`,
     newAgentManual: () => `${ws}/agents/new/manual`,
     newAgentAi: () => `${ws}/agents/new/ai`,
     // One creation conversation. It is a durable object, not a step of the

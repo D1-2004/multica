@@ -11,10 +11,11 @@ import { agentSourceBranchesOptions, usePreviewAgentSourceSync, useSyncAgentSour
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
+import { PackageRequirementsForm } from "../../create/package-requirements-form";
 import { useT } from "../../../i18n";
 
 export function PublishTab({ source, canEdit }: { source: AgentSource | null; canEdit: boolean }) {
-  return source ? <GitPublishTab source={source} canEdit={canEdit} /> : <PublishEmptyState />;
+  return source?.source_type === "github" ? <GitPublishTab source={source} canEdit={canEdit} /> : <PublishEmptyState />;
 }
 
 function PublishEmptyState() {
@@ -32,10 +33,14 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
   const previewMutation = usePreviewAgentSourceSync(source.agent_id);
   const syncMutation = useSyncAgentSource(workspaceId, source.agent_id);
   const preview = previewMutation.data;
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [deferBindings, setDeferBindings] = useState(false);
+  const requirementsReady = (preview?.requirements?.secrets ?? []).every((ref) => Object.hasOwn(secrets, ref)) && (!preview?.requirements?.deferred_bindings.length || deferBindings);
   const pending = previewMutation.isPending || syncMutation.isPending;
 
   const handlePreview = async () => {
     try {
+      setSecrets({}); setDeferBindings(false);
       await previewMutation.mutateAsync(ref.trim());
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t(($) => $.tab_body.publish.preview_failed));
@@ -43,9 +48,10 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
   };
 
   const handleConfirm = async () => {
-    if (!preview?.preview_id || pending || !canSync) return;
+    if (!preview?.preview_id || pending || !canSync || !requirementsReady) return;
     try {
-      const result = await syncMutation.mutateAsync(preview.preview_id);
+      const result = await syncMutation.mutateAsync({ previewId: preview.preview_id, secrets, deferredBindings: deferBindings ? preview.requirements?.deferred_bindings : [] });
+      setSecrets({});
       toast.success(t(($) => $.detail.source_sync_succeeded));
       result.warnings?.forEach((warning) => toast.warning(warning));
       previewMutation.reset();
@@ -90,12 +96,13 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
         <div className="space-y-4">
           <p className="break-all font-mono text-caption">{preview.base_sha.slice(0, 12)} → {preview.resolved_sha.slice(0, 12)} · {preview.ref}</p>
           {preview.warnings?.map((warning) => <p key={warning} className="text-caption text-muted-foreground">{warning}</p>)}
+          <PackageRequirementsForm requirements={preview.requirements} secrets={secrets} onSecretsChange={setSecrets} deferBindings={deferBindings} onDeferChange={setDeferBindings} disabled={pending} />
           <ChangeList title={t(($) => $.tab_body.publish.git_changes)} changes={preview.git_changes ?? []} />
           <ChangeList title={t(($) => $.tab_body.publish.configuration_changes)} changes={preview.configuration_changes ?? []} />
           {preview.changed === true ? (
             <div className="space-y-3">
               <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.publish.confirm_hint)}</p>
-              <Button disabled={pending || !canSync} onClick={handleConfirm}>
+              <Button disabled={pending || !canSync || !requirementsReady} onClick={handleConfirm}>
                 {syncMutation.isPending ? t(($) => $.tab_body.publish.publishing) : t(($) => $.tab_body.publish.confirm)}
               </Button>
             </div>

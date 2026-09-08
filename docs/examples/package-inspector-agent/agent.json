@@ -1,0 +1,117 @@
+{
+  "$schema": "agent.schema.json",
+  "version": "multica.agent/v2",
+  "name": "Agent 包验收助手",
+  "description": "验证本地 ZIP 与 Git 创建的配置、专属 skills 和导出再导入的一致性",
+  "instructions": "AGENTS.md",
+  "skills": [
+    {
+      "path": "skills/package-check",
+      "name": "package-check",
+      "description": "核对清单、引用文件和导入结果",
+      "enabled": true
+    },
+    {
+      "path": "skills/optional-review",
+      "name": "optional-review",
+      "description": "可选第二轮报告核对",
+      "enabled": false
+    }
+  ],
+  "configuration": {
+    "avatar_url": "emoji:🧪",
+    "persona": "你是谨慎的配置验收同事，每个结论都附上可以核对的证据。",
+    "reply_tone": "用简短、直接的中文说明结果。",
+    "inbound_coordinator": false,
+    "dingtalk_response_enabled": false,
+    "dingtalk_show_ai_tag": true,
+    "dispatch_always_new_issue": false,
+    "chat_session_resume": true,
+    "task_finished_loop_enabled": false,
+    "scene_memory_write_enabled": false,
+    "scene_memory_recall_enabled": false,
+    "scene_memory_ui_enabled": false,
+    "scene_memory_bootstrap_enabled": false,
+    "dispatch_prompt_overrides": {},
+    "model": "",
+    "thinking_level": "",
+    "service_tier": "",
+    "max_concurrent_tasks": 3,
+    "custom_args": [],
+    "custom_env": {
+      "AGENT_PACKAGE_TEST": "enabled"
+    },
+    "runtime_config": {
+      "llm_trace": {
+        "enabled": false
+      }
+    },
+    "mcp_config": {
+      "mcpServers": {}
+    },
+    "composio_toolkit_allowlist": []
+  },
+  "bindings": {
+    "runtime": {
+      "ref": "selected-runtime"
+    },
+    "runner": null,
+    "enterprise_identity": null,
+    "github_identity": null,
+    "dingtalk_account": null,
+    "bots": []
+  },
+  "access": {
+    "permission_mode": "private",
+    "invocation_targets": []
+  },
+  "disabled_runtime_skills": [],
+  "dsh_plugins": [],
+  "okrs": [
+    {
+      "objective": "完成 Agent 包端到端验收",
+      "key_results": [
+        "确认配置和文件完整保存",
+        "确认停用 skill 和专属权限保留"
+      ]
+    }
+  ],
+  "a2a": {
+    "enabled": false,
+    "card_name": "Agent 包验收助手",
+    "card_description": "检查智能体包的配置与文件",
+    "card_version": "1.0.0",
+    "card_skills": [
+      {
+        "id": "package-check",
+        "name": "包验收",
+        "description": "核对清单及引用文件",
+        "tags": [
+          "validation"
+        ],
+        "examples": [
+          "检查这个 Agent 包"
+        ],
+        "inputModes": [
+          "text/plain"
+        ],
+        "outputModes": [
+          "text/plain"
+        ]
+      }
+    ],
+    "clients": [
+      {
+        "key": "test-client",
+        "name": "包验收测试客户端",
+        "status": "disabled",
+        "scopes": [
+          "send",
+          "read"
+        ],
+        "rate_limit_per_minute": 5,
+        "max_concurrent_tasks": 1
+      }
+    ]
+  }
+}

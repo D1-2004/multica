@@ -1,5 +1,7 @@
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
 import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
+import type { AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
+import { AgentPackagePreviewSchema } from "./schemas";
 import type {
   Issue,
   IssuePriority,
@@ -5609,6 +5611,25 @@ export class ApiClient {
     );
   }
 
+  async previewAgentPackage(workspaceId: string, file: Blob): Promise<AgentPackagePreview> {
+    if (!file.size || file.size > 40 * 1024 * 1024) throw new Error("Agent ZIP must be between 1 byte and 40 MiB");
+    const response = await this.fetchRaw(`/api/workspaces/${workspaceId}/agent-packages/preview`, {
+      method: "POST", headers: { "Content-Type": "application/zip" }, body: file,
+    });
+    const raw: unknown = await response.json();
+    const result = parseWithFallback<AgentPackagePreview | null>(raw, AgentPackagePreviewSchema, null, { endpoint: "POST /api/workspaces/:id/agent-packages/preview", includeReceived: false });
+    if (!result) throw new Error("Invalid Agent package preview response");
+    return result;
+  }
+
+  async createAgentFromPackage(workspaceId: string, data: CreateAgentPackageRequest): Promise<CreateGitHubAgentResponse> {
+    if (!data.preview_id) throw new Error("Preview the Agent package before creating it");
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/agent-packages`, { method: "POST", body: JSON.stringify(data) });
+    const result = parseWithFallback(raw, CreateGitHubAgentResponseSchema, EMPTY_CREATE_GITHUB_AGENT_RESPONSE, { endpoint: "POST /api/workspaces/:id/agent-packages", includeReceived: false });
+    if (!result.agent.id || !result.source.synced_commit_sha) throw new Error("Invalid Agent package creation response");
+    return result;
+  }
+
   async exportAgent(agentId: string): Promise<Blob> {
     const response = await this.fetchRaw(`/api/agents/${encodeURIComponent(agentId)}/export`);
     if (response.headers.get("content-type")?.split(";")[0] !== "application/zip") {
@@ -5663,12 +5684,12 @@ export class ApiClient {
     });
   }
 
-  async syncAgentSource(agentId: string, previewId: string): Promise<SyncAgentSourceResponse> {
+  async syncAgentSource(agentId: string, previewId: string, bindings?: { secrets?: Record<string, string>; deferred_bindings?: string[] }): Promise<SyncAgentSourceResponse> {
     const raw = await this.fetch<unknown>(
       `/api/agents/${agentId}/source/sync`,
       {
         method: "POST",
-        body: JSON.stringify({ preview_id: previewId }),
+        body: JSON.stringify({ preview_id: previewId, ...bindings }),
       },
     );
     return parseWithFallback(

@@ -18,8 +18,8 @@ export function usePreviewAgentSourceSync(agentId: string) {
 export function useSyncAgentSource(wsId: string, agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (previewId: string) => {
-      const result = await api.syncAgentSource(agentId, previewId);
+    mutationFn: async (input: string | { previewId: string; secrets: Record<string, string>; deferredBindings?: string[] }) => {
+      const result = typeof input === "string" ? await api.syncAgentSource(agentId, input) : await api.syncAgentSource(agentId, input.previewId, { secrets: input.secrets, deferred_bindings: input.deferredBindings });
       if (result.source.agent_id !== agentId || !result.source.synced_commit_sha) {
         throw new Error("The server returned an invalid source confirmation");
       }

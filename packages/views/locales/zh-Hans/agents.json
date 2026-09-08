@@ -346,7 +346,7 @@
       "connection": "GitHub 连接",
       "default_branch": "仓库默认分支",
       "preview": "预览智能体",
-      "confirm_hint": "按预览内容创建私有智能体，导入指令和 skills。运行时和访问权限可在配置中调整。"
+      "confirm_hint": "确认后按清单创建智能体，导入配置、指令和专属 skills。"
     },
     "title": "创建智能体",
     "squad_title": "为小队创建智能体",
@@ -354,7 +354,7 @@
     "back": "返回",
     "eyebrow": "创建智能体",
     "choose_title": "你想从哪里开始？",
-    "choose_description": "从空白配置、基于成熟模板修改，或者直接描述需求，通过对话完成创建。",
+    "choose_description": "上传智能体 ZIP、从 Git 导入、手动配置，或通过 AI 对话创建。",
     "recommended": "推荐",
     "continue": "继续",
     "step_choose": "选择起点",
@@ -363,7 +363,7 @@
     "modes": {
       "git": {
         "title": "从 Git 创建",
-        "description": "从 GitHub 仓库导入指令和 skills。"
+        "description": "从包含 agent.json 和引用文件的 GitHub 仓库导入智能体配置。"
       },
       "blank": {
         "title": "从空白开始",
@@ -379,7 +379,11 @@
       },
       "github": {
         "title": "从 GitHub 导入",
-        "description": "从包含 dingtalk-agent.json、本体、skill 和配套文件的版本化 DTA Agent Project 创建。"
+        "description": "从包含 agent.json 和引用文件的 GitHub 仓库导入智能体配置。"
+      },
+      "local": {
+        "title": "从本地导入",
+        "description": "上传包含清单和文件的智能体 ZIP 包"
       }
     },
     "sections": {
@@ -457,7 +461,7 @@
     "step_github": "从 GitHub 导入",
     "github": {
       "source_title": "GitHub 来源",
-      "source_hint": "选择仓库和 ref，在创建智能体前校验并预览 dingtalk-agent.json。",
+      "source_hint": "选择仓库和分支，在创建前校验并预览 agent.json 及其引用文件。",
       "not_configured": "尚未配置 GitHub 智能体来源",
       "admin_required": "需要工作区管理员权限",
       "admin_required_hint": "只有工作区 owner 或 admin 可以预览私有仓库内容并创建 GitHub 来源智能体。",
@@ -485,6 +489,19 @@
       "skills": "包含的 skill",
       "instructions": "指令",
       "use": "使用此模板"
+    },
+    "local": {
+      "step": "上传 · 预览 · 创建",
+      "description": "上传智能体 ZIP 包。包根目录需要包含 agent.json 和引用的指令、skill 文件，最大 40 MiB。",
+      "file": "智能体 ZIP 包",
+      "preview": "上传并预览",
+      "admin_required": "仅工作区所有者和管理员可导入智能体。",
+      "runtime_required": "请选用 {{provider}} 运行时。",
+      "secret": "填写配置值：{{ref}}",
+      "bindings_required": "以下内容需要在目标工作区重新配置：",
+      "defer_bindings": "跳过以上绑定，稍后在配置页面处理。新智能体的成员授权暂设为私有。",
+      "confirm_hint": "确认后创建新智能体，并保存包中的配置、指令和专属 skills。",
+      "configuration": "查看将导入的配置"
     }
   },
   "create_dialog": {
@@ -557,13 +574,13 @@
       "description": "将平台当前保存的智能体配置、指令、skills（含启停状态）和配套文件整理为 ZIP，包含 manifest 和 JSON Schema。",
       "download": "下载智能体包",
       "downloading": "正在导出...",
-      "hint": "凭据和环境资源以待绑定引用记录。v2 包目前支持下载和校验预览，导入创建及发布尚未接通。",
+      "hint": "导入时重新选择运行时、填写配置值，并确认需在目标环境重新连接的资源。ZIP 与 Git 使用同一份清单和配置流程。",
       "unavailable": "仅智能体所有者或工作区 admin 可以导出。",
       "failed": "无法导出智能体"
     },
     "publish": {
       "no_source": "此智能体尚未关联 Git 仓库。当前可在“导出”中下载智能体包。",
-      "description": "管理智能体关联的 Git 仓库。同步会更新指令、专属 skill 及其文件。",
+      "description": "管理智能体的 Git 仓库。发布会更新清单中声明的配置、指令、专属 skills 和配套文件。",
       "repository": "智能体仓库地址",
       "deployed": "已发布分支与提交",
       "unavailable": "当前智能体或你的权限不支持手动同步。",

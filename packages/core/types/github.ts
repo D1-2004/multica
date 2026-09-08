@@ -179,6 +179,8 @@ export interface GitHubAgentPreviewRequest {
 }
 
 export interface GitHubAgentPreview {
+  definition?: Record<string, unknown>;
+  requirements?: import("./agent-package").AgentPackageRequirements;
   preview_id?: string;
   expires_at?: string;
   repository_url?: string;
@@ -245,6 +247,7 @@ export interface AgentSourceFileChange {
 }
 
 export interface AgentSourceSyncPreview {
+  requirements?: import("./agent-package").AgentPackageRequirements;
   preview_id: string;
   expires_at: string;
   repository_url: string;

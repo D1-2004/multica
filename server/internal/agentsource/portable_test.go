@@ -70,7 +70,7 @@ func TestPortableRejectsUnknownFieldsAndAmbiguousManifests(t *testing.T) {
 	if _, err := ReadDTARepository(context.Background(), client, Source{}); err == nil { t.Fatal("accepted ambiguous manifests") }
 }
 
-func TestPortableRejectsUnmaterializedVersion(t *testing.T) {
+func TestPortablePreservesExpandedVersion(t *testing.T) {
 	for _, configuration := range []map[string]any{nil, {"inbound_coordinator":true, "persona":"Reviewer"}} {
 		manifest := map[string]any{"$schema":PortableSchemaPath, "version":"multica.agent/v2", "name":"Reviewer", "instructions":"AGENTS.md", "skills":[]any{}}
 		if configuration != nil { manifest["configuration"] = configuration }
@@ -78,8 +78,6 @@ func TestPortableRejectsUnmaterializedVersion(t *testing.T) {
 		if err != nil { t.Fatal(err) }
 		client, err := newFSRepositoryClient(fstest.MapFS{PortableManifestPath:{Data:content}, "AGENTS.md":{Data:[]byte("Review changes")}})
 		if err != nil { t.Fatal(err) }
-		if _, err := ReadDTARepository(context.Background(), client, Source{}); err == nil {
-			t.Fatal("v2 must not be materialized with partially applied configuration")
-		}
+		if snapshot, err := ReadAgentRepository(context.Background(), client, Source{}); err != nil || snapshot.Definition.Definition == nil { t.Fatalf("v2 configuration must be retained: %v", err) }
 	}
 }

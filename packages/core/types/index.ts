@@ -368,3 +368,5 @@ export type {
   BillingCheckoutSessionStatus,
   CreateBillingPortalSessionResponse,
 } from "./billing";
+
+export type { AgentPackageRequirements, AgentPackagePreview, CreateAgentPackageRequest } from "./agent-package";

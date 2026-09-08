@@ -171,3 +171,22 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 ## Protocol history
 
 - 2026-09-08: Added Git URL preview/create, fixed-commit sync confirmation and exclusive skill edit/delete source maps to document the reviewed publication boundary.
+
+## Unified Agent packages and Builder
+
+| Contract | Source symbol | Verification |
+| --- | --- | --- |
+| ZIP manifest-first validation and bundle | `internal/agentsource/package.go` `ParseAgentPackage`; `portable.go` `ParsedAgentPackage.Bundle` | `go test ./internal/agentsource` |
+| Git acquisition uses agent.json | `internal/agentsource/snapshot.go` `ReadAgentRepository` | `TestZIPAndRepositoryPrepareIdenticalV2Bundle` |
+| Shared preview confirmation and transaction | `internal/handler/github_agent_source.go` `CreateAgentFromPackage` | `TestLocalAndGitPackagesCreateTheSameConfiguration` |
+| Config, secret/ref choices, OKRs and A2A | `internal/handler/agent_package_configuration.go` `preparePackageConfiguration` / `apply` | `TestCompleteExamplePackageUploadAndExport` |
+| v2 publication and stale state | `internal/handler/agent_package_sync.go`; `agent_source_preview.go` | `TestV2PackagePublicationAppliesConfigurationAndRejectsStalePreview` |
+| Builder's instructions and hidden carrier | `internal/handler/agent_builder.go` `agentBuilderInstructions` / `CreateAgentBuilderSession` | Read the embedded instructions and carrier transaction |
+| Builder skill loading | `internal/service/task.go` `LoadAgentSkills`; `builtin_skills.go` `BuiltinSkills` | Built-ins append to assigned workspace skills |
+| Builder confirms an ordinary draft | `packages/views/agents/create/use-create-agent-submit.ts` `useCreateAgentSubmit` | Calls `api.createAgent`, not package import |
+| Shared local/Git UI | `packages/views/agents/create/source-create-agent-page.tsx` `SourceCreateAgentPage` | Local/Git differ only in acquisition inputs |
+
+### Protocol history
+
+- 2026-09-08: Added package creation, complete example and Builder evidence.
+  Reason: replace the DTA-oriented source assumptions with the platform's manifest and ZIP contract.

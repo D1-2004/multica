@@ -401,13 +401,13 @@
       "description": "Multica에 현재 저장된 설정, 지침, skills(활성 상태 포함), 관련 파일을 manifest와 JSON Schema가 포함된 ZIP으로 다운로드합니다.",
       "download": "에이전트 패키지 다운로드",
       "downloading": "내보내는 중...",
-      "hint": "자격 증명과 환경 리소스는 다시 연결할 참조로 기록됩니다. v2 패키지는 다운로드와 검증 미리보기를 지원하며, 가져오기를 통한 생성 및 게시는 아직 지원하지 않습니다.",
+      "hint": "가져올 때 대상 런타임을 선택하고 설정 값과 다시 연결할 리소스를 확인하세요. ZIP과 Git은 같은 매니페스트와 설정 절차를 사용합니다.",
       "unavailable": "소유자 또는 워크스페이스 admin만 내보낼 수 있습니다.",
       "failed": "에이전트를 내보낼 수 없습니다"
     },
     "publish": {
       "no_source": "이 에이전트는 Git 저장소에 연결되지 않았습니다. 내보내기에서 현재 패키지를 다운로드할 수 있습니다.",
-      "description": "에이전트의 Git 저장소를 관리합니다. 동기화하면 지침, 전용 skill 및 해당 파일이 업데이트됩니다.",
+      "description": "Agent Git 저장소를 관리합니다. 게시하면 선언된 설정, 지침, 전용 스킬 및 보조 파일을 업데이트합니다.",
       "repository": "에이전트 저장소",
       "deployed": "게시된 브랜치와 커밋",
       "unavailable": "이 에이전트 또는 현재 권한으로는 수동 동기화를 사용할 수 없습니다.",
@@ -1462,7 +1462,7 @@
       "connection": "GitHub 연결",
       "default_branch": "저장소 기본 브랜치",
       "preview": "에이전트 미리보기",
-      "confirm_hint": "검토한 지침과 skills로 비공개 에이전트를 만듭니다. 런타임과 접근 권한은 설정에서 변경할 수 있습니다."
+      "confirm_hint": "확인하면 매니페스트의 설정, 지침 및 전용 스킬로 만듭니다."
     },
     "title": "에이전트 만들기",
     "squad_title": "이 스쿼드용 에이전트 만들기",
@@ -1470,7 +1470,7 @@
     "back": "뒤로",
     "eyebrow": "에이전트 만들기",
     "choose_title": "어떻게 시작하시겠어요?",
-    "choose_description": "모든 항목을 직접 설정하거나, 검증된 템플릿을 수정하거나, 필요한 내용을 설명하고 대화로 만들 수 있습니다.",
+    "choose_description": "Agent ZIP 업로드, Git 가져오기, 수동 설정 또는 AI 대화로 만듭니다.",
     "recommended": "추천",
     "continue": "계속",
     "step_choose": "시작 방법 선택",
@@ -1479,7 +1479,7 @@
     "modes": {
       "git": {
         "title": "Git에서 만들기",
-        "description": "GitHub 저장소에서 지침과 skills를 가져옵니다."
+        "description": "agent.json과 참조 파일이 있는 GitHub 저장소에서 설정을 가져옵니다."
       },
       "blank": {
         "title": "빈 상태로 시작",
@@ -1495,7 +1495,11 @@
       },
       "github": {
         "title": "GitHub에서 가져오기",
-        "description": "dingtalk-agent.json, 에이전트 정의, 스킬 및 보조 파일이 포함된 버전 관리 DTA Agent Project에서 만듭니다."
+        "description": "agent.json과 참조 파일이 있는 GitHub 저장소에서 설정을 가져옵니다."
+      },
+      "local": {
+        "title": "로컬에서 가져오기",
+        "description": "매니페스트와 파일이 포함된 에이전트 ZIP 업로드"
       }
     },
     "sections": {
@@ -1573,7 +1577,7 @@
     "step_github": "GitHub에서 가져오기",
     "github": {
       "source_title": "GitHub 소스",
-      "source_hint": "저장소와 ref를 선택한 후 만들기 전에 dingtalk-agent.json을 검증하고 미리 봅니다.",
+      "source_hint": "저장소와 브랜치를 선택하고 agent.json 및 참조 파일을 검증하고 미리 봅니다.",
       "not_configured": "GitHub 에이전트 소스가 설정되지 않았습니다",
       "admin_required": "워크스페이스 관리자 권한이 필요합니다",
       "admin_required_hint": "비공개 저장소 미리 보기와 GitHub 기반 에이전트 생성은 owner 또는 admin만 사용할 수 있습니다.",
@@ -1601,6 +1605,19 @@
       "skills": "포함된 스킬",
       "instructions": "지침",
       "use": "이 템플릿 사용"
+    },
+    "local": {
+      "step": "업로드 · 미리보기 · 생성",
+      "description": "루트에 agent.json과 참조된 지침 및 skill 파일이 있는 ZIP을 업로드하세요. 최대 40 MiB입니다.",
+      "file": "에이전트 ZIP 패키지",
+      "preview": "업로드 및 미리보기",
+      "admin_required": "워크스페이스 소유자와 관리자만 가져올 수 있습니다.",
+      "runtime_required": "{{provider}} 런타임을 선택하세요.",
+      "secret": "설정 값: {{ref}}",
+      "bindings_required": "대상 워크스페이스에서 다시 설정할 항목:",
+      "defer_bindings": "이 연결을 건너뛰고 나중에 설정합니다. 새 에이전트의 멤버 접근 권한은 비공개로 유지합니다。",
+      "confirm_hint": "확인하면 패키지의 설정, 지침 및 전용 skills를 가진 새 에이전트를 생성합니다.",
+      "configuration": "가져올 설정 확인"
     }
   },
   "actions": {

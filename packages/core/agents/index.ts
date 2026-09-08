@@ -19,3 +19,5 @@ export * from "./mcp-support";
 export * from "./openclaw-runtime-config";
 export * from "./llm-trace-runtime-config";
 export * from "./runtime-binding";
+
+export * from "./package-mutations";

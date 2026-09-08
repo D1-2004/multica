@@ -19,7 +19,7 @@ vi.mock("sonner", () => ({ toast: { error: mocked.error, success: mocked.success
 
 const source: AgentSource = {
   agent_id: "agent-1", source_type: "github", installation_id: "installation-1",
-  repository: "acme/reviewer", ref: "main", manifest_path: "dingtalk-agent.json",
+  repository: "acme/reviewer", ref: "main", manifest_path: "agent.json",
   synced_commit_sha: "a".repeat(40), sync_status: "ready", github_connected: true, can_sync: true,
   last_sync_error: null, last_sync_attempt_at: null, last_synced_at: "",
 };
@@ -55,7 +55,7 @@ describe("Git source import and export tab", () => {
     expect(mocked.confirm).not.toHaveBeenCalled();
     expect(screen.getByText("Git file changes (1)")).toBeDefined();
     fireEvent.click(screen.getByRole("button", { name: "Confirm publication" }));
-    await waitFor(() => expect(mocked.confirm).toHaveBeenCalledWith("agent-1", "preview-1"));
+    await waitFor(() => expect(mocked.confirm).toHaveBeenCalledWith("agent-1", "preview-1", { secrets: {}, deferred_bindings: [] }));
   });
 
   it("invalidates a preview when the selected branch changes", async () => {

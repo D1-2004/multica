@@ -14,11 +14,11 @@ import (
 func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	agent, source, ok := h.loadGitHubSourceForManage(w, r)
 	if !ok { return }
-	var request struct { PreviewID string `json:"preview_id"` }
+	var request struct { PreviewID string `json:"preview_id"`; Secrets map[string]string `json:"secrets"`; DeferredBindings []string `json:"deferred_bindings"` }
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil && !errors.Is(err, io.EOF) {
-		writeError(w, http.StatusBadRequest, "invalid source confirmation; only preview_id is accepted"); return
+		writeError(w, http.StatusBadRequest, "invalid source confirmation"); return
 	}
 	if request.PreviewID == "" {
 		writeError(w, http.StatusPreconditionRequired, "preview_id is required; preview source changes before confirming sync"); return
@@ -30,6 +30,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	}
 	resolved, err := h.resolveAgentSourcePreview(r.Context(), preview)
 	if err != nil { writeGitHubSourceError(w, err); return }
+	if resolved.bundle.Definition["a2a"] != nil && r.Header.Get("X-Actor-Source") != "" { writeError(w, http.StatusForbidden, "A2A policy import requires a human actor"); return }
 	if preview.AppliedAt.Valid { writeSourceSyncReplay(w, preview, resolved.bundle.Warnings); return }
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to start source sync"); return }
@@ -64,9 +65,10 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "Agent runtime is incompatible with the source"); return
 		}
 	}
-	configurationChanged := len(agentsource.DiffFiles(current, sourceDefinitionFiles(resolved.bundle))) > 0
+	configurationChanged := len(diffPackageState(current, sourceDefinitionFiles(resolved.bundle))) > 0
 	changed := configurationChanged || lockedSource.Ref != resolved.ref || lockedSource.SyncedCommitSha != resolved.sha
 	if changed {
+		if err := h.applyPackageSourceConfiguration(r.Context(), queries, agent, resolved, request.Secrets, request.DeferredBindings, parseUUID(requestUserID(r))); err != nil { writeAgentSourceDatabaseError(w, err); return }
 		if _, err := queries.UpdateAgent(r.Context(), gitAgentSourceSnapshotUpdate(agent.ID, resolved.bundle)); err != nil {
 			writeAgentSourceDatabaseError(w, err); return
 		}
@@ -82,6 +84,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record source confirmation"); return
 	}
 	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to commit source sync"); return }
+	if h.DingTalkResponsePolicyNotifier != nil { h.DingTalkResponsePolicyNotifier.NotifyResponsePolicyChanged() }
 	h.publishAgentSourceSync(r, agent, changed)
 	writeJSON(w, http.StatusOK, AgentSourceSyncResponse{Source:agentSourceToResponse(updatedSource), Changed:changed, Warnings:resolved.bundle.Warnings})
 }
@@ -90,7 +93,7 @@ func writeSourceSyncReplay(w http.ResponseWriter, preview db.AgentSourcePreview,
 	writeJSON(w, http.StatusOK, map[string]any{"source":json.RawMessage(preview.AppliedSource), "changed":preview.AppliedChanged, "warnings":warnings})
 }
 
-func applySourceSkills(ctx context.Context, queries *db.Queries, agent db.Agent, source db.AgentSource, resolved resolvedGitHubAgentSource) error {
+func applySourceSkills(ctx context.Context, queries *db.Queries, agent db.Agent, source db.AgentSource, resolved preparedAgentSource) error {
 	mappings, err := queries.ListAgentSourceSkills(ctx, source.ID)
 	if err != nil { return err }
 	byPath := map[string]db.AgentSourceSkill{}

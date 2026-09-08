@@ -30,6 +30,7 @@ func sourceRequestError(status int, message string) error {
 }
 
 type AgentSourceSyncPreviewResponse struct {
+	Requirements PackageRequirements `json:"requirements"`
 	PreviewID string `json:"preview_id"`
 	ExpiresAt string `json:"expires_at"`
 	RepositoryURL string `json:"repository_url"`
@@ -88,7 +89,7 @@ func (h *Handler) loadGitHubSourceForManage(w http.ResponseWriter, r *http.Reque
 	return agent, source, true
 }
 
-func (h *Handler) saveAgentSourcePreview(r *http.Request, workspaceID pgtype.UUID, agent db.Agent, source db.AgentSource, resolved resolvedGitHubAgentSource, stateHash string) (db.AgentSourcePreview, error) {
+func (h *Handler) saveAgentSourcePreview(r *http.Request, workspaceID pgtype.UUID, agent db.Agent, source db.AgentSource, resolved preparedAgentSource, stateHash string) (db.AgentSourcePreview, error) {
 	userID, err := parseUUIDValue(requestUserID(r))
 	if err != nil { return db.AgentSourcePreview{}, err }
 	snapshot, err := json.Marshal(resolved.snapshot)
@@ -118,14 +119,21 @@ func (h *Handler) readAgentSourcePreview(r *http.Request, workspaceID pgtype.UUI
 	return preview, nil
 }
 
-func (h *Handler) resolveAgentSourcePreview(ctx context.Context, preview db.AgentSourcePreview) (resolvedGitHubAgentSource, error) {
+func (h *Handler) resolveAgentSourcePreview(ctx context.Context, preview db.AgentSourcePreview) (preparedAgentSource, error) {
+	// Local previews have no external permission to recheck.
+	if !preview.GithubInstallationID.Valid {
+		var snapshot agentsource.RepositorySnapshot
+		if err := json.Unmarshal(preview.Snapshot, &snapshot); err != nil { return preparedAgentSource{}, err }
+		if err := agentsource.ValidateBundle(snapshot.Definition); err != nil { return preparedAgentSource{}, err }
+		return preparedAgentSource{snapshot:snapshot, bundle:snapshot.Definition, sha:preview.ResolvedSha}, nil
+	}
 	// Recheck current Git permission, but never resolve the branch a second time.
 	resolved, err := h.resolveGitHubAgentRepository(ctx, preview.WorkspaceID, GitHubAgentSourceInput{
 		InstallationID:uuidToString(preview.GithubInstallationID), Repository:preview.Repository, Ref:preview.Ref,
 	})
-	if err != nil { return resolvedGitHubAgentSource{}, err }
-	if err := json.Unmarshal(preview.Snapshot, &resolved.snapshot); err != nil { return resolvedGitHubAgentSource{}, err }
-	if err := agentsource.ValidateBundle(resolved.snapshot.Definition); err != nil { return resolvedGitHubAgentSource{}, err }
+	if err != nil { return preparedAgentSource{}, err }
+	if err := json.Unmarshal(preview.Snapshot, &resolved.snapshot); err != nil { return preparedAgentSource{}, err }
+	if err := agentsource.ValidateBundle(resolved.snapshot.Definition); err != nil { return preparedAgentSource{}, err }
 	resolved.sha, resolved.bundle = preview.ResolvedSha, resolved.snapshot.Definition
 	return resolved, nil
 }
@@ -156,6 +164,7 @@ func (h *Handler) writeCreatedSourceReplay(w http.ResponseWriter, r *http.Reques
 	if err != nil { writeError(w, http.StatusConflict, "the imported Agent no longer exists"); return }
 	if !h.canManageAgent(w, r, agent) { return }
 	response := h.agentToResponse(agent)
+	h.hydrateImportedAgent(r.Context(), &response, agent.ID)
 	if err := h.attachAgentSkills(r.Context(), &response, agent.ID); err != nil { writeError(w, http.StatusInternalServerError, "failed to load imported skills"); return }
 	if err := h.enrichAgentResponseWithTargets(r.Context(), &response, agent.ID); err != nil { writeError(w, http.StatusInternalServerError, "failed to load imported Agent access"); return }
 	actorType, _ := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
@@ -165,6 +174,7 @@ func (h *Handler) writeCreatedSourceReplay(w http.ResponseWriter, r *http.Reques
 
 func sourceDefinitionFiles(bundle agentsource.Bundle) map[string]string {
 	files := map[string]string{"instructions":bundle.Instructions}
+	appendPackageStateFiles(files, packageDefinitionPreview(bundle))
 	for _, skill := range bundle.Skills {
 		prefix := "skills/" + skill.SourcePath + "/"
 		files[prefix + "name"] = skill.Name
@@ -204,7 +214,19 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		if err != nil { return nil, "", err }
 		for _, file := range supporting { files[prefix + "files/" + file.Path] = file.Content }
 	}
+	manifest, _, err := buildAgentExportManifest(ctx, queries, agent, source.ManifestPath)
+	if err != nil { return nil, "", err }
+	if a2a, ok := manifest["a2a"].(map[string]any); ok {
+        mappings, err := readPackageClientMappings(ctx, queries, agent.ID); if err != nil { return nil, "", err }
+        if clients, ok := a2a["clients"].([]map[string]any); ok {
+            managed := []map[string]any{}
+            for _, client := range clients { if key, ok := client["key"].(string); ok && mappings[key] != "" { managed = append(managed, client) } }
+            a2a["clients"] = managed
+        }
+    }
+	appendPackageStateFiles(files, manifest)
 	state := struct {
+		PrivateConfig [][]byte
 		Files map[string]string
 		SourceID pgtype.UUID
 		InstallationID pgtype.UUID
@@ -214,7 +236,7 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		RuntimeID pgtype.UUID
 		OwnerID pgtype.UUID
 		Mappings []db.AgentSourceSkill
-	}{files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
+	}{[][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
 	encoded, err := json.Marshal(state)
 	if err != nil { return nil, "", err }
 	digest := sha256.Sum256(encoded)
@@ -248,11 +270,11 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to read source state"); return }
 	preview, err := h.saveAgentSourcePreview(r, agent.WorkspaceID, agent, source, resolved, stateHash)
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to save source preview"); return }
-	changes := agentsource.DiffFiles(current, sourceDefinitionFiles(resolved.bundle))
+	changes := diffPackageState(current, sourceDefinitionFiles(resolved.bundle))
 	writeJSON(w, http.StatusOK, AgentSourceSyncPreviewResponse{
-		PreviewID:uuidToString(preview.ID), ExpiresAt:timestampToString(preview.ExpiresAt), RepositoryURL:"https://github.com/" + resolved.repository.FullName,
+		Requirements:packageRequirements(resolved.bundle), PreviewID:uuidToString(preview.ID), ExpiresAt:timestampToString(preview.ExpiresAt), RepositoryURL:"https://github.com/" + resolved.repository.FullName,
 		Ref:resolved.ref, BaseSHA:source.SyncedCommitSha, ResolvedSHA:resolved.sha,
-		GitChanges:agentsource.DiffRepository(base, resolved.snapshot), ConfigurationChanges:changes, Warnings:resolved.bundle.Warnings,
+		GitChanges:agentsource.DiffRepository(packageDiffSnapshot(base), packageDiffSnapshot(resolved.snapshot)), ConfigurationChanges:changes, Warnings:resolved.bundle.Warnings,
 		Changed:len(changes) > 0 || source.Ref != resolved.ref || source.SyncedCommitSha != resolved.sha,
 	})
 }
@@ -269,4 +291,38 @@ func (h *Handler) publishedSourceSnapshot(ctx context.Context, agent db.Agent, s
 	return agentsource.ReadDTARepository(ctx, h.GitHubApp, agentsource.Source{
 		InstallationID:installationID, Owner:source.RepoOwner, Repository:source.RepoName, CommitSHA:source.SyncedCommitSha,
 	})
+}
+
+func appendPackageStateFiles(files map[string]string, manifest map[string]any) {
+    if a2a, ok := manifest["a2a"].(map[string]any); ok {
+        for key, value := range a2a { encoded, _ := json.Marshal(value); files["configuration/a2a/" + key] = string(encoded) }
+    }
+	if configuration, ok := manifest["configuration"].(map[string]any); ok {
+		for key, value := range configuration { encoded, _ := json.Marshal(value); files["configuration/" + key] = string(encoded) }
+	}
+	for _, key := range []string{"name", "description", "okrs", "access", "disabled_runtime_skills"} {
+		if value, exists := manifest[key]; exists { encoded, _ := json.Marshal(value); files["configuration/" + key] = string(encoded) }
+	}
+}
+
+func diffPackageState(current, desired map[string]string) []agentsource.FileChange {
+	managed := map[string]string{}
+	for key, value := range current {
+		if _, present := desired[key]; present || !strings.HasPrefix(key, "configuration/") { managed[key] = value }
+	}
+	return agentsource.DiffFiles(managed, desired)
+}
+
+// Git object hashes still reveal that a private file changed, but diff text
+// follows the same secret-redaction policy as the configuration preview.
+func packageDiffSnapshot(snapshot agentsource.RepositorySnapshot) agentsource.RepositorySnapshot {
+	if snapshot.Definition.Definition == nil { return snapshot }
+	files := map[string]string{}
+	for path, content := range snapshot.Files { files[path] = content }
+	if _, exists := files[agentsource.PortableManifestPath]; exists {
+		encoded, _ := json.MarshalIndent(packageDefinitionPreview(snapshot.Definition), "", "  ")
+		files[agentsource.PortableManifestPath] = string(encoded)
+	}
+	snapshot.Files = files
+	return snapshot
 }

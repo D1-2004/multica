@@ -423,6 +423,7 @@ type AgentSource struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
 	ManagedSourceKey     pgtype.Text        `json:"managed_source_key"`
+	A2aClientMappings    []byte             `json:"a2a_client_mappings"`
 }
 
 type AgentSourcePreview struct {
