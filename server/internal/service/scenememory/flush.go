@@ -332,7 +332,7 @@ func fallbackMerge(old string, batch []HistoryEvent) string {
 	var b strings.Builder
 	b.WriteString("## 场域定位\n- [推断] 本会话尚在观察中\n## 稳定知识与约定\n")
 	for _, event := range batch {
-		if event.Self {
+		if event.Self || event.NonHuman {
 			continue
 		}
 		line := clipRunes(event.Speaker+": "+event.Content, 80)
@@ -413,10 +413,10 @@ For a DM, do not invent a purpose; name and 成员 (the other human) suffice unl
 ## 纠正信号
 ## 待确认
 
-Keep people, standing preferences, terms, explicit human corrections and human [peer] "记住" facts. Mark uncertainty [推断] or [待确认] rather than dropping useful background.
+Keep compact, declarative, human-sourced facts: who is who, standing preferences, scene terms/conventions, explicit human corrections, human [peer] "记住". Mark uncertainty [推断] or [待确认] rather than dropping useful background.
 Human requests 去掉/删掉/干掉/不要记/从记忆里去掉 X: delete matching bullets from every section, without tombstones. 整理记忆: compact stale 待确认 and process notes, retaining durable background.
-Drop Git SHAs/commit IDs, pipeline/CI/deploy status, e2e/SLS debris, open tasks, secrets, health/pay/performance and insults without facts.
 
+Skip: this digital employee's speech (including uncited paraphrase of [self]/[agent]); other bots; open tasks/issue progress; git/pipeline/e2e; secrets; health/pay; trivial chit-chat; procedures (those are Issues/skills); easily rediscoverable public facts; raw dumps.
 [self] events and self_speakers (including aliases) identify this digital employee: never use its speech as facts or citations in any section; remove existing self-sourced content. Exclude DE recitation of 回复偏好/回复风格 unless stated by a human, and operational limits such as 每次只能回一条. For mixed human+self citations, retain only the human-supported fact and human citation.
 
 End each kept fact with (来自{speaker}, {M}月{D}日 {HH:mm}的发言). Copy speaker and Asia/Shanghai stamp from the events; never invent them. Preserve older citations unless a newer event rewrites the fact.
@@ -476,16 +476,17 @@ func buildFlushUserPrompt(row db.SceneMemory, batch []HistoryEvent, extraSelfNam
 	b.WriteString("\nmemory_revision: ")
 	b.WriteString(fmt.Sprintf("%d", row.MemoryRevision))
 	b.WriteString("\ncurrent_memory:\n")
-	if strings.TrimSpace(row.MemoryText) == "" {
+	cleaned := sanitizeFlushText(row.MemoryText, batch, extraSelfNames...)
+	if strings.TrimSpace(cleaned) == "" {
 		b.WriteString("(empty)\n")
 	} else {
-		b.WriteString(row.MemoryText)
+		b.WriteString(cleaned)
 		b.WriteString("\n")
 	}
 	if names := listedSelfNames(batch, extraSelfNames); len(names) > 0 {
 		b.WriteString("self_speakers: ")
 		b.WriteString(strings.Join(names, ", "))
-		b.WriteString(" (this digital employee; never cite in 纠正信号 / 稳定知识与约定 / 待确认)\n")
+		b.WriteString(" (this digital employee; never cite in any section)\n")
 	}
 	b.WriteString("\nevents (oldest first, clocks Asia/Shanghai):\n")
 	for _, event := range batch {
@@ -494,15 +495,22 @@ func buildFlushUserPrompt(row db.SceneMemory, batch []HistoryEvent, extraSelfNam
 			b.WriteString(stamp)
 			b.WriteString(" ")
 		}
-		if event.Self {
+		switch {
+		case event.Self:
 			b.WriteString("[self] ")
-		} else {
+			b.WriteString(event.Speaker)
+			b.WriteString(": (omitted — this digital employee is not a memory source)\n")
+		case event.NonHuman:
+			b.WriteString("[agent] ")
+			b.WriteString(event.Speaker)
+			b.WriteString(": (omitted — bot/digital-employee speech is not a memory source)\n")
+		default:
 			b.WriteString("[peer] ")
+			b.WriteString(event.Speaker)
+			b.WriteString(": ")
+			b.WriteString(clipRunes(event.Content, 200))
+			b.WriteString("\n")
 		}
-		b.WriteString(event.Speaker)
-		b.WriteString(": ")
-		b.WriteString(clipRunes(event.Content, 200))
-		b.WriteString("\n")
 	}
 	return b.String()
 }
@@ -510,7 +518,7 @@ func buildFlushUserPrompt(row db.SceneMemory, batch []HistoryEvent, extraSelfNam
 var (
 	flushProcessDebris   = regexp.MustCompile(`(?i)(commit\s+[0-9a-f]{7,}|流水线\s*\d+|下一轮.*SLS|feat/[a-z0-9._-]+|inbound-coordinator 基线|群隔离策略)`)
 	flushIssueStatus     = regexp.MustCompile(`\bWS-\d+\b`)
-	flushCitationSegment = regexp.MustCompile(`来自([^,，]+?),\s*\d+月\d+日 \d{2}:\d{2}的发言`)
+	flushCitationSegment = regexp.MustCompile(`来自([^,，;；]+?)[,，]\s*\d+月\d+日\s*\d{1,2}:\d{2}的发言`)
 )
 
 func listedSelfNames(batch []HistoryEvent, extra []string) []string {
@@ -560,6 +568,14 @@ func collectSelfNames(batch []HistoryEvent, extra ...string) []string {
 			add(alias)
 		}
 	}
+	for _, event := range batch {
+		if event.NonHuman {
+			add(event.Speaker)
+			for _, alias := range agentNameAliases(event.Speaker) {
+				add(alias)
+			}
+		}
+	}
 	return out
 }
 
@@ -602,7 +618,7 @@ func stripSelfCitations(line string, names []string) (string, bool) {
 	}
 	matches := flushCitationSegment.FindAllStringSubmatch(line, -1)
 	if len(matches) == 0 {
-		return line, citesSelfSpeaker(line, names)
+		return line, citesSelfSpeaker(line, names) || uncitedSelfFact(line, names)
 	}
 	kept := make([]string, 0, len(matches))
 	dropped := 0
@@ -623,6 +639,35 @@ func stripSelfCitations(line string, names []string) (string, bool) {
 	prefix := strings.TrimRight(line[:locs[0][0]], " ；;")
 	prefix = strings.TrimRight(prefix, " (（")
 	return prefix + " (" + strings.Join(kept, "；") + ")", false
+}
+
+func uncitedSelfFact(line string, names []string) bool {
+	if citationSpeaker(line) != "" {
+		return false
+	}
+	if looksLikeAgentReplyStyle(line) {
+		return true
+	}
+	body := strings.TrimSpace(line)
+	body = strings.TrimLeft(body, "- ")
+	for _, prefix := range []string{"[推断]", "[待确认]"} {
+		body = strings.TrimSpace(strings.TrimPrefix(body, prefix))
+	}
+	for _, name := range names {
+		if name == "" || !strings.HasPrefix(body, name) {
+			continue
+		}
+		rest := strings.TrimSpace(body[len(name):])
+		if rest == "" {
+			return true
+		}
+		if strings.HasPrefix(rest, "：") || strings.HasPrefix(rest, ":") ||
+			strings.HasPrefix(rest, "擅长") || strings.HasPrefix(rest, "背后") ||
+			strings.HasPrefix(rest, "主要") || strings.HasPrefix(rest, "没有") {
+			return true
+		}
+	}
+	return false
 }
 
 func isFlushTaskBullet(line string) bool {
@@ -762,14 +807,17 @@ func sanitizeFlushText(text string, batch []HistoryEvent, extraSelfNames ...stri
 		}
 		lineOut := raw
 		switch heading {
-		case "纠正信号", "稳定知识与约定", "待确认":
-			if rewritten, drop := stripSelfCitations(trimmed, names); drop {
-				continue
-			} else if rewritten != trimmed {
-				trimmed = rewritten
-				lineOut = rewritten
+		case "场域定位", "纠正信号", "稳定知识与约定", "待确认":
+			keepLocatingIdentity := heading == "场域定位" && (strings.HasPrefix(trimmed, "成员") || strings.HasPrefix(trimmed, "用途"))
+			if !keepLocatingIdentity {
+				if rewritten, drop := stripSelfCitations(trimmed, names); drop {
+					continue
+				} else if rewritten != trimmed {
+					trimmed = rewritten
+					lineOut = rewritten
+				}
 			}
-			if flushProcessDebris.MatchString(trimmed) {
+			if heading != "场域定位" && flushProcessDebris.MatchString(trimmed) {
 				continue
 			}
 			if heading == "纠正信号" && flushIssueStatus.MatchString(trimmed) {
@@ -778,10 +826,13 @@ func sanitizeFlushText(text string, batch []HistoryEvent, extraSelfNames ...stri
 			if (heading == "纠正信号" || heading == "待确认") && isFlushTaskBullet(trimmed) {
 				continue
 			}
-			if singlePeer && citesOutsideMembers(trimmed, members) {
+			if heading != "场域定位" && singlePeer && citesOutsideMembers(trimmed, members) {
 				continue
 			}
 			if looksLikeCoordinatorSelfLimit(trimmed) {
+				continue
+			}
+			if heading != "场域定位" && uncitedSelfFact(trimmed, names) {
 				continue
 			}
 			if heading == "稳定知识与约定" && looksLikeAgentReplyStyle(trimmed) && citationSpeaker(trimmed) == "" {

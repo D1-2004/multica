@@ -331,8 +331,11 @@ func TestBuildFlushUserPromptTagsSelfEvents(t *testing.T) {
 		Speaker:    "冬翔",
 		Content:    "GoalMate 是工具",
 	}}, nil)
-	if !strings.Contains(prompt, "[self] 测试号: 我记下了") {
+	if !strings.Contains(prompt, "[self] 测试号: (omitted — this digital employee is not a memory source)") {
 		t.Fatalf("missing self tag: %q", prompt)
+	}
+	if strings.Contains(prompt, "我记下了") {
+		t.Fatalf("self utterance must not be extractable: %q", prompt)
 	}
 	if !strings.Contains(prompt, "[peer] 冬翔: GoalMate 是工具") {
 		t.Fatalf("missing peer tag: %q", prompt)
@@ -381,12 +384,16 @@ func TestFlushSystemPromptKeepsLightBackgroundAndCitations(t *testing.T) {
 		{"group purpose", "For a group, add a short 用途：… after 成员 answering 这个群是做什么的"},
 		{"DM purpose", "For a DM, do not invent a purpose"},
 		{"DM human provenance", "Cite only that human as a DM source"},
-		{"durable human background", "Keep people, standing preferences, terms, explicit human corrections"},
-		{"human remember requests", `human [peer] "记住" facts`},
+		{"durable human background", "Keep compact, declarative, human-sourced facts"},
+		{"human remember requests", `human [peer] "记住"`},
+		{"skip procedures and dumps", "procedures (those are Issues/skills)"},
+		{"skip public trivia", "easily rediscoverable public facts"},
+		{"skip uncited paraphrase", "including uncited paraphrase"},
 		{"uncertain background", "Mark uncertainty [推断] or [待确认] rather than dropping useful background"},
 		{"human retractions", "delete matching bullets from every section, without tombstones"},
-		{"process debris", "Drop Git SHAs/commit IDs, pipeline/CI/deploy status, e2e/SLS debris"},
-		{"tasks and sensitive facts", "open tasks, secrets, health/pay/performance"},
+		{"process debris", "git/pipeline/e2e"},
+		{"tasks and sensitive facts", "open tasks/issue progress"},
+		{"skip secrets and health", "secrets; health/pay"},
 		{"self identity", "[self] events and self_speakers (including aliases) identify this digital employee"},
 		{"self sources forbidden", "never use its speech as facts or citations in any section"},
 		{"existing self content", "remove existing self-sourced content"},
@@ -637,5 +644,87 @@ func TestSanitizeMemoryTextForAgentDropsDisplayNameWhenAgentNameDiffers(t *testi
 	}
 	if !strings.Contains(got, "来自圆畅") {
 		t.Fatalf("peer cite must stay: %q", got)
+	}
+}
+
+func TestSanitizeFlushTextKeepsHumanFactWithChineseCommaMixedCite(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"璟琦",
+		"成员：璟琦、金龙",
+		"## 稳定知识与约定",
+		"- 随风统一处理大模型技术问题 (来自璟琦(主用钉)，9月7日14:13的发言；来自金龙，9月7日 18:53的发言)",
+		"## 纠正信号",
+		"## 待确认",
+	}, "\n")
+	got := sanitizeFlushText(raw, nil, "金龙")
+	if strings.Contains(got, "来自金龙") {
+		t.Fatalf("self citation must strip with Chinese comma: %q", got)
+	}
+	if !strings.Contains(got, "随风统一处理大模型技术问题") {
+		t.Fatalf("human fact must stay: %q", got)
+	}
+	if !strings.Contains(got, "来自璟琦(主用钉)") {
+		t.Fatalf("human citation must stay: %q", got)
+	}
+}
+
+func TestSanitizeFlushTextDropsLocatingSelfCiteAndUncitedParaphrase(t *testing.T) {
+	raw := strings.Join([]string{
+		"## 场域定位",
+		"VOC群",
+		"成员：璟琦、金龙",
+		"用途：客户声音",
+		"金龙：擅长VOC (来自金龙, 9月6日 16:45的发言)",
+		"## 稳定知识与约定",
+		"- 金龙擅长方向：VOC、知识查询",
+		"- 宜搭问题找宜搭团队 (来自璟琦, 9月6日 16:37的发言)",
+		"## 纠正信号",
+		"## 待确认",
+	}, "\n")
+	got := sanitizeFlushText(raw, nil, "金龙")
+	if strings.Contains(got, "擅长VOC") || strings.Contains(got, "金龙擅长方向") {
+		t.Fatalf("locating/uncited DE paraphrase must drop: %q", got)
+	}
+	if !strings.Contains(got, "成员：璟琦、金龙") {
+		t.Fatalf("member list must stay: %q", got)
+	}
+	if !strings.Contains(got, "宜搭问题找宜搭团队") {
+		t.Fatalf("human fact must stay: %q", got)
+	}
+}
+
+func TestBuildFlushUserPromptSanitizesMemoryAndOmitsSelfContent(t *testing.T) {
+	old := strings.Join([]string{
+		"## 场域定位",
+		"璟琦",
+		"成员：璟琦、金龙",
+		"## 稳定知识与约定",
+		"- 金龙擅长方向：VOC (来自金龙, 9月6日 16:45的发言)",
+		"- 宜搭问题找宜搭团队 (来自璟琦, 9月6日 16:37的发言)",
+	}, "\n")
+	prompt := buildFlushUserPrompt(testFlushRow(old), []HistoryEvent{{
+		OccurredAt: parseFlushTime(),
+		Speaker:    "金龙",
+		Content:    "我擅长VOC和知识查询",
+		Self:       true,
+	}, {
+		OccurredAt: parseFlushTime(),
+		Speaker:    "随风",
+		Content:    "算法团队口径",
+		NonHuman:   true,
+	}, {
+		OccurredAt: parseFlushTime(),
+		Speaker:    "璟琦",
+		Content:    "宜搭问题找宜搭团队",
+	}}, []string{"金龙"})
+	if strings.Contains(prompt, "来自金龙") || strings.Contains(prompt, "我擅长VOC") {
+		t.Fatalf("current_memory and self body must not leak DE speech: %q", prompt)
+	}
+	if !strings.Contains(prompt, "[agent] 随风: (omitted — bot/digital-employee speech is not a memory source)") {
+		t.Fatalf("other DE must be omitted: %q", prompt)
+	}
+	if !strings.Contains(prompt, "宜搭问题找宜搭团队") {
+		t.Fatalf("human fact must reach the model: %q", prompt)
 	}
 }

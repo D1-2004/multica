@@ -352,13 +352,14 @@ func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (HistoryPage, e
 		if speaker == "" {
 			speaker = "dingtalk"
 		}
+		self := messageIsSelf(message.IsSelf, message.Self, agentUID, agentDisplayName, message.SenderID, message.SenderOpenID, speaker)
 		page.Events = append(page.Events, HistoryEvent{
 			EvidenceID: evidenceID,
 			OccurredAt: occurred,
 			Speaker:    speaker,
 			Content:    content,
-			Self: messageIsSelf(message.IsSelf, message.Self, agentUID, agentDisplayName, message.SenderID, message.SenderOpenID, speaker) ||
-				senderIsDigitalEmployee(message.SenderType),
+			Self:       self,
+			NonHuman:   !self && senderIsDigitalEmployee(message.SenderType),
 		})
 	}
 	return page, nil
