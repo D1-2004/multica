@@ -112,6 +112,7 @@ import type {
   ChatPinnedAgent,
   ChatMessage,
   ChatMessagesPage,
+  CoordinatorConversationsPage,
   ChatDraftRestoresResponse,
   ChatPendingTask,
   PrioritizeQueuedChatTaskResponse,
@@ -312,6 +313,7 @@ import {
   ChatDraftRestoresResponseSchema,
   ChatMessageListSchema,
   ChatMessagesPageSchema,
+  CoordinatorConversationsPageSchema,
   ChatPendingTaskSchema,
   PrioritizeQueuedChatTaskResponseSchema,
   SendChatMessageResponseSchema,
@@ -2869,6 +2871,45 @@ export class ApiClient {
 
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {
     return this.fetch(`/api/agents/${agentId}/tasks`);
+  }
+
+  async listAgentCoordinatorConversations(
+    agentId: string,
+    offset = 0,
+  ): Promise<CoordinatorConversationsPage> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/coordinator-conversations?offset=${offset}`,
+    );
+    return parseWithFallback(
+      raw,
+      CoordinatorConversationsPageSchema,
+      { conversations: [], has_more: false, next_offset: 0 },
+      { endpoint: "GET /api/agents/{id}/coordinator-conversations" },
+    );
+  }
+
+  async listAgentCoordinatorConversationMessages(
+    agentId: string,
+    sessionId: string,
+    cursor?: { created_at: string; id: string } | null,
+  ): Promise<ChatMessagesPage> {
+    const params = new URLSearchParams({ limit: "50" });
+    if (cursor) {
+      params.set("before_created_at", cursor.created_at);
+      params.set("before_id", cursor.id);
+    }
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/coordinator-conversations/${encodeURIComponent(sessionId)}/messages?${params}`,
+    );
+    return parseWithFallback(
+      raw,
+      ChatMessagesPageSchema,
+      { messages: [], limit: 50, has_more: false, next_cursor: null },
+      {
+        endpoint:
+          "GET /api/agents/{id}/coordinator-conversations/{sessionId}/messages",
+      },
+    );
   }
 
   async listAgentCoordinatorSessions(agentId: string): Promise<ChatSession[]> {

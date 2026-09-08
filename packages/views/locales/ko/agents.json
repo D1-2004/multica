@@ -326,7 +326,8 @@
     "discard_keep": "계속 편집",
     "discard_confirm": "변경사항 버리기",
     "identity": "신원",
-    "llm_trace": "LLM 추적"
+    "llm_trace": "LLM 추적",
+    "inbound": "수신 대화"
   },
   "create_dialog": {
     "title_create": "에이전트 만들기",
@@ -1233,7 +1234,14 @@
       "relations_clear": "이 대화의 이슈 연결 해제",
       "relations_clear_confirm": "이 대화의 이슈 연결을 해제할까요? 기억 텍스트는 유지됩니다.",
       "relations_cleared": "이슈 연결을 해제했습니다",
-      "relations_clear_failed": "이슈 연결을 해제하지 못했습니다"
+      "relations_clear_failed": "이슈 연결을 해제하지 못했습니다",
+      "grouped_hint": "같은 그룹 또는 개인 대화의 판단 기록을 모아 표시합니다.",
+      "judgment_count": "판단 {{count}}건",
+      "load_more": "대화 더 보기",
+      "source_employee": "디지털 직원",
+      "source_robot": "로봇",
+      "source_unknown": "기타",
+      "refresh": "새로고침"
     },
     "memory": {
       "flags_hint": "쓰기·호출·워밍업은 기억을 어떻게 유지할지, 목록 표시는 여기에 보일지를 정합니다.",

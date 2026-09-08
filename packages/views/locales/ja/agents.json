@@ -318,7 +318,8 @@
     "discard_keep": "編集を続ける",
     "discard_confirm": "変更を破棄",
     "identity": "ID",
-    "llm_trace": "LLM トレース"
+    "llm_trace": "LLM トレース",
+    "inbound": "受信会話"
   },
   "create_dialog": {
     "title_create": "エージェントを作成",
@@ -1225,7 +1226,14 @@
       "relations_clear": "この会話の事項リンクを解除",
       "relations_clear_confirm": "この会話の事項リンクを解除しますか？記憶テキストは残します。",
       "relations_cleared": "事項リンクを解除しました",
-      "relations_clear_failed": "事項リンクの解除に失敗しました"
+      "relations_clear_failed": "事項リンクの解除に失敗しました",
+      "grouped_hint": "同じグループやDMの判断をまとめて表示します。",
+      "judgment_count": "{{count}} 件の判断",
+      "load_more": "会話をさらに読み込む",
+      "source_employee": "デジタル従業員",
+      "source_robot": "ロボット",
+      "source_unknown": "その他",
+      "refresh": "更新"
     },
     "memory": {
       "flags_hint": "書き込み・召還・ウォームアップは記憶の保持方法、表示リストはこの画面に出すかどうかです。",
