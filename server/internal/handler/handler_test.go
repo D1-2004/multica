@@ -2457,9 +2457,9 @@ func TestUpdateGitHubSourcedAgentAllowsLocalProfileButRejectsInstructions(t *tes
 	agentID := createHandlerTestAgent(t, "Git source profile original", nil)
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO agent_source (
-			agent_id, repo_owner, repo_name, ref, synced_commit_sha, created_by
-		) VALUES ($1, 'acme', 'factory-agent', 'main', '0123456789012345678901234567890123456789', $2)
-	`, agentID, testUserID); err != nil {
+			agent_id, workspace_id, repo_owner, repo_name, ref, synced_commit_sha, created_by
+		) VALUES ($1, $3, 'acme', 'factory-agent', 'main', '0123456789012345678901234567890123456789', $2)
+	`, agentID, testUserID, testWorkspaceID); err != nil {
 		t.Fatalf("create agent source: %v", err)
 	}
 

@@ -49,6 +49,7 @@ import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
 import { SceneMemoryTab } from "./tabs/scene-memory-tab";
+import { ImportExportTab } from "./tabs/import-export-tab";
 import { useT } from "../../i18n";
 import { useNavigation } from "../../navigation";
 
@@ -68,6 +69,7 @@ export type DetailTab =
   | "integrations"
   | "identity"
   | "general"
+  | "import_export"
   | "access"
   | "env"
   | "custom_args"
@@ -88,6 +90,7 @@ type SecondaryTab = {
     | "integrations"
     | "identity"
     | "general"
+    | "import_export"
     | "access"
     | "environment"
     | "custom_args"
@@ -108,6 +111,7 @@ const CAPABILITY_TABS: SecondaryTab[] = [
 
 const SETTINGS_TABS: SecondaryTab[] = [
   { id: "general", labelKey: "general" },
+  { id: "import_export", labelKey: "import_export" },
   { id: "okr", labelKey: "okr" },
   { id: "access", labelKey: "access" },
   { id: "env", labelKey: "environment" },
@@ -281,6 +285,7 @@ export function AgentOverviewPane({
   const visibleSettingsTabs = useMemo(
     () =>
       SETTINGS_TABS.filter((tab) => {
+        if (tab.id === "import_export") return source != null;
         if (tab.id === "env") return canEdit;
         if (tab.id === "runtime_config") {
           return runtime?.provider === "openclaw";
@@ -297,6 +302,7 @@ export function AgentOverviewPane({
       canEdit,
       currentUserId,
       runtime?.provider,
+      source,
     ],
   );
 
@@ -641,6 +647,9 @@ export function AgentOverviewPane({
                     />
                   )}
                   {effectiveView === "a2a" && <A2ATab agent={agent} />}
+                  {effectiveView === "import_export" && source && (
+                    <ImportExportTab key={`${agent.id}:${source.ref}:${source.synced_commit_sha}`} source={source} canEdit={canEdit} />
+                  )}
                 </div>
               </div>
             </section>

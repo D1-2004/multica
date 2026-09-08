@@ -125,6 +125,36 @@ func TestClientPaginatesRepositories(t *testing.T) {
 	}
 }
 
+func TestClientListsRepositoryBranchesWithPagination(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/8/access_tokens":
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintf(w, `{"token":"test-token","expires_at":%q}`, time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+		case "/repos/acme/agent/branches":
+			if r.URL.Query().Get("page") == "1" {
+				fmt.Fprint(w, `[`)
+				for index := range 100 {
+					if index > 0 {
+						fmt.Fprint(w, `,`)
+					}
+					fmt.Fprintf(w, `{"name":"release/%d","commit":{"sha":"%040d"}}`, index, index)
+				}
+				fmt.Fprint(w, `]`)
+			} else {
+				fmt.Fprint(w, `[{"name":"main","commit":{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"protected":true}]`)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	branches, err := newTestClient(t, server.URL).ListBranches(t.Context(), 8, "acme", "agent")
+	if err != nil || len(branches) != 101 || branches[100].Name != "main" || !branches[100].Protected {
+		t.Fatalf("branches = %#v, error = %v", branches, err)
+	}
+}
+
 func TestClientReturnsRateLimitError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

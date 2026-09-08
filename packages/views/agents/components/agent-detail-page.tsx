@@ -22,7 +22,6 @@ import type {
 } from "@multica/core/types";
 import {
   type AgentPresenceDetail,
-  agentSourceKeys,
   agentSourceOptions,
   isAgentRuntimeBound,
   useWorkspacePresenceMap,
@@ -123,7 +122,6 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   } = useAgentPermissions(agent, wsId);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
-  const [sourceSyncing, setSourceSyncing] = useState(false);
 
   const { data: agentSource } = useQuery({
     ...agentSourceOptions(wsId, agentId),
@@ -239,37 +237,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
     }
   };
 
-  const handleSourceSync = async () => {
-    if (!agentSource || sourceSyncing) return;
-    setSourceSyncing(true);
-    try {
-      const result = await api.syncAgentSource(agentId);
-      await Promise.all([
-        qc.invalidateQueries({
-          queryKey: agentSourceKeys.detail(wsId, agentId),
-        }),
-        qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) }),
-        qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) }),
-      ]);
-      toast.success(
-        result.changed
-          ? t(($) => $.detail.source_sync_succeeded)
-          : t(($) => $.detail.source_already_current),
-      );
-      result.warnings.forEach((warning) => toast.warning(warning));
-    } catch (error) {
-      await qc.invalidateQueries({
-        queryKey: agentSourceKeys.detail(wsId, agentId),
-      });
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : t(($) => $.detail.source_sync_failed),
-      );
-    } finally {
-      setSourceSyncing(false);
-    }
-  };
+  const handleSourceSync = () => setTabNavIntent("import_export");
 
   // --- Loading ---
   if (agentsLoading && !agent) {
@@ -465,7 +433,6 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           canOperateDingTalkBinding={canEdit.allowed && canAssign.allowed}
           dingTalkBindingPermissionLoading={permissionsLoading}
           source={agentSource ?? null}
-          sourceSyncing={sourceSyncing}
           onSourceSync={handleSourceSync}
           navIntent={tabNavIntent}
           onNavIntentHandled={() => setTabNavIntent(null)}

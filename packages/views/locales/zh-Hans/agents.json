@@ -283,6 +283,7 @@
     "clear_full": "清除选择（使用提供方默认）"
   },
   "tabs": {
+    "import_export": "导入导出",
     "overview": "概览",
     "work": "工作",
     "inbound": "入站",
@@ -515,6 +516,24 @@
     }
   },
   "tab_body": {
+    "import_export": {
+      "description": "管理智能体关联的 Git 仓库。同步会更新指令、专属 skill 及其文件。",
+      "repository": "智能体仓库地址",
+      "deployed": "已发布分支与提交",
+      "unavailable": "当前智能体或你的权限不支持手动同步。",
+      "branch": "分支或提交",
+      "loading": "正在准备预览...",
+      "preview": "预览变更",
+      "branches_failed": "无法加载分支列表，你仍可输入分支或提交。",
+      "preview_failed": "无法准备来源预览",
+      "git_changes": "Git 文件变更",
+      "configuration_changes": "配置变更",
+      "confirm_hint": "确认后将发布这个固定提交。上方配置变更包含将被覆盖的本地 skill 修改。",
+      "publishing": "正在发布...",
+      "confirm": "确认发布",
+      "before": "变更前",
+      "after": "变更后"
+    },
     "common": {
       "save": "保存",
       "add": "添加",

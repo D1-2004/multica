@@ -283,6 +283,7 @@
     "clear_full": "선택 지우기(제공자 기본값 사용)"
   },
   "tabs": {
+    "import_export": "가져오기 / 내보내기",
     "overview": "개요",
     "work": "작업",
     "inbound": "수신",
@@ -379,6 +380,24 @@
     }
   },
   "tab_body": {
+    "import_export": {
+      "description": "에이전트의 Git 저장소를 관리합니다. 동기화하면 지침, 전용 skill 및 해당 파일이 업데이트됩니다.",
+      "repository": "에이전트 저장소",
+      "deployed": "게시된 브랜치와 커밋",
+      "unavailable": "이 에이전트 또는 현재 권한으로는 수동 동기화를 사용할 수 없습니다.",
+      "branch": "브랜치 또는 커밋",
+      "loading": "미리보기 준비 중...",
+      "preview": "변경 미리보기",
+      "branches_failed": "브랜치를 불러올 수 없습니다. 브랜치 또는 커밋을 직접 입력할 수 있습니다.",
+      "preview_failed": "미리보기를 준비할 수 없습니다",
+      "git_changes": "Git 파일 변경",
+      "configuration_changes": "설정 변경",
+      "confirm_hint": "확인하면 이 커밋이 게시됩니다. 위 변경에는 덮어쓸 로컬 skill 수정 사항도 포함됩니다.",
+      "publishing": "게시 중...",
+      "confirm": "게시 확인",
+      "before": "변경 전",
+      "after": "변경 후"
+    },
     "common": {
       "save": "저장",
       "add": "추가",

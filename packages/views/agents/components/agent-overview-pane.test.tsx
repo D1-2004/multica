@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, AgentRuntime } from "@multica/core/types";
+import type { Agent, AgentRuntime, AgentSource } from "@multica/core/types";
 
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/en/common.json";
@@ -63,6 +63,9 @@ vi.mock("./tabs/coordinator-sessions-tab", () => ({
 }));
 vi.mock("./tabs/scene-memory-tab", () => ({
   SceneMemoryTab: () => <div>scene-memory-tab</div>,
+}));
+vi.mock("./tabs/import-export-tab", () => ({
+  ImportExportTab: () => <div>import-export-tab</div>,
 }));
 
 // The pane now reads workspace context to decide whether the Integrations
@@ -188,6 +191,7 @@ function renderPane(
     agent?: Agent;
     agentOverrides?: Partial<Agent>;
     canEdit?: boolean;
+    source?: AgentSource;
   } = {},
 ) {
   const queryClient = new QueryClient({
@@ -218,6 +222,7 @@ function renderPane(
             canOperateDingTalkBinding
             dingTalkBindingPermissionLoading={false}
             currentUserId={options.currentUserId}
+            source={options.source}
           />
         </QueryClientProvider>
       </NavigationProvider>
@@ -232,6 +237,24 @@ function openCapabilities() {
 function openSettings() {
   fireEvent.click(screen.getByRole("tab", { name: /^Settings$/i }));
 }
+
+it("shows import and export in Settings for a Git-created Agent", () => {
+  renderPane([], { source: {
+    agent_id: "agent-1", source_type: "github", installation_id: "installation",
+    repository: "acme/agent", ref: "main", manifest_path: "dingtalk-agent.json",
+    synced_commit_sha: "a".repeat(40), sync_status: "ready", last_sync_error: null,
+    last_sync_attempt_at: null, last_synced_at: "", github_connected: true,
+  } });
+  openSettings();
+  fireEvent.click(screen.getByRole("tab", { name: "Import / Export" }));
+  expect(screen.getByText("import-export-tab")).toBeDefined();
+});
+
+it("does not show the Git import and export tab on a manually created Agent", () => {
+  renderPane([]);
+  openSettings();
+  expect(screen.queryByRole("tab", { name: "Import / Export" })).toBeNull();
+});
 
 beforeEach(() => {
   larkListingRef.current = { installations: [], configured: false };

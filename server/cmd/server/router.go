@@ -2026,6 +2026,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
 					r.Get("/github/repositories", h.ListGitHubAgentRepositories)
+					r.Get("/github/branches", h.ListGitHubAgentBranches)
 					r.Post("/github/agent-preview", h.PreviewGitHubAgent)
 					r.Post("/github/agents", h.CreateGitHubAgent)
 				})
@@ -2447,6 +2448,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
+					r.Get("/source/branches", h.ListAgentSourceBranches)
+					r.Post("/source/preview", h.PreviewAgentSourceSync)
 					// The composed inbound prompt structure for this agent.
 					// Agent-scoped and manage-gated: the managed policy is
 					// deployment configuration, so it does not belong on the

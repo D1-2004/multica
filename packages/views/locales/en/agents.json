@@ -292,6 +292,7 @@
     "clear_full": "Clear selection (use provider default)"
   },
   "tabs": {
+    "import_export": "Import / Export",
     "overview": "Overview",
     "work": "Work",
     "inbound": "Inbound",
@@ -525,6 +526,24 @@
     }
   },
   "tab_body": {
+    "import_export": {
+      "description": "Manage the Git repository used by this agent. Sync updates instructions, exclusive skills and their files.",
+      "repository": "Agent repository",
+      "deployed": "Published branch and commit",
+      "unavailable": "Source syncing is unavailable for this agent or your current permissions.",
+      "branch": "Branch or commit",
+      "loading": "Preparing preview...",
+      "preview": "Preview changes",
+      "branches_failed": "Could not load branches. You can still enter a branch or commit.",
+      "preview_failed": "Could not prepare the source preview",
+      "git_changes": "Git file changes",
+      "configuration_changes": "Configuration changes",
+      "confirm_hint": "Confirm to apply this exact commit. The changes above include any local skill edits that will be overwritten.",
+      "publishing": "Publishing...",
+      "confirm": "Confirm publication",
+      "before": "Before",
+      "after": "After"
+    },
     "common": {
       "save": "Save",
       "add": "Add",
