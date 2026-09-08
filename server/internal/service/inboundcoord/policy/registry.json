@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-08.2",
-  "assembly_version": "1",
+  "policy_version": "2026-09-08.3",
+  "assembly_version": "2",
   "modules": [
     {
       "id": "core",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "4",
+      "version": "5",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -58,8 +58,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 4278,
-      "content_sha256": "2436da17e6adcab376ef8597f6a279823cd16eab588c89997812b83fb78c8773"
+      "budget_characters": 4642,
+      "content_sha256": "550dd08205af86eb7c75e2991d98d0c351d815893af3234bd467459a95260634"
     },
     {
       "id": "channel",
@@ -131,7 +131,7 @@
     },
     {
       "id": "memory",
-      "version": "1",
+      "version": "2",
       "file": "memory.md",
       "applies_when": "scene_memory_available",
       "requires": [
@@ -142,8 +142,8 @@
         "COORD.F03",
         "COORD.F11"
       ],
-      "budget_characters": 841,
-      "content_sha256": "a9e1a05b5195c59775f801c1d50052891381900c542d8d6b609f0cf817746c56"
+      "budget_characters": 955,
+      "content_sha256": "37bf8d9486b1c33692ea408ec643a87ebafb7110f041ad4040ca52b0e2738088"
     },
     {
       "id": "skills",
@@ -164,7 +164,7 @@
     },
     {
       "id": "dialogue",
-      "version": "2",
+      "version": "3",
       "file": "dialogue.md",
       "applies_when": "dialogue_available",
       "requires": [
@@ -178,8 +178,8 @@
         "COORD.F08",
         "COORD.F18"
       ],
-      "budget_characters": 1194,
-      "content_sha256": "625977d31193fc5d562dae672d2e62fdb7beb73edc2a7e643c9ee8a934545cc2"
+      "budget_characters": 1303,
+      "content_sha256": "cd6d57d7fd548a396214fb47e9a4e41f1a6ed8d2f80f9dee4744664459a15ff2"
     },
     {
       "id": "recall_match",
@@ -332,7 +332,7 @@
     {
       "id": "COORD.F04",
       "family": "F04",
-      "obligation": "能力介绍按已装技能快照直接答；请求实际工作使用正常执行链，不能因快循环缺工具误拒绝或用介绍代替行动。",
+      "obligation": "能力介绍按已装技能快照直接答；请求实际工作使用正常执行链，不能因快循环缺工具误拒绝或用介绍代替行动。场域记忆中的岗位禁令不能在快循环结案并挡住本应交执行器的工作。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -341,7 +341,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f04_contrast"
+        "f04_contrast",
+        "f04_talent_vs_contest"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -359,7 +360,7 @@
     {
       "id": "COORD.F05",
       "family": "F05",
-      "obligation": "问候、状态询问与重复已接受请求不授权重做；含糊短答根据正在回答的问题判断；明确重试不机械再确认。",
+      "obligation": "问候、状态询问与重复已接受请求不授权重做；含糊短答根据正在回答的问题判断；明确重试不机械再确认。短确认的任务书保留用户原话与窗口，不继承员工上一跳加工流水线。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -368,7 +369,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f05_contrast"
+        "f05_contrast",
+        "f05_yes_more_copies"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -379,7 +381,8 @@
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/inbound.md",
-        "server/internal/service/inboundcoord/policy/group.md"
+        "server/internal/service/inboundcoord/policy/group.md",
+        "server/internal/service/inboundcoord/continuation_content.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -440,7 +443,7 @@
     {
       "id": "COORD.F07",
       "family": "F07",
-      "obligation": "续接必须同一交付物且当前实质推进；单卡、同人、排名、忙、旧承诺都不充分；时间本身不否决明确续接。",
+      "obligation": "续接必须同一交付物且当前实质推进；单卡、同人、排名、忙、旧承诺都不充分；时间本身不否决明确续接。短确认续接时交付物以用户原话为准，不得把员工未获点名的加工步骤当成同一交付物。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -449,7 +452,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f07_contrast"
+        "f07_contrast",
+        "f05_yes_more_copies"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -460,7 +464,8 @@
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/inbound.md",
-        "server/internal/service/inboundcoord/policy/recall_match.md"
+        "server/internal/service/inboundcoord/policy/recall_match.md",
+        "server/internal/service/inboundcoord/continuation_content.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -556,7 +561,7 @@
     {
       "id": "COORD.F11",
       "family": "F11",
-      "obligation": "教学、纠正、盘点及撤回属于场域记忆；盘点只列稳定知识，旧复述/tombstone不复活事实，待写不冒充已提交。",
+      "obligation": "教学、纠正、盘点及撤回属于场域记忆；盘点只列稳定知识，旧复述/tombstone不复活事实，待写不冒充已提交。稳定记忆只写入任务书的「这不是」，不能作为 reply 拒绝本应交执行器的工作。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -564,7 +569,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f11_contrast"
+        "f11_contrast",
+        "f04_talent_vs_contest"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -574,7 +580,8 @@
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
-        "server/internal/service/inboundcoord/policy/memory.md"
+        "server/internal/service/inboundcoord/policy/memory.md",
+        "server/internal/service/inboundcoord/policy/inbound.md"
       ],
       "case_file": "cases.json"
     },
