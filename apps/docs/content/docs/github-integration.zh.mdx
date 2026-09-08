@@ -73,7 +73,7 @@ PR **关闭但没合并**——只更新 PR 卡片的状态为 `Closed`，issue 
 
 ## 从仓库创建智能体
 
-GitHub App 拥有 **Contents: Read-only** 权限且服务端配置了 App 凭证后，工作区 owner/admin 可以通过 **Agents → 创建智能体 → 从 GitHub 导入**，从 installation 可访问的仓库创建智能体。仓库列表、预览和创建保持 admin-only，避免连接 App 后把私有仓库名称和内容暴露给所有成员。仓库是智能体定义的版本化来源，不是智能体运行时的工作目录。
+GitHub App 拥有 **Contents: Read-only** 权限且服务端配置了 App 凭证后，工作区 owner/admin 可以通过 GitHub Agent API 传入仓库链接、连接和分支，预览并创建智能体。本轮服务端开发尚未接入创建页 Git 入口。仓库浏览与创建保持 admin-only。
 
 仓库根目录必须包含使用 `dingtalk-agent/project@1` 协议的 DTA `dingtalk-agent.json`：
 
@@ -99,7 +99,7 @@ GitHub App 拥有 **Contents: Read-only** 权限且服务端配置了 App 凭证
 
 Multica 校验 `project@1` 的稳定字段后，把所选 commit 编译为数据库快照；DTA 新增的扩展字段可以存在，`workspaces` 内部配置不会由 Multica 解释。display name 只作为创建默认值，后续同步更新本体和仓库 skill，并保留在 Multica 中修改的名称和描述。runtime、model、访问权限和额外工作区 skill 也仍由 Multica 管理。GitHub 导入不会回退读取旧的 `multica-agent.yaml`。
 
-仓库发生修改后**不会自动生效**。在智能体 Overview 点击 **立即同步**，Multica 才会解析配置的 ref 并原子替换 GitHub 管理的快照。已经派发的任务继续使用派发时的快照。断开 installation 后，最后一次有效快照仍可运行，但不能继续同步。
+仓库发生修改后**不会自动生效**。进入 Git 智能体的**设置 → 导入导出**，选择分支，查看 Git 文件变更和配置覆盖差异，再确认发布。服务端应用预览固定的提交，确认时不会追到分支的新提交。本地 skill 修改和删除会出现在配置差异中。概览的同步按钮进入此页。断开 installation 后保留活动配置，但不能继续同步。
 
 ## 断开连接
 
@@ -235,3 +235,7 @@ curl -i -X POST https://<api-host>/api/webhooks/github \
 - [Issues](/issues) —— PR 引用的 issue 编号（`MUL-123`）的来源
 - [工作区](/workspaces) —— 工作区 issue prefix 的设置位置
 - [环境变量](/environment-variables) —— 完整 env 清单，包含上面提到的 GitHub 变量
+
+## 协议历史
+
+- 2026-09-08：补充仓库链接 API 与预览后确认同步，替换原直接同步描述，并纠正尚未接入的创建页入口。

@@ -61,6 +61,9 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Contract | Source | Behavior |
 |---|---|---|
 | Git instance ownership | `server/internal/handler/github_agent_source.go` | Manifest name/description are create defaults; source sync updates instructions and source-managed skills only |
+| Git URL creation and immutable confirmation | `server/internal/handler/agent_source_preview.go`, `server/internal/handler/github_agent_source.go` | Workspace GitHub preview accepts a repository URL and saves a user-scoped `preview_id`; create confirmation is idempotent with that ID |
+| Branch selection and source sync | `server/internal/handler/agent_source_sync.go`, `server/internal/handler/agent_source_preview.go` | `POST /api/agents/{id}/source/preview` accepts ref and returns Git/configuration changes; `/source/sync` requires the returned `preview_id` and rejects stale state or revoked Git access |
+| Exclusive source skills | `server/internal/handler/skill.go`, `server/pkg/db/queries/agent_source_preview.sql` | Ordinary Git source skills are editable/deletable in workspace storage, but source mappings prohibit assigning them to other Agents; file mutations lock the parent skill |
 | Editable source Agent profile | `server/internal/handler/agent.go` | Name and description remain editable; only instructions are rejected as Git-managed |
 | DingTalk install CLI | `server/cmd/multica/cmd_dingtalk.go` | `begin` creates a QR session; optional `--allow-unbound` sends `allow_unbound=true` for external users; `status` performs one status read |
 
@@ -164,3 +167,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `CreateAgentParams` | generated from `queries/agent.sql` | typed params include nullable `Model`, `ThinkingLevel`, and `ServiceTier` |
 | `UpdateAgent` SET | generated from `queries/agent.sql` | COALESCE updates include model/thinking/service tier; dedicated clear queries restore each nullable override |
 | `UpdateAgentCustomEnv` (called by the `UpdateAgentEnv` handler) | 2652 | `SET custom_env = $2` — the only write path for env values |
+
+## Protocol history
+
+- 2026-09-08: Added Git URL preview/create, fixed-commit sync confirmation and exclusive skill edit/delete source maps to document the reviewed publication boundary.
