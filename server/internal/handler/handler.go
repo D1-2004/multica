@@ -42,6 +42,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/runnerws"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/storage"
@@ -255,18 +256,21 @@ type Handler struct {
 	// May be nil in tests / self-hosted with the metrics listener disabled;
 	// every Record* method is nil-safe and obsmetrics.RecordEvent treats a
 	// nil Metrics as "PostHog only".
-	Metrics                      *obsmetrics.BusinessMetrics
-	PATCache                     *auth.PATCache
-	DaemonTokenCache             *auth.DaemonTokenCache
-	MembershipCache              *auth.MembershipCache
-	WebhookRateLimiter           WebhookRateLimiter
-	WebhookIPRateLimiter         WebhookRateLimiter
-	WebhookAbsoluteIPRateLimiter WebhookRateLimiter
-	WebhookDeliveryWorker        *WebhookDeliveryWorker
-	TaskCompletionWorker         *agentmessagerouter.CompletionWorker
-	TaskCompletionTargetIdentity string
-	AgentMessageRouterLLMTrace   LLMTraceRouter
-	LLMTraceExternalSink         LLMTraceExternalSink
+	Metrics                        *obsmetrics.BusinessMetrics
+	PATCache                       *auth.PATCache
+	DaemonTokenCache               *auth.DaemonTokenCache
+	MembershipCache                *auth.MembershipCache
+	WebhookRateLimiter             WebhookRateLimiter
+	WebhookIPRateLimiter           WebhookRateLimiter
+	WebhookAbsoluteIPRateLimiter   WebhookRateLimiter
+	WebhookDeliveryWorker          *WebhookDeliveryWorker
+	TaskCompletionWorker           *agentmessagerouter.CompletionWorker
+	DingTalkResponses              *dingtalkresponse.Service
+	DingTalkResponsePolicySync     *agentmessagerouter.ResponsePolicySyncWorker
+	DingTalkResponsePolicyNotifier agentmessagerouter.ResponsePolicyNotifier
+	TaskCompletionTargetIdentity   string
+	AgentMessageRouterLLMTrace     LLMTraceRouter
+	LLMTraceExternalSink           LLMTraceExternalSink
 	// LLMTraceObserver receives every relayed sandbox model request/response
 	// pair in addition to Router and the Agent static sink. Nil when the
 	// server has no Langfuse configuration.

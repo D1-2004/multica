@@ -239,7 +239,7 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	assocApplies := in.Present && in.Stored.Source.Platform == "dingtalk" && in.Stored.Domain == "channel"
 	segments = append(segments, dispatchSegment(
 		DispatchSegmentSceneGraph, dispatchSegmentSourceBuiltin, dispatchDeliveryRuntimeBrief,
-		dispatchSceneGraphInstruction, in.Overrides,
+		dingTalkPolicyInstruction(dispatchSceneGraphInstruction, in.Stored.ResponsePolicy), in.Overrides,
 		assocApplies, "dingtalk_channel", "not_a_dingtalk_channel",
 	))
 

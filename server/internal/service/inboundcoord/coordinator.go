@@ -1,9 +1,9 @@
 // Package inboundcoord is the server-side short loop that decides whether an
 // inbound user turn can be answered immediately or must become an Issue that
 // starts a sandbox. Direct reply is the chat response; Issue is the only
-// sandbox path. Decide runs a bounded tool loop (assoc_recall / assoc_bind /
-// finish, with issue_comment_add terminal on success). DWS is not model-callable; the server reads authoritative DingTalk
-// history through an isolated DWS identity before the first model round.
+// sandbox path. Decide runs a bounded read-and-plan loop with progressive
+// context disclosure. Host commits validated finish.items afterwards. History
+// reads use an isolated DingTalk identity and the original window watermark.
 package inboundcoord
 
 import (
@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
-	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -42,7 +41,7 @@ const (
 	skillSnapshotsBudget    = 1200
 	titleBudget             = 80
 	temperature             = 0.3
-	maxCompletionTokens     = 512
+	maxCompletionTokens     = 1536
 )
 
 // Action is the short-loop verdict.
@@ -54,6 +53,7 @@ const (
 	ActionContinue Action = "continue"
 	ActionSilence  Action = "silence"
 	ActionRetry    Action = "retry"
+	ActionDeferred Action = "deferred"
 )
 
 // Source names the inbound surface that asked for a decision.
@@ -90,6 +90,13 @@ type Turn struct {
 	ReplyTone            string
 	Skills               []SkillSnapshot
 	Busy                 bool
+	HistoryBefore        time.Time
+	MessageTimestamp     time.Time
+	HistoryStatus        string
+	HistoryError         string
+	SkillsStatus         string
+	SceneMemoryStatus    string
+	TaskDeliveryContext  string
 	History              []HistoryLine
 	DingTalkHistory      []HistoryLine
 	IdentityNote         string
@@ -123,28 +130,37 @@ type Turn struct {
 
 // HistoryLine is one already-persisted Multica chat message or a DingTalk row.
 type HistoryLine struct {
-	Role       string
-	Content    string
-	EvidenceID string
+	Role              string
+	Content           string
+	EvidenceID        string
+	Timestamp         time.Time
+	TimestampRaw      string
+	SenderID          string
+	ReplyToEvidenceID string
+	ReplyToSenderID   string
+	ContentTruncated  bool
 }
 
 // Decision is what callers act on.
 type Decision struct {
-	Action       Action
-	UserText     string
-	LookInto     string
-	IssueID      string
-	Purpose      string
-	Intent       string
-	Reason       string
-	ElapsedMs    int64
-	Source       Source
-	ToolRounds   int
-	ToolsUsed    []string
-	IssueComment *IssueCommentEffect
-	Items        []WindowItem
-	Steps        []protocol.ChatCoordinatorStep
-	IssueResults []protocol.ChatCoordinatorIssueResult
+	Action              Action
+	UserText            string
+	LookInto            string
+	IssueID             string
+	Purpose             string
+	Intent              string
+	Reason              string
+	ElapsedMs           int64
+	Source              Source
+	ToolRounds          int
+	ToolsUsed           []string
+	IssueComment        *IssueCommentEffect
+	Items               []WindowItem
+	Steps               []protocol.ChatCoordinatorStep
+	CompletedActionKeys []string
+	PlanVersion         string
+	NonWorkRefs         []string
+	IssueResults        []protocol.ChatCoordinatorIssueResult
 	// TraceID is the coordinator trace id of the Decide call that produced
 	// this verdict (coord_trace_id in SLS, the Langfuse trace id).
 	TraceID string
@@ -202,6 +218,7 @@ type historyReader interface {
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 	GetAgentVoice(ctx context.Context, id pgtype.UUID) (db.GetAgentVoiceRow, error)
 	GetAgentSceneMemoryFlags(ctx context.Context, id pgtype.UUID) (db.AgentSceneMemoryFlags, error)
+	GetAgentDingTalkIdentity(ctx context.Context, arg db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
 	ListEnabledAgentSkillCardMetadata(ctx context.Context, agentID pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error)
 }
 
@@ -214,6 +231,7 @@ type SkillSnapshot struct {
 
 // Coordinator runs the bounded assoc tool loop in loop.go.
 type Coordinator struct {
+	Ready       func(context.Context) (bool, error)
 	LLM         *llm.Client
 	Queries     historyReader
 	Tools       Tools
@@ -229,7 +247,8 @@ type sceneMemoryReader interface {
 	Get(ctx context.Context, id scenememory.Identity) (db.SceneMemory, error)
 }
 
-// New wires the loop. assocSvc may be nil; Decide still fail-opens.
+// New wires the loop. assocSvc may be nil; missing required evidence defers
+// enabled Coordinator work without creating an unverified sandbox request.
 func New(llmClient *llm.Client, queries historyReader, assocSvc *assoc.Service) *Coordinator {
 	c := &Coordinator{LLM: llmClient, Queries: queries, Assoc: assocSvc}
 	if assocSvc != nil {
@@ -254,8 +273,8 @@ func (c *Coordinator) SetIssueCommentWriter(writer IssueCommentWriter) {
 }
 
 // FillVoice copies Digital-Employee-tab persona, reply tone, and enabled
-// skill snapshots onto the turn. Skill load failures leave Skills empty
-// rather than blocking Decide.
+// skill snapshots onto the turn. Skill load failures are marked unavailable
+// rather than being treated as an empty installed catalog.
 func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 	if c == nil || c.Queries == nil || turn == nil || !turn.AgentID.Valid {
 		return
@@ -275,9 +294,14 @@ func (c *Coordinator) FillSkills(ctx context.Context, turn *Turn) {
 	}
 	rows, err := c.Queries.ListEnabledAgentSkillCardMetadata(ctx, turn.AgentID)
 	if err != nil {
+		turn.SkillsStatus = "unavailable"
 		return
 	}
 	turn.Skills = skillSnapshotsFromRows(rows)
+	turn.SkillsStatus = "loaded"
+	if len(turn.Skills) == 0 {
+		turn.SkillsStatus = "empty"
+	}
 }
 
 func skillSnapshotsFromRows(rows []db.ListEnabledAgentSkillCardMetadataRow) []SkillSnapshot {
@@ -313,8 +337,8 @@ func hostSilence(turn Turn, reason string) Decision {
 	return Decision{Action: ActionSilence, Reason: reason}
 }
 
-// Decide returns a verdict. A disabled LLM or any failure continues the
-// existing sandbox enqueue so a missing model never silences users.
+// Decide returns a verdict or an explicit deferred state. Model/evidence
+// failures do not expand authorization by bypassing the validated plan.
 func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision) {
 	if strings.TrimSpace(turn.TraceID) == "" {
 		turn.TraceID = TraceIDFromContext(ctx)
@@ -333,6 +357,15 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if c == nil {
 		return Decision{Action: ActionContinue}
 	}
+	if c.Ready != nil {
+		ready, err := c.Ready(ctx)
+		if err != nil || !ready {
+			return Decision{Action: ActionDeferred, Reason: "coordinator_rollout_wait"}
+		}
+	}
+	if restored, ok := RestoredPlan(ctx); ok {
+		return restored
+	}
 	if strings.TrimSpace(turn.Message) == "" {
 		if turn.Source == SourceWeb {
 			return Decision{Action: ActionContinue}
@@ -345,17 +378,11 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
 		return hostSilence(turn, "window_ack")
 	}
-	if turn.Loop != LoopTaskFinished {
-		turn = KeepWorkUtterances(turn)
-	}
 	if turn.Loop == LoopTaskFinished && turn.AlreadyToldScene {
 		return hostSilence(turn, "already_told_scene")
 	}
-	if c.LLM == nil || !c.LLM.Enabled() {
-		if turn.Loop == LoopTaskFinished {
-			return Decision{Action: ActionSilence}
-		}
-		return Decision{Action: ActionContinue}
+	if c.Chat == nil && (c.LLM == nil || !c.LLM.Enabled()) {
+		return Decision{Action: ActionDeferred, Reason: "coordinator_model_unavailable"}
 	}
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
@@ -375,75 +402,41 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	started := time.Now()
 	turnTrace = c.startTurnTrace(ctx, turn, started)
 	loopCtx = langfuse.ContextWithTrace(loopCtx, turnTrace)
-	var preflightSteps []protocol.ChatCoordinatorStep
-	if turn.Source != SourceWeb && turn.Loop != LoopTaskFinished {
-		if c.DWSHistory == nil {
-			loopErr = fmt.Errorf("DWS history is not configured")
-			preflightSteps = coordinatorDWSHistorySteps(turn, nil, fmt.Errorf("DWS history is not configured"))
-			slog.Warn("inbound coordinator DWS history unavailable; continuing sandbox enqueue",
-				append(coordinatorLogIndex(turn),
-					"event", "inbound_coordinator_dws_history_failed",
-					"error_class", "not_configured",
-				)...)
-			return Decision{
-				Action: ActionContinue, ElapsedMs: time.Since(started).Milliseconds(), Source: turn.Source,
-				Steps: preflightSteps,
+	if turn.HistoryBefore.IsZero() {
+		turn.HistoryBefore = turn.MessageTimestamp
+		if turn.HistoryBefore.IsZero() {
+			turn.HistoryBefore = time.Now().UTC()
+		}
+	}
+	if turn.Source == SourceWeb && !turn.HistoryBefore.IsZero() {
+		kept := make([]HistoryLine, 0, len(turn.History))
+		for _, line := range turn.History {
+			if line.Timestamp.IsZero() || line.Timestamp.Before(turn.HistoryBefore) {
+				kept = append(kept, line)
 			}
 		}
-		historyObs := traceHistoryStart(turnTrace, turn)
-		histCtx, histCancel := context.WithTimeout(loopCtx, dwsHistoryTimeout)
-		history, err := c.DWSHistory.Load(histCtx, turn)
-		histCancel()
-		traceHistoryEnd(historyObs, history, err)
-		if err != nil {
-			loopErr = fmt.Errorf("dws history: %w", err)
-			preflightSteps = coordinatorDWSHistorySteps(turn, nil, err)
-			if dwsclient.IsTimeout(err) {
-				slog.Warn("inbound coordinator DWS history timed out; judging without last-N",
-					append(coordinatorLogIndex(turn),
-						"event", "inbound_coordinator_dws_history_failed",
-						"error_class", "timeout",
-						"elapsed_ms", time.Since(started).Milliseconds(),
-						"error", err,
-					)...)
-			} else {
-				slog.Warn("inbound coordinator DWS history failed; judging without last-N",
-					append(coordinatorLogIndex(turn),
-						"event", "inbound_coordinator_dws_history_failed",
-						"error_class", "read_failed",
-						"elapsed_ms", time.Since(started).Milliseconds(),
-						"error", err,
-					)...)
-			}
-		} else {
-			turn.DingTalkHistory = history
-			preflightSteps = coordinatorDWSHistorySteps(turn, history, nil)
-			slog.Info("inbound coordinator DWS history loaded",
-				append(coordinatorLogIndex(turn),
-					"event", "inbound_coordinator_dws_history_loaded",
-					"message_count", len(history),
-					"elapsed_ms", time.Since(started).Milliseconds(),
-				)...)
+		turn.History = kept
+	}
+	if turn.HistoryStatus == "" {
+		turn.HistoryStatus = "not_loaded"
+		if len(turn.DingTalkHistory) > 0 || len(turn.History) > 0 {
+			turn.HistoryStatus = "loaded"
 		}
 	}
 	decision, err := c.runLoop(loopCtx, turn)
 	loopErr = err
 	elapsed := time.Since(started)
-	decision.Steps = mergeCoordinatorSteps(preflightSteps, decision.Steps)
 	if turn.Loop == LoopTaskFinished {
 		decision = FilterTaskFinishedWrapup(decision)
 	}
 	if err != nil {
-		failOpen := ActionContinue
-		if turn.Loop == LoopTaskFinished {
-			failOpen = ActionSilence
-		}
+		failOpen := ActionDeferred
 		slog.Warn("inbound coordinator llm failed",
 			append(coordinatorLogIndex(turn),
 				"event", "inbound_coordinator_decided",
 				"action", string(failOpen),
 				"model", coordinatorModel,
-				"fail_open", true,
+				"fail_open", false,
 				"elapsed_ms", elapsed.Milliseconds(),
 				"error", err,
 			)...)
@@ -599,7 +592,7 @@ func (c *Coordinator) injectRelatedTasks(ctx context.Context, turn Turn) Turn {
 }
 
 // TurnFromChatSession loads agent voice and busy state. Web Chat also reads the
-// last 4 Multica rows. DingTalk turns load real conversation history in Decide.
+// last 4 Multica rows. DingTalk history is read on demand inside the loop.
 func (c *Coordinator) TurnFromChatSession(
 	ctx context.Context,
 	session db.ChatSession,
@@ -660,8 +653,11 @@ func (c *Coordinator) listHistory(ctx context.Context, sessionID pgtype.UUID, li
 			continue
 		}
 		lines = append(lines, HistoryLine{
-			Role:    page[i].Role,
-			Content: clipRunes(content, 160),
+			Role:             page[i].Role,
+			Content:          clipRunes(content, 160),
+			EvidenceID:       util.UUIDToString(page[i].ID),
+			Timestamp:        page[i].CreatedAt.Time,
+			ContentTruncated: utf8.RuneCountInString(content) > 160,
 		})
 	}
 	return lines
@@ -677,6 +673,7 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	if strings.TrimSpace(turn.ConversationID) == "" || !turn.AgentID.Valid {
 		return
 	}
+	turn.SceneMemoryStatus = "not_loaded"
 	flags, err := c.Queries.GetAgentSceneMemoryFlags(ctx, turn.AgentID)
 	if err != nil || !flags.RecallEnabled {
 		return
@@ -696,7 +693,18 @@ func (c *Coordinator) prefetchSceneMemory(ctx context.Context, turn *Turn) {
 	if err != nil {
 		return
 	}
-	turn.SceneMemory = scenememory.SanitizeMemoryTextForAgent(row.MemoryText, turn.AgentName)
+	names := []string{turn.AgentName}
+	if ident, identErr := c.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{
+		WorkspaceID: workspaceID,
+		AgentID:     turn.AgentID,
+	}); identErr == nil {
+		names = append(names, ident.AccountDisplayName)
+	}
+	turn.SceneMemory = scenememory.SanitizeMemoryTextForAgent(row.MemoryText, names...)
+	turn.SceneMemoryStatus = "loaded"
+	if strings.TrimSpace(turn.SceneMemory) == "" {
+		turn.SceneMemoryStatus = "empty"
+	}
 	turn.SceneMemoryRevision = row.MemoryRevision
 	turn.SceneTitle = strings.TrimSpace(row.SceneTitle)
 	slog.Info("scene memory injected into coordinator",
@@ -954,11 +962,16 @@ func stripMentionTokens(s string) string {
 // IssueDescription is the Issue body the sandbox will see.
 func IssueDescription(decision Decision, message string) string {
 	var b strings.Builder
+	if decision.PlanVersion == WindowPlanVersion {
+		b.WriteString("本次子任务只执行这一个交付物：")
+		b.WriteString(decision.Purpose)
+		b.WriteString("\n下方原始发言用于溯源与理解；其中不属于本交付物的其它工作由各自任务处理，不要重复执行。\n\n")
+	}
 	b.WriteString(strings.TrimSpace(message))
 	if decision.UserText != "" {
-		b.WriteString("\n\n前台已对用户说：")
+		b.WriteString("\n\n本轮拟向用户说明：")
 		b.WriteString(decision.UserText)
-		b.WriteString("\n请直接处理，不要重复打招呼或复述这句前台回复。")
+		b.WriteString("\n这是接待文案，不是完成或送达证据。请直接处理当前交付物，不重复打招呼或复述接待。")
 	}
 	if decision.LookInto != "" {
 		b.WriteString("\n要核对：")

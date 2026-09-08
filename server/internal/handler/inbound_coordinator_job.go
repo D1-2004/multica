@@ -111,6 +111,12 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if w == nil || w.handler == nil || w.handler.Queries == nil {
 		return false, nil
 	}
+	if c := w.handler.InboundCoordinator; c != nil && c.Ready != nil {
+		ready, err := c.Ready(ctx)
+		if err != nil || !ready {
+			return false, err
+		}
+	}
 	job, err := w.handler.Queries.ClaimInboundCoordinatorJob(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -131,6 +137,9 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	}
 	if strings.TrimSpace(command.TaskFinishedTaskID) != "" {
 		if runErr := w.handler.runPersistedTaskFinishedLoop(ctx, command.TaskFinishedTaskID); runErr != nil {
+			if errors.Is(runErr, errTaskFinishedResponsePending) {
+				return true, w.park(ctx, job, 5*time.Second, "response_receipt_pending")
+			}
 			return true, w.retry(ctx, job, runErr)
 		}
 		return true, w.complete(ctx, job)
@@ -179,6 +188,10 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	// Memory trigger recorded at enqueue time (coord_trace_id = job id) and
 	// the turn's SLS/Langfuse trace resolve to the same identifier.
 	jobCtx = inboundcoord.ContextWithTraceID(jobCtx, util.UUIDToString(job.ID))
+	jobCtx, err = w.handler.coordinatorCheckpointContext(jobCtx, job)
+	if err != nil {
+		return true, w.retry(ctx, job, err)
+	}
 	var recordedDecision *inboundcoord.Decision
 	jobCtx = inboundcoord.WithDecisionObserver(jobCtx, func(decision inboundcoord.Decision) {
 		copied := decision
@@ -262,11 +275,12 @@ func restoreInboundCoordinatorCommand(raw []byte, endpointID pgtype.UUID, target
 func (w *InboundCoordinatorJobWorker) complete(ctx context.Context, job db.InboundCoordinatorJob) error {
 	// Cover every successful materializer, including the sandbox fallback.
 	// Duplicate outbox enqueues are idempotent; failures keep the job retryable.
+	// Managed windows settle extras only after the actual response receipt.
 	command, err := restoreInboundCoordinatorCommand(job.Command, job.EndpointNamespaceID, w.handler.TaskCompletionTargetIdentity)
 	if err != nil {
 		return err
 	}
-	if w.handler.TaskService != nil {
+	if w.handler.TaskService != nil && !managedDingTalkResponse(command) {
 		for _, callback := range command.ExtraCompletionCallbacks {
 			if err := w.handler.TaskService.EnqueueSynchronousSilence(ctx, callback.URL, callback.Target, job.AgentID); err != nil {
 				return fmt.Errorf("settle collected callback: %w", err)
@@ -612,6 +626,9 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
 	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
+	if err := h.registerDingTalkResponseRoute(ctx, tx, command, dispatchContext); err != nil {
+		return nil, job, err
+	}
 	if cid := dispatchConversationID(command); cid != "" {
 		lockName := uuidToString(dispatchContext.WorkspaceID) + ":" + uuidToString(dispatchContext.AgentID) + ":" + cid
 		if _, lockErr := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockName); lockErr != nil {

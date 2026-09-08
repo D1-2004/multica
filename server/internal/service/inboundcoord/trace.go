@@ -175,7 +175,8 @@ func finishCoordinatorTrace(t *langfuse.Trace, decision Decision, loopErr error)
 		"action":      action,
 		"issue_id":    strings.TrimSpace(decision.IssueID),
 		"tool_rounds": decision.ToolRounds,
-		"fail_open":   loopErr != nil,
+		"fail_open":   decision.Action == ActionContinue && loopErr != nil,
+		"deferred":    decision.Action == ActionDeferred,
 	})
 	output := map[string]any{
 		"action":      action,

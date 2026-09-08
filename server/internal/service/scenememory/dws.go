@@ -251,6 +251,10 @@ type HistoryPage struct {
 	NextCursor      time.Time
 	HasMore         bool
 	PaginationKnown bool
+	// SelfNames is this digital employee's bound display name (and aliases),
+	// even when the current page has no [self] events. Flush uses it to
+	// strip leftover self-citations from earlier revisions.
+	SelfNames []string
 }
 
 func parseDWSEvents(raw []byte) ([]HistoryEvent, error) {
@@ -272,6 +276,7 @@ type dwsListMessage struct {
 	SenderOpenID  string `json:"senderOpenId"`
 	IsSelf        *bool  `json:"isSelf"`
 	Self          bool   `json:"self"`
+	SenderType    string `json:"senderType"`
 }
 
 func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (HistoryPage, error) {
@@ -307,7 +312,11 @@ func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (HistoryPage, e
 	if !payload.Success && len(messages) == 0 {
 		return HistoryPage{}, dwsclient.HistoryRejected(payload.ErrorCode, payload.ErrorMsg)
 	}
-	page := HistoryPage{RawCount: len(messages), PaginationKnown: payload.HasMore != nil}
+	page := HistoryPage{
+		RawCount:        len(messages),
+		PaginationKnown: payload.HasMore != nil,
+		SelfNames:       agentNameAliases(agentDisplayName),
+	}
 	if payload.HasMore != nil {
 		page.HasMore = *payload.HasMore
 	}
@@ -343,15 +352,26 @@ func parseDWSPage(raw []byte, agentUID, agentDisplayName string) (HistoryPage, e
 		if speaker == "" {
 			speaker = "dingtalk"
 		}
+		self := messageIsSelf(message.IsSelf, message.Self, agentUID, agentDisplayName, message.SenderID, message.SenderOpenID, speaker)
 		page.Events = append(page.Events, HistoryEvent{
 			EvidenceID: evidenceID,
 			OccurredAt: occurred,
 			Speaker:    speaker,
 			Content:    content,
-			Self:       messageIsSelf(message.IsSelf, message.Self, agentUID, agentDisplayName, message.SenderID, message.SenderOpenID, speaker),
+			Self:       self,
+			NonHuman:   !self && senderIsDigitalEmployee(message.SenderType),
 		})
 	}
 	return page, nil
+}
+
+func senderIsDigitalEmployee(senderType string) bool {
+	switch strings.ToLower(strings.TrimSpace(senderType)) {
+	case "bot", "robot", "digital_employee", "digitalemployee", "ai", "assistant":
+		return true
+	default:
+		return false
+	}
 }
 
 func messageIsSelf(flag *bool, self bool, agentUID, agentDisplayName, senderID, senderOpenID, senderName string) bool {

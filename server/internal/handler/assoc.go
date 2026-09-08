@@ -529,9 +529,9 @@ func (h *Handler) recordAssocInboundEvent(ctx context.Context, command DispatchC
 	}
 }
 
-func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext, issueID, issueTitle, runID, purposeExtra string, decision inboundcoord.Decision) {
+func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCommand, dispatchContext agentDispatchContext, issueID, issueTitle, runID, purposeExtra string, decision inboundcoord.Decision) error {
 	if h.Assoc == nil || issueID == "" {
-		return
+		return nil
 	}
 	ids := dispatchAssocIDs(command)
 	purpose := strings.TrimSpace(decision.Purpose)
@@ -557,7 +557,9 @@ func (h *Handler) associateDispatchIssue(ctx context.Context, command DispatchCo
 		Kind:           ids.Kind,
 	}); err != nil {
 		slog.Error("assoc issue conversation not linked", "error", err, "issue_id", issueID)
+		return err
 	}
+	return nil
 }
 
 type dispatchAssocIdentity struct {
@@ -576,6 +578,9 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	if message, ok := lastInboundTextMessage(command); ok {
 		ids.EvidenceID = strings.TrimSpace(message.OpenMsgID)
 	}
+	if command.WindowEvidenceID != "" {
+		ids.EvidenceID = command.WindowEvidenceID
+	}
 	openID := strings.TrimSpace(command.Event.Data.Sender.OpenDingTalkID)
 	if openID == "" {
 		openID = strings.TrimSpace(command.Event.Data.Sender.SenderOpenDingTalkID)
@@ -586,41 +591,18 @@ func dispatchAssocIDs(command DispatchCommand) dispatchAssocIdentity {
 	return ids
 }
 
-func bindWindowItemEvidence(command *DispatchCommand, item inboundcoord.WindowItem, used map[string]struct{}) {
+func bindWindowItemEvidence(command *DispatchCommand, item inboundcoord.WindowItem, _ map[string]struct{}) {
 	if command == nil {
 		return
 	}
-	delegator := strings.TrimSpace(item.Delegator)
-	for i := range command.Event.Data.Messages {
-		message := command.Event.Data.Messages[i]
+	for _, message := range command.Event.Data.Messages {
 		if message.Reaction != nil || strings.TrimSpace(message.Text) == "" {
 			continue
 		}
-		sender := strings.TrimSpace(message.SenderDisplayName)
-		if delegator != "" && sender != "" && sender != delegator {
-			continue
+		command.WindowEvidenceID = strings.TrimSpace(message.OpenMsgID)
+		if strings.TrimSpace(message.SenderDisplayName) != "" {
+			command.Event.Data.Sender = DispatchSender{DisplayName: strings.TrimSpace(message.SenderDisplayName), UID: strings.TrimSpace(message.SenderUID), StaffID: strings.TrimSpace(message.SenderStaffID), OpenDingTalkID: strings.TrimSpace(message.SenderOpenDingTalkID), SenderOpenDingTalkID: strings.TrimSpace(message.SenderOpenDingTalkID)}
 		}
-		evidence := strings.TrimSpace(message.OpenMsgID)
-		if evidence != "" {
-			if _, ok := used[evidence]; ok {
-				continue
-			}
-			used[evidence] = struct{}{}
-		}
-		if sender != "" {
-			command.Event.Data.Sender.DisplayName = sender
-		}
-		if openID := strings.TrimSpace(message.SenderOpenDingTalkID); openID != "" {
-			command.Event.Data.Sender.OpenDingTalkID = openID
-			command.Event.Data.Sender.SenderOpenDingTalkID = openID
-		}
-		if staff := strings.TrimSpace(message.SenderStaffID); staff != "" {
-			command.Event.Data.Sender.StaffID = staff
-		}
-		if uid := strings.TrimSpace(message.SenderUID); uid != "" {
-			command.Event.Data.Sender.UID = uid
-		}
-		command.Event.Data.Messages = []DispatchMessage{message}
 		return
 	}
 }

@@ -142,7 +142,7 @@ func createASBSandboxWithCapacityOnConnection(
 	excludedTaskID pgtype.UUID,
 	conn *pgxpool.Conn,
 	input ASBCreateSandboxInput,
-) (*ASBSandbox, error) {
+) (sandboxResult *ASBSandbox, resultErr error) {
 	if queries == nil || credentials == nil || client == nil || conn == nil {
 		return nil, errors.New("ASB tenant capacity coordination is unavailable")
 	}
@@ -151,6 +151,24 @@ func createASBSandboxWithCapacityOnConnection(
 		return nil, err
 	}
 	defer releaseCapacity()
+	if client.CapacityGate != nil {
+		delay, gateErr := client.CapacityGate.admit(ctx, client)
+		if gateErr != nil {
+			// Fail closed: loss of shared coordination must not cause a burst of
+			// upstream requests from every replica. Keep the task queued.
+			return nil, errors.Join(ErrASBCapacityUnavailable, fmt.Errorf("check ASB shared capacity cooldown: %w", gateErr))
+		}
+		if delay > 0 {
+			slog.Info("ASB task reused tenant capacity wait", "event", "asb_capacity_cooldown_hit",
+				"runtime_id", util.UUIDToString(runtimeID), "retry_after_ms", delay.Milliseconds())
+			return nil, ErrASBCapacityUnavailable
+		}
+	}
+	// Run before releasing the tenant lock, so the next replica observes the
+	// cached verdict. A cache hit must not extend its own cooldown indefinitely.
+	defer func() {
+		resultErr = recordASBCapacityResult(ctx, client, util.UUIDToString(runtimeID), resultErr)
+	}()
 
 	quotaExhausted, err := asbTenantQuotaExhausted(ctx, client)
 	if err != nil {

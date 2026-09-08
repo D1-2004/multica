@@ -47,6 +47,7 @@ compatibility: Requires dws-env, dws CLI on 预发, logged-in a1 and normandy. L
 | 要证什么 | 文档 |
 |---|---|
 | 口径进下一轮 Host | P1 |
+| 数字员工自己的话不进记忆 / Host | P12 |
 | 两群不串 | P4 / P7（P7 是从零建群） |
 | last-N 灌水后 Host 仍有探针 | P8 |
 | `/reset-memory` 清本 cid，其它 cid 还在 | P5 / P10 / P11 |

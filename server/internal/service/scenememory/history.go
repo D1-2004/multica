@@ -27,6 +27,8 @@ type HistoryEvent struct {
 	Speaker    string
 	Content    string
 	Self       bool
+	// NonHuman is another bot or digital employee, not this bound account.
+	NonHuman bool
 }
 
 func filterUntil(events []HistoryEvent, cutoffAt time.Time) []HistoryEvent {

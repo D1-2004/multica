@@ -6290,15 +6290,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		binDir := filepath.Dir(selfBin)
 		agentEnv["PATH"] = binDir + string(os.PathListSeparator) + os.Getenv("PATH")
 	}
-	if shimDir, shimErr := execenv.EnsureDWSShim(env.RootDir); shimErr != nil {
-		taskLog.Warn("dws send shim not installed", "error", shimErr)
-	} else if shimDir != "" {
-		basePath := agentEnv["PATH"]
-		if basePath == "" {
-			basePath = os.Getenv("PATH")
-		}
-		agentEnv["PATH"] = shimDir + string(os.PathListSeparator) + basePath
-	}
 	// Point Codex to the per-task CODEX_HOME so it discovers skills natively
 	// without polluting the system ~/.codex/skills/.
 	if env.CodexHome != "" {
@@ -6351,6 +6342,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// independently enforces the boundary before constructing the child.
 		isolateA2AChildEnv(agentEnv)
 		restoreA2ATaskIdentityEnv(agentEnv, token, a2aDWSConfigDir, a2aGitHubConfigDir, deapDWSToken)
+	}
+	// Apply the trusted task snapshot after custom_env, then put the shim back
+	// at the front of PATH after all task environment layers are complete.
+	execenv.ApplyDWSMessagePolicyEnv(agentEnv, task.DingTalkMessagePolicy)
+	if shimErr := installTaskDWSShim(agentEnv, env.RootDir, task.DingTalkMessagePolicy != nil); shimErr != nil {
+		if task.DingTalkMessagePolicy != nil {
+			return TaskResult{}, shimErr
+		}
+		taskLog.Warn("dws send shim not installed", "error", shimErr)
 	}
 	if task.A2AManagedRuntimeV2 {
 		if err := configureManagedA2AV2ProviderEnv(agentEnv, provider, env.RootDir, runtimeBrief, taskCtx.AgentSkills); err != nil {

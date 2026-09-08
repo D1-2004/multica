@@ -53,12 +53,14 @@ type WorkCounts struct {
 	WebhookLeases            int64 `json:"webhook_leases"`
 	DispatchAcceptances      int64 `json:"dispatch_acceptances"`
 	SceneMemoryLeases        int64 `json:"scene_memory_leases"`
+	ResponseActions          int64 `json:"response_actions"`
+	SandboxSendReceipts      int64 `json:"sandbox_send_receipts"`
 }
 
 func (c WorkCounts) Total() int64 {
 	return c.ActiveTasks + c.CompletionOutbox + c.ExecutionUpdateOutbox +
 		c.DingTalkStreamProcessing + c.WebhookLeases + c.DispatchAcceptances +
-		c.SceneMemoryLeases
+		c.SceneMemoryLeases + c.ResponseActions + c.SandboxSendReceipts
 }
 
 type Status struct {
@@ -173,7 +175,7 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 		}
 		snapshot := s.Snapshot()
 		if snapshot.State == StateNormal ||
-			(snapshot.State == StateDraining && strings.HasPrefix(r.URL.Path, "/api/daemon/")) {
+			(snapshot.State == StateDraining && (strings.HasPrefix(r.URL.Path, "/api/daemon/") || isTaskSendReceipt(r))) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -186,6 +188,11 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			"revision": snapshot.Revision,
 		})
 	})
+}
+
+func isTaskSendReceipt(r *http.Request) bool {
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	return r.Method == http.MethodPost && len(parts) == 4 && parts[0] == "api" && parts[1] == "tasks" && parts[2] != "" && parts[3] == "dingtalk-send-receipts"
 }
 
 func isDeploymentOperationalPath(path string) bool {
@@ -389,7 +396,11 @@ func queryWorkCounts(ctx context.Context, q rowQuerier) (WorkCounts, error) {
 			 WHERE status = 'queued' AND lease_token IS NOT NULL),
 			(SELECT count(*) FROM agent_dispatch_acceptance WHERE status = 'pending'),
 			(SELECT count(*) FROM scene_memory
-			 WHERE lease_token IS NOT NULL AND lease_expires_at > now())
+			 WHERE lease_token IS NOT NULL AND lease_expires_at > now()),
+			(SELECT count(*) FROM response_action
+			 WHERE next_attempt_at IS NOT NULL OR lease_token IS NOT NULL),
+			(SELECT count(*) FROM sandbox_send_receipt
+			 WHERE next_attempt_at IS NOT NULL OR lease_token IS NOT NULL)
 	`).Scan(
 		&counts.ActiveTasks,
 		&counts.CompletionOutbox,
@@ -398,6 +409,8 @@ func queryWorkCounts(ctx context.Context, q rowQuerier) (WorkCounts, error) {
 		&counts.WebhookLeases,
 		&counts.DispatchAcceptances,
 		&counts.SceneMemoryLeases,
+		&counts.ResponseActions,
+		&counts.SandboxSendReceipts,
 	)
 	return counts, err
 }
@@ -448,4 +461,18 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		return Status{}, fmt.Errorf("iterate deployment fence replicas: %w", err)
 	}
 	return status, nil
+}
+
+// AllLiveReplicasSupport gates a new persisted format until old writers have
+// left the cluster. No workspace or model data can assert this build marker.
+func (s *Service) AllLiveReplicasSupport(ctx context.Context, marker string) (bool, error) {
+	if s == nil || marker == "" {
+		return false, fmt.Errorf("replica compatibility marker required")
+	}
+	if s.Snapshot().State != StateNormal {
+		return false, nil
+	}
+	var ready bool
+	err := s.pool.QueryRow(ctx, `SELECT count(*)>0 AND bool_and(position($1 in build_id)>0) FROM deployment_fence_replica_ack WHERE last_seen_at >= $2`, marker, time.Now().Add(-s.liveWindow)).Scan(&ready)
+	return ready, err
 }

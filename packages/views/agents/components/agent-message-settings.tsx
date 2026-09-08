@@ -29,6 +29,22 @@ export function AgentMessageSettings({
       <SettingsCard>
         <BooleanSetting
           agentId={agent.id}
+          label={t(($) => $.inspector.prop_dingtalk_response_enabled)}
+          description={t(($) => $.inspector.prop_dingtalk_response_enabled_hint)}
+          enabled={agent.dingtalk_response_enabled === true}
+          canEdit={canEdit}
+          onSave={(next) => onUpdate({ dingtalk_response_enabled: next })}
+        />
+        <BooleanSetting
+          agentId={agent.id}
+          label={t(($) => $.inspector.prop_dingtalk_show_ai_tag)}
+          description={t(($) => $.inspector.prop_dingtalk_show_ai_tag_hint)}
+          enabled={agent.dingtalk_show_ai_tag === true}
+          canEdit={canEdit}
+          onSave={(next) => onUpdate({ dingtalk_show_ai_tag: next })}
+        />
+        <BooleanSetting
+          agentId={agent.id}
           label={t(($) => $.inspector.prop_chat_session_resume)}
           description={t(($) => $.inspector.prop_chat_session_resume_hint)}
           enabled={agent.chat_session_resume === true}

@@ -200,8 +200,8 @@ func TestDecideTraceRecordsLoopFailureAsError(t *testing.T) {
 	}}
 	coord := &Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: chat, Tools: &stubTools{}, Langfuse: client}
 	decision := coord.Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, ChatType: "p2p", Message: "hi"})
-	if decision.Action != ActionContinue {
-		t.Fatalf("fail-open decision = %#v", decision)
+	if decision.Action != ActionDeferred {
+		t.Fatalf("undecided input must stay deferred: %#v", decision)
 	}
 	spans := exporter.GetSpans()
 	roots := spansNamed(spans, coordinatorTraceName)
@@ -211,14 +211,14 @@ func TestDecideTraceRecordsLoopFailureAsError(t *testing.T) {
 	if got, _ := spanAttr(roots[0], "langfuse.observation.level"); got.AsString() != "ERROR" {
 		t.Errorf("root level = %s, want ERROR", got.AsString())
 	}
-	if got, _ := spanAttr(roots[0], "langfuse.trace.metadata.fail_open"); !got.AsBool() {
-		t.Errorf("fail_open metadata missing")
+	if got, _ := spanAttr(roots[0], "langfuse.trace.metadata.fail_open"); got.AsBool() {
+		t.Errorf("a model failure must not be recorded as execution fallback")
 	}
-	if got, _ := spanAttr(roots[0], "langfuse.trace.metadata.action"); got.AsString() != "continue" {
-		t.Errorf("action metadata = %q, want continue", got.AsString())
+	if got, _ := spanAttr(roots[0], "langfuse.trace.metadata.action"); got.AsString() != "deferred" {
+		t.Errorf("action metadata = %q, want deferred", got.AsString())
 	}
-	if len(spansNamed(spans, "coordinator.nudge")) != 1 {
-		t.Errorf("nudge event missing: %v", spanNames(spans))
+	if len(chat.params) != 2 || len(chat.params[1].Messages) <= len(chat.params[0].Messages) {
+		t.Errorf("uncommitted text must receive one repair attempt before deferral")
 	}
 	// The second round fails inside the completer, so the error lands on that
 	// generation rather than on a separate loop-error event.
@@ -242,12 +242,22 @@ func TestDecideTraceRecordsExhaustedRoundsAsLoopError(t *testing.T) {
 	}
 	coord := &Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: &scriptedCompleter{rounds: rounds}, Tools: &stubTools{}, Langfuse: client}
 	decision := coord.Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, ChatType: "p2p", Message: "hi"})
-	if decision.Action != ActionContinue {
+	if decision.Action != ActionDeferred {
 		t.Fatalf("decision = %#v", decision)
 	}
 	spans := exporter.GetSpans()
-	if len(spansNamed(spans, "coordinator.loop_error")) != 1 {
-		t.Errorf("loop error event missing: %v", spanNames(spans))
+	roots := spansNamed(spans, coordinatorTraceName)
+	if len(roots) != 1 {
+		t.Fatalf("root spans=%d", len(roots))
+	}
+	if got, _ := spanAttr(roots[0], "langfuse.observation.level"); got.AsString() != "ERROR" {
+		t.Fatalf("budget exhaustion must remain an error: %s", got.AsString())
+	}
+	if len(decision.Steps) == 0 || decision.Steps[len(decision.Steps)-1].Type != "error" {
+		t.Fatal("exhaustion lost the actionable failure evidence")
+	}
+	if len(decision.Items) > 0 || decision.IssueComment != nil {
+		t.Fatal("exhaustion must not synthesize or execute work")
 	}
 	if got := len(spansNamed(spans, toolAssocRecall)); got != maxLoopRounds {
 		t.Errorf("recall tool spans = %d, want one per round", got)

@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/sandboxrelay"
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/runtimeconfig"
@@ -450,7 +451,7 @@ func main() {
 		slog.Error("deployment fence instance identity failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
 	}
-	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit)
+	deploymentFence, err := deploymentfence.New(ctx, pool, instanceID, version+"@"+commit+" "+inboundcoord.ReplicaPlanMarker)
 	if err != nil {
 		slog.Error("deployment fence initialization failed", "error", err)
 		closeConfigResourcesAndExit(flags, remoteRuntimeConfig, 1)
@@ -541,6 +542,12 @@ func main() {
 	}
 	if h.TaskCompletionWorker != nil {
 		go h.TaskCompletionWorker.Run(sweepCtx)
+	}
+	if h.DingTalkResponses != nil {
+		go h.DingTalkResponses.Run(sweepCtx)
+	}
+	if h.DingTalkResponsePolicySync != nil {
+		go h.DingTalkResponsePolicySync.Run(sweepCtx)
 	}
 	if h.InboundCoordinatorWorker != nil {
 		go h.InboundCoordinatorWorker.Run(sweepCtx)
@@ -674,6 +681,12 @@ func main() {
 	}
 	if h.TaskCompletionWorker != nil && !h.TaskCompletionWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("task completion worker did not exit within shutdown timeout")
+	}
+	if h.DingTalkResponses != nil && !h.DingTalkResponses.WaitWithTimeout(context.Background(), 5*time.Second) {
+		slog.Warn("DingTalk response worker did not exit within shutdown timeout")
+	}
+	if h.DingTalkResponsePolicySync != nil && !h.DingTalkResponsePolicySync.WaitWithTimeout(5*time.Second) {
+		slog.Warn("DingTalk response policy worker did not exit within shutdown timeout")
 	}
 	if h.InboundCoordinatorWorker != nil && !h.InboundCoordinatorWorker.WaitWithTimeout(5*time.Second) {
 		slog.Warn("inbound coordinator worker did not exit within shutdown timeout")

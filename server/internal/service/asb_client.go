@@ -51,6 +51,7 @@ type ASBClientConfig struct {
 }
 
 type ASBClient struct {
+	CapacityGate    *ASBCapacityGate
 	baseURL         *url.URL
 	apiKey          string
 	capacityLockKey int32
@@ -202,6 +203,7 @@ type ASBBUCIdentityGrant struct {
 }
 
 type ASBHTTPError struct {
+	RetryAfter   time.Duration
 	Operation    string
 	StatusCode   int
 	RequestID    string
@@ -966,12 +968,26 @@ func newASBHTTPError(operation string, response *http.Response, encoded []byte) 
 		payload.Message = payload.Reason
 	}
 	return &ASBHTTPError{
+		RetryAfter:   parseASBRetryAfter(response.Header.Get("Retry-After"), time.Now()),
 		Operation:    operation,
 		StatusCode:   response.StatusCode,
 		RequestID:    sanitizeASBDiagnosticValue(requestID, 128),
 		ErrorCode:    sanitizeASBDiagnosticValue(payload.Code, 128),
 		ErrorMessage: sanitizeASBDiagnosticValue(payload.Message, 512),
 	}
+}
+
+func parseASBRetryAfter(value string, now time.Time) time.Duration {
+	if seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil {
+		if seconds > 0 {
+			return time.Duration(min(seconds, int64((24*time.Hour)/time.Second))) * time.Second
+		}
+		return 0
+	}
+	if retryAt, err := http.ParseTime(value); err == nil && retryAt.After(now) {
+		return min(retryAt.Sub(now), 24*time.Hour)
+	}
+	return 0
 }
 
 func sanitizeASBDiagnosticValue(value string, limit int) string {

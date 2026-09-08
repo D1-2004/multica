@@ -2,6 +2,7 @@ package inboundcoord
 
 import (
 	"strings"
+	"time"
 )
 
 // SceneWindowMaxItems is how many distinct deliverables one Decide window
@@ -10,31 +11,39 @@ const SceneWindowMaxItems = 2
 
 // WindowUtterance is one addressed inbound line in the current scene window.
 type WindowUtterance struct {
-	Sender string
-	Text   string
+	Sender            string
+	Text              string
+	EvidenceID        string
+	Timestamp         time.Time
+	SenderID          string
+	ReplyToContent    string
+	ReplyToSenderID   string
+	ReplyToEvidenceID string
 }
 
 // WindowItem is one deliverable the window decided to handle.
 type WindowItem struct {
-	Delegator string
-	Purpose   string
-	Intent    string
-	LookInto  string
+	IssueID    string   `json:"issue_id,omitempty"`
+	SourceRefs []string `json:"source_refs,omitempty"`
+	Basis      string   `json:"basis,omitempty"`
+	Content    string   `json:"content,omitempty"`
+	ActionKey  string   `json:"action_key,omitempty"`
+	Delegator  string
+	Purpose    string
+	Intent     string
+	LookInto   string
 }
 
 func windowUtterances(turn Turn) []WindowUtterance {
 	if len(turn.Utterances) > 0 {
 		out := make([]WindowUtterance, 0, len(turn.Utterances))
 		for _, u := range turn.Utterances {
-			text := strings.TrimSpace(u.Text)
-			if text == "" {
+			if strings.TrimSpace(u.Text) == "" {
 				continue
 			}
-			sender := strings.TrimSpace(u.Sender)
-			if sender == "" {
-				sender = strings.TrimSpace(turn.SenderName)
-			}
-			out = append(out, WindowUtterance{Sender: sender, Text: text})
+			// Preserve per-message evidence. The turn's current sender may be
+			// another person in a collected window, so it is not a fallback.
+			out = append(out, u)
 		}
 		if len(out) > 0 {
 			return out
@@ -44,7 +53,10 @@ func windowUtterances(turn Turn) []WindowUtterance {
 	if text == "" {
 		return nil
 	}
-	return []WindowUtterance{{Sender: strings.TrimSpace(turn.SenderName), Text: text}}
+	return []WindowUtterance{{
+		Sender: turn.SenderName, Text: turn.Message, EvidenceID: turn.EvidenceID,
+		Timestamp: turn.MessageTimestamp, SenderID: turn.PersonID,
+	}}
 }
 
 func windowSenderSet(turn Turn) map[string]struct{} {
@@ -74,7 +86,9 @@ func validWindowDelegator(turn Turn, delegator string) bool {
 	return ok
 }
 
-// AllWindowAck is true when every line is thanks / OK / "don't reply".
+// AllWindowAck is true only for an explicit instruction to stop replying.
+// Short assent and gratitude can answer a pending question; without that
+// context they must reach the semantic decision instead of being discarded.
 func AllWindowAck(turn Turn) bool {
 	utterances := windowUtterances(turn)
 	if len(utterances) == 0 {
@@ -113,41 +127,13 @@ func stripInboundDisplay(raw string) string {
 	return s
 }
 
-// KeepWorkUtterances drops thanks / OK lines from a mixed window so a real
-// ask is not silenced because later ACKs landed on the same job.
-func KeepWorkUtterances(turn Turn) Turn {
-	utterances := windowUtterances(turn)
-	if len(utterances) == 0 {
-		return turn
-	}
-	work := make([]WindowUtterance, 0, len(utterances))
-	for _, u := range utterances {
-		if allAckText(u.Text) {
-			continue
-		}
-		work = append(work, u)
-	}
-	if len(work) == 0 || len(work) == len(utterances) {
-		return turn
-	}
-	turn.Utterances = work
-	parts := make([]string, 0, len(work))
-	for _, u := range work {
-		parts = append(parts, u.Text)
-	}
-	turn.Message = strings.Join(parts, "\n")
-	return turn
-}
-
 func isAckOrStopReply(raw string) bool {
 	s := stripMentionsAndSpace(raw)
 	if s == "" {
 		return false
 	}
 	switch s {
-	case "好的", "好", "嗯", "行", "收到", "谢谢", "谢谢你", "辛苦了", "没事",
-		"ok", "OK", "Okay", "okay",
-		"不用回复了", "不用回了", "先忙你的", "不用回复":
+	case "不用回复了", "不用回了", "不用回复":
 		return true
 	default:
 		return false

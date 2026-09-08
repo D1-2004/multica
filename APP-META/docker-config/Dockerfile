@@ -98,7 +98,10 @@ RUN set -eux; \
     tar -xzf dws-linux-amd64.tar.gz; \
     install -m 0755 dws /usr/local/bin/dws; \
     rm -rf /tmp/dws; \
-    dws version
+    dws version; \
+    dws chat message send --help | grep -q -- '--ai-tag'; \
+    dws chat message send --help | grep -q -- '--idempotency-key'; \
+    dws chat message query-send-status --help > /dev/null
 
 RUN mkdir -p /home/admin/${APP_NAME}/target/${APP_NAME} /home/admin/${APP_NAME}/logs /home/admin/${APP_NAME}/node/bin /home/admin/cai/bin /home/admin/cai/conf/apps && \
     cp -rf /home/admin/appname/bin /home/admin/${APP_NAME} && \
