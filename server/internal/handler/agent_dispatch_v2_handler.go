@@ -321,7 +321,7 @@ func (h *Handler) handleAgentDispatchV2(
 		return
 	}
 	if h.InboundCoordinatorWorker != nil &&
-		shouldDeferInboundCoordinator(command, plan) &&
+		shouldEnqueueInboundCoordinatorJob(r.Context(), h, command, plan, dispatchContext.AgentID) &&
 		!dispatchIsAgentSelfMessage(command) &&
 		!dispatchIsAgentSelfEmotion(command) {
 		response, _, enqueueErr := h.enqueueInboundCoordinatorJob(

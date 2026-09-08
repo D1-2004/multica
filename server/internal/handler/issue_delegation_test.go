@@ -16,6 +16,18 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestMergeDelegatedInboundContentKeepsOriginalIM(t *testing.T) {
+	t.Parallel()
+	got := mergeDelegatedInboundContent("采集公开科技新闻，整理成消息卡片并发送。", "张三 在钉钉会话中的消息：\n\n搜索今天的科技新闻")
+	if !strings.Contains(got, "搜索今天的科技新闻") || !strings.Contains(got, "采集公开科技新闻") {
+		t.Fatalf("merged body dropped inbound IM: %q", got)
+	}
+	same := mergeDelegatedInboundContent("搜索今天的科技新闻，并整理成卡片", "搜索今天的科技新闻")
+	if strings.Count(same, "搜索今天的科技新闻") != 1 {
+		t.Fatalf("already-included inbound IM was duplicated: %q", same)
+	}
+}
+
 func createDelegationSourceTask(t *testing.T, agentID, contextJSON string) (taskID, chatSessionID string) {
 	t.Helper()
 	chatSessionID = createHandlerTestChatSession(t, agentID)
@@ -149,6 +161,13 @@ func TestDelegateIssueCreateTransfersPrivateContextAndCompletionResponsibility(t
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, response.IssueID)
 	})
+	var description string
+	if err := testPool.QueryRow(context.Background(), `SELECT description FROM issue WHERE id = $1`, response.IssueID).Scan(&description); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(description, "搜索今天的科技新闻") {
+		t.Fatalf("delegated issue dropped the inbound IM: %q", description)
+	}
 
 	var metadata []byte
 	if err := testPool.QueryRow(context.Background(), `
