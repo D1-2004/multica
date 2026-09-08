@@ -2491,6 +2491,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
+					r.Get("/coordinator-conversations", h.ListAgentCoordinatorConversations)
+					r.Get("/coordinator-conversations/{sessionId}/messages", h.ListAgentCoordinatorConversationMessages)
 					r.Get("/scene-memory", h.ListAgentSceneMemory)
 					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
 					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)

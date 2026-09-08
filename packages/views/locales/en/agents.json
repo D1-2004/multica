@@ -331,7 +331,8 @@
     "discard_keep": "Keep editing",
     "discard_confirm": "Discard changes",
     "identity": "Identity",
-    "llm_trace": "LLM Trace"
+    "llm_trace": "LLM Trace",
+    "inbound": "Inbound conversations"
   },
   "creation_studio": {
     "title": "Create an agent",
@@ -1385,7 +1386,14 @@
       "relations_clear": "Unlink issues on this scene",
       "relations_clear_confirm": "Unlink issues on this scene? Memory text is kept.",
       "relations_cleared": "Issue links cleared",
-      "relations_clear_failed": "Couldn't unlink issues"
+      "relations_clear_failed": "Couldn't unlink issues",
+      "grouped_hint": "Judgments from the same group or DM appear in one conversation.",
+      "judgment_count": "{{count}} judgments",
+      "load_more": "Load more conversations",
+      "source_employee": "Digital employee",
+      "source_robot": "Robot",
+      "source_unknown": "Other source",
+      "refresh": "Refresh"
     },
     "memory": {
       "flags_hint": "Write, recall, and warm-up control how memory is kept. Show list controls whether it appears here.",

@@ -4466,3 +4466,25 @@ export const DshPluginFileContentSchema = z
       content: row.content ?? "",
     }),
   );
+
+export const CoordinatorConversationsPageSchema = z
+  .object({
+    conversations: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            session_id: z.string(),
+            title: z.string().catch(""),
+            conversation_type: z.string().catch(""),
+            source: z.string().catch(""),
+            session_count: z.number().int().nonnegative().catch(0),
+            updated_at: z.string().catch(""),
+          })
+          .loose(),
+      )
+      .default([]),
+    has_more: z.boolean().catch(false),
+    next_offset: z.number().int().nonnegative().catch(0),
+  })
+  .loose();
