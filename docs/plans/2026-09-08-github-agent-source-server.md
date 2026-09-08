@@ -1,6 +1,6 @@
 # GitHub Agent 创建与确认同步
 
-本轮实现基于 DTA `dingtalk-agent/project@1`，直接读取仓库中的定义文件。开发者修改仓库并正常提交代码；Multica 读取固定 commit，预览后创建或同步 Agent。没有 CLI 构建、上传 Bundle 的步骤。
+支持 DTA `dingtalk-agent/project@1` 以及可导出的 `multica.agent/v1` JSON manifest，直接读取仓库中的定义文件。开发者修改仓库并正常提交代码；Multica 读取固定 commit，预览后创建或同步 Agent。没有 CLI 构建、上传 Bundle 的步骤。
 
 ## 已实现范围
 
@@ -9,23 +9,24 @@
 - 已有 Git Agent 可以选择新分支，查看 Git 文件差异和当前配置将被覆盖的差异，再确认同步。
 - 来源、分支、已发布 SHA，以及发布回执保存在 PostgreSQL。预览有效期为 30 分钟，限定工作区、创建者及目标 Agent；确认时重新检查 Git 权限。
 - 普通 Git Agent 的专属 skill 仍在工作区 skill 表和文件表中，允许管理者修改、删除，禁止分配到其他 Agent。`agent_source_skill` 是归属校验的权威关系，新增来源 skill 的 `config.exclusive_agent_id` 提供归属元数据；修改 config 会保留服务端来源信息。平台自动管理 Agent 的 skill 保持保护。
-- Git 来源 Agent 的配置区域增加“导入导出”子 tab。原概览同步按钮进入此页，通过预览和确认发布。Web/Desktop 共用此页面。
+- 创建方式选择页提供“从 Git 创建”：选择工作区连接、仓库 URL 和分支，预览固定版本后确认创建。Web/Desktop 均有独立 `/agents/new/git` 路由。
+- 配置 → 管理分为“导出”和“发布”两个子 section。所有 Agent 均显示入口；导出需管理权限，未关联 Git 的发布页引导从 Git 创建。Git 来源的概览同步按钮进入发布页。
 
 本轮同步的字段边界：
 
 | 内容 | 行为 |
 | --- | --- |
 | `agent.definition` 对应的指令 | 创建、同步时读取并覆盖 |
-| `agent.skills` 声明的 skills、目录内文本文件 | 创建专属工作区 skill；同步新增、修改、删除，恢复声明 skill 的 enabled 状态 |
+| `agent.skills` 声明的 skills、目录内文本文件 | 创建专属工作区 skill；同步新增、修改、删除，DTA 声明项恢复 enabled=true，JSON manifest 按 enabled 字段恢复状态 |
 | 名称和描述 | 创建使用默认值，可由创建请求覆盖；同步保留实例值 |
 | 手动添加的其他工作区 skill | 同步保留；不修改共享 skill 内容 |
 | runtime、模型、运行参数、persona、reply tone、MCP、环境变量 | 本轮不从 DTA manifest 导入，仍由实例配置管理 |
 | 身份、账号授权、调用权限、owner | 保留 |
 | 聊天、任务、记忆、运行数据 | 保留 |
 
-合入最新主干后，指令、skills 和“导入导出”统一位于“配置”区域，“导入导出”属于管理分组。导入操作的是 Agent 定义配置；这个入口不表示整个“配置”区域都被序列化或覆盖。
+指令、skills 和管理分组统一位于“配置”区域。导入操作的是 Agent 定义配置；这个入口不表示整个“配置”区域都被序列化或覆盖。
 
-本轮不包括创建页 Git 入口、源码导出接口、DTA CLI 的 `init` 改造、完整运行配置 Schema 扩展、普通资源目录及二进制资产导入。现有 DTA 编译器仍限制为指令和 skill 目录内的文本文件，并对跳过的二进制文件给出 warnings。`dta init` 的模板仓库能力需在 DTA 项目中单独实施。
+本轮不包括 DTA CLI 的 `init` 改造、完整运行配置 Schema 扩展、普通资源目录及二进制资产导入。现有 DTA 编译器仍限制为指令和 skill 目录内的文本文件，并对跳过的二进制文件给出 warnings。`dta init` 的模板仓库能力需在 DTA 项目中单独实施。
 
 ## API 契约
 
@@ -103,6 +104,35 @@
 
 旧的无 body `/source/sync` 不再直接更新。包括旧 DTA Git deploy 调用在内的 API 客户端，必须升级为预览再确认；创建的 SHA 请求兼容性不代表旧同步协议仍可用。
 
+## 源码导出与 JSON manifest
+
+`GET /api/agents/{agentId}/export`：Agent 所有者或工作区 owner/admin 可以下载当前配置的源码 ZIP；普通访问者拒绝。返回 `application/zip`、附件文件名和 `Cache-Control: no-store`。只读 repeatable-read 事务读取一个一致的 Agent/skill/文件快照。
+
+导出包含 `agent.json`、`agent.schema.json`、指令文件、全部已分配 skills 的 SKILL.md 和配套文本文件。保留停用状态。Git 来源保持已知指令路径和 skill 目录；手动添加的 skill 使用独立 `workspace-skills/<id>` 目录避免名称碰撞。来源 skill 去除服务端隔离名称后缀；内容原样保留，manifest 的 skill name/description 是导入时的元数据来源。
+
+```json
+{
+  "$schema": "agent.schema.json",
+  "version": "multica.agent/v1",
+  "name": "代码审查助手",
+  "description": "审查变更",
+  "instructions": "AGENTS.md",
+  "skills": [
+    {"path": "skills/review", "name": "review", "description": "审查规则", "enabled": true}
+  ]
+}
+```
+
+权威 JSON Schema 在 `server/internal/agentsource/agent.schema.json`，随每份导出提供；服务端使用固定版本契约验证，绝不读取仓库声明的任意远端 schema。`skills: []` 合法，不自动注入 DTA 基础 skill。预览响应的每个 skill 增加 `enabled`；旧响应省略时客户端不推断停用。
+
+仓库根只允许一个入口：`agent.json` 或 `dingtalk-agent.json`，同时存在时拒绝，避免选错定义。既有 YAML 不作为 Git 导入的自动回退。两个格式共用固定 SHA、预览确认、权限重查、事务落库和 diff 流程。
+
+导出不读取环境变量、运行配置、MCP 凭据、账号绑定、权限授予或聊天任务记忆；skill 正文和配套文件是用户编写的内容，按原文导出。所有导入 skill 都成为新 Agent 的专属工作区 skill。源码导出完成前会经过真实导入器校验；路径冲突、二进制、超限或会被跳过的文件返回 422，避免下载后才发现无法恢复。沿用最多 20 skills、单文件 1 MiB、单 skill 8 MiB、总计 32 MiB 等导入限制。
+
+ZIP 只用于下载源码目录，解压后正常提交到 Git；创建和发布始终直接读取 Git，无 CLI build/bundle 或上传产物阶段。后续目录移动在同一事务内先移除旧路径，再创建新路径，支持保留 skill 名称；失败整体回滚。
+
+滚动部署时，新版能读取旧 DTA 预览；包含新 JSON manifest 的预览带额外配置摘要，旧服务端会拒绝而不会按旧格式错误应用。若请求碰到旧副本，待发布完成后重新预览即可。本轮不新增数据库迁移。
+
 ## 事务与执行边界
 
 发布依次锁定预览、Agent、来源、来源 skill 与关联行，重新计算当前状态摘要，拒绝覆盖预览后发生的变更。指令、skills、来源 ref/SHA 和发布回执同事务提交。普通 skill 文件更新/删除锁定父 skill，避免同步读取到一半的配套文件。
@@ -115,7 +145,7 @@
 
 ## 验证与环境说明
 
-测试使用单独的本地数据库 `multica_agent_source_915f` 和 HTTP GitHub fixture；未访问真实 GitHub App installation，未部署。
+测试使用单独的本地数据库 `multica_agent_source_915f` 和 HTTP GitHub fixture；未访问真实 GitHub App installation。首版已部署预发，下面保留首版验证记录。
 
 验证结果：
 
@@ -126,8 +156,12 @@
 
 当前基线有独立于本改动的问题：全新库按文件顺序迁移时，`271_task_completion_canceled_status` 依赖尚未创建的 `9025_task_completion_outbox`；迁移编号 lint 还会报告已有的 `9093` 重号。测试库先执行了既有 `9025` 再继续迁移。sqlc 生成使用临时 schema 副本将同一前置文件排到 `271` 前，仅拷回新增查询与模型；没有修改或重排仓库中的既有迁移。
 
+创建与管理补齐后的本地验证：64 项 views 测试和 168 项 core 测试通过；包含分支变化使预览失效、固定预览 ID 创建、权限控制、源码下载及响应异常。Go 覆盖无 skill 的普通 Agent 导出、来源路径与停用状态往返、越权拒绝、目录重命名发布以及既有确认并发/回滚场景。Go 构建、core 类型检查和 npm lint 通过。所有检查均未调用代码格式化工具。
+
 ## 历史记录
 
 - 2026-09-08：增加 GitHub 链接创建、固定预览确认、换分支同步和导入导出来源页。原因：让 Git 仓库直接作为 Agent 定义来源，并在覆盖前呈现可确认的 Git 与本地配置差异；取消无预览的同步写入。
 
 - 2026-09-08 发布适配：合入 develop 的配置导航，将导入导出接到管理分组；将尚未发布的新增迁移改用 9159–9162，避开主干已有编号。
+
+- 2026-09-08 创建与管理补齐：新增从 Git 创建页面、源码导出接口及 JSON Schema，管理拆为导出和发布。原因：补齐创建可发现性与可往返导出，支持普通 Agent 没有 DTA 基础 skill 的场景；保留启停状态和来源路径，修复改目录后的同名 skill 发布冲突。
