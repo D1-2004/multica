@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Bot, GitFork, Loader2, RefreshCw, Server } from "lucide-react";
+import { Bot, GitFork, Loader2, RefreshCw, Server, Upload } from "lucide-react";
 import type {
   Agent,
   AgentRuntime,
@@ -246,8 +246,8 @@ export function AgentOverviewSummary({
         <section className="mt-5 border-t pt-5">
           <div className="flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-1.5 text-body font-medium">
-              <GitFork className="size-3.5" aria-hidden="true" />
-              {t(($) => $.overview.source_title)}
+              {source.source_type === "local" ? <Upload className="size-3.5" aria-hidden="true" /> : <GitFork className="size-3.5" aria-hidden="true" />}
+              {source.source_type === "local" ? t(($) => $.creation_studio.modes.local.title) : t(($) => $.overview.source_title)}
             </h2>
             <span
               className={`rounded-full px-2 py-0.5 text-micro font-medium ${
@@ -268,25 +268,25 @@ export function AgentOverviewSummary({
               )}
             </span>
           </div>
-          <a
+          {source.source_type === "github" && <a
             href={`https://github.com/${source.repository}`}
             target="_blank"
             rel="noreferrer"
             className="mt-3 block truncate text-caption font-medium text-foreground underline-offset-4 hover:underline"
           >
             {source.repository}
-          </a>
+          </a>}
           <dl className="mt-2 space-y-2 text-caption">
-            <SummaryRow label={t(($) => $.overview.source_ref)}>
+            {source.source_type === "github" && <SummaryRow label={t(($) => $.overview.source_ref)}>
               <span className="font-mono text-foreground">{source.ref}</span>
-            </SummaryRow>
-            <SummaryRow label={t(($) => $.overview.source_commit)}>
+            </SummaryRow>}
+            <SummaryRow label={source.source_type === "local" ? t(($) => $.overview.package_hash) : t(($) => $.overview.source_commit)}>
               <span className="font-mono text-foreground">
                 {source.synced_commit_sha.slice(0, 12)}
               </span>
             </SummaryRow>
             {source.last_synced_at && (
-              <SummaryRow label={t(($) => $.overview.source_synced_at)}>
+              <SummaryRow label={source.source_type === "local" ? t(($) => $.overview.package_imported_at) : t(($) => $.overview.source_synced_at)}>
                 <span className="text-foreground">
                   {new Date(source.last_synced_at).toLocaleString()}
                 </span>
@@ -298,7 +298,7 @@ export function AgentOverviewSummary({
               {source.last_sync_error}
             </p>
           )}
-          {canSyncSource && onSourceSync && (
+          {source.source_type === "github" && canSyncSource && onSourceSync && (
             <Button
               type="button"
               variant="outline"

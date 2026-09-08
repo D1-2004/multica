@@ -354,7 +354,7 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 	allowlist := normaliseComposioToolkitAllowlist(request.ComposioToolkitAllowlist)
 	if !h.composioMCPAppsEnabled(r.Context()) {
 		if resolved.bundle.Definition != nil && len(allowlist) > 0 { writeError(w, http.StatusUnprocessableEntity, "Composio apps are unavailable in this workspace"); return }
-		allowlist = nil
+		if resolved.bundle.Definition == nil { allowlist = nil }
 	}
 	manualSkills, ok := parseUUIDSliceOrBadRequest(w, request.SkillIDs, "skill_ids")
 	if !ok {

@@ -229,6 +229,8 @@
     "access": "访问权限",
     "attention_title": "Task 需要处理",
     "attention_queued_other": "运行时不可用，当前有 {{count}} 个 task 正在排队。",
+    "package_hash": "配置包摘要",
+    "package_imported_at": "导入时间",
     "source_title": "GitHub 来源",
     "source_ref": "Ref",
     "source_commit": "Commit",

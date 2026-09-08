@@ -221,6 +221,8 @@
     "access": "アクセス",
     "attention_title": "対応が必要な task",
     "attention_queued_other": "ランタイムが利用できないため、{{count}}件の task が待機中です。",
+    "package_hash": "パッケージハッシュ",
+    "package_imported_at": "インポート日時",
     "source_title": "GitHub ソース",
     "source_ref": "Ref",
     "source_commit": "コミット",

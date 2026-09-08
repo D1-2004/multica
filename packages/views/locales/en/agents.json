@@ -238,6 +238,8 @@
     "attention_title": "Tasks need attention",
     "attention_queued_one": "{{count}} task is queued while the runtime is unavailable.",
     "attention_queued_other": "{{count}} tasks are queued while the runtime is unavailable.",
+    "package_hash": "Package hash",
+    "package_imported_at": "Imported at",
     "source_title": "GitHub source",
     "source_ref": "Ref",
     "source_commit": "Commit",
