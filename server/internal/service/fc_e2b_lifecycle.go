@@ -31,7 +31,7 @@ func (l *FCE2BLauncher) RunSandboxLifecycle(ctx context.Context, namespace strin
 		configured := l.withCurrentConfig()
 		if configured.Config.Enabled && configured.Config.SandboxRenewalEnabled {
 			key := namespace + "|" + configured.Config.ServerURL + "|" + configured.Config.APIURL
-			coordinator := newFCE2BCheckCoordinator(l.LifecycleRedis, key, 90*time.Second, 30*time.Second)
+			coordinator := newFCE2BCheckCoordinator(l.LifecycleRedis, key, 90*time.Second, 5*time.Minute)
 			if err := runFCE2BCheckRound(ctx, coordinator, configured.checkSandboxExecutions); err != nil && ctx.Err() == nil {
 				slog.Warn("FC sandbox lifecycle round failed", "error", err)
 			}

@@ -11,7 +11,9 @@ The feature defaults off. Set `runtime.fc_e2b.sandbox_renewal_enabled` in the
 managed runtime document, or `MULTICA_FC_E2B_SANDBOX_RENEWAL_ENABLED=true` in
 environment-only installations. Redis is required. `timeout_seconds` supplies
 the renewal duration and must be at least 300 seconds when renewal is enabled.
-The normal value remains 3600 seconds.
+The normal value remains 3600 seconds. With the five-minute check interval,
+use at least 1200 seconds to leave room for a check within the renewal window;
+the configuration validation minimum of 300 seconds is too short for this cadence.
 
 Deploy the new server binary to every replica before adding the setting to
 Diamond: older binaries reject unknown config fields. This feature adds no
@@ -25,7 +27,7 @@ daemon-token binding is required.
 ## Scheduling and ownership
 
 - Every replica tries to claim every 5 seconds. A successful round advances the
-  next check by 30 seconds. There is no replay of historical timer ticks.
+  next check by five minutes. There is no replay of historical timer ticks.
 - Redis keys share a cluster hash tag. The namespace includes the deployment,
   Multica server URL and FC API URL. All replicas must use identical values.
 - One Lua script checks Redis TIME, next-run time and lock availability, then
@@ -100,9 +102,9 @@ to verify that a running process survives the original expiry after renewal,
 that its files remain, and that provider TTL limits match the desired policy.
 Those live provider checks are separate from the local tests.
 
-For a short acceptance run, use an isolated deployment with `timeout_seconds=300`
-and a newly created sandbox. Run a task that emits progress for about ten minutes.
-Renewal becomes eligible below 100 seconds remaining. Search all server replicas
+For an acceptance run, use an isolated deployment with `timeout_seconds=1200`
+and a newly created sandbox. Run a task that emits progress for about 25 minutes.
+Renewal becomes eligible below 400 seconds remaining. Search all server replicas
 for `FC sandbox renewed` and correlate `task_id`, `attempt_id`, `sandbox_id`,
 `old_expires_at` and `expires_at`. Independently read FC `endAt`, then verify the
 original process continues beyond its original expiry and the task completes.
@@ -156,3 +158,6 @@ untouched. `--check` verifies generated query files without writing them.
   sandbox-session tables, as requested. Remove the draft migrations, execution
   enrollment, heartbeat writes and check versions. Existing active tasks can now
   be checked directly; credential refresh remains a separate integration.
+- 2026-09-08: Increase the delay between completed check rounds from 30 seconds
+  to five minutes to reduce database scans and cloud metadata requests. Adjust
+  the acceptance example so its sandbox lifetime covers the longer check cadence.
