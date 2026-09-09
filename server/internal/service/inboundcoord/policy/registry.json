@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-09.4",
-  "assembly_version": "5",
+  "policy_version": "2026-09-09.6",
+  "assembly_version": "7",
   "modules": [
     {
       "id": "core",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "12",
+      "version": "14",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -57,10 +57,11 @@
         "COORD.F09",
         "COORD.F13",
         "COORD.F17",
-        "COORD.F10"
+        "COORD.F10",
+        "COORD.F03"
       ],
       "budget_characters": 2200,
-      "content_sha256": "3275561e9ae3598e68f4aa55c831aa2314fa1fcef1bd2ca61bebd7f7918979ec"
+      "content_sha256": "c6fe2673b79766b955202e58c4dfa01876e1dc50cbe94df09c0eef616e084bd3"
     },
     {
       "id": "channel",
@@ -221,7 +222,7 @@
     },
     {
       "id": "finish_check",
-      "version": "9",
+      "version": "12",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -244,11 +245,11 @@
         "COORD.F19"
       ],
       "budget_characters": 1850,
-      "content_sha256": "9cabd86dce2423be622db80025ed52650529c51ecf1642b864720ac31711a8bd"
+      "content_sha256": "810faeb109995438972ba484575eb437ddf241bb67bd3d5c3d26058f4b615659"
     },
     {
       "id": "finish_check_work",
-      "version": "8",
+      "version": "9",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -271,7 +272,7 @@
         "COORD.F19"
       ],
       "budget_characters": 2000,
-      "content_sha256": "c31b3073aef7b27ca4af69083b230ce7895336bfd9e219a0a8e4acd21a2ed1b7"
+      "content_sha256": "1d4480f8d4af4cd78bdc1c8c4ef7a37d5330bb8ff08b1d57af8218e50b087881"
     }
   ],
   "obligations": [
@@ -335,7 +336,10 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f02_contrast",
-        "f10_review_whole_window_and_clarification"
+        "f10_review_whole_window_and_clarification",
+        "f03_requested_log_status_vs_old_skills",
+        "f05_pending_answer_vs_report_redelivery",
+        "f07_explicit_reference_controls_current_work"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -347,7 +351,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -357,7 +364,9 @@
         "server/internal/service/inboundcoord/policy/recall_match.md",
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
-        "server/internal/service/inboundcoord/policy/finish_check_work.md"
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -377,7 +386,7 @@
     {
       "id": "COORD.F03",
       "family": "F03",
-      "obligation": "稳定事实、对话、工作与送达分别由对应来源证明；未加载、失败、过期、截断不是空结果；承诺不是完成。",
+      "obligation": "稳定事实、对话、工作与送达分别由对应来源证明；未加载、失败、过期、截断不是空结果；承诺不是完成。 任务状态/数量答复须针对当前明确目标及真实范围，无关任务清单或局部结果不能代答。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -387,7 +396,8 @@
         "recall_match",
         "completion",
         "finish_check",
-        "finish_check_work"
+        "finish_check_work",
+        "inbound"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -399,7 +409,11 @@
         "f12_exact_result_report",
         "f16_bounded_coordination_reads",
         "f13_host_scene_prefetch_success_vs_failure",
-        "f08_host_prefetch_keeps_requested_scope"
+        "f08_host_prefetch_keeps_requested_scope",
+        "f03_requested_log_status_vs_old_skills",
+        "f03_requested_count_vs_partial_inventory",
+        "f06_job_object_evidence_vs_old_work_clarification",
+        "f04_role_material_vs_coordination_record"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -414,7 +428,10 @@
         "closed_actions_live_delivery": "not_run",
         "scene_prefetch_host_tests": "not_run",
         "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run"
+        "scene_prefetch_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -431,14 +448,16 @@
         "server/internal/service/inboundcoord/coordination_view.go",
         "server/internal/service/inboundcoord/tools.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/service/inboundcoord/window_plan.go"
       ],
       "case_file": "cases.json"
     },
     {
       "id": "COORD.F04",
       "family": "F04",
-      "obligation": "能力说明使用describe_capabilities；实际工作通过start_work/continue_work交执行器。产品机制、专业分析、回源查证即使是短问句也属于执行，不能放入任何动作的reply字段；召回只证明关联和状态。无关场域禁令不能挡住正常授权工作。",
+      "obligation": "能力说明使用describe_capabilities；实际工作通过start_work/continue_work交执行器。产品机制、专业分析、回源查证即使是短问句也属于执行，不能放入任何动作的reply字段；召回只证明关联和状态。无关场域禁令不能挡住正常授权工作。 岗位业务材料/产物与Coordinator自己的issue/task记录分开解释；取样/查看领域材料是岗位数据范围内的有界检索请求，关联缺名不否认能力。仅明确询问所做工作的执行/进度才使用任务元数据，并针对该工作。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -454,7 +473,10 @@
         "f04_product_answer_vs_capability",
         "f15_issue_plan_job_scope_vs_pending_research",
         "f13_closed_action_reply_escape",
-        "f15_decline_quoted_boundary"
+        "f15_decline_quoted_boundary",
+        "f04_light_coordination_vs_business_execution",
+        "f06_job_object_evidence_vs_old_work_clarification",
+        "f04_role_material_vs_coordination_record"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -466,7 +488,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -474,14 +499,16 @@
         "server/internal/service/inboundcoord/policy/skills.md",
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
-        "server/internal/service/inboundcoord/policy/finish_check_work.md"
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json"
     },
     {
       "id": "COORD.F05",
       "family": "F05",
-      "obligation": "问候、状态询问与重复已接受请求不授权重做；含糊短答根据正在回答的问题判断；明确重试不机械再确认。短确认的任务书保留用户原话与窗口，不继承员工上一跳加工流水线。",
+      "obligation": "问候、状态询问与重复已接受请求不授权重做；含糊短答根据正在回答的问题判断；明确重试不机械再确认。短确认的任务书保留用户原话与窗口，不继承员工上一跳加工流水线。 basis=answer只指用户回答真实待答问题；重发已完成原产物是明确retry/redelivery，保持原内容，不自动改为新研究。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -494,7 +521,10 @@
       "case_ids": [
         "f05_contrast",
         "f05_yes_more_copies",
-        "f03_review_greeting_status_memory"
+        "f03_review_greeting_status_memory",
+        "f03_requested_log_status_vs_old_skills",
+        "f05_pending_answer_vs_report_redelivery",
+        "f04_light_coordination_vs_business_execution"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -506,7 +536,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -515,7 +548,9 @@
         "server/internal/service/inboundcoord/continuation_content.go",
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
-        "server/internal/service/inboundcoord/policy/finish_check_work.md"
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -535,7 +570,7 @@
     {
       "id": "COORD.F06",
       "family": "F06",
-      "obligation": "优先恢复已知对象、引用、正文；关键缺口无法恢复才最小澄清；补齐后推进，不派空通信任务。",
+      "obligation": "优先恢复已知对象、引用、正文；关键缺口无法恢复才最小澄清；补齐后推进，不派空通信任务。 已有岗位/能力证据可解释对象时，不能从无关旧事项制造澄清；审核revise应给出有据的对象和能力路由纠正，但不新增授权，执行器仍查身份/权限。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -549,7 +584,10 @@
       "case_ids": [
         "f06_contrast",
         "f10_review_whole_window_and_clarification",
-        "f15_decline_quoted_boundary"
+        "f15_decline_quoted_boundary",
+        "f16_review_work_checks_excludes_clarify",
+        "f06_job_object_evidence_vs_old_work_clarification",
+        "f04_role_material_vs_coordination_record"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -561,7 +599,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -570,7 +611,9 @@
         "server/internal/service/inboundcoord/policy/dialogue.md",
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
-        "server/internal/service/inboundcoord/policy/finish_check_work.md"
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -589,7 +632,7 @@
     {
       "id": "COORD.F07",
       "family": "F07",
-      "obligation": "续接必须同一交付物且当前实质推进；单卡、同人、排名、忙、旧承诺都不充分；时间本身不否决明确续接。短确认续接时交付物以用户原话为准，不得把员工未获点名的加工步骤当成同一交付物。",
+      "obligation": "续接必须同一交付物且当前实质推进；单卡、同人、排名、忙、旧承诺都不充分；时间本身不否决明确续接。短确认续接时交付物以用户原话为准，不得把员工未获点名的加工步骤当成同一交付物。 当前明确请求/引用定义工作对象，旧purpose仅是匹配线索，不覆盖用户最新目标。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -600,7 +643,9 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f07_contrast",
-        "f05_yes_more_copies"
+        "f05_yes_more_copies",
+        "f05_pending_answer_vs_report_redelivery",
+        "f07_explicit_reference_controls_current_work"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -609,7 +654,10 @@
         "live_delivery": "pending",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -618,7 +666,10 @@
         "server/internal/service/inboundcoord/continuation_content.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/coordination_view.go",
-        "server/internal/service/inboundcoord/tools.go"
+        "server/internal/service/inboundcoord/tools.go",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/finish_check.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -648,7 +699,8 @@
       "case_ids": [
         "f08_contrast",
         "f16_bounded_coordination_reads",
-        "f08_host_prefetch_keeps_requested_scope"
+        "f08_host_prefetch_keeps_requested_scope",
+        "f03_requested_count_vs_partial_inventory"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -660,7 +712,10 @@
         "closed_actions_live_delivery": "not_run",
         "scene_prefetch_host_tests": "not_run",
         "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run"
+        "scene_prefetch_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/channel.md",
@@ -669,7 +724,9 @@
         "server/internal/service/inboundcoord/tools.go",
         "server/internal/service/inboundcoord/coordination_view.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/finish_check.go"
       ],
       "case_file": "cases.json"
     },
@@ -722,7 +779,8 @@
       "case_ids": [
         "f10_contrast",
         "f10_review_whole_window_and_clarification",
-        "f10_independent_deliverables_vs_related_steps"
+        "f10_independent_deliverables_vs_related_steps",
+        "f16_review_work_checks_excludes_clarify"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -734,7 +792,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/window.md",
@@ -742,7 +803,9 @@
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
-        "server/internal/service/inboundcoord/policy/inbound.md"
+        "server/internal/service/inboundcoord/policy/inbound.md",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json"
     },
@@ -819,7 +882,7 @@
     {
       "id": "COORD.F13",
       "family": "F13",
-      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。",
+      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。 工作intent可省略为other；仅answer/change/retry误填intent时窄规范化为other，不更改basis。已注册有限kind误作tool只归一到同一finish候选并继续校验当前循环；该恢复路径中的source_refs合法JSON数组字符串只解一层；全部授权及answer证据门槛仍在。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -842,7 +905,11 @@
         "f15_decline_quoted_boundary",
         "f13_host_scene_prefetch_success_vs_failure",
         "f08_host_prefetch_keeps_requested_scope",
-        "f13_finish_hint_fields"
+        "f13_finish_hint_fields",
+        "f13_optional_intent_vs_continuation_basis",
+        "f13_registered_action_tool_recovery",
+        "f13_single_encoded_source_refs",
+        "f16_review_work_checks_excludes_clarify"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -857,7 +924,10 @@
         "closed_actions_live_delivery": "not_run",
         "scene_prefetch_host_tests": "not_run",
         "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run"
+        "scene_prefetch_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -876,7 +946,8 @@
         "server/internal/service/inboundcoord/coordination_context.go",
         "server/internal/service/inboundcoord/finish_quote.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
-        "server/internal/assoc/purpose.go"
+        "server/internal/assoc/purpose.go",
+        "server/internal/service/inboundcoord/terminal_call_recovery.go"
       ],
       "case_file": "cases.json"
     },
@@ -894,7 +965,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f14_contrast"
+        "f14_contrast",
+        "f04_light_coordination_vs_business_execution"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -903,14 +975,20 @@
         "live_delivery": "pending",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/voice.md",
         "server/internal/service/inboundcoord/policy/channel.md",
         "server/internal/service/inboundcoord/policy/web.md",
         "server/internal/service/inboundcoord/policy/group.md",
-        "server/internal/service/inboundcoord/policy/skills.md"
+        "server/internal/service/inboundcoord/policy/skills.md",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/finish_check.go"
       ],
       "case_file": "cases.json"
     },
@@ -931,7 +1009,9 @@
         "f15_host_held_policy_and_review_failure",
         "f15_issue_plan_job_scope_vs_pending_research",
         "f15_contract_stale_copy",
-        "f15_decline_quoted_boundary"
+        "f15_decline_quoted_boundary",
+        "f06_job_object_evidence_vs_old_work_clarification",
+        "f04_role_material_vs_coordination_record"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -959,7 +1039,7 @@
     {
       "id": "COORD.F16",
       "family": "F16",
-      "obligation": "主循环重建最新有界读状态，不累计旧工具正文；辅助读取/模型/审查失败不扩大权限，不把未知当空。当前可信窗口和用户限制不静默截断；预算无法保留必要约束时保留未决并停止提交。 读快照8000、最新反馈800与最近被拒精确提案6000分别计预算；超限/非法提案显式omitted，Reason诊断不被可选边界摘录覆盖，不累计旧候选。",
+      "obligation": "主循环重建最新有界读状态，不累计旧工具正文；辅助读取/模型/审查失败不扩大权限，不把未知当空。当前可信窗口和用户限制不静默截断；预算无法保留必要约束时保留未决并停止提交。 读快照8000、最新反馈800与最近被拒精确提案6000分别计预算；超限/非法提案显式omitted，Reason诊断不被可选边界摘录覆盖，不累计旧候选。 非法审核协议最多独立修复一次，传输故障与再次非法不构成放行；不因协议修复重放业务效果。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -974,7 +1054,11 @@
         "f15_contract_stale_copy",
         "f16_bounded_coordination_reads",
         "f13_host_scene_prefetch_success_vs_failure",
-        "f16_host_prefetch_nonwork_cost_and_skips"
+        "f16_host_prefetch_nonwork_cost_and_skips",
+        "f13_optional_intent_vs_continuation_basis",
+        "f13_registered_action_tool_recovery",
+        "f13_single_encoded_source_refs",
+        "f16_review_work_checks_excludes_clarify"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -989,7 +1073,10 @@
         "closed_actions_live_delivery": "not_run",
         "scene_prefetch_host_tests": "not_run",
         "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run"
+        "scene_prefetch_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1005,7 +1092,8 @@
         "server/internal/service/inboundcoord/coordination_context.go",
         "server/internal/service/inboundcoord/loop.go",
         "server/internal/service/inboundcoord/finish_quote.go",
-        "server/internal/service/inboundcoord/scene_prefetch.go"
+        "server/internal/service/inboundcoord/scene_prefetch.go",
+        "server/internal/service/inboundcoord/terminal_call_recovery.go"
       ],
       "case_file": "cases.json"
     },
@@ -1071,7 +1159,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f18_contrast"
+        "f18_contrast",
+        "f07_explicit_reference_controls_current_work"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1083,7 +1172,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "reply_recovery_host_tests": "not_run",
+        "reply_recovery_model_replay": "not_run",
+        "reply_recovery_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1091,7 +1183,9 @@
         "server/internal/handler/agent_dispatch_v2_handler.go",
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
-        "server/internal/service/inboundcoord/policy/finish_check_work.md"
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json"
     },

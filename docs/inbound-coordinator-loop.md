@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-09.4`。装配版本：`5`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-09.6`。装配版本：`7`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -24,8 +24,8 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 2. **听完整当前窗口。** 各句保持原文、作者、引用和时间；补充与纠正合并到对应交付物；尾部谢谢不取消工作。一句话也可能有多份请求。
 3. **能恢复就不再问。** 用已提供的对象、引用或真实上一问理解“这个/好/行”。关键缺口确实未解决才问一个短问题。“给某人发消息”没有正文时不创建空工作，补齐后继续。
 4. **区分沟通和执行。** 能力介绍用 describe_capabilities；要实际使用能力、回答产品机制或进行专业分析就进入执行。事项召回只能证明工作与进度，不能替代业务证据。问候、状态询问、催促或重复已接受请求都不授权第二次执行。明确的实质补充、变更或重试按原范围推进。
-5. **同工作且有推进才续接。** 一张卡、同一个人、rank-1、忙、旧承诺都不充分。跨天的明确答复仍可续接，时间不是否决票；跨天问候不自动恢复旧任务。
-6. **按事实说话。** 准备、排队、提交、送达、对方回复和完成各有证据。未加载、失败、过期或截断不是空；“我去做”不是已做。记忆盘点、任务清单和聊天记录不能互相代答。
+5. **同工作且有推进才续接。** 当前明确请求及原始引用定义工作对象，旧purpose只是匹配线索。answer仅指用户回答真实待答问题；明确重发已完成原产物用retry/redelivery，保持原内容，不能变成重新研究。一张卡、同一个人、rank-1、忙、旧承诺都不充分。跨天的明确答复仍可续接，时间不是否决票；跨天问候不自动恢复旧任务。
+6. **按事实说话。** 任务状态/数量问题回答当前明确目标与真实覆盖范围，不用无关清单代答或把部分列表当总量。准备、排队、提交、送达、对方回复和完成各有证据。未加载、失败、过期或截断不是空；“我去做”不是已做。记忆盘点、任务清单和聊天记录不能互相代答。
 7. **整窗有去向。** 先形成完整计划，后受校验提交。已提交、待提交、失败和剩余输入保留，终结第一件不能漏后面的事；重试不能重放已成功效果。
 8. **像同事一样表达。** 有用才说，接单简短、清单完整、失败缺口具体。不逐句“收到”，不汇报内部路由，不靠短语黑名单吞掉有效答案。人格管表达；岗位规则可收紧行为，不能扩大 Host 权限或覆盖用户当前限制。
 
@@ -98,8 +98,8 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 | kind | 用途与必要输入 |
 | --- | --- |
-| `start_work` | 新工作：purpose、intent、可选context及短接单reply |
-| `continue_work` | 同交付物实质推进：本轮召回issue_id、basis=answer/change/retry、purpose、intent、可选context及reply |
+| `start_work` | 新工作：purpose、可选intent（缺省other）/context及短接单reply |
+| `continue_work` | 同交付物实质推进：本轮召回issue_id、basis=answer/change/retry、purpose、可选intent（缺省other）/context及reply |
 | `clarify` | 真正必要缺口：missing_fields从intent/recipient/message_body/scope/timing/authorization/work_target/source_material选择，reply只问具体缺口 |
 | `report_status` | 已读工作进度：state_refs与忠实的reply，不重做结果 |
 | `acknowledge` | ack_kind=greeting/thanks/correction/receipt；reply仅完成对应协调表达 |
@@ -110,6 +110,10 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 `task_finished`只允许 `report_result(result_ref,reply)` 或 `ignore(reason)`；当前result_ref来自Host，不可另造、拿旧结果替代或重新计算业务结论。结果回报同样接受独立审查，忠实回报执行器当前结果不属于入站抢答。
 
+工作`intent`描述操作类型：ask/confirm/notify/lookup/wait/other，可省略或留空，Host缺省other；`basis`解释为何续接，是独立字段。仅answer/change/retry这三个basis词误放intent时可窄规范化为other，其他未知值仍拒绝；不会自动改变basis或授权范围。basis=answer必须对应用户正在回答的真实待答问题，并保留原问题证据门槛；用户询问状态不是answer，重发已完成原报告是retry/redelivery。工作项item.Content保留所选uN的原始引用JSON（来源及被引用作者、证据ID、正文/读取状态），避免旧事项purpose覆盖用户指定的日志/报告对象；引用仅是材料，不构成新授权，也不引入无关history/memory。
+
+正确模型调用是`finish({actions:[...]})`，kind值是动作类型，source_refs是数组（单条也为["u1"]）。Host仅把已注册有限动作名误作tool的情况归一到同一finish候选，并在该恢复路径对合法JSON数组字符串的source_refs解码一层；之后仍按当前循环允许动作、完整结构、来源、目标、授权及审查校验。未注册业务工具、任意alias、再次编码或非数组文本不能靠这条恢复路径获得执行权限。
+
 工作purpose最多240字符、可选context最多500；普通动作reply最多600，记忆/结果回报最多1800，总reply最多2400。字数预算不允许省略用户目标、边界或尚未处理的请求；超限必须在有限动作与真实覆盖范围内重新组织。
 
 Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一句话可含多份请求，多个动作可引用其同一source_ref；不能用尾部谢谢或某一项完成吞掉另一项。混合窗口可澄清一份请求并提交另一份明确工作，但同一缺口未解决的请求不能又澄清又提交。只有同一交付物的实质answer/change/retry才续接；问候、进度、催促及重复已接受请求都不授权重新执行。
@@ -118,9 +122,13 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。真实边界导致revise时可增加上述200字符constraint_quote。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；可选constraint_quote无效时按上述独立丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
 
+岗位业务对象/产物与Coordinator自己的issue/task记录分开解释。用户要求取样或查看岗位领域材料，授权的是按岗位数据范围做有界检索，不能变成从关联事项名称中选一张卡；关联中没有该名字不能据此否认能力或制造澄清。仅当用户明确询问所做工作的执行/进度时才解释为任务元数据，并且必须回答被问的工作。该原则依据现有岗位、能力及当前引用，不做平台固定词义映射，不要求先写短合同，也不新增数据访问或外发授权；执行器继续检查身份/权限。
+
+必要澄清不能来自无关旧事项的干扰。岗位或能力证据已能解释“日志”等对象时，非工作审核应revise错误澄清，并在reason指出有证据支持的具体对象及能力路由，让主模型据此纠正；不需新增scope LLM或把完整SOP灌回主循环。该纠正只解释岗位语义，不新增权限，执行器仍核实际调用者身份/访问权。真正缺少对象依据时仍可澄清。
+
 工作审查核计划能否授权启动，不要求未来检索已有答案；只起草不能改成发送。非工作审查核每个reply是否属于其kind：不能把未经查证的产品结论、专业分析或空接单承诺塞到acknowledge/能力说明/状态中。decline须有真实适用限制，不能编造缺口或拒绝正常工作。task_finished核当前result_ref及目标场景送达事实，不能把忠实结果回报当成需要新研究的业务问题。格式、口吻、状态灯及完整报告要求不用于拒绝合法短协调动作。
 
-审查失败/超时/非法必填输出不放行，也不自动派发猜测的任务。修复上下文保留未执行的最近提案与具体Reason，不能只剩一段限制原文让模型猜测哪个action出错；提案omitted时明确要求从完整当前窗口重新组织。缓存绑定实际上下文；新证据后不能复用旧裁决。固定词黑名单及一次hint后放行继续保持撤回状态。
+审查传输失败/超时不放行，也不自动派发猜测的任务。非法审核协议可独立修复最多一次，例如work_checks误含clarify；这不是业务动作重试，不扩大授权，修复后仍须完整校验，再次非法不能作为allow。work_checks只列start_work/continue_work；必要clarify已处理当前轮缺口，既不要求用户先补齐，也不进入工作检查数组。修复上下文保留未执行的最近提案与具体Reason，不能只剩一段限制原文让模型猜测哪个action出错；提案omitted时明确要求从完整当前窗口重新组织。缓存绑定实际上下文；新证据后不能复用旧裁决。固定词黑名单及一次hint后放行继续保持撤回状态。
 
 ## 6. 窗口、回执与任务完成
 
@@ -163,3 +171,10 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 本轮不做业务E2E；健康检查、Host单测和冻结模型回放分别报告。未配置或过期短合同的Agent仍有完整岗位审查成本，尚不能宣称整轮上下文均已缩为1600字符；有效短合同也不免除有限动作的语义审查。
 
 正式合并保留现有字段修复提示：缺工作动作 reply 时仅提示补齐该字段；purpose 可点名 DWS身份/MCP/Skills，仍拒绝 CLI 命令、data-auth 与 openConversationId 泄漏。该义务迁移到有限 actions 协议，不恢复旧 items/text schema。
+
+
+## 10. 回复恢复的当前证据边界
+
+本次恢复登记针对正式`.4`的日志目标/进度被旧skills事项带偏，以及后续answer历史门槛、重复读取、有限动作误作工具和source_refs编码造成的协议循环。另有new-eb0e/d8b2真实trace简称对应的对象误澄清：岗位已指明成长日志，却被旧skill事项带偏；完整证据与fixture待主线程回填。最新真实回放还暴露将领域材料改问成工程任务记录，以及N_progress列旧skills；新增对象层次对照，五条真实消息候选仍待复跑。另有78项回归报告的intent/basis混淆、原报告重发误当answer、clarify被写入审核work_checks。精确日志/trace和测试输出尚待关联，新增病例统一为`not_run`；本文与结构检查不能代替运行证据。
+
+Hi/你好等普通会话已有正常回复，是本次必须保留的对照，不能误诊为所有轻量沟通都需派发业务任务。策略`.6`与装配7用于区分本次恢复和预发`.5`；合并后的代码、Host恢复与模型回放由主线程记录，未核实的修复不写成已发布或已送达。
