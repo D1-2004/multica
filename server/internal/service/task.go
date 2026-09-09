@@ -6120,12 +6120,9 @@ func (s *TaskService) RecoverQueuedFCE2BTask(ctx context.Context, task db.AgentT
 	s.launchRuntimeForTask(task)
 }
 
-// triggerNextQueuedTaskForTerminal bridges long-lived daemon semantics for
-// server-managed run-once runtimes. A normal ASB daemon finishes a task and
-// keeps polling, so queued work is picked up naturally. FC/E2B run-once exits
-// after one claim; when a terminal task releases capacity, the server nudges
-// the next queued task for the same agent, preferring the same issue/chat/
-// quick-create lane when one exists.
+// triggerNextQueuedTaskForTerminal nudges queued work when a terminal task
+// releases capacity. ASB chooses the oldest task across the Runtime's agents
+// and task kinds. Other runtimes retain the same-agent and same-lane preference.
 func (s *TaskService) triggerNextQueuedTaskForTerminal(ctx context.Context, terminal db.AgentTaskQueue) {
 	if s == nil || s.Queries == nil || !terminal.RuntimeID.Valid {
 		return
@@ -6139,7 +6136,18 @@ func (s *TaskService) triggerNextQueuedTaskForTerminal(ctx context.Context, term
 		)
 		return
 	}
+	runtime, err := s.Queries.GetAgentRuntime(ctx, terminal.RuntimeID)
+	if err != nil {
+		slog.Warn("load runtime after terminal task failed",
+			"runtime_id", util.UUIDToString(terminal.RuntimeID), "error", err)
+		return
+	}
 	next, ok := nextQueuedTaskForTerminal(terminal, candidates)
+	if IsASBRuntime(runtime) {
+		// A released ASB slot belongs to the Runtime's queue, not the previous
+		// task's agent or chat lane. All task kinds compete in creation order.
+		next, ok = nextQueuedASBTask(candidates)
+	}
 	if !ok {
 		return
 	}
@@ -6150,6 +6158,22 @@ func (s *TaskService) triggerNextQueuedTaskForTerminal(ctx context.Context, term
 	)
 	s.notifyTaskAvailable(next)
 	s.launchRuntimeForTask(next)
+}
+
+func nextQueuedASBTask(candidates []db.AgentTaskQueue) (db.AgentTaskQueue, bool) {
+	var next db.AgentTaskQueue
+	found := false
+	for _, candidate := range candidates {
+		if !candidate.AgentID.Valid {
+			continue
+		}
+		if !found || candidate.CreatedAt.Time.Before(next.CreatedAt.Time) ||
+			(candidate.CreatedAt.Time.Equal(next.CreatedAt.Time) &&
+				util.UUIDToString(candidate.ID) < util.UUIDToString(next.ID)) {
+			next, found = candidate, true
+		}
+	}
+	return next, found
 }
 
 func nextQueuedTaskForTerminal(terminal db.AgentTaskQueue, candidates []db.AgentTaskQueue) (db.AgentTaskQueue, bool) {
