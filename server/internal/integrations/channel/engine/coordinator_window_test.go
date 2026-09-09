@@ -114,6 +114,9 @@ func TestCoordinatorItemContextKeepsSelectedSourcesAndReplacesWholeActor(t *test
 	if len(envelope.Data.Messages) != 2 || envelope.Data.Messages[0].OpenMsgID != "m-b" || envelope.Data.Messages[1].OpenMsgID != "m-c" || envelope.Data.Messages[0].ReferencedMessage.OpenMsgID != "question-b" {
 		t.Fatalf("selected evidence was collapsed or rewritten: %#v", envelope.Data.Messages)
 	}
+	if coordinatorItemOriginOpenMsgID(got, "") != "m-b" {
+		t.Fatalf("item origin = %q", coordinatorItemOriginOpenMsgID(got, ""))
+	}
 	var original map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &original)
 	if !reflect.DeepEqual(envelope.Callback, original["completion_callback"]) || !reflect.DeepEqual(envelope.Identity, original["external_identity"]) {
