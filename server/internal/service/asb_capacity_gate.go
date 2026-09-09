@@ -40,9 +40,14 @@ func (c *ASBClient) capacityGateKeys() []string {
 
 var asbCapacityAdmitScript = redis.NewScript(`
 local ttl = redis.call('PTTL', KEYS[1])
-if ttl > 0 then return ttl end
+if ttl > 0 then
+  local verdict = redis.call('GET', KEYS[1])
+  local pacing = 0
+  if verdict == 'checking' or verdict == 'available' then pacing = 1 end
+  return {ttl, pacing}
+end
 redis.call('SET', KEYS[1], 'checking', 'PX', ARGV[1])
-return 0
+return {0, 0}
 `)
 
 var asbCapacityThrottleScript = redis.NewScript(`
@@ -80,14 +85,22 @@ end
 return math.max(delay, previous)
 `)
 
-func (g *ASBCapacityGate) admit(ctx context.Context, client *ASBClient) (time.Duration, error) {
+// admit distinguishes a short create interval from a cached full/429 verdict.
+// The latter must stay durable; pacing can resume in the current launch.
+func (g *ASBCapacityGate) admit(ctx context.Context, client *ASBClient) (delay time.Duration, pacing bool, err error) {
 	if g == nil || g.redis == nil {
-		return 0, errors.New("ASB shared capacity coordination requires Redis")
+		return 0, false, errors.New("ASB shared capacity coordination requires Redis")
 	}
 	ctx, cancel := context.WithTimeout(ctx, asbCapacityGateTimeout)
 	defer cancel()
-	millis, err := asbCapacityAdmitScript.Run(ctx, g.redis, client.capacityGateKeys()[:1], asbCapacityCheckInterval.Milliseconds()).Int64()
-	return time.Duration(millis) * time.Millisecond, err
+	verdict, err := asbCapacityAdmitScript.Run(ctx, g.redis, client.capacityGateKeys()[:1], asbCapacityCheckInterval.Milliseconds()).Int64Slice()
+	if err != nil {
+		return 0, false, err
+	}
+	if len(verdict) != 2 {
+		return 0, false, errors.New("invalid ASB capacity admission verdict")
+	}
+	return time.Duration(verdict[0]) * time.Millisecond, verdict[1] == 1, nil
 }
 
 func (g *ASBCapacityGate) record(ctx context.Context, client *ASBClient, cause error) (time.Duration, error) {

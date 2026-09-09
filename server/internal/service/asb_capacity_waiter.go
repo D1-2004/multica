@@ -222,6 +222,9 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 		finishedScopeID := scopeID
 		l.Tasks.launchRuntimeForTaskWithCompletion(task, func() {
 			l.CapacityWait.finish(finishedScopeID)
+			// Continue draining eligible waiters without waiting for the next
+			// recovery tick. Fresh full/429 waits retain their retry deadline.
+			l.CapacityWait.notify()
 		})
 		scheduled++
 		slog.Info("ASB capacity waiter scheduled queued task",
