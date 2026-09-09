@@ -16,7 +16,6 @@ func TestClosedActionsRejectGenericAndCrossKindFields(t *testing.T) {
 	for _, raw := range []string{
 		`{"action":"reply","text":"只生成一份。"}`,
 		`{"actions":[{"kind":"reply","source_refs":["u1"],"reply":"只生成一份。"}]}`,
-		`{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来查证。","purpose":"查证主持人与参会人听记生成数量"}]}`,
 		`{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"other","reply":"收到。"}]}`,
 		`{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"receipt","reply":"收到。","purpose":"隐藏的业务执行"}]}`,
 		`{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"无需回复","reply":"夹带业务答案"}]}`,

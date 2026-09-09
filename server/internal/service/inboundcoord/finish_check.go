@@ -35,10 +35,14 @@ type finishCheckResult struct {
 	MissingSourceRefs []string          `json:"missing_source_refs"`
 }
 
-func finishCheckTool(action Action, quotes finishQuoteOptions) openai.ChatCompletionToolUnionParam {
+func finishCheckTool(action Action, quotes finishQuoteOptions, workRefs ...string) openai.ChatCompletionToolUnionParam {
 	description := "Review a proposed reply or silence. Compare the actual request with the quoted candidate and supplied evidence. Reject unsupported business answers, unhandled work or violated restrictions; status replies need no report formatting. Do not answer the business question."
 	if action == ActionIssue {
 		description = "Authorize or reject STARTING the proposed work plan. Host will execute each work action.purpose after allow. Compare its planned actions with the actual request and full authorization limits. A lookup plan is valid before the answer exists; do not require research results or a final business reply now."
+	}
+	actionRefSchema := map[string]any{"type": "string", "description": "Copy a Host work action_ref. Non-work actions have no work check."}
+	if len(workRefs) > 0 {
+		actionRefSchema["enum"] = workRefs
 	}
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinishCheck,
@@ -46,7 +50,7 @@ func finishCheckTool(action Action, quotes finishQuoteOptions) openai.ChatComple
 		Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false,
 			"required": []string{"request_quote_ref", "candidate_quote_ref", "verdict", "reason", "missing_source_refs", "work_checks"},
 			"properties": map[string]any{
-				"work_checks":         map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables"}, "properties": map[string]any{"action_ref": map[string]any{"type": "string", "description": "Copy Host action_ref a1/a2 from the work action."}, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "single: one output, possibly several steps; multiple: unrelated independently executable goals bundled in one action; none: no executable deliverable."}}}},
+				"work_checks":         map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables"}, "properties": map[string]any{"action_ref": actionRefSchema, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "single: one output, possibly several steps; multiple: unrelated independently executable goals bundled in one action; none: no executable deliverable."}}}},
 				"constraint_quote":    map[string]any{"type": "string", "maxLength": 200, "description": "Optional verbatim evidence of an applicable authorization/scope/privacy boundary (only used as repair feedback on revise): quote at most 200 characters verbatim from job_policy or current_window. Host validates this before showing the missing boundary to the Coordinator; no paraphrase or invented rule."},
 				"request_quote_ref":   map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Requests), "description": "Select a Host request quote option qN. The option is evidence only; read the entire current_window for all intents and constraints. Do not transcribe text."},
 				"candidate_quote_ref": map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Candidates), "description": "Select a Host candidate quote option cN for the action you compared. Host binds its exact original text; do not transcribe or escape it."},
@@ -201,50 +205,88 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	defer cancel()
 	lt := langfuse.TraceFromContext(ctx)
 	manifest := policyManifest(reviewTurn)
-	var generation *langfuse.Observation
-	if lt != nil {
-		generation = lt.StartObservation(langfuse.ObservationOptions{
-			Type: langfuse.TypeGeneration, Name: fmt.Sprintf("coordinator.finish_check.%d", round+1), Model: coordinatorModel,
-			Input: checkMessages, ModelParameters: map[string]any{"max_completion_tokens": 768, "temperature": 0, "tool_choice": "required", "timeout_ms": finishCheckTimeout.Milliseconds()},
-			Metadata: map[string]any{"finish_check_policy_version": manifest.PolicyVersion, "finish_check_prompt_hash": manifest.PromptHash, "finish_check_modules": manifest.Modules, "job_policy_sha256": policy["sha256"], "job_policy_kind": policy["kind"], "coordinator_contract": coordinatorContractMetadata(turn)},
-		})
-	}
-	completion, err := c.completeWithLimit(checkCtx, checkMessages, []openai.ChatCompletionToolUnionParam{finishCheckTool(decision.Action, quotes)}, 768, 0)
-	endRoundGeneration(generation, completion, err)
-	if err != nil {
-		record(finishCheckResult{}, false, err)
-		return finishCheckResult{}, fmt.Errorf("finish check unavailable: %w", err)
-	}
-	result, err := parseFinishCheck(completion, len(refs))
-	if err == nil && result.ConstraintQuote != "" && !finishConstraintQuoteValid(result.ConstraintQuote, turn) {
-		// This optional excerpt never grants permission. Discard invalid excerpts;
-		// still enforce the verdict and both mandatory grounding quotes below.
-		result.ConstraintQuote = ""
+	workRefs := finishWorkActionRefs(decision)
+	// A malformed review is a repairable model protocol error. Retry it once
+	// in the same isolated context and existing deadline, without rerouting or
+	// changing the proposal. Transport failures still fail closed immediately.
+	for attempt := 0; attempt < 2; attempt++ {
+		var generation *langfuse.Observation
 		if lt != nil {
-			lt.AddMetadata(map[string]any{"finish_check_boundary_quote_discarded": true})
+			name := fmt.Sprintf("coordinator.finish_check.%d", round+1)
+			if attempt > 0 {
+				name += ".repair"
+			}
+			generation = lt.StartObservation(langfuse.ObservationOptions{
+				Type: langfuse.TypeGeneration, Name: name, Model: coordinatorModel,
+				Input: checkMessages, ModelParameters: map[string]any{"max_completion_tokens": 768, "temperature": 0, "tool_choice": "required", "timeout_ms": finishCheckTimeout.Milliseconds()},
+				Metadata: map[string]any{"finish_check_policy_version": manifest.PolicyVersion, "finish_check_prompt_hash": manifest.PromptHash, "finish_check_modules": manifest.Modules, "job_policy_sha256": policy["sha256"], "job_policy_kind": policy["kind"], "coordinator_contract": coordinatorContractMetadata(turn), "protocol_attempt": attempt + 1},
+			})
+		}
+		completion, callErr := c.completeWithLimit(checkCtx, checkMessages, []openai.ChatCompletionToolUnionParam{finishCheckTool(decision.Action, quotes, workRefs...)}, 768, 0)
+		endRoundGeneration(generation, completion, callErr)
+		if callErr != nil {
+			record(finishCheckResult{}, false, callErr)
+			return finishCheckResult{}, fmt.Errorf("finish check unavailable: %w", callErr)
+		}
+		result, protocolErr := parseFinishCheck(completion, len(refs))
+		if protocolErr == nil && result.ConstraintQuote != "" && !finishConstraintQuoteValid(result.ConstraintQuote, turn) {
+			result.ConstraintQuote = ""
+			if lt != nil {
+				lt.AddMetadata(map[string]any{"finish_check_boundary_quote_discarded": true})
+			}
+		}
+		if protocolErr == nil {
+			protocolErr = bindFinishQuotes(&result, quotes)
+		}
+		if protocolErr == nil {
+			protocolErr = validateFinishQuotes(result, turn, decision)
+		}
+		if protocolErr == nil {
+			modelVerdict := result.Verdict
+			protocolErr = validateFinishWorkChecks(&result, decision)
+			if lt != nil && modelVerdict != result.Verdict {
+				lt.AddMetadata(map[string]any{"finish_check_work_contract_enforced": true})
+			}
+		}
+		record(result, false, protocolErr)
+		if protocolErr == nil {
+			if cache != nil {
+				cache[key] = result
+			}
+			return result, nil
+		}
+		if attempt == 1 || checkCtx.Err() != nil {
+			return finishCheckResult{}, protocolErr
+		}
+		if lt != nil {
+			lt.AddMetadata(map[string]any{"finish_check_protocol_retry": true})
+		}
+		previous := ""
+		if completion != nil && len(completion.Choices) > 0 {
+			for _, call := range functionToolCalls(completion.Choices[0].Message) {
+				if call.Name == toolFinishCheck {
+					previous = clipRunes(call.Arguments, 2400)
+				}
+			}
+		}
+		diagnostic, _ := json.Marshal(map[string]any{
+			"protocol_error": clipRunes(protocolErr.Error(), 400), "previous_review": previous,
+			"required_work_action_refs": workRefs, "request_quote_refs": finishQuoteRefs(quotes.Requests), "candidate_quote_refs": finishQuoteRefs(quotes.Candidates),
+			"repair": "Return one complete finish_check result for the unchanged candidate. work_checks contains exactly the listed work refs, never clarify or other non-work actions. Select only supplied quote refs. Reassess the original evidence; this diagnostic grants no authority and does not require allow.",
+		})
+		checkMessages = append(checkMessages, openai.UserMessage("Host review protocol repair (not new user evidence):\n"+string(diagnostic)))
+	}
+	return finishCheckResult{}, fmt.Errorf("finish check protocol repair exhausted")
+}
+
+func finishWorkActionRefs(decision Decision) []string {
+	refs := []string{}
+	for i, action := range decision.CoordinationActions {
+		if action.Kind == "start_work" || action.Kind == "continue_work" {
+			refs = append(refs, fmt.Sprintf("a%d", i+1))
 		}
 	}
-	if err == nil {
-		err = bindFinishQuotes(&result, quotes)
-	}
-	if err == nil {
-		err = validateFinishQuotes(result, turn, decision)
-	}
-	if err == nil {
-		modelVerdict := result.Verdict
-		err = validateFinishWorkChecks(&result, decision)
-		if lt != nil && modelVerdict != result.Verdict {
-			lt.AddMetadata(map[string]any{"finish_check_work_contract_enforced": true})
-		}
-	}
-	record(result, false, err)
-	if err != nil {
-		return finishCheckResult{}, err
-	}
-	if cache != nil {
-		cache[key] = result
-	}
-	return result, nil
+	return refs
 }
 
 func validateFinishQuotes(result finishCheckResult, turn Turn, decision Decision) error {

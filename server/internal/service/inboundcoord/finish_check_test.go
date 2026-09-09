@@ -86,9 +86,15 @@ func withScriptedFinishRequest(response openai.ChatCompletion, params openai.Cha
 	if len(params.Messages) == 0 {
 		return response
 	}
-	raw, _ := json.Marshal(params.Messages[len(params.Messages)-1])
 	var last struct{ Content string }
-	_ = json.Unmarshal(raw, &last)
+	for i := len(params.Messages) - 1; i >= 0; i-- {
+		raw, _ := json.Marshal(params.Messages[i])
+		_ = json.Unmarshal(raw, &last)
+		var proposal map[string]json.RawMessage
+		if json.Unmarshal([]byte(last.Content), &proposal) == nil && proposal["candidate"] != nil {
+			break
+		}
+	}
 	if len(params.Tools) == 0 || params.Tools[0].GetFunction() == nil {
 		return response
 	}
@@ -154,12 +160,16 @@ func TestFinishCheckFailureDefersWithoutSavingOrRetryingMainModel(t *testing.T) 
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("reply", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"你好。"}]}`)}, checkRounds: []openai.ChatCompletion{tc.response}, checkError: tc.err}
+			chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("reply", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"你好。"}]}`)}, checkRounds: []openai.ChatCompletion{tc.response, tc.response}, checkError: tc.err}
 			saves := 0
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { saves++; return nil })
 			d, err := (&Coordinator{Chat: chat}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, Message: "你好"})
-			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.calls != 1 || chat.checkCalls != 1 {
-				t.Fatalf("review failure must defer immediately: action=%s saves=%d routing_calls=%d checks=%d err=%v", d.Action, saves, chat.calls, chat.checkCalls, err)
+			wantChecks := 2
+			if tc.err != nil {
+				wantChecks = 1
+			}
+			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.calls != 1 || chat.checkCalls != wantChecks {
+				t.Fatalf("review failure must defer without rerouting: action=%s saves=%d routing_calls=%d checks=%d err=%v", d.Action, saves, chat.calls, chat.checkCalls, err)
 			}
 		})
 	}
@@ -351,12 +361,12 @@ func TestFinishCheckRejectsUnknownQuoteReferencesBeforeSaving(t *testing.T) {
 					assistantTool("recall", toolAssocRecall, `{}`),
 					assistantTool("send", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我现在把通知发给同事。","purpose":"向同事发送周五开会通知","intent":"other"}]}`),
 				},
-				checkRounds: []openai.ChatCompletion{assistantTool("untrusted-review", toolFinishCheck, string(raw))},
+				checkRounds: []openai.ChatCompletion{assistantTool("untrusted-review", toolFinishCheck, string(raw)), assistantTool("untrusted-review-again", toolFinishCheck, string(raw))},
 			}
 			saves := 0
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { saves++; return nil })
 			d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: requestText, Instructions: "Only draft. Do not send without approval."})
-			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.checkCalls != 1 {
+			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.checkCalls != 2 {
 				t.Fatalf("ungrounded quotation must not allow any durable plan: action=%s saves=%d checks=%d err=%v", d.Action, saves, chat.checkCalls, err)
 			}
 		})
