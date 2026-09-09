@@ -6,11 +6,16 @@ loopback, including intranet services.
 
 Every ASB creation request now includes a deny policy. Task sandboxes and
 enterprise identity seeds both receive explicit allowed destinations. The
-control-plane client rejects allow-by-default and wildcard/CIDR targets.
+control-plane client rejects allow-by-default, CIDRs and arbitrary wildcards.
+Only the two code-reviewed regional transfer families `*.trans.dingtalk.com`
+and `*.down.dingtalk.com` are allowed as built-in rules; user/deployment
+configuration still accepts exact hosts only.
 
 Default destinations combine:
 
 - Exact DWS MCP, gateway, terminal, API and identity service hosts.
+- DWS direct transfer, document OSS, mail attachment, Stream and distribution
+  dependencies, audited in [the DWS network review](asb-dws-network-audit.md).
 - BUC, AuthX, Idem, Aone, Code and sandbox service hosts.
 - npm and Python package registries used by sandbox tools.
 - Current deployment configuration: Multica callback/public/upload origins,
