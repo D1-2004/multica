@@ -138,7 +138,7 @@ func (s *IssueCommentService) ProcessCoordinatorFollowUp(ctx context.Context) (b
 	err = tx.QueryRow(ctx, `SELECT i.id,i.assignee_id FROM issue i JOIN agent a ON a.id=i.assignee_id AND a.workspace_id=i.workspace_id
  WHERE i.assignee_type='agent' AND a.archived_at IS NULL
  AND EXISTS(SELECT 1 FROM coordinator_issue_follow_up f WHERE f.issue_id=i.id AND f.workspace_id=i.workspace_id AND f.agent_id=i.assignee_id AND f.task_id IS NULL)
- AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=i.id AND t.agent_id=i.assignee_id AND (t.status IN ('queued','dispatched','running','waiting_local_directory') OR (t.status='deferred' AND t.context->>'channel_issue_media_pending'='true')))
+ AND NOT EXISTS(SELECT 1 FROM agent_task_queue t WHERE t.issue_id=i.id AND t.agent_id=i.assignee_id AND t.status IN ('queued','dispatched','running','waiting_local_directory','deferred'))
  ORDER BY i.updated_at LIMIT 1 FOR UPDATE OF i SKIP LOCKED`).Scan(&issueID, &agentID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -262,7 +262,7 @@ func (s *IssueCommentService) OutstandingCoordinatorFollowUps(ctx context.Contex
  AND f.dispatch_context->'external_identity'=($5::jsonb)->'external_identity'
  AND t.id IS DISTINCT FROM $3
  AND f.dispatch_context->'dispatch_event_data'->'conversation'->>'openConversationId'=$4
- AND (f.task_id IS NULL OR t.status IN ('queued','dispatched','running','waiting_local_directory')) ORDER BY f.created_at LIMIT 21`, task.IssueID, task.AgentID, task.ID, cid, task.Context)
+ AND (f.task_id IS NULL OR t.status IN ('queued','dispatched','running','waiting_local_directory','deferred')) ORDER BY f.created_at LIMIT 21`, task.IssueID, task.AgentID, task.ID, cid, task.Context)
 	if err != nil {
 		return "", err
 	}

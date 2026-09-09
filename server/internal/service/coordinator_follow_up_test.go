@@ -52,6 +52,12 @@ func TestProactiveFollowUpDurableBusyBatchAndReceipts(t *testing.T) {
 	if worked, err := f.svc.ProcessCoordinatorFollowUp(ctx); err != nil || worked {
 		t.Fatalf("started while previous task active: %v %v", worked, err)
 	}
+	if _, err = f.pool.Exec(ctx, `UPDATE agent_task_queue SET status='deferred' WHERE id=$1`, first.Task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if worked, err := f.svc.ProcessCoordinatorFollowUp(ctx); err != nil || worked {
+		t.Fatalf("jumped ahead of deferred retry: %v %v", worked, err)
+	}
 	if _, err = f.pool.Exec(ctx, `UPDATE agent_task_queue SET status='completed' WHERE id=$1`, first.Task.ID); err != nil {
 		t.Fatal(err)
 	}
