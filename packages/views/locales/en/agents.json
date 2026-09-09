@@ -231,8 +231,8 @@
     "labels_label": "Labels",
     "labels_hint": "Workspace labels used to classify this agent.",
     "github_managed_profile": "Instructions and repository skills are managed by GitHub; name and description remain editable in Multica.",
-    "prop_event_trigger": "Event trigger",
-    "prop_event_trigger_hint": "Run automatically when new events arrive in subscribed conversations. Nearby events are combined; the same conversation runs at most once every 30 seconds. Off by default. Changes reach Router within about 5 seconds when available."
+    "prop_event_trigger": "Proactively process all new conversation messages",
+    "prop_event_trigger_hint": "Read all new messages in monitored conversations, including messages without a mention. Use your role and context to decide whether to respond or act. Group consecutive messages and stay quiet when no response is needed. Enabling this also enables inbound judging."
   },
   "overview": {
     "agent_context": "Agent",

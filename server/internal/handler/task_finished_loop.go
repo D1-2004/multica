@@ -123,6 +123,14 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		delivery = h.taskFinishedDeliveryContext(ctx, task)
 		alreadyTold = inboundcoord.TaskFinishedResultAlreadyDelivered(fullResult, cid, delivery)
 	}
+	var outstanding string
+	if h.IssueCommentService != nil && task.IssueID.Valid {
+		var pendingErr error
+		outstanding, pendingErr = h.IssueCommentService.OutstandingCoordinatorFollowUps(ctx, *task, cid)
+		if pendingErr != nil {
+			return fmt.Errorf("load outstanding issue follow-ups: %w", pendingErr)
+		}
+	}
 	deliveryJSON, _ := json.Marshal(delivery)
 	turn := inboundcoord.Turn{
 		Loop:                 inboundcoord.LoopTaskFinished,
@@ -139,6 +147,7 @@ func (h *Handler) maybeRunTaskFinishedLoop(ctx context.Context, task *db.AgentTa
 		ConversationID:       cid,
 		IssueID:              uuidToString(task.IssueID),
 		TaskResult:           fullResult,
+		OutstandingFollowUps: outstanding,
 		TaskDeliveryContext:  string(deliveryJSON),
 		IssueDispatchContext: task.Context,
 		AlreadyToldScene:     alreadyTold,

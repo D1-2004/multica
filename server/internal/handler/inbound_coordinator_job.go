@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -135,6 +136,11 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.fail(ctx, job, command, "invalid persisted dispatch command")
 	}
+	if parked, parkErr := w.parkIfSceneWindowBusy(ctx, job, command); parkErr != nil {
+		return true, parkErr
+	} else if parked {
+		return true, nil
+	}
 	if strings.TrimSpace(command.TaskFinishedTaskID) != "" {
 		if runErr := w.handler.runPersistedTaskFinishedLoop(ctx, command.TaskFinishedTaskID); runErr != nil {
 			if errors.Is(runErr, errTaskFinishedResponsePending) {
@@ -143,11 +149,6 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 			return true, w.retry(ctx, job, runErr)
 		}
 		return true, w.complete(ctx, job)
-	}
-	if parked, parkErr := w.parkIfSceneWindowBusy(ctx, job, command); parkErr != nil {
-		return true, parkErr
-	} else if parked {
-		return true, nil
 	}
 	dispatchContext := agentDispatchContext{
 		EndpointID:          job.DispatchEndpointID,
@@ -320,6 +321,9 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 		// Half-second mutex wait: keep the Router callback so the next
 		// window can still speak. Do not close 处理中 here.
 		return true, w.park(ctx, job, inboundCoordinatorSceneBusyDelay, "scene window already running")
+	}
+	if command.ProactiveConversation || command.TaskFinishedTaskID != "" {
+		return false, nil
 	}
 	// New windows must be understood even at capacity: a status request
 	// or presence check needs no sandbox. Only previously judged work waits.
@@ -625,6 +629,30 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
+	if command.ProactiveConversation {
+		command, err = h.deduplicateObservedMessages(ctx, tx, command, dispatchContext)
+		if err != nil {
+			return nil, job, err
+		}
+		if len(command.Event.Data.Messages) == 0 {
+			if command.CompletionCallback != nil {
+				receipts := &service.TaskService{Queries: qtx}
+				if err = receipts.EnqueueSynchronousSilence(ctx, command.CompletionCallback.URL, command.CompletionCallback.Target, dispatchContext.AgentID); err != nil {
+					return nil, job, err
+				}
+			}
+			_, err = qtx.CompleteAgentDispatchAcceptance(ctx, db.CompleteAgentDispatchAcceptanceParams{ID: acceptance.ID, LeaseToken: acceptance.LeaseToken, ResponseStatus: pgtype.Int4{Int32: 202, Valid: true}, ResponseContentType: pgtype.Text{String: "application/json", Valid: true}, ResponseBody: []byte(`{"status":"accepted","code":"duplicate_observed_message"}`)})
+			if err != nil {
+				return nil, job, err
+			}
+			return response, job, tx.Commit(ctx)
+		}
+		rawCommand, err = json.Marshal(command)
+		if err != nil {
+			return nil, job, err
+		}
+		displayContent = buildDingTalkChannelDisplay(command)
+	}
 	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
 	if err := h.registerDingTalkResponseRoute(ctx, tx, command, dispatchContext); err != nil {
 		return nil, job, err
@@ -837,7 +865,7 @@ func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundC
 }
 
 func shouldDeferInboundCoordinator(command DispatchCommand, plan agentDispatchExecutionPlan) bool {
-	return command.CompletionCallback != nil &&
+	return (command.CompletionCallback != nil || command.ProactiveConversation) &&
 		command.Event.Domain == "channel" && command.Event.Type == "message.created" &&
 		(plan.MaterializerType == protocol.DispatchSurfaceTypeIssue ||
 			plan.MaterializerType == protocol.DispatchSurfaceTypeChat)

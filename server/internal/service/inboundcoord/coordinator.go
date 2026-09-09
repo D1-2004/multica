@@ -75,43 +75,45 @@ const (
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
-	Loop                 Loop
-	Source               Source
-	Addressed            bool
-	ChatType             string
-	ConversationTitle    string
-	SenderName           string
-	Message              string
-	AgentID              pgtype.UUID
-	UserID               pgtype.UUID
-	AgentName            string
-	Instructions         string
-	Persona              string
-	ReplyTone            string
-	Skills               []SkillSnapshot
-	Busy                 bool
-	HistoryBefore        time.Time
-	MessageTimestamp     time.Time
-	HistoryStatus        string
-	HistoryError         string
-	SkillsStatus         string
-	SceneMemoryStatus    string
-	TaskDeliveryContext  string
-	History              []HistoryLine
-	DingTalkHistory      []HistoryLine
-	IdentityNote         string
-	RelatedTasks         string
-	WorkspaceID          string
-	ConversationID       string
-	PersonID             string
-	DWSUID               string
-	DWSOrgID             string
-	EvidenceID           string
-	Kind                 string
-	TraceID              string
-	IssueDispatchContext []byte
-	SceneMemory          string
-	SceneMemoryRevision  int64
+	Loop                  Loop
+	Source                Source
+	Addressed             bool
+	ProactiveConversation bool
+	OutstandingFollowUps  string
+	ChatType              string
+	ConversationTitle     string
+	SenderName            string
+	Message               string
+	AgentID               pgtype.UUID
+	UserID                pgtype.UUID
+	AgentName             string
+	Instructions          string
+	Persona               string
+	ReplyTone             string
+	Skills                []SkillSnapshot
+	Busy                  bool
+	HistoryBefore         time.Time
+	MessageTimestamp      time.Time
+	HistoryStatus         string
+	HistoryError          string
+	SkillsStatus          string
+	SceneMemoryStatus     string
+	TaskDeliveryContext   string
+	History               []HistoryLine
+	DingTalkHistory       []HistoryLine
+	IdentityNote          string
+	RelatedTasks          string
+	WorkspaceID           string
+	ConversationID        string
+	PersonID              string
+	DWSUID                string
+	DWSOrgID              string
+	EvidenceID            string
+	Kind                  string
+	TraceID               string
+	IssueDispatchContext  []byte
+	SceneMemory           string
+	SceneMemoryRevision   int64
 	// SceneTitle is the conversation title Scene Memory recorded for this
 	// scene (the DM peer's name or the group title). Channel turns often
 	// carry only a sender id, so it is the human-readable conversation name
@@ -372,10 +374,10 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		}
 		return Decision{Action: ActionSilence}
 	}
-	if turn.Source != SourceWeb && !turn.Addressed && strings.EqualFold(turn.ChatType, "group") {
+	if turn.Source != SourceWeb && !turn.Addressed && !turn.ProactiveConversation && strings.EqualFold(turn.ChatType, "group") {
 		return Decision{Action: ActionSilence}
 	}
-	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
+	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && !turn.ProactiveConversation && AllWindowAck(turn) {
 		return hostSilence(turn, "window_ack")
 	}
 	if turn.Loop == LoopTaskFinished && turn.AlreadyToldScene {
@@ -386,7 +388,7 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
-	if turn.Loop != LoopTaskFinished && c.coordinatorOff(ctx, turn) {
+	if turn.Loop != LoopTaskFinished && !turn.ProactiveConversation && c.coordinatorOff(ctx, turn) {
 		slog.Info("inbound coordinator skipped; agent switch off",
 			append(coordinatorLogIndex(turn),
 				"event", "inbound_coordinator_decided",

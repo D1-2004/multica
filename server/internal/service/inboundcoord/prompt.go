@@ -36,6 +36,7 @@ func buildUserPrompt(turn Turn) string {
 		loop = LoopInbound
 	}
 	fmt.Fprintf(&b, "source: %s\nloop: %s\naddressed: %t\n", turn.Source, loop, turn.Addressed)
+	fmt.Fprintf(&b, "proactive_conversation: %t\n", turn.ProactiveConversation)
 	writePromptField(&b, "chat_type", turn.ChatType)
 	writePromptField(&b, "conversation_id", turn.ConversationID)
 	writePromptField(&b, "person_id", turn.PersonID)
@@ -54,6 +55,7 @@ func buildUserPrompt(turn Turn) string {
 		b.WriteByte('\n')
 	}
 	if loop == LoopTaskFinished {
+		writePromptField(&b, "outstanding_follow_ups (accepted requests, not handled by this finished task)", turn.OutstandingFollowUps)
 		writePromptField(&b, "issue_id", turn.IssueID)
 		if result := strings.TrimSpace(turn.TaskResult); result != "" {
 			fmt.Fprintf(&b, "task_result_status: loaded; truncated=%t\n", utf8.RuneCountInString(result) > 800)

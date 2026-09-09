@@ -546,6 +546,9 @@ func main() {
 	if h.DingTalkResponses != nil {
 		go h.DingTalkResponses.Run(sweepCtx)
 	}
+	if h.IssueCommentService != nil {
+		go h.IssueCommentService.RunCoordinatorFollowUps(sweepCtx)
+	}
 	if h.EventTriggers != nil {
 		go h.EventTriggers.Run(sweepCtx)
 	}

@@ -178,3 +178,11 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
   toggle rendered by `tabs/digital-employee-tab.tsx`; identity binding controls are unchanged.
 - Read-only verification: `multica agent get <id> --output json`,
   `multica autopilot runs <id> --output json`, and `GET /api/agents/{id}/event-batches`.
+
+## Proactive conversation admission
+
+- `server/internal/service/event_trigger.go`: toggle dependency and legacy-only draining.
+- `server/internal/handler/agent_event_trigger.go`, `proactive_conversation.go`: observed messages enter Coordinator; durable dedup covers the former inbox.
+- `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
+- `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
+- Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.

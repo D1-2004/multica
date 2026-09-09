@@ -340,37 +340,24 @@ State-changing (require an explicit instruction — do not run speculatively):
 `file:line` on the current tree, the runtime effect, and a safe read-only
 verification command.
 
-## Agent event triggers
+## Proactive conversations
 
-`agent update <id> --event-trigger-enabled[=false]` changes the default-off
-Agent event-trigger setting, also available under Digital Employee → Conversation
-& follow-up in Agent configuration. It does not change digital-employee bindings or
-subscription scope. The first adapter is observed DingTalk group messages.
-Changes synchronize to Router within about five seconds when Router is available;
-failed syncs retry automatically. Message receipt is not task completion.
+`agent update <id> --event-trigger-enabled[=false]` controls the default-off
+“Proactively process all new conversation messages” setting under Digital Employee,
+immediately below inbound judging. Enabling it enables inbound judging atomically;
+disabling inbound judging disables proactive processing. Existing bindings and
+subscription scopes are unchanged. Router synchronization normally takes up to five
+seconds plus request latency.
 
-The deterministic scheduler collects for 4 seconds of quiet, at most 12 seconds
-from the first pending event, and starts tasks at least 30 seconds apart for the
-same source/conversation. These are dispatch eligibility times, not a model reply
-SLA. A busy conversation keeps its next batch pending until the current task
-finishes. Each batch contains at most 100 events; overflow remains pending.
+Observed group messages use the normal durable Coordinator window (4 seconds quiet,
+12 seconds maximum collection, at most 100 messages). No Autopilot is created, and
+there is no extra 30-second task interval or wait for the sandbox to finish before
+judging new messages. Configure the employee's behavior through Agent instructions.
+Unmentioned messages reach the same Coordinator to decide reply, silence or Issue work.
+Authorized additions to a busy Issue are durably queued and combined for its next run.
+Read decisions in Coordinator conversations and execution in the associated Issues.
+Legacy event Autopilots are retained as history and only drain previously admitted work.
 
-Execution reuses a platform-managed `run_only` Autopilot. Its runs remain readable
-through `autopilot runs`, but direct editing, deletion, manual triggering or adding
-schedule/webhook triggers is rejected. Configure behavior through Agent instructions
-and skills; configure admission through the Agent toggle. No coordinator, issue,
-VIP classifier, or business-specific alert rule is added by this mechanism.
-
-The inbox persists admitted content and message IDs before acknowledging delivery.
-Duplicates do not move deadlines. Only successful tasks consume their frozen batch.
-Failed tasks retain the same batch/run and retry up to three scheduler attempts;
-cancellation or exhausted attempts pauses that conversation, retaining its events.
-Operators can inspect `GET /api/agents/{id}/event-batches` and explicitly retry with
-`POST /api/agents/{id}/event-batches/{batchId}/retry` after fixing the cause and enabling
-the Agent setting. Workspace and Agent management permissions apply.
-
-Disabling stops new admission/dispatch, preserves pending events, and allows an
-already-started task to finish. Re-enabling resumes pending work. Consumed inbox
-payloads are cleared after seven days; deduplication IDs and normal Autopilot/task
-execution history remain. Pending/failed content remains until handled or workspace
-deletion. This is not a general chat-history archive.
+The task-finished follow-up setting still controls automatic completion reports.
+Configuration and implementation map to `event_trigger.go`, `agent_event_trigger.go`,
+`proactive_conversation.go`, `inbound_coordinator_job.go`, and `coordinator_follow_up.go`.

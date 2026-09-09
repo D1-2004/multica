@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-08.2",
+  "policy_version": "2026-09-09.1",
   "assembly_version": "1",
   "modules": [
     {
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "4",
+      "version": "5",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -58,8 +58,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 4278,
-      "content_sha256": "2436da17e6adcab376ef8597f6a279823cd16eab588c89997812b83fb78c8773"
+      "budget_characters": 4500,
+      "content_sha256": "cafa483447308e547cf0208fa866a8f8dd82c38e4a7605e21b30f019fa281617"
     },
     {
       "id": "channel",
@@ -94,7 +94,7 @@
     },
     {
       "id": "group",
-      "version": "1",
+      "version": "2",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -108,8 +108,8 @@
         "COORD.F06",
         "COORD.F14"
       ],
-      "budget_characters": 764,
-      "content_sha256": "730109173ba49c5d3b25891aa56b40726c53db5f193ba7b2fc48531cfda2355e"
+      "budget_characters": 722,
+      "content_sha256": "ad393c5fe6be9c6107ad212020f182c482d05b20ed1fff93d04c0a385d97514e"
     },
     {
       "id": "window",
@@ -203,7 +203,7 @@
     },
     {
       "id": "completion",
-      "version": "1",
+      "version": "2",
       "file": "completion.md",
       "applies_when": "task_finished",
       "requires": [
@@ -215,8 +215,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 938,
-      "content_sha256": "3ae6e7db28656645958712eb8d13b99d1134af5902ca15662a51a95b313e3fe6"
+      "budget_characters": 1563,
+      "content_sha256": "1605880ac4b7869c7809e7cb8d1b4469b9aadd260dc40c6cd6fea462da9ef11b"
     }
   ],
   "obligations": [
@@ -234,7 +234,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f01_contrast"
+        "f01_contrast",
+        "proactive_group_contrast"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -266,7 +267,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f02_contrast"
+        "f02_contrast",
+        "proactive_group_contrast"
       ],
       "verification": {
         "source_mapping": "mapped",

@@ -39,6 +39,9 @@ func coordinatorCollectKind(command DispatchCommand) string {
 	if id := strings.TrimSpace(command.TaskFinishedTaskID); id != "" {
 		return "task_finished:" + id
 	}
+	if command.ProactiveConversation {
+		return "proactive"
+	}
 	if commandIsWindowAck(command) {
 		return "ack"
 	}
@@ -48,6 +51,9 @@ func coordinatorCollectKind(command DispatchCommand) string {
 // sameCoordinatorCollectKind is false when one side is thanks/OK and the
 // other is a real ask, or when wrap-up would merge with inbound work.
 func sameCoordinatorCollectKind(base, extra DispatchCommand) bool {
+	if base.ProactiveConversation != extra.ProactiveConversation || (base.ProactiveConversation && len(base.Event.Data.Messages)+len(extra.Event.Data.Messages) > 100) {
+		return false
+	}
 	if !sameDingTalkResponsePolicy(base.ResponsePolicy, extra.ResponsePolicy) {
 		return false
 	}
@@ -66,6 +72,7 @@ func mergeDispatchCommands(base, extra DispatchCommand) DispatchCommand {
 	if len(extra.Event.Data.Messages) == 0 {
 		return base
 	}
+	base.Event.Data.Mentions = append(base.Event.Data.Mentions, extra.Event.Data.Mentions...)
 	base.Event.Data.Messages = append(append([]DispatchMessage{}, base.Event.Data.Messages...), extra.Event.Data.Messages...)
 	return base
 }

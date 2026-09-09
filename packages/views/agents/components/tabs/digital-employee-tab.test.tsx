@@ -95,12 +95,13 @@ describe("DigitalEmployeeTab", () => {
       />,
     );
 
-    const toggle = screen.getByRole("switch", { name: "Event trigger" });
+    const toggle = screen.getByRole("switch", { name: "Proactively process all new conversation messages" });
     expect(toggle).not.toBeChecked();
     fireEvent.click(toggle);
     await waitFor(() =>
       expect(onUpdate).toHaveBeenCalledWith("agent-1", {
         event_trigger_enabled: true,
+        inbound_coordinator: true,
       }),
     );
   });
@@ -201,7 +202,7 @@ describe("DigitalEmployeeTab", () => {
     expect(
       screen.getByRole("region", { name: /Enterprise digital employee/i }),
     ).toHaveAttribute("data-can-operate", "false");
-    expect(screen.getByRole("switch", { name: "Event trigger" })).toHaveAttribute(
+    expect(screen.getByRole("switch", { name: "Proactively process all new conversation messages" })).toHaveAttribute(
       "aria-disabled",
       "true",
     );

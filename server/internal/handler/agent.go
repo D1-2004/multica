@@ -2439,12 +2439,22 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Disabling inbound judging also disables proactive processing. Conflicting
+	// fields fail closed; enabling proactive processing enables judging in one transaction.
+	if req.EventTriggerEnabled != nil && req.InboundCoordinator != nil && !*req.InboundCoordinator {
+		disabled := false
+		req.EventTriggerEnabled = &disabled
+	}
+	if req.EventTriggerEnabled != nil && *req.EventTriggerEnabled {
+		enabled := true
+		req.InboundCoordinator = &enabled
+	}
 	if req.EventTriggerEnabled != nil {
 		if h.EventTriggers == nil {
 			writeError(w, http.StatusServiceUnavailable, "event triggers are unavailable")
 			return
 		}
-		if err := h.EventTriggers.SetEnabled(r.Context(), updated, parseUUID(requestUserID(r)), *req.EventTriggerEnabled); err != nil {
+		if err := h.EventTriggers.SetEnabledAndInbound(r.Context(), updated, parseUUID(requestUserID(r)), *req.EventTriggerEnabled, req.InboundCoordinator); err != nil {
 			slog.Error("update event trigger failed", "agent_id", id, "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to update event trigger")
 			return

@@ -190,6 +190,17 @@
       "context_b": "真实IM因权限阻塞",
       "expected_effects": "前者只证明来源结构；后者仍BLOCKED不能报PASS",
       "verification": "not_run"
+    },
+    {
+      "id": "proactive_group_contrast",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F02"
+      ],
+      "context_a": "主动处理开启，群内无人 @ 但有本岗位可处理的问题，执行中同一事项又收到两条补充",
+      "context_b": "主动处理关闭的无 @ 群聊；主动处理开启但群友闲聊且无需员工介入",
+      "expected_effects": "开启后由同一个 Coordinator 语义判断，关闭保持原静默；有授权的补充持久化到原 Issue 后消费完成，新窗口不等执行；无关讨论可以静默",
+      "verification": "host_tests_passed; live_delivery_pending"
     }
   ]
 }

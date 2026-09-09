@@ -97,7 +97,7 @@ func TestEventTriggerDefaultOffDedupAndConcurrentDispatch(t *testing.T) {
 	if n := eventCount(t, s, `SELECT count(*) FROM agent_event_stream WHERE agent_id=$1`, a.ID); n != 0 {
 		t.Fatal("disabled event persisted")
 	}
-	if err := s.SetEnabled(ctx, a, a.OwnerID, true); err != nil {
+	if err := enableLegacyEventFixture(t, s, a); err != nil {
 		t.Fatal(err)
 	}
 	admitEvent(t, s, a, "one")
@@ -151,8 +151,7 @@ func TestEventTriggerDefaultOffDedupAndConcurrentDispatch(t *testing.T) {
 
 func TestEventTriggerFrozenBatchNewArrivalsAndRestart(t *testing.T) {
 	s, a := eventFixture(t)
-	ctx := context.Background()
-	if err := s.SetEnabled(ctx, a, a.OwnerID, true); err != nil {
+	if err := enableLegacyEventFixture(t, s, a); err != nil {
 		t.Fatal(err)
 	}
 	admitEvent(t, s, a, "first")
@@ -184,7 +183,7 @@ func TestEventTriggerFrozenBatchNewArrivalsAndRestart(t *testing.T) {
 func TestEventTriggerFailureRetainsBatchAndDisabledStopsDispatch(t *testing.T) {
 	s, a := eventFixture(t)
 	ctx := context.Background()
-	if err := s.SetEnabled(ctx, a, a.OwnerID, true); err != nil {
+	if err := enableLegacyEventFixture(t, s, a); err != nil {
 		t.Fatal(err)
 	}
 	admitEvent(t, s, a, "failure")
@@ -205,7 +204,7 @@ func TestEventTriggerFailureRetainsBatchAndDisabledStopsDispatch(t *testing.T) {
 	if n := eventCount(t, s, `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1`, a.ID); n != 1 {
 		t.Fatal("disabled retry dispatched")
 	}
-	if err := s.SetEnabled(ctx, a, a.OwnerID, true); err != nil {
+	if err := enableLegacyEventFixture(t, s, a); err != nil {
 		t.Fatal(err)
 	}
 	makeEventDue(t, s, a)
@@ -221,7 +220,7 @@ func TestEventTriggerFailureRetainsBatchAndDisabledStopsDispatch(t *testing.T) {
 func TestEventTriggerBoundedBatchPreservesOverflow(t *testing.T) {
 	s, a := eventFixture(t)
 	ctx := context.Background()
-	if err := s.SetEnabled(ctx, a, a.OwnerID, true); err != nil {
+	if err := enableLegacyEventFixture(t, s, a); err != nil {
 		t.Fatal(err)
 	}
 	var input []ObservedEvent
@@ -241,7 +240,7 @@ func TestEventTriggerBoundedBatchPreservesOverflow(t *testing.T) {
 func TestEventTriggerSQLDeadlines(t *testing.T) {
 	s, a := eventFixture(t)
 	ctx := context.Background()
-	if err := s.SetEnabled(ctx, a, a.OwnerID, true); err != nil {
+	if err := enableLegacyEventFixture(t, s, a); err != nil {
 		t.Fatal(err)
 	}
 	admitEvent(t, s, a, "initial")
@@ -268,4 +267,14 @@ func TestEventTriggerSQLDeadlines(t *testing.T) {
 	if seconds != EventMinInterval.Seconds() {
 		t.Fatalf("minimum dispatch interval=%f", seconds)
 	}
+}
+
+func enableLegacyEventFixture(t *testing.T, s *EventTriggerService, a db.Agent) error {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.SetEnabled(ctx, a, a.OwnerID, true); err != nil {
+		return err
+	}
+	_, err := s.Pool.Exec(ctx, `WITH ap AS (INSERT INTO autopilot(workspace_id,title,description,assignee_type,assignee_id,status,execution_mode,created_by_type,created_by_id) SELECT $1,'Legacy event fixture','legacy','agent',$2,'active','run_only','member',$3 WHERE NOT EXISTS(SELECT 1 FROM agent_event_trigger WHERE agent_id=$2 AND autopilot_id IS NOT NULL) RETURNING id) UPDATE agent_event_trigger SET delivery_mode='legacy',autopilot_id=COALESCE((SELECT id FROM ap),autopilot_id) WHERE agent_id=$2`, a.WorkspaceID, a.ID, a.OwnerID)
+	return err
 }
