@@ -485,9 +485,10 @@ fi
 
 stop_existing_processes
 
-# Database migrations are an independent release phase. Never execute schema
-# changes from application startup or replica restarts.
-echo "[multica][runtime] database migrations are managed by the release phase"
+# The Aone release order owns this automatic pre-start migration step.
+echo "[multica][runtime] running migrations"
+"$APP_ROOT/bin/migrate" up
+echo "[multica][runtime] migrations completed"
 
 start_processes
 if ! wait_for_startup; then
