@@ -316,7 +316,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 					return Decision{}, fmt.Errorf("continue_work requires answer/change/retry basis")
 				}
 				if a.Basis == "answer" && turn.HistoryStatus != "loaded" {
-					return Decision{}, hintErr("original question evidence is required", "Read context_read(kind=history) before interpreting a short answer. If unavailable, clarify.")
+					return Decision{}, hintErr("original question evidence is required", "First check whether this is actually an answer to your pending question. Greetings, status checks, reminders to keep doing accepted work, and requests to other people do not authorize continue_work: use acknowledge/report_status/ignore as appropriate. For a genuine answer only, read context_read(kind=history); do not repeat empty reads or invent a question.")
 				}
 				if continued[a.IssueID] {
 					return Decision{}, fmt.Errorf("combine all continuation refs for one Issue into one action")

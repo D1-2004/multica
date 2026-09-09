@@ -306,8 +306,8 @@
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
         "closed_actions_live_delivery": "not_run",
-        "group_recipient_host_tests": "pending",
-        "group_recipient_model_replay": "pending",
+        "group_recipient_host_tests": "passed",
+        "group_recipient_model_replay": "12 contrast cases passed on qwen3.7-plus; synthetic read-only fixtures; one targeted repair-hint rerun",
         "group_recipient_live_delivery": "pending"
       },
       "implementation_refs": [
