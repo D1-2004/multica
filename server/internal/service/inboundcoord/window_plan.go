@@ -346,6 +346,13 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 			item.IssueID = a.IssueID
 			item.Basis = basis
 			item.Content = strings.Join(content, "\n\n")
+			if a.Kind == "continue_work" {
+				history, err := continuationHistoryHandoff(turn)
+				if err != nil {
+					return Decision{}, err
+				}
+				item.Content += history
+			}
 			item.ActionKey = fmt.Sprintf("item-%d", len(d.Items)+1)
 			d.Items = append(d.Items, item)
 		}

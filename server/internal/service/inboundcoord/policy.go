@@ -120,9 +120,10 @@ func selectedPolicyModules(turn Turn, recalled bool) []policyModule {
 	finished := turn.Loop == LoopTaskFinished
 	selected := map[string]bool{"core": true}
 	if turn.Loop == LoopFinishCheck {
-		if turn.FinishCheckAction == ActionIssue {
+		if turn.FinishCheckAction == ActionIssue || turn.FinishCheckMixedActions {
 			selected["finish_check_work"] = true
-		} else {
+		}
+		if turn.FinishCheckAction != ActionIssue || turn.FinishCheckMixedActions {
 			selected["finish_check"] = true
 		}
 	} else if finished {

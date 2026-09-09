@@ -79,6 +79,7 @@ const (
 type Turn struct {
 	Loop                       Loop
 	FinishCheckAction          Action
+	FinishCheckMixedActions    bool
 	Source                     Source
 	Addressed                  bool
 	ChatType                   string

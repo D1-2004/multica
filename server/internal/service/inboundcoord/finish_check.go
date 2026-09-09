@@ -170,9 +170,14 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 			"sender": utterance.Sender, "sender_id": utterance.SenderID, "evidence_id": utterance.EvidenceID,
 			"timestamp": utterance.Timestamp, "quoted_context": utterance.ReplyToContent})
 	}
+	workRefs := finishWorkActionRefs(decision)
+	mixedActions := len(workRefs) > 0 && len(workRefs) < len(decision.CoordinationActions)
 	mode := "conversation_result"
 	if decision.Action == ActionIssue {
 		mode = "work_plan_authorization"
+	}
+	if mixedActions {
+		mode = "mixed_coordination_actions"
 	}
 	// Put the exact proposal after the long background policy. Use the same
 	// lower-case work fields the routing schema exposes, rather than Go names.
@@ -184,7 +189,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	if err != nil {
 		return finishCheckResult{}, fmt.Errorf("encode finish proposal: %w", err)
 	}
-	reviewTurn := Turn{Loop: LoopFinishCheck, FinishCheckAction: decision.Action}
+	reviewTurn := Turn{Loop: LoopFinishCheck, FinishCheckAction: decision.Action, FinishCheckMixedActions: mixedActions}
 	system := buildSystemPrompt(reviewTurn)
 	key := policyHash(system + "\n" + string(body) + "\n" + string(proposal))
 	if cached, ok := cache[key]; ok {
@@ -196,7 +201,10 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	defer cancel()
 	lt := langfuse.TraceFromContext(ctx)
 	manifest := policyManifest(reviewTurn)
-	workRefs := finishWorkActionRefs(decision)
+	reviewTool := finishCheckTool(decision.Action, quotes, workRefs...)
+	if mixedActions {
+		reviewTool.OfFunction.Function.Description = openai.String("Review every candidate action using its corresponding policy: apply finish_check to non-work responses and finish_check_work to planned work. Require both evidence-backed responses and authorized work scope; future work outputs need not exist yet. Return one verdict for the full mixed proposal.")
+	}
 	// A malformed review is a repairable model protocol error. Retry it once
 	// in the same isolated context and existing deadline, without rerouting or
 	// changing the proposal. Transport failures still fail closed immediately.
@@ -213,7 +221,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 				Metadata: map[string]any{"finish_check_policy_version": manifest.PolicyVersion, "finish_check_prompt_hash": manifest.PromptHash, "finish_check_modules": manifest.Modules, "job_policy_sha256": policy["sha256"], "job_policy_kind": policy["kind"], "coordinator_contract": coordinatorContractMetadata(turn), "protocol_attempt": attempt + 1},
 			})
 		}
-		completion, callErr := c.completeWithLimit(checkCtx, checkMessages, []openai.ChatCompletionToolUnionParam{finishCheckTool(decision.Action, quotes, workRefs...)}, 768, 0)
+		completion, callErr := c.completeWithLimit(checkCtx, checkMessages, []openai.ChatCompletionToolUnionParam{reviewTool}, 768, 0)
 		endRoundGeneration(generation, completion, callErr)
 		if callErr != nil {
 			record(finishCheckResult{}, false, callErr)

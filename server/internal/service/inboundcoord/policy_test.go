@@ -234,3 +234,19 @@ func TestPolicyTerminalReviewModesDoNotMix(t *testing.T) {
 		})
 	}
 }
+
+func TestPolicyMixedTerminalReviewLoadsBothCanonicalModules(t *testing.T) {
+	turn := Turn{Loop: LoopFinishCheck, FinishCheckAction: ActionIssue, FinishCheckMixedActions: true}
+	for _, recalled := range []bool{false, true} {
+		ids := policyModuleIDs(turn, recalled)
+		if len(ids) != 3 || !ids["core"] || !ids["finish_check"] || !ids["finish_check_work"] {
+			t.Fatalf("mixed review must include both existing rule scopes exactly once: %v", ids)
+		}
+		prompt := buildSystemPromptForStage(turn, recalled)
+		for _, id := range []string{"core", "finish_check", "finish_check_work"} {
+			if strings.Count(prompt, "[policy:"+id+"@") != 1 {
+				t.Fatalf("module %s is missing or repeated", id)
+			}
+		}
+	}
+}

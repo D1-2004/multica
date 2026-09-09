@@ -616,3 +616,53 @@ func TestValidateFinishQuotesStillRejectsFabricatedSourceText(t *testing.T) {
 		}
 	}
 }
+
+func TestFinishCheckMixedActionsReviewBothScopesOnce(t *testing.T) {
+	const instructions = "MIXED_REVIEW_POLICY_SENTINEL: Only draft until approved."
+	for _, workKind := range []string{"start_work", "continue_work"} {
+		t.Run(workKind, func(t *testing.T) {
+			turn := Turn{Source: SourceDigitalEmployee, Message: "之前的查询完成了吗？另外起草周五例会通知。", Instructions: instructions}
+			candidate := Decision{Action: ActionIssue, UserText: "查询任务仍在进行。\n我来起草通知。", CoordinationActions: []CoordinationAction{
+				{Kind: "report_status", SourceRefs: []string{"u1"}, StateRefs: []string{"r1"}, Reply: "查询任务仍在进行。"},
+				{Kind: workKind, SourceRefs: []string{"u1"}, Purpose: "起草周五下午三点会议通知正文", Intent: "other", Reply: "我来起草通知。"},
+			}, Items: []WindowItem{{Purpose: "起草周五下午三点会议通知正文", Intent: "other", SourceRefs: []string{"u1"}}}}
+			chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "Both the progress reply and authorized draft are reviewed.")}}
+			if _, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil); err != nil {
+				t.Fatal(err)
+			}
+			if chat.checkCalls != 1 || len(chat.checkParams) != 1 {
+				t.Fatalf("mixed actions must share one independent review: calls=%d", chat.checkCalls)
+			}
+			tool := chat.checkParams[0].Tools[0].GetFunction()
+			if tool == nil || !strings.Contains(tool.Description.Value, "finish_check to non-work") || !strings.Contains(tool.Description.Value, "finish_check_work to planned work") {
+				t.Fatal("mixed review retained a work-only tool contract")
+			}
+			raw, _ := json.Marshal(chat.checkParams[0].Messages)
+			var messages []struct{ Role, Content string }
+			if err := json.Unmarshal(raw, &messages); err != nil {
+				t.Fatal(err)
+			}
+			if len(messages) != 3 {
+				t.Fatalf("mixed review must retain one system, one background and one proposal: messages=%d", len(messages))
+			}
+			for _, module := range []string{"core", "finish_check", "finish_check_work"} {
+				if strings.Count(messages[0].Content, "[policy:"+module+"@") != 1 {
+					t.Fatalf("actual mixed review lacks exactly one %s module", module)
+				}
+			}
+			if strings.Count(string(raw), "MIXED_REVIEW_POLICY_SENTINEL") != 1 {
+				t.Fatal("mixed review duplicated or omitted the full working policy")
+			}
+			var proposal struct {
+				Mode      string                                 `json:"review_mode"`
+				Candidate struct{ Actions []CoordinationAction } `json:"candidate"`
+			}
+			if err := json.Unmarshal([]byte(messages[2].Content), &proposal); err != nil {
+				t.Fatal(err)
+			}
+			if proposal.Mode != "mixed_coordination_actions" || len(proposal.Candidate.Actions) != 2 {
+				t.Fatal("mixed review lost an action or retained a work-only mode")
+			}
+		})
+	}
+}
