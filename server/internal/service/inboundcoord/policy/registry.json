@@ -1,6 +1,6 @@
 {
   "policy_version": "2026-09-09.6",
-  "assembly_version": "7",
+  "assembly_version": "8",
   "modules": [
     {
       "id": "core",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "16",
+      "version": "17",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -61,7 +61,7 @@
         "COORD.F03"
       ],
       "budget_characters": 2468,
-      "content_sha256": "833b18b9c78bb180ba2c454253beb0e5dbaac3a0dbd0dee2b529df033b49006e"
+      "content_sha256": "8e8cbdabc38632ef02a2275396cfbb01b200677d8443ba047ecc268213d19b1a"
     },
     {
       "id": "channel",
@@ -149,7 +149,7 @@
     },
     {
       "id": "skills",
-      "version": "6",
+      "version": "7",
       "file": "skills.md",
       "applies_when": "skill_snapshots_available",
       "requires": [
@@ -162,7 +162,7 @@
         "COORD.F14"
       ],
       "budget_characters": 500,
-      "content_sha256": "028b2fc3f574bbfb2f695871fbb034f923981bf4468da4c2b4f59fb536a18d6e"
+      "content_sha256": "efc896d4671aa5d511255f892d373a4dca3e3867b9fbb5c8cd7212fc746e6569"
     },
     {
       "id": "dialogue",
@@ -222,7 +222,7 @@
     },
     {
       "id": "finish_check",
-      "version": "14",
+      "version": "15",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -245,7 +245,7 @@
         "COORD.F19"
       ],
       "budget_characters": 2122,
-      "content_sha256": "8382e8350b1d2ebd32fc230c033ea1d1753911a274598029a514df06f9c433b4"
+      "content_sha256": "f464ef2165c03d7a2d0135d6e075782c186c265d6c671365f7fa139ef2b982c5"
     },
     {
       "id": "finish_check_work",
@@ -351,7 +351,8 @@
         "f03_requested_log_status_vs_old_skills",
         "f05_pending_answer_vs_report_redelivery",
         "f07_explicit_reference_controls_current_work",
-        "f07_output_instance_anchor_vs_fresh_lookup"
+        "f07_output_instance_anchor_vs_fresh_lookup",
+        "f16_coordination_state_is_not_question_history"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -398,7 +399,7 @@
     {
       "id": "COORD.F03",
       "family": "F03",
-      "obligation": "稳定事实、对话、工作与送达分别由对应来源证明；未加载、失败、过期、截断不是空结果；承诺不是完成。 任务状态/数量答复须针对当前明确目标及真实范围，无关任务清单或局部结果不能代答。",
+      "obligation": "稳定事实、对话、工作与送达分别由对应来源证明；未加载、失败、过期、截断不是空结果；承诺不是完成。 任务状态/数量答复须针对当前明确目标及真实范围，无关任务清单或局部结果不能代答。 Issue流程状态、latest_execution、外部送达分别取证；最近协调拆分用该窗口持久化计划/回执计数，不数关联事项，未知不填0。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -425,7 +426,11 @@
         "f03_requested_log_status_vs_old_skills",
         "f03_requested_count_vs_partial_inventory",
         "f06_job_object_evidence_vs_old_work_clarification",
-        "f04_role_material_vs_coordination_record"
+        "f04_role_material_vs_coordination_record",
+        "f03_issue_state_vs_latest_execution",
+        "f04_declared_skill_synopsis_vs_managed_marker",
+        "f03_recent_coordination_counts_vs_association_count",
+        "f08_coordination_state_anchor_isolation"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -462,7 +467,10 @@
         "server/internal/service/inboundcoord/scene_prefetch.go",
         "server/internal/service/inboundcoord/loop.go",
         "server/internal/service/inboundcoord/policy/inbound.md",
-        "server/internal/service/inboundcoord/window_plan.go"
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/recent_coordination_state.go",
+        "server/pkg/db/queries/coordinator_work_state.sql",
+        "server/pkg/db/queries/coordinator_recent_state.sql"
       ],
       "case_file": "cases.json"
     },
@@ -489,7 +497,8 @@
         "f04_light_coordination_vs_business_execution",
         "f06_job_object_evidence_vs_old_work_clarification",
         "f04_role_material_vs_coordination_record",
-        "f06_delegated_sample_choices"
+        "f06_delegated_sample_choices",
+        "f04_declared_skill_synopsis_vs_managed_marker"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -514,7 +523,10 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/window_plan.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/skill_catalog_description.go",
+        "server/internal/service/inboundcoord/coordinator.go",
+        "server/pkg/db/queries/skill.sql"
       ],
       "case_file": "cases.json"
     },
@@ -538,7 +550,8 @@
         "f03_requested_log_status_vs_old_skills",
         "f05_pending_answer_vs_report_redelivery",
         "f04_light_coordination_vs_business_execution",
-        "f07_output_instance_anchor_vs_fresh_lookup"
+        "f07_output_instance_anchor_vs_fresh_lookup",
+        "f03_issue_state_vs_latest_execution"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -602,7 +615,8 @@
         "f16_review_work_checks_excludes_clarify",
         "f06_job_object_evidence_vs_old_work_clarification",
         "f04_role_material_vs_coordination_record",
-        "f06_delegated_sample_choices"
+        "f06_delegated_sample_choices",
+        "f16_coordination_state_is_not_question_history"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -716,7 +730,9 @@
         "f08_contrast",
         "f16_bounded_coordination_reads",
         "f08_host_prefetch_keeps_requested_scope",
-        "f03_requested_count_vs_partial_inventory"
+        "f03_requested_count_vs_partial_inventory",
+        "f03_recent_coordination_counts_vs_association_count",
+        "f08_coordination_state_anchor_isolation"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -742,7 +758,9 @@
         "server/internal/service/inboundcoord/scene_prefetch.go",
         "server/internal/service/inboundcoord/loop.go",
         "server/internal/service/inboundcoord/window_plan.go",
-        "server/internal/service/inboundcoord/finish_check.go"
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/recent_coordination_state.go",
+        "server/pkg/db/queries/coordinator_recent_state.sql"
       ],
       "case_file": "cases.json"
     },
@@ -899,7 +917,7 @@
     {
       "id": "COORD.F13",
       "family": "F13",
-      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。 工作intent可省略为other；仅answer/change/retry误填intent时窄规范化为other，不更改basis。已注册有限kind误作tool只归一到同一finish候选并继续校验当前循环；该恢复路径中的source_refs合法JSON数组字符串只解一层；全部授权及answer证据门槛仍在。",
+      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。 工作intent可省略为other；仅answer/change/retry误填intent时窄规范化为other，不更改basis。已注册有限kind误作tool只归一到同一finish候选并继续校验当前循环；该恢复路径中的source_refs合法JSON数组字符串只解一层；全部授权及answer证据门槛仍在。 coordination_state仅为Host锚定的前序窗口证据，不满足history原问题门槛。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -926,7 +944,10 @@
         "f13_optional_intent_vs_continuation_basis",
         "f13_registered_action_tool_recovery",
         "f13_single_encoded_source_refs",
-        "f16_review_work_checks_excludes_clarify"
+        "f16_review_work_checks_excludes_clarify",
+        "f03_issue_state_vs_latest_execution",
+        "f03_recent_coordination_counts_vs_association_count",
+        "f16_coordination_state_is_not_question_history"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -964,7 +985,9 @@
         "server/internal/service/inboundcoord/finish_quote.go",
         "server/internal/assoc/purpose.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
-        "server/internal/service/inboundcoord/terminal_call_recovery.go"
+        "server/internal/service/inboundcoord/terminal_call_recovery.go",
+        "server/internal/service/inboundcoord/recent_coordination_state.go",
+        "server/internal/service/inboundcoord/progressive_context.go"
       ],
       "case_file": "cases.json"
     },
@@ -1029,7 +1052,8 @@
         "f15_decline_quoted_boundary",
         "f06_job_object_evidence_vs_old_work_clarification",
         "f04_role_material_vs_coordination_record",
-        "f06_delegated_sample_choices"
+        "f06_delegated_sample_choices",
+        "f04_declared_skill_synopsis_vs_managed_marker"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1050,7 +1074,8 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/coordinatorcontract/contract.go",
-        "server/internal/handler/agent.go"
+        "server/internal/handler/agent.go",
+        "server/internal/service/inboundcoord/skill_catalog_description.go"
       ],
       "case_file": "cases.json"
     },
@@ -1076,7 +1101,9 @@
         "f13_optional_intent_vs_continuation_basis",
         "f13_registered_action_tool_recovery",
         "f13_single_encoded_source_refs",
-        "f16_review_work_checks_excludes_clarify"
+        "f16_review_work_checks_excludes_clarify",
+        "f16_coordination_state_is_not_question_history",
+        "f08_coordination_state_anchor_isolation"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1111,7 +1138,8 @@
         "server/internal/service/inboundcoord/loop.go",
         "server/internal/service/inboundcoord/finish_quote.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
-        "server/internal/service/inboundcoord/terminal_call_recovery.go"
+        "server/internal/service/inboundcoord/terminal_call_recovery.go",
+        "server/internal/service/inboundcoord/recent_coordination_state.go"
       ],
       "case_file": "cases.json"
     },

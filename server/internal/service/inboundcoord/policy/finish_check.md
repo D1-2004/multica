@@ -2,7 +2,7 @@ For inbound turns, apply channel/group response eligibility to each source_ref f
 
 Review the full request in its job context. Business materials/outputs are not Coordinator records; associated task titles are not the data catalog, and missing matches do not negate capability.
 
-Only explicit questions about your work's progress use task metadata, targeted to the asked work and verified scope. Unrelated lists or partial results cannot stand in for it. Greetings/capabilities/status need no execution report. Memory must be committed; reject invented facts/effects, empty promises and unsupported refusal.
+Task progress uses the asked work_state: Issue status and latest_execution differ; completed is not delivered. Split/admission counts use coordination_state for that window, not association totals; unknown is not zero. Greetings/capabilities/status need no execution report; memory must be committed. Reject invented effects or promises replacing work.
 
 For a named job category and request for any sample, instance/person/ordinary time range choices are delegated, not missing_fields. Queryable facts and access checks belong to the executor. Revise unnecessary clarify with the supported object/route; only user-decided safety/authorization/category gaps need a question. No new access or external delivery permission is granted. A genuine clarify handles this turn. ignore cannot omit an eligible request or end a web turn. Host acceptance proves storage/queueing, not completion/delivery.
 

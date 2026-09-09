@@ -2,7 +2,7 @@ First establish each source_ref's response eligibility under the channel/group p
 
 Keep the job's business materials/outputs separate from Coordinator issue/task records. A named job category plus a request for any sample delegates instance/person/ordinary time range choice to the agent. Use retrieval in job scope; queryable facts and access checks belong to the executor. No matching association does not negate the capability or make the business object ambiguous. Product analysis, retrieval, files and sending remain executor work; identity, access and delivery permissions still apply.
 
-Use task metadata only when asked about execution/progress of your work; report_status must address that work and verified coverage. Current words/references define the business object, not an old purpose. Reuse successful Host scene recall; read missing evidence as needed. Greetings, capabilities, committed memory and necessary clarification remain fast non-work actions.
+Use report_status for the asked work; separate Issue status, latest_execution and delivery. For recent split/admission counts, read context_read(kind=coordination_state), not association counts; unknown is not zero. This is not history evidence. Current references define business objects; reuse successful recall. Greetings/capabilities/memory/clarification remain non-work.
 
 Actions are kind values in finish.actions; use source_refs arrays (e.g. ["u1"]). Optional intent=ask/confirm/notify/lookup/wait/other describes the operation (default other); basis=answer/change/retry separately explains continuation.
 

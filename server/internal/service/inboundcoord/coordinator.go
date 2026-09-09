@@ -233,7 +233,7 @@ type historyReader interface {
 	GetAgentCoordinatorContract(ctx context.Context, id pgtype.UUID) ([]byte, error)
 	GetAgentSceneMemoryFlags(ctx context.Context, id pgtype.UUID) (db.AgentSceneMemoryFlags, error)
 	GetAgentDingTalkIdentity(ctx context.Context, arg db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
-	ListEnabledAgentSkillCardMetadata(ctx context.Context, agentID pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error)
+	ListEnabledAgentSkillCardMetadata(ctx context.Context, params db.ListEnabledAgentSkillCardMetadataParams) ([]db.ListEnabledAgentSkillCardMetadataRow, error)
 }
 
 // SkillSnapshot is the Coordinator-facing catalog row for one enabled skill.
@@ -308,7 +308,7 @@ func (c *Coordinator) FillSkills(ctx context.Context, turn *Turn) {
 	if c == nil || c.Queries == nil || turn == nil || !turn.AgentID.Valid {
 		return
 	}
-	rows, err := c.Queries.ListEnabledAgentSkillCardMetadata(ctx, turn.AgentID)
+	rows, err := c.Queries.ListEnabledAgentSkillCardMetadata(ctx, db.ListEnabledAgentSkillCardMetadataParams{AgentID: turn.AgentID, IncludeFrontmatter: true})
 	if err != nil {
 		turn.SkillsStatus = "unavailable"
 		return
@@ -332,7 +332,7 @@ func skillSnapshotsFromRows(rows []db.ListEnabledAgentSkillCardMetadataRow) []Sk
 		}
 		out = append(out, SkillSnapshot{
 			Name:        name,
-			Description: strings.TrimSpace(row.Description),
+			Description: coordinatorSkillDescription(row.Description, row.ContentHead),
 		})
 	}
 	if len(out) == 0 {

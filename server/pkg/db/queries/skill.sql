@@ -95,12 +95,16 @@ WHERE ask.agent_id = $1 AND ask.enabled = TRUE
 ORDER BY s.name ASC;
 
 -- name: ListEnabledAgentSkillCardMetadata :many
--- Public Agent Cards need only stable identity and descriptive metadata. Do
--- not load SKILL.md content or configuration into the anonymous card path.
-SELECT s.id, s.name, s.description
+-- Anonymous Agent Cards leave include_frontmatter false. Coordinator may read
+-- a bounded header only when descriptive metadata is absent or a DTA marker.
+SELECT s.id, s.name, s.description,
+       CASE WHEN sqlc.arg('include_frontmatter')::boolean AND (
+           s.description ~ '^[[:space:]]*$' OR
+           s.description ~ '^[[:space:]]*Managed by dingtalk-agent( \([0-9A-Fa-f]{6,64}\))?[[:space:]]*$'
+       ) THEN LEFT(s.content, 4096) ELSE '' END::text AS content_head
 FROM skill s
 JOIN agent_skill ask ON ask.skill_id = s.id
-WHERE ask.agent_id = $1 AND ask.enabled = TRUE
+WHERE ask.agent_id = sqlc.arg('agent_id') AND ask.enabled = TRUE
 ORDER BY s.name ASC, s.id ASC;
 
 -- name: ListAgentSkillSummaries :many

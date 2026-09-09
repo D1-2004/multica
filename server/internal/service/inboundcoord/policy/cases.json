@@ -723,6 +723,77 @@
       "verification": "not_run",
       "evidence_status": "pending_reference",
       "evidence_note": "本轮真实消息恢复与用户明确要求的一般对照；运行证据由主线程回填。"
+    },
+    {
+      "id": "f03_issue_state_vs_latest_execution",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F05",
+        "COORD.F13"
+      ],
+      "context_a": "所问Issue仍in_review/todo，work_state.latest_execution是该Agent/Issue最近创建的completed执行。",
+      "context_b": "同一Issue最近执行未加载、查询失败或确认没有可见执行记录。",
+      "expected_effects": "A区分事项流程状态与最近执行结束，不推断业务全部完成/已送达；B按read_status保留unknown/not_found，不编造未执行或已送达。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f04_declared_skill_synopsis_vs_managed_marker",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F15"
+      ],
+      "context_a": "能力元信息为空或仅Managed by标记，但4096字符内有完整frontmatter及已声明description。",
+      "context_b": "前缀没有完整frontmatter描述，或元信息本来已有人类可读描述。",
+      "expected_effects": "A仅补已声明有界description帮助识别岗位业务对象，仍不读正文/SOP或授予权限；B保留原描述/未知状态，不编造未安装。材料取样交岗位技能，不能选旧Issue标题代替。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f03_recent_coordination_counts_vs_association_count",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F08",
+        "COORD.F13"
+      ],
+      "context_a": "用户问刚才拆了几项，最近匹配协调窗口合法持久化计划有2工作项、1项受理证据。",
+      "context_b": "同场景召回有多张其他历史事项，或最近窗口尚无合法计划/回执。",
+      "expected_effects": "A读取coordination_state按对应窗口回答计划/已确认工作数及阶段，不数历史关联卡片；B未知计数保留null，不能写0。计划/Host确认数都不是执行完成或送达数量。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f16_coordination_state_is_not_question_history",
+      "rule_ids": [
+        "COORD.F02",
+        "COORD.F06",
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "只有coordination_state的窗口摘要/计划回执，用户短答需要真实原问题才能解释。",
+      "context_b": "context_read(history)已取得对应原问题与说话人证据。",
+      "expected_effects": "A不满足basis=answer的history门槛，不把读状态摘要升级为对话授权；B再按真实待答问题及当前权限判断。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f08_coordination_state_anchor_isolation",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F08",
+        "COORD.F16"
+      ],
+      "context_a": "存在Host当前job锚，只查同workspace/Agent/endpoint/source/CID且创建时间更早的最近3个窗口。",
+      "context_b": "没有合法锚、不同来源/会话、DB失败，或只有当前/后续窗口。",
+      "expected_effects": "保持not_loaded/unavailable/empty及有限范围，不跨来源补读或倒灌后来的授权；无前序窗口不代表全局零任务。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
     }
   ]
 }
