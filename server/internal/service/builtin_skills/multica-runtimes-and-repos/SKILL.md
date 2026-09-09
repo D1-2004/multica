@@ -91,6 +91,15 @@ More source-backed details: `references/runtimes-and-repos-source-map.md`.
 
 ### ASB sandbox capacity
 
+Cold launches read current ASB allocations and use the regional API endpoint
+with the most free slots. New regional allocations and quota increases are
+picked up on the next capacity check. A shared 30-second busy cooldown limits
+quota checks while full; upstream rate limits may extend that delay. An explicit `QUOTA_EXCEEDED`
+response tries other available regions, refreshes quotas once, then remains
+queueable if capacity is still unavailable. Permission errors remain errors.
+Regional routing applies to ASB service domains; custom gateways retain their
+configured endpoint and routing.
+
 When an ASB tenant has no free instance slots, Multica can terminate an idle
 task sandbox to make room for a new launch. Chat and issue sandboxes have the
 same reclaim policy, with no minimum idle time or chat retention grace.

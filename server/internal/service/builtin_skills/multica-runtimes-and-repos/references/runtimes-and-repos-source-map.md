@@ -1,5 +1,6 @@
 # Runtimes and repos source map
 
+- `server/internal/service/asb_capacity_region.go` maps live quota regions to ASB regional API hosts for cold creation. `asb_capacity.go` refreshes allocations after quota contention and after reclaim; only explicit create-time `403 QUOTA_EXCEEDED` errors trigger regional failover. Regional client copies do not change the shared tenant lock/cooldown or sandbox-ID-based lifecycle routing.
 - `server/internal/service/asb_capacity.go` reclaims idle chat and issue sandboxes with the same policy and no retention grace. `cloud_sandbox_session.sql` and scope advisory locks fence active tasks and launches. `runtime_start.sql`, `asb_capacity_waiter.go`, and the ASB terminal wakeup in `task.go` select capacity waiters in creation order without task-kind priority or previous-agent affinity.
 - `server/cmd/multica/cmd_runtime.go` registers `runtime list`, `usage`, `activity`, `update`, and `delete`.
 - `server/cmd/multica/cmd_daemon.go` refuses daemon start/restart/stop from a daemon-managed task and authenticates local shutdown with a per-instance control capability.

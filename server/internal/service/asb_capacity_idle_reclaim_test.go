@@ -67,7 +67,7 @@ func TestASBCapacityReclaimsRecentlyIdleSandboxForEveryScope(t *testing.T) {
 					if deleted.Load() {
 						usage = 0
 					}
-					fmt.Fprintf(w, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":1,"usage":%d}]`, usage)
+					fmt.Fprintf(w, `[{"networkZone":"ALITest","region":"cn-zhangjiakou","quota":1,"usage":1},{"networkZone":"ALITest","region":"cn-hangzhou","quota":1,"usage":%d}]`, usage)
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/sandboxes":
 					items := "[]"
 					count := 0
@@ -87,6 +87,9 @@ func TestASBCapacityReclaimsRecentlyIdleSandboxForEveryScope(t *testing.T) {
 					deleted.Store(true)
 					w.WriteHeader(http.StatusNoContent)
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
+					if r.URL.Host != "sandbox-cn-hangzhou.aone.alibaba-inc.com" {
+						t.Errorf("create did not use the region freed by reclaim: %s", r.URL.Host)
+					}
 					if !deleted.Load() {
 						t.Error("created a sandbox before releasing the occupied slot")
 					}
@@ -99,7 +102,7 @@ func TestASBCapacityReclaimsRecentlyIdleSandboxForEveryScope(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			client := newTestASBClient(t, server)
+			client := newASBRegionalTestClient(t, server.Config.Handler.ServeHTTP)
 			credentials := &ASBRuntimeClientProvider{Store: queries, Secrets: box, Config: ASBConfig{APIURL: server.URL}}
 			conn, err := pool.Acquire(ctx)
 			if err != nil {
