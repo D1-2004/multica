@@ -2746,6 +2746,7 @@ export const AgentInvocationTargetsSchema = z
 export const AgentResponseSchema = z
   .object({
     id: z.string(),
+    event_trigger_enabled: z.boolean().catch(false).default(false),
     dingtalk_response_enabled: z.boolean().catch(false).default(false),
     dingtalk_show_ai_tag: z.boolean().catch(false).default(false),
     dingtalk_response_policy_revision: z

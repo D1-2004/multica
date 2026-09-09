@@ -164,3 +164,17 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `CreateAgentParams` | generated from `queries/agent.sql` | typed params include nullable `Model`, `ThinkingLevel`, and `ServiceTier` |
 | `UpdateAgent` SET | generated from `queries/agent.sql` | COALESCE updates include model/thinking/service tier; dedicated clear queries restore each nullable override |
 | `UpdateAgentCustomEnv` (called by the `UpdateAgentEnv` handler) | 2652 | `SET custom_env = $2` — the only write path for env values |
+
+## Event-trigger implementation
+
+- `server/internal/service/event_trigger.go`: `SetEnabled`, `Admit`, `ProcessNext`,
+  and `SyncRoutes` own configuration, durable inbox, batching and Router policy.
+- `server/internal/handler/agent_event_trigger.go`: event adapter, batch inspection,
+  and authorized retry; `agent.go` exposes `event_trigger_enabled`.
+- `server/internal/handler/autopilot.go`: `requireAutopilotWrite` prevents direct
+  mutation/execution of Agent-managed event automations.
+- `server/cmd/multica/cmd_agent.go`: `event-trigger-enabled` update flag is Changed-gated.
+- `packages/views/agents/components/agent-detail-inspector.tsx`: Agent execution toggle;
+  digital-employee binding UI is unchanged.
+- Read-only verification: `multica agent get <id> --output json`,
+  `multica autopilot runs <id> --output json`, and `GET /api/agents/{id}/event-batches`.

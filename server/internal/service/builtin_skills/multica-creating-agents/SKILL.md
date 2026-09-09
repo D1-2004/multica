@@ -339,3 +339,37 @@ State-changing (require an explicit instruction — do not run speculatively):
 `references/creating-agents-source-map.md` maps every contract above to its
 `file:line` on the current tree, the runtime effect, and a safe read-only
 verification command.
+
+## Agent event triggers
+
+`agent update <id> --event-trigger-enabled[=false]` changes the default-off
+Agent execution setting. It does not change digital-employee bindings or
+subscription scope. The first adapter is observed DingTalk group messages.
+Changes synchronize to Router within about five seconds when Router is available;
+failed syncs retry automatically. Message receipt is not task completion.
+
+The deterministic scheduler collects for 4 seconds of quiet, at most 12 seconds
+from the first pending event, and starts tasks at least 30 seconds apart for the
+same source/conversation. These are dispatch eligibility times, not a model reply
+SLA. A busy conversation keeps its next batch pending until the current task
+finishes. Each batch contains at most 100 events; overflow remains pending.
+
+Execution reuses a platform-managed `run_only` Autopilot. Its runs remain readable
+through `autopilot runs`, but direct editing, deletion, manual triggering or adding
+schedule/webhook triggers is rejected. Configure behavior through Agent instructions
+and skills; configure admission through the Agent toggle. No coordinator, issue,
+VIP classifier, or business-specific alert rule is added by this mechanism.
+
+The inbox persists admitted content and message IDs before acknowledging delivery.
+Duplicates do not move deadlines. Only successful tasks consume their frozen batch.
+Failed tasks retain the same batch/run and retry up to three scheduler attempts;
+cancellation or exhausted attempts pauses that conversation, retaining its events.
+Operators can inspect `GET /api/agents/{id}/event-batches` and explicitly retry with
+`POST /api/agents/{id}/event-batches/{batchId}/retry` after fixing the cause and enabling
+the Agent setting. Workspace and Agent management permissions apply.
+
+Disabling stops new admission/dispatch, preserves pending events, and allows an
+already-started task to finish. Re-enabling resumes pending work. Consumed inbox
+payloads are cleared after seven days; deduplication IDs and normal Autopilot/task
+execution history remain. Pending/failed content remains until handled or workspace
+deletion. This is not a general chat-history archive.

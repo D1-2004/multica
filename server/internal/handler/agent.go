@@ -91,7 +91,8 @@ type AgentResponse struct {
 	// InboundCoordinator runs the server-side assoc tool loop that replies
 	// immediately or opens an Issue. Off by default for new and existing
 	// agents; only an explicit owner on switch enables it.
-	InboundCoordinator bool `json:"inbound_coordinator"`
+	InboundCoordinator  bool `json:"inbound_coordinator"`
+	EventTriggerEnabled bool `json:"event_trigger_enabled"`
 	// DingTalkShowAITag controls the sender label for platform and sandbox DWS sends.
 	DingTalkShowAITag bool `json:"dingtalk_show_ai_tag"`
 	// DingTalkResponseEnabled opts this employee into platform-owned replies and reception cleanup.
@@ -213,6 +214,9 @@ func (h *Handler) hydrateDingTalkResponsePolicy(ctx context.Context, resp *Agent
 	if err != nil {
 		slog.Warn("hydrate agent DingTalk response policy failed", "error", err, "agent_id", uuidToString(agentID))
 		return
+	}
+	if h.EventTriggers != nil {
+		resp.EventTriggerEnabled, _ = h.EventTriggers.Enabled(ctx, agentID, parseUUID(resp.WorkspaceID))
 	}
 	resp.InboundCoordinator = policy.InboundCoordinator
 	resp.DingTalkShowAITag = policy.DingtalkShowAiTag
@@ -380,6 +384,24 @@ func (h *Handler) hydrateAgentsDingTalkResponsePolicy(ctx context.Context, resps
 	}
 	if len(ids) == 0 {
 		return
+	}
+	if h.EventTriggers != nil {
+		eventRows, err := h.EventTriggers.Pool.Query(ctx, `SELECT agent_id,enabled FROM agent_event_trigger WHERE agent_id=ANY($1::uuid[])`, ids)
+		if err != nil {
+			slog.Warn("hydrate event trigger settings failed", "error", err)
+		} else {
+			for eventRows.Next() {
+				var agentID pgtype.UUID
+				var enabled bool
+				if err := eventRows.Scan(&agentID, &enabled); err != nil {
+					break
+				}
+				if i, ok := index[uuidToString(agentID)]; ok {
+					resps[i].EventTriggerEnabled = enabled
+				}
+			}
+			eventRows.Close()
+		}
 	}
 	rows, err := h.Queries.ListAgentDingTalkResponsePoliciesByIDs(ctx, ids)
 	if err != nil {
@@ -1775,6 +1797,7 @@ type UpdateAgentRequest struct {
 	DispatchAlwaysNewIssue      *bool              `json:"dispatch_always_new_issue"`
 	ChatSessionResume           *bool              `json:"chat_session_resume"`
 	InboundCoordinator          *bool              `json:"inbound_coordinator"`
+	EventTriggerEnabled         *bool              `json:"event_trigger_enabled"`
 	DingTalkShowAITag           *bool              `json:"dingtalk_show_ai_tag"`
 	DingTalkResponseEnabled     *bool              `json:"dingtalk_response_enabled"`
 	TaskFinishedLoopEnabled     *bool              `json:"task_finished_loop_enabled"`
@@ -2416,6 +2439,17 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.EventTriggerEnabled != nil {
+		if h.EventTriggers == nil {
+			writeError(w, http.StatusServiceUnavailable, "event triggers are unavailable")
+			return
+		}
+		if err := h.EventTriggers.SetEnabled(r.Context(), updated, parseUUID(requestUserID(r)), *req.EventTriggerEnabled); err != nil {
+			slog.Error("update event trigger failed", "agent_id", id, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update event trigger")
+			return
+		}
+	}
 	if req.ChatSessionResume != nil {
 		if err := h.Queries.UpdateAgentChatSessionResume(r.Context(), updated.ID, *req.ChatSessionResume); err != nil {
 			slog.Warn("update agent chat_session_resume failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)

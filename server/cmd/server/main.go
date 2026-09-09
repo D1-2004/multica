@@ -546,6 +546,9 @@ func main() {
 	if h.DingTalkResponses != nil {
 		go h.DingTalkResponses.Run(sweepCtx)
 	}
+	if h.EventTriggers != nil {
+		go h.EventTriggers.Run(sweepCtx)
+	}
 	if h.DingTalkResponsePolicySync != nil {
 		go h.DingTalkResponsePolicySync.Run(sweepCtx)
 	}
