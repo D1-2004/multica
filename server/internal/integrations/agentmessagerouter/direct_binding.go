@@ -108,6 +108,10 @@ func (s *Service) BindDigitalEmployee(ctx context.Context, params DirectBindingP
 	if err != nil {
 		return DirectDigitalEmployeeBinding{}, fmt.Errorf("%w: workspace descriptor", ErrInvalidResult)
 	}
+	publicOrigin, err := s.currentPublicOrigin()
+	if err != nil {
+		return DirectDigitalEmployeeBinding{}, err
+	}
 	endpoint, err := s.endpoints.Ensure(ctx, params.Agent.Workspace.ID, params.Agent.ID, params.InitiatorID)
 	if err != nil {
 		return DirectDigitalEmployeeBinding{}, fmt.Errorf("%w: endpoint resolution failed", ErrNotConfigured)
@@ -184,7 +188,8 @@ func (s *Service) BindDigitalEmployee(ctx context.Context, params DirectBindingP
 			ID:   util.UUIDToString(params.Agent.Workspace.ID),
 			Name: workspaceName,
 		},
-		DispatchPath: dispatchPath,
+		DispatchPath:     dispatchPath,
+		AgentEnvironment: agentEnvironmentFromPublicOrigin(publicOrigin),
 	})
 	if err != nil {
 		return DirectDigitalEmployeeBinding{}, ErrInvalidResult

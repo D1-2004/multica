@@ -42,8 +42,9 @@ func TestBeginIdentityBindingUsesUnifiedPageWithoutCreatingMessageInstallation(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fragment) != 10 || fragment.Get("bindingMode") != "identity" ||
+	if len(fragment) != 11 || fragment.Get("bindingMode") != "identity" ||
 		fragment.Get("bindingToken") != router.issued.BindingToken ||
+		fragment.Get("agentEnvironment") != "production" ||
 		fragment.Get("agentName") != "Database Agent" ||
 		fragment.Get("workspaceId") != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" ||
 		fragment.Get("workspaceName") != "Database Workspace" ||

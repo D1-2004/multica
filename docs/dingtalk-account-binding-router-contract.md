@@ -29,7 +29,8 @@ Content-Type: application/json
     "id": "<workspace UUID>",
     "name": "<workspace display name>"
   },
-  "dispatchPath": "/api/webhooks/agent-dispatch/<endpointId>"
+  "dispatchPath": "/api/webhooks/agent-dispatch/<endpointId>",
+  "agentEnvironment": "staging | production"
 }
 ```
 
@@ -43,6 +44,13 @@ snapshot. Agent and Workspace names are trimmed, must remain non-empty, may
 contain at most 256 Unicode code points, and must not contain C0 or C1 control
 characters. Invalid authoritative names fail begin explicitly; Multica neither
 truncates nor silently renames them.
+
+`agentEnvironment` is derived from the same current canonical HTTPS public
+origin used to build the callback URL. A hostname beginning with `pre-` maps to
+`staging`; every other valid hostname maps to `production`. Multica reads the
+provider for each binding operation, so a hot-updated origin is reflected in
+both the Router descriptor and QR payload. An invalid public origin fails
+before binding state, dispatch endpoints, or Router credentials are created.
 
 Router returns the credential and its expiry. It does not return a callback
 origin or a full callback URL:
@@ -62,6 +70,7 @@ display fields:
 bindingMode
 bindingToken
 agentId
+agentEnvironment
 agentName
 workspaceId
 workspaceName
@@ -78,11 +87,13 @@ query string, and must not be logged. Multica keeps `dispatchPath` in the
 pending binding and does not replace its local dispatch endpoint with a URL
 supplied by Router.
 
-The names are immutable display snapshots for the binding page. They do not
-participate in authentication, authorization, routing ownership, execution
-identity, or sender selection. The existing `message` / `identity` modes,
-organization selection, message scope, callback contract, and later binding
-behavior are unchanged.
+The names are immutable display snapshots for the binding page.
+`agentEnvironment` is an execution-environment snapshot that the binding page
+must return with the message-binding request so Router can persist it with the
+Agent delivery target. These fields do not participate in authentication,
+authorization, routing ownership, execution identity, or sender selection. The
+existing `message` / `identity` modes, organization selection, message scope,
+callback contract, and later binding behavior are unchanged.
 
 ### Binding operation authorization
 
@@ -889,3 +900,21 @@ changing the original binding timestamp. Each resulting binding is independent;
 unbinding a source later does not revoke previously authorized copies.
 
 No schema migration or Router/DWS credential-copy operation is required.
+
+## 2026-09-09 Agent Environment Change History
+
+- Added `agentEnvironment` to the normalized Agent descriptor sent when Router
+  issues a binding token.
+- Added the same value to the DingTalk binding-page QR fragment for both
+  `message` and `identity` modes.
+- Derived the value per operation from the current canonical public origin:
+  `pre-` hostnames use `staging`; all other valid hostnames use `production`.
+- Applied the same descriptor contract to direct digital-employee binding.
+
+## 2026-09-09 Agent Environment Change Reason
+
+The dispatch URL is constructed from the Router environment handling the
+incoming message, so it cannot reveal which environment originally deployed
+the bound Agent. Capturing the Agent environment when the binding is created
+lets Router persist an authoritative snapshot and reject cross-environment
+delivery with a clear outbound error before an inevitably failing dispatch.

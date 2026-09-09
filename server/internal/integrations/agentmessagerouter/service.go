@@ -442,6 +442,13 @@ func (s *Service) currentPublicOrigin() (*url.URL, error) {
 	return publicOrigin, nil
 }
 
+func agentEnvironmentFromPublicOrigin(publicOrigin *url.URL) AgentEnvironment {
+	if strings.HasPrefix(publicOrigin.Hostname(), "pre-") {
+		return AgentEnvironmentStaging
+	}
+	return AgentEnvironmentProduction
+}
+
 func (s *Service) currentDBaseBindingURL() (*url.URL, error) {
 	if s == nil {
 		return nil, ErrNotConfigured
@@ -565,6 +572,7 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 	if err != nil {
 		return BeginResult{}, err
 	}
+	agentEnvironment := agentEnvironmentFromPublicOrigin(publicOrigin)
 	dbaseBindingURL, err := s.currentDBaseBindingURL()
 	if err != nil {
 		return BeginResult{}, err
@@ -593,7 +601,8 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 			ID:   util.UUIDToString(params.Agent.Workspace.ID),
 			Name: workspaceName,
 		},
-		DispatchPath: dispatchPath,
+		DispatchPath:     dispatchPath,
+		AgentEnvironment: agentEnvironment,
 	})
 	if err != nil {
 		return BeginResult{}, fmt.Errorf("%w: begin agent descriptor: %v", ErrInvalidResult, err)
@@ -700,16 +709,17 @@ func (s *Service) Begin(ctx context.Context, params BeginParams) (result BeginRe
 	callbackURL := *publicOrigin
 	callbackURL.Path = "/api/integrations/dingtalk/account-bindings/" + util.UUIDToString(bindingID) + "/callback"
 	fragment := url.Values{
-		"bindingMode":   {string(params.BindingMode)},
-		"bindingToken":  {issued.BindingToken},
-		"callbackUrl":   {callbackURL.String()},
-		"callbackToken": {callbackToken},
-		"expiresAt":     {strconv.FormatInt(expiresAt.Unix(), 10)},
-		"agentId":       {descriptor.AgentID},
-		"agentName":     {descriptor.Name},
-		"workspaceId":   {descriptor.Workspace.ID},
-		"workspaceName": {descriptor.Workspace.Name},
-		"dispatchPath":  {descriptor.DispatchPath},
+		"bindingMode":      {string(params.BindingMode)},
+		"bindingToken":     {issued.BindingToken},
+		"callbackUrl":      {callbackURL.String()},
+		"callbackToken":    {callbackToken},
+		"expiresAt":        {strconv.FormatInt(expiresAt.Unix(), 10)},
+		"agentId":          {descriptor.AgentID},
+		"agentEnvironment": {string(descriptor.AgentEnvironment)},
+		"agentName":        {descriptor.Name},
+		"workspaceId":      {descriptor.Workspace.ID},
+		"workspaceName":    {descriptor.Workspace.Name},
+		"dispatchPath":     {descriptor.DispatchPath},
 	}
 	qrCodeURL := dbaseBindingURL.String() + "#" + fragment.Encode()
 	return BeginResult{

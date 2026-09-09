@@ -50,11 +50,23 @@ type WorkspaceDescriptor struct {
 	Name string `json:"name"`
 }
 
+type AgentEnvironment string
+
+const (
+	AgentEnvironmentStaging    AgentEnvironment = "staging"
+	AgentEnvironmentProduction AgentEnvironment = "production"
+)
+
+func (e AgentEnvironment) Valid() bool {
+	return e == AgentEnvironmentStaging || e == AgentEnvironmentProduction
+}
+
 type AgentDescriptor struct {
-	AgentID      string              `json:"agentId"`
-	Name         string              `json:"name"`
-	Workspace    WorkspaceDescriptor `json:"workspace"`
-	DispatchPath string              `json:"dispatchPath"`
+	AgentID          string              `json:"agentId"`
+	Name             string              `json:"name"`
+	Workspace        WorkspaceDescriptor `json:"workspace"`
+	DispatchPath     string              `json:"dispatchPath"`
+	AgentEnvironment AgentEnvironment    `json:"agentEnvironment"`
 }
 
 type Subscription struct {
@@ -494,6 +506,9 @@ func normalizeAgentDescriptor(descriptor AgentDescriptor) (AgentDescriptor, erro
 	if descriptor.AgentID == "" || workspaceIDErr != nil ||
 		workspaceID.String() != descriptor.Workspace.ID || dispatchPathErr != nil {
 		return AgentDescriptor{}, errors.New("agent binding descriptor identifiers are invalid")
+	}
+	if !descriptor.AgentEnvironment.Valid() {
+		return AgentDescriptor{}, errors.New("agent binding descriptor environment is invalid")
 	}
 	var err error
 	descriptor.Name, err = normalizeBindingDisplayName("agent name", descriptor.Name)
