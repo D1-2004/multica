@@ -12,8 +12,8 @@ when its existing option is enabled. No new event Autopilots are created.
 
 Use existing group-awareness CRs: Router 35999116 and Multica 36022159. Deploy the
 reply-target and bounded admission-retry Router first. Migrations 9211–9217 run
-**automatically through the release order**; never run them manually or from the
-application startup. The cutover pauses historical event Autopilots while the new
+**automatically through the release order's existing `src/main.sh` pre-start step**;
+never run them manually. The cutover pauses historical event Autopilots while the new
 worker drains any previously admitted batches. Old replicas reject new legacy
 admission; Router retains and retries those deliveries during rolling deployment.
 Existing user settings and historical runs are preserved.
