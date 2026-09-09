@@ -520,7 +520,6 @@ func main() {
 
 	// Start background sweeper to mark stale runtimes as offline.
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus)
-	go h.FCE2BLauncher.RunSandboxLifecycle(sweepCtx, os.Getenv("APP_ENV"))
 	go runRunnerArtifactCleanup(sweepCtx, queries)
 	go taskSvc.RunDeferredChannelTaskPromoter(sweepCtx)
 	if h.ASBLauncher != nil {
