@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 const (
@@ -140,12 +142,69 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 		if IsTimeout(failed) {
 			return nil, failed
 		}
-		if msg := SafeMessage(stderr.String(), 80); msg != "" {
+		if detail := historyCLIError(stderr.Bytes()); detail != nil {
+			return nil, detail
+		}
+		if msg := SafeMessage(redact.Text(stderr.String()), 80); msg != "" {
 			return nil, fmt.Errorf("%s: %s", failed.Error(), msg)
 		}
 		return nil, failed
 	}
 	return raw, nil
+}
+
+// HistoryError keeps only stable diagnostic fields, never the raw CLI payload
+// (which may contain credentials, actions or arbitrary server detail).
+type HistoryError struct {
+	fields map[string]any
+}
+
+func (e *HistoryError) Error() string {
+	parts := []string{"DWS conversation history query failed"}
+	for _, key := range []string{"server_error_code", "trace_id", "category", "reason"} {
+		if value, ok := e.fields[key].(string); ok {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+func (e *HistoryError) DiagnosticFields() map[string]any {
+	out := make(map[string]any, len(e.fields))
+	for key, value := range e.fields {
+		out[key] = value
+	}
+	return out
+}
+
+func historyCLIError(raw []byte) *HistoryError {
+	if len(raw) > MaxResponseBytes {
+		return nil
+	}
+	var envelope struct {
+		Error map[string]json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil || envelope.Error == nil {
+		return nil
+	}
+	fields := map[string]any{}
+	for _, key := range []string{"category", "reason", "server_error_code", "trace_id"} {
+		var value string
+		if json.Unmarshal(envelope.Error[key], &value) != nil {
+			var number json.Number
+			if key != "server_error_code" || json.Unmarshal(envelope.Error[key], &number) != nil {
+				continue
+			}
+			value = number.String()
+		}
+		value = strings.TrimSpace(value)
+		// These four fields are identifiers. Omit malformed/free-form values
+		// rather than expose raw error text or a truncated credential.
+		if value != "" && SafeCode(value) == value && redact.Text(value) == value {
+			fields[key] = value
+		}
+	}
+	return &HistoryError{fields: fields}
 }
 
 func looksLikeJSONObject(raw []byte) bool {

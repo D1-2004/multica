@@ -586,16 +586,23 @@ func parseIssueCommentEffect(raw string) (IssueCommentEffect, bool) {
 	return effect, true
 }
 
-var conversationIDPattern = regexp.MustCompile(`cid[+A-Za-z0-9_/=-]{8,}`)
+var conversationIDPattern = regexp.MustCompile(`cid[+A-Za-z0-9_/-]{8,}={0,2}`)
 
 func extractConversationIDs(message string) []string {
-	found := conversationIDPattern.FindAllString(message, -1)
+	// A numeric `cid=` report query parameter is not an openConversationId.
+	// Keep genuine opaque IDs, including openConversationId values in links.
+	found := conversationIDPattern.FindAllStringIndex(message, -1)
 	if len(found) == 0 {
 		return nil
 	}
 	seen := map[string]struct{}{}
 	var out []string
-	for _, id := range found {
+	for _, span := range found {
+		if span[0] > 0 && isConversationIDCharacter(message[span[0]-1]) ||
+			span[1] < len(message) && (isConversationIDCharacter(message[span[1]]) || message[span[1]] == '=') {
+			continue
+		}
+		id := message[span[0]:span[1]]
 		if _, ok := seen[id]; ok {
 			continue
 		}
@@ -603,6 +610,11 @@ func extractConversationIDs(message string) []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+func isConversationIDCharacter(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' ||
+		b == '+' || b == '_' || b == '/' || b == '-'
 }
 
 func asksSceneQuestion(message string) bool {

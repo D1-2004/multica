@@ -91,7 +91,7 @@ func parseValidatedWindowPlanHinted(raw string, turn Turn, recalls []recallCall,
 				}
 			}
 			if !found {
-				return Decision{}, hintErr("named conversation must be recalled", "Call assoc_recall with the exact conversation_id the user named before answering its recorded matters.")
+				return Decision{}, hintErr("named conversation must be recalled", fmt.Sprintf("Call assoc_recall with conversation_id=%q before answering this named scene's recorded matters.", cid))
 			}
 		}
 	}

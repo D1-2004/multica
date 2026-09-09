@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-08.3`。装配版本：`2`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-09.1`。装配版本：`2`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 是数字员工在聊天中的即时反应：理解谁在说什么，回答或澄清，衔接已授权工作，给需要结果的人准确反馈，不需要时安静。它和沙箱属于同一个员工，分别承担对话与执行。快循环不扩展为通用 DWS、文件或搜索运行时。
 
@@ -74,6 +74,7 @@ Coordinator 是数字员工在聊天中的即时反应：理解谁在说什么�
 初轮只开放 `assoc_recall`、`context_read`、`finish`。成功召回后，增加对合法目标的 `issue_get`、`issue_comment_list`。模型不再直接调用 `assoc_bind` 或 `issue_comment_add` 修改数据库；运行时现有内部函数不代表可向模型开放。
 
 - `assoc_recall` 先查当前 CID，不用 q 取代场景；用户明确另一个 CID 则原样查询。q 只过滤指定范围，人 ID 只是排序信号。旧工作可扩到 7d/30d，仍须声明范围。
+- 命名会话只接受合法形态的 `openConversationId`；成长日志链接中的 `cid=数字` 是来源参数，不能制造额外召回前置。真实 CID（含链接中的真实 openConversationId）仍保持精确召回约束，缺少召回的 hint 指明实际 CID。
 - `finish action=reply` 是本轮沟通，可以是回答、澄清、在场回应或真实进度；不宣称背景工作全部完成。
 - `finish action=silence` 只用于确实无需回应且无遗漏工作的窗口。网页直接对话不静默；“好”不能只凭词表判无事。
 - `finish action=issue` 通过 `items[]` 声明整窗工作计划。顶层 `issue_id` 禁止。每项包含 `source_refs`、`purpose`、`intent`、`basis`；新建省略 `item.issue_id`，续接使用本轮召回的精确 ID。`basis` 为 `new_request / answer / change / retry`，不能把催促标为实质推进。
@@ -104,5 +105,7 @@ collect 只合并正在输入的消息：4 秒静默，创建起最多 12 秒。
 9. 每轮记录 `policy_version / assembly_version / prompt_hash / modules / active_rule_ids`，以及实际上下文状态、可用工具和效果。回滚不得恢复已撤回的漏响应手段。
 
 运行 `python3 scripts/check-coordinator-policy.py` 检查来源哈希、103 条映射、规则/案例/实现引用、模块依赖、预算和版本。它不锁提示词原句，也不认证模型行为。策略模块测试在 `inboundcoord/policy_test.go`；语义与真实链路验收按风险使用相应案例，不把全仓测试数量当成对话正确性的证明。
+
+Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，合并目标为1200；超限返回实际长度及压缩提示。修复轮有独立50秒请求预算，仍受整个job原120秒截止约束，并为CAS提交预留5秒。相同被拒commit不重复消耗剩余轮次，保持dirty和旧水位等待既有退避。Langfuse工具accepted只证明草稿通过校验，根committed=true才证明数据库提交；cursor_at与planned_cursor_at分开，历史时间使用实际min/max，缺少claimed证据不能自动跳过。9月9日巡检修复仅完成Host协议/观测窄验证，真实模型收敛和真实投递未做E2E。
 
 澄清与计划覆盖：一个请求因必要意图、消息正文或目标缺失而正在追问时，不得同时生成该请求的执行项。全部待澄清用 reply；混合窗口的待澄清请求以提问文本及 non_work_refs 覆盖，其他已明确请求照常提交。旧事项相同联系人不构成当前消息正文。该语义由 COORD.F05 的 inbound 模块、finish schema 与缺正文/已给正文对照共同维护。

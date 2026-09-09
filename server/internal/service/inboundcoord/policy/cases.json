@@ -154,14 +154,25 @@
       "verification": "not_run"
     },
     {
-      "id": "f13_finish_hint_fields",
+      "id": "f13_named_cid_vs_report_link",
       "rule_ids": [
-        "COORD.F13"
+        "COORD.F13",
+        "COORD.F16"
       ],
-      "context_a": "finish action=issue 已有完整 items，仅缺 spoken text；purpose 点名 DWS身份",
-      "context_b": "purpose 粘贴 dws chat data-auth 或 openConversationId",
-      "expected_effects": "前者 hint 只修 text 并允许提交；后者拒绝 CLI/auth 且 hint 指向工具泄漏，不误伤产品名",
-      "verification": "scripted_host"
+      "context_a": "用户在正文或会话链接中写出真实 openConversationId，并询问该会话正在跟什么事",
+      "context_b": "用户提交成长日志，正文附带报告链接，其 URL 查询参数含 cid=75953554200",
+      "expected_effects": "前者必须先成功召回精确命名会话，未读时提示缺少哪个 ID；后者的数字 cid 参数不是 openConversationId，不得因此拒绝正常回复并耗尽重试；链接中的真实 opaque CID 仍受精确召回约束",
+      "incident_refs": [
+        "494ab191-71af-4651-9c02-6e2d1b04d8fe"
+      ],
+      "verification": "not_run",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/loop_test.go#TestExtractConversationIDs",
+        "server/internal/service/inboundcoord/loop_test.go#TestLoopReportLinkDoesNotRequireNamedConversationRecall",
+        "server/internal/service/inboundcoord/loop_test.go#TestNamedCurrentConversationStillRequiresRecall",
+        "server/internal/service/inboundcoord/loop_test.go#TestLinkedConversationStillRequiresRecall",
+        "server/internal/service/inboundcoord/loop_test.go#TestLoopNamedCIDFinishWithoutRecallIsRejected"
+      ]
     },
     {
       "id": "f14_contrast",
@@ -222,6 +233,38 @@
       "context_b": "真实IM因权限阻塞",
       "expected_effects": "前者只证明来源结构；后者仍BLOCKED不能报PASS",
       "verification": "not_run"
+    },
+    {
+      "id": "f11_memory_repair_budget",
+      "rule_ids": [
+        "COORD.F11"
+      ],
+      "context_a": "首轮完整记忆超过1600字，第二轮在整job原截止内压缩为有效新记忆",
+      "context_b": "修复轮重复相同的超长commit",
+      "expected_effects": "前者允许独立有界修复后CAS提交；后者INVALID_COMMIT，保持dirty及已提交水位，不丢纠正",
+      "verification": "host_unit_tests_passed; model_replay_and_live_delivery_not_run"
+    },
+    {
+      "id": "f19_memory_commit_observation",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F11",
+        "COORD.F19"
+      ],
+      "context_a": "DWS返回倒序事件、模型草稿通过校验但数据库尚未提交",
+      "context_b": "同批记忆数据库CAS提交成功",
+      "expected_effects": "时间用min/max，分页和缺证据可见；仅后者committed=true并推进cursor_at，计划水位独立为planned_cursor_at",
+      "verification": "host_unit_tests_passed; live_delivery_not_run"
+    },
+    {
+      "id": "f13_finish_hint_fields",
+      "rule_ids": [
+        "COORD.F13"
+      ],
+      "context_a": "finish action=issue 已有完整 items，仅缺 spoken text；purpose 点名 DWS身份",
+      "context_b": "purpose 粘贴 dws chat data-auth 或 openConversationId",
+      "expected_effects": "前者 hint 只修 text 并允许提交；后者拒绝 CLI/auth 且 hint 指向工具泄漏，不误伤产品名",
+      "verification": "scripted_host"
     }
   ]
 }

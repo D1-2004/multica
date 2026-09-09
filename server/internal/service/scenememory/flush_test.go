@@ -3,6 +3,8 @@ package scenememory
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,6 +40,75 @@ func TestParseFlushCommit(t *testing.T) {
 	redacted, err := parseFlushCommit(old, `{"decision":"replace","full_text":"token Bearer abcdefghijklmnop"}`)
 	if err != nil || !strings.Contains(redacted, "[REDACTED]") || strings.Contains(redacted, "abcdefghijklmnop") {
 		t.Fatalf("replace must redact secrets: %q err=%v", redacted, err)
+	}
+}
+
+func TestClassifyHistoryUnknownKeepsRetryPolicyWithStableCode(t *testing.T) {
+	input := errors.New("DWS conversation history query failed")
+	err := classifyHistory(input)
+	if FlushErrorCode(err) != ErrorHistoryUnavailable || !errors.Is(err, input) || TerminalFlushCode(FlushErrorCode(err)) {
+		t.Fatalf("unknown history error must retain retry semantics and cause: %v", err)
+	}
+	if RetryDelayFor(FlushErrorCode(err), 100) != RetryDelay(100) {
+		t.Fatal("history classification changed the existing backoff")
+	}
+	if got := FlushErrorCode(classifyHistory(errors.New("DWS AuthCode exchange failed"))); got != ErrorAuth {
+		t.Fatalf("existing auth classification changed: %s", got)
+	}
+}
+
+type flushTestHTTPClient func(*http.Request) (*http.Response, error)
+
+func (fn flushTestHTTPClient) Do(r *http.Request) (*http.Response, error) { return fn(r) }
+
+func TestMergeRepairsOversizeCommitWithFreshBoundedDeadline(t *testing.T) {
+	for _, repeated := range []bool{false, true} {
+		t.Run(fmt.Sprintf("repeated=%t", repeated), func(t *testing.T) {
+			var deadlines []time.Time
+			var requests []string
+			longText := strings.Repeat("字", 1756)
+			ctx, cancel := context.WithTimeout(context.Background(), 85*time.Second)
+			defer cancel()
+			parentDeadline, _ := ctx.Deadline()
+			client := flushTestHTTPClient(func(r *http.Request) (*http.Response, error) {
+				deadline, ok := r.Context().Deadline()
+				if !ok || !deadline.Before(parentDeadline) {
+					t.Fatalf("request must retain its shorter per-round budget: %s", deadline)
+				}
+				deadlines = append(deadlines, deadline)
+				raw, _ := io.ReadAll(r.Body)
+				requests = append(requests, string(raw))
+				text := longText
+				if len(deadlines) > 1 && !repeated {
+					text = "## 稳定知识与约定\n- 更新后的约定 (来自圆畅, 9月8日 12:00的发言)"
+				}
+				args, _ := json.Marshal(map[string]any{"decision": "replace", "full_text": text})
+				body, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"message": map[string]any{
+					"role": "assistant", "tool_calls": []any{map[string]any{
+						"id": "commit", "type": "function", "function": map[string]any{"name": "memory_flush_commit", "arguments": string(args)},
+					}},
+				}}}})
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(string(body))), Request: r}, nil
+			})
+			f := &MemoryFlusher{LLM: llm.New(llm.Config{APIKey: "test", BaseURL: "http://flush.test", MaxRetries: -1, HTTPClient: client})}
+			got, fallback, err := f.merge(ctx, db.SceneMemory{SceneKey: "cid", MemoryText: "旧约定"}, nil, nil)
+			if len(deadlines) != 2 || fallback {
+				t.Fatalf("calls=%d fallback=%v error=%v", len(deadlines), fallback, err)
+			}
+			if !deadlines[1].After(deadlines[0]) {
+				t.Fatalf("repair inherited first-round deadline: %v", deadlines)
+			}
+			if !strings.Contains(requests[1], "1756 Unicode code points") || !strings.Contains(requests[1], "Rewrite to at most 1200") {
+				t.Fatal("repair must receive measured length and a concrete smaller target")
+			}
+			if repeated {
+				if FlushErrorCode(err) != ErrorInvalidCommit || got != "" {
+					t.Fatalf("repeating rejected text must retain dirty work: text=%q err=%v", got, err)
+				}
+			} else if err != nil || !strings.Contains(got, "更新后的约定") {
+				t.Fatalf("repair failed: text=%q err=%v", got, err)
+			}
+		})
 	}
 }
 
@@ -297,7 +368,7 @@ func TestPlanFlushEmptyDeltaWithoutCutoffIsCaughtUp(t *testing.T) {
 
 func TestClassifyHistoryKeepsRedeemNetworkErrorsRetryable(t *testing.T) {
 	err := classifyHistory(errString("Agent Identity DWS redeem request failed"))
-	if FlushErrorCode(err) != "" {
+	if code := FlushErrorCode(err); code != ErrorHistoryUnavailable || TerminalFlushCode(code) {
 		t.Fatalf("network redeem must retry, code=%q", FlushErrorCode(err))
 	}
 	err = classifyHistory(errString("Agent Identity DWS redeem rejected: unauthorized"))

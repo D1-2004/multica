@@ -734,9 +734,84 @@ func TestLoopNamedCIDFinishWithoutRecallIsRejected(t *testing.T) {
 
 func TestExtractConversationIDs(t *testing.T) {
 	t.Parallel()
-	got := extractConversationIDs("cid+bEFv7ngm9n79Q1vL9HYJ1w== 里面聊了什么")
-	if len(got) != 1 || got[0] != "cid+bEFv7ngm9n79Q1vL9HYJ1w==" {
-		t.Fatalf("got=%v", got)
+	short := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
+	long := "cidSYyaWxOBeot0PXEyA6BNd1/SxKmRz0LQxkl8L2MbF4U="
+	for _, tt := range []struct {
+		name    string
+		message string
+		want    []string
+	}{
+		{"short", short + " 里面聊了什么", []string{short}},
+		{"long and punctuation", "看看（" + long + "）和 `" + short + "`", []string{long, short}},
+		{"field and duplicate", "conversation_id=" + long + "，再查" + long, []string{long}},
+		{"url-safe opaque id", "cidAbCdEfgh_123-xyz 在跟什么", []string{"cidAbCdEfgh_123-xyz"}},
+		{"report query", "https://landray.dingtalkapps.com/alid/app/report/viewReport_new.html?id=report&cid=75953554200&cname=team", nil},
+		{"encoded report link", "dingtalk://dingtalkclient/action/openapp?redirect_url=https%3A%2F%2Fexample.com%2Freport%3Fcid%3D75953554200", nil},
+		{"opaque id inside URL", "https://example.com/report?openConversationId=" + long, []string{long}},
+		{"opaque id inside DingTalk link", "dingtalk://dingtalkclient/action/openapp?openConversationId=" + short, []string{short}},
+		{"link and explicit scene", "[报告](https://example.com/report?cid=75953554200)\n" + short + " 里面聊了什么", []string{short}},
+		{"link and adjacent explicit scene", "https://example.com/report?cid=75953554200，另查" + long, []string{long}},
+		{"ordinary text", "cid=75953554200 acidabcdefghij lucidabcdefghij cid-short", nil},
+		{"malformed padding", short + "= " + short + "extra", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractConversationIDs(tt.message)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("got=%v want=%v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoopReportLinkDoesNotRequireNamedConversationRecall(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("f1", toolFinish, `{"action":"reply","text":"PC 官网迭代这一段似乎没有写完。"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[]}`}
+	c := &Coordinator{Chat: chat, Tools: tools}
+	got, err := c.runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		ConversationID: "cid58bvFJhm51zIMVj1WGa/vMyRqIqidBhxeJFn667zqMY=",
+		Message: "今日最重要进展：PC 官网迭代。围绕\n" +
+			"[日志](https://landray.dingtalkapps.com/alid/app/report/viewReport_new.html?id=report&cid=75953554200&cname=team)\n" +
+			"dingtalk://dingtalkclient/action/openapp?redirect_url=https%3A%2F%2Fexample.com%2Freport%3Fcid%3D75953554200",
+	})
+	if err != nil || got.Action != ActionReply || got.ToolRounds != 1 || len(tools.calls) != 0 {
+		t.Fatalf("report metadata must not create another scene lookup: decision=%#v err=%v calls=%v", got, err, tools.calls)
+	}
+}
+
+func TestNamedCurrentConversationStillRequiresRecall(t *testing.T) {
+	t.Parallel()
+	cid := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: cid, Message: cid + " 里面聊了什么"}
+	raw := `{"action":"reply","text":"本次范围内未找到事项记录。"}`
+	_, err := parseValidatedWindowPlan(raw, turn, nil, nil)
+	if err == nil || !strings.Contains(marshalToolFailure(err), cid) {
+		t.Fatalf("missing recall must identify the exact named scene: %v", err)
+	}
+	got, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: cid}}, nil)
+	if err != nil || got.Action != ActionReply {
+		t.Fatalf("current named scene is answerable after recall: %#v err=%v", got, err)
+	}
+}
+
+func TestLinkedConversationStillRequiresRecall(t *testing.T) {
+	t.Parallel()
+	cid := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ConversationID: "cid-current",
+		Message:        "这个会话在跟什么事 dingtalk://dingtalkclient/action/openapp?openConversationId=" + cid,
+	}
+	raw := `{"action":"reply","text":"本次范围内未找到事项记录。"}`
+	if _, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil); err == nil {
+		t.Fatal("reading the current scene does not cover the genuine linked scene")
+	}
+	got, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: cid}}, nil)
+	if err != nil || got.Action != ActionReply {
+		t.Fatalf("linked named scene is answerable after recall: %#v err=%v", got, err)
 	}
 }
 

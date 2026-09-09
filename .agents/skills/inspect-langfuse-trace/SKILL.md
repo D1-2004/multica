@@ -5,24 +5,33 @@ description: >
   用户给了 cid/openConversationId、钉钉 uid、Multica user id、workspace_id、agent_id、issue_id/task_id、coord_trace_id/job id、
   chat session id、evidence_id、scene_key，或说「Langfuse 上怎么查」「这次调用的 trace」「token 用量」时必须用。
   走 scripts/langfuse_lookup.py（Langfuse 公开 API），不要凭 UI 截图猜。
-compatibility: Requires LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY / LANGFUSE_BASE_URL in the shell environment (never in the repo). Unset HTTP proxy. Python 3.9+, stdlib only.
+compatibility: Reads LANGFUSE credentials from the environment or ~/.grok/langfuse.env (never in the repo). Unsets HTTP proxy. Python 3.9+, stdlib only.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   audience: "coding-agent"
 ---
 
 # 用 id 查 Langfuse trace
 
 预发和正式各自往同一个 Langfuse 项目投递，按 `environment`（`pre` / `production`）区分。
-key 只从环境变量读；这个 Langfuse 只能直连，每条命令先：
+key 优先从环境变量读，缺失时自动读取 `~/.grok/langfuse.env`；不要复制凭证到命令、聊天或仓库。脚本自动移除代理，只直连：
 
 ```bash
 unset ALL_PROXY all_proxy HTTP_PROXY http_proxy HTTPS_PROXY https_proxy
-export LANGFUSE_PUBLIC_KEY=… LANGFUSE_SECRET_KEY=… LANGFUSE_BASE_URL=https://unify-aipilot.dingtalk.com
 LF=.agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py
 ```
 
-可选 `LANGFUSE_QUERY_ENVIRONMENT=pre` 让 trace 列表只看一个环境。全局 flag：`--json`、`--limit N`、`--from 7d|24h|ISO`、`--environment pre|production`。`--limit` 必须当 flag 传，不能跟在 tag 后面当位置参数（多 tag 是 AND，会变成搜不到）。
+可选 `LANGFUSE_QUERY_ENVIRONMENT=pre` 让 trace 列表只看一个环境。全局 flag：`--json`、`--limit N`、`--from 7d|24h|ISO`、`--to ISO`（结束上界）、`--environment pre|production`、`--stats`。日期窗口用带时区的 ISO，日巡检先确定北京时间日期，再转 UTC。
+
+```bash
+# 2026-09-08 北京时间全天；按真实绑定 agent UUID 搜索。
+python3 "$LF" search --agent '<agent-uuid>' --text '<消息片段>' \
+  --environment production --from 2026-09-07T16:00:00Z --to 2026-09-08T16:00:00Z --stats
+```
+
+`--limit` 是结果上限；`--scan N` 是搜索候选上限（默认 `max(limit*10,100)`）；`--hydrate N` 是读取详情的上限（默认80）；`--workers N` 控制并发详情请求（默认4，最多16）。`--pages N` 控制列表页数，默认0表示不加页数上限，仍受候选或结果上限约束。长窗口查询优先用 agent UUID、session 或精确 trace ID 缩小范围，确认需要后再增大上限。
+
+任何扫描、水合或结果截断都会在 stderr 输出 `# query_stats`，包含 `raw_count / unique_count / duplicate_count / api_total_rows / truncated`；`--stats` 无截断也输出统计和请求耗时。JSON stdout 仍是 trace 数组。**`truncated=true` 下没有命中只能说“当前扫描范围未命中”，不能说“没有发生”。** API 会返回同一 trace ID 的多个版本，脚本按 ID 去重并保留时间最新版本；API `totalItems` 是原始行数，不是独立 trace 数。不要再用旧版400条隐形上限进行全日巡检。
 
 只知道 agent id / 花名 / 入站原文时用 `search`，不要用 `recent` 再人肉翻：
 
@@ -82,7 +91,7 @@ python3 $LF related <任意上述 id>
 
 ## 读一条 trace
 
-`python3 $LF trace <id>` 依次打印：摘要（name/tags/session/agent/action/status）、metadata、根 input/output、每个 observation 一行（类型、名字、level、模型、usage、延迟、输入输出前缀），最后列出 `idx.*` 键。
+`python3 $LF trace <id>` 依次打印：摘要（name/tags/session/agent/action/status）、metadata、input/output、每个 observation 一行（类型、名字、level、模型、usage、延迟、输入输出前缀），最后列出 `idx.*` 键。共享 trace 的顶层 timestamp/input/output 会被后续任务根覆盖；脚本展示 `name=inbound_coordinator` 最初一次的输入和最后一次的输出，摘要 `coordinator_attempts` 列出各次时间、action和错误。不要把第一次deferred当最终结果。列表日期过滤按服务端索引timestamp，任务跨日覆盖可能让原始入站轮移出当天列表；已知SLS trace ID时直接查详情（不附日期过滤），按最早Coordinator observation的startTime核实入站时间，不能把任务结束时刻当收到消息的时刻。
 
 - `inbound_coordinator`：根 input 是入站原话，output 是裁决（`action`/`user_text`/`issue_id`）；`coordinator.round.N` 是每轮模型调用；工具 observation 名字就是工具名；`dws_chat_history` 是钉钉历史预读。
 - `scene_memory_flush`：`dws_history_range` → `memory_flush.round.N` → `memory_flush_commit`（accepted/reason）；根 output 有 `new_memory_revision` 和替换后的文本。

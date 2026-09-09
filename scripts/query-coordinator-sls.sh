@@ -10,6 +10,8 @@ PROJECT="dt-fde-multica-sls"
 LOGSTORE="application-log"
 ENV="pre"
 FROM=""
+TO=""
+OFFSET="0"
 SIZE="50"
 NAME=""
 CID=""
@@ -31,12 +33,14 @@ Usage: scripts/query-coordinator-sls.sh [options]
   --env pre|prod          default pre (预发 prehost)
   --name NAME             conversation_name (群名, or 单聊 sender like 冬翔)
   --cid CID               conversation_id (openConversationId)
-  --message TEXT          inbound text; CJK is queried as a quoted phrase plus *wildcard*
+  --message TEXT          inbound text; CJK substrings are filtered locally
   --trace ID              coord_trace_id (one Decide() loop)
   --event EVENT           inbound_coordinator_llm_request|inbound_coordinator_llm|inbound_coordinator_llm_finish|inbound_coordinator_decided
   --agent NAME|UUID       agent_name, or agent_id when the value looks like a UUID
   --agent-id UUID         agent_id= (use this when --agent would be ambiguous)
   --from TIME             SLS --from (default 6h ago as unix epoch). Prefer epoch seconds or RFC3339 UTC like 2026-09-01T12:00:00Z
+  --to TIME               fixed end of query window (default current time)
+  --offset N              pagination offset (default 0); keep --from/--to fixed across pages
   --size N                max hits (default 50)
   --raw                   print Normandy JSON only
 
@@ -58,12 +62,19 @@ while [[ $# -gt 0 ]]; do
     --agent) AGENT="$2"; shift 2 ;;
     --agent-id) AGENT_ID="$2"; shift 2 ;;
     --from) FROM="$2"; shift 2 ;;
+    --to) TO="$2"; shift 2 ;;
+    --offset) OFFSET="$2"; shift 2 ;;
     --size) SIZE="$2"; shift 2 ;;
     --raw) RAW=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if ! [[ "$SIZE" =~ ^[1-9][0-9]*$ && "$OFFSET" =~ ^[0-9]+$ ]]; then
+  echo "--size must be positive and --offset nonnegative" >&2
+  exit 2
+fi
 
 case "$ENV" in
   pre) TAG="$PRE_TAG" ;;
@@ -133,26 +144,42 @@ args=(
   --query "$query"
   --from "$FROM"
   --size "$SIZE"
+  --offset "$OFFSET"
   --reverse
   --output json
 )
+[[ -n "$TO" ]] && args+=(--to "$TO")
 if [[ -f "$CONFIG" ]]; then
   args+=(--config "$CONFIG")
 fi
 
 echo "# query: $query" >&2
-echo "# from:  $FROM  size=$SIZE env=$ENV" >&2
-json="$(normandy "${args[@]}")"
+echo "# from: $FROM to=${TO:-now} size=$SIZE offset=$OFFSET env=$ENV" >&2
+result_file="$(mktemp)"
+trap 'rm -f "$result_file"' EXIT
+normandy "${args[@]}" > "$result_file"
+python3 - "$result_file" "$SIZE" "$OFFSET" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    rows = json.load(f)
+if not isinstance(rows, list):
+    raise SystemExit("SLS did not return a log array; query is incomplete")
+full = len(rows) >= int(sys.argv[2])
+print(json.dumps({"source": "sls", "rows": len(rows), "offset": int(sys.argv[3]),
+                  "possibly_truncated": full,
+                  "next_offset": int(sys.argv[3]) + len(rows) if full else None}), file=sys.stderr)
+PY
 
 if [[ "$RAW" -eq 1 ]]; then
-  printf '%s\n' "$json"
+  cat "$result_file"
   exit 0
 fi
 
-SLS_MESSAGE_FILTER="$MESSAGE" python3 - "$json" <<'PY'
+SLS_MESSAGE_FILTER="$MESSAGE" python3 - "$result_file" <<'PY'
 import json, os, re, sys
 
-raw = sys.argv[1]
+with open(sys.argv[1]) as f:
+    raw = f.read()
 needle = os.environ.get("SLS_MESSAGE_FILTER") or ""
 try:
     rows = json.loads(raw)
