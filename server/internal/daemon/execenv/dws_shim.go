@@ -159,6 +159,7 @@ func RunDWSWrap(deps DWSWrapDeps) int {
 			return 64
 		}
 		args = RewriteDWSSendAITag(args, policy)
+		args = RewriteDWSOriginReply(args, policy)
 	}
 	real, err := deps.LookPath("dws")
 	if err != nil {

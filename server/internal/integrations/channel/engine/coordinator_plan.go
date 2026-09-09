@@ -131,6 +131,7 @@ func (r *Router) materializeChannelCoordinatorPlan(ctx context.Context, inst Res
 	work.IssueResults = nil
 	seen := map[string]bool{}
 	var materialized []db.Issue
+	var origins []string
 	for _, item := range work.Items {
 		if strings.TrimSpace(item.ActionKey) == "" || seen[item.ActionKey] {
 			return errors.New("native coordinator item has missing or repeated action key")
@@ -145,6 +146,7 @@ func (r *Router) materializeChannelCoordinatorPlan(ctx context.Context, inst Res
 		if err != nil {
 			return err
 		}
+		origin := coordinatorItemOriginOpenMsgID(itemContext, msg.MessageID)
 		raw, err := inboundcoord.IndependentIssueTaskContext(itemContext, trigger)
 		if err != nil {
 			return err
@@ -189,6 +191,7 @@ func (r *Router) materializeChannelCoordinatorPlan(ctx context.Context, inst Res
 				WorkspaceID: inst.WorkspaceID, Title: inboundcoord.IssueTitle(itemDecision, msg.Text), Description: pgtype.Text{String: inboundcoord.IssueDescription(itemDecision, source), Valid: true},
 				Status: "todo", Priority: "none", AssigneeType: pgtype.Text{String: "agent", Valid: true}, AssigneeID: inst.AgentID, CreatorType: "member", CreatorID: identity.PrincipalUserID,
 				OriginType: pgtype.Text{String: originType, Valid: originType != ""}, OriginID: durableIssueCommandOriginID(inst.ID, itemKey), AllowDuplicate: true, AgentIdentityContextToken: token, DispatchContext: raw,
+				Metadata: dingTalkOriginMetadata(origin),
 			}, service.IssueCreateOpts{BroadcastPayload: func(issue db.Issue, _ []db.Attachment, _ []db.IssueLabel) map[string]any {
 				return map[string]any{"issue": service.IssueToMap(issue, prefix)}
 			}})
@@ -204,6 +207,7 @@ func (r *Router) materializeChannelCoordinatorPlan(ctx context.Context, inst Res
 			return errors.New("native coordinator item did not enqueue a durable task")
 		}
 		materialized = append(materialized, issue)
+		origins = append(origins, origin)
 		work.CompletedActionKeys = append(work.CompletedActionKeys, item.ActionKey)
 		work.IssueResults = append(work.IssueResults, protocol.ChatCoordinatorIssueResult{Action: action, IssueID: uuidString(issue.ID), IssueIdentifier: service.IssueIdentifier(prefix, issue.Number), IssueTitle: issue.Title, CommentID: uuidString(commentID), TaskID: uuidString(task.ID)})
 	}
@@ -234,7 +238,11 @@ func (r *Router) materializeChannelCoordinatorPlan(ctx context.Context, inst Res
 	r.notifyChannelCoordinatorTasks(ctx, tasks, work)
 	for i, issue := range materialized {
 		taskID, _ := util.ParseUUID(work.IssueResults[i].TaskID)
-		r.associateIssueConversation(ctx, inst, msg, issue, taskID)
+		itemMsg := msg
+		if i < len(origins) && origins[i] != "" {
+			itemMsg.MessageID = origins[i]
+		}
+		r.associateIssueConversation(ctx, inst, itemMsg, issue, taskID)
 	}
 	inboundcoord.RecordDecision(ctx, work)
 	return inboundcoord.SavePlan(ctx, work)
