@@ -215,7 +215,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - `server/internal/handler/autopilot.go`: `requireAutopilotWrite` prevents direct
   mutation/execution of Agent-managed event automations.
 - `server/cmd/multica/cmd_agent.go`: `event-trigger-enabled` update flag is Changed-gated.
-- `packages/views/agents/components/agent-detail-inspector.tsx`: Agent execution toggle;
-  digital-employee binding UI is unchanged.
+- `packages/views/agents/components/agent-message-settings.tsx`: Agent event-trigger
+  toggle rendered by `tabs/digital-employee-tab.tsx`; identity binding controls are unchanged.
 - Read-only verification: `multica agent get <id> --output json`,
   `multica autopilot runs <id> --output json`, and `GET /api/agents/{id}/event-batches`.

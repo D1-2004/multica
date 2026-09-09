@@ -436,7 +436,8 @@ verification command.
 ## Agent event triggers
 
 `agent update <id> --event-trigger-enabled[=false]` changes the default-off
-Agent execution setting. It does not change digital-employee bindings or
+Agent event-trigger setting, also available under Digital Employee → Conversation
+& follow-up in Agent configuration. It does not change digital-employee bindings or
 subscription scope. The first adapter is observed DingTalk group messages.
 Changes synchronize to Router within about five seconds when Router is available;
 failed syncs retry automatically. Message receipt is not task completion.

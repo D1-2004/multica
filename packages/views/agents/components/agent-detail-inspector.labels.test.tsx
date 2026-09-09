@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
+import { cleanup, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { AgentDetailInspector } from "./agent-detail-inspector";
@@ -52,16 +52,6 @@ const agent = {
 
 describe("AgentDetailInspector labels", () => {
   afterEach(cleanup);
-  it("keeps the event trigger off by default and saves only that setting", async () => {
-    const onUpdate=vi.fn(async()=>{});
-    renderWithI18n(<AgentDetailInspector agent={agent} runtime={null} runtimes={[]} members={[]} currentUserId="user-1" canEdit onUpdate={onUpdate} />);
-    const toggle=screen.getByRole("switch",{name:"Event trigger"});
-    expect(toggle).not.toBeChecked();
-    fireEvent.click(toggle);
-    await waitFor(()=>expect(onUpdate).toHaveBeenCalledWith("agent-1",{event_trigger_enabled:true}));
-  });
-
-
   // Agent labels were removed from the product (MUL-5600). Label Settings no
   // longer manages an agent catalog, so an attach-only picker here would be a
   // dead end pointing at a catalog the user cannot populate.
@@ -100,6 +90,7 @@ describe("AgentDetailInspector labels", () => {
 
     expect(screen.queryByText("Local Runner")).not.toBeInTheDocument();
     expect(screen.queryByTestId("runner-picker")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Event trigger" })).toBeNull();
   });
 
   it("places GitHub sandbox identity with runtime configuration", () => {

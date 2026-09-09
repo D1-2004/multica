@@ -5,7 +5,8 @@ Implemented in existing group-awareness CR 36022159, paired with Router CR 35999
 ## Agent event triggers
 
 `agent update <id> --event-trigger-enabled[=false]` changes the default-off
-Agent execution setting. It does not change digital-employee bindings or
+Agent event-trigger setting, also available under Digital Employee → Conversation
+& follow-up in Agent configuration. It does not change digital-employee bindings or
 subscription scope. The first adapter is observed DingTalk group messages.
 Changes synchronize to Router within about five seconds when Router is available;
 failed syncs retry automatically. Message receipt is not task completion.
@@ -54,5 +55,5 @@ instance for `go test -race ./internal/service -run '^TestEventTrigger'`.
 These tests exercise real SQL deadlines, deduplication, concurrent workers, restart
 reconciliation, success-only consumption, failure/retry, and batch overflow.
 Handler tests use `DATABASE_URL` and exercise config round trips, malformed input,
-self-message protection, and default-off admission. Frontend schema/inspector tests
+self-message protection, and default-off admission. Frontend schema/Digital Employee tests
 cover old-server defaults and toggling without any binding mutation.
