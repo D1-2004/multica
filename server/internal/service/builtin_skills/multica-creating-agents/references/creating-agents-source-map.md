@@ -205,3 +205,17 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Local/Git package preview retains bounded constraints and original source version | `server/internal/handler/agent_package.go`; `packages/core/types/agent-package.ts`; `packages/core/api/schemas.ts`: `AgentPackagePreviewSchema` |
 | Local package source blocks direct instructions/contract edits without blocking ordinary profile edits | `server/internal/handler/agent.go`: `UpdateAgent`; `server/internal/handler/agent_coordinator_contract_test.go`: `TestUpdateLocalPackageAgentPreservesSourceContract` |
 | Portable ZIP/Git/export use the same root contract field, retaining stale source hashes on copies | `server/internal/agentsource/portable.go`; `server/internal/agentsource/agent.schema.json`; `server/internal/handler/agent_export_manifest.go`; `server/internal/handler/agent_source_preview.go` |
+
+## Event-trigger implementation
+
+- `server/internal/service/event_trigger.go`: `SetEnabled`, `Admit`, `ProcessNext`,
+  and `SyncRoutes` own configuration, durable inbox, batching and Router policy.
+- `server/internal/handler/agent_event_trigger.go`: event adapter, batch inspection,
+  and authorized retry; `agent.go` exposes `event_trigger_enabled`.
+- `server/internal/handler/autopilot.go`: `requireAutopilotWrite` prevents direct
+  mutation/execution of Agent-managed event automations.
+- `server/cmd/multica/cmd_agent.go`: `event-trigger-enabled` update flag is Changed-gated.
+- `packages/views/agents/components/agent-detail-inspector.tsx`: Agent execution toggle;
+  digital-employee binding UI is unchanged.
+- Read-only verification: `multica agent get <id> --output json`,
+  `multica autopilot runs <id> --output json`, and `GET /api/agents/{id}/event-batches`.

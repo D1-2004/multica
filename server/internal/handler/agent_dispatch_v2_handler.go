@@ -202,6 +202,9 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
 		return
 	}
+	if h.handleObservedEvent(w, r, command, dispatchContext) {
+		return
+	}
 	if managedDingTalkResponse(command) && (h.DingTalkResponses == nil || h.InboundCoordinatorWorker == nil) {
 		writeError(w, http.StatusServiceUnavailable, "managed DingTalk response service is unavailable")
 		return

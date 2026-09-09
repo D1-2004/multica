@@ -486,9 +486,9 @@ fi
 
 stop_existing_processes
 
-echo "[multica][runtime] running migrations"
-"$APP_ROOT/bin/migrate" up
-echo "[multica][runtime] migrations completed"
+# Database migrations are an independent release phase. Never execute schema
+# changes from application startup or replica restarts.
+echo "[multica][runtime] database migrations are managed by the release phase"
 
 start_processes
 if ! wait_for_startup; then

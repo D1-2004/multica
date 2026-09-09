@@ -577,6 +577,17 @@ func (h *Handler) requireAutopilotWrite(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusForbidden, "only the autopilot creator, a workspace admin, or a granted collaborator can manage this autopilot")
 		return false
 	}
+	if h.EventTriggers != nil {
+		var managed bool
+		if err := h.EventTriggers.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM agent_event_trigger WHERE autopilot_id=$1 AND workspace_id=$2)`, ap.ID, ap.WorkspaceID).Scan(&managed); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "event trigger configuration is unavailable")
+			return false
+		}
+		if managed {
+			writeError(w, http.StatusConflict, "this automation is managed by the agent event-trigger setting; retry failed work through the agent event-batches API")
+			return false
+		}
+	}
 	return true
 }
 

@@ -526,8 +526,11 @@ func (c DispatchCommand) validateControl() error {
 
 func (c DispatchCommand) validateChannelMessageCreated() error {
 	if c.Event.Domain != "channel" ||
-		(c.Event.Type != "message.created" && c.Event.Type != "emotionReply") {
+		(c.Event.Type != "message.created" && c.Event.Type != "message.observed" && c.Event.Type != "emotionReply") {
 		return errors.New("event must be channel/message.created, channel/emotionReply, calendar/calendar.started or approval/approval.status_changed")
+	}
+	if c.Event.Type == "message.observed" && (c.Source.Type != "digital_employee" || c.Event.Data.Conversation.Type != "group" || c.Control != nil || c.Continuation != nil || c.ExternalIdentity.DWS == nil) {
+		return errors.New("message.observed requires a digital employee group event with DWS identity and no control or continuation")
 	}
 	// emotionReply 事件只允许数字员工来源；机器人通道没有表情回复订阅。
 	if c.Event.Type == "emotionReply" && c.Source.Type != "digital_employee" {
@@ -1527,7 +1530,7 @@ func dispatchWindowIsLifecycleEmotion(c DispatchCommand) bool {
 // the sandbox adding then removing an ack). Those events must not create new
 // Issue/comment work: doing so re-enters processing emotions and loops.
 func dispatchIsAgentSelfMessage(c DispatchCommand) bool {
-	if c.Event.Domain != "channel" || c.Event.Type != "message.created" {
+	if c.Event.Domain != "channel" || (c.Event.Type != "message.created" && c.Event.Type != "message.observed") {
 		return false
 	}
 	agentIDs := dispatchAgentIdentityIDs(c)

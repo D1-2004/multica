@@ -218,6 +218,7 @@ func init() {
 	agentUpdateCmd.Flags().StringSlice("public-to-member", nil, "public_to: allow the given member user id(s) to invoke this agent. Repeatable.")
 	agentUpdateCmd.Flags().String("status", "", "New status")
 	agentUpdateCmd.Flags().Int32("max-concurrent-tasks", 0, "New max concurrent tasks (1-50)")
+	agentUpdateCmd.Flags().Bool("event-trigger-enabled", false, "Automatically run on coalesced subscribed events (off by default)")
 	agentUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	agentTransferOwnerCmd.Flags().String("to-id", "", "User id of the new owner (must be a current workspace member)")
@@ -689,6 +690,10 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{}
+	if cmd.Flags().Changed("event-trigger-enabled") {
+		enabled, _ := cmd.Flags().GetBool("event-trigger-enabled")
+		body["event_trigger_enabled"] = enabled
+	}
 	if cmd.Flags().Changed("name") {
 		v, _ := cmd.Flags().GetString("name")
 		body["name"] = v

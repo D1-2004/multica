@@ -96,7 +96,7 @@ export function InboundCoordinatorSetting({
   );
 }
 
-function BooleanSetting({
+export function BooleanSetting({
   agentId,
   label,
   description,

@@ -10,6 +10,18 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Agent response policy compatibility", () => {
+  it.each(["true", 1, null, {}, []])("keeps event triggers disabled for malformed %j", (value) => {
+    expect(AgentResponseSchema.parse({ id: "agent-1", event_trigger_enabled: value }).event_trigger_enabled).toBe(false);
+  });
+
+  it.each([true, false])("updates only the event trigger toggle to %j", async (enabled) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: "agent-1", event_trigger_enabled: enabled }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await new ApiClient("https://api.example.test").updateAgent("agent-1", { event_trigger_enabled: enabled });
+    expect(result.event_trigger_enabled).toBe(enabled);
+    expect(fetchMock).toHaveBeenCalledWith("https://api.example.test/api/agents/agent-1", expect.objectContaining({ body: JSON.stringify({ event_trigger_enabled: enabled }) }));
+  });
+
   it("defaults policy fields from older backends while preserving unrelated data", () => {
     const parsed = parseWithFallback(
       { id: "agent-1", name: "Employee", future_setting: { enabled: true } },
@@ -20,6 +32,7 @@ describe("Agent response policy compatibility", () => {
     expect(parsed).toMatchObject({
       id: "agent-1",
       name: "Employee",
+      event_trigger_enabled: false,
       dingtalk_response_enabled: false,
       dingtalk_show_ai_tag: false,
       dingtalk_response_policy_revision: 1,
