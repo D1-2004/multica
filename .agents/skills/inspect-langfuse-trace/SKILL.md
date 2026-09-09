@@ -5,9 +5,9 @@ description: >
   用户给了 cid/openConversationId、钉钉 uid、Multica user id、workspace_id、agent_id、issue_id/task_id、coord_trace_id/job id、
   chat session id、evidence_id、scene_key，或说「Langfuse 上怎么查」「这次调用的 trace」「token 用量」时必须用。
   走 scripts/langfuse_lookup.py（Langfuse 公开 API），不要凭 UI 截图猜。
-compatibility: Reads LANGFUSE credentials from the environment or ~/.grok/langfuse.env (never in the repo). Unsets HTTP proxy. Python 3.9+, stdlib only.
 metadata:
-  version: "1.1.0"
+  compatibility: Reads LANGFUSE credentials from the environment or ~/.grok/langfuse.env (never in the repo). Unsets HTTP proxy. Python 3.9+, stdlib only.
+  version: "1.2.0"
   audience: "coding-agent"
 ---
 
@@ -96,6 +96,25 @@ python3 $LF related <任意上述 id>
 - `inbound_coordinator`：根 input 是入站原话，output 是裁决（`action`/`user_text`/`issue_id`）；`coordinator.round.N` 是每轮模型调用；工具 observation 名字就是工具名；`dws_chat_history` 是钉钉历史预读。
 - `scene_memory_flush`：`dws_history_range` → `memory_flush.round.N` → `memory_flush_commit`（accepted/reason）；根 output 有 `new_memory_revision` 和替换后的文本。
 - `agent_task`：根 input 是 Issue 标题/描述与触发，output 是结果；`llm.call.N` 是沙箱真实模型请求响应（含 usage）；工具名来自 transcript；`thinking` / `assistant_text` 是合并后的段落。
+
+## 有限动作版本的快速核对
+
+摘要不足时保存精确 trace 原始 JSON，再定位当前 `inbound_coordinator` 尝试及其 generations；共享 trace 顶层输出不能替代它：
+
+```bash
+python3 "$LF" trace "$COORD_TRACE_ID" --json > "$EVIDENCE/trace.json"
+```
+
+| 线索 | 先看哪里，如何判定 |
+|---|---|
+| 工作被 Coordinator 抢答 | finish 参数 `actions[]`、根 output `coordination_actions`、metadata/output `coordination_kinds`；逐项看 kind/reply/source_refs 与当前窗原话。内部 `action=reply` 是聚合结果，不能单凭它断言旧通用模型入口仍在。 |
+| 提了任务但没有执行 | `start_work/continue_work` 的 source_refs 对应谁的请求；随后是否有实际 issue/task 与提交回执、ack/outbox 状态、DWS 消息。模型承诺或 ack 入队都不等于实际送达。 |
+| 合同没生效或上下文仍很大 | metadata `coordinator_contract_state`、`coordinator_contract_hash`、`source_instructions_sha256`，再看对应 `coordinator.finish_check.N` 输入 `job_policy.kind/text`。有效短合同替代审查中的完整 SOP；缺失/过期/读取失败仍走全文审查，报告这部分成本。 |
+| 召回过多、状态引用不明 | `read_snapshot_count/runes/truncated/budget` 与 generation 中快照的 `read_ref/character_budget/coverage`；8000 是读取快照预算，当前窗、系统规则和审查另计。未导出的字段记为缺口，不把计划名 `coordination_read_budget/context_runes` 当成真实字段。 |
+| revise后修错字段或反复丢任务 | 对照review的Reason、下一轮反馈与generation内的 `Previous rejected proposal`；最近提案单独保留，`repair_proposal_runes/repair_proposal_budget`对应6000字符预算。超限/非法提案会显式omitted；8000读快照与800反馈另计。 |
+| 可选边界摘录异常 | `finish_check_boundary_quote_discarded=true`仅表示无效可选constraint_quote被丢弃；继续看必填request/candidate引用及verdict是否通过。Reason不能被摘录覆盖，allow带真实旁证可正常通过，decline仍须真实边界。 |
+
+`rN` 只在当前 run 的保留快照中解析；不要执行 `key issue_id r1`，也不要从旧 trace 复制它。由该快照取得真实 issue UUID 后，再按上表查业务 ID。有限动作版本关闭 `context_read(kind=job_policy)`，终结审查包含 task_finished；检查实际 policy/schema 区分旧版本和恢复 checkpoint。计费与延迟合计 `coordinator.round.N` 和 `coordinator.finish_check.N`，并核对 revise 后最终动作；去掉 generic reply 不证明动作语义、授权或真实交付一定正确。
 
 ## 注意
 

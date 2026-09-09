@@ -44,7 +44,8 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 			} `json:"messages"`
 			Tools []struct {
 				Function struct {
-					Name string `json:"name"`
+					Name       string         `json:"name"`
+					Parameters map[string]any `json:"parameters"`
 				} `json:"function"`
 			} `json:"tools"`
 		}
@@ -53,7 +54,8 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 		if len(body.Tools) == 1 && body.Tools[0].Function.Name == "finish_check" {
 			// This HTTP fixture verifies history transport and routing rounds;
 			// semantic verdicts have their own scripted and real-model tests.
-			_ = json.NewEncoder(w).Encode(withScriptedFinishQuotes(scriptedFinishVerdict("allow", "Scripted history fixture allows the candidate."), body.Messages[len(body.Messages)-1].Content))
+			requestRef, candidateRef := scriptedReferenceEnums(body.Tools[0].Function.Parameters)
+			_ = json.NewEncoder(w).Encode(withScriptedFinishReferences(scriptedFinishVerdict("allow", "Scripted history fixture allows the candidate."), body.Messages[len(body.Messages)-1].Content, requestRef, candidateRef))
 			return
 		}
 		call := calls.Add(1)
@@ -67,7 +69,7 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 			_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"history1","type":"function","function":{"name":"context_read","arguments":"{\"kind\":\"history\"}"}}]},"finish_reason":"tool_calls"}]}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"id":"cmpl-2","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"action\":\"reply\",\"text\":\"我在。\",\"reason\":\"本轮只沟通\"}"}}]},"finish_reason":"tool_calls"}]}`)
+		_, _ = io.WriteString(w, `{"id":"cmpl-2","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"actions\":[{\"kind\":\"acknowledge\",\"source_refs\":[\"u1\"],\"ack_kind\":\"greeting\",\"reply\":\"我在。\"}]}"}}]},"finish_reason":"tool_calls"}]}`)
 	}))
 	t.Cleanup(server.Close)
 	return llm.New(llm.Config{APIKey: "test", BaseURL: server.URL})
@@ -102,11 +104,11 @@ func TestDecideReadsDWSHistoryOnDemandForRobotAndDigitalEmployee(t *testing.T) {
 			if !strings.Contains(prompt, `"status":"loaded"`) || !strings.Contains(prompt, "看看今天的新闻") {
 				t.Fatalf("DWS history missing from prompt: %q", prompt)
 			}
-			if len(got.Steps) < 2 || got.Steps[0].Tool != "context_read" || got.Steps[0].Type != "tool_use" || got.Steps[1].Type != "tool_result" {
+			if len(got.Steps) < 4 || got.Steps[0].Tool != toolAssocRecall || !strings.Contains(got.Steps[0].Content, "Host prefetch") || got.Steps[2].Tool != "context_read" || got.Steps[2].Type != "tool_use" || got.Steps[3].Type != "tool_result" {
 				t.Fatalf("DWS timeline missing: %#v", got.Steps)
 			}
-			if !strings.Contains(got.Steps[1].Output, "看看今天的新闻") {
-				t.Fatalf("DWS timeline omitted loaded content: %#v", got.Steps[1])
+			if !strings.Contains(got.Steps[3].Output, "看看今天的新闻") {
+				t.Fatalf("DWS timeline omitted loaded content: %#v", got.Steps[3])
 			}
 			if len(loader.turns) != 1 || loader.turns[0].HistoryBefore.IsZero() {
 				t.Fatalf("on-demand history must receive the fixed window cutoff: %#v", loader.turns)
@@ -160,7 +162,7 @@ func TestDecideDWSHistoryFailureStillRunsLLM(t *testing.T) {
 	if !strings.Contains(prompt, `"status":"unavailable"`) {
 		t.Fatalf("failure must be explicit, not empty history: %q", prompt)
 	}
-	if len(got.Steps) < 2 || got.Steps[1].Tool != "context_read" || !strings.Contains(got.Steps[1].Output, `"status":"unavailable"`) {
+	if len(got.Steps) < 4 || got.Steps[3].Tool != "context_read" || !strings.Contains(got.Steps[3].Output, `"status":"unavailable"`) {
 		t.Fatalf("DWS failure timeline=%#v", got.Steps)
 	}
 }

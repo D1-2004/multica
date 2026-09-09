@@ -69,3 +69,9 @@ describe("stored agent draft", () => {
     ).toBe(false);
   });
 });
+
+it("retains coordinator constraints and their original instruction hash across autosave", () => {
+  const original = {...draft(), coordinatorContract:{version:1 as const,scope:"routing",must_delegate:[],constraints:["draft only"],clarify_when:[],source_instructions_sha256:"f".repeat(64)}};
+  const restored = fromStoredAgentDraft(toStoredAgentDraft(original,"msg"),original.runtimeId);
+  expect(restored.coordinatorContract).toEqual(original.coordinatorContract);
+});

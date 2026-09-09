@@ -15,6 +15,7 @@ import (
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
 
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
@@ -41,17 +42,20 @@ func TestCoordinatorFrozenTraceReplay(t *testing.T) {
 		t.Skip("LLM credentials unavailable; no configuration printed")
 	}
 	type result struct {
-		ID        string              `json:"id"`
-		Status    string              `json:"status"`
-		Action    Action              `json:"action,omitempty"`
-		Verdict   string              `json:"verdict,omitempty"`
-		Reason    string              `json:"reason,omitempty"`
-		ElapsedMS int64               `json:"elapsed_ms"`
-		Rounds    []frozenReplayRound `json:"rounds"`
-		ToolCalls []string            `json:"fake_read_calls"`
-		Items     []WindowItem        `json:"planned_items,omitempty"`
-		Reply     string              `json:"reply_for_manual_review,omitempty"`
-		Failure   string              `json:"failure,omitempty"`
+		ID                 string               `json:"id"`
+		Status             string               `json:"status"`
+		Action             Action               `json:"action,omitempty"`
+		Verdict            string               `json:"verdict,omitempty"`
+		Reason             string               `json:"reason,omitempty"`
+		ElapsedMS          int64                `json:"elapsed_ms"`
+		Rounds             []frozenReplayRound  `json:"rounds"`
+		ToolCalls          []string             `json:"fake_read_calls"`
+		Items              []WindowItem         `json:"planned_items,omitempty"`
+		Actions            []CoordinationAction `json:"coordination_actions,omitempty"`
+		Reply              string               `json:"reply_for_manual_review,omitempty"`
+		Failure            string               `json:"failure,omitempty"`
+		ContractState      string               `json:"contract_state"`
+		ContractCharacters int                  `json:"contract_characters"`
 	}
 	report := struct {
 		PolicyVersion       string   `json:"policy_version"`
@@ -64,23 +68,32 @@ func TestCoordinatorFrozenTraceReplay(t *testing.T) {
 		PolicyCharacters    int      `json:"job_policy_characters"`
 		Cases               []result `json:"cases"`
 	}{PolicyVersion: coordinatorPolicy.Version, SourceTrace: fixture.TraceID, Safety: "Real model with private frozen input and fake read-only tools. No E2E, external messages, memory writes, task creation or deployment verification.", OldSystemCharacters: utf8.RuneCountInString(fixture.System), OldUserCharacters: utf8.RuneCountInString(fixture.User), NewSystemCharacters: utf8.RuneCountInString(buildSystemPrompt(fixture.Turn)), NewUserCharacters: utf8.RuneCountInString(buildUserPrompt(fixture.Turn)), PolicyCharacters: utf8.RuneCountInString(fixture.Turn.Instructions)}
-	verifiedProgressEvidence := `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","title":"查询钉钉 AI 听记生成规则","status":"done","description":"此前用户委托查询钉钉 AI 听记生成规则；该查询任务已经完成，查证结果已整理。","updated_at":"2026-09-09T02:58:00Z"}`
+	verifiedProgressEvidence := `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","title":"查询钉钉 AI 听记生成规则","status":"done","original_goal":"查询钉钉 AI 听记生成规则","status_source":"issue_database","scope":"current_agent_workspace_issue","updated_at":"2026-09-09T02:58:00Z"}`
 	cases := []struct {
-		id             string
-		message        string
-		candidate      string
-		expect         Action
-		verdict        string
-		hostEvidence   string
-		policy         string
-		candidateIssue bool
+		id               string
+		message          string
+		candidate        string
+		expect           Action
+		verdict          string
+		hostEvidence     string
+		policy           string
+		candidateIssue   bool
+		candidatePurpose string
+		contract         bool
+		kinds            []string
+		taskFinished     bool
 	}{
-		{id: "original_product_question", expect: ActionIssue},
+		{id: "original_product_question", expect: ActionIssue, kinds: []string{"start_work"}},
+		{id: "task_finished_current_result", message: "任务完成，请向委托人汇报当前查证结果。", expect: ActionReply, taskFinished: true, kinds: []string{"report_result"}},
+		{id: "original_product_question_with_contract", expect: ActionIssue, contract: true, kinds: []string{"start_work"}},
 		{id: "original_unsupported_answer", candidate: fixture.BadReply, verdict: "revise"},
-		{id: "greeting_and_capabilities", message: "你好，你可以帮我做什么？", expect: ActionReply},
-		{id: "necessary_clarification", message: "帮我给同事发一条通知。", expect: ActionReply},
+		{id: "greeting_and_capabilities", message: "你好，你可以帮我做什么？", expect: ActionReply, kinds: []string{"describe_capabilities"}},
+		{id: "necessary_clarification", message: "帮我给同事发一条通知。", expect: ActionReply, kinds: []string{"clarify"}},
+		{id: "two_work_items_plus_clarification", message: "请查证主持人和参会人各自开启听记会生成几份；另外起草周五下午三点全员例会通知，正文写明请带周报，先不发送；最后帮我发个消息。", expect: ActionIssue, contract: true, kinds: []string{"start_work", "clarify"}},
 		{id: "verified_progress", message: "之前的查询任务完成了吗？", candidate: "查证任务已完成。", verdict: "allow", hostEvidence: verifiedProgressEvidence},
 		{id: "verified_progress_named_task", message: "“查询钉钉 AI 听记生成规则”这个任务完成了吗？", candidate: "查证任务已完成。", verdict: "allow", hostEvidence: verifiedProgressEvidence},
+		{id: "merged_independent_deliverables", message: "请查证听记生成份数；另起草周五三点例会通知，先不发送。", candidate: "我来查证听记并起草通知。", candidatePurpose: "1. 查证听记生成数量；2. 起草周五例会通知（不发送）", candidateIssue: true, contract: true, verdict: "revise"},
+		{id: "single_deliverable_steps", message: "帮我起草周五三点例会通知，整理议程、写初稿并校对，先不发送。", candidate: "我来整理议程并起草校对通知。", candidatePurpose: "起草周五三点例会通知：先整理议程，再写初稿并校对（不发送）", candidateIssue: true, contract: true, verdict: "allow"},
 		{id: "trailing_draft_restriction", message: "帮我给同事起草一条周五开会通知。", candidate: "我现在把周五开会通知发给同事。", candidateIssue: true, verdict: "revise", policy: strings.Repeat("Reference background without authorization. ", 200) + "Only draft. Never send until the user explicitly approves."},
 	}
 	for _, tc := range cases {
@@ -93,26 +106,52 @@ func TestCoordinatorFrozenTraceReplay(t *testing.T) {
 			if tc.policy != "" {
 				turn.Instructions = tc.policy
 			}
+			if tc.contract {
+				turn.CoordinatorContract, err = coordinatorcontract.Bind(&coordinatorcontract.Contract{Version: 1, Scope: "接待与协调钉钉产品问答、培训材料整理和授权通知工作。", MustDelegate: []string{"产品事实与机制必须由执行 Agent 查证后回答。", "专业分析、培训材料编写、通知起草与发送交执行 Agent。"}, Constraints: []string{"遵守用户当前限制；只起草不发送的授权不能变成发送。", "协调回复不能替代业务查证或宣称任务已完成。"}, ClarifyWhen: []string{"通知对象或内容缺失且无法从当前上下文恢复时，先澄清。"}}, turn.Instructions)
+				if err != nil {
+					t.Fatal(err)
+				}
+				turn.CoordinatorContractState = coordinatorcontract.StateLoaded
+			}
+			if tc.taskFinished {
+				turn.Loop = LoopTaskFinished
+				turn.IssueID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+				turn.TaskResult = "会议记录显示，主持人和参会人各自启动的听记均已完成，共有两条记录。本轮尚未向当前会话发送此结果。"
+				turn.TaskDeliveryContext = `{"status":"loaded","task_id":"frozen-current-task","scope":"current_task","deliveries":[]}`
+			}
 			reads := &frozenReplayTools{scene: turn.ConversationID, recall: fixture.Recall}
 			observer := &frozenReplayCompleter{client: client, model: os.Getenv("MULTICA_COORDINATOR_REPLAY_MODEL")}
 			coordinator := &Coordinator{Chat: observer, Tools: reads, DWSHistory: &replayHistory{scene: turn.ConversationID}}
 			ctx, cancel := context.WithTimeout(context.Background(), decisionTimeout)
 			defer cancel()
-			r := result{ID: tc.id, Status: "PASS"}
+			_, contractState := currentCoordinatorContract(turn)
+			r := result{ID: tc.id, Status: "PASS", ContractState: contractState, ContractCharacters: utf8.RuneCount(coordinatorcontract.Marshal(turn.CoordinatorContract))}
 			if tc.candidate != "" {
 				messages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(buildSystemPrompt(turn)), openai.UserMessage(buildUserPrompt(turn))}
 				if tc.id == "original_unsupported_answer" {
-					read := assistantTool("frozen-recall", toolAssocRecall, `{}`)
-					messages = append(messages, read.Choices[0].Message.ToParam(), openai.ToolMessage(fixture.Recall, "frozen-recall"))
+					normalized, normalizeErr := NormalizeCoordinationRead(toolAssocRecall, fixture.Recall)
+					if normalizeErr != nil {
+						t.Fatal(normalizeErr)
+					}
+					turn.CoordinationReads = []CoordinationRead{{ReadRef: "r1", Tool: toolAssocRecall, Result: json.RawMessage(normalized)}}
 				}
 				if tc.hostEvidence != "" {
-					read := assistantTool("frozen-verified-work", toolIssueGet, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`)
-					messages = append(messages, read.Choices[0].Message.ToParam(), openai.ToolMessage(tc.hostEvidence, "frozen-verified-work"))
+					normalized, normalizeErr := NormalizeCoordinationRead(toolWorkState, tc.hostEvidence)
+					if normalizeErr != nil {
+						t.Fatal(normalizeErr)
+					}
+					turn.CoordinationReads = []CoordinationRead{{ReadRef: "r1", Tool: toolWorkState, Result: json.RawMessage(normalized)}}
 				}
-				candidate := Decision{Action: ActionReply, UserText: tc.candidate}
+				candidate := Decision{Action: ActionReply, UserText: tc.candidate, CoordinationActions: []CoordinationAction{{Kind: "describe_capabilities", SourceRefs: []string{"u1"}, Reply: tc.candidate}}}
+				if tc.hostEvidence != "" {
+					candidate.CoordinationActions[0].Kind = "report_status"
+					candidate.CoordinationActions[0].StateRefs = []string{"r1"}
+				}
 				if tc.candidateIssue {
 					candidate.Action = ActionIssue
-					candidate.Items = []WindowItem{{SourceRefs: []string{"u1"}, Purpose: "向同事发送周五开会通知", Intent: "other", Basis: "new_request"}}
+					purpose := firstNonEmpty(tc.candidatePurpose, "向同事发送周五开会通知")
+					candidate.Items = []WindowItem{{SourceRefs: []string{"u1"}, Purpose: purpose, Intent: "other", Basis: "new_request"}}
+					candidate.CoordinationActions = []CoordinationAction{{Kind: "start_work", SourceRefs: []string{"u1"}, Purpose: purpose, Intent: "other", Reply: tc.candidate}}
 				}
 				r.Action = candidate.Action
 				check, callErr := coordinator.checkFinish(ctx, turn, candidate, messages, 0, map[string]finishCheckResult{})
@@ -124,14 +163,28 @@ func TestCoordinatorFrozenTraceReplay(t *testing.T) {
 				}
 			} else {
 				d, callErr := coordinator.runLoop(ctx, turn)
-				r.Action, r.Items, r.Reply = d.Action, d.Items, d.UserText
+				r.Action, r.Items, r.Reply, r.Actions = d.Action, d.Items, d.UserText, d.CoordinationActions
 				if callErr != nil {
 					r.Failure = fmt.Sprintf("loop failed (%T); upstream body omitted", callErr)
 				} else if d.Action != tc.expect {
 					r.Failure = "unexpected routing action: " + string(d.Action)
 				}
+				for _, expectedKind := range tc.kinds {
+					found := false
+					for _, action := range d.CoordinationActions {
+						if action.Kind == expectedKind {
+							found = true
+						}
+					}
+					if !found && r.Failure == "" {
+						r.Failure = "missing required coordination action: " + expectedKind
+					}
+				}
+				if tc.id == "two_work_items_plus_clarification" && len(d.Items) != 2 && r.Failure == "" {
+					r.Failure = "two independent deliverables were not retained with the clarification"
+				}
 				if tc.expect == ActionIssue {
-					if len(d.Items) == 0 {
+					if len(d.Items) == 0 && r.Failure == "" {
 						r.Failure = "original product question did not produce any executable work plan"
 					}
 					for _, item := range d.Items {
@@ -270,25 +323,27 @@ func (f *frozenReplayTools) Call(_ context.Context, _ Turn, name, arguments stri
 		}
 		return f.recall, nil
 	}
-	if name == toolIssueGet || name == toolIssueCommentList {
+	if name == toolWorkState || name == toolIssueGet || name == toolIssueCommentList {
 		return `{"status":"unavailable","hint":"The frozen export does not contain further work evidence; do not infer product facts."}`, nil
 	}
 	return "", fmt.Errorf("frozen replay has no implementation for tool %q", name)
 }
 
 type frozenReplayRound struct {
-	Model                  string   `json:"model"`
-	AllowedTools           []string `json:"allowed_tools"`
-	CalledTools            []string `json:"called_tools"`
-	InputTokens            int64    `json:"input_tokens"`
-	OutputTokens           int64    `json:"output_tokens"`
-	ElapsedMS              int64    `json:"elapsed_ms"`
-	InputCharacters        int      `json:"input_characters"`
-	FinishReason           string   `json:"finish_reason,omitempty"`
-	OutputCharacters       int      `json:"output_characters"`
-	ToolArgumentCharacters int      `json:"tool_argument_characters"`
-	ProposedAction         string   `json:"proposed_action,omitempty"`
-	ReviewVerdict          string   `json:"review_verdict,omitempty"`
+	Model                         string   `json:"model"`
+	SystemPromptHash              string   `json:"system_prompt_hash"`
+	AllowedTools                  []string `json:"allowed_tools"`
+	CalledTools                   []string `json:"called_tools"`
+	InputTokens                   int64    `json:"input_tokens"`
+	OutputTokens                  int64    `json:"output_tokens"`
+	ElapsedMS                     int64    `json:"elapsed_ms"`
+	InputCharacters               int      `json:"input_characters"`
+	FinishReason                  string   `json:"finish_reason,omitempty"`
+	OutputCharacters              int      `json:"output_characters"`
+	ToolArgumentCharacters        int      `json:"tool_argument_characters"`
+	ProposedAction                string   `json:"proposed_action,omitempty"`
+	ReviewVerdict                 string   `json:"review_verdict,omitempty"`
+	ToolArgumentsForPrivateReview []string `json:"tool_arguments_for_private_review,omitempty"`
 }
 type frozenReplayCompleter struct {
 	client *llm.Client
@@ -303,6 +358,12 @@ func (f *frozenReplayCompleter) Chat(ctx context.Context, params openai.ChatComp
 	started := time.Now()
 	round := frozenReplayRound{Model: string(params.Model), AllowedTools: toolParamNames(params.Tools)}
 	body, _ := json.Marshal(params.Messages)
+	if len(params.Messages) > 0 {
+		raw, _ := json.Marshal(params.Messages[0])
+		var system struct{ Content string }
+		_ = json.Unmarshal(raw, &system)
+		round.SystemPromptHash = policyHash(system.Content)
+	}
 	round.InputCharacters = utf8.RuneCount(body)
 	response, err := f.client.Chat(ctx, params)
 	if response != nil {
@@ -313,13 +374,21 @@ func (f *frozenReplayCompleter) Chat(ctx context.Context, params openai.ChatComp
 			round.OutputCharacters = utf8.RuneCountInString(choice.Message.Content)
 			for _, call := range functionToolCalls(choice.Message) {
 				round.CalledTools = append(round.CalledTools, call.Name)
+				round.ToolArgumentsForPrivateReview = append(round.ToolArgumentsForPrivateReview, call.Arguments)
 				characters := utf8.RuneCountInString(call.Arguments)
 				round.ToolArgumentCharacters += characters
 				round.OutputCharacters += characters
-				var terminal struct{ Action, Verdict string }
+				var terminal struct {
+					Verdict string
+					Actions []CoordinationAction
+				}
 				if json.Unmarshal([]byte(call.Arguments), &terminal) == nil {
 					if call.Name == toolFinish {
-						round.ProposedAction = terminal.Action
+						kinds := make([]string, 0, len(terminal.Actions))
+						for _, action := range terminal.Actions {
+							kinds = append(kinds, action.Kind)
+						}
+						round.ProposedAction = strings.Join(kinds, ",")
 					}
 					if call.Name == toolFinishCheck {
 						round.ReviewVerdict = terminal.Verdict

@@ -164,3 +164,16 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `CreateAgentParams` | generated from `queries/agent.sql` | typed params include nullable `Model`, `ThinkingLevel`, and `ServiceTier` |
 | `UpdateAgent` SET | generated from `queries/agent.sql` | COALESCE updates include model/thinking/service tier; dedicated clear queries restore each nullable override |
 | `UpdateAgentCustomEnv` (called by the `UpdateAgentEnv` handler) | 2652 | `SET custom_env = $2` — the only write path for env values |
+
+
+## Bounded Coordinator contract (2026-09-09)
+
+| Contract | Implementation |
+| --- | --- |
+| Version 1 shape; strict unknown-field validation; canonical JSON including source hash ≤1600 Unicode code points | `server/internal/coordinatorcontract/contract.go`: `Contract`, `Parse`, `Bind`, `Resolve`, `Hash` |
+| Dedicated nullable persisted field; omitted UPDATE preserves and JSON null atomically clears | `server/migrations/9159_agent_coordinator_contract.up.sql`; `server/pkg/db/queries/agent.sql`: `CreateAgent`, `UpdateAgent` |
+| Independent Coordinator read | `server/pkg/db/queries/agent_coordinator_contract.sql`: `GetAgentCoordinatorContract` |
+| Create/update/readback; source ownership guard; source hash retained on copies, missing hash Host-bound | `server/internal/handler/agent.go`: request/response structs, `bindAgentCoordinatorContract`, `agentToResponse` |
+| JSON/file CLI inputs and copy roundtrip | `server/cmd/multica/cmd_agent.go`: `registerCoordinatorContractFlags`, `resolveCoordinatorContract`; `server/cmd/multica/cmd_agent_copy.go`: `runAgentCopy` |
+| Web/Desktop duplicate, builder and stored draft roundtrip | `packages/core/agents/draft.ts`, `stored-draft.ts`, `builder-protocol.ts`; `packages/core/api/schemas.ts`: `CoordinatorContractSchema` |
+| Boundary and stale-version evidence | `server/internal/coordinatorcontract/contract_test.go`; `server/internal/handler/agent_coordinator_contract_test.go`; `server/cmd/multica/cmd_agent_coordinator_contract_test.go`; `packages/core/api/coordinator-contract.test.ts` |
