@@ -756,7 +756,7 @@ func (h *Handler) agentA2AEndpointPresentation(
 }
 
 func (h *Handler) loadConfiguredAgentA2ACardSkills(ctx context.Context, agentID pgtype.UUID) ([]a2aintegration.ConfiguredAgentSkill, error) {
-	rows, err := h.Queries.ListEnabledAgentSkillCardMetadata(ctx, agentID)
+	rows, err := h.Queries.ListEnabledAgentSkillCardMetadata(ctx, db.ListEnabledAgentSkillCardMetadataParams{AgentID: agentID})
 	if err != nil {
 		return nil, err
 	}

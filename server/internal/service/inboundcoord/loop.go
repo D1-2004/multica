@@ -180,7 +180,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 				}
 			} else if call.Name == toolContextRead {
-				result, callErr = c.readHistoryContext(ctx, &turn, call.Arguments)
+				if coordinationContextReadKind(call.Arguments) == coordinationStateKind {
+					result, callErr = c.readRecentCoordinationState(ctx, turn)
+				} else {
+					result, callErr = c.readHistoryContext(ctx, &turn, call.Arguments)
+				}
 			} else {
 				if call.Name == toolAssocRecall {
 					call.Arguments = defaultRecallConversationID(call.Arguments, turn.ConversationID)
@@ -208,7 +212,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				if reviewRejected {
 					unresolvedReviewFeedback = latestFeedback
 				}
-			} else if latestFeedbackNeedsHistory && call.Name == toolContextRead && turn.HistoryStatus == "loaded" && hasCoordinationHistorySnapshot(turn) {
+			} else if latestFeedbackNeedsHistory && call.Name == toolContextRead && coordinationContextReadKind(call.Arguments) == "history" && turn.HistoryStatus == "loaded" && hasCoordinationHistorySnapshot(turn) {
 				latestFeedback = historyPrerequisiteResolvedFeedback(turn, unresolvedReviewFeedback)
 				latestFeedbackNeedsHistory = false
 			}

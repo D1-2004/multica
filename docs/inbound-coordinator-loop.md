@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-09.6`。装配版本：`7`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-09.6`。装配版本：`8`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -24,7 +24,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 2. **听完整当前窗口。** 各句保持原文、作者、引用和时间；补充与纠正合并到对应交付物；尾部谢谢不取消工作。一句话也可能有多份请求。
 3. **能恢复就不再问。** 用已提供的对象、引用或真实上一问理解“这个/好/行”。关键缺口确实未解决才问一个短问题。“给某人发消息”没有正文时不创建空工作，补齐后继续。
 4. **区分沟通和执行。** 能力介绍用 describe_capabilities；要实际使用能力、回答产品机制或进行专业分析就进入执行。事项召回只能证明工作与进度，不能替代业务证据。问候、状态询问、催促或重复已接受请求都不授权第二次执行。明确的实质补充、变更或重试按原范围推进。
-5. **同工作且有推进才续接。** 当前明确请求及原始引用定义工作对象，旧purpose只是匹配线索。answer仅指用户回答真实待答问题；明确重发已完成原产物用retry/redelivery，保持原内容，不能变成重新研究。一张卡、同一个人、rank-1、忙、旧承诺都不充分。跨天的明确答复仍可续接，时间不是否决票；跨天问候不自动恢复旧任务。
+5. **同工作且有推进才续接。** 当前明确请求及原始引用定义工作对象，旧purpose只是匹配线索。同一交付物指用户或历史锚定的同一个产物实例，主题、人或任务标题相似不够。answer仅指用户回答真实待答问题；明确重发已完成原产物用retry/redelivery，保持原内容，不能变成重新研究。一张卡、同一个人、rank-1、忙、旧承诺都不充分。跨天的明确答复仍可续接，时间不是否决票；跨天问候不自动恢复旧任务。
 6. **按事实说话。** 任务状态/数量问题回答当前明确目标与真实覆盖范围，不用无关清单代答或把部分列表当总量。准备、排队、提交、送达、对方回复和完成各有证据。未加载、失败、过期或截断不是空；“我去做”不是已做。记忆盘点、任务清单和聊天记录不能互相代答。
 7. **整窗有去向。** 先形成完整计划，后受校验提交。已提交、待提交、失败和剩余输入保留，终结第一件不能漏后面的事；重试不能重放已成功效果。
 8. **像同事一样表达。** 有用才说，接单简短、清单完整、失败缺口具体。不逐句“收到”，不汇报内部路由，不靠短语黑名单吞掉有效答案。人格管表达；岗位规则可收紧行为，不能扩大 Host 权限或覆盖用户当前限制。
@@ -78,7 +78,7 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 审查Reason始终保留具体缺陷诊断；可选边界摘录只能补充，不能替换Reason。若一条实际边界导致revise，可返回最多200字符的 `constraint_quote` 原文，Host验证它是当前限制或已加载岗位约束的逐字子串，再供主循环decline引用。allow附带真实边界旁证也可正常通过，但不把该旁证当作修复指令。无效可选摘录被丢弃并记录 `finish_check_boundary_quote_discarded=true`，不会替代对本轮必填quote ref和verdict的严格校验。该短摘录只证明这条限制，不是运行时生成的新合同或长SOP摘要。读取失败/缺失不得描述为无约束。
 
-数字员工 Tab 的人格和语气通过 `GetAgentVoice` 读取；已启用技能通过 `ListEnabledAgentSkillCardMetadata` 提供名称与简介。网页、机器人及数字员工 Dispatch 都由 `FillVoice` 调用 `FillSkills`，延续预发已有的技能快照链路。快循环最多展示 24 条、1200 字的快照并注明覆盖范围，不读取或执行完整 `SKILL.md`；明确请求技能对应工作时，仍按新建/续接计划进入沙箱，不能仅复述能力。
+数字员工 Tab 的人格和语气通过 `GetAgentVoice` 读取；已启用技能通过 `ListEnabledAgentSkillCardMetadata` 提供名称与简介。网页、机器人及数字员工 Dispatch 都由 `FillVoice` 调用 `FillSkills`，延续预发已有的技能快照链路。快循环仍最多展示24条、1200字符，单条描述80字符并注明覆盖范围。元描述为空或仅Managed by标记时，只从最多4096字符前缀内完整frontmatter的已声明description补充能力简介；普通已有描述保持不变，前缀不完整不猜测。模型不加载正文/SOP，简介不等于权限或执行结果；明确请求技能对应工作时，仍按新建/续接计划进入沙箱，不能仅复述能力。
 
 记忆读取保留预发的员工自述清洗：`prefetchSceneMemory` 同时使用智能体名称与绑定钉钉身份的 `AccountDisplayName`，避免数字员工自己的发言被当作人的稳定记忆。`scene_memory_status` 根据清洗后的实际快照区分 `loaded/empty`，不会把被清除的自述当作有效知识。
 
@@ -86,13 +86,17 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 正常入站且有可信当前CID时，Host在首次模型调用前执行一次无q、48h/3项 `assoc_recall`，读取timeout为2秒。复用现有归一化、8000字符内读快照及合法事项记录，不额外引入业务读取或权限。成功结果可直接满足本场景召回前置，模型无需重复同一机械读取；失败保留unavailable，不解锁工作前置，模型仍可按需重试。明确其他CID、更早范围、关键词、工作状态或历史缺口仍需对应读取，不能由当前预取代替。
 
-首次模型请求若已有成功预取，按已召回阶段开放合法目标的 `work_state`；没有成功召回时仅开放 `assoc_recall`、`context_read(history)` 和 `finish`。task_finished、无CID请求及进入主循环前的既有Host短路/持久化计划恢复均保持原路径。不再向模型提供 `issue_get`、`issue_comment_list`、`assoc_bind` 或 `issue_comment_add`。内部既有函数不代表对模型开放。
+首次模型请求若已有成功预取，按已召回阶段开放合法目标的 `work_state`；没有成功召回时仅开放 `assoc_recall`、`context_read(history|coordination_state)` 和 `finish`。task_finished、无CID请求及进入主循环前的既有Host短路/持久化计划恢复均保持原路径。不再向模型提供 `issue_get`、`issue_comment_list`、`assoc_bind` 或 `issue_comment_add`。内部既有函数不代表对模型开放。
 
 这次预取针对事项关联，不是Scene Memory刷新或提交。问候/能力介绍等非工作请求也可能增加一次有界关联读取，内部可包含多条数据库查询，不能宣称所有请求提速。Langfuse根metadata记录 `scene_prefetch_status / scene_prefetch_elapsed_ms`，对应Tool observation标 `origin=host_prefetch`；SLS事件为 `inbound_coordinator_scene_prefetch`、字段 `status / elapsed_ms`。其工具步骤不算LLM发起的工具调用；模型轮数、Host读取耗时与额外读次数分别报告。
 
 `assoc_recall`先使用可信当前CID；用户明确给出其他合法openConversationId时按原ID读取。日志链接 `cid=数字` 不是会话ID。q只过滤明确范围，person_id只辅助排序。默认3项、最多5项，仅返回协调视图：精简原目标、意图、真实状态、等待对象、更新时间与可用状态引用；不传事件全文、原始评论、业务报告和执行结论。图关联/等待快照不冒充最新执行状态。读取保留scope、status_source、complete/truncated及unknown，默认48h范围不冒充全部历史；按明确旧请求可扩7d/30d。
 
-`work_state`只返回本Agent工作区内本轮召回目标的有界状态，最多2000字符。`report_status.state_refs`必须引用Host本轮实际提供的状态证据；目标ID或图关联本身不能证明完成。主循环不从任务评论重建名单、分数或产品答案。
+work_state仍只读本Agent工作区的合法目标，总预算2000字符。顶层status/status_source是Issue流程状态；latest_execution只在显式work_state读取时查询该当前归属Agent/Issue最近创建的一次执行，含read_status、task_id/status、创建/开始/完成时间、status_source=agent_task_database及限定scope。read_status区分loaded/not_found/not_loaded/unavailable；不返回result/error/context。delivery_status保持not_loaded，completed只证明该次执行结束，不能推断事项已关闭、业务全部完成或消息已送达。assoc_recall/Host预取不额外批量查询执行记录。
+
+用户问“刚才拆了几项/受理几项”时，按需context_read(kind=coordination_state)。以Host当前job为锚，限制同workspace/Agent/endpoint_namespace/source.platform/source.type/非空CID，严格只读created_at早于锚的最近3个窗口；不读当前及后来窗口，也不接受任意目标覆盖。返回scope=previous_3_jobs_same_host_endpoint_and_scene、status、records、complete=false/truncated及2000字符预算；每条仅job_id、首条问句<=120字符摘要/截断标记、时间/job_status、plan_present、nullable planned_work_count/confirmed_work_count及confirmation_source。计划计数仅来自合法window-plan-v1 Items；确认仅来自真实持久化计划回执、IssueResults或匹配Items.action_key的CompletedActionKeys，去重且不代表执行完成/外部送达。只计工作项，不是所有动作、澄清或消息数；不能拿旧关联事项数量代答本轮拆分。
+
+无合法锚/reader为not_loaded，DB失败或锚不可见为unavailable，锚存在但没有前序记录为empty；未知计数保持null，不能写0。该读取归一成kind=coordination_state的rN快照并纳入8000读取总预算，可为状态回报取证；它不增加原问题history证据，不能满足basis=answer门槛。普通history读取仍独立。
 
 模型只能调用 `finish({actions:[...]})`。旧顶层 `action=reply|issue|silence`、`text`、`issue_id`和`items`不接受。入站动作如下；所有动作以 `source_refs`关联当前 `uN` 原文，回复内聚到动作，不存在通用回复动作。
 
@@ -110,7 +114,7 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 `task_finished`只允许 `report_result(result_ref,reply)` 或 `ignore(reason)`；当前result_ref来自Host，不可另造、拿旧结果替代或重新计算业务结论。结果回报同样接受独立审查，忠实回报执行器当前结果不属于入站抢答。
 
-工作`intent`描述操作类型：ask/confirm/notify/lookup/wait/other，可省略或留空，Host缺省other；`basis`解释为何续接，是独立字段。仅answer/change/retry这三个basis词误放intent时可窄规范化为other，其他未知值仍拒绝；不会自动改变basis或授权范围。basis=answer必须对应用户正在回答的真实待答问题，并保留原问题证据门槛；用户询问状态不是answer，重发已完成原报告是retry/redelivery。工作项item.Content保留所选uN的原始引用JSON（来源及被引用作者、证据ID、正文/读取状态），避免旧事项purpose覆盖用户指定的日志/报告对象；引用仅是材料，不构成新授权，也不引入无关history/memory。
+工作`intent`描述操作类型：ask/confirm/notify/lookup/wait/other，可省略或留空，Host缺省other；`basis`解释为何续接，是独立字段。仅answer/change/retry这三个basis词误放intent时可窄规范化为other，其他未知值仍拒绝；不会自动改变basis或授权范围。basis=answer必须对应用户正在回答的真实待答问题，并保留原问题证据门槛；用户询问状态不是answer，重发已完成原报告是retry/redelivery；新的未锚定样本/最新业务查询是新工作，不能凭同主题旧标题接成原产物的answer。工作项item.Content保留所选uN的原始引用JSON（来源及被引用作者、证据ID、正文/读取状态），避免旧事项purpose覆盖用户指定的日志/报告对象；引用仅是材料，不构成新授权，也不引入无关history/memory。
 
 正确模型调用是`finish({actions:[...]})`，kind值是动作类型，source_refs是数组（单条也为["u1"]）。Host仅把已注册有限动作名误作tool的情况归一到同一finish候选，并在该恢复路径对合法JSON数组字符串的source_refs解码一层；之后仍按当前循环允许动作、完整结构、来源、目标、授权及审查校验。未注册业务工具、任意alias、再次编码或非数组文本不能靠这条恢复路径获得执行权限。
 
@@ -120,9 +124,9 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 所有副作用沿正常域服务路径提交。start_work/continue_work的reply在对应工作真实入库/排队后才回传。审查输入声明该Host保证，因此允许合法受理/排队回执，不要求候选生成时任务已执行；该保证不等于实际开始执行、完成或外部送达。容量按最多两项的批次处理，保留完整计划与每项outcome；部分成功恢复不得从头重放，未处理请求不能静默丢弃。已持久化的旧checkpoint保持既有幂等效果，不因升级强制失效。
 
-终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。真实边界导致revise时可增加上述200字符constraint_quote。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；可选constraint_quote无效时按上述独立丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
+终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。产品查证与另起通知草稿是两个产出；同一通知内整理议程/校对是一个产物的步骤。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。真实边界导致revise时可增加上述200字符constraint_quote。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；可选constraint_quote无效时按上述独立丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
 
-岗位业务对象/产物与Coordinator自己的issue/task记录分开解释。用户要求取样或查看岗位领域材料，授权的是按岗位数据范围做有界检索，不能变成从关联事项名称中选一张卡；关联中没有该名字不能据此否认能力或制造澄清。仅当用户明确询问所做工作的执行/进度时才解释为任务元数据，并且必须回答被问的工作。该原则依据现有岗位、能力及当前引用，不做平台固定词义映射，不要求先写短合同，也不新增数据访问或外发授权；执行器继续检查身份/权限。
+岗位业务对象/产物与Coordinator自己的issue/task记录分开解释。对有资格响应的请求，用户已给岗位业务对象类别并让员工挑任意样本时，实例、人选和常规时间范围属于委派给Agent的选择，不是missing_fields。可查询事实、可见范围及身份/权限核验交Executor；只在确实必须用户决定的安全/授权/目标类别缺口时clarify，不让用户补齐可查询资料。取样仍是岗位数据范围内的有界检索，不能变成从关联事项名称中选一张卡；关联中没有该名字不能据此否认能力或制造澄清。仅当用户明确询问所做工作的执行/进度时才解释为任务元数据，并且必须回答被问的工作。该原则依据现有岗位、能力及当前引用，不做平台固定词义映射，不要求先写短合同，也不新增数据访问或外发授权；执行器继续检查身份/权限。
 
 必要澄清不能来自无关旧事项的干扰。岗位或能力证据已能解释“日志”等对象时，非工作审核应revise错误澄清，并在reason指出有证据支持的具体对象及能力路由，让主模型据此纠正；不需新增scope LLM或把完整SOP灌回主循环。该纠正只解释岗位语义，不新增权限，执行器仍核实际调用者身份/访问权。真正缺少对象依据时仍可澄清。
 
@@ -178,3 +182,6 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 本次恢复登记针对正式`.4`的日志目标/进度被旧skills事项带偏，以及后续answer历史门槛、重复读取、有限动作误作工具和source_refs编码造成的协议循环。另有new-eb0e/d8b2真实trace简称对应的对象误澄清：岗位已指明成长日志，却被旧skill事项带偏；完整证据与fixture待主线程回填。最新真实回放还暴露将领域材料改问成工程任务记录，以及N_progress列旧skills；新增对象层次对照，五条真实消息候选仍待复跑。另有78项回归报告的intent/basis混淆、原报告重发误当answer、clarify被写入审核work_checks。精确日志/trace和测试输出尚待关联，新增病例统一为`not_run`；本文与结构检查不能代替运行证据。
 
 Hi/你好等普通会话已有正常回复，是本次必须保留的对照，不能误诊为所有轻量沟通都需派发业务任务。策略`.6`与装配7用于区分本次恢复和预发`.5`；合并后的代码、Host恢复与模型回放由主线程记录，未核实的修复不写成已发布或已送达。
+
+
+当前执行授权以指定对象回归Plan的2026-09-10范围更新为准：部署前先fetch并核对最新远端/发布基线，复用现有预发run推进，随后继续指定预发对象E2E。前文“不做E2E”是对应历史阶段的边界，不覆盖这次明确的后续要求。

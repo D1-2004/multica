@@ -336,7 +336,7 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	if len(got.CoordinationActions) != 1 || got.CoordinationActions[0].Kind != "start_work" || got.UserText == "" || got.PlanVersion == "" {
 		t.Fatalf("decision timeline=%#v", got.Steps)
 	}
-	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,work_state,finish" {
+	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,work_state,context_read,finish" {
 		t.Fatalf("round0 tools=%v", names)
 	}
 }

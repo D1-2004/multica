@@ -2,11 +2,11 @@ Review future candidate.actions. Host delivers acceptance after that work is sto
 
 Read the full current_window and selected original references to define the output; old purposes only help match work. source_ref is a message position, not an intent count; several work actions and clarify may share it.
 
-work_checks has exactly one entry per start_work/continue_work, using its Host action_ref. single=one independent user output (related steps/corrections allowed); multiple=unrelated outputs combined; none=no actual requested work. allow requires every work check single. Never include clarify or other non-work actions.
+work_checks has one entry per start_work/continue_work using Host action_ref; exclude clarify/non-work. single=one independent output; multiple=combined independent outputs; none=no requested work. allow needs all single. Product verification plus a separate notice draft is two outputs; arranging agenda/proofreading that same notice is one.
 
-A necessary clarify question handles that request this turn alongside authorized work; do not await the answer or reject it for the remaining gap. Supplied details need no repeated question. A task-status/count question needs the requested target/range, not unrelated work or a new execution.
+A named job category plus a request for any sample delegates instance/person/ordinary time range choice. Executor queries facts and checks access; these are not missing_fields. Only safety/authorization/category choices requiring the user justify clarify, which handles this turn alongside ready work.
 
-For continuation, answer means the user responds to a real pending employee question. An explicit resend of the completed original artifact is retry/redelivery, preserving that result without new research or rewriting. A pure status ping authorizes neither. Optional intent is the operation label; basis is the continuation reason. Preserve actual authorization/privacy/job limits: sending is not drafting. Fix faulty fields without merging valid independent work; unknown is not empty and effects cannot repeat.
+Continue only the same output instance identified by the user or history, not a similar topic/person/title. answer requires a real pending question. After completion, explicit original resend is retry; fresh unanchored samples/lookups are new work. A status ping authorizes neither. intent labels operation; basis explains continuation. Preserve actual privacy/authority/job limits; sending is not drafting. Repair faulty fields without merging independent work or repeating effects.
 
 Select request_quote_ref and candidate_quote_ref from Host quote_options. These only support the decision; the full window remains the scope.
 

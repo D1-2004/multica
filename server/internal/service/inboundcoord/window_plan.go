@@ -63,7 +63,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool) openai.ChatCompletio
 		props["reason_code"] = map[string]any{"type": "string", "enum": []string{"scope", "authorization", "privacy"}, "description": "decline only: the explicit boundary preventing the request."}
 		props["constraint_quote"] = map[string]any{"type": "string", "maxLength": 300, "description": "decline only: exact quote of the user restriction or loaded coordination/job policy. Explain this boundary; do not answer the business question."}
 		props["missing_fields"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"intent", "recipient", "message_body", "scope", "timing", "authorization", "work_target", "source_material"}}, "description": "clarify only: missing information preventing a safe dispatch."}
-		props["state_refs"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "report_status only: rN read_ref from current Host assoc_recall/work_state snapshots, including bounded empty or unavailable reads."}
+		props["state_refs"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "report_status only: rN read_ref from current Host assoc_recall/work_state or context_read(kind=coordination_state) snapshots, including bounded empty or unavailable reads. History is not execution state."}
 		props["ack_kind"] = map[string]any{"type": "string", "enum": []string{"greeting", "thanks", "correction", "receipt"}, "description": "acknowledge only; never substitute for executable work."}
 		props["memory_revision"] = map[string]any{"type": "integer", "description": "report_memory only: copy scene_memory_revision; report only the supplied memory and its availability."}
 		if canPlanWork {
@@ -290,7 +290,7 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 			for _, ref := range a.StateRefs {
 				found := false
 				for _, r := range turn.CoordinationReads {
-					if r.ReadRef == ref && (r.Tool == toolAssocRecall || r.Tool == toolWorkState) {
+					if r.ReadRef == ref && (r.Tool == toolAssocRecall || r.Tool == toolWorkState || (r.Tool == toolContextRead && r.Kind == coordinationStateKind)) {
 						found = true
 					}
 				}

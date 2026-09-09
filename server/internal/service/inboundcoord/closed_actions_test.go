@@ -51,8 +51,8 @@ func TestClosedActionsCoverWholeWindowAndRetainMixedIntents(t *testing.T) {
 
 func TestClosedActionsStatusAndMemoryReferencesAreHostOwned(t *testing.T) {
 	turn := Turn{Source: SourceDigitalEmployee, Message: "进展如何？", SceneMemoryRevision: 4,
-		CoordinationReads: []CoordinationRead{{ReadRef: "r2", Tool: toolAssocRecall, Result: json.RawMessage(`{"items":[],"complete":false}`)}, {ReadRef: "r3", Tool: toolWorkState, Failed: true, Result: json.RawMessage(`{"status":"unavailable"}`)}, {ReadRef: "r4", Tool: toolContextRead, Result: json.RawMessage(`{"status":"loaded"}`)}}}
-	for _, ref := range []string{"r2", "r3"} {
+		CoordinationReads: []CoordinationRead{{ReadRef: "r2", Tool: toolAssocRecall, Result: json.RawMessage(`{"items":[],"complete":false}`)}, {ReadRef: "r3", Tool: toolWorkState, Failed: true, Result: json.RawMessage(`{"status":"unavailable"}`)}, {ReadRef: "r4", Tool: toolContextRead, Result: json.RawMessage(`{"status":"loaded"}`)}, {ReadRef: "r5", Tool: toolContextRead, Kind: coordinationStateKind, Result: json.RawMessage(`{"status":"not_loaded","records":[]}`)}}}
+	for _, ref := range []string{"r2", "r3", "r5"} {
 		raw := `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["` + ref + `"],"reply":"这次查询范围不足，还不能确认是否完成。"}]}`
 		if _, err := parseValidatedWindowPlan(raw, turn, nil, nil); err != nil {
 			t.Fatalf("bounded empty/unavailable state remains reportable: %v", err)
