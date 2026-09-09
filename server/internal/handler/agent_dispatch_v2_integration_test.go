@@ -1231,6 +1231,78 @@ func TestHandleAgentDispatchV2ChatUsesContinuationWithoutChannelBinding(t *testi
 	}
 }
 
+func TestHandleAgentDispatchV2ChatContinuationMissingStartsNewSession(t *testing.T) {
+	configureDingTalkChatDispatchForTest(t)
+	agentID := createHandlerTestAgent(t, "test-v2-stale-chat-continuation", nil)
+	endpointID, deliverySecret := createAgentDispatchEndpointForTest(t, testUserID, agentID)
+	post := func(body, key string) (*httptest.ResponseRecorder, AgentChatDispatchResponse) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/webhooks/agent-dispatch", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+deliverySecret)
+		req.Header.Set("Idempotency-Key", key)
+		req = withURLParams(req, "endpointId", endpointID)
+		w := httptest.NewRecorder()
+		testHandler.HandleAgentDispatch(w, req)
+		var response AgentChatDispatchResponse
+		if w.Body.Len() > 0 {
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode %s: %v body=%s", key, err, w.Body.String())
+			}
+		}
+		return w, response
+	}
+	body := func(key, sessionID string) string {
+		t.Helper()
+		identity := fmt.Sprintf(`"agentId":%q,"continuation":null`, agentID)
+		if sessionID != "" {
+			identity = fmt.Sprintf(`"continuation":{"kind":"chat","chatSessionId":%q}`, sessionID)
+		}
+		return fmt.Sprintf(`{
+			"schemaVersion":"2.0",%s,
+			"completionCallback":{"url":"/api/v1/dispatch-tasks/%s/execution-result"},
+			"source":{"platform":"dingtalk","type":"digital_employee"},
+			"event":{"domain":"channel","type":"message.created","data":{
+				"conversation":{"openConversationId":"cid-stale-chat","type":"single"},
+				"sender":{"displayName":"张三","openDingTalkId":"open-stale-chat"},
+				"messages":[{"openMsgId":"msg-%s","occurredAt":1784512800000,"text":"%s"}]}},
+			"surface":{"type":"auto"},"outbound":{"mode":"dws","replyTo":"latest_message"},
+			"externalIdentity":{"contextToken":"sealed-stale-chat-context","expiresAt":4102444800000}
+		}`, identity, key, key, key)
+	}
+
+	firstW, first := post(body("stale-chat-first", ""), "stale-chat-first")
+	if firstW.Code != http.StatusAccepted {
+		t.Fatalf("first dispatch: status=%d body=%s", firstW.Code, firstW.Body.String())
+	}
+	if first.Continuation.ChatSessionID == "" {
+		t.Fatalf("first dispatch missing chat session: %+v", first)
+	}
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, first.Continuation.ChatSessionID); err != nil {
+		t.Fatalf("delete continued chat: %v", err)
+	}
+
+	staleW, stale := post(body("stale-chat-continue", first.Continuation.ChatSessionID), "stale-chat-continue")
+	if staleW.Code != http.StatusAccepted {
+		t.Fatalf("stale continuation: expected 202, got %d: %s", staleW.Code, staleW.Body.String())
+	}
+	if stale.Continuation.Kind != "chat" || stale.Continuation.ChatSessionID == "" {
+		t.Fatalf("stale continuation response = %+v", stale)
+	}
+	if stale.Continuation.ChatSessionID == first.Continuation.ChatSessionID {
+		t.Fatalf("stale continuation reused deleted chat %s", first.Continuation.ChatSessionID)
+	}
+	var exists bool
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT EXISTS(SELECT 1 FROM chat_session WHERE id = $1)
+	`, stale.Continuation.ChatSessionID).Scan(&exists); err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatalf("healed chat session %s was not created", stale.Continuation.ChatSessionID)
+	}
+}
+
 func TestHandleAgentDispatchV2IMControls(t *testing.T) {
 	for _, tc := range []struct {
 		name          string

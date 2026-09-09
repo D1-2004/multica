@@ -703,27 +703,33 @@ func (h *Handler) createAgentDispatchChatV2(
 		session, loadErr := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
 			ID: chatSessionID, WorkspaceID: dispatchContext.WorkspaceID,
 		})
-		if loadErr != nil {
-			if errors.Is(loadErr, pgx.ErrNoRows) {
-				writeError(w, http.StatusNotFound, "chat continuation not found")
-			} else {
-				writeError(w, http.StatusInternalServerError, "failed to load chat continuation")
+		if errors.Is(loadErr, pgx.ErrNoRows) {
+			// Router can replay a Chat ID after the session was deleted.
+			// Fail closed on ownership/archived, but missing is stale state:
+			// start a new unbound session so the inbound is not dropped.
+			slog.Info("chat continuation missing; starting a new unbound session",
+				"event", "agent_dispatch_chat_continuation_missing",
+				"continuation_chat_session_id", uuidToString(chatSessionID),
+			)
+			options.CreateUnboundSession = true
+		} else if loadErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load chat continuation")
+			return
+		} else {
+			if session.AgentID != dispatchContext.AgentID {
+				writeError(w, http.StatusForbidden, "chat continuation belongs to another agent")
+				return
 			}
-			return
+			if session.CreatorID != dispatchContext.UserID {
+				writeError(w, http.StatusForbidden, "chat continuation belongs to another endpoint actor")
+				return
+			}
+			if session.Status != "active" {
+				writeError(w, http.StatusBadRequest, "chat continuation is archived")
+				return
+			}
+			options.ChatSessionOverride = &chatSessionID
 		}
-		if session.AgentID != dispatchContext.AgentID {
-			writeError(w, http.StatusForbidden, "chat continuation belongs to another agent")
-			return
-		}
-		if session.CreatorID != dispatchContext.UserID {
-			writeError(w, http.StatusForbidden, "chat continuation belongs to another endpoint actor")
-			return
-		}
-		if session.Status != "active" {
-			writeError(w, http.StatusBadRequest, "chat continuation is archived")
-			return
-		}
-		options.ChatSessionOverride = &chatSessionID
 	}
 	// A durable coordinator job pins its id as the turn's trace id; give the
 	// channel engine that id as the inbound chat trace so the coordinator
