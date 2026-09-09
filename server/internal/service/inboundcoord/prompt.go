@@ -36,6 +36,7 @@ func buildUserPrompt(turn Turn) string {
 		loop = LoopInbound
 	}
 	fmt.Fprintf(&b, "source: %s\nloop: %s\naddressed: %t\n", turn.Source, loop, turn.Addressed)
+	fmt.Fprintf(&b, "proactive_conversation: %t\n", turn.ProactiveConversation)
 	writePromptField(&b, "chat_type", turn.ChatType)
 	writePromptField(&b, "conversation_id", turn.ConversationID)
 	writePromptField(&b, "person_id", turn.PersonID)
@@ -49,6 +50,7 @@ func buildUserPrompt(turn Turn) string {
 	writePromptField(&b, "agent_reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget))
 	writeCoordinatorContractPrompt(&b, turn)
 	if loop == LoopTaskFinished {
+		writePromptField(&b, "outstanding_follow_ups (accepted requests, not handled by this finished task)", turn.OutstandingFollowUps)
 		writePromptField(&b, "issue_id", turn.IssueID)
 		writePromptField(&b, "current_result_ref", currentResultRef(turn))
 		if result := strings.TrimSpace(turn.TaskResult); result != "" {

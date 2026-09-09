@@ -950,6 +950,8 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			name: "delete agent event data",
 			run: func() error {
 				for _, statement := range []string{
+					`DELETE FROM coordinator_observed_message WHERE workspace_id=$1`,
+					`DELETE FROM coordinator_issue_follow_up WHERE workspace_id=$1`,
 					`DELETE FROM agent_event WHERE stream_id IN (SELECT id FROM agent_event_stream WHERE workspace_id=$1)`,
 					`DELETE FROM agent_event_batch WHERE stream_id IN (SELECT id FROM agent_event_stream WHERE workspace_id=$1)`,
 					`DELETE FROM agent_event_stream WHERE workspace_id=$1`,

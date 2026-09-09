@@ -1,16 +1,13 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"github.com/jackc/pgx/v5"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/service"
 )
 
 type AgentEventBatchResponse struct {
@@ -108,9 +105,10 @@ func (h *Handler) RetryAgentEventBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"status": "pending", "batch_id": uuidToString(batchID)})
 }
 
-// Event-mode requests stop before prompt planning, coordinator admission or
-// issue/chat materialization. The callback confirms inbox delivery only.
-func (h *Handler) handleObservedEvent(w http.ResponseWriter, r *http.Request, c DispatchCommand, dc agentDispatchContext) bool {
+// Observed group messages enter the ordinary durable Coordinator admission.
+// The internal proactive flag is derived from server configuration, never from wire input.
+func (h *Handler) handleObservedEvent(w http.ResponseWriter, r *http.Request, command *DispatchCommand, dc agentDispatchContext) bool {
+	c := *command
 	if c.Source.Type != "digital_employee" || c.Event.Domain != "channel" {
 		return false
 	}
@@ -121,7 +119,7 @@ func (h *Handler) handleObservedEvent(w http.ResponseWriter, r *http.Request, c 
 	}
 	if h.EventTriggers == nil {
 		if observed {
-			writeError(w, http.StatusServiceUnavailable, "event triggers are unavailable")
+			writeError(w, http.StatusServiceUnavailable, "proactive conversations are unavailable")
 			return true
 		}
 		return false
@@ -132,16 +130,13 @@ func (h *Handler) handleObservedEvent(w http.ResponseWriter, r *http.Request, c 
 	}
 	enabled, err := h.EventTriggers.Enabled(r.Context(), dc.AgentID, dc.WorkspaceID)
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "event trigger configuration is unavailable")
+		writeError(w, http.StatusServiceUnavailable, "proactive conversation configuration is unavailable")
 		return true
 	}
 	if !observed && !enabled {
 		return false
 	}
-	// A source can switch while a legacy dispatch is already queued. Admit its
-	// message IDs into the same inbox; hourly summaries never create a second run.
-	code := "event_trigger_disabled"
-	if enabled && c.Event.Type != dispatchEventTypeConversationSummary {
+	if enabled && c.Event.Type != dispatchEventTypeConversationSummary && !dispatchIsAgentSelfMessage(c) {
 		agent, ok := h.resolveAgentDispatchAgent(w, r, dc.UserID, dc.WorkspaceID, dc.AgentID)
 		if !ok {
 			return true
@@ -151,43 +146,30 @@ func (h *Handler) handleObservedEvent(w http.ResponseWriter, r *http.Request, c 
 			return true
 		}
 		if c.ExternalIdentity.DWS == nil {
-			writeError(w, http.StatusBadRequest, "event requires DWS identity")
+			writeError(w, http.StatusBadRequest, "observed messages require DWS identity")
 			return true
 		}
-		if dispatchIsAgentSelfMessage(c) {
-			code = "self_event_ignored"
-		} else {
-			identity := c.ExternalIdentity.DWS
-			runtimeContext, _ := json.Marshal(map[string]any{"workspace_id": uuidToString(dc.WorkspaceID), "external_identity": map[string]any{"dws": identity}})
-			events := make([]service.ObservedEvent, 0, len(c.Event.Data.Messages))
-			for _, m := range c.Event.Data.Messages {
-				payload, marshalErr := json.Marshal(map[string]any{"type": "message.created", "conversation": c.Event.Data.Conversation, "sender": c.Event.Data.Sender, "message": m})
-				if marshalErr != nil {
-					writeError(w, http.StatusBadRequest, "invalid event payload")
-					return true
-				}
-				events = append(events, service.ObservedEvent{ID: m.OpenMsgID, Payload: payload, RuntimeContext: runtimeContext})
-			}
-			_, err = h.EventTriggers.Admit(r.Context(), dc.WorkspaceID, dc.AgentID, strings.Join([]string{c.Source.Platform, identity.OrgID, identity.UID}, ":"), c.Event.Data.Conversation.OpenConversationID, events)
-			if err != nil {
-				writeError(w, http.StatusServiceUnavailable, "failed to persist event inbox")
-				return true
-			}
-			code = "event_inbox_accepted"
+		if h.InboundCoordinatorWorker == nil {
+			writeError(w, http.StatusServiceUnavailable, "inbound coordinator is unavailable")
+			return true
 		}
-	} else if enabled {
-		code = "event_summary_superseded"
+		command.Event.Type = "message.created"
+		command.ProactiveConversation = true
+		command.Continuation = nil
+		command.AgentID = uuidToString(dc.AgentID)
+		return false
 	}
+	// Receipt only: disabled, own messages, and superseded hourly summaries perform no work.
 	if c.CompletionCallback != nil {
 		if h.TaskService == nil {
 			writeError(w, http.StatusServiceUnavailable, "event receipt service is unavailable")
 			return true
 		}
-		if err = h.TaskService.EnqueueSynchronousTaskCompletion(r.Context(), c.CompletionCallback.URL, c.CompletionCallback.Target, dc.AgentID, "Event delivery acknowledged; agent execution is tracked separately by its batch.", code); err != nil {
-			writeError(w, http.StatusServiceUnavailable, "failed to persist event delivery receipt")
+		if err = h.TaskService.EnqueueSynchronousSilence(r.Context(), c.CompletionCallback.URL, c.CompletionCallback.Target, dc.AgentID); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "failed to persist event receipt")
 			return true
 		}
 	}
-	writeJSON(w, http.StatusAccepted, map[string]any{"status": "accepted", "code": code})
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted", "code": "observed_message_ignored"})
 	return true
 }

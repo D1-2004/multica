@@ -160,7 +160,13 @@ type ApprovalEventData struct {
 // DispatchEventData keeps all platform routing locators in domain data. The
 // optional fields are intentionally opaque to PromptBuilder and are only used
 // by outbound strategies; they are never rendered into Issue/Comment content.
+type DispatchMention struct {
+	UID            string `json:"uid"`
+	OpenDingTalkID string `json:"openDingTalkId,omitempty"`
+}
+
 type DispatchEventData struct {
+	Mentions            []DispatchMention             `json:"mentions,omitempty"`
 	Conversation        DispatchConversation          `json:"conversation"`
 	Sender              DispatchSender                `json:"sender"`
 	Messages            []DispatchMessage             `json:"messages"`
@@ -212,6 +218,8 @@ type DispatchCompletionCallback struct {
 }
 
 type DispatchCommand struct {
+	// Internal admission fact; AgentDispatchV2Request does not expose this field.
+	ProactiveConversation    bool                             `json:"proactive_conversation,omitempty"`
 	WindowEvidenceID         string                           `json:"-"`
 	SchemaVersion            string                           `json:"schemaVersion"`
 	AgentID                  string                           `json:"agentId,omitempty"`

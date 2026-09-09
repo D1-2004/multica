@@ -123,6 +123,7 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		protocol.DispatchSurfaceJSONKey:  c.Surface,
 		protocol.DispatchOutboundJSONKey: c.Outbound,
 		"dispatch_idempotency_key":       idempotencyKey,
+		"proactive_conversation":         c.ProactiveConversation,
 	}
 	if c.Control != nil {
 		payload["dispatch_control"] = c.Control
@@ -202,7 +203,7 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
 		return
 	}
-	if h.handleObservedEvent(w, r, command, dispatchContext) {
+	if h.handleObservedEvent(w, r, &command, dispatchContext) {
 		return
 	}
 	if managedDingTalkResponse(command) && (h.DingTalkResponses == nil || h.InboundCoordinatorWorker == nil) {
@@ -279,7 +280,7 @@ func (h *Handler) handleAgentDispatchV2(
 		}
 	}
 
-	if command.CompletionCallback == nil {
+	if command.CompletionCallback == nil && !command.ProactiveConversation {
 		h.executeAgentDispatchV2(w, r, command, plan, dispatchContext)
 		return
 	}
@@ -1107,7 +1108,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			hasAttachments = true
 		}
 	}
-	if !hasAttachments {
+	if !hasAttachments || c.ProactiveConversation {
 		decision = decideDispatchCoordinator(
 			r.Context(), h, c, agent, prompt.DisplayContent,
 			dispatchContext.UserID,
@@ -1137,7 +1138,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	// only on execution, including the LLM-unavailable fallback.
 	if decision.Action == inboundcoord.ActionContinue && c.CompletionCallback != nil &&
 		c.Event.Domain == "channel" && c.Event.Type == "message.created" &&
-		sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c)) <= 0 {
+		!c.ProactiveConversation && sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c)) <= 0 {
 		writeError(w, http.StatusConflict, "scene already has two in-flight matters")
 		return
 	}
@@ -1215,7 +1216,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			newNeeded++
 		}
 		slots := sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c))
-		if newNeeded > slots {
+		if !c.ProactiveConversation && newNeeded > slots {
 			writeError(w, http.StatusConflict, "scene already has two in-flight matters")
 			return
 		}
@@ -1231,7 +1232,9 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				writeError(w, 500, "cannot recover committed issue")
 				return
 			}
-			firstTask, err = h.Queries.GetAgentTask(r.Context(), parseUUID(prior.TaskID))
+			if prior.TaskID != "" {
+				firstTask, err = h.Queries.GetAgentTask(r.Context(), parseUUID(prior.TaskID))
+			}
 			if err != nil {
 				writeError(w, 500, "cannot recover committed task")
 				return
@@ -1244,7 +1247,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			if planItemCompleted(decision, item.ActionKey) {
 				continue
 			}
-			if processed >= inboundcoord.SceneWindowMaxItems {
+			if !c.ProactiveConversation && processed >= inboundcoord.SceneWindowMaxItems {
 				break
 			}
 			processed++
@@ -1413,6 +1416,12 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		}
 		if h.TaskService != nil && c.CompletionCallback != nil {
 			spoken := stripReplyDecisionLeak(decision.UserText)
+			if spoken == "" && c.ProactiveConversation {
+				if err := h.TaskService.EnqueueSynchronousSilence(r.Context(), c.CompletionCallback.URL, c.CompletionCallback.Target, agent.ID); err != nil {
+					writeError(w, 500, "failed to persist coordinator receipt")
+					return
+				}
+			}
 			if spoken != "" {
 				if err := h.enqueueCoordinatorIssueAckOrComplete(
 					r.Context(), c, dispatchContext, agent.ID,
@@ -1505,7 +1514,7 @@ func (h *Handler) enqueueCoordinatorIssueAckOrComplete(
 	if on, err := h.Queries.GetAgentTaskFinishedLoop(ctx, agentID); err == nil {
 		wrapupOn = on
 	}
-	if wrapupOn && strings.TrimSpace(command.CompletionCallback.UpdateURL) != "" {
+	if wrapupOn && issueTask.ID.Valid && !command.ProactiveConversation && strings.TrimSpace(command.CompletionCallback.UpdateURL) != "" {
 		return h.TaskService.EnqueueCoordinatorIssueAck(
 			ctx,
 			issueTask,
@@ -1574,24 +1583,25 @@ func decideDispatchCoordinator(
 	ids := dispatchAssocIDs(command)
 	coord := h.inboundCoordinator()
 	turn := inboundcoord.Turn{
-		Source:               source,
-		Addressed:            true,
-		ChatType:             chatType,
-		ConversationTitle:    strings.TrimSpace(command.Event.Data.Conversation.Title),
-		SenderName:           command.Event.Data.Sender.DisplayName,
-		Message:              message,
-		AgentID:              agent.ID,
-		UserID:               userID,
-		AgentName:            agent.Name,
-		Instructions:         agent.Instructions,
-		IdentityNote:         inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
-		WorkspaceID:          uuidToString(agent.WorkspaceID),
-		ConversationID:       ids.ConversationID,
-		PersonID:             ids.PersonID,
-		EvidenceID:           ids.EvidenceID,
-		Kind:                 ids.Kind,
-		IssueDispatchContext: issueDispatchContext,
-		Utterances:           windowUtterancesFromCommand(command),
+		Source:                source,
+		Addressed:             !command.ProactiveConversation || dispatchMentionsEmployee(command),
+		ProactiveConversation: command.ProactiveConversation,
+		ChatType:              chatType,
+		ConversationTitle:     strings.TrimSpace(command.Event.Data.Conversation.Title),
+		SenderName:            command.Event.Data.Sender.DisplayName,
+		Message:               message,
+		AgentID:               agent.ID,
+		UserID:                userID,
+		AgentName:             agent.Name,
+		Instructions:          agent.Instructions,
+		IdentityNote:          inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
+		WorkspaceID:           uuidToString(agent.WorkspaceID),
+		ConversationID:        ids.ConversationID,
+		PersonID:              ids.PersonID,
+		EvidenceID:            ids.EvidenceID,
+		Kind:                  ids.Kind,
+		IssueDispatchContext:  issueDispatchContext,
+		Utterances:            windowUtterancesFromCommand(command),
 	}
 	turn.HistoryBefore = inboundcoord.HistoryBeforeFromContext(ctx)
 	for _, u := range turn.Utterances {
@@ -1618,6 +1628,9 @@ func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowU
 			continue
 		}
 		text := strings.TrimSpace(message.Text)
+		if command.ProactiveConversation && len(message.Attachments) > 0 {
+			text = dispatchMessageDisplay(message, dispatchDisplayIdentities{})
+		}
 		if text == "" {
 			continue
 		}

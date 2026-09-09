@@ -97,11 +97,21 @@ func (h *Handler) materializeWindowContinuation(ctx context.Context, c DispatchC
 	if h.IssueCommentService == nil {
 		return issue, db.AgentTaskQueue{}, protocol.ChatCoordinatorIssueResult{}, fmt.Errorf("comment service unavailable")
 	}
-	result, err := h.IssueCommentService.CreateExternalFollowUp(ctx, service.IssueCommentCreateParams{Issue: issue, AuthorID: dc.UserID, Content: inboundcoord.ContinuationContent(item), AgentIdentityContextToken: c.ExternalIdentity.ContextToken, DispatchContext: raw, IdempotencyKey: key}, service.IssueCommentCreateOpts{})
+	params := service.IssueCommentCreateParams{Issue: issue, AuthorID: dc.UserID, Content: inboundcoord.ContinuationContent(item), AgentIdentityContextToken: c.ExternalIdentity.ContextToken, DispatchContext: raw, IdempotencyKey: key}
+	var result service.IssueCommentCreateResult
+	if c.ProactiveConversation {
+		result, err = h.IssueCommentService.QueueCoordinatorFollowUp(ctx, params)
+	} else {
+		result, err = h.IssueCommentService.CreateExternalFollowUp(ctx, params, service.IssueCommentCreateOpts{})
+	}
 	if err != nil {
 		return issue, result.Task, protocol.ChatCoordinatorIssueResult{}, err
 	}
-	return issue, result.Task, protocol.ChatCoordinatorIssueResult{Action: "issue_commented", IssueID: util.UUIDToString(issue.ID), IssueIdentifier: service.IssueIdentifier(h.getIssuePrefix(ctx, dc.WorkspaceID), issue.Number), IssueTitle: issue.Title, CommentID: util.UUIDToString(result.Comment.ID), TaskID: util.UUIDToString(result.Task.ID)}, nil
+	action := "issue_commented"
+	if !result.Task.ID.Valid {
+		action = "issue_follow_up_queued"
+	}
+	return issue, result.Task, protocol.ChatCoordinatorIssueResult{Action: action, IssueID: util.UUIDToString(issue.ID), IssueIdentifier: service.IssueIdentifier(h.getIssuePrefix(ctx, dc.WorkspaceID), issue.Number), IssueTitle: issue.Title, CommentID: util.UUIDToString(result.Comment.ID), TaskID: util.UUIDToString(result.Task.ID)}, nil
 }
 
 func windowItemCommand(command DispatchCommand, item inboundcoord.WindowItem) DispatchCommand {

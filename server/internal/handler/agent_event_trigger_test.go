@@ -78,7 +78,7 @@ func TestEventTriggerDisabledHTTPDoesNotPersist(t *testing.T) {
 	h.EventTriggers = service.NewEventTriggerService(testPool, h.AutopilotService)
 	c := DispatchCommand{AgentID: id, Source: DispatchSource{Type: "digital_employee"}, Event: DispatchEvent{Domain: "channel", Type: "message.observed"}}
 	w := httptest.NewRecorder()
-	if !h.handleObservedEvent(w, newRequest(http.MethodPost, "/dispatch", nil), c, agentDispatchContext{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID}) {
+	if !h.handleObservedEvent(w, newRequest(http.MethodPost, "/dispatch", nil), &c, agentDispatchContext{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID}) {
 		t.Fatal("observed event fell through to coordinator")
 	}
 	if w.Code != http.StatusAccepted {
@@ -90,27 +90,32 @@ func TestEventTriggerDisabledHTTPDoesNotPersist(t *testing.T) {
 	}
 }
 
-func TestEventTriggerManagedAutopilotCannotBypassScheduler(t *testing.T) {
+func TestProactiveConversationDoesNotCreateAutopilot(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	old := testHandler.EventTriggers
 	testHandler.EventTriggers = service.NewEventTriggerService(testPool, testHandler.AutopilotService)
 	defer func() { testHandler.EventTriggers = old }()
-	id := createHandlerTestAgent(t, "event-managed", nil)
-	if w := updateAgentForTest(t, id, map[string]any{"event_trigger_enabled": true}); w.Code != http.StatusOK {
-		t.Fatalf("enable: %s", w.Body.String())
+	id := createHandlerTestAgent(t, "proactive-config", nil)
+	for _, body := range []map[string]any{{"inbound_coordinator": false}, {"event_trigger_enabled": true}, {"event_trigger_enabled": false}, {"event_trigger_enabled": true}, {"inbound_coordinator": false}} {
+		w := updateAgentForTest(t, id, body)
+		if w.Code != 200 {
+			t.Fatalf("update=%d %s", w.Code, w.Body.String())
+		}
+		var a AgentResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &a); err != nil {
+			t.Fatal(err)
+		}
+		if a.EventTriggerEnabled && !a.InboundCoordinator {
+			t.Fatal("proactive processing without coordinator")
+		}
+		if on, ok := body["event_trigger_enabled"]; ok && on == true && (!a.EventTriggerEnabled || !a.InboundCoordinator) {
+			t.Fatal("enabling proactive did not enable judging")
+		}
 	}
-	var apID string
-	if err := testPool.QueryRow(context.Background(), `SELECT autopilot_id::text FROM agent_event_trigger WHERE agent_id=$1`, parseUUID(id)).Scan(&apID); err != nil {
-		t.Fatal(err)
-	}
-	ap, err := testHandler.Queries.GetAutopilot(context.Background(), parseUUID(apID))
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := httptest.NewRecorder()
-	if testHandler.requireAutopilotWrite(w, newRequest(http.MethodPost, "/api/autopilots/"+apID+"/trigger", nil), ap, uuidToString(ap.WorkspaceID)) || w.Code != http.StatusConflict {
-		t.Fatalf("managed automation bypass: %d %s", w.Code, w.Body.String())
+	var n int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM autopilot WHERE assignee_id=$1`, parseUUID(id)).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("created autopilots=%d err=%v", n, err)
 	}
 }

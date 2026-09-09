@@ -223,8 +223,8 @@
     "labels_label": "标签",
     "labels_hint": "用于分类这个智能体的工作区标签。",
     "github_managed_profile": "指令和仓库 skill 由 GitHub 管理；名称和描述可在 Multica 中编辑。",
-    "prop_event_trigger": "事件触发",
-    "prop_event_trigger_hint": "监听范围内有新事件时自动执行。连续消息合批处理，同一会话两次执行至少间隔 30 秒，默认关闭。 配置通常约 5 秒同步生效。"
+    "prop_event_trigger": "主动处理会话所有新消息",
+    "prop_event_trigger_hint": "主动阅读监听范围内会话的新消息，即使没有 @ 也会结合岗位和上下文判断是否需要回应或处理。连续消息合并判断，无需回应时保持安静。开启时会同时打开“入站先判断”。"
   },
   "overview": {
     "agent_context": "智能体",

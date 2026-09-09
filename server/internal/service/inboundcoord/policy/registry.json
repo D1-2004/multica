@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-09.3",
+  "policy_version": "2026-09-09.4",
   "assembly_version": "5",
   "modules": [
     {
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "11",
+      "version": "12",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -59,8 +59,8 @@
         "COORD.F17",
         "COORD.F10"
       ],
-      "budget_characters": 2200,
-      "content_sha256": "4dc5bb263fb9831c6182ebfc9a69ca10ee1214ef285318c01d0408d8f64c18b8"
+      "budget_characters": 2442,
+      "content_sha256": "302024a9c321e49268ce6f56c9d4fbeba2b2f87c96d79140fad840dda7bd88d3"
     },
     {
       "id": "channel",
@@ -95,7 +95,7 @@
     },
     {
       "id": "group",
-      "version": "1",
+      "version": "2",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -109,8 +109,8 @@
         "COORD.F06",
         "COORD.F14"
       ],
-      "budget_characters": 750,
-      "content_sha256": "730109173ba49c5d3b25891aa56b40726c53db5f193ba7b2fc48531cfda2355e"
+      "budget_characters": 722,
+      "content_sha256": "ad393c5fe6be9c6107ad212020f182c482d05b20ed1fff93d04c0a385d97514e"
     },
     {
       "id": "window",
@@ -204,7 +204,7 @@
     },
     {
       "id": "completion",
-      "version": "2",
+      "version": "3",
       "file": "completion.md",
       "applies_when": "task_finished",
       "requires": [
@@ -216,12 +216,12 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 1000,
-      "content_sha256": "5cc03144e3664a323b6438ee2f7e26b1b7d14dd175bbf87368235906de2fb4f9"
+      "budget_characters": 1683,
+      "content_sha256": "bc3f023acb7bee9df806ae6dafb7fb22c9e6c84f5014dd5322ebcdb1531db234"
     },
     {
       "id": "finish_check",
-      "version": "9",
+      "version": "10",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -243,8 +243,8 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 1850,
-      "content_sha256": "9cabd86dce2423be622db80025ed52650529c51ecf1642b864720ac31711a8bd"
+      "budget_characters": 2122,
+      "content_sha256": "ee885ddfebdea4b47583db1a6c75f76482274c946c0f2489e4664365b24299bd"
     },
     {
       "id": "finish_check_work",
@@ -291,7 +291,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f01_contrast"
+        "f01_contrast",
+        "proactive_group_contrast"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -335,7 +336,8 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f02_contrast",
-        "f10_review_whole_window_and_clarification"
+        "f10_review_whole_window_and_clarification",
+        "proactive_group_contrast"
       ],
       "verification": {
         "source_mapping": "mapped",
