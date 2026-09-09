@@ -287,13 +287,7 @@ func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 		turn.Persona = voice.Persona
 		turn.ReplyTone = voice.ReplyTone
 	}
-	// Only the bound receiving identity may supply the employee's chat name.
-	// An Agent label, a sender name or a recalled delegator is not that identity.
-	if workspaceID, parseErr := util.ParseUUID(turn.WorkspaceID); parseErr == nil && turn.Source == SourceDigitalEmployee && turn.DWSUID != "" {
-		if identity, identityErr := c.Queries.GetAgentDingTalkIdentity(ctx, db.GetAgentDingTalkIdentityParams{WorkspaceID: workspaceID, AgentID: turn.AgentID}); identityErr == nil && identity.DwsUid == turn.DWSUID && identity.OrgID == turn.DWSOrgID {
-			turn.EmployeeAccountName = strings.TrimSpace(identity.AccountDisplayName)
-		}
-	}
+	c.fillReceivingIdentity(ctx, turn)
 	c.FillSkills(ctx, turn)
 }
 
