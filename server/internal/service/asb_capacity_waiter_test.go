@@ -169,6 +169,11 @@ func TestASBCapacityWaiterSchedulesOneTaskPerTenant(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(releaseLaunch)
+	select {
+	case <-waiter.CapacityWait.wakeups:
+	case <-time.After(time.Second):
+		t.Fatal("completed capacity launch did not wake the next waiting task")
+	}
 }
 
 func TestASBCapacityWaiterSelectsOldestTaskWithinRuntime(t *testing.T) {
