@@ -25,14 +25,14 @@ func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
 		Description: openai.String("Finish this conversation turn with ONE complete window plan. Default for any request that needs doing: action=issue after assoc_recall. reply is only a simple inquiry (greeting, capability, status of accepted work, missing-payload, thanks) or verified progress; silence is intentional non-interruption. Never reply claiming 已记录/已保存/我先查一下/稍后给你 — this loop cannot write or search. Skill work (daily-report submit, knowledge lookup, …) is action=issue, not an in-loop consulting answer. issue plans all requested work: new items omit issue_id; continuations copy a recalled issue_id and require substantive current input. Host commits and launches sandbox execution afterwards (commands, files, external tools); do not claim delivery. For issue, every source_ref must occur in executable items or non_work_refs. A request awaiting necessary clarification is covered by your question and non_work_refs, never by a speculative work item. At most 8 planned items, executed in batches of 2. Never silently drop an unhandled request. Read missing context before answering a previous question."),
 		Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"action"}, "properties": map[string]any{
 			"action":        map[string]any{"type": "string", "enum": actions},
-			"text":          map[string]any{"type": "string", "description": "Required for reply/issue: a useful natural response for the whole window, with no unsupported completion claims."},
+			"text":          map[string]any{"type": "string", "description": "Required for reply and issue. Issue cannot submit when text is empty, even if items are complete. A useful natural response for the whole window, with no unsupported completion claims."},
 			"reason":        map[string]any{"type": "string"},
 			"non_work_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Source refs requiring no execution now: greetings or requests explicitly addressed by a necessary clarification in text. Do not silently discard requests."},
 			"items": map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Required for issue. One item per executable deliverable with sufficient intent and payload; no item for work still awaiting clarification; source_refs copy u1 etc. from current_message.", "items": map[string]any{
 				"type": "object", "additionalProperties": false, "required": []string{"source_refs", "purpose", "intent", "basis"}, "properties": map[string]any{
 					"source_refs": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}},
 					"issue_id":    map[string]any{"type": "string", "description": "Existing recalled Issue UUID for continuation; omit for a new deliverable."},
-					"purpose":     map[string]any{"type": "string", "minLength": 8, "description": "The concrete event, target and deliverable, including needed return recipient. Host binds the actual speaker."},
+					"purpose":     map[string]any{"type": "string", "minLength": 8, "description": "The concrete event, target and deliverable, including needed return recipient. Product names such as DWS身份, MCP or Skills are allowed; do not paste CLI, data-auth or openConversationId. Host binds the actual speaker."},
 					"intent":      map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}},
 					"basis":       map[string]any{"type": "string", "enum": []string{"new_request", "answer", "change", "retry"}, "description": "Answer requires the original question; status pings/repeated accepted asks are NOT retry."},
 					"look_into":   map[string]any{"type": "string", "description": "Only necessary working context; not the whole scene memory/history."},
@@ -110,8 +110,17 @@ func parseValidatedWindowPlanHinted(raw string, turn Turn, recalls []recallCall,
 		}
 		return d, nil
 	}
-	if d.Action != ActionIssue || d.UserText == "" || len(input.Items) == 0 || len(input.Items) > WindowPlanMaxItems {
-		return Decision{}, hintErr("issue needs text and 1-8 complete work items", "Use finish.items with source_refs, purpose, intent, basis; all requests must have a disposition.")
+	if d.Action != ActionIssue {
+		return Decision{}, hintErr("unknown finish action", "Use action=reply, silence, or issue as advertised.")
+	}
+	if len(input.Items) == 0 {
+		return Decision{}, hintErr("issue needs 1-8 complete work items", hintIssueWorkItems)
+	}
+	if len(input.Items) > WindowPlanMaxItems {
+		return Decision{}, hintErr("finish items is at most 8", hintIssueItemLimit)
+	}
+	if d.UserText == "" {
+		return Decision{}, hintErr("issue needs spoken text", hintIssueSpokenText)
 	}
 	if turn.ConversationID != "" {
 		found := false
@@ -193,9 +202,9 @@ func parseValidatedWindowPlanHinted(raw string, turn Turn, recalls []recallCall,
 			}
 			continued[wire.IssueID] = true
 		}
-		item, ok := newWindowItem(turn, firstNonEmpty(first.Sender, turn.SenderName, "用户"), "", wire.Purpose, wire.Intent, wire.LookInto)
-		if !ok {
-			return Decision{}, fmt.Errorf("invalid deliverable purpose or intent")
+		item, err := composeWindowItem(turn, firstNonEmpty(first.Sender, turn.SenderName, "用户"), "", wire.Purpose, wire.Intent, wire.LookInto)
+		if err != nil {
+			return Decision{}, err
 		}
 		item.SourceRefs = wire.SourceRefs
 		item.IssueID = wire.IssueID

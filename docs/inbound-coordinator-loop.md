@@ -79,7 +79,7 @@ Coordinator 是数字员工在聊天中的即时反应：理解谁在说什么�
 - `finish action=issue` 通过 `items[]` 声明整窗工作计划。顶层 `issue_id` 禁止。每项包含 `source_refs`、`purpose`、`intent`、`basis`；新建省略 `item.issue_id`，续接使用本轮召回的精确 ID。`basis` 为 `new_request / answer / change / retry`，不能把催促标为实质推进。
 - Host 根据来源引用组装原文与真实委托人，验证目标、身份、范围及前置召回，再沿正常新建/评论/执行路径提交。模型写下一个 action 不是数据库已提交或外部已送达。
 - 整窗计划有界，提交按最多两项的容量批次处理；超额输入不能截断。部分成功保留实际 outcome 与稳定恢复位置，失败时不得从头执行成功项。
-- 工具失败返回最短可操作 hint；语义授权规则必须在副作用之前披露，不能等错误后才补。
+- 工具失败返回最短可操作 hint，并进入下一轮模型 tool 消息。hint 必须对准实际缺口：缺 `finish.text` 不复用 items 文案；`purpose` 可点名 DWS身份/MCP/Skills，但拒绝 `dws chat` / `data-auth` / `openConversationId`。语义授权规则必须在副作用之前披露，不能等错误后才补。
 
 具体 schema 以 `loop.go` 工具定义为准。业务请求超过当前计划上限、缺引用或含未解决语义时，不能虚构已全部接住；保留未决输入并走明确恢复路径。
 

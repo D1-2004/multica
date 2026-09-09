@@ -867,20 +867,29 @@ func parseWindowItems(turn Turn, raw []struct {
 }
 
 func newWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string) (WindowItem, bool) {
+	item, err := composeWindowItem(turn, delegator, place, purpose, intent, lookInto)
+	return item, err == nil
+}
+
+func composeWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string) (WindowItem, error) {
 	delegator = strings.TrimSpace(delegator)
 	if delegator == "" {
 		delegator = strings.TrimSpace(turn.SenderName)
 	}
 	if !validWindowDelegator(turn, delegator) {
-		return WindowItem{}, false
+		return WindowItem{}, hintErr("delegator must copy the utterance sender", "Host binds the speaker from source_refs; do not invent a different delegator.")
 	}
 	composed, err := assoc.ComposeCoordinatorPurpose(delegator, place, purpose)
 	if err != nil {
-		return WindowItem{}, false
+		hint := hintPurposeRepair
+		if strings.Contains(err.Error(), "tooling") {
+			hint = hintPurposeTooling
+		}
+		return WindowItem{}, hintWrap("invalid deliverable purpose", hint, err)
 	}
 	gotIntent, ok := assoc.CoordinatorIntent(intent)
 	if !ok {
-		return WindowItem{}, false
+		return WindowItem{}, hintErr("invalid work intent", hintIntent)
 	}
 	look := strings.TrimSpace(lookInto)
 	if look == "" {
@@ -889,7 +898,7 @@ func newWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string
 	if cid := strings.TrimSpace(turn.ConversationID); cid != "" {
 		look = strings.TrimSpace(look) + "\nscene_cid=" + cid
 	}
-	return WindowItem{Delegator: delegator, Purpose: composed, Intent: gotIntent, LookInto: look}, true
+	return WindowItem{Delegator: delegator, Purpose: composed, Intent: gotIntent, LookInto: look}, nil
 }
 
 // isMissingPayloadIssue detects an issue ack that is actually asking the user
