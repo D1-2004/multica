@@ -6,6 +6,8 @@ export type {
 } from "./fde";
 export type {
   Agent,
+  CoordinatorContract,
+  CoordinatorContractState,
   AgentStatus,
   AgentRuntimeMode,
   AgentVisibility,

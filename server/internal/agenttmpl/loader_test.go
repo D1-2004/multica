@@ -3,6 +3,8 @@ package agenttmpl
 import (
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"testing/fstest"
 )
 
@@ -163,6 +165,32 @@ func TestLoadFromFS_DuplicateSlug(t *testing.T) {
 		// That's fine — both are errors. Adjust expectation:
 		if err == nil || !strings.Contains(err.Error(), "does not match filename") {
 			t.Errorf("expected duplicate slug or filename mismatch, got %v", err)
+		}
+	}
+}
+
+func TestLoadFromFSCoordinatorContractIsBoundAndStrict(t *testing.T) {
+	const prefix = `{"slug":"x","name":"X","instructions":"do","skills":[],"coordinator_contract":`
+	const contract = `{"version":1,"scope":"Route only","must_delegate":["Business answers"]}`
+	fsys := fstest.MapFS{"templates/x.json": {Data: []byte(prefix + contract + `}`)}}
+	reg, err := loadFromFS(fsys, "templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl, ok := reg.Get("x")
+	if !ok || tmpl.CoordinatorContract == nil {
+		t.Fatal("template contract lost")
+	}
+	if _, state := coordinatorcontract.Resolve(coordinatorcontract.Marshal(tmpl.CoordinatorContract), tmpl.Instructions); state != coordinatorcontract.StateLoaded {
+		t.Fatalf("template contract state = %s", state)
+	}
+	for _, invalid := range []string{
+		strings.Replace(contract, `"version":1`, `"version":1,"allow_reply":true`, 1),
+		strings.Replace(contract, "Route only", strings.Repeat("界", 1601), 1),
+	} {
+		fsys["templates/x.json"].Data = []byte(prefix + invalid + `}`)
+		if _, err := loadFromFS(fsys, "templates"); err == nil {
+			t.Fatal("invalid template contract accepted")
 		}
 	}
 }

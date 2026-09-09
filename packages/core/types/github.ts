@@ -1,4 +1,4 @@
-import type { Agent, CreateAgentRequest } from "./agent";
+import type { Agent, CoordinatorContract, CreateAgentRequest } from "./agent";
 
 export type GitHubPullRequestState = "open" | "closed" | "merged" | "draft";
 
@@ -191,6 +191,7 @@ export interface GitHubAgentPreview {
   name: string;
   description: string;
   instructions: string;
+  coordinator_contract?: CoordinatorContract | null;
   skills: GitHubAgentSkillPreview[];
   compatible_providers: string[];
   warnings: string[];

@@ -27,7 +27,7 @@ type scriptedCompleter struct {
 
 func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
 	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "帮我沉淀这条决策", SenderName: "冬翔"}
-	raw := `{"action":"issue","text":"我来整理这条决策","items":[{"source_refs":["u1"],"purpose":"整理当前决策及判断依据","intent":"other","basis":"new_request"}]}`
+	raw := `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来整理这条决策","purpose":"整理当前决策及判断依据","intent":"other"}]}`
 	for _, recalls := range [][]recallCall{nil, {{ConversationID: "cid-other"}}} {
 		if _, err := parseValidatedWindowPlan(raw, turn, recalls, nil); err == nil {
 			t.Fatal("new work must check the current scene, not another scene")
@@ -37,7 +37,7 @@ func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
 	if err != nil || len(got.Items) != 1 || got.Items[0].IssueID != "" {
 		t.Fatalf("plan=%#v err=%v", got, err)
 	}
-	if _, err := parseValidatedWindowPlan(`{"action":"reply","text":"在，你说。"}`, Turn{ConversationID: "cid-current", Message: "你说话"}, nil, nil); err != nil {
+	if _, err := parseValidatedWindowPlan(`{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"在，你说。"}]}`, Turn{ConversationID: "cid-current", Message: "你说话"}, nil, nil); err != nil {
 		t.Fatalf("presence needs no work lookup: %v", err)
 	}
 }
@@ -118,7 +118,7 @@ func TestLoopPlansBusyContinuationWithoutWriting(t *testing.T) {
 		chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 			assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
 			assistantTool("obsolete-write", toolIssueCommentAdd, `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","content":"伪造的正文","reply_text":"已送达"}`),
-			assistantTool("plan", toolFinish, `{"action":"issue","text":"我把番茄这个答复带过去","items":[{"source_refs":["u1"],"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认番茄还是菠萝的偏好","intent":"confirm","basis":"answer"}]}`),
+			assistantTool("plan", toolFinish, `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把番茄这个答复带过去","purpose":"向须莫确认番茄还是菠萝的偏好","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`),
 		}}
 		tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认番茄还是菠萝","on_this_scene":true}]}`, errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy}}
 		got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "番茄", SenderName: "须莫", ConversationID: "cid-v6", Busy: busy, HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "你更喜欢番茄还是菠萝？"}}})
@@ -148,7 +148,7 @@ func TestLoopPlansBusyContinuationWithoutWriting(t *testing.T) {
 
 func TestLoopBusyFloodRemainsConversationWithoutWriting(t *testing.T) {
 	t.Parallel()
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("reply", toolFinish, `{"action":"silence","reason":"没有请求"}`)}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("reply", toolFinish, `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"没有请求"}]}`)}}
 	tools := &stubTools{errors: map[string]error{toolIssueCommentAdd: ErrIssueBusy}}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "灌水11：食堂窗口11今天供应番茄炒蛋，与工作无关。", ConversationID: "cid-v6", Busy: true})
 	if err != nil || got.Action != ActionSilence || len(got.Items) != 0 || len(tools.calls) != 0 || chat.calls != 1 {
@@ -160,7 +160,7 @@ func TestLoopBusyProgressDoesNotRequestAnotherTask(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{}`),
-		assistantTool("reply", toolFinish, `{"action":"reply","text":"这件事还在排队，完成后我告诉你。"}`),
+		assistantTool("reply", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"这件事还在排队，完成后我告诉你。"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认口味","status":"queued","on_this_scene":true}]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "怎么还没好", ConversationID: "cid-v6", Busy: true})
@@ -178,11 +178,11 @@ func TestLoopBusyAnswersAndNoiseHaveDistinctPlans(t *testing.T) {
 		{"番茄", false, true}, {"可以，三点没问题", false, true}, {"番茄", true, true},
 		{"灌水：食堂今天供应番茄炒蛋", false, false}, {"灌水：食堂今天供应番茄炒蛋", true, false},
 	} {
-		rounds := []openai.ChatCompletion{assistantTool("quiet", toolFinish, `{"action":"silence"}`)}
+		rounds := []openai.ChatCompletion{assistantTool("quiet", toolFinish, `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"当前消息无需回应且没有工作请求。"}]}`)}
 		if tc.work {
 			rounds = []openai.ChatCompletion{
 				assistantTool("recall", toolAssocRecall, `{}`),
-				assistantTool("plan", toolFinish, `{"action":"issue","text":"我把这个答复带过去","items":[{"source_refs":["u1"],"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"将同事对当前安排的答复转告委托人","intent":"confirm","basis":"answer"}]}`),
+				assistantTool("plan", toolFinish, `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把这个答复带过去","purpose":"将同事对当前安排的答复转告委托人","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`),
 			}
 		}
 		tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"确认同事对当前安排的选择","on_this_scene":true}]}`}
@@ -244,7 +244,7 @@ func TestLoopLogsLLMRequestAndFinish(t *testing.T) {
 
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("call-1", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("call-2", toolFinish, `{"action":"issue","text":"我先去问冬翔今天想吃什么","reason":"要向同事确认","items":[{"source_refs":["u1"],"purpose":"向冬翔确认今天吃什么","intent":"ask","basis":"new_request","look_into":"向冬翔确认今天吃什么"}]}`),
+		assistantTool("call-2", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我先去问冬翔今天想吃什么","purpose":"向冬翔确认今天吃什么","intent":"ask","context":"向冬翔确认今天吃什么"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"issue-meeting","purpose":"向冬翔确认明天开会时间","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`}
 	c := &Coordinator{Chat: chat, Tools: tools}
@@ -285,7 +285,7 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("call-1", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("call-2", toolFinish, `{"action":"issue","text":"我先去问冬翔今天想吃什么","reason":"要向同事确认","items":[{"source_refs":["u1"],"purpose":"向冬翔确认今天吃什么","intent":"ask","basis":"new_request","look_into":"向冬翔确认今天吃什么"}]}`),
+		assistantTool("call-2", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我先去问冬翔今天想吃什么","purpose":"向冬翔确认今天吃什么","intent":"ask","context":"向冬翔确认今天吃什么"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"issue-meeting","purpose":"向冬翔确认明天开会时间","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`}
 	c := &Coordinator{Chat: chat, Tools: tools}
@@ -333,7 +333,7 @@ func TestLoopRecallThenFinish(t *testing.T) {
 		got.Steps[2].Tool != toolFinish {
 		t.Fatalf("tool timeline=%#v", got.Steps)
 	}
-	if got.Reason != "要向同事确认" || got.UserText == "" || got.PlanVersion == "" {
+	if len(got.CoordinationActions) != 1 || got.CoordinationActions[0].Kind != "start_work" || got.UserText == "" || got.PlanVersion == "" {
 		t.Fatalf("decision timeline=%#v", got.Steps)
 	}
 	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,finish" {
@@ -345,7 +345,7 @@ func TestLoopRecallFillsInboundConversationID(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"q":"辰驷"}`),
-		assistantTool("finish", toolFinish, `{"action":"reply","text":"当前会话没有打球这件事。","reason":"场域无匹配"}`),
+		assistantTool("finish", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"当前会话没有打球这件事。"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[]}`}
 	inbound := "cid+bEFv7ngm9n79Q1vL9HYJw=="
@@ -374,7 +374,7 @@ func TestLoopNewDeliverableFinishSkipsForcedComment(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("finish", toolFinish, `{"action":"issue","text":"我去问须莫v6今天晚饭想吃什么","reason":"新的询问","items":[{"source_refs":["u1"],"purpose":"向须莫v6确认今天晚饭吃什么","intent":"ask","basis":"new_request","look_into":"向须莫v6确认今天晚饭吃什么"}]}`),
+		assistantTool("finish", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去问须莫v6今天晚饭想吃什么","purpose":"向须莫v6确认今天晚饭吃什么","intent":"ask","context":"向须莫v6确认今天晚饭吃什么"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"须莫🥥委托：看看联系人里有没有须莫v6","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
@@ -401,7 +401,7 @@ func TestLoopInboundOutreachReplyContinuesRecalledIssue(t *testing.T) {
 	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{}`),
-		assistantTool("finish", toolFinish, `{"action":"issue","text":"我把七点这个答复带过去","items":[{"source_refs":["u1"],"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认今晚几点可以打球","intent":"confirm","basis":"answer"}]}`),
+		assistantTool("finish", toolFinish, `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把七点这个答复带过去","purpose":"向须莫确认今晚几点可以打球","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认今晚几点打球","on_this_scene":true}]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "7点", SenderName: "须莫", ConversationID: "cid-v6", HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "今晚几点方便打球？"}}})
@@ -420,7 +420,7 @@ func TestLoopOneSceneCardAllowsNewIssueWhenPurposeDiffers(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("finish", toolFinish, `{"action":"issue","text":"我去问辰驷明天几点有空打球。","reason":"交付物不同","items":[{"source_refs":["u1"],"purpose":"向辰驷确认明天几点有空去打球","intent":"ask","basis":"new_request","look_into":"冬翔委托：向辰驷确认明天几点有空去打球"}]}`),
+		assistantTool("finish", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去问辰驷明天几点有空打球。","purpose":"向辰驷确认明天几点有空去打球","intent":"ask","context":"冬翔委托：向辰驷确认明天几点有空去打球"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"冬翔委托：向辰驷确认明天洗脚时间","status":"waiting","on_this_scene":true,"why":"本会话事项","waiting_on":"cid-inbound"}]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
@@ -446,7 +446,7 @@ func TestLoopWindowKeywordHitDoesNotForceComment(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"q":"辰驷"}`),
-		assistantTool("finish", toolFinish, `{"action":"issue","text":"我去问辰驷明天几点有空打球。","reason":"新的询问","items":[{"source_refs":["u1"],"purpose":"向辰驷确认明天几点有空去打球","intent":"ask","basis":"new_request","look_into":"向辰驷确认明天几点有空去打球"}]}`),
+		assistantTool("finish", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去问辰驷明天几点有空打球。","purpose":"向辰驷确认明天几点有空去打球","intent":"ask","context":"向辰驷确认明天几点有空去打球"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向辰驷确认明天什么时候去洗脚","status":"waiting","on_this_scene":false,"why":"关键词命中，不是本会话"}]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
@@ -473,7 +473,7 @@ func TestLoopBindWithoutIssueIDIsRejected(t *testing.T) {
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
 		assistantTool("bind", toolAssocBind, `{"conversation_id":"cid-v6","delegator":"须莫🥥","intent":"ask","purpose":"向须莫v6询问明早有没有会议"}`),
-		assistantTool("finish", toolFinish, `{"action":"issue","text":"我去问须莫v6明早有没有会议","reason":"新事项必须落到 Issue","items":[{"source_refs":["u1"],"purpose":"向须莫v6询问明早有没有会议","intent":"ask","basis":"new_request"}]}`),
+		assistantTool("finish", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去问须莫v6明早有没有会议","purpose":"向须莫v6询问明早有没有会议","intent":"ask"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"须莫🥥委托：向须莫v6询问晚上有没有会议","status":"waiting","on_this_scene":true,"why":"本会话事项"}]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
@@ -500,7 +500,7 @@ func TestLoopBindWithoutIssueIDIsRejected(t *testing.T) {
 	for _, step := range got.Steps {
 		if step.Tool == toolAssocBind && step.Error {
 			sawBindError = true
-			if !strings.Contains(step.Output, `"hint"`) || !strings.Contains(step.Output, "finish.items") {
+			if !strings.Contains(step.Output, `"hint"`) || !strings.Contains(step.Output, "finish.actions") {
 				t.Fatalf("bind error must include recovery hint, output=%s", step.Output)
 			}
 		}
@@ -514,8 +514,8 @@ func TestLoopNewIssueFinishRequiresPurpose(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("finish-bad", toolFinish, `{"action":"issue","text":"我去问","items":[{"source_refs":["u1"],"purpose":"","intent":"ask","basis":"new_request"}]}`),
-		assistantTool("finish-ok", toolFinish, `{"action":"issue","text":"我去问须莫v6明早有没有会议","reason":"新事项","items":[{"source_refs":["u1"],"purpose":"向须莫v6询问明早有没有会议","intent":"ask","basis":"new_request"}]}`),
+		assistantTool("finish-bad", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去问","purpose":"","intent":"ask"}]}`),
+		assistantTool("finish-ok", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去问须莫v6明早有没有会议","purpose":"向须莫v6询问明早有没有会议","intent":"ask"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
@@ -545,8 +545,8 @@ func TestLoopNewIssueFinishRequiresPurpose(t *testing.T) {
 func TestLoopContentJSONWithoutToolCallsNudgeThenFinish(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantJSON(`{"action":"reply","text":"这个单聊在跟高铁还是开车","look_into":"","reason":"猜的"}`),
-		assistantTool("f1", toolFinish, `{"action":"reply","text":"在，有事直接说。","reason":"打招呼"}`),
+		assistantJSON(`{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"这个单聊在跟高铁还是开车"}]}`),
+		assistantTool("f1", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"在，有事直接说。"}]}`),
 	}}
 	c := &Coordinator{Chat: chat}
 	got, err := c.runLoop(context.Background(), Turn{Source: SourceWeb, Message: "你好"})
@@ -578,7 +578,7 @@ func TestLoopLastRoundOnlyFinish(t *testing.T) {
 		t.Fatalf("initial tools=%v", first)
 	}
 	later := toolDefNamesFromDefs(toolsForDisclosure(turn, 1, true))
-	if strings.Join(later, ",") != "assoc_recall,issue_get,issue_comment_list,context_read,finish" {
+	if strings.Join(later, ",") != "assoc_recall,work_state,context_read,finish" {
 		t.Fatalf("recalled tools=%v", later)
 	}
 }
@@ -603,7 +603,7 @@ func TestLoopExceedsRounds(t *testing.T) {
 func TestDecideRunsToolLoop(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("f1", toolFinish, `{"action":"reply","text":"在，有事直接说。","reason":"打招呼"}`),
+		assistantTool("f1", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"在，有事直接说。"}]}`),
 	}}
 	c := &Coordinator{
 		LLM:  llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"}),
@@ -622,9 +622,9 @@ func TestLoopNamedCIDFinishWithoutRecallIsRejected(t *testing.T) {
 	t.Parallel()
 	fake := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("f0", toolFinish, `{"action":"reply","text":"这个单聊在跟高铁还是开车","reason":"猜的"}`),
+		assistantTool("f0", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"这个单聊在跟高铁还是开车"}]}`),
 		assistantTool("r1", toolAssocRecall, `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJ1w==","since":"48h"}`),
-		assistantTool("f1", toolFinish, `{"action":"reply","text":"这个会话在图上没有记录。","reason":"recall 为空"}`),
+		assistantTool("f1", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"这个会话在图上没有记录。"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[]}`}
 	c := &Coordinator{Chat: chat, Tools: tools}
@@ -682,7 +682,7 @@ func TestExtractConversationIDs(t *testing.T) {
 func TestLoopReportLinkDoesNotRequireNamedConversationRecall(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("f1", toolFinish, `{"action":"reply","text":"PC 官网迭代这一段似乎没有写完。"}`),
+		assistantTool("f1", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"receipt","reply":"PC 官网迭代这一段似乎没有写完。"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[]}`}
 	c := &Coordinator{Chat: chat, Tools: tools}
@@ -701,8 +701,8 @@ func TestLoopReportLinkDoesNotRequireNamedConversationRecall(t *testing.T) {
 func TestNamedCurrentConversationStillRequiresRecall(t *testing.T) {
 	t.Parallel()
 	cid := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: cid, Message: cid + " 里面聊了什么"}
-	raw := `{"action":"reply","text":"本次范围内未找到事项记录。"}`
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: cid, Message: cid + " 里面聊了什么", CoordinationReads: []CoordinationRead{{ReadRef: "r1", Tool: toolAssocRecall}}}
+	raw := `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"本次范围内未找到事项记录。"}]}`
 	_, err := parseValidatedWindowPlan(raw, turn, nil, nil)
 	if err == nil || !strings.Contains(marshalToolFailure(err), cid) {
 		t.Fatalf("missing recall must identify the exact named scene: %v", err)
@@ -717,11 +717,12 @@ func TestLinkedConversationStillRequiresRecall(t *testing.T) {
 	t.Parallel()
 	cid := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
 	turn := Turn{
-		Source:         SourceDigitalEmployee,
-		ConversationID: "cid-current",
-		Message:        "这个会话在跟什么事 dingtalk://dingtalkclient/action/openapp?openConversationId=" + cid,
+		Source:            SourceDigitalEmployee,
+		ConversationID:    "cid-current",
+		Message:           "这个会话在跟什么事 dingtalk://dingtalkclient/action/openapp?openConversationId=" + cid,
+		CoordinationReads: []CoordinationRead{{ReadRef: "r1", Tool: toolAssocRecall}},
 	}
-	raw := `{"action":"reply","text":"本次范围内未找到事项记录。"}`
+	raw := `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"本次范围内未找到事项记录。"}]}`
 	if _, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil); err == nil {
 		t.Fatal("reading the current scene does not cover the genuine linked scene")
 	}
@@ -736,7 +737,7 @@ func TestDecideNamedConversationRecallThenReply(t *testing.T) {
 	named := "cid+bEFv7ngm9n79Q1vL9HYJw=="
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("call-1", toolAssocRecall, `{"conversation_id":"cid+bEFv7ngm9n79Q1vL9HYJw==","since":"48h"}`),
-		assistantTool("call-2", toolFinish, `{"action":"reply","text":"这个单聊最近在跟「向冬翔确认明天去上海是坐高铁还是开车」。","reason":"图上已有这件事"}`),
+		assistantTool("call-2", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"这个单聊最近在跟「向冬翔确认明天去上海是坐高铁还是开车」。"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue":"WS-9","purpose":"向冬翔确认明天去上海是坐高铁还是开车","status":"waiting"}]}`}
 	c := &Coordinator{
@@ -778,7 +779,7 @@ func TestCoordinatorToolDefsIncludeAssocAndFinish(t *testing.T) {
 		if containsString(names, toolAssocBind) || containsString(names, toolIssueCommentAdd) {
 			t.Fatalf("reasoning phase advertised a write: %v", names)
 		}
-		if containsString(names, toolIssueGet) != recalled {
+		if containsString(names, toolWorkState) != recalled || containsString(names, toolIssueGet) || containsString(names, toolIssueCommentList) {
 			t.Fatalf("issue target not disclosed yet: %v", names)
 		}
 	}
@@ -789,7 +790,7 @@ func TestWindowPlanPreservesActualDingTalkSpeaker(t *testing.T) {
 	const issue = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	for _, source := range []Source{SourceDigitalEmployee, SourceRobot} {
 		turn := Turn{Source: source, SenderName: "被联系的同事", ConversationID: "cid-current", Message: "周五三点可以", HistoryStatus: "loaded"}
-		got, err := parseValidatedWindowPlan(`{"action":"issue","text":"我把这个答复带过去","items":[{"source_refs":["u1"],"issue_id":"`+issue+`","purpose":"确认同事周五三点是否可以开会","intent":"confirm","basis":"answer"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, map[string]struct{}{issue: {}})
+		got, err := parseValidatedWindowPlan(`{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把这个答复带过去","issue_id":"`+issue+`","purpose":"确认同事周五三点是否可以开会","intent":"confirm","basis":"answer"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, map[string]struct{}{issue: {}})
 		if err != nil || len(got.Items) != 1 {
 			t.Fatalf("source=%s plan=%#v err=%v", source, got, err)
 		}
@@ -802,7 +803,7 @@ func TestWindowPlanPreservesActualDingTalkSpeaker(t *testing.T) {
 func TestWindowPlanCannotIntroduceUnrecalledTarget(t *testing.T) {
 	t.Parallel()
 	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "改成线上会议", SenderName: "冬翔"}
-	raw := `{"action":"issue","text":"我把会议方式改成线上","items":[{"source_refs":["u1"],"issue_id":"unrecalled-issue","purpose":"将这次会议的地点改成线上会议","intent":"confirm","basis":"change"}]}`
+	raw := `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把会议方式改成线上","purpose":"将这次会议的地点改成线上会议","intent":"confirm","issue_id":"unrecalled-issue","basis":"change"}]}`
 	if _, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil); err == nil {
 		t.Fatal("a continuation cannot introduce a target absent from recall")
 	}
@@ -811,9 +812,9 @@ func TestWindowPlanCannotIntroduceUnrecalledTarget(t *testing.T) {
 	if _, ok := props["issue_id"]; ok {
 		t.Fatal("a top-level target can bypass per-item source attribution")
 	}
-	items := props["items"].(map[string]any)["items"].(map[string]any)
+	items := props["actions"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
 	for _, required := range []string{"source_refs", "purpose", "intent", "basis"} {
-		if !containsString(stringSlice(items["required"]), required) {
+		if _, ok := items[required]; !ok {
 			t.Fatalf("missing per-item obligation %s", required)
 		}
 	}
@@ -823,65 +824,53 @@ func TestWindowPlanEmptyTextHintDistinctFromItems(t *testing.T) {
 	t.Parallel()
 	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"}
 	recalls := []recallCall{{ConversationID: turn.ConversationID}}
-	items := `[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]`
-	_, err := parseValidatedWindowPlan(`{"action":"issue","text":"","items":`+items+`}`, turn, recalls, nil)
+	empty := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup"}]}`
+	_, err := parseValidatedWindowPlan(empty, turn, recalls, nil)
 	if err == nil {
-		t.Fatal("empty spoken text must fail even with complete items")
+		t.Fatal("missing per-action reply must fail")
 	}
 	raw := marshalToolFailure(err)
-	if !strings.Contains(raw, `"error":"issue needs spoken text"`) || !strings.Contains(raw, hintIssueSpokenText) {
-		t.Fatalf("empty text must name text, not items: %s", raw)
+	if !strings.Contains(raw, "start_work requires reply") || !strings.Contains(raw, "Set reply on this start_work action") {
+		t.Fatalf("missing reply needs a precise hint: %s", raw)
 	}
-	if strings.Contains(raw, hintIssueWorkItems) {
-		t.Fatalf("complete items must not reuse the items hint: %s", raw)
-	}
-	got, err := parseValidatedWindowPlan(`{"action":"issue","text":"我去查环境变量、DWS身份和已装 MCP/Skills，然后给你简略汇报。","items":`+items+`}`, turn, recalls, nil)
-	if err != nil || got.Action != ActionIssue || len(got.Items) != 1 {
-		t.Fatalf("DWS身份 as the deliverable must submit: plan=%#v err=%v", got, err)
+	complete := strings.Replace(empty, `"kind":"start_work"`, `"kind":"start_work","reply":"我去查配置与身份并汇报。"`, 1)
+	d, err := parseValidatedWindowPlan(complete, turn, recalls, nil)
+	if err != nil || d.Action != ActionIssue || len(d.Items) != 1 {
+		t.Fatalf("DWS identity remains a valid deliverable: %#v %v", d, err)
 	}
 }
 
 func TestWindowPlanToolingPurposeStillHinted(t *testing.T) {
 	t.Parallel()
 	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "冬翔", Message: "帮我约明天开会"}
-	_, err := parseValidatedWindowPlan(`{"action":"issue","text":"我去约明天的会","items":[{"source_refs":["u1"],"purpose":"向须莫v6询问明早有没有会议，dws要用dws chat data-auth","intent":"ask","basis":"new_request"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
+	_, err := parseValidatedWindowPlan(`{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去确认明天开会时间。","purpose":"向须莫v6询问明早有没有会议，dws要用dws chat data-auth","intent":"ask"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
 	if err == nil {
-		t.Fatal("CLI/auth leakage in purpose must still fail")
+		t.Fatal("CLI/auth in purpose must fail")
 	}
 	raw := marshalToolFailure(err)
-	if !strings.Contains(raw, `"hint"`) || !strings.Contains(raw, "data-auth") || !strings.Contains(raw, "DWS身份") {
-		t.Fatalf("tooling rejection must repair without banning DWS身份: %s", raw)
+	if !strings.Contains(raw, "data-auth") || !strings.Contains(raw, "DWS身份") || !strings.Contains(raw, `"hint"`) {
+		t.Fatalf("precise tooling hint missing: %s", raw)
 	}
 }
 
 func TestFinishEmptyTextHintReachesNextModelRound(t *testing.T) {
 	t.Parallel()
-	empty := `{"action":"issue","text":"","items":[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]}`
-	complete := `{"action":"issue","text":"我去查环境变量、DWS身份和已装 MCP/Skills，然后给你简略汇报。","items":[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]}`
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("r0", toolAssocRecall, `{"conversation_id":"cid-env"}`),
-		assistantTool("f0", toolFinish, empty),
-		assistantTool("f1", toolFinish, complete),
-	}}
-	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
-		Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201",
-		Message: "看下你的环境变量和dws身份 mcp和skills有什么",
-	})
-	if err != nil || got.Action != ActionIssue || chat.calls != 3 {
-		t.Fatalf("after a text hint the same items must submit: action=%s calls=%d err=%v", got.Action, chat.calls, err)
-	}
-	if len(chat.params) < 3 {
-		t.Fatalf("missing next-round params: %d", len(chat.params))
+	empty := `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup"}]}`
+	complete := strings.Replace(empty, `"kind":"start_work"`, `"kind":"start_work","reply":"我去查配置与身份并汇报。"`, 1)
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("r0", toolAssocRecall, `{"conversation_id":"cid-env"}`), assistantTool("f0", toolFinish, empty), assistantTool("f1", toolFinish, complete)}}
+	d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"})
+	if err != nil || d.Action != ActionIssue || chat.calls != 3 {
+		t.Fatalf("after reply repair: %s calls=%d err=%v", d.Action, chat.calls, err)
 	}
 	raw, _ := json.Marshal(chat.params[2].Messages)
-	if !strings.Contains(string(raw), "issue needs spoken text") || !strings.Contains(string(raw), hintIssueSpokenText) {
-		t.Fatalf("repair hint must enter the next model round: %s", raw)
+	if !strings.Contains(string(raw), "start_work requires reply") || !strings.Contains(string(raw), "Set reply on this start_work action") {
+		t.Fatalf("repair is not visible: %s", raw)
 	}
 }
 
 func TestMarshalToolFailureIncludesHint(t *testing.T) {
 	t.Parallel()
-	_, err := parseValidatedWindowPlan(`{"action":"issue","text":"我把这个答复带过去","items":[{"source_refs":["u1"],"purpose":"确认须莫周五三点是否方便开会","intent":"confirm","basis":"answer"}]}`, Turn{Source: SourceDigitalEmployee, SenderName: "须莫", Message: "可以", HistoryStatus: "not_loaded"}, nil, nil)
+	_, err := parseValidatedWindowPlan(`{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把这个答复带过去","purpose":"确认须莫周五三点是否方便开会","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`, Turn{Source: SourceDigitalEmployee, SenderName: "须莫", Message: "可以", HistoryStatus: "not_loaded"}, nil, map[string]struct{}{"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa": {}})
 	if err == nil {
 		t.Fatal("missing original question must reject an answer plan")
 	}
@@ -926,11 +915,12 @@ func TestFinishToolRoutesUnavailableCapabilitiesToIssue(t *testing.T) {
 			t.Fatal("finish description missing")
 		}
 		props := fn.Parameters["properties"].(map[string]any)
-		actions := stringSlice(props["action"].(map[string]any)["enum"])
-		if !containsString(actions, "reply") || containsString(actions, "issue") != ready {
+		operationProps := props["actions"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+		actions := stringSlice(operationProps["kind"].(map[string]any)["enum"])
+		if containsString(actions, "reply") || !containsString(actions, "acknowledge") || containsString(actions, "start_work") != ready || containsString(actions, "continue_work") != ready {
 			t.Fatalf("work must wait for evidence: %v", actions)
 		}
-		if _, ok := props["items"]; ok != ready {
+		if _, ok := operationProps["purpose"]; ok != ready {
 			t.Fatalf("work schema must appear only after evidence unlocks submission: ready=%v items=%v", ready, ok)
 		}
 	}
@@ -945,7 +935,7 @@ func TestLoopFinishTopLevelIssueIDIsRejectedThenScopedPlan(t *testing.T) {
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{}`),
 		assistantTool("bad", toolFinish, `{"action":"issue","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`),
-		assistantTool("fixed", toolFinish, `{"action":"issue","text":"我把七点这个答复带过去","items":[{"source_refs":["u1"],"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认今晚几点可以打球","intent":"confirm","basis":"answer"}]}`),
+		assistantTool("fixed", toolFinish, `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把七点这个答复带过去","purpose":"向须莫确认今晚几点可以打球","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"向须莫确认今晚几点打球","on_this_scene":true}]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Message: "7点", SenderName: "须莫", ConversationID: "cid-v6", HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "员工", Content: "今晚几点打球？"}}})
@@ -957,7 +947,7 @@ func TestLoopFinishTopLevelIssueIDIsRejectedThenScopedPlan(t *testing.T) {
 	}
 	sawHint := false
 	for _, step := range got.Steps {
-		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, "source_refs") {
+		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, "actions") {
 			sawHint = true
 		}
 	}
@@ -970,8 +960,8 @@ func TestLoopFinishIssueEmptyTextIsRejectedThenSpoken(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("finish-empty", toolFinish, `{"action":"issue","items":[{"source_refs":["u1"],"purpose":"向冬翔确认今天吃什么","intent":"ask","basis":"new_request"}]}`),
-		assistantTool("finish-ok", toolFinish, `{"action":"issue","text":"我去问冬翔今天想吃什么","reason":"新事项","items":[{"source_refs":["u1"],"purpose":"向冬翔确认今天吃什么","intent":"ask","basis":"new_request"}]}`),
+		assistantTool("finish-empty", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"向冬翔确认今天吃什么","intent":"ask"}]}`),
+		assistantTool("finish-ok", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去问冬翔今天想吃什么","purpose":"向冬翔确认今天吃什么","intent":"ask"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
@@ -991,7 +981,7 @@ func TestLoopFinishIssueEmptyTextIsRejectedThenSpoken(t *testing.T) {
 	}
 	sawHint := false
 	for _, step := range got.Steps {
-		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, "text") {
+		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, "reply") {
 			sawHint = true
 		}
 	}
@@ -1139,7 +1129,7 @@ func TestBuildUserPromptIncludesConversationID(t *testing.T) {
 
 func TestLoopIssueBusyAckSilences(t *testing.T) {
 	t.Parallel()
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("done", toolFinish, `{"action":"silence","reason":"已结束且没有新请求"}`)}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("done", toolFinish, `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"已结束且没有新请求"}]}`)}}
 	tools := &stubTools{}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "谢谢", ConversationID: "cid-v6", Busy: true})
 	if err != nil || got.Action != ActionSilence || len(got.Items) != 0 || len(tools.calls) != 0 {
@@ -1152,7 +1142,7 @@ func TestLoopTaskFinishedAllowsIssueGetWithoutRecall(t *testing.T) {
 	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("get", toolIssueGet, `{"issue_id":"`+issueID+`"}`),
-		assistantTool("finish", toolFinish, `{"action":"reply","text":"已经问过须莫，周五三点可以。"}`),
+		assistantTool("finish", toolFinish, completionFinishJSON(Turn{IssueID: issueID, TaskResult: "须莫说周五三点可以开会。"}, "已经问过须莫，周五三点可以。")),
 	}}
 	tools := &stubTools{}
 	decision, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{
@@ -1191,8 +1181,8 @@ func TestLoopTaskFinishedSilencesRedundantWrapup(t *testing.T) {
 
 func TestLoopTaskFinishedKeepsUntoldProgressForDelegator(t *testing.T) {
 	t.Parallel()
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("finish", toolFinish, `{"action":"reply","text":"已问 dxxh 明天开会时间，等他回。"}`)}}
 	delivery := `{"status":"loaded","task_id":"current-run","scope":"current_task","complete":false,"deliveries":[{"conversation_id":"cid-dxxh","message_id":"msg-ask","sent_text":"明天几点开会？","text_complete":true}]}`
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("finish", toolFinish, completionFinishJSON(Turn{ConversationID: "cid-delegator", TaskResult: "已向 dxxh 询问明天开会时间，还没有对方回答。", TaskDeliveryContext: delivery}, "已问 dxxh 明天开会时间，等他回。"))}}
 	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", ConversationID: "cid-delegator", Message: "任务已完成", TaskResult: "已向 dxxh 询问明天开会时间，还没有对方回答。", TaskDeliveryContext: delivery})
 	if err != nil || got.Action != ActionReply || got.UserText == "" {
 		t.Fatalf("a useful outcome not yet told to this scene must not be blacklisted: %#v err=%v", got, err)
@@ -1229,8 +1219,9 @@ func TestToolsForTurnTaskFinishedOmitsAssocRecall(t *testing.T) {
 			continue
 		}
 		props := fn.Parameters["properties"].(map[string]any)
-		actions := stringSlice(props["action"].(map[string]any)["enum"])
-		if strings.Join(actions, ",") != "reply,silence" {
+		operationProps := props["actions"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+		actions := stringSlice(operationProps["kind"].(map[string]any)["enum"])
+		if strings.Join(actions, ",") != "report_result,ignore" {
 			t.Fatalf("completion cannot create or continue work: %v", actions)
 		}
 	}
@@ -1263,7 +1254,7 @@ var _ Tools = (*stubTools)(nil)
 
 func TestLoopShortAnswerRequiresOriginalQuestionBeforePlan(t *testing.T) {
 	t.Parallel()
-	const plan = `{"action":"issue","text":"我把三点可以这个答复带过去","items":[{"source_refs":["u1"],"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"确认须莫周五三点是否方便开会","intent":"confirm","basis":"answer"}]}`
+	const plan = `{"actions":[{"kind":"continue_work","source_refs":["u1"],"reply":"我把三点可以这个答复带过去","purpose":"确认须莫周五三点是否方便开会","intent":"confirm","issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","basis":"answer"}]}`
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{}`),
 		assistantTool("premature", toolFinish, plan),
@@ -1294,8 +1285,8 @@ func TestLoopFailedRecallCannotUnlockNewWork(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("failed-read", toolAssocRecall, `{}`),
-		assistantTool("premature", toolFinish, `{"action":"issue","text":"我来整理当前决策","items":[{"source_refs":["u1"],"purpose":"整理当前决策及判断依据","intent":"other","basis":"new_request"}]}`),
-		assistantTool("clarify", toolFinish, `{"action":"reply","text":"暂时没读到之前的处理记录，我还不能确认是否已接过这件事。"}`),
+		assistantTool("premature", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来整理当前决策","purpose":"整理当前决策及判断依据","intent":"other"}]}`),
+		assistantTool("clarify", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"暂时没读到之前的处理记录，我还不能确认是否已接过这件事。"}]}`),
 	}}
 	tools := &stubTools{errors: map[string]error{toolAssocRecall: fmt.Errorf("temporary read failure")}}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, ConversationID: "cid-current", Message: "整理这次决策", SenderName: "冬翔"})
@@ -1311,7 +1302,7 @@ func TestLoopRepeatedAcceptedRequestRepliesWithoutWork(t *testing.T) {
 	t.Parallel()
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("status", toolAssocRecall, `{}`),
-		assistantTool("reply", toolFinish, `{"action":"reply","text":"这件事已经排上了，整理好我发你。"}`),
+		assistantTool("reply", toolFinish, `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["r1"],"reply":"这件事已经排上了，整理好我发你。"}]}`),
 	}}
 	tools := &stubTools{recall: `{"items":[{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","purpose":"整理今天会议的决策和行动项","status":"queued","on_this_scene":true}]}`}
 	got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "帮我整理今天会议的决策和行动项", ConversationID: "cid-current", Busy: true})
@@ -1328,7 +1319,7 @@ func TestLoopRejectsUnknownOrTrailingFinishJSON(t *testing.T) {
 	} {
 		chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 			assistantTool("invalid", toolFinish, raw),
-			assistantTool("repaired", toolFinish, `{"action":"reply","text":"在，你说。"}`),
+			assistantTool("repaired", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"在，你说。"}]}`),
 		}}
 		tools := &stubTools{}
 		got, err := (&Coordinator{Chat: chat, Tools: tools}).runLoop(context.Background(), Turn{Source: SourceWeb, Addressed: true, Message: "你好"})

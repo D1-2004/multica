@@ -44,7 +44,8 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 			} `json:"messages"`
 			Tools []struct {
 				Function struct {
-					Name string `json:"name"`
+					Name       string         `json:"name"`
+					Parameters map[string]any `json:"parameters"`
 				} `json:"function"`
 			} `json:"tools"`
 		}
@@ -53,7 +54,8 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 		if len(body.Tools) == 1 && body.Tools[0].Function.Name == "finish_check" {
 			// This HTTP fixture verifies history transport and routing rounds;
 			// semantic verdicts have their own scripted and real-model tests.
-			_ = json.NewEncoder(w).Encode(withScriptedFinishQuotes(scriptedFinishVerdict("allow", "Scripted history fixture allows the candidate."), body.Messages[len(body.Messages)-1].Content))
+			requestRef, candidateRef := scriptedReferenceEnums(body.Tools[0].Function.Parameters)
+			_ = json.NewEncoder(w).Encode(withScriptedFinishReferences(scriptedFinishVerdict("allow", "Scripted history fixture allows the candidate."), body.Messages[len(body.Messages)-1].Content, requestRef, candidateRef))
 			return
 		}
 		call := calls.Add(1)
@@ -67,7 +69,7 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 			_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"history1","type":"function","function":{"name":"context_read","arguments":"{\"kind\":\"history\"}"}}]},"finish_reason":"tool_calls"}]}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"id":"cmpl-2","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"action\":\"reply\",\"text\":\"我在。\",\"reason\":\"本轮只沟通\"}"}}]},"finish_reason":"tool_calls"}]}`)
+		_, _ = io.WriteString(w, `{"id":"cmpl-2","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"actions\":[{\"kind\":\"acknowledge\",\"source_refs\":[\"u1\"],\"ack_kind\":\"greeting\",\"reply\":\"我在。\"}]}"}}]},"finish_reason":"tool_calls"}]}`)
 	}))
 	t.Cleanup(server.Close)
 	return llm.New(llm.Config{APIKey: "test", BaseURL: server.URL})

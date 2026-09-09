@@ -190,3 +190,18 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 
 - 2026-09-08: Added package creation, complete example and Builder evidence.
   Reason: replace the DTA-oriented source assumptions with the platform's manifest and ZIP contract.
+
+## Bounded Coordinator contract (2026-09-09)
+
+| Contract | Implementation |
+| --- | --- |
+| Version 1 shape; strict unknown-field validation; canonical JSON including source hash ≤1600 Unicode code points | `server/internal/coordinatorcontract/contract.go`: `Contract`, `Parse`, `Bind`, `Resolve`, `Hash` |
+| Dedicated nullable persisted field; omitted UPDATE preserves and JSON null atomically clears | `server/migrations/9164_agent_coordinator_contract.up.sql`; `server/pkg/db/queries/agent.sql`: `CreateAgent`, `UpdateAgent` |
+| Independent Coordinator read | `server/pkg/db/queries/agent_coordinator_contract.sql`: `GetAgentCoordinatorContract` |
+| Create/update/readback; source ownership guard; source hash retained on copies, missing hash Host-bound | `server/internal/handler/agent.go`: request/response structs, `bindAgentCoordinatorContract`, `agentToResponse` |
+| JSON/file CLI inputs and copy roundtrip | `server/cmd/multica/cmd_agent.go`: `registerCoordinatorContractFlags`, `resolveCoordinatorContract`; `server/cmd/multica/cmd_agent_copy.go`: `runAgentCopy` |
+| Web/Desktop duplicate, builder and stored draft roundtrip | `packages/core/agents/draft.ts`, `stored-draft.ts`, `builder-protocol.ts`; `packages/core/api/schemas.ts`: `CoordinatorContractSchema` |
+| Boundary and stale-version evidence | `server/internal/coordinatorcontract/contract_test.go`; `server/internal/handler/agent_coordinator_contract_test.go`; `server/cmd/multica/cmd_agent_coordinator_contract_test.go`; `packages/core/api/coordinator-contract.test.ts` |
+| Local/Git package preview retains bounded constraints and original source version | `server/internal/handler/agent_package.go`; `packages/core/types/agent-package.ts`; `packages/core/api/schemas.ts`: `AgentPackagePreviewSchema` |
+| Local package source blocks direct instructions/contract edits without blocking ordinary profile edits | `server/internal/handler/agent.go`: `UpdateAgent`; `server/internal/handler/agent_coordinator_contract_test.go`: `TestUpdateLocalPackageAgentPreservesSourceContract` |
+| Portable ZIP/Git/export use the same root contract field, retaining stale source hashes on copies | `server/internal/agentsource/portable.go`; `server/internal/agentsource/agent.schema.json`; `server/internal/handler/agent_export_manifest.go`; `server/internal/handler/agent_source_preview.go` |

@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 )
 
 //go:embed templates/*.json
@@ -62,6 +64,21 @@ func loadFromFS(fsys fs.FS, dir string) (*Registry, error) {
 		var t Template
 		if err := json.Unmarshal(data, &t); err != nil {
 			return nil, fmt.Errorf("agenttmpl: parse %s: %w", path, err)
+		}
+
+		var raw struct {
+			CoordinatorContract json.RawMessage `json:"coordinator_contract"`
+		}
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return nil, fmt.Errorf("agenttmpl: parse %s: %w", path, err)
+		}
+		contract, err := coordinatorcontract.Parse(raw.CoordinatorContract)
+		if err != nil {
+			return nil, fmt.Errorf("agenttmpl: %s coordinator_contract: %w", path, err)
+		}
+		t.CoordinatorContract, err = coordinatorcontract.Bind(contract, t.Instructions)
+		if err != nil {
+			return nil, fmt.Errorf("agenttmpl: %s coordinator_contract: %w", path, err)
 		}
 
 		if err := validate(t, name); err != nil {

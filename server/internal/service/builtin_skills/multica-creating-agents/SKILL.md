@@ -50,7 +50,7 @@ An agent is a workspace-scoped row (table `agent`). Creation is a single
 re-reads the agent row and assembles the runtime payload — so the persisted
 fields, not the create-time output, are what the agent runs on.
 
-Two distinct text fields, often confused:
+Definition fields serve different consumers:
 
 - `description` is a catalog summary. It is stored and shown in listings; the
   daemon does NOT inject it into the agent's runtime prompt. Treat it as
@@ -59,6 +59,9 @@ Two distinct text fields, often confused:
   claim time and ships it to the provider as the agent's durable instructions.
   Persona, responsibilities, boundaries, output and escalation rules go here,
   not in `description`.
+- `coordinator_contract` is a short, explicit routing contract for the server
+  Coordinator. It may narrow the platform action set; it cannot add tools or
+  permit direct business answers. Full workflow instructions stay on the executor.
 
 ## CLI / API entry points
 
@@ -80,9 +83,40 @@ strings. `--max-concurrent-tasks` is validated as 1–50 before the request is
 sent.
 
 The HTTP body (`CreateAgentRequest`) accepts: `name`, `description`,
-`instructions`, `avatar_url`, `runtime_id`, `runtime_config`, `custom_env`,
+`instructions`, `coordinator_contract`, `avatar_url`, `runtime_id`, `runtime_config`, `custom_env`,
 `custom_args`, `model`, `thinking_level`, `service_tier`, `visibility`,
 `max_concurrent_tasks`, `mcp_config`, `skill_ids`.
+
+## Bounded Coordinator contract
+
+Use `--coordinator-contract-file <path>` (or `--coordinator-contract '<json>'`)
+on `agent create`, `agent update`, or `agent copy`. The file contains one object:
+
+```json
+{"version":1,"scope":"Product support","must_delegate":["Product evidence checks"],"constraints":["Draft only until approved"],"clarify_when":["Missing recipient or message body"]}
+```
+
+The canonical JSON object, including keys and the Host's source hash, must fit
+1600 Unicode code points. Unsupported versions, unknown fields, blank scope,
+empty list entries and oversized objects are rejected, never truncated.
+`instructions` remains the executor's complete job contract.
+
+The Host adds `source_instructions_sha256` when it is omitted. A supplied hash
+is preserved as a version reference; it is not an authorization credential.
+Copies therefore retain stale contracts without silently recertifying them.
+After reviewing a contract against changed instructions, explicitly republish
+its authored object with that hash omitted to bind the new instruction version.
+`agent get` exposes `coordinator_contract_state` as `loaded`, `not_configured`,
+`stale`, or `unavailable`; only `loaded` can supply the current short contract.
+
+On update, omission preserves the contract; `--coordinator-contract null`
+clears it atomically. Updating only `instructions` keeps the previous contract
+and source hash, so the state becomes `stale`. Missing, stale or invalid
+contracts never mean "no restrictions". Git-backed and local-package Agent contracts are managed
+with their source definitions and reject direct API edits, just like instructions.
+Portable `agent.json` stores `coordinator_contract` at the root beside the
+instructions reference. Preview and export retain it, including its source hash;
+a malformed contract is rejected at the schema/preview boundary.
 
 ## Copying an agent
 
@@ -100,7 +134,7 @@ multica agent copy <source-agent-id> --runtime-id <target> --model <model>  # cr
 ```
 
 - Copied by default, each overridable with the matching flag: `name` (suffixed
-  `" (copy)"`), `description`, `instructions`, avatar, `custom_args`,
+  `" (copy)"`), `description`, `instructions`, `coordinator_contract`, avatar, `custom_args`,
   `max_concurrent_tasks`, invocation permission (`permission_mode` +
   allow-list), and assigned workspace skills.
 - A copied `max_concurrent_tasks` is included only when the source value is

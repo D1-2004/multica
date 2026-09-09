@@ -17,6 +17,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/agenttmpl"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -65,7 +66,8 @@ type AgentTemplateSummaryResponse struct {
 // full Instructions block.
 type AgentTemplateResponse struct {
 	AgentTemplateSummaryResponse
-	Instructions string `json:"instructions"`
+	Instructions        string                        `json:"instructions"`
+	CoordinatorContract *coordinatorcontract.Contract `json:"coordinator_contract"`
 }
 
 func templateToSummary(t agenttmpl.Template) AgentTemplateSummaryResponse {
@@ -92,6 +94,7 @@ func templateToDetail(t agenttmpl.Template) AgentTemplateResponse {
 	return AgentTemplateResponse{
 		AgentTemplateSummaryResponse: templateToSummary(t),
 		Instructions:                 t.Instructions,
+		CoordinatorContract:          t.CoordinatorContract,
 	}
 }
 
@@ -139,13 +142,24 @@ type CreateAgentFromTemplateRequest struct {
 	// Optional overrides — let the picker UI customise the template before
 	// creation without forcing a second round-trip to the detail page.
 	// When nil/empty, the template's own values are used.
-	Description  *string `json:"description,omitempty"`
-	Instructions *string `json:"instructions,omitempty"`
-	AvatarURL    *string `json:"avatar_url,omitempty"`
+	Description         *string         `json:"description,omitempty"`
+	Instructions        *string         `json:"instructions,omitempty"`
+	CoordinatorContract json.RawMessage `json:"coordinator_contract,omitempty"`
+	AvatarURL           *string         `json:"avatar_url,omitempty"`
 	// Workspace skill IDs to attach **in addition to** the template's
 	// skills. The merge dedupes against template skills automatically
 	// (agent_skill INSERT uses ON CONFLICT DO NOTHING).
 	ExtraSkillIDs []string `json:"extra_skill_ids,omitempty"`
+}
+
+// An instruction override does not attest that the template's old contract is
+// still applicable. Only an explicitly submitted contract without a prior hash
+// is rebound; inherited and copied hashes preserve their freshness state.
+func templateCoordinatorContract(tmpl agenttmpl.Template, raw json.RawMessage, instructions string) ([]byte, error) {
+	if len(raw) == 0 {
+		return coordinatorcontract.Marshal(tmpl.CoordinatorContract), nil
+	}
+	return bindAgentCoordinatorContract(raw, instructions)
 }
 
 type CreateAgentFromTemplateResponse struct {
@@ -193,6 +207,16 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	tmpl, found := agentTemplates.Get(req.TemplateSlug)
 	if !found {
 		writeError(w, http.StatusBadRequest, "template not found: "+req.TemplateSlug)
+		return
+	}
+
+	instructions := tmpl.Instructions
+	if req.Instructions != nil {
+		instructions = *req.Instructions
+	}
+	contract, err := templateCoordinatorContract(tmpl, req.CoordinatorContract, instructions)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -452,32 +476,29 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	if req.Description != nil {
 		description = *req.Description
 	}
-	instructions := tmpl.Instructions
-	if req.Instructions != nil {
-		instructions = *req.Instructions
-	}
 	avatarURL, ok := h.newAgentAvatar(w, r, req.AvatarURL)
 	if !ok {
 		return
 	}
 
 	agent, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
-		WorkspaceID:        wsUUID,
-		Name:               req.Name,
-		Description:        description,
-		Instructions:       instructions,
-		AvatarUrl:          avatarURL,
-		RuntimeMode:        runtime.RuntimeMode,
-		RuntimeConfig:      rc,
-		RuntimeID:          runtime.ID,
-		Visibility:         perm.legacyVisibility(),
-		PermissionMode:     perm.mode,
-		MaxConcurrentTasks: req.MaxConcurrentTasks,
-		OwnerID:            creatorUUID,
-		CustomEnv:          ce,
-		CustomArgs:         ca,
-		McpConfig:          nil,
-		Model:              pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		WorkspaceID:         wsUUID,
+		Name:                req.Name,
+		Description:         description,
+		Instructions:        instructions,
+		CoordinatorContract: contract,
+		AvatarUrl:           avatarURL,
+		RuntimeMode:         runtime.RuntimeMode,
+		RuntimeConfig:       rc,
+		RuntimeID:           runtime.ID,
+		Visibility:          perm.legacyVisibility(),
+		PermissionMode:      perm.mode,
+		MaxConcurrentTasks:  req.MaxConcurrentTasks,
+		OwnerID:             creatorUUID,
+		CustomEnv:           ce,
+		CustomArgs:          ca,
+		McpConfig:           nil,
+		Model:               pgtype.Text{String: req.Model, Valid: req.Model != ""},
 	})
 	if err != nil {
 		// Mirror handler/agent.go:CreateAgent: when the duplicate is the

@@ -33,7 +33,7 @@ func TestCoordinatorRolloutNotReadyDefersBeforeModelOrTools(t *testing.T) {
 
 func TestCoordinatorRolloutReadyAllowsNormalDecision(t *testing.T) {
 	t.Parallel()
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("done", toolFinish, `{"action":"reply","text":"在，你说。"}`)}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("done", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"在，你说。"}]}`)}}
 	tools := &stubTools{}
 	calls := 0
 	got := (&Coordinator{Chat: chat, Tools: tools, Ready: func(context.Context) (bool, error) { calls++; return true, nil }}).Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, Message: "你在吗"})

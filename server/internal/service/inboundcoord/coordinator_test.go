@@ -16,6 +16,10 @@ import (
 )
 
 type coordQueriesStub struct {
+	agent              db.Agent
+	agentErr           error
+	contract           []byte
+	contractErr        error
 	inbound            bool
 	persona            string
 	replyTone          string
@@ -39,7 +43,11 @@ func (s *coordQueriesStub) ListChatMessagesPage(_ context.Context, arg db.ListCh
 }
 
 func (s *coordQueriesStub) GetAgent(context.Context, pgtype.UUID) (db.Agent, error) {
-	return db.Agent{}, nil
+	return s.agent, s.agentErr
+}
+
+func (s *coordQueriesStub) GetAgentCoordinatorContract(context.Context, pgtype.UUID) ([]byte, error) {
+	return s.contract, s.contractErr
 }
 
 func (s *coordQueriesStub) CountRunningTasks(context.Context, pgtype.UUID) (int64, error) {
@@ -102,91 +110,6 @@ func TestIssueTitleUsesDeliverableNotDelegatorPrefix(t *testing.T) {
 	got = IssueTitle(Decision{Purpose: "冬翔委托：<@abc> 向dxxh确认明天有空"}, "")
 	if got != "向dxxh确认明天有空" {
 		t.Fatalf("mention title=%q", got)
-	}
-}
-
-func TestParseDecisionReply(t *testing.T) {
-	got := parseDecision(`{"action":"reply","text":"在的，今天想先对哪件事？","look_into":"","reason":"这是打招呼"}`, Turn{Source: SourceWeb})
-	if got.Action != ActionReply || got.UserText == "" || got.Reason != "这是打招呼" {
-		t.Fatalf("got %#v", got)
-	}
-}
-
-func TestParseDecisionIssueEmptyTextContinues(t *testing.T) {
-	got := parseDecision(`{"action":"issue","text":"","look_into":"报名截止时间"}`, Turn{Source: SourceDigitalEmployee, Message: "看下截止"})
-	if got.Action != ActionContinue {
-		t.Fatalf("empty issue text must not synthesize an ack, got %s text=%q", got.Action, got.UserText)
-	}
-	if strings.Contains(got.UserText, "核对") {
-		t.Fatalf("ack fallback leaked: %q", got.UserText)
-	}
-}
-
-func TestParseDecisionIssueDropsFinishIssueID(t *testing.T) {
-	got := parseDecision(`{"action":"issue","text":"我去问冬翔晚上打不打球","issue_id":"8aae2a90-009e-4338-b17a-13ce6ff2f82a","delegator":"冬翔","purpose":"向冬翔确认晚上是否打球","intent":"ask"}`, Turn{
-		Source:     SourceRobot,
-		SenderName: "冬翔",
-		Message:    "问下冬翔晚上打球",
-	})
-	if got.Action != ActionIssue {
-		t.Fatalf("action=%s", got.Action)
-	}
-	if got.IssueID != "" {
-		t.Fatalf("finish must not continue via issue_id, issue_id=%q", got.IssueID)
-	}
-	if got.UserText != "我去问冬翔晚上打不打球" {
-		t.Fatalf("text=%q", got.UserText)
-	}
-}
-
-func TestParseDecisionSilenceRejectedOnWeb(t *testing.T) {
-	got := parseDecision(`{"action":"silence","text":""}`, Turn{Source: SourceWeb, Addressed: true, Message: "你好"})
-	if got.Action != ActionContinue {
-		t.Fatalf("web silence should fail open, got %s", got.Action)
-	}
-}
-
-func TestParseDecisionSilenceAllowedForDigitalEmployee(t *testing.T) {
-	got := parseDecision(`{"action":"silence","text":""}`, Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "group", Message: "晚上吃饭吗"})
-	if got.Action != ActionSilence {
-		t.Fatalf("got %s", got.Action)
-	}
-}
-
-func TestParseDecisionSilenceAllowedForAddressedGroupFlood(t *testing.T) {
-	got := parseDecision(`{"action":"silence","text":""}`, Turn{
-		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
-		Message: "R9-P8-FLOOD-3 unrelated noise",
-	})
-	if got.Action != ActionSilence {
-		t.Fatalf("addressed group flood may silence, got %s", got.Action)
-	}
-}
-
-func TestParseDecisionSilenceAllowedForDMFloodNoise(t *testing.T) {
-	got := parseDecision(`{"action":"silence","text":""}`, Turn{
-		Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p",
-		Message: "R9-P8-FLOOD-7 unrelated noise",
-	})
-	if got.Action != ActionSilence {
-		t.Fatalf("DM numbered flood may silence, got %s", got.Action)
-	}
-}
-
-func TestParseDecisionSilenceAllowedForAddressedEmojiAndThanks(t *testing.T) {
-	emoji := parseDecision(`{"action":"silence","text":""}`, Turn{
-		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
-		Message: "👍",
-	})
-	if emoji.Action != ActionSilence {
-		t.Fatalf("addressed emoji may silence, got %s", emoji.Action)
-	}
-	thanks := parseDecision(`{"action":"reply","text":"嗯"}`, Turn{
-		Source: SourceDigitalEmployee, Addressed: true, ChatType: "group",
-		Message: "谢谢",
-	})
-	if thanks.Action != ActionReply || thanks.UserText != "嗯" {
-		t.Fatalf("addressed thanks should stay a short reply, got %#v", thanks)
 	}
 }
 
@@ -562,7 +485,7 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 	}
 	prompt := buildUserPrompt(turn)
 	for _, field := range []string{
-		"scene_memory_status: loaded; scope=this_conversation; version=4",
+		"scene_memory_status: loaded; scope=this_conversation",
 		"scene_memory_revision: 4",
 		"scene_memory (Host-provided, this Scene only; never a source of issue_id):",
 		turn.SceneMemory,
@@ -587,33 +510,6 @@ func TestBuildUserPromptIncludesHostSceneMemory(t *testing.T) {
 		"memory":       {"COORD.F03", "COORD.F11"},
 		"recall_match": {"COORD.F02", "COORD.F03", "COORD.F07", "COORD.F08", "COORD.F17"},
 	}, []string{"completion"})
-}
-
-func TestParseDecisionCoercesMissingSendPayloadToReply(t *testing.T) {
-	got := parseDecision(`{"action":"issue","text":"我去给须莫发消息，请问要说什么？","look_into":"冬翔委托：向须莫发送消息","delegator":"冬翔","purpose":"向须莫发送消息","intent":"other","reason":"要发消息"}`, Turn{
-		Source:     SourceDigitalEmployee,
-		SenderName: "冬翔",
-		ChatType:   "p2p",
-		Message:    "给须莫发一条消息",
-	})
-	if got.Action != ActionReply {
-		t.Fatalf("missing payload must reply, got %s", got.Action)
-	}
-	if got.LookInto != "" {
-		t.Fatalf("reply must not keep look_into=%q", got.LookInto)
-	}
-	if !strings.Contains(got.UserText, "要说什么") {
-		t.Fatalf("text=%q", got.UserText)
-	}
-
-	joke := parseDecision(`{"action":"issue","text":"我去给须莫发个笑话","look_into":"委托人冬翔；对象须莫；交付物一条笑话","delegator":"冬翔","purpose":"向须莫发送一个笑话","intent":"other"}`, Turn{
-		Source:     SourceDigitalEmployee,
-		SenderName: "冬翔",
-		Message:    "发个笑话给他",
-	})
-	if joke.Action != ActionIssue {
-		t.Fatalf("named payload must stay issue, got %s", joke.Action)
-	}
 }
 
 func TestBuildUserPromptResetShowsEmptyHostBlock(t *testing.T) {
@@ -830,10 +726,10 @@ func splitCoordinatorPrompt(prompt string) (host, history, current string) {
 func TestBuildUserPromptMarksSceneMemoryNotLoadedWhenUnset(t *testing.T) {
 	turn := Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "你好"}
 	prompt := buildUserPrompt(turn)
-	if !strings.Contains(prompt, "scene_memory_status: not_loaded; scope=this_conversation; version=0") {
+	if !strings.Contains(prompt, "scene_memory_status: not_loaded; scope=this_conversation") {
 		t.Fatalf("unset memory must explicitly retain the missing-state distinction: %q", prompt)
 	}
-	if strings.Contains(prompt, "scene_memory_revision:") || strings.Contains(prompt, "scene_memory (Host-provided") || strings.Contains(prompt, "(empty)") {
+	if !strings.Contains(prompt, "scene_memory_revision: 0") || strings.Contains(prompt, "scene_memory (Host-provided") || strings.Contains(prompt, "(empty)") {
 		t.Fatalf("an absent snapshot must not be presented as a known-empty memory: %q", prompt)
 	}
 	assertDisclosedObligations(t, turn, false, map[string][]string{"core": {"COORD.F03"}}, []string{"memory"})
@@ -850,15 +746,8 @@ func TestBuildUserPromptNewsTurnKeepsIssueContract(t *testing.T) {
 	if !strings.Contains(prompt, "recent_dingtalk_history") || !strings.Contains(prompt, "昨天那个表") {
 		t.Fatalf("prompt = %q", prompt)
 	}
-	got := parseDecision(`{"action":"issue","text":"我先去看今天新闻","look_into":"今天新闻","reason":"要查实时资讯"}`, Turn{Source: SourceRobot, Message: "帮我看看今天有什么新闻"})
-	if got.Action != ActionIssue {
+	got, err := parseValidatedWindowPlan(`{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来查今天的新闻。","purpose":"查询并整理今天的重要新闻摘要","intent":"lookup"}]}`, Turn{Source: SourceRobot, Message: "帮我看看今天有什么新闻"}, nil, nil)
+	if err != nil || got.Action != ActionIssue {
 		t.Fatalf("news must stay issue, got %s", got.Action)
-	}
-}
-
-func TestParseDecisionInvalidJSON(t *testing.T) {
-	got := parseDecision("not-json", Turn{Source: SourceWeb, Message: "hi"})
-	if got.Action != ActionContinue {
-		t.Fatalf("got %s", got.Action)
 	}
 }

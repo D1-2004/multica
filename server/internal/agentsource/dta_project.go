@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 )
 
 const (
@@ -29,10 +31,11 @@ type DTAProject struct {
 }
 
 type DTAProjectAgent struct {
-	DisplayName string
-	Definition  string
-	SkillsRoot  string
-	Skills      []string
+	CoordinatorContract *coordinatorcontract.Contract
+	DisplayName         string
+	Definition          string
+	SkillsRoot          string
+	Skills              []string
 }
 
 type dtaProjectDocument struct {
@@ -44,10 +47,11 @@ type dtaProjectDocument struct {
 }
 
 type dtaProjectAgentDocument struct {
-	DisplayName json.RawMessage `json:"displayName"`
-	Definition  string          `json:"definition"`
-	SkillsRoot  string          `json:"skillsRoot"`
-	Skills      []string        `json:"skills"`
+	CoordinatorContract json.RawMessage `json:"coordinatorContract"`
+	DisplayName         json.RawMessage `json:"displayName"`
+	Definition          string          `json:"definition"`
+	SkillsRoot          string          `json:"skillsRoot"`
+	Skills              []string        `json:"skills"`
 }
 
 func ParseDTAProject(content []byte) (DTAProject, error) {
@@ -83,6 +87,10 @@ func ParseDTAProject(content []byte) (DTAProject, error) {
 	var agentDocument dtaProjectAgentDocument
 	if err := json.Unmarshal(document.Agent, &agentDocument); err != nil {
 		return DTAProject{}, fmt.Errorf("%s agent must be an object: %w", DTAProjectPath, err)
+	}
+	contract, err := coordinatorcontract.Parse(agentDocument.CoordinatorContract)
+	if err != nil {
+		return DTAProject{}, fmt.Errorf("agent.coordinatorContract: %w", err)
 	}
 	displayName := ""
 	if len(agentDocument.DisplayName) > 0 {
@@ -142,10 +150,11 @@ func ParseDTAProject(content []byte) (DTAProject, error) {
 		Name:       document.Name,
 		DTAVersion: document.DTAVersion,
 		Agent: DTAProjectAgent{
-			DisplayName: displayName,
-			Definition:  agentDocument.Definition,
-			SkillsRoot:  agentDocument.SkillsRoot,
-			Skills:      append([]string(nil), agentDocument.Skills...),
+			CoordinatorContract: contract,
+			DisplayName:         displayName,
+			Definition:          agentDocument.Definition,
+			SkillsRoot:          agentDocument.SkillsRoot,
+			Skills:              append([]string(nil), agentDocument.Skills...),
 		},
 	}, nil
 }
@@ -173,9 +182,10 @@ func CompileDTAProject(ctx context.Context, client RepositoryClient, source Sour
 		Kind:       Kind,
 		Metadata:   ManifestMetadata{Name: displayName},
 		Spec: ManifestSpec{
-			Instructions:  project.Agent.Definition,
-			Skills:        make([]ManifestSkill, 0, len(project.Agent.Skills)),
-			Compatibility: ManifestCompatibility{Providers: []string{}},
+			CoordinatorContract: project.Agent.CoordinatorContract,
+			Instructions:        project.Agent.Definition,
+			Skills:              make([]ManifestSkill, 0, len(project.Agent.Skills)),
+			Compatibility:       ManifestCompatibility{Providers: []string{}},
 		},
 	}
 	expectedSkillNames := make(map[string]string, len(project.Agent.Skills))
