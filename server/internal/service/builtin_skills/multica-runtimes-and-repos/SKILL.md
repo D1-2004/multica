@@ -89,6 +89,15 @@ Do not add a project resource just because `repo checkout` failed. First determi
 
 More source-backed details: `references/runtimes-and-repos-source-map.md`.
 
+### ASB sandbox capacity
+
+When an ASB tenant has no free instance slots, Multica can terminate an idle
+task sandbox to make room for a new launch. Chat and issue sandboxes have the
+same reclaim policy, with no minimum idle time or chat retention grace.
+Active tasks and in-flight launches remain fenced by task state and scope locks.
+ASB capacity retries use creation order regardless of chat, issue, autopilot,
+or retry priority. Files stored only in an idle sandbox may be lost on reclaim.
+
 ### ASB network allowlist
 
 ASB sandboxes deny outbound connections unless the destination is allowed.
