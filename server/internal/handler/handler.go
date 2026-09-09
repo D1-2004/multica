@@ -357,6 +357,7 @@ type Handler struct {
 	DingTalkAccountBindingOrigin         string
 	dingTalkAccountBindingOriginProvider func() string
 	dingTalkAccountBindingMetadata       dingTalkAccountBindingMetadataStore
+	dingTalkIdentityReuse                dingTalkIdentityReuseStore
 	dingTalkAccountBindingPermissions    agentInvocationPermissionStore
 	multicaMCPBindingTasks               multicaMCPBindingTaskStore
 	multicaMCPAgents                     multicaMCPAgentQueryStore
