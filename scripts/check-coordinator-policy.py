@@ -95,7 +95,7 @@ def check() -> dict[str, object]:
             require(rule_id in rules, f'{entry_id}: references unknown obligation {rule_id}')
         for module_id in mapping.get('modules', []):
             require(module_id in modules, f'{entry_id}: references unknown module {module_id}')
-    require({'work_submission', 'task_finished_reply', 'direct_reply'} <= set(registry['effect_dependencies']), 'required effect boundary missing')
+    require({'work_submission', 'task_finished_result', 'coordination_response'} <= set(registry['effect_dependencies']), 'required effect boundary missing')
     for effect, deps in registry['effect_dependencies'].items():
         require(bool(deps), f'{effect}: missing prerequisites')
         for dep in deps:

@@ -70,8 +70,7 @@ func (h *Handler) persistWebCoordinatorPlan(ctx context.Context, session db.Chat
 		if item.ActionKey == "" {
 			return nil, decision, fmt.Errorf("window item %d has no stable action key", i+1)
 		}
-		itemDecision := decision
-		itemDecision.Purpose, itemDecision.Intent, itemDecision.LookInto = item.Purpose, item.Intent, item.LookInto
+		itemDecision := decision.ForWindowItem(item)
 		itemContent := item.Content
 		if itemContent == "" {
 			itemContent = content

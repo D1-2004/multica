@@ -189,7 +189,7 @@ func TestPolicyCompletionProjectionOmitsUnrelatedFacts(t *testing.T) {
 	}
 }
 
-func TestPolicyKeepsFullWorkingConstraintsOnDemand(t *testing.T) {
+func TestPolicyKeepsFullWorkingConstraintsInHostReviewOnly(t *testing.T) {
 	constraint := "Only draft the message; do not send it until I approve."
 	instructions := strings.Repeat("Background context. ", 1000) + constraint
 	turn := Turn{Source: SourceDigitalEmployee, Message: "Draft a message", Instructions: instructions}
@@ -200,20 +200,12 @@ func TestPolicyKeepsFullWorkingConstraintsOnDemand(t *testing.T) {
 	if !strings.Contains(prompt, "job_policy_status: host_held") || !strings.Contains(prompt, policyHash(instructions)) {
 		t.Fatal("host-held policy provenance must be explicit")
 	}
-	raw, err := (&Coordinator{}).readHistoryContext(context.Background(), &turn, `{"kind":"job_policy"}`)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := (&Coordinator{}).readHistoryContext(context.Background(), &turn, `{"kind":"job_policy"}`); err == nil {
+		t.Fatal("routing must not retrieve the full execution SOP")
 	}
-	var result struct {
-		Text, Status, SHA256 string
-		Truncated            bool
-		Characters           int
-	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.Text != instructions || result.Status != "loaded" || result.Truncated || result.SHA256 != policyHash(instructions) || result.Characters != utf8.RuneCountInString(instructions) {
-		t.Fatal("on-demand policy must retain complete text, trailing authorization and provenance")
+	policy := coordinatorFinishPolicy(turn)
+	if policy["text"] != instructions || policy["complete"] != true || policy["sha256"] != policyHash(instructions) {
+		t.Fatal("Host review must retain trailing restrictions and original instruction provenance")
 	}
 }
 

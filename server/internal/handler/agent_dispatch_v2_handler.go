@@ -1239,11 +1239,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				break
 			}
 			processed++
-			itemDecision := decision
-			itemDecision.Purpose = item.Purpose
-			itemDecision.Intent = item.Intent
-			itemDecision.LookInto = item.LookInto
-			itemDecision.Items = []inboundcoord.WindowItem{item}
+			itemDecision := decision.ForWindowItem(item)
 			overrides := agentDispatchIssueCreateOverrides{
 				Title:          inboundcoord.IssueTitle(itemDecision, prompt.DisplayContent),
 				DisplayContent: inboundcoord.IssueDescription(itemDecision, firstNonEmpty(item.Content, prompt.DisplayContent)),

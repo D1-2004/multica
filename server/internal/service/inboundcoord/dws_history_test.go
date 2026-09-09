@@ -67,7 +67,7 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 			_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"history1","type":"function","function":{"name":"context_read","arguments":"{\"kind\":\"history\"}"}}]},"finish_reason":"tool_calls"}]}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"id":"cmpl-2","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"action\":\"reply\",\"text\":\"我在。\",\"reason\":\"本轮只沟通\"}"}}]},"finish_reason":"tool_calls"}]}`)
+		_, _ = io.WriteString(w, `{"id":"cmpl-2","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"actions\":[{\"kind\":\"acknowledge\",\"source_refs\":[\"u1\"],\"ack_kind\":\"greeting\",\"reply\":\"我在。\"}]}"}}]},"finish_reason":"tool_calls"}]}`)
 	}))
 	t.Cleanup(server.Close)
 	return llm.New(llm.Config{APIKey: "test", BaseURL: server.URL})

@@ -2611,10 +2611,23 @@ export const AgentTemplateSummaryListSchema = z.union([
 
 export const EMPTY_AGENT_TEMPLATE_SUMMARY_LIST: AgentTemplateSummary[] = [];
 
+export const CoordinatorContractSchema = z
+  .object({
+    version: z.literal(1),
+    scope: z.string().refine((value) => value.trim().length > 0),
+    must_delegate: z.array(z.string().refine((value) => value.trim().length > 0)),
+    constraints: z.array(z.string().refine((value) => value.trim().length > 0)),
+    clarify_when: z.array(z.string().refine((value) => value.trim().length > 0)),
+    source_instructions_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  })
+  .strict()
+  .refine((value) => [...JSON.stringify(value)].length <= 1600);
+
 export const AgentTemplateSchema = AgentTemplateSummarySchemaBase.extend({
   // Detail-only field. Default "" so a malformed detail still renders the
   // header + skill list; the user just sees an empty Instructions block.
   instructions: z.string().default(""),
+  coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
   system_key: z.string().optional(),
   system_instructions: z.string().optional(),
 }).loose();
@@ -2746,6 +2759,8 @@ export const AgentInvocationTargetsSchema = z
 export const AgentResponseSchema = z
   .object({
     id: z.string(),
+    coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
+    coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
     dingtalk_response_enabled: z.boolean().catch(false).default(false),
     dingtalk_show_ai_tag: z.boolean().catch(false).default(false),
     dingtalk_response_policy_revision: z
@@ -2921,6 +2936,7 @@ export const GitHubAgentPreviewSchema = z
     name: z.string(),
     description: z.string().default(""),
     instructions: z.string().default(""),
+    coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     skills: z
       .array(GitHubAgentSkillPreviewSchema)
       .nullish()
@@ -3015,6 +3031,7 @@ export const StoredAgentDraftSchema = z
     name: z.string().catch(""),
     description: z.string().catch(""),
     instructions: z.string().catch(""),
+    coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     avatar_url: z.string().nullable().catch(null),
     model: z.string().catch(""),
     thinking_level: z.string().catch(""),

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"github.com/multica-ai/multica/server/internal/githubapp"
 	"github.com/multica-ai/multica/server/internal/skill"
 	"gopkg.in/yaml.v3"
@@ -51,9 +53,10 @@ type ManifestMetadata struct {
 }
 
 type ManifestSpec struct {
-	Instructions  string                `yaml:"instructions" json:"instructions"`
-	Skills        []ManifestSkill       `yaml:"skills" json:"skills"`
-	Compatibility ManifestCompatibility `yaml:"compatibility" json:"compatibility"`
+	CoordinatorContract *coordinatorcontract.Contract `yaml:"coordinator_contract,omitempty" json:"coordinator_contract,omitempty"`
+	Instructions        string                        `yaml:"instructions" json:"instructions"`
+	Skills              []ManifestSkill               `yaml:"skills" json:"skills"`
+	Compatibility       ManifestCompatibility         `yaml:"compatibility" json:"compatibility"`
 }
 
 type ManifestSkill struct {
@@ -85,11 +88,35 @@ type Skill struct {
 }
 
 type Bundle struct {
-	Manifest     Manifest `json:"manifest"`
-	Instructions string   `json:"instructions"`
-	Skills       []Skill  `json:"skills"`
-	Warnings     []string `json:"warnings"`
-	Hash         string   `json:"hash"`
+	CoordinatorContract *coordinatorcontract.Contract `json:"coordinator_contract,omitempty"`
+	Manifest            Manifest                      `json:"manifest"`
+	Instructions        string                        `json:"instructions"`
+	Skills              []Skill                       `json:"skills"`
+	Warnings            []string                      `json:"warnings"`
+	Hash                string                        `json:"hash"`
+}
+
+// UnmarshalJSON validates both contract objects before typed decoding can discard
+// unknown fields in a persisted snapshot. Legacy bundles without contracts remain valid.
+func (b *Bundle) UnmarshalJSON(data []byte) error {
+	type plainBundle Bundle
+	var raw struct {
+		CoordinatorContract json.RawMessage `json:"coordinator_contract"`
+		Manifest            struct {
+			Spec struct {
+				CoordinatorContract json.RawMessage `json:"coordinator_contract"`
+			} `json:"spec"`
+		} `json:"manifest"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	for _, content := range []json.RawMessage{raw.CoordinatorContract, raw.Manifest.Spec.CoordinatorContract} {
+		if _, err := coordinatorcontract.Parse(content); err != nil {
+			return fmt.Errorf("bundle coordinator_contract: %w", err)
+		}
+	}
+	return json.Unmarshal(data, (*plainBundle)(b))
 }
 
 type RepositoryClient interface {
@@ -124,6 +151,12 @@ func ParseManifest(content []byte) (Manifest, error) {
 }
 
 func validateManifest(manifest Manifest) error {
+	if _, err := coordinatorcontract.Parse(coordinatorcontract.Marshal(manifest.Spec.CoordinatorContract)); err != nil {
+		return fmt.Errorf("spec.coordinator_contract: %w", err)
+	}
+	if _, err := coordinatorcontract.Bind(manifest.Spec.CoordinatorContract, ""); err != nil {
+		return fmt.Errorf("spec.coordinator_contract: %w", err)
+	}
 	if manifest.APIVersion != APIVersion {
 		return fmt.Errorf("apiVersion must be %q", APIVersion)
 	}
@@ -216,11 +249,16 @@ func compileBundle(
 		return Bundle{}, err
 	}
 
+	contract, err := coordinatorcontract.Bind(manifest.Spec.CoordinatorContract, string(instructionsBytes))
+	if err != nil {
+		return Bundle{}, fmt.Errorf("spec.coordinator_contract: %w", err)
+	}
 	bundle := Bundle{
-		Manifest:     manifest,
-		Instructions: string(instructionsBytes),
-		Skills:       make([]Skill, 0, len(manifest.Spec.Skills)),
-		Warnings:     []string{},
+		CoordinatorContract: contract,
+		Manifest:            manifest,
+		Instructions:        string(instructionsBytes),
+		Skills:              make([]Skill, 0, len(manifest.Spec.Skills)),
+		Warnings:            []string{},
 	}
 	totalSize := manifestSize + len(instructionsBytes)
 	seenSkillNames := make(map[string]string, len(manifest.Spec.Skills))
@@ -394,6 +432,13 @@ func hashBundle(bundle Bundle) string {
 	}
 	hash.Write([]byte{0})
 	hash.Write([]byte(bundle.Instructions))
+	// Absent contracts preserve existing persisted bundle hashes during rollout.
+	if bundle.CoordinatorContract != nil || bundle.Manifest.Spec.CoordinatorContract != nil {
+		hash.Write([]byte("\x00coordinator_contract\x00"))
+		hash.Write(coordinatorcontract.Marshal(bundle.Manifest.Spec.CoordinatorContract))
+		hash.Write([]byte{0})
+		hash.Write(coordinatorcontract.Marshal(bundle.CoordinatorContract))
+	}
 	for _, compiledSkill := range bundle.Skills {
 		hash.Write([]byte{0})
 		hash.Write([]byte(compiledSkill.SourcePath))
@@ -414,6 +459,13 @@ func hashBundle(bundle Bundle) string {
 func ValidateBundle(bundle Bundle) error {
 	if err := validateManifest(bundle.Manifest); err != nil {
 		return err
+	}
+	expectedContract, err := coordinatorcontract.Bind(bundle.Manifest.Spec.CoordinatorContract, bundle.Instructions)
+	if err != nil {
+		return fmt.Errorf("bundle coordinator_contract: %w", err)
+	}
+	if !bytes.Equal(coordinatorcontract.Marshal(expectedContract), coordinatorcontract.Marshal(bundle.CoordinatorContract)) {
+		return errors.New("bundle coordinator_contract does not match its source and instructions")
 	}
 	if !isText([]byte(bundle.Instructions)) {
 		return errors.New("instructions must be UTF-8 text")
