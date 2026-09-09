@@ -100,6 +100,12 @@ queueable if capacity is still unavailable. Permission errors remain errors.
 Regional routing applies to ASB service domains; custom gateways retain their
 configured endpoint and routing.
 
+The shared five-second create interval is pacing, not evidence that quota is
+full. Cold launches wait only its remaining duration and continue in the same
+startup attempt, without entering the capacity retry queue. Full-capacity and
+upstream rate-limit waits remain shared across replicas. Finishing a recovery
+launch immediately wakes the next eligible capacity waiter.
+
 When an ASB tenant has no free instance slots, Multica can terminate an idle
 task sandbox to make room for a new launch. Chat and issue sandboxes have the
 same reclaim policy, with no minimum idle time or chat retention grace.
