@@ -1,158 +1,56 @@
-# FC sandbox lifecycle checks
+# FC/E2B 任务启动时续期
 
-Multica can renew FC/E2B sandboxes while their current tasks have active states.
-The lifecycle worker runs in every server replica. Redis selects one executor
-per check round. Existing PostgreSQL task, startup-attempt and sandbox-session
-tables supply task state, sandbox identity and observed expiry.
+FC/E2B 沙箱获取逻辑位于 `server/internal/service/fc_e2b.go` 的
+`resolveSandboxOnConnection`，续期和释放接口位于 `fc_e2b_timeout.go`。
+任务执行命令只会在沙箱准备及续期成功后提交。
 
-## Enablement
+## 获取与替换
 
-The feature defaults off. Set `runtime.fc_e2b.sandbox_renewal_enabled` in the
-managed runtime document, or `MULTICA_FC_E2B_SANDBOX_RENEWAL_ENABLED=true` in
-environment-only installations. Redis is required. `timeout_seconds` supplies
-the renewal duration and must be at least 300 seconds when renewal is enabled.
-The normal value remains 3600 seconds.
+1. 在现有 runtime/scope 数据库锁内查找可复用沙箱；没有则创建。
+2. 检查沙箱就绪后，无论新建还是复用，都调用
+   `POST /sandboxes/{sandboxID}/timeout`，请求体为 `{"timeout":3600}`。
+   这是将剩余生存时间设为 3600 秒，不是在原到期时间上累加一小时。
+3. 调用 `GET /sandboxes/{sandboxID}`，确认 ID 一致、状态为 `running`，
+   `endAt` 至少达到续期请求开始后 3600 秒（容忍 5 秒时钟/时间截断误差）。
+   有 scope 的沙箱将云平台返回的实际到期时间写入已有
+   `fc_e2b_sandbox_session.expires_at`，再继续任务启动。
+4. 就绪或续期失败时，先将复用记录标记为 `stale`，再调用
+   `DELETE /sandboxes/{sandboxID}` 释放沙箱，并创建一个新沙箱重新走上述流程。
+   新沙箱仍需续期成功。单次获取最多尝试两个沙箱，避免平台故障时无限创建。
+5. 释放失败会记日志，并继续尝试替换；未释放的实例最终由平台 TTL 回收。
+   数据库失效标记写入失败则终止启动，避免删除仍可被复用的沙箱。
 
-Deploy the new server binary to every replica before adding the setting to
-Diamond: older binaries reject unknown config fields. This feature adds no
-database migration. Turning the setting off stops subsequent worker rounds;
-a round already in progress can finish under its frozen configuration snapshot.
+任务启动被取消时不再替换沙箱；尚未记录的新建实例会尝试释放。
+每次云平台 HTTP 请求最多等待 10 秒，释放有独立的 10 秒清理时间。
 
-Already-running tasks are eligible immediately after enablement if their latest
-valid startup attempt identifies an FC sandbox. No execution enrollment or
-daemon-token binding is required.
+## 配置与范围
 
-## Scheduling and ownership
+- 每次启动的续期目标固定为 3600 秒；`runtime.fc_e2b.timeout_seconds`
+  仍控制创建时传给平台的初始生存时间，默认也是 3600 秒。
+- 沿用现有 FC API 地址和密钥、数据库表及多实例获取锁，无新增迁移。
+- 不需要 `runtime.fc_e2b.sandbox_renewal_enabled` 开关，也不使用定时扫描、
+  ScheduleX 或 Redis 续期标记。
+- 运行中不会周期续期。单次长任务超过本次续期后的到期时间，仍可能被平台回收；
+  本方案不增加到期前回调、沙箱内部清理或任务结束补报机制。
 
-- Every replica tries to claim every 5 seconds. A successful round advances the
-  next check by 30 seconds. There is no replay of historical timer ticks.
-- Redis keys share a cluster hash tag. The namespace includes the deployment,
-  Multica server URL and FC API URL. All replicas must use identical values.
-- One Lua script checks Redis TIME, next-run time and lock availability, then
-  creates a unique token with a 90-second lease. A completed round atomically
-  checks ownership, advances next-run time and releases its lease.
-- Lease renewal checks the token every 20 seconds. Each complete round is
-  bounded to 60 seconds with four concurrent workers. Candidates without a
-  reuse mapping come first, followed by earlier cached sandbox expiry. There is
-  no fixed first-100 cutoff. Monitor round timeouts before increasing fleet size.
-- Loss of Redis ownership cancels the round. An interrupted round leaves its
-  uncertain lease to expire. Redis failure never enables per-node execution.
-- Redis failover can cause duplicate attempts. FC calls are bounded and each
-  attempt queries actual provider state before deciding whether to renew.
-  PostgreSQL instance advisory locks also coordinate background checks with
-  synchronous warm reuse. Fresh task and latest-attempt checks reject replaced
-  executions before renewal and before any task failure is committed.
+## 验证
 
-## Existing task state and provider state
+部署包含本改动的服务版本后，启动一次 FC/E2B 任务，按任务 trace 查询日志：
 
-`agent_task_queue` supplies the authoritative task state. Eligible states are
-`dispatched`, `running` and `waiting_local_directory`; queued and terminal tasks
-are excluded. `agent_task_runtime_start_attempt` supplies the sandbox ID from
-the latest attempt for that task, with matching Runtime, `aliyun_fc` backend,
-`starting` or `claimed` status and a nonempty sandbox ID. A newer attempt excludes
-the older one even if the newer attempt is not eligible itself.
+- `stage=fc_e2b_sandbox_renew status=succeeded`：应有 `sandbox_id`、
+  `timeout_seconds=3600` 和 `expires_at`；成功日志表示已读取平台并确认到期时间。
+- 在同一会话内再启动任务，即使仍有充足 TTL，也应再次出现续期成功日志。
+  同时核对 `fc_e2b_sandbox_session` 中相同沙箱的实际到期时间。
+- 续期失败时应有 `fc_e2b_sandbox_renew status=failed`、释放结果和
+  `fc_e2b_sandbox_replace status=started`，随后是新 ID 的创建及续期结果。
+  两个候选都失败时任务启动报错，不会向它们提交执行命令。
 
-`fc_e2b_sandbox_session.expires_at` is updated after a successful provider read.
-The worker also covers tasks without a warm-reuse mapping; it does not create a
-replacement bookkeeping row. FC queries use the deployment's current API URL.
+本地回归使用模拟云平台 HTTP 接口和 PostgreSQL，覆盖每次复用续期、新建续期、
+失败替换、释放失败、替换次数上限、多实例并发和单连接池获取。
+这些回归不替代预发云平台的实际验证。
 
-The task-status HTTP handler and existing stale-task sweeper are unchanged.
-There is no new task heartbeat, heartbeat table or check-version record. Active
-task state does not prove the process is healthy: a hung task can receive renewal
-until the existing completion, failure, cancellation or timeout mechanisms change
-its state. Provider/network errors alone do not terminate a task.
+## 变更历史
 
-Warm reuse queries the actual sandbox even if the cached database expiry has
-passed. It renews when remaining lifetime is below the smaller of ten minutes
-and one third of `timeout_seconds`. New sandboxes also have their provider expiry
-confirmed before use. A confirmed missing warm sandbox is invalidated and the
-normal creation path can create a replacement.
-
-During execution, the worker uses `GET /sandboxes/{id}` and, when necessary,
-`POST /sandboxes/{id}/timeout` with `{"timeout": seconds}`. This replaces remaining
-lifetime from the request time. Successful HTTP status alone is insufficient:
-the worker reads the actual `endAt` back and requires adequate remaining time.
-API credentials and response bodies are never logged; redirects are rejected.
-The adapter follows the [FC timeout contract](https://help.aliyun.com/zh/functioncompute/timeout)
-and the [E2B OpenAPI specification](https://github.com/e2b-dev/E2B/blob/main/spec/openapi.yml).
-
-Two consecutive provider 404 responses mark the instance unavailable. The
-associated current task follows the existing failure transaction with reason
-`sandbox_expired`. A task row lock plus a fresh latest-attempt check prevents
-that result from failing a replacement execution. This reason does not opt into
-automatic task replay. A paused instance is not automatically resumed or killed.
-
-Task completion stops renewal. The existing warm reuse retention remains; there
-is no new active kill or timeout-shortening policy. An already-submitted provider
-request may finish while the task transitions to a terminal state.
-
-## Boundaries and acceptance
-
-This module renews sandbox resources. It does not refresh daemon, relay, trace,
-Agent Identity or third-party credentials. FC launch currently issues a
-one-hour daemon/relay credential bundle. A reused sandbox can now survive across
-successive tasks, but uninterrupted single-task execution beyond credential
-expiry requires a separate Runtime credential-refresh integration. Do not
-advertise this feature as unlimited task lifetime.
-
-Before production enablement, use an isolated FC sandbox under the target account
-to verify that a running process survives the original expiry after renewal,
-that its files remain, and that provider TTL limits match the desired policy.
-Those live provider checks are separate from the local tests.
-
-For a short acceptance run, use an isolated deployment with `timeout_seconds=300`
-and a newly created sandbox. Run a task that emits progress for about ten minutes.
-Renewal becomes eligible below 100 seconds remaining. Search all server replicas
-for `FC sandbox renewed` and correlate `task_id`, `attempt_id`, `sandbox_id`,
-`old_expires_at` and `expires_at`. Independently read FC `endAt`, then verify the
-original process continues beyond its original expiry and the task completes.
-
-Inspect the existing rows with the execution task UUID:
-
-```sql
-SELECT t.id AS task_id, t.status, a.id AS attempt_id,
-       a.sandbox_id, s.expires_at
-FROM agent_task_queue t
-JOIN agent_task_runtime_start_attempt a ON a.task_id = t.id
-LEFT JOIN fc_e2b_sandbox_session s
-  ON s.runtime_id = a.runtime_id AND s.sandbox_id = a.sandbox_id
-  AND s.sandbox_backend = 'aliyun_fc' AND s.status = 'running'
-WHERE t.id = '<task UUID>'::uuid
-ORDER BY a.created_at DESC, a.id DESC
-LIMIT 1;
-```
-
-There are no new `last_alive_at` or `checked_at` fields to inspect. If the task has
-no reuse mapping, observe provider expiry directly. After the task is terminal and
-any in-flight check finishes, a sandbox without other active tasks stops receiving
-renewal. The feature switch still defaults off.
-
-Local tests use `DATABASE_URL` for an isolated database with the existing schema and
-`REDIS_TEST_URL` for Redis. They cover concurrent claims, lease takeover, stale
-owner rejection, scheduling, active task selection, replacement attempts, task
-completion during a provider lookup, warm reuse, expiry sync and provider errors.
-FC HTTP calls use local test servers.
-No test needs a real agent CLI or cloud credentials.
-
-The development baseline `develop@ecbb03df1` has five independently reproduced
-test failures: a trace-environment assertion, three stable-template fixtures/catalog
-assertions, and duplicate legacy migration prefix 9093. Keep those separate from
-renewal tests. The schema used for this revision's integration tests contains only
-the 471 existing migrations, without the earlier draft's lifecycle table.
-On 2026-09-08, 140 related top-level tests passed with the race detector after
-excluding those five baseline failures. Query-generation consistency, `go vet`,
-the server build and `git diff --check` also passed for the revised implementation.
-
-Regenerate the new queries with `scripts/generate-fc-sandbox-sqlc.py --sqlc <path>`.
-The script follows the fork's existing targeted generation convention; it defers
-schema-only migration 271 for sqlc analysis and leaves unrelated generated APIs
-untouched. `--check` verifies generated query files without writing them.
-
-## Change history
-
-- 2026-09-08: Initial local design added Redis-coordinated FC lifecycle checks and
-  a separate execution-heartbeat table to address interrupted warm sandbox tasks.
-- 2026-09-08: Revise before release to reuse the existing task, startup-attempt and
-  sandbox-session tables, as requested. Remove the draft migrations, execution
-  enrollment, heartbeat writes and check versions. Existing active tasks can now
-  be checked directly; credential refresh remains a separate integration.
+| 日期 | 变更 | 原因 |
+| --- | --- | --- |
+| 2026-09-09 | 回滚定时续期，改为每次任务启动时续期 3600 秒，失败释放并最多替换一次 | 简化多实例续期协调，避免在无法确认寿命的沙箱上启动任务 |
