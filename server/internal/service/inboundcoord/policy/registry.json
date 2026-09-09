@@ -1,10 +1,10 @@
 {
-  "policy_version": "2026-09-09.1",
-  "assembly_version": "2",
+  "policy_version": "2026-09-09.2",
+  "assembly_version": "4",
   "modules": [
     {
       "id": "core",
-      "version": "1",
+      "version": "2",
       "file": "core.md",
       "applies_when": "always",
       "requires": [],
@@ -23,12 +23,12 @@
         "COORD.F17",
         "COORD.F18"
       ],
-      "budget_characters": 1669,
-      "content_sha256": "e05dcfd68c2a27cada0b147e62e75395f2d3d7396db9fe43f00719ba7cfa9d86"
+      "budget_characters": 1065,
+      "content_sha256": "3c23c1217ea75b2571e829e283d54ee9a8ac072be17f9188540bc0837997aad3"
     },
     {
       "id": "voice",
-      "version": "1",
+      "version": "2",
       "file": "voice.md",
       "applies_when": "always",
       "requires": [
@@ -38,12 +38,12 @@
         "COORD.F14",
         "COORD.F15"
       ],
-      "budget_characters": 869,
-      "content_sha256": "b84575395d2f8925bdc4daefcf9650f347e7179e03a86a1ff8785aebf6ae3482"
+      "budget_characters": 477,
+      "content_sha256": "268a6e8a166885d220ca825883ad93b32209bc18fe8d79a507aa8d7968df8637"
     },
     {
       "id": "inbound",
-      "version": "8",
+      "version": "9",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -58,8 +58,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 4747,
-      "content_sha256": "d4da3c3b10aa5e9801780647ef97201b813bc8c12e4cd12220e9222ed2af9e2e"
+      "budget_characters": 2553,
+      "content_sha256": "618b7f2117ad565bc05b94c5c9934e75602fa41b344e28306b50e5a29866ef47"
     },
     {
       "id": "channel",
@@ -147,7 +147,7 @@
     },
     {
       "id": "skills",
-      "version": "4",
+      "version": "5",
       "file": "skills.md",
       "applies_when": "skill_snapshots_available",
       "requires": [
@@ -159,8 +159,8 @@
         "COORD.F04",
         "COORD.F14"
       ],
-      "budget_characters": 709,
-      "content_sha256": "9adbde565b27802f3d3a2b562ed0bc58ea8cdf91fc2cda63b8cefe782932752f"
+      "budget_characters": 438,
+      "content_sha256": "1a67ebcaf1ee254d2855e4a52c49b86a85de38d387d224facfbab8cc70bdb2da"
     },
     {
       "id": "dialogue",
@@ -183,7 +183,7 @@
     },
     {
       "id": "recall_match",
-      "version": "2",
+      "version": "3",
       "file": "recall_match.md",
       "applies_when": "recalled",
       "requires": [
@@ -198,8 +198,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 1757,
-      "content_sha256": "6ccd70cdb70cb6c2881dbffcbd372fa5edbe6dd3051ac644503b8c09041075d4"
+      "budget_characters": 1035,
+      "content_sha256": "63529669c97846f14fa2d5ece0c04ce980fcc5a4795fefd9ec0c5af99cb2f83c"
     },
     {
       "id": "completion",
@@ -217,6 +217,60 @@
       ],
       "budget_characters": 938,
       "content_sha256": "3ae6e7db28656645958712eb8d13b99d1134af5902ca15662a51a95b313e3fe6"
+    },
+    {
+      "id": "finish_check",
+      "version": "4",
+      "file": "finish_check.md",
+      "applies_when": "finish_check",
+      "requires": [
+        "core"
+      ],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F02",
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F05",
+        "COORD.F06",
+        "COORD.F10",
+        "COORD.F11",
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16",
+        "COORD.F17",
+        "COORD.F18",
+        "COORD.F19"
+      ],
+      "budget_characters": 2018,
+      "content_sha256": "47e0b023930daa7a88ee58776158198560ae8f612b1136324e73f3979384e465"
+    },
+    {
+      "id": "finish_check_work",
+      "version": "1",
+      "file": "finish_check_work.md",
+      "applies_when": "finish_check_work",
+      "requires": [
+        "core"
+      ],
+      "owns_rule_ids": [
+        "COORD.F01",
+        "COORD.F02",
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F05",
+        "COORD.F06",
+        "COORD.F07",
+        "COORD.F10",
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16",
+        "COORD.F17",
+        "COORD.F18",
+        "COORD.F19"
+      ],
+      "budget_characters": 2126,
+      "content_sha256": "6777fc4783c1b1a80c48a7e3418685aaaa445ab3fbc486cebc28e589d3d21110"
     }
   ],
   "obligations": [
@@ -230,7 +284,9 @@
         "channel",
         "web",
         "group",
-        "window"
+        "window",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -240,7 +296,10 @@
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -248,7 +307,10 @@
         "server/internal/service/inboundcoord/policy/web.md",
         "server/internal/service/inboundcoord/policy/group.md",
         "server/internal/service/inboundcoord/policy/window.md",
-        "server/internal/service/inboundcoord/window.go"
+        "server/internal/service/inboundcoord/window.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     },
@@ -262,24 +324,33 @@
         "group",
         "window",
         "dialogue",
-        "recall_match"
+        "recall_match",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f02_contrast"
+        "f02_contrast",
+        "f10_review_whole_window_and_clarification"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "regression_observed; candidate_fix_pending_replay",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/group.md",
         "server/internal/service/inboundcoord/policy/window.md",
         "server/internal/service/inboundcoord/policy/dialogue.md",
-        "server/internal/service/inboundcoord/policy/recall_match.md"
+        "server/internal/service/inboundcoord/policy/recall_match.md",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -307,18 +378,25 @@
         "skills",
         "dialogue",
         "recall_match",
-        "completion"
+        "completion",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f03_contrast",
-        "f19_memory_commit_observation"
+        "f19_memory_commit_observation",
+        "f04_product_answer_vs_capability",
+        "f03_review_greeting_status_memory"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -328,35 +406,48 @@
         "server/internal/service/inboundcoord/policy/recall_match.md",
         "server/internal/service/inboundcoord/policy/completion.md",
         "server/internal/service/scenememory/flush.go",
-        "server/internal/service/scenememory/trace.go"
+        "server/internal/service/scenememory/trace.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     },
     {
       "id": "COORD.F04",
       "family": "F04",
-      "obligation": "能力介绍按已装技能快照直接答；请求实际工作使用正常执行链，不能因快循环缺工具误拒绝或用介绍代替行动。场域记忆中的岗位禁令不能在快循环结案并挡住本应交执行器的工作。",
+      "obligation": "能力介绍按已装技能快照直接答；请求实际工作使用正常执行链，不能因快循环缺工具误拒绝或用介绍代替行动。场域记忆中的岗位禁令不能在快循环结案并挡住本应交执行器的工作。 产品机制、专业分析与岗位要求回源的问答属于执行；事项召回不能替代业务证据。",
       "status": "active",
       "runtime_modules": [
         "core",
         "inbound",
-        "skills"
+        "skills",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f04_contrast",
-        "f04_talent_vs_contest"
+        "f04_talent_vs_contest",
+        "f04_product_answer_vs_capability",
+        "f15_issue_plan_job_scope_vs_pending_research"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/inbound.md",
-        "server/internal/service/inboundcoord/policy/skills.md"
+        "server/internal/service/inboundcoord/policy/skills.md",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     },
@@ -368,24 +459,33 @@
       "runtime_modules": [
         "core",
         "inbound",
-        "group"
+        "group",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f05_contrast",
-        "f05_yes_more_copies"
+        "f05_yes_more_copies",
+        "f03_review_greeting_status_memory"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "regression_observed; candidate_fix_pending_replay",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/inbound.md",
         "server/internal/service/inboundcoord/policy/group.md",
-        "server/internal/service/inboundcoord/continuation_content.go"
+        "server/internal/service/inboundcoord/continuation_content.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -411,23 +511,32 @@
         "core",
         "inbound",
         "group",
-        "dialogue"
+        "dialogue",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f06_contrast"
+        "f06_contrast",
+        "f10_review_whole_window_and_clarification"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "regression_observed; candidate_fix_pending_replay",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/inbound.md",
         "server/internal/service/inboundcoord/policy/group.md",
-        "server/internal/service/inboundcoord/policy/dialogue.md"
+        "server/internal/service/inboundcoord/policy/dialogue.md",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -451,7 +560,8 @@
       "runtime_modules": [
         "core",
         "inbound",
-        "recall_match"
+        "recall_match",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -468,7 +578,8 @@
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/inbound.md",
         "server/internal/service/inboundcoord/policy/recall_match.md",
-        "server/internal/service/inboundcoord/continuation_content.go"
+        "server/internal/service/inboundcoord/continuation_content.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -543,21 +654,30 @@
       "obligation": "整窗原文与逐句来源完整，合并同交付物、区分不同工作；尾部感谢不取消；超额或部分成功不能丢余项。",
       "status": "active",
       "runtime_modules": [
-        "window"
+        "window",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f10_contrast"
+        "f10_contrast",
+        "f10_review_whole_window_and_clarification"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/window.md",
-        "server/internal/service/inboundcoord/window.go"
+        "server/internal/service/inboundcoord/window.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     },
@@ -568,27 +688,34 @@
       "status": "active",
       "runtime_modules": [
         "core",
-        "memory"
+        "memory",
+        "finish_check"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f11_contrast",
         "f04_talent_vs_contest",
         "f19_memory_commit_observation",
-        "f11_memory_repair_budget"
+        "f11_memory_repair_budget",
+        "f03_review_greeting_status_memory"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/memory.md",
         "server/internal/service/inboundcoord/policy/inbound.md",
         "server/internal/service/scenememory/flush.go",
-        "server/internal/service/scenememory/trace.go"
+        "server/internal/service/scenememory/trace.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go"
       ],
       "case_file": "cases.json"
     },
@@ -626,19 +753,27 @@
         "core",
         "inbound",
         "recall_match",
-        "completion"
+        "completion",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f13_contrast",
         "f13_named_cid_vs_report_link",
+        "f04_product_answer_vs_capability",
+        "f15_host_held_policy_and_review_failure",
+        "f15_issue_plan_job_scope_vs_pending_research",
         "f13_finish_hint_fields"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -648,6 +783,9 @@
         "server/internal/service/inboundcoord/loop.go",
         "server/internal/service/inboundcoord/tools.go",
         "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/assoc/purpose.go"
       ],
       "case_file": "cases.json"
@@ -686,51 +824,70 @@
     {
       "id": "COORD.F15",
       "family": "F15",
-      "obligation": "人格与语气只管表达；岗位规则可以收紧行为；它们不能扩大Host权限或覆盖用户当前限制。",
+      "obligation": "人格与语气只管表达；岗位规则可以收紧行为；它们不能扩大Host权限或覆盖用户当前限制。 完整岗位约束由Host保留，主循环按需读取，reply/silence及带岗位的issue计划在提交前审查全文；未加载不等于无限制。",
       "status": "active",
       "runtime_modules": [
         "core",
-        "voice"
+        "voice",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f15_contrast"
+        "f15_contrast",
+        "f15_host_held_policy_and_review_failure",
+        "f15_issue_plan_job_scope_vs_pending_research"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
-        "server/internal/service/inboundcoord/policy/voice.md"
+        "server/internal/service/inboundcoord/policy/voice.md",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     },
     {
       "id": "COORD.F16",
       "family": "F16",
-      "obligation": "辅助读取或模型失败不绕过判断扩大执行；未知状态保留未决输入；有限预算留修复空间，不虚构沉默成功。",
+      "obligation": "辅助读取或模型失败不绕过判断扩大执行；未知状态保留未决输入；有限预算留修复空间，不虚构沉默成功。 所需终结审查不可用或拒绝不提交计划，也不默认派发。",
       "status": "active",
       "runtime_modules": [
-        "core"
+        "core",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f16_contrast",
-        "f13_named_cid_vs_report_link"
+        "f13_named_cid_vs_report_link",
+        "f15_host_held_policy_and_review_failure"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/coordinator.go",
-        "server/internal/service/inboundcoord/window_plan.go"
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     },
@@ -744,17 +901,24 @@
         "inbound",
         "window",
         "recall_match",
-        "completion"
+        "completion",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f17_contrast"
+        "f17_contrast",
+        "f10_review_whole_window_and_clarification",
+        "f15_issue_plan_job_scope_vs_pending_research"
       ],
       "verification": {
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -762,7 +926,10 @@
         "server/internal/service/inboundcoord/policy/window.md",
         "server/internal/service/inboundcoord/policy/recall_match.md",
         "server/internal/service/inboundcoord/policy/completion.md",
-        "server/internal/handler/agent_dispatch_v2_handler.go"
+        "server/internal/handler/agent_dispatch_v2_handler.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     },
@@ -773,7 +940,9 @@
       "status": "active",
       "runtime_modules": [
         "core",
-        "dialogue"
+        "dialogue",
+        "finish_check",
+        "finish_check_work"
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
@@ -783,12 +952,18 @@
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
         "server/internal/service/inboundcoord/policy/dialogue.md",
-        "server/internal/handler/agent_dispatch_v2_handler.go"
+        "server/internal/handler/agent_dispatch_v2_handler.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     },
@@ -797,7 +972,10 @@
       "family": "F19",
       "obligation": "只有一份现行合同；旧手段保存继承关系；记录精确装配版本；结构检查、模型行为和真实送达分别证明。",
       "status": "active",
-      "runtime_modules": [],
+      "runtime_modules": [
+        "finish_check",
+        "finish_check_work"
+      ],
       "enforcement_home": "host",
       "case_ids": [
         "f19_contrast",
@@ -807,13 +985,19 @@
         "source_mapping": "mapped",
         "runtime_path": "structural_checks",
         "model_replay": "pending",
-        "live_delivery": "pending"
+        "live_delivery": "pending",
+        "finish_review_host_tests": "not_run",
+        "finish_review_model_replay": "not_run",
+        "finish_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/trace.go",
         "docs/inbound-coordinator-loop.md",
         "server/internal/service/scenememory/flush.go",
-        "server/internal/service/scenememory/trace.go"
+        "server/internal/service/scenememory/trace.go",
+        "server/internal/service/inboundcoord/policy/finish_check.md",
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/policy/finish_check_work.md"
       ],
       "case_file": "cases.json"
     }
@@ -829,7 +1013,18 @@
       "completion"
     ],
     "direct_reply": [
-      "core"
+      "core",
+      "finish_check"
+    ],
+    "direct_silence": [
+      "core",
+      "finish_check"
+    ],
+    "job_policy_work_submission": [
+      "core",
+      "inbound",
+      "recall_match",
+      "finish_check_work"
     ]
   },
   "retired_implementations": [
@@ -906,6 +1101,35 @@
       "incident_refs": [
         "a6dcbb4d2",
         "b56e52090"
+      ]
+    },
+    {
+      "id": "LEGACY.FAKE_WORK_ONE_HINT_THEN_ALLOW",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16",
+        "COORD.F19"
+      ],
+      "reason": "固定假完成词与一次hint后放行无法拦截未查证的业务答案；以提交前独立语义审查替代，审查异常不放行、不默认派发。",
+      "incident_refs": [
+        "605e116e29704bf294f653bb4508a684"
+      ]
+    },
+    {
+      "id": "LEGACY.EAGER_FULL_JOB_SOP",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F04",
+        "COORD.F15",
+        "COORD.F19"
+      ],
+      "reason": "主循环默认展开完整执行SOP会混淆路由与执行职责；Host保留全文及hash，按需读取和独立终结审查承载全部限制，不截断或摘要删除约束。",
+      "incident_refs": [
+        "605e116e29704bf294f653bb4508a684"
       ]
     }
   ]

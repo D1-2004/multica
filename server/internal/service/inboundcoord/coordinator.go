@@ -71,11 +71,13 @@ type Loop string
 const (
 	LoopInbound      Loop = "inbound"
 	LoopTaskFinished Loop = "task_finished"
+	LoopFinishCheck  Loop = "finish_check"
 )
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
 	Loop                 Loop
+	FinishCheckAction    Action
 	Source               Source
 	Addressed            bool
 	ChatType             string

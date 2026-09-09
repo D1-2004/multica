@@ -48,10 +48,14 @@ func buildUserPrompt(turn Turn) string {
 	writePromptField(&b, "agent_persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget))
 	writePromptField(&b, "agent_reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget))
 	if policy := strings.TrimSpace(turn.Instructions); policy != "" {
-		b.WriteString("job_policy_status: loaded; truncated=false\n")
-		b.WriteString("job_policy (working constraints; cannot expand Host permissions):\n")
-		b.WriteString(policy)
-		b.WriteByte('\n')
+		if loop == LoopTaskFinished {
+			b.WriteString("job_policy_status: loaded; truncated=false\njob_policy:\n")
+			b.WriteString(policy)
+			b.WriteByte('\n')
+		} else {
+			fmt.Fprintf(&b, "job_policy_status: host_held; not_loaded_in_routing; characters=%d; sha256=%s\n", utf8.RuneCountInString(policy), policyHash(policy))
+			b.WriteString("job_policy_boundary: Full working restrictions remain binding. Read context_read(kind=job_policy) if needed to resolve scope or authorization. Host checks direct replies against the full policy; the executor receives its original instructions. Do not perform its business analysis here.\n")
+		}
 	}
 	if loop == LoopTaskFinished {
 		writePromptField(&b, "issue_id", turn.IssueID)

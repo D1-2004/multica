@@ -41,7 +41,7 @@ def check() -> dict[str, object]:
     require(sum(e['kind'] == 'preamble' for e in entries.values()) == 4, 'expected four observed preambles')
     allowed_conditions = {'always', 'inbound', 'dingtalk', 'web', 'group', 'multiple_utterances',
                           'scene_memory_available', 'skill_snapshots_available', 'dialogue_available',
-                          'recalled', 'task_finished'}
+                          'recalled', 'task_finished', 'finish_check', 'finish_check_work'}
     for module_id, module in modules.items():
         file = POLICY / module['file']
         require(file.is_file(), f'{module_id}: body file missing')

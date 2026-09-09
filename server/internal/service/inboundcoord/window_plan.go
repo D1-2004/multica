@@ -22,10 +22,10 @@ func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
 	}
 	fn := shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("Finish this conversation turn with ONE complete window plan. Default for any request that needs doing: action=issue after assoc_recall. reply is only a simple inquiry (greeting, capability, status of accepted work, missing-payload, thanks) or verified progress; silence is intentional non-interruption. Never reply claiming 已记录/已保存/我先查一下/稍后给你 — this loop cannot write or search. Skill work (daily-report submit, knowledge lookup, …) is action=issue, not an in-loop consulting answer. issue plans all requested work: new items omit issue_id; continuations copy a recalled issue_id and require substantive current input. Host commits and launches sandbox execution afterwards (commands, files, external tools); do not claim delivery. For issue, every source_ref must occur in executable items or non_work_refs. A request awaiting necessary clarification is covered by your question and non_work_refs, never by a speculative work item. At most 8 planned items, executed in batches of 2. Never silently drop an unhandled request. Read missing context before answering a previous question."),
+		Description: openai.String("Finish conversation routing, not the business work. Product behavior, professional questions, research and execution require action=issue; never put their answer in text. reply is reserved for greetings, capability explanations, necessary clarification, memory acknowledgement/inventory, or evidenced progress. issue needs acknowledgement text and a complete items plan after recall: new items omit issue_id; continuations use a recalled ID with substantive current input. Cover every source_ref in items or non_work_refs; never execute a request still awaiting clarification. At most 8 items, submitted in batches of 2. Host independently checks terminal decisions before saving; its rejection is not new authorization."),
 		Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"action"}, "properties": map[string]any{
 			"action":        map[string]any{"type": "string", "enum": actions},
-			"text":          map[string]any{"type": "string", "description": "Required for reply and issue. Issue cannot submit when text is empty, even if items are complete. A useful natural response for the whole window, with no unsupported completion claims."},
+			"text":          map[string]any{"type": "string", "description": "Required for reply and issue; complete work items without text cannot submit. Communication or acknowledgement for the whole window, not a product/business answer or unsupported completion claim."},
 			"reason":        map[string]any{"type": "string"},
 			"non_work_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Source refs requiring no execution now: greetings or requests explicitly addressed by a necessary clarification in text. Do not silently discard requests."},
 			"items": map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Required for issue. One item per executable deliverable with sufficient intent and payload; no item for work still awaiting clarification; source_refs copy u1 etc. from current_message.", "items": map[string]any{
@@ -41,7 +41,7 @@ func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
 		}},
 	}
 	if !canPlanWork {
-		fn.Description = openai.String("Finish a reply or intentional silence only. Work cannot be submitted yet. If this is not a simple inquiry (greeting, capability, status, missing-payload, thanks), do not action=reply: call assoc_recall on this conversation first, then issue. If a short answer may respond to your earlier question, read context_read(kind=history) before deciding whether to acknowledge or be silent. A reply promising action does not execute it. No items at this stage.")
+		fn.Description = openai.String("Only conversation can finish before recall: greeting, capability explanation, necessary clarification, memory acknowledgement/inventory or verified progress. A product or professional question requires assoc_recall then action=issue, even when it sounds easy. Never substitute an answer or promise for dispatch. Read history when a short answer depends on your previous question. No items at this stage.")
 		props := fn.Parameters["properties"].(map[string]any)
 		delete(props, "items")
 		delete(props, "non_work_refs")
@@ -50,10 +50,6 @@ func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
 }
 
 func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recalled map[string]struct{}) (Decision, error) {
-	return parseValidatedWindowPlanHinted(raw, turn, recalls, recalled, false)
-}
-
-func parseValidatedWindowPlanHinted(raw string, turn Turn, recalls []recallCall, recalled map[string]struct{}, fakeWorkHinted bool) (Decision, error) {
 	var input struct {
 		Action      string   `json:"action"`
 		Text        string   `json:"text"`
@@ -104,9 +100,6 @@ func parseValidatedWindowPlanHinted(raw string, turn Turn, recalls []recallCall,
 		}
 		if d.Action == ActionSilence && turn.Source == SourceWeb {
 			return Decision{}, fmt.Errorf("web chat requires a reply")
-		}
-		if err := requireNoFakeWorkReplyOnce(turn, raw, fakeWorkHinted); err != nil {
-			return Decision{}, err
 		}
 		return d, nil
 	}

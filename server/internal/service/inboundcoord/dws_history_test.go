@@ -37,14 +37,26 @@ func (s *dwsHistoryStub) Load(_ context.Context, turn Turn) ([]HistoryLine, erro
 func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory bool) *llm.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		call := calls.Add(1)
 		var body struct {
 			Messages []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
+			Tools []struct {
+				Function struct {
+					Name string `json:"name"`
+				} `json:"function"`
+			} `json:"tools"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		if len(body.Tools) == 1 && body.Tools[0].Function.Name == "finish_check" {
+			// This HTTP fixture verifies history transport and routing rounds;
+			// semantic verdicts have their own scripted and real-model tests.
+			_ = json.NewEncoder(w).Encode(withScriptedFinishQuotes(scriptedFinishVerdict("allow", "Scripted history fixture allows the candidate."), body.Messages[len(body.Messages)-1].Content))
+			return
+		}
+		call := calls.Add(1)
 		for _, message := range body.Messages {
 			if message.Role == "user" || message.Role == "tool" {
 				*prompt += "\n" + message.Role + ": " + message.Content
