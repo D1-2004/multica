@@ -355,8 +355,10 @@ func (c *ASBClient) CreateSandbox(ctx context.Context, input ASBCreateSandboxInp
 		if rule.Action != "allow" || strings.TrimSpace(rule.Target) == "" {
 			return nil, errors.New("ASB network rules must explicitly allow targets")
 		}
-		if _, err := NormalizeASBNetworkTargets([]string{rule.Target}); err != nil {
-			return nil, err
+		if !isASBManagedNetworkFamily(rule.Target) {
+			if _, err := NormalizeASBNetworkTargets([]string{rule.Target}); err != nil {
+				return nil, err
+			}
 		}
 	}
 	request := asbCreateSandboxRequest{

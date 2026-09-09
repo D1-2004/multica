@@ -13,7 +13,7 @@ import (
 )
 
 func TestASBNetworkTargetsRejectIsolationBypasses(t *testing.T) {
-	for _, target := range []string{"*", "*.alibaba-inc.com", "0.0.0.0/0", "::/0", "https://host.example/a", "host.example:443", "a..example", "example.com/path", "example.com\nother.com", "-a.example", "example.com?x=1"} {
+	for _, target := range []string{"*", "*.alibaba-inc.com", "*.trans.dingtalk.com", "*.down.dingtalk.com", "0.0.0.0/0", "::/0", "https://host.example/a", "host.example:443", "a..example", "example.com/path", "example.com\nother.com", "-a.example", "example.com?x=1"} {
 		t.Run(target, func(t *testing.T) {
 			if _, err := NormalizeASBNetworkTargets([]string{target}); err == nil {
 				t.Fatalf("accepted %q", target)
@@ -26,6 +26,49 @@ func TestASBNetworkTargetsRejectIsolationBypasses(t *testing.T) {
 	}
 	if _, err := NormalizeASBNetworkTargets(make([]string, 257)); err == nil {
 		t.Fatal("accepted oversized allowlist")
+	}
+}
+
+func TestASBDWSDirectTransferPolicyReachesCreationBoundary(t *testing.T) {
+	settings, err := asbNetworkSettings(ASBConfig{}, db.AgentRuntime{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var body asbCreateSandboxRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.NetworkPolicy.DefaultAction != "deny" {
+			t.Fatal("DWS dependencies changed the default action")
+		}
+		for _, target := range []string{"sh-dualstack.trans.dingtalk.com", "*.trans.dingtalk.com", "down.dingtalk.com", "*.down.dingtalk.com", "alidocs2.oss-cn-zhangjiakou.aliyuncs.com", "alimail-cn.aliyuncs.com", "alimail-personal.aliyuncs.com", "wss-open-connection.dingtalk.com", "pre-mcp-gw.dingtalk.io"} {
+			if !slices.Contains(body.NetworkPolicy.Egress, ASBNetworkRule{Action: "allow", Target: target}) {
+				t.Errorf("missing DWS dependency %s", target)
+			}
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"sandbox-test","status":{"state":"Running"}}`))
+	}))
+	defer srv.Close()
+	client, err := NewASBClient(ASBClientConfig{BaseURL: srv.URL, APIKey: "test-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := ASBCreateSandboxInput{ImageURI: "image", TimeoutSeconds: 60, ResourceCPU: "1", ResourceMemory: "1Gi", Entrypoint: []string{"sleep infinity"}, NetworkPolicy: settings.Policy()}
+	if _, err := client.CreateSandbox(context.Background(), input); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"*", "*.dingtalk.com", "*.aliyuncs.com", "*.alibaba-inc.com", "*.trans.dingtalk.com.evil.example", "*trans.dingtalk.com", "*.TRANS.dingtalk.com", "0.0.0.0/0"} {
+		input.NetworkPolicy.Egress = []ASBNetworkRule{{Action: "allow", Target: target}}
+		if _, err := client.CreateSandbox(context.Background(), input); err == nil {
+			t.Errorf("accepted unreviewed service family %q", target)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("unsafe policy reached control plane: calls=%d", calls)
 	}
 }
 
