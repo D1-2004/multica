@@ -170,9 +170,6 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 		return 0, fmt.Errorf("list ASB capacity-waiting tasks: %w", err)
 	}
 	sort.SliceStable(waiting, func(i, j int) bool {
-		if waiting[i].Priority != waiting[j].Priority {
-			return waiting[i].Priority > waiting[j].Priority
-		}
 		if !waiting[i].CreatedAt.Time.Equal(waiting[j].CreatedAt.Time) {
 			return waiting[i].CreatedAt.Time.Before(waiting[j].CreatedAt.Time)
 		}
