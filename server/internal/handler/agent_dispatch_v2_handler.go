@@ -1620,17 +1620,23 @@ func decideDispatchCoordinator(
 	return coord.Decide(ctx, turn)
 }
 
+// Both prompt utterances and per-item dispatch selection use this projection
+// so an attachment-only proactive message cannot shift the source_ref index.
+func coordinatorWindowMessageText(command DispatchCommand, message DispatchMessage) string {
+	if message.Reaction != nil {
+		return ""
+	}
+	if command.ProactiveConversation && len(message.Attachments) > 0 {
+		return dispatchMessageDisplay(message, dispatchDisplayIdentities{})
+	}
+	return strings.TrimSpace(message.Text)
+}
+
 func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowUtterance {
 	fallback := strings.TrimSpace(command.Event.Data.Sender.DisplayName)
 	out := make([]inboundcoord.WindowUtterance, 0, len(command.Event.Data.Messages))
 	for _, message := range command.Event.Data.Messages {
-		if message.Reaction != nil {
-			continue
-		}
-		text := strings.TrimSpace(message.Text)
-		if command.ProactiveConversation && len(message.Attachments) > 0 {
-			text = dispatchMessageDisplay(message, dispatchDisplayIdentities{})
-		}
+		text := coordinatorWindowMessageText(command, message)
 		if text == "" {
 			continue
 		}
