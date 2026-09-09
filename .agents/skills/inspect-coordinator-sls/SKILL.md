@@ -80,6 +80,8 @@ Generation 原文、token、沙箱 `agent_task`：skill `inspect-langfuse`（`sc
 
 没有 `inbound_coordinator_llm_request` 的旧日志只有 `inbound_coordinator_decided`，看不出 prompt。
 
+新日志也有8000字`user_prompt`上限：对比`user_prompt_runes`与返回长度，缺`current_message`分界时不能判断完整场域记忆召回。先记录可见revision/前缀，再读同一trace的Langfuse generation补齐；不要把被截断部分误判成未提供。
+
 ## 错法
 
 - 用 Router `get_observability_llm_trace` 当 Coordinator 上下文。那是沙箱模型。
