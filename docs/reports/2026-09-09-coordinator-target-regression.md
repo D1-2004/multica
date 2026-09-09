@@ -112,7 +112,7 @@
 
 1. **状态声明缺少事实范围约束。** 当前Host检查rN存在，没有机械保证它支持派发数、执行数或送达结论。出现未加载→没有、多条不同Issue的人名与completed状态拼接。ROI最高的下一步是让LLM选择有限状态事实和对象，由Host根据对应记录生成状态句。
 2. **短答与故障反馈仍会漏接。** 自身上一问的补答最终3/3错误；“消息未发完整”仍会变成旧状态清单或只说去检查。需要证明实际原问题和当前目标的对应关系，不能用ack收口。
-3. **执行器岗位工具约束与效率。** 两个简单查询耗时12–17分钟。杭州执行器47次模型调用、上海46次，均为qwen3.8-max；Coordinator为qwen3.7-plus。执行器上下文/工具路径问题需要独立修复，换强模型的隔离探针也没有稳定解决Coordinator状态错误。
+3. **执行器岗位工具约束与效率。** 两个简单查询耗时12–17分钟。杭州执行器47次模型调用、上海45次，均为qwen3.8-max；Coordinator为qwen3.7-plus。执行器上下文/工具路径问题需要独立修复，换强模型的隔离探针也没有稳定解决Coordinator状态错误。
 
 没有重开旧报告全文、增加主Loop上限或修改生产岗位来凑通过率。场域记忆读取可见，未新增跨CID写入/隔离E2E，不能外推为整个记忆系统验收完成。
 
@@ -120,7 +120,7 @@
 
 - [巡检Skill](../../.agents/skills/inspect-daily-qa/SKILL.md)，新增[回放与验收方法](../../.agents/skills/inspect-daily-qa/references/coordinator-regression.md)。
 - [可复用harness](../../scripts/coordinator-regression/README.md)：无默认模型调用，纯只读冻结工具；无凭据或生产正文，已编译验证。
-- 私有原始证据、逐样本报告、输入与请求归档保存在用户本机受限目录，详见本轮交付链接；仓库只保存聚合结论和方法。
+- 私有原始证据、逐样本报告、输入与请求归档：`/Users/yuanzhan/.codex/artifacts/coordinator-regression-20260909/evidence.tgz`（目录700、归档600）；仓库只保存聚合结论和方法。
 - Langfuse按agent tag、CID、SLS job精确定位。运行中快照可能不完整，结合task-trace，并在完成后再次hydrate：两个查询完成后分别有164/161个observation、49/48个generation，各含Coordinator与agent_task根。不要用早期空快照认定未执行。
 
 本地验证包含受影响Go包、服务端构建、62例policy结构检查、Skill校验和真实PostgreSQL查询回滚验证。结构通过与上述语义/业务失败分别报告；预发验证节点不据此标记全面通过。
