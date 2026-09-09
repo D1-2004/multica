@@ -57,6 +57,8 @@ Langfuse 先用 `agent-UUID`、session/CID、trace ID 或 idx 事件缩小范围
 
 **共享 trace 顶层 input/output/timestamp 可能由后续 agent_task 覆盖。** 原始问答读 `observations[name=inbound_coordinator]`，逐次尝试看根输入和 `coordinator.round.N`；沙箱读 `agent_task` 和 `llm.call.N`。模型参数、显式 reasoning 字段和工具参数才是推理证据；没有的推理不要补造。
 
+`2026-09-09.2`起，主循环的`job_policy_status=host_held`是按需加载，不是丢配置。完整岗位在`context_read(kind=job_policy)`或独立`coordinator.finish_check.N`中读取。检查SLS `inbound_coordinator_finish_check`及LF同名tool的allow/revise、理由和cache_hit；被拒后是否补读/形成计划，以及最终是否保存。`tool_rounds`只数路由轮次，成本需加上finish-check generations；主prompt变小不保证整轮token/时延下降。该检查不覆盖已持久化旧checkpoint或独立task_finished路径，不把旧计划恢复称作新模型绕过检查。
+
 ## 判断问题的顺序
 
 1. **资格与覆盖**：谁在问谁，哪些原文构成当前窗；静默是否合理，是否有未完成的明确请求。

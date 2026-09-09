@@ -44,7 +44,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	}
 	steps := make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2)
 	appendStep := func(step protocol.ChatCoordinatorStep) { step.Seq = len(steps) + 1; steps = append(steps, step) }
-	fakeWorkHinted := false
+	finishChecks := map[string]finishCheckResult{}
 	fail := func(err error) (Decision, error) {
 		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
 		return Decision{Action: ActionDeferred, Reason: "coordinator_undecided", Steps: steps}, err
@@ -109,9 +109,16 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 				} else {
 					var decision Decision
-					decision, callErr = parseValidatedWindowPlanHinted(call.Arguments, turn, recalls, recalledIssues, fakeWorkHinted)
-					if isFakeWorkReplyHint(callErr) {
-						fakeWorkHinted = true
+					decision, callErr = parseValidatedWindowPlan(call.Arguments, turn, recalls, recalledIssues)
+					if callErr == nil && needsFinishCheck(turn, decision) {
+						check, checkErr := c.checkFinish(ctx, turn, decision, messages, round, finishChecks)
+						if checkErr != nil {
+							traceToolEnd(traceToolStart(lt, round, call), "", checkErr, "finish_check_unavailable")
+							return fail(checkErr)
+						}
+						if check.Verdict != "allow" {
+							callErr = hintErr("finish does not cover this window", "Repair before finishing: "+check.Reason+". Missing current refs: "+strings.Join(check.MissingSourceRefs, ",")+". Obtain missing conversation evidence or submit authorized work with finish.items; do not turn this hint into a new authorization.")
+						}
 					}
 					if callErr == nil {
 						decision.Steps = steps
@@ -172,20 +179,22 @@ func finishToolOutput(decision Decision) string {
 }
 
 func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) (*openai.ChatCompletion, error) {
+	return c.completeWithLimit(ctx, messages, tools, maxCompletionTokens, temperature)
+}
+
+func (c *Coordinator) completeWithLimit(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64) (*openai.ChatCompletion, error) {
 	params := openai.ChatCompletionNewParams{
 		Messages:            messages,
 		Model:               shared.ChatModel(coordinatorModel),
 		Tools:               tools,
 		ReasoningEffort:     shared.ReasoningEffortNone,
-		MaxCompletionTokens: openai.Int(maxCompletionTokens),
+		MaxCompletionTokens: openai.Int(limit),
 	}
 	params.SetExtraFields(map[string]any{
 		"enable_thinking": false,
 		"tool_choice":     "required",
 	})
-	if temperature > 0 {
-		params.Temperature = openai.Float(temperature)
-	}
+	params.Temperature = openai.Float(temp)
 	if c != nil && c.Chat != nil {
 		return c.Chat.Chat(ctx, params)
 	}

@@ -24,7 +24,7 @@ RAW=0
 
 PRE_TAG='__tag__:__user_defined_id__: acni_ag_dt-fde-multica_default_prehost'
 PROD_TAG='__tag__:__user_defined_id__: acni_ag_dt-fde-multica_default_host'
-ALL_EVENTS='(inbound_coordinator_llm_request or inbound_coordinator_llm or inbound_coordinator_llm_finish or inbound_coordinator_llm_nudge or inbound_coordinator_decided or inbound_coordinator_dws_history_loaded or inbound_coordinator_dws_history_failed)'
+ALL_EVENTS='(inbound_coordinator_llm_request or inbound_coordinator_llm or inbound_coordinator_llm_finish or inbound_coordinator_llm_nudge or inbound_coordinator_decided or inbound_coordinator_dws_history_loaded or inbound_coordinator_dws_history_failed or inbound_coordinator_finish_check)'
 
 usage() {
   cat <<'EOF'
@@ -266,6 +266,10 @@ for trace in order:
                 print(f"  arguments: {fields['arguments']}")
             if fields.get("result"):
                 print(f"  result: {fields['result']}")
+        elif event == "inbound_coordinator_finish_check":
+            print(f"\n[{ts}] FINISH_CHECK verdict={fields.get('verdict', '')} cache_hit={fields.get('cache_hit', '')} error={fields.get('error', '')}")
+            print(f"  reason: {fields.get('reason', '')}")
+            print(f"  missing_source_refs: {fields.get('missing_source_refs', '')}")
         elif event == "inbound_coordinator_llm_finish":
             print(f"\n[{ts}] FINISH action={fields.get('action', '')} issue_id={fields.get('issue_id', '')}")
             print(f"  text: {fields.get('text', '')}")
