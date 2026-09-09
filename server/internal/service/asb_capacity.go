@@ -169,68 +169,43 @@ func createASBSandboxWithCapacityOnConnection(
 		resultErr = recordASBCapacityResult(ctx, client, util.UUIDToString(runtimeID), resultErr)
 	}()
 
-	quotaExhausted, err := asbTenantQuotaExhausted(ctx, client)
+	quotas, err := client.ListQuotas(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("check Aone Sandbox quota before create: %w", err)
 	}
-	if quotaExhausted {
-		reclaimed, err := reclaimASBSandboxForCredential(
-			ctx,
-			queries,
-			credentials,
-			client,
-			runtimeID,
-			excludedTaskID,
-			conn,
-		)
-		if err != nil {
-			return nil, err
+	sandbox, err := createASBSandboxInAvailableRegion(ctx, client, runtimeID, input, quotas)
+	if !errors.Is(err, ErrASBCapacityUnavailable) {
+		return sandbox, err
+	}
+	if isASBQuotaExceeded(err) {
+		// Another caller may consume a slot, or an allocation may be added
+		// after the initial read. Refresh once before reclaiming any sandbox.
+		quotas, quotaErr := client.ListQuotas(ctx)
+		if quotaErr != nil {
+			return nil, errors.Join(err, quotaErr)
 		}
-		if !reclaimed {
-			return nil, ErrASBCapacityUnavailable
+		sandbox, err = createASBSandboxInAvailableRegion(ctx, client, runtimeID, input, quotas)
+		if !errors.Is(err, ErrASBCapacityUnavailable) {
+			return sandbox, err
 		}
 	}
 
-	sandbox, err := client.CreateSandbox(ctx, input)
-	if err == nil {
-		return sandbox, nil
-	}
-	logASBCreateFailure("initial", runtimeID, err)
-	// The quota can change between its read and the create call. Re-read it
-	// while still holding the tenant lock, reclaim one eligible task sandbox,
-	// and repeat the create operation once.
-	quotaExhausted, quotaErr := asbTenantQuotaExhausted(ctx, client)
-	if quotaErr != nil {
-		return nil, errors.Join(fmt.Errorf("create ASB sandbox: %w", err), quotaErr)
-	}
-	if !quotaExhausted {
-		return nil, fmt.Errorf("create ASB sandbox: %w", err)
-	}
 	reclaimed, reclaimErr := reclaimASBSandboxForCredential(
-		ctx,
-		queries,
-		credentials,
-		client,
-		runtimeID,
-		excludedTaskID,
-		conn,
+		ctx, queries, credentials, client, runtimeID, excludedTaskID, conn,
 	)
 	if reclaimErr != nil {
-		return nil, errors.Join(fmt.Errorf("create ASB sandbox: %w", err), reclaimErr)
+		return nil, errors.Join(err, reclaimErr)
 	}
 	if !reclaimed {
-		return nil, ErrASBCapacityUnavailable
+		return nil, err
 	}
-	sandbox, err = client.CreateSandbox(ctx, input)
+	// Reclaim can release a slot in any region. Select from a fresh snapshot,
+	// rather than retrying the original, possibly still full region.
+	quotas, err = client.ListQuotas(ctx)
 	if err != nil {
-		logASBCreateFailure("after_capacity_reclaim", runtimeID, err)
-		return nil, asbCapacityUnavailableIfStillExhausted(
-			ctx,
-			client,
-			fmt.Errorf("create ASB sandbox after capacity reclaim: %w", err),
-		)
+		return nil, errors.Join(ErrASBCapacityUnavailable, err)
 	}
-	return sandbox, nil
+	return createASBSandboxInAvailableRegion(ctx, client, runtimeID, input, quotas)
 }
 
 func asbTenantQuotaExhausted(ctx context.Context, client *ASBClient) (bool, error) {
