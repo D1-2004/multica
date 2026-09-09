@@ -104,11 +104,11 @@ func TestDecideReadsDWSHistoryOnDemandForRobotAndDigitalEmployee(t *testing.T) {
 			if !strings.Contains(prompt, `"status":"loaded"`) || !strings.Contains(prompt, "看看今天的新闻") {
 				t.Fatalf("DWS history missing from prompt: %q", prompt)
 			}
-			if len(got.Steps) < 2 || got.Steps[0].Tool != "context_read" || got.Steps[0].Type != "tool_use" || got.Steps[1].Type != "tool_result" {
+			if len(got.Steps) < 4 || got.Steps[0].Tool != toolAssocRecall || !strings.Contains(got.Steps[0].Content, "Host prefetch") || got.Steps[2].Tool != "context_read" || got.Steps[2].Type != "tool_use" || got.Steps[3].Type != "tool_result" {
 				t.Fatalf("DWS timeline missing: %#v", got.Steps)
 			}
-			if !strings.Contains(got.Steps[1].Output, "看看今天的新闻") {
-				t.Fatalf("DWS timeline omitted loaded content: %#v", got.Steps[1])
+			if !strings.Contains(got.Steps[3].Output, "看看今天的新闻") {
+				t.Fatalf("DWS timeline omitted loaded content: %#v", got.Steps[3])
 			}
 			if len(loader.turns) != 1 || loader.turns[0].HistoryBefore.IsZero() {
 				t.Fatalf("on-demand history must receive the fixed window cutoff: %#v", loader.turns)
@@ -162,7 +162,7 @@ func TestDecideDWSHistoryFailureStillRunsLLM(t *testing.T) {
 	if !strings.Contains(prompt, `"status":"unavailable"`) {
 		t.Fatalf("failure must be explicit, not empty history: %q", prompt)
 	}
-	if len(got.Steps) < 2 || got.Steps[1].Tool != "context_read" || !strings.Contains(got.Steps[1].Output, `"status":"unavailable"`) {
+	if len(got.Steps) < 4 || got.Steps[3].Tool != "context_read" || !strings.Contains(got.Steps[3].Output, `"status":"unavailable"`) {
 		t.Fatalf("DWS failure timeline=%#v", got.Steps)
 	}
 }

@@ -474,6 +474,42 @@
       "context_b": "主动处理关闭的无 @ 群聊；主动处理开启但群友闲聊且无需员工介入",
       "expected_effects": "开启后由同一个 Coordinator 语义判断，关闭保持原静默；有授权的补充持久化到原 Issue 后消费完成，新窗口不等执行；无关讨论可以静默",
       "verification": "host_tests_passed; live_delivery_pending"
+    },
+    {
+      "id": "f13_host_scene_prefetch_success_vs_failure",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "正常有可信当前CID的入站，Host在首次模型调用前成功完成无q、48h/3项assoc_recall并保留有界快照及合法目标。",
+      "context_b": "同一请求的Host预取超时或读取失败，快照标unavailable。",
+      "expected_effects": "A首次模型请求可按已召回阶段直接规划工作，沿用现有目标/身份/提交守卫，无需模型重做机械召回；B不得把失败当空结果或解锁工作，模型可按需重试已有assoc_recall。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f08_host_prefetch_keeps_requested_scope",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F08",
+        "COORD.F13"
+      ],
+      "context_a": "当前CID预取成功，用户请求本场景当前窗口内的工作。",
+      "context_b": "同样预取成功，但用户明确指定另一个CID或更早的历史范围。",
+      "expected_effects": "A可以复用Host预取；B仍需对应CID/时间范围的按需读取，当前48h快照不冒充别场景或全部历史，预取不加载原始评论/业务结果。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f16_host_prefetch_nonwork_cost_and_skips",
+      "rule_ids": [
+        "COORD.F09",
+        "COORD.F16",
+        "COORD.F19"
+      ],
+      "context_a": "有可信CID的普通问候/能力介绍进入正常入站主循环。",
+      "context_b": "task_finished、无CID请求，或此前已由Host短路/持久化计划恢复的路径。",
+      "expected_effects": "A也可能多一次有界关联读取，记录实际耗时和读次数，不承诺必然更快；B不新增该预取。origin=host_prefetch不是LLM工具调用，模型调用数按generation/tool_calls统计，缺metadata不猜失败。",
+      "verification": "not_run"
     }
   ]
 }

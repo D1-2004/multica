@@ -90,7 +90,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/channel.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -138,7 +139,8 @@
           "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -186,7 +188,8 @@
           "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -234,7 +237,8 @@
           "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -287,7 +291,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/window.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -340,7 +345,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/window.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -381,7 +387,8 @@
           "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -483,7 +490,8 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -749,7 +757,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -891,7 +900,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -991,7 +1001,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
-          "docs/evals/coordinator-collect-e2e.json"
+          "docs/evals/coordinator-collect-e2e.json",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1187,7 +1198,8 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2037,7 +2049,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2091,7 +2104,8 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/policy/inbound.md"
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2136,7 +2150,8 @@
           "server/internal/service/inboundcoord/continuation_content.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
-          "docs/evals/coordinator-collect-e2e.json"
+          "docs/evals/coordinator-collect-e2e.json",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2395,7 +2410,8 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2454,7 +2470,8 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2513,7 +2530,8 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2552,7 +2570,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2591,7 +2610,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2630,7 +2650,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2669,7 +2690,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2708,7 +2730,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2747,7 +2770,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2803,7 +2827,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/channel.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2854,7 +2879,8 @@
           "server/internal/service/inboundcoord/tools.go",
           "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
-          "server/internal/service/inboundcoord/finish_check.go"
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2936,7 +2962,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2992,7 +3019,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/channel.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3048,7 +3076,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/channel.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3201,7 +3230,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/window.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3303,7 +3333,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3360,7 +3391,8 @@
           "server/internal/service/inboundcoord/policy/skills.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/scenememory/flush.go",
-          "server/internal/service/scenememory/trace.go"
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3704,7 +3736,8 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3743,7 +3776,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3800,7 +3834,8 @@
           "server/internal/service/inboundcoord/policy/skills.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/scenememory/flush.go",
-          "server/internal/service/scenememory/trace.go"
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -4004,7 +4039,8 @@
           "server/internal/service/scenememory/trace.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4232,7 +4268,8 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
-          "docs/evals/coordinator-collect-e2e.json"
+          "docs/evals/coordinator-collect-e2e.json",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -4455,7 +4492,8 @@
           "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4507,7 +4545,8 @@
           "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4873,7 +4912,8 @@
           "server/internal/service/inboundcoord/tools.go",
           "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/window.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4917,7 +4957,8 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/coordinator.go"
+          "server/internal/service/inboundcoord/coordinator.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }

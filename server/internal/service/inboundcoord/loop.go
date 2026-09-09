@@ -34,11 +34,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(buildSystemPrompt(turn)), openai.UserMessage(buildUserPrompt(turn)),
 	}
-	if turn.Loop == LoopTaskFinished {
-		logCoordinatorLLMRequest(turn, buildUserPrompt(turn))
-	} else {
-		logCoordinatorLLMRequest(turn, coordinationUserPrompt(turn))
-	}
+
 	var used []string
 	var recalls []recallCall
 	recalledIssues := map[string]struct{}{}
@@ -56,6 +52,21 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		if _, err := rememberCoordinationRead(&turn, &readSequence, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {
 			latestFeedback = coordinationRepairFeedback(toolContextRead, err)
 		}
+	}
+	if (turn.Loop == "" || turn.Loop == LoopInbound) && turn.ConversationID != "" {
+		call, result, readErr := c.prefetchSceneRecall(ctx, &turn, &readSequence)
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
+		used = append(used, call.Name)
+		if readErr == nil {
+			recalls = append(recalls, parseRecallCall(call.Arguments))
+			collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
+		}
+	}
+	if turn.Loop == LoopTaskFinished {
+		logCoordinatorLLMRequest(turn, buildUserPrompt(turn), false)
+	} else {
+		logCoordinatorLLMRequest(turn, coordinationUserPrompt(turn), len(recalls) > 0)
 	}
 	fail := func(err error) (Decision, error) {
 		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
@@ -480,7 +491,7 @@ func coordinatorLogIndex(turn Turn) []any {
 	}
 }
 
-func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
+func logCoordinatorLLMRequest(turn Turn, userPrompt string, recalled bool) {
 	slog.Info("inbound coordinator llm request",
 		append(coordinatorLogIndex(turn),
 			"event", "inbound_coordinator_llm_request",
@@ -493,7 +504,8 @@ func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
 			"dingtalk_history_count", len(turn.DingTalkHistory),
 			"multica_history_count", len(turn.History),
 			"scene_memory_revision", turn.SceneMemoryRevision,
-			"system_prompt_runes", len([]rune(buildSystemPrompt(turn))),
+			"system_prompt_runes", len([]rune(buildSystemPromptForStage(turn, recalled))),
+			"read_snapshot_runes", len([]rune(coordinationReadsJSON(turn))),
 			"user_prompt", clipRunes(userPrompt, llmLogPromptBudget),
 			"user_prompt_runes", len([]rune(userPrompt)),
 		)...)
