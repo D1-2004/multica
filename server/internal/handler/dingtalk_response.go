@@ -88,6 +88,7 @@ func (h *Handler) PrepareExecutionResult(ctx context.Context, callback string, r
 		return true, errors.New("response callback agent does not match frozen route")
 	}
 	in := responseInputForResult(route.Input, result)
+	in = h.fillDingTalkResponseOrigin(ctx, in)
 	if in.Text != "" && in.TaskID != "" {
 		state, checkErr := h.DingTalkResponses.SandboxResponseState(ctx, in.WorkspaceID, in.AgentID, "", in.TaskID, in.ConversationID)
 		if checkErr != nil {
@@ -149,8 +150,45 @@ func (h *Handler) PrepareExecutionUpdate(ctx context.Context, callback string, u
 	if in.Text == "" {
 		in.CloseState = "silent"
 	}
+	in = h.fillDingTalkResponseOrigin(ctx, in)
 	_, err = h.DingTalkResponses.Submit(ctx, in)
 	return true, err
+}
+
+func (h *Handler) fillDingTalkResponseOrigin(ctx context.Context, in dingtalkresponse.ActionInput) dingtalkresponse.ActionInput {
+	if h == nil || h.Queries == nil {
+		return in
+	}
+	var task db.AgentTaskQueue
+	var issue db.Issue
+	if taskID, err := util.ParseUUID(in.TaskID); err == nil {
+		if loaded, loadErr := h.Queries.GetAgentTask(ctx, taskID); loadErr == nil {
+			task = loaded
+			if !task.IssueID.Valid && in.IssueID != "" {
+				if issueID, parseErr := util.ParseUUID(in.IssueID); parseErr == nil {
+					task.IssueID = issueID
+				}
+			}
+		}
+	}
+	issueID := in.IssueID
+	if issueID == "" && task.IssueID.Valid {
+		issueID = uuidToString(task.IssueID)
+	}
+	if parsedIssue, err := util.ParseUUID(issueID); err == nil {
+		workspaceID, wsErr := util.ParseUUID(in.WorkspaceID)
+		if wsErr != nil && task.ID.Valid {
+			if agent, agentErr := h.Queries.GetAgent(ctx, task.AgentID); agentErr == nil {
+				workspaceID = agent.WorkspaceID
+			}
+		}
+		if workspaceID.Valid {
+			if loaded, loadErr := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: parsedIssue, WorkspaceID: workspaceID}); loadErr == nil {
+				issue = loaded
+			}
+		}
+	}
+	return fillDingTalkOriginReply(in, task, issue)
 }
 
 // RouterResponseReceiptSender pins pending receipts to their original Router.
