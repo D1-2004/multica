@@ -26,7 +26,7 @@ Langfuse 保留内部派发 action，并增加 `coordination_kinds` 和具体 `c
 
 ## 验证与发布
 
-核心实现已提交 `95072f39f`；最终引用协议与验证结果随本报告一起提交。分支为 `codex/feidi-daily-inspection`。
+核心实现提交 `95072f39f`，最终宿主引用协议提交 `a20fa11d6`。分支为 `codex/feidi-daily-inspection`。
 
 - 最终同版真实模型冻结回放 7/7 通过。所有业务工具为冻结的假只读工具，没有真实消息、任务或记忆写入。
 - inboundcoord 全包 286 PASS、2 项显式 opt-in 跳过；服务端构建通过。合同/API/CLI/来源/派发与完成回调的本地窄测、36 项 TS 和 core typecheck 通过。
@@ -45,7 +45,17 @@ Langfuse 保留内部派发 action，并增加 `coordination_kinds` 和具体 `c
 
 原 trace 初始 system+user 为 26,110 字符，新版为 6,287（-75.9%）。同 trace 两种合同模式总 token 为 19,895→15,345（-22.9%），审查输入为 12,584→3,180（-74.7%）。短合同一例错误调用了一次不存在的 start_work 工具，Host 拒绝后恢复；因此实测延迟没有下降，不能用理想轮数替代真实成本。
 
-预发部署结果及构建 SHA 待发布后回填。
+预发发布已完成部署阶段：
+
+- [本次变更单 36047738](https://cd.aone.alibaba-inc.com/unite/micro/cr/app/342160/36047738)。旧变更单36035346已由其他发布流程结束，因此本次新建CR，不复用已结束对象。
+- [本次运行 3107465826 的快照](https://cd.aone.alibaba-inc.com/unite/micro/publish/app/342160/flow/1005452/snapshots/241056598)：构建及扫描成功，预发部署于 **2026-09-09 16:30:53 +08:00 SUCCESS**，流水线预发集成测试节点SUCCESS。
+- 构建Job `171198851`，源码 `bcc1ef8b0f2982711510258c024958bbb7bc5aff`，包含功能提交`95072f39f`与`a20fa11d6`及预发Portable兼容。合并期间保留了已有ASB回收变更和流水线要求集成的事件触发CR，未覆盖他人提交。
+- 合并后的实际release目录额外3例通过：无依据业务回答必须revise、仅起草却发送必须revise、真实done进度可以allow。6个关键源码文件在回放期间未改变。
+- 16:42:11的只读验收：`/health`、`/status.taobao`均HTTP200；真实Agent list/get返回`coordinator_contract`与`coordinator_contract_state=not_configured`，验证新接口及字段可读。没有修改实际Agent定义。
+- 本次运行的后续人工验证节点后来变为CANCEL，同时平台已有另一个预发运行3107471651；这里报告的是本次构建和部署节点的已完成事实，不把总体CANCEL写成整条流水线SUCCESS。
+- 集成基线已取消应用启动时自动迁移。数据库直连受网络限制；本次通过已部署Agent接口验证新字段可读，未声称直接核验迁移账本，也未额外执行远程数据库写入。只操作预发，没有由本任务发起正式发布。
+
+私有发布证据另存`closed-actions-pre-health.json`、`release-negative.json`及`release-negative-provenance.json`，均在`/tmp/multica-trace-605e116e/`。
 
 最终私有冻结证据：`/tmp/multica-trace-605e116e/replay-closed-actions-qrefs.json`。此前失败报告全部保留；修复的新增问题包括缺 intent、混合动作的旧投影误导、修复 Reason 被边界摘录覆盖、缺失上次候选、交付物独立性只藏在审查 prose、原文转义重抄失败。
 
