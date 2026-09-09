@@ -843,6 +843,34 @@ func shouldDeferInboundCoordinator(command DispatchCommand, plan agentDispatchEx
 			plan.MaterializerType == protocol.DispatchSurfaceTypeChat)
 }
 
+// shouldEnqueueInboundCoordinatorJob is the admission gate for the durable
+// short-loop queue. The owner off switch must skip it: auto-mode IM has to
+// land on the sandbox chat task immediately, or the original message is
+// stranded on a Coordinator session and never reaches background Issue work.
+func shouldEnqueueInboundCoordinatorJob(
+	ctx context.Context,
+	h *Handler,
+	command DispatchCommand,
+	plan agentDispatchExecutionPlan,
+	agentID pgtype.UUID,
+) bool {
+	if !shouldDeferInboundCoordinator(command, plan) {
+		return false
+	}
+	return inboundCoordinatorEnabled(ctx, h, agentID)
+}
+
+func inboundCoordinatorEnabled(ctx context.Context, h *Handler, agentID pgtype.UUID) bool {
+	if h == nil || h.Queries == nil || !agentID.Valid {
+		return true
+	}
+	on, err := h.Queries.GetAgentInboundCoordinator(ctx, agentID)
+	if err != nil {
+		return true
+	}
+	return on
+}
+
 func (h *Handler) markSceneMemoryDirty(
 	ctx context.Context,
 	qtx *db.Queries,
