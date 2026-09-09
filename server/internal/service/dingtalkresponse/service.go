@@ -38,6 +38,7 @@ type ActionInput struct {
 	SenderOpenDingTalkID string `json:"sender_open_dingtalk_id"`
 	IsGroup              bool   `json:"is_group"`
 	ShowAITag            bool   `json:"show_ai_tag"`
+	ReplyToOpenMsgID     string `json:"reply_to_open_msg_id,omitempty"`
 	CallbackURL          string `json:"callback_url"`
 	CallbackTarget       string `json:"callback_target"`
 	Text                 string `json:"text,omitempty"`

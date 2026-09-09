@@ -55,6 +55,24 @@ func TestDWSMessagePolicyPreservesArgv(t *testing.T) {
 	}
 }
 
+func TestRewriteDWSOriginReplyQuotesOriginConversation(t *testing.T) {
+	t.Parallel()
+	policy := &protocol.DingTalkMessagePolicy{ReplyToOpenMsgID: "msg-origin", ReplyConversationID: "cid-origin"}
+	got := RewriteDWSOriginReply([]string{"chat", "message", "send", "--conversation-id", "cid-origin", "--content", "结论", "--idempotency-key", "k", "--ai-tag=false"}, policy)
+	want := []string{"chat", "+messages-reply", "--group", "cid-origin", "--message-id", "msg-origin", "--content", "结论", "--idempotency-key", "k", "--ai-tag=false", "--yes", "--format", "json"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+	outreach := []string{"chat", "message", "send", "--conversation-id", "cid-other", "--content", "请问一下"}
+	if got := RewriteDWSOriginReply(outreach, policy); !reflect.DeepEqual(got, outreach) {
+		t.Fatalf("rewrote outreach: %#v", got)
+	}
+	already := []string{"chat", "+messages-reply", "--group", "cid-origin", "--message-id", "msg-other", "--content", "ok"}
+	if got := RewriteDWSOriginReply(already, policy); !reflect.DeepEqual(got, already) {
+		t.Fatalf("rewrote explicit reply: %#v", got)
+	}
+}
+
 func TestDWSMessagePolicySupportedEntryPoints(t *testing.T) {
 	t.Parallel()
 	for _, command := range []string{"chat message send", "chat message reply", "chat send", "chat reply", "chat +send", "chat +dm", "chat +send-to-group", "chat +messages-send", "chat +messages-reply"} {
