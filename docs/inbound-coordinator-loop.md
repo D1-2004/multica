@@ -75,7 +75,7 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 主循环只看有效合同或未迁移状态/hash/全文长度元数据，不能通过 `context_read(kind=job_policy)` 打开长SOP。`context_read(kind=history)`仅恢复本场景原窗口前的指代、对象或上一问，最多3000字符并声明截断；它不是业务查询。所有托管读上下文总预算8000字符，只保留当前有效快照；最新修复反馈800字符。另独立保留最近一次被拒的精确提案JSON，最多6000字符，供下一轮按诊断修复具体字段；超限或非法JSON时明确标omitted，不静默截成残缺提案，也不累积历次候选。完整执行SOP仍由执行器持有；旧Agent的全文审查属于上段明确保留的迁移成本。
 
-审查Reason始终保留具体缺陷诊断；可选边界摘录只能补充，不能替换Reason。若一条实际边界导致revise，可返回最多200字符的 `constraint_quote` 原文，Host验证它是当前限制或已加载岗位约束的逐字子串，再供主循环decline引用。allow附带真实边界旁证也可正常通过，但不把该旁证当作修复指令。无效可选摘录被丢弃并记录 `finish_check_boundary_quote_discarded=true`，不会替代对必填引用和verdict的严格校验。该短摘录只证明这条限制，不是运行时生成的新合同或长SOP摘要。读取失败/缺失不得描述为无约束。
+审查Reason始终保留具体缺陷诊断；可选边界摘录只能补充，不能替换Reason。若一条实际边界导致revise，可返回最多200字符的 `constraint_quote` 原文，Host验证它是当前限制或已加载岗位约束的逐字子串，再供主循环decline引用。allow附带真实边界旁证也可正常通过，但不把该旁证当作修复指令。无效可选摘录被丢弃并记录 `finish_check_boundary_quote_discarded=true`，不会替代对本轮必填quote ref和verdict的严格校验。该短摘录只证明这条限制，不是运行时生成的新合同或长SOP摘要。读取失败/缺失不得描述为无约束。
 
 数字员工 Tab 的人格和语气通过 `GetAgentVoice` 读取；已启用技能通过 `ListEnabledAgentSkillCardMetadata` 提供名称与简介。网页、机器人及数字员工 Dispatch 都由 `FillVoice` 调用 `FillSkills`，延续预发已有的技能快照链路。快循环最多展示 24 条、1200 字的快照并注明覆盖范围，不读取或执行完整 `SKILL.md`；明确请求技能对应工作时，仍按新建/续接计划进入沙箱，不能仅复述能力。
 
@@ -111,7 +111,7 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 所有副作用沿正常域服务路径提交。start_work/continue_work的reply在对应工作真实入库/排队后才回传。审查输入声明该Host保证，因此允许合法受理/排队回执，不要求候选生成时任务已执行；该保证不等于实际开始执行、完成或外部送达。容量按最多两项的批次处理，保留完整计划与每项outcome；部分成功恢复不得从头重放，未处理请求不能静默丢弃。已持久化的旧checkpoint保持既有幂等效果，不因升级强制失效。
 
-终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、分别摘自当前请求和候选回复/工作purpose的 `request_quote / candidate_quote`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。真实边界导致revise时可增加上述200字符constraint_quote。Host严格验证必填request_quote/candidate_quote的逐字来源，以及verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；可选constraint_quote无效时按上述独立丢弃规则处理，decline动作本身仍需真实适用边界。空原窗使用 `[empty_window]`，无文字ignore使用 `[silence]`；这些是审查引用哨兵，不是重新开放旧模型动作。
+终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。真实边界导致revise时可增加上述200字符constraint_quote。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；可选constraint_quote无效时按上述独立丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
 
 工作审查核计划能否授权启动，不要求未来检索已有答案；只起草不能改成发送。非工作审查核每个reply是否属于其kind：不能把未经查证的产品结论、专业分析或空接单承诺塞到acknowledge/能力说明/状态中。decline须有真实适用限制，不能编造缺口或拒绝正常工作。task_finished核当前result_ref及目标场景送达事实，不能把忠实结果回报当成需要新研究的业务问题。格式、口吻、状态灯及完整报告要求不用于拒绝合法短协调动作。
 

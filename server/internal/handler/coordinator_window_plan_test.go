@@ -501,10 +501,28 @@ func (p *taskFinishedCompletionProbe) Chat(_ context.Context, params openai.Chat
 		if len(proposal.CurrentWindow) != 1 || proposal.CurrentWindow[0].Text == "" || len(proposal.Candidate.Actions) != 1 || proposal.Candidate.Actions[0].Kind != "report_result" || proposal.Candidate.Actions[0].Reply == "" {
 			return nil, fmt.Errorf("finish review lacks its actual request or candidate")
 		}
+		encodedSchema, err := json.Marshal(params.Tools[0].GetFunction().Parameters)
+		if err != nil {
+			return nil, err
+		}
+		var schema struct {
+			Properties map[string]struct {
+				Enum []string `json:"enum"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(encodedSchema, &schema); err != nil {
+			return nil, err
+		}
+		requestRefs := schema.Properties["request_quote_ref"].Enum
+		candidateRefs := schema.Properties["candidate_quote_ref"].Enum
+		if len(requestRefs) == 0 || len(candidateRefs) == 0 {
+			return nil, fmt.Errorf("finish review lacks Host quote reference options")
+		}
 		name = "finish_check"
 		arguments = map[string]any{
-			"request_quote": proposal.CurrentWindow[0].Text, "candidate_quote": proposal.Candidate.Actions[0].Reply,
+			"request_quote_ref": requestRefs[0], "candidate_quote_ref": candidateRefs[0],
 			"verdict": "allow", "reason": "The fixture reports only the supplied current result.", "missing_source_refs": []string{},
+			"work_checks": []any{},
 		}
 	} else {
 		resultRef := ""

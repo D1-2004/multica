@@ -13,29 +13,34 @@ import (
 	openai "github.com/openai/openai-go/v3"
 )
 
-const scriptedRequestQuote = "[scripted_request_quote]"
-const scriptedCandidateQuote = "[scripted_candidate_quote]"
+const scriptedRequestQuoteRef = "[scripted_request_quote_ref]"
+const scriptedCandidateQuoteRef = "[scripted_candidate_quote_ref]"
 const scriptedWorkChecks = "[scripted_work_checks]"
 
 func scriptedFinishVerdict(verdict, reason string, refs ...string) openai.ChatCompletion {
 	if refs == nil {
 		refs = []string{}
 	}
-	raw, _ := json.Marshal(map[string]any{"verdict": verdict, "reason": reason, "missing_source_refs": refs, "request_quote": scriptedRequestQuote, "candidate_quote": scriptedCandidateQuote, "work_checks": scriptedWorkChecks})
+	raw, _ := json.Marshal(map[string]any{"verdict": verdict, "reason": reason, "missing_source_refs": refs, "request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "work_checks": scriptedWorkChecks})
 	return assistantTool("review", "finish_check", string(raw))
 }
 
 // Only synthetic markers are filled. Missing, blank or fabricated quotes in
 // explicit malformed responses remain unchanged so Host tests cannot mask them.
-func scriptedExactQuote(text string) string {
-	runes := []rune(strings.TrimSpace(text))
-	if len(runes) > 80 {
-		runes = runes[:80]
+func scriptedReferenceEnums(parameters map[string]any) (string, string) {
+	props, _ := parameters["properties"].(map[string]any)
+	first := func(name string) string {
+		field, _ := props[name].(map[string]any)
+		values := stringSlice(field["enum"])
+		if len(values) > 0 {
+			return values[0]
+		}
+		return ""
 	}
-	return string(runes)
+	return first("request_quote_ref"), first("candidate_quote_ref")
 }
 
-func withScriptedFinishQuotes(response openai.ChatCompletion, proposal string) openai.ChatCompletion {
+func withScriptedFinishReferences(response openai.ChatCompletion, proposal, requestRef, candidateRef string) openai.ChatCompletion {
 	if len(response.Choices) != 1 {
 		return response
 	}
@@ -48,7 +53,6 @@ func withScriptedFinishQuotes(response openai.ChatCompletion, proposal string) o
 		return response
 	}
 	var input struct {
-		Window    []struct{ Text string } `json:"current_window"`
 		Candidate struct {
 			Actions []struct {
 				CoordinationAction
@@ -59,21 +63,6 @@ func withScriptedFinishQuotes(response openai.ChatCompletion, proposal string) o
 	if json.Unmarshal([]byte(proposal), &input) != nil {
 		return response
 	}
-	requestQuote := "[empty_window]"
-	for _, utterance := range input.Window {
-		if text := strings.TrimSpace(utterance.Text); text != "" {
-			requestQuote = scriptedExactQuote(text)
-			break
-		}
-	}
-	candidateQuote := "[silence]"
-	for _, action := range input.Candidate.Actions {
-		text := firstNonEmpty(action.Reply, action.Purpose)
-		if text != "" {
-			candidateQuote = scriptedExactQuote(text)
-			break
-		}
-	}
 	if result["work_checks"] == scriptedWorkChecks {
 		checks := []map[string]string{}
 		for _, action := range input.Candidate.Actions {
@@ -83,11 +72,11 @@ func withScriptedFinishQuotes(response openai.ChatCompletion, proposal string) o
 		}
 		result["work_checks"] = checks
 	}
-	if result["request_quote"] == scriptedRequestQuote {
-		result["request_quote"] = requestQuote
+	if result["request_quote_ref"] == scriptedRequestQuoteRef {
+		result["request_quote_ref"] = requestRef
 	}
-	if result["candidate_quote"] == scriptedCandidateQuote {
-		result["candidate_quote"] = candidateQuote
+	if result["candidate_quote_ref"] == scriptedCandidateQuoteRef {
+		result["candidate_quote_ref"] = candidateRef
 	}
 	raw, _ := json.Marshal(result)
 	return assistantTool(calls[0].ID, toolFinishCheck, string(raw))
@@ -100,7 +89,11 @@ func withScriptedFinishRequest(response openai.ChatCompletion, params openai.Cha
 	raw, _ := json.Marshal(params.Messages[len(params.Messages)-1])
 	var last struct{ Content string }
 	_ = json.Unmarshal(raw, &last)
-	return withScriptedFinishQuotes(response, last.Content)
+	if len(params.Tools) == 0 || params.Tools[0].GetFunction() == nil {
+		return response
+	}
+	requestRef, candidateRef := scriptedReferenceEnums(params.Tools[0].GetFunction().Parameters)
+	return withScriptedFinishReferences(response, last.Content, requestRef, candidateRef)
 }
 
 func TestFinishCheckRejectsUnsupportedAnswerBeforeSavingAndRepairsToWork(t *testing.T) {
@@ -341,19 +334,18 @@ func TestFinishCheckUsesDeterministicBoundedModelRequest(t *testing.T) {
 	}
 }
 
-func TestFinishCheckRejectsUngroundedQuotesBeforeSaving(t *testing.T) {
+func TestFinishCheckRejectsUnknownQuoteReferencesBeforeSaving(t *testing.T) {
 	requestText := "帮我给同事起草周五开会通知。"
-	candidateText := "我现在把通知发给同事。"
 	cases := []struct{ name, requestQuote, candidateQuote string }{
-		{"fabricated request", "请立刻发送并删除历史记录", candidateText},
-		{"empty request", "", candidateText},
-		{"fabricated candidate", requestText, "已成功生成一份PDF"},
-		{"empty candidate", requestText, ""},
-		{"source mistaken for candidate", requestText, requestText},
+		{"unknown request", "q999", scriptedCandidateQuoteRef},
+		{"empty request", "", scriptedCandidateQuoteRef},
+		{"unknown candidate", scriptedRequestQuoteRef, "c999"},
+		{"empty candidate", scriptedRequestQuoteRef, ""},
+		{"wrong reference domains", "c1", "q1"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			raw, _ := json.Marshal(map[string]any{"verdict": "allow", "reason": "Scripted quotation validation fixture.", "missing_source_refs": []string{}, "request_quote": tc.requestQuote, "candidate_quote": tc.candidateQuote, "work_checks": scriptedWorkChecks})
+			raw, _ := json.Marshal(map[string]any{"verdict": "allow", "reason": "Scripted quotation validation fixture.", "missing_source_refs": []string{}, "request_quote_ref": tc.requestQuote, "candidate_quote_ref": tc.candidateQuote, "work_checks": scriptedWorkChecks})
 			chat := &scriptedCompleter{
 				rounds: []openai.ChatCompletion{
 					assistantTool("recall", toolAssocRecall, `{}`),
@@ -448,7 +440,7 @@ func TestFinishCheckDiscardsUnusableOptionalBoundaryWithoutDiscardingVerdict(t *
 		{"FORGED_POLICY_SENTINEL", "revise", false},
 		{strings.Repeat("x", 201), "revise", false},
 	} {
-		raw, _ := json.Marshal(map[string]any{"request_quote": "先起草通知", "candidate_quote": "我来起草通知。", "constraint_quote": tc.quote, "verdict": tc.verdict, "reason": "Only an authorized draft may proceed.", "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
+		raw, _ := json.Marshal(map[string]any{"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "constraint_quote": tc.quote, "verdict": tc.verdict, "reason": "Only an authorized draft may proceed.", "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
 		chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{assistantTool("check", toolFinishCheck, string(raw))}}
 		result, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, Decision{Action: ActionIssue, UserText: "我来起草通知。", CoordinationActions: []CoordinationAction{{Kind: "start_work", SourceRefs: []string{"u1"}, Purpose: "起草周五下午三点会议通知正文", Intent: "other", Reply: "我来起草通知。"}}, Items: []WindowItem{{SourceRefs: []string{"u1"}, Purpose: "起草周五下午三点会议通知正文", Intent: "other"}}}, nil, 0, nil)
 		if err != nil || result.Verdict != tc.verdict || (result.ConstraintQuote != "") != tc.keep {
@@ -461,7 +453,7 @@ func TestFinishCheckRepairSeesRejectedProposalAndSpecificReasonWithoutForgedBoun
 	const bad = `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"起草周五下午三点全员例会通知正文","intent":"other","reply":"已经发给大家了。"}]}`
 	const fixed = `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"起草周五下午三点全员例会通知正文","intent":"other","reply":"我来起草周五例会通知。"}]}`
 	const reason = "第1项reply虚报发送；保持起草purpose，只将reply改成起草承诺。"
-	revise, _ := json.Marshal(map[string]any{"request_quote": scriptedRequestQuote, "candidate_quote": scriptedCandidateQuote, "constraint_quote": "FORGED_POLICY_SENTINEL", "verdict": "revise", "reason": reason, "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
+	revise, _ := json.Marshal(map[string]any{"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "constraint_quote": "FORGED_POLICY_SENTINEL", "verdict": "revise", "reason": reason, "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("bad", toolFinish, bad), assistantTool("fixed", toolFinish, fixed)}, checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, string(revise)), scriptedFinishVerdict("allow", "The drafting plan and its acknowledgement stay within scope.")}}
 	d, err := (&Coordinator{Chat: chat}).runLoop(context.Background(), Turn{Source: SourceWeb, Message: "帮我起草周五三点全员例会通知，先不发送。"})
 	if err != nil || d.Action != ActionIssue || chat.calls != 2 || chat.checkCalls != 2 {
@@ -533,7 +525,7 @@ func TestFinishCheckRequiresOneExplicitAtomicityJudgmentPerWorkAction(t *testing
 		{"invalid count kind", `[{"action_ref":"a1","deliverables":"maybe"},{"action_ref":"a3","deliverables":"single"}]`, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reply := `{"verdict":"allow","reason":"The requested plan is covered.","request_quote":"请查证听记规则","candidate_quote":"我来查证听记。","missing_source_refs":[],"work_checks":` + tc.checks + `}`
+			reply := `{"verdict":"allow","reason":"The requested plan is covered.","request_quote_ref":"q1","candidate_quote_ref":"c1","missing_source_refs":[],"work_checks":` + tc.checks + `}`
 			chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, reply)}}
 			result, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil)
 			if (err != nil) != tc.wantError || (!tc.wantError && result.Verdict != tc.want) {
@@ -543,5 +535,74 @@ func TestFinishCheckRequiresOneExplicitAtomicityJudgmentPerWorkAction(t *testing
 				t.Fatalf("atomicity repair must target its work action: %s", result.Reason)
 			}
 		})
+	}
+}
+
+func TestFinishCheckBindsHostQuoteReferencesWithoutRewritingEscapes(t *testing.T) {
+	text := "我能处理产品需求：\\n收集与分析。\n也能排查问题。"
+	turn := Turn{Source: SourceDigitalEmployee, Message: "你好\\n你能做什么？\n请介绍能力。"}
+	candidate := Decision{Action: ActionReply, UserText: text, CoordinationActions: []CoordinationAction{{Kind: "describe_capabilities", SourceRefs: []string{"u1"}, Reply: text}}}
+	chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "The capability summary is within scope.")}}
+	result, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil)
+	if err != nil || result.RequestQuote != turn.Message || result.CandidateQuote != text || result.RequestQuoteRef == "" || result.CandidateQuoteRef == "" {
+		t.Fatalf("Host changed literal/newline text during reference binding: %#v err=%v", result, err)
+	}
+	props := chat.checkParams[0].Tools[0].GetFunction().Parameters["properties"].(map[string]any)
+	if props["request_quote"] != nil || props["candidate_quote"] != nil {
+		t.Fatal("free-form quotation must not remain in the reviewer schema")
+	}
+	q, c := scriptedReferenceEnums(chat.checkParams[0].Tools[0].GetFunction().Parameters)
+	if result.RequestQuoteRef != q || result.CandidateQuoteRef != c {
+		t.Fatal("review did not use exactly the offered reference domains")
+	}
+}
+
+func TestFinishQuoteOptionsAreBoundedExactSubstringsAndRejectUnknownRefs(t *testing.T) {
+	text := strings.Repeat("原文\\n\n", 100)
+	turn := Turn{Source: SourceDigitalEmployee, Message: text}
+	candidate := Decision{Action: ActionReply, UserText: text, CoordinationActions: []CoordinationAction{{Kind: "describe_capabilities", SourceRefs: []string{"u1"}, Reply: text}}}
+	options := finishQuotes(turn, candidate)
+	for _, choices := range [][]finishQuoteOption{options.Requests, options.Candidates} {
+		if len(choices) == 0 {
+			t.Fatal("empty reference domain")
+		}
+		for _, choice := range choices {
+			if utf8.RuneCountInString(choice.Text) > 80 || !strings.Contains(text, choice.Text) {
+				t.Fatalf("quote must be an exact bounded source span: %#v", choice)
+			}
+		}
+	}
+	for _, refs := range [][2]string{{"q999", options.Candidates[0].Ref}, {options.Requests[0].Ref, "c999"}, {"c1", "q1"}} {
+		if err := bindFinishQuotes(&finishCheckResult{RequestQuoteRef: refs[0], CandidateQuoteRef: refs[1]}, options); err == nil {
+			t.Fatalf("unknown/cross-domain refs accepted: %v", refs)
+		}
+	}
+}
+
+func TestFinishCheckRejectsFreeQuotationFieldsOnTheWire(t *testing.T) {
+	raw := `{"request_quote_ref":"q1","candidate_quote_ref":"c1","request_quote":"fabricated request","candidate_quote":"fabricated result","verdict":"allow","reason":"invalid old wire fields","missing_source_refs":[],"work_checks":[]}`
+	response := assistantTool("review", toolFinishCheck, raw)
+	if _, err := parseFinishCheck(&response, 1); err == nil {
+		t.Fatal("old free-form quotation fields must not be accepted beside finite references")
+	}
+}
+
+func TestValidateFinishQuotesStillRejectsFabricatedSourceText(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, Message: "帮我起草周五会议通知，不要发送。"}
+	candidate := Decision{Action: ActionReply, UserText: "我来起草会议通知。", CoordinationActions: []CoordinationAction{{Kind: "acknowledge", Reply: "我来起草会议通知。"}}}
+	for _, tc := range []struct {
+		request, candidate string
+		valid              bool
+	}{
+		{"帮我起草周五会议通知", "我来起草会议通知。", true},
+		{"请立即发送所有资料", "我来起草会议通知。", false},
+		{"帮我起草周五会议通知", "已经发给所有人", false},
+		{"帮我起草周五会议通知", "帮我起草周五会议通知，不要发送。", false},
+		{"", "我来起草会议通知。", false},
+	} {
+		err := validateFinishQuotes(finishCheckResult{RequestQuote: tc.request, CandidateQuote: tc.candidate, Verdict: "allow"}, turn, candidate)
+		if (err == nil) != tc.valid {
+			t.Fatalf("original-source validation changed: %#v err=%v", tc, err)
+		}
 	}
 }

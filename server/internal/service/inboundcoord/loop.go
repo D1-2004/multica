@@ -315,7 +315,7 @@ func coordinatorIssueCommentListTool() openai.ChatCompletionToolUnionParam {
 			"required":             []string{"issue_id"},
 			"properties": map[string]any{
 				"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall items[].issue_id, or from this turn's issue_id when loop=task_finished."),
-				"tail":     map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "default": 3, "description": "Newest comments to return, default 20, max 50."},
+				"tail":     map[string]any{"type": "integer", "minimum": 1, "maximum": 50, "description": "Newest comments to return, default 20, max 50."},
 			},
 		},
 	})

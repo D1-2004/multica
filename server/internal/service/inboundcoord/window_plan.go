@@ -244,7 +244,10 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 			if a.Kind == "report_memory" || a.Kind == "report_result" {
 				limit = 1800
 			}
-			if a.Reply == "" || utf8.RuneCountInString(a.Reply) > limit {
+			if a.Reply == "" {
+				return Decision{}, hintErr(a.Kind+" requires reply", "Set reply on this "+a.Kind+" action; preserve its source_refs and other valid fields.")
+			}
+			if utf8.RuneCountInString(a.Reply) > limit {
 				return Decision{}, fmt.Errorf("%s requires reply of at most %d characters", a.Kind, limit)
 			}
 			replies = append(replies, a.Reply)

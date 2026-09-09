@@ -221,7 +221,7 @@
     },
     {
       "id": "finish_check",
-      "version": "8",
+      "version": "9",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -243,12 +243,12 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 2000,
-      "content_sha256": "6a6ed711f0543281b868689563f8eb95936893b72467d64cd1a0cb2b80b93b74"
+      "budget_characters": 1850,
+      "content_sha256": "9cabd86dce2423be622db80025ed52650529c51ecf1642b864720ac31711a8bd"
     },
     {
       "id": "finish_check_work",
-      "version": "7",
+      "version": "8",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -270,8 +270,8 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 2100,
-      "content_sha256": "2941985338a12927590d9c621a2ca6ab2bc915e696dfa59e5c9489342eea43cc"
+      "budget_characters": 2000,
+      "content_sha256": "c31b3073aef7b27ca4af69083b230ce7895336bfd9e219a0a8e4acd21a2ed1b7"
     }
   ],
   "obligations": [
@@ -800,7 +800,7 @@
     {
       "id": "COORD.F13",
       "family": "F13",
-      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。",
+      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -848,7 +848,8 @@
         "server/internal/service/inboundcoord/coordination_view.go",
         "server/internal/coordinatorcontract/contract.go",
         "server/internal/handler/agent.go",
-        "server/internal/service/inboundcoord/coordination_context.go"
+        "server/internal/service/inboundcoord/coordination_context.go",
+        "server/internal/service/inboundcoord/finish_quote.go"
       ],
       "case_file": "cases.json"
     },
@@ -970,7 +971,8 @@
         "server/internal/coordinatorcontract/contract.go",
         "server/internal/handler/agent.go",
         "server/internal/service/inboundcoord/coordination_context.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/finish_quote.go"
       ],
       "case_file": "cases.json"
     },
@@ -1096,7 +1098,8 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/coordination_context.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/finish_quote.go"
       ],
       "case_file": "cases.json"
     }
@@ -1271,6 +1274,16 @@
       "incident_refs": [
         "605e116e29704bf294f653bb4508a684"
       ]
+    },
+    {
+      "id": "LEGACY.LLM_TRANSCRIBED_REVIEW_QUOTES",
+      "status": "superseded",
+      "superseded_by": [
+        "COORD.F13",
+        "COORD.F16",
+        "COORD.F19"
+      ],
+      "reason": "合法语义裁决仍会因LLM抄写引文的换行/转义差异失败；改为Host生成有界原文选项，LLM只选本轮引用ID，Host严格绑定原文。完整窗口仍是语义判断全集，不降低真实性校验。"
     }
   ]
 }

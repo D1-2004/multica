@@ -24,6 +24,8 @@ type finishWorkCheck struct {
 }
 
 type finishCheckResult struct {
+	RequestQuoteRef   string            `json:"request_quote_ref"`
+	CandidateQuoteRef string            `json:"candidate_quote_ref"`
 	WorkChecks        []finishWorkCheck `json:"work_checks"`
 	ConstraintQuote   string            `json:"constraint_quote,omitempty"`
 	RequestQuote      string            `json:"request_quote"`
@@ -33,7 +35,7 @@ type finishCheckResult struct {
 	MissingSourceRefs []string          `json:"missing_source_refs"`
 }
 
-func finishCheckTool(action Action) openai.ChatCompletionToolUnionParam {
+func finishCheckTool(action Action, quotes finishQuoteOptions) openai.ChatCompletionToolUnionParam {
 	description := "Review a proposed reply or silence. Compare the actual request with the quoted candidate and supplied evidence. Reject unsupported business answers, unhandled work or violated restrictions; status replies need no report formatting. Do not answer the business question."
 	if action == ActionIssue {
 		description = "Authorize or reject STARTING the proposed work plan. Host will execute each work action.purpose after allow. Compare its planned actions with the actual request and full authorization limits. A lookup plan is valid before the answer exists; do not require research results or a final business reply now."
@@ -42,12 +44,12 @@ func finishCheckTool(action Action) openai.ChatCompletionToolUnionParam {
 		Name:        toolFinishCheck,
 		Description: openai.String(description),
 		Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false,
-			"required": []string{"request_quote", "candidate_quote", "verdict", "reason", "missing_source_refs", "work_checks"},
+			"required": []string{"request_quote_ref", "candidate_quote_ref", "verdict", "reason", "missing_source_refs", "work_checks"},
 			"properties": map[string]any{
 				"work_checks":         map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables"}, "properties": map[string]any{"action_ref": map[string]any{"type": "string", "description": "Copy Host action_ref a1/a2 from the work action."}, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "single: one output, possibly several steps; multiple: unrelated independently executable goals bundled in one action; none: no executable deliverable."}}}},
 				"constraint_quote":    map[string]any{"type": "string", "maxLength": 200, "description": "Optional verbatim evidence of an applicable authorization/scope/privacy boundary (only used as repair feedback on revise): quote at most 200 characters verbatim from job_policy or current_window. Host validates this before showing the missing boundary to the Coordinator; no paraphrase or invented rule."},
-				"request_quote":       map[string]any{"type": "string", "description": "Copy one short CONTIGUOUS operative phrase from one current_window text (or current_task_result on completion), usually 8-80 characters. Never combine utterances, paraphrase or change escapes. [empty_window] only for no input."},
-				"candidate_quote":     map[string]any{"type": "string", "description": "Copy one short CONTIGUOUS commitment from ONE action.reply or ONE work action.purpose, usually 8-80 characters (short replies may be shorter). Never concatenate actions or copy a whole multiline reply. Preserve literal escapes. [silence] only for no-text ignore."},
+				"request_quote_ref":   map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Requests), "description": "Select a Host request quote option qN. The option is evidence only; read the entire current_window for all intents and constraints. Do not transcribe text."},
+				"candidate_quote_ref": map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Candidates), "description": "Select a Host candidate quote option cN for the action you compared. Host binds its exact original text; do not transcribe or escape it."},
 				"verdict":             map[string]any{"type": "string", "enum": []string{"allow", "revise"}},
 				"reason":              map[string]any{"type": "string", "maxLength": 160, "description": "One short clause naming the material defect or reason to allow. At most 160 characters. No report, rule recital, business answer or formatting advice."},
 				"missing_source_refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Current uN refs whose requested work or required clarification is not covered; empty for allow."},
@@ -170,9 +172,10 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	}
 	// Put the exact proposal after the long background policy. Use the same
 	// lower-case work fields the routing schema exposes, rather than Go names.
+	quotes := finishQuotes(turn, decision)
 	proposal, err := json.Marshal(map[string]any{
 		"review_mode": mode, "current_window": window, "source_refs": refs,
-		"candidate": map[string]any{"actions": actions},
+		"candidate": map[string]any{"actions": actions}, "quote_options": quotes,
 	})
 	if err != nil {
 		return finishCheckResult{}, fmt.Errorf("encode finish proposal: %w", err)
@@ -197,7 +200,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 			Metadata: map[string]any{"finish_check_policy_version": manifest.PolicyVersion, "finish_check_prompt_hash": manifest.PromptHash, "finish_check_modules": manifest.Modules, "job_policy_sha256": policy["sha256"], "job_policy_kind": policy["kind"], "coordinator_contract": coordinatorContractMetadata(turn)},
 		})
 	}
-	completion, err := c.completeWithLimit(checkCtx, checkMessages, []openai.ChatCompletionToolUnionParam{finishCheckTool(decision.Action)}, 768, 0)
+	completion, err := c.completeWithLimit(checkCtx, checkMessages, []openai.ChatCompletionToolUnionParam{finishCheckTool(decision.Action, quotes)}, 768, 0)
 	endRoundGeneration(generation, completion, err)
 	if err != nil {
 		record(finishCheckResult{}, false, err)
@@ -211,6 +214,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		if lt != nil {
 			lt.AddMetadata(map[string]any{"finish_check_boundary_quote_discarded": true})
 		}
+	}
+	if err == nil {
+		err = bindFinishQuotes(&result, quotes)
 	}
 	if err == nil {
 		err = validateFinishQuotes(result, turn, decision)
@@ -278,6 +284,15 @@ func parseFinishCheck(completion *openai.ChatCompletion, sourceCount int) (finis
 	if len(calls) != 1 || calls[0].Name != toolFinishCheck {
 		return result, fmt.Errorf("finish check did not call its validation tool")
 	}
+	var wireFields map[string]json.RawMessage
+	if json.Unmarshal([]byte(calls[0].Arguments), &wireFields) == nil {
+		if _, ok := wireFields["request_quote"]; ok {
+			return result, fmt.Errorf("select request_quote_ref instead of transcribing request_quote")
+		}
+		if _, ok := wireFields["candidate_quote"]; ok {
+			return result, fmt.Errorf("select candidate_quote_ref instead of transcribing candidate_quote")
+		}
+	}
 	decoder := json.NewDecoder(strings.NewReader(calls[0].Arguments))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&result); err != nil {
@@ -287,7 +302,7 @@ func parseFinishCheck(completion *openai.ChatCompletion, sourceCount int) (finis
 	if err := decoder.Decode(&trailing); err != io.EOF {
 		return result, fmt.Errorf("finish check must contain one JSON object")
 	}
-	if (result.Verdict != "allow" && result.Verdict != "revise") || strings.TrimSpace(result.Reason) == "" || result.MissingSourceRefs == nil || result.WorkChecks == nil {
+	if (result.Verdict != "allow" && result.Verdict != "revise") || strings.TrimSpace(result.Reason) == "" || result.MissingSourceRefs == nil || result.WorkChecks == nil || result.RequestQuoteRef == "" || result.CandidateQuoteRef == "" {
 		return result, fmt.Errorf("finish check needs a verdict and reason")
 	}
 	for _, ref := range result.MissingSourceRefs {

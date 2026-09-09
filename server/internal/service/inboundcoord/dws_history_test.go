@@ -44,7 +44,8 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 			} `json:"messages"`
 			Tools []struct {
 				Function struct {
-					Name string `json:"name"`
+					Name       string         `json:"name"`
+					Parameters map[string]any `json:"parameters"`
 				} `json:"function"`
 			} `json:"tools"`
 		}
@@ -53,7 +54,8 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 		if len(body.Tools) == 1 && body.Tools[0].Function.Name == "finish_check" {
 			// This HTTP fixture verifies history transport and routing rounds;
 			// semantic verdicts have their own scripted and real-model tests.
-			_ = json.NewEncoder(w).Encode(withScriptedFinishQuotes(scriptedFinishVerdict("allow", "Scripted history fixture allows the candidate."), body.Messages[len(body.Messages)-1].Content))
+			requestRef, candidateRef := scriptedReferenceEnums(body.Tools[0].Function.Parameters)
+			_ = json.NewEncoder(w).Encode(withScriptedFinishReferences(scriptedFinishVerdict("allow", "Scripted history fixture allows the candidate."), body.Messages[len(body.Messages)-1].Content, requestRef, candidateRef))
 			return
 		}
 		call := calls.Add(1)

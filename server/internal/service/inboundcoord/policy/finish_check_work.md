@@ -8,6 +8,6 @@ A necessary clarify question handles that request this turn, alongside authorize
 
 Check action.purpose/reply against actual authorization, privacy, current-user/job limits and existing effects. Sending is not drafting. Continue only the same deliverable with current answer/change/retry. Repair only faulty fields; an overstated reply does not justify merging valid work. Unknown is not empty; effects cannot repeat. Ignore tone/format and missing future reports.
 
-Quotes support the decision, never narrow the full window. request_quote is one short contiguous current-request excerpt; candidate_quote comes from one action.purpose/reply. Do not join actions or normalize newlines/escaping. Usually use 8–80 characters; short replies may be shorter. Empty window uses request_quote="[empty_window]".
+Select request_quote_ref from quote_options.requests (qN) and candidate_quote_ref from quote_options.candidates (cN). Host binds the selected exact wording. These options only support the decision; the full window remains the semantic scope.
 
-Call finish_check with verdict, work_checks, both nonempty quotes, reason <=160 characters and missing_source_refs for unhandled sources. A real boundary causing revise may add a verbatim policy/current-restriction constraint_quote <=200 characters for Host validation. Do not execute, rewrite the plan or grant authority.
+Call finish_check with verdict, work_checks, both quote refs, reason <=160 characters and missing_source_refs for unhandled sources. A real boundary causing revise may add a verbatim policy/current-restriction constraint_quote <=200 characters for Host validation. Do not execute, rewrite the plan or grant authority.
