@@ -1,3 +1,4 @@
+import { ReusableDingTalkIdentitiesSchema } from "./schemas";
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
@@ -2471,5 +2472,19 @@ describe("label usage task attribution schema", () => {
     expect(parsed.tasks).toHaveLength(1);
     expect(parsed.tasks[0]?.agent_id).toBe("agent-1");
     expect(parsed.tasks[0]?.attribution).toBeUndefined();
+  });
+});
+
+
+describe("ReusableDingTalkIdentitiesSchema", () => {
+  it("returns only display metadata and a source Agent reference", () => {
+    const parsed = ReusableDingTalkIdentitiesSchema.parse({ identities: [{
+      source_agent_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", source_agent_name: "source",
+      account_display_name: "Alice", organization_name: "Acme", dws_uid: "must-not-leak",
+    }] });
+    expect(parsed).toEqual([{ sourceAgentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", sourceAgentName: "source", accountDisplayName: "Alice", organizationName: "Acme" }]);
+  });
+  it.each([{}, { identities: null }, { identities: [{}] }, { identities: [{ source_agent_id: "bad" }] }])("rejects malformed candidates %j", (data) => {
+    expect(ReusableDingTalkIdentitiesSchema.safeParse(data).success).toBe(false);
   });
 });

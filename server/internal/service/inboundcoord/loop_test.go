@@ -16,9 +16,13 @@ import (
 )
 
 type scriptedCompleter struct {
-	rounds []openai.ChatCompletion
-	calls  int
-	params []openai.ChatCompletionNewParams
+	rounds      []openai.ChatCompletion
+	calls       int
+	params      []openai.ChatCompletionNewParams
+	checkRounds []openai.ChatCompletion
+	checkCalls  int
+	checkParams []openai.ChatCompletionNewParams
+	checkError  error
 }
 
 func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
@@ -38,113 +42,25 @@ func TestNewIssueRequiresCurrentSceneRecall(t *testing.T) {
 	}
 }
 
-func TestRequireNoFakeWorkReplyRejectsClaimedSandboxEffects(t *testing.T) {
-	reportTurn := Turn{
-		Message: "你好，今天主要工作是对顺丰的风景台进行需求调研",
-		Skills:  []SkillSnapshot{{Name: "work-report-operator", Description: "当用户提交或更新本人日报时使用"}},
-	}
-	if err := requireNoFakeWorkReply(reportTurn, `{"action":"reply","text":"收到。顺丰风景台的需求调研已记录，今天会重点跟进这块工作。"}`); err == nil {
-		t.Fatal("claimed 已记录 must not pass as reply")
-	}
-	if err := requireNoFakeWorkReply(reportTurn, `{"action":"reply","text":"好，等你把今天的日报正文发过来。"}`); err != nil {
-		t.Fatalf("asking for the report body is a legal reply: %v", err)
-	}
-	if err := requireNoFakeWorkReply(reportTurn, `{"action":"issue","text":"我去把今天这段记进日报","delegator":"G酱","purpose":"提交G酱今日日报：顺丰风景台需求调研","intent":"other"}`); err != nil {
-		t.Fatalf("issue path must pass: %v", err)
-	}
-	if err := requireNoFakeWorkReply(Turn{
-		Message: "今天日报写了吗",
-		Skills:  []SkillSnapshot{{Name: "work-report-operator", Description: "当用户提交或更新本人日报时使用"}},
-	}, `{"action":"reply","text":"还没有记上，你把今天的正文发过来我帮你写。"}`); err != nil {
-		t.Fatalf("日报 status inquiry must stay a legal reply: %v", err)
-	}
-
-	lookupTurn := Turn{
-		Message: "平台方是否应对AI练货底层模型稳定性进行兜底及透出底层日志",
-		Skills:  []SkillSnapshot{{Name: "knowledge-query", Description: "查询 Semantica 中当前生效的正式口径"}},
-	}
-	if err := requireNoFakeWorkReply(lookupTurn, `{"action":"reply","text":"这个问题涉及平台责任边界和技术透明度，我需要先查一下咱们内部有没有相关的正式口径或历史决策。\n\n我查一下现有记录里有没有类似情况的处理先例，稍后给你更具体的建议。"}`); err == nil {
-		t.Fatal("我先查一下 / 稍后给你 must not pass as reply")
-	}
-	if err := requireNoFakeWorkReply(lookupTurn, `{"action":"reply","text":"我看了下，目前内网 VOC 数据获取确实存在被动和不同步的情况。要解决这个问题，建议从这几个方向入手：建立主动订阅机制。"}`); err != nil {
-		t.Fatalf("consulting wording without a completion claim is prompt-routed, not Host-hard: %v", err)
-	}
-	if err := requireNoFakeWorkReply(Turn{Message: "在吗"}, `{"action":"reply","text":"在，有事直接说。"}`); err != nil {
-		t.Fatalf("presence reply must pass: %v", err)
-	}
-	if err := requireNoFakeWorkReply(Turn{Message: "练货"}, `{"action":"reply","text":"要我先查一下现有口径吗？"}`); err != nil {
-		t.Fatalf("clarifying 先查一下 as a question must pass: %v", err)
-	}
-	if err := requireNoFakeWorkReply(Turn{Message: "日报"}, `{"action":"reply","text":"目前还没有已记录的日报。"}`); err != nil {
-		t.Fatalf("negated 已记录 must pass: %v", err)
-	}
-	claimed := `{"action":"reply","text":"收到。顺丰风景台的需求调研已记录，今天会重点跟进这块工作。"}`
-	if _, err := parseValidatedWindowPlan(claimed, reportTurn, nil, nil); err == nil {
-		t.Fatal("window plan must reject the claimed-record reply on the first finish")
-	} else if !isFakeWorkReplyHint(err) || !strings.Contains(err.Error(), "sandbox effect") {
-		t.Fatalf("first finish must be the fake-work hint: %v", err)
-	} else {
-		hintJSON := marshalToolFailure(err)
-		if !strings.Contains(hintJSON, "assoc_recall") || !strings.Contains(hintJSON, "action=issue") || !strings.Contains(hintJSON, "keep action=reply") {
-			t.Fatalf("hint must spell both paths: %s", hintJSON)
-		}
-	}
-	second, err := parseValidatedWindowPlanHinted(claimed, reportTurn, nil, nil, true)
-	if err != nil || second.Action != ActionReply {
-		t.Fatalf("second finish must fail-open as reply: plan=%#v err=%v", second, err)
-	}
-}
-
-func TestLoopFakeWorkReplyHintedOnceThenAccepted(t *testing.T) {
-	t.Parallel()
-	claimed := `{"action":"reply","text":"收到。顺丰风景台的需求调研已记录，今天会重点跟进这块工作。"}`
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("f0", toolFinish, claimed),
-		assistantTool("f1", toolFinish, claimed),
-	}}
-	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
-		Source: SourceDigitalEmployee, Message: "你好，今天主要工作是对顺丰的风景台进行需求调研",
-		ConversationID: "cid-report",
-		Skills:         []SkillSnapshot{{Name: "work-report-operator", Description: "当用户提交或更新本人日报时使用"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Action != ActionReply || got.UserText == "" || chat.calls != 2 {
-		t.Fatalf("one hint then fail-open reply: action=%s text=%q calls=%d", got.Action, got.UserText, chat.calls)
-	}
-	sawHint := false
-	for _, step := range got.Steps {
-		if step.Tool == toolFinish && step.Error && strings.Contains(step.Output, "assoc_recall") {
-			sawHint = true
-		}
-	}
-	if !sawHint {
-		t.Fatalf("missing one-shot fake-work hint, steps=%#v", got.Steps)
-	}
-}
-
-func TestLoopFakeWorkReplyHintThenIssue(t *testing.T) {
-	t.Parallel()
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("f0", toolFinish, `{"action":"reply","text":"收到。顺丰风景台的需求调研已记录。"}`),
-		assistantTool("r1", toolAssocRecall, `{"conversation_id":"cid-report"}`),
-		assistantTool("f1", toolFinish, `{"action":"issue","text":"我去把今天这段记进日报","items":[{"source_refs":["u1"],"purpose":"提交今日日报：顺丰风景台需求调研","intent":"other","basis":"new_request"}]}`),
-	}}
-	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{recall: `{"items":[]}`}}).runLoop(context.Background(), Turn{
-		Source: SourceDigitalEmployee, Message: "你好，今天主要工作是对顺丰的风景台进行需求调研",
-		ConversationID: "cid-report", SenderName: "G酱",
-		Skills: []SkillSnapshot{{Name: "work-report-operator", Description: "当用户提交或更新本人日报时使用"}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Action != ActionIssue || !strings.Contains(got.UserText, "记进日报") || chat.calls != 3 {
-		t.Fatalf("after hint the model must be able to submit issue: action=%s text=%q calls=%d err=%v", got.Action, got.UserText, chat.calls, err)
-	}
-}
-
 func (s *scriptedCompleter) Chat(_ context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
+	if names := toolParamNames(params.Tools); len(names) == 1 && names[0] == "finish_check" {
+		s.checkParams = append(s.checkParams, params)
+		s.checkCalls++
+		if s.checkError != nil {
+			return nil, s.checkError
+		}
+		if s.checkRounds != nil {
+			if s.checkCalls > len(s.checkRounds) {
+				return nil, fmt.Errorf("unexpected extra finish check %d", s.checkCalls)
+			}
+			out := withScriptedFinishRequest(s.checkRounds[s.checkCalls-1], params)
+			return &out, nil
+		}
+		// Existing scripted tests exercise the Host plan protocol, not model
+		// judgment. Dedicated finish-check tests supply explicit verdicts.
+		out := withScriptedFinishRequest(scriptedFinishVerdict("allow", "Scripted Host-protocol fixture accepts this candidate."), params)
+		return &out, nil
+	}
 	s.params = append(s.params, params)
 	if s.calls >= len(s.rounds) {
 		return nil, fmt.Errorf("unexpected extra round %d", s.calls)
@@ -734,9 +650,84 @@ func TestLoopNamedCIDFinishWithoutRecallIsRejected(t *testing.T) {
 
 func TestExtractConversationIDs(t *testing.T) {
 	t.Parallel()
-	got := extractConversationIDs("cid+bEFv7ngm9n79Q1vL9HYJ1w== 里面聊了什么")
-	if len(got) != 1 || got[0] != "cid+bEFv7ngm9n79Q1vL9HYJ1w==" {
-		t.Fatalf("got=%v", got)
+	short := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
+	long := "cidSYyaWxOBeot0PXEyA6BNd1/SxKmRz0LQxkl8L2MbF4U="
+	for _, tt := range []struct {
+		name    string
+		message string
+		want    []string
+	}{
+		{"short", short + " 里面聊了什么", []string{short}},
+		{"long and punctuation", "看看（" + long + "）和 `" + short + "`", []string{long, short}},
+		{"field and duplicate", "conversation_id=" + long + "，再查" + long, []string{long}},
+		{"url-safe opaque id", "cidAbCdEfgh_123-xyz 在跟什么", []string{"cidAbCdEfgh_123-xyz"}},
+		{"report query", "https://landray.dingtalkapps.com/alid/app/report/viewReport_new.html?id=report&cid=75953554200&cname=team", nil},
+		{"encoded report link", "dingtalk://dingtalkclient/action/openapp?redirect_url=https%3A%2F%2Fexample.com%2Freport%3Fcid%3D75953554200", nil},
+		{"opaque id inside URL", "https://example.com/report?openConversationId=" + long, []string{long}},
+		{"opaque id inside DingTalk link", "dingtalk://dingtalkclient/action/openapp?openConversationId=" + short, []string{short}},
+		{"link and explicit scene", "[报告](https://example.com/report?cid=75953554200)\n" + short + " 里面聊了什么", []string{short}},
+		{"link and adjacent explicit scene", "https://example.com/report?cid=75953554200，另查" + long, []string{long}},
+		{"ordinary text", "cid=75953554200 acidabcdefghij lucidabcdefghij cid-short", nil},
+		{"malformed padding", short + "= " + short + "extra", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractConversationIDs(tt.message)
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("got=%v want=%v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoopReportLinkDoesNotRequireNamedConversationRecall(t *testing.T) {
+	t.Parallel()
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("f1", toolFinish, `{"action":"reply","text":"PC 官网迭代这一段似乎没有写完。"}`),
+	}}
+	tools := &stubTools{recall: `{"items":[]}`}
+	c := &Coordinator{Chat: chat, Tools: tools}
+	got, err := c.runLoop(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		ConversationID: "cid58bvFJhm51zIMVj1WGa/vMyRqIqidBhxeJFn667zqMY=",
+		Message: "今日最重要进展：PC 官网迭代。围绕\n" +
+			"[日志](https://landray.dingtalkapps.com/alid/app/report/viewReport_new.html?id=report&cid=75953554200&cname=team)\n" +
+			"dingtalk://dingtalkclient/action/openapp?redirect_url=https%3A%2F%2Fexample.com%2Freport%3Fcid%3D75953554200",
+	})
+	if err != nil || got.Action != ActionReply || got.ToolRounds != 1 || len(tools.calls) != 0 {
+		t.Fatalf("report metadata must not create another scene lookup: decision=%#v err=%v calls=%v", got, err, tools.calls)
+	}
+}
+
+func TestNamedCurrentConversationStillRequiresRecall(t *testing.T) {
+	t.Parallel()
+	cid := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: cid, Message: cid + " 里面聊了什么"}
+	raw := `{"action":"reply","text":"本次范围内未找到事项记录。"}`
+	_, err := parseValidatedWindowPlan(raw, turn, nil, nil)
+	if err == nil || !strings.Contains(marshalToolFailure(err), cid) {
+		t.Fatalf("missing recall must identify the exact named scene: %v", err)
+	}
+	got, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: cid}}, nil)
+	if err != nil || got.Action != ActionReply {
+		t.Fatalf("current named scene is answerable after recall: %#v err=%v", got, err)
+	}
+}
+
+func TestLinkedConversationStillRequiresRecall(t *testing.T) {
+	t.Parallel()
+	cid := "cid+bEFv7ngm9n79Q1vL9HYJ1w=="
+	turn := Turn{
+		Source:         SourceDigitalEmployee,
+		ConversationID: "cid-current",
+		Message:        "这个会话在跟什么事 dingtalk://dingtalkclient/action/openapp?openConversationId=" + cid,
+	}
+	raw := `{"action":"reply","text":"本次范围内未找到事项记录。"}`
+	if _, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil); err == nil {
+		t.Fatal("reading the current scene does not cover the genuine linked scene")
+	}
+	got, err := parseValidatedWindowPlan(raw, turn, []recallCall{{ConversationID: cid}}, nil)
+	if err != nil || got.Action != ActionReply {
+		t.Fatalf("linked named scene is answerable after recall: %#v err=%v", got, err)
 	}
 }
 
@@ -825,6 +816,66 @@ func TestWindowPlanCannotIntroduceUnrecalledTarget(t *testing.T) {
 		if !containsString(stringSlice(items["required"]), required) {
 			t.Fatalf("missing per-item obligation %s", required)
 		}
+	}
+}
+
+func TestWindowPlanEmptyTextHintDistinctFromItems(t *testing.T) {
+	t.Parallel()
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201", Message: "看下你的环境变量和dws身份 mcp和skills有什么"}
+	recalls := []recallCall{{ConversationID: turn.ConversationID}}
+	items := `[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]`
+	_, err := parseValidatedWindowPlan(`{"action":"issue","text":"","items":`+items+`}`, turn, recalls, nil)
+	if err == nil {
+		t.Fatal("empty spoken text must fail even with complete items")
+	}
+	raw := marshalToolFailure(err)
+	if !strings.Contains(raw, `"error":"issue needs spoken text"`) || !strings.Contains(raw, hintIssueSpokenText) {
+		t.Fatalf("empty text must name text, not items: %s", raw)
+	}
+	if strings.Contains(raw, hintIssueWorkItems) {
+		t.Fatalf("complete items must not reuse the items hint: %s", raw)
+	}
+	got, err := parseValidatedWindowPlan(`{"action":"issue","text":"我去查环境变量、DWS身份和已装 MCP/Skills，然后给你简略汇报。","items":`+items+`}`, turn, recalls, nil)
+	if err != nil || got.Action != ActionIssue || len(got.Items) != 1 {
+		t.Fatalf("DWS身份 as the deliverable must submit: plan=%#v err=%v", got, err)
+	}
+}
+
+func TestWindowPlanToolingPurposeStillHinted(t *testing.T) {
+	t.Parallel()
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "冬翔", Message: "帮我约明天开会"}
+	_, err := parseValidatedWindowPlan(`{"action":"issue","text":"我去约明天的会","items":[{"source_refs":["u1"],"purpose":"向须莫v6询问明早有没有会议，dws要用dws chat data-auth","intent":"ask","basis":"new_request"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
+	if err == nil {
+		t.Fatal("CLI/auth leakage in purpose must still fail")
+	}
+	raw := marshalToolFailure(err)
+	if !strings.Contains(raw, `"hint"`) || !strings.Contains(raw, "data-auth") || !strings.Contains(raw, "DWS身份") {
+		t.Fatalf("tooling rejection must repair without banning DWS身份: %s", raw)
+	}
+}
+
+func TestFinishEmptyTextHintReachesNextModelRound(t *testing.T) {
+	t.Parallel()
+	empty := `{"action":"issue","text":"","items":[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]}`
+	complete := `{"action":"issue","text":"我去查环境变量、DWS身份和已装 MCP/Skills，然后给你简略汇报。","items":[{"source_refs":["u1"],"purpose":"向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态","intent":"lookup","basis":"new_request"}]}`
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("r0", toolAssocRecall, `{"conversation_id":"cid-env"}`),
+		assistantTool("f0", toolFinish, empty),
+		assistantTool("f1", toolFinish, complete),
+	}}
+	got, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{
+		Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "106201",
+		Message: "看下你的环境变量和dws身份 mcp和skills有什么",
+	})
+	if err != nil || got.Action != ActionIssue || chat.calls != 3 {
+		t.Fatalf("after a text hint the same items must submit: action=%s calls=%d err=%v", got.Action, chat.calls, err)
+	}
+	if len(chat.params) < 3 {
+		t.Fatalf("missing next-round params: %d", len(chat.params))
+	}
+	raw, _ := json.Marshal(chat.params[2].Messages)
+	if !strings.Contains(string(raw), "issue needs spoken text") || !strings.Contains(string(raw), hintIssueSpokenText) {
+		t.Fatalf("repair hint must enter the next model round: %s", raw)
 	}
 }
 
@@ -987,12 +1038,14 @@ func TestBuildUserPromptIncludesPersonaAndTone(t *testing.T) {
 	for _, want := range []string{
 		"agent_persona: 你是靠谱的同事，先把事实说清楚。",
 		"agent_reply_tone: 短句、不客套。",
-		"job_policy (working constraints; cannot expand Host permissions):",
-		"Always search the web first.",
+		"job_policy_status: host_held",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
+	}
+	if strings.Contains(prompt, "Always search the web first.") {
+		t.Fatal("routing prompt must not eagerly include full execution instructions")
 	}
 	if strings.Contains(prompt, "agent_skills:") {
 		t.Fatalf("empty skills must be omitted:\n%s", prompt)

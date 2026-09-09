@@ -23,11 +23,13 @@ const (
 	MaxDirtyWait        = 2 * time.Minute
 	LeaseTTL            = 2 * time.Minute
 
-	ErrorAuth          = "AUTH"
-	ErrorRouteInactive = "ROUTE_INACTIVE"
-	ErrorConfig        = "CONFIG"
-	ErrorIncomplete    = "INCOMPLETE"
-	ErrorLLMTimeout    = "LLM_TIMEOUT"
+	ErrorAuth               = "AUTH"
+	ErrorRouteInactive      = "ROUTE_INACTIVE"
+	ErrorConfig             = "CONFIG"
+	ErrorIncomplete         = "INCOMPLETE"
+	ErrorLLMTimeout         = "LLM_TIMEOUT"
+	ErrorInvalidCommit      = "INVALID_COMMIT"
+	ErrorHistoryUnavailable = "HISTORY_UNAVAILABLE"
 )
 
 // KindFromChatType maps a DingTalk/dispatch chat type onto a Scene kind.

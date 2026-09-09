@@ -103,5 +103,64 @@ class FromTimestampTests(unittest.TestCase):
         self.assertTrue(ts.endswith("Z"))
 
 
+class QueryCoverageTests(unittest.TestCase):
+    def test_scan_exceeds_old_eight_page_cap(self):
+        class Fake:
+            max_pages = 0
+            def get(self, _path, params):
+                start = (params["page"] - 1) * params["limit"]
+                return {"data": [{"id": str(i)} for i in range(start, min(start + params["limit"], 450))],
+                        "meta": {"totalItems": 450}}
+        client = Fake()
+        self.assertEqual(len(mod.list_traces(client, {}, 500)), 450)
+        self.assertEqual(client.last_scan["pages"], 9)
+        self.assertFalse(client.last_scan["truncated"])
+
+    def test_duplicate_versions_keep_latest_and_report_rows(self):
+        class Fake:
+            max_pages = 0
+            def get(self, _path, _params):
+                return {"data": [{"id": "same", "timestamp": "2026-09-08T12:00:00Z"},
+                                 {"id": "same", "timestamp": "2026-09-08T14:00:00Z"}],
+                        "meta": {"totalItems": 2}}
+        client = Fake()
+        result = mod.list_traces(client, {}, 50)
+        self.assertEqual(result[0]["timestamp"], "2026-09-08T14:00:00Z")
+        self.assertEqual(client.last_scan["duplicate_count"], 1)
+        self.assertEqual(client.last_scan["api_total_rows"], 2)
+
+    def test_page_cap_is_explicitly_incomplete(self):
+        class Fake:
+            max_pages = 1
+            def get(self, _path, _params):
+                return {"data": [{"id": str(i)} for i in range(50)], "meta": {"totalItems": 300}}
+        client = Fake()
+        self.assertEqual(len(mod.list_traces(client, {}, 200)), 50)
+        self.assertTrue(client.last_scan["truncated"])
+
+    def test_trace_search_prefers_coordinator_observation(self):
+        tr = {"input": "task overwrote this", "output": "task done",
+              "observations": [{"name": "inbound_coordinator", "input": "原始问题探针", "output": {"action": "issue"}}]}
+        self.assertIn("原始问题探针", mod.trace_search_blob(tr))
+        self.assertNotIn("task overwrote this", mod.trace_search_blob(tr))
+
+    def test_unhydrated_search_never_claims_complete(self):
+        class Fake:
+            workers = 2
+            hydrate_limit = 0
+            def in_scope(self, _trace):
+                return True
+        client = Fake()
+        self.assertEqual(mod.search_text(client, [{"id": "a", "input": None}], "needle", 20), [])
+        self.assertTrue(client.search_stats["truncated"])
+        self.assertEqual(client.search_stats["unhydrated"], 1)
+
+    def test_window_flags_are_not_search_arguments(self):
+        rest, flags = mod.parse_global_flags(["search", "--to=2026-09-08T16:00:00Z", "--pages", "0", "--stats", "--scan", "500"])
+        self.assertEqual(rest, ["search"])
+        self.assertEqual(flags["to"], "2026-09-08T16:00:00Z")
+        self.assertEqual(flags["scan"], 500)
+
+
 if __name__ == "__main__":
     unittest.main()

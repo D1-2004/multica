@@ -71,11 +71,13 @@ type Loop string
 const (
 	LoopInbound      Loop = "inbound"
 	LoopTaskFinished Loop = "task_finished"
+	LoopFinishCheck  Loop = "finish_check"
 )
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
 	Loop                 Loop
+	FinishCheckAction    Action
 	Source               Source
 	Addressed            bool
 	ChatType             string
@@ -375,6 +377,18 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if turn.Source != SourceWeb && !turn.Addressed && strings.EqualFold(turn.ChatType, "group") {
 		return Decision{Action: ActionSilence}
 	}
+	// The owner switch skips the whole short loop, including Host ACK
+	// silence. Auto-mode sandbox still has to see the original IM.
+	if turn.Loop != LoopTaskFinished && c.coordinatorOff(ctx, turn) {
+		slog.Info("inbound coordinator skipped; agent switch off",
+			append(coordinatorLogIndex(turn),
+				"event", "inbound_coordinator_decided",
+				"action", string(ActionContinue),
+				"fail_open", false,
+				"switch_off", true,
+			)...)
+		return Decision{Action: ActionContinue}
+	}
 	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
 		return hostSilence(turn, "window_ack")
 	}
@@ -386,16 +400,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
-	if turn.Loop != LoopTaskFinished && c.coordinatorOff(ctx, turn) {
-		slog.Info("inbound coordinator skipped; agent switch off",
-			append(coordinatorLogIndex(turn),
-				"event", "inbound_coordinator_decided",
-				"action", string(ActionContinue),
-				"fail_open", false,
-				"switch_off", true,
-			)...)
-		return Decision{Action: ActionContinue}
-	}
 
 	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
 	defer cancel()
@@ -865,20 +869,29 @@ func parseWindowItems(turn Turn, raw []struct {
 }
 
 func newWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string) (WindowItem, bool) {
+	item, err := composeWindowItem(turn, delegator, place, purpose, intent, lookInto)
+	return item, err == nil
+}
+
+func composeWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string) (WindowItem, error) {
 	delegator = strings.TrimSpace(delegator)
 	if delegator == "" {
 		delegator = strings.TrimSpace(turn.SenderName)
 	}
 	if !validWindowDelegator(turn, delegator) {
-		return WindowItem{}, false
+		return WindowItem{}, hintErr("delegator must copy the utterance sender", "Host binds the speaker from source_refs; do not invent a different delegator.")
 	}
 	composed, err := assoc.ComposeCoordinatorPurpose(delegator, place, purpose)
 	if err != nil {
-		return WindowItem{}, false
+		hint := hintPurposeRepair
+		if strings.Contains(err.Error(), "tooling") {
+			hint = hintPurposeTooling
+		}
+		return WindowItem{}, hintWrap("invalid deliverable purpose", hint, err)
 	}
 	gotIntent, ok := assoc.CoordinatorIntent(intent)
 	if !ok {
-		return WindowItem{}, false
+		return WindowItem{}, hintErr("invalid work intent", hintIntent)
 	}
 	look := strings.TrimSpace(lookInto)
 	if look == "" {
@@ -887,7 +900,7 @@ func newWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string
 	if cid := strings.TrimSpace(turn.ConversationID); cid != "" {
 		look = strings.TrimSpace(look) + "\nscene_cid=" + cid
 	}
-	return WindowItem{Delegator: delegator, Purpose: composed, Intent: gotIntent, LookInto: look}, true
+	return WindowItem{Delegator: delegator, Purpose: composed, Intent: gotIntent, LookInto: look}, nil
 }
 
 // isMissingPayloadIssue detects an issue ack that is actually asking the user

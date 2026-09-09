@@ -64,11 +64,24 @@ func ValidateCoordinatorPurpose(purpose string) error {
 	if !strings.Contains(purpose, "委托") {
 		return fmt.Errorf("purpose must name the delegator with 委托")
 	}
-	lower := strings.ToLower(purpose)
-	if strings.Contains(lower, "dws") || strings.Contains(lower, "data-auth") || strings.Contains(purpose, "openConversationId") {
+	if purposeContainsTooling(purpose) {
 		return fmt.Errorf("purpose must not include tooling or auth")
 	}
 	return nil
+}
+
+// purposeContainsTooling rejects CLI/auth leakage, not product names such as DWS身份.
+func purposeContainsTooling(purpose string) bool {
+	lower := strings.ToLower(purpose)
+	if strings.Contains(lower, "data-auth") || strings.Contains(purpose, "openConversationId") {
+		return true
+	}
+	for _, marker := range []string{"dws chat", "dws要用", "dws todo", "dws mail"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // NormalizeConversationID strips quotes/space so stored cid values compare.

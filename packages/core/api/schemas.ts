@@ -4534,3 +4534,18 @@ export const CoordinatorConversationsPageSchema = z
     next_offset: z.number().int().nonnegative().catch(0),
   })
   .loose();
+
+// No account UID, organization ID or authorization material leaves the server.
+export const ReusableDingTalkIdentitiesSchema = z.object({
+  identities: z.array(z.object({
+    source_agent_id: z.string().uuid(),
+    source_agent_name: z.string(),
+    account_display_name: z.string(),
+    organization_name: z.string(),
+  }).transform((item) => ({
+    sourceAgentId: item.source_agent_id,
+    sourceAgentName: item.source_agent_name,
+    accountDisplayName: item.account_display_name,
+    organizationName: item.organization_name,
+  }))),
+}).transform((response) => response.identities);

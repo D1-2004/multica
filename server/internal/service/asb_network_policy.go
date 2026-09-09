@@ -19,14 +19,40 @@ import (
 const asbNetworkAllowlistKey = "asb_network_allowlist"
 const asbNetworkPolicyFingerprintKey = "multica.network_policy_sha256"
 
-// These are concrete service dependencies, never parent-domain wildcards.
+// Audited against DWS v1.0.62-beta.6 (e45f7ca9), including direct transfers
+// after MCP returns a signed URL. See docs/security/asb-dws-network-audit.md.
+// Regional file-transfer hosts are limited to the two managed families below;
+// never allow all DingTalk, Alibaba intranet, or shared OSS tenant domains.
 var asbBuiltinNetworkTargets = []string{
 	"mcp.dingtalk.com", "pre-mcp.dingtalk.com", "mcp-gw.dingtalk.com", "pre-mcp-gw.dingtalk.com",
 	"open-dev.dingtalk.com", "pre-open-dev.dingtalk.com", "api.dingtalk.com", "oapi.dingtalk.com", "pre-oapi.dingtalk.com",
+	"login.dingtalk.com", "pre-login.dingtalk.com",
+	"mcp.dingtalk.io", "pre-mcp.dingtalk.io", "mcp-gw.dingtalk.io", "pre-mcp-gw.dingtalk.io",
+	"login.dingtalk.io", "pre-login.dingtalk.io", "api.dingtalk.io", "open-dev.dingtalk.io", "pre-open-dev.dingtalk.io",
+	"trans.dingtalk.com", "sh-dualstack.trans.dingtalk.com", "*.trans.dingtalk.com",
+	"down.dingtalk.com", "*.down.dingtalk.com", "download.dingtalk.com", "upload.dingtalk.com",
+	"alidocs.oss-cn-zhangjiakou.aliyuncs.com", "alidocs2.oss-cn-zhangjiakou.aliyuncs.com",
+	"alimail-cn.aliyuncs.com", "alimail-personal.aliyuncs.com",
+	"wss-open-connection.dingtalk.com", "pre-wss-open-connection.dingtalk.com",
+	"alidocs.dingtalk.com", "docs.dingtalk.com", "shanji.dingtalk.com", "aihub.dingtalk.com",
+	"open.dingtalk.com", "s.dingtalk.com", "img.alicdn.com", "server.safeding.com",
+	"github.com", "api.github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "gosspublic.alicdn.com",
+	"generativelanguage.googleapis.com",
 	"agent-identity.dingtalk.com", "pre-agent-identity.dingtalk.com",
 	"login.alibaba-inc.com", "authx.alibaba-inc.com", "id-api.alibaba-inc.com",
 	"aone.alibaba-inc.com", "code.alibaba-inc.com", "sandbox.aone.alibaba-inc.com",
 	"registry.npmjs.org", "registry.npmmirror.com", "pypi.org", "files.pythonhosted.org",
+}
+
+// Only these code-reviewed service families may use ASB wildcard matching.
+// Custom Runtime/Agent/deployment configuration still accepts exact hosts only.
+func isASBManagedNetworkFamily(target string) bool {
+	switch target {
+	case "*.trans.dingtalk.com", "*.down.dingtalk.com":
+		return true
+	default:
+		return false
+	}
 }
 
 type ASBNetworkRule struct {

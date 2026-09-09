@@ -44,7 +44,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	}
 	steps := make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2)
 	appendStep := func(step protocol.ChatCoordinatorStep) { step.Seq = len(steps) + 1; steps = append(steps, step) }
-	fakeWorkHinted := false
+	finishChecks := map[string]finishCheckResult{}
 	fail := func(err error) (Decision, error) {
 		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
 		return Decision{Action: ActionDeferred, Reason: "coordinator_undecided", Steps: steps}, err
@@ -109,9 +109,16 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 				} else {
 					var decision Decision
-					decision, callErr = parseValidatedWindowPlanHinted(call.Arguments, turn, recalls, recalledIssues, fakeWorkHinted)
-					if isFakeWorkReplyHint(callErr) {
-						fakeWorkHinted = true
+					decision, callErr = parseValidatedWindowPlan(call.Arguments, turn, recalls, recalledIssues)
+					if callErr == nil && needsFinishCheck(turn, decision) {
+						check, checkErr := c.checkFinish(ctx, turn, decision, messages, round, finishChecks)
+						if checkErr != nil {
+							traceToolEnd(traceToolStart(lt, round, call), "", checkErr, "finish_check_unavailable")
+							return fail(checkErr)
+						}
+						if check.Verdict != "allow" {
+							callErr = hintErr("finish does not cover this window", "Repair before finishing: "+check.Reason+". Missing current refs: "+strings.Join(check.MissingSourceRefs, ",")+". Obtain missing conversation evidence or submit authorized work with finish.items; do not turn this hint into a new authorization.")
+						}
 					}
 					if callErr == nil {
 						decision.Steps = steps
@@ -172,20 +179,22 @@ func finishToolOutput(decision Decision) string {
 }
 
 func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) (*openai.ChatCompletion, error) {
+	return c.completeWithLimit(ctx, messages, tools, maxCompletionTokens, temperature)
+}
+
+func (c *Coordinator) completeWithLimit(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64) (*openai.ChatCompletion, error) {
 	params := openai.ChatCompletionNewParams{
 		Messages:            messages,
 		Model:               shared.ChatModel(coordinatorModel),
 		Tools:               tools,
 		ReasoningEffort:     shared.ReasoningEffortNone,
-		MaxCompletionTokens: openai.Int(maxCompletionTokens),
+		MaxCompletionTokens: openai.Int(limit),
 	}
 	params.SetExtraFields(map[string]any{
 		"enable_thinking": false,
 		"tool_choice":     "required",
 	})
-	if temperature > 0 {
-		params.Temperature = openai.Float(temperature)
-	}
+	params.Temperature = openai.Float(temp)
 	if c != nil && c.Chat != nil {
 		return c.Chat.Chat(ctx, params)
 	}
@@ -332,6 +341,11 @@ const (
 	hintReplyText       = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
 	hintRecallFirst     = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
 	hintNewDeliverable  = "This inbound is a different deliverable from that Issue. finish action=issue without issue_id. Do not issue_comment_add."
+	hintIssueSpokenText = "Set finish.text to a short spoken line for this window, such as 我去查环境并汇报简略结果. Complete items without text cannot submit."
+	hintIssueWorkItems  = "Use finish.items with source_refs, purpose, intent, basis; all requests must have a disposition."
+	hintIssueItemLimit  = "Keep at most 8 planned items; never drop later requests."
+	hintPurposeTooling  = "Purpose may name the requested object, including DWS身份 / MCP / Skills. Do not paste CLI commands, data-auth, or openConversationId. Rewrite as {委托人}委托：{事件与目的}."
+	hintPurposeRepair   = "Rewrite purpose as {委托人}委托：{事件与目的}, naming the concrete event and deliverable. Do not paste the inbound envelope."
 )
 
 type toolHintError struct {
@@ -581,16 +595,23 @@ func parseIssueCommentEffect(raw string) (IssueCommentEffect, bool) {
 	return effect, true
 }
 
-var conversationIDPattern = regexp.MustCompile(`cid[+A-Za-z0-9_/=-]{8,}`)
+var conversationIDPattern = regexp.MustCompile(`cid[+A-Za-z0-9_/-]{8,}={0,2}`)
 
 func extractConversationIDs(message string) []string {
-	found := conversationIDPattern.FindAllString(message, -1)
+	// A numeric `cid=` report query parameter is not an openConversationId.
+	// Keep genuine opaque IDs, including openConversationId values in links.
+	found := conversationIDPattern.FindAllStringIndex(message, -1)
 	if len(found) == 0 {
 		return nil
 	}
 	seen := map[string]struct{}{}
 	var out []string
-	for _, id := range found {
+	for _, span := range found {
+		if span[0] > 0 && isConversationIDCharacter(message[span[0]-1]) ||
+			span[1] < len(message) && (isConversationIDCharacter(message[span[1]]) || message[span[1]] == '=') {
+			continue
+		}
+		id := message[span[0]:span[1]]
 		if _, ok := seen[id]; ok {
 			continue
 		}
@@ -598,6 +619,11 @@ func extractConversationIDs(message string) []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+func isConversationIDCharacter(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' ||
+		b == '+' || b == '_' || b == '/' || b == '-'
 }
 
 func asksSceneQuestion(message string) bool {

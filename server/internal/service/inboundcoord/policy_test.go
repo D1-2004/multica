@@ -1,7 +1,9 @@
 package inboundcoord
 
 import (
+	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +47,7 @@ func TestPolicySelectsIndependentEntryPoints(t *testing.T) {
 
 func TestPolicySelectionDependenciesCloseAcrossConditions(t *testing.T) {
 	for _, source := range []Source{SourceWeb, SourceRobot, SourceDigitalEmployee} {
-		for _, loop := range []Loop{LoopInbound, LoopTaskFinished} {
+		for _, loop := range []Loop{LoopInbound, LoopTaskFinished, LoopFinishCheck} {
 			for _, chatType := range []string{"p2p", "group"} {
 				for conditions := 0; conditions < 32; conditions++ {
 					turn := Turn{Source: source, Loop: loop, ChatType: chatType, Message: "message"}
@@ -96,8 +98,10 @@ func TestPolicyManifestMatchesActualPromptAndModuleBudgets(t *testing.T) {
 	if manifest.Characters > 9500 {
 		t.Fatalf("direct-answer system prompt regressed to %d characters", manifest.Characters)
 	}
-	if !strings.Contains(prompt, "must assoc_recall this scene then finish action=issue") {
-		t.Fatal("inbound policy lost the default dispatch-and-associate rule")
+	for _, rule := range []string{"COORD.F04", "COORD.F05", "COORD.F17"} {
+		if !slices.Contains(manifest.ActiveRuleIDs, rule) {
+			t.Fatalf("inbound policy manifest lost routing obligation %s", rule)
+		}
 	}
 	for _, module := range coordinatorPolicy.Modules {
 		if policyHash(policyModuleBody(module)) != module.ContentHash {
@@ -185,14 +189,56 @@ func TestPolicyCompletionProjectionOmitsUnrelatedFacts(t *testing.T) {
 	}
 }
 
-func TestPolicyKeepsWorkingConstraintAfterLongInstructions(t *testing.T) {
+func TestPolicyKeepsFullWorkingConstraintsOnDemand(t *testing.T) {
 	constraint := "Only draft the message; do not send it until I approve."
-	instructions := strings.Repeat("Background context. ", 80) + constraint
-	prompt := buildUserPrompt(Turn{Source: SourceDigitalEmployee, Message: "Draft a message", Instructions: instructions})
-	if !strings.Contains(prompt, instructions) || !strings.Contains(prompt, constraint) {
-		t.Fatal("working-policy projection dropped a trailing execution restriction")
+	instructions := strings.Repeat("Background context. ", 1000) + constraint
+	turn := Turn{Source: SourceDigitalEmployee, Message: "Draft a message", Instructions: instructions}
+	prompt := buildUserPrompt(turn)
+	if strings.Contains(prompt, instructions) || strings.Contains(prompt, constraint) {
+		t.Fatal("routing projection must not eagerly load the execution SOP")
 	}
-	if !strings.Contains(prompt, "job_policy_status: loaded; truncated=false") {
-		t.Fatal("full working-policy state must be explicit")
+	if !strings.Contains(prompt, "job_policy_status: host_held") || !strings.Contains(prompt, policyHash(instructions)) {
+		t.Fatal("host-held policy provenance must be explicit")
+	}
+	raw, err := (&Coordinator{}).readHistoryContext(context.Background(), &turn, `{"kind":"job_policy"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Text, Status, SHA256 string
+		Truncated            bool
+		Characters           int
+	}
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != instructions || result.Status != "loaded" || result.Truncated || result.SHA256 != policyHash(instructions) || result.Characters != utf8.RuneCountInString(instructions) {
+		t.Fatal("on-demand policy must retain complete text, trailing authorization and provenance")
+	}
+}
+
+func TestPolicyTerminalReviewModesDoNotMix(t *testing.T) {
+	for _, action := range []Action{ActionReply, ActionSilence, ActionIssue} {
+		t.Run(string(action), func(t *testing.T) {
+			turn := Turn{Loop: LoopFinishCheck, FinishCheckAction: action, Source: SourceDigitalEmployee, ChatType: "group", Skills: []SkillSnapshot{{Name: "Meetings"}}, SceneMemoryRevision: 2, DingTalkHistory: []HistoryLine{{Content: "earlier conversation"}}, Utterances: []WindowUtterance{{Text: "first"}, {Text: "second"}}}
+			wanted, forbidden := "finish_check", "finish_check_work"
+			if action == ActionIssue {
+				wanted, forbidden = forbidden, wanted
+			}
+			for _, recalled := range []bool{false, true} {
+				ids := policyModuleIDs(turn, recalled)
+				if len(ids) != 2 || !ids["core"] || !ids[wanted] || ids[forbidden] {
+					t.Fatalf("terminal review must load only core and its action-specific policy: action=%s recalled=%t modules=%v", action, recalled, ids)
+				}
+				prompt := buildSystemPromptForStage(turn, recalled)
+				manifest := policyManifestForStage(turn, recalled)
+				if manifest.PromptHash != policyHash(prompt) {
+					t.Fatal("review manifest does not identify the actual independent policy")
+				}
+				if !strings.Contains(prompt, "[policy:"+wanted+"@") || strings.Contains(prompt, "[policy:"+forbidden+"@") {
+					t.Fatal("work authorization and current-answer review instructions were mixed")
+				}
+			}
+		})
 	}
 }

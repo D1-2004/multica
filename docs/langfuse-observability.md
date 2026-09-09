@@ -31,7 +31,7 @@ Boot logs `langfuse_enabled` with the resolved endpoint and environment, or
 ## Trace model and lookup keys
 
 Every trace carries the same lookup keys the SLS index uses, as first-level
-Langfuse trace metadata (filterable in the UI and the `traces` API), plus user,
+Langfuse trace metadata (use the measured lookup capabilities below), plus user,
 session, and tags on every span:
 
 | Langfuse field | Coordinator turn | Memory flush | Agent task |
@@ -69,6 +69,23 @@ coordinator's `coord_trace_id` (stamped into `task.context.coordinator_trace_id`
 so the two traces can be joined in either direction.
 
 ### Coordinator turn (`inbound_coordinator`)
+
+Policy `2026-09-09.2` keeps the full job policy in Host context instead of
+repeating it in every routing prompt. `job_policy_status=host_held` is deliberate
+deferred loading, not missing configuration; `context_read(kind=job_policy)`
+returns the complete original constraints when scope needs clarification.
+
+Model replies/silence and work plans with a custom job policy receive a bounded
+independent check before `SavePlan`. `coordinator.finish_check.N` is a separate
+generation (temperature 0, 512 output-token cap, up to 12 seconds within the
+original decision deadline); the `finish_check` tool event contains its verdict
+and cache status. Root `finish_check_verdict` and `finish_check_candidate_action`
+describe the last check. Check metadata uses a `finish_check_` prefix so it cannot
+overwrite the routing prompt's hash/modules. Routing `tool_rounds` excludes
+these additional model calls; inspect all generations for cost and latency.
+The SLS event is `inbound_coordinator_finish_check`. A rejected result cannot be
+saved; unavailable or invalid checks defer, and do not authorize work. Existing
+durable checkpoints and the separate `task_finished` path are unchanged.
 
 - Root observation: type `agent`, input = the inbound message plus prompt
   context sizes, output = the decision (`action`, `issue_id`, `user_text`,
@@ -123,6 +140,20 @@ id, `job_id`, and the flush's `coord_trace_id` are therefore one value.
   `memory_flush_commit` tool events (accepted or rejected with the reason) and
   `memory_flush.nudge` events.
 
+As of the September 9 inspection change, tool `accepted=true` only means a
+draft was validated. The root's `committed=true` proves the database CAS
+succeeded. `cursor_at` remains the last committed cursor on failure;
+`planned_cursor_at` records the attempted progress separately. History spans
+include min/max event time (independent of source ordering), pagination and
+claimed/trigger/pending evidence visibility. Rejected commits expose the actual
+code-point count and `last_commit_error`, so a final timeout cannot hide an
+oversized draft. SLS `scene_memory_flush_failed` includes scene, agent, attempt
+and error-code keys for direct aggregation.
+History CLI failures retain the bounded diagnostic fields `category`, `reason`,
+`server_error_code` and `trace_id` in `history_error`. Unknown history failures
+use `HISTORY_UNAVAILABLE` and keep the existing retry policy; an old `error:`
+trace with truncated stderr cannot recover these fields retroactively.
+
 ### Agent task (`agent_task`) — the Daemon side
 
 The daemon never talks to Langfuse and needs no new build. It already reports
@@ -169,6 +200,16 @@ and reports transcripts, the server-side path was chosen so pre-release gets
 traces from a normal application deploy.
 
 ## Finding a trace
+
+Daily inspection uses `.agents/skills/inspect-daily-qa/`. Pin both window
+endpoints and environment. The September 8 production list returned 3434 rows
+but 3415 unique trace IDs: keep raw counts and deduplicate versions before
+counting traces. API totals describe rows, not necessarily unique traces.
+Shared traces may have top-level input/output/timestamp from a later task;
+inspect the `inbound_coordinator` root observation for the original turn and
+its individual attempts. Missing list input is not missing generation input.
+Query metadata/filter support must follow the measured table below; do not
+assume the public API supports every UI filter.
 
 Use the `inspect-langfuse-trace` skill
 (`.agents/skills/inspect-langfuse-trace/`); its script wraps the public API

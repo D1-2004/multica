@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -126,6 +127,22 @@ func (w *Worker) ProcessNext(ctx context.Context) (bool, error) {
 			return true, err
 		}
 		code := FlushErrorCode(err)
+		var historyDetail any
+		var historyErr *dwsclient.HistoryError
+		if errors.As(err, &historyErr) {
+			historyDetail = historyErr.DiagnosticFields()
+		}
+		slog.Warn("scene memory flush failed",
+			"event", "scene_memory_flush_failed",
+			"scene_memory_id", util.UUIDToString(row.ID),
+			"scene_key", row.SceneKey,
+			"agent_id", util.UUIDToString(row.AgentID),
+			"workspace_id", util.UUIDToString(row.WorkspaceID),
+			"attempt", row.AttemptCount,
+			"error_code", code,
+			"history_error", historyDetail,
+			"error", err,
+		)
 		if TerminalFlushCode(code) {
 			if blockErr := w.store.Block(ctx, row, code, err.Error()); blockErr != nil && !errors.Is(blockErr, ErrLeaseLost) {
 				return true, blockErr

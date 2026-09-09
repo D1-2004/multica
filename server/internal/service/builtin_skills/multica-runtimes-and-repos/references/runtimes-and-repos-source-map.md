@@ -22,3 +22,4 @@
 
 - `server/internal/service/asb_network_policy.go` composes default-deny ASB policies from platform dependencies, Agent configuration and Runtime metadata. `asb_client.go` enforces deny at creation; `asb_launcher.go` refuses warm reuse after a policy change.
 - `server/internal/handler/runtime_asb_network.go` serves owner/admin-only GET/PUT `/api/runtimes/{runtimeId}/asb-network-policy`; `packages/views/runtimes/components/asb-network-policy-section.tsx` edits exact additional targets.
+- `docs/security/asb-dws-network-audit.md` maps DWS direct-transfer, OSS, mail, Stream and distribution dependencies to reviewed default rules; only two managed transfer families accept wildcards at the creation boundary.

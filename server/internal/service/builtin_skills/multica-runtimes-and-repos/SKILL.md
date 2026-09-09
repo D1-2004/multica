@@ -94,7 +94,11 @@ More source-backed details: `references/runtimes-and-repos-source-map.md`.
 ASB sandboxes deny outbound connections unless the destination is allowed.
 Required platform services and configured Agent MCP/service hosts are included
 automatically. Workspace owners/admins can add exact domains or individual IPs
-in the Runtime details page. Wildcards, URLs and CIDR ranges are rejected.
+in the Runtime details page. Custom wildcards, URLs and CIDR ranges are rejected.
+Defaults include DWS signed file transfers, document OSS, mail and Stream.
+Regional transfer subdomains under trans.dingtalk.com and down.dingtalk.com
+are managed defaults. Enterprise-specific storage and third-party download
+hosts still require an exact Runtime entry.
 Changes apply at the next task launch: sandboxes using an older policy are
 replaced, so files stored only in that sandbox do not carry over. Active tasks
 finish with their existing policy. Ask the user to configure a missing

@@ -16,3 +16,11 @@ export const dingtalkAccountBindingsOptions = (wsId: string) =>
     enabled: !!wsId,
     refetchOnWindowFocus: "always" as const,
   });
+
+export const reusableDingTalkIdentitiesOptions = (wsId: string, agentId: string) =>
+  queryOptions({
+    queryKey: [...dingtalkAccountBindingKeys.all(wsId), "reusable", agentId],
+    queryFn: () => api.listReusableDingTalkIdentities(wsId, agentId),
+    enabled: !!wsId && !!agentId,
+    refetchOnWindowFocus: "always",
+  });

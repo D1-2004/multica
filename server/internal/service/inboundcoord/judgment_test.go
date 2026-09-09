@@ -263,6 +263,12 @@ func TestJudgmentDecideDeterministic(t *testing.T) {
 			want: ActionContinue,
 		},
 		{
+			name: "switch_off_skips_window_ack_silence",
+			c:    &Coordinator{LLM: enabledLLM, Queries: &coordQueriesStub{inbound: false}},
+			turn: Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "谢谢", AgentID: testAgentID()},
+			want: ActionContinue,
+		},
+		{
 			name: "nil_coordinator_continue",
 			c:    nil,
 			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},

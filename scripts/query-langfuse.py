@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib.util
 import json
 import os
 import re
@@ -23,6 +24,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ENV_FILE = Path.home() / ".grok" / "langfuse.env"
+LOOKUP_PATH = Path(__file__).resolve().parents[1] / ".agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py"
+_spec = importlib.util.spec_from_file_location("multica_langfuse_lookup", LOOKUP_PATH)
+lookup = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(lookup)
 
 
 def load_env() -> None:
@@ -168,33 +173,14 @@ def iso_from(value: str) -> str:
 
 
 def list_traces(query_base: dict, pages: int, page_size: int) -> list[dict]:
-    rows: list[dict] = []
-    seen: set[str] = set()
-    for page in range(1, pages + 1):
-        query = dict(query_base)
-        query["limit"] = str(page_size)
-        query["page"] = str(page)
-        payload = api_get("/api/public/traces", query)
-        batch = payload.get("data") or []
-        for row in batch:
-            tid = row.get("id")
-            if tid and tid not in seen:
-                seen.add(tid)
-                rows.append(row)
-        if len(batch) < page_size:
-            break
+    client = lookup.Client(max_pages=pages)
+    rows = lookup.list_traces(client, query_base, pages * page_size)
+    client.report_stats()
     return rows
 
 
 def trace_blob(row: dict) -> str:
-    return "\n".join(
-        [
-            json.dumps(row.get("input"), ensure_ascii=False),
-            json.dumps(row.get("output"), ensure_ascii=False),
-            json.dumps(row.get("metadata") or {}, ensure_ascii=False),
-            str(row.get("sessionId") or ""),
-        ]
-    )
+    return lookup.trace_search_blob(row)
 
 
 def match_message(row: dict, needle: str) -> tuple[bool, dict]:
@@ -221,10 +207,19 @@ def main() -> None:
     parser.add_argument("--cid", default="", help="conversation_id substring")
     parser.add_argument("--message", default="", help="inbound text substring (hydrates traces whose list payload omitted input)")
     parser.add_argument("--from", dest="from_ts", default="", help="ISO8601, unix seconds, or 7d/24h")
+    parser.add_argument("--to", dest="to_ts", default="", help="exclusive end timestamp (ISO8601, unix seconds, or 7d/24h)")
+    parser.add_argument("--environment", "--env", default="", help="pre or production; defaults to LANGFUSE_QUERY_ENVIRONMENT")
+    parser.add_argument("--pages", type=int, default=0, help="maximum list pages; 0 has no page cap")
+    parser.add_argument("--scan", type=int, default=None, help="maximum unique list candidates before local filtering")
+    parser.add_argument("--hydrate", type=int, default=80, help="maximum trace details for text search")
+    parser.add_argument("--workers", type=int, default=4, help="parallel detail requests, capped at 16")
+    parser.add_argument("--stats", action="store_true", help="print query coverage and timing to stderr")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--observations", action="store_true", help="also list observations for the first match")
     parser.add_argument("--raw", action="store_true")
     args = parser.parse_args()
+    if args.limit < 1 or args.pages < 0 or args.hydrate < 0 or args.workers < 1 or (args.scan is not None and args.scan < 1):
+        parser.error("limit/scan/workers must be positive; pages/hydrate must be nonnegative")
 
     from_ts = args.from_ts
     if not from_ts:
@@ -241,6 +236,10 @@ def main() -> None:
         "fromTimestamp": from_ts,
         "orderBy": "timestamp.desc",
     }
+    client = lookup.Client(environment=args.environment, to_timestamp=iso_from(args.to_ts) if args.to_ts else "", max_pages=args.pages)
+    client.from_timestamp = from_ts if args.from_ts or not args.trace else ""
+    client.hydrate_limit = args.hydrate
+    client.workers = args.workers
     if args.name:
         query["name"] = args.name
     if looks_like_uuid(args.agent):
@@ -259,20 +258,21 @@ def main() -> None:
     elif args.agent and not args.name and not args.loop:
         query["name"] = "inbound_coordinator"
 
-    scan_pages = 6 if (args.agent or args.message or args.cid or args.issue) else 1
-    rows = list_traces(query, pages=scan_pages, page_size=50)
+    scan = args.scan or (max(args.limit * 10, 100) if (args.agent or args.message or args.cid or args.issue) else args.limit)
+    if args.trace:
+        tr = client.get(f"/api/public/traces/{lookup.trace_id_hex(args.trace)}")
+        rows = [tr] if client.in_scope(tr) else []
+    elif args.issue:
+        rows = lookup.traces_by_key(client, "issue_id", args.issue, scan, from_ts)
+    else:
+        rows = lookup.list_traces(client, query, scan)
     matched = [row for row in rows if match_trace(row, args)]
     if args.message:
-        hits = []
-        for row in matched:
-            ok, full = match_message(row, args.message)
-            if ok:
-                hits.append(full)
-            if len(hits) >= args.limit:
-                break
-        matched = hits
+        matched = lookup.search_text(client, matched, args.message, args.limit)
     else:
+        client.search_stats = {"candidates": len(matched), "returned": min(len(matched), args.limit), "truncated": len(matched) > args.limit}
         matched = matched[: args.limit]
+    client.report_stats(args.stats)
     if args.raw:
         json.dump({"data": matched}, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
@@ -306,7 +306,7 @@ def main() -> None:
         for key in ("status", "channel", "provider", "runtime_name", "task_id"):
             if meta.get(key):
                 print(f"  {key}: {meta[key]}")
-        preview = row.get("input")
+        preview, _ = lookup.trace_io(row)
         if preview not in (None, "", {}, []):
             text = preview if isinstance(preview, str) else json.dumps(preview, ensure_ascii=False)
             print(f"  input: {text[:180]}")
@@ -314,9 +314,9 @@ def main() -> None:
     if args.observations:
         first = matched[0]
         tid = first.get("id")
-        obs = api_get("/api/public/observations", {"traceId": tid, "limit": "50"})
+        obs = client.get("/api/public/traces/" + tid).get("observations") or []
         print("\n--- observations ---")
-        for item in obs.get("data") or []:
+        for item in obs:
             print(
                 "{start} type={typ} name={name} id={oid}".format(
                     start=item.get("startTime"),
