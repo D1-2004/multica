@@ -198,6 +198,7 @@ type Agent struct {
 	ServiceTier             pgtype.Text `json:"service_tier"`
 	DispatchAlwaysNewIssue  bool        `json:"dispatch_always_new_issue"`
 	DispatchPromptOverrides []byte      `json:"dispatch_prompt_overrides"`
+	CoordinatorContract     []byte      `json:"coordinator_contract"`
 }
 
 type AgentA2aEndpoint struct {
@@ -348,18 +349,18 @@ type AgentMcpDelegation struct {
 
 // Revocable many-to-many bindings between Agents and local Runner machines
 type AgentRunnerBinding struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	MachineID   pgtype.UUID        `json:"machine_id"`
-	BoundBy     pgtype.UUID        `json:"bound_by"`
-	Roots       []byte             `json:"roots"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	MachineID   pgtype.UUID `json:"machine_id"`
+	BoundBy     pgtype.UUID `json:"bound_by"`
+	Roots       []byte      `json:"roots"`
 	// Server-name to configuration-fingerprint allowlist for Agent-enabled local MCP mounts.
 	EnabledMcpServers []byte             `json:"enabled_mcp_servers"`
-	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
-	RevokedBy   pgtype.UUID        `json:"revoked_by"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy         pgtype.UUID        `json:"revoked_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	// Agent-scoped logical disconnect; the shared machine process exits only when no connected bindings remain
 	DisconnectedAt pgtype.Timestamptz `json:"disconnected_at"`
 	DisconnectedBy pgtype.UUID        `json:"disconnected_by"`

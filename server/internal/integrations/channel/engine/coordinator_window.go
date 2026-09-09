@@ -9,6 +9,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type coordinatorDispatchSender struct {
@@ -206,5 +207,65 @@ func coordinatorItemTaskContext(raw []byte, msg channel.InboundMessage, item inb
 	}
 	data["messages"], _ = json.Marshal(selected)
 	envelope["dispatch_event_data"], _ = json.Marshal(data)
-	return json.Marshal(envelope)
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		return nil, err
+	}
+	return stampDingTalkOrigin(encoded, strings.TrimSpace(first.OpenMsgID)), nil
+}
+
+func stampDingTalkOrigin(raw []byte, origin string) []byte {
+	origin = strings.TrimSpace(origin)
+	if origin == "" || len(raw) == 0 {
+		return raw
+	}
+	var payload map[string]json.RawMessage
+	if json.Unmarshal(raw, &payload) != nil {
+		return raw
+	}
+	encoded, err := json.Marshal(origin)
+	if err != nil {
+		return raw
+	}
+	payload[protocol.DingTalkReplyToOpenMsgIDContextKey] = encoded
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+func dingTalkOriginMetadata(openMsgID string) []byte {
+	openMsgID = strings.TrimSpace(openMsgID)
+	if openMsgID == "" {
+		return nil
+	}
+	raw, err := json.Marshal(map[string]string{protocol.DingTalkOriginOpenMsgIDMetadataKey: openMsgID})
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+func coordinatorItemOriginOpenMsgID(raw []byte, fallback string) string {
+	var payload struct {
+		ReplyTo string `json:"dingtalk_reply_to_open_msg_id"` // matches protocol.DingTalkReplyToOpenMsgIDContextKey
+		Data    struct {
+			Messages []coordinatorDispatchMessage `json:"messages"`
+		} `json:"dispatch_event_data"`
+	}
+	if json.Unmarshal(raw, &payload) == nil {
+		if id := strings.TrimSpace(payload.ReplyTo); id != "" {
+			return id
+		}
+		for _, message := range payload.Data.Messages {
+			if coordinatorMessageIsReaction(message) || strings.TrimSpace(message.Text) == "" {
+				continue
+			}
+			if id := strings.TrimSpace(message.OpenMsgID); id != "" {
+				return id
+			}
+		}
+	}
+	return strings.TrimSpace(fallback)
 }

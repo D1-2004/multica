@@ -458,6 +458,7 @@ type taskFinishedCompletionProbe struct {
 	calls  int
 	params []openai.ChatCompletionNewParams
 	err    error
+	reply  string
 }
 
 func (p *taskFinishedCompletionProbe) Chat(_ context.Context, params openai.ChatCompletionNewParams) (*openai.ChatCompletion, error) {
@@ -466,7 +467,89 @@ func (p *taskFinishedCompletionProbe) Chat(_ context.Context, params openai.Chat
 	if p.err != nil {
 		return nil, p.err
 	}
-	return &openai.ChatCompletion{Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Role: "assistant", ToolCalls: []openai.ChatCompletionMessageToolCallUnion{{ID: "finish-failure", Type: "function", Function: openai.ChatCompletionMessageFunctionToolCallFunction{Name: "finish", Arguments: `{"action":"reply","text":"这次没有完成，暂时没有可交付的结果。"}`}}}}}}}, nil
+	encodedMessages, err := json.Marshal(params.Messages)
+	if err != nil {
+		return nil, err
+	}
+	var messages []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(encodedMessages, &messages); err != nil {
+		return nil, err
+	}
+	name := "finish"
+	var arguments any
+	if len(params.Tools) == 1 && params.Tools[0].GetFunction() != nil && params.Tools[0].GetFunction().Name == "finish_check" {
+		var proposal struct {
+			CurrentWindow []struct {
+				Text string `json:"text"`
+			} `json:"current_window"`
+			Candidate struct {
+				Actions []struct {
+					Kind  string `json:"kind"`
+					Reply string `json:"reply"`
+				} `json:"actions"`
+			} `json:"candidate"`
+		}
+		if len(messages) == 0 {
+			return nil, fmt.Errorf("finish review has no messages")
+		}
+		if err := json.Unmarshal([]byte(messages[len(messages)-1].Content), &proposal); err != nil {
+			return nil, err
+		}
+		if len(proposal.CurrentWindow) != 1 || proposal.CurrentWindow[0].Text == "" || len(proposal.Candidate.Actions) != 1 || proposal.Candidate.Actions[0].Kind != "report_result" || proposal.Candidate.Actions[0].Reply == "" {
+			return nil, fmt.Errorf("finish review lacks its actual request or candidate")
+		}
+		encodedSchema, err := json.Marshal(params.Tools[0].GetFunction().Parameters)
+		if err != nil {
+			return nil, err
+		}
+		var schema struct {
+			Properties map[string]struct {
+				Enum []string `json:"enum"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(encodedSchema, &schema); err != nil {
+			return nil, err
+		}
+		requestRefs := schema.Properties["request_quote_ref"].Enum
+		candidateRefs := schema.Properties["candidate_quote_ref"].Enum
+		if len(requestRefs) == 0 || len(candidateRefs) == 0 {
+			return nil, fmt.Errorf("finish review lacks Host quote reference options")
+		}
+		name = "finish_check"
+		arguments = map[string]any{
+			"request_quote_ref": requestRefs[0], "candidate_quote_ref": candidateRefs[0],
+			"verdict": "allow", "reason": "The fixture reports only the supplied current result.", "missing_source_refs": []string{},
+			"work_checks": []any{},
+		}
+	} else {
+		resultRef := ""
+		for _, message := range messages {
+			if message.Role != "user" {
+				continue
+			}
+			for _, line := range strings.Split(message.Content, "\n") {
+				if strings.HasPrefix(line, "current_result_ref: ") {
+					resultRef = strings.TrimPrefix(line, "current_result_ref: ")
+				}
+			}
+		}
+		if resultRef == "" {
+			return nil, fmt.Errorf("completion routing lacks the Host current result ref")
+		}
+		reply := p.reply
+		if reply == "" {
+			reply = "这次没有完成，暂时没有可交付的结果。"
+		}
+		arguments = map[string]any{"actions": []map[string]string{{"kind": "report_result", "result_ref": resultRef, "reply": reply}}}
+	}
+	raw, err := json.Marshal(arguments)
+	if err != nil {
+		return nil, err
+	}
+	return &openai.ChatCompletion{Choices: []openai.ChatCompletionChoice{{Message: openai.ChatCompletionMessage{Role: "assistant", ToolCalls: []openai.ChatCompletionMessageToolCallUnion{{ID: "completion-" + name, Type: "function", Function: openai.ChatCompletionMessageFunctionToolCallFunction{Name: name, Arguments: string(raw)}}}}}}}, nil
 }
 
 func (f coordinatorPlanFixture) finishedTask(t *testing.T, status string) db.AgentTaskQueue {
@@ -503,8 +586,8 @@ func TestCoordinatorWindowPlanFailedTaskExplainsFailureWithoutNewWork(t *testing
 	if err := f.h.runPersistedTaskFinishedLoop(context.Background(), uuidToString(task.ID)); err != nil {
 		t.Fatal(err)
 	}
-	if probe.calls != 1 {
-		t.Fatalf("a terminal failure without active retry needs one completion decision: %d", probe.calls)
+	if probe.calls != 2 {
+		t.Fatalf("a terminal failure needs one routing decision and one finish review: %d", probe.calls)
 	}
 	messages, _ := json.Marshal(probe.params[0].Messages)
 	if !strings.Contains(string(messages), "本次执行已失败") || strings.Contains(string(messages), "unverified-success-from-task-text") {
@@ -515,6 +598,9 @@ func TestCoordinatorWindowPlanFailedTaskExplainsFailureWithoutNewWork(t *testing
 		if fn == nil || (fn.Name != "finish" && fn.Name != "issue_get" && fn.Name != "issue_comment_list") {
 			t.Fatalf("failure completion exposed a work tool: %#v", fn)
 		}
+	}
+	if len(probe.params[1].Tools) != 1 || probe.params[1].Tools[0].GetFunction() == nil || probe.params[1].Tools[0].GetFunction().Name != "finish_check" {
+		t.Fatal("completion must pass the independent finish review before delivery")
 	}
 	var tasks int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1`, f.agent.ID).Scan(&tasks); err != nil {
@@ -533,6 +619,43 @@ func TestCoordinatorWindowPlanFailedTaskExplainsFailureWithoutNewWork(t *testing
 	}
 }
 
+func TestCoordinatorWindowPlanTaskFinishedReportsCurrentResultWithoutNewWork(t *testing.T) {
+	f := newCoordinatorPlanFixture(t, "整理本次会议决策")
+	task := f.finishedTask(t, "completed")
+	const result = "本次会议决策：下周一启动评审。"
+	resultJSON, _ := json.Marshal(map[string]string{"output": result})
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent_task_queue SET result=$2 WHERE id=$1`, task.ID, resultJSON); err != nil {
+		t.Fatal(err)
+	}
+	probe := &taskFinishedCompletionProbe{reply: result}
+	f.h.InboundCoordinator.Chat = probe
+	if err := f.h.runPersistedTaskFinishedLoop(context.Background(), uuidToString(task.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if probe.calls != 2 {
+		t.Fatalf("current result reporting needs one routing decision and one finish review: %d", probe.calls)
+	}
+	messages, _ := json.Marshal(probe.params[0].Messages)
+	if !strings.Contains(string(messages), result) {
+		t.Fatal("completion routing did not receive the current task result")
+	}
+	var tasks int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_task_queue WHERE agent_id=$1`, f.agent.ID).Scan(&tasks); err != nil {
+		t.Fatal(err)
+	}
+	if tasks != 1 {
+		t.Fatalf("result reporting created %d tasks", tasks)
+	}
+	callback, _, _ := inboundcoord.WrapupCallback(task.Context)
+	var outboxes int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM task_completion_outbox WHERE callback_url=$1`, callback).Scan(&outboxes); err != nil {
+		t.Fatal(err)
+	}
+	if outboxes != 1 {
+		t.Fatalf("result reporting must persist one independent delivery: %d", outboxes)
+	}
+}
+
 func TestCoordinatorWindowPlanTaskFinishedModelFailureKeepsJobRetryable(t *testing.T) {
 	f := newCoordinatorPlanFixture(t, "整理本次会议决策")
 	task := f.finishedTask(t, "failed")
@@ -540,6 +663,9 @@ func TestCoordinatorWindowPlanTaskFinishedModelFailureKeepsJobRetryable(t *testi
 	f.h.InboundCoordinator.Chat = probe
 	if err := f.h.runPersistedTaskFinishedLoop(context.Background(), uuidToString(task.ID)); err == nil {
 		t.Fatal("model failure must propagate to the persisted worker")
+	}
+	if probe.calls != 1 {
+		t.Fatalf("failed routing should not run the finish review: %d", probe.calls)
 	}
 	callback, _, _ := inboundcoord.WrapupCallback(task.Context)
 	var count int

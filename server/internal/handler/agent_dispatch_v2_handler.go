@@ -80,7 +80,7 @@ func buildAgentDispatchIssueCreateParams(
 		AllowDuplicate:            true,
 		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:           privateContext,
-		Metadata:                  overrides.Metadata,
+		Metadata:                  mergeDingTalkOriginMetadata(overrides.Metadata, dispatchOriginOpenMsgID(command)),
 		SystemLabelName:           overrides.SystemLabelName,
 		SystemLabelDescription:    overrides.SystemLabelDescription,
 		SystemLabelColor:          overrides.SystemLabelColor,
@@ -141,6 +141,9 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		payload["external_identity"] = struct {
 			DWS *AgentDispatchDWSIdentity `json:"dws"`
 		}{DWS: c.ExternalIdentity.DWS}
+	}
+	if origin := dispatchOriginOpenMsgID(c); origin != "" {
+		payload[protocol.DingTalkReplyToOpenMsgIDContextKey] = origin
 	}
 	if c.DispatchEndpointID != "" {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
@@ -1245,11 +1248,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				break
 			}
 			processed++
-			itemDecision := decision
-			itemDecision.Purpose = item.Purpose
-			itemDecision.Intent = item.Intent
-			itemDecision.LookInto = item.LookInto
-			itemDecision.Items = []inboundcoord.WindowItem{item}
+			itemDecision := decision.ForWindowItem(item)
 			overrides := agentDispatchIssueCreateOverrides{
 				Title:          inboundcoord.IssueTitle(itemDecision, prompt.DisplayContent),
 				DisplayContent: inboundcoord.IssueDescription(itemDecision, firstNonEmpty(item.Content, prompt.DisplayContent)),

@@ -360,3 +360,25 @@ func TestAgentCopyExposesSecretSafeFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentCopyPreservesCoordinatorContractSourceVersion(t *testing.T) {
+	source := fullSourceAgent()
+	source["coordinator_contract"] = map[string]any{"version": 1, "scope": "route requests", "must_delegate": []string{"research"}, "constraints": []string{"draft only"}, "clarify_when": []string{}, "source_instructions_sha256": strings.Repeat("a", 64)}
+	source["coordinator_contract_state"] = "stale"
+	var got map[string]any
+	srv := copyMockServer(t, source, &got)
+	defer srv.Close()
+	setCopyTestEnv(t, srv.URL)
+	cmd := newAgentCopyTestCmd()
+	if err := cmd.Flags().Set("instructions", "new job"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runAgentCopy(cmd, []string{"agent-src"}); err != nil {
+		t.Fatal(err)
+	}
+	oldJSON, _ := json.Marshal(source["coordinator_contract"])
+	copiedJSON, _ := json.Marshal(got["coordinator_contract"])
+	if string(oldJSON) != string(copiedJSON) {
+		t.Fatalf("copy changed source version: %s", copiedJSON)
+	}
+}

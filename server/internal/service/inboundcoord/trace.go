@@ -62,6 +62,9 @@ func coordinatorTraceOptions(turn Turn, started time.Time) langfuse.TraceOptions
 		"addressed":         turn.Addressed,
 		"busy":              turn.Busy,
 	}
+	for key, value := range coordinatorContractMetadata(turn) {
+		metadata[key] = value
+	}
 	if turn.SceneMemoryRevision > 0 {
 		metadata["scene_memory_revision"] = turn.SceneMemoryRevision
 	}
@@ -173,24 +176,27 @@ func finishCoordinatorTrace(t *langfuse.Trace, decision Decision, loopErr error)
 	// first span of the trace arrives, long before the decision exists.
 	action := string(decision.Action)
 	t.AddMetadata(map[string]any{
-		"action":      action,
-		"issue_id":    strings.TrimSpace(decision.IssueID),
-		"tool_rounds": decision.ToolRounds,
-		"fail_open":   decision.Action == ActionContinue && loopErr != nil,
-		"deferred":    decision.Action == ActionDeferred,
+		"action":             action,
+		"coordination_kinds": decision.CoordinationKinds(),
+		"issue_id":           strings.TrimSpace(decision.IssueID),
+		"tool_rounds":        decision.ToolRounds,
+		"fail_open":          decision.Action == ActionContinue && loopErr != nil,
+		"deferred":           decision.Action == ActionDeferred,
 	})
 	output := map[string]any{
-		"action":      action,
-		"issue_id":    strings.TrimSpace(decision.IssueID),
-		"user_text":   clipRunes(strings.TrimSpace(decision.UserText), traceOutputTextBudget),
-		"look_into":   clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
-		"purpose":     clipRunes(strings.TrimSpace(decision.Purpose), llmLogFieldBudget),
-		"intent":      strings.TrimSpace(decision.Intent),
-		"reason":      clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
-		"tool_rounds": decision.ToolRounds,
-		"tools_used":  decision.ToolsUsed,
-		"elapsed_ms":  decision.ElapsedMs,
+		"action":             action,
+		"coordination_kinds": decision.CoordinationKinds(),
+		"issue_id":           strings.TrimSpace(decision.IssueID),
+		"user_text":          clipRunes(strings.TrimSpace(decision.UserText), traceOutputTextBudget),
+		"look_into":          clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
+		"purpose":            clipRunes(strings.TrimSpace(decision.Purpose), llmLogFieldBudget),
+		"intent":             strings.TrimSpace(decision.Intent),
+		"reason":             clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
+		"tool_rounds":        decision.ToolRounds,
+		"tools_used":         decision.ToolsUsed,
+		"elapsed_ms":         decision.ElapsedMs,
 	}
+	output["coordination_actions"] = decision.CoordinationActions
 	if decision.IssueComment != nil {
 		output["issue_comment"] = decision.IssueComment
 	}

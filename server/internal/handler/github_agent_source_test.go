@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
+
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/agentsource"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -91,5 +93,33 @@ func TestWriteGitHubSourceErrorTreatsDTAProjectFailuresAsUnprocessable(t *testin
 
 	if recorder.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusUnprocessableEntity, recorder.Body.String())
+	}
+}
+
+func TestGitAgentSourceSnapshotUpdatesAndClearsCoordinatorContract(t *testing.T) {
+	bound, err := coordinatorcontract.Bind(&coordinatorcontract.Contract{Version: 1, Scope: "Route requests"}, "source SOP")
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := gitAgentSourceSnapshotUpdate(pgtype.UUID{Valid: true}, agentsource.Bundle{Instructions: "source SOP", CoordinatorContract: bound})
+	if _, state := coordinatorcontract.Resolve(params.CoordinatorContract, params.Instructions.String); state != coordinatorcontract.StateLoaded {
+		t.Fatalf("sync contract state = %s", state)
+	}
+	cleared := gitAgentSourceSnapshotUpdate(pgtype.UUID{Valid: true}, agentsource.Bundle{Instructions: "source SOP"})
+	if string(cleared.CoordinatorContract) != "null" {
+		t.Fatalf("missing source contract must explicitly clear stored contract, got %q", cleared.CoordinatorContract)
+	}
+	preview := GitHubAgentPreviewResponse{CoordinatorContract: bound}
+	raw, err := json.Marshal(preview)
+	if err != nil || !strings.Contains(string(raw), `"coordinator_contract":{"version":1`) {
+		t.Fatalf("preview lost contract: %s, %v", raw, err)
+	}
+}
+
+func TestWriteGitHubSourceErrorTreatsBoundContractBudgetAsUnprocessable(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeGitHubSourceError(recorder, errors.New("spec.coordinator_contract: coordinator_contract must be 1600 characters or fewer including JSON fields and source hash"))
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 }

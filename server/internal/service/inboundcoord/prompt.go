@@ -47,18 +47,10 @@ func buildUserPrompt(turn Turn) string {
 	writePromptField(&b, "identity_note", turn.IdentityNote)
 	writePromptField(&b, "agent_persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget))
 	writePromptField(&b, "agent_reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget))
-	if policy := strings.TrimSpace(turn.Instructions); policy != "" {
-		if loop == LoopTaskFinished {
-			b.WriteString("job_policy_status: loaded; truncated=false\njob_policy:\n")
-			b.WriteString(policy)
-			b.WriteByte('\n')
-		} else {
-			fmt.Fprintf(&b, "job_policy_status: host_held; not_loaded_in_routing; characters=%d; sha256=%s\n", utf8.RuneCountInString(policy), policyHash(policy))
-			b.WriteString("job_policy_boundary: Full working restrictions remain binding. Read context_read(kind=job_policy) if needed to resolve scope or authorization. Host checks direct replies against the full policy; the executor receives its original instructions. Do not perform its business analysis here.\n")
-		}
-	}
+	writeCoordinatorContractPrompt(&b, turn)
 	if loop == LoopTaskFinished {
 		writePromptField(&b, "issue_id", turn.IssueID)
+		writePromptField(&b, "current_result_ref", currentResultRef(turn))
 		if result := strings.TrimSpace(turn.TaskResult); result != "" {
 			fmt.Fprintf(&b, "task_result_status: loaded; truncated=%t\n", utf8.RuneCountInString(result) > 800)
 			b.WriteString("task_result:\n")
@@ -122,9 +114,9 @@ func writeInboundContext(b *strings.Builder, turn Turn) {
 		b.WriteByte('\n')
 	}
 	memoryState := promptContextState(turn.SceneMemoryStatus, strings.TrimSpace(turn.SceneMemory) != "", turn.SceneMemoryRevision > 0)
-	fmt.Fprintf(b, "scene_memory_status: %s; scope=this_conversation; version=%d\n", memoryState, turn.SceneMemoryRevision)
+	fmt.Fprintf(b, "scene_memory_status: %s; scope=this_conversation\nscene_memory_revision: %d\n", memoryState, turn.SceneMemoryRevision)
 	if turn.SceneMemoryRevision > 0 || strings.TrimSpace(turn.SceneMemory) != "" {
-		fmt.Fprintf(b, "scene_memory_revision: %d\nscene_memory (Host-provided, this Scene only; never a source of issue_id):\n", turn.SceneMemoryRevision)
+		b.WriteString("scene_memory (Host-provided, this Scene only; never a source of issue_id):\n")
 		if memory := strings.TrimSpace(turn.SceneMemory); memory != "" {
 			b.WriteString(memory)
 		} else {

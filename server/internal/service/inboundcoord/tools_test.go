@@ -344,7 +344,7 @@ func TestAssocToolsBindRequiresIssueID(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 	var h hinter
-	if !errors.As(err, &h) || !strings.Contains(h.Hint(), "finish action=issue") {
+	if !errors.As(err, &h) || !strings.Contains(h.Hint(), "start_work") {
 		t.Fatalf("missing bind hint: %v", err)
 	}
 }
@@ -419,19 +419,19 @@ func TestMarshalCoordinatorRecallIsSlim(t *testing.T) {
 		t.Fatalf("items=%+v", view.Items)
 	}
 	item := view.Items[0]
-	if item.IssueID != "0f45c389-d67c-4ebd-b524-97d95177b1c9" || item.Who != "须莫🥥" || item.WaitingOn != "cidviyliGA6bfBKZARuuy0RzA==" {
+	if item.IssueID != "0f45c389-d67c-4ebd-b524-97d95177b1c9" || item.Who != "须莫🥥" || (len(item.WaitingOn) != 1 || item.WaitingOn[0].ConversationID != "cidviyliGA6bfBKZARuuy0RzA==") {
 		t.Fatalf("item=%+v", item)
 	}
-	if item.LastComment != "已向须莫v6发送消息询问今晚是否有会议安排。 等待须莫v6回复。" && !strings.Contains(item.LastComment, "已向须莫v6发送消息询问今晚是否有会议安排") {
-		t.Fatalf("last_comment=%q", item.LastComment)
+	if item.Status != "unknown" || item.StatusSource != "not_loaded" || item.TaskStatus != "not_loaded" {
+		t.Fatalf("graph status must not become current Issue/task state: %+v", item)
 	}
-	if strings.Contains(item.LastComment, "openTaskId") || strings.Contains(item.LastComment, "发送详情") {
-		t.Fatalf("last_comment still has DWS dump: %q", item.LastComment)
+	if item.AssociationUpdatedAt == "" || view.Scope.Since == "" || view.Scope.Until == "" {
+		t.Fatalf("coordination view must preserve read scope: %s", raw)
 	}
 	for _, banned := range []string{
 		`"task_id"`, `"intent_label"`, `"matched_via"`, `"conversations"`,
 		`"last_touched_at"`, `"age_seconds"`, `"last_comment_at"`, `"events_note"`,
-		`"since"`, `"until"`, `"rels"`,
+		`"events"`, `"last_comment"`, `"rels"`,
 	} {
 		if strings.Contains(raw, banned) {
 			t.Fatalf("slim recall leaked %s: %s", banned, raw)
@@ -471,17 +471,6 @@ func TestMarshalCoordinatorRecallDropsForeignScene(t *testing.T) {
 	}
 }
 
-func TestSanitizeRecallCommentDropsDWS(t *testing.T) {
-	t.Parallel()
-	got := sanitizeRecallComment("已向须莫v6发送消息询问今晚是否有会议安排。\n发送详情：\n- 目标会话：须莫v6（openConversationId: cidx）\n- 发送状态：成功（openTaskId: abc）\n等待回复。")
-	if strings.Contains(got, "openTaskId") || strings.Contains(got, "发送详情") || strings.Contains(strings.ToLower(got), "dws") {
-		t.Fatalf("got=%q", got)
-	}
-	if !strings.Contains(got, "已向须莫v6发送消息询问今晚是否有会议安排") {
-		t.Fatalf("got=%q", got)
-	}
-}
-
 func TestAssocToolsUnknownName(t *testing.T) {
 	t.Parallel()
 	tools := &AssocTools{Service: assoc.NewService(assoc.NewMemory())}
@@ -509,7 +498,7 @@ func mustSince48h(t *testing.T) time.Time {
 	return parsed
 }
 
-func TestAssocToolsRecallOverlaysEventText(t *testing.T) {
+func TestAssocToolsRecallDoesNotExposeEventText(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	store := assoc.NewMemory()
@@ -556,17 +545,15 @@ func TestAssocToolsRecallOverlaysEventText(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &view); err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]struct{}{}
-	for _, event := range view.Events {
-		got[event.Text] = struct{}{}
+	if strings.Contains(raw, `"events"`) || strings.Contains(raw, `"text"`) || strings.Contains(raw, `"7点"`) {
+		t.Fatalf("association events must stay outside coordination view: %s", raw)
 	}
-	if _, ok := got["7点"]; !ok {
-		t.Fatalf("inbound text missing events=%+v", view.Events)
-	}
-	if _, ok := got["今晚几点打球"]; !ok {
-		if _, ok := got["向须莫v6确认今晚几点打球"]; !ok {
-			t.Fatalf("outbound text missing events=%+v", view.Events)
-		}
+	// The graph remains available to other consumers with its actual events.
+	underlying, err := svc.Recall(ctx, assoc.Query{
+		WorkspaceID: "ws", AgentID: agentID, ConversationID: "cid-v6", Since: mustSince48h(t), Until: time.Now().UTC(),
+	})
+	if err != nil || len(underlying.Events) == 0 {
+		t.Fatalf("shared association events lost: %+v err=%v", underlying, err)
 	}
 }
 
