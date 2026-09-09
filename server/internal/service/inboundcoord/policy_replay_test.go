@@ -438,7 +438,13 @@ func evaluateCoordinatorReplay(f coordinatorReplayFixture, d Decision, err error
 	}
 	if f.ForbidReads {
 		assert(history.calls == 0 && len(reads.calls) == 0, "direct inventory answer must use provided facts without extra reads")
-		assert(len(observer.rounds) == 1, "direct inventory answer must retain one model round")
+		routingRounds := 0
+		for _, round := range observer.rounds {
+			if !slices.Contains(round.AllowedTools, "finish_check") {
+				routingRounds++
+			}
+		}
+		assert(routingRounds == 1, "direct inventory answer must retain one routing round, plus independent terminal review")
 	}
 	for _, failure := range append(append(append([]string{}, observer.violations...), reads.violations...), history.violations...) {
 		r.Failures = append(r.Failures, failure)

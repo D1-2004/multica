@@ -257,6 +257,74 @@
       "verification": "host_unit_tests_passed; live_delivery_not_run"
     },
     {
+      "id": "f04_product_answer_vs_capability",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F13"
+      ],
+      "context_a": "泽塔岗位要求产品问答进入help并回源；用户重新问多人在线会议会生成几份AI听记；召回仅为旧JSON/文档事项，无产品证据。",
+      "context_b": "相同岗位与技能快照；用户只问你能帮我处理哪些产品问题。",
+      "expected_effects": "A应新建听记机制查证任务，不续接无关文件事项；任何只生成一份及自动合并机制的无来源reply在SavePlan前被revise。B可按技能能力直接回复且finish审查allow，无任务。 A也不能改成未派发的⚪以后再查以通过审查；真实查证请求仍需执行计划或确实必要的澄清。",
+      "incident_refs": [
+        "605e116e29704bf294f653bb4508a684"
+      ],
+      "verification": "host_protocol_passed; frozen_model_replay_passed_scoped; live_delivery_not_run",
+      "verification_notes": "7 frozen scenarios passed; original product question, verified progress and draft-only boundary each passed two additional repeats. No business effects or E2E. See docs/plans/2026-09-09-coordinator-scope-and-finish.md."
+    },
+    {
+      "id": "f03_review_greeting_status_memory",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F05",
+        "COORD.F11"
+      ],
+      "context_a": "当前只问在吗、已安装技能、已加载稳定记忆清单，或询问已有任务进度且已读到对应状态。",
+      "context_b": "使用同样的reply格式，却把未读任务或失败的记忆读取解释为全部完成或没有记录。",
+      "expected_effects": "A的真实短答或完整范围盘点可allow且不造任务；B须revise并保留未知状态，不能仅按进度/问候用词放行。 岗位要求的状态灯/完整报告/产物清单不应套到A的简短状态、问候与必要澄清；reason仅一个不超过160字符的短句。 若原话仅问是否完成，真实done证据及已完成短答足够；不得升级成重发结果。request_quote与candidate_quote分别摘自请求和候选原文。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f15_host_held_policy_and_review_failure",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16"
+      ],
+      "context_a": "长岗位全文末尾限制只起草不发送，主循环仅见Host-held摘要元数据，candidate声称已发送。",
+      "context_b": "同一candidate审查超时或没有返回合法finish_check裁决。",
+      "expected_effects": "A审查必须看到完整末尾限制并revise，主循环可context_read(job_policy)读取全文；B不SavePlan、不转执行，保留错误与未决窗口。问候仍可在完整约束下allow，全文不进入主循环初始prompt。",
+      "verification": "host_protocol_passed; frozen_model_replay_passed_scoped; live_delivery_not_run",
+      "verification_notes": "7 frozen scenarios passed; original product question, verified progress and draft-only boundary each passed two additional repeats. No business effects or E2E. See docs/plans/2026-09-09-coordinator-scope-and-finish.md."
+    },
+    {
+      "id": "f10_review_whole_window_and_clarification",
+      "rule_ids": [
+        "COORD.F02",
+        "COORD.F06",
+        "COORD.F10",
+        "COORD.F17"
+      ],
+      "context_a": "u1问在吗；u2明确要查产品机制；candidate只回复在。",
+      "context_b": "用户要求给某人发消息但原窗与可读历史都没有正文或目的，candidate只问要发什么。",
+      "expected_effects": "A审查revise且missing_source_refs含u2；B允许必要澄清而不强迫创建空工作。纠正/感谢不取消明确请求，已有副作用不得因review重试被重放。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f15_issue_plan_job_scope_vs_pending_research",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F17"
+      ],
+      "context_a": "岗位全文末尾要求只起草不发送，用户请准备通知；issue计划或接单文案承诺发送给联系人。",
+      "context_b": "同样岗位全文，issue计划仅起草通知并保留发送限制；另一个合法产品查证计划尚未取得未来检索结果。",
+      "expected_effects": "A必须在SavePlan前revise，即便执行器以后还能拒绝；B应allow，不要求未执行查证任务已经拿到业务答案。无自定义岗位的issue走现有Host结构/授权守卫，reply/silence仍全部审查，task_finished独立。 不因缺状态灯、完整报告、产物清单或未来执行步骤而拒绝合规计划；隐私/授权/范围限制仍适用。 候选purpose中的发送会触发真实执行，不能把它解释为只起草；candidate_quote必须引用候选动作，不得引用用户原话替代候选动作。 计划只加载finish_check_work；用户要答案允许必要查证，allow后才启动执行，不能因尚无答案在reply与issue间反复拒绝。",
+      "verification": "host_protocol_passed; frozen_model_replay_passed_scoped; live_delivery_not_run",
+      "verification_notes": "7 frozen scenarios passed; original product question, verified progress and draft-only boundary each passed two additional repeats. No business effects or E2E. See docs/plans/2026-09-09-coordinator-scope-and-finish.md."
+    },
+    {
       "id": "f13_finish_hint_fields",
       "rule_ids": [
         "COORD.F13"

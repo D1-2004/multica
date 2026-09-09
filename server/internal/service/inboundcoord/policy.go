@@ -118,10 +118,18 @@ func policyHash(text string) string {
 
 func selectedPolicyModules(turn Turn, recalled bool) []policyModule {
 	finished := turn.Loop == LoopTaskFinished
-	selected := map[string]bool{"core": true, "voice": true}
-	if finished {
+	selected := map[string]bool{"core": true}
+	if turn.Loop == LoopFinishCheck {
+		if turn.FinishCheckAction == ActionIssue {
+			selected["finish_check_work"] = true
+		} else {
+			selected["finish_check"] = true
+		}
+	} else if finished {
+		selected["voice"] = true
 		selected["completion"] = true
 	} else {
+		selected["voice"] = true
 		selected["inbound"] = true
 		if turn.Source == SourceWeb {
 			selected["web"] = true
