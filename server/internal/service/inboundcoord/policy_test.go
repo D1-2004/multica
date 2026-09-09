@@ -219,8 +219,8 @@ func TestPolicyTerminalReviewModesDoNotMix(t *testing.T) {
 			}
 			for _, recalled := range []bool{false, true} {
 				ids := policyModuleIDs(turn, recalled)
-				if len(ids) != 2 || !ids["core"] || !ids[wanted] || ids[forbidden] {
-					t.Fatalf("terminal review must load only core and its action-specific policy: action=%s recalled=%t modules=%v", action, recalled, ids)
+				if len(ids) != 4 || !ids["core"] || !ids["group"] || !ids["channel"] || !ids[wanted] || ids[forbidden] {
+					t.Fatalf("group review must share participation policy and keep action-specific review separate: action=%s recalled=%t modules=%v", action, recalled, ids)
 				}
 				prompt := buildSystemPromptForStage(turn, recalled)
 				manifest := policyManifestForStage(turn, recalled)

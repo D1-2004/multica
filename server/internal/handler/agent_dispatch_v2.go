@@ -126,6 +126,9 @@ func (m *DispatchReferencedMessage) UnmarshalJSON(data []byte) error {
 }
 
 type DispatchMessage struct {
+	// nil is legacy/unknown; [] is a known unmentioned line. Keep empty arrays
+	// across durable serialization so a later window union cannot overwrite it.
+	Mentions             []DispatchMention          `json:"mentions"`
 	OpenMsgID            string                     `json:"openMsgId"`
 	OccurredAt           int64                      `json:"occurredAt"`
 	Text                 string                     `json:"text,omitempty"`

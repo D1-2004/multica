@@ -105,7 +105,8 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	input := map[string]any{
 		"proactive_conversation": turn.ProactiveConversation,
 		"source":                 turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, "addressed": turn.Addressed,
-		"agent_name": turn.AgentName, "persona": clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
+		"employee_account_name": turn.EmployeeAccountName, "employee_uid": turn.DWSUID,
+		"agent_name": firstNonEmpty(turn.EmployeeAccountName, turn.AgentName), "agent_config_label": turn.AgentName, "persona": clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
 		"persona_truncated":    utf8.RuneCountInString(strings.TrimSpace(turn.Persona)) > personaBudget,
 		"skills":               map[string]any{"status": skillsStatus, "snapshot": skills, "scope": "installed_catalog_snapshot", "shown": shownSkills, "supplied": len(turn.Skills), "catalog_complete": shownSkills == len(turn.Skills) && skillsStatus == "loaded", "descriptions": "bounded, not full skill instructions"},
 		"job_policy":           policy,
@@ -169,7 +170,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	for i, utterance := range windowUtterances(turn) {
 		window = append(window, map[string]any{"source_ref": refs[i], "text": utterance.Text,
 			"sender": utterance.Sender, "sender_id": utterance.SenderID, "evidence_id": utterance.EvidenceID,
-			"timestamp": utterance.Timestamp, "quoted_context": utterance.ReplyToContent})
+			"timestamp": utterance.Timestamp, "mentions": utterance.Mentions, "mention_relation": mentionRelation(turn, utterance), "reply_to_sender_id": utterance.ReplyToSenderID, "reply_to_evidence_id": utterance.ReplyToEvidenceID, "quoted_context": utterance.ReplyToContent})
 	}
 	mode := "conversation_result"
 	if decision.Action == ActionIssue {
@@ -186,6 +187,9 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		return finishCheckResult{}, fmt.Errorf("encode finish proposal: %w", err)
 	}
 	reviewTurn := Turn{Loop: LoopFinishCheck, FinishCheckAction: decision.Action}
+	if turn.Loop != LoopTaskFinished {
+		reviewTurn.Source, reviewTurn.ChatType = turn.Source, turn.ChatType
+	}
 	system := buildSystemPrompt(reviewTurn)
 	key := policyHash(system + "\n" + string(body) + "\n" + string(proposal))
 	if cached, ok := cache[key]; ok {

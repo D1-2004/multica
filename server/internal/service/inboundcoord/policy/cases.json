@@ -510,6 +510,16 @@
       "context_b": "task_finished、无CID请求，或此前已由Host短路/持久化计划恢复的路径。",
       "expected_effects": "A也可能多一次有界关联读取，记录实际耗时和读次数，不承诺必然更快；B不新增该预取。origin=host_prefetch不是LLM工具调用，模型调用数按generation/tool_calls统计，缺metadata不猜失败。",
       "verification": "not_run"
+    },
+    {
+      "id": "group_recipient_role_contrast",
+      "rule_ids": [
+        "COORD.F01"
+      ],
+      "context_a": "找别人的问候、点名让别人处理、闲聊；旧同群 Issue 不能把这些消息变成员工的请求",
+      "context_b": "叫绑定员工账号/数字员工、明确邀请协助、岗位范围内开放问题、已有工作真实补充；混合窗口逐条判断",
+      "expected_effects": "A 静默且无工作副作用；B 合理回应或委派，混合窗口只响应有效来源；主判断和最终审查共享群聊资格及可信逐条身份，不以关键词或必须 @ 替代语义判断",
+      "verification": "pending_real_model_and_live_delivery"
     }
   ]
 }

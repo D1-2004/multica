@@ -9,9 +9,17 @@ import (
 // may start or continue. A third real ask stays pending for the next window.
 const SceneWindowMaxItems = 2
 
-// WindowUtterance is one addressed inbound line in the current scene window.
+// MessageMention preserves trusted channel mention targets; empty UID does not
+// prove who an open-id target is. Never infer identities from a display name.
+type MessageMention struct {
+	UID            string `json:"uid,omitempty"`
+	OpenDingTalkID string `json:"open_dingtalk_id,omitempty"`
+}
+
+// WindowUtterance is one inbound line in the current scene window.
 type WindowUtterance struct {
 	Sender            string
+	Mentions          []MessageMention
 	Text              string
 	EvidenceID        string
 	Timestamp         time.Time
@@ -161,4 +169,30 @@ func (d Decision) ForWindowItem(item WindowItem) Decision {
 	d.CoordinationActions = nil
 	d.NonWorkRefs = nil
 	return d
+}
+
+// mentionRelation compares trusted identifiers, not names or message text.
+// Other-only mentions are not a veto: the same line can also invite the
+// employee by name; that distinction belongs to the shared group policy.
+func mentionRelation(turn Turn, u WindowUtterance) string {
+	if u.Mentions == nil {
+		return "unknown"
+	}
+	if len(u.Mentions) == 0 {
+		return "none"
+	}
+	unknown := false
+	for _, m := range u.Mentions {
+		if m.UID == "" || turn.DWSUID == "" {
+			unknown = true
+			continue
+		}
+		if m.UID == turn.DWSUID {
+			return "includes_employee"
+		}
+	}
+	if unknown {
+		return "unknown"
+	}
+	return "other_only"
 }

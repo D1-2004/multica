@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-09.4",
-  "assembly_version": "5",
+  "policy_version": "2026-09-09.5",
+  "assembly_version": "6",
   "modules": [
     {
       "id": "core",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "12",
+      "version": "13",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -59,8 +59,8 @@
         "COORD.F17",
         "COORD.F10"
       ],
-      "budget_characters": 2454,
-      "content_sha256": "31fbd0892eb8b4fb5f278251f2832f1020f20211874e998f5b183b0b6e27fd6b"
+      "budget_characters": 2468,
+      "content_sha256": "50f6074ea0e084e194a6959215763351571b46f4649459ebd7af76e5583ab7b6"
     },
     {
       "id": "channel",
@@ -95,7 +95,7 @@
     },
     {
       "id": "group",
-      "version": "2",
+      "version": "3",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -109,8 +109,8 @@
         "COORD.F06",
         "COORD.F14"
       ],
-      "budget_characters": 722,
-      "content_sha256": "ad393c5fe6be9c6107ad212020f182c482d05b20ed1fff93d04c0a385d97514e"
+      "budget_characters": 1100,
+      "content_sha256": "9de26043097eb08db27148bbb1590ef4ce9ad2093aaa22cba21ceebcac9def9c"
     },
     {
       "id": "window",
@@ -292,7 +292,8 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f01_contrast",
-        "proactive_group_contrast"
+        "proactive_group_contrast",
+        "group_recipient_role_contrast"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -304,7 +305,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "group_recipient_host_tests": "pending",
+        "group_recipient_model_replay": "pending",
+        "group_recipient_live_delivery": "pending"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -315,7 +319,12 @@
         "server/internal/service/inboundcoord/window.go",
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
-        "server/internal/service/inboundcoord/policy/finish_check_work.md"
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
+        "server/internal/service/inboundcoord/prompt.go",
+        "server/internal/service/inboundcoord/policy.go",
+        "server/internal/service/inboundcoord/proactive_relevance_test.go",
+        "server/internal/service/inboundcoord/scene_prefetch.go",
+        "server/internal/service/inboundcoord/window_plan.go"
       ],
       "case_file": "cases.json"
     },

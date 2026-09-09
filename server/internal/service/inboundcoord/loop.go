@@ -53,7 +53,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			latestFeedback = coordinationRepairFeedback(toolContextRead, err)
 		}
 	}
-	if (turn.Loop == "" || turn.Loop == LoopInbound) && turn.ConversationID != "" {
+	if shouldPrefetchSceneRecall(turn) {
 		call, result, readErr := c.prefetchSceneRecall(ctx, &turn, &readSequence)
 		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
 		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})

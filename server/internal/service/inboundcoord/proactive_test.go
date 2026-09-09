@@ -23,7 +23,7 @@ func TestProactiveUnaddressedReachesSameCoordinator(t *testing.T) {
 
 func TestProactivePolicyAndCompletionCoverage(t *testing.T) {
 	turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, Message: "帮我查一下"}
-	if !strings.Contains(buildUserPrompt(turn), "proactive_conversation: true") || !strings.Contains(buildSystemPrompt(turn), "without requiring an @") {
+	if !strings.Contains(buildUserPrompt(turn), "proactive_conversation: true") || !strings.Contains(buildSystemPrompt(turn), "不要求 @") {
 		t.Fatal("proactive host and prompt contracts diverged")
 	}
 	turn.Loop = LoopTaskFinished

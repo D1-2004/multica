@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/langfuse"
@@ -73,4 +74,14 @@ func (c *Coordinator) prefetchSceneRecall(ctx context.Context, turn *Turn, seque
 		"event", "inbound_coordinator_scene_prefetch", "origin", "host_prefetch", "status", status,
 		"elapsed_ms", elapsed, "read_snapshot_count", len(turn.CoordinationReads), "timeout_ms", scenePrefetchTimeout.Milliseconds(), "arguments", call.Arguments, "result", clipRunes(result, llmLogToolBudget))...)
 	return call, result, err
+}
+
+// Observed group chatter must establish relevance before unrelated old work
+// enters its first decision. The same loop can still recall on demand and
+// retains the mandatory recall-before-work gate; no classifier call is added.
+func shouldPrefetchSceneRecall(turn Turn) bool {
+	if (turn.Loop != "" && turn.Loop != LoopInbound) || turn.ConversationID == "" {
+		return false
+	}
+	return !(turn.ProactiveConversation && !turn.Addressed && strings.EqualFold(turn.ChatType, "group"))
 }
