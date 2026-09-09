@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-09.3",
+  "policy_version": "2026-09-09.4",
   "assembly_version": "5",
   "modules": [
     {
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "11",
+      "version": "12",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,7 +60,7 @@
         "COORD.F10"
       ],
       "budget_characters": 2200,
-      "content_sha256": "4dc5bb263fb9831c6182ebfc9a69ca10ee1214ef285318c01d0408d8f64c18b8"
+      "content_sha256": "3275561e9ae3598e68f4aa55c831aa2314fa1fcef1bd2ca61bebd7f7918979ec"
     },
     {
       "id": "channel",
@@ -397,7 +397,9 @@
         "f03_review_greeting_status_memory",
         "f03_status_refs_vs_title",
         "f12_exact_result_report",
-        "f16_bounded_coordination_reads"
+        "f16_bounded_coordination_reads",
+        "f13_host_scene_prefetch_success_vs_failure",
+        "f08_host_prefetch_keeps_requested_scope"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -409,7 +411,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "scene_prefetch_host_tests": "not_run",
+        "scene_prefetch_model_comparison": "not_run",
+        "scene_prefetch_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -424,7 +429,9 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/coordination_view.go",
-        "server/internal/service/inboundcoord/tools.go"
+        "server/internal/service/inboundcoord/tools.go",
+        "server/internal/service/inboundcoord/scene_prefetch.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json"
     },
@@ -640,7 +647,8 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f08_contrast",
-        "f16_bounded_coordination_reads"
+        "f16_bounded_coordination_reads",
+        "f08_host_prefetch_keeps_requested_scope"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -649,14 +657,19 @@
         "live_delivery": "pending",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "scene_prefetch_host_tests": "not_run",
+        "scene_prefetch_model_comparison": "not_run",
+        "scene_prefetch_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/channel.md",
         "server/internal/service/inboundcoord/policy/dialogue.md",
         "server/internal/service/inboundcoord/policy/recall_match.md",
         "server/internal/service/inboundcoord/tools.go",
-        "server/internal/service/inboundcoord/coordination_view.go"
+        "server/internal/service/inboundcoord/coordination_view.go",
+        "server/internal/service/inboundcoord/scene_prefetch.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json"
     },
@@ -670,7 +683,8 @@
       ],
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
-        "f09_contrast"
+        "f09_contrast",
+        "f16_host_prefetch_nonwork_cost_and_skips"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -679,12 +693,17 @@
         "live_delivery": "pending",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "scene_prefetch_host_tests": "not_run",
+        "scene_prefetch_model_comparison": "not_run",
+        "scene_prefetch_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/inbound.md",
         "server/internal/handler/inbound_coordinator_job.go",
-        "docs/evals/coordinator-collect-e2e.json"
+        "docs/evals/coordinator-collect-e2e.json",
+        "server/internal/service/inboundcoord/scene_prefetch.go",
+        "server/internal/service/inboundcoord/loop.go"
       ],
       "case_file": "cases.json"
     },
@@ -800,7 +819,7 @@
     {
       "id": "COORD.F13",
       "family": "F13",
-      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。",
+      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -820,7 +839,9 @@
         "f13_closed_action_reply_escape",
         "f03_status_refs_vs_title",
         "f12_exact_result_report",
-        "f15_decline_quoted_boundary"
+        "f15_decline_quoted_boundary",
+        "f13_host_scene_prefetch_success_vs_failure",
+        "f08_host_prefetch_keeps_requested_scope"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -832,7 +853,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "scene_prefetch_host_tests": "not_run",
+        "scene_prefetch_model_comparison": "not_run",
+        "scene_prefetch_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -849,7 +873,8 @@
         "server/internal/coordinatorcontract/contract.go",
         "server/internal/handler/agent.go",
         "server/internal/service/inboundcoord/coordination_context.go",
-        "server/internal/service/inboundcoord/finish_quote.go"
+        "server/internal/service/inboundcoord/finish_quote.go",
+        "server/internal/service/inboundcoord/scene_prefetch.go"
       ],
       "case_file": "cases.json"
     },
@@ -945,7 +970,9 @@
         "f13_named_cid_vs_report_link",
         "f15_host_held_policy_and_review_failure",
         "f15_contract_stale_copy",
-        "f16_bounded_coordination_reads"
+        "f16_bounded_coordination_reads",
+        "f13_host_scene_prefetch_success_vs_failure",
+        "f16_host_prefetch_nonwork_cost_and_skips"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -957,7 +984,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "scene_prefetch_host_tests": "not_run",
+        "scene_prefetch_model_comparison": "not_run",
+        "scene_prefetch_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -972,7 +1002,8 @@
         "server/internal/handler/agent.go",
         "server/internal/service/inboundcoord/coordination_context.go",
         "server/internal/service/inboundcoord/loop.go",
-        "server/internal/service/inboundcoord/finish_quote.go"
+        "server/internal/service/inboundcoord/finish_quote.go",
+        "server/internal/service/inboundcoord/scene_prefetch.go"
       ],
       "case_file": "cases.json"
     },
@@ -1065,7 +1096,7 @@
     {
       "id": "COORD.F19",
       "family": "F19",
-      "obligation": "只有一份现行合同；旧手段保存继承关系；记录精确装配版本；结构检查、模型行为和真实送达分别证明。",
+      "obligation": "只有一份现行合同；旧手段保存继承关系；记录精确装配版本；结构检查、模型行为和真实送达分别证明。 Host预取的origin/status/elapsed独立记录，不算LLM发起的工具调用；非工作请求额外读取成本单列。",
       "status": "active",
       "runtime_modules": [
         "finish_check",
@@ -1075,7 +1106,8 @@
       "case_ids": [
         "f19_contrast",
         "f19_memory_commit_observation",
-        "f15_contract_stale_copy"
+        "f15_contract_stale_copy",
+        "f16_host_prefetch_nonwork_cost_and_skips"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1087,7 +1119,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "scene_prefetch_host_tests": "not_run",
+        "scene_prefetch_model_comparison": "not_run",
+        "scene_prefetch_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/trace.go",
@@ -1099,7 +1134,8 @@
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/coordination_context.go",
         "server/internal/service/inboundcoord/loop.go",
-        "server/internal/service/inboundcoord/finish_quote.go"
+        "server/internal/service/inboundcoord/finish_quote.go",
+        "server/internal/service/inboundcoord/scene_prefetch.go"
       ],
       "case_file": "cases.json"
     }

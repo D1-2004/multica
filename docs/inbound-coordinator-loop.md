@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-09.3`。装配版本：`5`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-09.4`。装配版本：`5`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -10,6 +10,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 修改 Coordinator 的提示词、工具、上下文、handler、assoc、scenememory、窗口、回执或 trace 前，先读本文件和 [规则目录](../server/internal/service/inboundcoord/policy/registry.json)。目录登记 `COORD.F01`–`COORD.F19` 的行为义务、模块、实现引用、对照案例和已撤回手段。
 
+- [Host预取Plan](plans/2026-09-09-coordinator-prefetch.md) 记录当前场域必需读取前置的收益假设、额外成本与实测；
 - [有限动作与短合同 Plan](plans/2026-09-09-coordinator-closed-actions.md) 记录当前动作协议、迁移边界和验收；
 - [上下文减重与终结审查 Plan](plans/2026-09-09-coordinator-scope-and-finish.md) 记录本次实现与验证状态；[原实施 Plan](plans/2026-09-07-coordinator-progressive-context.md) 保留此前分阶段证据。
 - [103 条来源清单](plans/2026-09-07-coordinator-progressive-context-inventory.json) 保留原 trace 的 99 条 bullet、4 条开场原文及哈希；候选映射另列，不覆盖源证据。
@@ -46,13 +47,13 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 | `memory` | 已有本场景记忆快照 | 稳定知识、当前纠正、撤回与盘点 |
 | `skills` | 已有技能快照 | 名称/能力介绍与实际执行区别 |
 | `dialogue` | 已载入对话证据 | 上一问、短答、引用与原窗口水位 |
-| `recall_match` | 本轮成功召回后 | 候选比较、工作进度、旧工作与续接 |
+| `recall_match` | 本轮成功召回后（含首次模型调用前的Host预取） | 候选比较、工作进度、旧工作与续接 |
 
 模块只按 Host 已知条件选择，不用词表裁决业务意图。主循环可一轮形成完整 actions；入站非工作动作和 task_finished 的结果动作提交前均进入独立终结审查。带岗位约束的工作计划使用未来计划审查，不能要求尚未执行的任务先交付答案。内部归一化仍可使用 `ActionIssue` 选择工作审查，它不是对模型开放的旧 `finish(action=issue)`。
 
 审查按候选是否含工作严格二选一，不混载 voice/inbound，不替模型执行或选目标。有效短合同替代协调层的完整SOP；缺失、过期或不可读短合同时，Host保留原完整岗位审查。旧Agent因此仍有全文审查成本，本轮不通过截断或硬失败门槛删除约束，也不宣称所有Agent整轮token已有固定上限。成功读取后重建system和manifest，模块与旧工具正文不重复累积；实际效果与当前限制不能因省token丢失。
 
-接口：`buildSystemPrompt(turn)` / `policyManifest(turn)` 提供初轮；`buildSystemPromptForStage(turn, recalled)` / `policyManifestForStage(turn, recalled)` 提供实际披露阶段。成功召回前不得开放依赖匹配规则的工作目标工具。
+接口：`buildSystemPrompt(turn)` / `policyManifest(turn)` 提供未披露召回的视图；`buildSystemPromptForStage(turn, recalled)` / `policyManifestForStage(turn, recalled)` 提供实际披露阶段。Host预取成功时，首次模型请求已经采用已召回阶段；预取失败仍保持未召回阶段。成功召回前不得开放依赖匹配规则的工作目标工具。
 
 ## 4. 事实投影与读取
 
@@ -83,7 +84,11 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 ## 5. 工具与提交边界
 
-入站初轮只开放 `assoc_recall`、`context_read(history)` 和 `finish`。成功召回后可对本轮合法目标使用 `work_state`；不再向模型提供 `issue_get`、`issue_comment_list`、`assoc_bind` 或 `issue_comment_add`。内部既有函数不代表对模型开放。
+正常入站且有可信当前CID时，Host在首次模型调用前执行一次无q、48h/3项 `assoc_recall`，读取timeout为2秒。复用现有归一化、8000字符内读快照及合法事项记录，不额外引入业务读取或权限。成功结果可直接满足本场景召回前置，模型无需重复同一机械读取；失败保留unavailable，不解锁工作前置，模型仍可按需重试。明确其他CID、更早范围、关键词、工作状态或历史缺口仍需对应读取，不能由当前预取代替。
+
+首次模型请求若已有成功预取，按已召回阶段开放合法目标的 `work_state`；没有成功召回时仅开放 `assoc_recall`、`context_read(history)` 和 `finish`。task_finished、无CID请求及进入主循环前的既有Host短路/持久化计划恢复均保持原路径。不再向模型提供 `issue_get`、`issue_comment_list`、`assoc_bind` 或 `issue_comment_add`。内部既有函数不代表对模型开放。
+
+这次预取针对事项关联，不是Scene Memory刷新或提交。问候/能力介绍等非工作请求也可能增加一次有界关联读取，内部可包含多条数据库查询，不能宣称所有请求提速。Langfuse根metadata记录 `scene_prefetch_status / scene_prefetch_elapsed_ms`，对应Tool observation标 `origin=host_prefetch`；SLS事件为 `inbound_coordinator_scene_prefetch`、字段 `status / elapsed_ms`。其工具步骤不算LLM发起的工具调用；模型轮数、Host读取耗时与额外读次数分别报告。
 
 `assoc_recall`先使用可信当前CID；用户明确给出其他合法openConversationId时按原ID读取。日志链接 `cid=数字` 不是会话ID。q只过滤明确范围，person_id只辅助排序。默认3项、最多5项，仅返回协调视图：精简原目标、意图、真实状态、等待对象、更新时间与可用状态引用；不传事件全文、原始评论、业务报告和执行结论。图关联/等待快照不冒充最新执行状态。读取保留scope、status_source、complete/truncated及unknown，默认48h范围不冒充全部历史；按明确旧请求可扩7d/30d。
 

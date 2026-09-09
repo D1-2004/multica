@@ -61,6 +61,8 @@ Langfuse 先用 `agent-UUID`、session/CID、trace ID 或 idx 事件缩小范围
 
 短合同看 `coordinator_contract_state`、`coordinator_contract_hash`、`source_instructions_sha256`：`loaded` 时路由与终结审查使用短合同；`not_configured/stale/unavailable` 不能视作无限制，完整原始 SOP 留在 Host 审查。新版本不再允许 `context_read(kind=job_policy)`，两种循环均有终结审查；历史 `.09.2` 的按需读取及旧 checkpoint 恢复按当时行为解释。检查 `inbound_coordinator_finish_check`、LF `finish_check` 的 allow/revise、理由和 cache_hit；`coordinator.finish_check.N` 查看实际输入的 `job_policy.kind/text`。`tool_rounds` 只数路由轮次，成本需合计主循环和审查 generations；无有效短合同仍有全文审查成本，要单列 token、时延和重试，不能只用主 prompt 变小证明总成本下降。
 
+`2026-09-09.4`起正常有CID入站可先由Host做无q、48h/3项关联预取（读取timeout 2秒）。查LF根 `scene_prefetch_status / scene_prefetch_elapsed_ms` 与Tool observation的 `origin=host_prefetch`；SLS对应 `inbound_coordinator_scene_prefetch` 的status/elapsed_ms。成功可省掉模型机械召回轮；失败是unavailable且不解锁工作，后续模型可重试。该字段指事项关联，不代表Scene Memory刷新。Host步骤/used_tools里也可能出现assoc_recall，不能计作LLM发起的工具调用；按generation的tool_calls统计模型调用。问候/能力介绍可能反而多一次读，分别报告Host读耗时/次数与模型轮数；task_finished、无CID、既有短路/计划恢复无预取时，缺字段不等于失败。
+
 协调读取的 `read_ref=rN` 只引用本次 run 当前保留的快照，不是 issue/task/trace ID，也不能跨重试复用。当前观测字段是 `read_snapshot_count/runes/truncated/budget`，快照信封另有 `character_budget/truncated/coverage`；不要假定存在 `coordination_read_budget/context_runes`。以该版本实际 metadata 和 generation 输入为准，缺失字段标未观测；8000 字是读取快照预算，不是整个 Agent 上下文总量。移除 generic reply 只证明接口收口，仍须检查专业问答是否被错误包装成 acknowledge/clarify 等动作，及实际任务是否落地。
 
 修复漂移先比较审查Reason、下一轮反馈及 `Previous rejected proposal`：Host应保留具体Reason和最近一次未执行提案，不用constraint_quote替换诊断。提案最多6000字符，超限/非法时显式omitted；查看 `repair_proposal_runes/repair_proposal_budget` 与实际generation，独立于8000读取及800反馈预算。`finish_check_boundary_quote_discarded=true`只表示曾丢弃无效可选边界摘录，不等于整轮失败或授权放宽；必填request/candidate引用、verdict/missingrefs和decline边界仍须合法。
