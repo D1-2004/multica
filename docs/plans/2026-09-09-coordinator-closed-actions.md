@@ -22,9 +22,13 @@
 
 ## 进展与结果
 
-主体实现及模型验收完成；预发基线语义合并与新包接口兼容已完成，正在构建与发布验证。最终七例真实模型回放全部通过，详情见 `docs/reports/2026-09-09-coordinator-closed-actions.md`。
+主体实现、模型验收、预发基线兼容及部署已完成。最终七例真实模型回放全部通过，详情见 `docs/reports/2026-09-09-coordinator-closed-actions.md`。
 
 最新诊断修复：真实冻结回放暴露多意图窗口中的错误合并与修复漂移。工作审查改为先读整窗全部原文，短quote只作佐证，source_ref不等于意图数；Host另保留最近被拒提案和原始Reason，使下一轮能只修具体错误字段。新增metadata `repair_proposal_runes / repair_proposal_budget`，可选边界摘录丢弃单独观测。三例模型回放仍待验证结果，不把Host修复或文档同步记为模型已通过。
 
 - 新字段迁移改为 `9164_agent_coordinator_contract`，避开预发已占用的9159–9163；不重编号既有迁移。
 - 预发合并保留目的描述中DWS身份/MCP/Skills等合法对象及精确错误反馈，新输入仍仅有限actions；原故障和失败回放不改写为通过。
+
+- 交付提交：feature `95072f39f` + `a20fa11d6`，预发构建源码 `bcc1ef8b0f2982711510258c024958bbb7bc5aff`；CR36047738，run3107465826，build171198851。
+- 预发部署16:30:53 SUCCESS；16:42只读健康与真实Agent字段GET通过。后续人工验证CANCEL及其他预发运行属于共享流水线后续状态，未把总体状态冒称SUCCESS。
+- 最终7模型例与release实际3例均通过；未跑业务E2E、未改在线Agent定义、未发正式。遗留：旧Agent未配短合同仍有全文审查成本，模型可能纠错增加轮次；直接迁移账本未验证，字段读取已验证。
