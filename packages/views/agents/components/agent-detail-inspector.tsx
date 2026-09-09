@@ -19,7 +19,6 @@ import {
   SettingsRow,
   SettingsSection,
 } from "../../settings/components/settings-layout";
-import { BooleanSetting } from "./agent-message-settings";
 import { useT } from "../../i18n";
 import { ModelPicker } from "./inspector/model-picker";
 import {
@@ -100,14 +99,6 @@ export function AgentDetailInspector({
         description={t(($) => $.inspector.section_execution_hint)}
       >
         <SettingsCard>
-          <BooleanSetting
-            agentId={agent.id}
-            label={t(($) => $.inspector.prop_event_trigger)}
-            description={t(($) => $.inspector.prop_event_trigger_hint)}
-            enabled={agent.event_trigger_enabled === true}
-            canEdit={canEdit}
-            onSave={(enabled) => update({ event_trigger_enabled: enabled })}
-          />
           <SettingsRow
             label={t(($) => $.inspector.prop_runtime)}
             size="select-wide"
