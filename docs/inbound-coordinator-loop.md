@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-09.6`。装配版本：`8`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-09.6`。装配版本：`9`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -39,8 +39,8 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 | `voice` | 入站与 `task_finished` | 员工表达 |
 | `inbound` | 入站 | 当前窗口、沟通/执行、澄清、工作规划 |
 | `completion` | `task_finished` | 当前结果与目标会话的必要回报 |
-| `finish_check` | 非工作动作及 task_finished 的审查；群上下文同时披露channel/group | 核验有限协调动作或当前结果能否终结 |
-| `finish_check_work` | 含 start_work/continue_work 的计划审查；群上下文同时披露channel/group | 核验未来工作及同行协调动作能否启动 |
+| `finish_check` | 候选含非工作动作及 task_finished 的审查；群上下文同时披露channel/group | 核验有限协调动作或当前结果能否终结 |
+| `finish_check_work` | 候选含 start_work/continue_work 的计划审查；群上下文同时披露channel/group | 核验未来工作能否启动 |
 | `channel` / `web` | 实际入站 source | 身份缺失、场景边界、响应规则 |
 | `group` | 实际群聊 | 响应资格与不打扰 |
 | `window` | 当前有多条原文 | 合并补充、逐句来源、整窗覆盖 |
@@ -51,7 +51,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 模块只按 Host 已知条件选择，不用词表裁决业务意图。主循环可一轮形成完整 actions；入站非工作动作和 task_finished 的结果动作提交前均进入独立终结审查。带岗位约束的工作计划使用未来计划审查，不能要求尚未执行的任务先交付答案。内部归一化仍可使用 `ActionIssue` 选择工作审查，它不是对模型开放的旧 `finish(action=issue)`。
 
-审查按候选是否含工作严格二选一，不混载voice/inbound；群上下文同时披露channel/group，与主判断共享逐句参与资格及绑定接收身份。完成结果仍按完成合同审查，不开放新工作路由。审查不替模型执行或选目标。有效短合同替代协调层的完整SOP；缺失、过期或不可读短合同时，Host保留原完整岗位审查。旧Agent因此仍有全文审查成本，本轮不通过截断或硬失败门槛删除约束，也不宣称所有Agent整轮token已有固定上限。成功读取后重建system和manifest，模块与旧工具正文不重复累积；实际效果与当前限制不能因省token丢失。
+纯工作、纯非工作候选分别只载对应审查模块；混合候选在同一次审核装配core及两类审查模块，岗位约束仍只提供一次，不增模型调用或轮数。合法工作不能替同行非工作回复通过真实性与范围审查。不混载voice/inbound；群上下文同时披露channel/group，与主判断共享逐句参与资格及绑定接收身份。完成结果仍按完成合同审查，不开放新工作路由。审查不替模型执行或选目标。有效短合同替代协调层的完整SOP；缺失、过期或不可读短合同时，Host保留原完整岗位审查。旧Agent因此仍有全文审查成本，本轮不通过截断或硬失败门槛删除约束，也不宣称所有Agent整轮token已有固定上限。成功读取后重建system和manifest，模块与旧工具正文不重复累积；实际效果与当前限制不能因省token丢失。
 
 接口：`buildSystemPrompt(turn)` / `policyManifest(turn)` 提供未披露召回的视图；`buildSystemPromptForStage(turn, recalled)` / `policyManifestForStage(turn, recalled)` 提供实际披露阶段。Host预取成功时，首次模型请求已经采用已召回阶段；预取失败仍保持未召回阶段。成功召回前不得开放依赖匹配规则的工作目标工具。
 
@@ -118,6 +118,13 @@ report_status.state_refs仍只能引用Host本轮实际提供的rN状态证据�
 `task_finished`只允许 `report_result(result_ref,reply)` 或 `ignore(reason)`；当前result_ref来自Host，不可另造、拿旧结果替代或重新计算业务结论。结果回报同样接受独立审查，忠实回报执行器当前结果不属于入站抢答。
 
 工作`intent`描述操作类型：ask/confirm/notify/lookup/wait/other，可省略或留空，Host缺省other；`basis`解释为何续接，是独立字段。仅answer/change/retry这三个basis词误放intent时可窄规范化为other，其他未知值仍拒绝；不会自动改变basis或授权范围。basis=answer必须对应用户正在回答的真实待答问题，并保留原问题证据门槛；用户询问状态不是answer，重发已完成原报告是retry/redelivery；新的未锚定样本/最新业务查询是新工作，不能凭同主题旧标题接成原产物的answer。工作项item.Content保留所选uN的原始引用JSON（来源及被引用作者、证据ID、正文/读取状态），避免旧事项purpose覆盖用户指定的日志/报告对象；引用仅是材料，不构成新授权，也不引入无关history/memory。
+
+continue_work(answer/change/retry)还可在Item.Content追加本轮已经向路由/审核披露的最近普通history快照：须HistoryStatus=loaded、同一非空CID、同一原始HistoryBefore、水位/作用域匹配且含实际消息。仅复用已有有界投影，不重新查询或展开raw Turn.History；coordination_state不能充当这份history。最新普通history读取失败、不可用或范围不符时不复活更早快照。
+
+交接说明与快照合计沿用3000字符预算，保留作者、证据ID、原时间、引用及truncated。若说明占用预算，按已有优先级裁去较旧消息并标截断；不能把缺失当完整。说明明确历史只帮助理解本次续接对象/限制，不新增授权、不恢复其他工作，助手自述不证明完成或送达。当前请求仍定义允许动作；new start_work不加该历史。此补丁不增加主prompt、工具schema、模型请求或业务读取，装配版本仍8。
+
+history_handoff_test.go覆盖各续接basis、错误/过期scope与3000预算；主线程已报告本地受影响整包验证通过，运行日志由主线程归档。本次93次冻结回放先于此补丁且O组没有history调用，不能据此宣称模型/真实Executor交接已验证。
+
 
 正确模型调用是`finish({actions:[...]})`，kind值是动作类型，source_refs是数组（单条也为["u1"]）。Host仅把已注册有限动作名误作tool的情况归一到同一finish候选，并在该恢复路径对合法JSON数组字符串的source_refs解码一层；之后仍按当前循环允许动作、完整结构、来源、目标、授权及审查校验。未注册业务工具、任意alias、再次编码或非数组文本不能靠这条恢复路径获得执行权限。
 

@@ -794,6 +794,21 @@
       "verification": "not_run",
       "evidence_status": "pending_reference",
       "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f13_mixed_work_and_status_review_coverage",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F10",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "当前同时询问指定工作进度并授权另一份新产物；候选为report_status+start_work，状态回复准确对应所问目标与真实读取范围，工作独立且获授权。",
+      "context_b": "同样的混合候选，start_work合法，但report_status把无关旧事项清单当所问工作的进度，或由未知状态推断完成。",
+      "expected_effects": "两者都在同一次审核加载finish_check_work与finish_check，岗位约束仅一份，不增调用或轮数；A可allow，B须针对错误状态动作revise，不能因工作计划合法使非工作回复随之放行。纯工作仍只加载工作模块，纯非工作仍只加载非工作模块。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "集成候选混合report_status+start_work仅载工作审核模块的覆盖缺陷；Host装配测试、模型和真实投递结果由主线程分别回填。"
     }
   ]
 }

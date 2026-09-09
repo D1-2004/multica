@@ -95,7 +95,11 @@
           "server/internal/service/inboundcoord/coordination_view.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/pkg/db/queries/coordinator_work_state.sql",
-          "server/pkg/db/queries/coordinator_recent_state.sql"
+          "server/pkg/db/queries/coordinator_recent_state.sql",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -147,7 +151,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -199,7 +206,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -251,7 +261,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -308,7 +321,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -365,7 +381,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -410,7 +429,9 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/coordination_context.go",
-          "server/internal/service/inboundcoord/loop.go"
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -519,7 +540,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -800,7 +824,9 @@
           "server/pkg/db/queries/skill.sql",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/coordination_context.go",
-          "server/internal/service/inboundcoord/loop.go"
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -954,7 +980,9 @@
           "server/pkg/db/queries/skill.sql",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/coordination_context.go",
-          "server/internal/service/inboundcoord/loop.go"
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1005,7 +1033,11 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/handler/agent_dispatch_v2_handler.go",
           "server/internal/service/inboundcoord/policy/finish_check.md",
-          "server/internal/service/inboundcoord/finish_check.go"
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1097,7 +1129,10 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/continuation_content.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1149,7 +1184,10 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/policy/inbound.md"
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1191,7 +1229,10 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/continuation_content.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1255,7 +1296,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1303,7 +1347,10 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/policy/recall_match.md"
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1672,7 +1719,11 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/window.go"
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1723,7 +1774,11 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/window.go"
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1774,7 +1829,11 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/window.go"
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1829,7 +1888,10 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
-          "server/internal/service/inboundcoord/policy/recall_match.md"
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2065,7 +2127,11 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/window.go"
+          "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2167,7 +2233,11 @@
           "server/internal/service/inboundcoord/coordination_view.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/pkg/db/queries/coordinator_work_state.sql",
-          "server/pkg/db/queries/coordinator_recent_state.sql"
+          "server/pkg/db/queries/coordinator_recent_state.sql",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2213,7 +2283,10 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
           "docs/evals/coordinator-collect-e2e.json",
-          "server/internal/service/inboundcoord/scene_prefetch.go"
+          "server/internal/service/inboundcoord/scene_prefetch.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2255,7 +2328,10 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/continuation_content.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2317,7 +2393,10 @@
           "server/internal/service/inboundcoord/continuation_content.go",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/handler/task_finished_loop.go",
-          "server/internal/service/inboundcoord/wrapup.go"
+          "server/internal/service/inboundcoord/wrapup.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2370,7 +2449,10 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/continuation_content.go"
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2412,7 +2494,10 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/continuation_content.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2476,7 +2561,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2539,7 +2627,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2602,7 +2693,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2915,7 +3009,11 @@
           "server/internal/service/inboundcoord/coordination_view.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/pkg/db/queries/coordinator_work_state.sql",
-          "server/pkg/db/queries/coordinator_recent_state.sql"
+          "server/pkg/db/queries/coordinator_recent_state.sql",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2970,7 +3068,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3012,7 +3113,10 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/continuation_content.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3116,7 +3220,11 @@
           "server/internal/service/inboundcoord/coordination_view.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/pkg/db/queries/coordinator_work_state.sql",
-          "server/pkg/db/queries/coordinator_recent_state.sql"
+          "server/pkg/db/queries/coordinator_recent_state.sql",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3177,7 +3285,11 @@
           "server/internal/service/inboundcoord/coordination_view.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/pkg/db/queries/coordinator_work_state.sql",
-          "server/pkg/db/queries/coordinator_recent_state.sql"
+          "server/pkg/db/queries/coordinator_recent_state.sql",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3334,7 +3446,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3442,7 +3557,9 @@
           "server/pkg/db/queries/skill.sql",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/coordination_context.go",
-          "server/internal/service/inboundcoord/loop.go"
+          "server/internal/service/inboundcoord/loop.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3504,7 +3621,11 @@
           "server/internal/service/inboundcoord/coordination_view.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/pkg/db/queries/coordinator_work_state.sql",
-          "server/pkg/db/queries/coordinator_recent_state.sql"
+          "server/pkg/db/queries/coordinator_recent_state.sql",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3557,7 +3678,10 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/continuation_content.go"
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3610,7 +3734,10 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/continuation_content.go"
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3652,7 +3779,10 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/continuation_content.go",
-          "server/internal/service/inboundcoord/policy/finish_check_work.md"
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3704,7 +3834,10 @@
           "server/internal/service/inboundcoord/policy/finish_check.md",
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
-          "server/internal/service/inboundcoord/policy/inbound.md"
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3852,7 +3985,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3956,7 +4092,11 @@
           "server/internal/service/inboundcoord/coordination_view.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/pkg/db/queries/coordinator_work_state.sql",
-          "server/pkg/db/queries/coordinator_recent_state.sql"
+          "server/pkg/db/queries/coordinator_recent_state.sql",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -4622,7 +4762,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4678,7 +4821,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -5055,7 +5201,10 @@
           "server/pkg/db/queries/coordinator_work_state.sql",
           "server/pkg/db/queries/coordinator_recent_state.sql",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -5103,7 +5252,10 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/recent_coordination_state.go",
           "server/internal/service/inboundcoord/progressive_context.go",
-          "server/internal/service/inboundcoord/coordination_context.go"
+          "server/internal/service/inboundcoord/coordination_context.go",
+          "server/internal/service/inboundcoord/history_handoff.go",
+          "server/internal/service/inboundcoord/history_handoff_test.go",
+          "server/internal/service/inboundcoord/policy.go"
         ],
         "coverage": "source_mapping_only"
       }

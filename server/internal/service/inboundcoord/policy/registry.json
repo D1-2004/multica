@@ -1,6 +1,6 @@
 {
   "policy_version": "2026-09-09.6",
-  "assembly_version": "8",
+  "assembly_version": "9",
   "modules": [
     {
       "id": "core",
@@ -222,7 +222,7 @@
     },
     {
       "id": "finish_check",
-      "version": "15",
+      "version": "16",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -244,8 +244,8 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 2122,
-      "content_sha256": "f464ef2165c03d7a2d0135d6e075782c186c265d6c671365f7fa139ef2b982c5"
+      "budget_characters": 2200,
+      "content_sha256": "2aa5e37bcf90b1e2e42ea9f2d95101f52184ddd0b65c942a5acd3e2f3ec00d99"
     },
     {
       "id": "finish_check_work",
@@ -367,7 +367,10 @@
         "closed_actions_live_delivery": "not_run",
         "reply_recovery_host_tests": "not_run",
         "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "reply_recovery_live_delivery": "not_run",
+        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
+        "continuation_history_handoff_model_replay": "not_run",
+        "continuation_history_handoff_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -379,7 +382,9 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/window_plan.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/history_handoff.go",
+        "server/internal/service/inboundcoord/history_handoff_test.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -430,7 +435,8 @@
         "f03_issue_state_vs_latest_execution",
         "f04_declared_skill_synopsis_vs_managed_marker",
         "f03_recent_coordination_counts_vs_association_count",
-        "f08_coordination_state_anchor_isolation"
+        "f08_coordination_state_anchor_isolation",
+        "f13_mixed_work_and_status_review_coverage"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -448,7 +454,13 @@
         "scene_prefetch_live_delivery": "not_run",
         "reply_recovery_host_tests": "not_run",
         "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "reply_recovery_live_delivery": "not_run",
+        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
+        "continuation_history_handoff_model_replay": "not_run",
+        "continuation_history_handoff_live_delivery": "not_run",
+        "mixed_review_host_tests": "not_run",
+        "mixed_review_model_replay": "not_run",
+        "mixed_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -470,7 +482,12 @@
         "server/internal/service/inboundcoord/window_plan.go",
         "server/internal/service/inboundcoord/recent_coordination_state.go",
         "server/pkg/db/queries/coordinator_work_state.sql",
-        "server/pkg/db/queries/coordinator_recent_state.sql"
+        "server/pkg/db/queries/coordinator_recent_state.sql",
+        "server/internal/service/inboundcoord/history_handoff.go",
+        "server/internal/service/inboundcoord/history_handoff_test.go",
+        "server/internal/service/inboundcoord/policy.go",
+        "server/internal/service/inboundcoord/policy_test.go#TestPolicyMixedTerminalReviewLoadsBothCanonicalModules",
+        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce"
       ],
       "case_file": "cases.json"
     },
@@ -687,7 +704,10 @@
         "closed_actions_live_delivery": "not_run",
         "reply_recovery_host_tests": "not_run",
         "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "reply_recovery_live_delivery": "not_run",
+        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
+        "continuation_history_handoff_model_replay": "not_run",
+        "continuation_history_handoff_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -699,7 +719,9 @@
         "server/internal/service/inboundcoord/tools.go",
         "server/internal/service/inboundcoord/window_plan.go",
         "server/internal/service/inboundcoord/loop.go",
-        "server/internal/service/inboundcoord/finish_check.go"
+        "server/internal/service/inboundcoord/finish_check.go",
+        "server/internal/service/inboundcoord/history_handoff.go",
+        "server/internal/service/inboundcoord/history_handoff_test.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -815,7 +837,8 @@
         "f10_review_whole_window_and_clarification",
         "f10_independent_deliverables_vs_related_steps",
         "f16_review_work_checks_excludes_clarify",
-        "f10_product_check_and_separate_notice"
+        "f10_product_check_and_separate_notice",
+        "f13_mixed_work_and_status_review_coverage"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -830,7 +853,10 @@
         "closed_actions_live_delivery": "not_run",
         "reply_recovery_host_tests": "not_run",
         "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "reply_recovery_live_delivery": "not_run",
+        "mixed_review_host_tests": "not_run",
+        "mixed_review_model_replay": "not_run",
+        "mixed_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/window.md",
@@ -840,7 +866,10 @@
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/policy/inbound.md",
         "server/internal/service/inboundcoord/window_plan.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/policy.go",
+        "server/internal/service/inboundcoord/policy_test.go#TestPolicyMixedTerminalReviewLoadsBothCanonicalModules",
+        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce"
       ],
       "case_file": "cases.json"
     },
@@ -917,7 +946,7 @@
     {
       "id": "COORD.F13",
       "family": "F13",
-      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。 工作intent可省略为other；仅answer/change/retry误填intent时窄规范化为other，不更改basis。已注册有限kind误作tool只归一到同一finish候选并继续校验当前循环；该恢复路径中的source_refs合法JSON数组字符串只解一层；全部授权及answer证据门槛仍在。 coordination_state仅为Host锚定的前序窗口证据，不满足history原问题门槛。",
+      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。 工作intent可省略为other；仅answer/change/retry误填intent时窄规范化为other，不更改basis。已注册有限kind误作tool只归一到同一finish候选并继续校验当前循环；该恢复路径中的source_refs合法JSON数组字符串只解一层；全部授权及answer证据门槛仍在。 coordination_state仅为Host锚定的前序窗口证据，不满足history原问题门槛。 混合工作与非工作动作时，同一次审核装配两类现有审查模块并只提供一次岗位约束；纯工作/纯非工作选择不变，工作可启动不替代同行状态回复的真实性审查。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -947,7 +976,8 @@
         "f16_review_work_checks_excludes_clarify",
         "f03_issue_state_vs_latest_execution",
         "f03_recent_coordination_counts_vs_association_count",
-        "f16_coordination_state_is_not_question_history"
+        "f16_coordination_state_is_not_question_history",
+        "f13_mixed_work_and_status_review_coverage"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -965,7 +995,13 @@
         "scene_prefetch_live_delivery": "not_run",
         "reply_recovery_host_tests": "not_run",
         "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "reply_recovery_live_delivery": "not_run",
+        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
+        "continuation_history_handoff_model_replay": "not_run",
+        "continuation_history_handoff_live_delivery": "not_run",
+        "mixed_review_host_tests": "not_run",
+        "mixed_review_model_replay": "not_run",
+        "mixed_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -987,7 +1023,12 @@
         "server/internal/service/inboundcoord/scene_prefetch.go",
         "server/internal/service/inboundcoord/terminal_call_recovery.go",
         "server/internal/service/inboundcoord/recent_coordination_state.go",
-        "server/internal/service/inboundcoord/progressive_context.go"
+        "server/internal/service/inboundcoord/progressive_context.go",
+        "server/internal/service/inboundcoord/history_handoff.go",
+        "server/internal/service/inboundcoord/history_handoff_test.go",
+        "server/internal/service/inboundcoord/policy.go",
+        "server/internal/service/inboundcoord/policy_test.go#TestPolicyMixedTerminalReviewLoadsBothCanonicalModules",
+        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce"
       ],
       "case_file": "cases.json"
     },
@@ -1121,7 +1162,10 @@
         "scene_prefetch_live_delivery": "not_run",
         "reply_recovery_host_tests": "not_run",
         "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "reply_recovery_live_delivery": "not_run",
+        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
+        "continuation_history_handoff_model_replay": "not_run",
+        "continuation_history_handoff_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1139,7 +1183,9 @@
         "server/internal/service/inboundcoord/finish_quote.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
         "server/internal/service/inboundcoord/terminal_call_recovery.go",
-        "server/internal/service/inboundcoord/recent_coordination_state.go"
+        "server/internal/service/inboundcoord/recent_coordination_state.go",
+        "server/internal/service/inboundcoord/history_handoff.go",
+        "server/internal/service/inboundcoord/history_handoff_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -1165,7 +1211,8 @@
         "f13_closed_action_reply_escape",
         "f10_independent_deliverables_vs_related_steps",
         "f07_output_instance_anchor_vs_fresh_lookup",
-        "f10_product_check_and_separate_notice"
+        "f10_product_check_and_separate_notice",
+        "f13_mixed_work_and_status_review_coverage"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1177,7 +1224,13 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
+        "continuation_history_handoff_model_replay": "not_run",
+        "continuation_history_handoff_live_delivery": "not_run",
+        "mixed_review_host_tests": "not_run",
+        "mixed_review_model_replay": "not_run",
+        "mixed_review_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1190,14 +1243,20 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/coordination_context.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/history_handoff.go",
+        "server/internal/service/inboundcoord/history_handoff_test.go",
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/policy.go",
+        "server/internal/service/inboundcoord/policy_test.go#TestPolicyMixedTerminalReviewLoadsBothCanonicalModules",
+        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce"
       ],
       "case_file": "cases.json"
     },
     {
       "id": "COORD.F18",
       "family": "F18",
-      "obligation": "当前引用与附件正证据在路由前可见；读失败不当作不存在；写入后不得再因附件覆盖路由二次派发。",
+      "obligation": "当前引用与附件正证据在路由前可见；读失败不当作不存在；写入后不得再因附件覆盖路由二次派发。 续接Item可携带本轮已披露、同CID/原水位的最近普通history有界快照；失败不复活旧读，coordination_state不代替history，历史仅数据不构成新授权。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -1223,7 +1282,10 @@
         "closed_actions_live_delivery": "not_run",
         "reply_recovery_host_tests": "not_run",
         "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "reply_recovery_live_delivery": "not_run",
+        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
+        "continuation_history_handoff_model_replay": "not_run",
+        "continuation_history_handoff_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1233,7 +1295,9 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/window_plan.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/history_handoff.go",
+        "server/internal/service/inboundcoord/history_handoff_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -1307,6 +1371,11 @@
       "core",
       "inbound",
       "recall_match",
+      "finish_check_work"
+    ],
+    "mixed_work_and_coordination_review": [
+      "core",
+      "finish_check",
       "finish_check_work"
     ]
   },
