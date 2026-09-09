@@ -1651,7 +1651,20 @@ func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowU
 			refSenderID = message.ReferencedMessage.SenderUID
 			ref = firstNonEmpty(message.ReferencedMessage.OpenMsgID, message.ReferencedMessage.MessageID)
 		}
-		out = append(out, inboundcoord.WindowUtterance{Sender: sender, Text: text, EvidenceID: message.OpenMsgID, Timestamp: at, SenderID: senderID, ReplyToEvidenceID: ref, ReplyToContent: refContent, ReplyToSenderID: refSenderID})
+		mentions := message.Mentions
+		// Event-level mentions are exact only for a single original message.
+		// A merged/legacy window's union is never attributed to every source.
+		if mentions == nil && len(command.Event.Data.Messages) == 1 {
+			mentions = command.Event.Data.Mentions
+		}
+		var targets []inboundcoord.MessageMention
+		if mentions != nil {
+			targets = make([]inboundcoord.MessageMention, 0, len(mentions))
+			for _, mention := range mentions {
+				targets = append(targets, inboundcoord.MessageMention{UID: mention.UID, OpenDingTalkID: mention.OpenDingTalkID})
+			}
+		}
+		out = append(out, inboundcoord.WindowUtterance{Sender: sender, Mentions: targets, Text: text, EvidenceID: message.OpenMsgID, Timestamp: at, SenderID: senderID, ReplyToEvidenceID: ref, ReplyToContent: refContent, ReplyToSenderID: refSenderID})
 	}
 	return out
 }

@@ -1,6 +1,7 @@
 package inboundcoord
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -41,7 +42,12 @@ func buildUserPrompt(turn Turn) string {
 	writePromptField(&b, "conversation_id", turn.ConversationID)
 	writePromptField(&b, "person_id", turn.PersonID)
 	writePromptField(&b, "sender", turn.SenderName)
-	writePromptField(&b, "agent_name", turn.AgentName)
+	writePromptField(&b, "agent_name", firstNonEmpty(turn.EmployeeAccountName, turn.AgentName))
+	if turn.EmployeeAccountName != "" {
+		writePromptField(&b, "agent_config_label", turn.AgentName)
+	}
+	writePromptField(&b, "employee_account_name", turn.EmployeeAccountName)
+	writePromptField(&b, "employee_uid", turn.DWSUID)
 	if turn.Source == SourceWeb {
 		writePromptField(&b, "session_title (label only)", turn.ConversationTitle)
 	}
@@ -81,6 +87,11 @@ func buildUserPrompt(turn Turn) string {
 	b.WriteString("\nwindow_format: utterances oldest to newest; source_ref is local to this window\ncurrent_message:\n")
 	for i, utterance := range windowUtterances(turn) {
 		fmt.Fprintf(&b, "- source_ref=u%d sender=%q", i+1, firstNonEmpty(utterance.Sender, "unknown"))
+		fmt.Fprintf(&b, " mention_relation=%s", mentionRelation(turn, utterance))
+		if utterance.Mentions != nil {
+			mentions, _ := json.Marshal(utterance.Mentions)
+			fmt.Fprintf(&b, " mentions=%s", mentions)
+		}
 		if utterance.EvidenceID != "" {
 			fmt.Fprintf(&b, " evidence_id=%q", utterance.EvidenceID)
 		}

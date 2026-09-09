@@ -84,6 +84,9 @@ func stampDispatchMessageSenders(command *DispatchCommand) {
 	sender := command.Event.Data.Sender
 	for i := range command.Event.Data.Messages {
 		msg := &command.Event.Data.Messages[i]
+		if msg.Mentions == nil && len(command.Event.Data.Messages) == 1 {
+			msg.Mentions = append([]DispatchMention{}, command.Event.Data.Mentions...)
+		}
 		if strings.TrimSpace(msg.SenderDisplayName) == "" {
 			msg.SenderDisplayName = strings.TrimSpace(sender.DisplayName)
 		}

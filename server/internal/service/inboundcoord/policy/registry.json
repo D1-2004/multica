@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-09.1",
+  "policy_version": "2026-09-09.1-relevance",
   "assembly_version": "1",
   "modules": [
     {
@@ -94,7 +94,7 @@
     },
     {
       "id": "group",
-      "version": "2",
+      "version": "3",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -108,8 +108,8 @@
         "COORD.F06",
         "COORD.F14"
       ],
-      "budget_characters": 722,
-      "content_sha256": "ad393c5fe6be9c6107ad212020f182c482d05b20ed1fff93d04c0a385d97514e"
+      "budget_characters": 1100,
+      "content_sha256": "9de26043097eb08db27148bbb1590ef4ce9ad2093aaa22cba21ceebcac9def9c"
     },
     {
       "id": "window",
