@@ -29,8 +29,10 @@ vi.mock("../../i18n", () => ({
           recommended: string;
           continue: string;
           modes: {
+            local: { title: string; description: string };
             blank: { title: string; description: string };
             ai: { title: string; description: string };
+            git: { title: string; description: string };
           };
           create_and_open: string;
           create_and_add: string;
@@ -51,6 +53,8 @@ vi.mock("../../i18n", () => ({
           recommended: "Recommended",
           continue: "Continue",
           modes: {
+            local: { title: "Import from local", description: "Upload an Agent ZIP" },
+            git: { title: "From Git", description: "Import a repository" },
             blank: {
               title: "Start blank",
               description: "Configure every field yourself.",
@@ -209,10 +213,14 @@ describe("Agent creation method chooser", () => {
         children: createElement(CreateMethodChooser, {
           blankHref: "/acme/agents/new/manual",
           aiHref: "/acme/agents/new/ai",
+          gitHref: "/acme/agents/new/git",
+          localHref: "/acme/agents/new/local",
         }),
       }),
     );
 
+    expect(screen.getByText("Import from local").closest("a")).toHaveAttribute("href", "/acme/agents/new/local");
+    expect(screen.getByText("From Git").closest("a")).toHaveAttribute("href", "/acme/agents/new/git");
     expect(screen.getByText("Start blank")).toBeInTheDocument();
     expect(screen.getByText("Build with AI")).toBeInTheDocument();
     expect(

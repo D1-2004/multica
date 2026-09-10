@@ -1,0 +1,95 @@
+--- pre/common.before
++++ pre/common.after
+@@ -61,86 +61,13 @@
+ 
+ - 不得把仍在处理、已排队或已委派描述成已经完成。
+ - 外部操作失败时，应说明失败步骤、已完成部分和可验证状态。
+-- 使用 dws 时优先使用`dws命令使用参考`章节里的指导， 只有在命令报错，比如命令不存在、参数不符合要求等情况下才使用 `--help` 命令去探索调用方式。
++- 使用 dws 时优先执行本次可信任务上下文给出的现成命令；仅在缺少命令或参数契约不明确时，读取对应命令的 --help 或 Skill。不要先尝试过时示例再反复修正。
+ 
+ ## dws命令使用参考
+ 
+-### 标记消息为已读
+-```bash
+-dws chat mark-read \\\\
+-  --conversation-id \\\"<当前会话ID>\\\" \\\\
+-  --message-id \\\"<当前消息ID>\\\" \\\\
+-  -y -f json
+-```
+-
+-### 发送消息
+-
+-  ```
+-  # 发送到群聊
+-dws chat message send \\\\
+-  --group \\\"<openConversationId>\\\" \\\\
+-  --text \\\"消息内容\\\" \\\\
+-  -y -f json
+-
+-# 发送给单个用户
+-dws chat message send \\\\
+-  --open-dingtalk-id \\\"<openDingTalkId>\\\" \\\\
+-  --text \\\"消息内容\\\" \\\\
+-  -y -f json
+-  ```
+-  内容包含换行时，推荐从文件读取：
+-  ```
+-  dws chat message send \\\\
+-  --group \\\"<openConversationId>\\\" \\\\
+-  --text \\\"$(cat message.md)\\\" \\\\
+-  --uuid \\\"$(uuidgen)\\\" \\\\
+-  -y -f json
+-  ```
+-
+-### 引用回复消息
+-
+-`dws chat message reply` 用于以当前用户身份引用回复指定消息：
+-
+-```bash
+-dws chat message reply \\\\
+-  --conversation-id \\\"<openConversationId>\\\" \\\\
+-  --ref-msg-id \\\"<openMsgId>\\\" \\\\
+-  --ref-sender \\\"<senderOpenDingTalkId>\\\" \\\\
+-  --text \\\"回复内容\\\" \\\\
+-  --uuid \\\"$(uuidgen)\\\" \\\\
+-  -y -f json
+-```
+-
+-回复多行内容时：
+-
+-```bash
+-dws chat message reply \\\\
+-  --conversation-id \\\"<openConversationId>\\\" \\\\
+-  --ref-msg-id \\\"<openMsgId>\\\" \\\\
+-  --ref-sender \\\"<senderOpenDingTalkId>\\\" \\\\
+-  --text \\\"$(cat reply.md)\\\" \\\\
+-  --uuid \\\"$(uuidgen)\\\" \\\\
+-  -y -f json
+-```
+-
+-参数说明：
+-
+-- `--conversation-id`：目标消息所属会话的准确 ID。
+-- `--ref-msg-id`：被引用消息的准确 `openMsgId`。
+-- `--ref-sender`：被引用消息发送者的 `openDingTalkId`。
+-- `--text`：回复正文。
+-- `--uuid`：可选幂等键，避免重复发送。
+-- `-y`：跳过交互确认。
+-- `-f json`：返回 JSON，需检查 `success=true`。
+-
+-预览、不实际发送：
+-
+-```bash
+-dws chat message reply \\\\
+-  --conversation-id \\\"<openConversationId>\\\" \\\\
+-  --ref-msg-id \\\"<openMsgId>\\\" \\\\
+-  --ref-sender \\\"<senderOpenDingTalkId>\\\" \\\\
+-  --text \\\"回复内容\\\" \\\\
+-  --dry-run \\\\
+-  -f json
+-```+- 回复本次消息时，优先使用当前可信交付上下文中提供的可直接运行的回复命令和目标。不要从旧Issue、历史教程或示例重新拼接另一套回复参数。
++- 引用回复使用当前CLI的 `dws chat +messages-reply`；采用任务上下文给出的会话与消息标识，只替换用户可见正文。缺少可执行命令时先查看该命令的 `--help`，不猜测参数名。
++- 当前任务已经给出明确发送对象时，直接按该对象处理；只有确需另找接收人或转达时才查找和核实身份。
++- 不依赖系统一定安装了 uuidgen。CLI的可选幂等参数仅按现有任务命令或精确帮助使用，不为了发送消息另装工具。
++- 平台声明托管消息生命周期时，不手动操作已读和处理中表情；未托管时遵循本次任务的具体交付要求。
++- 发送结果以独立送达状态或可回读的消息为准；受理或排队不是送达，未确认成功不得重复声称已发送。

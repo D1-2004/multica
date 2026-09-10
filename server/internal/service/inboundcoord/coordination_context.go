@@ -24,12 +24,13 @@ const (
 // CoordinationRead is a Host-owned snapshot visible to the current routing
 // round. ReadRef is local to this run and cannot be imported from old messages.
 type CoordinationRead struct {
-	ReadRef string          `json:"read_ref"`
-	Tool    string          `json:"tool"`
-	Kind    string          `json:"kind,omitempty"`
-	Result  json.RawMessage `json:"result"`
-	Failed  bool            `json:"failed,omitempty"`
-	key     string
+	ReadRef   string          `json:"read_ref"`
+	Tool      string          `json:"tool"`
+	Kind      string          `json:"kind,omitempty"`
+	Result    json.RawMessage `json:"result"`
+	Failed    bool            `json:"failed,omitempty"`
+	key       string
+	arguments string
 }
 
 type coordinationReadEnvelope struct {
@@ -181,7 +182,7 @@ func rememberCoordinationRead(turn *Turn, seq *int, name, arguments, raw string,
 	if name == toolContextRead && coordinationContextReadKind(arguments) == coordinationStateKind {
 		kind = coordinationStateKind
 	}
-	turn.CoordinationReads = append(kept, CoordinationRead{ReadRef: ref, Tool: name, Kind: kind, Result: encoded, Failed: callErr != nil || (name == toolContextRead && kind == "" && turn.HistoryStatus == "unavailable"), key: key})
+	turn.CoordinationReads = append(kept, CoordinationRead{ReadRef: ref, Tool: name, Kind: kind, Result: encoded, Failed: callErr != nil || (name == toolContextRead && kind == "" && turn.HistoryStatus == "unavailable"), key: key, arguments: arguments})
 	for utf8.RuneCountInString(coordinationReadsJSON(*turn)) > coordinationReadsBudget {
 		if len(turn.CoordinationReads) <= 1 {
 			return "", fmt.Errorf("coordination read exceeds total context budget")

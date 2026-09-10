@@ -37,7 +37,15 @@ Rules:
 - permission_scope must be private, workspace, or members. Default to private unless the user explicitly requests sharing.
 - member_ids may only contain IDs explicitly listed in AVAILABLE WORKSPACE MEMBERS, and only when permission_scope is members.
 - Never request, expose, or place secrets, tokens, passwords, or environment-variable values in the draft.
-- Do not claim that the agent has been created. The user must review and confirm the draft in the UI.`
+- Do not claim that the agent has been created. The user must review and confirm the draft in the UI.
+
+Agent package knowledge:
+- Multica's portable definition is agent.json, validated against the server-owned JSON Schema downloaded from GET /api/agent-schema. The current full configuration version is multica.agent/v2.
+- A repository or ZIP contains agent.json, agent.schema.json, the instructions Markdown file and declared skills, each with SKILL.md and its supporting files. Uploaded scripts are data; importing never executes them.
+- Local ZIP upload and Git repository acquisition produce the same validated bundle. Both use a persisted preview_id, destination runtime selection and POST /api/workspaces/{id}/agent-packages to create atomically after confirmation.
+- A bundle is the parsed manifest and referenced file contents, not a separately built DTA CLI artifact. Do not teach dta bundle or dingtalk-agent.json as the Multica creation contract.
+- Resource aliases need destination bindings; secret_ref values must be supplied through the import UI and must never enter this conversation. Imported workspace skills are exclusive to the new Agent.
+- This Builder conversation still returns agent_draft for the creation form. It does not emit or upload a package and must not claim that its draft covers every schema field. For complete package import/export use the local/Git creation and Agent export UI.`
 
 type CreateAgentBuilderSessionRequest struct {
 	RuntimeID string `json:"runtime_id"`

@@ -49,6 +49,11 @@ type GitHubAgentPreviewRequest struct {
 
 type GitHubAgentPreviewResponse struct {
 	CoordinatorContract *coordinatorcontract.Contract `json:"coordinator_contract"`
+	Definition          map[string]any                `json:"definition"`
+	Requirements        PackageRequirements           `json:"requirements"`
+	PreviewID           string                        `json:"preview_id"`
+	ExpiresAt           string                        `json:"expires_at"`
+	RepositoryURL       string                        `json:"repository_url"`
 	InstallationID      string                        `json:"installation_id"`
 	Repository          string                        `json:"repository"`
 	Ref                 string                        `json:"ref"`
@@ -63,6 +68,7 @@ type GitHubAgentPreviewResponse struct {
 }
 
 type GitHubAgentSkillPreview struct {
+	Enabled     bool   `json:"enabled"`
 	SourcePath  string `json:"source_path"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -70,7 +76,10 @@ type GitHubAgentSkillPreview struct {
 }
 
 type CreateGitHubAgentRequest struct {
+	Secrets          map[string]string `json:"secrets"`
+	DeferredBindings []string          `json:"deferred_bindings"`
 	CreateAgentRequest
+	PreviewID      string `json:"preview_id"`
 	InstallationID string `json:"installation_id"`
 	Repository     string `json:"repository"`
 	Ref            string `json:"ref"`
@@ -78,18 +87,21 @@ type CreateGitHubAgentRequest struct {
 }
 
 type AgentSourceResponse struct {
-	AgentID           string  `json:"agent_id"`
-	SourceType        string  `json:"source_type"`
-	InstallationID    *string `json:"installation_id"`
-	Repository        string  `json:"repository"`
-	Ref               string  `json:"ref"`
-	ManifestPath      string  `json:"manifest_path"`
-	SyncedCommitSHA   string  `json:"synced_commit_sha"`
-	SyncStatus        string  `json:"sync_status"`
-	LastSyncError     *string `json:"last_sync_error"`
-	LastSyncAttemptAt *string `json:"last_sync_attempt_at"`
-	LastSyncedAt      string  `json:"last_synced_at"`
-	GitHubConnected   bool    `json:"github_connected"`
+	RepositoryURL      string   `json:"repository_url"`
+	CanSync            bool     `json:"can_sync"`
+	ConfigurationScope []string `json:"configuration_scope"`
+	AgentID            string   `json:"agent_id"`
+	SourceType         string   `json:"source_type"`
+	InstallationID     *string  `json:"installation_id"`
+	Repository         string   `json:"repository"`
+	Ref                string   `json:"ref"`
+	ManifestPath       string   `json:"manifest_path"`
+	SyncedCommitSHA    string   `json:"synced_commit_sha"`
+	SyncStatus         string   `json:"sync_status"`
+	LastSyncError      *string  `json:"last_sync_error"`
+	LastSyncAttemptAt  *string  `json:"last_sync_attempt_at"`
+	LastSyncedAt       string   `json:"last_synced_at"`
+	GitHubConnected    bool     `json:"github_connected"`
 }
 
 type AgentSourceSyncResponse struct {
@@ -98,12 +110,13 @@ type AgentSourceSyncResponse struct {
 	Warnings []string            `json:"warnings"`
 }
 
-type resolvedGitHubAgentSource struct {
+type preparedAgentSource struct {
 	installation db.GithubInstallation
 	repository   githubapp.Repository
 	ref          string
 	sha          string
 	bundle       agentsource.Bundle
+	snapshot     agentsource.RepositorySnapshot
 }
 
 func (h *Handler) ListGitHubAgentRepositories(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +181,16 @@ func (h *Handler) PreviewGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to check GitHub agent conflicts")
 		return
 	}
+	preview, err := h.saveAgentSourcePreview(r, wsUUID, db.Agent{}, db.AgentSource{}, resolved, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save GitHub agent preview")
+		return
+	}
 	writeJSON(w, http.StatusOK, GitHubAgentPreviewResponse{
+		Definition: packageDefinitionPreview(resolved.bundle), Requirements: packageRequirements(resolved.bundle),
+		PreviewID:           uuidToString(preview.ID),
+		ExpiresAt:           timestampToString(preview.ExpiresAt),
+		RepositoryURL:       "https://github.com/" + resolved.repository.FullName,
 		InstallationID:      uuidToString(resolved.installation.ID),
 		Repository:          resolved.repository.FullName,
 		Ref:                 resolved.ref,
@@ -196,16 +218,26 @@ func sourceSkillPreviews(skills []agentsource.Skill) []GitHubAgentSkillPreview {
 	for _, compiled := range skills {
 		previews = append(previews, GitHubAgentSkillPreview{
 			SourcePath: compiled.SourcePath, Name: compiled.Name,
-			Description: compiled.Description, FileCount: len(compiled.Files),
+			Description: compiled.Description, FileCount: len(compiled.Files), Enabled: !compiled.Disabled,
 		})
 	}
 	return previews
 }
 
 func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
+	h.CreateAgentFromPackage(w, r)
+}
+
+// CreateAgentFromPackage is the confirmation path for every prepared source.
+// Acquisition is finished before this method; source checks only reauthorize
+// the pinned preview and never re-read mutable branch contents.
+func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
+		return
+	}
+	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok {
 		return
 	}
 	ownerID, ok := requireUserID(w, r)
@@ -213,24 +245,59 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ownerUUID := parseUUID(ownerID)
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 	var request CreateGitHubAgentRequest
 	rawFields, err := decodeJSONBodyWithRawFields(r.Body, &request)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if !immutableGitSHA.MatchString(request.ResolvedSHA) {
-		writeError(w, http.StatusBadRequest, "resolved_sha must be an immutable Git commit SHA")
-		return
+	var preview db.AgentSourcePreview
+	var resolved preparedAgentSource
+	if request.PreviewID != "" {
+		preview, err = h.readAgentSourcePreview(r, wsUUID, request.PreviewID)
+		if err != nil {
+			writeGitHubSourceError(w, err)
+			return
+		}
+		if preview.AgentSourceID.Valid {
+			writeError(w, http.StatusBadRequest, "a sync preview cannot create an Agent")
+			return
+		}
+		if request.InstallationID != "" || request.Repository != "" || request.Ref != "" || request.ResolvedSHA != "" {
+			writeError(w, http.StatusBadRequest, "preview_id already fixes the repository, connection and commit; omit source overrides")
+			return
+		}
+		resolved, err = h.resolveAgentSourcePreview(r.Context(), preview)
+		if err == nil && preview.AppliedAt.Valid {
+			h.writeCreatedSourceReplay(w, r, preview)
+			return
+		}
+	} else {
+		// Existing API clients may confirm an immutable SHA directly. The new
+		// UI uses preview_id so retries also preserve the created Agent identity.
+		if !immutableGitSHA.MatchString(request.ResolvedSHA) {
+			writeError(w, http.StatusBadRequest, "preview_id or an immutable resolved_sha is required")
+			return
+		}
+		resolved, err = h.resolveAndCompileGitHubAgent(r.Context(), wsUUID, GitHubAgentSourceInput{
+			InstallationID: request.InstallationID, Repository: request.Repository, Ref: request.Ref, ResolvedSHA: request.ResolvedSHA,
+		})
+		if err == nil {
+			preview, err = h.saveAgentSourcePreview(r, wsUUID, db.Agent{}, db.AgentSource{}, resolved, "")
+		}
 	}
-	resolved, err := h.resolveAndCompileGitHubAgent(r.Context(), wsUUID, GitHubAgentSourceInput{
-		InstallationID: request.InstallationID,
-		Repository:     request.Repository,
-		Ref:            request.Ref,
-		ResolvedSHA:    request.ResolvedSHA,
-	})
 	if err != nil {
 		writeGitHubSourceError(w, err)
+		return
+	}
+	definition, err := preparePackageConfiguration(&request, rawFields, resolved.bundle)
+	if err != nil {
+		writeGitHubSourceError(w, err)
+		return
+	}
+	if definition.A2A != nil && r.Header.Get("X-Actor-Source") != "" {
+		writeError(w, http.StatusForbidden, "A2A policy import requires a human actor")
 		return
 	}
 	agentName, agentDescription, err := gitAgentInstanceProfile(request, rawFields, resolved.bundle)
@@ -267,11 +334,23 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("thinking_level %q is not recognised for runtime %q", request.ThinkingLevel, runtime.Provider))
 		return
 	}
+	if !agentpkg.IsKnownServiceTier(runtime.Provider, request.ServiceTier) {
+		writeError(w, http.StatusBadRequest, "service_tier is not supported by this runtime")
+		return
+	}
+	if err := definition.validateRuntime(runtime); err != nil {
+		writeGitHubSourceError(w, err)
+		return
+	}
 	if request.Visibility == "" {
 		request.Visibility = "private"
 	}
 	if request.MaxConcurrentTasks == 0 {
 		request.MaxConcurrentTasks = 6
+	}
+	if err := validateAgentMaxConcurrentTasks(request.MaxConcurrentTasks); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	_, hasTargets := rawFields["invocation_targets"]
 	legacyVisibility := request.Visibility
@@ -299,7 +378,13 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	allowlist := normaliseComposioToolkitAllowlist(request.ComposioToolkitAllowlist)
 	if !h.composioMCPAppsEnabled(r.Context()) {
-		allowlist = nil
+		if resolved.bundle.Definition != nil && len(allowlist) > 0 {
+			writeError(w, http.StatusUnprocessableEntity, "Composio apps are unavailable in this workspace")
+			return
+		}
+		if resolved.bundle.Definition == nil {
+			allowlist = nil
+		}
 	}
 	manualSkills, ok := parseUUIDSliceOrBadRequest(w, request.SkillIDs, "skill_ids")
 	if !ok {
@@ -323,6 +408,16 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	preview, err = lockSourcePreview(r.Context(), qtx, preview)
+	if err != nil {
+		writeGitHubSourceError(w, err)
+		return
+	}
+	if preview.AppliedAt.Valid {
+		_ = tx.Rollback(r.Context())
+		h.writeCreatedSourceReplay(w, r, preview)
+		return
+	}
 	var source db.AgentSource
 	created, err := materializeAgentBundleInTx(r.Context(), qtx, db.CreateAgentParams{
 		WorkspaceID:         wsUUID,
@@ -337,16 +432,24 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		CustomEnv: customEnv, CustomArgs: customArgs, McpConfig: mcpConfig,
 		Model:                    pgtype.Text{String: request.Model, Valid: request.Model != ""},
 		ThinkingLevel:            pgtype.Text{String: request.ThinkingLevel, Valid: request.ThinkingLevel != ""},
+		ServiceTier:              pgtype.Text{String: request.ServiceTier, Valid: request.ServiceTier != ""},
 		ComposioToolkitAllowlist: allowlist,
 	}, permission, manualSkills, func(created db.Agent) error {
 		var createErr error
-		source, createErr = qtx.CreateAgentSource(r.Context(), db.CreateAgentSourceParams{
-			AgentID: created.ID, WorkspaceID: wsUUID, GithubInstallationID: resolved.installation.ID,
-			RepoOwner: ownerFromFullName(resolved.repository.FullName), RepoName: repoFromFullName(resolved.repository.FullName),
-			Ref: resolved.ref, ManifestPath: agentsource.DTAProjectPath, SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
-		})
+		if !resolved.installation.ID.Valid {
+			source, createErr = qtx.CreateLocalAgentSource(r.Context(), db.CreateLocalAgentSourceParams{AgentID: created.ID, WorkspaceID: wsUUID, SyncedCommitSha: resolved.bundle.Hash, CreatedBy: ownerUUID})
+		} else {
+			source, createErr = qtx.CreateAgentSource(r.Context(), db.CreateAgentSourceParams{
+				AgentID: created.ID, WorkspaceID: wsUUID, GithubInstallationID: resolved.installation.ID,
+				RepoOwner: ownerFromFullName(resolved.repository.FullName), RepoName: repoFromFullName(resolved.repository.FullName),
+				Ref: resolved.ref, ManifestPath: agentsource.SourceManifestPath(resolved.bundle), SyncedCommitSha: resolved.sha, CreatedBy: ownerUUID,
+			})
+		}
 		if createErr != nil {
 			return createErr
+		}
+		if err := definition.apply(r.Context(), qtx, created, ownerUUID); err != nil {
+			return err
 		}
 		for _, compiledSkill := range resolved.bundle.Skills {
 			skillRow, createErr := createSourceSkillInTx(r.Context(), qtx, wsUUID, ownerUUID, resolved, source.ID, compiledSkill)
@@ -354,6 +457,9 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 				return createErr
 			}
 			if createErr = qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{AgentID: created.ID, SkillID: skillRow.ID}); createErr != nil {
+				return createErr
+			}
+			if _, createErr = qtx.SetAgentSkillEnabled(r.Context(), db.SetAgentSkillEnabledParams{AgentID: created.ID, SkillID: skillRow.ID, Enabled: !compiledSkill.Disabled}); createErr != nil {
 				return createErr
 			}
 			if _, createErr = qtx.CreateAgentSourceSkill(r.Context(), db.CreateAgentSourceSkillParams{AgentSourceID: source.ID, SkillID: skillRow.ID, SourcePath: compiledSkill.SourcePath}); createErr != nil {
@@ -366,16 +472,26 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		writeAgentSourceDatabaseError(w, err)
 		return
 	}
+	if err := markSourcePreviewApplied(r.Context(), qtx, preview, source, true); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record GitHub agent creation")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit GitHub agent create")
 		return
 	}
 
+	created, err = h.Queries.GetAgent(r.Context(), created.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read created Agent")
+		return
+	}
 	if runtime.Status == "online" && h.TaskService != nil {
 		h.TaskService.ReconcileAgentStatus(r.Context(), created.ID)
 		created, _ = h.Queries.GetAgent(r.Context(), created.ID)
 	}
 	response := h.agentToResponse(created)
+	h.hydrateImportedAgent(r.Context(), &response, created.ID)
 	_ = h.attachAgentSkills(r.Context(), &response, created.ID)
 	_ = h.enrichAgentResponseWithTargets(r.Context(), &response, created.ID)
 	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
@@ -385,15 +501,18 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	redactAgentResponseForActor(&response, actorType)
 	warnings := append([]string{}, resolved.bundle.Warnings...)
-	if currentSHA, resolveErr := h.GitHubApp.ResolveCommit(
-		r.Context(),
-		resolved.installation.InstallationID,
-		ownerFromFullName(resolved.repository.FullName),
-		repoFromFullName(resolved.repository.FullName),
-		resolved.ref,
-	); resolveErr == nil && !strings.EqualFold(currentSHA, resolved.sha) {
-		warnings = append(warnings, "the configured Git ref advanced after preview; the agent was created from the previewed commit")
+	if resolved.installation.ID.Valid {
+		if currentSHA, resolveErr := h.GitHubApp.ResolveCommit(
+			r.Context(),
+			resolved.installation.InstallationID,
+			ownerFromFullName(resolved.repository.FullName),
+			repoFromFullName(resolved.repository.FullName),
+			resolved.ref,
+		); resolveErr == nil && !strings.EqualFold(currentSHA, resolved.sha) {
+			warnings = append(warnings, "the configured Git ref advanced after preview; the agent was created from the previewed commit")
+		}
 	}
+	warnings = append(warnings, definition.warnings...)
 	payload := map[string]any{
 		"agent":    response,
 		"source":   agentSourceToResponse(source),
@@ -434,174 +553,21 @@ func (h *Handler) GetAgentSource(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agentSourceToResponse(source))
 }
 
-func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
-	agentRow, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
-	if !ok || !h.canManageAgent(w, r, agentRow) {
-		return
-	}
-	source, err := h.Queries.GetAgentSourceByAgentID(r.Context(), agentRow.ID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "agent source not found")
-		return
-	}
-	if source.ManagedSourceKey.Valid {
-		writeError(w, http.StatusConflict, "this Agent source is updated automatically by Multica")
-		return
-	}
-	if !source.GithubInstallationID.Valid {
-		writeError(w, http.StatusConflict, "GitHub installation is disconnected")
-		return
-	}
-	installation, err := h.Queries.GetGitHubInstallationInWorkspace(r.Context(), db.GetGitHubInstallationInWorkspaceParams{ID: source.GithubInstallationID, WorkspaceID: agentRow.WorkspaceID})
-	if err != nil || h.GitHubApp == nil {
-		writeError(w, http.StatusConflict, "GitHub installation is disconnected")
-		return
-	}
-	sha, err := h.GitHubApp.ResolveCommit(r.Context(), installation.InstallationID, source.RepoOwner, source.RepoName, source.Ref)
-	if err != nil {
-		h.recordAgentSourceFailure(r.Context(), source.ID, err)
-		writeGitHubSourceError(w, err)
-		return
-	}
-	bundle, err := agentsource.CompileDTAProject(r.Context(), h.GitHubApp, agentsource.Source{InstallationID: installation.InstallationID, Owner: source.RepoOwner, Repository: source.RepoName, CommitSHA: sha})
-	if err != nil {
-		h.recordAgentSourceFailure(r.Context(), source.ID, err)
-		writeGitHubSourceError(w, err)
-		return
-	}
-	if agentRow.RuntimeID.Valid {
-		runtime, runtimeErr := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{ID: agentRow.RuntimeID, WorkspaceID: agentRow.WorkspaceID})
-		if runtimeErr != nil {
-			writeError(w, http.StatusConflict, "agent runtime is unavailable")
-			return
-		}
-		if !providerCompatible(bundle.Manifest.Spec.Compatibility.Providers, runtime.Provider) {
-			err = fmt.Errorf("runtime provider %q is not allowed by the manifest", runtime.Provider)
-			h.recordAgentSourceFailure(r.Context(), source.ID, err)
-			writeError(w, http.StatusUnprocessableEntity, err.Error())
-			return
-		}
-	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start source sync")
-		return
-	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
-	recordTransactionFailure := func(syncErr error, status int, publicMessage string, databaseError bool) {
-		_ = tx.Rollback(r.Context())
-		h.recordAgentSourceFailure(r.Context(), source.ID, syncErr)
-		if databaseError {
-			writeAgentSourceDatabaseError(w, syncErr)
-			return
-		}
-		writeError(w, status, publicMessage)
-	}
-	locked, err := qtx.LockAgentSourceByAgentID(r.Context(), agentRow.ID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "agent source not found")
-		return
-	}
-	if locked.SyncedCommitSha != source.SyncedCommitSha {
-		writeError(w, http.StatusConflict, "agent source changed while this sync was running")
-		return
-	}
-	if locked.SyncedCommitSha == sha {
-		locked, err = qtx.MarkAgentSourceSyncSucceeded(r.Context(), db.MarkAgentSourceSyncSucceededParams{ID: locked.ID, SyncedCommitSha: sha})
-		if err != nil {
-			recordTransactionFailure(fmt.Errorf("record unchanged source sync: %w", err), http.StatusInternalServerError, "failed to record source sync", false)
-			return
-		}
-		if err := tx.Commit(r.Context()); err != nil {
-			h.recordAgentSourceFailure(r.Context(), source.ID, fmt.Errorf("commit unchanged source sync: %w", err))
-			writeError(w, http.StatusInternalServerError, "failed to record source sync")
-			return
-		}
-		h.publishAgentSourceSync(r, agentRow, false)
-		writeJSON(w, http.StatusOK, AgentSourceSyncResponse{Source: agentSourceToResponse(locked), Changed: false, Warnings: bundle.Warnings})
-		return
-	}
-	if _, err := qtx.UpdateAgent(r.Context(), gitAgentSourceSnapshotUpdate(agentRow.ID, bundle)); err != nil {
-		recordTransactionFailure(fmt.Errorf("update agent snapshot: %w", err), http.StatusInternalServerError, "failed to update agent snapshot", true)
-		return
-	}
-	existingMappings, err := qtx.ListAgentSourceSkills(r.Context(), locked.ID)
-	if err != nil {
-		recordTransactionFailure(fmt.Errorf("load source skills: %w", err), http.StatusInternalServerError, "failed to load source skills", false)
-		return
-	}
-	byPath := make(map[string]db.AgentSourceSkill, len(existingMappings))
-	for _, mapping := range existingMappings {
-		byPath[mapping.SourcePath] = mapping
-	}
-	for _, compiledSkill := range bundle.Skills {
-		mapping, exists := byPath[compiledSkill.SourcePath]
-		if exists {
-			if err := updateSourceSkillInTx(r.Context(), qtx, mapping.SkillID, resolvedGitHubAgentSource{installation: installation, repository: githubapp.Repository{FullName: source.RepoOwner + "/" + source.RepoName}, ref: source.Ref, sha: sha, bundle: bundle}, locked.ID, compiledSkill); err != nil {
-				recordTransactionFailure(fmt.Errorf("update source skill %q: %w", compiledSkill.SourcePath, err), http.StatusInternalServerError, "failed to update source skill", true)
-				return
-			}
-			delete(byPath, compiledSkill.SourcePath)
-			continue
-		}
-		createdSkill, err := createSourceSkillInTx(r.Context(), qtx, agentRow.WorkspaceID, agentRow.OwnerID, resolvedGitHubAgentSource{installation: installation, repository: githubapp.Repository{FullName: source.RepoOwner + "/" + source.RepoName}, ref: source.Ref, sha: sha, bundle: bundle}, locked.ID, compiledSkill)
-		if err != nil {
-			recordTransactionFailure(fmt.Errorf("create source skill %q: %w", compiledSkill.SourcePath, err), http.StatusInternalServerError, "failed to create source skill", true)
-			return
-		}
-		if err := qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{AgentID: agentRow.ID, SkillID: createdSkill.ID}); err != nil {
-			recordTransactionFailure(fmt.Errorf("attach source skill %q: %w", compiledSkill.SourcePath, err), http.StatusInternalServerError, "failed to attach source skill", false)
-			return
-		}
-		if _, err := qtx.CreateAgentSourceSkill(r.Context(), db.CreateAgentSourceSkillParams{AgentSourceID: locked.ID, SkillID: createdSkill.ID, SourcePath: compiledSkill.SourcePath}); err != nil {
-			recordTransactionFailure(fmt.Errorf("track source skill %q: %w", compiledSkill.SourcePath, err), http.StatusInternalServerError, "failed to track source skill", false)
-			return
-		}
-	}
-	for _, removed := range byPath {
-		if err := qtx.RemoveAgentSkill(r.Context(), db.RemoveAgentSkillParams{AgentID: agentRow.ID, SkillID: removed.SkillID}); err != nil {
-			recordTransactionFailure(fmt.Errorf("detach removed source skill %q: %w", removed.SourcePath, err), http.StatusInternalServerError, "failed to detach removed source skill", false)
-			return
-		}
-		if err := qtx.DeleteAgentSourceSkill(r.Context(), db.DeleteAgentSourceSkillParams{AgentSourceID: locked.ID, SkillID: removed.SkillID}); err != nil {
-			recordTransactionFailure(fmt.Errorf("remove source skill mapping %q: %w", removed.SourcePath, err), http.StatusInternalServerError, "failed to remove source skill mapping", false)
-			return
-		}
-		if err := qtx.DeleteSkill(r.Context(), db.DeleteSkillParams{ID: removed.SkillID, WorkspaceID: agentRow.WorkspaceID}); err != nil {
-			recordTransactionFailure(fmt.Errorf("delete removed source skill %q: %w", removed.SourcePath, err), http.StatusInternalServerError, "failed to delete removed source skill", false)
-			return
-		}
-	}
-	updatedSource, err := qtx.MarkAgentSourceSyncSucceeded(r.Context(), db.MarkAgentSourceSyncSucceededParams{ID: locked.ID, SyncedCommitSha: sha})
-	if err != nil {
-		recordTransactionFailure(fmt.Errorf("record source sync success: %w", err), http.StatusInternalServerError, "failed to record source sync", false)
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		h.recordAgentSourceFailure(r.Context(), source.ID, fmt.Errorf("commit source sync: %w", err))
-		writeError(w, http.StatusInternalServerError, "failed to commit source sync")
-		return
-	}
-	h.publishAgentSourceSync(r, agentRow, true)
-	writeJSON(w, http.StatusOK, AgentSourceSyncResponse{Source: agentSourceToResponse(updatedSource), Changed: true, Warnings: bundle.Warnings})
-}
-
-// gitAgentSourceSnapshotUpdate is intentionally narrow: repository sync owns
-// executable instructions, while the Multica Agent owns its display name and
-// description after creation. Keep those profile fields unset so a manifest
-// update cannot silently rename an existing Agent.
+// v1 keeps its historical instance profile; v2 manages declared profile fields.
 func gitAgentSourceSnapshotUpdate(agentID pgtype.UUID, bundle agentsource.Bundle) db.UpdateAgentParams {
 	contract := coordinatorcontract.Marshal(bundle.CoordinatorContract)
 	if contract == nil {
-		// The source owns this snapshot; removing its contract must clear old state.
 		contract = []byte("null")
 	}
-	return db.UpdateAgentParams{
-		CoordinatorContract: contract,
-		ID:                  agentID,
-		Instructions:        pgtype.Text{String: bundle.Instructions, Valid: true},
+	params := db.UpdateAgentParams{ID: agentID, Instructions: pgtype.Text{String: bundle.Instructions, Valid: true}, CoordinatorContract: contract}
+	if bundle.Definition != nil {
+		params.Name = pgtype.Text{String: bundle.Manifest.Metadata.Name, Valid: true}
+		if _, present := bundle.Definition["description"]; present {
+			params.Description = pgtype.Text{String: bundle.Manifest.Metadata.Description, Valid: true}
+		}
 	}
+	return params
+
 }
 
 func (h *Handler) publishAgentSourceSync(r *http.Request, agentRow db.Agent, changed bool) {
@@ -611,6 +577,7 @@ func (h *Handler) publishAgentSourceSync(r *http.Request, agentRow db.Agent, cha
 		return
 	}
 	response := h.agentToResponse(refreshed)
+	h.hydrateImportedAgent(r.Context(), &response, refreshed.ID)
 	if err := h.attachAgentSkills(r.Context(), &response, refreshed.ID); err != nil {
 		slog.Warn("load agent skills after GitHub source sync", "error", err, "agent_id", uuidToString(agentRow.ID))
 		return
@@ -629,60 +596,80 @@ func (h *Handler) publishAgentSourceSync(r *http.Request, agentRow db.Agent, cha
 	}
 }
 
-func (h *Handler) resolveAndCompileGitHubAgent(ctx context.Context, workspaceID pgtype.UUID, input GitHubAgentSourceInput) (resolvedGitHubAgentSource, error) {
+func (h *Handler) resolveAndCompileGitHubAgent(ctx context.Context, workspaceID pgtype.UUID, input GitHubAgentSourceInput) (preparedAgentSource, error) {
+	resolved, err := h.resolveGitHubAgentRepository(ctx, workspaceID, input)
+	if err != nil {
+		return preparedAgentSource{}, err
+	}
+	sha := strings.TrimSpace(input.ResolvedSHA)
+	if sha == "" {
+		sha, err = h.GitHubApp.ResolveCommit(ctx, resolved.installation.InstallationID, ownerFromFullName(resolved.repository.FullName), repoFromFullName(resolved.repository.FullName), resolved.ref)
+		if err != nil {
+			return preparedAgentSource{}, err
+		}
+	}
+	if !immutableGitSHA.MatchString(sha) {
+		return preparedAgentSource{}, sourceRequestError(http.StatusBadRequest, "resolved_sha must be an immutable Git commit SHA")
+	}
+	snapshot, err := agentsource.ReadAgentRepository(ctx, h.GitHubApp, agentsource.Source{
+		InstallationID: resolved.installation.InstallationID,
+		Owner:          ownerFromFullName(resolved.repository.FullName), Repository: repoFromFullName(resolved.repository.FullName), CommitSHA: sha,
+	})
+	if err != nil {
+		return preparedAgentSource{}, err
+	}
+	resolved.sha, resolved.bundle, resolved.snapshot = sha, snapshot.Definition, snapshot
+	return resolved, nil
+}
+
+func (h *Handler) resolveGitHubAgentRepository(ctx context.Context, workspaceID pgtype.UUID, input GitHubAgentSourceInput) (preparedAgentSource, error) {
 	if h.GitHubApp == nil {
-		return resolvedGitHubAgentSource{}, githubapp.ErrUnavailable
+		return preparedAgentSource{}, githubapp.ErrUnavailable
+	}
+	repositoryName, requestedRef, err := agentsource.ParseGitHubRepository(input.Repository, input.Ref)
+	if err != nil {
+		return preparedAgentSource{}, sourceRequestError(http.StatusBadRequest, err.Error())
 	}
 	installationUUID, err := parseUUIDValue(input.InstallationID)
 	if err != nil {
-		return resolvedGitHubAgentSource{}, errors.New("invalid installation_id")
+		return preparedAgentSource{}, sourceRequestError(http.StatusBadRequest, "invalid installation_id")
 	}
 	installation, err := h.Queries.GetGitHubInstallationInWorkspace(ctx, db.GetGitHubInstallationInWorkspaceParams{ID: installationUUID, WorkspaceID: workspaceID})
 	if err != nil {
-		return resolvedGitHubAgentSource{}, errors.New("GitHub installation not found")
+		return preparedAgentSource{}, sourceRequestError(http.StatusNotFound, "GitHub installation not found")
 	}
 	repositories, err := h.GitHubApp.ListRepositories(ctx, installation.InstallationID)
 	if err != nil {
-		return resolvedGitHubAgentSource{}, err
+		return preparedAgentSource{}, err
 	}
 	var repository githubapp.Repository
 	for _, candidate := range repositories {
-		if strings.EqualFold(candidate.FullName, input.Repository) {
+		if strings.EqualFold(candidate.FullName, repositoryName) {
 			repository = candidate
 			break
 		}
 	}
 	if repository.FullName == "" {
-		return resolvedGitHubAgentSource{}, errors.New("repository is not accessible to this GitHub installation")
+		return preparedAgentSource{}, sourceRequestError(http.StatusForbidden, "repository is not accessible to this GitHub installation")
 	}
-	ref := strings.TrimSpace(input.Ref)
+	ref := requestedRef
 	if ref == "" {
 		ref = repository.DefaultBranch
 	}
-	if ref == "" || len(ref) > 255 || strings.ContainsRune(ref, '\x00') {
-		return resolvedGitHubAgentSource{}, errors.New("invalid Git ref")
+	if !agentsource.ValidGitRef(ref) {
+		return preparedAgentSource{}, sourceRequestError(http.StatusBadRequest, "invalid Git ref")
 	}
-	sha := strings.TrimSpace(input.ResolvedSHA)
-	if sha == "" {
-		sha, err = h.GitHubApp.ResolveCommit(ctx, installation.InstallationID, ownerFromFullName(repository.FullName), repoFromFullName(repository.FullName), ref)
-		if err != nil {
-			return resolvedGitHubAgentSource{}, err
-		}
-	} else if !immutableGitSHA.MatchString(sha) {
-		return resolvedGitHubAgentSource{}, errors.New("resolved_sha must be an immutable Git commit SHA")
-	}
-	bundle, err := agentsource.CompileDTAProject(ctx, h.GitHubApp, agentsource.Source{
-		InstallationID: installation.InstallationID,
-		Owner:          ownerFromFullName(repository.FullName), Repository: repoFromFullName(repository.FullName), CommitSHA: sha,
-	})
-	if err != nil {
-		return resolvedGitHubAgentSource{}, err
-	}
-	return resolvedGitHubAgentSource{installation: installation, repository: repository, ref: ref, sha: sha, bundle: bundle}, nil
+	return preparedAgentSource{installation: installation, repository: repository, ref: ref}, nil
 }
 
-func createSourceSkillInTx(ctx context.Context, queries *db.Queries, workspaceID, creatorID pgtype.UUID, source resolvedGitHubAgentSource, agentSourceID pgtype.UUID, compiled agentsource.Skill) (db.Skill, error) {
-	config, err := json.Marshal(sourceSkillConfig(source, compiled.SourcePath))
+func createSourceSkillInTx(ctx context.Context, queries *db.Queries, workspaceID, creatorID pgtype.UUID, source preparedAgentSource, agentSourceID pgtype.UUID, compiled agentsource.Skill) (db.Skill, error) {
+	configuration := sourceSkillConfig(source, compiled.SourcePath)
+	owner, err := queries.GetAgentSourceByID(ctx, agentSourceID)
+	if err != nil {
+		return db.Skill{}, err
+	}
+	configuration["exclusive_agent_id"] = uuidToString(owner.AgentID)
+	config, err := json.Marshal(configuration)
 	if err != nil {
 		return db.Skill{}, err
 	}
@@ -702,8 +689,27 @@ func createSourceSkillInTx(ctx context.Context, queries *db.Queries, workspaceID
 	return created, nil
 }
 
-func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgtype.UUID, source resolvedGitHubAgentSource, agentSourceID pgtype.UUID, compiled agentsource.Skill) error {
-	config, err := json.Marshal(sourceSkillConfig(source, compiled.SourcePath))
+func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgtype.UUID, source preparedAgentSource, agentSourceID pgtype.UUID, compiled agentsource.Skill) error {
+	existing, err := queries.GetSkill(ctx, skillID)
+	if err != nil {
+		return err
+	}
+	configuration := map[string]any{}
+	if len(existing.Config) > 0 {
+		if err := json.Unmarshal(existing.Config, &configuration); err != nil {
+			return err
+		}
+	}
+	if configuration == nil {
+		configuration = map[string]any{}
+	}
+	configuration["origin"] = sourceSkillConfig(source, compiled.SourcePath)["origin"]
+	owner, err := queries.GetAgentSourceByID(ctx, agentSourceID)
+	if err != nil {
+		return err
+	}
+	configuration["exclusive_agent_id"] = uuidToString(owner.AgentID)
+	config, err := json.Marshal(configuration)
 	if err != nil {
 		return err
 	}
@@ -737,7 +743,10 @@ func sourceManagedSkillName(name string, agentSourceID pgtype.UUID) string {
 	return name + "--" + sourceID
 }
 
-func sourceSkillConfig(source resolvedGitHubAgentSource, sourcePath string) map[string]any {
+func sourceSkillConfig(source preparedAgentSource, sourcePath string) map[string]any {
+	if !source.installation.ID.Valid {
+		return map[string]any{"origin": map[string]any{"type": "agent_package", "package_hash": source.bundle.Hash, "path": sourcePath}}
+	}
 	return map[string]any{"origin": map[string]any{
 		"type": "github_agent_source", "repository": source.repository.FullName,
 		"ref": source.ref, "commit_sha": source.sha, "path": sourcePath,
@@ -773,9 +782,17 @@ func agentSourceToResponse(source db.AgentSource) AgentSourceResponse {
 		value := uuidToString(source.GithubInstallationID)
 		installationID = &value
 	}
+	repository, repositoryURL := "", ""
+	if source.SourceType == "github" {
+		repository = source.RepoOwner + "/" + source.RepoName
+		repositoryURL = "https://github.com/" + repository
+	}
 	return AgentSourceResponse{
-		AgentID: uuidToString(source.AgentID), SourceType: source.SourceType,
-		InstallationID: installationID, Repository: source.RepoOwner + "/" + source.RepoName,
+		RepositoryURL:      repositoryURL,
+		CanSync:            connected && !source.ManagedSourceKey.Valid,
+		ConfigurationScope: []string{"name", "description", "instructions", "configuration", "access", "okrs", "a2a", "disabled_runtime_skills", "skills", "skill_files"},
+		AgentID:            uuidToString(source.AgentID), SourceType: source.SourceType,
+		InstallationID: installationID, Repository: repository,
 		Ref: source.Ref, ManifestPath: source.ManifestPath, SyncedCommitSHA: source.SyncedCommitSha,
 		SyncStatus: status, LastSyncError: textToPtr(source.LastSyncError),
 		LastSyncAttemptAt: timestampToPtr(source.LastSyncAttemptAt), LastSyncedAt: timestampToString(source.LastSyncedAt),
@@ -814,8 +831,14 @@ func parseUUIDValue(value string) (pgtype.UUID, error) {
 }
 
 func writeGitHubSourceError(w http.ResponseWriter, err error) {
+	if writeManifestSchemaError(w, err) {
+		return
+	}
 	var apiErr *githubapp.APIError
+	var requestErr *gitSourceRequestError
 	switch {
+	case errors.As(err, &requestErr):
+		writeError(w, requestErr.status, requestErr.message)
 	case errors.Is(err, githubapp.ErrUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "GitHub agent sources are unavailable")
 	case errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound:
@@ -838,6 +861,11 @@ func writeGitHubSourceError(w http.ResponseWriter, err error) {
 }
 
 func writeAgentSourceDatabaseError(w http.ResponseWriter, err error) {
+	var requestErr *gitSourceRequestError
+	if errors.As(err, &requestErr) {
+		writeError(w, requestErr.status, requestErr.message)
+		return
+	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 		writeError(w, http.StatusConflict, "an agent or skill with this name already exists in the workspace")

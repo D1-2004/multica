@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"sort"
@@ -34,7 +35,7 @@ func CompileDTAProjectFS(ctx context.Context, sourceFS fs.FS) (Bundle, error) {
 }
 
 func newFSRepositoryClient(sourceFS fs.FS) (*fsRepositoryClient, error) {
-	client := &fsRepositoryClient{sourceFS: sourceFS, blobs: make(map[string][]byte)}
+	client := &fsRepositoryClient{sourceFS: sourceFS, blobs: make(map[string]string)}
 	if err := fs.WalkDir(sourceFS, ".", func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -53,15 +54,17 @@ func newFSRepositoryClient(sourceFS fs.FS) (*fsRepositoryClient, error) {
 		if !entry.Type().IsRegular() {
 			return fmt.Errorf("unsupported local bundle file %q", filePath)
 		}
-		content, err := fs.ReadFile(sourceFS, filePath)
+		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
-		sum := sha256.Sum256(append([]byte(filePath+"\x00"), content...))
+		// Local object IDs identify paths; content is read only after the manifest
+		// has passed schema validation. Compiled definitions carry content hashes.
+		sum := sha256.Sum256([]byte(filePath))
 		blobID := hex.EncodeToString(sum[:])
-		client.blobs[blobID] = content
+		client.blobs[blobID] = filePath
 		client.entries = append(client.entries, githubapp.TreeEntry{
-			Path: filePath, Type: "blob", Mode: "100644", SHA: blobID, Size: int64(len(content)),
+			Path: filePath, Type: "blob", Mode: "100644", SHA: blobID, Size: info.Size(),
 		})
 		return nil
 	}); err != nil {
@@ -74,7 +77,7 @@ func newFSRepositoryClient(sourceFS fs.FS) (*fsRepositoryClient, error) {
 type fsRepositoryClient struct {
 	sourceFS fs.FS
 	entries  []githubapp.TreeEntry
-	blobs    map[string][]byte
+	blobs    map[string]string
 }
 
 func (c *fsRepositoryClient) GetTree(context.Context, int64, string, string, string) (githubapp.Tree, error) {
@@ -82,9 +85,15 @@ func (c *fsRepositoryClient) GetTree(context.Context, int64, string, string, str
 }
 
 func (c *fsRepositoryClient) GetBlob(_ context.Context, _ int64, _, _, blobID string) ([]byte, error) {
-	content, ok := c.blobs[blobID]
+	filePath, ok := c.blobs[blobID]
 	if !ok {
 		return nil, fmt.Errorf("local bundle blob %q not found", blobID)
 	}
-	return append([]byte(nil), content...), nil
+	file, err := c.sourceFS.Open(filePath)
+	if err != nil { return nil, err }
+	defer file.Close()
+	content, err := io.ReadAll(io.LimitReader(file, MaxFileSize + 1))
+	if err != nil { return nil, err }
+	if len(content) > MaxFileSize { return nil, fmt.Errorf("%s exceeds the file size limit", filePath) }
+	return content, nil
 }

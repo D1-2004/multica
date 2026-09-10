@@ -7,6 +7,7 @@ export * from "./derive-presence";
 export * from "./failure-reason";
 export * from "./effective-access";
 export * from "./queries";
+export * from "./source-mutations";
 export * from "./use-agent-presence";
 export * from "./use-update-agent-allowlist";
 export * from "./use-agent-activity";
@@ -18,3 +19,5 @@ export * from "./mcp-support";
 export * from "./openclaw-runtime-config";
 export * from "./llm-trace-runtime-config";
 export * from "./runtime-binding";
+
+export * from "./package-mutations";

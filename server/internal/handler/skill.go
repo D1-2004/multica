@@ -492,8 +492,13 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.Queries.WithTx(tx)
 
+	skill, err = qtx.GetSkillInWorkspaceForUpdate(r.Context(), db.GetSkillInWorkspaceForUpdateParams{ID:skill.ID, WorkspaceID:skill.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "skill not found")
+		return
+	}
 	params := db.UpdateSkillParams{
-		ID: parseUUID(id),
+		ID: skill.ID,
 	}
 	if req.Name != nil {
 		params.Name = pgtype.Text{String: sanitizeNullBytes(*req.Name), Valid: true}
@@ -505,6 +510,21 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		params.Content = pgtype.Text{String: sanitizeNullBytes(*req.Content), Valid: true}
 	}
 	if req.Config != nil {
+		mapping, sourceErr := qtx.GetAgentSourceSkillBySkillID(r.Context(), skill.ID)
+		if sourceErr != nil && !errors.Is(sourceErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership"); return
+		}
+		if sourceErr == nil {
+			configuration, ok := req.Config.(map[string]any)
+			if !ok { writeError(w, http.StatusBadRequest, "exclusive skill config must be an object"); return }
+			source, err := qtx.GetAgentSourceByID(r.Context(), mapping.AgentSourceID)
+			if err != nil { writeError(w, http.StatusInternalServerError, "failed to load skill source"); return }
+			configuration["exclusive_agent_id"] = uuidToString(source.AgentID)
+			configuration["origin"] = map[string]any{
+				"type":"github_agent_source", "repository":source.RepoOwner + "/" + source.RepoName,
+				"ref":source.Ref, "commit_sha":source.SyncedCommitSha, "path":mapping.SourcePath,
+			}
+		}
 		config, _ := json.Marshal(req.Config)
 		params.Config = config
 	}
@@ -586,8 +606,12 @@ func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	if err := qtx.DeleteSkillLabelAssignmentsBySkill(r.Context(), skill.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to remove skill label assignments")
+	if _, err := qtx.GetSkillInWorkspaceForUpdate(r.Context(), db.GetSkillInWorkspaceForUpdateParams{ID:skill.ID, WorkspaceID:skill.WorkspaceID}); err != nil {
+		writeError(w, http.StatusNotFound, "skill not found")
+		return
+	}
+	if err := qtx.DeleteSkillDependents(r.Context(), skill.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to remove skill dependents")
 		return
 	}
 	if err := qtx.DeleteSkill(r.Context(), db.DeleteSkillParams{
@@ -2422,7 +2446,14 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sf, err := h.Queries.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil { writeError(w, http.StatusInternalServerError, "failed to start skill file update"); return }
+	defer tx.Rollback(r.Context())
+	queries := h.Queries.WithTx(tx)
+	if _, err := queries.GetSkillInWorkspaceForUpdate(r.Context(), db.GetSkillInWorkspaceForUpdateParams{ID:skill.ID, WorkspaceID:skill.WorkspaceID}); err != nil {
+		writeError(w, http.StatusNotFound, "skill not found"); return
+	}
+	sf, err := queries.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
 		SkillID: skill.ID,
 		Path:    sanitizeNullBytes(req.Path),
 		Content: sanitizeNullBytes(req.Content),
@@ -2432,6 +2463,7 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to save skill file"); return }
 	writeJSON(w, http.StatusOK, skillFileToResponse(sf))
 }
 
@@ -2455,15 +2487,23 @@ func (h *Handler) DeleteSkillFile(w http.ResponseWriter, r *http.Request) {
 	}
 	// Verify the file belongs to the parent skill we just authorized — guards
 	// against deleting a file owned by a different skill via the URL param.
-	file, err := h.Queries.GetSkillFile(r.Context(), fileUUID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil { writeError(w, http.StatusInternalServerError, "failed to start skill file deletion"); return }
+	defer tx.Rollback(r.Context())
+	queries := h.Queries.WithTx(tx)
+	if _, err := queries.GetSkillInWorkspaceForUpdate(r.Context(), db.GetSkillInWorkspaceForUpdateParams{ID:skill.ID, WorkspaceID:skill.WorkspaceID}); err != nil {
+		writeError(w, http.StatusNotFound, "skill not found"); return
+	}
+	file, err := queries.GetSkillFile(r.Context(), fileUUID)
 	if err != nil || uuidToString(file.SkillID) != uuidToString(skill.ID) {
 		writeError(w, http.StatusNotFound, "skill file not found")
 		return
 	}
-	if err := h.Queries.DeleteSkillFile(r.Context(), file.ID); err != nil {
+	if err := queries.DeleteSkillFile(r.Context(), file.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete skill file")
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to delete skill file"); return }
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2738,13 +2778,16 @@ func (h *Handler) ensureSourceManagedSkillsIncluded(w http.ResponseWriter, r *ht
 }
 
 func (h *Handler) rejectSourceManagedSkillWrite(w http.ResponseWriter, r *http.Request, skillID pgtype.UUID) bool {
-	managed, err := h.isSourceManagedSkill(r.Context(), skillID)
+	mapping, err := h.Queries.GetAgentSourceSkillBySkillID(r.Context(), skillID)
+	if errors.Is(err, pgx.ErrNoRows) { return false }
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership")
 		return true
 	}
-	if managed {
-		writeError(w, http.StatusConflict, "this skill is managed by a GitHub agent source")
+	source, err := h.Queries.GetAgentSourceByID(r.Context(), mapping.AgentSourceID)
+	if err != nil { writeError(w, http.StatusInternalServerError, "failed to verify skill source ownership"); return true }
+	if source.ManagedSourceKey.Valid {
+		writeError(w, http.StatusConflict, "this skill is managed by Multica")
 		return true
 	}
 	return false

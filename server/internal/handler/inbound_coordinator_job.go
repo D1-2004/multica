@@ -367,6 +367,13 @@ func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentI
 }
 
 func (w *InboundCoordinatorJobWorker) park(ctx context.Context, job db.InboundCoordinatorJob, delay time.Duration, reason string) error {
+	if isCoordinatorBusyParkReason(reason) {
+		feedbackCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := w.handler.persistCoordinatorWait(feedbackCtx, job, reason); err != nil {
+			slog.Warn("coordinator wait feedback unavailable", "job_id", util.UUIDToString(job.ID), "error", err)
+		}
+		cancel()
+	}
 	slog.Info("inbound coordinator job parked for next window",
 		"event", "inbound_coordinator_job_parked",
 		"job_id", util.UUIDToString(job.ID),
@@ -613,6 +620,14 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	}
 	response := newBufferedDispatchResponse()
 	writeJSON(response, http.StatusAccepted, map[string]string{"status": "accepted"})
+	// Optional progress eligibility cannot abort the admission transaction.
+	waitCtx, waitCancel := context.WithTimeout(ctx, 2*time.Second)
+	waitPolicy, waitPolicyErr := h.Queries.GetAgentDingTalkResponsePolicy(waitCtx, dispatchContext.AgentID)
+	waitCancel()
+	if waitPolicyErr != nil {
+		waitPolicy = db.GetAgentDingTalkResponsePolicyRow{}
+		slog.Warn("coordinator waiting delivery policy unavailable", "agent_id", uuidToString(dispatchContext.AgentID))
+	}
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return nil, job, err
@@ -643,6 +658,11 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 		}
 		displayContent = buildDingTalkChannelDisplay(command)
 	}
+	waitDelivery := freezeCoordinatorWaitDelivery(command, dispatchContext, waitPolicy)
+	rawCommand, err = marshalCoordinatorWaitCommand(command, waitDelivery)
+	if err != nil {
+		return nil, job, err
+	}
 	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
 	if err := h.registerDingTalkResponseRoute(ctx, tx, command, dispatchContext); err != nil {
 		return nil, job, err
@@ -666,12 +686,16 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if restoreErr != nil {
 				return nil, job, restoreErr
 			}
-			if !sameCoordinatorCollectKind(base, command) {
+			priorWait, priorWaitErr := coordinatorWaitDeliveryFromCommand(existing.Command)
+			if priorWaitErr != nil {
+				return nil, job, priorWaitErr
+			}
+			if !sameCoordinatorCollectKind(base, command) || !sameCoordinatorWaitDelivery(priorWait, waitDelivery) {
 				splitKind = true
 				continue
 			}
 			merged := mergeDispatchCommands(base, command)
-			mergedRaw, marshalErr := json.Marshal(merged)
+			mergedRaw, marshalErr := marshalCoordinatorWaitCommand(merged, *priorWait)
 			if marshalErr != nil {
 				return nil, job, marshalErr
 			}

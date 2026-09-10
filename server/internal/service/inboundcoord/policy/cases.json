@@ -883,6 +883,199 @@
       "forbidden_effects": "测试样例问句自动取得响应资格；工具名一票否决；缺失身份猜测；固定短语跳过LLM。",
       "verification": "host_protocol_passed; real_model_26_of_26_on_2026_09_10_assembly_14; live_delivery_pending",
       "evidence_note": "docs/evals/results/20260910T033123Z-generic-proactive-gate.json; one frozen candidate, synthetic read-only replay"
+    },
+    {
+      "id": "f01_execution_delivery_follows_trusted_source",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F03",
+        "COORD.F17",
+        "COORD.F18"
+      ],
+      "context_a": "同一项明确查询来自Web会话，未授权另行外发；窗口拆项或旧checkpoint恢复后Source仍取可信入站。",
+      "context_b": "相同工作来自数字员工/机器人钉钉事件，或来源为空/未来未知值；另有原文明确指定对象与渠道的外发。",
+      "expected_effects": "Web通过任务结果/已有会话回传，不为交付另找钉钉发信人。钉钉沿已有交付上下文，用事件提供身份且发送时取证；未知来源不猜Web或钉钉。各来源均保留明确外发授权和原始引用/历史，不把Issue署名当委托人。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/issue_description_test.go#TestIssueDescriptionUsesSourceRetainedByHostAndWindowItem",
+        "server/internal/service/inboundcoord/issue_description_test.go#TestIssueDescriptionPreservesExplicitDeliveryAndOriginalHandoff"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
+    },
+    {
+      "id": "f04_single_work_does_not_authorize_environment_repair",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F07",
+        "COORD.F15",
+        "COORD.F18"
+      ],
+      "context_a": "用户只要求执行一项指定只读命令/查询，失败时返回原始错误；默认执行上下文重复了purpose，另有独立scope和原始引用。",
+      "context_b": "用户在当前请求中明确授权一个有边界的环境修复或外发操作。",
+      "expected_effects": "A仅执行该交付物；依赖失败记录已完成步骤/原始错误/阻塞，不自动找改凭证或扩成登录/环境维修。只去重平台生成的重复目标，保留独立上下文、scope和原始handoff。B仍以最新原始授权及权限为准，不因技术名称词表否决，也不扩大到其他维修。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/issue_description_test.go#TestIssueDescriptionKeepsOneGoalAndNecessaryContext",
+        "server/internal/service/inboundcoord/issue_description_test.go#TestIssueDescriptionPreservesExplicitDeliveryAndOriginalHandoff"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
+    },
+    {
+      "id": "f09_saved_work_wait_notice_is_nonterminal_once",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F09",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "已判断并保存含未提交工作项的计划，当前合法lease因容量或同Issue busy重复park；其中可有已提交部分。",
+      "context_b": "尚未保存工作计划、全部工作已提交、主动会话/task_finished，或普通调用者伪造coordinator_wait标记。",
+      "expected_effects": "A每job只持久化一次Host等待说明，准确说尚未开始的剩余部分；不复用模型接单回复或声称task已入队/正在执行。等待标记、本地message及获得独立冻结等待资格的outbox同事务，原callback/终结消息/计划不完成。B不新增该等待效果；缺资格只本地记录。新legacy等待资格与结果归属分开，旧legacy无快照不追溯；旧managed route兼容但不能覆盖显式disabled。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitNoticeIsOnceAndDoesNotSettlePlan",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitRequiresSavedWorkAndHonorsManagedReplyPolicy",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitTextDoesNotClaimAllWorkIsUnstartedAfterPartialCommit",
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go#TestCoordinatorWaitIsHostOnlyAndDoesNotCloseReceipt"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。",
+      "waiting_admission_verification": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification"
+    },
+    {
+      "id": "f17_wait_notice_cancels_when_resolved",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F09",
+        "COORD.F17"
+      ],
+      "context_a": "待发送的等待notice仍对应同workspace/Agent的pending或running Coordinator job，且还有未提交Items。",
+      "context_b": "发送前该job已terminal、全部Items已提交或关联不匹配；另有notice入库/路由校验失败。",
+      "expected_effects": "A沿已有response outbox发送并去重，不写关闭原dispatch的receipt。B未发notice取消；失败原子回滚，不阻止既有park/恢复，不伪造已送达。只取消尚未发送动作，不撤回已送达notice，也不把Coordinator job终态等同任意Executor task终态。",
+      "host_protocol_test_refs": [
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go#TestCoordinatorWaitResolvedBeforeSendDoesNotSend",
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go#TestCoordinatorWaitAllItemsCommittedBeforeSendDoesNotSend",
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go#TestCoordinatorWaitEnqueueRollsBack",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitFailureDoesNotBlockPark"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
+    },
+    {
+      "id": "f09_legacy_wait_permission_is_admission_scoped",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F09",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "新legacy结果归属的普通digital_employee消息，入站时response_enabled和inbound_coordinator开启、revision合法且DWS/CID/接收对象/Host target齐全；没有managed response_route。",
+      "context_b": "旧legacy job没有等待资格快照，或新快照明确disabled、版本未知、身份/目标不足、cancel/proactive/task_finished；后来开关开启或caller伪造字段。",
+      "expected_effects": "A仅冻结独立Host非终结等待资格，可经既有outbox发等待，不改变legacy最终回复归属。B只本地说明，不追补资格；显式disabled不回退managed route。只有旧无快照的managed job可沿原冻结route兼容，仍核Host范围。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitIndependentAdmissionGuards",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitLegacyAdmissionFreezesAndCollectsIndependently",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitWireCannotGrantEligibility",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitOldLegacyJobCannotGainNewPermission"
+      ],
+      "verification": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
+      "evidence_status": "host_report_received",
+      "evidence_note": "Scope实施者已报告本地Host/collect资格测试通过；未运行新的真实预发legacy等待IM送达验证。"
+    },
+    {
+      "id": "f09_wait_permission_change_splits_collect",
+      "rule_ids": [
+        "COORD.F09",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "同场景同版本/开关/发送身份/目标的入站继续收集；同群仅当前发言人变化。",
+      "context_b": "等待资格的enabled/revision/发送身份/目标变化，或旧collect job没有快照；原job建立后实时开关改变。",
+      "expected_effects": "A可合窗并保留原冻结接收目标，同群可收多位发言人；B拆窗，不把新资格覆盖到旧窗口。停放发送只使用原入站快照，不按实时开关追溯扩权；入站策略查询失败冻结disabled，不令可选通知查询破坏主接单事务。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitLegacyAdmissionFreezesAndCollectsIndependently",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitWireCannotGrantEligibility"
+      ],
+      "verification": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
+      "evidence_status": "host_report_received",
+      "evidence_note": "Scope实施者已报告本地Host/collect资格测试通过；未运行新的真实预发legacy等待IM送达验证。"
+    },
+    {
+      "id": "f01_current_origin_reply_vs_actual_relay",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F03",
+        "COORD.F07",
+        "COORD.F17",
+        "COORD.F18"
+      ],
+      "context_a": "CoordinatorIssueFollowUp为DWS钉钉channel，可信当前sender UID/openID存在，当前消息与origin消息一致、当前CID可生成ready reply hint，用户只需本次答复。",
+      "context_b": "当前origin不一致、缺CID/消息/稳定sender、无DWS或未实际提供reply hint；或真实请求是第三方代问/转告并需要确定原委托人。",
+      "expected_effects": "A按既有回复策略使用已知原会话目标，不因Issue-comment触发就默认assoc找人/重建角色。B从当前Issue及相关原始上下文/必要assoc恢复真实角色后沟通，不虚构接收人。两者仍读最新Issue/comments授权，不跳过发送/完成取证，不扩大外联/跨场景权限。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/coordinator_issue_relay_test.go#TestCoordinatorIssueRelayUsesTrustedCurrentTargetWithoutMandatoryRoleLookup",
+        "server/internal/handler/coordinator_issue_relay_test.go#TestCoordinatorIssueRelayRequiresConsistentIdentityAndReplyLocator",
+        "server/internal/handler/coordinator_issue_relay_test.go#TestCoordinatorIssueRelayRetainsActualRelayResolution"
+      ],
+      "verification": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
+      "evidence_status": "host_report_received",
+      "evidence_note": "实施者报告直接回复/不一致定位/真实转达的3组及4既有相关组通过；旧current_conversation_id断言在HEAD基线仍失败，不计为修复或全包行为通过，预发真实投递未认证。"
+    },
+    {
+      "id": "f17_acceptance_names_user_goal_without_internal_machinery",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "用户要求打印dws auth status，工作已真实提交；未询问执行环境或内部路由。",
+      "context_b": "相同工作与目标，但用户明确要求说明执行位置/技术细节；或命令名称本身是交付内容。",
+      "expected_effects": "A用简短自然受理表述如“我来打印dws auth status”，不默认复述“我会在沙箱中执行”等内部实现，不虚称已经完成。B保留必要命令名及用户要求的细节，不按技术词表删目标。action、basis、target_match和派工时点保持；实际钉钉送达须另取渠道证据。",
+      "verification": "pre actual acceptance delivered at 14:45:07, matching admitted action reply; no unrequested sandbox wording",
+      "evidence_status": "live_acceptance_case_passed",
+      "evidence_note": "Actual DingTalk message msgjW8FQctny3sQ9o7tdtYP5Q== before task result; requested command retained. Does not certify every wording contrast.",
+      "host_contract_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery"
+    },
+    {
+      "id": "f16_same_run_work_state_reuses_retained_success",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F08",
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "同一次Coordinator运行中，在合法召回目标scope校验后，重复读取相同原参数work_state；该运行已新增且仍保留issue_database来源的成功快照。",
+      "context_b": "首次/最新结果失败或unavailable（含latest_execution读取失败），快照被预算淘汰、输入参数不同、跨运行，或当前scope/合法Issue检查不通过。",
+      "expected_effects": "A跳过下游读取和重新remember，复用原result/read_ref；partial/unknown/not_loaded及complete/truncated边界不升级，不扩大摘要。B可在合法范围内重新读取；scope失败不能被快照绕过。不是跨Turn/用户/Agent共享缓存，不批量预取其他候选。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotReuseKeepsPartialEvidenceAndReadRef",
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotFailuresRemainRetryable",
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotScopeGuardPrecedesReuse",
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotDoesNotCrossRunsOrArguments"
+      ],
+      "verification": "Host tests, frozen real-model 3v3 and pre live single-case passed; cache-hit branch covered by Host tests",
+      "evidence_status": "host_frozen_model_and_live_case_passed",
+      "evidence_note": "Pre policy2026-09-10.4/assembly15 trace2513240e2c8043edb7bc9e1894cb63a3: 2 primary rounds, 1 work_state, 6.979s loop, 14s actual DingTalk admission; complete=false/truncated=true and delivery not_loaded preserved. See final report; no fleet latency claim."
+    },
+    {
+      "id": "f16_state_snapshot_feedback_preserves_open_constraints",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "工作状态成功可用，当前没有其他待修反馈；模型重复调用同参work_state试图展开已裁剪内容。",
+      "context_b": "同时存在未解决的finish review拒绝、其他错误反馈或basis=answer所需的history原问题证据。",
+      "expected_effects": "A使用现有latestFeedback位说明snapshot_available/重复不能展开摘要，保留800反馈和8000快照预算。B不以重复读取提示覆盖审核/history/错误约束，不强迫无证据finish。工具调用仍可记录为模型动作，但实际下游复用和模型轮数收益分别验证；不宣称2轮/约4秒已经省掉。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotPreservesPendingFeedback"
+      ],
+      "verification": "Host tests, frozen real-model 3v3 and pre live single-case passed; cache-hit branch covered by Host tests",
+      "evidence_status": "host_frozen_model_and_live_case_passed",
+      "evidence_note": "Pre policy2026-09-10.4/assembly15 trace2513240e2c8043edb7bc9e1894cb63a3: 2 primary rounds, 1 work_state, 6.979s loop, 14s actual DingTalk admission; complete=false/truncated=true and delivery not_loaded preserved. See final report; no fleet latency claim."
     }
   ]
 }

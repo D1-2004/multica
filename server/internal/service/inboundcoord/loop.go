@@ -46,7 +46,9 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	appendStep := func(step protocol.ChatCoordinatorStep) { step.Seq = len(steps) + 1; steps = append(steps, step) }
 	finishChecks := map[string]finishCheckResult{}
 	readSequence := coordinationReadSequence(turn)
+	initialReadSequence := readSequence
 	latestFeedback := ""
+	latestReadFeedback := ""
 	latestProposal := ""
 	latestFeedbackNeedsHistory := false
 	unresolvedReviewFeedback := ""
@@ -80,6 +82,10 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		if turn.Loop == LoopTaskFinished {
 			messages[0] = openai.SystemMessage(buildSystemPromptForStage(turn, recalled))
 		} else {
+			if !latestFeedbackNeedsHistory && unresolvedReviewFeedback == "" && (latestFeedback == "" || latestFeedback == latestReadFeedback) {
+				latestReadFeedback = workStateSnapshotFeedback(turn, initialReadSequence)
+				latestFeedback = latestReadFeedback
+			}
 			messages = buildCoordinationMessages(turn, recalled, latestFeedback, latestProposal)
 		}
 		tools := toolsForDisclosure(turn, round, recalled)
@@ -142,6 +148,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			var result string
 			callErr := recoveryErr
 			reviewRejected := false
+			reusedWorkState := false
+			var readObservation *langfuse.Observation
+			if allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) {
+				readObservation = traceToolStart(lt, round, call)
+			}
 			if callErr != nil {
 				// An ambiguous action cannot be repaired by choosing its meaning.
 			} else if !allowed[call.Name] {
@@ -191,11 +202,20 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				}
 				callErr = requireRecalledIssueForTool(call.Name, call.Arguments, recalledIssues)
 				if callErr == nil {
-					result, callErr = c.callTool(ctx, turn, call.Name, call.Arguments)
+					if turn.Loop != LoopTaskFinished && call.Name == toolWorkState {
+						if snapshot, ok := reusableWorkStateSnapshot(turn, call.Arguments, initialReadSequence); ok {
+							result, reusedWorkState = string(snapshot.Result), true
+						}
+					}
+					if !reusedWorkState {
+						result, callErr = c.callTool(ctx, turn, call.Name, call.Arguments)
+					}
 				}
 			}
 			if turn.Loop != LoopTaskFinished && allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) {
-				result, callErr = rememberCoordinationRead(&turn, &readSequence, call.Name, call.Arguments, result, callErr)
+				if !reusedWorkState {
+					result, callErr = rememberCoordinationRead(&turn, &readSequence, call.Name, call.Arguments, result, callErr)
+				}
 				if callErr == nil && call.Name == toolAssocRecall {
 					recalls = append(recalls, parseRecallCall(call.Arguments))
 					collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
@@ -216,12 +236,19 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				latestFeedback = historyPrerequisiteResolvedFeedback(turn, unresolvedReviewFeedback)
 				latestFeedbackNeedsHistory = false
 			}
-			appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: callErr != nil})
+			reason := ""
+			if reusedWorkState {
+				reason = workStateSnapshotReuseReason
+			}
+			appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: callErr != nil, Content: reason})
 			if turn.Loop == LoopTaskFinished {
 				messages = append(messages, openai.ToolMessage(result, call.ID))
 			}
-			logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, callErr != nil, "")
-			traceToolEnd(traceToolStart(lt, round, call), result, callErr, "")
+			logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, callErr != nil, reason)
+			if readObservation == nil {
+				readObservation = traceToolStart(lt, round, call)
+			}
+			traceToolEnd(readObservation, result, callErr, reason)
 		}
 	}
 	return fail(fmt.Errorf("coordinator loop: evidence or valid plan missing after %d rounds", maxLoopRounds))
@@ -329,7 +356,7 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 func coordinatorWorkStateTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolWorkState,
-		Description: openai.String("Read the real current status and short original goal of a recalled Issue. No comments, execution results or chat bodies. Cite the Host read_ref in report_status; unavailable/partial is not proof of completion."),
+		Description: openai.String("Read this turn's bounded status and original-goal snapshot of a recalled Issue. Successful same-argument reads reuse the Host read_ref; repeating cannot expand truncated/complete=false summaries. Unavailable reads may be retried. No comments, execution results or chat bodies. Cite read_ref in report_status; unknown execution/delivery stays unknown."),
 		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"issue_id"}, "properties": map[string]any{"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall.")}},
 	})
 }

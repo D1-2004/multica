@@ -47,6 +47,8 @@ import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
 import { SceneMemoryTab } from "./tabs/scene-memory-tab";
+import { ExportTab } from "./tabs/export-tab";
+import { PublishTab } from "./tabs/publish-tab";
 import { DigitalEmployeeTab } from "./tabs/digital-employee-tab";
 import { AgentMCPAccessTab } from "./tabs/mcp-access-tab";
 import { useT } from "../../i18n";
@@ -529,6 +531,10 @@ export function AgentOverviewPane({
                         !!currentUserId && agent.owner_id === currentUserId
                       }
                     />
+                  )}
+                  {effectiveView === "export" && <ExportTab agentId={agent.id} canEdit={canEdit} />}
+                  {effectiveView === "publish" && (
+                    <PublishTab key={`${agent.id}:${source?.ref}:${source?.synced_commit_sha}`} source={source} canEdit={canEdit} />
                   )}
                   {effectiveView === "access" && (
                     <AgentAccessSettings

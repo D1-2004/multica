@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-10.2`。装配版本：`14`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-10.4`。装配版本：`15`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -10,6 +10,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 修改 Coordinator 的提示词、工具、上下文、handler、assoc、scenememory、窗口、回执或 trace 前，先读本文件和 [规则目录](../server/internal/service/inboundcoord/policy/registry.json)。目录登记 `COORD.F01`–`COORD.F19` 的行为义务、模块、实现引用、对照案例和已撤回手段。
 
+- [DWS执行恢复Plan](plans/2026-09-10-dws-execution-recovery.md) 记录来源交付、单项执行边界与Host等待反馈；
 - [通用语义修复 Plan](plans/2026-09-10-generic-proactive-semantics.md) 记录身份未知边界、词表撤回与跨场景验证；
 - [decline边界Plan](plans/2026-09-10-coordinator-decline-boundary.md) 记录主模型、Host与审核配置来源一致性及验证；
 - [Host预取Plan](plans/2026-09-09-coordinator-prefetch.md) 记录当前场域必需读取前置的收益假设、额外成本与实测；
@@ -96,6 +97,10 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 work_state仍只读本Agent工作区的合法目标，总预算2000字符。顶层status/status_source是Issue流程状态；latest_execution只在显式work_state读取时查询该当前归属Agent/Issue最近创建的一次执行，含read_status、task_id/status、创建/开始/完成时间、status_source=agent_task_database及限定scope。read_status区分loaded/not_found/not_loaded/unavailable；不返回result/error/context。delivery_status保持not_loaded，completed只证明该次执行结束，不能推断事项已关闭、业务全部完成或消息已送达。assoc_recall/Host预取不额外批量查询执行记录。
 
+同一次Coordinator运行中的work_state重复读取只复用本次运行新增且仍保留的成功快照：先通过当前scope/合法召回Issue检查，再核参数仅含同一issue_id（空白等价，额外字段不命中）及快照issue_id/read_ref/scope和issue_database来源，latest_execution不可为unavailable。命中时跳过下游读取和remember，返回原result/read_ref，不分配新rN；partial、unknown、not_loaded和complete/truncated原样，不把重复调用当刷新或展开摘要。失败/unavailable、跨运行/参数变化或预算淘汰后可按原权限重读；不共享到其他Turn/身份，不批量预取候选。
+
+成功状态可用时以现有latestFeedback位提示snapshot_available及重复无法扩展摘要；已有review、history原问题或其他错误反馈优先保留。私有原参数仅用于同参判断，不进入模型。读取8000/反馈800预算和最大轮数不变，不新增LLM。减少下游读取与模型是否少走轮次是两项指标，实际延迟收益需独立回放/预发证据。 SLS/步骤及Langfuse以reason=work_state_snapshot_reused标记命中；它仍是一次模型工具请求，但不是新增后端读取或更新的证据。
+
 用户问“刚才拆了几项/受理几项”时，按需context_read(kind=coordination_state)。以Host当前job为锚，限制同workspace/Agent/endpoint_namespace/source.platform/source.type/非空CID，严格只读created_at早于锚的最近3个窗口；不读当前及后来窗口，也不接受任意目标覆盖。返回scope=previous_3_jobs_same_host_endpoint_and_scene、status、records、complete=false/truncated及2000字符预算；每条仅job_id、首条问句<=120字符摘要/截断标记、时间/job_status、plan_present、nullable planned_work_count/confirmed_work_count及confirmation_source。计划计数仅来自合法window-plan-v1 Items；确认仅来自真实持久化计划回执、IssueResults或匹配Items.action_key的CompletedActionKeys，去重且不代表执行完成/外部送达。只计工作项，不是所有动作、澄清或消息数；不能拿旧关联事项数量代答本轮拆分。
 
 无合法锚/reader为not_loaded，DB失败或锚不可见为unavailable，锚存在但没有前序记录为empty；未知计数保持null，不能写0。该读取归一成kind=coordination_state的rN快照并纳入8000读取总预算，可为状态回报取证；它不增加原问题history证据，不能满足basis=answer门槛。普通history读取仍独立。
@@ -134,7 +139,13 @@ history_handoff_test.go覆盖各续接basis、错误/过期scope与3000预算；
 
 Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一句话可含多份请求，多个动作可引用其同一source_ref；不能用尾部谢谢或某一项完成吞掉另一项。混合窗口可澄清一份请求并提交另一份明确工作，但同一缺口未解决的请求不能又澄清又提交。只有同一交付物的实质answer/change/retry才续接；问候、进度、催促及重复已接受请求都不授权重新执行。
 
-所有副作用沿正常域服务路径提交。start_work/continue_work的reply在对应工作真实入库/排队后才回传。审查输入声明该Host保证，因此允许合法受理/排队回执，不要求候选生成时任务已执行；该保证不等于实际开始执行、完成或外部送达。容量按最多两项的批次处理，保留完整计划与每项outcome；部分成功恢复不得从头重放，未处理请求不能静默丢弃。已持久化的旧checkpoint保持既有幂等效果，不因升级强制失效。
+执行器收到的IssueDescription按Host保留的Decision.Source生成交付要求：Web通过当前任务结果或已有会话回传，不额外寻找钉钉发信人/收件人；数字员工/机器人按可信事件和已有钉钉交付上下文回复，身份缺失不补造；未知来源只使用已有上下文，不推定渠道。原文明确授权的外发、代问或转达仍保留指定对象/渠道/范围，需发送时核验结果；Issue创建人/评论人不是默认委托人，接待文案不是已完成或送达证据。
+
+执行交接的角色追溯按需进行。CoordinatorIssueFollowUp已有可信当前sender UID/openID、当前CID及与当前消息一致的origin定位，并实际提供ready reply hint时，按原回复策略直接使用该目标；Issue-comment触发本身不要求默认assoc找人。仍需读取当前Issue及相关最新comments确认授权。真实第三方代问/转达、角色冲突或目标缺失时继续追溯原始委托与必要assoc；已知目标不证明送达，也不授予无关外联/跨会话权限。详见[Dispatch执行合同](agent-dispatch-v2-execution-contract.md#coordinator-issue-follow-up-reply-targets)。
+
+单项执行描述优先保留purpose，并仅消除平台生成的默认context重复；独立上下文、scene_cid、原始发言/引用和有界history handoff原样保留。遇依赖故障记录已完成步骤、原始错误和阻塞，不把明确工作擅自扩展为凭证寻找/修改、登录或环境维修；实际操作始终以本次最新原始授权为准。
+
+所有副作用沿正常域服务路径提交。start_work/continue_work的reply在对应工作真实入库/排队后才回传。受理文案简短自然地说明用户目标，默认不提沙箱等内部实现；必要命令名称和用户明确要求的技术细节照常保留，不改变action/basis/target_match。工作台出现文案或回调被接受不等于钉钉已送达，须由渠道回读/发送凭证确认。审查输入声明该Host保证，因此允许合法受理/排队回执，不要求候选生成时任务已执行；该保证不等于实际开始执行、完成或外部送达。容量按最多两项的批次处理，保留完整计划与每项outcome；部分成功恢复不得从头重放，未处理请求不能静默丢弃。已持久化的旧checkpoint保持既有幂等效果，不因升级强制失效。
 
 终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。产品查证与另起通知草稿是两个产出；同一通知内整理议程/校对是一个产物的步骤。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。规则驱动revise须提供上述200字符constraint_quote，其余填空。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；非空constraint_quote无效时按上述revise修正/allow丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
 
@@ -151,6 +162,12 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 自然语言意图由LLM判断并审查。Host不再用ACK、停止回复、工具名称或诊断编号词表决定静默、拆窗或工作关联；自发事件、监听范围、去重与持久化状态继续按协议事实检查。
 
 collect 只按入站来源和生命周期区分，普通提问与礼貌收尾可在同一窗口。collect 只合并正在输入的消息：4 秒静默，创建起最多 12 秒。封窗、已 claim、重试或挂起的窗口不再吸收新消息。同 scene 同时一个 Coordinator 窗口，沙箱执行仍受两槽保护；容量不能阻止新窗口判断聊天。collect/park 不提前 sync-silence 完成，回执随真实处理关闭。
+
+已判断并保存的工作仍有未提交项，因容量或同Issue busy停放时，Host可提供一次真实等待说明：计划已保存、相关新执行尚未开始；部分成功只描述剩余项，不冒充任务已入队/运行。仅处理持有当前lease的job；主动会话及task_finished不新增该notice。每job的_coordinator_wait标记、本地message和具备冻结等待资格的响应outbox同事务、稳定键去重；不修改原计划/CompletedActionKeys，不消费原completion callback，也不使用终结coordinator消息类型。新job以Host字段_coordinator_wait_delivery v1冻结enabled、revision与发送input：要求response_enabled/inbound_coordinator开启、revision>=1，普通digital_employee/channel/message.created且DWS出站、非cancel/proactive/task_finished，可信DWS UID/org/CID及Host callback target齐全；单聊还需明确sender openID。入站查询在事务外最多2秒，失败冻结disabled。等待资格与legacy/managed最终结果归属独立，不能被公开wire提供。
+
+停放发送仅用此快照，复核workspace/Agent/CID、当前Host target及完整发送身份；disabled/未知版本不回退。旧无快照managed job仍可用原冻结route，旧legacy无快照只本地说明，不因后续开关开启追补IM。collect比较等待资格enabled/revision/身份/目标，变化或旧无快照则拆窗；同群不同发言人可合并但保留原冻结recipient。普通发送入口拒绝调用者自带等待标记；缺资格仅本地反馈，不绕过发送范围。
+
+response worker在发送前复核该Coordinator job仍pending/running、关联action一致且有未提交Items；job已终态或工作已全部提交则取消尚未发送的notice。该检查不撤回已送达消息，也不泛指任意Executor task终态。notice写入/路由失败整笔回滚；反馈最多使用park前2秒，不阻止现有park与后续恢复。等待反馈是Host状态效果，不新增LLM调用或动作，不放宽并发及完成判定。
 
 `task_finished` 使用独立系统规则与当前结果事实，不带技能目录、长期记忆、群历史或新建路由；结果动作也先审查再交付。只读该工作与当前结果的送达证据。已在当前会话覆盖的同一结果无需二刷；仅问过联系人、另一任务出过消息或旧阶段已回报，不能压掉新的相关答案/失败。未知送达状态不能声称已告知，也不能仅因“等他回”或“已确认”而吞掉应说的事实。
 

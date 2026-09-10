@@ -27,12 +27,18 @@ Existing user settings and historical runs are preserved.
 - Coordinator, inbound jobs, task-finished loop, proactive admission, event trigger,
   Issue follow-up, and response-policy regression selection passed against isolated
   PostgreSQL 17. Server compilation passed.
-- Policy 2026-09-09.1 structural registry checks passed: 19 obligations, 12 modules,
-  20 contrast contracts. Structural checks do not certify live model behavior.
+- Feature policy 2026-09-09.1 passed structural checks. Release integration preserves
+  the newer closed-action Coordinator and uses policy 2026-09-09.4, with 19
+  obligations, 14 modules and 38 contrast contracts. Structural checks do not certify live model behavior.
 - Broad existing test suites contain failures also reproduced at parent 54cfea41c
   (including prompt fixtures, FC trace config, finalization fixture and binding
   test panic). The two candidate-only regressions found by comparison—prompt
   budget and inbound toggle dependency—were fixed and their targeted suites pass.
+
+Release integration also passes pending-supplement evidence to finish review and
+keeps its work-acceptance guarantee accurate when an Issue continuation is waiting
+without a new task ID. The old completion test fixture was updated to exercise the
+current report_result plus finish_check protocol.
 
 Pre-release migration, immutable build identity, and real message acceptance remain
 separate gates, to be recorded after the release order finishes.

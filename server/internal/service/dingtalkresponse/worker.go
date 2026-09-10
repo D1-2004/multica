@@ -71,6 +71,19 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 	if err != nil || a == nil {
 		return false, err
 	}
+	progress := a.Input.CoordinatorWaitJobID != "" && a.Input.CallbackURL == ""
+	if progress && a.State == "pending" {
+		var waiting bool
+		err = s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM inbound_coordinator_job WHERE id=$1 AND workspace_id=$2 AND agent_id=$3 AND status IN ('pending','running') AND command #>> '{_coordinator_wait,response_action_id}'=$4 AND command #>> '{_coordinator_plan,PlanVersion}'='window-plan-v1' AND jsonb_array_length(command #> '{_coordinator_plan,Items}') > COALESCE(jsonb_array_length(NULLIF(command #> '{_coordinator_plan,CompletedActionKeys}', 'null'::jsonb)),0))`, a.Input.CoordinatorWaitJobID, a.Input.WorkspaceID, a.Input.AgentID, a.ID).Scan(&waiting)
+		if err != nil {
+			return true, s.release(ctx, a, time.Now().Add(retryDelay(a.Attempts)))
+		}
+		if !waiting {
+			if err = s.saveState(ctx, a, "cancelled", "", "", "", "coordinator_wait_resolved"); err != nil {
+				return true, err
+			}
+		}
+	}
 	if a.State == "pending" {
 		if a.Input.Text == "" {
 			err = s.saveState(ctx, a, a.Input.CloseState, "", "", "", "")
@@ -84,7 +97,7 @@ func (s *Service) processOne(ctx context.Context) (bool, error) {
 		return true, err
 	}
 
-	if isReceiptState(a.State) && a.ReceiptState != a.State {
+	if !progress && isReceiptState(a.State) && a.ReceiptState != a.State {
 		if s.receipts == nil {
 			return true, s.release(ctx, a, time.Now().Add(time.Minute))
 		}
