@@ -194,6 +194,16 @@ func createASBSandboxWithCapacityOnConnection(
 	if err != nil {
 		return nil, fmt.Errorf("check Aone Sandbox quota before create: %w", err)
 	}
+	for _, allocation := range quotas {
+		slog.Info("queried ASB quota before sandbox create",
+			"event", "asb_capacity_quota_queried",
+			"runtime_id", util.UUIDToString(runtimeID),
+			"network_zone", allocation.NetworkZone,
+			"region", allocation.Region,
+			"quota", allocation.Quota,
+			"usage", allocation.Usage,
+		)
+	}
 	sandbox, err := createASBSandboxInAvailableRegion(ctx, client, runtimeID, input, quotas)
 	if !errors.Is(err, ErrASBCapacityUnavailable) {
 		return sandbox, err
