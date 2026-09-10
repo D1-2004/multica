@@ -51,6 +51,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	latestReadFeedback := ""
 	latestProposal := ""
 	latestFeedbackNeedsHistory := false
+	latestFeedbackNeedsHistoryAttempt := false
 	unresolvedReviewFeedback := ""
 	modelRounds := 0
 	if turn.Loop != LoopTaskFinished && len(turn.History)+len(turn.DingTalkHistory) > 0 {
@@ -127,6 +128,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		if len(calls) == 0 {
 			latestFeedback = coordinationRepairFeedback("tool_required", fmt.Errorf("call an available tool to finish or obtain missing evidence; do not invent facts"))
 			latestFeedbackNeedsHistory = false
+			latestFeedbackNeedsHistoryAttempt = false
 			if turn.Loop == LoopTaskFinished {
 				messages = append(messages, msg.ToParam(), openai.UserMessage(latestFeedback))
 			}
@@ -163,6 +165,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			var result string
 			callErr := recoveryErr
 			reviewRejected := false
+			historyAttemptRequired := false
 			reusedWorkState := false
 			repeatedHistoryRead := false
 			var readObservation *langfuse.Observation
@@ -187,7 +190,8 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 							return fail(checkErr)
 						}
 						if check.Verdict != "allow" {
-							reviewRejected = true
+							reviewRejected = !check.HistoryReadRequired
+							historyAttemptRequired = check.HistoryReadRequired
 							callErr = hintErr("finish needs revision: "+check.Reason, "Missing current refs: "+strings.Join(check.MissingSourceRefs, ",")+". Repair the diagnosed action/field in the previous proposal while preserving every request and current restriction. This review grants no new authority.")
 							if check.ConstraintQuote != "" {
 								callErr = hintErr("finish needs revision: "+check.Reason, "Verified boundary quote: "+jsonQuote(check.ConstraintQuote)+". Repair only the diagnosed fields; a boundary does not mean all other work must be declined.")
@@ -250,13 +254,15 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					latestProposal = boundedRejectedProposal(call.Arguments)
 				}
 				latestFeedback = coordinationRepairFeedback(call.Name, callErr)
-				latestFeedbackNeedsHistory = isHistoryPrerequisiteError(callErr)
+				latestFeedbackNeedsHistoryAttempt = historyAttemptRequired
+				latestFeedbackNeedsHistory = isHistoryPrerequisiteError(callErr) || historyAttemptRequired
 				if reviewRejected {
 					unresolvedReviewFeedback = latestFeedback
 				}
-			} else if latestFeedbackNeedsHistory && call.Name == toolContextRead && coordinationContextReadKind(call.Arguments) == "history" && turn.HistoryStatus == "loaded" && hasCoordinationHistorySnapshot(turn) {
+			} else if latestFeedbackNeedsHistory && call.Name == toolContextRead && coordinationContextReadKind(call.Arguments) == "history" && ((turn.HistoryStatus == "loaded" && hasCoordinationHistorySnapshot(turn)) || (latestFeedbackNeedsHistoryAttempt && oneOf(turn.HistoryStatus, "empty", "unavailable"))) {
 				latestFeedback = historyPrerequisiteResolvedFeedback(turn, unresolvedReviewFeedback)
 				latestFeedbackNeedsHistory = false
+				latestFeedbackNeedsHistoryAttempt = false
 			}
 			reason := ""
 			if reusedWorkState {

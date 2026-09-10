@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-10.5",
-  "assembly_version": "16",
+  "policy_version": "2026-09-10.8",
+  "assembly_version": "19",
   "modules": [
     {
       "id": "core",
@@ -96,7 +96,7 @@
     },
     {
       "id": "group",
-      "version": "10",
+      "version": "11",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -110,8 +110,8 @@
         "COORD.F06",
         "COORD.F14"
       ],
-      "budget_characters": 3258,
-      "content_sha256": "15d826efe3748c5f63894a2a9d2391369319eefa70e288603e6633ddf99bd4a9"
+      "budget_characters": 4085,
+      "content_sha256": "adc3b353319ccc819e3a5c1d0c9bb42074b73877a2c40354b2566040289ccdd1"
     },
     {
       "id": "window",
@@ -166,7 +166,7 @@
     },
     {
       "id": "dialogue",
-      "version": "6",
+      "version": "7",
       "file": "dialogue.md",
       "applies_when": "dialogue_available",
       "requires": [
@@ -180,8 +180,8 @@
         "COORD.F08",
         "COORD.F18"
       ],
-      "budget_characters": 1100,
-      "content_sha256": "403f98995b68ce34a6fa7167e578203d5413820c6a14a0b1ce743b83edaad0bd"
+      "budget_characters": 1409,
+      "content_sha256": "9494fafe8c65356a047332cba35914cc345dd9368a4d664d54229d6419fd7af2"
     },
     {
       "id": "recall_match",
@@ -279,7 +279,7 @@
     {
       "id": "COORD.F01",
       "family": "F01",
-      "obligation": "可信消息决定说话人、逐句委托与作用域；未被叫到不接管群聊，自发事件不自激；缺失身份不猜。 执行描述按可信Decision.Source保留Web/钉钉/未知的交付区别，不把Issue署名或未知来源补成钉钉委托人。 可信当前sender/消息/CID与ready origin reply目标一致时可按既有回复策略直接回当前对象，Issue-comment本身不强制assoc重找委托人；真实转达/冲突/缺目标仍追溯。",
+      "obligation": "可信消息决定说话人、逐句委托与作用域；未被叫到不接管群聊，自发事件不自激；缺失身份不猜。 执行描述按可信Decision.Source保留Web/钉钉/未知的交付区别，不把Issue署名或未知来源补成钉钉委托人。 可信当前sender/消息/CID与ready origin reply目标一致时可按既有回复策略直接回当前对象，Issue-comment本身不强制assoc重找委托人；真实转达/冲突/缺目标仍追溯。 对话对象依赖历史且现有证据不足时按需读取；结合原消息时间间隔、作者、引用与中间交流判断延续，不设固定时间阈值，不把未读或空事项召回当作无对话。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -298,7 +298,12 @@
         "generic_identity_and_semantics",
         "f01_execution_delivery_follows_trusted_source",
         "f09_legacy_wait_permission_is_admission_scoped",
-        "f01_current_origin_reply_vs_actual_relay"
+        "f01_current_origin_reply_vs_actual_relay",
+        "f01_history_on_demand",
+        "f02_dialogue_elapsed_time",
+        "f01_intervening_respondent",
+        "f02_old_explicit_reply",
+        "f02_history_read_unknown"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -308,7 +313,8 @@
         "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
-        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof"
+        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
+        "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -334,14 +340,15 @@
         "server/internal/service/inboundcoord/issue_description_test.go",
         "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction",
         "server/internal/handler/coordinator_issue_relay_test.go",
-        "docs/agent-dispatch-v2-execution-contract.md"
+        "docs/agent-dispatch-v2-execution-contract.md",
+        "server/internal/service/inboundcoord/progressive_context.go"
       ],
       "case_file": "cases.json"
     },
     {
       "id": "COORD.F02",
       "family": "F02",
-      "obligation": "按原窗口及引用时间理解本轮；补充与纠正优先；已答上一问不重复追问，后发问题不能授权旧消息。",
+      "obligation": "按原窗口及引用时间理解本轮；补充与纠正优先；已答上一问不重复追问，后发问题不能授权旧消息。 对话对象依赖历史且现有证据不足时按需读取；结合原消息时间间隔、作者、引用与中间交流判断延续，不设固定时间阈值，不把未读或空事项召回当作无对话。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -362,11 +369,17 @@
         "f07_explicit_reference_controls_current_work",
         "f07_output_instance_anchor_vs_fresh_lookup",
         "f16_coordination_state_is_not_question_history",
+        "f01_history_on_demand",
+        "f02_dialogue_elapsed_time",
+        "f01_intervening_respondent",
+        "f02_old_explicit_reply",
+        "f02_history_read_unknown",
         "f02_third_party_answer_relayed_to_requester"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
+        "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior.",
         "history_prefetch_2026_09_10": "host_tests_passed_local; pre e2e pending"
       },
       "implementation_refs": [
@@ -382,6 +395,7 @@
         "server/internal/service/inboundcoord/loop.go",
         "server/internal/service/inboundcoord/history_handoff.go",
         "server/internal/service/inboundcoord/history_handoff_test.go",
+        "server/internal/service/inboundcoord/progressive_context.go",
         "server/internal/service/inboundcoord/history_prefetch.go",
         "server/internal/service/inboundcoord/policy/inbound.md"
       ],

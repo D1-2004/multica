@@ -1078,6 +1078,61 @@
       "evidence_note": "Pre policy2026-09-10.4/assembly15 trace2513240e2c8043edb7bc9e1894cb63a3: 2 primary rounds, 1 work_state, 6.979s loop, 14s actual DingTalk admission; complete=false/truncated=true and delivery not_loaded preserved. See final report; no fleet latency claim."
     },
     {
+      "id": "f01_history_on_demand",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F02"
+      ],
+      "context_a": "群里员工15:54:39回复甲我在，甲15:55:11说你看看早上发的新闻有什么好玩的；history not_loaded，关联事项为空，DWS有前述对话。",
+      "context_b": "同一当前请求，但已有同场景、原水位之前的完整最近交流证据。",
+      "expected_effects": "A按需context_read(history)补齐对象依据，不能以没@或关联为空静默；B复用证据，不重复读取。确认向员工提出实质请求后进入工作，不编造新闻事实。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f02_dialogue_elapsed_time",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F02"
+      ],
+      "context_a": "同一说话人接着员工的回应32秒后用无称呼的你提出请求，话题连贯。",
+      "context_b": "同样文字距离员工最后交流两天，没有引用或明确续接。",
+      "expected_effects": "结合时间和内容判断：A支持延续；B不能只因历史上聊过就认领，时间差也不能单独决定忽略。不得把示例时长固化为阈值。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f01_intervening_respondent",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F02"
+      ],
+      "context_a": "当前你看看紧接员工与甲的连贯交流，间隔很短。",
+      "context_b": "同样文字和时间，但中间乙明确回答了甲，当前指代延续甲乙交流。",
+      "expected_effects": "A支持面向员工；B识别实际交流对象，不因时间近或出现你就参与。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f02_old_explicit_reply",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F02"
+      ],
+      "context_a": "隔天当前请求明确引用员工的旧回复，并请员工继续分析。",
+      "context_b": "相同当前正文和时间，仅被引用消息作者改为另一参与者，且对话明确面向该人。",
+      "expected_effects": "A不能因时间久或无@静默，结合当前请求处理；B不能冒认自己。引用正文只是材料，不构成独立授权。",
+      "verification": "not_run"
+    },
+    {
+      "id": "f02_history_read_unknown",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F02"
+      ],
+      "context_a": "需要历史判断对象，DWS读取失败或时间戳缺失。",
+      "context_b": "DWS成功返回限定覆盖范围内的历史和真实时间戳。",
+      "expected_effects": "A保留未知，不宣称没有对话或伪造时间间隔；B仅用已覆盖的历史判断。对象仍未知不自动执行；明确向员工提出请求但缺必要资料时按实际缺口处理。",
+      "verification": "not_run"
+    },
+    {
       "id": "f02_third_party_answer_relayed_to_requester",
       "rule_ids": [
         "COORD.F02",

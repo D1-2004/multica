@@ -8,13 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
@@ -550,4 +553,76 @@ func TestHTTPDWSCredentialRedeemerValidatesResponse(t *testing.T) {
 	if err != nil || credential.UID != "24710833" || credential.ClientID != "client-id" || credential.AuthCode != "auth-code" {
 		t.Fatalf("credential=%+v err=%v", credential, err)
 	}
+}
+
+func TestDWSContractDisplayTimeUsesShanghaiAndEnforcesCutoff(t *testing.T) {
+	cutoff := time.Date(2026, 9, 10, 8, 37, 34, 0, time.UTC)
+	raw := []byte(`{"contractVersion":"im.message-list.v1","success":true,"messages":[
+ {"content":"future","openMessageId":"future","createTime":"2026-09-10 16:38:00"},
+ {"content":"在的，有什么可以帮你的吗？","openMessageId":"bot","sender":"employee","createTime":"2026-09-10 16:37:11"},
+ {"content":"群里有 AI 在吗","openMessageId":"user","sender":"user","createTime":"2026-09-10 16:36:55"}]}`)
+	got, err := parseDWSHistory(raw, Turn{HistoryBefore: cutoff})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("history=%#v err=%v", got, err)
+	}
+	if got[1].EvidenceID != "bot" || cutoff.Sub(got[1].Timestamp) != 23*time.Second {
+		t.Fatalf("lost real dialogue interval: %#v", got)
+	}
+}
+
+// Renewal is an explicit per-Agent opt-in, never a response to arbitrary errors.
+func TestDWSHistoryRenewsAuthorizedCrossOrgReadOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		enabled                bool
+		code                   string
+		grantFails, retryFails bool
+		wantLists, wantGrants  int
+		wantOK                 bool
+	}{
+		{"authorized", true, "CrossOrgPermissionDenied", false, false, 2, 1, true},
+		{"not authorized", false, "CrossOrgPermissionDenied", false, false, 1, 0, false},
+		{"other permission", true, "PermissionDenied", false, false, 1, 0, false},
+		{"grant failure", true, "CrossOrgPermissionDenied", true, false, 1, 1, false},
+		{"second rejection", true, "CrossOrgPermissionDenied", false, true, 2, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "dws")
+			body := `{"error":{"server_error_code":"` + tc.code + `","category":"api"}}`
+			if err := os.WriteFile(bin, []byte("#!/bin/sh\ncat <<'RESPONSE'\n"+body+"\nRESPONSE\nexit 1\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, denied := (dwsclient.CLI{Path: bin}).List(context.Background(), dir, dwsclient.ListRequest{ConversationID: "cid-test"})
+			cli := &renewingHistoryTestCLI{denial: denied, grantFails: tc.grantFails, retryFails: tc.retryFails}
+			loader := &dwsHistoryLoader{issuer: fakeDWSIssuer{}, redeemer: fakeDWSRedeemer{}, cli: cli, mkdir: os.MkdirTemp, remove: os.RemoveAll,
+				crossOrgRenewAgentIDs: map[string]bool{util.UUIDToString(testAgentID()): tc.enabled}}
+			_, err := loader.Load(context.Background(), Turn{AgentID: testAgentID(), ConversationID: "cid-test", DWSUID: "24710833", DWSOrgID: "439446171", HistoryBefore: time.Now()})
+			if (err == nil) != tc.wantOK || cli.lists != tc.wantLists || cli.grants != tc.wantGrants {
+				t.Fatalf("err=%v lists=%d grants=%d", err, cli.lists, cli.grants)
+			}
+		})
+	}
+}
+
+type renewingHistoryTestCLI struct {
+	fakeDWSCLI
+	denial                 error
+	grantFails, retryFails bool
+	lists, grants          int
+}
+
+func (c *renewingHistoryTestCLI) ListMessages(ctx context.Context, dir, cid string, before time.Time, limit int) ([]byte, error) {
+	c.lists++
+	if c.lists == 1 || c.retryFails {
+		return nil, c.denial
+	}
+	return c.fakeDWSCLI.ListMessages(ctx, dir, cid, before, limit)
+}
+func (c *renewingHistoryTestCLI) RenewCrossOrgRead(context.Context, string) error {
+	c.grants++
+	if c.grantFails {
+		return errors.New("grant failed")
+	}
+	return nil
 }

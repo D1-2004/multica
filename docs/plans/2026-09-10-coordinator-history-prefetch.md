@@ -1,6 +1,6 @@
 # Coordinator 历史预取、轻量问候免审与代问答复转告
 
-policy_version `2026-09-10.5`，装配版本 `16`。现行合同见 [inbound-coordinator-loop.md](../inbound-coordinator-loop.md)。
+policy_version `2026-09-10.8`，装配版本 `19`（合并 须莫 的 `codex/coordinator-history-fix-20260910`：DWS 历史环境隔离、跨组织授权续期、按需历史与时间判断之后）。现行合同见 [inbound-coordinator-loop.md](../inbound-coordinator-loop.md)。
 
 ## 触发事实（正式，2026-09-10 17:03–17:06，FDE教练 a9ce26da）
 
