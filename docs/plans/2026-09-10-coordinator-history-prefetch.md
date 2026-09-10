@@ -77,6 +77,16 @@ Codex 第二轮审查（6 项，均已修）：repeatHint 丢失 history 前置�
 
 预算路径本身用 Host 脚本化测试证明；真实模型不能稳定触发同一失败三次。
 
+预发回填（run 3107710926，commit f23a68edf，19:58–20:00）：
+
+| # | 结果 | trace |
+| --- | --- | --- |
+| E1 | acknowledge「在的。」1 轮 6.6s，无工具错误 | `576bd155afdb4dfb94f98eddd1d227a9` |
+| E2 | decline「我无法回答评比类问题。」constraint_quote=「不要回答评比类问题」（枚举选项），1 轮 5.3s，出处校验 0 次失败 | `65dfa833c1d349728dfad633b1a7e05d` |
+| E3 | report_status 引用 r1/r3「已收到回复：6 点出发」，2 轮 8.4s，无陈旧 issue_id 错误 | `f34769a4e8f54d43bc60a53090532eb6` |
+
+Codex 修正后复跑（run 3107713776，commit 52a7e611f，20:09–20:11）：E1 `ff01df20053440c3aeb1566603c7645b` 6.1s；E2 `23b09837ef5549f3a701b146e2d41a1a` 4.5s，constraint_quote 仍为枚举句；E3 `045f87f535814bb5855feba84a1f5c74` 7.1s，state_refs r1/r3。三条均无工具错误、无 withdrawn_tools / loop_stop_reason。
+
 ## 未做与建议
 
 - 协调层没有「转达」原语：代问答复仍要再派一次沙箱（每次 30–40s）。建议给 Host 增加受限的同场景/委托人回传动作，或让执行器在同一任务里等待答复后转告。
