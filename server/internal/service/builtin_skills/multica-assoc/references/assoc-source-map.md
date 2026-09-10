@@ -48,3 +48,5 @@ tree before trusting any line number.
 | Coordinator recall cards | bounded purpose/intent and real state references; no raw task comments or business conclusions; CLI/MCP still use full `assoc.Result` |
 | Event clipped body | `assoc_event.body` via `Event.Body` / `EventRef.Text` |
 | Technical work subjects | `server/internal/assoc/purpose.go` structure only; `inboundcoord/policy/finish_check_work.md` semantic review |
+
+| Continuation target review | `inboundcoord/finish_work_target.go` projects the loaded original goal; `finish_check.go` requires target_match consistent with action kind before submission |

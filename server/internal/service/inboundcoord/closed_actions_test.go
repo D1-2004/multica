@@ -16,7 +16,6 @@ func TestClosedActionsRejectGenericAndCrossKindFields(t *testing.T) {
 	for _, raw := range []string{
 		`{"action":"reply","text":"只生成一份。"}`,
 		`{"actions":[{"kind":"reply","source_refs":["u1"],"reply":"只生成一份。"}]}`,
-		`{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来查证。","purpose":"查证主持人与参会人听记生成数量"}]}`,
 		`{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"other","reply":"收到。"}]}`,
 		`{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"receipt","reply":"收到。","purpose":"隐藏的业务执行"}]}`,
 		`{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"无需回复","reply":"夹带业务答案"}]}`,
@@ -52,8 +51,8 @@ func TestClosedActionsCoverWholeWindowAndRetainMixedIntents(t *testing.T) {
 
 func TestClosedActionsStatusAndMemoryReferencesAreHostOwned(t *testing.T) {
 	turn := Turn{Source: SourceDigitalEmployee, Message: "进展如何？", SceneMemoryRevision: 4,
-		CoordinationReads: []CoordinationRead{{ReadRef: "r2", Tool: toolAssocRecall, Result: json.RawMessage(`{"items":[],"complete":false}`)}, {ReadRef: "r3", Tool: toolWorkState, Failed: true, Result: json.RawMessage(`{"status":"unavailable"}`)}, {ReadRef: "r4", Tool: toolContextRead, Result: json.RawMessage(`{"status":"loaded"}`)}}}
-	for _, ref := range []string{"r2", "r3"} {
+		CoordinationReads: []CoordinationRead{{ReadRef: "r2", Tool: toolAssocRecall, Result: json.RawMessage(`{"items":[],"complete":false}`)}, {ReadRef: "r3", Tool: toolWorkState, Failed: true, Result: json.RawMessage(`{"status":"unavailable"}`)}, {ReadRef: "r4", Tool: toolContextRead, Result: json.RawMessage(`{"status":"loaded"}`)}, {ReadRef: "r5", Tool: toolContextRead, Kind: coordinationStateKind, Result: json.RawMessage(`{"status":"not_loaded","records":[]}`)}}}
+	for _, ref := range []string{"r2", "r3", "r5"} {
 		raw := `{"actions":[{"kind":"report_status","source_refs":["u1"],"state_refs":["` + ref + `"],"reply":"这次查询范围不足，还不能确认是否完成。"}]}`
 		if _, err := parseValidatedWindowPlan(raw, turn, nil, nil); err != nil {
 			t.Fatalf("bounded empty/unavailable state remains reportable: %v", err)

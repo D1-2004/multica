@@ -124,9 +124,10 @@ func selectedPolicyModules(turn Turn, recalled bool) []policyModule {
 		if turn.Source != SourceWeb && strings.EqualFold(turn.ChatType, "group") {
 			selected["channel"], selected["group"] = true, true
 		}
-		if turn.FinishCheckAction == ActionIssue {
+		if turn.FinishCheckAction == ActionIssue || turn.FinishCheckMixedActions {
 			selected["finish_check_work"] = true
-		} else {
+		}
+		if turn.FinishCheckAction != ActionIssue || turn.FinishCheckMixedActions {
 			selected["finish_check"] = true
 		}
 	} else if finished {

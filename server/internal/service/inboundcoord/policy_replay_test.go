@@ -532,7 +532,7 @@ func TestCoordinatorPolicyReplayFixtures(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 36 {
-		t.Fatalf("minimum replay suite has %d cases, want 36", len(seen))
+	if len(seen) != 40 {
+		t.Fatalf("minimum replay suite has %d cases, want 40", len(seen))
 	}
 }

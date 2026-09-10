@@ -15,8 +15,10 @@ waiting sender.
 
 The inbound coordinator is a read-only decision loop: `assoc_recall`,
 `context_read` for bounded conversation history, and recalled-issue readers.
-It submits a complete plan through `finish.items`: new items omit `issue_id`;
-continuations carry a recalled `issue_id` plus the current source references.
+It submits a complete plan through `finish.actions`: start_work creates a new deliverable;
+continue_work carries a recalled issue_id and the current source references.
+The existing finish review judges target_match against the loaded original goal;
+only the same deliverable can continue. Shared evidence alone does not merge work.
 Host commits the normal Issue/member-comment operations after validation and
 keeps retries idempotent. Coordinator does not expose write tools. Business
 DWS operations and full skills still run in the sandbox.

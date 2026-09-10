@@ -76,3 +76,12 @@ func receivingIdentityStatus(turn Turn) string {
 	}
 	return "loaded"
 }
+
+// In proactive groups Addressed is populated only from trusted @ metadata.
+// It is not a negative semantic judgment about natural names or open requests.
+func modelAddressingField(turn Turn) string {
+	if turn.ProactiveConversation && strings.EqualFold(turn.ChatType, "group") {
+		return "has_explicit_employee_mention"
+	}
+	return "addressed"
+}

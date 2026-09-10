@@ -432,7 +432,7 @@
       ],
       "context_a": "有效合同或当前限制明确禁止外发且能逐字引用",
       "context_b": "只是无关旧记忆或读取失败，用户请求正常授权查证",
-      "expected_effects": "A可decline(authorization)引用真实constraint_quote并只解释边界；B不得伪造拒绝原因/澄清问题，应处理授权工作。",
+      "expected_effects": "A可decline(authorization)引用真实constraint_quote并只解释边界；显式固定拒绝话术须遵守。B不得伪造拒绝原因/澄清问题，应处理授权工作。审核revise引文无效按一次协议修正处理，不降级为无引用修订；allow附加无效引文可丢弃。",
       "verification": "not_run"
     },
     {
@@ -453,14 +453,20 @@
         "COORD.F13"
       ],
       "context_a": "start_work已有完整工作字段，仅缺本动作reply；purpose点名DWS身份",
-      "context_b": "用户明确请求排查通信工具、授权机制或会话字段；对照为把实际秘密值无关地加入工作描述",
-      "expected_effects": "A保留完整actions，只补该动作reply；B允许技术名称作为工作对象，实际凭据泄漏由语义审查拒绝。Host不以命令或字段名裁决意图。",
+      "context_b": "purpose粘贴dws chat data-auth或openConversationId",
+      "expected_effects": "A保留完整actions，只补该动作reply并允许业务对象名；B拒绝CLI/auth且提示具体purpose缺口，不误伤产品名。旧finish.text提示已由动作专属reply替代。",
       "verification": "not_run",
       "prior_verification": [
         {
           "policy_version": "2026-09-09.2",
           "status": "scripted_host",
           "notes": "Release f13 finish hint regression under old window-plan input."
+        },
+        {
+          "policy_version": "2026-09-09.6",
+          "source_ref": "9ddb9e8c9",
+          "status": "scripted_host",
+          "notes": "Incoming inherited case marker; merged finite-action contract needs revalidation."
         }
       ]
     },
@@ -519,7 +525,348 @@
       "context_a": "找别人的问候、点名让别人处理、闲聊；旧同群 Issue 不能把这些消息变成员工的请求",
       "context_b": "叫绑定员工账号/数字员工、明确邀请协助、岗位范围内开放问题、已有工作真实补充；混合窗口逐条判断",
       "expected_effects": "A 静默且无工作副作用；B 合理回应或委派，混合窗口只响应有效来源；主判断和最终审查共享群聊资格及可信逐条身份，不以关键词或必须 @ 替代语义判断",
-      "verification": "pending_real_model_and_live_delivery"
+      "verification": "host_protocol_passed; real_model_26_of_26_on_2026_09_10_assembly_14; live_delivery_pending",
+      "evidence_note": "docs/evals/results/20260910T033123Z-generic-proactive-gate.json; one frozen candidate, synthetic read-only replay"
+    },
+    {
+      "id": "f03_requested_log_status_vs_old_skills",
+      "rule_ids": [
+        "COORD.F02",
+        "COORD.F03",
+        "COORD.F05"
+      ],
+      "context_a": "用户明确问日志任务的状态，当前读取含对应任务真实状态。",
+      "context_b": "同样的日志状态问题，召回只有旧skills任务/清单或不匹配的状态。",
+      "expected_effects": "A用report_status回答日志目标及真实状态，不新建执行；B不能拿无关清单代答、不能把用户提问当basis=answer去续接skills任务；保留未知或读取实际目标。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "new-prod日志故障摘要；精确trace/日志定位与验证路径待回填"
+    },
+    {
+      "id": "f03_requested_count_vs_partial_inventory",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F08"
+      ],
+      "context_a": "用户询问明确这几项日志工作有多少未完成，读取覆盖这些目标并有真实状态。",
+      "context_b": "用户询问相同目标，但仅有其他任务或有限窗口的部分列表。",
+      "expected_effects": "A按指定目标和已验证范围作数量答复；B不得用无关数量或部分列表冒充全部，需说明覆盖缺口。状态/数量本身不授权重跑业务任务。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "new-prod目标/范围问题及回归场景；精确验证路径待回填"
+    },
+    {
+      "id": "f05_pending_answer_vs_report_redelivery",
+      "rule_ids": [
+        "COORD.F02",
+        "COORD.F05",
+        "COORD.F07"
+      ],
+      "context_a": "员工确实在等用户回答报告格式，当前用户回答PDF且有原问题证据。",
+      "context_b": "原报告已经完成，用户明确要求把原报告再发一次，并未回答待定问题。",
+      "expected_effects": "A可在对应工作的basis=answer下推进；B是明确retry/redelivery，保持原报告内容/版本，不凭空补answer历史前置或改成重新研究。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "78项回归发现原报告重发误当answer；精确输入与输出路径待回填"
+    },
+    {
+      "id": "f07_explicit_reference_controls_current_work",
+      "rule_ids": [
+        "COORD.F02",
+        "COORD.F07",
+        "COORD.F18"
+      ],
+      "context_a": "当前用户明确引用日志原稿或纠正工作对象。",
+      "context_b": "召回第一项的旧purpose描述skills清单，且与当前引用不匹配。",
+      "expected_effects": "当前明确原话/引用定义目标和交付物，旧purpose只作匹配线索；工作项保留所选原始引用，不把无关旧purpose写回本次工作。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "new-prod误接旧skills事项与引用恢复场景；精确证据路径待回填"
+    },
+    {
+      "id": "f13_optional_intent_vs_continuation_basis",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "合法continue_work误把change放到intent，basis仍为实际change；或未提供intent。",
+      "context_b": "其余字段一致，但intent是任意未注册值。",
+      "expected_effects": "前者缺省或三种已知basis词误填intent时窄规范化为other，basis及授权不变；后者仍拒绝并给字段修复，不把任意未知词放行。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "78项回归发现intent=change重复非法；协议测试路径待回填"
+    },
+    {
+      "id": "f13_registered_action_tool_recovery",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "模型把当前循环允许的continue_work kind误作为工具名，参数仍构成该动作。",
+      "context_b": "模型调用未注册业务工具或当前循环不允许的动作。",
+      "expected_effects": "A仅归一到同一finish候选并经过全部schema/引用/授权/审查；B不能被任意alias放行。正确调用仍是finish.actions。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "new-prod有限动作误作工具导致循环失败；协议测试路径待回填"
+    },
+    {
+      "id": "f13_single_encoded_source_refs",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "有限动作误作工具调用时，source_refs是内容为[\"u1\"]的合法JSON数组字符串。",
+      "context_b": "同一动作工具误用路径中，source_refs是双重编码、普通逗号文本、非数组或含未知当前引用。",
+      "expected_effects": "A仅解一层再按标准数组/当前来源校验；B不继续猜测解码或制造source_ref，仍须明确修复。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "new-prod source_refs编码异常；协议测试路径待回填"
+    },
+    {
+      "id": "f16_review_work_checks_excludes_clarify",
+      "rule_ids": [
+        "COORD.F06",
+        "COORD.F10",
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "混合计划有合法工作和必要clarify，审核work_checks仅覆盖每个工作action_ref。",
+      "context_b": "同一候选的审核协议误把clarify也写入work_checks。",
+      "expected_effects": "A可allow，clarify已处理当前轮缺口；B是审核协议错误，最多单独修复一次并重新校验，不放宽业务授权、不重跑已提交效果，仍非法不能冒充通过。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "78项回归发现混合review把clarify写入work_checks；验证路径待回填"
+    },
+    {
+      "id": "f04_light_coordination_vs_business_execution",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F05",
+        "COORD.F14"
+      ],
+      "context_a": "用户只说Hi/你好，询问已安装能力或请求已验证目标进度。",
+      "context_b": "用户实际要求执行查证、制作产物或发送内容。",
+      "expected_effects": "A保持相应轻量非工作动作，不为普通沟通强派业务任务；B交执行器，不能恢复generic business reply。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "当前线上Hi/你好已正常回复；这是对照保护，不把其误报为本次根因"
+    },
+    {
+      "id": "f06_job_object_evidence_vs_old_work_clarification",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F06",
+        "COORD.F15"
+      ],
+      "context_a": "用户说给我选一份日志看看；岗位明确fde-growth-log指成长日志，但主模型只见Managed by...目录描述和旧skill阅读事项，候选反问是否要该旧方案/结果。",
+      "context_b": "同样说日志，但岗位、能力和当前引用均没有足以识别对象的依据，且确有多个未消除的解释。",
+      "expected_effects": "A审核revise无关旧事项制造的澄清，reason具体说明有岗位依据的成长日志对象及fde-growth-log能力路由，使主循环可纠正；这不是业务答案或新授权，执行器仍核调用者身份/权限。B才允许必要对象澄清，不凭空补岗位语义。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_source": "new-eb0e/d8b2",
+      "evidence_note": "主线程提供的真实trace简称；完整定位键与新fixture/回放输出待回填。"
+    },
+    {
+      "id": "f04_role_material_vs_coordination_record",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F06",
+        "COORD.F15"
+      ],
+      "context_a": "用户要求从岗位领域材料选一份看看，关联里仅有旧skills/工程事项，没有同名卡片；岗位资料能说明其业务对象。",
+      "context_b": "用户明确询问此前那份工作的执行/进度，当前可读证据需要按该工作匹配。",
+      "expected_effects": "A按岗位数据范围安排有界材料检索，不把协调任务卡当领域材料、不因关联缺名否认能力或问任意范围；审核用已有岗位证据给出具体对象/能力纠正。B才回答匹配工作的真实状态，不能用旧skills清单代替。两者都不新增数据访问或外发权限，不硬编码某个词的行业含义，也不要求先写短合同。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_source": "真实消息回放：new-eb0e/d8b2、N_progress",
+      "evidence_note": "本轮五条真实消息候选待复跑；精确fixture/报告路径由主线程回填。"
+    },
+    {
+      "id": "f06_delegated_sample_choices",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F06",
+        "COORD.F15"
+      ],
+      "context_a": "用户已给岗位业务对象类别，并让员工挑任意一份样本；实例、人选和常规时间范围可由员工按岗位数据范围选择。",
+      "context_b": "对象类别/安全范围/授权确有必须用户决定的关键缺口，当前依据无法恢复。",
+      "expected_effects": "A委派有界取样及可查询事实、可见范围/身份权限核验，不把被委托的常规选择写成missing_fields；B才clarify真实用户决策缺口。不因此新增访问或外发权限。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "本轮真实消息恢复与用户明确要求的一般对照；运行证据由主线程回填。"
+    },
+    {
+      "id": "f07_output_instance_anchor_vs_fresh_lookup",
+      "rule_ids": [
+        "COORD.F02",
+        "COORD.F05",
+        "COORD.F07",
+        "COORD.F17"
+      ],
+      "context_a": "用户或历史明确锚定同一已完成原产物实例，并明确要求原物重发。",
+      "context_b": "仅主题、人或任务标题相似，用户要求新的样本或最新业务查询，没有锚定原产物实例。",
+      "expected_effects": "A可用retry/redelivery保持原内容交付；B作为新工作，不当作旧产物的answer。真实待答问题仍可answer，原产物的明确变更按实际授权处理；单纯问状态不重跑。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "本轮真实消息恢复与用户明确要求的一般对照；运行证据由主线程回填。"
+    },
+    {
+      "id": "f10_product_check_and_separate_notice",
+      "rule_ids": [
+        "COORD.F10",
+        "COORD.F17"
+      ],
+      "context_a": "用户要产品查证，并另起一份通知草稿。",
+      "context_b": "用户只要同一份通知，要求整理其中的议程并校对。",
+      "expected_effects": "A是两个独立产出，分别工作动作及single检查；B是一个通知产物的相关步骤，可一个工作动作，不按动词数强拆。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "本轮真实消息恢复与用户明确要求的一般对照；运行证据由主线程回填。"
+    },
+    {
+      "id": "f03_issue_state_vs_latest_execution",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F05",
+        "COORD.F13"
+      ],
+      "context_a": "所问Issue仍in_review/todo，work_state.latest_execution是该Agent/Issue最近创建的completed执行。",
+      "context_b": "同一Issue最近执行未加载、查询失败或确认没有可见执行记录。",
+      "expected_effects": "A区分事项流程状态与最近执行结束，不推断业务全部完成/已送达；B按read_status保留unknown/not_found，不编造未执行或已送达。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f04_declared_skill_synopsis_vs_managed_marker",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F04",
+        "COORD.F15"
+      ],
+      "context_a": "能力元信息为空或仅Managed by标记，但4096字符内有完整frontmatter及已声明description。",
+      "context_b": "前缀没有完整frontmatter描述，或元信息本来已有人类可读描述。",
+      "expected_effects": "A仅补已声明有界description帮助识别岗位业务对象，仍不读正文/SOP或授予权限；B保留原描述/未知状态，不编造未安装。材料取样交岗位技能，不能选旧Issue标题代替。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f03_recent_coordination_counts_vs_association_count",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F08",
+        "COORD.F13"
+      ],
+      "context_a": "用户问刚才拆了几项，最近匹配协调窗口合法持久化计划有2工作项、1项受理证据。",
+      "context_b": "同场景召回有多张其他历史事项，或最近窗口尚无合法计划/回执。",
+      "expected_effects": "A读取coordination_state按对应窗口回答计划/已确认工作数及阶段，不数历史关联卡片；B未知计数保留null，不能写0。计划/Host确认数都不是执行完成或送达数量。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f16_coordination_state_is_not_question_history",
+      "rule_ids": [
+        "COORD.F02",
+        "COORD.F06",
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "只有coordination_state的窗口摘要/计划回执，用户短答需要真实原问题才能解释。",
+      "context_b": "context_read(history)已取得对应原问题与说话人证据。",
+      "expected_effects": "A不满足basis=answer的history门槛，不把读状态摘要升级为对话授权；B再按真实待答问题及当前权限判断。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f08_coordination_state_anchor_isolation",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F08",
+        "COORD.F16"
+      ],
+      "context_a": "存在Host当前job锚，只查同workspace/Agent/endpoint/source/CID且创建时间更早的最近3个窗口。",
+      "context_b": "没有合法锚、不同来源/会话、DB失败，或只有当前/后续窗口。",
+      "expected_effects": "保持not_loaded/unavailable/empty及有限范围，不跨来源补读或倒灌后来的授权；无前序窗口不代表全局零任务。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "读取能力与真实消息恢复的新合同；Go/模型/E2E实际证据由主线程分别回填。"
+    },
+    {
+      "id": "f13_mixed_work_and_status_review_coverage",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F10",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "当前同时询问指定工作进度并授权另一份新产物；候选为report_status+start_work，状态回复准确对应所问目标与真实读取范围，工作独立且获授权。",
+      "context_b": "同样的混合候选，start_work合法，但report_status把无关旧事项清单当所问工作的进度，或由未知状态推断完成。",
+      "expected_effects": "两者都在同一次审核加载finish_check_work与finish_check，岗位约束仅一份，不增调用或轮数；A可allow，B须针对错误状态动作revise，不能因工作计划合法使非工作回复随之放行。纯工作仍只加载工作模块，纯非工作仍只加载非工作模块。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "集成候选混合report_status+start_work仅载工作审核模块的覆盖缺陷；Host装配测试、模型和真实投递结果由主线程分别回填。"
+    },
+    {
+      "id": "f15_visible_config_boundary_same_source",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15"
+      ],
+      "context_a": "当前persona或reply_tone的可见预算内含适用限制，主模型逐字引用该独立片段形成decline。",
+      "context_b": "限制文字被改写，或由persona末尾与reply_tone开头拼接成任一字段均不存在的新句。",
+      "expected_effects": "A的出处检查与独立审核使用相同有界原文，不因来源漏列而反复失败；是否适用仍由审核判断。B保持拒绝，不因配置来源加入而接受伪引文。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "用户截图decline可见配置引用被Host拒绝的来源错配；实际Host测试/模型/预发投递结果由主线程回填，结构登记不代替行为验证。"
+    },
+    {
+      "id": "f16_hidden_config_and_old_data_not_boundary",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16"
+      ],
+      "context_a": "当前限制位于persona前400字符或reply_tone前200字符的实际可见部分。",
+      "context_b": "引用只存在于不可见配置尾部、场域记忆、旧报告或旧工具结果，没有当前合法边界来源。",
+      "expected_effects": "A在主模型、Host与审核间保持同一出处；B不能升级为新限制，Host拒绝或审核纠正，不回灌全文或旧数据来凑引用。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "用户截图decline可见配置引用被Host拒绝的来源错配；实际Host测试/模型/预发投递结果由主线程回填，结构登记不代替行为验证。"
+    },
+    {
+      "id": "f15_config_narrows_without_new_authority",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15"
+      ],
+      "context_a": "当前配置明确收窄可做范围，用户请求触及真实适用边界；reply仅解释逐字边界。",
+      "context_b": "配置声称可绕过岗位/当前用户授权，或仅要求简短口吻却被用来拒绝正常协调动作。",
+      "expected_effects": "A可经出处检查及独立审核decline；B不因文字真实而变成有效授权或拒绝依据。配置只能收窄，不能扩大权限、改写岗位或用格式要求挡住有效短回复。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "用户截图decline可见配置引用被Host拒绝的来源错配；实际Host测试/模型/预发投递结果由主线程回填，结构登记不代替行为验证。"
+    },
+    {
+      "id": "f15_policy_revise_returns_repair_boundary",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16"
+      ],
+      "context_a": "decline引用真实且拒绝方向适用，但只有审核可见的岗位规则要求一段固定拒绝话术，当前reply未满足。",
+      "context_b": "规则驱动revise的constraint_quote去掉Markdown或改写而非逐字子串；或allow夹带无效附加quote。",
+      "expected_effects": "A固定话术是明确文本要求，不是润色；revise回传<=200字真实指令/固定话术供修复。B的revise不得静默清空引文后缓存：复用现有一次/12秒协议修正，仍失败则不提交；allow的无效附加quote丢弃且不阻塞。字段必填，allow或无规则依据填空；来源、授权、原候选及其他检查不放宽。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "主线程实际回放报告9/9因固定模板要求但无原文反馈反复修订至8轮；此次只登记修复合同，原始运行与新验证证据由主线程回填。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence"
+      ]
     },
     {
       "id": "generic_identity_and_semantics",
@@ -534,7 +881,8 @@
       "context_b": "仅命中配置名称但接收名缺失；真实对象是他人；引用的示例角色称呼；岗位外的求助。",
       "expected_effects": "A由LLM结合身份、岗位与上下文决定回复或工作，Host不按自然语言词表短路。B没有介入依据时保持静默，配置标签不补成账号别名。collect不按ACK文字拆窗。",
       "forbidden_effects": "测试样例问句自动取得响应资格；工具名一票否决；缺失身份猜测；固定短语跳过LLM。",
-      "verification": "host_protocol_passed; real_model_21_of_22_overall; independent_shared_marker_deferred; live_delivery_pending"
+      "verification": "host_protocol_passed; real_model_26_of_26_on_2026_09_10_assembly_14; live_delivery_pending",
+      "evidence_note": "docs/evals/results/20260910T033123Z-generic-proactive-gate.json; one frozen candidate, synthetic read-only replay"
     }
   ]
 }

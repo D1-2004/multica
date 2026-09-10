@@ -3,13 +3,17 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/assoc"
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 const (
@@ -22,6 +26,8 @@ const (
 	coordinationRecallScope       = "agent_workspace_associations"
 	coordinationIssueScope        = "current_agent_workspace_issue"
 	coordinationIssueStatusSource = "issue_database"
+	coordinationExecutionSource   = "agent_task_database"
+	coordinationExecutionScope    = "latest_created_task_for_current_issue_and_agent"
 )
 
 // The graph finds candidate work. Its waiting/open status and old comments do
@@ -65,19 +71,38 @@ type coordinatorRecallView struct {
 	CharacterBudget int                         `json:"character_budget"`
 }
 
+// Optional capability: existing IssueAccess implementations need no new method.
+// Production db.Queries implements this bounded, read-only projection.
+type coordinatorIssueExecutionReader interface {
+	GetLatestCoordinatorIssueExecution(context.Context, db.GetLatestCoordinatorIssueExecutionParams) (db.GetLatestCoordinatorIssueExecutionRow, error)
+}
+
+type coordinationExecutionState struct {
+	ReadStatus     string `json:"read_status"`
+	StatusSource   string `json:"status_source,omitempty"`
+	Scope          string `json:"scope,omitempty"`
+	TaskID         string `json:"task_id,omitempty"`
+	Status         string `json:"status,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
+	StartedAt      string `json:"started_at,omitempty"`
+	CompletedAt    string `json:"completed_at,omitempty"`
+	DeliveryStatus string `json:"delivery_status"`
+}
+
 type coordinationWorkState struct {
-	IssueID         string `json:"issue_id"`
-	Status          string `json:"status"`
-	StatusSource    string `json:"status_source"`
-	Title           string `json:"title"`
-	OriginalGoal    string `json:"original_goal"`
-	GoalSource      string `json:"goal_source"`
-	UpdatedAt       string `json:"updated_at,omitempty"`
-	Scope           string `json:"scope"`
-	TaskStatus      string `json:"task_status"`
-	Complete        bool   `json:"complete"`
-	Truncated       bool   `json:"truncated"`
-	CharacterBudget int    `json:"character_budget"`
+	LatestExecution coordinationExecutionState `json:"latest_execution"`
+	IssueID         string                     `json:"issue_id"`
+	Status          string                     `json:"status"`
+	StatusSource    string                     `json:"status_source"`
+	Title           string                     `json:"title"`
+	OriginalGoal    string                     `json:"original_goal"`
+	GoalSource      string                     `json:"goal_source"`
+	UpdatedAt       string                     `json:"updated_at,omitempty"`
+	Scope           string                     `json:"scope"`
+	TaskStatus      string                     `json:"task_status"`
+	Complete        bool                       `json:"complete"`
+	Truncated       bool                       `json:"truncated"`
+	CharacterBudget int                        `json:"character_budget"`
 }
 
 func coordinationRecallLimit(limit int) int {
@@ -160,14 +185,32 @@ func (t *AssocTools) workState(ctx context.Context, turn Turn, raw string) (stri
 	if err != nil {
 		return "", err
 	}
+	workspace, _ := util.ParseUUID(strings.TrimSpace(turn.WorkspaceID))
+	if issue.WorkspaceID != workspace {
+		return "", fmt.Errorf("work_state issue is outside the current workspace")
+	}
 	view := coordinationWorkState{
-		IssueID: util.UUIDToString(issue.ID), Status: strings.TrimSpace(issue.Status),
+		LatestExecution: coordinationExecutionState{ReadStatus: "not_loaded"},
+		IssueID:         util.UUIDToString(issue.ID), Status: strings.TrimSpace(issue.Status),
 		StatusSource: coordinationIssueStatusSource, Title: strings.TrimSpace(issue.Title),
 		OriginalGoal: strings.TrimSpace(issue.Description.String), GoalSource: "issue_description_excerpt",
 		Scope: coordinationIssueScope, TaskStatus: "not_loaded", Complete: true,
 	}
 	if issue.UpdatedAt.Valid {
 		view.UpdatedAt = issue.UpdatedAt.Time.UTC().Format(time.RFC3339Nano)
+	}
+	if reader, ok := t.Issues.(coordinatorIssueExecutionReader); ok {
+		// Run only for explicit work_state reads; prefetch/assoc_recall never call it.
+		task, readErr := reader.GetLatestCoordinatorIssueExecution(ctx, db.GetLatestCoordinatorIssueExecutionParams{WorkspaceID: workspace, IssueID: issue.ID, AgentID: turn.AgentID})
+		switch {
+		case errors.Is(readErr, pgx.ErrNoRows):
+			view.LatestExecution = coordinationExecutionState{ReadStatus: "not_found", StatusSource: coordinationExecutionSource, Scope: coordinationExecutionScope}
+		case readErr != nil:
+			// Do not expose error bodies, failure_reason, result, or credential-bearing context.
+			view.LatestExecution = coordinationExecutionState{ReadStatus: "unavailable"}
+		default:
+			view.LatestExecution = coordinationExecutionState{ReadStatus: "loaded", StatusSource: coordinationExecutionSource, Scope: coordinationExecutionScope, TaskID: util.UUIDToString(task.ID), Status: task.Status, CreatedAt: coordinationDBTime(task.CreatedAt), StartedAt: coordinationDBTime(task.StartedAt), CompletedAt: coordinationDBTime(task.CompletedAt)}
+		}
 	}
 	return marshalCoordinationView(toolWorkState, view)
 }
@@ -278,7 +321,13 @@ func NormalizeCoordinationRead(name, raw string) (string, error) {
 		view.GoalSource = "issue_description_excerpt"
 		view.Status, view.StatusSource = normalizeIssueStatus(view.Status, view.StatusSource)
 		view.UpdatedAt = normalizedCoordinationTime(view.UpdatedAt)
+		// Issue status is independent of the latest execution. Neither proves delivery.
 		view.TaskStatus = "not_loaded"
+		latest, err := normalizeCoordinationExecution(view.LatestExecution)
+		if err != nil {
+			return "", err
+		}
+		view.LatestExecution = latest
 		view.Complete = !view.Truncated && view.StatusSource == coordinationIssueStatusSource
 		view.CharacterBudget = coordinationWorkStateBudget
 		encoded, err := json.Marshal(view)
@@ -417,4 +466,54 @@ func recallWho(people []assoc.PersonRef) string {
 		names = append(names, name)
 	}
 	return strings.Join(names, "、")
+}
+
+func coordinationDBTime(at pgtype.Timestamptz) string {
+	if !at.Valid {
+		return ""
+	}
+	return at.Time.UTC().Format(time.RFC3339Nano)
+}
+
+func normalizeCoordinationExecution(state coordinationExecutionState) (coordinationExecutionState, error) {
+	// This table contains execution state, not external delivery receipts.
+	state.DeliveryStatus = "not_loaded"
+	if state.ReadStatus == "" {
+		state.ReadStatus = "not_loaded"
+	}
+	hasTaskData := state.TaskID != "" || state.Status != "" || state.CreatedAt != "" || state.StartedAt != "" || state.CompletedAt != ""
+	switch state.ReadStatus {
+	case "not_loaded", "unavailable":
+		if hasTaskData || state.StatusSource != "" || state.Scope != "" {
+			return state, fmt.Errorf("unread latest_execution cannot contain task facts")
+		}
+		return state, nil
+	case "not_found":
+		if hasTaskData {
+			return state, fmt.Errorf("latest_execution not_found cannot contain task facts")
+		}
+	case "loaded":
+		if id, err := util.ParseUUID(state.TaskID); err != nil || !id.Valid {
+			return state, fmt.Errorf("latest_execution requires an exact Task UUID")
+		}
+		if !oneOf(state.Status, "queued", "dispatched", "running", "waiting_local_directory", "deferred", "completed", "failed", "cancelled") {
+			return state, fmt.Errorf("latest_execution has an invalid agent task status")
+		}
+	default:
+		return state, fmt.Errorf("latest_execution has an invalid read_status")
+	}
+	if state.StatusSource != coordinationExecutionSource || state.Scope != coordinationExecutionScope {
+		return state, fmt.Errorf("latest_execution must preserve its Agent task database source and scope")
+	}
+	for _, value := range []*string{&state.CreatedAt, &state.StartedAt, &state.CompletedAt} {
+		if *value == "" {
+			continue
+		}
+		normalized := normalizedCoordinationTime(*value)
+		if normalized == "" {
+			return state, fmt.Errorf("latest_execution has an invalid timestamp")
+		}
+		*value = normalized
+	}
+	return state, nil
 }
