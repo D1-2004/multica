@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +68,40 @@ type ListRequest struct {
 type CLI struct {
 	Path         string
 	ClientSecret string
+	MCPBaseURL   string
+}
+
+// IsCrossOrgPermissionDenied matches the server's typed scope rejection only.
+// Generic authorization failures must never trigger a new grant.
+func IsCrossOrgPermissionDenied(err error) bool {
+	var detail *HistoryError
+	return errors.As(err, &detail) && detail.fields["server_error_code"] == "CrossOrgPermissionDenied"
+}
+
+// RenewCrossOrgRead is invoked only for identities whose owner opted into
+// renewal. The grant is restricted to chat data reads and expires in seven days.
+func (c CLI) RenewCrossOrgRead(ctx context.Context, configDir string) error {
+	cmd := exec.CommandContext(ctx, c.path(), "chat", "data-auth", "cross-org",
+		"--all", "--agentCode", "wukong", "--grant-type", "timed", "--ttl", "7d", "--yes", "--format", "json")
+	cmd.Env = CommandEnv(configDir, nil)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return commandFailed(ctx, "DWS cross-org chat read renewal failed", err)
+	}
+	var response struct {
+		Success bool `json:"success"`
+		Result  struct {
+			Scope     string `json:"scope"`
+			GrantType string `json:"grantType"`
+			ExpireAt  int64  `json:"expireAt"`
+		} `json:"result"`
+	}
+	if stdout.Len() > MaxResponseBytes || json.Unmarshal(stdout.Bytes(), &response) != nil || !response.Success || response.Result.Scope != "chat.data:cross-org" || response.Result.GrantType != "timed" || response.Result.ExpireAt <= time.Now().UnixMilli() {
+		return errors.New("DWS cross-org chat read renewal was not confirmed")
+	}
+	return nil
 }
 
 func (c CLI) path() string {
@@ -79,6 +114,15 @@ func (c CLI) path() string {
 func (c CLI) Exchange(ctx context.Context, configDir string, credential Credential) error {
 	if strings.TrimSpace(c.ClientSecret) == "" {
 		return errors.New("DWS client secret is not configured")
+	}
+	if raw := strings.TrimSpace(c.MCPBaseURL); raw != "" {
+		endpoint, err := url.Parse(raw)
+		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			return errors.New("invalid DWS MCP base URL")
+		}
+		if err := os.WriteFile(filepath.Join(configDir, "mcp_url"), []byte(strings.TrimRight(raw, "/")), 0o600); err != nil {
+			return errors.New("configure isolated DWS MCP endpoint")
+		}
 	}
 	cmd := exec.CommandContext(ctx, c.path(),
 		"auth", "exchange",
@@ -135,6 +179,9 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 	if runErr != nil {
 		// dws often exits 1 with a success:false JSON envelope. Keep the
 		// body so callers can log errorMsg instead of a blank CLI failure.
+		if detail := historyCLIError(raw); detail != nil {
+			return nil, detail
+		}
 		if looksLikeJSONObject(raw) {
 			return raw, nil
 		}

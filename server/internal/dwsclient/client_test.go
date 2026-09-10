@@ -148,3 +148,73 @@ func canceledCtx(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
+
+func TestExchangePinsIsolatedMCPEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dws")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n[ \"$(cat \"$DWS_CONFIG_DIR/mcp_url\")\" = 'https://pre-mcp.dingtalk.com' ]\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cli := CLI{Path: bin, ClientSecret: "test-secret", MCPBaseURL: "https://pre-mcp.dingtalk.com/"}
+	if err := cli.Exchange(context.Background(), dir, Credential{UID: "123", ClientID: "test", AuthCode: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "mcp_url"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("unsafe endpoint config: %v %v", info, err)
+	}
+	cli.MCPBaseURL = "https://user:secret@example.com"
+	if err := cli.Exchange(context.Background(), dir, Credential{}); err == nil {
+		t.Fatal("credential-bearing endpoint accepted")
+	}
+}
+
+func TestListExtractsStructuredErrorOnStdout(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dws")
+	script := "#!/bin/sh\necho '{\"error\":{\"category\":\"api\",\"reason\":\"business_error\",\"server_error_code\":1001,\"trace_id\":\"trace-safe\",\"message\":\"token=do-not-leak\"}}'\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (CLI{Path: bin}).List(context.Background(), dir, ListRequest{ConversationID: "cid-test"})
+	var detail *HistoryError
+	if !errors.As(err, &detail) || detail.DiagnosticFields()["server_error_code"] != "1001" || strings.Contains(err.Error(), "do-not-leak") {
+		t.Fatalf("unsafe or missing structured diagnostic: %v", err)
+	}
+}
+
+func TestCrossOrgReadRenewalConfirmsOnlyTimedReadGrant(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		ok         bool
+	}{
+		{"confirmed", `{"success":true,"result":{"scope":"chat.data:cross-org","grantType":"timed","expireAt":4102444800000}}`, true},
+		{"rejected", `{"success":false,"errorMsg":"token=do-not-leak"}`, false},
+		{"wrong scope", `{"success":true,"result":{"scope":"chat.message:send","grantType":"timed","expireAt":4102444800000}}`, false},
+		{"permanent", `{"success":true,"result":{"scope":"chat.data:cross-org","grantType":"permanent","expireAt":4102444800000}}`, false},
+		{"expired", `{"success":true,"result":{"scope":"chat.data:cross-org","grantType":"timed","expireAt":1}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "dws")
+			script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$DWS_CONFIG_DIR/args\"\ncat <<'RESPONSE'\n" + tc.body + "\nRESPONSE\n"
+			if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			err := (CLI{Path: bin}).RenewCrossOrgRead(context.Background(), dir)
+			if (err == nil) != tc.ok || (err != nil && strings.Contains(err.Error(), "do-not-leak")) {
+				t.Fatalf("unexpected renewal result: %v", err)
+			}
+			args, _ := os.ReadFile(filepath.Join(dir, "args"))
+			if string(args) != "chat\ndata-auth\ncross-org\n--all\n--agentCode\nwukong\n--grant-type\ntimed\n--ttl\n7d\n--yes\n--format\njson\n" {
+				t.Fatalf("grant widened or lost expiry: %s", args)
+			}
+		})
+	}
+	if IsCrossOrgPermissionDenied(errors.New("CrossOrgPermissionDenied")) || IsCrossOrgPermissionDenied(&HistoryError{fields: map[string]any{"server_error_code": "PermissionDenied"}}) {
+		t.Fatal("unrelated errors must not trigger renewal")
+	}
+	if !IsCrossOrgPermissionDenied(&HistoryError{fields: map[string]any{"server_error_code": "CrossOrgPermissionDenied"}}) {
+		t.Fatal("typed cross-org denial missing")
+	}
+}

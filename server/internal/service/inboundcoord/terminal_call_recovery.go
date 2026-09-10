@@ -127,7 +127,7 @@ func historyPrerequisiteResolvedFeedback(turn Turn, unresolvedReview string) str
 	}
 	encoded, _ := json.Marshal(map[string]any{
 		"tool": toolContextRead, "history_status": turn.HistoryStatus, "read_prerequisite_satisfied": true,
-		"instruction": "The scoped history read has completed. Re-evaluate the current utterance against that evidence. Loaded history does not prove a matching original question, consent, or authorization to continue work; all finish checks still apply.",
+		"instruction": "The scoped history read has completed; do not repeat the read to satisfy the previous prerequisite. Re-evaluate the current utterance against the returned status and evidence. Empty or unavailable history does not prove absence of dialogue. Loaded history does not prove a matching original question, consent, or authorization to continue work; all finish checks still apply.",
 	})
 	return string(encoded)
 }
