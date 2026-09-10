@@ -53,6 +53,14 @@ func withScriptedFinishReferences(response openai.ChatCompletion, proposal, requ
 		return response
 	}
 	var input struct {
+		ReceivingContext struct {
+			Proactive bool   `json:"proactive"`
+			ChatType  string `json:"chat_type"`
+		} `json:"receiving_context"`
+		CurrentWindow []struct {
+			SourceRef string `json:"source_ref"`
+			Text      string `json:"text"`
+		} `json:"current_window"`
 		Candidate struct {
 			Actions []struct {
 				CoordinationAction
@@ -64,10 +72,36 @@ func withScriptedFinishReferences(response openai.ChatCompletion, proposal, requ
 		return response
 	}
 	if result["work_checks"] == scriptedWorkChecks {
+		if input.ReceivingContext.Proactive && input.ReceivingContext.ChatType == "group" {
+			checks := []map[string]any{}
+			for _, u := range input.CurrentWindow {
+				disposition := "ignore"
+				for _, a := range input.Candidate.Actions {
+					if !containsString(a.SourceRefs, u.SourceRef) {
+						continue
+					}
+					if a.Kind == "start_work" || a.Kind == "continue_work" {
+						disposition = "work"
+					} else if a.Kind != "ignore" && disposition != "work" {
+						disposition = "coordinate"
+					}
+				}
+				basis, quote := "unknown", ""
+				if disposition != "ignore" {
+					basis, quote = "direct", u.Text
+				}
+				checks = append(checks, map[string]any{"source_refs": []string{u.SourceRef}, "basis": basis, "recipient_quote": quote, "evidence_ref": "", "disposition": disposition})
+			}
+			result["participation_checks"] = checks
+		}
 		checks := []map[string]string{}
 		for _, action := range input.Candidate.Actions {
 			if action.Kind == "start_work" || action.Kind == "continue_work" {
-				checks = append(checks, map[string]string{"action_ref": action.ActionRef, "deliverables": "single"})
+				target := "new_work"
+				if action.Kind == "continue_work" {
+					target = "same_deliverable"
+				}
+				checks = append(checks, map[string]string{"action_ref": action.ActionRef, "deliverables": "single", "target_match": target})
 			}
 		}
 		result["work_checks"] = checks
@@ -523,16 +557,16 @@ func TestFinishCheckRequiresOneExplicitAtomicityJudgmentPerWorkAction(t *testing
 		name, checks, want string
 		wantError          bool
 	}{
-		{"single per work", `[{"action_ref":"a1","deliverables":"single"},{"action_ref":"a3","deliverables":"single"}]`, "allow", false},
-		{"multiple cannot allow", `[{"action_ref":"a1","deliverables":"multiple"},{"action_ref":"a3","deliverables":"single"}]`, "revise", false},
-		{"no deliverable cannot allow", `[{"action_ref":"a1","deliverables":"none"},{"action_ref":"a3","deliverables":"single"}]`, "revise", false},
-		{"missing second work", `[{"action_ref":"a1","deliverables":"single"}]`, "", true},
+		{"single per work", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"},{"action_ref":"a3","deliverables":"single","target_match":"new_work"}]`, "allow", false},
+		{"multiple cannot allow", `[{"action_ref":"a1","deliverables":"multiple","target_match":"new_work"},{"action_ref":"a3","deliverables":"single","target_match":"new_work"}]`, "revise", false},
+		{"no deliverable cannot allow", `[{"action_ref":"a1","deliverables":"none","target_match":"new_work"},{"action_ref":"a3","deliverables":"single","target_match":"new_work"}]`, "revise", false},
+		{"missing second work", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"}]`, "", true},
 		{"empty work checks", `[]`, "", true},
 		{"null work checks", `null`, "", true},
-		{"nonwork masquerades", `[{"action_ref":"a1","deliverables":"single"},{"action_ref":"a2","deliverables":"single"}]`, "", true},
-		{"unknown reference", `[{"action_ref":"a1","deliverables":"single"},{"action_ref":"a99","deliverables":"single"}]`, "", true},
-		{"duplicate reference", `[{"action_ref":"a1","deliverables":"single"},{"action_ref":"a1","deliverables":"single"}]`, "", true},
-		{"invalid count kind", `[{"action_ref":"a1","deliverables":"maybe"},{"action_ref":"a3","deliverables":"single"}]`, "", true},
+		{"nonwork masquerades", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"},{"action_ref":"a2","deliverables":"single","target_match":"new_work"}]`, "", true},
+		{"unknown reference", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"},{"action_ref":"a99","deliverables":"single","target_match":"new_work"}]`, "", true},
+		{"duplicate reference", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"},{"action_ref":"a1","deliverables":"single","target_match":"new_work"}]`, "", true},
+		{"invalid count kind", `[{"action_ref":"a1","deliverables":"maybe"},{"action_ref":"a3","deliverables":"single","target_match":"new_work"}]`, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reply := `{"verdict":"allow","reason":"The requested plan is covered.","request_quote_ref":"q1","candidate_quote_ref":"c1","missing_source_refs":[],"work_checks":` + tc.checks + `}`

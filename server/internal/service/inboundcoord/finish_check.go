@@ -21,18 +21,20 @@ const finishCheckTimeout = 12 * time.Second
 type finishWorkCheck struct {
 	ActionRef    string `json:"action_ref"`
 	Deliverables string `json:"deliverables"`
+	TargetMatch  string `json:"target_match"`
 }
 
 type finishCheckResult struct {
-	RequestQuoteRef   string            `json:"request_quote_ref"`
-	CandidateQuoteRef string            `json:"candidate_quote_ref"`
-	WorkChecks        []finishWorkCheck `json:"work_checks"`
-	ConstraintQuote   string            `json:"constraint_quote,omitempty"`
-	RequestQuote      string            `json:"request_quote"`
-	CandidateQuote    string            `json:"candidate_quote"`
-	Verdict           string            `json:"verdict"`
-	Reason            string            `json:"reason"`
-	MissingSourceRefs []string          `json:"missing_source_refs"`
+	RequestQuoteRef     string                     `json:"request_quote_ref"`
+	CandidateQuoteRef   string                     `json:"candidate_quote_ref"`
+	WorkChecks          []finishWorkCheck          `json:"work_checks"`
+	ParticipationChecks []finishParticipationCheck `json:"participation_checks,omitempty"`
+	ConstraintQuote     string                     `json:"constraint_quote,omitempty"`
+	RequestQuote        string                     `json:"request_quote"`
+	CandidateQuote      string                     `json:"candidate_quote"`
+	Verdict             string                     `json:"verdict"`
+	Reason              string                     `json:"reason"`
+	MissingSourceRefs   []string                   `json:"missing_source_refs"`
 }
 
 func finishCheckTool(action Action, quotes finishQuoteOptions, workRefs ...string) openai.ChatCompletionToolUnionParam {
@@ -50,7 +52,7 @@ func finishCheckTool(action Action, quotes finishQuoteOptions, workRefs ...strin
 		Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false,
 			"required": []string{"request_quote_ref", "candidate_quote_ref", "verdict", "reason", "missing_source_refs", "work_checks", "constraint_quote"},
 			"properties": map[string]any{
-				"work_checks":         map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables"}, "properties": map[string]any{"action_ref": actionRefSchema, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "single: one output, possibly several steps; multiple: unrelated independently executable goals bundled in one action; none: no executable deliverable."}}}},
+				"work_checks":         map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables", "target_match"}, "properties": map[string]any{"target_match": map[string]any{"type": "string", "enum": []string{"new_work", "same_deliverable", "different_deliverable", "no_advancement", "unknown"}, "description": "Judge the chosen work target separately from permission and output count. start_work uses new_work. For continue_work compare candidate.purpose with existing_work.original_goal: same_deliverable only for a substantive update to that SAME requested output; different_deliverable for an independent outcome even with shared evidence/topic/person. Same goal but no substantive new input or requested execution change is no_advancement: a status/presence check or reminder of accepted work does not request another execution. Missing target evidence is unknown. Only same_deliverable can allow continuation."}, "action_ref": actionRefSchema, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "single: one output, possibly several steps; multiple: unrelated independently executable goals bundled in one action; none: no executable deliverable."}}}},
 				"constraint_quote":    map[string]any{"type": "string", "maxLength": 200, "description": "On revise caused by a supplied policy/configuration requirement, return its exact directive or mandatory reply template here (<=200 characters). Routing cannot read the hidden policy: saying only use the template is not repairable. Quote job_policy, current_window or supplied persona/reply_tone verbatim. Empty for allow or revisions unrelated to such requirements. Never invent rules."},
 				"request_quote_ref":   map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Requests), "description": "Select a Host request quote option qN. The option is evidence only; read the entire current_window for all intents and constraints. Do not transcribe text."},
 				"candidate_quote_ref": map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Candidates), "description": "Select a Host candidate quote option cN for the action you compared. Host binds its exact original text; do not transcribe or escape it."},
@@ -109,8 +111,8 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	input := map[string]any{
 		"proactive_conversation": turn.ProactiveConversation,
 		"employee_account_name":  turn.EmployeeAccountName, "employee_uid": turn.DWSUID,
-		"source": turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, "addressed": turn.Addressed,
-		"agent_name": firstNonEmpty(turn.EmployeeAccountName, turn.AgentName), "agent_config_label": turn.AgentName, "persona": configuredPersona(turn),
+		"source": turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, modelAddressingField(turn): turn.Addressed,
+		"agent_name": conversationAgentName(turn), "receiving_identity_status": receivingIdentityStatus(turn), "persona": configuredPersona(turn),
 		"persona_truncated":        utf8.RuneCountInString(strings.TrimSpace(turn.Persona)) > personaBudget,
 		"reply_tone":               configuredReplyTone(turn),
 		"reply_tone_truncated":     utf8.RuneCountInString(strings.TrimSpace(turn.ReplyTone)) > toneBudget,
@@ -124,7 +126,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		"reply_delivery_guarantees": "Work replies are delivered only after ALL work items are committed and tasks queued. Acceptance/queued acknowledgements are then true. This does not prove execution completed, business results, or external delivery. A clarify question handles its request for this window; the user answers in a later window.",
 	}
 	if turn.ProactiveConversation {
-		input["reply_delivery_guarantees"] = "Work acceptance is sent only after every work item is durably stored: new execution is queued; additions to a busy Issue wait in its durable follow-up queue. Neither state proves running, completion or external delivery. Unmentioned requests may be handled within the employee role. Avoid acknowledging every line."
+		input["reply_delivery_guarantees"] = "Work acceptance is sent only after every work item is durably stored: new execution is queued; additions to a busy Issue wait in its durable follow-up queue. Neither state proves running, completion or external delivery."
 	}
 	if turn.Loop == LoopTaskFinished {
 		input["outstanding_follow_ups"] = turn.OutstandingFollowUps
@@ -147,11 +149,15 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	// projection is only message-granular and contradicts mixed intents in u1.
 	type reviewAction struct {
 		CoordinationAction
-		ActionRef string `json:"action_ref"`
+		ActionRef    string              `json:"action_ref"`
+		ExistingWork *finishExistingWork `json:"existing_work,omitempty"`
 	}
 	actions := make([]reviewAction, len(decision.CoordinationActions))
 	for i, a := range decision.CoordinationActions {
 		actions[i] = reviewAction{CoordinationAction: a, ActionRef: fmt.Sprintf("a%d", i+1)}
+		if a.Kind == "continue_work" {
+			actions[i].ExistingWork = existingWorkForFinish(turn, a.IssueID)
+		}
 	}
 	if len(actions) == 0 {
 		return finishCheckResult{}, fmt.Errorf("finish review requires explicit coordination actions")
@@ -194,6 +200,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	proposal, err := json.Marshal(map[string]any{
 		"review_mode": mode, "current_window": window, "source_refs": refs,
 		"candidate": map[string]any{"actions": actions}, "quote_options": quotes,
+		"receiving_context": map[string]any{"proactive": turn.ProactiveConversation, "source": turn.Source, "chat_type": turn.ChatType, "account_name": conversationAgentName(turn), "account_uid": turn.DWSUID, "identity_status": receivingIdentityStatus(turn), "history_status": turn.HistoryStatus},
 	})
 	if err != nil {
 		return finishCheckResult{}, fmt.Errorf("encode finish proposal: %w", err)
@@ -214,8 +221,15 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	lt := langfuse.TraceFromContext(ctx)
 	manifest := policyManifest(reviewTurn)
 	reviewTool := finishCheckTool(decision.Action, quotes, workRefs...)
+	if requiresParticipationCheck(turn) {
+		addParticipationCheckSchema(&reviewTool, refs)
+	}
 	if mixedActions {
 		reviewTool.OfFunction.Function.Description = openai.String("Review every candidate action using its corresponding policy: apply finish_check to non-work responses and finish_check_work to planned work. Require both evidence-backed responses and authorized work scope; future work outputs need not exist yet. Return one verdict for the full mixed proposal.")
+	}
+	reviewLimit := int64(768)
+	if requiresParticipationCheck(turn) {
+		reviewLimit = min(int64(3072), reviewLimit+int64(len(refs))*96)
 	}
 	// A malformed review is a repairable model protocol error. Retry it once
 	// in the same isolated context and existing deadline, without rerouting or
@@ -229,11 +243,11 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 			}
 			generation = lt.StartObservation(langfuse.ObservationOptions{
 				Type: langfuse.TypeGeneration, Name: name, Model: coordinatorModel,
-				Input: checkMessages, ModelParameters: map[string]any{"max_completion_tokens": 768, "temperature": 0, "tool_choice": "required", "timeout_ms": finishCheckTimeout.Milliseconds()},
+				Input: checkMessages, ModelParameters: map[string]any{"max_completion_tokens": reviewLimit, "temperature": 0, "tool_choice": "required", "timeout_ms": finishCheckTimeout.Milliseconds()},
 				Metadata: map[string]any{"finish_check_policy_version": manifest.PolicyVersion, "finish_check_prompt_hash": manifest.PromptHash, "finish_check_modules": manifest.Modules, "job_policy_sha256": policy["sha256"], "job_policy_kind": policy["kind"], "coordinator_contract": coordinatorContractMetadata(turn), "protocol_attempt": attempt + 1},
 			})
 		}
-		completion, callErr := c.completeWithLimit(checkCtx, checkMessages, []openai.ChatCompletionToolUnionParam{reviewTool}, 768, 0)
+		completion, callErr := c.completeWithLimit(checkCtx, checkMessages, []openai.ChatCompletionToolUnionParam{reviewTool}, reviewLimit, 0)
 		endRoundGeneration(generation, completion, callErr)
 		if callErr != nil {
 			record(finishCheckResult{}, false, callErr)
@@ -259,6 +273,18 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		if protocolErr == nil {
 			modelVerdict := result.Verdict
 			protocolErr = validateFinishWorkChecks(&result, decision)
+			if protocolErr == nil {
+				protocolErr = validateFinishParticipationChecks(&result, turn, decision)
+			}
+			if protocolErr == nil && result.Verdict == "allow" {
+				for _, action := range actions {
+					if action.Kind == "continue_work" && action.ExistingWork.ReadStatus != "loaded" {
+						result.Verdict = "revise"
+						result.Reason = "Work action " + action.ActionRef + " has no loaded original target goal; obtain target evidence before judging continuation. Missing evidence grants no authority."
+						break
+					}
+				}
+			}
 			if lt != nil && modelVerdict != result.Verdict {
 				lt.AddMetadata(map[string]any{"finish_check_work_contract_enforced": true})
 			}
@@ -406,18 +432,32 @@ func finishConstraintQuoteValid(quote string, turn Turn) bool {
 // The model assesses semantic independence explicitly; Host enforces the
 // one-deliverable action contract rather than interpreting prose in reason.
 func validateFinishWorkChecks(result *finishCheckResult, decision Decision) error {
-	expected := map[string]bool{}
+	expected := map[string]string{}
 	for i, a := range decision.CoordinationActions {
 		if a.Kind == "start_work" || a.Kind == "continue_work" {
-			expected[fmt.Sprintf("a%d", i+1)] = true
+			expected[fmt.Sprintf("a%d", i+1)] = a.Kind
 		}
 	}
 	seen := map[string]bool{}
 	for _, check := range result.WorkChecks {
-		if !expected[check.ActionRef] || seen[check.ActionRef] || !oneOf(check.Deliverables, "single", "multiple", "none") {
+		if expected[check.ActionRef] == "" || seen[check.ActionRef] || !oneOf(check.Deliverables, "single", "multiple", "none") {
 			return fmt.Errorf("finish check has invalid or duplicate work action reference")
 		}
 		seen[check.ActionRef] = true
+		if !oneOf(check.TargetMatch, "new_work", "same_deliverable", "different_deliverable", "no_advancement", "unknown") {
+			return fmt.Errorf("work action %s needs target_match=new_work/same_deliverable/different_deliverable/no_advancement/unknown", check.ActionRef)
+		}
+		wantMatch := "new_work"
+		if expected[check.ActionRef] == "continue_work" {
+			wantMatch = "same_deliverable"
+		}
+		if result.Verdict == "allow" && check.TargetMatch != wantMatch {
+			result.Verdict = "revise"
+			result.Reason = "Work action " + check.ActionRef + " target_match=" + check.TargetMatch + " does not support " + expected[check.ActionRef] + "; an independent deliverable needs start_work, and continuation requires evidence of the same original output. Preserve all requests."
+			if check.TargetMatch == "no_advancement" {
+				result.Reason = "Work action " + check.ActionRef + " has no new work input or execution change; respond through the appropriate non-work coordination action without restarting accepted work."
+			}
+		}
 		if result.Verdict == "allow" && check.Deliverables != "single" {
 			result.Verdict = "revise"
 			if check.Deliverables == "multiple" {

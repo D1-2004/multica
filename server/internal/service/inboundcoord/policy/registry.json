@@ -1,10 +1,10 @@
 {
-  "policy_version": "2026-09-10.1",
-  "assembly_version": "10",
+  "policy_version": "2026-09-10.2",
+  "assembly_version": "14",
   "modules": [
     {
       "id": "core",
-      "version": "4",
+      "version": "5",
       "file": "core.md",
       "applies_when": "always",
       "requires": [],
@@ -23,8 +23,8 @@
         "COORD.F17",
         "COORD.F18"
       ],
-      "budget_characters": 1100,
-      "content_sha256": "426a7c05a66c400f9cf29bad7bf2ed02fad65fbc791408acf1ab5f52a683ef7a"
+      "budget_characters": 1179,
+      "content_sha256": "d3f30b16ea8e734eb4cc80091b5a13c6644e6a5d440eeb118e24e6f687e31287"
     },
     {
       "id": "voice",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "18",
+      "version": "19",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,8 +60,8 @@
         "COORD.F10",
         "COORD.F03"
       ],
-      "budget_characters": 2468,
-      "content_sha256": "27981fc637edec0f359ec71eb118321722d7e37c990c68e00df9358804c9dc77"
+      "budget_characters": 2635,
+      "content_sha256": "3cd16b6d9078b8552c8ca2e090d6c8bf66f0c018dd4ebcea8ac4c2885b43fd95"
     },
     {
       "id": "channel",
@@ -96,7 +96,7 @@
     },
     {
       "id": "group",
-      "version": "3",
+      "version": "10",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -110,8 +110,8 @@
         "COORD.F06",
         "COORD.F14"
       ],
-      "budget_characters": 1100,
-      "content_sha256": "9de26043097eb08db27148bbb1590ef4ce9ad2093aaa22cba21ceebcac9def9c"
+      "budget_characters": 3258,
+      "content_sha256": "15d826efe3748c5f63894a2a9d2391369319eefa70e288603e6633ddf99bd4a9"
     },
     {
       "id": "window",
@@ -133,7 +133,7 @@
     },
     {
       "id": "memory",
-      "version": "3",
+      "version": "5",
       "file": "memory.md",
       "applies_when": "scene_memory_available",
       "requires": [
@@ -145,11 +145,11 @@
         "COORD.F11"
       ],
       "budget_characters": 850,
-      "content_sha256": "9d4e0c72f78f39563afd6b97536cc6991cbc990fd891ba632356b9e5c0918807"
+      "content_sha256": "92308d8fbf0ccbb2cd7d2224ca9ee7d6fb2de0a99408d5efc4ca0fc84440e37e"
     },
     {
       "id": "skills",
-      "version": "7",
+      "version": "8",
       "file": "skills.md",
       "applies_when": "skill_snapshots_available",
       "requires": [
@@ -161,12 +161,12 @@
         "COORD.F04",
         "COORD.F14"
       ],
-      "budget_characters": 500,
-      "content_sha256": "efc896d4671aa5d511255f892d373a4dca3e3867b9fbb5c8cd7212fc746e6569"
+      "budget_characters": 536,
+      "content_sha256": "48814d32d9ab1fa1c613a7531978dffd6fcd3fbf7e15652e758d84f3e76cd8b7"
     },
     {
       "id": "dialogue",
-      "version": "4",
+      "version": "6",
       "file": "dialogue.md",
       "applies_when": "dialogue_available",
       "requires": [
@@ -181,11 +181,11 @@
         "COORD.F18"
       ],
       "budget_characters": 1100,
-      "content_sha256": "8222c23b0fe856cacbd3e1b38a3a9299acdfa582cbffe8554a04845764788661"
+      "content_sha256": "403f98995b68ce34a6fa7167e578203d5413820c6a14a0b1ce743b83edaad0bd"
     },
     {
       "id": "recall_match",
-      "version": "4",
+      "version": "6",
       "file": "recall_match.md",
       "applies_when": "recalled",
       "requires": [
@@ -200,8 +200,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 1350,
-      "content_sha256": "8096c84b551b04679549627fdf888651cde85d8c04a1a6517a8d9c72c060d369"
+      "budget_characters": 1561,
+      "content_sha256": "6f06709cc09eeaf6558d9e5c7992e58739e8d18da9df4fdc033cc45094f2016c"
     },
     {
       "id": "completion",
@@ -249,7 +249,7 @@
     },
     {
       "id": "finish_check_work",
-      "version": "12",
+      "version": "15",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -271,8 +271,8 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 2000,
-      "content_sha256": "e81d0e90106559e936ee42e621910b3b7a1b9750f418163004b1b5a8f2783705"
+      "budget_characters": 2961,
+      "content_sha256": "e44f98179cbcc4254e49c3cb175d2926d1d2d453a348ac7bf6e8dcd4fbcf2898"
     }
   ],
   "obligations": [
@@ -294,22 +294,12 @@
       "case_ids": [
         "f01_contrast",
         "proactive_group_contrast",
-        "group_recipient_role_contrast"
+        "group_recipient_role_contrast",
+        "generic_identity_and_semantics"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "group_recipient_host_tests": "passed",
-        "group_recipient_model_replay": "12 contrast cases passed on qwen3.7-plus; synthetic read-only fixtures; one targeted repair-hint rerun",
-        "group_recipient_live_delivery": "pending"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -325,7 +315,12 @@
         "server/internal/service/inboundcoord/policy.go",
         "server/internal/service/inboundcoord/proactive_relevance_test.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
-        "server/internal/service/inboundcoord/window_plan.go"
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/generic_semantics_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "server/internal/assoc/purpose_subject_test.go",
+        "server/internal/service/inboundcoord/finish_participation.go",
+        "server/internal/service/inboundcoord/finish_participation_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -355,22 +350,8 @@
         "f16_coordination_state_is_not_question_history"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "regression_observed; candidate_fix_pending_replay",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run",
-        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
-        "continuation_history_handoff_model_replay": "not_run",
-        "continuation_history_handoff_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -439,28 +420,8 @@
         "f13_mixed_work_and_status_review_coverage"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "scene_prefetch_host_tests": "not_run",
-        "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run",
-        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
-        "continuation_history_handoff_model_replay": "not_run",
-        "continuation_history_handoff_live_delivery": "not_run",
-        "mixed_review_host_tests": "not_run",
-        "mixed_review_model_replay": "not_run",
-        "mixed_review_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -518,19 +479,8 @@
         "f04_declared_skill_synopsis_vs_managed_marker"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -568,22 +518,12 @@
         "f05_pending_answer_vs_report_redelivery",
         "f04_light_coordination_vs_business_execution",
         "f07_output_instance_anchor_vs_fresh_lookup",
-        "f03_issue_state_vs_latest_execution"
+        "f03_issue_state_vs_latest_execution",
+        "generic_identity_and_semantics"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "regression_observed; candidate_fix_pending_replay",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -594,7 +534,10 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/window_plan.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/generic_semantics_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "server/internal/assoc/purpose_subject_test.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -633,22 +576,12 @@
         "f06_job_object_evidence_vs_old_work_clarification",
         "f04_role_material_vs_coordination_record",
         "f06_delegated_sample_choices",
-        "f16_coordination_state_is_not_question_history"
+        "f16_coordination_state_is_not_question_history",
+        "generic_identity_and_semantics"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "regression_observed; candidate_fix_pending_replay",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -659,7 +592,10 @@
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/service/inboundcoord/window_plan.go",
-        "server/internal/service/inboundcoord/loop.go"
+        "server/internal/service/inboundcoord/loop.go",
+        "server/internal/service/inboundcoord/generic_semantics_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "server/internal/assoc/purpose_subject_test.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -692,22 +628,12 @@
         "f05_yes_more_copies",
         "f05_pending_answer_vs_report_redelivery",
         "f07_explicit_reference_controls_current_work",
-        "f07_output_instance_anchor_vs_fresh_lookup"
+        "f07_output_instance_anchor_vs_fresh_lookup",
+        "generic_identity_and_semantics"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "regression_observed; candidate_fix_pending_replay",
-        "live_delivery": "pending",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run",
-        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
-        "continuation_history_handoff_model_replay": "not_run",
-        "continuation_history_handoff_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -721,7 +647,9 @@
         "server/internal/service/inboundcoord/loop.go",
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/history_handoff.go",
-        "server/internal/service/inboundcoord/history_handoff_test.go"
+        "server/internal/service/inboundcoord/history_handoff_test.go",
+        "server/internal/service/inboundcoord/finish_work_target.go",
+        "server/internal/service/inboundcoord/finish_work_target_test.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -757,19 +685,8 @@
         "f08_coordination_state_anchor_isolation"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "scene_prefetch_host_tests": "not_run",
-        "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/channel.md",
@@ -800,16 +717,8 @@
         "f16_host_prefetch_nonwork_cost_and_skips"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "scene_prefetch_host_tests": "not_run",
-        "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/inbound.md",
@@ -841,22 +750,8 @@
         "f13_mixed_work_and_status_review_coverage"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run",
-        "mixed_review_host_tests": "not_run",
-        "mixed_review_model_replay": "not_run",
-        "mixed_review_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/window.md",
@@ -892,16 +787,8 @@
         "f03_review_greeting_status_memory"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -928,13 +815,8 @@
         "f12_exact_result_report"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/completion.md",
@@ -981,36 +863,12 @@
         "f15_visible_config_boundary_same_source",
         "f16_hidden_config_and_old_data_not_boundary",
         "f15_config_narrows_without_new_authority",
-        "f15_policy_revise_returns_repair_boundary"
+        "f15_policy_revise_returns_repair_boundary",
+        "generic_identity_and_semantics"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "scene_prefetch_host_tests": "not_run",
-        "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run",
-        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
-        "continuation_history_handoff_model_replay": "not_run",
-        "continuation_history_handoff_live_delivery": "not_run",
-        "mixed_review_host_tests": "not_run",
-        "mixed_review_model_replay": "not_run",
-        "mixed_review_live_delivery": "not_run",
-        "decline_boundary_host_tests": "not_run",
-        "decline_boundary_model_replay": "not_run",
-        "decline_boundary_live_delivery": "not_run",
-        "decline_policy_repair_host_tests": "not_run",
-        "decline_policy_repair_model_replay": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1041,7 +899,10 @@
         "server/internal/service/inboundcoord/configured_boundaries.go",
         "server/internal/service/inboundcoord/configured_boundaries_test.go",
         "server/internal/service/inboundcoord/prompt.go",
-        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence"
+        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence",
+        "server/internal/service/inboundcoord/generic_semantics_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "server/internal/assoc/purpose_subject_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -1063,16 +924,8 @@
         "f04_light_coordination_vs_business_execution"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/voice.md",
@@ -1114,21 +967,8 @@
         "f15_policy_revise_returns_repair_boundary"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "decline_boundary_host_tests": "not_run",
-        "decline_boundary_model_replay": "not_run",
-        "decline_boundary_live_delivery": "not_run",
-        "decline_policy_repair_host_tests": "not_run",
-        "decline_policy_repair_model_replay": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1176,30 +1016,8 @@
         "f15_policy_revise_returns_repair_boundary"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "scene_prefetch_host_tests": "not_run",
-        "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run",
-        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
-        "continuation_history_handoff_model_replay": "not_run",
-        "continuation_history_handoff_live_delivery": "not_run",
-        "decline_boundary_host_tests": "not_run",
-        "decline_boundary_model_replay": "not_run",
-        "decline_boundary_live_delivery": "not_run",
-        "decline_policy_repair_host_tests": "not_run",
-        "decline_policy_repair_model_replay": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1253,22 +1071,8 @@
         "f13_mixed_work_and_status_review_coverage"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
-        "continuation_history_handoff_model_replay": "not_run",
-        "continuation_history_handoff_live_delivery": "not_run",
-        "mixed_review_host_tests": "not_run",
-        "mixed_review_model_replay": "not_run",
-        "mixed_review_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1308,22 +1112,8 @@
         "f07_explicit_reference_controls_current_work"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "reply_recovery_host_tests": "not_run",
-        "reply_recovery_model_replay": "not_run",
-        "reply_recovery_live_delivery": "not_run",
-        "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
-        "continuation_history_handoff_model_replay": "not_run",
-        "continuation_history_handoff_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1356,19 +1146,8 @@
         "f16_host_prefetch_nonwork_cost_and_skips"
       ],
       "verification": {
-        "source_mapping": "mapped",
-        "runtime_path": "structural_checks",
-        "model_replay": "pending",
-        "live_delivery": "pending",
-        "finish_review_host_tests": "not_run",
-        "finish_review_model_replay": "not_run",
-        "finish_review_live_delivery": "not_run",
-        "closed_actions_host_tests": "not_run",
-        "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run",
-        "scene_prefetch_host_tests": "not_run",
-        "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run"
+        "status": "integration_replay_pending",
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/trace.go",
@@ -1571,6 +1350,43 @@
         "COORD.F19"
       ],
       "reason": "合法语义裁决仍会因LLM抄写引文的换行/转义差异失败；改为Host生成有界原文选项，LLM只选本轮引用ID，Host严格绑定原文。完整窗口仍是语义判断全集，不降低真实性校验。"
+    },
+    {
+      "id": "message_phrase_intent_gate",
+      "reason": "ACK and stop phrases bypassed semantic context and split collect windows; natural language now reaches the same LLM decision and review. Host retains protocol, scope, lifecycle and idempotency checks.",
+      "superseded_by": [
+        "COORD.F05",
+        "COORD.F06",
+        "COORD.F13"
+      ],
+      "status": "superseded"
+    },
+    {
+      "id": "tool_name_purpose_veto",
+      "reason": "Tool and field names can be legitimate work subjects. Host validates structure; LLM evaluates authorization and actual credential exposure in context.",
+      "superseded_by": [
+        "COORD.F04",
+        "COORD.F13"
+      ],
+      "status": "superseded"
+    },
+    {
+      "id": "test_example_group_participation",
+      "reason": "A sample greeting is not participation authority. Use trusted receiving identity, current request, role scope and dialogue; missing receiving name stays unknown.",
+      "superseded_by": [
+        "COORD.F01",
+        "COORD.F02"
+      ],
+      "status": "superseded"
+    },
+    {
+      "id": "test_token_deliverable_match",
+      "status": "superseded",
+      "reason": "Synthetic token markers and their prefixes do not establish whether two messages concern the same work. Removed the old comment tool gate and its example-specific test; same-deliverable decisions remain semantic with trusted recalled targets.",
+      "superseded_by": [
+        "COORD.F07",
+        "COORD.F13"
+      ]
     }
   ]
 }

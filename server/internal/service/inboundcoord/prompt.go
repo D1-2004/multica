@@ -36,16 +36,14 @@ func buildUserPrompt(turn Turn) string {
 	if loop == "" {
 		loop = LoopInbound
 	}
-	fmt.Fprintf(&b, "source: %s\nloop: %s\naddressed: %t\n", turn.Source, loop, turn.Addressed)
+	fmt.Fprintf(&b, "source: %s\nloop: %s\n%s: %t\n", turn.Source, loop, modelAddressingField(turn), turn.Addressed)
 	fmt.Fprintf(&b, "proactive_conversation: %t\n", turn.ProactiveConversation)
 	writePromptField(&b, "chat_type", turn.ChatType)
 	writePromptField(&b, "conversation_id", turn.ConversationID)
 	writePromptField(&b, "person_id", turn.PersonID)
 	writePromptField(&b, "sender", turn.SenderName)
-	writePromptField(&b, "agent_name", firstNonEmpty(turn.EmployeeAccountName, turn.AgentName))
-	if turn.EmployeeAccountName != "" {
-		writePromptField(&b, "agent_config_label", turn.AgentName)
-	}
+	writePromptField(&b, "agent_name", conversationAgentName(turn))
+	writePromptField(&b, "receiving_identity_status", receivingIdentityStatus(turn))
 	writePromptField(&b, "employee_account_name", turn.EmployeeAccountName)
 	writePromptField(&b, "employee_uid", turn.DWSUID)
 	if turn.Source == SourceWeb {

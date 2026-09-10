@@ -57,3 +57,31 @@ func receivingBindingName(turn Turn, binding db.ChannelInstallation) string {
 	// owns this display name; it grants no DWS identity or execution permission.
 	return strings.TrimSpace(facts.Name)
 }
+
+// A digital employee's configuration title is never an external account alias.
+// Keep unavailable receiving facts unavailable in both decision and review.
+func conversationAgentName(turn Turn) string {
+	if turn.Source == SourceDigitalEmployee {
+		return strings.TrimSpace(turn.EmployeeAccountName)
+	}
+	return strings.TrimSpace(turn.AgentName)
+}
+
+func receivingIdentityStatus(turn Turn) string {
+	if turn.Source != SourceDigitalEmployee {
+		return "not_applicable"
+	}
+	if strings.TrimSpace(turn.EmployeeAccountName) == "" {
+		return "name_unavailable"
+	}
+	return "loaded"
+}
+
+// In proactive groups Addressed is populated only from trusted @ metadata.
+// It is not a negative semantic judgment about natural names or open requests.
+func modelAddressingField(turn Turn) string {
+	if turn.ProactiveConversation && strings.EqualFold(turn.ChatType, "group") {
+		return "has_explicit_employee_mention"
+	}
+	return "addressed"
+}

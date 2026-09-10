@@ -54,7 +54,7 @@ func TestCoordinatorPolicyReplay(t *testing.T) {
 			filter[id] = true
 		}
 	}
-	fixtures := append(coordinatorReplayFixtures(), proactiveRelevanceFixtures()...)
+	fixtures := append(append(coordinatorReplayFixtures(), proactiveRelevanceFixtures()...), genericConversationFixtures()...)
 	known := map[string]bool{}
 	for _, fixture := range fixtures {
 		known[fixture.ID] = true
@@ -515,7 +515,7 @@ func TestCoordinatorPolicyReplayFixtures(t *testing.T) {
 		contracts[item.ID] = true
 	}
 	seen := map[string]bool{}
-	for _, fixture := range coordinatorReplayFixtures() {
+	for _, fixture := range append(append(coordinatorReplayFixtures(), proactiveRelevanceFixtures()...), genericConversationFixtures()...) {
 		if seen[fixture.ID] || fixture.ID == "" {
 			t.Fatalf("duplicate or empty replay fixture %q", fixture.ID)
 		}
@@ -532,7 +532,7 @@ func TestCoordinatorPolicyReplayFixtures(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 14 {
-		t.Fatalf("minimum replay suite has %d cases, want 14", len(seen))
+	if len(seen) != 40 {
+		t.Fatalf("minimum replay suite has %d cases, want 40", len(seen))
 	}
 }

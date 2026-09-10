@@ -142,7 +142,7 @@ func TestOverlayDispatchSenderCopiesDelegator(t *testing.T) {
 	}
 }
 
-func TestSameCoordinatorCollectKindSeparatesAckFromWork(t *testing.T) {
+func TestSameCoordinatorCollectKindDoesNotInferIntent(t *testing.T) {
 	ask := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
 		Sender:   DispatchSender{DisplayName: "冬翔"},
 		Messages: []DispatchMessage{{Text: "帮我订下周去上海的高铁", SenderDisplayName: "冬翔"}},
@@ -159,17 +159,17 @@ func TestSameCoordinatorCollectKindSeparatesAckFromWork(t *testing.T) {
 		Sender:   DispatchSender{DisplayName: "dxxh"},
 		Messages: []DispatchMessage{{Text: "好的", SenderDisplayName: "dxxh"}},
 	}}}
-	if sameCoordinatorCollectKind(ask, ack) {
-		t.Fatal("ACK must not collect onto a parked ask")
+	if !sameCoordinatorCollectKind(ask, ack) {
+		t.Fatal("ordinary inbound messages must share the same collect kind")
 	}
-	if sameCoordinatorCollectKind(ack, ask) {
-		t.Fatal("ask must not collect onto an ACK window")
+	if !sameCoordinatorCollectKind(ack, ask) {
+		t.Fatal("collect kind must not depend on message wording")
 	}
 	if !sameCoordinatorCollectKind(ask, follow) {
 		t.Fatal("follow-up asks on the same scene still collect")
 	}
 	if !sameCoordinatorCollectKind(ack, thanks) {
-		t.Fatal("ACK lines still collect with each other")
+		t.Fatal("ordinary inbound messages collect with each other")
 	}
 }
 
@@ -194,7 +194,7 @@ func TestSameCoordinatorCollectKindSeparatesTaskFinished(t *testing.T) {
 	}
 }
 
-func TestShouldParkSceneCapacitySkipsAckWindows(t *testing.T) {
+func TestShouldParkSceneCapacityDoesNotInferIntent(t *testing.T) {
 	ask := DispatchCommand{Event: DispatchEvent{Data: DispatchEventData{
 		Sender:   DispatchSender{DisplayName: "测试号"},
 		Messages: []DispatchMessage{{Text: "问 dxxh 周五三点", SenderDisplayName: "测试号"}},
@@ -206,8 +206,8 @@ func TestShouldParkSceneCapacitySkipsAckWindows(t *testing.T) {
 	if !shouldParkSceneCapacity(ask, 2) {
 		t.Fatal("two active tasks must park a real ask")
 	}
-	if shouldParkSceneCapacity(ack, 2) {
-		t.Fatal("ACK window must not wait for a sandbox slot")
+	if !shouldParkSceneCapacity(ack, 2) {
+		t.Fatal("already judged work must respect capacity regardless of wording")
 	}
 	if shouldParkSceneCapacity(ask, 1) {
 		t.Fatal("one active task is under the cap")

@@ -95,38 +95,6 @@ func validWindowDelegator(turn Turn, delegator string) bool {
 	return ok
 }
 
-// AllWindowAck is true only for an explicit instruction to stop replying.
-// Short assent and gratitude can answer a pending question; without that
-// context they must reach the semantic decision instead of being discarded.
-func AllWindowAck(turn Turn) bool {
-	utterances := windowUtterances(turn)
-	if len(utterances) == 0 {
-		return allAckText(turn.Message)
-	}
-	for _, u := range utterances {
-		if !allAckText(u.Text) {
-			return false
-		}
-	}
-	return true
-}
-
-func allAckText(raw string) bool {
-	s := stripInboundDisplay(raw)
-	found := false
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !isAckOrStopReply(line) {
-			return false
-		}
-		found = true
-	}
-	return found
-}
-
 func stripInboundDisplay(raw string) string {
 	s := strings.TrimSpace(raw)
 	if i := strings.Index(s, "在钉钉会话中的消息："); i >= 0 {
@@ -134,28 +102,6 @@ func stripInboundDisplay(raw string) string {
 	}
 	s = strings.TrimSpace(strings.TrimPrefix(s, "钉钉会话消息："))
 	return s
-}
-
-func isAckOrStopReply(raw string) bool {
-	s := stripMentionsAndSpace(raw)
-	if s == "" {
-		return false
-	}
-	switch s {
-	case "不用回复了", "不用回了", "不用回复":
-		return true
-	default:
-		return false
-	}
-}
-
-func stripMentionsAndSpace(raw string) string {
-	fields := strings.Fields(stripMentionTokens(strings.TrimSpace(raw)))
-	for len(fields) > 0 && strings.HasPrefix(fields[0], "@") && len(fields[0]) > 1 {
-		fields = fields[1:]
-	}
-	joined := strings.Join(fields, "")
-	return strings.Trim(joined, "。！？!?.~…，,、 ")
 }
 
 // ForWindowItem limits the executor handoff to the selected deliverable. An old
