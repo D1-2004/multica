@@ -48,3 +48,5 @@
 - [群参与 12 例](/Users/xumo/Documents/campus/.worktrees/proactive-generic-pre-release-20260910/server/internal/service/inboundcoord/proactive_relevance_test.go)
 - [泛化与任务关联 14 例](/Users/xumo/Documents/campus/.worktrees/proactive-generic-pre-release-20260910/server/internal/service/inboundcoord/generic_replay_test.go)
 - [任务关联审查的 Host 测试](/Users/xumo/Documents/campus/.worktrees/proactive-generic-pre-release-20260910/server/internal/service/inboundcoord/finish_work_target_test.go)
+
+最终候选补充：重点8类各2次为15/16通过，1次审核模型请求失败；未改代码补跑该场景2/2通过。失败报告保留，不计入通过。预发新版本发布验证继续进行中。
