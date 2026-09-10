@@ -51,21 +51,23 @@ type dwsHistoryCLI interface {
 
 // DWSHistoryConfig wires the server-side, per-request DWS history reader.
 type DWSHistoryConfig struct {
-	AgentIdentity   dwsContextIssuer
-	BaseURL         string
-	BaseURLProvider func() string
-	ClientSecret    string
-	CLIPath         string
-	MCPBaseURL      string
-	HTTPClient      *http.Client
+	AgentIdentity         dwsContextIssuer
+	BaseURL               string
+	BaseURLProvider       func() string
+	ClientSecret          string
+	CLIPath               string
+	MCPBaseURL            string
+	CrossOrgRenewAgentIDs []string
+	HTTPClient            *http.Client
 }
 
 type dwsHistoryLoader struct {
-	issuer   dwsContextIssuer
-	redeemer dwsCredentialRedeemer
-	cli      dwsHistoryCLI
-	mkdir    func(string, string) (string, error)
-	remove   func(string) error
+	issuer                dwsContextIssuer
+	redeemer              dwsCredentialRedeemer
+	cli                   dwsHistoryCLI
+	mkdir                 func(string, string) (string, error)
+	remove                func(string) error
+	crossOrgRenewAgentIDs map[string]bool
 }
 
 // NewDWSHistoryLoader creates a loader that mints a separate Agent Identity
@@ -80,7 +82,8 @@ func NewDWSHistoryLoader(cfg DWSHistoryConfig) DingTalkHistoryLoader {
 		cliPath = "dws"
 	}
 	return &dwsHistoryLoader{
-		issuer: cfg.AgentIdentity,
+		crossOrgRenewAgentIDs: authorizedHistoryRenewalAgents(cfg.CrossOrgRenewAgentIDs),
+		issuer:                cfg.AgentIdentity,
 		redeemer: &httpDWSCredentialRedeemer{
 			baseURL:         strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 			baseURLProvider: cfg.BaseURLProvider,
@@ -148,10 +151,33 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 		return nil, err
 	}
 	raw, err := l.cli.ListMessages(ctx, dir, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
+	if err != nil && l.crossOrgRenewAgentIDs[util.UUIDToString(turn.AgentID)] && dwsclient.IsCrossOrgPermissionDenied(err) {
+		renewer, ok := l.cli.(interface {
+			RenewCrossOrgRead(context.Context, string) error
+		})
+		if !ok {
+			return nil, errors.New("DWS cross-org chat read renewal is unavailable")
+		}
+		if grantErr := renewer.RenewCrossOrgRead(ctx, dir); grantErr != nil {
+			return nil, grantErr
+		}
+		// Retry this exact scoped read once. A second rejection remains a failure.
+		raw, err = l.cli.ListMessages(ctx, dir, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return parseDWSHistory(raw, turn)
+}
+
+func authorizedHistoryRenewalAgents(ids []string) map[string]bool {
+	result := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			result[id] = true
+		}
+	}
+	return result
 }
 
 type httpDWSCredentialRedeemer struct {
@@ -177,6 +203,10 @@ type osDWSHistoryCLI struct {
 	path         string
 	clientSecret string
 	mcpBaseURL   string
+}
+
+func (c *osDWSHistoryCLI) RenewCrossOrgRead(ctx context.Context, configDir string) error {
+	return dwsclient.CLI{Path: c.path}.RenewCrossOrgRead(ctx, configDir)
 }
 
 func (c *osDWSHistoryCLI) Exchange(ctx context.Context, configDir string, credential dwsCredential) error {

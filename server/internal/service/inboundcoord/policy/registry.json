@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-10.6",
-  "assembly_version": "17",
+  "policy_version": "2026-09-10.7",
+  "assembly_version": "18",
   "modules": [
     {
       "id": "core",

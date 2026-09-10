@@ -97,6 +97,7 @@ func validateFinishParticipationChecks(result *finishCheckResult, turn Turn, dec
 			explicitOther := check.Basis == "other" && strings.TrimSpace(check.RecipientQuote) != "" && strings.Contains(utterances[index].Text, check.RecipientQuote)
 			if result.Verdict == "allow" && actual == "ignore" && oneOf(check.Basis, "other", "unknown") && turn.HistoryStatus == "not_loaded" && strings.TrimSpace(turn.ConversationID) != "" && !explicitOther {
 				result.Verdict = "revise"
+				result.HistoryReadRequired = true
 				result.Reason = "Source " + sourceRef + " has no grounded respondent and history is not_loaded. Read context_read(kind=history) once before concluding no ongoing dialogue; compare authors, original timestamps, replies and intervening messages. A failed read is unknown, not evidence of absence."
 			}
 			if result.Verdict == "allow" && (!grounded || actual != check.Disposition || (oneOf(check.Basis, "other", "unknown") && actual != "ignore")) {

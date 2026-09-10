@@ -779,11 +779,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
 	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
-		MCPBaseURL:      strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL")),
-		AgentIdentity:   agentidentityhsf.NewClient(),
-		BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
-		BaseURLProvider: agentIdentityControlBaseURLProvider,
-		ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+		MCPBaseURL:            strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL")),
+		CrossOrgRenewAgentIDs: strings.Split(os.Getenv("MULTICA_DWS_HISTORY_CROSS_ORG_RENEW_AGENT_IDS"), ","),
+		AgentIdentity:         agentidentityhsf.NewClient(),
+		BaseURL:               signupConfig.FCE2B.AgentIdentityControlBaseURL,
+		BaseURLProvider:       agentIdentityControlBaseURLProvider,
+		ClientSecret:          signupConfig.FCE2B.DWSClientSecret,
 	})
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)

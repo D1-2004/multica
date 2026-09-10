@@ -71,6 +71,39 @@ type CLI struct {
 	MCPBaseURL   string
 }
 
+// IsCrossOrgPermissionDenied matches the server's typed scope rejection only.
+// Generic authorization failures must never trigger a new grant.
+func IsCrossOrgPermissionDenied(err error) bool {
+	var detail *HistoryError
+	return errors.As(err, &detail) && detail.fields["server_error_code"] == "CrossOrgPermissionDenied"
+}
+
+// RenewCrossOrgRead is invoked only for identities whose owner opted into
+// renewal. The grant is restricted to chat data reads and expires in seven days.
+func (c CLI) RenewCrossOrgRead(ctx context.Context, configDir string) error {
+	cmd := exec.CommandContext(ctx, c.path(), "chat", "data-auth", "cross-org",
+		"--all", "--agentCode", "wukong", "--grant-type", "timed", "--ttl", "7d", "--yes", "--format", "json")
+	cmd.Env = CommandEnv(configDir, nil)
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return commandFailed(ctx, "DWS cross-org chat read renewal failed", err)
+	}
+	var response struct {
+		Success bool `json:"success"`
+		Result  struct {
+			Scope     string `json:"scope"`
+			GrantType string `json:"grantType"`
+			ExpireAt  int64  `json:"expireAt"`
+		} `json:"result"`
+	}
+	if stdout.Len() > MaxResponseBytes || json.Unmarshal(stdout.Bytes(), &response) != nil || !response.Success || response.Result.Scope != "chat.data:cross-org" || response.Result.GrantType != "timed" || response.Result.ExpireAt <= time.Now().UnixMilli() {
+		return errors.New("DWS cross-org chat read renewal was not confirmed")
+	}
+	return nil
+}
+
 func (c CLI) path() string {
 	if strings.TrimSpace(c.Path) == "" {
 		return DefaultCLIPath

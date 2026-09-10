@@ -1,8 +1,14 @@
 package inboundcoord
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
+
+	openai "github.com/openai/openai-go/v3"
 )
 
 func TestParticipationJudgmentMustAgreeWithCandidateAndGroundItsEvidence(t *testing.T) {
@@ -22,6 +28,34 @@ func TestParticipationJudgmentMustAgreeWithCandidateAndGroundItsEvidence(t *test
 			r := finishCheckResult{Verdict: "allow", ParticipationChecks: []finishParticipationCheck{{SourceRefs: []string{"u1"}, Basis: tc.basis, RecipientQuote: tc.quote, Disposition: tc.disposition}}}
 			if err := validateFinishParticipationChecks(&r, turn, d); err != nil || r.Verdict != tc.want {
 				t.Fatalf("verdict=%s err=%v", r.Verdict, err)
+			}
+		})
+	}
+}
+
+func TestParticipationHistoryAttemptClearsOnlyReadFeedback(t *testing.T) {
+	for _, status := range []string{"loaded", "empty", "unavailable"} {
+		t.Run(status, func(t *testing.T) {
+			ignore := `{"actions":[{"kind":"ignore","source_refs":["u1"],"reason":"No grounded respondent"}]}`
+			chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+				assistantTool("before", toolFinish, ignore),
+				assistantTool("read", toolContextRead, `{"kind":"history"}`),
+				assistantTool("after", toolFinish, ignore),
+			}}
+			history := &terminalRecoveryHistory{}
+			if status == "loaded" {
+				history.lines = []HistoryLine{{Role: "user", Content: "Someone else's discussion"}}
+			} else if status == "unavailable" {
+				history.err = errors.New("history unavailable")
+			}
+			turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, ConversationID: "cid-current", HistoryStatus: "not_loaded", Message: "Can you check this?"}
+			d, err := (&Coordinator{Chat: chat, DWSHistory: history, Tools: &stubTools{}}).runLoop(context.Background(), turn)
+			if err != nil || d.Action != ActionSilence || history.calls != 1 || chat.checkCalls != 2 {
+				t.Fatalf("history attempt was not re-evaluated: decision=%s err=%v reads=%d reviews=%d", d.Action, err, history.calls, chat.checkCalls)
+			}
+			last, _ := json.Marshal(chat.params[len(chat.params)-1].Messages)
+			if strings.Contains(string(last), "Source u1 has no grounded respondent") || !strings.Contains(string(last), "do not repeat the read") || !strings.Contains(string(last), "does not prove absence") {
+				t.Fatal("completed attempt retained the read instruction or lost uncertainty")
 			}
 		})
 	}

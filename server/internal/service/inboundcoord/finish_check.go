@@ -25,6 +25,7 @@ type finishWorkCheck struct {
 }
 
 type finishCheckResult struct {
+	HistoryReadRequired bool                       `json:"-"` // Host-only prerequisite, never supplied by the reviewer.
 	RequestQuoteRef     string                     `json:"request_quote_ref"`
 	CandidateQuoteRef   string                     `json:"candidate_quote_ref"`
 	WorkChecks          []finishWorkCheck          `json:"work_checks"`
