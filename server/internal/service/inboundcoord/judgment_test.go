@@ -38,13 +38,13 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 			name: "candidate_comparison_before_work_submission", turn: inbound, recalled: true,
 			modules: map[string][]string{"recall_match": {"COORD.F02", "COORD.F03", "COORD.F07", "COORD.F08", "COORD.F13", "COORD.F17"}},
 			absent:  []string{"completion"},
-			tools:   []string{toolAssocRecall, toolContextRead, toolIssueGet, toolIssueCommentList, toolFinish},
+			tools:   []string{toolAssocRecall, toolContextRead, toolWorkState, toolFinish},
 		},
 		{
 			name: "previous_question_before_short_answer", turn: Turn{Source: SourceRobot, HistoryStatus: "loaded", DingTalkHistory: []HistoryLine{{Role: "assistant", Content: "周五三点可以吗？"}}, Message: "可以，三点没问题"},
 			modules: map[string][]string{"dialogue": {"COORD.F02", "COORD.F03", "COORD.F06", "COORD.F08", "COORD.F18"}},
 			absent:  []string{"recall_match", "skills", "completion"},
-			tools:   []string{toolAssocRecall, toolFinish},
+			tools:   []string{toolAssocRecall, toolContextRead, toolFinish},
 		},
 		{
 			name: "completion_isolated_from_inbound", turn: Turn{Loop: LoopTaskFinished, Source: SourceDigitalEmployee, Skills: inbound.Skills, SceneMemory: "unrelated fact"},
@@ -97,126 +97,6 @@ func assertDisclosedObligations(t *testing.T, turn Turn, recalled bool, want map
 	}
 }
 
-func TestJudgmentParseDecision(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name    string
-		turn    Turn
-		raw     string
-		want    Action
-		look    bool
-		ack     bool
-		notText []string
-	}{
-		{
-			name: "greeting_hello_reply",
-			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},
-			raw:  `{"action":"reply","text":"在，有事直接说。","look_into":"","reason":"打招呼"}`,
-			want: ActionReply,
-		},
-		{
-			name: "thanks_small_talk_reply",
-			turn: Turn{Source: SourceRobot, Addressed: true, ChatType: "p2p", Message: "谢谢"},
-			raw:  `{"action":"reply","text":"没事，随时叫我。","look_into":"","reason":"道谢"}`,
-			want: ActionReply,
-		},
-		{
-			name: "live_info_today_news_issue",
-			turn: Turn{Source: SourceRobot, Addressed: true, ChatType: "p2p", Message: "帮我看看今天有什么新闻"},
-			raw:  `{"action":"issue","text":"我先去看今天新闻","look_into":"今天新闻","reason":"要查实时资讯"}`,
-			want: ActionIssue,
-			look: true,
-			ack:  true,
-			notText: []string{
-				"验收环境",
-				"没有联网",
-				"没法抓新闻",
-				"没法抓",
-			},
-		},
-		{
-			name: "lookup_deadline_issue",
-			turn: Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "查一下截止时间"},
-			raw:  `{"action":"issue","text":"我先去对一下截止时间","look_into":"截止时间","reason":"要查资料"}`,
-			want: ActionIssue,
-			look: true,
-			ack:  true,
-		},
-		{
-			name: "do_work_write_issue",
-			turn: Turn{Source: SourceWeb, Addressed: true, Message: "帮我整理一份报名表"},
-			raw:  `{"action":"issue","text":"我先去整理报名表","look_into":"报名表","reason":"要动手做"}`,
-			want: ActionIssue,
-			look: true,
-			ack:  true,
-		},
-		{
-			name: "track_followup_issue",
-			turn: Turn{Source: SourceDigitalEmployee, Addressed: true, Message: "跟一下昨天那笔报销"},
-			raw:  `{"action":"issue","text":"我先去跟昨天那笔报销","look_into":"昨天报销","reason":"要持续跟进"}`,
-			want: ActionIssue,
-			look: true,
-			ack:  true,
-		},
-		{
-			name: "unaddressed_group_eat_silence",
-			turn: Turn{Source: SourceDigitalEmployee, Addressed: false, ChatType: "group", Message: "晚上吃饭吗"},
-			raw:  `{"action":"silence","text":"","look_into":"","reason":"群里闲聊不是叫我"}`,
-			want: ActionSilence,
-		},
-		{
-			name: "web_silence_json_continue",
-			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},
-			raw:  `{"action":"silence","text":"","look_into":"","reason":"误判"}`,
-			want: ActionContinue,
-		},
-		{
-			name: "invalid_json_continue",
-			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},
-			raw:  "not-json",
-			want: ActionContinue,
-		},
-		{
-			name: "empty_reply_text_continue",
-			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},
-			raw:  `{"action":"reply","text":"","look_into":"","reason":"空"}`,
-			want: ActionContinue,
-		},
-		{
-			name: "empty_issue_text_continue",
-			turn: Turn{Source: SourceRobot, Addressed: true, ChatType: "p2p", Message: "hi"},
-			raw:  `{"action":"issue","issue_id":"8aae2a90-009e-4338-b17a-13ce6ff2f82a","text":""}`,
-			want: ActionContinue,
-		},
-		{
-			name: "unknown_action_continue",
-			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},
-			raw:  `{"action":"chat","text":"hi","look_into":"","reason":"旧字段"}`,
-			want: ActionContinue,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := parseDecision(tc.raw, tc.turn)
-			if got.Action != tc.want {
-				t.Fatalf("action = %s, want %s (%#v)", got.Action, tc.want, got)
-			}
-			if tc.look && strings.TrimSpace(got.LookInto) == "" {
-				t.Fatalf("issue look_into empty: %#v", got)
-			}
-			if tc.ack && strings.TrimSpace(got.UserText) == "" {
-				t.Fatalf("issue ack empty: %#v", got)
-			}
-			for _, banned := range tc.notText {
-				if strings.Contains(got.UserText, banned) || strings.Contains(got.Reason, banned) {
-					t.Fatalf("lookup/work landed a capability refusal %q in %#v", banned, got)
-				}
-			}
-		})
-	}
-}
-
 func TestJudgmentDecideDeterministic(t *testing.T) {
 	enabledLLM := llm.New(llm.Config{APIKey: "k", BaseURL: "http://127.0.0.1:1"})
 	disabledLLM := llm.New(llm.Config{})
@@ -263,6 +143,12 @@ func TestJudgmentDecideDeterministic(t *testing.T) {
 			want: ActionContinue,
 		},
 		{
+			name: "switch_off_skips_window_ack_silence",
+			c:    &Coordinator{LLM: enabledLLM, Queries: &coordQueriesStub{inbound: false}},
+			turn: Turn{Source: SourceDigitalEmployee, Addressed: true, ChatType: "p2p", Message: "谢谢", AgentID: testAgentID()},
+			want: ActionContinue,
+		},
+		{
 			name: "nil_coordinator_continue",
 			c:    nil,
 			turn: Turn{Source: SourceWeb, Addressed: true, Message: "你好"},
@@ -276,36 +162,5 @@ func TestJudgmentDecideDeterministic(t *testing.T) {
 				t.Fatalf("action = %s, want %s", got.Action, tc.want)
 			}
 		})
-	}
-}
-
-func TestParseDecisionNewIssueComposesPurpose(t *testing.T) {
-	t.Parallel()
-	got := parseDecision(`{"action":"issue","text":"我去问须莫v6明早有没有会议","delegator":"须莫🥥","purpose":"向须莫v6询问明早有没有会议","intent":"ask","reason":"新事项"}`, Turn{
-		Source:     SourceDigitalEmployee,
-		SenderName: "须莫🥥",
-		Message:    "问一下须莫v6明早有没有会议",
-	})
-	if got.Action != ActionIssue {
-		t.Fatalf("action=%s", got.Action)
-	}
-	if got.Purpose != "须莫🥥委托：向须莫v6询问明早有没有会议" || got.Intent != "ask" {
-		t.Fatalf("purpose=%q intent=%q", got.Purpose, got.Intent)
-	}
-	if got.LookInto != "须莫🥥委托：向须莫v6询问明早有没有会议" {
-		t.Fatalf("look_into=%q", got.LookInto)
-	}
-}
-
-func TestParseDecisionIssueFillsLookIntoFromMessage(t *testing.T) {
-	got := parseDecision(`{"action":"issue","text":"我先去看","look_into":"","reason":"要查"}`, Turn{
-		Source:  SourceWeb,
-		Message: "帮我看看今天有什么新闻",
-	})
-	if got.Action != ActionIssue {
-		t.Fatalf("action = %s", got.Action)
-	}
-	if got.LookInto != "帮我看看今天有什么新闻" {
-		t.Fatalf("look_into = %q", got.LookInto)
 	}
 }

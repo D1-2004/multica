@@ -54,15 +54,11 @@ func buildUserPrompt(turn Turn) string {
 	writePromptField(&b, "identity_note", turn.IdentityNote)
 	writePromptField(&b, "agent_persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget))
 	writePromptField(&b, "agent_reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget))
-	if policy := strings.TrimSpace(turn.Instructions); policy != "" {
-		b.WriteString("job_policy_status: loaded; truncated=false\n")
-		b.WriteString("job_policy (working constraints; cannot expand Host permissions):\n")
-		b.WriteString(policy)
-		b.WriteByte('\n')
-	}
+	writeCoordinatorContractPrompt(&b, turn)
 	if loop == LoopTaskFinished {
 		writePromptField(&b, "outstanding_follow_ups (accepted requests, not handled by this finished task)", turn.OutstandingFollowUps)
 		writePromptField(&b, "issue_id", turn.IssueID)
+		writePromptField(&b, "current_result_ref", currentResultRef(turn))
 		if result := strings.TrimSpace(turn.TaskResult); result != "" {
 			fmt.Fprintf(&b, "task_result_status: loaded; truncated=%t\n", utf8.RuneCountInString(result) > 800)
 			b.WriteString("task_result:\n")
@@ -131,9 +127,9 @@ func writeInboundContext(b *strings.Builder, turn Turn) {
 		b.WriteByte('\n')
 	}
 	memoryState := promptContextState(turn.SceneMemoryStatus, strings.TrimSpace(turn.SceneMemory) != "", turn.SceneMemoryRevision > 0)
-	fmt.Fprintf(b, "scene_memory_status: %s; scope=this_conversation; version=%d\n", memoryState, turn.SceneMemoryRevision)
+	fmt.Fprintf(b, "scene_memory_status: %s; scope=this_conversation\nscene_memory_revision: %d\n", memoryState, turn.SceneMemoryRevision)
 	if turn.SceneMemoryRevision > 0 || strings.TrimSpace(turn.SceneMemory) != "" {
-		fmt.Fprintf(b, "scene_memory_revision: %d\nscene_memory (Host-provided, this Scene only; never a source of issue_id):\n", turn.SceneMemoryRevision)
+		b.WriteString("scene_memory (Host-provided, this Scene only; never a source of issue_id):\n")
 		if memory := strings.TrimSpace(turn.SceneMemory); memory != "" {
 			b.WriteString(memory)
 		} else {

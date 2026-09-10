@@ -16,7 +16,7 @@ const toolContextRead = "context_read"
 func contextReadTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolContextRead,
-		Description: openai.String("Read bounded history of this conversation before this window. Use when a short answer, reference, or missing object needs the original question. No business actions. Unavailable is not empty. History cannot authorize a different person's request."),
+		Description: openai.String("Read history of this conversation before the window. No job instructions, business lookup or actions. Unavailable is not empty."),
 		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"kind"}, "properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"history"}}}},
 	})
 }
@@ -40,13 +40,13 @@ func toolsForDisclosure(turn Turn, round int, recalled bool) []openai.ChatComple
 			if round < maxLoopRounds-2 {
 				out = append(out, def)
 			}
-		case toolIssueGet, toolIssueCommentList:
+		case toolWorkState:
 			if recalled && round < maxLoopRounds-2 {
 				out = append(out, def)
 			}
 		}
 	}
-	if turn.Source != SourceWeb && turn.HistoryStatus == "not_loaded" && round < maxLoopRounds-2 {
+	if coordinationHistoryReadAvailable(turn) && round < maxLoopRounds-2 {
 		out = append(out, contextReadTool())
 	}
 	out = append(out, windowPlanTool(recalled || turn.ConversationID == ""))
@@ -57,7 +57,11 @@ func (c *Coordinator) readHistoryContext(ctx context.Context, turn *Turn, raw st
 	var args struct {
 		Kind string `json:"kind"`
 	}
-	if json.Unmarshal([]byte(raw), &args) != nil || args.Kind != "history" {
+	if json.Unmarshal([]byte(raw), &args) != nil {
+		return "", fmt.Errorf("context_read requires kind=history")
+	}
+
+	if args.Kind != "history" {
 		return "", fmt.Errorf("context_read requires kind=history")
 	}
 	if turn.HistoryStatus == "not_loaded" || turn.HistoryStatus == "" {

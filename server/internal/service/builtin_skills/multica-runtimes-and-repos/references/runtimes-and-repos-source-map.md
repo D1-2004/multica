@@ -1,5 +1,9 @@
 # Runtimes and repos source map
 
+- `server/internal/service/asb_capacity_gate.go` distinguishes short create pacing from cached full/429 results. `asb_capacity.go` waits the remaining pacing interval inside the current launch under the tenant lock; it preserves cancellation and never reports pacing as full quota. `asb_capacity_waiter.go` wakes the next eligible waiter after a recovery launch finishes.
+
+- `server/internal/service/asb_capacity_region.go` maps live quota regions to ASB regional API hosts for cold creation. `asb_capacity.go` refreshes allocations after quota contention and after reclaim; only explicit create-time `403 QUOTA_EXCEEDED` errors trigger regional failover. Regional client copies do not change the shared tenant lock/cooldown or sandbox-ID-based lifecycle routing.
+- `server/internal/service/asb_capacity.go` reclaims idle chat and issue sandboxes with the same policy and no retention grace. `cloud_sandbox_session.sql` and scope advisory locks fence active tasks and launches. `runtime_start.sql`, `asb_capacity_waiter.go`, and the ASB terminal wakeup in `task.go` select capacity waiters in creation order without task-kind priority or previous-agent affinity.
 - `server/cmd/multica/cmd_runtime.go` registers `runtime list`, `usage`, `activity`, `update`, and `delete`.
 - `server/cmd/multica/cmd_daemon.go` refuses daemon start/restart/stop from a daemon-managed task and authenticates local shutdown with a per-instance control capability.
 - `runtime list` reads `/api/runtimes` and prints `id`, `name`, `runtime_mode`, `provider`, `status`, and `last_seen_at`.
@@ -19,3 +23,7 @@
 - `server/cmd/multica/cmd_agent.go`, `cmd_config.go`, `cmd_auth.go`, `cmd_login.go`, `cmd_setup.go`, `cmd_workspace.go`, `cmd_runtime_profile.go`, and `cmd_daemon.go` enforce the task boundary: API calls require task authentication, task-local config commands fail closed without their root, auth status hides credential material, and human/local profile or daemon commands reject managed task context.
 - `cmd_daemon.go` scopes the two read-only diagnostics instead of rejecting them: `daemonStatusHealthPort` takes the injected `MULTICA_DAEMON_PORT` (never the `--profile` hash, which would report an unrelated daemon), `resolveDiskUsageRoot` takes `daemon.TaskWorkspacesRootEnv` (never the `$HOME`-derived default), `checkTaskDiskUsageScope` rejects the flags that widen the scan past this daemon, and the STATUS column plus the other-roots hint are skipped because both reach for Owner profile state.
 - `server/internal/daemon/execenv/runtime_config.go` injects task/project/repo context into agent workdirs.
+
+- `server/internal/service/asb_network_policy.go` composes default-deny ASB policies from platform dependencies, Agent configuration and Runtime metadata. `asb_client.go` enforces deny at creation; `asb_launcher.go` refuses warm reuse after a policy change.
+- `server/internal/handler/runtime_asb_network.go` serves owner/admin-only GET/PUT `/api/runtimes/{runtimeId}/asb-network-policy`; `packages/views/runtimes/components/asb-network-policy-section.tsx` edits exact additional targets.
+- `docs/security/asb-dws-network-audit.md` maps DWS direct-transfer, OSS, mail, Stream and distribution dependencies to reviewed default rules; only two managed transfer families accept wildcards at the creation boundary.

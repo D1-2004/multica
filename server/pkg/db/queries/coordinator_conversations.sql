@@ -1,0 +1,52 @@
+-- name: ListCoordinatorConversations :many
+-- Group existing transcripts without changing their persistence or identity.
+WITH sessions AS (
+  SELECT cs.id, cs.title, cs.updated_at,
+    COALESCE(job.command #>> '{event,data,conversation,title}', '')::text AS conversation_title,
+    COALESCE(job.command #>> '{event,data,conversation,type}', '')::text AS conversation_type,
+    COALESCE(job.command #>> '{event,data,sender,displayName}', '')::text AS sender_name,
+    COALESCE(job.command #>> '{source,type}', '')::text AS source,
+    jsonb_build_array(job.endpoint_namespace_id, job.command #>> '{source,platform}',
+      job.command #>> '{source,type}',
+      CASE WHEN NULLIF(BTRIM(job.command #>> '{event,data,conversation,openConversationId}'), '') IS NULL
+        THEN jsonb_build_array('session', cs.id::text)
+        ELSE jsonb_build_array('conversation', BTRIM(job.command #>> '{event,data,conversation,openConversationId}'))
+      END)::text AS conversation_key
+  FROM inbound_coordinator_job job
+  JOIN chat_session cs ON cs.id = job.chat_session_id
+    AND cs.workspace_id = job.workspace_id AND cs.agent_id = job.agent_id
+  WHERE job.workspace_id = @workspace_id AND job.agent_id = @agent_id
+), ranked AS (
+  SELECT sessions.*,
+    count(*) OVER (PARTITION BY conversation_key)::bigint AS session_count,
+    row_number() OVER (PARTITION BY conversation_key ORDER BY updated_at DESC, id DESC) AS rank
+  FROM sessions
+)
+SELECT md5(conversation_key)::text AS id, id AS session_id, title, updated_at, session_count,
+  conversation_title, conversation_type, sender_name, source
+FROM ranked
+WHERE rank = 1
+ORDER BY updated_at DESC, id DESC
+LIMIT @page_limit OFFSET @page_offset;
+
+-- name: ListCoordinatorConversationMessages :many
+SELECT m.* FROM chat_message m
+JOIN chat_session cs ON cs.id = m.chat_session_id
+JOIN inbound_coordinator_job job ON job.chat_session_id = cs.id
+  AND job.workspace_id = cs.workspace_id AND job.agent_id = cs.agent_id
+JOIN inbound_coordinator_job anchor ON anchor.chat_session_id = @session_id
+  AND anchor.workspace_id = job.workspace_id AND anchor.agent_id = job.agent_id
+  AND anchor.endpoint_namespace_id = job.endpoint_namespace_id
+  AND (anchor.command #>> '{source,platform}') IS NOT DISTINCT FROM (job.command #>> '{source,platform}')
+  AND (anchor.command #>> '{source,type}') IS NOT DISTINCT FROM (job.command #>> '{source,type}')
+  AND (
+    (NULLIF(BTRIM(anchor.command #>> '{event,data,conversation,openConversationId}'), '') IS NOT NULL
+      AND BTRIM(anchor.command #>> '{event,data,conversation,openConversationId}') = BTRIM(job.command #>> '{event,data,conversation,openConversationId}'))
+    OR anchor.chat_session_id = job.chat_session_id
+  )
+WHERE job.workspace_id = @workspace_id AND job.agent_id = @agent_id
+  AND m.message_kind NOT IN ('channel_command', 'onboarding_kickoff')
+  AND (sqlc.narg('before_created_at')::timestamptz IS NULL
+    OR (m.created_at, m.id) < (sqlc.narg('before_created_at')::timestamptz, sqlc.narg('before_id')::uuid))
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT @page_limit;

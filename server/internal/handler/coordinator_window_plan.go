@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/service"
@@ -122,7 +121,7 @@ func windowItemCommand(command DispatchCommand, item inboundcoord.WindowItem) Di
 	var selected []DispatchMessage
 	index := 0
 	for _, message := range command.Event.Data.Messages {
-		if message.Reaction != nil || strings.TrimSpace(message.Text) == "" {
+		if coordinatorWindowMessageText(command, message) == "" {
 			continue
 		}
 		index++

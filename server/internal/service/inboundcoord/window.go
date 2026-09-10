@@ -31,6 +31,7 @@ type WindowUtterance struct {
 
 // WindowItem is one deliverable the window decided to handle.
 type WindowItem struct {
+	Reply      string   `json:"reply,omitempty"`
 	IssueID    string   `json:"issue_id,omitempty"`
 	SourceRefs []string `json:"source_refs,omitempty"`
 	Basis      string   `json:"basis,omitempty"`
@@ -155,6 +156,19 @@ func stripMentionsAndSpace(raw string) string {
 	}
 	joined := strings.Join(fields, "")
 	return strings.Trim(joined, "。！？!?.~…，,、 ")
+}
+
+// ForWindowItem limits the executor handoff to the selected deliverable. An old
+// persisted checkpoint has no per-item reply, so its saved acknowledgement stays.
+func (d Decision) ForWindowItem(item WindowItem) Decision {
+	d.Purpose, d.Intent, d.LookInto = item.Purpose, item.Intent, item.LookInto
+	d.Items = []WindowItem{item}
+	if item.Reply != "" {
+		d.UserText = item.Reply
+	}
+	d.CoordinationActions = nil
+	d.NonWorkRefs = nil
+	return d
 }
 
 // mentionRelation compares trusted identifiers, not names or message text.

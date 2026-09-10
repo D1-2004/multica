@@ -30,6 +30,24 @@ func TestSendArgsPreserveContentAndExplicitPolicy(t *testing.T) {
 	}
 }
 
+func TestSendArgsQuoteReplyUsesMessagesReply(t *testing.T) {
+	content := "收到，我去查"
+	args, err := sendArgs(SendRequest{
+		ConversationID: "cid-origin", Content: content, IdempotencyKey: "stable",
+		ShowAITag: false, ReplyToOpenMsgID: "msg-origin",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"chat", "+messages-reply", "--content", content, "--idempotency-key", "stable", "--ai-tag=false", "--format", "json", "--yes", "--group", "cid-origin", "--message-id", "msg-origin"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v", args)
+	}
+	if _, err := sendArgs(SendRequest{Content: content, IdempotencyKey: "stable", ReplyToOpenMsgID: "msg-origin"}); err == nil {
+		t.Fatal("quoted reply without conversation")
+	}
+}
+
 func TestSendStatusRequiresDeliveryEvidence(t *testing.T) {
 	for _, tc := range []struct{ name, raw, state, message string }{
 		{"accepted", `{"success":true,"result":{"openTaskId":"task"}}`, "provider_accepted", ""},

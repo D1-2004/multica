@@ -337,7 +337,8 @@
     "discard_keep": "Keep editing",
     "discard_confirm": "Discard changes",
     "identity": "Identity",
-    "llm_trace": "LLM Trace"
+    "llm_trace": "LLM Trace",
+    "inbound": "Inbound conversations"
   },
   "creation_studio": {
     "title": "Create an agent",
@@ -1280,7 +1281,15 @@
       "enterprise_identity_connect_failed": "Unable to start employee authorization.",
       "enterprise_identity_revoke": "Unbind",
       "enterprise_identity_revoked": "Employee identity unbound.",
-      "enterprise_identity_revoke_failed": "Unable to unbind employee identity."
+      "enterprise_identity_revoke_failed": "Unable to unbind employee identity.",
+      "dingtalk_identity_reuse_select": "Use an existing identity",
+      "dingtalk_identity_reuse_placeholder": "Choose an identity",
+      "dingtalk_identity_reuse_apply": "Use this identity",
+      "dingtalk_identity_reuse_hint": "Choose an identity you already bound in this workspace. No QR code is needed.",
+      "dingtalk_identity_reuse_empty": "No reusable identities yet. Scan to bind a new account.",
+      "dingtalk_identity_reuse_load_failed": "Unable to load reusable identities. You must own this agent.",
+      "dingtalk_identity_reuse_retry": "Retry",
+      "dingtalk_identity_reuse_failed": "Unable to reuse this identity. Refresh and try again."
     },
     "activity": {
       "status": {
@@ -1392,7 +1401,14 @@
       "relations_clear": "Unlink issues on this scene",
       "relations_clear_confirm": "Unlink issues on this scene? Memory text is kept.",
       "relations_cleared": "Issue links cleared",
-      "relations_clear_failed": "Couldn't unlink issues"
+      "relations_clear_failed": "Couldn't unlink issues",
+      "grouped_hint": "Judgments from the same group or DM appear in one conversation.",
+      "judgment_count": "{{count}} judgments",
+      "load_more": "Load more conversations",
+      "source_employee": "Digital employee",
+      "source_robot": "Robot",
+      "source_unknown": "Other source",
+      "refresh": "Refresh"
     },
     "memory": {
       "flags_hint": "Write, recall, and warm-up control how memory is kept. Show list controls whether it appears here.",

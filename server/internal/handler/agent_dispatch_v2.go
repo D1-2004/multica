@@ -771,6 +771,7 @@ type persistedDispatchContext struct {
 	CoordinatorIssueFollowUp bool                                 `json:"coordinator_issue_follow_up,omitempty"`
 	CoordinatorIssueTrigger  inboundcoord.CoordinatorIssueTrigger `json:"coordinator_issue_trigger,omitempty"`
 	ContextPrompt            string                               `json:"dispatch_context_prompt"`
+	ReplyToOpenMsgID         string                               `json:"dingtalk_reply_to_open_msg_id,omitempty"`
 }
 
 type persistedDispatchExternalIdentity struct {
@@ -1160,9 +1161,18 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext, resum
 		b.WriteString(relayInstruction)
 		b.WriteString("\n\n")
 	}
-	hints := make([]string, 0, len(facts)+1)
+	hints := make([]string, 0, len(facts)+2)
 	if readback {
 		hints = append(hints, dispatchConversationReadHint(stored))
+	}
+	if stored.CoordinatorIssueFollowUp {
+		origin := stored.ReplyToOpenMsgID
+		if origin == "" {
+			origin = firstDispatchMessageOpenMsgID(stored.EventData)
+		}
+		if hint := dingTalkOriginReplyHint(stored.EventData.Conversation.OpenConversationID, origin); hint != "" {
+			hints = append(hints, hint)
+		}
 	}
 	for _, fact := range facts {
 		hints = append(hints, dispatchQuotedMessageReadHint(fact))

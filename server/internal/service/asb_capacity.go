@@ -27,7 +27,6 @@ const (
 	asbCapacityUnavailableMessage = "Aone Sandbox 实例额度已满，当前 Runtime 没有可安全回收的空闲任务沙箱；请等待正在处理的任务结束后重试"
 	asbCapacityWaitingStage       = "sandbox_capacity_waiting"
 	asbCapacityWaitingErrorCode   = "ASB-CAPACITY-WAITING"
-	asbChatSandboxReclaimGrace    = 20 * time.Minute
 )
 
 var ErrASBCapacityUnavailable = withRuntimeStartUserDetail(
@@ -152,16 +151,36 @@ func createASBSandboxWithCapacityOnConnection(
 	}
 	defer releaseCapacity()
 	if client.CapacityGate != nil {
-		delay, gateErr := client.CapacityGate.admit(ctx, client)
-		if gateErr != nil {
-			// Fail closed: loss of shared coordination must not cause a burst of
-			// upstream requests from every replica. Keep the task queued.
-			return nil, errors.Join(ErrASBCapacityUnavailable, fmt.Errorf("check ASB shared capacity cooldown: %w", gateErr))
-		}
-		if delay > 0 {
-			slog.Info("ASB task reused tenant capacity wait", "event", "asb_capacity_cooldown_hit",
+		for {
+			delay, pacing, gateErr := client.CapacityGate.admit(ctx, client)
+			if gateErr != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
+				// Fail closed: loss of shared coordination must not cause a burst
+				// of upstream requests from every replica. Keep the task queued.
+				return nil, errors.Join(ErrASBCapacityUnavailable, fmt.Errorf("check ASB shared capacity cooldown: %w", gateErr))
+			}
+			if delay <= 0 {
+				break
+			}
+			if !pacing {
+				slog.Info("ASB task reused tenant capacity wait", "event", "asb_capacity_cooldown_hit",
+					"runtime_id", util.UUIDToString(runtimeID), "retry_after_ms", delay.Milliseconds())
+				return nil, ErrASBCapacityUnavailable
+			}
+			// Keep our place under the tenant lock, but do not hold it through
+			// sandbox boot. A successful create releases it below. Cancellation
+			// interrupts the short interval without probing or reporting full.
+			slog.Info("ASB sandbox creation paced within current launch", "event", "asb_capacity_create_pacing",
 				"runtime_id", util.UUIDToString(runtimeID), "retry_after_ms", delay.Milliseconds())
-			return nil, ErrASBCapacityUnavailable
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 	// Run before releasing the tenant lock, so the next replica observes the
@@ -170,68 +189,43 @@ func createASBSandboxWithCapacityOnConnection(
 		resultErr = recordASBCapacityResult(ctx, client, util.UUIDToString(runtimeID), resultErr)
 	}()
 
-	quotaExhausted, err := asbTenantQuotaExhausted(ctx, client)
+	quotas, err := client.ListQuotas(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("check Aone Sandbox quota before create: %w", err)
 	}
-	if quotaExhausted {
-		reclaimed, err := reclaimASBSandboxForCredential(
-			ctx,
-			queries,
-			credentials,
-			client,
-			runtimeID,
-			excludedTaskID,
-			conn,
-		)
-		if err != nil {
-			return nil, err
+	sandbox, err := createASBSandboxInAvailableRegion(ctx, client, runtimeID, input, quotas)
+	if !errors.Is(err, ErrASBCapacityUnavailable) {
+		return sandbox, err
+	}
+	if isASBQuotaExceeded(err) {
+		// Another caller may consume a slot, or an allocation may be added
+		// after the initial read. Refresh once before reclaiming any sandbox.
+		quotas, quotaErr := client.ListQuotas(ctx)
+		if quotaErr != nil {
+			return nil, errors.Join(err, quotaErr)
 		}
-		if !reclaimed {
-			return nil, ErrASBCapacityUnavailable
+		sandbox, err = createASBSandboxInAvailableRegion(ctx, client, runtimeID, input, quotas)
+		if !errors.Is(err, ErrASBCapacityUnavailable) {
+			return sandbox, err
 		}
 	}
 
-	sandbox, err := client.CreateSandbox(ctx, input)
-	if err == nil {
-		return sandbox, nil
-	}
-	logASBCreateFailure("initial", runtimeID, err)
-	// The quota can change between its read and the create call. Re-read it
-	// while still holding the tenant lock, reclaim one eligible task sandbox,
-	// and repeat the create operation once.
-	quotaExhausted, quotaErr := asbTenantQuotaExhausted(ctx, client)
-	if quotaErr != nil {
-		return nil, errors.Join(fmt.Errorf("create ASB sandbox: %w", err), quotaErr)
-	}
-	if !quotaExhausted {
-		return nil, fmt.Errorf("create ASB sandbox: %w", err)
-	}
 	reclaimed, reclaimErr := reclaimASBSandboxForCredential(
-		ctx,
-		queries,
-		credentials,
-		client,
-		runtimeID,
-		excludedTaskID,
-		conn,
+		ctx, queries, credentials, client, runtimeID, excludedTaskID, conn,
 	)
 	if reclaimErr != nil {
-		return nil, errors.Join(fmt.Errorf("create ASB sandbox: %w", err), reclaimErr)
+		return nil, errors.Join(err, reclaimErr)
 	}
 	if !reclaimed {
-		return nil, ErrASBCapacityUnavailable
+		return nil, err
 	}
-	sandbox, err = client.CreateSandbox(ctx, input)
+	// Reclaim can release a slot in any region. Select from a fresh snapshot,
+	// rather than retrying the original, possibly still full region.
+	quotas, err = client.ListQuotas(ctx)
 	if err != nil {
-		logASBCreateFailure("after_capacity_reclaim", runtimeID, err)
-		return nil, asbCapacityUnavailableIfStillExhausted(
-			ctx,
-			client,
-			fmt.Errorf("create ASB sandbox after capacity reclaim: %w", err),
-		)
+		return nil, errors.Join(ErrASBCapacityUnavailable, err)
 	}
-	return sandbox, nil
+	return createASBSandboxInAvailableRegion(ctx, client, runtimeID, input, quotas)
 }
 
 func asbTenantQuotaExhausted(ctx context.Context, client *ASBClient) (bool, error) {
@@ -312,9 +306,6 @@ func reclaimASBSandboxForCredential(
 		if !candidate.ScopeID.Valid ||
 			(candidate.ScopeType != fcE2BScopeTypeChat &&
 				candidate.ScopeType != fcE2BScopeTypeIssue) {
-			continue
-		}
-		if asbChatSandboxWithinReclaimGrace(candidate, time.Now()) {
 			continue
 		}
 		releaseCandidate, locked, err := tryLockASBSandboxScopeOnConnection(
@@ -413,14 +404,6 @@ func reclaimASBSandboxForCredential(
 		excludedTaskID,
 		liveSandboxes,
 	)
-}
-
-func asbChatSandboxWithinReclaimGrace(candidate db.FcE2bSandboxSession, now time.Time) bool {
-	if candidate.ScopeType != fcE2BScopeTypeChat || !candidate.LastUsedAt.Valid {
-		return false
-	}
-	age := now.Sub(candidate.LastUsedAt.Time)
-	return age >= 0 && age < asbChatSandboxReclaimGrace
 }
 
 func reclaimUntrackedIdleASBSandbox(

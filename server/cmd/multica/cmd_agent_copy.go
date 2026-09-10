@@ -58,6 +58,7 @@ func registerAgentCopyFlags(cmd *cobra.Command) {
 	cmd.Flags().String("runtime-id", "", "Target runtime ID (default: the source agent's runtime). A different value forks the agent onto that runtime.")
 	cmd.Flags().String("description", "", "Override the copied description")
 	cmd.Flags().String("instructions", "", "Override the copied instructions")
+	registerCoordinatorContractFlags(cmd)
 	cmd.Flags().String("model", "", "Model identifier for the copy. Required when --runtime-id selects a different runtime (pass \"\" to accept the target runtime default). Empty otherwise = runtime default.")
 	cmd.Flags().String("thinking-level", "", "Override thinking level. Not carried across a runtime change unless set here.")
 	cmd.Flags().String("service-tier", "", "Override Codex service tier. Not carried across a runtime change unless set here.")
@@ -149,6 +150,17 @@ func runAgentCopy(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("instructions") {
 		v, _ := cmd.Flags().GetString("instructions")
 		body["instructions"] = v
+	}
+
+	// Routing constraints retain their original instruction version on copies.
+	// An instruction override must not silently certify an outdated contract.
+	if contract, ok := src["coordinator_contract"]; ok && contract != nil {
+		body["coordinator_contract"] = contract
+	}
+	if contract, present, err := resolveCoordinatorContract(cmd); err != nil {
+		return err
+	} else if present {
+		body["coordinator_contract"] = contract
 	}
 
 	// Avatar reference travels with the copy (both agents point at the same

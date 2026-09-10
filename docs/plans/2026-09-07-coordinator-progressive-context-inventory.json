@@ -61,7 +61,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F03",
           "COORD.F08"
@@ -73,6 +73,8 @@
           "dialogue",
           "recall_match",
           "completion",
+          "finish_check",
+          "finish_check_work",
           "channel"
         ],
         "implementation_refs": [
@@ -82,8 +84,14 @@
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/channel.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -109,7 +117,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F13"
         ],
@@ -117,7 +125,9 @@
           "core",
           "inbound",
           "recall_match",
-          "completion"
+          "completion",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -125,7 +135,12 @@
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -151,7 +166,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F13"
         ],
@@ -159,7 +174,9 @@
           "core",
           "inbound",
           "recall_match",
-          "completion"
+          "completion",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -167,7 +184,12 @@
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -193,7 +215,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F13"
         ],
@@ -201,7 +223,9 @@
           "core",
           "inbound",
           "recall_match",
-          "completion"
+          "completion",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -209,7 +233,12 @@
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -236,7 +265,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F13",
           "COORD.F17"
@@ -246,6 +275,8 @@
           "inbound",
           "recall_match",
           "completion",
+          "finish_check",
+          "finish_check_work",
           "window"
         ],
         "implementation_refs": [
@@ -255,8 +286,13 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/window.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -283,7 +319,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F13",
           "COORD.F17"
@@ -293,6 +329,8 @@
           "inbound",
           "recall_match",
           "completion",
+          "finish_check",
+          "finish_check_work",
           "window"
         ],
         "implementation_refs": [
@@ -302,8 +340,13 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/window.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -329,16 +372,23 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F16"
         ],
         "modules": [
-          "core"
+          "core",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
-          "server/internal/service/inboundcoord/coordinator.go"
+          "server/internal/service/inboundcoord/coordinator.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -364,19 +414,24 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04"
         ],
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -403,7 +458,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -414,6 +469,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "recall_match",
           "completion"
@@ -425,11 +482,16 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -455,19 +517,25 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05"
         ],
         "modules": [
           "core",
           "inbound",
-          "group"
+          "group",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/group.md"
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -494,19 +562,24 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04"
         ],
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -527,19 +600,24 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04"
         ],
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -560,19 +638,24 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04"
         ],
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -599,7 +682,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F06"
@@ -610,6 +693,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "dialogue"
         ],
@@ -620,6 +705,9 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/dialogue.md"
         ],
@@ -649,7 +737,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04",
           "COORD.F16"
@@ -657,13 +745,20 @@
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/skills.md",
-          "server/internal/service/inboundcoord/coordinator.go"
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/coordinator.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -690,7 +785,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04",
           "COORD.F06"
@@ -699,6 +794,8 @@
           "core",
           "inbound",
           "skills",
+          "finish_check",
+          "finish_check_work",
           "group",
           "dialogue"
         ],
@@ -706,6 +803,9 @@
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/dialogue.md"
         ],
@@ -730,7 +830,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04",
           "COORD.F06"
@@ -739,6 +839,8 @@
           "core",
           "inbound",
           "skills",
+          "finish_check",
+          "finish_check_work",
           "group",
           "dialogue"
         ],
@@ -746,6 +848,9 @@
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/dialogue.md"
         ],
@@ -775,7 +880,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04",
           "COORD.F16"
@@ -783,13 +888,20 @@
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/skills.md",
-          "server/internal/service/inboundcoord/coordinator.go"
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/coordinator.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -816,7 +928,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07",
           "COORD.F17"
@@ -825,16 +937,22 @@
           "core",
           "inbound",
           "recall_match",
+          "finish_check_work",
           "window",
-          "completion"
+          "completion",
+          "finish_check"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/completion.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -862,7 +980,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05",
           "COORD.F09"
@@ -870,14 +988,21 @@
         "modules": [
           "core",
           "inbound",
-          "group"
+          "group",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
-          "docs/evals/coordinator-collect-e2e.json"
+          "docs/evals/coordinator-collect-e2e.json",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -904,19 +1029,22 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07"
         ],
         "modules": [
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/recall_match.md"
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -944,7 +1072,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F06"
@@ -955,6 +1083,8 @@
           "window",
           "dialogue",
           "recall_match",
+          "finish_check",
+          "finish_check_work",
           "inbound"
         ],
         "implementation_refs": [
@@ -963,6 +1093,9 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md"
         ],
         "coverage": "source_mapping_only",
@@ -990,19 +1123,22 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07"
         ],
         "modules": [
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/recall_match.md"
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1030,7 +1166,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -1041,6 +1177,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "recall_match",
           "completion"
@@ -1052,11 +1190,16 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1083,7 +1226,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05",
           "COORD.F07"
@@ -1092,12 +1235,18 @@
           "core",
           "inbound",
           "group",
+          "finish_check",
+          "finish_check_work",
           "recall_match"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/recall_match.md"
         ],
         "coverage": "source_mapping_only",
@@ -1126,7 +1275,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F14"
@@ -1137,6 +1286,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "voice",
           "skills"
         ],
@@ -1147,6 +1298,9 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
           "server/internal/service/inboundcoord/policy/skills.md"
         ],
@@ -1175,7 +1329,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F14"
@@ -1186,6 +1340,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "voice",
           "skills"
         ],
@@ -1196,6 +1352,9 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
           "server/internal/service/inboundcoord/policy/skills.md"
         ],
@@ -1224,7 +1383,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F14"
@@ -1235,6 +1394,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "voice",
           "skills"
         ],
@@ -1245,6 +1406,9 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
           "server/internal/service/inboundcoord/policy/skills.md"
         ],
@@ -1273,7 +1437,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05",
           "COORD.F14"
@@ -1282,6 +1446,8 @@
           "core",
           "inbound",
           "group",
+          "finish_check",
+          "finish_check_work",
           "voice",
           "channel",
           "web",
@@ -1291,6 +1457,10 @@
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/web.md",
@@ -1322,7 +1492,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05",
           "COORD.F14"
@@ -1331,6 +1501,8 @@
           "core",
           "inbound",
           "group",
+          "finish_check",
+          "finish_check_work",
           "voice",
           "channel",
           "web",
@@ -1340,6 +1512,10 @@
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/web.md",
@@ -1370,7 +1546,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F06"
         ],
@@ -1378,13 +1554,18 @@
           "core",
           "inbound",
           "group",
-          "dialogue"
+          "dialogue",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
-          "server/internal/service/inboundcoord/policy/dialogue.md"
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1412,7 +1593,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F10"
@@ -1422,7 +1603,9 @@
           "group",
           "window",
           "dialogue",
-          "recall_match"
+          "recall_match",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -1430,6 +1613,9 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/window.go"
         ],
         "coverage": "source_mapping_only",
@@ -1458,7 +1644,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F10"
@@ -1468,7 +1654,9 @@
           "group",
           "window",
           "dialogue",
-          "recall_match"
+          "recall_match",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -1476,6 +1664,9 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/window.go"
         ],
         "coverage": "source_mapping_only",
@@ -1504,7 +1695,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F10"
@@ -1514,7 +1705,9 @@
           "group",
           "window",
           "dialogue",
-          "recall_match"
+          "recall_match",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -1522,6 +1715,9 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/window.go"
         ],
         "coverage": "source_mapping_only",
@@ -1550,7 +1746,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F02"
@@ -1561,6 +1757,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "dialogue",
           "recall_match"
         ],
@@ -1571,6 +1769,9 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md"
         ],
@@ -1600,7 +1801,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05",
           "COORD.F14"
@@ -1609,6 +1810,8 @@
           "core",
           "inbound",
           "group",
+          "finish_check",
+          "finish_check_work",
           "voice",
           "channel",
           "web",
@@ -1618,6 +1821,10 @@
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/web.md",
@@ -1648,17 +1855,23 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F11"
         ],
         "modules": [
           "core",
-          "memory"
+          "memory",
+          "finish_check"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
-          "server/internal/service/inboundcoord/policy/memory.md"
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1684,17 +1897,23 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F11"
         ],
         "modules": [
           "core",
-          "memory"
+          "memory",
+          "finish_check"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
-          "server/internal/service/inboundcoord/policy/memory.md"
+          "server/internal/service/inboundcoord/policy/memory.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1720,7 +1939,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F06"
         ],
@@ -1728,13 +1947,18 @@
           "core",
           "inbound",
           "group",
-          "dialogue"
+          "dialogue",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
-          "server/internal/service/inboundcoord/policy/dialogue.md"
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1762,7 +1986,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F10"
@@ -1772,7 +1996,9 @@
           "group",
           "window",
           "dialogue",
-          "recall_match"
+          "recall_match",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -1780,6 +2006,9 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/window.go"
         ],
         "coverage": "source_mapping_only",
@@ -1807,7 +2036,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -1820,7 +2049,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1847,7 +2077,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F03",
           "COORD.F11"
@@ -1858,7 +2088,9 @@
           "skills",
           "dialogue",
           "recall_match",
-          "completion"
+          "completion",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -1866,7 +2098,14 @@
           "server/internal/service/inboundcoord/policy/skills.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/policy/completion.md"
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1893,7 +2132,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07",
           "COORD.F09"
@@ -1901,14 +2140,18 @@
         "modules": [
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
-          "docs/evals/coordinator-collect-e2e.json"
+          "docs/evals/coordinator-collect-e2e.json",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1935,19 +2178,22 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07"
         ],
         "modules": [
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/recall_match.md"
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1976,7 +2222,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F07",
@@ -1988,6 +2234,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "recall_match",
           "completion"
@@ -1999,8 +2247,12 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/handler/task_finished_loop.go",
           "server/internal/service/inboundcoord/wrapup.go"
@@ -2031,7 +2283,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F07"
@@ -2042,6 +2294,8 @@
           "window",
           "dialogue",
           "recall_match",
+          "finish_check",
+          "finish_check_work",
           "inbound"
         ],
         "implementation_refs": [
@@ -2050,7 +2304,11 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/policy/inbound.md"
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/continuation_content.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2077,19 +2335,22 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07"
         ],
         "modules": [
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/recall_match.md"
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2117,7 +2378,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -2128,6 +2389,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "recall_match",
           "completion"
@@ -2139,11 +2402,16 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2170,7 +2438,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -2181,6 +2449,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "recall_match",
           "completion"
@@ -2192,11 +2462,16 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2223,7 +2498,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -2234,6 +2509,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "recall_match",
           "completion"
@@ -2245,11 +2522,16 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2275,7 +2557,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2288,7 +2570,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2314,7 +2597,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2327,7 +2610,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2353,7 +2637,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2366,7 +2650,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2392,7 +2677,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2405,7 +2690,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2431,7 +2717,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2444,7 +2730,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2470,7 +2757,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2483,7 +2770,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2510,7 +2798,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F03",
           "COORD.F08"
@@ -2522,6 +2810,8 @@
           "dialogue",
           "recall_match",
           "completion",
+          "finish_check",
+          "finish_check_work",
           "channel"
         ],
         "implementation_refs": [
@@ -2531,8 +2821,14 @@
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/channel.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2559,7 +2855,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07",
           "COORD.F13"
@@ -2568,15 +2864,23 @@
           "core",
           "inbound",
           "recall_match",
-          "completion"
+          "finish_check_work",
+          "completion",
+          "finish_check"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2603,19 +2907,22 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07"
         ],
         "modules": [
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/recall_match.md"
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2642,7 +2949,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2655,7 +2962,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2682,7 +2990,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F03",
           "COORD.F08"
@@ -2694,6 +3002,8 @@
           "dialogue",
           "recall_match",
           "completion",
+          "finish_check",
+          "finish_check_work",
           "channel"
         ],
         "implementation_refs": [
@@ -2703,8 +3013,14 @@
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/channel.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2731,7 +3047,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F03",
           "COORD.F08"
@@ -2743,6 +3059,8 @@
           "dialogue",
           "recall_match",
           "completion",
+          "finish_check",
+          "finish_check_work",
           "channel"
         ],
         "implementation_refs": [
@@ -2752,8 +3070,14 @@
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/channel.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2779,19 +3103,25 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05"
         ],
         "modules": [
           "core",
           "inbound",
-          "group"
+          "group",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/group.md"
+          "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2819,7 +3149,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F06"
@@ -2830,6 +3160,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "dialogue"
         ],
@@ -2840,6 +3172,9 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/dialogue.md"
         ],
@@ -2869,7 +3204,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F13",
           "COORD.F17"
@@ -2879,6 +3214,8 @@
           "inbound",
           "recall_match",
           "completion",
+          "finish_check",
+          "finish_check_work",
           "window"
         ],
         "implementation_refs": [
@@ -2888,8 +3225,13 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/window.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2916,7 +3258,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05",
           "COORD.F14"
@@ -2925,6 +3267,8 @@
           "core",
           "inbound",
           "group",
+          "finish_check",
+          "finish_check_work",
           "voice",
           "channel",
           "web",
@@ -2934,6 +3278,10 @@
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/web.md",
@@ -2965,7 +3313,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04",
           "COORD.F16"
@@ -2973,13 +3321,20 @@
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/skills.md",
-          "server/internal/service/inboundcoord/coordinator.go"
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/coordinator.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3006,7 +3361,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F03"
@@ -3017,6 +3372,8 @@
           "window",
           "dialogue",
           "recall_match",
+          "finish_check",
+          "finish_check_work",
           "memory",
           "skills",
           "completion"
@@ -3027,9 +3384,15 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/memory.md",
           "server/internal/service/inboundcoord/policy/skills.md",
-          "server/internal/service/inboundcoord/policy/completion.md"
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3057,7 +3420,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F07"
@@ -3068,6 +3431,8 @@
           "window",
           "dialogue",
           "recall_match",
+          "finish_check",
+          "finish_check_work",
           "inbound"
         ],
         "implementation_refs": [
@@ -3076,7 +3441,11 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/policy/inbound.md"
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/continuation_content.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3104,7 +3473,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F07"
@@ -3115,6 +3484,8 @@
           "window",
           "dialogue",
           "recall_match",
+          "finish_check",
+          "finish_check_work",
           "inbound"
         ],
         "implementation_refs": [
@@ -3123,7 +3494,11 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/policy/inbound.md"
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/policy/inbound.md",
+          "server/internal/service/inboundcoord/continuation_content.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3150,19 +3525,22 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F07"
         ],
         "modules": [
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/recall_match.md"
+          "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3190,7 +3568,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F06"
@@ -3201,6 +3579,8 @@
           "window",
           "dialogue",
           "recall_match",
+          "finish_check",
+          "finish_check_work",
           "inbound"
         ],
         "implementation_refs": [
@@ -3209,6 +3589,9 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md"
         ],
         "coverage": "source_mapping_only",
@@ -3236,7 +3619,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -3278,7 +3661,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -3321,7 +3704,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -3332,6 +3715,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "recall_match",
           "completion"
@@ -3343,11 +3728,16 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3373,7 +3763,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -3386,7 +3776,8 @@
           "server/internal/service/inboundcoord/policy/channel.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3413,7 +3804,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F02",
           "COORD.F03"
@@ -3424,6 +3815,8 @@
           "window",
           "dialogue",
           "recall_match",
+          "finish_check",
+          "finish_check_work",
           "memory",
           "skills",
           "completion"
@@ -3434,9 +3827,15 @@
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/memory.md",
           "server/internal/service/inboundcoord/policy/skills.md",
-          "server/internal/service/inboundcoord/policy/completion.md"
+          "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3463,17 +3862,22 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F15"
         ],
         "modules": [
           "core",
-          "voice"
+          "voice",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
-          "server/internal/service/inboundcoord/policy/voice.md"
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3499,7 +3903,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -3536,19 +3940,24 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04"
         ],
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3574,17 +3983,22 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F15"
         ],
         "modules": [
           "core",
-          "voice"
+          "voice",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
-          "server/internal/service/inboundcoord/policy/voice.md"
+          "server/internal/service/inboundcoord/policy/voice.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3610,14 +4024,23 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F19"
         ],
-        "modules": [],
+        "modules": [
+          "finish_check",
+          "finish_check_work"
+        ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/trace.go",
-          "docs/inbound-coordinator-loop.md"
+          "docs/inbound-coordinator-loop.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3643,7 +4066,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -3685,7 +4108,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -3728,7 +4151,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F14"
@@ -3739,6 +4162,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "voice",
           "skills"
         ],
@@ -3749,6 +4174,9 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
           "server/internal/service/inboundcoord/policy/skills.md"
         ],
@@ -3776,7 +4204,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -3819,7 +4247,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F05",
           "COORD.F09"
@@ -3827,14 +4255,21 @@
         "modules": [
           "core",
           "inbound",
-          "group"
+          "group",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/group.md",
+          "server/internal/service/inboundcoord/continuation_content.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
-          "docs/evals/coordinator-collect-e2e.json"
+          "docs/evals/coordinator-collect-e2e.json",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3861,7 +4296,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -3903,7 +4338,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -3946,7 +4381,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F01",
           "COORD.F06"
@@ -3957,6 +4392,8 @@
           "web",
           "group",
           "window",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "dialogue"
         ],
@@ -3967,6 +4404,9 @@
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/window.md",
           "server/internal/service/inboundcoord/window.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/dialogue.md"
         ],
@@ -3995,7 +4435,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -4027,7 +4467,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12",
           "COORD.F13"
@@ -4036,7 +4476,9 @@
           "completion",
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/completion.md",
@@ -4046,7 +4488,12 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4073,7 +4520,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12",
           "COORD.F13"
@@ -4082,7 +4529,9 @@
           "completion",
           "core",
           "inbound",
-          "recall_match"
+          "recall_match",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/completion.md",
@@ -4092,7 +4541,12 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/loop.go",
-          "server/internal/service/inboundcoord/tools.go"
+          "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4118,7 +4572,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -4154,7 +4608,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -4191,7 +4645,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12",
           "COORD.F14"
@@ -4238,7 +4692,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -4274,7 +4728,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -4310,7 +4764,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -4339,19 +4793,24 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F04"
         ],
         "modules": [
           "core",
           "inbound",
-          "skills"
+          "skills",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4371,7 +4830,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F14",
           "COORD.F15"
@@ -4382,7 +4841,9 @@
           "web",
           "group",
           "skills",
-          "core"
+          "core",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/voice.md",
@@ -4390,7 +4851,10 @@
           "server/internal/service/inboundcoord/policy/web.md",
           "server/internal/service/inboundcoord/policy/group.md",
           "server/internal/service/inboundcoord/policy/skills.md",
-          "server/internal/service/inboundcoord/policy/core.md"
+          "server/internal/service/inboundcoord/policy/core.md",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4412,7 +4876,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F03",
           "COORD.F11",
@@ -4426,6 +4890,8 @@
           "dialogue",
           "recall_match",
           "completion",
+          "finish_check",
+          "finish_check_work",
           "inbound",
           "window"
         ],
@@ -4436,11 +4902,18 @@
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/policy/completion.md",
+          "server/internal/service/scenememory/flush.go",
+          "server/internal/service/scenememory/trace.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
+          "server/internal/service/inboundcoord/window_plan.go",
           "server/internal/service/inboundcoord/policy/window.md",
-          "server/internal/handler/agent_dispatch_v2_handler.go"
+          "server/internal/handler/agent_dispatch_v2_handler.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4460,7 +4933,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-09.1-relevance",
+        "policy_version": "2026-09-09.5",
         "rule_ids": [
           "COORD.F13",
           "COORD.F16"
@@ -4469,7 +4942,9 @@
           "core",
           "inbound",
           "recall_match",
-          "completion"
+          "completion",
+          "finish_check",
+          "finish_check_work"
         ],
         "implementation_refs": [
           "server/internal/service/inboundcoord/policy/core.md",
@@ -4478,7 +4953,12 @@
           "server/internal/service/inboundcoord/policy/completion.md",
           "server/internal/service/inboundcoord/loop.go",
           "server/internal/service/inboundcoord/tools.go",
-          "server/internal/service/inboundcoord/coordinator.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/policy/finish_check.md",
+          "server/internal/service/inboundcoord/finish_check.go",
+          "server/internal/service/inboundcoord/policy/finish_check_work.md",
+          "server/internal/service/inboundcoord/coordinator.go",
+          "server/internal/service/inboundcoord/scene_prefetch.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4728,6 +5208,41 @@
       "status": "7/9 passed; approval after history still replied with a promise without work in 2/3 repeats",
       "superseded_by": "2026-09-08.2",
       "change": "dialogue module explicitly routes an answered execution question to a work plan, not a promise-only reply"
+    },
+    {
+      "policy_version": "2026-09-09.2",
+      "assembly_version": "3",
+      "change": "压缩重复路由策略；完整岗位全文改为Host-held+按需读；reply/silence及带自定义岗位的issue计划提交前独立语义审查。issue审查只核覆盖、授权、范围和承诺，不要求未来执行结果。19项义务与103条原始来源不变，旧假完成词保护显式退役。",
+      "incident_trace_id": "605e116e29704bf294f653bb4508a684",
+      "source_mapping": "source_mapping_only",
+      "host_tests": "not_run",
+      "model_replay": "not_run",
+      "live_delivery": "not_run"
+    },
+    {
+      "policy_version": "2026-09-09.2",
+      "module": "finish_check@2",
+      "change": "首次冻结回放4/6通过：发现已核实进度被完整报告格式要求误拒，必要澄清审查输出截断。限定审查为实质事实/授权/范围/覆盖，禁止把执行报告格式套到短对话或待执行计划，reason单句<=160字符。未查证原请求不能以灰灯待查回复替代任务。",
+      "first_replay_result": "4/6; retained by main-agent evidence report, not overwritten",
+      "verification_after_change": "not_run"
+    },
+    {
+      "policy_version": "2026-09-09.2",
+      "module": "finish_check@3",
+      "change": "真实done证据、温度0的7例回放仍有误读：把发送计划软化成起草、把状态询问扩张为完整结果。审查先摘录请求与候选各自动作原文，再判实质不匹配；issue purpose视为真实执行。纯完成询问以done证据及已完成短答为充分。",
+      "preceding_replay_result": "3/7; retained by main-agent evidence report, not overwritten",
+      "verification_after_change": "not_run"
+    },
+    {
+      "policy_version": "2026-09-09.2",
+      "assembly_version": "4",
+      "modules": [
+        "finish_check@4",
+        "finish_check_work@1"
+      ],
+      "change": "原文对照后6/7通过，剩余原产品问题因把未来计划当当前答案而反复拒绝。将reply/silence的当前结果核验与issue的未来计划授权核验拆成互斥模块；计划尚未执行，无需先交答案/证据。",
+      "preceding_replay_result": "6/7; retained by main-agent evidence report, not overwritten",
+      "verification_after_change": "not_run"
     }
   ]
 }

@@ -41,7 +41,7 @@ def check() -> dict[str, object]:
     require(sum(e['kind'] == 'preamble' for e in entries.values()) == 4, 'expected four observed preambles')
     allowed_conditions = {'always', 'inbound', 'dingtalk', 'web', 'group', 'multiple_utterances',
                           'scene_memory_available', 'skill_snapshots_available', 'dialogue_available',
-                          'recalled', 'task_finished'}
+                          'recalled', 'task_finished', 'finish_check', 'finish_check_work'}
     for module_id, module in modules.items():
         file = POLICY / module['file']
         require(file.is_file(), f'{module_id}: body file missing')
@@ -95,7 +95,7 @@ def check() -> dict[str, object]:
             require(rule_id in rules, f'{entry_id}: references unknown obligation {rule_id}')
         for module_id in mapping.get('modules', []):
             require(module_id in modules, f'{entry_id}: references unknown module {module_id}')
-    require({'work_submission', 'task_finished_reply', 'direct_reply'} <= set(registry['effect_dependencies']), 'required effect boundary missing')
+    require({'work_submission', 'task_finished_result', 'coordination_response'} <= set(registry['effect_dependencies']), 'required effect boundary missing')
     for effect, deps in registry['effect_dependencies'].items():
         require(bool(deps), f'{effect}: missing prerequisites')
         for dep in deps:

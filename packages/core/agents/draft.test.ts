@@ -265,3 +265,36 @@ describe("agent draft execution overrides", () => {
     expect(isDraftDescriptionWithinLimit("汉".repeat(256))).toBe(false);
   });
 });
+
+it("preserves a stale coordinator contract through duplicate and create", () => {
+  const contract = {version:1 as const,scope:"routing",must_delegate:["research"],constraints:["draft only"],clarify_when:[],source_instructions_sha256:"a".repeat(64)};
+  const source = sourceAgent({coordinator_contract:contract,coordinator_contract_state:"stale"});
+  const duplicate = buildDuplicateDraft(source,{runtimes:[CODEX_RUNTIME],currentUserId:"user-1",fallbackRuntimeId:"runtime-1",nameSuffix:" copy"});
+  expect(duplicate.coordinatorContract).toEqual(contract);
+  expect(buildCreateAgentRequest({draft:{...duplicate,instructions:"changed"},runtimeId:"runtime-1"}).coordinator_contract).toEqual(contract);
+});
+
+
+it("duplicates exact instruction whitespace so the contract hash remains valid", () => {
+  const instructions = "\n# Role\nDraft only.\n";
+  const contract = {
+    version: 1 as const,
+    scope: "routing",
+    must_delegate: ["research"],
+    constraints: ["draft only"],
+    clarify_when: [],
+    source_instructions_sha256: "f".repeat(64),
+  };
+  const duplicate = buildDuplicateDraft(
+    sourceAgent({ instructions, coordinator_contract: contract }),
+    {
+      runtimes: [CODEX_RUNTIME],
+      currentUserId: "user-1",
+      fallbackRuntimeId: "runtime-1",
+      nameSuffix: " copy",
+    },
+  );
+  const request = buildCreateAgentRequest({ draft: duplicate, runtimeId: "runtime-1" });
+  expect(request.instructions).toBe(instructions);
+  expect(request.coordinator_contract).toEqual(contract);
+});

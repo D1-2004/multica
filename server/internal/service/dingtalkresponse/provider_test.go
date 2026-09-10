@@ -46,6 +46,11 @@ if sys.argv[1:3] == ['auth','exchange']:
     assert os.environ['DWS_CLIENT_SECRET']=='server-client-secret'
     assert sys.argv[sys.argv.index('--code')+1]=='ephemeral-auth-code'
     with open(os.path.join(config,'token'),'w') as f: f.write('short-lived-token')
+elif sys.argv[1:3] == ['chat','+messages-reply']:
+    assert os.path.exists(os.path.join(config,'token'))
+    assert sys.argv[sys.argv.index('--message-id')+1]=='msg-origin'
+    assert sys.argv[sys.argv.index('--group')+1]=='cid'
+    print(json.dumps({'success':True,'openTaskId':'quoted-task'}))
 elif sys.argv[1:4] == ['chat','message','send']:
     assert os.path.exists(os.path.join(config,'token'))
     assert '--ai-tag=false' in sys.argv
@@ -90,6 +95,36 @@ else: sys.exit(9)
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("credential directory retained: %s", path)
 		}
+	}
+}
+
+func TestDWSProviderQuoteReplyUsesOriginMessage(t *testing.T) {
+	issuer := &fakeIssuer{}
+	redeem := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"identity":{"key":"dws","type":"DWS_UID","uid":"123","clientId":"client"},"credential":{"type":"DWS_AUTH_CODE","authCode":"ephemeral-auth-code"}}`))
+	}))
+	defer redeem.Close()
+	dir := t.TempDir()
+	exe := filepath.Join(dir, "fake-dws")
+	script := `#!/usr/bin/env python3
+import json,os,sys
+if sys.argv[1:3] == ['auth','exchange']:
+    raise SystemExit(0)
+if sys.argv[1:3] != ['chat','+messages-reply']:
+    raise SystemExit(9)
+assert sys.argv[sys.argv.index('--message-id')+1]=='msg-origin'
+assert sys.argv[sys.argv.index('--group')+1]=='cid'
+print(json.dumps({'success':True,'openTaskId':'quoted-task'}))
+`
+	if err := os.WriteFile(exe, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	p := NewDWSProvider(DWSConfig{AgentIdentity: issuer, BaseURL: redeem.URL, ClientSecret: "server-client-secret", CLIPath: exe, HTTPClient: redeem.Client()})
+	in := inputFixture()
+	in.ReplyToOpenMsgID = "msg-origin"
+	result, err := p.Send(context.Background(), in, "stable-key")
+	if err != nil || result.OpenTaskID != "quoted-task" {
+		t.Fatalf("send=%+v err=%v", result, err)
 	}
 }
 

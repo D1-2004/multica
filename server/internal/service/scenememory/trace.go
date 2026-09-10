@@ -3,12 +3,15 @@ package scenememory
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	openai "github.com/openai/openai-go/v3"
 
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -27,12 +30,14 @@ const (
 )
 
 type flushOutcome struct {
-	EventCount     int
-	CaughtUp       bool
-	Replace        bool
-	MemoryRevision int64
-	MemoryText     string
-	CursorAt       time.Time
+	EventCount      int
+	CaughtUp        bool
+	Replace         bool
+	MemoryRevision  int64
+	MemoryText      string
+	CursorAt        time.Time
+	PlannedCursorAt time.Time
+	Committed       bool
 }
 
 func (f *MemoryFlusher) startFlushTrace(ctx context.Context, row db.SceneMemory, started time.Time) *langfuse.Trace {
@@ -91,11 +96,13 @@ func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) 
 		"trigger_job_id":      util.UUIDToString(row.LastTriggerJobID),
 		"trigger_evidence_id": strings.TrimSpace(row.LastTriggerEvidenceID),
 		"model":               flushModel,
+		"memory_code_points":  utf8.RuneCountInString(row.MemoryText),
 	}
 	tags := []string{flushTraceTag}
 	for _, tag := range []string{
 		langfuse.Tag("kind", row.SceneKind),
 		langfuse.Tag("agent", util.UUIDToString(row.AgentID)),
+		langfuse.Tag("agent_name", agentName),
 		langfuse.Tag("workspace", util.UUIDToString(row.WorkspaceID)),
 	} {
 		if tag != "" {
@@ -140,6 +147,7 @@ func finishFlushTrace(t *langfuse.Trace, outcome *flushOutcome, err error) {
 		"event_count":         outcome.EventCount,
 		"caught_up":           outcome.CaughtUp,
 		"replace":             outcome.Replace,
+		"committed":           outcome.Committed,
 		"new_memory_revision": outcome.MemoryRevision,
 		"error_code":          errorCodeOrEmpty(err),
 	})
@@ -148,6 +156,7 @@ func finishFlushTrace(t *langfuse.Trace, outcome *flushOutcome, err error) {
 		"event_count":         outcome.EventCount,
 		"caught_up":           outcome.CaughtUp,
 		"replace":             outcome.Replace,
+		"committed":           outcome.Committed,
 		"new_memory_revision": outcome.MemoryRevision,
 	}
 	if outcome.Replace {
@@ -156,7 +165,14 @@ func finishFlushTrace(t *langfuse.Trace, outcome *flushOutcome, err error) {
 	if !outcome.CursorAt.IsZero() {
 		output["cursor_at"] = outcome.CursorAt.UTC().Format(time.RFC3339)
 	}
+	if !outcome.PlannedCursorAt.IsZero() {
+		output["planned_cursor_at"] = outcome.PlannedCursorAt.UTC().Format(time.RFC3339)
+	}
 	end := langfuse.EndOptions{Output: output, Err: err}
+	var historyErr *dwsclient.HistoryError
+	if errors.As(err, &historyErr) {
+		t.AddMetadata(historyErr.DiagnosticFields())
+	}
 	if err != nil && !TerminalFlushCode(FlushErrorCode(err)) {
 		// Retryable failures (history not visible yet, transient DWS errors)
 		// are expected on the way to a committed flush.
@@ -192,19 +208,68 @@ func traceHistoryRead(t *langfuse.Trace, row db.SceneMemory) *langfuse.Observati
 	})
 }
 
-func endHistoryRead(obs *langfuse.Observation, events []HistoryEvent, err error) {
+func endHistoryRead(obs *langfuse.Observation, row db.SceneMemory, page HistoryPage, err error) {
 	if obs == nil {
 		return
 	}
 	end := langfuse.EndOptions{Err: err}
+	var historyErr *dwsclient.HistoryError
+	if errors.As(err, &historyErr) {
+		end.Metadata = historyErr.DiagnosticFields()
+	}
 	if err == nil {
-		end.Output = map[string]any{"event_count": len(events)}
-		if len(events) > 0 {
-			end.Output.(map[string]any)["oldest"] = events[0].OccurredAt.UTC().Format(time.RFC3339)
-			end.Output.(map[string]any)["newest"] = events[len(events)-1].OccurredAt.UTC().Format(time.RFC3339)
-		}
+		end.Output = historyReadTraceOutput(row, page)
 	}
 	obs.End(end)
+}
+
+func historyReadTraceOutput(row db.SceneMemory, page HistoryPage) map[string]any {
+	out := map[string]any{
+		"event_count": len(page.Events), "raw_count": page.RawCount,
+		"evidence_count": len(page.EvidenceIDs), "has_more": page.HasMore,
+		"pagination_known": page.PaginationKnown,
+	}
+	if !page.NextCursor.IsZero() {
+		out["next_cursor"] = page.NextCursor.UTC().Format(time.RFC3339Nano)
+	}
+	if progress, ok := restoredHistoryProgress(row); ok {
+		out["history_after"] = progress.After.UTC().Format(time.RFC3339Nano)
+	}
+	// DWS may return descending events even for a forward page.
+	var oldest, newest time.Time
+	for _, event := range page.Events {
+		if oldest.IsZero() || event.OccurredAt.Before(oldest) {
+			oldest = event.OccurredAt
+		}
+		if event.OccurredAt.After(newest) {
+			newest = event.OccurredAt
+		}
+	}
+	if !oldest.IsZero() {
+		out["oldest"] = oldest.UTC().Format(time.RFC3339)
+		out["newest"] = newest.UTC().Format(time.RFC3339)
+	}
+	_, pendingEv := pendingFrom(row)
+	for label, evidence := range map[string]string{
+		"claimed": row.LeaseTargetThroughEvidenceID,
+		"trigger": row.LastTriggerEvidenceID,
+		"pending": pendingEv,
+	} {
+		evidence = strings.TrimSpace(evidence)
+		if evidence == "" {
+			continue
+		}
+		seen := false
+		for _, visible := range page.EvidenceIDs {
+			if visible == evidence {
+				seen = true
+				break
+			}
+		}
+		out[label+"_evidence_id"] = evidence
+		out[label+"_evidence_in_page"] = seen
+	}
+	return out
 }
 
 func traceFlushGeneration(t *langfuse.Trace, round int, messages []openai.ChatCompletionMessageParamUnion) *langfuse.Observation {
@@ -267,9 +332,17 @@ func traceFlushCommit(t *langfuse.Trace, round int, callID, arguments string, ac
 		input = json.RawMessage(arguments)
 	}
 	end := langfuse.EndOptions{Output: map[string]any{"accepted": accepted, "reason": reason}}
+	var payload struct {
+		FullText string `json:"full_text"`
+	}
+	if json.Unmarshal([]byte(arguments), &payload) == nil && payload.FullText != "" {
+		end.Output.(map[string]any)["full_text_code_points"] = utf8.RuneCountInString(payload.FullText)
+		end.Output.(map[string]any)["max_code_points"] = MaxMemoryCodePoints
+	}
 	if !accepted {
 		end.Level = langfuse.LevelWarning
 		end.StatusMessage = reason
+		t.AddMetadata(map[string]any{"last_commit_error": reason, "last_rejected_round": round + 1})
 	}
 	t.Event(langfuse.ObservationOptions{
 		Type:     langfuse.TypeTool,

@@ -170,9 +170,6 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 		return 0, fmt.Errorf("list ASB capacity-waiting tasks: %w", err)
 	}
 	sort.SliceStable(waiting, func(i, j int) bool {
-		if waiting[i].Priority != waiting[j].Priority {
-			return waiting[i].Priority > waiting[j].Priority
-		}
 		if !waiting[i].CreatedAt.Time.Equal(waiting[j].CreatedAt.Time) {
 			return waiting[i].CreatedAt.Time.Before(waiting[j].CreatedAt.Time)
 		}
@@ -225,6 +222,9 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 		finishedScopeID := scopeID
 		l.Tasks.launchRuntimeForTaskWithCompletion(task, func() {
 			l.CapacityWait.finish(finishedScopeID)
+			// Continue draining eligible waiters without waiting for the next
+			// recovery tick. Fresh full/429 waits retain their retry deadline.
+			l.CapacityWait.notify()
 		})
 		scheduled++
 		slog.Info("ASB capacity waiter scheduled queued task",

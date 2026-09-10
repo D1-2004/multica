@@ -2437,6 +2437,8 @@ func (l *FCE2BLauncher) resolveSandbox(ctx context.Context, rt db.AgentRuntime, 
 }
 
 func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.AgentRuntime, scope fcE2BTaskScope, scoped bool, template string, runtimeLockConn *pgxpool.Conn, trace chattrace.Trace) (string, bool, error) {
+	var sandboxID string
+	coldStart := true
 	if scoped {
 		// Serialize the lookup-or-create with the other replicas before reading:
 		// a check outside the lock is exactly the race that orphans sandboxes.
@@ -2453,56 +2455,86 @@ func (l *FCE2BLauncher) resolveSandboxOnConnection(ctx context.Context, rt db.Ag
 			Template:  template,
 		})
 		if err == nil {
-			readyStarted := time.Now()
-			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "checking", "sandbox_id", session.SandboxID, "cold_start", false)
-			if err := l.checkSandboxReady(ctx, session.SandboxID); err != nil {
-				chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "failed", "sandbox_id", session.SandboxID, "cold_start", false, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds(), "error", err)
-				_ = l.Queries.MarkFCE2BSandboxSessionStale(ctx, db.MarkFCE2BSandboxSessionStaleParams{
-					RuntimeID: rt.ID,
-					ScopeType: scope.typ,
-					ScopeID:   scope.id,
-					SandboxID: session.SandboxID,
-				})
-				return "", false, fmt.Errorf("FC/E2B warm sandbox %s is unavailable: %w", session.SandboxID, err)
-			}
-			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "succeeded", "sandbox_id", session.SandboxID, "cold_start", false, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds())
-			return session.SandboxID, false, nil
-		}
-		if err != pgx.ErrNoRows {
+			sandboxID, coldStart = session.SandboxID, false
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return "", false, fmt.Errorf("load FC/E2B sandbox session: %w", err)
 		}
 	}
 
-	createStarted := time.Now()
-	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "started", "template", template)
-	sandboxID, err := l.createSandbox(ctx, template)
-	if err != nil {
-		chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "failed", "template", template, "stage_elapsed_ms", time.Since(createStarted).Milliseconds(), "error", err)
-		return "", true, err
-	}
-	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "succeeded", "sandbox_id", sandboxID, "template", template, "stage_elapsed_ms", time.Since(createStarted).Milliseconds())
-	readyStarted := time.Now()
-	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "waiting", "sandbox_id", sandboxID, "cold_start", true)
-	if err := l.waitSandboxReady(ctx, sandboxID); err != nil {
-		chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "failed", "sandbox_id", sandboxID, "cold_start", true, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds(), "error", err)
-		return "", true, err
-	}
-	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "succeeded", "sandbox_id", sandboxID, "cold_start", true, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds())
-	if scoped {
-		_, err = l.Queries.UpsertFCE2BSandboxSession(ctx, db.UpsertFCE2BSandboxSessionParams{
-			WorkspaceID: rt.WorkspaceID,
-			RuntimeID:   rt.ID,
-			ScopeType:   scope.typ,
-			ScopeID:     scope.id,
-			SandboxID:   sandboxID,
-			Template:    template,
-			ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Duration(l.Config.TimeoutSeconds) * time.Second), Valid: true},
-		})
-		if err != nil {
-			return "", true, fmt.Errorf("record FC/E2B sandbox session: %w", err)
+	// One candidate plus one replacement bounds platform failures. Both warm
+	// reuse and cold creation must renew before the task can be submitted.
+	var lastErr error
+	for candidate := 0; candidate < 2; candidate++ {
+		if err := ctx.Err(); err != nil {
+			return "", coldStart, err
 		}
+		if sandboxID == "" {
+			coldStart = true
+			createStarted := time.Now()
+			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "started", "template", template)
+			var err error
+			sandboxID, err = l.createSandbox(ctx, template)
+			if err != nil {
+				chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "failed", "template", template, "stage_elapsed_ms", time.Since(createStarted).Milliseconds(), "error", err)
+				return "", true, err
+			}
+			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_create", "succeeded", "sandbox_id", sandboxID, "template", template, "stage_elapsed_ms", time.Since(createStarted).Milliseconds())
+		}
+		readyStarted := time.Now()
+		chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "checking", "sandbox_id", sandboxID, "cold_start", coldStart)
+		var readyErr error
+		if coldStart {
+			readyErr = l.waitSandboxReady(ctx, sandboxID)
+		} else {
+			readyErr = l.checkSandboxReady(ctx, sandboxID)
+		}
+		var expiresAt time.Time
+		if readyErr == nil {
+			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "succeeded", "sandbox_id", sandboxID, "cold_start", coldStart, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds())
+			expiresAt, readyErr = l.renewSandboxForTask(ctx, sandboxID, trace)
+		} else {
+			chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_ready", "failed", "sandbox_id", sandboxID, "cold_start", coldStart, "stage_elapsed_ms", time.Since(readyStarted).Milliseconds(), "error", readyErr)
+		}
+		if readyErr != nil {
+			// A cancelled launch must not replace a healthy warm sandbox. A new
+			// instance has no task yet and can be released even on cancellation.
+			if err := ctx.Err(); err != nil {
+				if coldStart {
+					l.releaseUnusedSandbox(ctx, sandboxID, trace)
+				}
+				return "", coldStart, err
+			}
+			if scoped && !coldStart {
+				if err := l.Queries.MarkFCE2BSandboxSessionStale(ctx, db.MarkFCE2BSandboxSessionStaleParams{
+					RuntimeID: rt.ID, ScopeType: scope.typ, ScopeID: scope.id, SandboxID: sandboxID,
+				}); err != nil {
+					return "", false, fmt.Errorf("invalidate FC/E2B sandbox before replacement: %w", err)
+				}
+			}
+			l.releaseUnusedSandbox(ctx, sandboxID, trace)
+			lastErr = fmt.Errorf("prepare FC/E2B sandbox %s: %w", sandboxID, readyErr)
+			if candidate == 0 {
+				chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_replace", "started", "sandbox_id", sandboxID, "error", readyErr)
+			}
+			sandboxID = ""
+			continue
+		}
+		if scoped {
+			_, err := l.Queries.UpsertFCE2BSandboxSession(ctx, db.UpsertFCE2BSandboxSessionParams{
+				WorkspaceID: rt.WorkspaceID, RuntimeID: rt.ID, ScopeType: scope.typ, ScopeID: scope.id,
+				SandboxID: sandboxID, Template: template,
+				ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+			})
+			if err != nil {
+				if coldStart {
+					l.releaseUnusedSandbox(ctx, sandboxID, trace)
+				}
+				return "", coldStart, fmt.Errorf("record FC/E2B sandbox session: %w", err)
+			}
+		}
+		return sandboxID, coldStart, nil
 	}
-	return sandboxID, true, nil
+	return "", coldStart, lastErr
 }
 
 func (l *FCE2BLauncher) createSandbox(ctx context.Context, template string) (string, error) {

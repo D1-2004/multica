@@ -436,7 +436,7 @@ func TestTaskFinishedManagedPendingParksThenVerifiedFailureResumes(t *testing.T)
 		t.Fatal(err)
 	}
 	f.pendingReceipt(t)
-	chat := &responseTestCompleter{}
+	chat := &taskFinishedCompletionProbe{reply: "The reviewed schedule is ready for your decision."}
 	f.h.InboundCoordinator = &inboundcoord.Coordinator{LLM: llm.New(llm.Config{APIKey: "test", BaseURL: "http://127.0.0.1:1"}), Chat: chat}
 	if err := f.h.runPersistedTaskFinishedLoop(ctx, f.taskID); !errors.Is(err, errTaskFinishedResponsePending) {
 		t.Fatalf("pending should defer: %v", err)
@@ -479,7 +479,7 @@ func TestTaskFinishedManagedPendingParksThenVerifiedFailureResumes(t *testing.T)
 	if err := testPool.QueryRow(ctx, `SELECT status FROM inbound_coordinator_job WHERE id=$1`, jobID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
-	if status != "completed" || chat.calls != 1 {
+	if status != "completed" || chat.calls != 2 {
 		t.Fatalf("verified failed send lost follow-up: status=%s calls=%d", status, chat.calls)
 	}
 	var text string

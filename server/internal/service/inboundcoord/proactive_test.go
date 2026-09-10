@@ -9,7 +9,7 @@ import (
 
 func TestProactiveUnaddressedReachesSameCoordinator(t *testing.T) {
 	for _, on := range []bool{false, true} {
-		chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("done", toolFinish, `{"action":"reply","text":"在，你说。"}`)}}
+		chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("done", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"在，你说。"}]}`)}}
 		turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", Message: "有数字员工在吗", Addressed: false, ProactiveConversation: on}
 		got := (&Coordinator{Chat: chat}).Decide(context.Background(), turn)
 		if on && (chat.calls != 1 || got.Action != ActionReply) {

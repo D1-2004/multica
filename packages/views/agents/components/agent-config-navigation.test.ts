@@ -31,7 +31,8 @@ describe("agent configuration navigation", () => {
     expect(normalizeDetailView("not-a-view")).toBeNull();
   });
 
-  it("rejects the removed inbound detail view", () => {
-    expect(normalizeDetailView("inbound")).toBeNull();
+  it("restores inbound deep links as a primary section", () => {
+    expect(normalizeDetailView("inbound")).toBe("inbound");
+    expect(sectionForView("inbound")).toBe("inbound");
   });
 });

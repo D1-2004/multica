@@ -110,6 +110,7 @@ func resolveDingTalkTaskPolicy(ctx context.Context, reader dingTalkTaskPolicyRea
 	policy := &protocol.DingTalkMessagePolicy{PlatformManagedLifecycle: managed}
 	if stored.ResponsePolicy != nil {
 		policy.ShowAITag = stored.ResponsePolicy.ShowAITag
+		applyDingTalkOriginReply(policy, stored)
 		return policy, nil
 	}
 	current, err := reader.GetAgentDingTalkResponsePolicy(ctx, task.AgentID)
@@ -117,6 +118,7 @@ func resolveDingTalkTaskPolicy(ctx context.Context, reader dingTalkTaskPolicyRea
 		return nil, fmt.Errorf("load DingTalk response policy for task: %w", err)
 	}
 	policy.ShowAITag = current.DingtalkShowAiTag
+	applyDingTalkOriginReply(policy, stored)
 	return policy, nil
 }
 

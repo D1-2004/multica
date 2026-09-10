@@ -88,3 +88,42 @@ Workspace repos and project resources are not the same thing:
 Do not add a project resource just because `repo checkout` failed. First determine whether the user asked for durable project context or just a task checkout.
 
 More source-backed details: `references/runtimes-and-repos-source-map.md`.
+
+### ASB sandbox capacity
+
+Cold launches read current ASB allocations and use the regional API endpoint
+with the most free slots. New regional allocations and quota increases are
+picked up on the next capacity check. A shared 30-second busy cooldown limits
+quota checks while full; upstream rate limits may extend that delay. An explicit `QUOTA_EXCEEDED`
+response tries other available regions, refreshes quotas once, then remains
+queueable if capacity is still unavailable. Permission errors remain errors.
+Regional routing applies to ASB service domains; custom gateways retain their
+configured endpoint and routing.
+
+The shared five-second create interval is pacing, not evidence that quota is
+full. Cold launches wait only its remaining duration and continue in the same
+startup attempt, without entering the capacity retry queue. Full-capacity and
+upstream rate-limit waits remain shared across replicas. Finishing a recovery
+launch immediately wakes the next eligible capacity waiter.
+
+When an ASB tenant has no free instance slots, Multica can terminate an idle
+task sandbox to make room for a new launch. Chat and issue sandboxes have the
+same reclaim policy, with no minimum idle time or chat retention grace.
+Active tasks and in-flight launches remain fenced by task state and scope locks.
+ASB capacity retries use creation order regardless of chat, issue, autopilot,
+or retry priority. Files stored only in an idle sandbox may be lost on reclaim.
+
+### ASB network allowlist
+
+ASB sandboxes deny outbound connections unless the destination is allowed.
+Required platform services and configured Agent MCP/service hosts are included
+automatically. Workspace owners/admins can add exact domains or individual IPs
+in the Runtime details page. Custom wildcards, URLs and CIDR ranges are rejected.
+Defaults include DWS signed file transfers, document OSS, mail and Stream.
+Regional transfer subdomains under trans.dingtalk.com and down.dingtalk.com
+are managed defaults. Enterprise-specific storage and third-party download
+hosts still require an exact Runtime entry.
+Changes apply at the next task launch: sandboxes using an older policy are
+replaced, so files stored only in that sandbox do not carry over. Active tasks
+finish with their existing policy. Ask the user to configure a missing
+destination; do not try to bypass the sandbox network policy.

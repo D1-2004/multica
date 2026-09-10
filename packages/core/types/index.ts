@@ -6,6 +6,8 @@ export type {
 } from "./fde";
 export type {
   Agent,
+  CoordinatorContract,
+  CoordinatorContractState,
   AgentStatus,
   AgentRuntimeMode,
   AgentVisibility,
@@ -168,6 +170,8 @@ export {
 } from "./attachment-url";
 export type {
   ChatSession,
+  CoordinatorConversation,
+  CoordinatorConversationsPage,
   ChatLastMessage,
   ChatPinnedAgent,
   ChatMessage,

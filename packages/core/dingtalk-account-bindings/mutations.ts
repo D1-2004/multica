@@ -10,7 +10,7 @@ export function useBeginDingTalkAccountBinding(wsId: string) {
       api.beginDingTalkAccountBinding(wsId, agentId, bindingMode),
     onSettled: () =>
       queryClient.invalidateQueries({
-        queryKey: dingtalkAccountBindingKeys.list(wsId),
+        queryKey: dingtalkAccountBindingKeys.all(wsId),
       }),
   });
 }
@@ -22,7 +22,7 @@ export function useDeleteDingTalkAccountBinding(wsId: string) {
       api.deleteDingTalkAccountBinding(wsId, agentId, bindingMode),
     onSuccess: () =>
       queryClient.invalidateQueries({
-        queryKey: dingtalkAccountBindingKeys.list(wsId),
+        queryKey: dingtalkAccountBindingKeys.all(wsId),
       }),
   });
 }
@@ -39,7 +39,16 @@ export function useUpdateDingTalkAccountBindingSurface(wsId: string) {
     }) => api.updateDingTalkAccountBindingSurface(wsId, agentId, surfaceType),
     onSuccess: () =>
       queryClient.invalidateQueries({
-        queryKey: dingtalkAccountBindingKeys.list(wsId),
+        queryKey: dingtalkAccountBindingKeys.all(wsId),
       }),
+  });
+}
+
+export function useReuseDingTalkIdentity(wsId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ agentId, sourceAgentId }: { agentId: string; sourceAgentId: string }) =>
+      api.reuseDingTalkIdentity(wsId, agentId, sourceAgentId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: dingtalkAccountBindingKeys.all(wsId) }),
   });
 }

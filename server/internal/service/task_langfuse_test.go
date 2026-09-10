@@ -104,7 +104,7 @@ func TestTaskLangfuseTraceOptionsUsesTaskTraceAndDeterministicRoot(t *testing.T)
 		t.Fatalf("user/session = %s/%s", opts.UserID, opts.SessionID)
 	}
 	wantTags := "agent_task,runtime-cloud,provider-hermes,channel-web," +
-		"agent-01000000-0000-0000-0000-000000000000,workspace-09000000-0000-0000-0000-000000000000," +
+		"agent-01000000-0000-0000-0000-000000000000,agent_name-FDE教练,workspace-09000000-0000-0000-0000-000000000000," +
 		"user-04000000-0000-0000-0000-000000000000,task-aabb0000-0000-0000-0000-000000000000,issue-02000000-0000-0000-0000-000000000000"
 	if strings.Join(opts.Tags, ",") != wantTags {
 		t.Fatalf("tags = %v", opts.Tags)

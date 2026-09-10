@@ -80,7 +80,7 @@ func buildAgentDispatchIssueCreateParams(
 		AllowDuplicate:            true,
 		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:           privateContext,
-		Metadata:                  overrides.Metadata,
+		Metadata:                  mergeDingTalkOriginMetadata(overrides.Metadata, dispatchOriginOpenMsgID(command)),
 		SystemLabelName:           overrides.SystemLabelName,
 		SystemLabelDescription:    overrides.SystemLabelDescription,
 		SystemLabelColor:          overrides.SystemLabelColor,
@@ -142,6 +142,9 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		payload["external_identity"] = struct {
 			DWS *AgentDispatchDWSIdentity `json:"dws"`
 		}{DWS: c.ExternalIdentity.DWS}
+	}
+	if origin := dispatchOriginOpenMsgID(c); origin != "" {
+		payload[protocol.DingTalkReplyToOpenMsgIDContextKey] = origin
 	}
 	if c.DispatchEndpointID != "" {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
@@ -325,7 +328,7 @@ func (h *Handler) handleAgentDispatchV2(
 		return
 	}
 	if h.InboundCoordinatorWorker != nil &&
-		shouldDeferInboundCoordinator(command, plan) &&
+		shouldEnqueueInboundCoordinatorJob(r.Context(), h, command, plan, dispatchContext.AgentID) &&
 		!dispatchIsAgentSelfMessage(command) &&
 		!dispatchIsAgentSelfEmotion(command) {
 		response, _, enqueueErr := h.enqueueInboundCoordinatorJob(
@@ -707,27 +710,33 @@ func (h *Handler) createAgentDispatchChatV2(
 		session, loadErr := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
 			ID: chatSessionID, WorkspaceID: dispatchContext.WorkspaceID,
 		})
-		if loadErr != nil {
-			if errors.Is(loadErr, pgx.ErrNoRows) {
-				writeError(w, http.StatusNotFound, "chat continuation not found")
-			} else {
-				writeError(w, http.StatusInternalServerError, "failed to load chat continuation")
+		if errors.Is(loadErr, pgx.ErrNoRows) {
+			// Router can replay a Chat ID after the session was deleted.
+			// Fail closed on ownership/archived, but missing is stale state:
+			// start a new unbound session so the inbound is not dropped.
+			slog.Info("chat continuation missing; starting a new unbound session",
+				"event", "agent_dispatch_chat_continuation_missing",
+				"continuation_chat_session_id", uuidToString(chatSessionID),
+			)
+			options.CreateUnboundSession = true
+		} else if loadErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load chat continuation")
+			return
+		} else {
+			if session.AgentID != dispatchContext.AgentID {
+				writeError(w, http.StatusForbidden, "chat continuation belongs to another agent")
+				return
 			}
-			return
+			if session.CreatorID != dispatchContext.UserID {
+				writeError(w, http.StatusForbidden, "chat continuation belongs to another endpoint actor")
+				return
+			}
+			if session.Status != "active" {
+				writeError(w, http.StatusBadRequest, "chat continuation is archived")
+				return
+			}
+			options.ChatSessionOverride = &chatSessionID
 		}
-		if session.AgentID != dispatchContext.AgentID {
-			writeError(w, http.StatusForbidden, "chat continuation belongs to another agent")
-			return
-		}
-		if session.CreatorID != dispatchContext.UserID {
-			writeError(w, http.StatusForbidden, "chat continuation belongs to another endpoint actor")
-			return
-		}
-		if session.Status != "active" {
-			writeError(w, http.StatusBadRequest, "chat continuation is archived")
-			return
-		}
-		options.ChatSessionOverride = &chatSessionID
 	}
 	// A durable coordinator job pins its id as the turn's trace id; give the
 	// channel engine that id as the inbound chat trace so the coordinator
@@ -1245,11 +1254,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				break
 			}
 			processed++
-			itemDecision := decision
-			itemDecision.Purpose = item.Purpose
-			itemDecision.Intent = item.Intent
-			itemDecision.LookInto = item.LookInto
-			itemDecision.Items = []inboundcoord.WindowItem{item}
+			itemDecision := decision.ForWindowItem(item)
 			overrides := agentDispatchIssueCreateOverrides{
 				Title:          inboundcoord.IssueTitle(itemDecision, prompt.DisplayContent),
 				DisplayContent: inboundcoord.IssueDescription(itemDecision, firstNonEmpty(item.Content, prompt.DisplayContent)),
@@ -1618,17 +1623,23 @@ func decideDispatchCoordinator(
 	return coord.Decide(ctx, turn)
 }
 
+// Both prompt utterances and per-item dispatch selection use this projection
+// so an attachment-only proactive message cannot shift the source_ref index.
+func coordinatorWindowMessageText(command DispatchCommand, message DispatchMessage) string {
+	if message.Reaction != nil {
+		return ""
+	}
+	if command.ProactiveConversation && len(message.Attachments) > 0 {
+		return dispatchMessageDisplay(message, dispatchDisplayIdentities{})
+	}
+	return strings.TrimSpace(message.Text)
+}
+
 func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowUtterance {
 	fallback := strings.TrimSpace(command.Event.Data.Sender.DisplayName)
 	out := make([]inboundcoord.WindowUtterance, 0, len(command.Event.Data.Messages))
 	for _, message := range command.Event.Data.Messages {
-		if message.Reaction != nil {
-			continue
-		}
-		text := strings.TrimSpace(message.Text)
-		if command.ProactiveConversation && len(message.Attachments) > 0 {
-			text = dispatchMessageDisplay(message, dispatchDisplayIdentities{})
-		}
+		text := coordinatorWindowMessageText(command, message)
 		if text == "" {
 			continue
 		}

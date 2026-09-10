@@ -274,6 +274,8 @@ WHERE attempt.id = @id
 -- attempt abandoned past the task-launch lease is recovered after a crash.
 -- Return one task per Runtime without a global LIMIT so a busy tenant cannot
 -- hide every other tenant before exact credential scopes are resolved in Go.
+-- Sandbox capacity is FIFO for every task kind; chat and retry priorities do
+-- not grant preferential access to a tenant's instance quota.
 SELECT DISTINCT ON (task.runtime_id) task.*
 FROM agent_task_queue AS task
 JOIN LATERAL (
@@ -311,4 +313,4 @@ WHERE task.status = 'queued'
       task.runtime_launch_lease_expires_at IS NULL
       OR task.runtime_launch_lease_expires_at <= now()
   )
-ORDER BY task.runtime_id, task.priority DESC, task.created_at ASC, task.id ASC;
+ORDER BY task.runtime_id, task.created_at ASC, task.id ASC;

@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"github.com/multica-ai/multica/server/internal/langfuse"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -71,50 +72,58 @@ type Loop string
 const (
 	LoopInbound      Loop = "inbound"
 	LoopTaskFinished Loop = "task_finished"
+	LoopFinishCheck  Loop = "finish_check"
 )
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
-	Loop                  Loop
-	Source                Source
-	Addressed             bool
-	ProactiveConversation bool
-	OutstandingFollowUps  string
-	ChatType              string
-	ConversationTitle     string
-	SenderName            string
-	Message               string
-	AgentID               pgtype.UUID
-	UserID                pgtype.UUID
-	AgentName             string
-	EmployeeAccountName   string
-	Instructions          string
-	Persona               string
-	ReplyTone             string
-	Skills                []SkillSnapshot
-	Busy                  bool
-	HistoryBefore         time.Time
-	MessageTimestamp      time.Time
-	HistoryStatus         string
-	HistoryError          string
-	SkillsStatus          string
-	SceneMemoryStatus     string
-	TaskDeliveryContext   string
-	History               []HistoryLine
-	DingTalkHistory       []HistoryLine
-	IdentityNote          string
-	RelatedTasks          string
-	WorkspaceID           string
-	ConversationID        string
-	PersonID              string
-	DWSUID                string
-	DWSOrgID              string
-	EvidenceID            string
-	Kind                  string
-	TraceID               string
-	IssueDispatchContext  []byte
-	SceneMemory           string
-	SceneMemoryRevision   int64
+	ProactiveConversation      bool
+	OutstandingFollowUps       string
+	Loop                       Loop
+	FinishCheckAction          Action
+	Source                     Source
+	Addressed                  bool
+	ChatType                   string
+	ConversationTitle          string
+	SenderName                 string
+	Message                    string
+	AgentID                    pgtype.UUID
+	UserID                     pgtype.UUID
+	AgentName                  string
+	EmployeeAccountName        string
+	Instructions               string
+	InstructionsUnavailable    bool
+	CoordinatorContract        *coordinatorcontract.Contract
+	CoordinatorContractState   string
+	CoordinatorContractHash    string
+	Persona                    string
+	ReplyTone                  string
+	Skills                     []SkillSnapshot
+	Busy                       bool
+	HistoryBefore              time.Time
+	MessageTimestamp           time.Time
+	HistoryStatus              string
+	HistoryError               string
+	SkillsStatus               string
+	SceneMemoryStatus          string
+	TaskDeliveryContext        string
+	History                    []HistoryLine
+	DingTalkHistory            []HistoryLine
+	CoordinationReads          []CoordinationRead
+	CoordinationReadsTruncated bool
+	IdentityNote               string
+	RelatedTasks               string
+	WorkspaceID                string
+	ConversationID             string
+	PersonID                   string
+	DWSUID                     string
+	DWSOrgID                   string
+	EvidenceID                 string
+	Kind                       string
+	TraceID                    string
+	IssueDispatchContext       []byte
+	SceneMemory                string
+	SceneMemoryRevision        int64
 	// SceneTitle is the conversation title Scene Memory recorded for this
 	// scene (the DM peer's name or the group title). Channel turns often
 	// carry only a sender id, so it is the human-readable conversation name
@@ -146,6 +155,7 @@ type HistoryLine struct {
 
 // Decision is what callers act on.
 type Decision struct {
+	CoordinationActions []CoordinationAction `json:"coordination_actions,omitempty"`
 	Action              Action
 	UserText            string
 	LookInto            string
@@ -220,6 +230,7 @@ type historyReader interface {
 	CountRunningTasks(ctx context.Context, agentID pgtype.UUID) (int64, error)
 	GetAgentInboundCoordinator(ctx context.Context, id pgtype.UUID) (bool, error)
 	GetAgentVoice(ctx context.Context, id pgtype.UUID) (db.GetAgentVoiceRow, error)
+	GetAgentCoordinatorContract(ctx context.Context, id pgtype.UUID) ([]byte, error)
 	GetAgentSceneMemoryFlags(ctx context.Context, id pgtype.UUID) (db.AgentSceneMemoryFlags, error)
 	GetAgentDingTalkIdentity(ctx context.Context, arg db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
 	ListEnabledAgentSkillCardMetadata(ctx context.Context, agentID pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error)
@@ -279,6 +290,7 @@ func (c *Coordinator) SetIssueCommentWriter(writer IssueCommentWriter) {
 // skill snapshots onto the turn. Skill load failures are marked unavailable
 // rather than being treated as an empty installed catalog.
 func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
+	c.fillCoordinatorContract(ctx, turn)
 	if c == nil || c.Queries == nil || turn == nil || !turn.AgentID.Valid {
 		return
 	}
@@ -379,6 +391,18 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	if turn.Source != SourceWeb && !turn.Addressed && !turn.ProactiveConversation && strings.EqualFold(turn.ChatType, "group") {
 		return Decision{Action: ActionSilence}
 	}
+	// The owner switch skips the whole short loop, including Host ACK
+	// silence. Auto-mode sandbox still has to see the original IM.
+	if turn.Loop != LoopTaskFinished && !turn.ProactiveConversation && c.coordinatorOff(ctx, turn) {
+		slog.Info("inbound coordinator skipped; agent switch off",
+			append(coordinatorLogIndex(turn),
+				"event", "inbound_coordinator_decided",
+				"action", string(ActionContinue),
+				"fail_open", false,
+				"switch_off", true,
+			)...)
+		return Decision{Action: ActionContinue}
+	}
 	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && !turn.ProactiveConversation && AllWindowAck(turn) {
 		return hostSilence(turn, "window_ack")
 	}
@@ -390,16 +414,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 	}
 	ensureTurnTraceID(&turn)
 	c.prefetchSceneMemory(ctx, &turn)
-	if turn.Loop != LoopTaskFinished && !turn.ProactiveConversation && c.coordinatorOff(ctx, turn) {
-		slog.Info("inbound coordinator skipped; agent switch off",
-			append(coordinatorLogIndex(turn),
-				"event", "inbound_coordinator_decided",
-				"action", string(ActionContinue),
-				"fail_open", false,
-				"switch_off", true,
-			)...)
-		return Decision{Action: ActionContinue}
-	}
 
 	loopCtx, cancel := context.WithTimeout(ctx, decisionTimeout)
 	defer cancel()
@@ -628,6 +642,8 @@ func (c *Coordinator) TurnFromChatSession(
 	if agent, err := c.Queries.GetAgent(ctx, session.AgentID); err == nil {
 		turn.AgentName = agent.Name
 		turn.Instructions = agent.Instructions
+	} else {
+		turn.InstructionsUnavailable = true
 	}
 	c.FillVoice(ctx, &turn)
 	if n, err := c.Queries.CountRunningTasks(ctx, session.AgentID); err == nil && n > 0 {
@@ -731,158 +747,30 @@ func (c *Coordinator) coordinatorOff(ctx context.Context, turn Turn) bool {
 	return !on
 }
 
-func parseDecision(raw string, turn Turn) Decision {
-	var parsed struct {
-		Action    string `json:"action"`
-		Text      string `json:"text"`
-		LookInto  string `json:"look_into"`
-		Purpose   string `json:"purpose"`
-		Delegator string `json:"delegator"`
-		Intent    string `json:"intent"`
-		Place     string `json:"place"`
-		Reason    string `json:"reason"`
-		Items     []struct {
-			Delegator string `json:"delegator"`
-			Purpose   string `json:"purpose"`
-			Intent    string `json:"intent"`
-			LookInto  string `json:"look_into"`
-			Place     string `json:"place"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &parsed); err != nil {
-		return Decision{Action: ActionContinue}
-	}
-	action := Action(strings.TrimSpace(parsed.Action))
-	text := strings.TrimSpace(parsed.Text)
-	look := strings.TrimSpace(parsed.LookInto)
-	reason := strings.TrimSpace(parsed.Reason)
-	items := parseWindowItems(turn, parsed.Items)
-	if len(items) == 0 && action == ActionIssue {
-		purpose := strings.TrimSpace(parsed.Purpose)
-		if purpose == "" || utf8.RuneCountInString(purpose) < 8 {
-			purpose = firstNonEmpty(purpose, look, strings.TrimSpace(turn.Message), text)
-		}
-		intent := strings.TrimSpace(parsed.Intent)
-		if intent == "" {
-			intent = "other"
-		}
-		item, ok := newWindowItem(turn, firstNonEmpty(parsed.Delegator, turn.SenderName), parsed.Place, purpose, intent, look)
-		if !ok {
-			item, ok = newWindowItem(turn, turn.SenderName, parsed.Place, purpose, intent, look)
-		}
-		if ok {
-			items = []WindowItem{item}
-		}
-	}
-	if len(items) > SceneWindowMaxItems {
-		items = items[:SceneWindowMaxItems]
-	}
-	switch action {
-	case ActionReply:
-		if len(items) > 0 {
-			action = ActionIssue
-			break
-		}
-		if text == "" {
-			return Decision{Action: ActionContinue}
-		}
-		reply := Decision{Action: ActionReply, UserText: text, Reason: reason}
-		if turn.Loop == LoopTaskFinished {
-			return FilterTaskFinishedWrapup(reply)
-		}
-		return reply
-	case ActionIssue:
-		break
-	case ActionSilence:
-		if len(items) > 0 {
-			action = ActionIssue
-			break
-		}
-		if turn.Source == SourceWeb {
-			return Decision{Action: ActionContinue}
-		}
-		return Decision{Action: ActionSilence, Reason: reason}
-	default:
-		if len(items) == 0 {
-			return Decision{Action: ActionContinue}
-		}
-		action = ActionIssue
-	}
-	if action != ActionIssue {
-		return Decision{Action: ActionContinue}
-	}
-	if text == "" {
-		return Decision{Action: ActionContinue}
-	}
-	if isMissingPayloadIssue(text) {
-		return Decision{Action: ActionReply, UserText: text, Reason: firstNonEmpty(reason, "missing send payload")}
-	}
-	if len(items) > 0 {
-		primary := items[0]
-		if look == "" {
-			look = primary.LookInto
-		}
-		return Decision{
-			Action:   ActionIssue,
-			UserText: text,
-			LookInto: look,
-			Purpose:  primary.Purpose,
-			Intent:   primary.Intent,
-			Reason:   reason,
-			Items:    items,
-		}
-	}
-	delegator := firstNonEmpty(parsed.Delegator, turn.SenderName)
-	if delegator != "" && !validWindowDelegator(turn, delegator) {
-		return Decision{Action: ActionContinue, UserText: text, Reason: firstNonEmpty(reason, "invalid window item")}
-	}
-	purpose, _ := assoc.ComposeCoordinatorPurpose(delegator, parsed.Place, parsed.Purpose)
-	intent, _ := assoc.CoordinatorIntent(parsed.Intent)
-	if look == "" {
-		look = purpose
-	}
-	if look == "" {
-		look = clipRunes(strings.TrimSpace(turn.Message), titleBudget)
-	}
-	return Decision{Action: ActionIssue, UserText: text, LookInto: look, Purpose: purpose, Intent: intent, Reason: reason}
-}
-
-func parseWindowItems(turn Turn, raw []struct {
-	Delegator string `json:"delegator"`
-	Purpose   string `json:"purpose"`
-	Intent    string `json:"intent"`
-	LookInto  string `json:"look_into"`
-	Place     string `json:"place"`
-}) []WindowItem {
-	out := make([]WindowItem, 0, SceneWindowMaxItems)
-	for _, row := range raw {
-		item, ok := newWindowItem(turn, row.Delegator, row.Place, row.Purpose, row.Intent, row.LookInto)
-		if !ok {
-			continue
-		}
-		out = append(out, item)
-		if len(out) == SceneWindowMaxItems {
-			break
-		}
-	}
-	return out
-}
-
 func newWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string) (WindowItem, bool) {
+	item, err := composeWindowItem(turn, delegator, place, purpose, intent, lookInto)
+	return item, err == nil
+}
+
+func composeWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string) (WindowItem, error) {
 	delegator = strings.TrimSpace(delegator)
 	if delegator == "" {
 		delegator = strings.TrimSpace(turn.SenderName)
 	}
 	if !validWindowDelegator(turn, delegator) {
-		return WindowItem{}, false
+		return WindowItem{}, hintErr("delegator must copy the utterance sender", "Host binds the speaker from source_refs; do not invent a different delegator.")
 	}
 	composed, err := assoc.ComposeCoordinatorPurpose(delegator, place, purpose)
 	if err != nil {
-		return WindowItem{}, false
+		hint := hintPurposeRepair
+		if strings.Contains(err.Error(), "tooling") {
+			hint = hintPurposeTooling
+		}
+		return WindowItem{}, hintWrap("invalid deliverable purpose", hint, err)
 	}
 	gotIntent, ok := assoc.CoordinatorIntent(intent)
 	if !ok {
-		return WindowItem{}, false
+		return WindowItem{}, hintErr("invalid work intent", hintIntent)
 	}
 	look := strings.TrimSpace(lookInto)
 	if look == "" {
@@ -891,19 +779,7 @@ func newWindowItem(turn Turn, delegator, place, purpose, intent, lookInto string
 	if cid := strings.TrimSpace(turn.ConversationID); cid != "" {
 		look = strings.TrimSpace(look) + "\nscene_cid=" + cid
 	}
-	return WindowItem{Delegator: delegator, Purpose: composed, Intent: gotIntent, LookInto: look}, true
-}
-
-// isMissingPayloadIssue detects an issue ack that is actually asking the user
-// what to send. Opening a sandbox for that wastes a Run and the Issue body
-// tells the daemon to "process directly".
-func isMissingPayloadIssue(text string) bool {
-	for _, needle := range []string{"要说什么", "请问要说", "发什么内容", "说什么？", "发什么？"} {
-		if strings.Contains(text, needle) {
-			return true
-		}
-	}
-	return false
+	return WindowItem{Delegator: delegator, Purpose: composed, Intent: gotIntent, LookInto: look}, nil
 }
 
 // IssueTitle is the Issue row title for a sandbox handoff. It is what humans
@@ -968,7 +844,11 @@ func IssueDescription(decision Decision, message string) string {
 	var b strings.Builder
 	if decision.PlanVersion == WindowPlanVersion {
 		b.WriteString("本次子任务只执行这一个交付物：")
-		b.WriteString(decision.Purpose)
+		deliverable := strings.TrimSpace(decision.LookInto)
+		if deliverable == "" {
+			deliverable = decision.Purpose
+		}
+		b.WriteString(deliverable)
 		b.WriteString("\n下方原始发言用于溯源与理解；其中不属于本交付物的其它工作由各自任务处理，不要重复执行。\n\n")
 	}
 	b.WriteString(strings.TrimSpace(message))

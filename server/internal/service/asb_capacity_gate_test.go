@@ -68,7 +68,7 @@ func TestASBCapacityGateSerializesReplicasAndSharesFullResult(t *testing.T) {
 			if i%2 == 0 {
 				client = &nodeB
 			}
-			delay, err := client.CapacityGate.admit(ctx, client)
+			delay, _, err := client.CapacityGate.admit(ctx, client)
 			if err != nil {
 				t.Error(err)
 				return
@@ -85,8 +85,8 @@ func TestASBCapacityGateSerializesReplicasAndSharesFullResult(t *testing.T) {
 	if _, err := nodeA.CapacityGate.record(ctx, nodeA, ErrASBCapacityUnavailable); err != nil {
 		t.Fatal(err)
 	}
-	delay, err := nodeB.CapacityGate.admit(ctx, &nodeB)
-	if err != nil || delay < 29*time.Second {
+	delay, pacing, err := nodeB.CapacityGate.admit(ctx, &nodeB)
+	if err != nil || pacing || delay < 29*time.Second {
 		t.Fatalf("peer did not reuse full result: %s, %v", delay, err)
 	}
 	if delay, err := nodeB.CapacityGate.throttleDelay(ctx, &nodeB); err != nil || delay != 0 {
@@ -94,13 +94,13 @@ func TestASBCapacityGateSerializesReplicasAndSharesFullResult(t *testing.T) {
 	}
 	before := rdb.PTTL(ctx, nodeA.capacityGateKeys()[0]).Val()
 	for range 10 {
-		_, _ = nodeB.CapacityGate.admit(ctx, &nodeB)
+		_, _, _ = nodeB.CapacityGate.admit(ctx, &nodeB)
 	}
 	if after := rdb.PTTL(ctx, nodeA.capacityGateKeys()[0]).Val(); after > before {
 		t.Fatal("cache hits extended the cooldown; queued tasks could starve forever")
 	}
 	other := newASBCapacityGateTestTenant(t, rdb)
-	if delay, err := other.CapacityGate.admit(ctx, other); err != nil || delay != 0 {
+	if delay, _, err := other.CapacityGate.admit(ctx, other); err != nil || delay != 0 {
 		t.Fatalf("another tenant was blocked: %s, %v", delay, err)
 	}
 }

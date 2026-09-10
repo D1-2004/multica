@@ -24,10 +24,22 @@ func (p *DingTalkResponsePolicy) Managed() bool {
 	return p.Valid() && p.Mode == DingTalkResponseModeCoordinator
 }
 
+const (
+	// DingTalkOriginOpenMsgIDMetadataKey is frozen on Issue create and never
+	// overwritten by later comments. Host outbound uses it when the current
+	// task did not stamp a more specific inbound message.
+	DingTalkOriginOpenMsgIDMetadataKey = "dingtalk.origin_open_msg_id"
+	// DingTalkReplyToOpenMsgIDContextKey is the inbound openMsgId this task
+	// should quote. IndependentIssueTaskContext preserves unknown keys.
+	DingTalkReplyToOpenMsgIDContextKey = "dingtalk_reply_to_open_msg_id"
+)
+
 // DingTalkMessagePolicy is trusted per-task state, not agent custom_env.
 type DingTalkMessagePolicy struct {
-	ShowAITag                bool `json:"show_ai_tag"`
-	PlatformManagedLifecycle bool `json:"platform_managed_lifecycle"`
+	ShowAITag                bool   `json:"show_ai_tag"`
+	PlatformManagedLifecycle bool   `json:"platform_managed_lifecycle"`
+	ReplyToOpenMsgID         string `json:"reply_to_open_msg_id,omitempty"`
+	ReplyConversationID      string `json:"reply_conversation_id,omitempty"`
 }
 
 // DingTalkResponseReceipt reports delivery separately from task execution.

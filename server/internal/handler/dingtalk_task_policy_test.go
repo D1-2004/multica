@@ -45,6 +45,8 @@ func dingTalkTaskPolicyContext(t *testing.T, managed bool) []byte {
 		Domain: "channel", Type: "message.created",
 		Outbound:         DispatchOutbound{Mode: protocol.DispatchOutboundModeDWS},
 		ExternalIdentity: &persistedDispatchExternalIdentity{DWS: &AgentDispatchDWSIdentity{UID: "123", OrgID: "456"}},
+		ReplyToOpenMsgID: "msg-origin",
+		EventData:        DispatchEventData{Conversation: DispatchConversation{OpenConversationID: "cid-origin"}},
 	}
 	if managed {
 		context.ResponsePolicy = &protocol.DingTalkResponsePolicy{
@@ -92,6 +94,9 @@ func TestResolveDingTalkTaskPolicyFrozenSnapshot(t *testing.T) {
 	}
 	if policy == nil || !policy.ShowAITag || !policy.PlatformManagedLifecycle {
 		t.Fatalf("frozen policy was not preserved: %+v", policy)
+	}
+	if policy.ReplyToOpenMsgID != "msg-origin" || policy.ReplyConversationID != "cid-origin" {
+		t.Fatalf("origin quote was not copied onto the claim snapshot: %+v", policy)
 	}
 	if reader.policyReads != 0 || reader.identityReads != 0 {
 		t.Fatal("frozen identity and policy must not drift with later agent settings")

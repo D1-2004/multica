@@ -439,6 +439,9 @@ func TestShouldDeferInboundCoordinatorForRouterMessageCallbacks(t *testing.T) {
 	if !shouldDeferInboundCoordinator(base, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}) {
 		t.Fatal("chat materialization must use the same durable coordinator queue")
 	}
+	if !shouldEnqueueInboundCoordinatorJob(context.Background(), nil, base, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}, pgtype.UUID{}) {
+		t.Fatal("missing agent lookup must keep the durable coordinator queue")
+	}
 }
 
 func TestDispatchRuntimeContextCarriesIdentityExpiryWithoutDuplicatingToken(t *testing.T) {

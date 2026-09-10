@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/agentsource"
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"github.com/multica-ai/multica/server/internal/githubapp"
 	agentpkg "github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -47,17 +48,18 @@ type GitHubAgentPreviewRequest struct {
 }
 
 type GitHubAgentPreviewResponse struct {
-	InstallationID      string                    `json:"installation_id"`
-	Repository          string                    `json:"repository"`
-	Ref                 string                    `json:"ref"`
-	ResolvedSHA         string                    `json:"resolved_sha"`
-	Name                string                    `json:"name"`
-	Description         string                    `json:"description"`
-	Instructions        string                    `json:"instructions"`
-	Skills              []GitHubAgentSkillPreview `json:"skills"`
-	CompatibleProviders []string                  `json:"compatible_providers"`
-	Warnings            []string                  `json:"warnings"`
-	Blockers            []string                  `json:"blockers"`
+	CoordinatorContract *coordinatorcontract.Contract `json:"coordinator_contract"`
+	InstallationID      string                        `json:"installation_id"`
+	Repository          string                        `json:"repository"`
+	Ref                 string                        `json:"ref"`
+	ResolvedSHA         string                        `json:"resolved_sha"`
+	Name                string                        `json:"name"`
+	Description         string                        `json:"description"`
+	Instructions        string                        `json:"instructions"`
+	Skills              []GitHubAgentSkillPreview     `json:"skills"`
+	CompatibleProviders []string                      `json:"compatible_providers"`
+	Warnings            []string                      `json:"warnings"`
+	Blockers            []string                      `json:"blockers"`
 }
 
 type GitHubAgentSkillPreview struct {
@@ -174,6 +176,7 @@ func (h *Handler) PreviewGitHubAgent(w http.ResponseWriter, r *http.Request) {
 		Name:                resolved.bundle.Manifest.Metadata.Name,
 		Description:         resolved.bundle.Manifest.Metadata.Description,
 		Instructions:        resolved.bundle.Instructions,
+		CoordinatorContract: resolved.bundle.CoordinatorContract,
 		Skills:              sourceSkillPreviews(resolved.bundle.Skills),
 		CompatibleProviders: resolved.bundle.Manifest.Spec.Compatibility.Providers,
 		Warnings:            resolved.bundle.Warnings,
@@ -322,12 +325,13 @@ func (h *Handler) CreateGitHubAgent(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	var source db.AgentSource
 	created, err := materializeAgentBundleInTx(r.Context(), qtx, db.CreateAgentParams{
-		WorkspaceID:  wsUUID,
-		Name:         agentName,
-		Description:  agentDescription,
-		Instructions: resolved.bundle.Instructions,
-		AvatarUrl:    ptrToText(request.AvatarURL),
-		RuntimeMode:  runtime.RuntimeMode, RuntimeConfig: runtimeConfig, RuntimeID: runtime.ID,
+		WorkspaceID:         wsUUID,
+		Name:                agentName,
+		Description:         agentDescription,
+		Instructions:        resolved.bundle.Instructions,
+		CoordinatorContract: coordinatorcontract.Marshal(resolved.bundle.CoordinatorContract),
+		AvatarUrl:           ptrToText(request.AvatarURL),
+		RuntimeMode:         runtime.RuntimeMode, RuntimeConfig: runtimeConfig, RuntimeID: runtime.ID,
 		Visibility: permission.legacyVisibility(), PermissionMode: permission.mode,
 		MaxConcurrentTasks: request.MaxConcurrentTasks, OwnerID: ownerUUID,
 		CustomEnv: customEnv, CustomArgs: customArgs, McpConfig: mcpConfig,
@@ -588,9 +592,15 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 // description after creation. Keep those profile fields unset so a manifest
 // update cannot silently rename an existing Agent.
 func gitAgentSourceSnapshotUpdate(agentID pgtype.UUID, bundle agentsource.Bundle) db.UpdateAgentParams {
+	contract := coordinatorcontract.Marshal(bundle.CoordinatorContract)
+	if contract == nil {
+		// The source owns this snapshot; removing its contract must clear old state.
+		contract = []byte("null")
+	}
 	return db.UpdateAgentParams{
-		ID:           agentID,
-		Instructions: pgtype.Text{String: bundle.Instructions, Valid: true},
+		CoordinatorContract: contract,
+		ID:                  agentID,
+		Instructions:        pgtype.Text{String: bundle.Instructions, Valid: true},
 	}
 }
 
@@ -814,7 +824,8 @@ func writeGitHubSourceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "GitHub installation cannot access this repository")
 	case errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests:
 		writeError(w, http.StatusTooManyRequests, "GitHub rate limit exceeded")
-	case strings.Contains(err.Error(), "manifest") ||
+	case strings.Contains(err.Error(), "coordinator_contract") ||
+		strings.Contains(err.Error(), "manifest") ||
 		strings.Contains(err.Error(), "dingtalk-agent.json") ||
 		strings.Contains(err.Error(), "project protocol") ||
 		strings.Contains(err.Error(), "skill") ||

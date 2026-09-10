@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/agentsource"
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -187,6 +188,7 @@ func (s *Service) Snapshot(ctx context.Context) (db.ManagedAgentSourceSnapshot, 
 	}
 	var bundle agentsource.Bundle
 	if err := json.Unmarshal(row.Bundle, &bundle); err != nil ||
+		agentsource.ValidateBundle(bundle) != nil ||
 		bundle.Hash == "" ||
 		bundle.Hash != row.BundleHash.String ||
 		!isManagedDTAProjectBundle(bundle) {
@@ -271,7 +273,8 @@ func (s *Service) Provision(ctx context.Context, workspaceID, ownerID, runtimeID
 	agent, err := qtx.CreateAgent(ctx, db.CreateAgentParams{
 		WorkspaceID: workspaceID, Name: bundle.Manifest.Metadata.Name,
 		Description: bundle.Manifest.Metadata.Description, Instructions: bundle.Instructions,
-		RuntimeMode: runtimeMode, RuntimeConfig: []byte("{}"), RuntimeID: runtimeID,
+		CoordinatorContract: coordinatorcontract.Marshal(bundle.CoordinatorContract),
+		RuntimeMode:         runtimeMode, RuntimeConfig: []byte("{}"), RuntimeID: runtimeID,
 		Visibility: "private", PermissionMode: "private", MaxConcurrentTasks: 6,
 		OwnerID: ownerID, CustomEnv: []byte("{}"), CustomArgs: []byte("[]"),
 		Model: pgtype.Text{String: model, Valid: strings.TrimSpace(model) != ""},
@@ -402,7 +405,14 @@ func (s *Service) rolloutOne(ctx context.Context, source db.AgentSource, sha str
 	if err != nil {
 		return err
 	}
-	if _, err := qtx.UpdateAgent(ctx, db.UpdateAgentParams{ID: agent.ID, Instructions: pgtype.Text{String: bundle.Instructions, Valid: true}}); err != nil {
+	contract := coordinatorcontract.Marshal(bundle.CoordinatorContract)
+	if contract == nil {
+		contract = []byte("null")
+	}
+	if _, err := qtx.UpdateAgent(ctx, db.UpdateAgentParams{
+		ID: agent.ID, Instructions: pgtype.Text{String: bundle.Instructions, Valid: true},
+		CoordinatorContract: contract,
+	}); err != nil {
 		return err
 	}
 	mappings, err := qtx.ListAgentSourceSkills(ctx, locked.ID)

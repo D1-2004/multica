@@ -103,6 +103,11 @@ func TestASBCapacityWaiterSchedulesOneTaskPerTenant(t *testing.T) {
 
 	first := seedWait()
 	second := seedWait()
+	if _, err := pool.Exec(ctx, `
+		UPDATE agent_task_queue SET priority = 4 WHERE id = $1
+	`, second.ID); err != nil {
+		t.Fatal(err)
+	}
 	box, err := secretbox.New(bytes.Repeat([]byte{0x71}, secretbox.KeySize))
 	if err != nil {
 		t.Fatal(err)
@@ -145,8 +150,8 @@ func TestASBCapacityWaiterSchedulesOneTaskPerTenant(t *testing.T) {
 	}
 	select {
 	case call := <-launcherCalls:
-		if call.task.ID != first.ID && call.task.ID != second.ID {
-			t.Fatalf("scheduled unexpected task %s", util.UUIDToString(call.task.ID))
+		if call.task.ID != first.ID {
+			t.Fatalf("scheduled task %s, want oldest task despite another Runtime's higher priority", util.UUIDToString(call.task.ID))
 		}
 	case <-time.After(time.Second):
 		t.Fatal("capacity waiter did not invoke Runtime launcher")
@@ -164,4 +169,56 @@ func TestASBCapacityWaiterSchedulesOneTaskPerTenant(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 	close(releaseLaunch)
+	select {
+	case <-waiter.CapacityWait.wakeups:
+	case <-time.After(time.Second):
+		t.Fatal("completed capacity launch did not wake the next waiting task")
+	}
+}
+
+func TestASBCapacityWaiterSelectsOldestTaskWithinRuntime(t *testing.T) {
+	ctx := context.Background()
+	pool := newTaskClaimRacePool(t)
+	queries := db.New(pool)
+	tasks := NewTaskService(queries, pool, nil, events.New())
+	var first db.AgentTaskQueue
+	for index := 0; index < 2; index++ {
+		taskID, _, _ := dispatchedCommentTaskFixture(t, ctx, pool)
+		task, err := queries.GetAgentTask(ctx, util.MustParseUUID(taskID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			first = task
+		}
+		if _, err := pool.Exec(ctx, `
+			UPDATE agent_task_queue SET status = 'queued', dispatched_at = NULL,
+			    runtime_id = $2, priority = $3,
+			    created_at = now() - make_interval(secs => $4::double precision)
+			WHERE id = $1
+		`, task.ID, first.RuntimeID, index*4, 120-index*60); err != nil {
+			t.Fatal(err)
+		}
+		task.RuntimeID = first.RuntimeID
+		attempt, err := tasks.BeginRuntimeStartAttempt(ctx, task, SandboxBackendASB, RuntimeStartProtocolHTTPJSONV1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if waiting, err := tasks.MarkRuntimeStartCapacityWaiting(ctx, attempt); err != nil || !waiting {
+			t.Fatalf("mark capacity wait: waiting=%v err=%v", waiting, err)
+		}
+	}
+	waiting, err := queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{RetrySeconds: 0, StaleSeconds: 3600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range waiting {
+		if task.RuntimeID == first.RuntimeID {
+			if task.ID != first.ID {
+				t.Fatalf("selected task %s instead of the older low-priority task", util.UUIDToString(task.ID))
+			}
+			return
+		}
+	}
+	t.Fatal("Runtime has no capacity waiter")
 }

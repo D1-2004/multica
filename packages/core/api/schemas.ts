@@ -2611,10 +2611,23 @@ export const AgentTemplateSummaryListSchema = z.union([
 
 export const EMPTY_AGENT_TEMPLATE_SUMMARY_LIST: AgentTemplateSummary[] = [];
 
+export const CoordinatorContractSchema = z
+  .object({
+    version: z.literal(1),
+    scope: z.string().refine((value) => value.trim().length > 0),
+    must_delegate: z.array(z.string().refine((value) => value.trim().length > 0)),
+    constraints: z.array(z.string().refine((value) => value.trim().length > 0)),
+    clarify_when: z.array(z.string().refine((value) => value.trim().length > 0)),
+    source_instructions_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  })
+  .strict()
+  .refine((value) => [...JSON.stringify(value)].length <= 1600);
+
 export const AgentTemplateSchema = AgentTemplateSummarySchemaBase.extend({
   // Detail-only field. Default "" so a malformed detail still renders the
   // header + skill list; the user just sees an empty Instructions block.
   instructions: z.string().default(""),
+  coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
   system_key: z.string().optional(),
   system_instructions: z.string().optional(),
 }).loose();
@@ -2747,6 +2760,8 @@ export const AgentResponseSchema = z
   .object({
     id: z.string(),
     event_trigger_enabled: z.boolean().catch(false).default(false),
+    coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
+    coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
     dingtalk_response_enabled: z.boolean().catch(false).default(false),
     dingtalk_show_ai_tag: z.boolean().catch(false).default(false),
     dingtalk_response_policy_revision: z
@@ -2922,6 +2937,7 @@ export const GitHubAgentPreviewSchema = z
     name: z.string(),
     description: z.string().default(""),
     instructions: z.string().default(""),
+    coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     skills: z
       .array(GitHubAgentSkillPreviewSchema)
       .nullish()
@@ -3016,6 +3032,7 @@ export const StoredAgentDraftSchema = z
     name: z.string().catch(""),
     description: z.string().catch(""),
     instructions: z.string().catch(""),
+    coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     avatar_url: z.string().nullable().catch(null),
     model: z.string().catch(""),
     thinking_level: z.string().catch(""),
@@ -4513,3 +4530,40 @@ export const DshPluginFileContentSchema = z
       content: row.content ?? "",
     }),
   );
+
+export const CoordinatorConversationsPageSchema = z
+  .object({
+    conversations: z
+      .array(
+        z
+          .object({
+            id: z.string(),
+            session_id: z.string(),
+            title: z.string().catch(""),
+            conversation_type: z.string().catch(""),
+            source: z.string().catch(""),
+            session_count: z.number().int().nonnegative().catch(0),
+            updated_at: z.string().catch(""),
+          })
+          .loose(),
+      )
+      .default([]),
+    has_more: z.boolean().catch(false),
+    next_offset: z.number().int().nonnegative().catch(0),
+  })
+  .loose();
+
+// No account UID, organization ID or authorization material leaves the server.
+export const ReusableDingTalkIdentitiesSchema = z.object({
+  identities: z.array(z.object({
+    source_agent_id: z.string().uuid(),
+    source_agent_name: z.string(),
+    account_display_name: z.string(),
+    organization_name: z.string(),
+  }).transform((item) => ({
+    sourceAgentId: item.source_agent_id,
+    sourceAgentName: item.source_agent_name,
+    accountDisplayName: item.account_display_name,
+    organizationName: item.organization_name,
+  }))),
+}).transform((response) => response.identities);

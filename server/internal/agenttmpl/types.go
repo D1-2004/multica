@@ -10,6 +10,8 @@
 // in-memory map for a DB-backed Registry without touching callers.
 package agenttmpl
 
+import "github.com/multica-ai/multica/server/internal/coordinatorcontract"
+
 // Template is the structured representation of an `agent template` JSON file
 // loaded from server/internal/agenttmpl/templates/<slug>.json.
 type Template struct {
@@ -45,6 +47,10 @@ type Template struct {
 	// `agent.instructions` column. Keep it plain markdown — the runtime
 	// receives it as-is.
 	Instructions string `json:"instructions"`
+
+	// CoordinatorContract is an explicitly authored routing contract, bound to
+	// Instructions when the template is loaded. It never replaces the executor SOP.
+	CoordinatorContract *coordinatorcontract.Contract `json:"coordinator_contract,omitempty"`
 
 	// Skills lists the skill references that should be materialised into the
 	// workspace when the template is picked. Order is preserved in responses

@@ -13,7 +13,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func TestShouldEnqueueInboundCoordinatorJobHonorsOwnerSwitch(t *testing.T) {
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "coord-switch-defer", nil)
+	command := DispatchCommand{
+		Event:              DispatchEvent{Domain: "channel", Type: "message.created"},
+		CompletionCallback: &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/x/execution-result"},
+	}
+	plan := agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}
+	id := parseUUID(agentID)
+	if err := testHandler.Queries.UpdateAgentInboundCoordinator(ctx, id, false); err != nil {
+		t.Fatal(err)
+	}
+	if shouldEnqueueInboundCoordinatorJob(ctx, testHandler, command, plan, id) {
+		t.Fatal("inbound coordinator off must send auto IM to the sandbox instead of the coordinator queue")
+	}
+	if err := testHandler.Queries.UpdateAgentInboundCoordinator(ctx, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if !shouldEnqueueInboundCoordinatorJob(ctx, testHandler, command, plan, id) {
+		t.Fatal("inbound coordinator on must still use the durable coordinator queue")
+	}
+}
 
 func TestCoordinatorCollectDeadline(t *testing.T) {
 	start := time.Now().UTC()
