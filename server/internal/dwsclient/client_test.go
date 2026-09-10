@@ -148,3 +148,37 @@ func canceledCtx(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
+
+func TestExchangePinsIsolatedMCPEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dws")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\n[ \"$(cat \"$DWS_CONFIG_DIR/mcp_url\")\" = 'https://pre-mcp.dingtalk.com' ]\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cli := CLI{Path: bin, ClientSecret: "test-secret", MCPBaseURL: "https://pre-mcp.dingtalk.com/"}
+	if err := cli.Exchange(context.Background(), dir, Credential{UID: "123", ClientID: "test", AuthCode: "test"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "mcp_url"))
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("unsafe endpoint config: %v %v", info, err)
+	}
+	cli.MCPBaseURL = "https://user:secret@example.com"
+	if err := cli.Exchange(context.Background(), dir, Credential{}); err == nil {
+		t.Fatal("credential-bearing endpoint accepted")
+	}
+}
+
+func TestListExtractsStructuredErrorOnStdout(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dws")
+	script := "#!/bin/sh\necho '{\"error\":{\"category\":\"api\",\"reason\":\"business_error\",\"server_error_code\":1001,\"trace_id\":\"trace-safe\",\"message\":\"token=do-not-leak\"}}'\nexit 1\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (CLI{Path: bin}).List(context.Background(), dir, ListRequest{ConversationID: "cid-test"})
+	var detail *HistoryError
+	if !errors.As(err, &detail) || detail.DiagnosticFields()["server_error_code"] != "1001" || strings.Contains(err.Error(), "do-not-leak") {
+		t.Fatalf("unsafe or missing structured diagnostic: %v", err)
+	}
+}

@@ -59,3 +59,23 @@ func TestProactiveAddressFlagDescribesOnlyMentionMetadata(t *testing.T) {
 		t.Fatal("ordinary inbound addressing contract changed")
 	}
 }
+
+func TestIgnoreNeedsDialogueEvidenceWhenRecipientIsUnresolved(t *testing.T) {
+	for _, tc := range []struct{ name, status, basis, quote, want string }{
+		{"unread pronoun followup", "not_loaded", "unknown", "", "revise"},
+		{"other without evidence", "not_loaded", "other", "", "revise"},
+		{"explicit different respondent", "not_loaded", "other", "Riley", "allow"},
+		{"loaded history evaluated", "loaded", "unknown", "", "allow"},
+		{"empty history evaluated", "empty", "unknown", "", "allow"},
+		{"unavailable must not reread forever", "unavailable", "unknown", "", "allow"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, HistoryStatus: tc.status, ConversationID: "cid-test", Message: "Riley, can you check this?"}
+			result := finishCheckResult{Verdict: "allow", ParticipationChecks: []finishParticipationCheck{{SourceRefs: []string{"u1"}, Basis: tc.basis, RecipientQuote: tc.quote, Disposition: "ignore"}}}
+			decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "ignore", SourceRefs: []string{"u1"}}}}
+			if err := validateFinishParticipationChecks(&result, turn, decision); err != nil || result.Verdict != tc.want {
+				t.Fatalf("verdict=%s err=%v", result.Verdict, err)
+			}
+		})
+	}
+}

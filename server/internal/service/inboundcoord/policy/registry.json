@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-10.5",
-  "assembly_version": "16",
+  "policy_version": "2026-09-10.6",
+  "assembly_version": "17",
   "modules": [
     {
       "id": "core",
@@ -314,7 +314,7 @@
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
         "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
-        "dialogue_history_guidance": "2026-09-10.5 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior."
+        "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -378,7 +378,7 @@
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
-        "dialogue_history_guidance": "2026-09-10.5 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior."
+        "dialogue_history_guidance": "2026-09-10.6 integrates on-demand history and elapsed-time guidance from candidate .3; five new contrast contracts not_run; local tests do not certify real-model behavior."
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",

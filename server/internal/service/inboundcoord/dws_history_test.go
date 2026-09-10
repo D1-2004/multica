@@ -495,3 +495,18 @@ func TestHTTPDWSCredentialRedeemerValidatesResponse(t *testing.T) {
 		t.Fatalf("credential=%+v err=%v", credential, err)
 	}
 }
+
+func TestDWSContractDisplayTimeUsesShanghaiAndEnforcesCutoff(t *testing.T) {
+	cutoff := time.Date(2026, 9, 10, 8, 37, 34, 0, time.UTC)
+	raw := []byte(`{"contractVersion":"im.message-list.v1","success":true,"messages":[
+ {"content":"future","openMessageId":"future","createTime":"2026-09-10 16:38:00"},
+ {"content":"在的，有什么可以帮你的吗？","openMessageId":"bot","sender":"employee","createTime":"2026-09-10 16:37:11"},
+ {"content":"群里有 AI 在吗","openMessageId":"user","sender":"user","createTime":"2026-09-10 16:36:55"}]}`)
+	got, err := parseDWSHistory(raw, Turn{HistoryBefore: cutoff})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("history=%#v err=%v", got, err)
+	}
+	if got[1].EvidenceID != "bot" || cutoff.Sub(got[1].Timestamp) != 23*time.Second {
+		t.Fatalf("lost real dialogue interval: %#v", got)
+	}
+}

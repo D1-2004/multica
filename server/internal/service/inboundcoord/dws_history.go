@@ -56,6 +56,7 @@ type DWSHistoryConfig struct {
 	BaseURLProvider func() string
 	ClientSecret    string
 	CLIPath         string
+	MCPBaseURL      string
 	HTTPClient      *http.Client
 }
 
@@ -87,6 +88,7 @@ func NewDWSHistoryLoader(cfg DWSHistoryConfig) DingTalkHistoryLoader {
 		},
 		cli: &osDWSHistoryCLI{
 			path:         cliPath,
+			mcpBaseURL:   strings.TrimSpace(cfg.MCPBaseURL),
 			clientSecret: strings.TrimSpace(cfg.ClientSecret),
 		},
 		mkdir:  os.MkdirTemp,
@@ -174,10 +176,11 @@ func (r *httpDWSCredentialRedeemer) Redeem(ctx context.Context, contextToken str
 type osDWSHistoryCLI struct {
 	path         string
 	clientSecret string
+	mcpBaseURL   string
 }
 
 func (c *osDWSHistoryCLI) Exchange(ctx context.Context, configDir string, credential dwsCredential) error {
-	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret}.Exchange(ctx, configDir, dwsclient.Credential{
+	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret, MCPBaseURL: c.mcpBaseURL}.Exchange(ctx, configDir, dwsclient.Credential{
 		UID: credential.UID, ClientID: credential.ClientID, AuthCode: credential.AuthCode,
 	})
 }
@@ -186,7 +189,7 @@ func (c *osDWSHistoryCLI) ListMessages(ctx context.Context, configDir, conversat
 	if before.IsZero() {
 		return nil, errors.New("DWS history requires a fixed window cutoff")
 	}
-	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret}.List(ctx, configDir, dwsclient.ListRequest{
+	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret, MCPBaseURL: c.mcpBaseURL}.List(ctx, configDir, dwsclient.ListRequest{
 		ConversationID: conversationID,
 		Before:         before,
 		Direction:      "older",
@@ -211,11 +214,12 @@ type dwsHistoryMessage struct {
 }
 
 type dwsMessageListResponse struct {
-	Success   bool            `json:"success"`
-	ErrorCode string          `json:"errorCode"`
-	ErrorMsg  string          `json:"errorMsg"`
-	Messages  json.RawMessage `json:"messages"`
-	Result    json.RawMessage `json:"result"`
+	ContractVersion string          `json:"contractVersion"`
+	Success         bool            `json:"success"`
+	ErrorCode       string          `json:"errorCode"`
+	ErrorMsg        string          `json:"errorMsg"`
+	Messages        json.RawMessage `json:"messages"`
+	Result          json.RawMessage `json:"result"`
 }
 
 func parseDWSHistory(raw []byte, turn Turn) ([]HistoryLine, error) {
@@ -260,6 +264,11 @@ func parseDWSHistory(raw []byte, turn Turn) ([]HistoryLine, error) {
 			continue
 		}
 		timestamp, timestampRaw := parseHistoryTimestamp(message.CreateTime)
+		// The DWS message-list contract formats display timestamps in Shanghai,
+		// independently of the process timezone. Legacy untyped values stay unknown.
+		if timestamp.IsZero() && payload.ContractVersion == "im.message-list.v1" {
+			timestamp, _ = time.ParseInLocation("2006-01-02 15:04:05", timestampRaw, time.FixedZone("Asia/Shanghai", 8*60*60))
+		}
 		if !turn.HistoryBefore.IsZero() && !timestamp.IsZero() && !timestamp.Before(turn.HistoryBefore) {
 			continue
 		}
