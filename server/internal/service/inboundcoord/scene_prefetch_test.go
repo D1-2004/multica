@@ -141,3 +141,19 @@ func TestScenePrefetchSkipsNoSceneAndCompletion(t *testing.T) {
 		}
 	}
 }
+
+func TestObservedGroupAssessesParticipationBeforeReadingOldWork(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, ChatType: "group", ProactiveConversation: true, ConversationID: "group", Message: "同事在吗"}
+	if shouldPrefetchSceneRecall(turn) {
+		t.Fatal("observation must not preload unrelated old work")
+	}
+	turn.Addressed = true
+	if !shouldPrefetchSceneRecall(turn) {
+		t.Fatal("explicitly addressed turns retain prefetch")
+	}
+	turn.Addressed = false
+	turn.ChatType = "p2p"
+	if !shouldPrefetchSceneRecall(turn) {
+		t.Fatal("DM prefetch changed")
+	}
+}

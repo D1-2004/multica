@@ -336,7 +336,7 @@ func TestLoopRecallThenFinish(t *testing.T) {
 	if len(got.CoordinationActions) != 1 || got.CoordinationActions[0].Kind != "start_work" || got.UserText == "" || got.PlanVersion == "" {
 		t.Fatalf("decision timeline=%#v", got.Steps)
 	}
-	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,work_state,finish" {
+	if names := toolDefNames(chat.params[0]); strings.Join(names, ",") != "assoc_recall,work_state,context_read,finish" {
 		t.Fatalf("round0 tools=%v", names)
 	}
 }
@@ -840,16 +840,12 @@ func TestWindowPlanEmptyTextHintDistinctFromItems(t *testing.T) {
 	}
 }
 
-func TestWindowPlanToolingPurposeStillHinted(t *testing.T) {
+func TestWindowPlanAcceptsTechnicalSubject(t *testing.T) {
 	t.Parallel()
-	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-env", SenderName: "冬翔", Message: "帮我约明天开会"}
-	_, err := parseValidatedWindowPlan(`{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我去确认明天开会时间。","purpose":"向须莫v6询问明早有没有会议，dws要用dws chat data-auth","intent":"ask"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
-	if err == nil {
-		t.Fatal("CLI/auth in purpose must fail")
-	}
-	raw := marshalToolFailure(err)
-	if !strings.Contains(raw, "data-auth") || !strings.Contains(raw, "DWS身份") || !strings.Contains(raw, `"hint"`) {
-		t.Fatalf("precise tooling hint missing: %s", raw)
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-tech", SenderName: "乔宁", Message: "请排查 dws chat data-auth 授权失败"}
+	d, err := parseValidatedWindowPlan(`{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来排查授权失败的原因。","purpose":"排查 dws chat data-auth 授权失败的原因和修复方法","intent":"lookup"}]}`, turn, []recallCall{{ConversationID: turn.ConversationID}}, nil)
+	if err != nil || d.Action != ActionIssue || len(d.Items) != 1 {
+		t.Fatalf("technical subject must reach semantic review: d=%+v err=%v", d, err)
 	}
 }
 

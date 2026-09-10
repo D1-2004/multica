@@ -53,6 +53,14 @@ func withScriptedFinishReferences(response openai.ChatCompletion, proposal, requ
 		return response
 	}
 	var input struct {
+		ReceivingContext struct {
+			Proactive bool   `json:"proactive"`
+			ChatType  string `json:"chat_type"`
+		} `json:"receiving_context"`
+		CurrentWindow []struct {
+			SourceRef string `json:"source_ref"`
+			Text      string `json:"text"`
+		} `json:"current_window"`
 		Candidate struct {
 			Actions []struct {
 				CoordinationAction
@@ -64,10 +72,36 @@ func withScriptedFinishReferences(response openai.ChatCompletion, proposal, requ
 		return response
 	}
 	if result["work_checks"] == scriptedWorkChecks {
+		if input.ReceivingContext.Proactive && input.ReceivingContext.ChatType == "group" {
+			checks := []map[string]any{}
+			for _, u := range input.CurrentWindow {
+				disposition := "ignore"
+				for _, a := range input.Candidate.Actions {
+					if !containsString(a.SourceRefs, u.SourceRef) {
+						continue
+					}
+					if a.Kind == "start_work" || a.Kind == "continue_work" {
+						disposition = "work"
+					} else if a.Kind != "ignore" && disposition != "work" {
+						disposition = "coordinate"
+					}
+				}
+				basis, quote := "unknown", ""
+				if disposition != "ignore" {
+					basis, quote = "direct", u.Text
+				}
+				checks = append(checks, map[string]any{"source_refs": []string{u.SourceRef}, "basis": basis, "recipient_quote": quote, "evidence_ref": "", "disposition": disposition})
+			}
+			result["participation_checks"] = checks
+		}
 		checks := []map[string]string{}
 		for _, action := range input.Candidate.Actions {
 			if action.Kind == "start_work" || action.Kind == "continue_work" {
-				checks = append(checks, map[string]string{"action_ref": action.ActionRef, "deliverables": "single"})
+				target := "new_work"
+				if action.Kind == "continue_work" {
+					target = "same_deliverable"
+				}
+				checks = append(checks, map[string]string{"action_ref": action.ActionRef, "deliverables": "single", "target_match": target})
 			}
 		}
 		result["work_checks"] = checks
@@ -86,9 +120,15 @@ func withScriptedFinishRequest(response openai.ChatCompletion, params openai.Cha
 	if len(params.Messages) == 0 {
 		return response
 	}
-	raw, _ := json.Marshal(params.Messages[len(params.Messages)-1])
 	var last struct{ Content string }
-	_ = json.Unmarshal(raw, &last)
+	for i := len(params.Messages) - 1; i >= 0; i-- {
+		raw, _ := json.Marshal(params.Messages[i])
+		_ = json.Unmarshal(raw, &last)
+		var proposal map[string]json.RawMessage
+		if json.Unmarshal([]byte(last.Content), &proposal) == nil && proposal["candidate"] != nil {
+			break
+		}
+	}
 	if len(params.Tools) == 0 || params.Tools[0].GetFunction() == nil {
 		return response
 	}
@@ -154,12 +194,16 @@ func TestFinishCheckFailureDefersWithoutSavingOrRetryingMainModel(t *testing.T) 
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("reply", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"你好。"}]}`)}, checkRounds: []openai.ChatCompletion{tc.response}, checkError: tc.err}
+			chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("reply", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"greeting","reply":"你好。"}]}`)}, checkRounds: []openai.ChatCompletion{tc.response, tc.response}, checkError: tc.err}
 			saves := 0
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { saves++; return nil })
 			d, err := (&Coordinator{Chat: chat}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, Message: "你好"})
-			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.calls != 1 || chat.checkCalls != 1 {
-				t.Fatalf("review failure must defer immediately: action=%s saves=%d routing_calls=%d checks=%d err=%v", d.Action, saves, chat.calls, chat.checkCalls, err)
+			wantChecks := 2
+			if tc.err != nil {
+				wantChecks = 1
+			}
+			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.calls != 1 || chat.checkCalls != wantChecks {
+				t.Fatalf("review failure must defer without rerouting: action=%s saves=%d routing_calls=%d checks=%d err=%v", d.Action, saves, chat.calls, chat.checkCalls, err)
 			}
 		})
 	}
@@ -351,12 +395,12 @@ func TestFinishCheckRejectsUnknownQuoteReferencesBeforeSaving(t *testing.T) {
 					assistantTool("recall", toolAssocRecall, `{}`),
 					assistantTool("send", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我现在把通知发给同事。","purpose":"向同事发送周五开会通知","intent":"other"}]}`),
 				},
-				checkRounds: []openai.ChatCompletion{assistantTool("untrusted-review", toolFinishCheck, string(raw))},
+				checkRounds: []openai.ChatCompletion{assistantTool("untrusted-review", toolFinishCheck, string(raw)), assistantTool("untrusted-review-again", toolFinishCheck, string(raw))},
 			}
 			saves := 0
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { saves++; return nil })
 			d, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: requestText, Instructions: "Only draft. Do not send without approval."})
-			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.checkCalls != 1 {
+			if err == nil || d.Action != ActionDeferred || saves != 0 || chat.checkCalls != 2 {
 				t.Fatalf("ungrounded quotation must not allow any durable plan: action=%s saves=%d checks=%d err=%v", d.Action, saves, chat.checkCalls, err)
 			}
 		})
@@ -419,7 +463,7 @@ func TestFinishCheckRejectsFabricatedConstraintQuotes(t *testing.T) {
 		{"不要发送", "revise", true},
 		{"The user cannot use any tool.", "revise", false},
 		{"Never send until approved.", "allow", true},
-		{strings.Repeat("x", 201), "revise", false},
+		{strings.Repeat("x", 201), "allow", false},
 	} {
 		result := finishCheckResult{RequestQuote: "先起草通知", CandidateQuote: candidate.UserText, ConstraintQuote: tc.quote, Verdict: tc.verdict}
 		err := validateFinishQuotes(result, turn, candidate)
@@ -437,8 +481,8 @@ func TestFinishCheckDiscardsUnusableOptionalBoundaryWithoutDiscardingVerdict(t *
 	}{
 		{"Never send until approved.", "allow", true},
 		{"不要发送", "revise", true},
-		{"FORGED_POLICY_SENTINEL", "revise", false},
-		{strings.Repeat("x", 201), "revise", false},
+		{"FORGED_POLICY_SENTINEL", "allow", false},
+		{strings.Repeat("x", 201), "allow", false},
 	} {
 		raw, _ := json.Marshal(map[string]any{"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "constraint_quote": tc.quote, "verdict": tc.verdict, "reason": "Only an authorized draft may proceed.", "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
 		chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{assistantTool("check", toolFinishCheck, string(raw))}}
@@ -454,9 +498,9 @@ func TestFinishCheckRepairSeesRejectedProposalAndSpecificReasonWithoutForgedBoun
 	const fixed = `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"起草周五下午三点全员例会通知正文","intent":"other","reply":"我来起草周五例会通知。"}]}`
 	const reason = "第1项reply虚报发送；保持起草purpose，只将reply改成起草承诺。"
 	revise, _ := json.Marshal(map[string]any{"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "constraint_quote": "FORGED_POLICY_SENTINEL", "verdict": "revise", "reason": reason, "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("bad", toolFinish, bad), assistantTool("fixed", toolFinish, fixed)}, checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, string(revise)), scriptedFinishVerdict("allow", "The drafting plan and its acknowledgement stay within scope.")}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("bad", toolFinish, bad), assistantTool("fixed", toolFinish, fixed)}, checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, string(revise)), scriptedFinishVerdict("revise", reason), scriptedFinishVerdict("allow", "The drafting plan and its acknowledgement stay within scope.")}}
 	d, err := (&Coordinator{Chat: chat}).runLoop(context.Background(), Turn{Source: SourceWeb, Message: "帮我起草周五三点全员例会通知，先不发送。"})
-	if err != nil || d.Action != ActionIssue || chat.calls != 2 || chat.checkCalls != 2 {
+	if err != nil || d.Action != ActionIssue || chat.calls != 2 || chat.checkCalls != 3 {
 		t.Fatalf("repair did not complete: %#v calls=%d checks=%d err=%v", d, chat.calls, chat.checkCalls, err)
 	}
 	next, _ := json.Marshal(chat.params[1].Messages)
@@ -513,16 +557,16 @@ func TestFinishCheckRequiresOneExplicitAtomicityJudgmentPerWorkAction(t *testing
 		name, checks, want string
 		wantError          bool
 	}{
-		{"single per work", `[{"action_ref":"a1","deliverables":"single"},{"action_ref":"a3","deliverables":"single"}]`, "allow", false},
-		{"multiple cannot allow", `[{"action_ref":"a1","deliverables":"multiple"},{"action_ref":"a3","deliverables":"single"}]`, "revise", false},
-		{"no deliverable cannot allow", `[{"action_ref":"a1","deliverables":"none"},{"action_ref":"a3","deliverables":"single"}]`, "revise", false},
-		{"missing second work", `[{"action_ref":"a1","deliverables":"single"}]`, "", true},
+		{"single per work", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"},{"action_ref":"a3","deliverables":"single","target_match":"new_work"}]`, "allow", false},
+		{"multiple cannot allow", `[{"action_ref":"a1","deliverables":"multiple","target_match":"new_work"},{"action_ref":"a3","deliverables":"single","target_match":"new_work"}]`, "revise", false},
+		{"no deliverable cannot allow", `[{"action_ref":"a1","deliverables":"none","target_match":"new_work"},{"action_ref":"a3","deliverables":"single","target_match":"new_work"}]`, "revise", false},
+		{"missing second work", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"}]`, "", true},
 		{"empty work checks", `[]`, "", true},
 		{"null work checks", `null`, "", true},
-		{"nonwork masquerades", `[{"action_ref":"a1","deliverables":"single"},{"action_ref":"a2","deliverables":"single"}]`, "", true},
-		{"unknown reference", `[{"action_ref":"a1","deliverables":"single"},{"action_ref":"a99","deliverables":"single"}]`, "", true},
-		{"duplicate reference", `[{"action_ref":"a1","deliverables":"single"},{"action_ref":"a1","deliverables":"single"}]`, "", true},
-		{"invalid count kind", `[{"action_ref":"a1","deliverables":"maybe"},{"action_ref":"a3","deliverables":"single"}]`, "", true},
+		{"nonwork masquerades", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"},{"action_ref":"a2","deliverables":"single","target_match":"new_work"}]`, "", true},
+		{"unknown reference", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"},{"action_ref":"a99","deliverables":"single","target_match":"new_work"}]`, "", true},
+		{"duplicate reference", `[{"action_ref":"a1","deliverables":"single","target_match":"new_work"},{"action_ref":"a1","deliverables":"single","target_match":"new_work"}]`, "", true},
+		{"invalid count kind", `[{"action_ref":"a1","deliverables":"maybe"},{"action_ref":"a3","deliverables":"single","target_match":"new_work"}]`, "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reply := `{"verdict":"allow","reason":"The requested plan is covered.","request_quote_ref":"q1","candidate_quote_ref":"c1","missing_source_refs":[],"work_checks":` + tc.checks + `}`
@@ -604,5 +648,55 @@ func TestValidateFinishQuotesStillRejectsFabricatedSourceText(t *testing.T) {
 		if (err == nil) != tc.valid {
 			t.Fatalf("original-source validation changed: %#v err=%v", tc, err)
 		}
+	}
+}
+
+func TestFinishCheckMixedActionsReviewBothScopesOnce(t *testing.T) {
+	const instructions = "MIXED_REVIEW_POLICY_SENTINEL: Only draft until approved."
+	for _, workKind := range []string{"start_work", "continue_work"} {
+		t.Run(workKind, func(t *testing.T) {
+			turn := Turn{Source: SourceDigitalEmployee, Message: "之前的查询完成了吗？另外起草周五例会通知。", Instructions: instructions}
+			candidate := Decision{Action: ActionIssue, UserText: "查询任务仍在进行。\n我来起草通知。", CoordinationActions: []CoordinationAction{
+				{Kind: "report_status", SourceRefs: []string{"u1"}, StateRefs: []string{"r1"}, Reply: "查询任务仍在进行。"},
+				{Kind: workKind, SourceRefs: []string{"u1"}, Purpose: "起草周五下午三点会议通知正文", Intent: "other", Reply: "我来起草通知。"},
+			}, Items: []WindowItem{{Purpose: "起草周五下午三点会议通知正文", Intent: "other", SourceRefs: []string{"u1"}}}}
+			chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{scriptedFinishVerdict("allow", "Both the progress reply and authorized draft are reviewed.")}}
+			if _, err := (&Coordinator{Chat: chat}).checkFinish(context.Background(), turn, candidate, nil, 0, nil); err != nil {
+				t.Fatal(err)
+			}
+			if chat.checkCalls != 1 || len(chat.checkParams) != 1 {
+				t.Fatalf("mixed actions must share one independent review: calls=%d", chat.checkCalls)
+			}
+			tool := chat.checkParams[0].Tools[0].GetFunction()
+			if tool == nil || !strings.Contains(tool.Description.Value, "finish_check to non-work") || !strings.Contains(tool.Description.Value, "finish_check_work to planned work") {
+				t.Fatal("mixed review retained a work-only tool contract")
+			}
+			raw, _ := json.Marshal(chat.checkParams[0].Messages)
+			var messages []struct{ Role, Content string }
+			if err := json.Unmarshal(raw, &messages); err != nil {
+				t.Fatal(err)
+			}
+			if len(messages) != 3 {
+				t.Fatalf("mixed review must retain one system, one background and one proposal: messages=%d", len(messages))
+			}
+			for _, module := range []string{"core", "finish_check", "finish_check_work"} {
+				if strings.Count(messages[0].Content, "[policy:"+module+"@") != 1 {
+					t.Fatalf("actual mixed review lacks exactly one %s module", module)
+				}
+			}
+			if strings.Count(string(raw), "MIXED_REVIEW_POLICY_SENTINEL") != 1 {
+				t.Fatal("mixed review duplicated or omitted the full working policy")
+			}
+			var proposal struct {
+				Mode      string                                 `json:"review_mode"`
+				Candidate struct{ Actions []CoordinationAction } `json:"candidate"`
+			}
+			if err := json.Unmarshal([]byte(messages[2].Content), &proposal); err != nil {
+				t.Fatal(err)
+			}
+			if proposal.Mode != "mixed_coordination_actions" || len(proposal.Candidate.Actions) != 2 {
+				t.Fatal("mixed review lost an action or retained a work-only mode")
+			}
+		})
 	}
 }

@@ -89,14 +89,22 @@ export function InboundCoordinatorSetting({
           description={t(($) => $.inspector.prop_inbound_coordinator_hint)}
           enabled={agent.inbound_coordinator === true}
           canEdit={canEdit}
-          onSave={(next) => onUpdate({ inbound_coordinator: next })}
+          onSave={(next) => onUpdate(next ? { inbound_coordinator: true } : { inbound_coordinator: false, event_trigger_enabled: false })}
+        />
+        <BooleanSetting
+          agentId={agent.id}
+          label={t(($) => $.inspector.prop_event_trigger)}
+          description={t(($) => $.inspector.prop_event_trigger_hint)}
+          enabled={agent.event_trigger_enabled === true}
+          canEdit={canEdit}
+          onSave={(next) => onUpdate(next ? { event_trigger_enabled: true, inbound_coordinator: true } : { event_trigger_enabled: false })}
         />
       </SettingsCard>
     </SettingsSection>
   );
 }
 
-function BooleanSetting({
+export function BooleanSetting({
   agentId,
   label,
   description,

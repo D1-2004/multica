@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/multica-ai/multica/server/internal/langfuse"
@@ -16,8 +17,8 @@ const toolContextRead = "context_read"
 func contextReadTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolContextRead,
-		Description: openai.String("Read history of this conversation before the window. No job instructions, business lookup or actions. Unavailable is not empty."),
-		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"kind"}, "properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"history"}}}},
+		Description: openai.String("Read kind=history to recover a prior question; kind=coordination_state to inspect the previous three coordination windows and persisted work submission counts. Host fixes the current job/scene; no selectable IDs. Coordination metadata never proves execution or delivery. No business lookup or actions."),
+		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"kind"}, "properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"history", coordinationStateKind}}}},
 	})
 }
 
@@ -46,7 +47,7 @@ func toolsForDisclosure(turn Turn, round int, recalled bool) []openai.ChatComple
 			}
 		}
 	}
-	if coordinationHistoryReadAvailable(turn) && round < maxLoopRounds-2 {
+	if (coordinationHistoryReadAvailable(turn) || strings.TrimSpace(turn.TraceID) != "") && round < maxLoopRounds-2 {
 		out = append(out, contextReadTool())
 	}
 	out = append(out, windowPlanTool(recalled || turn.ConversationID == ""))

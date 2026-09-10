@@ -252,11 +252,12 @@ a1 app pipeline run --pipeline-id 66
 
 Pre-release runs PolarDB PostgreSQL 17 (`multica_pre`), reachable from a dev
 machine with the proxy unset. Get the URL from the env trait
-(`DATABASE_URL`). The Aone all-in-one startup script runs the packaged
-`migrate up` binary after stopping the old application processes and before
-starting the new release. The migration runner uses a PostgreSQL advisory lock
-to serialize concurrent pod startup. Other deployment modes still run migration
-as an explicit release operation.
+(`DATABASE_URL`). The Aone release order automatically runs the packaged migrator
+through `src/main.sh`, after stopping old processes and before starting the new
+release. Preserve that existing automatic step; never execute pre-release or
+production migrations manually through a local CLI or a pod/web shell. Generic
+container entrypoints must not run migrations. The migration runner uses a
+PostgreSQL advisory lock and records full filename stems.
 
 Before shipping risky migrations, rehearse them against the real pre-release
 database inside a transaction that is always rolled back — a local Postgres runs

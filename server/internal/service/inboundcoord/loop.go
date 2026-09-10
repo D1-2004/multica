@@ -48,12 +48,15 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	readSequence := coordinationReadSequence(turn)
 	latestFeedback := ""
 	latestProposal := ""
+	latestFeedbackNeedsHistory := false
+	unresolvedReviewFeedback := ""
+	modelRounds := 0
 	if turn.Loop != LoopTaskFinished && len(turn.History)+len(turn.DingTalkHistory) > 0 {
 		if _, err := rememberCoordinationRead(&turn, &readSequence, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {
 			latestFeedback = coordinationRepairFeedback(toolContextRead, err)
 		}
 	}
-	if (turn.Loop == "" || turn.Loop == LoopInbound) && turn.ConversationID != "" {
+	if shouldPrefetchSceneRecall(turn) {
 		call, result, readErr := c.prefetchSceneRecall(ctx, &turn, &readSequence)
 		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
 		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
@@ -70,7 +73,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	}
 	fail := func(err error) (Decision, error) {
 		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
-		return Decision{Action: ActionDeferred, Reason: "coordinator_undecided", Steps: steps}, err
+		return Decision{Action: ActionDeferred, Reason: "coordinator_undecided", Steps: steps, ToolRounds: modelRounds, ToolsUsed: append([]string(nil), used...)}, err
 	}
 	for round := 0; round < maxLoopRounds; round++ {
 		recalled := len(recalls) > 0
@@ -88,6 +91,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			}
 		}
 		generation := traceRoundGeneration(lt, round, messages, tools)
+		modelRounds = round + 1
 		completion, err := c.complete(ctx, messages, tools)
 		endRoundGeneration(generation, completion, err)
 		if err != nil {
@@ -101,6 +105,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		calls := functionToolCalls(msg)
 		if len(calls) == 0 {
 			latestFeedback = coordinationRepairFeedback("tool_required", fmt.Errorf("call an available tool to finish or obtain missing evidence; do not invent facts"))
+			latestFeedbackNeedsHistory = false
 			if turn.Loop == LoopTaskFinished {
 				messages = append(messages, msg.ToParam(), openai.UserMessage(latestFeedback))
 			}
@@ -116,14 +121,31 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			allowed[name] = true
 		}
 		for _, call := range calls {
+			originalCall := call
+			used = append(used, originalCall.Name)
+			appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: originalCall.Name, Input: clipRunes(originalCall.Arguments, 4000)})
+			normalized, recovered, recoveryErr := recoverTerminalActionCall(call)
+			if recovered {
+				recordTerminalCallRecovery(lt, turn, round, originalCall, normalized, recoveryErr)
+				step := protocol.ChatCoordinatorStep{Type: "tool_result", Tool: originalCall.Name, Content: "Host protocol recovery only; proposal is not yet validated or executed", Error: recoveryErr != nil}
+				if recoveryErr == nil {
+					call = normalized
+					step.Output = clipRunes(call.Arguments, 8000)
+				} else {
+					step.Output = marshalToolFailure(recoveryErr)
+				}
+				appendStep(step)
+			}
 			if call.Name == toolAssocRecall {
 				call.Arguments = defaultRecallConversationID(call.Arguments, turn.ConversationID)
 			}
-			appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: clipRunes(call.Arguments, 4000)})
 			var result string
-			var callErr error
-			if !allowed[call.Name] {
-				callErr = hintErr("tool is not available in this stage", "Use the advertised read tools, then submit work with finish.actions; do not call write tools.")
+			callErr := recoveryErr
+			reviewRejected := false
+			if callErr != nil {
+				// An ambiguous action cannot be repaired by choosing its meaning.
+			} else if !allowed[call.Name] {
+				callErr = hintErr("tool is not available in this stage", "Call an advertised read tool or submit finish.actions with finish({actions:[...]}). start_work and continue_work are action kinds, not standalone business tools; Host commits only a validated plan.")
 			} else if call.Name == toolFinish {
 				if len(calls) != 1 {
 					callErr = hintErr("finish must be the only call", "Read the tool evidence on the next round before finishing.")
@@ -138,6 +160,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 							return fail(checkErr)
 						}
 						if check.Verdict != "allow" {
+							reviewRejected = true
 							callErr = hintErr("finish needs revision: "+check.Reason, "Missing current refs: "+strings.Join(check.MissingSourceRefs, ",")+". Repair the diagnosed action/field in the previous proposal while preserving every request and current restriction. This review grants no new authority.")
 							if check.ConstraintQuote != "" {
 								callErr = hintErr("finish needs revision: "+check.Reason, "Verified boundary quote: "+jsonQuote(check.ConstraintQuote)+". Repair only the diagnosed fields; a boundary does not mean all other work must be declined.")
@@ -147,7 +170,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					if callErr == nil {
 						decision.Steps = steps
 						decision.ToolRounds = round + 1
-						decision.ToolsUsed = append(used, call.Name)
+						decision.ToolsUsed = append([]string(nil), used...)
 						if saveErr := SavePlan(ctx, decision); saveErr != nil {
 							return fail(saveErr)
 						}
@@ -157,7 +180,11 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 				}
 			} else if call.Name == toolContextRead {
-				result, callErr = c.readHistoryContext(ctx, &turn, call.Arguments)
+				if coordinationContextReadKind(call.Arguments) == coordinationStateKind {
+					result, callErr = c.readRecentCoordinationState(ctx, turn)
+				} else {
+					result, callErr = c.readHistoryContext(ctx, &turn, call.Arguments)
+				}
 			} else {
 				if call.Name == toolAssocRecall {
 					call.Arguments = defaultRecallConversationID(call.Arguments, turn.ConversationID)
@@ -167,7 +194,6 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					result, callErr = c.callTool(ctx, turn, call.Name, call.Arguments)
 				}
 			}
-			used = append(used, call.Name)
 			if turn.Loop != LoopTaskFinished && allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) {
 				result, callErr = rememberCoordinationRead(&turn, &readSequence, call.Name, call.Arguments, result, callErr)
 				if callErr == nil && call.Name == toolAssocRecall {
@@ -182,6 +208,13 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					latestProposal = boundedRejectedProposal(call.Arguments)
 				}
 				latestFeedback = coordinationRepairFeedback(call.Name, callErr)
+				latestFeedbackNeedsHistory = isHistoryPrerequisiteError(callErr)
+				if reviewRejected {
+					unresolvedReviewFeedback = latestFeedback
+				}
+			} else if latestFeedbackNeedsHistory && call.Name == toolContextRead && coordinationContextReadKind(call.Arguments) == "history" && turn.HistoryStatus == "loaded" && hasCoordinationHistorySnapshot(turn) {
+				latestFeedback = historyPrerequisiteResolvedFeedback(turn, unresolvedReviewFeedback)
+				latestFeedbackNeedsHistory = false
 			}
 			appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: callErr != nil})
 			if turn.Loop == LoopTaskFinished {
@@ -370,11 +403,9 @@ const (
 	hintConversation    = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
 	hintReplyText       = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
 	hintRecallFirst     = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
-	hintNewDeliverable  = "This inbound is a different deliverable. Use start_work without issue_id; do not continue the old Issue."
 	hintIssueSpokenText = "Set the work action.reply to its short acknowledgement; a work action without reply cannot submit."
 	hintIssueWorkItems  = "Use finish.actions with source_refs, purpose, intent and reply on each work action; every request needs a disposition."
 	hintIssueItemLimit  = "Keep at most 8 actions; never drop later requests."
-	hintPurposeTooling  = "Purpose may name requested DWS身份 / MCP / Skills. Do not paste CLI commands, data-auth, or openConversationId. Name the concrete deliverable."
 	hintPurposeRepair   = "Rewrite purpose as {委托人}委托：{事件与目的}, naming the concrete event and deliverable. Do not paste the inbound envelope."
 )
 
@@ -657,19 +688,6 @@ func extractConversationIDs(message string) []string {
 func isConversationIDCharacter(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' ||
 		b == '+' || b == '_' || b == '/' || b == '-'
-}
-
-func asksSceneQuestion(message string) bool {
-	s := strings.ToLower(message)
-	for _, needle := range []string{
-		"聊了什么", "有哪些事", "在跟什么", "跟什么事", "会话", "事情",
-		"conversation", "what happened", "what's going on",
-	} {
-		if strings.Contains(s, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func collectRecalledIssues(issues, continuations map[string]struct{}, conversationID, raw string) {

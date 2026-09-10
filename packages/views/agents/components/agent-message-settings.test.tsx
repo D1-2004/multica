@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
-import { AgentMessageSettings } from "./agent-message-settings";
+import { AgentMessageSettings, InboundCoordinatorSetting } from "./agent-message-settings";
 
 const agent = { id: "agent-1" } as Agent;
 
@@ -138,4 +138,21 @@ describe("AgentMessageSettings", () => {
     expect(screen.getByLabelText("Show AI sender label")).not.toBeChecked();
   });
 
+});
+
+
+describe("Proactive conversation setting", () => {
+  it.each([
+    [false, false, "Proactively process all new conversation messages", { event_trigger_enabled: true, inbound_coordinator: true }],
+    [true, true, "Proactively process all new conversation messages", { event_trigger_enabled: false }],
+    [true, true, "Judge before sandbox", { inbound_coordinator: false, event_trigger_enabled: false }],
+  ] as const)("preserves the inbound dependency for %j / %j", (inbound, proactive, label, expected) => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(<InboundCoordinatorSetting agent={{ ...agent, inbound_coordinator: inbound, event_trigger_enabled: proactive }} canEdit onUpdate={onUpdate} />);
+    const toggles = screen.getAllByRole("switch");
+    expect(toggles[0]).toHaveAccessibleName("Judge before sandbox");
+    expect(toggles[1]).toHaveAccessibleName("Proactively process all new conversation messages");
+    fireEvent.click(screen.getByLabelText(label));
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith(expected);
+  });
 });

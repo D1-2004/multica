@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_coordinator_follow_up_identity ON coordinator_issue_follow_up(workspace_id,agent_id,idempotency_key);

@@ -165,6 +165,27 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `UpdateAgent` SET | generated from `queries/agent.sql` | COALESCE updates include model/thinking/service tier; dedicated clear queries restore each nullable override |
 | `UpdateAgentCustomEnv` (called by the `UpdateAgentEnv` handler) | 2652 | `SET custom_env = $2` — the only write path for env values |
 
+## Event-trigger implementation
+
+- `server/internal/service/event_trigger.go`: `SetEnabled`, `Admit`, `ProcessNext`,
+  and `SyncRoutes` own configuration, durable inbox, batching and Router policy.
+- `server/internal/handler/agent_event_trigger.go`: event adapter, batch inspection,
+  and authorized retry; `agent.go` exposes `event_trigger_enabled`.
+- `server/internal/handler/autopilot.go`: `requireAutopilotWrite` prevents direct
+  mutation/execution of Agent-managed event automations.
+- `server/cmd/multica/cmd_agent.go`: `event-trigger-enabled` update flag is Changed-gated.
+- `packages/views/agents/components/agent-message-settings.tsx`: Agent event-trigger
+  toggle rendered by `tabs/digital-employee-tab.tsx`; identity binding controls are unchanged.
+- Read-only verification: `multica agent get <id> --output json`,
+  `multica autopilot runs <id> --output json`, and `GET /api/agents/{id}/event-batches`.
+
+## Proactive conversation admission
+
+- `server/internal/service/event_trigger.go`: toggle dependency and legacy-only draining.
+- `server/internal/handler/agent_event_trigger.go`, `proactive_conversation.go`: observed messages enter Coordinator; durable dedup covers the former inbox.
+- `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
+- `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
+- Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.
 
 ## Bounded Coordinator contract (2026-09-09)
 

@@ -370,3 +370,25 @@ State-changing (require an explicit instruction — do not run speculatively):
 `references/creating-agents-source-map.md` maps every contract above to its
 `file:line` on the current tree, the runtime effect, and a safe read-only
 verification command.
+
+## Proactive conversations
+
+`agent update <id> --event-trigger-enabled[=false]` controls the default-off
+“Proactively process all new conversation messages” setting under Digital Employee,
+immediately below inbound judging. Enabling it enables inbound judging atomically;
+disabling inbound judging disables proactive processing. Existing bindings and
+subscription scopes are unchanged. Router synchronization normally takes up to five
+seconds plus request latency.
+
+Observed group messages use the normal durable Coordinator window (4 seconds quiet,
+12 seconds maximum collection, at most 100 messages). No Autopilot is created, and
+there is no extra 30-second task interval or wait for the sandbox to finish before
+judging new messages. Configure the employee's behavior through Agent instructions.
+Unmentioned messages reach the same Coordinator to decide reply, silence or Issue work.
+Authorized additions to a busy Issue are durably queued and combined for its next run.
+Read decisions in Coordinator conversations and execution in the associated Issues.
+Legacy event Autopilots are retained as history and only drain previously admitted work.
+
+The task-finished follow-up setting still controls automatic completion reports.
+Configuration and implementation map to `event_trigger.go`, `agent_event_trigger.go`,
+`proactive_conversation.go`, `inbound_coordinator_job.go`, and `coordinator_follow_up.go`.

@@ -3385,6 +3385,9 @@ func (h *Handler) deleteIssueAndCollectAttachmentURLs(ctx context.Context, issue
 	if err != nil {
 		return nil, fmt.Errorf("list issue attachment URLs: %w", err)
 	}
+	if _, err := tx.Exec(ctx, `DELETE FROM coordinator_issue_follow_up WHERE issue_id=$1 AND workspace_id=$2`, issue.ID, issue.WorkspaceID); err != nil {
+		return nil, fmt.Errorf("delete proactive follow-ups: %w", err)
+	}
 	if err := qtx.DeleteIssue(ctx, db.DeleteIssueParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,

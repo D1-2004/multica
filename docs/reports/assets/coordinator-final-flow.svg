@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 880" width="1080" height="880">
+<style>text{font-family:"PingFang SC","Microsoft YaHei",Arial,sans-serif;fill:#111827} .sub{fill:#4b5563}</style>
+<rect width="1080" height="880" fill="white"/>
+<defs>
+<marker id="main" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#2563eb"/></marker>
+<marker id="read" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#059669"/></marker>
+<marker id="loop" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#7c3aed"/></marker>
+<marker id="event" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0,10 3.5,0 7" fill="#6b7280"/></marker>
+</defs>
+<text x="48" y="48" font-size="28" text-anchor="start" class="">Coordinator：有限动作与独立审核</text>
+<text x="48" y="77" font-size="16" text-anchor="start" class="sub">assembly 9 · 主循环不做业务查证 · Agent 按已授权任务执行</text>
+<rect x="48" y="176" width="180" height="96" rx="12" fill="white" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="138.0" y="210" font-size="22" text-anchor="middle" class="">用户输入</text>
+<text x="138.0" y="241" font-size="16" text-anchor="middle" class="sub">当前发言与引用</text>
+<rect x="328" y="164" width="260" height="120" rx="12" fill="#eff6ff" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="458.0" y="198" font-size="22" text-anchor="middle" class="">Coordinator</text>
+<text x="458.0" y="229" font-size="16" text-anchor="middle" class="sub">只产出有限 actions</text>
+<text x="458.0" y="254" font-size="16" text-anchor="middle" class="sub">工作动作内含受理回复</text>
+<rect x="688" y="140" width="320" height="180" rx="12" fill="#faf5ff" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="848.0" y="174" font-size="22" text-anchor="middle" class="">隔离的 finish check</text>
+<text x="848.0" y="205" font-size="16" text-anchor="middle" class="sub">纯工作 → 工作规则</text>
+<text x="848.0" y="230" font-size="16" text-anchor="middle" class="sub">纯回复 → 回复规则</text>
+<text x="848.0" y="255" font-size="16" text-anchor="middle" class="sub">混合 → 两类规则，一次审核</text>
+<text x="848.0" y="280" font-size="16" text-anchor="middle" class="sub">岗位约束只装载一次</text>
+<rect x="328" y="392" width="260" height="178" rx="12" fill="#f0fdf4" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="458.0" y="426" font-size="22" text-anchor="middle" class="">Host 只读事实</text>
+<text x="458.0" y="457" font-size="16" text-anchor="middle" class="sub">事项候选 / 当前目标</text>
+<text x="458.0" y="482" font-size="16" text-anchor="middle" class="sub">执行状态 / 协调记录</text>
+<text x="458.0" y="507" font-size="16" text-anchor="middle" class="sub">岗位用途 / 场域记忆</text>
+<text x="458.0" y="532" font-size="16" text-anchor="middle" class="sub">已读历史 / 原始引用</text>
+<rect x="688" y="410" width="320" height="124" rx="12" fill="#eff6ff" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="848.0" y="444" font-size="22" text-anchor="middle" class="">Host 校验并提交</text>
+<text x="848.0" y="475" font-size="16" text-anchor="middle" class="sub">保存计划 → 真实副作用</text>
+<text x="848.0" y="500" font-size="16" text-anchor="middle" class="sub">原引用与有界历史随任务交接</text>
+<rect x="688" y="656" width="320" height="100" rx="12" fill="white" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="848.0" y="690" font-size="22" text-anchor="middle" class="">执行 Agent</text>
+<text x="848.0" y="721" font-size="16" text-anchor="middle" class="sub">独立上下文，读取业务资料</text>
+<text x="848.0" y="746" font-size="16" text-anchor="middle" class="sub">按岗位与本轮边界完成交付</text>
+<rect x="328" y="656" width="260" height="100" rx="12" fill="white" stroke="#cbd5e1" stroke-width="1.5"/>
+<text x="458.0" y="690" font-size="22" text-anchor="middle" class="">用户收到消息</text>
+<text x="458.0" y="721" font-size="16" text-anchor="middle" class="sub">受理 / 状态 / 完成结果</text>
+<path d="M228 224H328" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#main)" stroke-dasharray=""/>
+<rect x="243.0" y="202" width="70" height="24" fill="white" opacity=".97"/>
+<text x="278" y="218" font-size="15" text-anchor="middle" class="">当前窗</text>
+<path d="M588 224H688" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#main)" stroke-dasharray=""/>
+<rect x="606.0" y="202" width="64" height="24" fill="white" opacity=".97"/>
+<text x="638" y="218" font-size="15" text-anchor="middle" class="">候选</text>
+<path d="M458 392V284" fill="none" stroke="#059669" stroke-width="2" marker-end="url(#read)" stroke-dasharray=""/>
+<rect x="408.0" y="323" width="100" height="24" fill="white" opacity=".97"/>
+<text x="458" y="339" font-size="15" text-anchor="middle" class="">有界注入</text>
+<path d="M848 140V108H458V164" fill="none" stroke="#7c3aed" stroke-width="2" marker-end="url(#loop)" stroke-dasharray=""/>
+<rect x="585.0" y="91" width="154" height="24" fill="white" opacity=".97"/>
+<text x="662" y="107" font-size="15" text-anchor="middle" class="">修正 / 重新决策</text>
+<path d="M848 320V410" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#main)" stroke-dasharray=""/>
+<rect x="816.0" y="347" width="64" height="24" fill="white" opacity=".97"/>
+<text x="848" y="363" font-size="15" text-anchor="middle" class="">通过</text>
+<path d="M848 534V656" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#main)" stroke-dasharray=""/>
+<rect x="790.0" y="574" width="116" height="24" fill="white" opacity=".97"/>
+<text x="848" y="590" font-size="15" text-anchor="middle" class="">工作与边界</text>
+<path d="M688 472H630V696H588" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#main)" stroke-dasharray=""/>
+<rect x="558.0" y="599" width="144" height="24" fill="white" opacity=".97"/>
+<text x="630" y="615" font-size="15" text-anchor="middle" class="">受理 / 协调回复</text>
+<path d="M848 756V796H458V756" fill="none" stroke="#6b7280" stroke-width="2" marker-end="url(#event)" stroke-dasharray="5,4"/>
+<rect x="587.0" y="779" width="156" height="24" fill="white" opacity=".97"/>
+<text x="665" y="795" font-size="15" text-anchor="middle" class="">完成协调后回复</text>
+<text x="48" y="626" font-size="17" text-anchor="start" class="">控制边界</text>
+<text x="48" y="655" font-size="15" text-anchor="start" class="sub">不恢复旧报告全文</text>
+<text x="48" y="681" font-size="15" text-anchor="start" class="sub">续接历史最多3000字</text>
+<text x="48" y="707" font-size="15" text-anchor="start" class="sub">完成仍须独立审查</text>
+<text x="48" y="733" font-size="15" text-anchor="start" class="sub">未知状态不能推断为零</text>
+<path d="M58 845h32" stroke="#2563eb" stroke-width="2" stroke-dasharray=""/>
+<text x="102" y="850" font-size="14" text-anchor="start" class="sub">提交与回复</text>
+<path d="M302 845h32" stroke="#059669" stroke-width="2" stroke-dasharray=""/>
+<text x="346" y="850" font-size="14" text-anchor="start" class="sub">只读事实</text>
+<path d="M510 845h32" stroke="#7c3aed" stroke-width="2" stroke-dasharray=""/>
+<text x="554" y="850" font-size="14" text-anchor="start" class="sub">修正</text>
+<path d="M686 845h32" stroke="#6b7280" stroke-width="2" stroke-dasharray="5,4"/>
+<text x="730" y="850" font-size="14" text-anchor="start" class="sub">完成事件</text>
+</svg>

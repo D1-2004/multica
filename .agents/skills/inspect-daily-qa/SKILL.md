@@ -79,6 +79,10 @@ Langfuse 先用 `agent-UUID`、session/CID、trace ID 或 idx 事件缩小范围
 
 记忆工具 accepted 仅表示 draft 通过校验；根 `committed=true`、新 revision 才证明数据库提交。旧 trace 没有 committed 时读最终状态；`planned_cursor_at` 不是 `cursor_at`。旧版 oldest/newest 可能来自倒序首尾，应回看事件。`INCOMPLETE` 且 claimed evidence 不可见不能跳过水位，更不能用 reset-memory 掩盖问题。统计持续重试热点（如数百次），区分超长、超时、DWS错误、证据不可见。
 
+## 修复后的冻结回放与预发验收
+
+用户要求回归或E2E时读取 [Coordinator回放与验收](references/coordinator-regression.md)，重点核验夹具完整查询匹配、实际可见性、状态证据范围和混合动作审查覆盖。
+
 ## 可复用索引与报告
 
 `scripts/build_index.py` 只读已下载 JSON，归一化实际消息和 SLS 关联键，汇总去重 Langfuse 及覆盖缺口；它不自动裁决问答正确性，不猜出站匹配。

@@ -2759,6 +2759,7 @@ export const AgentInvocationTargetsSchema = z
 export const AgentResponseSchema = z
   .object({
     id: z.string(),
+    event_trigger_enabled: z.boolean().catch(false).default(false),
     coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
     dingtalk_response_enabled: z.boolean().catch(false).default(false),
