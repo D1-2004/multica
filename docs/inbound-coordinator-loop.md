@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-10.8`。装配版本：`19`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-10.9`。装配版本：`20`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -110,6 +110,10 @@ work_state仍只读本Agent工作区的合法目标，总预算2000字符。顶�
 
 report_status.state_refs仍只能引用Host本轮实际提供的rN状态证据；目标ID或关联卡片不是完成证明，不从任务评论重建业务结果。
 
+
+工具契约先于失败提示：Host 每轮把本轮可校验的值写进 schema（`tool_contract.go`），而不是等模型调错再用 hint 纠正。`source_refs` 枚举当前窗口 `u1..uN`；`state_refs` 枚举本轮已有的 `rN`；`issue_id`（finish continue_work 与 work_state）枚举本轮实际召回的 Issue id；`memory_revision` 固定为当前 revision；`decline.constraint_quote` 枚举可见来源（persona、reply_tone、当前原文、已加载短合同）逐句拆出的候选，不含 Host 持有的完整岗位说明，且每个选项都能通过 `suppliedConstraintQuote`。本轮没有对应引用的动作不出现在 `kind` 里：没有可引用限制句就没有 decline，没有快照就没有 report_status，没有召回 id 就没有 continue_work。触发证据：正式 trace `342b8b1cfe8040a29f79e4a613a59ecf` 中 decline 因 constraint_quote 出处校验失败 35 次、`40526d2be3604629b705cf73d2a12a85` 中 work_state 用陈旧 id 连续失败。
+
+重试预算（`retry_budget.go`）：同名同参数的读取失败 2 次后从工具列表撤回，第 3 次相同调用直接拒绝并提示改用已有证据或 finish；finish 提案因同一 Host 缺陷被拒 3 次、或审核连续 3 次返回同一 reason（相同提案命中审核缓存也计数），以 deferred 提前结束，Langfuse 根 metadata 记 `loop_stop_reason=repeated_invalid_plan|review_deadlock`、`loop_stop_round`、`withdrawn_tools`，SLS 事件 `inbound_coordinator_tool_withdrawn`。不同缺陷/不同 reason 的修复不受预算影响。提前结束仍是零回复，只是不再把 8 轮都花在同一个拒绝上；触发证据 `5a21b47f8f774f9e914734277b7d6818`（同一 reason 30 次、152s）。
 
 模型只能调用 `finish({actions:[...]})`。旧顶层 `action=reply|issue|silence`、`text`、`issue_id`和`items`不接受。入站动作如下；所有动作以 `source_refs`关联当前 `uN` 原文，回复内聚到动作，不存在通用回复动作。
 

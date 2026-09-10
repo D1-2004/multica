@@ -143,7 +143,14 @@ func TestTerminalCallRecoveryCannotBypassRecallCoverageOrReview(t *testing.T) {
 			saves := 0
 			ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { saves++; return nil })
 			d, err := (&Coordinator{Chat: chat, Tools: tc.tools}).runLoop(ctx, Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", SenderName: "用户", Message: "查证审批数据导出范围"})
-			if err == nil || d.Action != ActionDeferred || saves != 0 || d.ToolRounds != maxLoopRounds || len(d.ToolsUsed) != maxLoopRounds+1 {
+			// The identical proposal is refused for the same defect each round;
+			// the retry budget stops the run after three identical rejections
+			// instead of spending the whole round cap.
+			wantRounds, wantReason := repeatedFinishErrorBudget, loopStopRepeatedInvalidPlan
+			if tc.rejectReview {
+				wantRounds, wantReason = repeatedReviewReasonBudget, loopStopReviewDeadlock
+			}
+			if err == nil || d.Action != ActionDeferred || d.Reason != wantReason || saves != 0 || d.ToolRounds != wantRounds || len(d.ToolsUsed) != wantRounds+1 {
 				t.Fatalf("guard bypass or lost failure counters: %#v err=%v saves=%d", d, err, saves)
 			}
 			if (!tc.rejectReview && chat.checkCalls != 0) || (tc.rejectReview && chat.checkCalls != 1) {

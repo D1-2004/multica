@@ -1,6 +1,6 @@
 # Coordinator 历史预取、轻量问候免审与代问答复转告
 
-policy_version `2026-09-10.8`，装配版本 `19`（合并 须莫 的 `codex/coordinator-history-fix-20260910`：DWS 历史环境隔离、跨组织授权续期、按需历史与时间判断之后）。现行合同见 [inbound-coordinator-loop.md](../inbound-coordinator-loop.md)。
+policy_version `2026-09-10.9`，装配版本 `20`（合并 须莫 的 `codex/coordinator-history-fix-20260910`：DWS 历史环境隔离、跨组织授权续期、按需历史与时间判断之后）。现行合同见 [inbound-coordinator-loop.md](../inbound-coordinator-loop.md)。
 
 ## 触发事实（正式，2026-09-10 17:03–17:06，FDE教练 a9ce26da）
 
@@ -45,8 +45,38 @@ policy_version `2026-09-10.8`，装配版本 `19`（合并 须莫 的 `codex/coo
 
 正式环境 17:03 链路中断掉的「答复转告委托人」一环在预发闭合。遗留：转告仍走沙箱（约 40s）；模型侧延迟波动不由本改动控制。
 
+## 第二轮：重试预算与工具契约（policy 2026-09-10.9 / assembly 20）
+
+冬翔明确「工具报错后机械重试到 8 轮是不对的」，并要求「上下文里先把工具需要什么参数、怎么调用定义充分，不然都走 hint 会浪费」。
+
+触发证据（当日正式 trace 的重复错误统计）：
+
+| trace | 重复错误 | 次数 |
+| --- | --- | --- |
+| `342b8b1cfe8040a29f79e4a613a59ecf` | `decline constraint_quote must quote an actual supplied boundary` | 35 |
+| 同上 | 把 `decline` 当工具名调用 | 9 |
+| `5a21b47f8f774f9e914734277b7d6818` | 审核 reason「Candidate c1 only addresses u1; ignores u2/u3」 | 30 |
+| `40526d2be3604629b705cf73d2a12a85` | work_state 用上一轮 trace 的陈旧 issue_id | 4 |
+
+改动：
+
+1. **工具契约进 schema**（`tool_contract.go`、`window_plan.go`、`progressive_context.go`）：source_refs / state_refs / issue_id / memory_revision / constraint_quote 都用本轮已知的合法值作 enum；没有对应引用的 kind 不提供。constraint_quote 选项只来自模型可见的 persona、reply_tone、当前原文与已加载短合同，不含 Host 持有的完整岗位说明。
+2. **重试预算**（`retry_budget.go`、`loop.go`）：同名同参读取失败 2 次撤回、第 3 次拒绝；同一 Host 缺陷 3 次或同一审核 reason 3 次以 deferred 提前结束，metadata 记 `loop_stop_reason`、`withdrawn_tools`。
+
+Host 测试：`TestRepeatedFailingReadIsWithdrawnAfterBudget`、`TestRepeatedInvalidPlanStopsBeforeRoundCap`、`TestRepeatedReviewReasonStopsAsDeadlock`、`TestDifferentReviewReasonsKeepRepairing`、`TestFinishSchemaListsWhatHostCanValidate`、`TestFinishSchemaOmitsKindsWithoutReferences`、`TestWorkStateSchemaEnumeratesRecalledIssues`；`TestTerminalCallRecoveryCannotBypassRecallCoverageOrReview` 的轮数期望改为预算值。
+
+简单 e2e（预发，冬翔 → 测试号）：
+
+| # | 发送 | 期望 | 看哪里 |
+| --- | --- | --- | --- |
+| E1 | 「在吗」 | acknowledge，1 轮，无 withdrawn_tools / loop_stop_reason | trace metadata |
+| E2 | 「不要回答评比类问题。我们为什么不是最佳协作奖？」 | decline，constraint_quote 恰为该句，1 轮，无 constraint_quote 出处失败 | trace 的 finish 参数与 tool 错误 |
+| E3 | 「刚才那件事进度怎么样」 | report_status 引用 r1（或 continue/clarify），无陈旧 issue_id 失败 | trace 的 tool 错误为 0 |
+
+预算路径本身用 Host 脚本化测试证明；真实模型不能稳定触发同一失败三次。
+
 ## 未做与建议
 
 - 协调层没有「转达」原语：代问答复仍要再派一次沙箱（每次 30–40s）。建议给 Host 增加受限的同场景/委托人回传动作，或让执行器在同一任务里等待答复后转告。
-- 审核一致性、工具报错后的机械重试（8 轮上限）与 bot 对 bot 刷屏没有 Host 级刹车，本轮只以规则和免审窄化，未改协议。
+- 重试预算与工具契约（第二轮）只消除「同一错误反复」和「模型猜合法值」；审核对不同提案给出前后矛盾的裁决（a0871239）仍未处理，需要更短、更固定的审核输入或更小的审核模型。bot 对 bot 刷屏没有 Host 级刹车。
 - 入站事件没有「发送方是数字员工」标记，无法在 Host 层识别 bot 互刷。

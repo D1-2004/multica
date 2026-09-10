@@ -40,9 +40,18 @@ type CoordinationAction struct {
 }
 
 func windowPlanTool(canPlanWork bool) openai.ChatCompletionToolUnionParam {
-	return coordinationFinishTool(canPlanWork, false)
+	return coordinationFinishTool(canPlanWork, false, toolContract{})
 }
-func coordinationFinishTool(canPlanWork, taskFinished bool) openai.ChatCompletionToolUnionParam {
+
+// windowPlanToolFor narrows the finish schema to what Host can validate this
+// round: window refs, existing read refs, recalled Issue ids, the memory
+// revision and quotable boundary sentences. A kind whose required reference
+// does not exist yet is not offered rather than rejected afterwards.
+func windowPlanToolFor(turn Turn, canPlanWork bool) openai.ChatCompletionToolUnionParam {
+	return coordinationFinishTool(canPlanWork, false, toolContractFor(turn))
+}
+
+func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContract) openai.ChatCompletionToolUnionParam {
 	kinds := []string{"clarify", "report_status", "acknowledge", "describe_capabilities", "report_memory", "decline", "ignore"}
 	if canPlanWork {
 		kinds = append(kinds, "start_work", "continue_work")
@@ -50,29 +59,65 @@ func coordinationFinishTool(canPlanWork, taskFinished bool) openai.ChatCompletio
 	if taskFinished {
 		kinds = []string{"report_result", "ignore"}
 	}
+	sourceRefSchema := map[string]any{"type": "string"}
+	if len(contract.sourceRefs) > 0 {
+		sourceRefSchema = stringEnum(contract.sourceRefs)
+	}
 	props := map[string]any{
 		"kind":        map[string]any{"type": "string", "enum": kinds},
-		"source_refs": map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "Exact current-window uN refs. Cover every input, including non-work. Multiple intents may share a ref."},
+		"source_refs": map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": sourceRefSchema, "description": "Exact current-window uN refs. Every uN in current_message must be covered by at least one action, including non-work. Multiple intents may share a ref."},
 		"reply":       map[string]any{"type": "string", "description": "Required except ignore. Only user-facing communication belonging to this operation, never a business answer or internal routing narration. For work, briefly name what you will do. Host sends it after submission succeeds."},
 		"reason":      map[string]any{"type": "string", "description": "Only ignore: why no response/work is needed."},
 	}
+	// A contract without window refs is the legacy unscoped schema used by
+	// protocol tests; a live round always has refs and gets the strict schema.
+	strict := len(contract.sourceRefs) > 0
 	if taskFinished {
 		delete(props, "source_refs")
 		props["result_ref"] = map[string]any{"type": "string", "description": "report_result only: copy current_result_ref. Summarize the supplied current result only; no invented delivery."}
 	} else {
-		props["reason_code"] = map[string]any{"type": "string", "enum": []string{"scope", "authorization", "privacy"}, "description": "decline only: the explicit boundary preventing the request."}
-		props["constraint_quote"] = map[string]any{"type": "string", "maxLength": 300, "description": "decline only: exact quote of an applicable restriction from the current request, loaded contract, visible agent_persona or agent_reply_tone. Do not paraphrase hidden job policy. Host verifies provenance, then independently reviews applicability; style alone does not justify refusal."}
+		if !strict {
+			props["reason_code"] = map[string]any{"type": "string", "enum": []string{"scope", "authorization", "privacy"}, "description": "decline only: the explicit boundary preventing the request."}
+			props["constraint_quote"] = map[string]any{"type": "string", "maxLength": 300, "description": "decline only: exact quote of an applicable restriction from the current request, loaded contract, visible agent_persona or agent_reply_tone. Do not paraphrase hidden job policy. Host verifies provenance, then independently reviews applicability; style alone does not justify refusal."}
+			props["state_refs"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "report_status only: rN read_ref from current Host assoc_recall/work_state or context_read(kind=coordination_state) snapshots, including bounded empty or unavailable reads. History is not execution state."}
+		} else if len(contract.boundaryQuotes) > 0 {
+			props["reason_code"] = map[string]any{"type": "string", "enum": []string{"scope", "authorization", "privacy"}, "description": "decline only: the explicit boundary preventing the request."}
+			quote := stringEnum(contract.boundaryQuotes)
+			quote["description"] = "decline only: pick the one listed sentence that actually restricts this request. These are the only quotable boundaries (current request, loaded contract, visible agent_persona, agent_reply_tone); Host then independently reviews applicability, and style alone does not justify refusal."
+			props["constraint_quote"] = quote
+		} else {
+			kinds = removeKind(kinds, "decline")
+		}
 		props["missing_fields"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"intent", "recipient", "message_body", "scope", "timing", "authorization", "work_target", "source_material"}}, "description": "clarify only: missing information preventing a safe dispatch."}
-		props["state_refs"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "report_status only: rN read_ref from current Host assoc_recall/work_state or context_read(kind=coordination_state) snapshots, including bounded empty or unavailable reads. History is not execution state."}
+		if strict && len(contract.stateRefs) > 0 {
+			props["state_refs"] = map[string]any{"type": "array", "minItems": 1, "uniqueItems": true, "items": stringEnum(contract.stateRefs), "description": "report_status only: read_ref of the Host snapshots listed in this run (assoc_recall, work_state, context_read coordination_state), including bounded empty or unavailable reads. History is not execution state."}
+		} else if strict {
+			kinds = removeKind(kinds, "report_status")
+		}
 		props["ack_kind"] = map[string]any{"type": "string", "enum": []string{"greeting", "thanks", "correction", "receipt"}, "description": "acknowledge only; never substitute for executable work."}
-		props["memory_revision"] = map[string]any{"type": "integer", "description": "report_memory only: copy scene_memory_revision; report only the supplied memory and its availability."}
+		revision := map[string]any{"type": "integer", "description": "report_memory only: copy scene_memory_revision; report only the supplied memory and its availability."}
+		if contract.memoryRevision > 0 {
+			revision["enum"] = []int64{contract.memoryRevision}
+		}
+		props["memory_revision"] = revision
 		if canPlanWork {
 			props["purpose"] = map[string]any{"type": "string", "minLength": 8, "maxLength": 240, "description": "Work only: ONE independently executable deliverable with its concrete target. Separate unrelated deliverables into separate actions; never hide them as a numbered list inside one purpose. Amendments or steps toward the same artifact may stay together. Host binds the speaker."}
 			props["intent"] = map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "default": "other", "description": "Optional classification only; omit when unsure. Defaults to other. Continuation basis answer/change/retry belongs in basis, not intent."}
 			props["context"] = map[string]any{"type": "string", "maxLength": 500, "description": "Work only: necessary context, without copying history or scene memory."}
-			props["issue_id"] = recalledIssueIDSchema("continue_work only: exact recalled Issue UUID. start_work must omit it.")
-			props["basis"] = map[string]any{"type": "string", "enum": []string{"answer", "change", "retry"}, "description": "continue_work only. answer means this sender answers a real pending question, not that you will answer the user. Original-report resend or resumed authorized work needs an applicable retry or a new explicit delivery; status-only uses report_status. Do not turn missing question evidence into retry."}
+			if len(contract.issueIDs) > 0 {
+				issue := recalledIssueIDSchema("continue_work only: one of the Issue ids recalled in this run. start_work must omit it.")
+				issue["enum"] = append([]string(nil), contract.issueIDs...)
+				props["issue_id"] = issue
+				props["basis"] = map[string]any{"type": "string", "enum": []string{"answer", "change", "retry"}, "description": "continue_work only. answer means this sender answers a real pending question, not that you will answer the user. Original-report resend or resumed authorized work needs an applicable retry or a new explicit delivery; status-only uses report_status. Do not turn missing question evidence into retry."}
+			} else if len(contract.sourceRefs) > 0 {
+				// A live turn without a recalled Issue cannot continue anything.
+				kinds = removeKind(kinds, "continue_work")
+			} else {
+				props["issue_id"] = recalledIssueIDSchema("continue_work only: exact recalled Issue UUID. start_work must omit it.")
+				props["basis"] = map[string]any{"type": "string", "enum": []string{"answer", "change", "retry"}, "description": "continue_work only. answer means this sender answers a real pending question, not that you will answer the user. Original-report resend or resumed authorized work needs an applicable retry or a new explicit delivery; status-only uses report_status. Do not turn missing question evidence into retry."}
+			}
 		}
+		props["kind"] = map[string]any{"type": "string", "enum": kinds}
 	}
 	variants := make([]any, 0, len(kinds))
 	for _, kind := range kinds {

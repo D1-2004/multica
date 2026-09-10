@@ -133,9 +133,12 @@ type Turn struct {
 	// ChatSessionID is the web Chat session the turn belongs to; channel
 	// turns leave it empty and are grouped by ConversationID instead.
 	ChatSessionID string
-	TaskResult    string
-	IssueID       string
-	Utterances    []WindowUtterance
+	// recalledIssueIDs are the Issue ids this run has actually recalled; the
+	// loop refreshes them each round so tool schemas can list them.
+	recalledIssueIDs []string
+	TaskResult       string
+	IssueID          string
+	Utterances       []WindowUtterance
 	// AlreadyToldScene is set by Host on task_finished when this sandbox
 	// run already sent IM on the inbound conversation. Decide silences.
 	AlreadyToldScene bool

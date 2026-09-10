@@ -89,10 +89,15 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	} else {
 		logCoordinatorLLMRequest(turn, coordinationUserPrompt(turn), len(recalls) > 0)
 	}
-	fail := func(err error) (Decision, error) {
+	ledger := newRetryLedger()
+	failWith := func(reason string, err error) (Decision, error) {
 		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
-		return Decision{Action: ActionDeferred, Reason: "coordinator_undecided", Steps: steps, ToolRounds: modelRounds, ToolsUsed: append([]string(nil), used...)}, err
+		if lt != nil && reason != "coordinator_undecided" {
+			lt.AddMetadata(map[string]any{"loop_stop_reason": reason, "loop_stop_round": modelRounds})
+		}
+		return Decision{Action: ActionDeferred, Reason: reason, Steps: steps, ToolRounds: modelRounds, ToolsUsed: append([]string(nil), used...)}, err
 	}
+	fail := func(err error) (Decision, error) { return failWith("coordinator_undecided", err) }
 	for round := 0; round < maxLoopRounds; round++ {
 		recalled := len(recalls) > 0
 		if turn.Loop == LoopTaskFinished {
@@ -104,10 +109,14 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			}
 			messages = buildCoordinationMessages(turn, recalled, latestFeedback, latestProposal)
 		}
-		tools := toolsForDisclosure(turn, round, recalled)
+		turn.recalledIssueIDs = turn.recalledIssueIDs[:0]
+		for id := range recalledIssues {
+			turn.recalledIssueIDs = append(turn.recalledIssueIDs, id)
+		}
+		tools := withoutWithdrawnTools(toolsForDisclosure(turn, round, recalled), ledger)
 		manifest := policyManifestForStage(turn, recalled)
 		if lt != nil {
-			lt.AddMetadata(map[string]any{"policy_version": manifest.PolicyVersion, "assembly_version": manifest.AssemblyVersion, "prompt_hash": manifest.PromptHash, "modules": manifest.Modules, "active_rule_ids": manifest.ActiveRuleIDs, "history_status": turn.HistoryStatus, "history_before": turn.HistoryBefore, "dingtalk_history_count": len(turn.DingTalkHistory), "allowed_tools": toolParamNames(tools)})
+			lt.AddMetadata(map[string]any{"policy_version": manifest.PolicyVersion, "assembly_version": manifest.AssemblyVersion, "prompt_hash": manifest.PromptHash, "modules": manifest.Modules, "active_rule_ids": manifest.ActiveRuleIDs, "history_status": turn.HistoryStatus, "history_before": turn.HistoryBefore, "dingtalk_history_count": len(turn.DingTalkHistory), "allowed_tools": toolParamNames(tools), "withdrawn_tools": ledger.withdrawnTools()})
 			if turn.Loop != LoopTaskFinished {
 				lt.AddMetadata(map[string]any{"read_snapshot_count": len(turn.CoordinationReads), "read_snapshot_runes": len([]rune(coordinationReadsJSON(turn))), "read_snapshot_truncated": turn.CoordinationReadsTruncated, "read_snapshot_budget": coordinationReadsBudget, "repair_proposal_runes": len([]rune(latestProposal)), "repair_proposal_budget": coordinationProposalBudget})
 			}
@@ -172,6 +181,12 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			if allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) {
 				readObservation = traceToolStart(lt, round, call)
 			}
+			if callErr == nil {
+				// The same call that already failed repeatedly is refused before
+				// it spends another round; finish is refused only for an identical
+				// proposal, never withdrawn.
+				callErr = ledger.refuseRepeat(call.Name, call.Arguments)
+			}
 			if callErr != nil {
 				// An ambiguous action cannot be repaired by choosing its meaning.
 			} else if !allowed[call.Name] {
@@ -183,6 +198,16 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				} else {
 					var decision Decision
 					decision, callErr = parseValidatedWindowPlan(call.Arguments, turn, recalls, recalledIssues)
+					if callErr != nil {
+						// The same Host defect across rounds means the model is not
+						// repairing the plan; stop before the round cap instead of
+						// collecting identical rejections.
+						if n := ledger.recordFinishError(callErr); n >= repeatedFinishErrorBudget {
+							return failWith(loopStopRepeatedInvalidPlan, fmt.Errorf("plan rejected %d times for the same defect: %w", n, callErr))
+						} else if n > 1 {
+							callErr = repeatHint(callErr, n, "Change the action kind or the referenced fields; the same proposal cannot pass.")
+						}
+					}
 					if callErr == nil && needsFinishCheck(turn, decision) {
 						check, checkErr := c.checkFinish(ctx, turn, decision, messages, round, finishChecks)
 						if checkErr != nil {
@@ -195,6 +220,15 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 							callErr = hintErr("finish needs revision: "+check.Reason, "Missing current refs: "+strings.Join(check.MissingSourceRefs, ",")+". Repair the diagnosed action/field in the previous proposal while preserving every request and current restriction. This review grants no new authority.")
 							if check.ConstraintQuote != "" {
 								callErr = hintErr("finish needs revision: "+check.Reason, "Verified boundary quote: "+jsonQuote(check.ConstraintQuote)+". Repair only the diagnosed fields; a boundary does not mean all other work must be declined.")
+							}
+							// Review returning the same reason three times is a deadlock
+							// between reviewer and model, not a repairable defect.
+							if !check.HistoryReadRequired {
+								if n := ledger.recordReviewReason(check.Reason); n >= repeatedReviewReasonBudget {
+									return failWith(loopStopReviewDeadlock, fmt.Errorf("review repeated the same reason %d times: %s", n, check.Reason))
+								} else if n > 1 {
+									callErr = repeatHint(callErr, n, "The reviewer has given this reason before; repair exactly that defect or choose a different action kind.")
+								}
 							}
 						}
 					}
@@ -253,9 +287,17 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 				if call.Name == toolFinish {
 					latestProposal = boundedRejectedProposal(call.Arguments)
 				}
+				needsHistory := isHistoryPrerequisiteError(callErr)
+				if count, withdrawn := ledger.recordFailure(call.Name, call.Arguments); count > 1 {
+					callErr = repeatHint(callErr, count, "This exact call already failed; do not resubmit it unchanged.")
+					result = marshalToolFailure(callErr)
+					if withdrawn {
+						slog.Info("inbound coordinator tool withdrawn", append(coordinatorLogIndex(turn), "event", "inbound_coordinator_tool_withdrawn", "tool", call.Name, "round", round+1, "failures", count)...)
+					}
+				}
 				latestFeedback = coordinationRepairFeedback(call.Name, callErr)
 				latestFeedbackNeedsHistoryAttempt = historyAttemptRequired
-				latestFeedbackNeedsHistory = isHistoryPrerequisiteError(callErr) || historyAttemptRequired
+				latestFeedbackNeedsHistory = needsHistory || historyAttemptRequired
 				if reviewRejected {
 					unresolvedReviewFeedback = latestFeedback
 				}
@@ -363,7 +405,7 @@ func taskFinishedToolDefs() []openai.ChatCompletionToolUnionParam {
 }
 
 func coordinatorTaskFinishedFinishTool() openai.ChatCompletionToolUnionParam {
-	return coordinationFinishTool(false, true)
+	return coordinationFinishTool(false, true, toolContract{})
 }
 
 func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
