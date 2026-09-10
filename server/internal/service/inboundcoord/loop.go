@@ -58,6 +58,12 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			latestFeedback = coordinationRepairFeedback(toolContextRead, err)
 		}
 	}
+	// The DingTalk history read runs concurrently with the scene recall so the
+	// first model request sees the question this employee asked a moment ago.
+	var pendingHistory <-chan historyPrefetchResult
+	if shouldPrefetchHistory(c, turn) {
+		pendingHistory = c.startHistoryPrefetch(ctx, turn)
+	}
 	if shouldPrefetchSceneRecall(turn) {
 		call, result, readErr := c.prefetchSceneRecall(ctx, &turn, &readSequence)
 		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
@@ -67,6 +73,15 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			recalls = append(recalls, parseRecallCall(call.Arguments))
 			collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
 		}
+	}
+	if pendingHistory != nil {
+		call, result, readErr := c.finishHistoryPrefetch(ctx, &turn, &readSequence, pendingHistory)
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
+		if readErr != nil {
+			result = marshalToolFailure(readErr)
+		}
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
+		used = append(used, call.Name)
 	}
 	if turn.Loop == LoopTaskFinished {
 		logCoordinatorLLMRequest(turn, buildUserPrompt(turn), false)
@@ -149,6 +164,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			callErr := recoveryErr
 			reviewRejected := false
 			reusedWorkState := false
+			repeatedHistoryRead := false
 			var readObservation *langfuse.Observation
 			if allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) {
 				readObservation = traceToolStart(lt, round, call)
@@ -193,6 +209,12 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			} else if call.Name == toolContextRead {
 				if coordinationContextReadKind(call.Arguments) == coordinationStateKind {
 					result, callErr = c.readRecentCoordinationState(ctx, turn)
+				} else if _, ok := retainedHistorySnapshot(turn); ok && turn.HistoryStatus != "not_loaded" && !latestFeedbackNeedsHistory {
+					// The bounded history is already in this run's snapshots; another
+					// identical read cannot expand it and only burns a round.
+					repeatedHistoryRead = true
+					callErr = hintErr(fmt.Sprintf("history already read this run: status=%s; reuse the existing snapshot", turn.HistoryStatus),
+						"Do not repeat context_read(kind=history). Decide from the current window and the retained history snapshot; if that history is empty or unavailable, treat the original question as unknown and use clarify, acknowledge, report_status or ignore. Submit finish({actions:[...]}).")
 				} else {
 					result, callErr = c.readHistoryContext(ctx, &turn, call.Arguments)
 				}
@@ -212,7 +234,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 				}
 			}
-			if turn.Loop != LoopTaskFinished && allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) {
+			if turn.Loop != LoopTaskFinished && allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) && !repeatedHistoryRead {
 				if !reusedWorkState {
 					result, callErr = rememberCoordinationRead(&turn, &readSequence, call.Name, call.Arguments, result, callErr)
 				}

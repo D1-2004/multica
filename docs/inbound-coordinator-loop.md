@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-10.4`。装配版本：`15`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-10.5`。装配版本：`16`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -10,6 +10,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 修改 Coordinator 的提示词、工具、上下文、handler、assoc、scenememory、窗口、回执或 trace 前，先读本文件和 [规则目录](../server/internal/service/inboundcoord/policy/registry.json)。目录登记 `COORD.F01`–`COORD.F19` 的行为义务、模块、实现引用、对照案例和已撤回手段。
 
+- [历史预取与轻量问候免审 Plan](plans/2026-09-10-coordinator-history-prefetch.md) 记录冬翔→菲迪→须莫代问链路的触发证据、89 轮扫描统计、历史预取/免审/转告规则与验证状态；
 - [DWS执行恢复Plan](plans/2026-09-10-dws-execution-recovery.md) 记录来源交付、单项执行边界与Host等待反馈；
 - [通用语义修复 Plan](plans/2026-09-10-generic-proactive-semantics.md) 记录身份未知边界、词表撤回与跨场景验证；
 - [decline边界Plan](plans/2026-09-10-coordinator-decline-boundary.md) 记录主模型、Host与审核配置来源一致性及验证；
@@ -52,7 +53,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 | `dialogue` | 已载入对话证据 | 上一问、短答、引用与原窗口水位 |
 | `recall_match` | 本轮成功召回后（含首次模型调用前的Host预取） | 候选比较、工作进度、旧工作与续接 |
 
-模块只按 Host 已知条件选择，不用词表裁决业务意图。主循环可一轮形成完整 actions；入站非工作动作和 task_finished 的结果动作提交前均进入独立终结审查。带岗位约束的工作计划使用未来计划审查，不能要求尚未执行的任务先交付答案。内部归一化仍可使用 `ActionIssue` 选择工作审查，它不是对模型开放的旧 `finish(action=issue)`。
+模块只按 Host 已知条件选择，不用词表裁决业务意图。主循环可一轮形成完整 actions；入站非工作动作和 task_finished 的结果动作提交前均进入独立终结审查。2026-09-10 曾评估让短问候的 `acknowledge(greeting|thanks)` 免审以省一次模型调用，因 Host 无法证明短消息里没有夹带请求（「你好，帮我查一下昨天的日志」）而撤回；审查成本应通过更小的审查模型或更短的审查输入降低，不通过跳过覆盖检查。带岗位约束的工作计划使用未来计划审查，不能要求尚未执行的任务先交付答案。内部归一化仍可使用 `ActionIssue` 选择工作审查，它不是对模型开放的旧 `finish(action=issue)`。
 
 纯工作、纯非工作候选分别只载对应审查模块；混合候选在同一次审核装配core及两类审查模块，岗位约束仍只提供一次，不增模型调用或轮数。合法工作不能替同行非工作回复通过真实性与范围审查。不混载voice/inbound；群上下文同时披露channel/group，与主判断共享逐句参与资格及绑定接收身份。完成结果仍按完成合同审查，不开放新工作路由。审查不替模型执行或选目标。有效短合同替代协调层的完整SOP；缺失、过期或不可读短合同时，Host保留原完整岗位审查。旧Agent因此仍有全文审查成本，本轮不通过截断或硬失败门槛删除约束，也不宣称所有Agent整轮token已有固定上限。成功读取后重建system和manifest，模块与旧工具正文不重复累积；实际效果与当前限制不能因省token丢失。
 
@@ -90,6 +91,8 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 有可信当前CID的正常入站，除主动会话中未@本员工的群消息外，Host在首次模型调用前执行一次无q、48h/3项 `assoc_recall`，读取timeout为2秒。复用现有归一化、8000字符内读快照及合法事项记录，不额外引入业务读取或权限。成功结果可直接满足本场景召回前置，模型无需重复同一机械读取；失败保留unavailable，不解锁工作前置，模型仍可按需重试。明确其他CID、更早范围、关键词、工作状态或历史缺口仍需对应读取，不能由当前预取代替。
 
 主动会话中未@本员工的群消息先在同一循环判断相关性，必要时按需召回；历史事项不能先入上下文诱导接管。DM与明确@的预取保持既有行为。首次模型请求若已有成功预取，按已召回阶段开放合法目标的 `work_state`；没有成功召回时仅开放 `assoc_recall`、`context_read(history|coordination_state)` 和 `finish`。task_finished、无CID请求及进入主循环前的既有Host短路/持久化计划恢复均保持原路径。不再向模型提供 `issue_get`、`issue_comment_list`、`assoc_bind` 或 `issue_comment_add`。内部既有函数不代表对模型开放。
+
+同一批预取还读取本场景的有界钉钉历史（`shouldPrefetchHistory` / `history_prefetch.go`）：数字员工与机器人入站、可信 CID 与 DWS 身份齐全、history 尚未加载、且不是主动会话中未@本员工的群消息时，Host 与 assoc 预取并行调用 `DWSHistory.Load`，上限 2.5 秒。成功或空结果按原 `context_read(kind=history)` 快照登记（r2），首个模型请求同时装配 `dialogue` 模块，因此「对方回答了员工代问的问题」在首轮就有证据和规则。超时保持 `not_loaded`，模型仍可按需读一次；其它失败标 `unavailable`，不当作空会话。同一轮再次 `context_read(kind=history)` 时，若快照已在且状态不是 not_loaded，Host 返回复用提示而不重读，避免预发 trace `cb7dacb19ec246c584971e148ea8c11f` 那样连读 6 次的空转；basis=answer 的历史前置反馈仍按原路径解决。Langfuse 根 metadata 记 `history_prefetch_status / history_prefetch_elapsed_ms`，SLS 事件为 `inbound_coordinator_history_prefetch`。触发证据：正式 trace `bf0bcb544bed486ab4fbb16454dabe67`（须莫答「6 点」时 history not_loaded，被判 clarify）与 `39427c330a2b4182a5b10fe44503355f`（答复从未转告委托人，回复泄漏「任务状态为 completed」）。
 
 这次预取针对事项关联，不是Scene Memory刷新或提交。问候/能力介绍等非工作请求也可能增加一次有界关联读取，内部可包含多条数据库查询，不能宣称所有请求提速。Langfuse根metadata记录 `scene_prefetch_status / scene_prefetch_elapsed_ms`，对应Tool observation标 `origin=host_prefetch`；SLS事件为 `inbound_coordinator_scene_prefetch`、字段 `status / elapsed_ms`。其工具步骤不算LLM发起的工具调用；模型轮数、Host读取耗时与额外读次数分别报告。
 
