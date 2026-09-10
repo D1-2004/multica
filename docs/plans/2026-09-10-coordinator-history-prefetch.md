@@ -65,6 +65,8 @@ policy_version `2026-09-10.9`，装配版本 `20`（合并 须莫 的 `codex/coo
 
 Host 测试：`TestRepeatedFailingReadIsWithdrawnAfterBudget`、`TestRepeatedInvalidPlanStopsBeforeRoundCap`、`TestRepeatedReviewReasonStopsAsDeadlock`、`TestDifferentReviewReasonsKeepRepairing`、`TestFinishSchemaListsWhatHostCanValidate`、`TestFinishSchemaOmitsKindsWithoutReferences`、`TestWorkStateSchemaEnumeratesRecalledIssues`；`TestTerminalCallRecoveryCannotBypassRecallCoverageOrReview` 的轮数期望改为预算值。
 
+Codex 第二轮审查（6 项，均已修）：repeatHint 丢失 history 前置错误类型 → 保留类型；错误/reason 计数不区分实质修复 → 计数键加入提案形态（kind、refs、purpose、目标，不含 reply 措辞）；state_refs 误把 history 快照当状态引用 → 只列 assoc_recall/work_state/coordination_state；对合同 JSON 整体分句会漏掉合法条目 → 按 constraints/must_delegate/clarify_when 逐条列出；四字下限删掉「不外发」这类短限制 → 下限 2 字且整段字段也可引用；空召回仍公布 work_state → 只在有召回 id 时公布；revision=0 未固定 → 始终固定。
+
 简单 e2e（预发，冬翔 → 测试号）：
 
 | # | 发送 | 期望 | 看哪里 |

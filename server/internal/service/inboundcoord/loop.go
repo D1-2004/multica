@@ -202,7 +202,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						// The same Host defect across rounds means the model is not
 						// repairing the plan; stop before the round cap instead of
 						// collecting identical rejections.
-						if n := ledger.recordFinishError(callErr); n >= repeatedFinishErrorBudget {
+						if n := ledger.recordFinishError(callErr, call.Arguments); n >= repeatedFinishErrorBudget {
 							return failWith(loopStopRepeatedInvalidPlan, fmt.Errorf("plan rejected %d times for the same defect: %w", n, callErr))
 						} else if n > 1 {
 							callErr = repeatHint(callErr, n, "Change the action kind or the referenced fields; the same proposal cannot pass.")
@@ -224,7 +224,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 							// Review returning the same reason three times is a deadlock
 							// between reviewer and model, not a repairable defect.
 							if !check.HistoryReadRequired {
-								if n := ledger.recordReviewReason(check.Reason); n >= repeatedReviewReasonBudget {
+								if n := ledger.recordReviewReason(check.Reason, call.Arguments); n >= repeatedReviewReasonBudget {
 									return failWith(loopStopReviewDeadlock, fmt.Errorf("review repeated the same reason %d times: %s", n, check.Reason))
 								} else if n > 1 {
 									callErr = repeatHint(callErr, n, "The reviewer has given this reason before; repair exactly that defect or choose a different action kind.")

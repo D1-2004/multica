@@ -44,7 +44,7 @@ func toolsForDisclosure(turn Turn, round int, recalled bool) []openai.ChatComple
 		case toolWorkState:
 			// Only Issue ids recalled in this run are valid arguments; the
 			// schema lists them so the model cannot request a stale id.
-			if recalled && round < maxLoopRounds-2 {
+			if recalled && round < maxLoopRounds-2 && len(turn.recalledIssueIDs) > 0 {
 				out = append(out, coordinatorWorkStateToolFor(sortedCopy(turn.recalledIssueIDs)))
 			}
 		}

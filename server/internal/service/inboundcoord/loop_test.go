@@ -577,6 +577,7 @@ func TestLoopLastRoundOnlyFinish(t *testing.T) {
 	if strings.Join(first, ",") != "assoc_recall,context_read,finish" {
 		t.Fatalf("initial tools=%v", first)
 	}
+	turn.recalledIssueIDs = []string{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
 	later := toolDefNamesFromDefs(toolsForDisclosure(turn, 1, true))
 	if strings.Join(later, ",") != "assoc_recall,work_state,context_read,finish" {
 		t.Fatalf("recalled tools=%v", later)
@@ -772,7 +773,11 @@ func TestDecideNamedConversationRecallThenReply(t *testing.T) {
 func TestCoordinatorToolDefsIncludeAssocAndFinish(t *testing.T) {
 	t.Parallel()
 	for _, recalled := range []bool{false, true} {
-		names := toolDefNamesFromDefs(toolsForDisclosure(Turn{Source: SourceDigitalEmployee, HistoryStatus: "not_loaded"}, 0, recalled))
+		turn := Turn{Source: SourceDigitalEmployee, HistoryStatus: "not_loaded"}
+		if recalled {
+			turn.recalledIssueIDs = []string{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+		}
+		names := toolDefNamesFromDefs(toolsForDisclosure(turn, 0, recalled))
 		if !containsString(names, toolAssocRecall) || !containsString(names, toolFinish) || !containsString(names, toolContextRead) {
 			t.Fatalf("missing decision/read path: %v", names)
 		}

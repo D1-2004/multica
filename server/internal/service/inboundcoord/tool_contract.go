@@ -35,7 +35,11 @@ func toolContractFor(turn Turn) toolContract {
 		contract.sourceRefs = append(contract.sourceRefs, fmt.Sprintf("u%d", i+1))
 	}
 	for _, read := range turn.CoordinationReads {
-		if strings.TrimSpace(read.ReadRef) != "" {
+		// report_status may cite work evidence only: assoc_recall, work_state
+		// and coordination_state snapshots. A history snapshot is dialogue,
+		// not execution state, and Host rejects it as a state_ref.
+		isState := read.Tool == toolAssocRecall || read.Tool == toolWorkState || (read.Tool == toolContextRead && read.Kind == coordinationStateKind)
+		if isState && strings.TrimSpace(read.ReadRef) != "" {
 			contract.stateRefs = append(contract.stateRefs, read.ReadRef)
 		}
 	}
@@ -51,23 +55,40 @@ func toolContractFor(turn Turn) toolContract {
 // full job policy is deliberately excluded. Each option is a substring of its
 // source, so suppliedConstraintQuote accepts it unchanged.
 func boundaryQuoteOptions(turn Turn) []string {
-	sources := []string{configuredPersona(turn), configuredReplyTone(turn)}
-	if _, state := currentCoordinatorContract(turn); state == coordinatorcontract.StateLoaded {
-		sources = append(sources, coordinationConstraintText(turn))
+	seen := map[string]bool{}
+	var out []string
+	add := func(sentence string) bool {
+		sentence = strings.TrimSpace(sentence)
+		if n := utf8.RuneCountInString(sentence); n < 2 || n > 300 || seen[sentence] {
+			return len(out) < boundaryQuoteLimit
+		}
+		seen[sentence] = true
+		out = append(out, sentence)
+		return len(out) < boundaryQuoteLimit
 	}
+	// A loaded short contract is quoted entry by entry; each entry is a
+	// substring of its canonical JSON, which is what Host validates against.
+	if contract, state := currentCoordinatorContract(turn); state == coordinatorcontract.StateLoaded && contract != nil {
+		for _, group := range [][]string{contract.Constraints, contract.MustDelegate, contract.ClarifyWhen} {
+			for _, entry := range group {
+				if !add(entry) {
+					return out
+				}
+			}
+		}
+	}
+	sources := []string{configuredPersona(turn), configuredReplyTone(turn)}
 	for _, utterance := range windowUtterances(turn) {
 		sources = append(sources, utterance.Text)
 	}
-	seen := map[string]bool{}
-	var out []string
 	for _, source := range sources {
+		// The whole bounded field is quotable too, so a short restriction such
+		// as a three-character reply_tone is never lost to sentence splitting.
+		if !add(source) {
+			return out
+		}
 		for _, sentence := range splitBoundarySentences(source) {
-			if seen[sentence] {
-				continue
-			}
-			seen[sentence] = true
-			out = append(out, sentence)
-			if len(out) == boundaryQuoteLimit {
+			if !add(sentence) {
 				return out
 			}
 		}
@@ -81,7 +102,7 @@ func splitBoundarySentences(text string) []string {
 	flush := func() {
 		sentence := strings.TrimSpace(current.String())
 		current.Reset()
-		if n := utf8.RuneCountInString(sentence); n >= 4 && n <= 300 {
+		if n := utf8.RuneCountInString(sentence); n >= 2 && n <= 300 {
 			out = append(out, sentence)
 		}
 	}

@@ -14,6 +14,8 @@ import (
 func TestRoutingContractUsesToolLoop(t *testing.T) {
 	inbound := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", HistoryStatus: "not_loaded", Message: "你会什么"}
 	inbound.Skills = []SkillSnapshot{{Name: "dingtalk-minutes", Description: "查询听记并整理行动项"}}
+	recalledInbound := inbound
+	recalledInbound.recalledIssueIDs = []string{"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
 	for _, tc := range []struct {
 		name     string
 		turn     Turn
@@ -35,7 +37,7 @@ func TestRoutingContractUsesToolLoop(t *testing.T) {
 			tools:  []string{toolAssocRecall, toolContextRead, toolFinish},
 		},
 		{
-			name: "candidate_comparison_before_work_submission", turn: inbound, recalled: true,
+			name: "candidate_comparison_before_work_submission", turn: recalledInbound, recalled: true,
 			modules: map[string][]string{"recall_match": {"COORD.F02", "COORD.F03", "COORD.F07", "COORD.F08", "COORD.F13", "COORD.F17"}},
 			absent:  []string{"completion"},
 			tools:   []string{toolAssocRecall, toolContextRead, toolWorkState, toolFinish},

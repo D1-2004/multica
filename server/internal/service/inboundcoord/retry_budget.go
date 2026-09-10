@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	openai "github.com/openai/openai-go/v3"
@@ -90,24 +91,63 @@ func (l *retryLedger) recordFailure(name, arguments string) (count int, withdraw
 	return count, withdrawn
 }
 
-// recordFinishError counts identical Host validation defects across rounds.
-func (l *retryLedger) recordFinishError(err error) int {
+// recordFinishError counts a Host validation defect repeated for the same
+// proposal shape. A materially changed plan (different kinds, refs, purposes
+// or targets) restarts the count even when the defect text is the same.
+func (l *retryLedger) recordFinishError(err error, arguments string) int {
 	if l == nil || err == nil {
 		return 0
 	}
-	key := normalizeRepeatKey(err.Error())
+	key := normalizeRepeatKey(err.Error()) + "|" + proposalShape(arguments)
 	l.finishErrors[key]++
 	return l.finishErrors[key]
 }
 
-// recordReviewReason counts identical review reasons across rounds.
-func (l *retryLedger) recordReviewReason(reason string) int {
+// recordReviewReason counts a review reason repeated for the same proposal
+// shape; a repaired plan that still draws the same reason starts over.
+func (l *retryLedger) recordReviewReason(reason, arguments string) int {
 	if l == nil {
 		return 0
 	}
-	key := normalizeRepeatKey(reason)
+	key := normalizeRepeatKey(reason) + "|" + proposalShape(arguments)
 	l.reviewReasons[key]++
 	return l.reviewReasons[key]
+}
+
+// proposalShape reduces a finish proposal to what the plan does: kinds, refs,
+// purposes, targets and fields. Reply wording is excluded so that rewording
+// the same plan still counts as the same plan.
+func proposalShape(arguments string) string {
+	var input struct {
+		Actions []struct {
+			Kind          string   `json:"kind"`
+			SourceRefs    []string `json:"source_refs"`
+			Purpose       string   `json:"purpose"`
+			IssueID       string   `json:"issue_id"`
+			Basis         string   `json:"basis"`
+			Intent        string   `json:"intent"`
+			MissingFields []string `json:"missing_fields"`
+			StateRefs     []string `json:"state_refs"`
+			AckKind       string   `json:"ack_kind"`
+			ReasonCode    string   `json:"reason_code"`
+			Quote         string   `json:"constraint_quote"`
+		} `json:"actions"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(arguments)), &input) != nil || len(input.Actions) == 0 {
+		return policyHash(strings.TrimSpace(arguments))
+	}
+	parts := make([]string, 0, len(input.Actions))
+	for _, a := range input.Actions {
+		refs := append([]string(nil), a.SourceRefs...)
+		sort.Strings(refs)
+		fields := append([]string(nil), a.MissingFields...)
+		sort.Strings(fields)
+		states := append([]string(nil), a.StateRefs...)
+		sort.Strings(states)
+		parts = append(parts, strings.Join([]string{a.Kind, strings.Join(refs, ","), normalizeRepeatKey(a.Purpose), a.IssueID, a.Basis, a.Intent, strings.Join(fields, ","), strings.Join(states, ","), a.AckKind, a.ReasonCode, normalizeRepeatKey(a.Quote)}, "\x1f"))
+	}
+	sort.Strings(parts)
+	return policyHash(strings.Join(parts, "\x1e"))
 }
 
 func (l *retryLedger) withdrawnTools() []string {
@@ -154,5 +194,12 @@ func repeatHint(err error, count int, instruction string) error {
 	if errors.As(err, &hinted) && hinted != nil {
 		msg, hint = hinted.Error(), hinted.hint
 	}
-	return hintErr(fmt.Sprintf("%s (identical failure #%d)", msg, count), strings.TrimSpace(hint+" "+instruction))
+	msg = fmt.Sprintf("%s (identical failure #%d)", msg, count)
+	hint = strings.TrimSpace(hint + " " + instruction)
+	// A typed Host prerequisite must survive the repeat note so the loop still
+	// recognizes when the required history read has satisfied it.
+	if isHistoryPrerequisiteError(err) {
+		return historyPrerequisiteHint(msg, hint)
+	}
+	return hintErr(msg, hint)
 }

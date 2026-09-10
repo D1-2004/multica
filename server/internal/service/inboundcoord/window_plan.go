@@ -96,7 +96,8 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		}
 		props["ack_kind"] = map[string]any{"type": "string", "enum": []string{"greeting", "thanks", "correction", "receipt"}, "description": "acknowledge only; never substitute for executable work."}
 		revision := map[string]any{"type": "integer", "description": "report_memory only: copy scene_memory_revision; report only the supplied memory and its availability."}
-		if contract.memoryRevision > 0 {
+		if strict {
+			// Host requires the exact current revision, including 0.
 			revision["enum"] = []int64{contract.memoryRevision}
 		}
 		props["memory_revision"] = revision

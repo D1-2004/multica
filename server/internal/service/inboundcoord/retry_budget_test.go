@@ -2,9 +2,13 @@ package inboundcoord
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 
 	openai "github.com/openai/openai-go/v3"
 )
@@ -19,7 +23,9 @@ func retryTestTools(t *testing.T, reads *int) scenePrefetchToolFunc {
 	t.Helper()
 	return scenePrefetchToolFunc(func(_ context.Context, _ Turn, name, _ string) (string, error) {
 		if name == toolAssocRecall {
-			return `{"conversation_id":"cid-current","items":[]}`, nil
+			// One other Issue is recalled so work_state is disclosed; the id
+			// the scripted model uses was never recalled.
+			return `{"conversation_id":"cid-current","status":"loaded","items":[{"issue_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","purpose":"另一件事","on_this_scene":true}]}`, nil
 		}
 		*reads++
 		return `{"issue_id":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}`, nil
@@ -189,12 +195,18 @@ func TestFinishSchemaOmitsKindsWithoutReferences(t *testing.T) {
 	schema := finishSchema(t, windowPlanToolFor(turn, true))
 	props := schema["properties"].(map[string]any)
 	kinds := anyStrings(enumOf(t, props, "kind", "enum"))
-	for _, absent := range []string{"decline", "report_status", "continue_work"} {
+	for _, absent := range []string{"report_status", "continue_work"} {
 		if containsString(kinds, absent) {
 			t.Fatalf("%s cannot validate without a reference and must not be offered: %v", absent, kinds)
 		}
 	}
-	if _, ok := props["constraint_quote"]; ok {
+	// The current message itself is a quotable source, so decline stays
+	// available with exactly the sentences Host will accept.
+	if quotes := anyStrings(enumOf(t, props, "constraint_quote", "enum")); len(quotes) != 1 || quotes[0] != "在吗" {
+		t.Fatalf("quote options must be exactly the visible sentences: %v", quotes)
+	}
+	empty := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Utterances: []WindowUtterance{{Sender: "冬翔", Text: "。"}}}
+	if _, ok := finishSchema(t, windowPlanToolFor(empty, true))["properties"].(map[string]any)["constraint_quote"]; ok {
 		t.Fatal("no boundary sentence exists, so constraint_quote must not be offered")
 	}
 	if !containsString(kinds, "start_work") || !containsString(kinds, "acknowledge") || !containsString(kinds, "clarify") {
@@ -221,6 +233,95 @@ func TestWorkStateSchemaEnumeratesRecalledIssues(t *testing.T) {
 		}
 	}
 	t.Fatal("work_state not disclosed after recall")
+}
+
+func TestChangedProposalWithSameReviewReasonKeepsRepairing(t *testing.T) {
+	turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "查证听记规则；另发个消息；还要起草周五例会通知。", SenderName: "冬翔"}
+	bundled := func(purpose string) string {
+		return `{"actions":[{"kind":"start_work","source_refs":["u1"],"reply":"我来处理。","purpose":"` + purpose + `"}]}`
+	}
+	reason := "Action a1 bundles independent deliverables."
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("f1", toolFinish, bundled("查证听记规则、发消息并起草周五例会通知")),
+		assistantTool("f2", toolFinish, bundled("查证听记规则并起草周五例会通知")),
+		assistantTool("f3", toolFinish, bundled("起草周五例会通知并发送确认消息")),
+		assistantTool("f4", toolFinish, bundled("起草周五例会通知")),
+	}, checkRounds: []openai.ChatCompletion{
+		scriptedFinishVerdict("revise", reason), scriptedFinishVerdict("revise", reason), scriptedFinishVerdict("revise", reason), scriptedFinishVerdict("allow", "single deliverable"),
+	}}
+	reads := 0
+	d, err := (&Coordinator{Chat: chat, Tools: retryTestTools(t, &reads)}).runLoop(context.Background(), turn)
+	if err != nil || d.Action != ActionIssue || chat.calls != 4 {
+		t.Fatalf("a materially changed plan must not be counted as a deadlock: %v action=%s calls=%d", err, d.Action, chat.calls)
+	}
+}
+
+func TestRepeatHintKeepsHistoryPrerequisiteType(t *testing.T) {
+	base := historyPrerequisiteHint("basis=answer requires original question evidence", "read history")
+	wrapped := repeatHint(base, 2, "do not resubmit")
+	if !isHistoryPrerequisiteError(wrapped) {
+		t.Fatalf("repeat note dropped the typed prerequisite: %T %v", wrapped, wrapped)
+	}
+	if !strings.Contains(wrapped.Error(), "identical failure #2") {
+		t.Fatalf("repeat note missing: %v", wrapped)
+	}
+	if isHistoryPrerequisiteError(repeatHint(hintErr("plain", "hint"), 2, "x")) {
+		t.Fatal("an ordinary hint must not become a prerequisite")
+	}
+}
+
+func TestFinishSchemaSourcesMatchHostValidation(t *testing.T) {
+	t.Run("history snapshot is not a state ref", func(t *testing.T) {
+		turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "刚才聊了什么", CoordinationReads: []CoordinationRead{{ReadRef: "r1", Tool: toolContextRead, Result: json.RawMessage(`{}`)}}}
+		props := finishSchema(t, windowPlanToolFor(turn, true))["properties"].(map[string]any)
+		if containsString(anyStrings(enumOf(t, props, "kind", "enum")), "report_status") {
+			t.Fatal("a history-only run cannot offer report_status")
+		}
+		turn.CoordinationReads = append(turn.CoordinationReads, CoordinationRead{ReadRef: "r2", Tool: toolContextRead, Kind: coordinationStateKind, Result: json.RawMessage(`{}`)})
+		props = finishSchema(t, windowPlanToolFor(turn, true))["properties"].(map[string]any)
+		if got := enumOf(t, props, "state_refs", "items", "enum"); len(got) != 1 || got[0] != "r2" {
+			t.Fatalf("only work evidence may be cited: %v", got)
+		}
+	})
+	t.Run("loaded contract entries are quotable", func(t *testing.T) {
+		instructions := "HIDDEN_SOP_LINE"
+		sum := sha256.Sum256([]byte(instructions))
+		contract := &coordinatorcontract.Contract{Version: 1, Scope: "FDE 教练", Constraints: []string{"不得向外部发送内部数据"}, MustDelegate: []string{"任何日志统计交执行器"}, SourceInstructionsSHA256: hex.EncodeToString(sum[:])}
+		turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "把内部数据发给客户", CoordinatorContract: contract, CoordinatorContractState: coordinatorcontract.StateLoaded, Instructions: instructions}
+		if _, state := currentCoordinatorContract(turn); state != coordinatorcontract.StateLoaded {
+			t.Fatalf("fixture contract must resolve as loaded, got %s", state)
+		}
+		props := finishSchema(t, windowPlanToolFor(turn, true))["properties"].(map[string]any)
+		quotes := anyStrings(enumOf(t, props, "constraint_quote", "enum"))
+		if !containsString(quotes, "不得向外部发送内部数据") || !containsString(quotes, "任何日志统计交执行器") {
+			t.Fatalf("contract entries missing from quote options: %v", quotes)
+		}
+		for _, quote := range quotes {
+			if strings.Contains(quote, "HIDDEN_SOP_LINE") || !suppliedConstraintQuote(quote, turn) {
+				t.Fatalf("quote %q leaks or fails provenance", quote)
+			}
+		}
+	})
+	t.Run("short restriction stays quotable", func(t *testing.T) {
+		turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "发出去", ReplyTone: "不外发"}
+		props := finishSchema(t, windowPlanToolFor(turn, true))["properties"].(map[string]any)
+		if !containsString(anyStrings(enumOf(t, props, "constraint_quote", "enum")), "不外发") {
+			t.Fatal("a short reply_tone restriction must remain quotable")
+		}
+	})
+	t.Run("zero revision is pinned", func(t *testing.T) {
+		turn := Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "你记得什么"}
+		props := finishSchema(t, windowPlanToolFor(turn, true))["properties"].(map[string]any)
+		if got := enumOf(t, props, "memory_revision", "enum"); len(got) != 1 || got[0] != float64(0) {
+			t.Fatalf("revision 0 must be pinned too: %v", got)
+		}
+	})
+	t.Run("empty recall offers no work_state", func(t *testing.T) {
+		names := toolParamNames(toolsForDisclosure(Turn{Source: SourceDigitalEmployee, ConversationID: "cid-current", Message: "进度如何"}, 1, true))
+		if containsString(names, toolWorkState) {
+			t.Fatalf("work_state without any recalled id has no valid argument: %v", names)
+		}
+	})
 }
 
 func anyStrings(values []any) []string {
