@@ -136,11 +136,67 @@ func TestDecideDWSHistoryTimeoutStillRunsLLM(t *testing.T) {
 		DWSUID:            "24710833",
 		DWSOrgID:          "439446171",
 	})
-	if got.Action == ActionContinue || calls.Load() != 2 || loader.calls != 1 {
+	// The Host prefetch times out and leaves history not_loaded so the
+	// on-demand read may still try once; that read then reports unavailable.
+	if got.Action == ActionContinue || calls.Load() != 2 || loader.calls != 2 {
 		t.Fatalf("timeout must still judge: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
 	}
 	if !strings.Contains(prompt, `"status":"unavailable"`) {
 		t.Fatalf("timeout must be explicit, not empty history: %q", prompt)
+	}
+}
+
+func TestDecidePrefetchesDWSHistoryBeforeFirstModelCall(t *testing.T) {
+	loader := &dwsHistoryStub{history: []HistoryLine{
+		{Role: "菲迪", Content: "须莫你好，冬翔让我帮你问一下，晚上几点出发？"},
+	}}
+	var calls atomic.Int32
+	var prompt string
+	c := &Coordinator{LLM: decisionLLM(t, &calls, &prompt, false), DWSHistory: loader}
+	got := c.Decide(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "6 点",
+		AgentID:        testAgentID(),
+		ConversationID: "cid-real",
+		DWSUID:         "24710833",
+		DWSOrgID:       "439446171",
+	})
+	if got.Action != ActionReply || calls.Load() != 1 || loader.calls != 1 {
+		t.Fatalf("history must be read once before the first model call: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	}
+	if !strings.Contains(prompt, `"status":"loaded"`) || !strings.Contains(prompt, "晚上几点出发") {
+		t.Fatalf("prefetched history missing from the first prompt: %q", prompt)
+	}
+	if len(got.Steps) < 4 || got.Steps[0].Tool != toolAssocRecall || got.Steps[2].Tool != toolContextRead || !strings.Contains(got.Steps[2].Content, "Host prefetch") || got.Steps[3].Type != "tool_result" || !strings.Contains(got.Steps[3].Output, "晚上几点出发") {
+		t.Fatalf("history prefetch timeline missing: %#v", got.Steps)
+	}
+	if len(loader.turns) != 1 || loader.turns[0].HistoryBefore.IsZero() {
+		t.Fatalf("prefetch must receive the fixed window cutoff: %#v", loader.turns)
+	}
+}
+
+func TestDecideRepeatedHistoryReadReusesPrefetchedSnapshot(t *testing.T) {
+	loader := &dwsHistoryStub{history: []HistoryLine{{Role: "须莫", Content: "看看今天的新闻"}}}
+	var calls atomic.Int32
+	var prompt string
+	c := &Coordinator{LLM: decisionLLM(t, &calls, &prompt, true), DWSHistory: loader}
+	got := c.Decide(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "刚才聊了什么",
+		AgentID:        testAgentID(),
+		ConversationID: "cid-real",
+		DWSUID:         "24710833",
+		DWSOrgID:       "439446171",
+	})
+	if got.Action != ActionReply || calls.Load() != 2 || loader.calls != 1 {
+		t.Fatalf("a repeated history read must not reload: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	}
+	if !strings.Contains(prompt, "history already read this run") {
+		t.Fatalf("repeated read must be answered with a reuse hint: %q", prompt)
 	}
 }
 
