@@ -214,7 +214,9 @@
     "cancel": "キャンセル",
     "labels_label": "ラベル",
     "labels_hint": "このエージェントを分類するワークスペースラベルです。",
-    "github_managed_profile": "指示とリポジトリスキルは GitHub で管理され、名前と説明は Multica で編集できます。"
+    "github_managed_profile": "指示とリポジトリスキルは GitHub で管理され、名前と説明は Multica で編集できます。",
+    "prop_event_trigger": "会話のすべての新着メッセージを能動的に処理",
+    "prop_event_trigger_hint": "監視対象の会話の新着メッセージを、メンションがなくても役割と文脈に応じて判断します。連続したメッセージはまとめて判断し、不要な返信はしません。有効にすると受信時の判断も有効になります。"
   },
   "overview": {
     "agent_context": "エージェント",

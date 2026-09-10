@@ -54,7 +54,7 @@ func TestCoordinatorPolicyReplay(t *testing.T) {
 			filter[id] = true
 		}
 	}
-	fixtures := coordinatorReplayFixtures()
+	fixtures := append(append(coordinatorReplayFixtures(), proactiveRelevanceFixtures()...), genericConversationFixtures()...)
 	known := map[string]bool{}
 	for _, fixture := range fixtures {
 		known[fixture.ID] = true
@@ -233,13 +233,16 @@ func (f *replayReadTools) Call(_ context.Context, _ Turn, name, arguments string
 		}
 		return replayJSON(map[string]any{"status": "loaded", "conversation_id": f.scene, "complete": true, "items": items, "events": []any{}, "read_this": "These are candidate matters in this scene; only current substantive input on the same deliverable can continue work."}), nil
 	}
-	if name == toolIssueGet || name == toolIssueCommentList {
+	if name == toolWorkState || name == toolIssueGet || name == toolIssueCommentList {
 		if !f.recalled {
 			f.violations = append(f.violations, "issue read occurred before recall")
 			return "", fmt.Errorf("fixture target not recalled")
 		}
 		for _, card := range f.cards {
 			if card.ID == args.IssueID {
+				if name == toolWorkState {
+					return replayJSON(map[string]any{"issue_id": card.ID, "title": card.Purpose, "original_goal": card.Purpose, "status": card.Status, "status_source": coordinationIssueStatusSource, "scope": coordinationIssueScope}), nil
+				}
 				if name == toolIssueGet {
 					return replayJSON(map[string]any{"issue_id": card.ID, "title": card.Purpose, "status": card.Status, "description": card.Comment}), nil
 				}
@@ -512,7 +515,7 @@ func TestCoordinatorPolicyReplayFixtures(t *testing.T) {
 		contracts[item.ID] = true
 	}
 	seen := map[string]bool{}
-	for _, fixture := range coordinatorReplayFixtures() {
+	for _, fixture := range append(append(coordinatorReplayFixtures(), proactiveRelevanceFixtures()...), genericConversationFixtures()...) {
 		if seen[fixture.ID] || fixture.ID == "" {
 			t.Fatalf("duplicate or empty replay fixture %q", fixture.ID)
 		}
@@ -529,7 +532,7 @@ func TestCoordinatorPolicyReplayFixtures(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 14 {
-		t.Fatalf("minimum replay suite has %d cases, want 14", len(seen))
+	if len(seen) != 40 {
+		t.Fatalf("minimum replay suite has %d cases, want 40", len(seen))
 	}
 }

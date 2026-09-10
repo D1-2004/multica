@@ -15,8 +15,10 @@ waiting sender.
 
 The inbound coordinator is a read-only decision loop: `assoc_recall`,
 `context_read` for bounded conversation history, and recalled-issue readers.
-It submits a complete plan through `finish.items`: new items omit `issue_id`;
-continuations carry a recalled `issue_id` plus the current source references.
+It submits a complete plan through `finish.actions`: start_work creates a new deliverable;
+continue_work carries a recalled issue_id and the current source references.
+The existing finish review judges target_match against the loaded original goal;
+only the same deliverable can continue. Shared evidence alone does not merge work.
 Host commits the normal Issue/member-comment operations after validation and
 keeps retries idempotent. Coordinator does not expose write tools. Business
 DWS operations and full skills still run in the sandbox.
@@ -96,3 +98,5 @@ conversation's Issue associations and does not start a sandbox. It is not
 Name 委托人, 事件, and 目的: `冬翔委托：向辰驷确认明天几点打球`.
 Place is optional. Not the inbound envelope. Not `帮我看看`. One recalled card
 is not a verdict; continue only when purpose matches the current message.
+Technical names and commands may be the requested work object; judge their
+meaning and authorization in context, not by a keyword blacklist.

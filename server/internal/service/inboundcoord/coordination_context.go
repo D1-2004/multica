@@ -26,6 +26,7 @@ const (
 type CoordinationRead struct {
 	ReadRef string          `json:"read_ref"`
 	Tool    string          `json:"tool"`
+	Kind    string          `json:"kind,omitempty"`
 	Result  json.RawMessage `json:"result"`
 	Failed  bool            `json:"failed,omitempty"`
 	key     string
@@ -63,7 +64,7 @@ func coordinationUserPrompt(turn Turn) string {
 
 func hasCoordinationHistorySnapshot(turn Turn) bool {
 	for _, read := range turn.CoordinationReads {
-		if read.Tool == toolContextRead {
+		if read.Tool == toolContextRead && read.Kind == "" {
 			return true
 		}
 	}
@@ -116,12 +117,12 @@ func isCoordinationReadCall(name, arguments string) bool {
 	var args struct {
 		Kind string `json:"kind"`
 	}
-	return json.Unmarshal([]byte(arguments), &args) == nil && args.Kind == "history"
+	return json.Unmarshal([]byte(arguments), &args) == nil && (args.Kind == "history" || args.Kind == coordinationStateKind)
 }
 
 func coordinationReadKey(name, arguments string) string {
 	if name == toolContextRead {
-		return name + ":history"
+		return name + ":" + coordinationContextReadKind(arguments)
 	}
 	if name == toolWorkState {
 		return name + ":" + issueIDFromToolArguments(arguments)
@@ -144,7 +145,9 @@ func rememberCoordinationRead(turn *Turn, seq *int, name, arguments, raw string,
 		return "", fmt.Errorf("%s is not a managed coordination read", name)
 	}
 	if callErr == nil {
-		if name == toolContextRead {
+		if name == toolContextRead && coordinationContextReadKind(arguments) == coordinationStateKind {
+			raw, callErr = normalizeRecentCoordinationState(raw)
+		} else if name == toolContextRead {
 			if turn.HistoryStatus == "" && len(turn.History)+len(turn.DingTalkHistory) > 0 {
 				turn.HistoryStatus = "loaded"
 			}
@@ -174,7 +177,11 @@ func rememberCoordinationRead(turn *Turn, seq *int, name, arguments, raw string,
 			kept = append(kept, read)
 		}
 	}
-	turn.CoordinationReads = append(kept, CoordinationRead{ReadRef: ref, Tool: name, Result: encoded, Failed: callErr != nil || (name == toolContextRead && turn.HistoryStatus == "unavailable"), key: key})
+	kind := ""
+	if name == toolContextRead && coordinationContextReadKind(arguments) == coordinationStateKind {
+		kind = coordinationStateKind
+	}
+	turn.CoordinationReads = append(kept, CoordinationRead{ReadRef: ref, Tool: name, Kind: kind, Result: encoded, Failed: callErr != nil || (name == toolContextRead && kind == "" && turn.HistoryStatus == "unavailable"), key: key})
 	for utf8.RuneCountInString(coordinationReadsJSON(*turn)) > coordinationReadsBudget {
 		if len(turn.CoordinationReads) <= 1 {
 			return "", fmt.Errorf("coordination read exceeds total context budget")
@@ -315,4 +322,12 @@ func boundedRejectedProposal(raw string) string {
 		return raw
 	}
 	return `{"omitted":true,"reason":"Previous proposal is invalid JSON or exceeds the 6000-character repair budget; reconstruct from the full current window."}`
+}
+
+func coordinationContextReadKind(raw string) string {
+	var args struct {
+		Kind string `json:"kind"`
+	}
+	_ = json.Unmarshal([]byte(raw), &args)
+	return args.Kind
 }

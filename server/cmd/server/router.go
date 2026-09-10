@@ -511,6 +511,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if opts.RuntimeConfig != nil {
 		h.FCE2BStable.DeveloperUserIDsProvider = opts.RuntimeConfig.stablePublisherUserIDs
 	}
+	h.EventTriggers = service.NewEventTriggerService(pool, h.AutopilotService)
 	h.TaskService.RuntimeLauncher = service.NewCloudSandboxLauncher(
 		queries,
 		h.FCE2BLauncher,
@@ -542,6 +543,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 		h.TaskCompletionTargetIdentity = routerClient.TargetIdentity()
 		h.TaskService.CompletionNotifier = h.TaskCompletionWorker
+		h.EventTriggers.Router = routerClient
 		h.DingTalkResponsePolicySync = newDingTalkResponsePolicyWorker(queries, routerClient)
 		h.DingTalkResponsePolicyNotifier = h.DingTalkResponsePolicySync
 		h.DingTalkBindingTeardownRouter = routerClient
@@ -2514,6 +2516,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/archive", h.ArchiveAgent)
 					r.Post("/restore", h.RestoreAgent)
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
+					r.Get("/event-batches", h.ListAgentEventBatches)
+					r.Post("/event-batches/{batchId}/retry", h.RetryAgentEventBatch)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
 					r.Get("/coordinator-conversations", h.ListAgentCoordinatorConversations)

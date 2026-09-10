@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_coordinator_observed_message_identity ON coordinator_observed_message(workspace_id,agent_id,source_key,conversation_id,message_id);

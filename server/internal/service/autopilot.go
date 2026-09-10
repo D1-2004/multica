@@ -858,6 +858,10 @@ func (e *errDispatchSkipped) Error() string { return e.reason }
 // admission and dispatch, or the runtime went offline in the gap, we still
 // fail closed instead of enqueueing a doomed task.
 func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot, run *db.AutopilotRun, actorUserID pgtype.UUID) error {
+	return s.dispatchRunOnlyTask(ctx, ap, run, actorUserID, true)
+}
+
+func (s *AutopilotService) dispatchRunOnlyTask(ctx context.Context, ap db.Autopilot, run *db.AutopilotRun, actorUserID pgtype.UUID, notify bool) error {
 	agent, _, err := s.resolveAutopilotLeader(ctx, ap)
 	if err != nil {
 		// Same admission-vs-failure classification as shouldSkipDispatch:
@@ -935,7 +939,7 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 		TaskID: task.ID,
 	})
 	if err != nil {
-		slog.Warn("failed to update run with task_id", "run_id", util.UUIDToString(run.ID), "error", err)
+		return fmt.Errorf("update run with task reference: %w", err)
 	} else {
 		*run = updatedRun
 	}
@@ -945,7 +949,9 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 	// (bypassing TaskService.Enqueue*), so without this the runtime
 	// would not get a wakeup and any cached "empty" verdict would
 	// stall the task until the TTL expired.
-	s.TaskSvc.NotifyTaskEnqueued(ctx, task)
+	if notify {
+		s.TaskSvc.NotifyTaskEnqueued(ctx, task)
+	}
 
 	slog.Info("autopilot dispatched (run_only)",
 		"autopilot_id", util.UUIDToString(ap.ID),

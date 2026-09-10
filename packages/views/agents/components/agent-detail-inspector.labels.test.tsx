@@ -52,7 +52,6 @@ const agent = {
 
 describe("AgentDetailInspector labels", () => {
   afterEach(cleanup);
-
   // Agent labels were removed from the product (MUL-5600). Label Settings no
   // longer manages an agent catalog, so an attach-only picker here would be a
   // dead end pointing at a catalog the user cannot populate.
@@ -91,6 +90,7 @@ describe("AgentDetailInspector labels", () => {
 
     expect(screen.queryByText("Local Runner")).not.toBeInTheDocument();
     expect(screen.queryByTestId("runner-picker")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Event trigger" })).toBeNull();
   });
 
   it("places GitHub sandbox identity with runtime configuration", () => {

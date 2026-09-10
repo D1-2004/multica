@@ -77,8 +77,11 @@ const (
 
 // Turn is the local context the loop is allowed to see.
 type Turn struct {
+	ProactiveConversation      bool
+	OutstandingFollowUps       string
 	Loop                       Loop
 	FinishCheckAction          Action
+	FinishCheckMixedActions    bool
 	Source                     Source
 	Addressed                  bool
 	ChatType                   string
@@ -88,6 +91,7 @@ type Turn struct {
 	AgentID                    pgtype.UUID
 	UserID                     pgtype.UUID
 	AgentName                  string
+	EmployeeAccountName        string
 	Instructions               string
 	InstructionsUnavailable    bool
 	CoordinatorContract        *coordinatorcontract.Contract
@@ -230,7 +234,7 @@ type historyReader interface {
 	GetAgentCoordinatorContract(ctx context.Context, id pgtype.UUID) ([]byte, error)
 	GetAgentSceneMemoryFlags(ctx context.Context, id pgtype.UUID) (db.AgentSceneMemoryFlags, error)
 	GetAgentDingTalkIdentity(ctx context.Context, arg db.GetAgentDingTalkIdentityParams) (db.AgentDingtalkIdentity, error)
-	ListEnabledAgentSkillCardMetadata(ctx context.Context, agentID pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error)
+	ListEnabledAgentSkillCardMetadata(ctx context.Context, params db.ListEnabledAgentSkillCardMetadataParams) ([]db.ListEnabledAgentSkillCardMetadataRow, error)
 }
 
 // SkillSnapshot is the Coordinator-facing catalog row for one enabled skill.
@@ -296,6 +300,7 @@ func (c *Coordinator) FillVoice(ctx context.Context, turn *Turn) {
 		turn.Persona = voice.Persona
 		turn.ReplyTone = voice.ReplyTone
 	}
+	c.fillReceivingIdentity(ctx, turn)
 	c.FillSkills(ctx, turn)
 }
 
@@ -304,7 +309,7 @@ func (c *Coordinator) FillSkills(ctx context.Context, turn *Turn) {
 	if c == nil || c.Queries == nil || turn == nil || !turn.AgentID.Valid {
 		return
 	}
-	rows, err := c.Queries.ListEnabledAgentSkillCardMetadata(ctx, turn.AgentID)
+	rows, err := c.Queries.ListEnabledAgentSkillCardMetadata(ctx, db.ListEnabledAgentSkillCardMetadataParams{AgentID: turn.AgentID, IncludeFrontmatter: true})
 	if err != nil {
 		turn.SkillsStatus = "unavailable"
 		return
@@ -328,7 +333,7 @@ func skillSnapshotsFromRows(rows []db.ListEnabledAgentSkillCardMetadataRow) []Sk
 		}
 		out = append(out, SkillSnapshot{
 			Name:        name,
-			Description: strings.TrimSpace(row.Description),
+			Description: coordinatorSkillDescription(row.Description, row.ContentHead),
 		})
 	}
 	if len(out) == 0 {
@@ -384,12 +389,12 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		}
 		return Decision{Action: ActionSilence}
 	}
-	if turn.Source != SourceWeb && !turn.Addressed && strings.EqualFold(turn.ChatType, "group") {
+	if turn.Source != SourceWeb && !turn.Addressed && !turn.ProactiveConversation && strings.EqualFold(turn.ChatType, "group") {
 		return Decision{Action: ActionSilence}
 	}
 	// The owner switch skips the whole short loop, including Host ACK
 	// silence. Auto-mode sandbox still has to see the original IM.
-	if turn.Loop != LoopTaskFinished && c.coordinatorOff(ctx, turn) {
+	if turn.Loop != LoopTaskFinished && !turn.ProactiveConversation && c.coordinatorOff(ctx, turn) {
 		slog.Info("inbound coordinator skipped; agent switch off",
 			append(coordinatorLogIndex(turn),
 				"event", "inbound_coordinator_decided",
@@ -398,9 +403,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 				"switch_off", true,
 			)...)
 		return Decision{Action: ActionContinue}
-	}
-	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && AllWindowAck(turn) {
-		return hostSilence(turn, "window_ack")
 	}
 	if turn.Loop == LoopTaskFinished && turn.AlreadyToldScene {
 		return hostSilence(turn, "already_told_scene")
@@ -758,11 +760,7 @@ func composeWindowItem(turn Turn, delegator, place, purpose, intent, lookInto st
 	}
 	composed, err := assoc.ComposeCoordinatorPurpose(delegator, place, purpose)
 	if err != nil {
-		hint := hintPurposeRepair
-		if strings.Contains(err.Error(), "tooling") {
-			hint = hintPurposeTooling
-		}
-		return WindowItem{}, hintWrap("invalid deliverable purpose", hint, err)
+		return WindowItem{}, hintWrap("invalid deliverable purpose", hintPurposeRepair, err)
 	}
 	gotIntent, ok := assoc.CoordinatorIntent(intent)
 	if !ok {

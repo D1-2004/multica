@@ -219,8 +219,8 @@ func TestPolicyTerminalReviewModesDoNotMix(t *testing.T) {
 			}
 			for _, recalled := range []bool{false, true} {
 				ids := policyModuleIDs(turn, recalled)
-				if len(ids) != 2 || !ids["core"] || !ids[wanted] || ids[forbidden] {
-					t.Fatalf("terminal review must load only core and its action-specific policy: action=%s recalled=%t modules=%v", action, recalled, ids)
+				if len(ids) != 4 || !ids["core"] || !ids["group"] || !ids["channel"] || !ids[wanted] || ids[forbidden] {
+					t.Fatalf("group review must share participation policy and keep action-specific review separate: action=%s recalled=%t modules=%v", action, recalled, ids)
 				}
 				prompt := buildSystemPromptForStage(turn, recalled)
 				manifest := policyManifestForStage(turn, recalled)
@@ -232,5 +232,21 @@ func TestPolicyTerminalReviewModesDoNotMix(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPolicyMixedTerminalReviewLoadsBothCanonicalModules(t *testing.T) {
+	turn := Turn{Loop: LoopFinishCheck, FinishCheckAction: ActionIssue, FinishCheckMixedActions: true}
+	for _, recalled := range []bool{false, true} {
+		ids := policyModuleIDs(turn, recalled)
+		if len(ids) != 3 || !ids["core"] || !ids["finish_check"] || !ids["finish_check_work"] {
+			t.Fatalf("mixed review must include both existing rule scopes exactly once: %v", ids)
+		}
+		prompt := buildSystemPromptForStage(turn, recalled)
+		for _, id := range []string{"core", "finish_check", "finish_check_work"} {
+			if strings.Count(prompt, "[policy:"+id+"@") != 1 {
+				t.Fatalf("module %s is missing or repeated", id)
+			}
+		}
 	}
 }

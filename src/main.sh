@@ -486,6 +486,7 @@ fi
 
 stop_existing_processes
 
+# The Aone release order owns this automatic pre-start migration step.
 echo "[multica][runtime] running migrations"
 "$APP_ROOT/bin/migrate" up
 echo "[multica][runtime] migrations completed"

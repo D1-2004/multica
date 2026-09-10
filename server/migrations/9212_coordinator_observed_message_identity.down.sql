@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_coordinator_observed_message_identity;

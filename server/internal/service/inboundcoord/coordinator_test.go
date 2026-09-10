@@ -25,6 +25,8 @@ type coordQueriesStub struct {
 	replyTone          string
 	skills             []db.ListEnabledAgentSkillCardMetadataRow
 	skillsErr          error
+	skillsCalls        int
+	lastSkillMetadata  db.ListEnabledAgentSkillCardMetadataParams
 	page               []db.ChatMessage
 	listErr            error
 	lastList           db.ListChatMessagesPageParams
@@ -70,7 +72,9 @@ func (s *coordQueriesStub) GetAgentDingTalkIdentity(context.Context, db.GetAgent
 	return db.AgentDingtalkIdentity{AccountDisplayName: s.accountDisplayName}, nil
 }
 
-func (s *coordQueriesStub) ListEnabledAgentSkillCardMetadata(context.Context, pgtype.UUID) ([]db.ListEnabledAgentSkillCardMetadataRow, error) {
+func (s *coordQueriesStub) ListEnabledAgentSkillCardMetadata(_ context.Context, params db.ListEnabledAgentSkillCardMetadataParams) ([]db.ListEnabledAgentSkillCardMetadataRow, error) {
+	s.skillsCalls++
+	s.lastSkillMetadata = params
 	if s.skillsErr != nil {
 		return nil, s.skillsErr
 	}

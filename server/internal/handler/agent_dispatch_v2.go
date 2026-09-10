@@ -126,6 +126,9 @@ func (m *DispatchReferencedMessage) UnmarshalJSON(data []byte) error {
 }
 
 type DispatchMessage struct {
+	// nil is legacy/unknown; [] is a known unmentioned line. Keep empty arrays
+	// across durable serialization so a later window union cannot overwrite it.
+	Mentions             []DispatchMention          `json:"mentions"`
 	OpenMsgID            string                     `json:"openMsgId"`
 	OccurredAt           int64                      `json:"occurredAt"`
 	Text                 string                     `json:"text,omitempty"`
@@ -160,28 +163,35 @@ type ApprovalEventData struct {
 // DispatchEventData keeps all platform routing locators in domain data. The
 // optional fields are intentionally opaque to PromptBuilder and are only used
 // by outbound strategies; they are never rendered into Issue/Comment content.
+type DispatchMention struct {
+	UID            string `json:"uid"`
+	OpenDingTalkID string `json:"openDingTalkId,omitempty"`
+}
+
 type DispatchEventData struct {
-	Conversation       DispatchConversation       `json:"conversation"`
-	Sender             DispatchSender             `json:"sender"`
-	Messages           []DispatchMessage          `json:"messages"`
-	CalendarID         string                     `json:"calendarId,omitempty"`
-	Subject            string                     `json:"subject,omitempty"`
-	Comment            string                     `json:"comment,omitempty"`
-	StartTime          *int64                     `json:"startTime,omitempty"`
-	EndTime            *int64                     `json:"endTime,omitempty"`
-	Timezone           string                     `json:"timezone,omitempty"`
-	AllDayEvent        bool                       `json:"allDayEvent,omitempty"`
-	BelongOrgID        string                     `json:"belongOrgId,omitempty"`
-	Organizers         []string                   `json:"organizers,omitempty"`
-	Attendees          []DispatchCalendarAttendee `json:"attendees,omitempty"`
-	Location           string                     `json:"location,omitempty"`
-	DetailURL          string                     `json:"detailUrl,omitempty"`
-	VideoConferenceURL string                     `json:"videoConferenceUrl,omitempty"`
-	AIReadableContent  string                     `json:"aiReadableContent,omitempty"`
-	Approval           *ApprovalEventData         `json:"approval,omitempty"`
-	Reply              json.RawMessage            `json:"reply,omitempty"`
-	Reference          json.RawMessage            `json:"reference,omitempty"`
-	Reaction           json.RawMessage            `json:"reaction,omitempty"`
+	Mentions            []DispatchMention             `json:"mentions,omitempty"`
+	Conversation        DispatchConversation          `json:"conversation"`
+	Sender              DispatchSender                `json:"sender"`
+	Messages            []DispatchMessage             `json:"messages"`
+	CalendarID          string                        `json:"calendarId,omitempty"`
+	Subject             string                        `json:"subject,omitempty"`
+	Comment             string                        `json:"comment,omitempty"`
+	StartTime           *int64                        `json:"startTime,omitempty"`
+	EndTime             *int64                        `json:"endTime,omitempty"`
+	Timezone            string                        `json:"timezone,omitempty"`
+	AllDayEvent         bool                          `json:"allDayEvent,omitempty"`
+	BelongOrgID         string                        `json:"belongOrgId,omitempty"`
+	Organizers          []string                      `json:"organizers,omitempty"`
+	Attendees           []DispatchCalendarAttendee    `json:"attendees,omitempty"`
+	Location            string                        `json:"location,omitempty"`
+	DetailURL           string                        `json:"detailUrl,omitempty"`
+	VideoConferenceURL  string                        `json:"videoConferenceUrl,omitempty"`
+	AIReadableContent   string                        `json:"aiReadableContent,omitempty"`
+	Approval            *ApprovalEventData            `json:"approval,omitempty"`
+	ConversationSummary *ConversationSummaryEventData `json:"conversationSummary,omitempty"`
+	Reply               json.RawMessage               `json:"reply,omitempty"`
+	Reference           json.RawMessage               `json:"reference,omitempty"`
+	Reaction            json.RawMessage               `json:"reaction,omitempty"`
 }
 
 type DispatchSurface struct {
@@ -211,6 +221,8 @@ type DispatchCompletionCallback struct {
 }
 
 type DispatchCommand struct {
+	// Internal admission fact; AgentDispatchV2Request does not expose this field.
+	ProactiveConversation    bool                             `json:"proactive_conversation,omitempty"`
 	WindowEvidenceID         string                           `json:"-"`
 	SchemaVersion            string                           `json:"schemaVersion"`
 	AgentID                  string                           `json:"agentId,omitempty"`
@@ -257,6 +269,9 @@ func NewDispatchPromptBuilder() *DispatchPromptBuilder {
 	builder.register("channel", "emotionReply", "digital_employee", buildDingTalkDigitalEmployeePrompt)
 	builder.register("calendar", "calendar.started", "digital_employee", buildDingTalkCalendarStartedPrompt)
 	builder.register("approval", "approval.status_changed", "digital_employee", buildApprovalStatusChangedPrompt)
+	// conversation.summary 是数字员工的群会话小时级汇总巡检：静默检测、按需行动，
+	// 不复用 message.created 的回复渲染。
+	builder.register("channel", dispatchEventTypeConversationSummary, "digital_employee", buildConversationSummaryPrompt)
 	return builder
 }
 
@@ -308,7 +323,18 @@ func dispatchInstructionAppliesTo(stored persistedDispatchContext) bool {
 		stored.Surface.Type == protocol.DispatchSurfaceTypeIssue &&
 		(stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
 			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
-	return channelMessage || calendarIssue || approvalIssue
+	// conversation.summary 的运行时指令完全由 Router 的 contextPrompt 承载（静默检测、
+	// 按需行动）；放行 gate 才能让 claim 投影注入该 contextPrompt。与 calendar/approval
+	// 不同，汇总巡检不强制回复，故 surface 允许 issue/chat/auto、outbound 允许 none/dws/robot_sdk。
+	conversationSummary := stored.Source.Type == "digital_employee" &&
+		stored.Domain == "channel" && stored.Type == dispatchEventTypeConversationSummary &&
+		(stored.Surface.Type == protocol.DispatchSurfaceTypeIssue ||
+			stored.Surface.Type == protocol.DispatchSurfaceTypeChat ||
+			stored.Surface.Type == protocol.DispatchSurfaceTypeAuto) &&
+		(stored.Outbound.Mode == protocol.DispatchOutboundModeNone ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeDWS ||
+			stored.Outbound.Mode == protocol.DispatchOutboundModeRobotSDK)
+	return channelMessage || calendarIssue || approvalIssue || conversationSummary
 }
 
 func resolveDispatchRuntimePrompt(flags *featureflag.Service, flagKey string) string {
@@ -381,6 +407,10 @@ func (c DispatchCommand) validate() error {
 		}
 	} else if c.Event.Domain == "approval" && c.Event.Type == "approval.status_changed" {
 		if err := c.validateApprovalStatusChanged(); err != nil {
+			return err
+		}
+	} else if c.Event.Domain == "channel" && c.Event.Type == dispatchEventTypeConversationSummary {
+		if err := c.validateConversationSummary(); err != nil {
 			return err
 		}
 	} else if err := c.validateChannelMessageCreated(); err != nil {
@@ -507,8 +537,11 @@ func (c DispatchCommand) validateControl() error {
 
 func (c DispatchCommand) validateChannelMessageCreated() error {
 	if c.Event.Domain != "channel" ||
-		(c.Event.Type != "message.created" && c.Event.Type != "emotionReply") {
+		(c.Event.Type != "message.created" && c.Event.Type != "message.observed" && c.Event.Type != "emotionReply") {
 		return errors.New("event must be channel/message.created, channel/emotionReply, calendar/calendar.started or approval/approval.status_changed")
+	}
+	if c.Event.Type == "message.observed" && (c.Source.Type != "digital_employee" || c.Event.Data.Conversation.Type != "group" || c.Control != nil || c.Continuation != nil || c.ExternalIdentity.DWS == nil) {
+		return errors.New("message.observed requires a digital employee group event with DWS identity and no control or continuation")
 	}
 	// emotionReply 事件只允许数字员工来源；机器人通道没有表情回复订阅。
 	if c.Event.Type == "emotionReply" && c.Source.Type != "digital_employee" {
@@ -1090,6 +1123,12 @@ func buildDispatchConversationInstruction(stored persistedDispatchContext, resum
 	if stored.Source.Platform != "dingtalk" || stored.Domain != "channel" {
 		return ""
 	}
+	// conversation.summary 是静默巡检：本函数产出的都是"读回会话并回复最新消息"的面向
+	// 回复的机制（SSOT / chat 投递 / issue 投递 / 委托角色），与汇总语义冲突；汇总的运行
+	// 时指令由 Router 的 contextPrompt 单独承载，这里直接跳过。
+	if stored.Type == dispatchEventTypeConversationSummary {
+		return ""
+	}
 	relayInstruction := buildDispatchIssueRelayInstruction(stored)
 	if stored.Outbound.Mode != protocol.DispatchOutboundModeDWS {
 		if relayInstruction == "" {
@@ -1272,6 +1311,8 @@ func applyLegacyDingTalkDispatchPrompt(
 		inputLabel = "## External DingTalk Calendar Event\n\n"
 	} else if stored.Domain == "approval" {
 		inputLabel = "## External DingTalk Approval Event\n\n"
+	} else if stored.Type == dispatchEventTypeConversationSummary {
+		inputLabel = "## External DingTalk Conversation Summary\n\n"
 	}
 	legacyContent := instruction + "\n\n---\n\n" + inputLabel
 	if response.TriggerCommentID != nil {
@@ -1297,7 +1338,11 @@ func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *feat
 		surfacePrompt,
 	)
 	workflowPrompt := ""
-	if stored.Outbound.Mode == protocol.DispatchOutboundModeDWS && !stored.CoordinatorIssueFollowUp {
+	if stored.Type == dispatchEventTypeConversationSummary {
+		// 汇总巡检没有"回复最新消息"的工作流：legacy 守护进程直接采用 Router 的
+		// contextPrompt（静默检测、按需行动），不注入读回执/回复生命周期指令。
+		workflowPrompt = strings.TrimSpace(stored.ContextPrompt)
+	} else if stored.Outbound.Mode == protocol.DispatchOutboundModeDWS && !stored.CoordinatorIssueFollowUp {
 		workflowPrompt = buildLegacyDingTalkDWSWorkflowPrompt(DispatchCommand{
 			SchemaVersion:      stored.SchemaVersion,
 			Source:             stored.Source,
@@ -1506,7 +1551,7 @@ func dispatchWindowIsLifecycleEmotion(c DispatchCommand) bool {
 // the sandbox adding then removing an ack). Those events must not create new
 // Issue/comment work: doing so re-enters processing emotions and loops.
 func dispatchIsAgentSelfMessage(c DispatchCommand) bool {
-	if c.Event.Domain != "channel" || c.Event.Type != "message.created" {
+	if c.Event.Domain != "channel" || (c.Event.Type != "message.created" && c.Event.Type != "message.observed") {
 		return false
 	}
 	agentIDs := dispatchAgentIdentityIDs(c)
@@ -1800,6 +1845,11 @@ func dispatchWindowIdempotencyKey(c DispatchCommand) string {
 	if c.Event.Domain == "approval" && c.Event.Type == "approval.status_changed" && c.Event.Data.Approval != nil {
 		return fmt.Sprintf("approval:%s:%s", strings.TrimSpace(c.Event.Data.Approval.FormCode), strings.TrimSpace(c.Event.Data.Approval.Status))
 	}
+	if c.Event.Domain == "channel" && c.Event.Type == dispatchEventTypeConversationSummary &&
+		c.Event.Data.ConversationSummary != nil {
+		// 汇总没有消息列表可哈希；用 summaryId 做稳定幂等键，避免不同汇总碰撞。
+		return "conversation-summary:" + strings.TrimSpace(c.Event.Data.ConversationSummary.SummaryID)
+	}
 	// The router intentionally keeps window IDs internal. Stable message IDs
 	// provide the same key across transport retries without leaking IDs into
 	// the visible issue/comment text.
@@ -1823,6 +1873,9 @@ func dispatchIssueTitle(c DispatchCommand, idempotencyKey string) string {
 			formCode = "审批"
 		}
 		return clipDispatchTitle("审批单：" + formCode)
+	}
+	if c.Event.Domain == "channel" && c.Event.Type == dispatchEventTypeConversationSummary {
+		return clipDispatchTitle(dispatchConversationSummaryTitle(c))
 	}
 
 	summary := ""

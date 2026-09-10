@@ -13,3 +13,25 @@
 - `GET /api/autopilots/cron-preview?expr=&tz=` (`server/internal/handler/autopilot_cron_preview.go`) returns `{next_runs}` — the next 3 occurrences as RFC3339 UTC — or 400 with the parser/timezone error. Compute-only (no autopilot is touched), gated by workspace membership; schedule editors use it instead of approximating the next run client-side.
 - Write/execute authorization lives in `autopilotWriteByOwnership` / `memberCanWriteAutopilot` / `requireAutopilotWrite` (`server/internal/handler/autopilot.go`): editing, deleting, triggering, replaying deliveries, and managing triggers/webhook secrets require the autopilot's creator, a workspace owner/admin, or an explicit collaborator. Reads (list/get/runs/deliveries) stay open to any workspace member, but `GetAutopilot` redacts `webhook_token`/`webhook_path`/`webhook_url` for callers who lack write access, since the token alone can trigger the autopilot. Creating a new autopilot is still open to any member (they become its creator). This is the autopilot-level View/Write layer; it is independent of, and ANDed with, the private-assignee-agent gate enforced at dispatch time in `shouldSkipDispatch`.
 - Explicit write grants ("collaborators") are stored in the `autopilot_collaborator` table (migration 128, members-only, no FK — deleted alongside the autopilot in the delete transaction). Endpoints: `POST /api/autopilots/{id}/collaborators` (body `{user_id}`) and `DELETE /api/autopilots/{id}/collaborators/{userId}`, both gated by the NARROWER `requireAutopilotAccessManagement` (creator or workspace owner/admin only — a granted collaborator keeps write/execute but cannot re-grant or revoke peers, preventing privilege escalation), both returning the updated `{collaborators}` list. `GetAutopilot` embeds the `collaborators` array and stamps two per-caller booleans: `can_write` (gates edit/run/trigger controls) and the narrower `can_manage_access` (gates the "Manage access" entry). The web/desktop "Manage access" UI lives in `packages/views/autopilots/components/manage-access-dialog.tsx`.
+
+## Event-trigger implementation
+
+- `server/internal/service/event_trigger.go`: `SetEnabled`, `Admit`, `ProcessNext`,
+  and `SyncRoutes` own configuration, durable inbox, batching and Router policy.
+- `server/internal/handler/agent_event_trigger.go`: event adapter, batch inspection,
+  and authorized retry; `agent.go` exposes `event_trigger_enabled`.
+- `server/internal/handler/autopilot.go`: `requireAutopilotWrite` prevents direct
+  mutation/execution of Agent-managed event automations.
+- `server/cmd/multica/cmd_agent.go`: `event-trigger-enabled` update flag is Changed-gated.
+- `packages/views/agents/components/agent-message-settings.tsx`: Agent event-trigger
+  toggle rendered by `tabs/digital-employee-tab.tsx`; identity binding controls are unchanged.
+- Read-only verification: `multica agent get <id> --output json`,
+  `multica autopilot runs <id> --output json`, and `GET /api/agents/{id}/event-batches`.
+
+## Proactive conversation admission
+
+- `server/internal/service/event_trigger.go`: toggle dependency and legacy-only draining.
+- `server/internal/handler/agent_event_trigger.go`, `proactive_conversation.go`: observed messages enter Coordinator; durable dedup covers the former inbox.
+- `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
+- `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
+- Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.

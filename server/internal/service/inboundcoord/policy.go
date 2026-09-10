@@ -120,9 +120,14 @@ func selectedPolicyModules(turn Turn, recalled bool) []policyModule {
 	finished := turn.Loop == LoopTaskFinished
 	selected := map[string]bool{"core": true}
 	if turn.Loop == LoopFinishCheck {
-		if turn.FinishCheckAction == ActionIssue {
+		// Final review shares the same group participation boundary as routing.
+		if turn.Source != SourceWeb && strings.EqualFold(turn.ChatType, "group") {
+			selected["channel"], selected["group"] = true, true
+		}
+		if turn.FinishCheckAction == ActionIssue || turn.FinishCheckMixedActions {
 			selected["finish_check_work"] = true
-		} else {
+		}
+		if turn.FinishCheckAction != ActionIssue || turn.FinishCheckMixedActions {
 			selected["finish_check"] = true
 		}
 	} else if finished {
