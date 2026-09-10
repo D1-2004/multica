@@ -512,6 +512,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		h.FCE2BStable.DeveloperUserIDsProvider = opts.RuntimeConfig.stablePublisherUserIDs
 	}
 	h.EventTriggers = service.NewEventTriggerService(pool, h.AutopilotService)
+	h.MessageAutomations = &service.MessageAutomationService{Pool: pool, Autopilot: h.AutopilotService}
 	h.TaskService.RuntimeLauncher = service.NewCloudSandboxLauncher(
 		queries,
 		h.FCE2BLauncher,

@@ -549,6 +549,9 @@ func main() {
 	if h.IssueCommentService != nil {
 		go h.IssueCommentService.RunCoordinatorFollowUps(sweepCtx)
 	}
+	if h.MessageAutomations != nil {
+		go h.MessageAutomations.Run(sweepCtx)
+	}
 	if h.EventTriggers != nil {
 		go h.EventTriggers.Run(sweepCtx)
 	}

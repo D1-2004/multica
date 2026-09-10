@@ -104,14 +104,15 @@ type AutopilotSubscriberEntry struct {
 }
 
 type AutopilotTriggerResponse struct {
-	ID             string  `json:"id"`
-	AutopilotID    string  `json:"autopilot_id"`
-	Kind           string  `json:"kind"`
-	Enabled        bool    `json:"enabled"`
-	CronExpression *string `json:"cron_expression"`
-	Timezone       *string `json:"timezone"`
-	NextRunAt      *string `json:"next_run_at"`
-	WebhookToken   *string `json:"webhook_token"`
+	MergeIntervalMinutes *int32  `json:"merge_interval_minutes,omitempty"`
+	ID                   string  `json:"id"`
+	AutopilotID          string  `json:"autopilot_id"`
+	Kind                 string  `json:"kind"`
+	Enabled              bool    `json:"enabled"`
+	CronExpression       *string `json:"cron_expression"`
+	Timezone             *string `json:"timezone"`
+	NextRunAt            *string `json:"next_run_at"`
+	WebhookToken         *string `json:"webhook_token"`
 	// WebhookPath is computed from webhook_token. Always present for webhook
 	// triggers; nil for schedule/api. Not stored — see triggerToResponse.
 	WebhookPath *string `json:"webhook_path"`
@@ -219,6 +220,10 @@ func (h *Handler) triggerToResponse(t db.AutopilotTrigger) AutopilotTriggerRespo
 		LastFiredAt:    timestampToPtr(t.LastFiredAt),
 		CreatedAt:      timestampToString(t.CreatedAt),
 		UpdatedAt:      timestampToString(t.UpdatedAt),
+	}
+	if t.Kind == service.DingTalkMessageTrigger && t.MergeIntervalMinutes.Valid {
+		minutes := t.MergeIntervalMinutes.Int32
+		resp.MergeIntervalMinutes = &minutes
 	}
 	if t.Kind == "webhook" && t.WebhookToken.Valid && t.WebhookToken.String != "" {
 		path := webhookPathForToken(t.WebhookToken.String)
@@ -344,10 +349,11 @@ type SubscriberInput struct {
 }
 
 type CreateAutopilotTriggerRequest struct {
-	Kind           string  `json:"kind"`
-	CronExpression *string `json:"cron_expression"`
-	Timezone       *string `json:"timezone"`
-	Label          *string `json:"label"`
+	MergeIntervalMinutes *int32  `json:"merge_interval_minutes,omitempty"`
+	Kind                 string  `json:"kind"`
+	CronExpression       *string `json:"cron_expression"`
+	Timezone             *string `json:"timezone"`
+	Label                *string `json:"label"`
 	// Provider is currently only meaningful for kind=webhook. Allowed
 	// values: "generic" (default) or "github". Unset → "generic".
 	Provider *string `json:"provider"`
@@ -370,10 +376,11 @@ type SetSigningSecretRequest struct {
 }
 
 type UpdateAutopilotTriggerRequest struct {
-	Enabled        *bool   `json:"enabled"`
-	CronExpression *string `json:"cron_expression"`
-	Timezone       *string `json:"timezone"`
-	Label          *string `json:"label"`
+	MergeIntervalMinutes *int32  `json:"merge_interval_minutes,omitempty"`
+	Enabled              *bool   `json:"enabled"`
+	CronExpression       *string `json:"cron_expression"`
+	Timezone             *string `json:"timezone"`
+	Label                *string `json:"label"`
 	// EventFilters is the desired event-filter set with tri-state PATCH
 	// semantics:
 	//
@@ -931,6 +938,22 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if nextType != prev.AssigneeType || nextID != prev.AssigneeID {
+		var hasMessageTrigger bool
+		if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM autopilot_trigger WHERE autopilot_id=$1 AND kind='dingtalk_message' AND enabled)`, prev.ID).Scan(&hasMessageTrigger); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to inspect message triggers")
+			return
+		}
+		if hasMessageTrigger {
+			candidate := prev
+			candidate.AssigneeType = nextType
+			candidate.AssigneeID = nextID
+			if !h.requireMessageAutomationAssignee(w, r, candidate) {
+				return
+			}
+		}
+	}
+
 	// Assignment locks come first. Runtime teardown and squad leader changes
 	// also lock Agent/Squad before they update matching Autopilot rows; keeping
 	// that global order prevents an Agent↔Autopilot deadlock.
@@ -980,6 +1003,13 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			PublishedByID:   parseUUID(userID),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update autopilot")
+			return
+		}
+	}
+
+	if prev.AssigneeType != autopilot.AssigneeType || prev.AssigneeID != autopilot.AssigneeID || prev.Status != autopilot.Status || prev.ExecutionMode != autopilot.ExecutionMode {
+		if _, err := tx.Exec(r.Context(), `UPDATE autopilot_trigger SET message_revision=message_revision+1,message_accept_after=now() WHERE autopilot_id=$1 AND kind='dingtalk_message'`, autopilot.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to reset message collection")
 			return
 		}
 	}
@@ -1289,13 +1319,35 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "kind is required")
 		return
 	}
-	if req.Kind != "schedule" && req.Kind != "webhook" {
+	if req.Kind != "schedule" && req.Kind != "webhook" && req.Kind != service.DingTalkMessageTrigger {
 		// "api" kind is deprecated: it was reserved-but-inert (no scheduler,
 		// no ingress route), and the only way to actually fire one was via
 		// the manual /trigger endpoint — which already works regardless of
 		// trigger kind. Surface stragglers with 400 so callers move to
 		// schedule or webhook.
-		writeError(w, http.StatusBadRequest, "kind must be schedule or webhook")
+		writeError(w, http.StatusBadRequest, "kind must be schedule, webhook or dingtalk_message")
+		return
+	}
+	var mergeInterval pgtype.Int4
+	if req.Kind == service.DingTalkMessageTrigger {
+		minutes := int32(5)
+		if req.MergeIntervalMinutes != nil {
+			minutes = *req.MergeIntervalMinutes
+		}
+		if err := service.ValidateMessageMergeInterval(minutes); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if req.CronExpression != nil || req.Timezone != nil {
+			writeError(w, http.StatusBadRequest, "cron and timezone are not valid for message triggers")
+			return
+		}
+		if !h.requireMessageAutomationAssignee(w, r, ap) {
+			return
+		}
+		mergeInterval = pgtype.Int4{Int32: minutes, Valid: true}
+	} else if req.MergeIntervalMinutes != nil {
+		writeError(w, http.StatusBadRequest, "merge_interval_minutes is only valid for message triggers")
 		return
 	}
 	if req.Kind == "schedule" && (req.CronExpression == nil || *req.CronExpression == "") {
@@ -1401,14 +1453,15 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	qtx := h.Queries.WithTx(tx)
 
 	trigger, err := qtx.CreateAutopilotTrigger(r.Context(), db.CreateAutopilotTriggerParams{
-		AutopilotID:    ap.ID,
-		Kind:           req.Kind,
-		Enabled:        true,
-		CronExpression: cronText,
-		Timezone:       tzText,
-		NextRunAt:      nextRunAt,
-		Label:          ptrToText(req.Label),
-		WebhookToken:   webhookToken,
+		MergeIntervalMinutes: mergeInterval,
+		AutopilotID:          ap.ID,
+		Kind:                 req.Kind,
+		Enabled:              true,
+		CronExpression:       cronText,
+		Timezone:             tzText,
+		NextRunAt:            nextRunAt,
+		Label:                ptrToText(req.Label),
+		WebhookToken:         webhookToken,
 		// Seed the responsible publisher = creator; a later substantive edit re-stamps
 		// it to the editor so runs attribute to whoever last shaped this trigger
 		// (source=trigger_owner, MUL-4302).
@@ -1634,6 +1687,19 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if req.MergeIntervalMinutes != nil {
+		if prev.Kind != service.DingTalkMessageTrigger {
+			writeError(w, http.StatusBadRequest, "merge_interval_minutes is only valid for message triggers")
+			return
+		}
+		if err := service.ValidateMessageMergeInterval(*req.MergeIntervalMinutes); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if prev.Kind == service.DingTalkMessageTrigger && (req.Enabled == nil || *req.Enabled) && !h.requireMessageAutomationAssignee(w, r, ap) {
+		return
+	}
 	// Kind-specific validation. Mirrors the create-path discipline: cron
 	// and timezone only make sense on schedule triggers, so reject loudly
 	// rather than persisting fields that no code path reads. enabled and
@@ -1655,6 +1721,9 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		Timezone:       prev.Timezone,
 		NextRunAt:      prev.NextRunAt,
 		Label:          prev.Label,
+	}
+	if req.MergeIntervalMinutes != nil {
+		params.MergeIntervalMinutes = pgtype.Int4{Int32: *req.MergeIntervalMinutes, Valid: true}
 	}
 	if req.Enabled != nil {
 		params.Enabled = pgtype.Bool{Bool: *req.Enabled, Valid: true}
@@ -1744,7 +1813,7 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	// over-transfer Elon flagged). Comparing the persisted before/after rows captures a
 	// real change and ignores label-only / no-op PATCHes (next_run_at is derived from
 	// cron/timezone, so it is not an independent signal).
-	triggerSubstantiveChange := prev.Enabled != trigger.Enabled ||
+	triggerSubstantiveChange := prev.MergeIntervalMinutes != trigger.MergeIntervalMinutes || prev.Enabled != trigger.Enabled ||
 		prev.CronExpression != trigger.CronExpression ||
 		prev.Timezone != trigger.Timezone ||
 		!bytes.Equal(prev.EventFilters, trigger.EventFilters)
@@ -1834,6 +1903,18 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to delete trigger")
 		return
 	}
+	if trigger.Kind == service.DingTalkMessageTrigger {
+		// Run payloads preserve execution history after the trigger is removed.
+		if _, err := tx.Exec(r.Context(), `DELETE FROM autopilot_message_event WHERE trigger_id=$1`, triggerUUID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete message observations")
+			return
+		}
+		if _, err := tx.Exec(r.Context(), `DELETE FROM autopilot_message_window WHERE trigger_id=$1`, triggerUUID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to delete message windows")
+			return
+		}
+	}
+
 	if err := h.recordAutopilotRuleVersion(r.Context(), qtx, ap, "member", parseUUID(userID)); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete trigger")
 		return

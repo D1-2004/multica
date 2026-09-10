@@ -76,7 +76,7 @@ var autopilotRunsCmd = &cobra.Command{
 
 var autopilotTriggerAddCmd = &cobra.Command{
 	Use:   "trigger-add <autopilot-id>",
-	Short: "Add a schedule or webhook trigger to an autopilot",
+	Short: "Add a schedule, webhook, or DingTalk message trigger to an autopilot",
 	Args:  exactArgs(1),
 	RunE:  runAutopilotTriggerAdd,
 }
@@ -161,8 +161,9 @@ func init() {
 	autopilotRunsCmd.Flags().Int("offset", 0, "Pagination offset")
 	autopilotRunsCmd.Flags().String("output", "table", "Output format: table or json")
 
-	// trigger-add — supports schedule and webhook
-	autopilotTriggerAddCmd.Flags().String("kind", "schedule", "Trigger kind: schedule or webhook")
+	// trigger-add supports scheduled, webhook, and message automation.
+	autopilotTriggerAddCmd.Flags().String("kind", "schedule", "Trigger kind: schedule, webhook, or dingtalk_message")
+	autopilotTriggerAddCmd.Flags().Int("merge-interval-minutes", 5, "DingTalk message merge window, 1 to 1440 minutes")
 	autopilotTriggerAddCmd.Flags().String("cron", "", "Cron expression (required for --kind schedule)")
 	autopilotTriggerAddCmd.Flags().String("timezone", "", "IANA timezone (default UTC; schedule only)")
 	autopilotTriggerAddCmd.Flags().String("label", "", "Optional human-readable label")
@@ -174,6 +175,7 @@ func init() {
 
 	// trigger-update
 	autopilotTriggerUpdateCmd.Flags().Bool("enabled", true, "Enable or disable the trigger")
+	autopilotTriggerUpdateCmd.Flags().Int("merge-interval-minutes", 5, "DingTalk message merge window, 1 to 1440 minutes")
 	autopilotTriggerUpdateCmd.Flags().String("cron", "", "New cron expression")
 	autopilotTriggerUpdateCmd.Flags().String("timezone", "", "New IANA timezone")
 	autopilotTriggerUpdateCmd.Flags().String("label", "", "New label")
@@ -578,14 +580,14 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	if kind == "" {
 		kind = "schedule"
 	}
-	if kind != "schedule" && kind != "webhook" {
-		return fmt.Errorf("--kind must be schedule or webhook")
+	if kind != "schedule" && kind != "webhook" && kind != "dingtalk_message" {
+		return fmt.Errorf("--kind must be schedule, webhook, or dingtalk_message")
 	}
 	cron, _ := cmd.Flags().GetString("cron")
 	if kind == "schedule" && cron == "" {
 		return fmt.Errorf("--cron is required for --kind schedule")
 	}
-	if kind == "webhook" {
+	if kind != "schedule" {
 		if v, _ := cmd.Flags().GetString("timezone"); v != "" {
 			return fmt.Errorf("--timezone is only valid with --kind schedule")
 		}
@@ -595,6 +597,15 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{"kind": kind}
+	if kind == "dingtalk_message" {
+		minutes, _ := cmd.Flags().GetInt("merge-interval-minutes")
+		if minutes < 1 || minutes > 1440 {
+			return fmt.Errorf("--merge-interval-minutes must be between 1 and 1440")
+		}
+		body["merge_interval_minutes"] = minutes
+	} else if cmd.Flags().Changed("merge-interval-minutes") {
+		return fmt.Errorf("--merge-interval-minutes is only valid with --kind dingtalk_message")
+	}
 	if kind == "schedule" {
 		body["cron_expression"] = cron
 		if v, _ := cmd.Flags().GetString("timezone"); v != "" {
@@ -699,6 +710,13 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{}
+	if cmd.Flags().Changed("merge-interval-minutes") {
+		minutes, _ := cmd.Flags().GetInt("merge-interval-minutes")
+		if minutes < 1 || minutes > 1440 {
+			return fmt.Errorf("--merge-interval-minutes must be between 1 and 1440")
+		}
+		body["merge_interval_minutes"] = minutes
+	}
 	if cmd.Flags().Changed("enabled") {
 		v, _ := cmd.Flags().GetBool("enabled")
 		body["enabled"] = v
@@ -716,7 +734,7 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 		body["label"] = v
 	}
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use --enabled, --cron, --timezone, or --label")
+		return fmt.Errorf("no fields to update; use --enabled, --cron, --timezone, --merge-interval-minutes, or --label")
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())

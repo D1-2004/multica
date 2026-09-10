@@ -7,7 +7,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Clock,
   FilePlus2,
   FolderKanban,
   Maximize2,
@@ -56,7 +55,6 @@ import type {
 } from "@multica/core/types";
 import { TitleEditor, ContentEditor, type TitleEditorRef } from "../../editor";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { SegmentedToggle } from "../../common/segmented-toggle";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { AgentPicker, type AssigneeSelection } from "./pickers/agent-picker";
@@ -69,6 +67,7 @@ import { parseCron, toCron } from "./schedule-editor/cron-mapping";
 import { useScheduleSubmitGate } from "./schedule-editor/validate";
 import { WebhookEventFilterSection } from "./webhook-event-filter-section";
 import { WebhookUrlField } from "./webhook-url-field";
+import { MessageTriggerSection, TriggerKindPicker, useMessageTriggerEligibility, validMessageInterval, type EditableTriggerKind } from "./message-trigger-section";
 import { useT } from "../../i18n";
 import { formatSchedulePartialFailureToast } from "./autopilot-dialog-toast";
 import type { WebhookEventFilter } from "@multica/core/types";
@@ -199,13 +198,18 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
   // updates), so the toggle is hidden when editing. The kind is
   // initialized from the first existing trigger so we render the right
   // panel without surprising the user.
-  const initialKind: "schedule" | "webhook" = (() => {
+  const initialKind: EditableTriggerKind = (() => {
     if (isCreate) return "schedule";
     const first = props.triggers[0];
     if (first?.kind === "webhook") return "webhook";
+    if (first?.kind === "dingtalk_message") return "dingtalk_message";
     return "schedule";
   })();
-  const [triggerKind, setTriggerKind] = useState<"schedule" | "webhook">(initialKind);
+  const [triggerKind, setTriggerKind] = useState<EditableTriggerKind>(initialKind);
+
+  const existingMessageTrigger = !isCreate ? props.triggers.find((trigger) => trigger.kind === "dingtalk_message") : undefined;
+  const [mergeMinutes, setMergeMinutes] = useState(existingMessageTrigger?.merge_interval_minutes ?? 5);
+  const { eligible: messageEligible } = useMessageTriggerEligibility(wsId, assigneeType, assigneeId);
 
   const initialEventFilters: WebhookEventFilter[] =
     !isCreate && props.triggers[0]?.event_filters ? props.triggers[0].event_filters : [];
@@ -305,6 +309,10 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
       else assigneeTriggerRef.current?.focus();
       return;
     }
+    if (triggerKind === "dingtalk_message" && (!messageEligible || !validMessageInterval(mergeMinutes))) {
+      toast.error(!messageEligible ? t(($) => $.message_trigger.binding_required) : t(($) => $.message_trigger.invalid_interval));
+      return;
+    }
     setSubmitting(true);
     try {
       if (scheduleWillBeWritten && !(await scheduleGate.ensureAccepted(schedule))) {
@@ -334,6 +342,8 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
               kind: "webhook",
               event_filters: eventFilters.length > 0 ? eventFilters : undefined,
             });
+          } else if (triggerKind === "dingtalk_message") {
+            await createTrigger.mutateAsync({ autopilotId: autopilot.id, kind: "dingtalk_message", merge_interval_minutes: mergeMinutes });
           } else {
             await createTrigger.mutateAsync({
               autopilotId: autopilot.id,
@@ -404,6 +414,14 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             triggerOk = false;
             triggerErrMessage =
               err instanceof Error && err.message ? err.message : null;
+          }
+        }
+        if (triggerKind === "dingtalk_message" && existingMessageTrigger && mergeMinutes !== existingMessageTrigger.merge_interval_minutes) {
+          try {
+            await updateTrigger.mutateAsync({ autopilotId: props.autopilotId, triggerId: existingMessageTrigger.id, merge_interval_minutes: mergeMinutes });
+          } catch (err) {
+            triggerOk = false;
+            triggerErrMessage = err instanceof Error ? err.message : null;
           }
         }
         // Webhook autopilots have no schedule, but the user can still edit
@@ -637,7 +655,7 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             )}
 
             {isCreate && (
-              <TriggerKindSection kind={triggerKind} onChange={setTriggerKind} />
+              <TriggerKindPicker kind={triggerKind} onChange={setTriggerKind} messageEligible={messageEligible} disabled={submitting} />
             )}
 
             {triggerKind === "schedule" ? (
@@ -669,6 +687,8 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
                   />
                 )}
               </div>
+            ) : triggerKind === "dingtalk_message" ? (
+              <MessageTriggerSection minutes={mergeMinutes} onChange={setMergeMinutes} eligible={messageEligible} disabled={submitting} />
             ) : (
               <WebhookSection
                 isCreate={isCreate}
@@ -978,42 +998,6 @@ function ScheduleEmptyState({ onAdd }: { onAdd: () => void }) {
 // ---------------------------------------------------------------------------
 // Trigger kind segmented control + webhook help section
 // ---------------------------------------------------------------------------
-
-function TriggerKindSection({
-  kind,
-  onChange,
-}: {
-  kind: "schedule" | "webhook";
-  onChange: (kind: "schedule" | "webhook") => void;
-}) {
-  const { t } = useT("autopilots");
-  return (
-    <div>
-      <SectionLabel>{t(($) => $.dialog.section_trigger_kind)}</SectionLabel>
-      <SegmentedToggle
-        value={kind}
-        onChange={onChange}
-        buttonClassName="px-3 py-1.5 text-body"
-        options={[
-          [
-            "schedule",
-            <span key="schedule" className="flex items-center justify-center gap-1.5">
-              <Clock className="h-3.5 w-3.5" />
-              {t(($) => $.dialog.trigger_kind_schedule)}
-            </span>,
-          ],
-          [
-            "webhook",
-            <span key="webhook" className="flex items-center justify-center gap-1.5">
-              <Webhook className="h-3.5 w-3.5" />
-              {t(($) => $.dialog.trigger_kind_webhook)}
-            </span>,
-          ],
-        ]}
-      />
-    </div>
-  );
-}
 
 function WebhookSection({
   isCreate,
