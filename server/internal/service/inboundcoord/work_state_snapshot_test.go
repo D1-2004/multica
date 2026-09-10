@@ -140,7 +140,9 @@ func TestWorkStateSnapshotScopeGuardPrecedesReuse(t *testing.T) {
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("w", toolWorkState, snapshotArguments), assistantTool("finish", toolFinish, snapshotClarifyFinish)}}
 	tools := scenePrefetchToolFunc(func(_ context.Context, _ Turn, name, _ string) (string, error) {
 		if name == toolAssocRecall {
-			return `{"conversation_id":"cid-current","items":[]}`, nil
+			// A different Issue is recalled, so work_state is disclosed with
+			// that id only; the retained snapshot's id was never recalled.
+			return `{"conversation_id":"cid-current","status":"loaded","items":[{"issue_id":"dddddddd-dddd-dddd-dddd-dddddddddddd","purpose":"另一件事","on_this_scene":true}]}`, nil
 		}
 		reads++
 		return workStateSnapshotFixture(t), nil

@@ -3421,6 +3421,37 @@ const AutopilotListItemSchema = z
   })
   .loose();
 
+export const AutopilotTriggerSchema = z.object({
+  id: z.string().min(1), autopilot_id: z.string().min(1), kind: z.string(),
+  enabled: z.boolean().default(false),
+  merge_interval_minutes: z.number().int().min(1).max(1440).nullable().optional(),
+  cron_expression: z.string().nullable().default(null), timezone: z.string().nullable().default(null),
+  next_run_at: z.string().nullable().default(null), webhook_token: z.string().nullable().default(null),
+  label: z.string().nullable().default(null), last_fired_at: z.string().nullable().default(null),
+  created_at: z.string().default(""), updated_at: z.string().default(""),
+}).loose();
+
+export const GetAutopilotResponseSchema = z.object({
+  autopilot: AutopilotListItemSchema,
+  triggers: z.array(AutopilotTriggerSchema).default([]),
+}).loose();
+
+export const FALLBACK_AUTOPILOT_TRIGGER = {
+  id: "", autopilot_id: "", kind: "api" as const, enabled: false,
+  cron_expression: null, timezone: null, next_run_at: null, webhook_token: null,
+  label: null, last_fired_at: null, created_at: "", updated_at: "",
+};
+
+export const FALLBACK_GET_AUTOPILOT_RESPONSE = {
+  autopilot: {
+    id: "", workspace_id: "", title: "", description: null, assignee_type: "agent" as const,
+    assignee_id: "", status: "paused" as const, execution_mode: "run_only" as const,
+    issue_title_template: null, created_by_type: "member", created_by_id: "", last_run_at: null,
+    created_at: "", updated_at: "", can_write: false, can_manage_access: false,
+  },
+  triggers: [],
+};
+
 export const ListAutopilotsResponseSchema = z
   .object({
     autopilots: z.array(AutopilotListItemSchema).default([]),

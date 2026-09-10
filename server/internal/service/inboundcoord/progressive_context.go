@@ -17,7 +17,7 @@ const toolContextRead = "context_read"
 func contextReadTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolContextRead,
-		Description: openai.String("Read kind=history to recover a prior question; kind=coordination_state to inspect the previous three coordination windows and persisted work submission counts. Host fixes the current job/scene; no selectable IDs. Coordination metadata never proves execution or delivery. No business lookup or actions."),
+		Description: openai.String("Read kind=history on demand to resolve the intended respondent, dialogue continuation, references or a prior question. It reads current-scene DWS messages before the fixed window cutoff, with authors and timestamps; weigh elapsed time, intervening speakers and topic continuity together. Reuse sufficient supplied evidence. kind=coordination_state inspects the previous three coordination windows and persisted work submission counts, not dialogue. Host fixes the job/scene; no selectable IDs. No business lookup or actions; metadata never proves execution or delivery."),
 		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"kind"}, "properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"history", coordinationStateKind}}}},
 	})
 }
@@ -42,15 +42,17 @@ func toolsForDisclosure(turn Turn, round int, recalled bool) []openai.ChatComple
 				out = append(out, def)
 			}
 		case toolWorkState:
-			if recalled && round < maxLoopRounds-2 {
-				out = append(out, def)
+			// Only Issue ids recalled in this run are valid arguments; the
+			// schema lists them so the model cannot request a stale id.
+			if recalled && round < maxLoopRounds-2 && len(turn.recalledIssueIDs) > 0 {
+				out = append(out, coordinatorWorkStateToolFor(sortedCopy(turn.recalledIssueIDs)))
 			}
 		}
 	}
 	if (coordinationHistoryReadAvailable(turn) || strings.TrimSpace(turn.TraceID) != "") && round < maxLoopRounds-2 {
 		out = append(out, contextReadTool())
 	}
-	out = append(out, windowPlanTool(recalled || turn.ConversationID == ""))
+	out = append(out, windowPlanToolFor(turn, recalled || turn.ConversationID == ""))
 	return out
 }
 

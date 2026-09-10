@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-10.4`。装配版本：`15`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-10.9`。装配版本：`20`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -10,6 +10,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 修改 Coordinator 的提示词、工具、上下文、handler、assoc、scenememory、窗口、回执或 trace 前，先读本文件和 [规则目录](../server/internal/service/inboundcoord/policy/registry.json)。目录登记 `COORD.F01`–`COORD.F19` 的行为义务、模块、实现引用、对照案例和已撤回手段。
 
+- [历史预取与轻量问候免审 Plan](plans/2026-09-10-coordinator-history-prefetch.md) 记录冬翔→菲迪→须莫代问链路的触发证据、89 轮扫描统计、历史预取/免审/转告规则与验证状态；
 - [DWS执行恢复Plan](plans/2026-09-10-dws-execution-recovery.md) 记录来源交付、单项执行边界与Host等待反馈；
 - [通用语义修复 Plan](plans/2026-09-10-generic-proactive-semantics.md) 记录身份未知边界、词表撤回与跨场景验证；
 - [decline边界Plan](plans/2026-09-10-coordinator-decline-boundary.md) 记录主模型、Host与审核配置来源一致性及验证；
@@ -52,7 +53,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 | `dialogue` | 已载入对话证据 | 上一问、短答、引用与原窗口水位 |
 | `recall_match` | 本轮成功召回后（含首次模型调用前的Host预取） | 候选比较、工作进度、旧工作与续接 |
 
-模块只按 Host 已知条件选择，不用词表裁决业务意图。主循环可一轮形成完整 actions；入站非工作动作和 task_finished 的结果动作提交前均进入独立终结审查。带岗位约束的工作计划使用未来计划审查，不能要求尚未执行的任务先交付答案。内部归一化仍可使用 `ActionIssue` 选择工作审查，它不是对模型开放的旧 `finish(action=issue)`。
+模块只按 Host 已知条件选择，不用词表裁决业务意图。主循环可一轮形成完整 actions；入站非工作动作和 task_finished 的结果动作提交前均进入独立终结审查。2026-09-10 曾评估让短问候的 `acknowledge(greeting|thanks)` 免审以省一次模型调用，因 Host 无法证明短消息里没有夹带请求（「你好，帮我查一下昨天的日志」）而撤回；审查成本应通过更小的审查模型或更短的审查输入降低，不通过跳过覆盖检查。带岗位约束的工作计划使用未来计划审查，不能要求尚未执行的任务先交付答案。内部归一化仍可使用 `ActionIssue` 选择工作审查，它不是对模型开放的旧 `finish(action=issue)`。
 
 纯工作、纯非工作候选分别只载对应审查模块；混合候选在同一次审核装配core及两类审查模块，岗位约束仍只提供一次，不增模型调用或轮数。合法工作不能替同行非工作回复通过真实性与范围审查。不混载voice/inbound；群上下文同时披露channel/group，与主判断共享逐句参与资格及绑定接收身份。完成结果仍按完成合同审查，不开放新工作路由。审查不替模型执行或选目标。有效短合同替代协调层的完整SOP；缺失、过期或不可读短合同时，Host保留原完整岗位审查。旧Agent因此仍有全文审查成本，本轮不通过截断或硬失败门槛删除约束，也不宣称所有Agent整轮token已有固定上限。成功读取后重建system和manifest，模块与旧工具正文不重复累积；实际效果与当前限制不能因省token丢失。
 
@@ -77,7 +78,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 Host按当前instructions精确hash区分 `loaded / not_configured / stale / unavailable`。写入未带source hash的显式合同，由Host绑定当前原文；带hash的复制保留原版本关联，不把stale自动认证成loaded。只更新instructions会保留旧合同并变stale。更新省略合同字段表示保留，JSON null原子清空。API、CLI、复制、Builder、Git/DTA源和模板都保持字段；Git管理的合同与instructions一起禁止API热改。不自动给线上Agent编造短合同。
 
-主循环只看有效合同或未迁移状态/hash/全文长度元数据，不能通过 `context_read(kind=job_policy)` 打开长SOP。`context_read(kind=history)`仅恢复本场景原窗口前的指代、对象或上一问，最多3000字符并声明截断；它不是业务查询。所有托管读上下文总预算8000字符，只保留当前有效快照；最新修复反馈800字符。另独立保留最近一次被拒的精确提案JSON，最多6000字符，供下一轮按诊断修复具体字段；超限或非法JSON时明确标omitted，不静默截成残缺提案，也不累积历次候选。完整执行SOP仍由执行器持有；旧Agent的全文审查属于上段明确保留的迁移成本。
+主循环只看有效合同或未迁移状态/hash/全文长度元数据，不能通过 `context_read(kind=job_policy)` 打开长SOP。`context_read(kind=history)`按需恢复本场景原窗口前的对话对象、延续关系、指代或上一问，最多3000字符并声明截断；它不是业务查询。所有托管读上下文总预算8000字符，只保留当前有效快照；最新修复反馈800字符。另独立保留最近一次被拒的精确提案JSON，最多6000字符，供下一轮按诊断修复具体字段；超限或非法JSON时明确标omitted，不静默截成残缺提案，也不累积历次候选。完整执行SOP仍由执行器持有；旧Agent的全文审查属于上段明确保留的迁移成本。
 
 审查Reason始终保留具体缺陷诊断，引文不能替换Reason。constraint_quote字段必填：allow或无规则依据填空；规则驱动revise须提供最多200字符的逐字指令/所需固定话术，避免要求主模型猜不可见SOP。对非空 `constraint_quote` 原文，Host逐个来源验证它是当前限制、已加载岗位约束或实际可见persona/reply_tone的逐字子串，不跨字段拼接，再供主循环decline引用。真实引文只供修复，不构成额外授权。revise的非空摘录若伪改写、去Markdown或不匹配来源，复用现有一次、共用12秒截止的审核协议修正；仍失败则停止提交，不静默清空并缓存无依据revise。allow夹带无效附加引文仍丢弃并记录 `finish_check_boundary_quote_discarded=true`，不阻塞合法裁决；必填quote ref及verdict仍严格校验。该短摘录只证明这条限制，不是运行时生成的新合同或长SOP摘要。读取失败/缺失不得描述为无约束。
 
@@ -90,6 +91,8 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 有可信当前CID的正常入站，除主动会话中未@本员工的群消息外，Host在首次模型调用前执行一次无q、48h/3项 `assoc_recall`，读取timeout为2秒。复用现有归一化、8000字符内读快照及合法事项记录，不额外引入业务读取或权限。成功结果可直接满足本场景召回前置，模型无需重复同一机械读取；失败保留unavailable，不解锁工作前置，模型仍可按需重试。明确其他CID、更早范围、关键词、工作状态或历史缺口仍需对应读取，不能由当前预取代替。
 
 主动会话中未@本员工的群消息先在同一循环判断相关性，必要时按需召回；历史事项不能先入上下文诱导接管。DM与明确@的预取保持既有行为。首次模型请求若已有成功预取，按已召回阶段开放合法目标的 `work_state`；没有成功召回时仅开放 `assoc_recall`、`context_read(history|coordination_state)` 和 `finish`。task_finished、无CID请求及进入主循环前的既有Host短路/持久化计划恢复均保持原路径。不再向模型提供 `issue_get`、`issue_comment_list`、`assoc_bind` 或 `issue_comment_add`。内部既有函数不代表对模型开放。
+
+同一批预取还读取本场景的有界钉钉历史（`shouldPrefetchHistory` / `history_prefetch.go`）：数字员工与机器人入站、可信 CID 与 DWS 身份齐全、history 尚未加载、且不是主动会话中未@本员工的群消息时，Host 与 assoc 预取并行调用 `DWSHistory.Load`，上限 2.5 秒。成功或空结果按原 `context_read(kind=history)` 快照登记（r2），首个模型请求同时装配 `dialogue` 模块，因此「对方回答了员工代问的问题」在首轮就有证据和规则。超时保持 `not_loaded`，模型仍可按需读一次；其它失败标 `unavailable`，不当作空会话。同一轮再次 `context_read(kind=history)` 时，若快照已在且状态不是 not_loaded，Host 返回复用提示而不重读，避免预发 trace `cb7dacb19ec246c584971e148ea8c11f` 那样连读 6 次的空转；basis=answer 的历史前置反馈仍按原路径解决。Langfuse 根 metadata 记 `history_prefetch_status / history_prefetch_elapsed_ms`，SLS 事件为 `inbound_coordinator_history_prefetch`。触发证据：正式 trace `bf0bcb544bed486ab4fbb16454dabe67`（须莫答「6 点」时 history not_loaded，被判 clarify）与 `39427c330a2b4182a5b10fe44503355f`（答复从未转告委托人，回复泄漏「任务状态为 completed」）。
 
 这次预取针对事项关联，不是Scene Memory刷新或提交。问候/能力介绍等非工作请求也可能增加一次有界关联读取，内部可包含多条数据库查询，不能宣称所有请求提速。Langfuse根metadata记录 `scene_prefetch_status / scene_prefetch_elapsed_ms`，对应Tool observation标 `origin=host_prefetch`；SLS事件为 `inbound_coordinator_scene_prefetch`、字段 `status / elapsed_ms`。其工具步骤不算LLM发起的工具调用；模型轮数、Host读取耗时与额外读次数分别报告。
 
@@ -107,6 +110,10 @@ work_state仍只读本Agent工作区的合法目标，总预算2000字符。顶�
 
 report_status.state_refs仍只能引用Host本轮实际提供的rN状态证据；目标ID或关联卡片不是完成证明，不从任务评论重建业务结果。
 
+
+工具契约先于失败提示：Host 每轮把本轮可校验的值写进 schema（`tool_contract.go`），而不是等模型调错再用 hint 纠正。`source_refs` 枚举当前窗口 `u1..uN`；`state_refs` 枚举本轮已有的 `rN`；`issue_id`（finish continue_work 与 work_state）枚举本轮实际召回的 Issue id；`memory_revision` 固定为当前 revision；`decline.constraint_quote` 枚举可见来源（persona、reply_tone、当前原文、已加载短合同）逐句拆出的候选，不含 Host 持有的完整岗位说明，且每个选项都能通过 `suppliedConstraintQuote`。本轮没有对应引用的动作不出现在 `kind` 里：没有可引用限制句就没有 decline，没有快照就没有 report_status，没有召回 id 就没有 continue_work。触发证据：正式 trace `342b8b1cfe8040a29f79e4a613a59ecf` 中 decline 因 constraint_quote 出处校验失败 35 次、`40526d2be3604629b705cf73d2a12a85` 中 work_state 用陈旧 id 连续失败。
+
+重试预算（`retry_budget.go`）：同名同参数的读取失败 2 次后从工具列表撤回，第 3 次相同调用直接拒绝并提示改用已有证据或 finish；finish 提案因同一 Host 缺陷被拒 3 次、或审核连续 3 次返回同一 reason（相同提案命中审核缓存也计数），以 deferred 提前结束，Langfuse 根 metadata 记 `loop_stop_reason=repeated_invalid_plan|review_deadlock`、`loop_stop_round`、`withdrawn_tools`，SLS 事件 `inbound_coordinator_tool_withdrawn`。不同缺陷/不同 reason 的修复不受预算影响。提前结束仍是零回复，只是不再把 8 轮都花在同一个拒绝上；触发证据 `5a21b47f8f774f9e914734277b7d6818`（同一 reason 30 次、152s）。
 
 模型只能调用 `finish({actions:[...]})`。旧顶层 `action=reply|issue|silence`、`text`、`issue_id`和`items`不接受。入站动作如下；所有动作以 `source_refs`关联当前 `uN` 原文，回复内聚到动作，不存在通用回复动作。
 
@@ -141,7 +148,7 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 执行器收到的IssueDescription按Host保留的Decision.Source生成交付要求：Web通过当前任务结果或已有会话回传，不额外寻找钉钉发信人/收件人；数字员工/机器人按可信事件和已有钉钉交付上下文回复，身份缺失不补造；未知来源只使用已有上下文，不推定渠道。原文明确授权的外发、代问或转达仍保留指定对象/渠道/范围，需发送时核验结果；Issue创建人/评论人不是默认委托人，接待文案不是已完成或送达证据。
 
-执行交接的角色追溯按需进行。CoordinatorIssueFollowUp已有可信当前sender UID/openID、当前CID及与当前消息一致的origin定位，并实际提供ready reply hint时，按原回复策略直接使用该目标；Issue-comment触发本身不要求默认assoc找人。仍需读取当前Issue及相关最新comments确认授权。真实第三方代问/转达、角色冲突或目标缺失时继续追溯原始委托与必要assoc；已知目标不证明送达，也不授予无关外联/跨会话权限。详见[Dispatch执行合同](agent-dispatch-v2-execution-contract.md#coordinator-issue-follow-up-reply-targets)。
+执行交接的角色追溯按需进行。CoordinatorIssueFollowUp已有可信当前sender UID/openID、当前CID及与当前消息一致的origin定位，并实际提供ready reply hint时，按原回复策略直接使用该目标；Issue-comment触发本身不要求默认assoc找人。仍需读取当前Issue及相关最新comments确认授权。真实第三方代问/转达、角色冲突或目标缺失时继续追溯原始委托与必要assoc；已知目标不证明送达，也不授予无关外联/跨会话权限。详见[Dispatch执行合同](agent-dispatch-v2-execution-contract.md#coordinator-issue-follow-up-reply-targets)。Coordinator建出的独立Issue任务是纯Issue工作：claim时不再注入Diamond派发策略（common+surface或Agent的policy覆盖）与Router contextPrompt（两者excluded_reason=coordinator_issue），只保留钉钉会话事实、scene graph、回复格式与企业身份段；短循环已消费的派发不重复投喂给执行器。
 
 单项执行描述优先保留purpose，并仅消除平台生成的默认context重复；独立上下文、scene_cid、原始发言/引用和有界history handoff原样保留。遇依赖故障记录已完成步骤、原始错误和阻塞，不把明确工作擅自扩展为凭证寻找/修改、登录或环境维修；实际操作始终以本次最新原始授权为准。
 
@@ -211,6 +218,8 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 
 默认关闭的“主动处理会话所有新消息”位于“入站先判断”下方。开启时同事务开启入站判断；关闭入站判断同时关闭主动处理。Router 继续按原订阅范围投递，Multica 将 message.observed 转入持久 Coordinator 窗口，按消息 ID 去重，4 秒静默/12 秒封窗，最多 100 条一窗；无 Autopilot 新执行或额外 30 秒冷却。未被 @ 和纯确认词不能在主动模式下跳过语义判断。原 Autopilot 只收尾升级前的消息，消息去重覆盖两个入口；旧版本入库在切换后返回可重试错误。
 
+自动化中的 `dingtalk_message` 触发方式是独立功能：`message.statistics` 仅收集元数据，按用户配置的固定窗口触发自动化，不进入 Coordinator，也不改变主动处理开关或窗口。账号自身发出的消息不计入统计。旧 `conversation.summary` 仅返回静默收据，不再创建任务。实现与验收契约见 [钉钉消息自动化方案](plans/2026-09-10-dingtalk-message-autopilot.md)。
+
 同 Issue 的补充先保存评论与私有待处理上下文，再结束本轮事件消费。独立工作线程待当前任务终态后，将同身份、同会话的连续补充合并到一次执行，保留逐条来源和实际评论投递水位；独立的 DWS 身份在启动前重新解析，不沿用前一任务的临时 Token。任务完成跟进开关维持原义。完成回路只汇报结果及已接收补充的真实等待/执行状态，不新增路由。
 
 结构测试、数据库并发测试与真实预发对话分别记录在本次实施记录中；未完成的验证不得记为通过。
@@ -222,6 +231,10 @@ Scene Memory 的全文上限 1600 Unicode code points 包含标题和引用，�
 找别人的问候、交给别人处理的事情和无关闲聊静默，不发澄清、不代答、不建/续 Issue；找数字员工、明确邀请它协助、岗位内开放问题及已有工作真实补充仍由同一 Coordinator 决定回应或委派。窗口包含两类消息时分别处理，不能全回或全丢。问候与已接受请求的重复提醒不新增执行。此改造复用现有 finish_check，不增加分类模型请求、定时任务或业务规则开关；任务完成审查仍使用独立完成合同。
 
 对未 @ 本员工的主动群消息，首轮先判断响应资格，历史 Issue 改为同一循环按需召回，避免同群旧事项诱导接管群友的工作。DM 与明确 @ 的预取保持原有行为；所有工作仍须先完成召回才能提交，不增加独立分类 LLM 请求。
+
+对话对象依赖前文且已提供证据不足时，模型按需调用 `context_read(kind=history)`，由现有 DWS reader 查询当前会话原窗口前的消息，保留作者和时间；对象明确或已有充分证据时不重复读取。结合当前消息与历史回复的时间间隔、引用对象、话题连续性及中间其他人的交流判断是否在对员工说话。时间近仅支持延续，时间久削弱无锚定指代，但不否决明确引用或续问；不设置固定超时阈值。未读取、读取失败或空事项召回不等于没有对话，时间戳缺失保持未知。主判断和现有群聊终结审查共享该指引，Host 的读取权限、水位、预算和动作校验保持现行合同。
+
+策略 `.5` 合入候选 `.3` 的指引，针对 2026-09-10 15:55 无 @ 追问、15:56 引用员工回复仍被忽略的现场证据补充以上工具与提示词指引。五组对照登记于 cases.json；模型回放与真实投递尚未验证，本地结构及单测结果不能作为线上修复验收。
 
 群内名字优先从当前有效的 message 路由绑定获取，与执行身份授权独立。新绑定的 account/tenant 必须与可信入站身份一致；存量无 account-key 的绑定使用同一认证工作区/Agent 下的有效路由显示名，不据此新增身份权限。只有不存在消息绑定时才尝试精确匹配执行身份。
 
@@ -239,3 +252,11 @@ Hi/你好等普通会话已有正常回复，是本次必须保留的对照，�
 审查将可信接收身份与当前窗口置于同一个最新输入中，避免长岗位背景隔开身份与原文；不新增身份别名。相同目标但无新增执行输入的提醒用no_advancement拒绝重复执行，仍需模型按当前原文判断。
 
 主动群的现有审查还返回participation_checks：共享依据的source_refs可分组，但每条来源须恰好覆盖一次；模型独立判断对象依据、原文称呼或已读对话引用和ignore/coordinate/work去向。Host只验证出处及判定与动作的一致性，不用人名或意图词表分类。审查输出预算随窗口条数从768有界增加到3072，仍在原12秒截止内，不增加独立分类调用。
+
+DWS 历史读取通过 `MULTICA_DWS_HISTORY_MCP_URL` 显式选择 MCP 环境，并在每次隔离配置目录中写入 `mcp_url`；预发配置使用预发地址。`im.message-list.v1` 的无时区显示时间按 DWS 约定的上海时区解析，未知格式保留原文。群聊对象未明且历史未加载时，忽略提案须先读取一次历史；明确引用当前文本中的其他收件人可直接判断。读取失败保持未知，不循环读取，也不凭空建立对话。CLI 标准错误仅记录稳定诊断字段。
+
+### 跨组织历史读取续授
+
+`MULTICA_DWS_HISTORY_CROSS_ORG_RENEW_AGENT_IDS` 显式列出已获账号所有者同意续授的 Agent UUID（逗号分隔，默认空）。仅当这些 Agent 的历史读取返回 `CrossOrgPermissionDenied` 时，Host 使用本次隔离身份执行 `dws chat data-auth cross-org --all --grant-type timed --ttl 7d --yes`，确认限时读取授权成功后重试原查询一次。授权失败、其他错误或再次拒绝均保留失败；不改变绑定身份、会话范围和历史截止时间。
+
+因未读取历史而阻止静默的 Host 提示，在读取返回 loaded、empty 或 unavailable 后解除；empty/unavailable 仍是证据缺失，不证明没有对话，也不授权继续工作。语义审查提出的其他限制继续保留。

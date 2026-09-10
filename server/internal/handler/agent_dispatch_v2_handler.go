@@ -206,6 +206,9 @@ func (h *Handler) handleAgentDispatchV2(
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
 		return
 	}
+	if h.handleMessageStatistics(w, r, command, dispatchContext) {
+		return
+	}
 	if h.handleObservedEvent(w, r, &command, dispatchContext) {
 		return
 	}

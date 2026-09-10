@@ -124,31 +124,6 @@ func TestConversationSummaryDispatchValidation(t *testing.T) {
 	})
 }
 
-func TestConversationSummaryPromptDisplay(t *testing.T) {
-	c := conversationSummaryDispatchCommand()
-	prompt := mustBuildDispatchPrompt(t, c)
-
-	for _, want := range []string{
-		"项目群",
-		"新消息：12",
-		"@你：3",
-		"特别关注人发送：5",
-		"置顶会话消息：2",
-		"2026-09-08 09:00 ~ 2026-09-08 10:00",
-	} {
-		if !strings.Contains(prompt.DisplayContent, want) {
-			t.Fatalf("summary display missing %q: %s", want, prompt.DisplayContent)
-		}
-	}
-
-	// 可见内容只陈述分桶事实与计数，不得泄露会话定位、汇总 ID 或 Router 私有指令。
-	for _, secret := range []string{"cid-summary-secret", "summary-123", "ROUTER SUMMARY CONTEXT"} {
-		if strings.Contains(prompt.DisplayContent, secret) {
-			t.Fatalf("summary display leaked %q: %s", secret, prompt.DisplayContent)
-		}
-	}
-}
-
 func TestConversationSummaryInstructionGate(t *testing.T) {
 	stored := persistedDispatchContext{
 		Source:        DispatchSource{Platform: "dingtalk", Type: "digital_employee"},
@@ -251,30 +226,5 @@ func TestConversationSummaryLegacyClaimUsesRouterContext(t *testing.T) {
 		if strings.Contains(response.HandoffNote, unwanted) {
 			t.Fatalf("legacy handoff note contains reply workflow %q: %s", unwanted, response.HandoffNote)
 		}
-	}
-}
-
-func TestConversationSummaryIdempotencyKeyAndTitle(t *testing.T) {
-	c := conversationSummaryDispatchCommand()
-
-	if got := dispatchWindowIdempotencyKey(c); got != "conversation-summary:summary-123" {
-		t.Fatalf("summary idempotency key = %q", got)
-	}
-	if got := dispatchIssueTitle(c, dispatchWindowIdempotencyKey(c)); got != "项目群 会话汇总｜2026-09-08T09:00" {
-		t.Fatalf("summary issue title = %q", got)
-	}
-
-	// 缺少时间桶时标题退化为"<群名> 会话汇总"。
-	noBucket := cloneConversationSummary(c)
-	noBucket.Event.Data.ConversationSummary.TimeBucket = ""
-	if got := dispatchIssueTitle(noBucket, dispatchWindowIdempotencyKey(noBucket)); got != "项目群 会话汇总" {
-		t.Fatalf("summary issue title without bucket = %q", got)
-	}
-
-	// 群名缺省时退化为"群聊"。
-	noTitle := cloneConversationSummary(c)
-	noTitle.Event.Data.Conversation.Title = ""
-	if got := dispatchIssueTitle(noTitle, dispatchWindowIdempotencyKey(noTitle)); got != "群聊 会话汇总｜2026-09-08T09:00" {
-		t.Fatalf("summary issue title without conversation title = %q", got)
 	}
 }

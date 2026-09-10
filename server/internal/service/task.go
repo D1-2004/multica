@@ -1302,6 +1302,17 @@ func (s *TaskService) enqueueIssueTaskWithCommentPlanAndDispatchContext(ctx cont
 	originatorUserID := attr.UserID
 	runtimeMCPOverlay := s.buildRuntimeMCPOverlay(ctx, originatorUserID, agent)
 	attrSource, attrDelegatedFrom, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
+	// A message-triggered automation carries stable account identity, never the
+	// short-lived transport token. Apply it before the task row becomes claimable,
+	// including when the issue event listener wins the enqueue race.
+	if len(dispatchContext) == 0 && issue.OriginType.String == "autopilot" && !triggerCommentID.Valid && !rerunOfTaskID.Valid {
+		if run, runErr := s.Queries.GetAutopilotRunByIssue(ctx, issue.ID); runErr == nil && run.Source == DingTalkMessageTrigger {
+			dispatchContext = run.RuntimeContext
+		} else if runErr != nil && !errors.Is(runErr, pgx.ErrNoRows) {
+			return db.AgentTaskQueue{}, fmt.Errorf("load automation runtime context: %w", runErr)
+		}
+	}
+
 	createParams := db.CreateAgentTaskParams{
 		AgentID:                   issue.AssigneeID,
 		RuntimeID:                 agent.RuntimeID,

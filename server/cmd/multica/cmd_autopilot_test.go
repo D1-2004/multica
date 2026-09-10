@@ -473,3 +473,41 @@ func TestUUIDRegexp(t *testing.T) {
 		}
 	}
 }
+
+func TestRunAutopilotMessageTriggerTransmitsInterval(t *testing.T) {
+	const apID = "33333333-3333-3333-3333-333333333333"
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/autopilots/"+apID+"/triggers" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": "trigger-1", "kind": "dingtalk_message"})
+	}))
+	defer srv.Close()
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	cmd := &cobra.Command{Use: "trigger-add"}
+	cmd.Flags().String("kind", "dingtalk_message", "")
+	cmd.Flags().String("cron", "", "")
+	cmd.Flags().String("timezone", "", "")
+	cmd.Flags().String("label", "", "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().Int("merge-interval-minutes", 5, "")
+	_ = cmd.Flags().Set("merge-interval-minutes", "7")
+	if err := runAutopilotTriggerAdd(cmd, []string{apID}); err != nil {
+		t.Fatal(err)
+	}
+	if body["kind"] != "dingtalk_message" || body["merge_interval_minutes"] != float64(7) {
+		t.Fatalf("incorrect request: %#v", body)
+	}
+	_ = cmd.Flags().Set("merge-interval-minutes", "0")
+	if err := runAutopilotTriggerAdd(cmd, []string{apID}); err == nil {
+		t.Fatal("invalid interval accepted")
+	}
+}

@@ -168,6 +168,23 @@ describe("DispatchPromptDialog", () => {
     ).toBeInTheDocument();
   });
 
+  it("explains why a Coordinator-created Issue task is not given the policy", async () => {
+    const base = preview();
+    mockPreview.mockResolvedValueOnce({
+      ...base,
+      segments: base.segments.map((segment) =>
+        segment.id === "policy"
+          ? { ...segment, included: false, excluded_reason: "coordinator_issue" }
+          : segment,
+      ),
+    });
+    renderDialog();
+    await screen.findByText("Managed policy");
+    expect(
+      screen.getByText(/Not active · not used for Coordinator-created Issues/i),
+    ).toBeInTheDocument();
+  });
+
   it("says up front that Multica-created work never receives this", async () => {
     renderDialog();
     expect(

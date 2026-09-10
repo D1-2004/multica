@@ -8,7 +8,7 @@ export type AutopilotExecutionMode = "create_issue" | "run_only";
 // Path A). Older servers omit this field — callers should default to "agent".
 export type AutopilotAssigneeType = "agent" | "squad";
 
-export type AutopilotTriggerKind = "schedule" | "webhook" | "api";
+export type AutopilotTriggerKind = "schedule" | "webhook" | "api" | "dingtalk_message";
 
 // `skipped` is emitted by the backend pre-flight admission check
 // (assignee runtime offline at dispatch time, MUL-1899). The frontend MUST
@@ -21,7 +21,7 @@ export type AutopilotRunStatus =
   | "failed"
   | "skipped";
 
-export type AutopilotRunSource = "schedule" | "manual" | "webhook" | "api";
+export type AutopilotRunSource = "schedule" | "manual" | "webhook" | "api" | "dingtalk_message";
 
 export interface Autopilot {
   id: string;
@@ -89,6 +89,7 @@ export interface AutopilotCollaboratorsResponse {
 }
 
 export interface AutopilotTrigger {
+  merge_interval_minutes?: number | null;
   id: string;
   autopilot_id: string;
   kind: AutopilotTriggerKind;
@@ -170,6 +171,7 @@ export interface UpdateAutopilotRequest {
 }
 
 export interface CreateAutopilotTriggerRequest {
+  merge_interval_minutes?: number | null;
   kind: AutopilotTriggerKind;
   cron_expression?: string;
   timezone?: string;
@@ -179,6 +181,7 @@ export interface CreateAutopilotTriggerRequest {
 }
 
 export interface UpdateAutopilotTriggerRequest {
+  merge_interval_minutes?: number | null;
   enabled?: boolean;
   cron_expression?: string;
   timezone?: string;

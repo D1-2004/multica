@@ -133,9 +133,12 @@ type Turn struct {
 	// ChatSessionID is the web Chat session the turn belongs to; channel
 	// turns leave it empty and are grouped by ConversationID instead.
 	ChatSessionID string
-	TaskResult    string
-	IssueID       string
-	Utterances    []WindowUtterance
+	// recalledIssueIDs are the Issue ids this run has actually recalled; the
+	// loop refreshes them each round so tool schemas can list them.
+	recalledIssueIDs []string
+	TaskResult       string
+	IssueID          string
+	Utterances       []WindowUtterance
 	// AlreadyToldScene is set by Host on task_finished when this sandbox
 	// run already sent IM on the inbound conversation. Decide silences.
 	AlreadyToldScene bool
@@ -848,7 +851,7 @@ func IssueDescription(decision Decision, message string) string {
 	if decision.UserText != "" {
 		b.WriteString("\n\n本轮拟向用户说明：")
 		b.WriteString(decision.UserText)
-		b.WriteString("\n这是接待文案，不是完成或送达证据。请直接处理当前交付物，不重复打招呼或复述接待。")
+		b.WriteString("\n这是接待文案，不是完成或送达证据；接待由 Host 负责发给委托人。请直接处理当前交付物，不重复打招呼或复述接待，也不再向委托人发送确认或进度消息；只在有结果或失败时回报。")
 	}
 	if purpose != "" && decision.PlanVersion != WindowPlanVersion {
 		b.WriteString("\n事项简报：")

@@ -228,6 +228,7 @@ type Handler struct {
 	IssueService             *service.IssueService
 	IssueCommentService      *service.IssueCommentService
 	AutopilotService         *service.AutopilotService
+	MessageAutomations       *service.MessageAutomationService
 	EventTriggers            *service.EventTriggerService
 	EmailService             *service.EmailService
 	UpdateStore              UpdateStore
