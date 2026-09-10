@@ -13,15 +13,14 @@ import (
 )
 
 const (
-	asbCapacityCheckInterval = 5 * time.Second
-	asbCapacityBusyCooldown  = 30 * time.Second
-	asbCapacityBackoffMax    = 5 * time.Minute
-	asbCapacityGateTimeout   = 2 * time.Second
+	asbCapacityBusyCooldown = 30 * time.Second
+	asbCapacityBackoffMax   = 5 * time.Minute
+	asbCapacityGateTimeout  = 2 * time.Second
 )
 
-// ASBCapacityGate shares admission and negative capacity results across API
-// replicas. The PostgreSQL tenant lock still owns reclaim/create serialization;
-// this gate also spaces consecutive holders of that lock, including new tasks.
+// ASBCapacityGate shares negative capacity results across API replicas.
+// The PostgreSQL tenant lock owns reclaim/create serialization; healthy
+// launches do not need an additional interval between holders of that lock.
 type ASBCapacityGate struct {
 	redis *redis.Client
 }
@@ -42,12 +41,10 @@ var asbCapacityAdmitScript = redis.NewScript(`
 local ttl = redis.call('PTTL', KEYS[1])
 if ttl > 0 then
   local verdict = redis.call('GET', KEYS[1])
-  local pacing = 0
-  if verdict == 'checking' or verdict == 'available' then pacing = 1 end
-  return {ttl, pacing}
+  if verdict ~= 'checking' and verdict ~= 'available' then return ttl end
+  redis.call('DEL', KEYS[1])
 end
-redis.call('SET', KEYS[1], 'checking', 'PX', ARGV[1])
-return {0, 0}
+return 0
 `)
 
 var asbCapacityThrottleScript = redis.NewScript(`
@@ -79,35 +76,38 @@ elseif redis.call('GET', KEYS[1]) ~= 'throttled' then
   redis.call('DEL', KEYS[2])
 end
 local previous = redis.call('PTTL', KEYS[1])
+if ARGV[2] == 'available' then
+  local verdict = redis.call('GET', KEYS[1])
+  if verdict == 'checking' or verdict == 'available' then
+    redis.call('DEL', KEYS[1])
+    return 0
+  end
+  return math.max(0, previous)
+end
 if delay > previous then
   redis.call('SET', KEYS[1], ARGV[2], 'PX', delay)
 end
 return math.max(delay, previous)
 `)
 
-// admit distinguishes a short create interval from a cached full/429 verdict.
-// The latter must stay durable; pacing can resume in the current launch.
-func (g *ASBCapacityGate) admit(ctx context.Context, client *ASBClient) (delay time.Duration, pacing bool, err error) {
+// admit runs under the tenant lock. A positive marker left by an older replica
+// adds no protection once this caller owns that lock. Negative verdicts remain
+// durable, including throttles recorded by concurrent warm-sandbox operations.
+func (g *ASBCapacityGate) admit(ctx context.Context, client *ASBClient) (time.Duration, error) {
 	if g == nil || g.redis == nil {
-		return 0, false, errors.New("ASB shared capacity coordination requires Redis")
+		return 0, errors.New("ASB shared capacity coordination requires Redis")
 	}
 	ctx, cancel := context.WithTimeout(ctx, asbCapacityGateTimeout)
 	defer cancel()
-	verdict, err := asbCapacityAdmitScript.Run(ctx, g.redis, client.capacityGateKeys()[:1], asbCapacityCheckInterval.Milliseconds()).Int64Slice()
-	if err != nil {
-		return 0, false, err
-	}
-	if len(verdict) != 2 {
-		return 0, false, errors.New("invalid ASB capacity admission verdict")
-	}
-	return time.Duration(verdict[0]) * time.Millisecond, verdict[1] == 1, nil
+	millis, err := asbCapacityAdmitScript.Run(ctx, g.redis, client.capacityGateKeys()[:1]).Int64()
+	return time.Duration(millis) * time.Millisecond, err
 }
 
 func (g *ASBCapacityGate) record(ctx context.Context, client *ASBClient, cause error) (time.Duration, error) {
 	if g == nil || g.redis == nil {
 		return 0, errors.New("ASB shared capacity coordination requires Redis")
 	}
-	delay, result, retryAfter := asbCapacityCheckInterval, "available", time.Duration(0)
+	delay, result, retryAfter := time.Duration(0), "available", time.Duration(0)
 	var httpErr *ASBHTTPError
 	if errors.As(cause, &httpErr) && httpErr.StatusCode == http.StatusTooManyRequests {
 		delay, result, retryAfter = asbCapacityBusyCooldown, "throttled", httpErr.RetryAfter

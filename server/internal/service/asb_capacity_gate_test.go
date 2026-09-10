@@ -52,7 +52,7 @@ func newASBCapacityGateTestTenant(t *testing.T, rdb *redis.Client) *ASBClient {
 	return client
 }
 
-func TestASBCapacityGateSerializesReplicasAndSharesFullResult(t *testing.T) {
+func TestASBCapacityGateDoesNotPaceHealthyReplicasAndSharesFullResult(t *testing.T) {
 	ctx := context.Background()
 	rdb := newASBCapacityRedisTestClient(t)
 	nodeA := newASBCapacityGateTestTenant(t, rdb)
@@ -68,7 +68,7 @@ func TestASBCapacityGateSerializesReplicasAndSharesFullResult(t *testing.T) {
 			if i%2 == 0 {
 				client = &nodeB
 			}
-			delay, _, err := client.CapacityGate.admit(ctx, client)
+			delay, err := client.CapacityGate.admit(ctx, client)
 			if err != nil {
 				t.Error(err)
 				return
@@ -79,14 +79,14 @@ func TestASBCapacityGateSerializesReplicasAndSharesFullResult(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	if admitted.Load() != 1 {
-		t.Fatalf("admitted %d concurrent probes, want 1", admitted.Load())
+	if admitted.Load() != 32 {
+		t.Fatalf("healthy gate delayed %d callers; reservations are serialized by PostgreSQL", 32-admitted.Load())
 	}
 	if _, err := nodeA.CapacityGate.record(ctx, nodeA, ErrASBCapacityUnavailable); err != nil {
 		t.Fatal(err)
 	}
-	delay, pacing, err := nodeB.CapacityGate.admit(ctx, &nodeB)
-	if err != nil || pacing || delay < 29*time.Second {
+	delay, err := nodeB.CapacityGate.admit(ctx, &nodeB)
+	if err != nil || delay < 29*time.Second {
 		t.Fatalf("peer did not reuse full result: %s, %v", delay, err)
 	}
 	if delay, err := nodeB.CapacityGate.throttleDelay(ctx, &nodeB); err != nil || delay != 0 {
@@ -94,14 +94,55 @@ func TestASBCapacityGateSerializesReplicasAndSharesFullResult(t *testing.T) {
 	}
 	before := rdb.PTTL(ctx, nodeA.capacityGateKeys()[0]).Val()
 	for range 10 {
-		_, _, _ = nodeB.CapacityGate.admit(ctx, &nodeB)
+		_, _ = nodeB.CapacityGate.admit(ctx, &nodeB)
 	}
 	if after := rdb.PTTL(ctx, nodeA.capacityGateKeys()[0]).Val(); after > before {
 		t.Fatal("cache hits extended the cooldown; queued tasks could starve forever")
 	}
 	other := newASBCapacityGateTestTenant(t, rdb)
-	if delay, _, err := other.CapacityGate.admit(ctx, other); err != nil || delay != 0 {
+	if delay, err := other.CapacityGate.admit(ctx, other); err != nil || delay != 0 {
 		t.Fatalf("another tenant was blocked: %s, %v", delay, err)
+	}
+}
+
+func TestASBCapacityGateIgnoresOldPositiveMarkers(t *testing.T) {
+	ctx := context.Background()
+	rdb := newASBCapacityRedisTestClient(t)
+	client := newASBCapacityGateTestTenant(t, rdb)
+	for _, verdict := range []string{"checking", "available"} {
+		t.Run(verdict, func(t *testing.T) {
+			if err := rdb.Set(ctx, client.capacityGateKeys()[0], verdict, 5*time.Second).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if delay, err := client.CapacityGate.admit(ctx, client); err != nil || delay != 0 {
+				t.Fatalf("old positive marker delayed a tenant lock holder: %s, %v", delay, err)
+			}
+			if delay, err := client.CapacityGate.record(ctx, client, nil); err != nil || delay != 0 {
+				t.Fatalf("healthy result added a new interval: %s, %v", delay, err)
+			}
+			if rdb.Exists(ctx, client.capacityGateKeys()[0]).Val() != 0 {
+				t.Fatal("healthy result retained a cooldown")
+			}
+		})
+	}
+}
+
+func TestASBCapacityGateSuccessCannotClearConcurrentNegativeVerdict(t *testing.T) {
+	ctx := context.Background()
+	rdb := newASBCapacityRedisTestClient(t)
+	client := newASBCapacityGateTestTenant(t, rdb)
+	for _, verdict := range []string{"full", "throttled"} {
+		t.Run(verdict, func(t *testing.T) {
+			if err := rdb.Set(ctx, client.capacityGateKeys()[0], verdict, 30*time.Second).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if delay, err := client.CapacityGate.record(ctx, client, nil); err != nil || delay < 29*time.Second {
+				t.Fatalf("success shortened a concurrent negative verdict: %s, %v", delay, err)
+			}
+			if delay, err := client.CapacityGate.admit(ctx, client); err != nil || delay < 29*time.Second {
+				t.Fatalf("negative verdict was bypassed: %s, %v", delay, err)
+			}
+		})
 	}
 }
 
