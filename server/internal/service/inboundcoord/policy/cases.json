@@ -534,7 +534,7 @@
       "context_b": "仅命中配置名称但接收名缺失；真实对象是他人；引用的示例角色称呼；岗位外的求助。",
       "expected_effects": "A由LLM结合身份、岗位与上下文决定回复或工作，Host不按自然语言词表短路。B没有介入依据时保持静默，配置标签不补成账号别名。collect不按ACK文字拆窗。",
       "forbidden_effects": "测试样例问句自动取得响应资格；工具名一票否决；缺失身份猜测；固定短语跳过LLM。",
-      "verification": "host_protocol_passed; model_replay_pending; live_delivery_pending"
+      "verification": "host_protocol_passed; real_model_21_of_22_overall; independent_shared_marker_deferred; live_delivery_pending"
     }
   ]
 }

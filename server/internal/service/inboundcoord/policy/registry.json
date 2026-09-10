@@ -311,7 +311,7 @@
         "group_recipient_model_replay": "12 contrast cases passed on qwen3.7-plus; synthetic read-only fixtures; one targeted repair-hint rerun",
         "group_recipient_live_delivery": "pending",
         "generic_semantics_host_tests": "passed: assoc and inboundcoord packages; 51 focused handler checks against isolated local PostgreSQL",
-        "generic_semantics_model_replay": "not_run",
+        "generic_semantics_model_replay": "21/22 passed on qwen3.7-plus; independent outcome sharing diagnostic marker exhausted repair loop; no write effects in replay",
         "generic_semantics_live_delivery": "not_run"
       },
       "implementation_refs": [
@@ -527,7 +527,7 @@
         "closed_actions_model_replay": "not_run",
         "closed_actions_live_delivery": "not_run",
         "generic_semantics_host_tests": "passed: assoc and inboundcoord packages; 51 focused handler checks against isolated local PostgreSQL",
-        "generic_semantics_model_replay": "not_run",
+        "generic_semantics_model_replay": "21/22 passed on qwen3.7-plus; independent outcome sharing diagnostic marker exhausted repair loop; no write effects in replay",
         "generic_semantics_live_delivery": "not_run"
       },
       "implementation_refs": [
@@ -589,7 +589,7 @@
         "closed_actions_model_replay": "not_run",
         "closed_actions_live_delivery": "not_run",
         "generic_semantics_host_tests": "passed: assoc and inboundcoord packages; 51 focused handler checks against isolated local PostgreSQL",
-        "generic_semantics_model_replay": "not_run",
+        "generic_semantics_model_replay": "21/22 passed on qwen3.7-plus; independent outcome sharing diagnostic marker exhausted repair loop; no write effects in replay",
         "generic_semantics_live_delivery": "not_run"
       },
       "implementation_refs": [
@@ -642,7 +642,8 @@
         "live_delivery": "pending",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "generic_semantics_model_replay": "21/22 passed on qwen3.7-plus; independent outcome sharing diagnostic marker exhausted repair loop; no write effects in replay"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -893,7 +894,7 @@
         "scene_prefetch_model_comparison": "not_run",
         "scene_prefetch_live_delivery": "not_run",
         "generic_semantics_host_tests": "passed: assoc and inboundcoord packages; 51 focused handler checks against isolated local PostgreSQL",
-        "generic_semantics_model_replay": "not_run",
+        "generic_semantics_model_replay": "21/22 passed on qwen3.7-plus; independent outcome sharing diagnostic marker exhausted repair loop; no write effects in replay",
         "generic_semantics_live_delivery": "not_run"
       },
       "implementation_refs": [
