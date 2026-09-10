@@ -32,7 +32,18 @@ policy_version `2026-09-10.8`，装配版本 `19`（合并 须莫 的 `codex/coo
 | 结构检查 `scripts/check-coordinator-policy.py` | PASS_STRUCTURAL_ONLY |
 | `go test ./internal/service/inboundcoord/` | 通过（新增 `TestDecidePrefetchesDWSHistoryBeforeFirstModelCall`、`TestDecideRepeatedHistoryReadReusesPrefetchedSnapshot`；`TestDecideDWSHistoryTimeoutStillRunsLLM` 的 loader 次数按预取语义改为 2） |
 | Codex 审查 | 4 项发现：免审吞请求（撤回）、超时被判 unavailable（已按预取 context 状态判定）、任务书断言已送达（已改为 Host 负责）、旧 trace 证据版本被改写（已恢复 .4） |
-| 预发 e2e（冬翔 → 测试号 → dxxh 同款代问链路） | 见本文末尾回填 |
+| 预发 e2e（冬翔 → 测试号 → dxxh 同款代问链路） | 通过，见下 |
+
+## 预发 e2e 回填（2026-09-10 18:50–18:54，run 3107698664，agent e2293e9e）
+
+| 时间 | 会话 | 事件 | 证据 |
+| --- | --- | --- | --- |
+| 18:50:03 | 冬翔→测试号 `cid+bEFv7ngm9n79Q1vL9HYJw==` | 「给 dxxh 发个消息，问他今晚几点出发。E2E-RELAY-7731」→ 18:50:21 回「我会向 dxxh 发送消息，询问今晚几点出发。」 | trace `5ffa7faf935a482ab629004f7bf08a5a`：history_prefetch loaded 2161ms，1 轮，start_work，审核 allow，8.5s |
+| 18:51:27 | 测试号→dxxh `cidY2dbfQCZpRueOTXtopDhjvML5zzQGOkDHSQfIeaPP4g=` | 沙箱发出「冬翔托我问你一下：今晚几点出发？时间定好后回复我，我转告冬翔。」 | 同上 agent_task |
+| 18:52:54 | dxxh | 「6 点」→ 18:53:29 回「收到，我会把“6 点”转告给冬翔。」 | trace `9d420681c16f4b55af5bf607cbbed9dd`：history_prefetch loaded 835ms、dingtalk_history_count=10，continue_work(basis=answer)，审核 allow（「Relay reply advances same deliverable」），无 clarify；24.9s，其中 round.1 模型延迟 17.5s |
+| 18:54:10 | 冬翔 | 收到「你让我问 dxxh 今晚几点出发，他回复了：6 点出发。」 | 钉钉回读（as 主角） |
+
+正式环境 17:03 链路中断掉的「答复转告委托人」一环在预发闭合。遗留：转告仍走沙箱（约 40s）；模型侧延迟波动不由本改动控制。
 
 ## 未做与建议
 
