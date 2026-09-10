@@ -1023,6 +1023,21 @@
       "verification": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
       "evidence_status": "host_report_received",
       "evidence_note": "实施者报告直接回复/不一致定位/真实转达的3组及4既有相关组通过；旧current_conversation_id断言在HEAD基线仍失败，不计为修复或全包行为通过，预发真实投递未认证。"
+    },
+    {
+      "id": "f17_acceptance_names_user_goal_without_internal_machinery",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "用户要求打印dws auth status，工作已真实提交；未询问执行环境或内部路由。",
+      "context_b": "相同工作与目标，但用户明确要求说明执行位置/技术细节；或命令名称本身是交付内容。",
+      "expected_effects": "A用简短自然受理表述如“我来打印dws auth status”，不默认复述“我会在沙箱中执行”等内部实现，不虚称已经完成。B保留必要命令名及用户要求的细节，不按技术词表删目标。action、basis、target_match和派工时点保持；实际钉钉送达须另取渠道证据。",
+      "verification": "not_run",
+      "evidence_status": "structural_and_package_checks_only",
+      "evidence_note": "结构checker及修改后的inboundcoord全包通过；此自然语言对照和实际钉钉投递尚未运行，不能把文案改善当作Router映射已修复。",
+      "host_contract_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery"
     }
   ]
 }

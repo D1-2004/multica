@@ -61,7 +61,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F03",
           "COORD.F08"
@@ -133,7 +133,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F13"
         ],
@@ -197,7 +197,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F13"
         ],
@@ -261,7 +261,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F13"
         ],
@@ -326,7 +326,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F13",
           "COORD.F17"
@@ -397,7 +397,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F13",
           "COORD.F17"
@@ -467,7 +467,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F16"
         ],
@@ -517,7 +517,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04"
         ],
@@ -566,7 +566,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -643,7 +643,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05"
         ],
@@ -688,7 +688,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04"
         ],
@@ -731,7 +731,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04"
         ],
@@ -774,7 +774,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04"
         ],
@@ -823,7 +823,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F06"
@@ -881,7 +881,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04",
           "COORD.F16"
@@ -941,7 +941,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04",
           "COORD.F06"
@@ -991,7 +991,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04",
           "COORD.F06"
@@ -1046,7 +1046,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04",
           "COORD.F16"
@@ -1106,7 +1106,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07",
           "COORD.F17"
@@ -1170,7 +1170,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05",
           "COORD.F09"
@@ -1224,7 +1224,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07"
         ],
@@ -1272,7 +1272,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F06"
@@ -1326,7 +1326,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07"
         ],
@@ -1374,7 +1374,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -1451,7 +1451,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05",
           "COORD.F07"
@@ -1505,7 +1505,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F14"
@@ -1561,7 +1561,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F14"
@@ -1617,7 +1617,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F14"
@@ -1673,7 +1673,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05",
           "COORD.F14"
@@ -1728,7 +1728,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05",
           "COORD.F14"
@@ -1782,7 +1782,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F06"
         ],
@@ -1829,7 +1829,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F10"
@@ -1884,7 +1884,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F10"
@@ -1939,7 +1939,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F10"
@@ -1994,7 +1994,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F02"
@@ -2054,7 +2054,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05",
           "COORD.F14"
@@ -2108,7 +2108,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F11"
         ],
@@ -2150,7 +2150,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F11"
         ],
@@ -2192,7 +2192,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F06"
         ],
@@ -2239,7 +2239,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F10"
@@ -2293,7 +2293,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2336,7 +2336,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F03",
           "COORD.F11"
@@ -2407,7 +2407,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07",
           "COORD.F09"
@@ -2464,7 +2464,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07"
         ],
@@ -2513,7 +2513,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F07",
@@ -2579,7 +2579,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F07"
@@ -2636,7 +2636,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07"
         ],
@@ -2684,7 +2684,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -2761,7 +2761,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -2838,7 +2838,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -2915,7 +2915,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2957,7 +2957,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -2999,7 +2999,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -3041,7 +3041,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -3083,7 +3083,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -3125,7 +3125,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -3168,7 +3168,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F03",
           "COORD.F08"
@@ -3241,7 +3241,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07",
           "COORD.F13"
@@ -3310,7 +3310,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07"
         ],
@@ -3357,7 +3357,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -3400,7 +3400,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F03",
           "COORD.F08"
@@ -3473,7 +3473,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F03",
           "COORD.F08"
@@ -3545,7 +3545,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05"
         ],
@@ -3591,7 +3591,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F06"
@@ -3648,7 +3648,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F13",
           "COORD.F17"
@@ -3719,7 +3719,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05",
           "COORD.F14"
@@ -3774,7 +3774,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04",
           "COORD.F16"
@@ -3834,7 +3834,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F03"
@@ -3909,7 +3909,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F07"
@@ -3967,7 +3967,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F07"
@@ -4024,7 +4024,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F07"
         ],
@@ -4072,7 +4072,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F06"
@@ -4126,7 +4126,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -4168,7 +4168,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -4211,7 +4211,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F13"
@@ -4287,7 +4287,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F08"
         ],
@@ -4330,7 +4330,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F02",
           "COORD.F03"
@@ -4404,7 +4404,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F15"
         ],
@@ -4452,7 +4452,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -4489,7 +4489,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04"
         ],
@@ -4537,7 +4537,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F15"
         ],
@@ -4585,7 +4585,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F19"
         ],
@@ -4627,7 +4627,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -4669,7 +4669,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -4712,7 +4712,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F14"
@@ -4767,7 +4767,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -4810,7 +4810,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F05",
           "COORD.F09"
@@ -4865,7 +4865,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -4907,7 +4907,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14"
         ],
@@ -4950,7 +4950,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F01",
           "COORD.F06"
@@ -5006,7 +5006,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -5038,7 +5038,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12",
           "COORD.F13"
@@ -5106,7 +5106,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12",
           "COORD.F13"
@@ -5173,7 +5173,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -5209,7 +5209,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -5246,7 +5246,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12",
           "COORD.F14"
@@ -5293,7 +5293,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -5329,7 +5329,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -5365,7 +5365,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F12"
         ],
@@ -5394,7 +5394,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F04"
         ],
@@ -5436,7 +5436,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F14",
           "COORD.F15"
@@ -5489,7 +5489,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F03",
           "COORD.F11",
@@ -5566,7 +5566,7 @@
       "implementation_status": "mapped_to_candidate",
       "behavior_verification": "not_run",
       "implementation": {
-        "policy_version": "2026-09-10.2",
+        "policy_version": "2026-09-10.3",
         "rule_ids": [
           "COORD.F13",
           "COORD.F16"

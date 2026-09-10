@@ -1,5 +1,5 @@
 {
-  "policy_version": "2026-09-10.2",
+  "policy_version": "2026-09-10.3",
   "assembly_version": "14",
   "modules": [
     {
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "19",
+      "version": "20",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -61,7 +61,7 @@
         "COORD.F03"
       ],
       "budget_characters": 2635,
-      "content_sha256": "3cd16b6d9078b8552c8ca2e090d6c8bf66f0c018dd4ebcea8ac4c2885b43fd95"
+      "content_sha256": "192678cde1b0a4c764fe54d4f8d81767e9b09d9936a238aacdc1dc815430f107"
     },
     {
       "id": "channel",
@@ -435,7 +435,8 @@
         "f01_execution_delivery_follows_trusted_source",
         "f09_saved_work_wait_notice_is_nonterminal_once",
         "f17_wait_notice_cancels_when_resolved",
-        "f01_current_origin_reply_vs_actual_relay"
+        "f01_current_origin_reply_vs_actual_relay",
+        "f17_acceptance_names_user_goal_without_internal_machinery"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -444,7 +445,9 @@
         "dws_execution_recovery_live_delivery": "not_run",
         "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
-        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof"
+        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
+        "concise_acceptance_host_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery",
+        "concise_acceptance_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -930,7 +933,8 @@
         "generic_identity_and_semantics",
         "f09_saved_work_wait_notice_is_nonterminal_once",
         "f09_legacy_wait_permission_is_admission_scoped",
-        "f09_wait_permission_change_splits_collect"
+        "f09_wait_permission_change_splits_collect",
+        "f17_acceptance_names_user_goal_without_internal_machinery"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -939,7 +943,9 @@
         "dws_execution_recovery_live_delivery": "not_run",
         "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
-        "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification"
+        "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
+        "concise_acceptance_host_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery",
+        "concise_acceptance_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1131,7 +1137,7 @@
     {
       "id": "COORD.F17",
       "family": "F17",
-      "obligation": "整窗actions经Host验证及审查后提交；start_work/continue_work中的接单reply仅在真实提交后交付。部分成功持久化且恢复不重放已成功项，旧checkpoint沿用原幂等效果。 审查输入明确受理回执的送达保证：对应工作先入库/排队，允许真实受理表述，但不证明开始执行、完成或外部送达。 每job等待标记、本地notice及具备冻结等待资格的outbox同事务且去重，不修改原计划/完成键；发送前job终态或全项已提交则取消尚未发notice。默认交付遵循真实Source，明确外发仍保留原授权和发送证据。 新legacy任务可取得独立非终结等待资格，不改变最终结果归属；旧无快照managed任务仅保留原冻结route兼容，发送仍核Host target及身份范围。",
+      "obligation": "整窗actions经Host验证及审查后提交；start_work/continue_work中的接单reply仅在真实提交后交付。部分成功持久化且恢复不重放已成功项，旧checkpoint沿用原幂等效果。 审查输入明确受理回执的送达保证：对应工作先入库/排队，允许真实受理表述，但不证明开始执行、完成或外部送达。 每job等待标记、本地notice及具备冻结等待资格的outbox同事务且去重，不修改原计划/完成键；发送前job终态或全项已提交则取消尚未发notice。默认交付遵循真实Source，明确外发仍保留原授权和发送证据。 新legacy任务可取得独立非终结等待资格，不改变最终结果归属；旧无快照managed任务仅保留原冻结route兼容，发送仍核Host target及身份范围。 成功派工的受理回复简短自然地说明用户目标，默认不讲沙箱等内部实现，保留必要命令名及明确要求的技术细节；文案正确仍需单独证明渠道送达。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -1157,7 +1163,8 @@
         "f17_wait_notice_cancels_when_resolved",
         "f09_legacy_wait_permission_is_admission_scoped",
         "f09_wait_permission_change_splits_collect",
-        "f01_current_origin_reply_vs_actual_relay"
+        "f01_current_origin_reply_vs_actual_relay",
+        "f17_acceptance_names_user_goal_without_internal_machinery"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -1167,7 +1174,9 @@
         "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
-        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof"
+        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
+        "concise_acceptance_host_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery",
+        "concise_acceptance_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
