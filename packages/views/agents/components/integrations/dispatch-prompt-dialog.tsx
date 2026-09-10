@@ -195,6 +195,8 @@ export function DispatchPromptDialog({
           return t(($) => $.tab_body.dispatch.excluded_no_conversation_context);
         case "not_a_dingtalk_channel":
           return t(($) => $.tab_body.dispatch.excluded_not_a_dingtalk_channel);
+        case "coordinator_issue":
+          return t(($) => $.tab_body.dispatch.excluded_coordinator_issue);
         default:
           return t(($) => $.tab_body.dispatch.excluded_empty);
       }

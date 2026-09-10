@@ -1345,20 +1345,30 @@ func applyLegacyDingTalkDispatchPrompt(
 }
 
 func buildLegacyDispatchInstruction(stored persistedDispatchContext, flags *featureflag.Service, agentPrompt string) string {
-	surfacePrompt := strings.TrimSpace(agentPrompt)
-	if surfacePrompt == "" {
-		surfacePrompt = resolveSurfaceRuntimePrompt(flags, stored.Surface.Type)
+	surfacePrompt := ""
+	// Same gate as the segment composer: a Coordinator-created Issue task is
+	// plain Issue work and receives neither the dispatch-mode policy nor the
+	// Agent's replacement for it.
+	if !stored.CoordinatorIssueFollowUp {
+		surfacePrompt = strings.TrimSpace(agentPrompt)
+		if surfacePrompt == "" {
+			surfacePrompt = resolveSurfaceRuntimePrompt(flags, stored.Surface.Type)
+		}
 	}
 	runtimePrompt := joinDispatchPromptSections(
 		legacyDispatchExternalInputSafetyPrompt(),
 		surfacePrompt,
 	)
 	workflowPrompt := ""
-	if stored.Type == dispatchEventTypeConversationSummary {
+	if stored.CoordinatorIssueFollowUp {
+		// A Coordinator-created Issue task receives neither the Router context
+		// nor the short-loop DWS workflow: the short loop already consumed that
+		// dispatch. The conversation instruction below carries what it keeps.
+	} else if stored.Type == dispatchEventTypeConversationSummary {
 		// 汇总巡检没有"回复最新消息"的工作流：legacy 守护进程直接采用 Router 的
 		// contextPrompt（静默检测、按需行动），不注入读回执/回复生命周期指令。
 		workflowPrompt = strings.TrimSpace(stored.ContextPrompt)
-	} else if stored.Outbound.Mode == protocol.DispatchOutboundModeDWS && !stored.CoordinatorIssueFollowUp {
+	} else if stored.Outbound.Mode == protocol.DispatchOutboundModeDWS {
 		workflowPrompt = buildLegacyDingTalkDWSWorkflowPrompt(DispatchCommand{
 			SchemaVersion:      stored.SchemaVersion,
 			Source:             stored.Source,

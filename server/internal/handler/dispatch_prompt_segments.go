@@ -51,6 +51,15 @@ const (
 	dispatchSegmentSourceRouter  = "router"  // per-dispatch, resolved upstream
 )
 
+// dispatchExcludedCoordinatorIssue is the exclusion reason for the segments
+// that describe the inbound dispatch itself — the managed policy and the
+// Router's contextPrompt — on an Issue task the Coordinator created. The short
+// loop already consumed that dispatch (acknowledged it or parked it silently);
+// the Issue task is plain Issue work that keeps only the DingTalk facts it
+// needs to reach people, so the dispatch-mode policy, reply-decision fence and
+// short-loop delivery facts would only contradict the follow-up instruction.
+const dispatchExcludedCoordinatorIssue = "coordinator_issue"
+
 // DispatchPromptSegment is one row of the composed instruction, carrying enough
 // for the settings UI to render the real structure: where the text comes from,
 // whether this agent replaced it, and whether it applies at all to the previewed
@@ -192,9 +201,18 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 
 	// Policy is scoped to dispatch runs. A DingTalk stream task with no dispatch
 	// envelope has no mode, and inflating it with the common section would give
-	// it policy it does not receive today.
+	// it policy it does not receive today. An Issue task the Coordinator created
+	// carries the envelope only for its DingTalk facts: the dispatch it came from
+	// was already handled by the short loop, so the dispatch-mode policy does not
+	// apply either (see dispatchExcludedCoordinatorIssue).
+	coordinatorIssue := in.Present && in.Stored.CoordinatorIssueFollowUp
+	dispatchApplies := in.Present && !coordinatorIssue
+	dispatchGateReason := "no_dispatch_context"
+	if coordinatorIssue {
+		dispatchGateReason = dispatchExcludedCoordinatorIssue
+	}
 	managedPolicy := ""
-	if in.Present {
+	if dispatchApplies {
 		managedPolicy = joinDispatchPromptSections(
 			resolveDispatchRuntimePrompt(in.Flags, featureflag.DispatchCommonRuntimePromptFlagKey),
 			resolveSurfaceRuntimePrompt(in.Flags, in.Stored.Surface.Type),
@@ -203,17 +221,19 @@ func composeDispatchInstructionSegments(in dispatchInstructionInputs) []Dispatch
 	segments = append(segments, dispatchSegment(
 		DispatchSegmentPolicy, dispatchSegmentSourceManaged, dispatchDeliveryRuntimeBrief,
 		managedPolicy, in.Overrides,
-		in.Present, "dingtalk_dispatch", "no_dispatch_context",
+		dispatchApplies, "dingtalk_dispatch", dispatchGateReason,
 	))
 
+	// The Router's contextPrompt describes the delivery the short loop already
+	// performed, so it shares the Coordinator-Issue gate with the policy.
 	segments = append(segments, DispatchPromptSegment{
 		ID:             DispatchSegmentContext,
 		Source:         dispatchSegmentSourceRouter,
 		Delivery:       dispatchDeliveryPerTurn,
 		Customizable:   false,
 		Condition:      "per_dispatch",
-		Included:       in.Present && strings.TrimSpace(in.Stored.ContextPrompt) != "",
-		ExcludedReason: dispatchExcludedReason(in.Present, "no_dispatch_context", "not_supplied"),
+		Included:       dispatchApplies && strings.TrimSpace(in.Stored.ContextPrompt) != "",
+		ExcludedReason: dispatchExcludedReason(dispatchApplies, dispatchGateReason, "not_supplied"),
 		ManagedText:    in.Stored.ContextPrompt,
 		EffectiveText:  in.Stored.ContextPrompt,
 	})

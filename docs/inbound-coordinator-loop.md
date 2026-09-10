@@ -141,7 +141,7 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 执行器收到的IssueDescription按Host保留的Decision.Source生成交付要求：Web通过当前任务结果或已有会话回传，不额外寻找钉钉发信人/收件人；数字员工/机器人按可信事件和已有钉钉交付上下文回复，身份缺失不补造；未知来源只使用已有上下文，不推定渠道。原文明确授权的外发、代问或转达仍保留指定对象/渠道/范围，需发送时核验结果；Issue创建人/评论人不是默认委托人，接待文案不是已完成或送达证据。
 
-执行交接的角色追溯按需进行。CoordinatorIssueFollowUp已有可信当前sender UID/openID、当前CID及与当前消息一致的origin定位，并实际提供ready reply hint时，按原回复策略直接使用该目标；Issue-comment触发本身不要求默认assoc找人。仍需读取当前Issue及相关最新comments确认授权。真实第三方代问/转达、角色冲突或目标缺失时继续追溯原始委托与必要assoc；已知目标不证明送达，也不授予无关外联/跨会话权限。详见[Dispatch执行合同](agent-dispatch-v2-execution-contract.md#coordinator-issue-follow-up-reply-targets)。
+执行交接的角色追溯按需进行。CoordinatorIssueFollowUp已有可信当前sender UID/openID、当前CID及与当前消息一致的origin定位，并实际提供ready reply hint时，按原回复策略直接使用该目标；Issue-comment触发本身不要求默认assoc找人。仍需读取当前Issue及相关最新comments确认授权。真实第三方代问/转达、角色冲突或目标缺失时继续追溯原始委托与必要assoc；已知目标不证明送达，也不授予无关外联/跨会话权限。详见[Dispatch执行合同](agent-dispatch-v2-execution-contract.md#coordinator-issue-follow-up-reply-targets)。Coordinator建出的独立Issue任务是纯Issue工作：claim时不再注入Diamond派发策略（common+surface或Agent的policy覆盖）与Router contextPrompt（两者excluded_reason=coordinator_issue），只保留钉钉会话事实、scene graph、回复格式与企业身份段；短循环已消费的派发不重复投喂给执行器。
 
 单项执行描述优先保留purpose，并仅消除平台生成的默认context重复；独立上下文、scene_cid、原始发言/引用和有界history handoff原样保留。遇依赖故障记录已完成步骤、原始错误和阻塞，不把明确工作擅自扩展为凭证寻找/修改、登录或环境维修；实际操作始终以本次最新原始授权为准。
 
