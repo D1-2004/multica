@@ -17,7 +17,7 @@ const toolContextRead = "context_read"
 func contextReadTool() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolContextRead,
-		Description: openai.String("Read kind=history to recover a prior question; kind=coordination_state to inspect the previous three coordination windows and persisted work submission counts. Host fixes the current job/scene; no selectable IDs. Coordination metadata never proves execution or delivery. No business lookup or actions."),
+		Description: openai.String("Read kind=history on demand to resolve the intended respondent, dialogue continuation, references or a prior question. It reads current-scene DWS messages before the fixed window cutoff, with authors and timestamps; weigh elapsed time, intervening speakers and topic continuity together. Reuse sufficient supplied evidence. kind=coordination_state inspects the previous three coordination windows and persisted work submission counts, not dialogue. Host fixes the job/scene; no selectable IDs. No business lookup or actions; metadata never proves execution or delivery."),
 		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"kind"}, "properties": map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"history", coordinationStateKind}}}},
 	})
 }
