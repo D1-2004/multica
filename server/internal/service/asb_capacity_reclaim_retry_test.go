@@ -156,12 +156,15 @@ func TestASBCapacityReclaimRetriesThenTriesNextIdleCandidate(t *testing.T) {
 		tracked     int
 		waitFailure bool
 		allFail     bool
+		newQuota    bool
 	}{
 		{name: "tracked delete failure", tracked: 2},
 		{name: "tracked release observation failure", tracked: 2, waitFailure: true},
 		{name: "untracked delete failure"},
 		{name: "tracked then untracked", tracked: 1},
 		{name: "every candidate fails", tracked: 1, allFail: true},
+		{name: "quota increases during tracked reclaim", tracked: 2, newQuota: true},
+		{name: "quota increases during untracked reclaim", newQuota: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -206,7 +209,7 @@ func TestASBCapacityReclaimRetriesThenTriesNextIdleCandidate(t *testing.T) {
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/v1/sandboxes/quotas":
 					usage := 2
-					if deleted {
+					if deleted || (test.newQuota && len(deletes) > 0) {
 						usage = 1
 					}
 					fmt.Fprintf(w, `[{"networkZone":"ALITest","region":"cn-hangzhou","quota":2,"usage":%d}]`, usage)
@@ -231,14 +234,14 @@ func TestASBCapacityReclaimRetriesThenTriesNextIdleCandidate(t *testing.T) {
 				case r.Method == http.MethodDelete:
 					id := strings.TrimPrefix(r.URL.Path, "/v1/sandboxes/")
 					deletes = append(deletes, id)
-					if test.allFail || (id == "idle-0" && !test.waitFailure) {
+					if test.allFail || (id == "idle-0" && !test.waitFailure && !test.newQuota) {
 						w.WriteHeader(http.StatusInternalServerError)
 					} else {
 						deleted = id == "idle-1"
 						w.WriteHeader(http.StatusNoContent)
 					}
 				case r.Method == http.MethodPost && r.URL.Path == "/v1/sandboxes":
-					if !deleted {
+					if !deleted && !(test.newQuota && len(deletes) > 0) {
 						t.Error("created before quota was released")
 					}
 					w.WriteHeader(http.StatusAccepted)
@@ -259,6 +262,9 @@ func TestASBCapacityReclaimRetriesThenTriesNextIdleCandidate(t *testing.T) {
 					ResourceCPU: "1", ResourceMemory: "1Gi", Entrypoint: []string{"sleep", "infinity"},
 				})
 			want := []string{"idle-0", "idle-0", "idle-0", "idle-1"}
+			if test.newQuota {
+				want = []string{"idle-0"}
+			}
 			if test.allFail {
 				want = append(want, "idle-1", "idle-1")
 				if !errors.Is(err, ErrASBCapacityUnavailable) {
@@ -279,6 +285,8 @@ func TestASBCapacityReclaimRetryBudgetAndCancellation(t *testing.T) {
 		name        string
 		succeedsOn  int
 		cancelAfter time.Duration
+		quotaAfter  time.Duration
+		strict      bool
 		status      int
 		wantDeletes int
 		wantElapsed time.Duration
@@ -286,6 +294,8 @@ func TestASBCapacityReclaimRetryBudgetAndCancellation(t *testing.T) {
 		{name: "stuck sandbox times out three times", wantDeletes: 3, wantElapsed: 90 * time.Second},
 		{name: "third attempt releases quota", succeedsOn: 3, wantDeletes: 3, wantElapsed: 60 * time.Second},
 		{name: "parent cancellation stops retries", cancelAfter: 5 * time.Second, wantDeletes: 1, wantElapsed: 5 * time.Second},
+		{name: "new quota resumes while deletion is still pending", quotaAfter: 1500 * time.Millisecond, wantDeletes: 1, wantElapsed: 2 * time.Second},
+		{name: "cleanup still requires actual termination", quotaAfter: 2 * time.Second, strict: true, wantElapsed: 30 * time.Second},
 		{name: "tenant rate limit stops retries", status: http.StatusTooManyRequests, wantDeletes: 1},
 		{name: "forbidden stops retries", status: http.StatusForbidden, wantDeletes: 1},
 	} {
@@ -297,6 +307,10 @@ func TestASBCapacityReclaimRetryBudgetAndCancellation(t *testing.T) {
 					time.AfterFunc(test.cancelAfter, cancel)
 				}
 				deletes := 0
+				var quotaAvailable atomic.Bool
+				if test.quotaAfter > 0 {
+					time.AfterFunc(test.quotaAfter, func() { quotaAvailable.Store(true) })
+				}
 				client := newASBRegionalTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					released := test.succeedsOn > 0 && deletes >= test.succeedsOn
@@ -310,7 +324,7 @@ func TestASBCapacityReclaimRetryBudgetAndCancellation(t *testing.T) {
 						w.WriteHeader(status)
 					case r.URL.Path == "/v1/sandboxes/quotas":
 						usage := 1
-						if released {
+						if released || quotaAvailable.Load() {
 							usage = 0
 						}
 						fmt.Fprintf(w, `[{"networkZone":"ALITest","region":"cn-hangzhou","quota":1,"usage":%d}]`, usage)
@@ -325,9 +339,18 @@ func TestASBCapacityReclaimRetryBudgetAndCancellation(t *testing.T) {
 					}
 				})
 				started := time.Now()
-				err := reclaimASBSandboxWithRetries(ctx, client, "stuck")
-				if (err == nil) != (test.succeedsOn > 0) {
+				reclaimed := false
+				var err error
+				if test.strict {
+					err = waitForASBCapacityRelease(ctx, client, "stuck")
+				} else {
+					reclaimed, err = reclaimASBSandboxWithRetries(ctx, client, "stuck")
+				}
+				if (err == nil) != (!test.strict && (test.succeedsOn > 0 || test.quotaAfter > 0)) {
 					t.Fatalf("unexpected reclaim result: %v", err)
+				}
+				if reclaimed != (test.succeedsOn > 0) {
+					t.Fatalf("reclaimed=%v; a quota increase must not imply sandbox termination", reclaimed)
 				}
 				if test.cancelAfter > 0 && !errors.Is(err, context.Canceled) {
 					t.Fatalf("cancellation lost: %v", err)
