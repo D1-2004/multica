@@ -1305,6 +1305,8 @@
         "server/internal/service/inboundcoord/issue_description_test.go",
         "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction",
         "server/internal/handler/coordinator_issue_relay_test.go",
+        "server/internal/handler/dispatch_prompt_segments.go#composeDispatchInstructionSegments",
+        "server/internal/handler/coordinator_issue_prompt_test.go",
         "docs/agent-dispatch-v2-execution-contract.md"
       ],
       "case_file": "cases.json"
