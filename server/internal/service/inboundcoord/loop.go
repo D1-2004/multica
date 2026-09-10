@@ -370,11 +370,9 @@ const (
 	hintConversation    = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
 	hintReplyText       = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
 	hintRecallFirst     = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
-	hintNewDeliverable  = "This inbound is a different deliverable. Use start_work without issue_id; do not continue the old Issue."
 	hintIssueSpokenText = "Set the work action.reply to its short acknowledgement; a work action without reply cannot submit."
 	hintIssueWorkItems  = "Use finish.actions with source_refs, purpose, intent and reply on each work action; every request needs a disposition."
 	hintIssueItemLimit  = "Keep at most 8 actions; never drop later requests."
-	hintPurposeTooling  = "Purpose may name requested DWS身份 / MCP / Skills. Do not paste CLI commands, data-auth, or openConversationId. Name the concrete deliverable."
 	hintPurposeRepair   = "Rewrite purpose as {委托人}委托：{事件与目的}, naming the concrete event and deliverable. Do not paste the inbound envelope."
 )
 
@@ -657,19 +655,6 @@ func extractConversationIDs(message string) []string {
 func isConversationIDCharacter(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' ||
 		b == '+' || b == '_' || b == '/' || b == '-'
-}
-
-func asksSceneQuestion(message string) bool {
-	s := strings.ToLower(message)
-	for _, needle := range []string{
-		"聊了什么", "有哪些事", "在跟什么", "跟什么事", "会话", "事情",
-		"conversation", "what happened", "what's going on",
-	} {
-		if strings.Contains(s, needle) {
-			return true
-		}
-	}
-	return false
 }
 
 func collectRecalledIssues(issues, continuations map[string]struct{}, conversationID, raw string) {

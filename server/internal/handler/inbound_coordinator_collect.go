@@ -42,14 +42,11 @@ func coordinatorCollectKind(command DispatchCommand) string {
 	if command.ProactiveConversation {
 		return "proactive"
 	}
-	if commandIsWindowAck(command) {
-		return "ack"
-	}
 	return "work"
 }
 
-// sameCoordinatorCollectKind is false when one side is thanks/OK and the
-// other is a real ask, or when wrap-up would merge with inbound work.
+// Collection classes depend only on protocol and lifecycle facts. Message
+// meaning, including output preferences, is decided from the complete window.
 func sameCoordinatorCollectKind(base, extra DispatchCommand) bool {
 	if base.ProactiveConversation != extra.ProactiveConversation || (base.ProactiveConversation && len(base.Event.Data.Messages)+len(extra.Event.Data.Messages) > 100) {
 		return false

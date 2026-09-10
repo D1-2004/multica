@@ -349,21 +349,12 @@ func TestAssocToolsBindRequiresIssueID(t *testing.T) {
 	}
 }
 
-func TestAssocToolsBindRejectsToolingPurpose(t *testing.T) {
+func TestAssocToolsBindAcceptsTechnicalSubject(t *testing.T) {
 	t.Parallel()
 	tools := &AssocTools{Service: assoc.NewService(assoc.NewMemory())}
-	_, err := tools.Call(context.Background(), Turn{
-		WorkspaceID:    "ws",
-		AgentID:        testAgentID(),
-		ConversationID: "cid-dongxiang",
-		SenderName:     "须莫🥥",
-	}, toolAssocBind, `{"issue_id":"issue-meet","delegator":"须莫🥥","intent":"ask","purpose":"向须莫v6询问明早有没有会议，dws要用dws chat data-auth cross-org去找须莫v6"}`)
-	if err == nil || !strings.Contains(err.Error(), "tooling") {
-		t.Fatalf("err=%v", err)
-	}
-	var h hinter
-	if !errors.As(err, &h) || !strings.Contains(h.Hint(), "dws") {
-		t.Fatalf("missing purpose hint: %v", err)
+	_, err := tools.Call(context.Background(), Turn{WorkspaceID: "ws", AgentID: testAgentID(), ConversationID: "cid-tech", SenderName: "乔宁"}, toolAssocBind, `{"issue_id":"issue-tech","delegator":"乔宁","intent":"lookup","purpose":"排查 dws chat data-auth 跨组织授权失败的原因并提供修复建议"}`)
+	if err != nil {
+		t.Fatalf("technical subject rejected by Host: %v", err)
 	}
 }
 

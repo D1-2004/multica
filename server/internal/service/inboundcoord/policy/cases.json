@@ -453,8 +453,8 @@
         "COORD.F13"
       ],
       "context_a": "start_work已有完整工作字段，仅缺本动作reply；purpose点名DWS身份",
-      "context_b": "purpose粘贴dws chat data-auth或openConversationId",
-      "expected_effects": "A保留完整actions，只补该动作reply并允许业务对象名；B拒绝CLI/auth且提示具体purpose缺口，不误伤产品名。旧finish.text提示已由动作专属reply替代。",
+      "context_b": "用户明确请求排查通信工具、授权机制或会话字段；对照为把实际秘密值无关地加入工作描述",
+      "expected_effects": "A保留完整actions，只补该动作reply；B允许技术名称作为工作对象，实际凭据泄漏由语义审查拒绝。Host不以命令或字段名裁决意图。",
       "verification": "not_run",
       "prior_verification": [
         {
@@ -520,6 +520,21 @@
       "context_b": "叫绑定员工账号/数字员工、明确邀请协助、岗位范围内开放问题、已有工作真实补充；混合窗口逐条判断",
       "expected_effects": "A 静默且无工作副作用；B 合理回应或委派，混合窗口只响应有效来源；主判断和最终审查共享群聊资格及可信逐条身份，不以关键词或必须 @ 替代语义判断",
       "verification": "pending_real_model_and_live_delivery"
+    },
+    {
+      "id": "generic_identity_and_semantics",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F05",
+        "COORD.F06",
+        "COORD.F13",
+        "COORD.F07"
+      ],
+      "context_a": "当前请求明确面向可信接收账号，或符合岗位的开放求助；包含技术名称的真实排查请求；输出偏好中的问句、引用和补充。",
+      "context_b": "仅命中配置名称但接收名缺失；真实对象是他人；引用的示例角色称呼；岗位外的求助。",
+      "expected_effects": "A由LLM结合身份、岗位与上下文决定回复或工作，Host不按自然语言词表短路。B没有介入依据时保持静默，配置标签不补成账号别名。collect不按ACK文字拆窗。",
+      "forbidden_effects": "测试样例问句自动取得响应资格；工具名一票否决；缺失身份猜测；固定短语跳过LLM。",
+      "verification": "host_protocol_passed; model_replay_pending; live_delivery_pending"
     }
   ]
 }

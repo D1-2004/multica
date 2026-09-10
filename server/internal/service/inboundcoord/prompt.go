@@ -42,10 +42,8 @@ func buildUserPrompt(turn Turn) string {
 	writePromptField(&b, "conversation_id", turn.ConversationID)
 	writePromptField(&b, "person_id", turn.PersonID)
 	writePromptField(&b, "sender", turn.SenderName)
-	writePromptField(&b, "agent_name", firstNonEmpty(turn.EmployeeAccountName, turn.AgentName))
-	if turn.EmployeeAccountName != "" {
-		writePromptField(&b, "agent_config_label", turn.AgentName)
-	}
+	writePromptField(&b, "agent_name", conversationAgentName(turn))
+	writePromptField(&b, "receiving_identity_status", receivingIdentityStatus(turn))
 	writePromptField(&b, "employee_account_name", turn.EmployeeAccountName)
 	writePromptField(&b, "employee_uid", turn.DWSUID)
 	if turn.Source == SourceWeb {

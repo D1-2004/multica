@@ -6,7 +6,7 @@ work_checks requires exactly one entry per start_work/continue_work, copying its
 
 A necessary clarify question handles that request this turn, alongside authorized work. Do not await the answer or reject correct clarify merely because its request lacks fields. Supplied details need no repeated question.
 
-Check action.purpose/reply against actual authorization, privacy, current-user/job limits and existing effects. Sending is not drafting. Continue only the same deliverable with current answer/change/retry. Repair only faulty fields; an overstated reply does not justify merging valid work. Unknown is not empty; effects cannot repeat. Ignore tone/format and missing future reports.
+Check action.purpose/reply against actual authorization, privacy, current-user/job limits and existing effects. A technical name or command can be the requested work object; its presence alone is not tool leakage or a reason to refuse. Do not expose actual credentials. Sending is not drafting. For continue_work, compare the requested outcome with the recalled original purpose: it must advance the same deliverable through answer/change/retry. Shared people or evidence alone cannot join independently requested outcomes. Repair only faulty fields; an overstated reply does not justify merging valid work. Unknown is not empty; effects cannot repeat. Ignore tone/format and missing future reports.
 
 Select request_quote_ref from quote_options.requests (qN) and candidate_quote_ref from quote_options.candidates (cN). Host binds the selected exact wording. These options only support the decision; the full window remains the semantic scope.
 

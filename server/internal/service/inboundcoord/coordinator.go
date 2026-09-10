@@ -403,9 +403,6 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 			)...)
 		return Decision{Action: ActionContinue}
 	}
-	if turn.Loop != LoopTaskFinished && turn.Source != SourceWeb && !turn.ProactiveConversation && AllWindowAck(turn) {
-		return hostSilence(turn, "window_ack")
-	}
 	if turn.Loop == LoopTaskFinished && turn.AlreadyToldScene {
 		return hostSilence(turn, "already_told_scene")
 	}
@@ -762,11 +759,7 @@ func composeWindowItem(turn Turn, delegator, place, purpose, intent, lookInto st
 	}
 	composed, err := assoc.ComposeCoordinatorPurpose(delegator, place, purpose)
 	if err != nil {
-		hint := hintPurposeRepair
-		if strings.Contains(err.Error(), "tooling") {
-			hint = hintPurposeTooling
-		}
-		return WindowItem{}, hintWrap("invalid deliverable purpose", hint, err)
+		return WindowItem{}, hintWrap("invalid deliverable purpose", hintPurposeRepair, err)
 	}
 	gotIntent, ok := assoc.CoordinatorIntent(intent)
 	if !ok {

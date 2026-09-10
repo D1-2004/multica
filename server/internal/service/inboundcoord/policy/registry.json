@@ -1,10 +1,10 @@
 {
-  "policy_version": "2026-09-09.5",
-  "assembly_version": "6",
+  "policy_version": "2026-09-10.1",
+  "assembly_version": "7",
   "modules": [
     {
       "id": "core",
-      "version": "3",
+      "version": "4",
       "file": "core.md",
       "applies_when": "always",
       "requires": [],
@@ -23,8 +23,8 @@
         "COORD.F17",
         "COORD.F18"
       ],
-      "budget_characters": 1100,
-      "content_sha256": "4c98654f1a32a21ad5f4bdea75ff2f32e91a572857177460b40dd385a962d6b9"
+      "budget_characters": 1146,
+      "content_sha256": "cb672a4e66fdf7de510f8837258dcad430179f01dad22b336a30b73f24e82b25"
     },
     {
       "id": "voice",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "13",
+      "version": "14",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -59,8 +59,8 @@
         "COORD.F17",
         "COORD.F10"
       ],
-      "budget_characters": 2468,
-      "content_sha256": "50f6074ea0e084e194a6959215763351571b46f4649459ebd7af76e5583ab7b6"
+      "budget_characters": 2728,
+      "content_sha256": "619cb67fc4ce25dc5afc3c671b10d6c89b5a314c0d65e8dca6dc154cb8f1ee0e"
     },
     {
       "id": "channel",
@@ -95,7 +95,7 @@
     },
     {
       "id": "group",
-      "version": "3",
+      "version": "4",
       "file": "group.md",
       "applies_when": "group",
       "requires": [
@@ -110,7 +110,7 @@
         "COORD.F14"
       ],
       "budget_characters": 1100,
-      "content_sha256": "9de26043097eb08db27148bbb1590ef4ce9ad2093aaa22cba21ceebcac9def9c"
+      "content_sha256": "a07857b592d975e14a3c70a6453c5997a4a4dbd6c47736e75b84282414396bcc"
     },
     {
       "id": "window",
@@ -132,7 +132,7 @@
     },
     {
       "id": "memory",
-      "version": "3",
+      "version": "4",
       "file": "memory.md",
       "applies_when": "scene_memory_available",
       "requires": [
@@ -144,11 +144,11 @@
         "COORD.F11"
       ],
       "budget_characters": 850,
-      "content_sha256": "9d4e0c72f78f39563afd6b97536cc6991cbc990fd891ba632356b9e5c0918807"
+      "content_sha256": "92308d8fbf0ccbb2cd7d2224ca9ee7d6fb2de0a99408d5efc4ca0fc84440e37e"
     },
     {
       "id": "skills",
-      "version": "6",
+      "version": "7",
       "file": "skills.md",
       "applies_when": "skill_snapshots_available",
       "requires": [
@@ -161,11 +161,11 @@
         "COORD.F14"
       ],
       "budget_characters": 500,
-      "content_sha256": "028b2fc3f574bbfb2f695871fbb034f923981bf4468da4c2b4f59fb536a18d6e"
+      "content_sha256": "d0e5f1e0e23e571049c5f67cc69fd9fce711bc3492a43efb062a41c7300ad5ce"
     },
     {
       "id": "dialogue",
-      "version": "4",
+      "version": "5",
       "file": "dialogue.md",
       "applies_when": "dialogue_available",
       "requires": [
@@ -180,11 +180,11 @@
         "COORD.F18"
       ],
       "budget_characters": 1100,
-      "content_sha256": "8222c23b0fe856cacbd3e1b38a3a9299acdfa582cbffe8554a04845764788661"
+      "content_sha256": "403f98995b68ce34a6fa7167e578203d5413820c6a14a0b1ce743b83edaad0bd"
     },
     {
       "id": "recall_match",
-      "version": "4",
+      "version": "5",
       "file": "recall_match.md",
       "applies_when": "recalled",
       "requires": [
@@ -199,8 +199,8 @@
         "COORD.F13",
         "COORD.F17"
       ],
-      "budget_characters": 1350,
-      "content_sha256": "8096c84b551b04679549627fdf888651cde85d8c04a1a6517a8d9c72c060d369"
+      "budget_characters": 1561,
+      "content_sha256": "6f06709cc09eeaf6558d9e5c7992e58739e8d18da9df4fdc033cc45094f2016c"
     },
     {
       "id": "completion",
@@ -248,7 +248,7 @@
     },
     {
       "id": "finish_check_work",
-      "version": "8",
+      "version": "10",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -270,8 +270,8 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 2000,
-      "content_sha256": "c31b3073aef7b27ca4af69083b230ce7895336bfd9e219a0a8e4acd21a2ed1b7"
+      "budget_characters": 2251,
+      "content_sha256": "f7370fbad6eefd137acf02425419ac72d557af82b4e7fdc5a25d504d099f2d7b"
     }
   ],
   "obligations": [
@@ -293,7 +293,8 @@
       "case_ids": [
         "f01_contrast",
         "proactive_group_contrast",
-        "group_recipient_role_contrast"
+        "group_recipient_role_contrast",
+        "generic_identity_and_semantics"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -308,7 +309,10 @@
         "closed_actions_live_delivery": "not_run",
         "group_recipient_host_tests": "passed",
         "group_recipient_model_replay": "12 contrast cases passed on qwen3.7-plus; synthetic read-only fixtures; one targeted repair-hint rerun",
-        "group_recipient_live_delivery": "pending"
+        "group_recipient_live_delivery": "pending",
+        "generic_semantics_host_tests": "passed: assoc and inboundcoord packages; 51 focused handler checks against isolated local PostgreSQL",
+        "generic_semantics_model_replay": "not_run",
+        "generic_semantics_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -324,7 +328,10 @@
         "server/internal/service/inboundcoord/policy.go",
         "server/internal/service/inboundcoord/proactive_relevance_test.go",
         "server/internal/service/inboundcoord/scene_prefetch.go",
-        "server/internal/service/inboundcoord/window_plan.go"
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/generic_semantics_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "server/internal/assoc/purpose_subject_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -505,7 +512,8 @@
       "case_ids": [
         "f05_contrast",
         "f05_yes_more_copies",
-        "f03_review_greeting_status_memory"
+        "f03_review_greeting_status_memory",
+        "generic_identity_and_semantics"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -517,7 +525,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "generic_semantics_host_tests": "passed: assoc and inboundcoord packages; 51 focused handler checks against isolated local PostgreSQL",
+        "generic_semantics_model_replay": "not_run",
+        "generic_semantics_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -526,7 +537,10 @@
         "server/internal/service/inboundcoord/continuation_content.go",
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
-        "server/internal/service/inboundcoord/policy/finish_check_work.md"
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
+        "server/internal/service/inboundcoord/generic_semantics_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "server/internal/assoc/purpose_subject_test.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -560,7 +574,8 @@
       "case_ids": [
         "f06_contrast",
         "f10_review_whole_window_and_clarification",
-        "f15_decline_quoted_boundary"
+        "f15_decline_quoted_boundary",
+        "generic_identity_and_semantics"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -572,7 +587,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "generic_semantics_host_tests": "passed: assoc and inboundcoord packages; 51 focused handler checks against isolated local PostgreSQL",
+        "generic_semantics_model_replay": "not_run",
+        "generic_semantics_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -581,7 +599,10 @@
         "server/internal/service/inboundcoord/policy/dialogue.md",
         "server/internal/service/inboundcoord/policy/finish_check.md",
         "server/internal/service/inboundcoord/finish_check.go",
-        "server/internal/service/inboundcoord/policy/finish_check_work.md"
+        "server/internal/service/inboundcoord/policy/finish_check_work.md",
+        "server/internal/service/inboundcoord/generic_semantics_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "server/internal/assoc/purpose_subject_test.go"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -611,7 +632,8 @@
       "enforcement_home": "semantic_decision_and_host",
       "case_ids": [
         "f07_contrast",
-        "f05_yes_more_copies"
+        "f05_yes_more_copies",
+        "generic_identity_and_semantics"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -853,7 +875,8 @@
         "f15_decline_quoted_boundary",
         "f13_finish_hint_fields",
         "f13_host_scene_prefetch_success_vs_failure",
-        "f08_host_prefetch_keeps_requested_scope"
+        "f08_host_prefetch_keeps_requested_scope",
+        "generic_identity_and_semantics"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -868,7 +891,10 @@
         "closed_actions_live_delivery": "not_run",
         "scene_prefetch_host_tests": "not_run",
         "scene_prefetch_model_comparison": "not_run",
-        "scene_prefetch_live_delivery": "not_run"
+        "scene_prefetch_live_delivery": "not_run",
+        "generic_semantics_host_tests": "passed: assoc and inboundcoord packages; 51 focused handler checks against isolated local PostgreSQL",
+        "generic_semantics_model_replay": "not_run",
+        "generic_semantics_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -887,7 +913,10 @@
         "server/internal/service/inboundcoord/coordination_context.go",
         "server/internal/service/inboundcoord/finish_quote.go",
         "server/internal/assoc/purpose.go",
-        "server/internal/service/inboundcoord/scene_prefetch.go"
+        "server/internal/service/inboundcoord/scene_prefetch.go",
+        "server/internal/service/inboundcoord/generic_semantics_test.go",
+        "server/internal/service/inboundcoord/generic_replay_test.go",
+        "server/internal/assoc/purpose_subject_test.go"
       ],
       "case_file": "cases.json"
     },
@@ -1333,6 +1362,43 @@
         "COORD.F19"
       ],
       "reason": "合法语义裁决仍会因LLM抄写引文的换行/转义差异失败；改为Host生成有界原文选项，LLM只选本轮引用ID，Host严格绑定原文。完整窗口仍是语义判断全集，不降低真实性校验。"
+    },
+    {
+      "id": "message_phrase_intent_gate",
+      "reason": "ACK and stop phrases bypassed semantic context and split collect windows; natural language now reaches the same LLM decision and review. Host retains protocol, scope, lifecycle and idempotency checks.",
+      "superseded_by": [
+        "COORD.F05",
+        "COORD.F06",
+        "COORD.F13"
+      ],
+      "status": "superseded"
+    },
+    {
+      "id": "tool_name_purpose_veto",
+      "reason": "Tool and field names can be legitimate work subjects. Host validates structure; LLM evaluates authorization and actual credential exposure in context.",
+      "superseded_by": [
+        "COORD.F04",
+        "COORD.F13"
+      ],
+      "status": "superseded"
+    },
+    {
+      "id": "test_example_group_participation",
+      "reason": "A sample greeting is not participation authority. Use trusted receiving identity, current request, role scope and dialogue; missing receiving name stays unknown.",
+      "superseded_by": [
+        "COORD.F01",
+        "COORD.F02"
+      ],
+      "status": "superseded"
+    },
+    {
+      "id": "test_token_deliverable_match",
+      "status": "superseded",
+      "reason": "Synthetic token markers and their prefixes do not establish whether two messages concern the same work. Removed the old comment tool gate and its example-specific test; same-deliverable decisions remain semantic with trusted recalled targets.",
+      "superseded_by": [
+        "COORD.F07",
+        "COORD.F13"
+      ]
     }
   ]
 }

@@ -106,7 +106,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		"proactive_conversation": turn.ProactiveConversation,
 		"source":                 turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, "addressed": turn.Addressed,
 		"employee_account_name": turn.EmployeeAccountName, "employee_uid": turn.DWSUID,
-		"agent_name": firstNonEmpty(turn.EmployeeAccountName, turn.AgentName), "agent_config_label": turn.AgentName, "persona": clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
+		"agent_name": conversationAgentName(turn), "receiving_identity_status": receivingIdentityStatus(turn), "persona": clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
 		"persona_truncated":    utf8.RuneCountInString(strings.TrimSpace(turn.Persona)) > personaBudget,
 		"skills":               map[string]any{"status": skillsStatus, "snapshot": skills, "scope": "installed_catalog_snapshot", "shown": shownSkills, "supplied": len(turn.Skills), "catalog_complete": shownSkills == len(turn.Skills) && skillsStatus == "loaded", "descriptions": "bounded, not full skill instructions"},
 		"job_policy":           policy,
@@ -117,7 +117,7 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		"reply_delivery_guarantees": "Work replies are delivered only after ALL work items are committed and tasks queued. Acceptance/queued acknowledgements are then true. This does not prove execution completed, business results, or external delivery. A clarify question handles its request for this window; the user answers in a later window.",
 	}
 	if turn.ProactiveConversation {
-		input["reply_delivery_guarantees"] = "Work acceptance is sent only after every work item is durably stored: new execution is queued; additions to a busy Issue wait in its durable follow-up queue. Neither state proves running, completion or external delivery. Unmentioned requests may be handled within the employee role. Avoid acknowledging every line."
+		input["reply_delivery_guarantees"] = "Work acceptance is sent only after every work item is durably stored: new execution is queued; additions to a busy Issue wait in its durable follow-up queue. Neither state proves running, completion or external delivery."
 	}
 	if turn.Loop == LoopTaskFinished {
 		input["outstanding_follow_ups"] = turn.OutstandingFollowUps
