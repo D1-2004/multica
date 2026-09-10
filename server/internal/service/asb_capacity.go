@@ -152,36 +152,19 @@ func createASBSandboxWithCapacityOnConnection(
 	}
 	defer releaseCapacity()
 	if client.CapacityGate != nil {
-		for {
-			delay, pacing, gateErr := client.CapacityGate.admit(ctx, client)
-			if gateErr != nil {
-				if ctx.Err() != nil {
-					return nil, ctx.Err()
-				}
-				// Fail closed: loss of shared coordination must not cause a burst
-				// of upstream requests from every replica. Keep the task queued.
-				return nil, errors.Join(ErrASBCapacityUnavailable, fmt.Errorf("check ASB shared capacity cooldown: %w", gateErr))
-			}
-			if delay <= 0 {
-				break
-			}
-			if !pacing {
-				slog.Info("ASB task reused tenant capacity wait", "event", "asb_capacity_cooldown_hit",
-					"runtime_id", util.UUIDToString(runtimeID), "retry_after_ms", delay.Milliseconds())
-				return nil, ErrASBCapacityUnavailable
-			}
-			// Keep our place under the tenant lock, but do not hold it through
-			// sandbox boot. A successful create releases it below. Cancellation
-			// interrupts the short interval without probing or reporting full.
-			slog.Info("ASB sandbox creation paced within current launch", "event", "asb_capacity_create_pacing",
-				"runtime_id", util.UUIDToString(runtimeID), "retry_after_ms", delay.Milliseconds())
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+		delay, gateErr := client.CapacityGate.admit(ctx, client)
+		if gateErr != nil {
+			if ctx.Err() != nil {
 				return nil, ctx.Err()
-			case <-timer.C:
 			}
+			// Fail closed: loss of shared coordination must not cause a burst
+			// of upstream requests from every replica. Keep the task queued.
+			return nil, errors.Join(ErrASBCapacityUnavailable, fmt.Errorf("check ASB shared capacity cooldown: %w", gateErr))
+		}
+		if delay > 0 {
+			slog.Info("ASB task reused tenant capacity wait", "event", "asb_capacity_cooldown_hit",
+				"runtime_id", util.UUIDToString(runtimeID), "retry_after_ms", delay.Milliseconds())
+			return nil, ErrASBCapacityUnavailable
 		}
 	}
 	// Run before releasing the tenant lock, so the next replica observes the
