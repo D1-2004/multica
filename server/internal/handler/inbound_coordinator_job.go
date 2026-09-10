@@ -342,18 +342,8 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 	return false, nil
 }
 
-func commandIsWindowAck(command DispatchCommand) bool {
-	return inboundcoord.AllWindowAck(inboundcoord.Turn{
-		SenderName: strings.TrimSpace(command.Event.Data.Sender.DisplayName),
-		Utterances: windowUtterancesFromCommand(command),
-	})
-}
-
-func shouldParkSceneCapacity(command DispatchCommand, active int64) bool {
-	if active < int64(inboundcoord.SceneWindowMaxItems) {
-		return false
-	}
-	return !commandIsWindowAck(command)
+func shouldParkSceneCapacity(_ DispatchCommand, active int64) bool {
+	return active >= int64(inboundcoord.SceneWindowMaxItems)
 }
 
 func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentID pgtype.UUID, cid string) int {
@@ -729,10 +719,9 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			return response, job, nil
 		}
 		if splitKind {
-			slog.Info("inbound coordinator job collect split ack and work",
+			slog.Info("inbound coordinator job collect split by source or lifecycle",
 				"event", "inbound_coordinator_job_collect_split",
 				"source", command.Source.Type,
-				"incoming_ack", commandIsWindowAck(command),
 			)
 		}
 	}

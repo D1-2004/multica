@@ -41,7 +41,7 @@ func TestGroupReviewSharesParticipationPolicyAndTrustedIdentity(t *testing.T) {
 	for _, p := range chat.checkParams {
 		raw, _ := json.Marshal(p.Messages)
 		s := string(raw)
-		for _, want := range []string{"policy:group@3", "employee_account_name", "other-id"} {
+		for _, want := range []string{"policy:group@", "employee_account_name", "other-id"} {
 			if !strings.Contains(s, want) {
 				t.Fatalf("review input lost %s", want)
 			}

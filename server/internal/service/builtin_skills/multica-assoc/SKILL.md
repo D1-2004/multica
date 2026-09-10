@@ -96,3 +96,5 @@ conversation's Issue associations and does not start a sandbox. It is not
 Name 委托人, 事件, and 目的: `冬翔委托：向辰驷确认明天几点打球`.
 Place is optional. Not the inbound envelope. Not `帮我看看`. One recalled card
 is not a verdict; continue only when purpose matches the current message.
+Technical names and commands may be the requested work object; judge their
+meaning and authorization in context, not by a keyword blacklist.
