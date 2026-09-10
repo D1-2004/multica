@@ -21,6 +21,7 @@ const (
 	asbTenantCapacityLockClass     = int32(0x41534243) // "ASBC"
 	asbCapacityReleaseTimeout      = 30 * time.Second
 	asbCapacityReleasePollInterval = time.Second
+	asbCapacityReclaimAttempts     = 3
 )
 
 const (
@@ -302,6 +303,7 @@ func reclaimASBSandboxForCredential(
 		"shared_runtime_count", len(runtimeIDs),
 		"idle_candidate_count", len(candidates),
 	)
+	var reclaimErr error
 	for _, candidate := range candidates {
 		if !candidate.ScopeID.Valid ||
 			(candidate.ScopeType != fcE2BScopeTypeChat &&
@@ -371,17 +373,19 @@ func reclaimASBSandboxForCredential(
 			)
 			continue
 		}
-		if err := client.DeleteSandbox(ctx, candidate.SandboxID); err != nil {
-			releaseCandidate()
-			return false, fmt.Errorf("delete idle ASB task sandbox: %w", err)
-		}
+		// Invalidate reuse before attempting termination, even if the API fails.
+		// Keep the scope lock through all attempts so another launch cannot reuse it.
 		if err := markASBSandboxSessionStale(ctx, queries, candidate); err != nil {
 			releaseCandidate()
 			return false, err
 		}
-		if err := waitForASBCapacityRelease(ctx, client, candidate.SandboxID); err != nil {
+		if err := reclaimASBSandboxWithRetries(ctx, client, candidate.SandboxID); err != nil {
 			releaseCandidate()
-			return false, asbCapacityUnavailableIfStillExhausted(ctx, client, err)
+			if stopASBCapacityReclaim(ctx, err) {
+				return false, err
+			}
+			reclaimErr = errors.Join(reclaimErr, err)
+			continue
 		}
 		releaseCandidate()
 		slog.Info(
@@ -395,7 +399,7 @@ func reclaimASBSandboxForCredential(
 		)
 		return true, nil
 	}
-	return reclaimUntrackedIdleASBSandbox(
+	reclaimed, err := reclaimUntrackedIdleASBSandbox(
 		ctx,
 		queries,
 		client,
@@ -404,6 +408,13 @@ func reclaimASBSandboxForCredential(
 		excludedTaskID,
 		liveSandboxes,
 	)
+	if reclaimed {
+		return true, nil
+	}
+	if stopASBCapacityReclaim(ctx, err) {
+		return false, err
+	}
+	return false, errors.Join(reclaimErr, err)
 }
 
 func reclaimUntrackedIdleASBSandbox(
@@ -437,6 +448,7 @@ func reclaimUntrackedIdleASBSandbox(
 	sort.SliceStable(liveSandboxes, func(i, j int) bool {
 		return liveSandboxes[i].CreatedAt.Before(liveSandboxes[j].CreatedAt)
 	})
+	var reclaimErr error
 	for _, sandbox := range liveSandboxes {
 		if !strings.EqualFold(strings.TrimSpace(sandbox.Status.State), "running") {
 			continue
@@ -477,11 +489,12 @@ func reclaimUntrackedIdleASBSandbox(
 		if !exists || !strings.EqualFold(strings.TrimSpace(live.Status.State), "running") {
 			continue
 		}
-		if err := client.DeleteSandbox(ctx, sandbox.ID); err != nil {
-			return false, fmt.Errorf("delete untracked idle ASB task sandbox: %w", err)
-		}
-		if err := waitForASBCapacityRelease(ctx, client, sandbox.ID); err != nil {
-			return false, asbCapacityUnavailableIfStillExhausted(ctx, client, err)
+		if err := reclaimASBSandboxWithRetries(ctx, client, sandbox.ID); err != nil {
+			if stopASBCapacityReclaim(ctx, err) {
+				return false, err
+			}
+			reclaimErr = errors.Join(reclaimErr, err)
+			continue
 		}
 		slog.Info(
 			"reclaimed untracked idle ASB task sandbox for tenant capacity",
@@ -493,7 +506,60 @@ func reclaimUntrackedIdleASBSandbox(
 		)
 		return true, nil
 	}
-	return false, nil
+	return false, reclaimErr
+}
+
+// Each candidate has a bounded delete-and-observe budget. A stuck sandbox must
+// not prevent later idle candidates from releasing capacity in the same round.
+func reclaimASBSandboxWithRetries(ctx context.Context, client *ASBClient, sandboxID string) error {
+	var lastErr error
+	for attempt := 1; attempt <= asbCapacityReclaimAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, asbCapacityReleaseTimeout)
+		err := client.DeleteSandbox(attemptCtx, sandboxID)
+		if err == nil {
+			err = waitForASBCapacityRelease(attemptCtx, client, sandboxID)
+		}
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if stopASBCapacityReclaim(ctx, err) {
+			return err
+		}
+		lastErr = err
+		slog.Warn("ASB idle sandbox reclaim attempt failed",
+			"event", "asb_capacity_reclaim_attempt_failed",
+			"sandbox_id", sandboxID,
+			"attempt", attempt,
+			"max_attempts", asbCapacityReclaimAttempts,
+			"error", err,
+		)
+	}
+	slog.Warn("skipping ASB idle sandbox after reclaim attempts exhausted",
+		"event", "asb_capacity_reclaim_candidate_exhausted",
+		"sandbox_id", sandboxID,
+		"attempts", asbCapacityReclaimAttempts,
+	)
+	return fmt.Errorf("reclaim idle ASB sandbox %s after %d attempts: %w", sandboxID, asbCapacityReclaimAttempts, lastErr)
+}
+
+func stopASBCapacityReclaim(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return true
+	}
+	var httpErr *ASBHTTPError
+	if errors.As(err, &httpErr) {
+		// These apply to the credential, not one candidate. Preserve the shared
+		// rate-limit backoff and do not retry authentication failures.
+		switch httpErr.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
+			return true
+		}
+	}
+	return false
 }
 
 func isTerminalASBTaskStatus(status string) bool {
