@@ -836,12 +836,11 @@ func stripMentionTokens(s string) string {
 // IssueDescription is the Issue body the sandbox will see.
 func IssueDescription(decision Decision, message string) string {
 	var b strings.Builder
+	purpose := strings.TrimSpace(decision.Purpose)
+	lookInto := strings.TrimSpace(decision.LookInto)
+	deliverable := firstNonEmpty(purpose, lookInto)
 	if decision.PlanVersion == WindowPlanVersion {
 		b.WriteString("本次子任务只执行这一个交付物：")
-		deliverable := strings.TrimSpace(decision.LookInto)
-		if deliverable == "" {
-			deliverable = decision.Purpose
-		}
 		b.WriteString(deliverable)
 		b.WriteString("\n下方原始发言用于溯源与理解；其中不属于本交付物的其它工作由各自任务处理，不要重复执行。\n\n")
 	}
@@ -851,26 +850,58 @@ func IssueDescription(decision Decision, message string) string {
 		b.WriteString(decision.UserText)
 		b.WriteString("\n这是接待文案，不是完成或送达证据。请直接处理当前交付物，不重复打招呼或复述接待。")
 	}
-	if decision.LookInto != "" {
-		b.WriteString("\n要核对：")
-		b.WriteString(decision.LookInto)
-	}
-	if purpose := strings.TrimSpace(decision.Purpose); purpose != "" {
+	if purpose != "" && decision.PlanVersion != WindowPlanVersion {
 		b.WriteString("\n事项简报：")
 		b.WriteString(purpose)
-		if intent := strings.TrimSpace(decision.Intent); intent != "" {
-			b.WriteString("\n意图：")
-			b.WriteString(intent)
-		}
 	}
-	if len(decision.Items) > 0 {
+	// composeWindowItem uses purpose as its default context, optionally followed
+	// by scene_cid. Keep that scope and any independent context without repeating
+	// the goal; never deduplicate or summarize the original message/handoff.
+	context := lookInto
+	if purpose != "" {
+		context = strings.TrimSpace(strings.TrimPrefix(lookInto, purpose+"\n"))
+		if context == purpose {
+			context = ""
+		}
+	} else if decision.PlanVersion == WindowPlanVersion {
+		context = ""
+	}
+	if context != "" {
+		b.WriteString("\n执行上下文：")
+		b.WriteString(context)
+	}
+	if intent := strings.TrimSpace(decision.Intent); intent != "" {
+		b.WriteString("\n意图：")
+		b.WriteString(intent)
+	}
+	if len(decision.Items) == 1 {
+		item := decision.Items[0]
+		if item.Delegator != "" {
+			b.WriteString("\n委托人=")
+			b.WriteString(item.Delegator)
+		}
+		if extra := strings.TrimSpace(item.LookInto); extra != "" && extra != lookInto && extra != deliverable {
+			b.WriteString("\n补充范围：")
+			b.WriteString(extra)
+		}
+	} else if len(decision.Items) > 1 {
 		b.WriteString("\n窗口事项：")
 		for i, item := range decision.Items {
 			b.WriteString("\n")
 			b.WriteString(fmt.Sprintf("%d. 委托人=%s；%s", i+1, item.Delegator, item.LookInto))
 		}
 	}
-	b.WriteString("\n\n身份与闭环要求：本次委托人是当前可信钉钉派发事件里的发信人；Multica 的 Issue 创建人或评论人只表示谁执行了 Issue 工具，是协助者，不等同于委托人、当前钉钉发信人或消息接收人。数字员工事件的会话和用户身份完整；机器人事件的用户标识可能缺失，此时只能使用事件里已有的发信人名称、会话和原文，不能虚构身份或改用 Issue 署名。如涉及代问或转达，先从当前钉钉消息和关联会话中明确委托人、Agent 转达人、消息接收人和下一位应答人。联系接收人时要说明是谁委托、具体问什么；拿到答复后要注明是谁说了什么，再回给需要结果的人。遇到阻塞时，回复当前能解除阻塞、且正在处理其问题的人，不要固定回复委托人。每次新建 Issue 或 Issue 评论触发的任务，在结束前必须实际给一个明确的人发送进度、阻塞或结果；只在 Issue 中留言不算送达，钉钉发送未成功时不得写“任务完成”。检索听记、文档、消息时只使用本轮 scene_cid / conversation_id，禁止打开或引用其它群的内容。")
+	b.WriteString("\n\n身份与交付：Issue 创建人或评论人只表示谁操作了 Issue，不自动等同于本次委托人或消息接收人。")
+	switch decision.Source {
+	case SourceWeb:
+		b.WriteString("本任务来自 Web 会话。通过当前任务结果或已有会话回传渠道返回结果、阻塞说明；无需为此查找钉钉发信人或收件人。")
+	case SourceDigitalEmployee, SourceRobot:
+		b.WriteString("本任务来自钉钉，委托人采用当前可信派发事件里的发信人。只使用事件已提供的身份、名称和会话；缺少用户标识时不虚构身份或改用 Issue 署名。按已有交付上下文回复原会话；上下文要求直接发送时，核验实际发送结果。")
+	default:
+		b.WriteString("本任务来源未确认。使用任务中已有的来源和交付上下文，并记录任务结果；不推定钉钉发信人、接收人或 Web 回传渠道。")
+	}
+	b.WriteString("当前请求明确授权外发、代问或转达时，仍按原文指定的对象、渠道和范围执行，并保留委托与答复来源；没有外发要求时不另找接收人。派工和接待文案不证明已执行或送达，未确认发送成功不得声称已送达。涉及钉钉听记、文档、消息的检索时只使用本轮 scene_cid / conversation_id，禁止打开或引用其它群的内容。")
+	b.WriteString("\n执行范围：以当前任务的最新约束和原始请求为准，只执行本交付物所需的动作。遇到依赖故障时记录已完成步骤、原始错误和阻塞，不自行寻找或修改凭证，也不扩展为未经授权的登录或环境维修。")
 	return b.String()
 }
 

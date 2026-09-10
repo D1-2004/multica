@@ -38,6 +38,8 @@ import type {
   ListGitHubAgentRepositoriesResponse,
   ListGitHubInstallationsResponse,
   AgentSource,
+  AgentSourceSyncPreview,
+  AgentSourceBranches,
   CreateGitHubAgentResponse,
   SyncAgentSourceResponse,
   FDEOnboardingState,
@@ -2759,9 +2761,9 @@ export const AgentInvocationTargetsSchema = z
 export const AgentResponseSchema = z
   .object({
     id: z.string(),
-    event_trigger_enabled: z.boolean().catch(false).default(false),
     coordinator_contract: CoordinatorContractSchema.nullish().catch(null),
     coordinator_contract_state: z.enum(["loaded", "not_configured", "stale", "unavailable"]).catch("unavailable").default("not_configured"),
+    event_trigger_enabled: z.boolean().catch(false).default(false),
     dingtalk_response_enabled: z.boolean().catch(false).default(false),
     dingtalk_show_ai_tag: z.boolean().catch(false).default(false),
     dingtalk_response_policy_revision: z
@@ -2916,6 +2918,7 @@ export const EMPTY_GITHUB_INSTALLATIONS: ListGitHubInstallationsResponse = {
 
 const GitHubAgentSkillPreviewSchema = z
   .object({
+    enabled: z.boolean().optional(),
     source_path: z.string(),
     name: z.string(),
     description: z.string().default(""),
@@ -2928,8 +2931,37 @@ const NullableStringArraySchema = z
   .nullish()
   .transform((value) => value ?? []);
 
+export const AgentPackageRequirementsSchema = z.object({
+  secrets: NullableStringArraySchema,
+  deferred_bindings: NullableStringArraySchema,
+  runtime_provider: z.string().default(""),
+});
+
+export const AgentPackagePreviewSchema = z.object({
+  definition: z.record(z.string(), z.unknown()).optional(),
+  preview_id: z.string().min(1),
+  expires_at: z.string().min(1),
+  package_hash: z.string().min(1),
+  manifest_version: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().default(""),
+  instructions: z.string().default(""),
+  // A preview is a confirmation boundary: reject malformed authored constraints.
+  coordinator_contract: CoordinatorContractSchema.nullish(),
+  skills: z.array(GitHubAgentSkillPreviewSchema).default([]),
+  manifest_fields: NullableStringArraySchema,
+  configuration_fields: NullableStringArraySchema,
+  warnings: NullableStringArraySchema,
+  requirements: AgentPackageRequirementsSchema,
+});
+
 export const GitHubAgentPreviewSchema = z
   .object({
+    requirements: AgentPackageRequirementsSchema.optional(),
+    definition: z.record(z.string(), z.unknown()).optional(),
+    preview_id: z.string().optional(),
+    expires_at: z.string().optional(),
+    repository_url: z.string().optional(),
     installation_id: z.string(),
     repository: z.string(),
     ref: z.string(),
@@ -2962,8 +2994,17 @@ export const EMPTY_GITHUB_AGENT_PREVIEW: GitHubAgentPreview = {
   blockers: [],
 };
 
+export const AgentManifestSchemaDownloadSchema = z.object({
+  $schema: z.literal("https://json-schema.org/draft/2020-12/schema"),
+  $defs: z.record(z.string(), z.record(z.string(), z.unknown())),
+  oneOf: z.array(z.object({ $ref: z.string().min(1) })).min(1),
+}).passthrough();
+
 export const AgentSourceSchema = z
   .object({
+    repository_url: z.string().optional(),
+    can_sync: z.boolean().optional(),
+    configuration_scope: NullableStringArraySchema,
     agent_id: z.string(),
     source_type: z.string(),
     installation_id: z.string().nullable().default(null),
@@ -3020,6 +3061,50 @@ export const EMPTY_SYNC_AGENT_SOURCE_RESPONSE: SyncAgentSourceResponse = {
   source: EMPTY_AGENT_SOURCE,
   changed: false,
   warnings: [],
+};
+
+const AgentSourceFileChangeSchema = z.object({
+  path: z.string(), status: z.string(),
+  before: z.string().nullable(), after: z.string().nullable(),
+  before_sha: z.string().optional(), after_sha: z.string().optional(),
+  before_mode: z.string().optional(), after_mode: z.string().optional(),
+}).loose();
+
+const ImmutableGitCommitSchema = z.string().regex(/^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$/);
+const AgentSourceChangesSchema = z.array(AgentSourceFileChangeSchema).nullish().transform((value) => value ?? []);
+
+export const AgentSourceSyncPreviewSchema = z.object({
+  requirements: AgentPackageRequirementsSchema.optional(),
+  preview_id: z.string().uuid(),
+  expires_at: z.string(),
+  repository_url: z.string(),
+  ref: z.string(),
+  base_sha: ImmutableGitCommitSchema,
+  resolved_sha: ImmutableGitCommitSchema,
+  git_changes: AgentSourceChangesSchema,
+  configuration_changes: AgentSourceChangesSchema,
+  warnings: NullableStringArraySchema,
+  changed: z.boolean(),
+}).loose();
+
+export const EMPTY_AGENT_SOURCE_SYNC_PREVIEW: AgentSourceSyncPreview = {
+  preview_id: "", expires_at: "", repository_url: "", ref: "", base_sha: "", resolved_sha: "",
+  git_changes: [], configuration_changes: [], warnings: [], changed: false,
+};
+
+export const AgentSourceBranchesSchema = z.object({
+  repository: z.string(),
+  repository_url: z.string(),
+  default_branch: z.string(),
+  branches: z.array(z.object({
+    name: z.string(),
+    commit: z.object({ sha: ImmutableGitCommitSchema }),
+    protected: z.boolean().default(false),
+  })).nullish().transform((value) => value ?? []),
+}).loose();
+
+export const EMPTY_AGENT_SOURCE_BRANCHES: AgentSourceBranches = {
+  repository: "", repository_url: "", default_branch: "", branches: [],
 };
 /**
  * The stored configuration of a creation conversation. Every field falls back

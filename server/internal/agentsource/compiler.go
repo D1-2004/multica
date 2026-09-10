@@ -80,6 +80,7 @@ type File struct {
 }
 
 type Skill struct {
+	Disabled    bool   `json:"disabled,omitempty"`
 	SourcePath  string `json:"source_path"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -88,6 +89,8 @@ type Skill struct {
 }
 
 type Bundle struct {
+	Definition          map[string]json.RawMessage    `json:"definition,omitempty"`
+	PortableConfig      *PortableManifest             `json:"portable_config,omitempty"`
 	CoordinatorContract *coordinatorcontract.Contract `json:"coordinator_contract,omitempty"`
 	Manifest            Manifest                      `json:"manifest"`
 	Instructions        string                        `json:"instructions"`
@@ -96,13 +99,19 @@ type Bundle struct {
 	Hash                string                        `json:"hash"`
 }
 
-// UnmarshalJSON validates both contract objects before typed decoding can discard
-// unknown fields in a persisted snapshot. Legacy bundles without contracts remain valid.
+// UnmarshalJSON checks every contract representation before typed decoding can
+// discard unknown fields in a persisted source snapshot.
 func (b *Bundle) UnmarshalJSON(data []byte) error {
 	type plainBundle Bundle
 	var raw struct {
 		CoordinatorContract json.RawMessage `json:"coordinator_contract"`
-		Manifest            struct {
+		PortableConfig      struct {
+			CoordinatorContract json.RawMessage `json:"coordinator_contract"`
+		} `json:"portable_config"`
+		Definition struct {
+			CoordinatorContract json.RawMessage `json:"coordinator_contract"`
+		} `json:"definition"`
+		Manifest struct {
 			Spec struct {
 				CoordinatorContract json.RawMessage `json:"coordinator_contract"`
 			} `json:"spec"`
@@ -111,12 +120,13 @@ func (b *Bundle) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	for _, content := range []json.RawMessage{raw.CoordinatorContract, raw.Manifest.Spec.CoordinatorContract} {
+	for _, content := range []json.RawMessage{raw.CoordinatorContract, raw.Manifest.Spec.CoordinatorContract, raw.PortableConfig.CoordinatorContract, raw.Definition.CoordinatorContract} {
 		if _, err := coordinatorcontract.Parse(content); err != nil {
 			return fmt.Errorf("bundle coordinator_contract: %w", err)
 		}
 	}
 	return json.Unmarshal(data, (*plainBundle)(b))
+
 }
 
 type RepositoryClient interface {
@@ -200,7 +210,7 @@ func validateManifest(manifest Manifest) error {
 }
 
 func validateRepositoryPath(value, field string) error {
-	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
+	if strings.IndexFunc(value, func(r rune) bool { return r < 32 }) >= 0 || value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
 		return fmt.Errorf("%s must be a non-empty relative repository path", field)
 	}
 	cleaned := path.Clean(value)
@@ -451,16 +461,73 @@ func hashBundle(bundle Bundle) string {
 			hash.Write([]byte(file.Content))
 		}
 	}
+	if bundle.PortableConfig != nil {
+		encoded, _ := json.Marshal(bundle.PortableConfig)
+		hash.Write([]byte{0})
+		hash.Write(encoded)
+		for _, item := range bundle.Skills {
+			encoded, _ = json.Marshal(item)
+			hash.Write([]byte{0})
+			hash.Write(encoded)
+		}
+	}
+	if bundle.Definition != nil {
+		encoded, _ := json.Marshal(bundle.Definition)
+		var canonical any
+		decoder := json.NewDecoder(bytes.NewReader(encoded))
+		decoder.UseNumber()
+		_ = decoder.Decode(&canonical)
+		encoded, _ = json.Marshal(canonical)
+		hash.Write([]byte{0})
+		hash.Write(encoded)
+	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // ValidateBundle verifies a persisted bundle before it is materialized. The
 // canonical hash excludes warnings and is shared with Compile and CompileFS.
 func ValidateBundle(bundle Bundle) error {
+	if bundle.PortableConfig != nil {
+		if bundle.Definition != nil {
+			encoded, err := json.Marshal(bundle.Definition)
+			if err != nil {
+				return err
+			}
+			if _, err := ValidateManifestJSON(encoded); err != nil {
+				return err
+			}
+			var header PortableManifest
+			if err := json.Unmarshal(encoded, &header); err != nil {
+				return err
+			}
+			actual, _ := json.Marshal(bundle.PortableConfig)
+			expected, _ := json.Marshal(header)
+			if !bytes.Equal(actual, expected) {
+				return errors.New("bundle manifest header does not match definition")
+			}
+			if err := validatePortableLayout(header); err != nil {
+				return err
+			}
+		} else if err := bundle.PortableConfig.validate(); err != nil {
+			return err
+		}
+	} else {
+		for _, item := range bundle.Skills {
+			if item.Disabled {
+				return errors.New("disabled source skills require a portable manifest")
+			}
+		}
+	}
 	if err := validateManifest(bundle.Manifest); err != nil {
 		return err
 	}
 	expectedContract, err := coordinatorcontract.Bind(bundle.Manifest.Spec.CoordinatorContract, bundle.Instructions)
+	if bundle.PortableConfig != nil {
+		if !bytes.Equal(coordinatorcontract.Marshal(bundle.Manifest.Spec.CoordinatorContract), coordinatorcontract.Marshal(bundle.PortableConfig.CoordinatorContract)) {
+			return errors.New("bundle coordinator_contract source does not match portable manifest")
+		}
+		expectedContract, err = portableCoordinatorContract(bundle.PortableConfig.CoordinatorContract, bundle.Instructions)
+	}
 	if err != nil {
 		return fmt.Errorf("bundle coordinator_contract: %w", err)
 	}

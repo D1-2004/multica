@@ -5,3 +5,5 @@ export { ChooseCreateMethodPage } from "./choose-create-method-page";
 export { ManualCreateAgentPage } from "./manual-create-agent-page";
 export { AiCreateAgentPage } from "./ai-create-agent-page";
 export { AiBuilderSessionPage } from "./ai-builder-session-page";
+
+export { GitCreateAgentPage } from "./git-create-agent-page";

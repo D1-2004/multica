@@ -2060,10 +2060,17 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Instructions != nil || req.CoordinatorContract != nil {
-		if _, sourceErr := h.Queries.GetAgentSourceByAgentID(r.Context(), existing.ID); sourceErr == nil {
-			message := "instructions are managed by the GitHub source"
+		if source, sourceErr := h.Queries.GetAgentSourceByAgentID(r.Context(), existing.ID); sourceErr == nil {
+			sourceLabel := "source"
+			switch source.SourceType {
+			case "github":
+				sourceLabel = "GitHub source"
+			case "local":
+				sourceLabel = "local package source"
+			}
+			message := "instructions are managed by the " + sourceLabel
 			if req.Instructions == nil {
-				message = "coordinator_contract is managed by the GitHub source"
+				message = "coordinator_contract is managed by the " + sourceLabel
 			}
 			writeError(w, http.StatusConflict, message)
 			return

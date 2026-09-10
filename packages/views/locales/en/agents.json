@@ -240,6 +240,8 @@
     "attention_title": "Tasks need attention",
     "attention_queued_one": "{{count}} task is queued while the runtime is unavailable.",
     "attention_queued_other": "{{count}} tasks are queued while the runtime is unavailable.",
+    "package_hash": "Package hash",
+    "package_imported_at": "Imported at",
     "source_title": "GitHub source",
     "source_ref": "Ref",
     "source_commit": "Commit",
@@ -300,6 +302,8 @@
     "clear_full": "Clear selection (use provider default)"
   },
   "tabs": {
+    "export": "Export",
+    "publish": "Publish",
     "overview": "Overview",
     "work": "Work",
     "memory": "Memory",
@@ -341,19 +345,39 @@
     "inbound": "Inbound conversations"
   },
   "creation_studio": {
+    "schema": {
+      "download": "Download Schema",
+      "downloading": "Downloading...",
+      "failed": "Could not download agent schema"
+    },
+    "git": {
+      "disabled_skill": "Disabled",
+      "step": "Select a repository and preview",
+      "description": "Select a workspace GitHub connection, paste the repository URL, then choose a branch. Review the pinned version before creating the agent.",
+      "connection_required": "A workspace owner or admin must connect GitHub and grant access to the repository.",
+      "manage_connections": "Manage connections",
+      "connection": "GitHub connection",
+      "default_branch": "Repository default branch",
+      "preview": "Preview agent",
+      "confirm_hint": "Confirmation creates an Agent with the manifest configuration, instructions and exclusive skills."
+    },
     "title": "Create an agent",
     "squad_title": "Create an agent for this squad",
     "duplicate_title": "Duplicate {{name}}",
     "back": "Go back",
     "eyebrow": "Agent creation",
     "choose_title": "How would you like to start?",
-    "choose_description": "Start with full control, adapt a proven template, or describe what you need and build it through conversation.",
+    "choose_description": "Upload an Agent ZIP, import from Git, configure manually, or build with AI.",
     "recommended": "Recommended",
     "continue": "Continue",
     "step_choose": "Choose a starting point",
     "step_configure": "Review and configure",
     "step_ai": "Build through conversation",
     "modes": {
+      "git": {
+        "title": "From Git",
+        "description": "Import Agent configuration from a GitHub repository containing agent.json and its referenced files."
+      },
       "blank": {
         "title": "Start blank",
         "description": "Configure every field yourself. Best when you already know exactly how this agent should work."
@@ -368,7 +392,11 @@
       },
       "github": {
         "title": "Import from GitHub",
-        "description": "Create from a versioned DTA Agent Project containing dingtalk-agent.json, its definition, skills, and supporting files."
+        "description": "Import Agent configuration from a GitHub repository containing agent.json and its referenced files."
+      },
+      "local": {
+        "title": "Import from local",
+        "description": "Upload an Agent ZIP containing its manifest and files"
       }
     },
     "sections": {
@@ -446,7 +474,7 @@
     "step_github": "Import from GitHub",
     "github": {
       "source_title": "GitHub source",
-      "source_hint": "Select a repository and ref, then validate its dingtalk-agent.json before creating the agent.",
+      "source_hint": "Select a repository and branch, then validate and preview agent.json and its referenced files.",
       "not_configured": "GitHub agent sources are not configured",
       "admin_required": "Workspace admin access is required",
       "admin_required_hint": "Only workspace owners and admins can preview private repository contents or create GitHub-backed agents.",
@@ -474,6 +502,19 @@
       "skills": "Included skills",
       "instructions": "Instructions",
       "use": "Use this template"
+    },
+    "local": {
+      "step": "Upload · Preview · Create",
+      "description": "Upload an Agent ZIP, with agent.json and its referenced instructions and skill files at the archive root. Maximum 40 MiB.",
+      "file": "Agent ZIP package",
+      "preview": "Upload and preview",
+      "admin_required": "Only workspace owners and admins can import Agents.",
+      "runtime_required": "Select a {{provider}} runtime.",
+      "secret": "Configuration value: {{ref}}",
+      "bindings_required": "Set up these resources in the destination workspace:",
+      "defer_bindings": "Skip these bindings and configure them later. Member-based access on a new Agent stays private.",
+      "confirm_hint": "Confirmation creates a new Agent with the package configuration, instructions and exclusive skills.",
+      "configuration": "Review imported configuration"
     }
   },
   "create_dialog": {
@@ -543,6 +584,33 @@
     }
   },
   "tab_body": {
+    "export": {
+      "description": "Download a ZIP of the agent configuration, instructions, skills (including enabled state), and supporting files currently saved in Multica, with a manifest and JSON Schema.",
+      "download": "Download agent package",
+      "downloading": "Exporting...",
+      "hint": "Choose the destination runtime, provide configuration values, and review resources to reconnect when importing. ZIP and Git use the same manifest and configuration flow.",
+      "unavailable": "Only the agent owner or a workspace admin can export this agent.",
+      "failed": "Could not export agent"
+    },
+    "publish": {
+      "no_source": "This agent is not linked to a Git repository. You can download its current agent package from Export.",
+      "description": "Manage the Agent Git repository. Publication updates declared configuration, instructions, exclusive skills and supporting files.",
+      "repository": "Agent repository",
+      "deployed": "Published branch and commit",
+      "unavailable": "Source syncing is unavailable for this agent or your current permissions.",
+      "branch": "Branch or commit",
+      "loading": "Preparing preview...",
+      "preview": "Preview changes",
+      "branches_failed": "Could not load branches. You can still enter a branch or commit.",
+      "preview_failed": "Could not prepare the source preview",
+      "git_changes": "Git file changes",
+      "configuration_changes": "Configuration changes",
+      "confirm_hint": "Confirm to apply this exact commit. The changes above include any local skill edits that will be overwritten.",
+      "publishing": "Publishing...",
+      "confirm": "Confirm publication",
+      "before": "Before",
+      "after": "After"
+    },
     "common": {
       "save": "Save",
       "add": "Add",

@@ -61,7 +61,10 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Contract | Source | Behavior |
 |---|---|---|
 | Git instance ownership | `server/internal/handler/github_agent_source.go` | Manifest name/description are create defaults; source sync updates instructions and source-managed skills only |
-| Editable source Agent profile | `server/internal/handler/agent.go` | Name and description remain editable; only instructions are rejected as Git-managed |
+| Git URL creation and immutable confirmation | `server/internal/handler/agent_source_preview.go`, `server/internal/handler/github_agent_source.go` | Workspace GitHub preview accepts a repository URL and saves a user-scoped `preview_id`; create confirmation is idempotent with that ID |
+| Branch selection and source sync | `server/internal/handler/agent_source_sync.go`, `server/internal/handler/agent_source_preview.go` | `POST /api/agents/{id}/source/preview` accepts ref and returns Git/configuration changes; `/source/sync` requires the returned `preview_id` and rejects stale state or revoked Git access |
+| Exclusive source skills | `server/internal/handler/skill.go`, `server/pkg/db/queries/agent_source_preview.sql` | Ordinary Git source skills are editable/deletable in workspace storage, but source mappings prohibit assigning them to other Agents; file mutations lock the parent skill |
+| Editable source Agent profile | `server/internal/handler/agent.go` | Name and description remain editable; only instructions are rejected as Git-managed. v2 publication reapplies declared profile values; v1 publication preserves the instance profile |
 | DingTalk install CLI | `server/cmd/multica/cmd_dingtalk.go` | `begin` creates a QR session; optional `--allow-unbound` sends `allow_unbound=true` for external users; `status` performs one status read |
 
 ## Create handler — `server/internal/handler/agent.go`
@@ -165,6 +168,44 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | `UpdateAgent` SET | generated from `queries/agent.sql` | COALESCE updates include model/thinking/service tier; dedicated clear queries restore each nullable override |
 | `UpdateAgentCustomEnv` (called by the `UpdateAgentEnv` handler) | 2652 | `SET custom_env = $2` — the only write path for env values |
 
+## Protocol history
+
+- 2026-09-08: Added Git URL preview/create, fixed-commit sync confirmation and exclusive skill edit/delete source maps to document the reviewed publication boundary.
+
+## Unified Agent packages and Builder
+
+| Contract | Source symbol | Verification |
+| --- | --- | --- |
+| ZIP manifest-first validation and bundle | `internal/agentsource/package.go` `ParseAgentPackage`; `portable.go` `ParsedAgentPackage.Bundle` | `go test ./internal/agentsource` |
+| Git acquisition uses agent.json | `internal/agentsource/snapshot.go` `ReadAgentRepository` | `TestZIPAndRepositoryPrepareIdenticalV2Bundle` |
+| Shared preview confirmation and transaction | `internal/handler/github_agent_source.go` `CreateAgentFromPackage` | `TestLocalAndGitPackagesCreateTheSameConfiguration` |
+| Config, secret/ref choices, OKRs and A2A | `internal/handler/agent_package_configuration.go` `preparePackageConfiguration` / `apply` | `TestCompleteExamplePackageUploadAndExport` |
+| v2 publication and stale state | `internal/handler/agent_package_sync.go`; `agent_source_preview.go` | `TestV2PackagePublicationAppliesConfigurationAndRejectsStalePreview` |
+| Builder's instructions and hidden carrier | `internal/handler/agent_builder.go` `agentBuilderInstructions` / `CreateAgentBuilderSession` | Read the embedded instructions and carrier transaction |
+| Builder skill loading | `internal/service/task.go` `LoadAgentSkills`; `builtin_skills.go` `BuiltinSkills` | Built-ins append to assigned workspace skills |
+| Builder confirms an ordinary draft | `packages/views/agents/create/use-create-agent-submit.ts` `useCreateAgentSubmit` | Calls `api.createAgent`, not package import |
+| Shared local/Git UI | `packages/views/agents/create/source-create-agent-page.tsx` `SourceCreateAgentPage` | Local/Git differ only in acquisition inputs |
+
+### Protocol history
+
+- 2026-09-08: Added package creation, complete example and Builder evidence.
+  Reason: replace the DTA-oriented source assumptions with the platform's manifest and ZIP contract.
+
+## Bounded Coordinator contract (2026-09-09)
+
+| Contract | Implementation |
+| --- | --- |
+| Version 1 shape; strict unknown-field validation; canonical JSON including source hash ≤1600 Unicode code points | `server/internal/coordinatorcontract/contract.go`: `Contract`, `Parse`, `Bind`, `Resolve`, `Hash` |
+| Dedicated nullable persisted field; omitted UPDATE preserves and JSON null atomically clears | `server/migrations/9164_agent_coordinator_contract.up.sql`; `server/pkg/db/queries/agent.sql`: `CreateAgent`, `UpdateAgent` |
+| Independent Coordinator read | `server/pkg/db/queries/agent_coordinator_contract.sql`: `GetAgentCoordinatorContract` |
+| Create/update/readback; source ownership guard; source hash retained on copies, missing hash Host-bound | `server/internal/handler/agent.go`: request/response structs, `bindAgentCoordinatorContract`, `agentToResponse` |
+| JSON/file CLI inputs and copy roundtrip | `server/cmd/multica/cmd_agent.go`: `registerCoordinatorContractFlags`, `resolveCoordinatorContract`; `server/cmd/multica/cmd_agent_copy.go`: `runAgentCopy` |
+| Web/Desktop duplicate, builder and stored draft roundtrip | `packages/core/agents/draft.ts`, `stored-draft.ts`, `builder-protocol.ts`; `packages/core/api/schemas.ts`: `CoordinatorContractSchema` |
+| Boundary and stale-version evidence | `server/internal/coordinatorcontract/contract_test.go`; `server/internal/handler/agent_coordinator_contract_test.go`; `server/cmd/multica/cmd_agent_coordinator_contract_test.go`; `packages/core/api/coordinator-contract.test.ts` |
+| Local/Git package preview retains bounded constraints and original source version | `server/internal/handler/agent_package.go`; `packages/core/types/agent-package.ts`; `packages/core/api/schemas.ts`: `AgentPackagePreviewSchema` |
+| Local package source blocks direct instructions/contract edits without blocking ordinary profile edits | `server/internal/handler/agent.go`: `UpdateAgent`; `server/internal/handler/agent_coordinator_contract_test.go`: `TestUpdateLocalPackageAgentPreservesSourceContract` |
+| Portable ZIP/Git/export use the same root contract field, retaining stale source hashes on copies | `server/internal/agentsource/portable.go`; `server/internal/agentsource/agent.schema.json`; `server/internal/handler/agent_export_manifest.go`; `server/internal/handler/agent_source_preview.go` |
+
 ## Event-trigger implementation
 
 - `server/internal/service/event_trigger.go`: `SetEnabled`, `Admit`, `ProcessNext`,
@@ -186,15 +227,3 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
 - `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
 - Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.
-
-## Bounded Coordinator contract (2026-09-09)
-
-| Contract | Implementation |
-| --- | --- |
-| Version 1 shape; strict unknown-field validation; canonical JSON including source hash ≤1600 Unicode code points | `server/internal/coordinatorcontract/contract.go`: `Contract`, `Parse`, `Bind`, `Resolve`, `Hash` |
-| Dedicated nullable persisted field; omitted UPDATE preserves and JSON null atomically clears | `server/migrations/9159_agent_coordinator_contract.up.sql`; `server/pkg/db/queries/agent.sql`: `CreateAgent`, `UpdateAgent` |
-| Independent Coordinator read | `server/pkg/db/queries/agent_coordinator_contract.sql`: `GetAgentCoordinatorContract` |
-| Create/update/readback; source ownership guard; source hash retained on copies, missing hash Host-bound | `server/internal/handler/agent.go`: request/response structs, `bindAgentCoordinatorContract`, `agentToResponse` |
-| JSON/file CLI inputs and copy roundtrip | `server/cmd/multica/cmd_agent.go`: `registerCoordinatorContractFlags`, `resolveCoordinatorContract`; `server/cmd/multica/cmd_agent_copy.go`: `runAgentCopy` |
-| Web/Desktop duplicate, builder and stored draft roundtrip | `packages/core/agents/draft.ts`, `stored-draft.ts`, `builder-protocol.ts`; `packages/core/api/schemas.ts`: `CoordinatorContractSchema` |
-| Boundary and stale-version evidence | `server/internal/coordinatorcontract/contract_test.go`; `server/internal/handler/agent_coordinator_contract_test.go`; `server/cmd/multica/cmd_agent_coordinator_contract_test.go`; `packages/core/api/coordinator-contract.test.ts` |

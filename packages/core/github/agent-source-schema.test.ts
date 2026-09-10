@@ -5,9 +5,42 @@ import {
   EMPTY_AGENT_SOURCE,
   EMPTY_GITHUB_AGENT_PREVIEW,
   GitHubAgentPreviewSchema,
+  AgentSourceSyncPreviewSchema,
+  EMPTY_AGENT_SOURCE_SYNC_PREVIEW,
+  AgentSourceBranchesSchema,
+  EMPTY_AGENT_SOURCE_BRANCHES,
 } from "../api/schemas";
 
 describe("GitHub agent source API schemas", () => {
+  it("rejects a sync preview without a confirmation ID or an immutable commit", () => {
+    for (const value of [
+      { resolved_sha: "a".repeat(40), ref: "main" },
+      { preview_id: "11111111-1111-4111-8111-111111111111", resolved_sha: "main" },
+    ]) {
+      expect(parseWithFallback(value, AgentSourceSyncPreviewSchema, EMPTY_AGENT_SOURCE_SYNC_PREVIEW, {
+        endpoint: "POST /api/agents/:id/source/preview",
+      })).toEqual(EMPTY_AGENT_SOURCE_SYNC_PREVIEW);
+    }
+  });
+
+  it("rejects malformed branch responses", () => {
+    expect(parseWithFallback({ branches: [{ name: 123 }] }, AgentSourceBranchesSchema, EMPTY_AGENT_SOURCE_BRANCHES, {
+      endpoint: "GET /api/agents/:id/source/branches",
+    })).toEqual(EMPTY_AGENT_SOURCE_BRANCHES);
+  });
+
+  it("preserves file deletion and absent binary text in a sync diff", () => {
+    const parsed = AgentSourceSyncPreviewSchema.parse({
+      preview_id: "11111111-1111-4111-8111-111111111111",
+      expires_at: "2026-09-08T12:00:00Z",
+      repository_url: "https://github.com/acme/agent",
+      ref: "release/v2", base_sha: "a".repeat(40), resolved_sha: "b".repeat(40), changed: true,
+      git_changes: [{ path: "removed.md", status: "deleted", before: "old", after: null }],
+      configuration_changes: null, warnings: null,
+    });
+    expect(parsed.git_changes[0]?.after).toBeNull();
+    expect(parsed.configuration_changes).toEqual([]);
+  });
   it("falls back when preview loses its immutable SHA", () => {
     const parsed = parseWithFallback(
       {

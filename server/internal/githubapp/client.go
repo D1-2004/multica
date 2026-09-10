@@ -72,6 +72,30 @@ type Repository struct {
 	HTMLURL       string `json:"html_url"`
 }
 
+type Branch struct {
+	Name string `json:"name"`
+	Commit struct {
+		SHA string `json:"sha"`
+	} `json:"commit"`
+	Protected bool `json:"protected"`
+}
+
+func (c *Client) ListBranches(ctx context.Context, installationID int64, owner, repo string) ([]Branch, error) {
+	branches := make([]Branch, 0)
+	for page := 1; page <= maxRepositoryPages; page++ {
+		var response []Branch
+		path := "/repos/" + escape(owner) + "/" + escape(repo) + "/branches?per_page=100&page=" + strconv.Itoa(page)
+		if err := c.doInstallationJSON(ctx, installationID, http.MethodGet, path, nil, &response); err != nil {
+			return nil, err
+		}
+		branches = append(branches, response...)
+		if len(response) < 100 {
+			return branches, nil
+		}
+	}
+	return nil, errors.New("github branch pagination limit exceeded")
+}
+
 type TreeEntry struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`

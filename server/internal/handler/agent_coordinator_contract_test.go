@@ -78,3 +78,44 @@ func TestUpdateAgentCoordinatorContractRoundtrip(t *testing.T) {
 	check(map[string]any{"coordinator_contract": authored}, coordinatorcontract.StateLoaded)
 	check(map[string]any{"coordinator_contract": nil}, coordinatorcontract.StateNotConfigured)
 }
+
+func TestUpdateLocalPackageAgentPreservesSourceContract(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	agentID := createHandlerTestAgent(t, "local-package-contract-protection", nil)
+	bound, err := bindAgentCoordinatorContract([]byte(`{"version":1,"scope":"Product support","constraints":["Draft only"],"must_delegate":[],"clarify_when":[]}`), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testHandler.Queries.UpdateAgent(t.Context(), db.UpdateAgentParams{ID: parseUUID(agentID), CoordinatorContract: bound}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testHandler.Queries.CreateLocalAgentSource(t.Context(), db.CreateLocalAgentSourceParams{
+		AgentID: parseUUID(agentID), WorkspaceID: parseUUID(testWorkspaceID), SyncedCommitSha: "package-hash", CreatedBy: parseUUID(testUserID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []map[string]any{
+		{"instructions": "local override"},
+		{"coordinator_contract": nil},
+		{"coordinator_contract": map[string]any{"version": 1, "scope": "changed"}},
+	} {
+		w := updateAgentForTest(t, agentID, body)
+		if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "local package source") {
+			t.Fatalf("source edit must identify the local package: %d %s", w.Code, w.Body.String())
+		}
+	}
+	if w := updateAgentForTest(t, agentID, map[string]any{"description": "Profile remains editable"}); w.Code != http.StatusOK {
+		t.Fatalf("profile edit rejected: %d %s", w.Code, w.Body.String())
+	}
+	row, err := testHandler.Queries.GetAgent(t.Context(), parseUUID(agentID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, state := coordinatorcontract.Resolve(row.CoordinatorContract, row.Instructions)
+	expected, _ := coordinatorcontract.Parse(bound)
+	if state != coordinatorcontract.StateLoaded || coordinatorcontract.Hash(actual) != coordinatorcontract.Hash(expected) {
+		t.Fatalf("source contract changed: state=%s", state)
+	}
+}

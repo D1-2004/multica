@@ -47,3 +47,10 @@ export const githubAgentRepositoriesOptions = (wsId: string, installationId: str
     queryFn: () => api.listGitHubAgentRepositories(wsId, installationId),
     enabled: !!wsId && !!installationId,
   });
+
+export const githubAgentBranchesOptions = (wsId: string, installationId: string, repository: string) =>
+  queryOptions({
+    queryKey: [...githubKeys.all(wsId), "agent-branches", installationId, repository],
+    queryFn: () => api.listGitHubAgentBranches(wsId, installationId, repository),
+    enabled: !!wsId && !!installationId && !!repository,
+  });

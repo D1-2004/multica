@@ -468,7 +468,7 @@ function ReusableExecutionIdentity({ agentId }: { agentId: string }) {
         <select id={`reuse-identity-${agentId}`} className="h-9 min-w-0 max-w-full rounded-md border bg-background px-3 text-sm" value={selected} onChange={(event) => setSelected(event.target.value)} disabled={reuse.isPending}>
           <option value="">{t(($) => $.tab_body.integrations.dingtalk_identity_reuse_placeholder)}</option>
           {identities.map((identity) => <option key={identity.sourceAgentId} value={identity.sourceAgentId}>
-            {identity.accountDisplayName} · {identity.organizationName}（{identity.sourceAgentName}）
+            {identity.accountDisplayName} · {identity.organizationName} ({identity.sourceAgentName})
           </option>)}
         </select>
         <Button size="sm" onClick={() => void applyIdentity()} disabled={!selectedIdentity || reuse.isPending}>

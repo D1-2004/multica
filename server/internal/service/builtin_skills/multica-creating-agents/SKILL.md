@@ -112,8 +112,11 @@ its authored object with that hash omitted to bind the new instruction version.
 On update, omission preserves the contract; `--coordinator-contract null`
 clears it atomically. Updating only `instructions` keeps the previous contract
 and source hash, so the state becomes `stale`. Missing, stale or invalid
-contracts never mean "no restrictions". Git-backed Agent contracts are managed
+contracts never mean "no restrictions". Git-backed and local-package Agent contracts are managed
 with their source definitions and reject direct API edits, just like instructions.
+Portable `agent.json` stores `coordinator_contract` at the root beside the
+instructions reference. Preview and export retain it, including its source hash;
+a malformed contract is rejected at the schema/preview boundary.
 
 ## Copying an agent
 
@@ -367,9 +370,68 @@ State-changing (require an explicit instruction — do not run speculatively):
 
 ## References
 
+The canonical package is a directory containing `agent.json`, the downloaded
+`agent.schema.json`, its instructions Markdown file, and declared skill directories
+with `SKILL.md` and supporting files. Use `multica.agent/v2` for the complete
+configuration contract. Download the authoritative Schema with `GET /api/agent-schema`;
+the server always validates with its embedded copy before reading referenced files.
+A bundle is the parsed manifest and files, with a canonical content hash. It is
+not a DTA CLI build artifact; do not require `dta bundle` or `dingtalk-agent.json`.
+
+Workspace owners/admins can upload a ZIP through
+`POST /api/workspaces/{id}/agent-packages/preview` (`application/zip`, or one
+multipart `file`, maximum 40 MiB), or acquire the same directory from GitHub via
+`POST /api/workspaces/{id}/github/agent-preview`. Git reads a pinned commit using
+the selected workspace GitHub App installation, not the Agent's execution identity.
+Both produce an immutable, actor-bound `preview_id` valid for 30 minutes.
+
+After the user reviews the instructions, configuration and skill files, both
+creation methods confirm through `POST /api/workspaces/{id}/agent-packages` with
+`preview_id`, the destination `runtime_id`, and optional `name` / `description`.
+Supply `secrets` by alias through the import form; never put real values in a chat.
+`requirements.deferred_bindings` lists external identity, bot, runner, plugin or
+non-portable access choices that need separate destination setup. The user must
+explicitly acknowledge these in `deferred_bindings`; they are never silently
+copied by UUID. Deferred member-based access creates a private Agent. Runtime
+requirements and disabled runtime skills are checked against the chosen runtime.
+The Agent, configuration, OKRs, A2A policies, exclusive workspace skills and files
+are written in one transaction. Duplicate confirmation returns the same Agent.
+Existing OKR label conflicts fail atomically instead of taking over another
+Agent's labels. A2A policies do not include credentials or mint new tokens.
+
+For an existing Git Agent, preview `POST /api/agents/{id}/source/preview` with
+`{"ref":"<branch>"}` and review `git_changes` and `configuration_changes`.
+Confirm with `POST /api/agents/{id}/source/sync`, passing the `preview_id` and any
+explicit secret/binding choices. Omitted configuration stays unmanaged, while
+explicit false/empty/null values are applied. Expired or stale previews require
+previewing again. Skills stay exclusive, editable and deletable. Publication
+preserves the selected runtime. v1 preserves the instance name and description;
+v2 publishes the manifest name and its description when declared.
+
+`GET /api/agents/{id}/export` downloads a ZIP of the current platform definition,
+including disabled skills and supporting files. Secrets become references;
+runtime history, credentials and platform system instructions are excluded.
+
+The AI Builder is a separate draft conversation: a hidden system Agent returns
+`<agent_draft>` and the user confirms the ordinary `POST /api/agents` form.
+Builder knows this package protocol but does not generate/upload ZIPs itself.
+Its draft covers name, description, instructions, model, selected workspace skill
+IDs and invocation access; do not claim it expresses every v2 schema field.
+
 `references/creating-agents-source-map.md` maps every contract above to its
 `file:line` on the current tree, the runtime effect, and a safe read-only
 verification command.
+
+## Protocol history
+
+- 2026-09-08: Added repository URL creation and preview-ID source confirmation.
+  Replaced unreviewed source sync with fixed-commit Git/configuration previews,
+  and allowed ordinary source skill edits/deletion while retaining exclusivity.
+
+- 2026-09-08: Unified local ZIP and Git package creation around agent.json, added
+  v2 configuration materialization and explicit destination choices, and documented
+  the Builder draft/package boundary. Reason: the package protocol is authoritative;
+  importing must not depend on a separately built DTA artifact or drop configuration.
 
 ## Proactive conversations
 

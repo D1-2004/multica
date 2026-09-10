@@ -73,7 +73,7 @@ The action is attributed to the `system` actor on the timeline. Subscribers of t
 
 ## Creating agents from a repository
 
-When the GitHub App has **Contents: Read-only** permission and App credentials are configured, workspace owners and admins can use **Agents → Create agent → Import from GitHub** to build an agent from an installed repository. Repository listing, preview, and creation stay admin-only so connecting an App does not expose private repository names or contents to every workspace member. The repository is the versioned source of the definition; it is not the agent's runtime working directory.
+When the GitHub App has **Contents: Read-only** permission and App credentials are configured, workspace owners and admins can preview and create an agent through the GitHub agent API using a repository URL, connection and branch. The creation-page Git entry is not included in this server phase. Repository browsing and creation remain admin-only.
 
 The repository root must contain a DTA `dingtalk-agent.json` using the `dingtalk-agent/project@1` protocol:
 
@@ -99,7 +99,7 @@ The repository root must contain a DTA `dingtalk-agent.json` using the `dingtalk
 
 Multica validates the stable `project@1` fields and materializes the selected commit into its database as a snapshot. It accepts additional DTA extension fields and does not interpret workspace definitions. The display name is only the creation default; later syncs update the definition and repository skills while preserving the name and description edited in Multica. Runtime, model, access, and additional workspace skills also remain Multica-managed. GitHub import does not fall back to the legacy `multica-agent.yaml` format.
 
-Repository changes are **not applied automatically**. Use **Sync now** on the agent overview to resolve the configured ref and atomically replace the GitHub-managed snapshot. Existing runs keep the snapshot with which they were dispatched. Disconnecting the installation leaves the last valid snapshot runnable but disables further syncs.
+Repository changes are **not applied automatically**. Open the Git Agent’s **Configuration → Import / Export**, select a branch, review the Git and configuration changes, and confirm publication. The exact previewed commit is applied; a moved branch does not change the confirmed version. Local skill edits and deletions are included in the configuration preview. The overview sync button opens this page. Disconnecting the installation leaves the active configuration intact but disables further syncs.
 
 ## Disconnecting
 
@@ -235,3 +235,7 @@ A few rough edges to be aware of today:
 - [Issues](/issues) — the issue identifiers (`MUL-123`) referenced from PRs
 - [Workspaces](/workspaces) — where the workspace-specific issue prefix is set
 - [Environment variables](/environment-variables) — full env reference, including the GitHub variables above
+
+## Protocol history
+
+- 2026-09-08: Documented repository URL APIs and preview-before-confirm sync, replacing the previous direct-sync behavior and correcting the unavailable creation entry.
