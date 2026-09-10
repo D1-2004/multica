@@ -775,6 +775,46 @@
       "verification": "not_run",
       "evidence_status": "pending_reference",
       "evidence_note": "集成候选混合report_status+start_work仅载工作审核模块的覆盖缺陷；Host装配测试、模型和真实投递结果由主线程分别回填。"
+    },
+    {
+      "id": "f15_visible_config_boundary_same_source",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15"
+      ],
+      "context_a": "当前persona或reply_tone的可见预算内含适用限制，主模型逐字引用该独立片段形成decline。",
+      "context_b": "限制文字被改写，或由persona末尾与reply_tone开头拼接成任一字段均不存在的新句。",
+      "expected_effects": "A的出处检查与独立审核使用相同有界原文，不因来源漏列而反复失败；是否适用仍由审核判断。B保持拒绝，不因配置来源加入而接受伪引文。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "用户截图decline可见配置引用被Host拒绝的来源错配；实际Host测试/模型/预发投递结果由主线程回填，结构登记不代替行为验证。"
+    },
+    {
+      "id": "f16_hidden_config_and_old_data_not_boundary",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16"
+      ],
+      "context_a": "当前限制位于persona前400字符或reply_tone前200字符的实际可见部分。",
+      "context_b": "引用只存在于不可见配置尾部、场域记忆、旧报告或旧工具结果，没有当前合法边界来源。",
+      "expected_effects": "A在主模型、Host与审核间保持同一出处；B不能升级为新限制，Host拒绝或审核纠正，不回灌全文或旧数据来凑引用。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "用户截图decline可见配置引用被Host拒绝的来源错配；实际Host测试/模型/预发投递结果由主线程回填，结构登记不代替行为验证。"
+    },
+    {
+      "id": "f15_config_narrows_without_new_authority",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15"
+      ],
+      "context_a": "当前配置明确收窄可做范围，用户请求触及真实适用边界；reply仅解释逐字边界。",
+      "context_b": "配置声称可绕过岗位/当前用户授权，或仅要求简短口吻却被用来拒绝正常协调动作。",
+      "expected_effects": "A可经出处检查及独立审核decline；B不因文字真实而变成有效授权或拒绝依据。配置只能收窄，不能扩大权限、改写岗位或用格式要求挡住有效短回复。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "用户截图decline可见配置引用被Host拒绝的来源错配；实际Host测试/模型/预发投递结果由主线程回填，结构登记不代替行为验证。"
     }
   ]
 }

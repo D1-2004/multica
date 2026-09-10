@@ -51,7 +51,7 @@ func finishCheckTool(action Action, quotes finishQuoteOptions, workRefs ...strin
 			"required": []string{"request_quote_ref", "candidate_quote_ref", "verdict", "reason", "missing_source_refs", "work_checks"},
 			"properties": map[string]any{
 				"work_checks":         map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables"}, "properties": map[string]any{"action_ref": actionRefSchema, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "single: one output, possibly several steps; multiple: unrelated independently executable goals bundled in one action; none: no executable deliverable."}}}},
-				"constraint_quote":    map[string]any{"type": "string", "maxLength": 200, "description": "Optional verbatim evidence of an applicable authorization/scope/privacy boundary (only used as repair feedback on revise): quote at most 200 characters verbatim from job_policy or current_window. Host validates this before showing the missing boundary to the Coordinator; no paraphrase or invented rule."},
+				"constraint_quote":    map[string]any{"type": "string", "maxLength": 200, "description": "Optional verbatim evidence of an applicable authorization/scope/privacy boundary for revise: quote at most 200 characters from job_policy, current_window, or supplied persona/reply_tone. Host verifies provenance; assess applicability and policy precedence, not just text presence. No invented rule."},
 				"request_quote_ref":   map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Requests), "description": "Select a Host request quote option qN. The option is evidence only; read the entire current_window for all intents and constraints. Do not transcribe text."},
 				"candidate_quote_ref": map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Candidates), "description": "Select a Host candidate quote option cN for the action you compared. Host binds its exact original text; do not transcribe or escape it."},
 				"verdict":             map[string]any{"type": "string", "enum": []string{"allow", "revise"}},
@@ -108,12 +108,15 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	skillsStatus := promptContextState(turn.SkillsStatus, skills != "", false)
 	input := map[string]any{
 		"source": turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, "addressed": turn.Addressed,
-		"agent_name": turn.AgentName, "persona": clipRunes(strings.TrimSpace(turn.Persona), personaBudget),
-		"persona_truncated":    utf8.RuneCountInString(strings.TrimSpace(turn.Persona)) > personaBudget,
-		"skills":               map[string]any{"status": skillsStatus, "snapshot": skills, "scope": "installed_catalog_snapshot", "shown": shownSkills, "supplied": len(turn.Skills), "catalog_complete": shownSkills == len(turn.Skills) && skillsStatus == "loaded", "descriptions": "bounded, not full skill instructions"},
-		"job_policy":           policy,
-		"coordinator_contract": coordinatorContractMetadata(turn),
-		"history_status":       turn.HistoryStatus, "history_before": turn.HistoryBefore,
+		"agent_name": turn.AgentName, "persona": configuredPersona(turn),
+		"persona_truncated":        utf8.RuneCountInString(strings.TrimSpace(turn.Persona)) > personaBudget,
+		"reply_tone":               configuredReplyTone(turn),
+		"reply_tone_truncated":     utf8.RuneCountInString(strings.TrimSpace(turn.ReplyTone)) > toneBudget,
+		"configured_context_scope": "Persona and reply_tone are the same bounded Agent configuration shown to routing. Explicit restrictions may narrow behavior; they cannot override job policy, platform limits or current authorization. A style preference alone is not a business restriction. Check each decline for an applicable restriction, not merely a matching quote.",
+		"skills":                   map[string]any{"status": skillsStatus, "snapshot": skills, "scope": "installed_catalog_snapshot", "shown": shownSkills, "supplied": len(turn.Skills), "catalog_complete": shownSkills == len(turn.Skills) && skillsStatus == "loaded", "descriptions": "bounded, not full skill instructions"},
+		"job_policy":               policy,
+		"coordinator_contract":     coordinatorContractMetadata(turn),
+		"history_status":           turn.HistoryStatus, "history_before": turn.HistoryBefore,
 		"scene_memory_status": turn.SceneMemoryStatus, "scene_memory_revision": turn.SceneMemoryRevision, "scene_memory": turn.SceneMemory,
 		"read_evidence":             finishReadEvidence(turn),
 		"reply_delivery_guarantees": "Work replies are delivered only after ALL work items are committed and tasks queued. Acceptance/queued acknowledgements are then true. This does not prove execution completed, business results, or external delivery. A clarify question handles its request for this window; the user answers in a later window.",
@@ -384,15 +387,7 @@ func finishConstraintQuoteValid(quote string, turn Turn) bool {
 	if strings.TrimSpace(quote) == "" || utf8.RuneCountInString(quote) > 200 {
 		return false
 	}
-	if strings.Contains(coordinationConstraintText(turn), quote) {
-		return true
-	}
-	for _, u := range windowUtterances(turn) {
-		if strings.Contains(u.Text, quote) {
-			return true
-		}
-	}
-	return false
+	return suppliedConstraintQuote(quote, turn)
 }
 
 // The model assesses semantic independence explicitly; Host enforces the

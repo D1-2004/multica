@@ -1,10 +1,10 @@
 {
-  "policy_version": "2026-09-09.6",
-  "assembly_version": "9",
+  "policy_version": "2026-09-10.1",
+  "assembly_version": "10",
   "modules": [
     {
       "id": "core",
-      "version": "3",
+      "version": "4",
       "file": "core.md",
       "applies_when": "always",
       "requires": [],
@@ -24,7 +24,7 @@
         "COORD.F18"
       ],
       "budget_characters": 1100,
-      "content_sha256": "4c98654f1a32a21ad5f4bdea75ff2f32e91a572857177460b40dd385a962d6b9"
+      "content_sha256": "426a7c05a66c400f9cf29bad7bf2ed02fad65fbc791408acf1ab5f52a683ef7a"
     },
     {
       "id": "voice",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "16",
+      "version": "17",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -61,7 +61,7 @@
         "COORD.F03"
       ],
       "budget_characters": 2200,
-      "content_sha256": "d535dd2d2ecd57ae4557e0dcfdd615a0cdc2dd60d7649efe4ad1d4a7d5c5cabc"
+      "content_sha256": "79429cfd6fd82a0db0a25134731884a203f915b8698363beb6a5567f8b70cb3b"
     },
     {
       "id": "channel",
@@ -222,7 +222,7 @@
     },
     {
       "id": "finish_check",
-      "version": "15",
+      "version": "16",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -245,11 +245,11 @@
         "COORD.F19"
       ],
       "budget_characters": 1900,
-      "content_sha256": "60f4f4e8d06fadf23a96852b04e7d23917d5054ca53c07477efcb24f854bce69"
+      "content_sha256": "c247578d5a1dfe7a0585fb540abe23da092ba3f825026af3a8d69a8fc6abb8e7"
     },
     {
       "id": "finish_check_work",
-      "version": "10",
+      "version": "11",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -272,7 +272,7 @@
         "COORD.F19"
       ],
       "budget_characters": 2000,
-      "content_sha256": "581f44e6560e0a189cecd5cd7b610d1042d04ab7efa6f2e6eace9608c182d51f"
+      "content_sha256": "6e16886ea107f37df96a8de6e86d4e6edff3bbf2bce50ef74558cd5e50fe1780"
     }
   ],
   "obligations": [
@@ -966,7 +966,10 @@
         "f03_issue_state_vs_latest_execution",
         "f03_recent_coordination_counts_vs_association_count",
         "f16_coordination_state_is_not_question_history",
-        "f13_mixed_work_and_status_review_coverage"
+        "f13_mixed_work_and_status_review_coverage",
+        "f15_visible_config_boundary_same_source",
+        "f16_hidden_config_and_old_data_not_boundary",
+        "f15_config_narrows_without_new_authority"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -990,7 +993,10 @@
         "continuation_history_handoff_live_delivery": "not_run",
         "mixed_review_host_tests": "not_run",
         "mixed_review_model_replay": "not_run",
-        "mixed_review_live_delivery": "not_run"
+        "mixed_review_live_delivery": "not_run",
+        "decline_boundary_host_tests": "not_run",
+        "decline_boundary_model_replay": "not_run",
+        "decline_boundary_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1017,7 +1023,10 @@
         "server/internal/service/inboundcoord/history_handoff_test.go",
         "server/internal/service/inboundcoord/policy.go",
         "server/internal/service/inboundcoord/policy_test.go#TestPolicyMixedTerminalReviewLoadsBothCanonicalModules",
-        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce"
+        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce",
+        "server/internal/service/inboundcoord/configured_boundaries.go",
+        "server/internal/service/inboundcoord/configured_boundaries_test.go",
+        "server/internal/service/inboundcoord/prompt.go"
       ],
       "case_file": "cases.json"
     },
@@ -1065,7 +1074,7 @@
     {
       "id": "COORD.F15",
       "family": "F15",
-      "obligation": "人格/语气只管表达；有效短协调合同可收紧平台动作，不能扩大权限。合同按instructions hash判loaded/not_configured/stale/unavailable，总预算1600字符。完整SOP留给执行器，主循环不能补读全文；缺失/过期合同时由Host保留完整岗位审查，不能当作无限制。decline必须引用真实适用边界。",
+      "obligation": "人格/语气决定表达，其中实际可见的显式限制可进一步收窄、不能覆盖岗位或当前授权；有效短协调合同可收紧平台动作，不能扩大权限。合同按instructions hash判loaded/not_configured/stale/unavailable，总预算1600字符。完整SOP留给执行器，主循环不能补读全文；缺失/过期合同时由Host保留完整岗位审查，不能当作无限制。decline必须引用真实适用边界。 主模型、Host与独立审核复用persona400/reply_tone200有界投影；逐字匹配仅证明出处，不能证明适用。不可见尾部、记忆及旧报告不新增来源，各字段不能拼接伪造引用。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -1083,7 +1092,10 @@
         "f06_job_object_evidence_vs_old_work_clarification",
         "f04_role_material_vs_coordination_record",
         "f06_delegated_sample_choices",
-        "f04_declared_skill_synopsis_vs_managed_marker"
+        "f04_declared_skill_synopsis_vs_managed_marker",
+        "f15_visible_config_boundary_same_source",
+        "f16_hidden_config_and_old_data_not_boundary",
+        "f15_config_narrows_without_new_authority"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1095,7 +1107,10 @@
         "finish_review_live_delivery": "not_run",
         "closed_actions_host_tests": "not_run",
         "closed_actions_model_replay": "not_run",
-        "closed_actions_live_delivery": "not_run"
+        "closed_actions_live_delivery": "not_run",
+        "decline_boundary_host_tests": "not_run",
+        "decline_boundary_model_replay": "not_run",
+        "decline_boundary_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1105,7 +1120,11 @@
         "server/internal/service/inboundcoord/policy/finish_check_work.md",
         "server/internal/coordinatorcontract/contract.go",
         "server/internal/handler/agent.go",
-        "server/internal/service/inboundcoord/skill_catalog_description.go"
+        "server/internal/service/inboundcoord/skill_catalog_description.go",
+        "server/internal/service/inboundcoord/configured_boundaries.go",
+        "server/internal/service/inboundcoord/configured_boundaries_test.go",
+        "server/internal/service/inboundcoord/prompt.go",
+        "server/internal/service/inboundcoord/window_plan.go"
       ],
       "case_file": "cases.json"
     },
@@ -1133,7 +1152,8 @@
         "f13_single_encoded_source_refs",
         "f16_review_work_checks_excludes_clarify",
         "f16_coordination_state_is_not_question_history",
-        "f08_coordination_state_anchor_isolation"
+        "f08_coordination_state_anchor_isolation",
+        "f16_hidden_config_and_old_data_not_boundary"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1154,7 +1174,10 @@
         "reply_recovery_live_delivery": "not_run",
         "continuation_history_handoff_host_tests": "reported_passed_by_root; history_handoff_test.go; execution_log_pending",
         "continuation_history_handoff_model_replay": "not_run",
-        "continuation_history_handoff_live_delivery": "not_run"
+        "continuation_history_handoff_live_delivery": "not_run",
+        "decline_boundary_host_tests": "not_run",
+        "decline_boundary_model_replay": "not_run",
+        "decline_boundary_live_delivery": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1174,7 +1197,10 @@
         "server/internal/service/inboundcoord/terminal_call_recovery.go",
         "server/internal/service/inboundcoord/recent_coordination_state.go",
         "server/internal/service/inboundcoord/history_handoff.go",
-        "server/internal/service/inboundcoord/history_handoff_test.go"
+        "server/internal/service/inboundcoord/history_handoff_test.go",
+        "server/internal/service/inboundcoord/configured_boundaries.go",
+        "server/internal/service/inboundcoord/configured_boundaries_test.go",
+        "server/internal/service/inboundcoord/prompt.go"
       ],
       "case_file": "cases.json"
     },

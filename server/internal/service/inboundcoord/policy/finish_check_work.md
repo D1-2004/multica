@@ -10,4 +10,4 @@ Continue only the same output instance identified by the user or history, not a 
 
 Select request_quote_ref and candidate_quote_ref from Host quote_options. These only support the decision; the full window remains the scope.
 
-Call finish_check with verdict, work_checks, both quote refs, reason <=160 characters and missing_source_refs. A real boundary causing revise may add a verbatim policy/current-restriction constraint_quote <=200 characters for Host validation. Do not execute, rewrite the plan, invent limits or judge tone/format.
+Call finish_check with verdict, work_checks, both quote refs, reason <=160 characters and missing_source_refs. A relevant user/job/contract or shown persona/reply_tone limit may add exact constraint_quote <=200 on revise; Host verifies it. Do not execute, rewrite the plan, invent limits or judge tone/format.
