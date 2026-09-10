@@ -367,6 +367,13 @@ func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentI
 }
 
 func (w *InboundCoordinatorJobWorker) park(ctx context.Context, job db.InboundCoordinatorJob, delay time.Duration, reason string) error {
+	if isCoordinatorBusyParkReason(reason) {
+		feedbackCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := w.handler.persistCoordinatorWait(feedbackCtx, job, reason); err != nil {
+			slog.Warn("coordinator wait feedback unavailable", "job_id", util.UUIDToString(job.ID), "error", err)
+		}
+		cancel()
+	}
 	slog.Info("inbound coordinator job parked for next window",
 		"event", "inbound_coordinator_job_parked",
 		"job_id", util.UUIDToString(job.ID),

@@ -883,6 +883,85 @@
       "forbidden_effects": "测试样例问句自动取得响应资格；工具名一票否决；缺失身份猜测；固定短语跳过LLM。",
       "verification": "host_protocol_passed; real_model_26_of_26_on_2026_09_10_assembly_14; live_delivery_pending",
       "evidence_note": "docs/evals/results/20260910T033123Z-generic-proactive-gate.json; one frozen candidate, synthetic read-only replay"
+    },
+    {
+      "id": "f01_execution_delivery_follows_trusted_source",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F03",
+        "COORD.F17",
+        "COORD.F18"
+      ],
+      "context_a": "同一项明确查询来自Web会话，未授权另行外发；窗口拆项或旧checkpoint恢复后Source仍取可信入站。",
+      "context_b": "相同工作来自数字员工/机器人钉钉事件，或来源为空/未来未知值；另有原文明确指定对象与渠道的外发。",
+      "expected_effects": "Web通过任务结果/已有会话回传，不为交付另找钉钉发信人。钉钉沿已有交付上下文，用事件提供身份且发送时取证；未知来源不猜Web或钉钉。各来源均保留明确外发授权和原始引用/历史，不把Issue署名当委托人。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/issue_description_test.go#TestIssueDescriptionUsesSourceRetainedByHostAndWindowItem",
+        "server/internal/service/inboundcoord/issue_description_test.go#TestIssueDescriptionPreservesExplicitDeliveryAndOriginalHandoff"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
+    },
+    {
+      "id": "f04_single_work_does_not_authorize_environment_repair",
+      "rule_ids": [
+        "COORD.F04",
+        "COORD.F07",
+        "COORD.F15",
+        "COORD.F18"
+      ],
+      "context_a": "用户只要求执行一项指定只读命令/查询，失败时返回原始错误；默认执行上下文重复了purpose，另有独立scope和原始引用。",
+      "context_b": "用户在当前请求中明确授权一个有边界的环境修复或外发操作。",
+      "expected_effects": "A仅执行该交付物；依赖失败记录已完成步骤/原始错误/阻塞，不自动找改凭证或扩成登录/环境维修。只去重平台生成的重复目标，保留独立上下文、scope和原始handoff。B仍以最新原始授权及权限为准，不因技术名称词表否决，也不扩大到其他维修。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/issue_description_test.go#TestIssueDescriptionKeepsOneGoalAndNecessaryContext",
+        "server/internal/service/inboundcoord/issue_description_test.go#TestIssueDescriptionPreservesExplicitDeliveryAndOriginalHandoff"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
+    },
+    {
+      "id": "f09_saved_work_wait_notice_is_nonterminal_once",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F09",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "已判断并保存含未提交工作项的计划，当前合法lease因容量或同Issue busy重复park；其中可有已提交部分。",
+      "context_b": "尚未保存工作计划、全部工作已提交、主动会话/task_finished，或普通调用者伪造coordinator_wait标记。",
+      "expected_effects": "A每job只持久化一次Host等待说明，准确说尚未开始的剩余部分；不复用模型接单回复或声称task已入队/正在执行。等待标记、本地message及合规managed outbox同事务，原callback/终结消息/计划不完成。B不新增该等待效果；managed路由不存在时只本地记录，不绕过原回复策略或让调用者伪造。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitNoticeIsOnceAndDoesNotSettlePlan",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitRequiresSavedWorkAndHonorsManagedReplyPolicy",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitTextDoesNotClaimAllWorkIsUnstartedAfterPartialCommit",
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go#TestCoordinatorWaitIsHostOnlyAndDoesNotCloseReceipt"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
+    },
+    {
+      "id": "f17_wait_notice_cancels_when_resolved",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F09",
+        "COORD.F17"
+      ],
+      "context_a": "待发送的等待notice仍对应同workspace/Agent的pending或running Coordinator job，且还有未提交Items。",
+      "context_b": "发送前该job已terminal、全部Items已提交或关联不匹配；另有notice入库/路由校验失败。",
+      "expected_effects": "A沿已有response outbox发送并去重，不写关闭原dispatch的receipt。B未发notice取消；失败原子回滚，不阻止既有park/恢复，不伪造已送达。只取消尚未发送动作，不撤回已送达notice，也不把Coordinator job终态等同任意Executor task终态。",
+      "host_protocol_test_refs": [
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go#TestCoordinatorWaitResolvedBeforeSendDoesNotSend",
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go#TestCoordinatorWaitAllItemsCommittedBeforeSendDoesNotSend",
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go#TestCoordinatorWaitEnqueueRollsBack",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitFailureDoesNotBlockPark"
+      ],
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
     }
   ]
 }

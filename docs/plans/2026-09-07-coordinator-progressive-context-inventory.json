@@ -99,7 +99,15 @@
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/window_plan.go",
-          "server/internal/service/inboundcoord/policy.go"
+          "server/internal/service/inboundcoord/policy.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -157,7 +165,13 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -215,7 +229,13 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -273,7 +293,13 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -336,7 +362,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -399,7 +433,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -495,7 +537,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/skill_catalog_description.go",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/pkg/db/queries/skill.sql"
+          "server/pkg/db/queries/skill.sql",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -564,7 +608,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -655,7 +707,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/skill_catalog_description.go",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/pkg/db/queries/skill.sql"
+          "server/pkg/db/queries/skill.sql",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -696,7 +750,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/skill_catalog_description.go",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/pkg/db/queries/skill.sql"
+          "server/pkg/db/queries/skill.sql",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -737,7 +793,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/skill_catalog_description.go",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/pkg/db/queries/skill.sql"
+          "server/pkg/db/queries/skill.sql",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -791,7 +849,9 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/dialogue.md"
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -850,7 +910,9 @@
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -902,7 +964,9 @@
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/skill_catalog_description.go",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/pkg/db/queries/skill.sql"
+          "server/pkg/db/queries/skill.sql",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -950,7 +1014,9 @@
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/skill_catalog_description.go",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/pkg/db/queries/skill.sql"
+          "server/pkg/db/queries/skill.sql",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1009,7 +1075,9 @@
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1064,7 +1132,15 @@
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/window_plan.go",
-          "server/internal/service/inboundcoord/policy.go"
+          "server/internal/service/inboundcoord/policy.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1114,7 +1190,12 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
           "docs/evals/coordinator-collect-e2e.json",
-          "server/internal/service/inboundcoord/scene_prefetch.go"
+          "server/internal/service/inboundcoord/scene_prefetch.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1159,7 +1240,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1259,7 +1342,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1329,7 +1414,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1380,7 +1473,9 @@
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -1435,7 +1530,9 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1489,7 +1586,9 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1543,7 +1642,9 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -1921,7 +2022,9 @@
           "server/internal/service/inboundcoord/policy/recall_match.md",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2267,7 +2370,15 @@
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/window_plan.go",
-          "server/internal/service/inboundcoord/policy.go"
+          "server/internal/service/inboundcoord/policy.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2316,7 +2427,14 @@
           "server/internal/service/inboundcoord/scene_prefetch.go",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2361,7 +2479,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2426,7 +2546,9 @@
           "server/internal/service/inboundcoord/wrapup.go",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2482,7 +2604,9 @@
           "server/internal/service/inboundcoord/continuation_content.go",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2527,7 +2651,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2597,7 +2723,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2666,7 +2800,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -2735,7 +2877,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3052,7 +3202,15 @@
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/window_plan.go",
-          "server/internal/service/inboundcoord/policy.go"
+          "server/internal/service/inboundcoord/policy.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3113,7 +3271,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3158,7 +3324,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3266,7 +3434,15 @@
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/window_plan.go",
-          "server/internal/service/inboundcoord/policy.go"
+          "server/internal/service/inboundcoord/policy.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3331,7 +3507,15 @@
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/window_plan.go",
-          "server/internal/service/inboundcoord/policy.go"
+          "server/internal/service/inboundcoord/policy.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3430,7 +3614,9 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/dialogue.md"
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3494,7 +3680,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3607,7 +3801,9 @@
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -3673,7 +3869,15 @@
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/window_plan.go",
-          "server/internal/service/inboundcoord/policy.go"
+          "server/internal/service/inboundcoord/policy.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3729,7 +3933,9 @@
           "server/internal/service/inboundcoord/continuation_content.go",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3785,7 +3991,9 @@
           "server/internal/service/inboundcoord/continuation_content.go",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -3830,7 +4038,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -4039,7 +4249,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4147,7 +4365,15 @@
           "server/internal/service/inboundcoord/history_handoff.go",
           "server/internal/service/inboundcoord/history_handoff_test.go",
           "server/internal/service/inboundcoord/window_plan.go",
-          "server/internal/service/inboundcoord/policy.go"
+          "server/internal/service/inboundcoord/policy.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -4194,7 +4420,9 @@
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
           "server/internal/service/inboundcoord/prompt.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4277,7 +4505,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/skill_catalog_description.go",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/pkg/db/queries/skill.sql"
+          "server/pkg/db/queries/skill.sql",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4323,7 +4553,9 @@
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
           "server/internal/service/inboundcoord/prompt.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4503,7 +4735,9 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/voice.md",
-          "server/internal/service/inboundcoord/policy/skills.md"
+          "server/internal/service/inboundcoord/policy/skills.md",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4594,7 +4828,12 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/handler/inbound_coordinator_job.go",
           "docs/evals/coordinator-collect-e2e.json",
-          "server/internal/service/inboundcoord/scene_prefetch.go"
+          "server/internal/service/inboundcoord/scene_prefetch.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -4733,7 +4972,9 @@
           "server/internal/service/inboundcoord/finish_check.go",
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/policy/inbound.md",
-          "server/internal/service/inboundcoord/policy/dialogue.md"
+          "server/internal/service/inboundcoord/policy/dialogue.md",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -4827,7 +5068,13 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4889,7 +5136,13 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -5156,7 +5409,9 @@
           "server/internal/service/inboundcoord/policy/finish_check_work.md",
           "server/internal/service/inboundcoord/skill_catalog_description.go",
           "server/internal/service/inboundcoord/coordinator.go",
-          "server/pkg/db/queries/skill.sql"
+          "server/pkg/db/queries/skill.sql",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -5205,7 +5460,9 @@
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
           "server/internal/service/inboundcoord/prompt.go",
-          "server/internal/service/inboundcoord/window_plan.go"
+          "server/internal/service/inboundcoord/window_plan.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -5276,7 +5533,15 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }
@@ -5330,7 +5595,13 @@
           "server/internal/service/inboundcoord/policy.go",
           "server/internal/service/inboundcoord/configured_boundaries.go",
           "server/internal/service/inboundcoord/configured_boundaries_test.go",
-          "server/internal/service/inboundcoord/prompt.go"
+          "server/internal/service/inboundcoord/prompt.go",
+          "server/internal/handler/coordinator_wait.go",
+          "server/internal/handler/coordinator_wait_test.go",
+          "server/internal/handler/inbound_coordinator_job.go",
+          "server/internal/service/dingtalkresponse/service.go",
+          "server/internal/service/dingtalkresponse/worker.go",
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
         ],
         "coverage": "source_mapping_only"
       }

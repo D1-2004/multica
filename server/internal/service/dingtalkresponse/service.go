@@ -43,6 +43,8 @@ type ActionInput struct {
 	CallbackTarget       string `json:"callback_target"`
 	Text                 string `json:"text,omitempty"`
 	CloseState           string `json:"close_state,omitempty"`
+	// Set only by EnqueueCoordinatorWait, never by a caller-supplied send flag.
+	CoordinatorWaitJobID string `json:"coordinator_wait_job_id,omitempty"`
 }
 
 type Route struct {
@@ -125,6 +127,27 @@ func (s *Service) FindRoute(ctx context.Context, callbackURL string) (*Route, er
 // Enqueue is transaction-friendly. Call Notify only after the caller commits.
 // Reusing an action ID with different contents is rejected, never overwritten.
 func (s *Service) Enqueue(ctx context.Context, tx DBTX, in ActionInput) (string, error) {
+	if in.CoordinatorWaitJobID != "" {
+		return "", errors.New("coordinator wait progress requires its Host enqueue path")
+	}
+	return s.enqueue(ctx, tx, in)
+}
+
+// EnqueueCoordinatorWait records non-terminal Host progress. An empty callback
+// also makes an older worker fail callback validation before HTTP; it cannot
+// settle the original dispatch while a rolling deployment is in progress.
+func (s *Service) EnqueueCoordinatorWait(ctx context.Context, tx DBTX, in ActionInput, jobID string) (string, error) {
+	if _, err := uuid.Parse(jobID); err != nil {
+		return "", errors.New("coordinator wait job id is invalid")
+	}
+	in.CoordinatorWaitJobID = jobID
+	in.RequestID = "coordinator-wait:" + jobID
+	in.ActionID = ""
+	in.TaskID, in.IssueID, in.CallbackURL, in.CloseState = "", "", "", ""
+	return s.enqueue(ctx, tx, in)
+}
+
+func (s *Service) enqueue(ctx context.Context, tx DBTX, in ActionInput) (string, error) {
 	if tx == nil {
 		return "", errors.New("response action database is required")
 	}
@@ -292,7 +315,14 @@ func validateScope(in ActionInput) error {
 }
 
 func validateInput(in ActionInput) error {
-	if _, err := parseCallback(in.CallbackURL, true); err != nil {
+	if in.CoordinatorWaitJobID != "" {
+		if _, err := uuid.Parse(in.CoordinatorWaitJobID); err != nil {
+			return errors.New("coordinator wait job id is invalid")
+		}
+		if in.CallbackURL != "" || in.TaskID != "" || in.IssueID != "" || in.CloseState != "" || in.Text == "" {
+			return errors.New("coordinator wait cannot close a dispatch or claim a task")
+		}
+	} else if _, err := parseCallback(in.CallbackURL, true); err != nil {
 		return err
 	}
 	if err := validateScope(in); err != nil {
