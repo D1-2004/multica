@@ -429,7 +429,7 @@ func TestFinishCheckRejectsFabricatedConstraintQuotes(t *testing.T) {
 		{"不要发送", "revise", true},
 		{"The user cannot use any tool.", "revise", false},
 		{"Never send until approved.", "allow", true},
-		{strings.Repeat("x", 201), "revise", false},
+		{strings.Repeat("x", 201), "allow", false},
 	} {
 		result := finishCheckResult{RequestQuote: "先起草通知", CandidateQuote: candidate.UserText, ConstraintQuote: tc.quote, Verdict: tc.verdict}
 		err := validateFinishQuotes(result, turn, candidate)
@@ -447,8 +447,8 @@ func TestFinishCheckDiscardsUnusableOptionalBoundaryWithoutDiscardingVerdict(t *
 	}{
 		{"Never send until approved.", "allow", true},
 		{"不要发送", "revise", true},
-		{"FORGED_POLICY_SENTINEL", "revise", false},
-		{strings.Repeat("x", 201), "revise", false},
+		{"FORGED_POLICY_SENTINEL", "allow", false},
+		{strings.Repeat("x", 201), "allow", false},
 	} {
 		raw, _ := json.Marshal(map[string]any{"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "constraint_quote": tc.quote, "verdict": tc.verdict, "reason": "Only an authorized draft may proceed.", "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
 		chat := &scriptedCompleter{checkRounds: []openai.ChatCompletion{assistantTool("check", toolFinishCheck, string(raw))}}
@@ -464,9 +464,9 @@ func TestFinishCheckRepairSeesRejectedProposalAndSpecificReasonWithoutForgedBoun
 	const fixed = `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"起草周五下午三点全员例会通知正文","intent":"other","reply":"我来起草周五例会通知。"}]}`
 	const reason = "第1项reply虚报发送；保持起草purpose，只将reply改成起草承诺。"
 	revise, _ := json.Marshal(map[string]any{"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "constraint_quote": "FORGED_POLICY_SENTINEL", "verdict": "revise", "reason": reason, "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
-	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("bad", toolFinish, bad), assistantTool("fixed", toolFinish, fixed)}, checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, string(revise)), scriptedFinishVerdict("allow", "The drafting plan and its acknowledgement stay within scope.")}}
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("bad", toolFinish, bad), assistantTool("fixed", toolFinish, fixed)}, checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, string(revise)), scriptedFinishVerdict("revise", reason), scriptedFinishVerdict("allow", "The drafting plan and its acknowledgement stay within scope.")}}
 	d, err := (&Coordinator{Chat: chat}).runLoop(context.Background(), Turn{Source: SourceWeb, Message: "帮我起草周五三点全员例会通知，先不发送。"})
-	if err != nil || d.Action != ActionIssue || chat.calls != 2 || chat.checkCalls != 2 {
+	if err != nil || d.Action != ActionIssue || chat.calls != 2 || chat.checkCalls != 3 {
 		t.Fatalf("repair did not complete: %#v calls=%d checks=%d err=%v", d, chat.calls, chat.checkCalls, err)
 	}
 	next, _ := json.Marshal(chat.params[1].Messages)

@@ -61,7 +61,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool) openai.ChatCompletio
 		props["result_ref"] = map[string]any{"type": "string", "description": "report_result only: copy current_result_ref. Summarize the supplied current result only; no invented delivery."}
 	} else {
 		props["reason_code"] = map[string]any{"type": "string", "enum": []string{"scope", "authorization", "privacy"}, "description": "decline only: the explicit boundary preventing the request."}
-		props["constraint_quote"] = map[string]any{"type": "string", "maxLength": 300, "description": "decline only: exact quote of the user restriction or loaded coordination/job policy. Explain this boundary; do not answer the business question."}
+		props["constraint_quote"] = map[string]any{"type": "string", "maxLength": 300, "description": "decline only: exact quote of an applicable restriction from the current request, loaded contract, visible agent_persona or agent_reply_tone. Do not paraphrase hidden job policy. Host verifies provenance, then independently reviews applicability; style alone does not justify refusal."}
 		props["missing_fields"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string", "enum": []string{"intent", "recipient", "message_body", "scope", "timing", "authorization", "work_target", "source_material"}}, "description": "clarify only: missing information preventing a safe dispatch."}
 		props["state_refs"] = map[string]any{"type": "array", "minItems": 1, "items": map[string]any{"type": "string"}, "description": "report_status only: rN read_ref from current Host assoc_recall/work_state or context_read(kind=coordination_state) snapshots, including bounded empty or unavailable reads. History is not execution state."}
 		props["ack_kind"] = map[string]any{"type": "string", "enum": []string{"greeting", "thanks", "correction", "receipt"}, "description": "acknowledge only; never substitute for executable work."}
@@ -263,12 +263,8 @@ func parseValidatedWindowPlan(raw string, turn Turn, recalls []recallCall, recal
 			if !oneOf(a.ReasonCode, "scope", "authorization", "privacy") || strings.TrimSpace(a.ConstraintQuote) == "" || utf8.RuneCountInString(a.ConstraintQuote) > 300 {
 				return Decision{}, fmt.Errorf("decline requires a reason_code and exact constraint_quote")
 			}
-			matched := strings.Contains(coordinationConstraintText(turn), a.ConstraintQuote)
-			for _, u := range utterances {
-				matched = matched || strings.Contains(u.Text, a.ConstraintQuote)
-			}
-			if !matched {
-				return Decision{}, fmt.Errorf("decline constraint_quote must quote an actual supplied boundary")
+			if !suppliedConstraintQuote(a.ConstraintQuote, turn) {
+				return Decision{}, hintErr("decline constraint_quote must quote an actual supplied boundary", "Use verbatim text from the current request, visible agent_persona/agent_reply_tone, or loaded contract. Do not repeat or paraphrase an unseen policy. If no applicable visible restriction supports decline, reassess the request; the independent review holds the full working policy. Missing evidence grants no new authority.")
 			}
 		case "clarify":
 			if !validEnumList(a.MissingFields, []string{"intent", "recipient", "message_body", "scope", "timing", "authorization", "work_target", "source_material"}) {

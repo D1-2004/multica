@@ -52,8 +52,8 @@ func buildUserPrompt(turn Turn) string {
 		writePromptField(&b, "session_title (label only)", turn.ConversationTitle)
 	}
 	writePromptField(&b, "identity_note", turn.IdentityNote)
-	writePromptField(&b, "agent_persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget))
-	writePromptField(&b, "agent_reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget))
+	writePromptField(&b, "agent_persona", configuredPersona(turn))
+	writePromptField(&b, "agent_reply_tone", configuredReplyTone(turn))
 	writeCoordinatorContractPrompt(&b, turn)
 	if loop == LoopTaskFinished {
 		writePromptField(&b, "outstanding_follow_ups (accepted requests, not handled by this finished task)", turn.OutstandingFollowUps)

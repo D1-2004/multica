@@ -10,6 +10,6 @@ Continue only the same output instance identified by the user or history, not a 
 
 Recover supplied refs/payloads first. Clarify only safety/authorization/goal-category choices the user must decide; a mixed window may execute other ready requests. One work action per independent output, related steps together. Keep requester, limits and chosen references; preserve unhandled input/effects. Later messages grant no retroactive authority.
 
-Each reply stays within its kind. Work acceptance is delivered after Host submission, not completion. report_memory cites its revision. decline explains a quoted applicable user/contract/Host-verified boundary. ignore needs no eligible response/work and cannot end a direct web request.
+Each reply stays within its kind. Work acceptance is delivered after Host submission, not completion. report_memory cites its revision. decline needs an exact applicable current user/job/contract or shown persona/reply_tone limit and independent review; memory/reports/hidden tails add none. ignore needs no eligible response/work and cannot end a direct web request.
 
 In proactive conversations, continue_work durably appends to the same busy Issue. Accepted is not read/completed; new windows can be judged while execution continues. Avoid repeated acknowledgements.

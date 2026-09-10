@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-09.6`。装配版本：`9`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-10.1`。装配版本：`10`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -10,6 +10,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 修改 Coordinator 的提示词、工具、上下文、handler、assoc、scenememory、窗口、回执或 trace 前，先读本文件和 [规则目录](../server/internal/service/inboundcoord/policy/registry.json)。目录登记 `COORD.F01`–`COORD.F19` 的行为义务、模块、实现引用、对照案例和已撤回手段。
 
+- [decline边界Plan](plans/2026-09-10-coordinator-decline-boundary.md) 记录主模型、Host与审核配置来源一致性及验证；
 - [Host预取Plan](plans/2026-09-09-coordinator-prefetch.md) 记录当前场域必需读取前置的收益假设、额外成本与实测；
 - [有限动作与短合同 Plan](plans/2026-09-09-coordinator-closed-actions.md) 记录当前动作协议、迁移边界和验收；
 - [上下文减重与终结审查 Plan](plans/2026-09-09-coordinator-scope-and-finish.md) 记录本次实现与验证状态；[原实施 Plan](plans/2026-09-07-coordinator-progressive-context.md) 保留此前分阶段证据。
@@ -27,7 +28,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 5. **同工作且有推进才续接。** 当前明确请求及原始引用定义工作对象，旧purpose只是匹配线索。同一交付物指用户或历史锚定的同一个产物实例，主题、人或任务标题相似不够。answer仅指用户回答真实待答问题；明确重发已完成原产物用retry/redelivery，保持原内容，不能变成重新研究。一张卡、同一个人、rank-1、忙、旧承诺都不充分。跨天的明确答复仍可续接，时间不是否决票；跨天问候不自动恢复旧任务。
 6. **按事实说话。** 任务状态/数量问题回答当前明确目标与真实覆盖范围，不用无关清单代答或把部分列表当总量。准备、排队、提交、送达、对方回复和完成各有证据。未加载、失败、过期或截断不是空；“我去做”不是已做。记忆盘点、任务清单和聊天记录不能互相代答。
 7. **整窗有去向。** 先形成完整计划，后受校验提交。已提交、待提交、失败和剩余输入保留，终结第一件不能漏后面的事；重试不能重放已成功效果。
-8. **像同事一样表达。** 有用才说，接单简短、清单完整、失败缺口具体。不逐句“收到”，不汇报内部路由，不靠短语黑名单吞掉有效答案。人格管表达；岗位规则可收紧行为，不能扩大 Host 权限或覆盖用户当前限制。
+8. **像同事一样表达。** 有用才说，接单简短、清单完整、失败缺口具体。不逐句“收到”，不汇报内部路由，不靠短语黑名单吞掉有效答案。人格/语气管表达，其中可见的显式限制可进一步收窄；配置不能扩大Host权限或覆盖岗位/用户当前授权。
 
 ## 3. 规则装配
 
@@ -76,9 +77,9 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 
 主循环只看有效合同或未迁移状态/hash/全文长度元数据，不能通过 `context_read(kind=job_policy)` 打开长SOP。`context_read(kind=history)`仅恢复本场景原窗口前的指代、对象或上一问，最多3000字符并声明截断；它不是业务查询。所有托管读上下文总预算8000字符，只保留当前有效快照；最新修复反馈800字符。另独立保留最近一次被拒的精确提案JSON，最多6000字符，供下一轮按诊断修复具体字段；超限或非法JSON时明确标omitted，不静默截成残缺提案，也不累积历次候选。完整执行SOP仍由执行器持有；旧Agent的全文审查属于上段明确保留的迁移成本。
 
-审查Reason始终保留具体缺陷诊断；可选边界摘录只能补充，不能替换Reason。若一条实际边界导致revise，可返回最多200字符的 `constraint_quote` 原文，Host验证它是当前限制或已加载岗位约束的逐字子串，再供主循环decline引用。allow附带真实边界旁证也可正常通过，但不把该旁证当作修复指令。无效可选摘录被丢弃并记录 `finish_check_boundary_quote_discarded=true`，不会替代对本轮必填quote ref和verdict的严格校验。该短摘录只证明这条限制，不是运行时生成的新合同或长SOP摘要。读取失败/缺失不得描述为无约束。
+审查Reason始终保留具体缺陷诊断，引文不能替换Reason。constraint_quote字段必填：allow或无规则依据填空；规则驱动revise须提供最多200字符的逐字指令/所需固定话术，避免要求主模型猜不可见SOP。对非空 `constraint_quote` 原文，Host逐个来源验证它是当前限制、已加载岗位约束或实际可见persona/reply_tone的逐字子串，不跨字段拼接，再供主循环decline引用。真实引文只供修复，不构成额外授权。revise的非空摘录若伪改写、去Markdown或不匹配来源，复用现有一次、共用12秒截止的审核协议修正；仍失败则停止提交，不静默清空并缓存无依据revise。allow夹带无效附加引文仍丢弃并记录 `finish_check_boundary_quote_discarded=true`，不阻塞合法裁决；必填quote ref及verdict仍严格校验。该短摘录只证明这条限制，不是运行时生成的新合同或长SOP摘要。读取失败/缺失不得描述为无约束。
 
-数字员工 Tab 的人格和语气通过 `GetAgentVoice` 读取；已启用技能通过 `ListEnabledAgentSkillCardMetadata` 提供名称与简介。网页、机器人及数字员工 Dispatch 都由 `FillVoice` 调用 `FillSkills`，延续预发已有的技能快照链路。快循环仍最多展示24条、1200字符，单条描述80字符并注明覆盖范围。元描述为空或仅Managed by标记时，只从最多4096字符前缀内完整frontmatter的已声明description补充能力简介；普通已有描述保持不变，前缀不完整不猜测。模型不加载正文/SOP，简介不等于权限或执行结果；明确请求技能对应工作时，仍按新建/续接计划进入沙箱，不能仅复述能力。
+数字员工Tab的人格和语气通过 `GetAgentVoice` 读取；主prompt、Host引用校验与侧审核共用persona400/reply_tone200字符的同一投影，审核同时注明各字段是否截断。逐字出处不等于限制适用：配置仅可收窄，不覆盖岗位或当前授权，decline仍需独立审核；记忆、旧报告、旧工具结果及不可见尾部不新增边界来源。已启用技能通过 `ListEnabledAgentSkillCardMetadata` 提供名称与简介。网页、机器人及数字员工 Dispatch 都由 `FillVoice` 调用 `FillSkills`，延续预发已有的技能快照链路。快循环仍最多展示24条、1200字符，单条描述80字符并注明覆盖范围。元描述为空或仅Managed by标记时，只从最多4096字符前缀内完整frontmatter的已声明description补充能力简介；普通已有描述保持不变，前缀不完整不猜测。模型不加载正文/SOP，简介不等于权限或执行结果；明确请求技能对应工作时，仍按新建/续接计划进入沙箱，不能仅复述能力。
 
 记忆读取保留预发的员工自述清洗：`prefetchSceneMemory` 同时使用智能体名称与绑定钉钉身份的 `AccountDisplayName`，避免数字员工自己的发言被当作人的稳定记忆。`scene_memory_status` 根据清洗后的实际快照区分 `loaded/empty`，不会把被清除的自述当作有效知识。
 
@@ -112,7 +113,7 @@ report_status.state_refs仍只能引用Host本轮实际提供的rN状态证据�
 | `acknowledge` | ack_kind=greeting/thanks/correction/receipt；reply仅完成对应协调表达 |
 | `describe_capabilities` | 根据已加载目录说明能力，不实际做业务分析 |
 | `report_memory` | 引用当前memory_revision盘点已提交稳定记忆，不假称待写已成功 |
-| `decline` | reason_code=scope/authorization/privacy；constraint_quote逐字引用适用当前限制、有效合同或Host验证的边界摘录，reply仅解释该边界 |
+| `decline` | reason_code=scope/authorization/privacy；constraint_quote逐字引用适用当前限制、有效合同、可见persona/reply_tone限制或Host验证的边界摘录，reply仅解释该边界 |
 | `ignore` | reason说明为何没有待答复或待执行请求；直接web请求不能用其结束 |
 
 `task_finished`只允许 `report_result(result_ref,reply)` 或 `ignore(reason)`；当前result_ref来自Host，不可另造、拿旧结果替代或重新计算业务结论。结果回报同样接受独立审查，忠实回报执行器当前结果不属于入站抢答。
@@ -134,15 +135,15 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 所有副作用沿正常域服务路径提交。start_work/continue_work的reply在对应工作真实入库/排队后才回传。审查输入声明该Host保证，因此允许合法受理/排队回执，不要求候选生成时任务已执行；该保证不等于实际开始执行、完成或外部送达。容量按最多两项的批次处理，保留完整计划与每项outcome；部分成功恢复不得从头重放，未处理请求不能静默丢弃。已持久化的旧checkpoint保持既有幂等效果，不因升级强制失效。
 
-终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。产品查证与另起通知草稿是两个产出；同一通知内整理议程/校对是一个产物的步骤。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。真实边界导致revise时可增加上述200字符constraint_quote。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；可选constraint_quote无效时按上述独立丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
+终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。产品查证与另起通知草稿是两个产出；同一通知内整理议程/校对是一个产物的步骤。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。规则驱动revise须提供上述200字符constraint_quote，其余填空。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；非空constraint_quote无效时按上述revise修正/allow丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
 
 岗位业务对象/产物与Coordinator自己的issue/task记录分开解释。对有资格响应的请求，用户已给岗位业务对象类别并让员工挑任意样本时，实例、人选和常规时间范围属于委派给Agent的选择，不是missing_fields。可查询事实、可见范围及身份/权限核验交Executor；只在确实必须用户决定的安全/授权/目标类别缺口时clarify，不让用户补齐可查询资料。取样仍是岗位数据范围内的有界检索，不能变成从关联事项名称中选一张卡；关联中没有该名字不能据此否认能力或制造澄清。仅当用户明确询问所做工作的执行/进度时才解释为任务元数据，并且必须回答被问的工作。该原则依据现有岗位、能力及当前引用，不做平台固定词义映射，不要求先写短合同，也不新增数据访问或外发授权；执行器继续检查身份/权限。
 
 必要澄清不能来自无关旧事项的干扰。岗位或能力证据已能解释“日志”等对象时，非工作审核应revise错误澄清，并在reason指出有证据支持的具体对象及能力路由，让主模型据此纠正；不需新增scope LLM或把完整SOP灌回主循环。该纠正只解释岗位语义，不新增权限，执行器仍核实际调用者身份/访问权。真正缺少对象依据时仍可澄清。
 
-工作审查核计划能否授权启动，不要求未来检索已有答案；只起草不能改成发送。非工作审查核每个reply是否属于其kind：不能把未经查证的产品结论、专业分析或空接单承诺塞到acknowledge/能力说明/状态中。decline须有真实适用限制，不能编造缺口或拒绝正常工作。task_finished核当前result_ref及目标场景送达事实，不能把忠实结果回报当成需要新研究的业务问题。格式、口吻、状态灯及完整报告要求不用于拒绝合法短协调动作。
+工作审查核计划能否授权启动，不要求未来检索已有答案；只起草不能改成发送。非工作审查核每个reply是否属于其kind：不能把未经查证的产品结论、专业分析或空接单承诺塞到acknowledge/能力说明/状态中。decline须有真实适用限制，不能编造缺口或拒绝正常工作。task_finished核当前result_ref及目标场景送达事实，不能把忠实结果回报当成需要新研究的业务问题。一般格式、口吻、状态灯及完整报告建议不用于拒绝合法短协调动作；岗位明确规定的固定拒绝话术须遵守，不算润色建议。
 
-审查传输失败/超时不放行，也不自动派发猜测的任务。非法审核协议可独立修复最多一次，例如work_checks误含clarify；这不是业务动作重试，不扩大授权，修复后仍须完整校验，再次非法不能作为allow。work_checks只列start_work/continue_work；必要clarify已处理当前轮缺口，既不要求用户先补齐，也不进入工作检查数组。修复上下文保留未执行的最近提案与具体Reason，不能只剩一段限制原文让模型猜测哪个action出错；提案omitted时明确要求从完整当前窗口重新组织。缓存绑定实际上下文；新证据后不能复用旧裁决。固定词黑名单及一次hint后放行继续保持撤回状态。
+审查传输失败/超时不放行，也不自动派发猜测的任务。非法审核协议可在同一12秒截止内独立修复最多一次，例如work_checks误含clarify或revise引文不匹配；这不是业务动作重试，不扩大授权，修复后仍须完整校验，再次非法不能作为allow。work_checks只列start_work/continue_work；必要clarify已处理当前轮缺口，既不要求用户先补齐，也不进入工作检查数组。修复上下文保留未执行的最近提案与具体Reason，不能只剩一段限制原文让模型猜测哪个action出错；提案omitted时明确要求从完整当前窗口重新组织。缓存绑定实际上下文；新证据后不能复用旧裁决。固定词黑名单及一次hint后放行继续保持撤回状态。
 
 ## 6. 窗口、回执与任务完成
 
