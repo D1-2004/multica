@@ -2215,7 +2215,7 @@ describe("ApiClient", () => {
 
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
-      new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {
+      new Response(JSON.stringify({ autopilots: [], runs: [], total: 0, id: "tr-1", autopilot_id: "ap-1", kind: "schedule" }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
@@ -3714,5 +3714,24 @@ describe("ApiClient agent scene memory", () => {
     await expect(
       new ApiClient("https://api.example.test").listAgentSceneRelations("agent-1", "cid+abc"),
     ).resolves.toEqual([]);
+  });
+});
+
+
+describe("ApiClient message automation boundaries", () => {
+  const reply = (value: unknown) => vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(value), { status: 200 })));
+  it("preserves a saved message interval and tolerates additive fields", async () => {
+    reply({ id: "tr-1", autopilot_id: "ap-1", kind: "dingtalk_message", enabled: true, merge_interval_minutes: 7, future_field: true });
+    await expect(new ApiClient("https://api.example.test").createAutopilotTrigger("ap-1", { kind: "dingtalk_message", merge_interval_minutes: 7 }))
+      .resolves.toMatchObject({ id: "tr-1", enabled: true, merge_interval_minutes: 7 });
+  });
+  it.each([null, { id: "tr-1" }, { id: "tr-1", autopilot_id: "ap-1", kind: "dingtalk_message", merge_interval_minutes: "5" }])("rejects an unreadable trigger write without reporting success: %j", async (value) => {
+    reply(value);
+    await expect(new ApiClient("https://api.example.test").updateAutopilotTrigger("ap-1", "tr-1", { merge_interval_minutes: 5 })).rejects.toThrow("Reload to verify");
+  });
+  it("disables editing when detail data is malformed", async () => {
+    reply({ autopilot: null, triggers: "unexpected" });
+    await expect(new ApiClient("https://api.example.test").getAutopilot("ap-1"))
+      .resolves.toMatchObject({ autopilot: { can_write: false, status: "paused" }, triggers: [] });
   });
 });

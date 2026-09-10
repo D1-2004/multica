@@ -646,6 +646,7 @@ type AutopilotRun struct {
 	SquadID           pgtype.UUID        `json:"squad_id"`
 	PlannedAt         pgtype.Timestamptz `json:"planned_at"`
 	WebhookDeliveryID pgtype.UUID        `json:"webhook_delivery_id"`
+	RuntimeContext    []byte             `json:"runtime_context"`
 }
 
 type AutopilotSubscriber struct {
@@ -674,7 +675,10 @@ type AutopilotTrigger struct {
 	// Actor type of the trigger's current responsible publisher: member | agent. Set to the creator at creation and re-stamped to the editor on any substantive edit governing this trigger. Consumed only for attribution (source=trigger_owner) — never authorization. NULL on pre-migration triggers (MUL-4302).
 	PublishedByType pgtype.Text `json:"published_by_type"`
 	// The member/agent currently responsible for this trigger's effective config (creator, then last substantive editor). For a member this is the accountable human of runs the trigger fires (source=trigger_owner). No FK, app-layer integrity. NULL on pre-migration triggers, which degrade to rule_owner (MUL-4302).
-	PublishedByID pgtype.UUID `json:"published_by_id"`
+	PublishedByID        pgtype.UUID        `json:"published_by_id"`
+	MergeIntervalMinutes pgtype.Int4        `json:"merge_interval_minutes"`
+	MessageRevision      int64              `json:"message_revision"`
+	MessageAcceptAfter   pgtype.Timestamptz `json:"message_accept_after"`
 }
 
 type ChannelBindingToken struct {

@@ -16,6 +16,7 @@ import {
   useTriggerAutopilot,
   useCreateAutopilotTrigger,
   useDeleteAutopilotTrigger,
+  useUpdateAutopilotTrigger,
   useRotateAutopilotTriggerWebhookToken,
 } from "@multica/core/autopilots/mutations";
 import { buildAutopilotWebhookUrl } from "@multica/core/autopilots";
@@ -53,7 +54,6 @@ import { browserTimezone } from "../../common/timezone-select";
 import { cronFields, parseCron, toCron } from "./schedule-editor/cron-mapping";
 import { useDescribeSchedule } from "./schedule-editor/describe";
 import { formatInTimeZone } from "../../common/format-in-time-zone";
-import { SegmentedToggle } from "../../common/segmented-toggle";
 import { useScheduleSubmitGate } from "./schedule-editor/validate";
 import type {
   AutopilotExecutionMode,
@@ -67,6 +67,7 @@ import { TranscriptButton } from "../../common/task-transcript";
 import { AutopilotDialog } from "./autopilot-dialog";
 import { runNowToastKind, runNowBlockedKey } from "./run-now-toast";
 import { WebhookPayloadPreview } from "./webhook-payload-preview";
+import { MessageTriggerSection, TriggerKindPicker, useMessageTriggerEligibility, validMessageInterval, type EditableTriggerKind } from "./message-trigger-section";
 import { WebhookDeliveriesSection } from "./webhook-deliveries-section";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { useT } from "../../i18n";
@@ -94,6 +95,7 @@ const RUN_VISUAL: Record<RunStatus, { color: string; icon: typeof CheckCircle2; 
 // trigger_payload to keep responses small (worst case 256 KiB × N runs),
 // so the detail-on-demand fetch lives here.
 function WebhookPayloadSlot({ autopilotId, runId }: { autopilotId: string; runId: string }) {
+  const { t } = useT("autopilots");
   const wsId = useWorkspaceId();
   const { data, isLoading } = useQuery(
     autopilotRunOptions(wsId, autopilotId, runId),
@@ -104,7 +106,7 @@ function WebhookPayloadSlot({ autopilotId, runId }: { autopilotId: string; runId
   if (!data || data.trigger_payload == null) {
     return null;
   }
-  return <WebhookPayloadPreview payload={data.trigger_payload} />;
+  return <WebhookPayloadPreview payload={data.trigger_payload} label={data.source === "dingtalk_message" ? t(($) => $.message_trigger.runtime_payload) : undefined} />;
 }
 
 function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: string; agentName: string }) {
@@ -144,7 +146,7 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
         {t(($) => $.run_status[status])}
       </span>
       <span className="w-20 shrink-0 text-caption text-muted-foreground">
-        {t(($) => $.run_source[run.source as "schedule" | "manual" | "webhook" | "api"]) ?? run.source}
+        {t(($) => $.run_source[run.source as "schedule" | "manual" | "webhook" | "api" | "dingtalk_message"]) ?? run.source}
       </span>
       <span className="flex-1 min-w-0 text-caption text-muted-foreground truncate">
         {run.issue_id ? (
@@ -163,7 +165,7 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
           isLive={run.status === "running"}
           title={t(($) => $.run.view_log)}
           headerSlot={
-            run.source === "webhook" ? (
+            run.source === "webhook" || run.source === "dingtalk_message" ? (
               <WebhookPayloadSlot autopilotId={run.autopilot_id} runId={run.id} />
             ) : undefined
           }
@@ -256,8 +258,20 @@ function SkippedRunsGroup({
   );
 }
 
-function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrigger; autopilotId: string; canWrite: boolean }) {
+function TriggerRow({ trigger, autopilotId, canWrite, assigneeId, assigneeType }: { trigger: AutopilotTrigger; autopilotId: string; canWrite: boolean; assigneeId: string; assigneeType: string }) {
   const { t, i18n } = useT("autopilots");
+  const wsId = useWorkspaceId();
+  const { eligible: messageEligible } = useMessageTriggerEligibility(wsId, assigneeType, assigneeId);
+  const updateTrigger = useUpdateAutopilotTrigger();
+  const [messageEditOpen, setMessageEditOpen] = useState(false);
+  const [mergeMinutes, setMergeMinutes] = useState(trigger.merge_interval_minutes ?? 5);
+  const saveMessageInterval = async () => {
+    if (!validMessageInterval(mergeMinutes) || !messageEligible) return;
+    try {
+      await updateTrigger.mutateAsync({ autopilotId, triggerId: trigger.id, merge_interval_minutes: mergeMinutes });
+      setMessageEditOpen(false);
+    } catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
+  };
   const describeSchedule = useDescribeSchedule();
   const deleteTrigger = useDeleteAutopilotTrigger();
   const rotateToken = useRotateAutopilotTriggerWebhookToken();
@@ -282,6 +296,7 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
     }
   };
 
+  const isMessage = trigger.kind === "dingtalk_message";
   const isWebhook = trigger.kind === "webhook";
   const isApi = trigger.kind === "api";
   // Resolve the URL from the server's webhook_url first, then compose
@@ -341,7 +356,7 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
       <Icon className="h-4 w-4 shrink-0 text-muted-foreground mt-0.5" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-body font-medium">{t(($) => $.trigger_kind[trigger.kind])}</span>
+          <span className="text-body font-medium">{t(($) => $.trigger_kind[trigger.kind]) ?? trigger.kind}</span>
           {trigger.label && (
             <span className="text-caption text-muted-foreground">({trigger.label})</span>
           )}
@@ -356,6 +371,8 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
             </span>
           )}
         </div>
+        {isMessage && <p className="mt-1 text-caption text-muted-foreground">{t(($) => $.message_trigger.summary, { minutes: trigger.merge_interval_minutes ?? "—" })}</p>}
+        {isMessage && canWrite && <Button size="sm" variant="ghost" className="mt-1" onClick={() => { setMergeMinutes(trigger.merge_interval_minutes ?? 5); setMessageEditOpen(true); }}>{t(($) => $.message_trigger.edit)}</Button>}
         {trigger.cron_expression && (
           // The plain-language line leads; the raw expression drops to a
           // secondary line so the two never run together as one blob.
@@ -410,6 +427,17 @@ function TriggerRow({ trigger, autopilotId, canWrite }: { trigger: AutopilotTrig
         )}
       </div>
       {!showWebhookUrlRow && deleteButton}
+      {messageEditOpen && <Dialog open={messageEditOpen} onOpenChange={setMessageEditOpen}>
+        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+          <DialogTitle>{t(($) => $.message_trigger.edit)}</DialogTitle>
+          <MessageTriggerSection minutes={mergeMinutes} onChange={setMergeMinutes} eligible={messageEligible} disabled={updateTrigger.isPending} />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setMessageEditOpen(false)}>{t(($) => $.message_trigger.cancel)}</Button>
+            <Button onClick={saveMessageInterval} disabled={updateTrigger.isPending || !messageEligible || !validMessageInterval(mergeMinutes)}>{t(($) => $.message_trigger.save)}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>}
+
       <AlertDialog open={confirmOpen} onOpenChange={(v) => { if (!v && !deleting) setConfirmOpen(false); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -462,22 +490,28 @@ function AddTriggerDialog({
   open,
   onOpenChange,
   autopilotId,
+  assigneeId,
+  assigneeType,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   autopilotId: string;
+  assigneeId: string;
+  assigneeType: string;
 }) {
   const { t } = useT("autopilots");
   const wsId = useWorkspaceId();
   const createTrigger = useCreateAutopilotTrigger();
-  const [kind, setKind] = useState<"schedule" | "webhook">("schedule");
+  const [kind, setKind] = useState<EditableTriggerKind>("schedule");
   const [config, setConfig] = useState<ScheduleConfig>(() =>
     getDefaultScheduleConfig(browserTimezone()),
   );
+  const [mergeMinutes, setMergeMinutes] = useState(5);
+  const { eligible: messageEligible } = useMessageTriggerEligibility(wsId, assigneeType, assigneeId);
   const [label, setLabel] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const scheduleGate = useScheduleSubmitGate(wsId);
-  const canSubmit = !submitting && (kind !== "schedule" || scheduleGate.scheduleValid);
+  const canSubmit = !submitting && (kind !== "schedule" || scheduleGate.scheduleValid) && (kind !== "dingtalk_message" || (messageEligible && validMessageInterval(mergeMinutes)));
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -501,6 +535,9 @@ function AddTriggerDialog({
           label: label.trim() || undefined,
         });
         toast.success(t(($) => $.add_trigger_dialog.toast_added_schedule));
+      } else if (kind === "dingtalk_message") {
+        await createTrigger.mutateAsync({ autopilotId, kind, merge_interval_minutes: mergeMinutes, label: label.trim() || undefined });
+        toast.success(t(($) => $.message_trigger.saved));
       } else {
         await createTrigger.mutateAsync({
           autopilotId,
@@ -526,7 +563,7 @@ function AddTriggerDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm">
+      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
         <DialogTitle>{t(($) => $.add_trigger_dialog.title)}</DialogTitle>
         {/* DialogContent is a grid, so without min-w-0 this item's min-width is
             its content's — and the cron readback is one unbreakable line that
@@ -537,27 +574,7 @@ function AddTriggerDialog({
               {t(($) => $.add_trigger_dialog.type_label)}
             </label>
             <div className="mt-1">
-              <SegmentedToggle
-                value={kind}
-                onChange={setKind}
-                buttonClassName="px-3 py-1.5 text-body"
-                options={[
-                  [
-                    "schedule",
-                    <span key="schedule" className="flex items-center justify-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5" />
-                      {t(($) => $.add_trigger_dialog.type_schedule)}
-                    </span>,
-                  ],
-                  [
-                    "webhook",
-                    <span key="webhook" className="flex items-center justify-center gap-1.5">
-                      <Webhook className="h-3.5 w-3.5" />
-                      {t(($) => $.add_trigger_dialog.type_webhook)}
-                    </span>,
-                  ],
-                ]}
-              />
+              <TriggerKindPicker kind={kind} onChange={setKind} messageEligible={messageEligible} disabled={submitting} />
             </div>
           </div>
 
@@ -575,6 +592,8 @@ function AddTriggerDialog({
               // read — an edit landing inside that window would be discarded.
               disabled={submitting}
             />
+          ) : kind === "dingtalk_message" ? (
+            <MessageTriggerSection minutes={mergeMinutes} onChange={setMergeMinutes} eligible={messageEligible} disabled={submitting} />
           ) : (
             <p className="rounded-md bg-muted/50 px-3 py-2 text-caption text-muted-foreground">
               {t(($) => $.add_trigger_dialog.webhook_help)}
@@ -986,7 +1005,7 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
             ) : (
               <div className="space-y-2">
                 {triggers.map((trig) => (
-                  <TriggerRow key={trig.id} trigger={trig} autopilotId={autopilotId} canWrite={canWrite} />
+                  <TriggerRow key={trig.id} trigger={trig} autopilotId={autopilotId} canWrite={canWrite} assigneeId={autopilot.assignee_id} assigneeType={autopilot.assignee_type ?? "agent"} />
                 ))}
               </div>
             )}
@@ -1046,6 +1065,8 @@ export function AutopilotDetailPage({ autopilotId }: { autopilotId: string }) {
           open={triggerDialogOpen}
           onOpenChange={setTriggerDialogOpen}
           autopilotId={autopilotId}
+          assigneeId={autopilot.assignee_id}
+          assigneeType={autopilot.assignee_type ?? "agent"}
         />
       )}
       {editDialogOpen && (

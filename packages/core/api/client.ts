@@ -395,6 +395,10 @@ import {
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   AutopilotRunSchema,
+  AutopilotTriggerSchema,
+  GetAutopilotResponseSchema,
+  FALLBACK_AUTOPILOT_TRIGGER,
+  FALLBACK_GET_AUTOPILOT_RESPONSE,
   FALLBACK_AUTOPILOT_RUN,
   CronPreviewResponseSchema,
   UNREADABLE_CRON_PREVIEW_RESPONSE,
@@ -5280,7 +5284,8 @@ export class ApiClient {
   }
 
   async getAutopilot(id: string): Promise<GetAutopilotResponse> {
-    return this.fetch(`/api/autopilots/${id}`);
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}`);
+    return parseWithFallback(raw, GetAutopilotResponseSchema, FALLBACK_GET_AUTOPILOT_RESPONSE, { endpoint: "GET /api/autopilots/:id", includeReceived: false });
   }
 
   async createAutopilot(data: CreateAutopilotRequest): Promise<Autopilot> {
@@ -5362,10 +5367,13 @@ export class ApiClient {
     autopilotId: string,
     data: CreateAutopilotTriggerRequest,
   ): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers`, {
       method: "POST",
       body: JSON.stringify(data),
     });
+    const parsed = parseWithFallback(raw, AutopilotTriggerSchema, FALLBACK_AUTOPILOT_TRIGGER, { endpoint: "automation trigger write", includeReceived: false });
+    if (!parsed.id) throw new Error("The trigger response could not be read. Reload to verify the saved configuration.");
+    return parsed;
   }
 
   async updateAutopilotTrigger(
@@ -5373,10 +5381,13 @@ export class ApiClient {
     triggerId: string,
     data: UpdateAutopilotTriggerRequest,
   ): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+    const parsed = parseWithFallback(raw, AutopilotTriggerSchema, FALLBACK_AUTOPILOT_TRIGGER, { endpoint: "automation trigger write", includeReceived: false });
+    if (!parsed.id) throw new Error("The trigger response could not be read. Reload to verify the saved configuration.");
+    return parsed;
   }
 
   async deleteAutopilotTrigger(

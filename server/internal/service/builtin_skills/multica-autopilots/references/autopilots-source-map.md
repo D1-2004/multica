@@ -35,3 +35,22 @@
 - `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
 - `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
 - Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.
+
+
+## DingTalk message automation trigger
+
+- `server/internal/service/autopilot_messages.go`: source-bound metadata admission,
+  fixed windows, revision invalidation, counts, and idempotent dispatch/recovery.
+- `server/internal/handler/agent_dispatch_message_statistics.go`: authenticated
+  metadata adapter, self-message exclusion and retired hourly-summary receipts.
+- `server/internal/handler/autopilot.go`, `autopilot_messages.go`: trigger CRUD,
+  active binding validation, merge interval and configuration revision changes.
+- `server/migrations/9218_dingtalk_message_autopilot.up.sql` through
+  `9221_message_event_window.up.sql`: durable windows, dedup and indexes.
+- `server/cmd/server/main.go`: message window worker startup.
+- `server/cmd/multica/cmd_autopilot.go`: `dingtalk_message` trigger kind and
+  `--merge-interval-minutes` create/update flag.
+- `packages/views/autopilots/components/message-trigger-section.tsx`: shared
+  binding eligibility, interval editor and actual run input example.
+- `autopilot-dialog.tsx`, `autopilot-detail-page.tsx` in that directory: trigger
+  creation/editing and saved runtime statistics. No proactive setting changes.

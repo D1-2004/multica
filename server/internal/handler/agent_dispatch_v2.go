@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/pkg/featureflag"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -188,6 +189,7 @@ type DispatchEventData struct {
 	VideoConferenceURL  string                        `json:"videoConferenceUrl,omitempty"`
 	AIReadableContent   string                        `json:"aiReadableContent,omitempty"`
 	Approval            *ApprovalEventData            `json:"approval,omitempty"`
+	MessageStatistics   *service.MessageObservation   `json:"messageStatistics,omitempty"`
 	ConversationSummary *ConversationSummaryEventData `json:"conversationSummary,omitempty"`
 	Reply               json.RawMessage               `json:"reply,omitempty"`
 	Reference           json.RawMessage               `json:"reference,omitempty"`
@@ -269,9 +271,6 @@ func NewDispatchPromptBuilder() *DispatchPromptBuilder {
 	builder.register("channel", "emotionReply", "digital_employee", buildDingTalkDigitalEmployeePrompt)
 	builder.register("calendar", "calendar.started", "digital_employee", buildDingTalkCalendarStartedPrompt)
 	builder.register("approval", "approval.status_changed", "digital_employee", buildApprovalStatusChangedPrompt)
-	// conversation.summary 是数字员工的群会话小时级汇总巡检：静默检测、按需行动，
-	// 不复用 message.created 的回复渲染。
-	builder.register("channel", dispatchEventTypeConversationSummary, "digital_employee", buildConversationSummaryPrompt)
 	return builder
 }
 
@@ -407,6 +406,10 @@ func (c DispatchCommand) validate() error {
 		}
 	} else if c.Event.Domain == "approval" && c.Event.Type == "approval.status_changed" {
 		if err := c.validateApprovalStatusChanged(); err != nil {
+			return err
+		}
+	} else if c.Event.Domain == "channel" && c.Event.Type == "message.statistics" {
+		if err := c.validateMessageStatistics(); err != nil {
 			return err
 		}
 	} else if c.Event.Domain == "channel" && c.Event.Type == dispatchEventTypeConversationSummary {
@@ -1861,11 +1864,6 @@ func dispatchWindowIdempotencyKey(c DispatchCommand) string {
 	if c.Event.Domain == "approval" && c.Event.Type == "approval.status_changed" && c.Event.Data.Approval != nil {
 		return fmt.Sprintf("approval:%s:%s", strings.TrimSpace(c.Event.Data.Approval.FormCode), strings.TrimSpace(c.Event.Data.Approval.Status))
 	}
-	if c.Event.Domain == "channel" && c.Event.Type == dispatchEventTypeConversationSummary &&
-		c.Event.Data.ConversationSummary != nil {
-		// 汇总没有消息列表可哈希；用 summaryId 做稳定幂等键，避免不同汇总碰撞。
-		return "conversation-summary:" + strings.TrimSpace(c.Event.Data.ConversationSummary.SummaryID)
-	}
 	// The router intentionally keeps window IDs internal. Stable message IDs
 	// provide the same key across transport retries without leaking IDs into
 	// the visible issue/comment text.
@@ -1889,9 +1887,6 @@ func dispatchIssueTitle(c DispatchCommand, idempotencyKey string) string {
 			formCode = "审批"
 		}
 		return clipDispatchTitle("审批单：" + formCode)
-	}
-	if c.Event.Domain == "channel" && c.Event.Type == dispatchEventTypeConversationSummary {
-		return clipDispatchTitle(dispatchConversationSummaryTitle(c))
 	}
 
 	summary := ""

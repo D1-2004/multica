@@ -137,7 +137,8 @@
     "schedule": "スケジュール",
     "manual": "手動",
     "webhook": "Webhook",
-    "api": "API"
+    "api": "API",
+    "dingtalk_message": "DingTalk メッセージ受信時"
   },
   "run": {
     "issue_linked": "タスクをリンク済み",
@@ -161,7 +162,8 @@
   "trigger_kind": {
     "schedule": "スケジュール",
     "webhook": "Webhook",
-    "api": "API"
+    "api": "API",
+    "dingtalk_message": "DingTalk メッセージ受信時"
   },
   "trigger_row": {
     "disabled_badge": "無効",
@@ -454,5 +456,30 @@
       "confirm": "完全に削除",
       "deleting": "削除中…"
     }
+  },
+  "message_trigger": {
+    "kind": "DingTalk メッセージ受信時",
+    "interval": "メッセージ集約間隔",
+    "minutes": "分",
+    "help": "最初の新着メッセージで集約を開始します。後続メッセージで待ち時間は延長されません。新着がない場合は実行しません。",
+    "binding_required": "このトリガーには、デジタル従業員のメッセージ受信に連携したエージェントを選択してください。",
+    "scope": "デジタル従業員のメッセージ設定の会話を対象とします。連携アカウント自身の送信は除外されます。能動的な会話処理とは独立して動作します。",
+    "data_title": "各実行に渡される情報",
+    "data_help": "集約期間、会話名と ID、メッセージ数、メンション数、最初と最後のメッセージ時刻が指示に追加されます。本文は含まれません。必要に応じて DWS で取得できます。",
+    "example": "入力例",
+    "conversation": "会話",
+    "messages": "新着メッセージ",
+    "mentions": "メンション",
+    "example_group": "プロジェクトグループ",
+    "example_direct": "ダイレクト会話",
+    "json": "データフィールドを表示",
+    "invalid_interval": "1〜1440 の整数（分）を入力してください。",
+    "summary": "新着を {{minutes}} 分間集約し、新着がない期間は実行しません",
+    "saved": "DingTalk メッセージトリガーを追加しました",
+    "runtime_payload": "DingTalk メッセージ統計",
+    "edit": "集約間隔を編集",
+    "save": "間隔を保存",
+    "cancel": "キャンセル",
+    "total": "例：2 会話、8 件の新着メッセージ、1 件のメンション。"
   }
 }

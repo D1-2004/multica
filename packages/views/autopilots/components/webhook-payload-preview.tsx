@@ -12,6 +12,7 @@ interface WebhookPayloadPreviewProps {
   /** Default open vs collapsed. The dialog has limited vertical space, so
    *  we collapse by default and let the user expand. */
   defaultOpen?: boolean;
+  label?: string;
 }
 
 /**
@@ -26,6 +27,7 @@ interface WebhookPayloadPreviewProps {
 export function WebhookPayloadPreview({
   payload,
   defaultOpen = false,
+  label,
 }: WebhookPayloadPreviewProps) {
   const { t } = useT("autopilots");
   const [open, setOpen] = useState(defaultOpen);
@@ -85,7 +87,7 @@ export function WebhookPayloadPreview({
       >
         <Webhook className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <span className="font-medium">
-          {t(($) => $.webhook_payload.label)}
+          {label ?? t(($) => $.webhook_payload.label)}
         </span>
         <code className="truncate font-mono text-muted-foreground">
           {event ?? t(($) => $.webhook_payload.unknown_event)}
