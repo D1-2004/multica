@@ -47,7 +47,23 @@ Router实际trace 870bdbf55f10ecb698ed5bd6a300b1580c8e8a92bbdbd903468bd3daa0b0f3
 | work_state实际读取 | 6 / 3 / 3 | 1 / 1 / 1 |
 | 处理耗时（秒） | 16.792 / 10.881 / 10.856 | 7.199 / 6.737 / 6.599 |
 
-三次均正确续接同Issue，保留“不修改登录配置”、truncated=true/complete=false及delivery=not_loaded。中位处理耗时下降约38%，不代表线上分位数或固定SLA。修复后模型没有再请求重复读取，因此真实模型收益来自说明减少了重复轮次；cache-hit/read_ref复用分支由Host单测证明，不冒称这3次真实模型命中了缓存。预发最新优化的端到端时间另行回填。
+三次均正确续接同Issue，保留“不修改登录配置”、truncated=true/complete=false及delivery=not_loaded。中位处理耗时下降约38%，不代表线上分位数或固定SLA。修复后模型没有再请求重复读取，因此真实模型收益来自说明减少了重复轮次；cache-hit/read_ref复用分支由Host单测证明，不冒称这3次真实模型命中了缓存。三链总token从97,572降为47,448，减少约51%。
+
+## 最新预发实测与最终交付
+
+性能提交4107d664b已随run3107647877部署，release为36aefdff1，保留同期二维码绑定更新57d3af718。部署、集成测试均SUCCESS，仅人工预发验证节点等待；没有发布生产。
+
+- 实际策略2026-09-10.4/assembly15，trace2513240e2c8043edb7bc9e1894cb63a3。
+- 15:46:42，主角发送相同请求，msgF3NaKLCNC6TRTS5a8/ErLA==。
+- 15:46:49.099至15:46:56.079，Coordinator用时6.979秒；主模型2轮，work_state仅1次，审核1次。新读取span记录了约3ms实际读取，而不是旧的后置0ms。
+- 15:46:56，Task50ff87ee入队，同秒钉钉收到“我将重新执行 dws auth status 并回传原始状态输出。”，msgEClJRNoD+1/SvIugXfi6ZA==。没有默认提沙箱，保留了所需命令与交付内容。
+- 15:47:47，原始结果送达，msg433HL9MibD3sYuV0r9yD9A==；受理回复不再等待执行结束。
+
+本轮端到端受理约14秒，较前一轮18秒减少约4秒。Coordinator自身从11.587秒降至6.979秒；这是两次实测点，不是全量分位数。剩余约7秒主要发生在进入Coordinator前的消息接入、收集和排队。工作台处理耗时不能替代端到端口径。
+
+提交分支：Multica为codex/dws-auth-execution-recovery（CR36063548），Router为codex/coordinator-quick-reply（CR36066061）。主要交付为派工后立即投递内聚reply、忙时明确等待、简短文案与减少重复推理；Runtime已验收后按用户要求停止扩展。未合入主干，未推进生产或人工发布确认。
+
+证据：所列DWS消息ID；/tmp/coordinator-quick-perf-live-messages.json（complete=true）；/tmp/coordinator-quick-perf-lf-full.json；/tmp/coordinator-quick-reply-router-detail.json；/tmp/coordinator-read-reuse-20260910/report.md及comparison.json。原始输入及凭证相关上下文仅留在私有证据目录。
 
 ## 原始长等待（历史定位）
 

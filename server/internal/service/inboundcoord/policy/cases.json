@@ -1056,9 +1056,9 @@
         "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotScopeGuardPrecedesReuse",
         "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotDoesNotCrossRunsOrArguments"
       ],
-      "verification": "Host tests and single-case real-model 3v3 passed; pre latest optimization pending",
-      "evidence_status": "host_and_frozen_model_passed",
-      "evidence_note": "Full package passed. Real-model after runs each requested work_state once, so cache-hit/read_ref preservation remains covered by Host tests, not those model runs. See docs/reports/2026-09-10-dws-auth-status-recovery.md."
+      "verification": "Host tests, frozen real-model 3v3 and pre live single-case passed; cache-hit branch covered by Host tests",
+      "evidence_status": "host_frozen_model_and_live_case_passed",
+      "evidence_note": "Pre policy2026-09-10.4/assembly15 trace2513240e2c8043edb7bc9e1894cb63a3: 2 primary rounds, 1 work_state, 6.979s loop, 14s actual DingTalk admission; complete=false/truncated=true and delivery not_loaded preserved. See final report; no fleet latency claim."
     },
     {
       "id": "f16_state_snapshot_feedback_preserves_open_constraints",
@@ -1073,9 +1073,9 @@
       "host_protocol_test_refs": [
         "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotPreservesPendingFeedback"
       ],
-      "verification": "Host tests and single-case real-model 3v3 passed; pre latest optimization pending",
-      "evidence_status": "host_and_frozen_model_passed",
-      "evidence_note": "Full package passed. Real-model after runs each requested work_state once, so cache-hit/read_ref preservation remains covered by Host tests, not those model runs. See docs/reports/2026-09-10-dws-auth-status-recovery.md."
+      "verification": "Host tests, frozen real-model 3v3 and pre live single-case passed; cache-hit branch covered by Host tests",
+      "evidence_status": "host_frozen_model_and_live_case_passed",
+      "evidence_note": "Pre policy2026-09-10.4/assembly15 trace2513240e2c8043edb7bc9e1894cb63a3: 2 primary rounds, 1 work_state, 6.979s loop, 14s actual DingTalk admission; complete=false/truncated=true and delivery not_loaded preserved. See final report; no fleet latency claim."
     }
   ]
 }
