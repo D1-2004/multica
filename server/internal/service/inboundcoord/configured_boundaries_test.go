@@ -119,3 +119,23 @@ func TestConfiguredQuoteDoesNotBypassApplicabilityReview(t *testing.T) {
 		t.Fatal("configuration bypassed unavailable working policy")
 	}
 }
+
+func TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence(t *testing.T) {
+	turn := Turn{Source: SourceWeb, Message: "请解释内部评比。", ReplyTone: "不处理内部评比", Instructions: "**不处理内部评比**：固定回答「请向组织者查询。」"}
+	response := func(quote string) openai.ChatCompletion {
+		raw, _ := json.Marshal(map[string]any{"request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "constraint_quote": quote, "verdict": "revise", "reason": "Use the mandatory reply text.", "missing_source_refs": []string{}, "work_checks": scriptedWorkChecks})
+		return assistantTool("review", toolFinishCheck, string(raw))
+	}
+	corrected := `{"actions":[{"kind":"decline","source_refs":["u1"],"reply":"请向组织者查询。","reason_code":"scope","constraint_quote":"不处理内部评比"}]}`
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{assistantTool("bad", toolFinish, boundaryDecline(t, turn.ReplyTone)), assistantTool("fixed", toolFinish, corrected)}, checkRounds: []openai.ChatCompletion{response("不处理内部评比：固定回答「请向组织者查询。」"), response("固定回答「请向组织者查询。」"), scriptedFinishVerdict("allow", "The mandatory reply is used.")}}
+	saved := 0
+	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(Decision) error { saved++; return nil })
+	d, err := (&Coordinator{Chat: chat}).runLoop(ctx, turn)
+	if err != nil || d.UserText != "请向组织者查询。" || chat.calls != 2 || chat.checkCalls != 3 || saved != 1 {
+		t.Fatalf("unrepairable hidden template: %v %#v checks=%d saves=%d", err, d, chat.checkCalls, saved)
+	}
+	next, _ := json.Marshal(chat.params[1].Messages)
+	if !strings.Contains(string(next), "固定回答「请向组织者查询。」") || !strings.Contains(string(next), "Use the mandatory reply text.") {
+		t.Fatal("validated template or real reason missing from routing feedback")
+	}
+}

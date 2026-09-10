@@ -222,7 +222,7 @@
     },
     {
       "id": "finish_check",
-      "version": "16",
+      "version": "18",
       "file": "finish_check.md",
       "applies_when": "finish_check",
       "requires": [
@@ -245,11 +245,11 @@
         "COORD.F19"
       ],
       "budget_characters": 1900,
-      "content_sha256": "c247578d5a1dfe7a0585fb540abe23da092ba3f825026af3a8d69a8fc6abb8e7"
+      "content_sha256": "5eb2d88dea68bf606a12442b69e6e503a0517561288fd6d37f0e1034127ae786"
     },
     {
       "id": "finish_check_work",
-      "version": "11",
+      "version": "12",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -272,7 +272,7 @@
         "COORD.F19"
       ],
       "budget_characters": 2000,
-      "content_sha256": "6e16886ea107f37df96a8de6e86d4e6edff3bbf2bce50ef74558cd5e50fe1780"
+      "content_sha256": "e81d0e90106559e936ee42e621910b3b7a1b9750f418163004b1b5a8f2783705"
     }
   ],
   "obligations": [
@@ -935,7 +935,7 @@
     {
       "id": "COORD.F13",
       "family": "F13",
-      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 可选审查边界摘录无效时单独丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。 工作intent可省略为other；仅answer/change/retry误填intent时窄规范化为other，不更改basis。已注册有限kind误作tool只归一到同一finish候选并继续校验当前循环；该恢复路径中的source_refs合法JSON数组字符串只解一层；全部授权及answer证据门槛仍在。 coordination_state仅为Host锚定的前序窗口证据，不满足history原问题门槛。 混合工作与非工作动作时，同一次审核装配两类现有审查模块并只提供一次岗位约束；纯工作/纯非工作选择不变，工作可启动不替代同行状态回复的真实性审查。",
+      "obligation": "模型finish只接受闭合actions集合，reply内聚各动作且不能扩大语义；合法目标、状态/结果/限制引用及source_refs由Host核验。schema、工具、hint和提示词一致；副作用前披露授权条件。 审查constraint_quote字段必填；规则驱动revise须提供<=200字逐字指令/固定话术供修复，allow或无规则依据填空。revise的非空摘录无效时进入现有一次/12秒审核协议修正，仍失败则停止提交，不清空后缓存无依据revise；allow的无效附加摘录才丢弃并观测；必填原文引用、裁决及主动作decline的边界校验仍严格。 审查work_checks按Host action_ref逐个判断工作独立交付物为single/multiple/none；纯非工作为空数组，allow不能携带multiple/none。 模型只选择Host本轮quote_options的qN/cN引用，Host绑定精确原文并留痕；自由转录request_quote/candidate_quote不再作为模型字段。 正常入站的当前CID可由Host先预取48h/3项关联，成功才满足召回前置并开放合法工作目标；失败保留未知、可按需重试。 工作intent可省略为other；仅answer/change/retry误填intent时窄规范化为other，不更改basis。已注册有限kind误作tool只归一到同一finish候选并继续校验当前循环；该恢复路径中的source_refs合法JSON数组字符串只解一层；全部授权及answer证据门槛仍在。 coordination_state仅为Host锚定的前序窗口证据，不满足history原问题门槛。 混合工作与非工作动作时，同一次审核装配两类现有审查模块并只提供一次岗位约束；纯工作/纯非工作选择不变，工作可启动不替代同行状态回复的真实性审查。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -969,7 +969,8 @@
         "f13_mixed_work_and_status_review_coverage",
         "f15_visible_config_boundary_same_source",
         "f16_hidden_config_and_old_data_not_boundary",
-        "f15_config_narrows_without_new_authority"
+        "f15_config_narrows_without_new_authority",
+        "f15_policy_revise_returns_repair_boundary"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -996,7 +997,9 @@
         "mixed_review_live_delivery": "not_run",
         "decline_boundary_host_tests": "not_run",
         "decline_boundary_model_replay": "not_run",
-        "decline_boundary_live_delivery": "not_run"
+        "decline_boundary_live_delivery": "not_run",
+        "decline_policy_repair_host_tests": "not_run",
+        "decline_policy_repair_model_replay": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1026,7 +1029,8 @@
         "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce",
         "server/internal/service/inboundcoord/configured_boundaries.go",
         "server/internal/service/inboundcoord/configured_boundaries_test.go",
-        "server/internal/service/inboundcoord/prompt.go"
+        "server/internal/service/inboundcoord/prompt.go",
+        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence"
       ],
       "case_file": "cases.json"
     },
@@ -1095,7 +1099,8 @@
         "f04_declared_skill_synopsis_vs_managed_marker",
         "f15_visible_config_boundary_same_source",
         "f16_hidden_config_and_old_data_not_boundary",
-        "f15_config_narrows_without_new_authority"
+        "f15_config_narrows_without_new_authority",
+        "f15_policy_revise_returns_repair_boundary"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1110,7 +1115,9 @@
         "closed_actions_live_delivery": "not_run",
         "decline_boundary_host_tests": "not_run",
         "decline_boundary_model_replay": "not_run",
-        "decline_boundary_live_delivery": "not_run"
+        "decline_boundary_live_delivery": "not_run",
+        "decline_policy_repair_host_tests": "not_run",
+        "decline_policy_repair_model_replay": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1124,7 +1131,8 @@
         "server/internal/service/inboundcoord/configured_boundaries.go",
         "server/internal/service/inboundcoord/configured_boundaries_test.go",
         "server/internal/service/inboundcoord/prompt.go",
-        "server/internal/service/inboundcoord/window_plan.go"
+        "server/internal/service/inboundcoord/window_plan.go",
+        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence"
       ],
       "case_file": "cases.json"
     },
@@ -1153,7 +1161,8 @@
         "f16_review_work_checks_excludes_clarify",
         "f16_coordination_state_is_not_question_history",
         "f08_coordination_state_anchor_isolation",
-        "f16_hidden_config_and_old_data_not_boundary"
+        "f16_hidden_config_and_old_data_not_boundary",
+        "f15_policy_revise_returns_repair_boundary"
       ],
       "verification": {
         "source_mapping": "mapped",
@@ -1177,7 +1186,9 @@
         "continuation_history_handoff_live_delivery": "not_run",
         "decline_boundary_host_tests": "not_run",
         "decline_boundary_model_replay": "not_run",
-        "decline_boundary_live_delivery": "not_run"
+        "decline_boundary_live_delivery": "not_run",
+        "decline_policy_repair_host_tests": "not_run",
+        "decline_policy_repair_model_replay": "not_run"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1200,7 +1211,8 @@
         "server/internal/service/inboundcoord/history_handoff_test.go",
         "server/internal/service/inboundcoord/configured_boundaries.go",
         "server/internal/service/inboundcoord/configured_boundaries_test.go",
-        "server/internal/service/inboundcoord/prompt.go"
+        "server/internal/service/inboundcoord/prompt.go",
+        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence"
       ],
       "case_file": "cases.json"
     },

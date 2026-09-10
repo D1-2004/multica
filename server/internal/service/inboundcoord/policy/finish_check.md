@@ -8,4 +8,4 @@ For task_finished, faithfully report the supplied current result_ref/result with
 
 Select request_quote_ref from quote_options.requests and candidate_quote_ref from quote_options.candidates. Host binds the exact text; selected quotes do not narrow the full window.
 
-Call finish_check with verdict, work_checks, both refs, reason <=160 characters and missing_source_refs. Use work_checks=[] for nonwork-only; otherwise follow the work module. Revise substantive defects, not polish. Unknown is not empty; effects cannot repeat. Applicable user/job/contract or shown persona/reply_tone limits may supply exact constraint_quote <=200; never invent authority.
+Call finish_check with verdict, work_checks, both refs, reason <=160 characters and missing_source_refs. Use work_checks=[] for nonwork-only; otherwise follow the work module. Enforce mandated text; ignore cosmetic polish. Unknown is not empty; effects cannot repeat. On policy-driven revise, return exact instruction/fixed wording in constraint_quote (<=200); otherwise empty. Host validates.

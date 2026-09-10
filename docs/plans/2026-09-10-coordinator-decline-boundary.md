@@ -12,7 +12,7 @@
 
 - 主模型、Host 引用检查与侧审核共用当前人格/语气的有界可见投影；persona 400、reply_tone 200 Unicode 字符预算保持。仅真实已披露原文可匹配，未披露尾部及截断标记不成为新限制。
 - 既有当前用户限制、有效协调合同/适用岗位边界仍有效。人格/语气中的明确限制可以进一步收窄，不能新增权限、绕过岗位或覆盖当前用户授权范围；表达偏好本身不构成拒绝合法协调动作的理由。
-- decline 的 constraint_quote 仍须逐字真实且最多 300 字；来源匹配只验证出处，不证明限制适用，仍经独立审核。审核补充的可选边界引用仍最多 200 字，不能覆盖具体 Reason 或替代必填引用/裁决校验。
+- decline 的 constraint_quote 仍须逐字真实且最多 300 字；来源匹配只验证出处，不证明限制适用，仍经独立审核。审核反馈的边界引用仍最多 200 字，不能覆盖具体 Reason 或替代必填引用/裁决校验。
 - 记忆、旧报告、历史工具输出及配置不可见尾部不新增边界来源；引用数据仍是数据。错误来源继续拒绝；不借本次修复恢复泛用业务 reply、放大配置权限或放弃审核。
 - 只替换现有边界说明并保持各 prompt 模块原预算，103 条来源原文和 hash 不变。装配版本递增反映来源披露和引用验证合同变化。
 
@@ -30,3 +30,15 @@
 主线程实现 configured_boundaries.go：configuredPersona/configuredReplyTone 被主prompt和侧审核复用，suppliedConstraintQuote逐个独立来源匹配，供window_plan与finishConstraintQuoteValid共用；不跨字段拼接。侧审核沿用persona并补reply_tone、reply_tone_truncated及configured_context_scope。Host测试文件为configured_boundaries_test.go；实际运行结果由主线程回填。
 
 文档/规则登记已完成：core、inbound和两review仅替换既有边界句，预算分别保持1100/2200/1900/2000。新增3个对照，均not_run。python3 scripts/check-coordinator-policy.py通过：103条来源、19项义务、14模块、63病例，结果仅PASS_STRUCTURAL_ONLY；不认证模型行为。
+
+## 补充：规则驱动修订须提供可修复原文
+
+主线程真实回放发现第二层来源不对齐：Host已接受可见配置引文，但只在审核可见的SOP要求固定拒绝话术；审核9/9只说“没用固定模板”却不返回原文，主模型仍反复修订至8轮。此观察由主线程提供，具体样本/新结果待回填，不等于本补丁已通过。
+
+保持未发布的2026-09-10.1/assembly10。现有constraint_quote改为工具必填字段：allow或无规则依据填空；规则驱动revise必须给出最多200字逐字指令/固定话术，让主模型有依据修正，Host验证合法来源后才反馈。Reason继续说明具体问题，不被引文替代；revise假引文进入既有审核协议修正，allow无效附加引文丢弃；不扩大授权，不增加既有修正次数或截止时间。两review仅替换现有边界句，原模块预算不变；新增f15_policy_revise_returns_repair_boundary正反合同，状态not_run。
+
+### 修复反馈的无效引文处理
+
+规则驱动revise提供了非空constraint_quote但伪改写/去Markdown导致不匹配时，不能静默清空后缓存无依据revise；复用现有最多一次、同一12秒截止的审核协议修正，仍非法则不提交。allow中的无效附加引文仍丢弃，不阻塞其余已合法裁决。固定拒绝话术是显式文本要求，不属于普通润色。此改变不放宽Host逐字检查、不更改原候选或新增业务授权。
+
+复用f15_policy_revise_returns_repair_boundary病例，不增加病例数量；更新旧f15_decline_quoted_boundary口径。实现测试引用TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence，实际运行结果由主线程回填。文档/结构检查不构成模型或真实投递通过。

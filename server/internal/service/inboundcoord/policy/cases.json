@@ -432,7 +432,7 @@
       ],
       "context_a": "有效合同或当前限制明确禁止外发且能逐字引用",
       "context_b": "只是无关旧记忆或读取失败，用户请求正常授权查证",
-      "expected_effects": "A可decline(authorization)引用真实constraint_quote并只解释边界；B不得伪造拒绝原因/澄清问题，应处理授权工作。",
+      "expected_effects": "A可decline(authorization)引用真实constraint_quote并只解释边界；显式固定拒绝话术须遵守。B不得伪造拒绝原因/澄清问题，应处理授权工作。审核revise引文无效按一次协议修正处理，不降级为无引用修订；allow附加无效引文可丢弃。",
       "verification": "not_run"
     },
     {
@@ -815,6 +815,23 @@
       "verification": "not_run",
       "evidence_status": "pending_reference",
       "evidence_note": "用户截图decline可见配置引用被Host拒绝的来源错配；实际Host测试/模型/预发投递结果由主线程回填，结构登记不代替行为验证。"
+    },
+    {
+      "id": "f15_policy_revise_returns_repair_boundary",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F15",
+        "COORD.F16"
+      ],
+      "context_a": "decline引用真实且拒绝方向适用，但只有审核可见的岗位规则要求一段固定拒绝话术，当前reply未满足。",
+      "context_b": "规则驱动revise的constraint_quote去掉Markdown或改写而非逐字子串；或allow夹带无效附加quote。",
+      "expected_effects": "A固定话术是明确文本要求，不是润色；revise回传<=200字真实指令/固定话术供修复。B的revise不得静默清空引文后缓存：复用现有一次/12秒协议修正，仍失败则不提交；allow的无效附加quote丢弃且不阻塞。字段必填，allow或无规则依据填空；来源、授权、原候选及其他检查不放宽。",
+      "verification": "not_run",
+      "evidence_status": "pending_reference",
+      "evidence_note": "主线程实际回放报告9/9因固定模板要求但无原文反馈反复修订至8轮；此次只登记修复合同，原始运行与新验证证据由主线程回填。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence"
+      ]
     }
   ]
 }
