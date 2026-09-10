@@ -932,7 +932,7 @@
       ],
       "context_a": "已判断并保存含未提交工作项的计划，当前合法lease因容量或同Issue busy重复park；其中可有已提交部分。",
       "context_b": "尚未保存工作计划、全部工作已提交、主动会话/task_finished，或普通调用者伪造coordinator_wait标记。",
-      "expected_effects": "A每job只持久化一次Host等待说明，准确说尚未开始的剩余部分；不复用模型接单回复或声称task已入队/正在执行。等待标记、本地message及合规managed outbox同事务，原callback/终结消息/计划不完成。B不新增该等待效果；managed路由不存在时只本地记录，不绕过原回复策略或让调用者伪造。",
+      "expected_effects": "A每job只持久化一次Host等待说明，准确说尚未开始的剩余部分；不复用模型接单回复或声称task已入队/正在执行。等待标记、本地message及获得独立冻结等待资格的outbox同事务，原callback/终结消息/计划不完成。B不新增该等待效果；缺资格只本地记录。新legacy等待资格与结果归属分开，旧legacy无快照不追溯；旧managed route兼容但不能覆盖显式disabled。",
       "host_protocol_test_refs": [
         "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitNoticeIsOnceAndDoesNotSettlePlan",
         "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitRequiresSavedWorkAndHonorsManagedReplyPolicy",
@@ -941,7 +941,8 @@
       ],
       "verification": "not_run",
       "evidence_status": "pending_reference",
-      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
+      "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。",
+      "waiting_admission_verification": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification"
     },
     {
       "id": "f17_wait_notice_cancels_when_resolved",
@@ -962,6 +963,66 @@
       "verification": "not_run",
       "evidence_status": "pending_reference",
       "evidence_note": "DWS单命令执行恢复的Host/执行交接合同；测试文件已实现，实际运行与预发投递证据由主线程回填。无新增模型调用。"
+    },
+    {
+      "id": "f09_legacy_wait_permission_is_admission_scoped",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F09",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "新legacy结果归属的普通digital_employee消息，入站时response_enabled和inbound_coordinator开启、revision合法且DWS/CID/接收对象/Host target齐全；没有managed response_route。",
+      "context_b": "旧legacy job没有等待资格快照，或新快照明确disabled、版本未知、身份/目标不足、cancel/proactive/task_finished；后来开关开启或caller伪造字段。",
+      "expected_effects": "A仅冻结独立Host非终结等待资格，可经既有outbox发等待，不改变legacy最终回复归属。B只本地说明，不追补资格；显式disabled不回退managed route。只有旧无快照的managed job可沿原冻结route兼容，仍核Host范围。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitIndependentAdmissionGuards",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitLegacyAdmissionFreezesAndCollectsIndependently",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitWireCannotGrantEligibility",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitOldLegacyJobCannotGainNewPermission"
+      ],
+      "verification": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
+      "evidence_status": "host_report_received",
+      "evidence_note": "Scope实施者已报告本地Host/collect资格测试通过；未运行新的真实预发legacy等待IM送达验证。"
+    },
+    {
+      "id": "f09_wait_permission_change_splits_collect",
+      "rule_ids": [
+        "COORD.F09",
+        "COORD.F13",
+        "COORD.F17"
+      ],
+      "context_a": "同场景同版本/开关/发送身份/目标的入站继续收集；同群仅当前发言人变化。",
+      "context_b": "等待资格的enabled/revision/发送身份/目标变化，或旧collect job没有快照；原job建立后实时开关改变。",
+      "expected_effects": "A可合窗并保留原冻结接收目标，同群可收多位发言人；B拆窗，不把新资格覆盖到旧窗口。停放发送只使用原入站快照，不按实时开关追溯扩权；入站策略查询失败冻结disabled，不令可选通知查询破坏主接单事务。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitLegacyAdmissionFreezesAndCollectsIndependently",
+        "server/internal/handler/coordinator_wait_test.go#TestCoordinatorWaitWireCannotGrantEligibility"
+      ],
+      "verification": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
+      "evidence_status": "host_report_received",
+      "evidence_note": "Scope实施者已报告本地Host/collect资格测试通过；未运行新的真实预发legacy等待IM送达验证。"
+    },
+    {
+      "id": "f01_current_origin_reply_vs_actual_relay",
+      "rule_ids": [
+        "COORD.F01",
+        "COORD.F03",
+        "COORD.F07",
+        "COORD.F17",
+        "COORD.F18"
+      ],
+      "context_a": "CoordinatorIssueFollowUp为DWS钉钉channel，可信当前sender UID/openID存在，当前消息与origin消息一致、当前CID可生成ready reply hint，用户只需本次答复。",
+      "context_b": "当前origin不一致、缺CID/消息/稳定sender、无DWS或未实际提供reply hint；或真实请求是第三方代问/转告并需要确定原委托人。",
+      "expected_effects": "A按既有回复策略使用已知原会话目标，不因Issue-comment触发就默认assoc找人/重建角色。B从当前Issue及相关原始上下文/必要assoc恢复真实角色后沟通，不虚构接收人。两者仍读最新Issue/comments授权，不跳过发送/完成取证，不扩大外联/跨场景权限。",
+      "host_protocol_test_refs": [
+        "server/internal/handler/coordinator_issue_relay_test.go#TestCoordinatorIssueRelayUsesTrustedCurrentTargetWithoutMandatoryRoleLookup",
+        "server/internal/handler/coordinator_issue_relay_test.go#TestCoordinatorIssueRelayRequiresConsistentIdentityAndReplyLocator",
+        "server/internal/handler/coordinator_issue_relay_test.go#TestCoordinatorIssueRelayRetainsActualRelayResolution"
+      ],
+      "verification": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
+      "evidence_status": "host_report_received",
+      "evidence_note": "实施者报告直接回复/不一致定位/真实转达的3组及4既有相关组通过；旧current_conversation_id断言在HEAD基线仍失败，不计为修复或全包行为通过，预发真实投递未认证。"
     }
   ]
 }

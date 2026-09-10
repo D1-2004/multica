@@ -46,3 +46,23 @@
 - 旧副本兼容证据：Go overlay 使用原 f6eb46d8b 的 service.go/worker.go 读取新等待记录；provider.Send 确实会发送一次通知，空 callback 仅阻止 terminal receipt 的 HTTP 提交。连续 3 次 receipt 重试仍仅 1 次 send、0 次可提交的终结 callback，测试 PASS。不能把该结果描述为旧 worker 阻止了所有 HTTP。
 - 本地验证：dingtalkresponse 完整包 PASS；5 个 handler 顶层测试/6 个场景 PASS，覆盖跨重试去重、部分完成、无授权目标、发送开关、事务故障不阻塞及后续终结消息。Handler 在独立临时 schema 应用仓库已有 9144–9148 迁移，未修改 public 或复制用户数据。日志 `/tmp/dws-coordinator-wait-handler-tests.log`、`/tmp/dws-coordinator-wait-response-tests.log`；旧副本证据 `/tmp/dws-wait-legacy-check/result.log`。
 - 本节只证明 Host 持久化/供应商协议与本地故障边界；真实预发等待通知送达仍需部署后验证，尚不记为 E2E 通过。无新表或迁移、无并发上限变化。
+
+## 预发验收剧本
+
+1. Runtime候选：独立私有Agent绑定精确Template，第一次Issue任务通过DSH shell读取当前Issue，成功后输出唯一nonce；下一条同Agent任务再读取当前Issue，按task_id与sandbox启动证据分别记录冷/热。只输出认证布尔状态，不打印令牌或改登录配置。
+2. Web交付：新Web会话派出明确单项只读任务，检查实际Issue描述来自Web，没有寻找钉钉接收人的错误要求；独立回读任务工具输出及Web会话结果。
+3. 指定Agent钉钉：保持e2293e9e原PI运行时，以主角经dws-env as向已核验预发单聊发送只读命令；记录接收、Coordinator决定、Task开始、工具返回、实际消息送达，不把接待当完成。
+4. 等待通知：同一测试工作仍执行时追加明确重新执行请求，验证busy后只收到一次等待说明；解除busy后正常派工并交付。只创建有限测试工作，不占用或取消其他用户工作。
+
+本轮无共享Daemon或daemon wire改动；候选FC验证针对DSH外层shell适配，不能声称已完成local Daemon滚动验证。
+
+### 等待投递资格补正（2026-09-10 13:35）
+
+本节替换首版“仅 managed 入站可以发送等待说明”的限制，保留原窗口结果回执归属。实际 PI 8477 路径的执行提示仍包含会被 managed 转换替换的旧接待说明，且模板缺少 `dws_message_policy_v1` 能力证据，因此能够确认有效非 managed；不能据此断言具体 wire 是字段缺失还是显式 legacy。首版 job `debc8ba2-1506-44db-9d88-135087edd079` 已显示本地等待说明，但实际钉钉回读未见该说明。远程 DB 只读连接超时，未进行远程写入，也没有用缺失查询结果补造 wire 状态。
+
+- 新 job 接受时冻结独立 Host 资格 `_coordinator_wait_delivery={version:1,enabled,revision,input}`。开关查询在接单事务外最多 2 秒，失败冻结 disabled，不使可选等待反馈查询中止接单事务；资格与 command 在既有接单事务中保存。
+- enabled 仅在当时 Agent `dingtalk_response_enabled` 与 Coordinator 都开启、revision 有效、普通 digital_employee/dws/channel.message.created 入站、非 cancel、可信 Router target、稳定 DWS UID/org/CID 与必要 DM 收件人齐全时成立。不读取 Runtime 能力作为独立状态通知的资格，也不调整任何 Agent 或 Runtime 配置。
+- 等待只消费冻结资格；新 job 显式 disabled 禁止回退 managed route。无新字段的旧 managed job保留旧 route，无字段的旧 legacy job 不追溯授权。新资格可以支持有效非 managed 的工作，但不创建 managed response_route、不修改原 responsePolicy、不发送终结 callback。
+- collect 保留首条资格及群内原收件人；enabled/revision、执行身份或目标范围改变时不合窗。公共请求的 underscore 字段不能进入此 Host 快照，后续 Agent 开关变化不能重写已接受窗口。
+- 验证：本地 Handler Wait 全部 9 个顶层测试（包括 10 条资格 guard 子例）及 2 个既有 collect/receipt 测试 PASS，0.565 秒，无 skip；日志 `/tmp/dws-wait-eligibility-tests.log`。包含实际 enqueue、跨开关变更分窗、旧窗口保留授权、旧窗口不追溯新增授权、legacy 无 route 的等待动作持久化及 wire 伪造失败。
+- 新资格路径尚需再次预发送达验证，当前不记为 E2E 通过。未修改并发、原接单/结果回执、worker 的 12 秒模型协议或用户 PI runtime/provider。

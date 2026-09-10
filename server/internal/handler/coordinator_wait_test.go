@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/service/dingtalkresponse"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
@@ -98,7 +99,7 @@ func waitPlanFixture(t *testing.T, managed bool) coordinatorWaitFixture {
 func waitCounts(t *testing.T, f coordinatorWaitFixture) (int, int, int) {
 	t.Helper()
 	var notices, terminals, outbound int
-	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FILTER(WHERE message_kind='message'),count(*) FILTER(WHERE message_kind='coordinator') FROM chat_message WHERE chat_session_id=$1`, f.job.ChatSessionID).Scan(&notices, &terminals); err != nil {
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FILTER(WHERE message_kind='message'),count(*) FILTER(WHERE message_kind='coordinator') FROM chat_message WHERE chat_session_id=$1 AND role='assistant'`, f.job.ChatSessionID).Scan(&notices, &terminals); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.pool.QueryRow(context.Background(), `SELECT count(*) FROM response_action WHERE agent_id=$1`, f.agent.ID).Scan(&outbound); err != nil {
@@ -204,5 +205,166 @@ func TestCoordinatorWaitWithoutTrustedSendIdentityIsLocalOnly(t *testing.T) {
 	notices, _, outbound := waitCounts(t, f)
 	if notices != 1 || outbound != 0 {
 		t.Fatal("missing send identity must retain visible local waiting state only")
+	}
+}
+
+func TestCoordinatorWaitIndependentAdmissionGuards(t *testing.T) {
+	c := responseTestCommand(uuid.NewString(), testRouterTargetIdentity)
+	c.ResponsePolicy = nil
+	scope := agentDispatchContext{AgentID: parseUUID(c.AgentID), WorkspaceID: parseUUID(uuid.NewString())}
+	policy := db.GetAgentDingTalkResponsePolicyRow{DingtalkResponseEnabled: true, InboundCoordinator: true, DingtalkResponsePolicyRevision: 10}
+	for _, tc := range []struct {
+		name    string
+		change  func(*DispatchCommand, *db.GetAgentDingTalkResponsePolicyRow)
+		allowed bool
+	}{
+		{"absent managed policy", func(*DispatchCommand, *db.GetAgentDingTalkResponsePolicyRow) {}, true},
+		{"explicit legacy", func(c *DispatchCommand, _ *db.GetAgentDingTalkResponsePolicyRow) {
+			c.ResponsePolicy = &protocol.DingTalkResponsePolicy{Version: 1, Mode: protocol.DingTalkResponseModeLegacy, Revision: 10}
+		}, true},
+		{"reply disabled", func(_ *DispatchCommand, p *db.GetAgentDingTalkResponsePolicyRow) { p.DingtalkResponseEnabled = false }, false},
+		{"coordinator disabled", func(_ *DispatchCommand, p *db.GetAgentDingTalkResponsePolicyRow) { p.InboundCoordinator = false }, false},
+		{"unverified revision", func(_ *DispatchCommand, p *db.GetAgentDingTalkResponsePolicyRow) {
+			p.DingtalkResponsePolicyRevision = 0
+		}, false},
+		{"web", func(c *DispatchCommand, _ *db.GetAgentDingTalkResponsePolicyRow) { c.Source.Type = "web" }, false},
+		{"no outbound", func(c *DispatchCommand, _ *db.GetAgentDingTalkResponsePolicyRow) { c.Outbound.Mode = "none" }, false},
+		{"no identity", func(c *DispatchCommand, _ *db.GetAgentDingTalkResponsePolicyRow) { c.ExternalIdentity.DWS = nil }, false},
+		{"no peer", func(c *DispatchCommand, _ *db.GetAgentDingTalkResponsePolicyRow) {
+			c.Event.Data.Conversation.Type = "p2p"
+			c.Event.Data.Sender.OpenDingTalkID = ""
+			c.Event.Data.Sender.SenderOpenDingTalkID = ""
+		}, false},
+		{"no trusted Router target", func(c *DispatchCommand, _ *db.GetAgentDingTalkResponsePolicyRow) {
+			c.CompletionCallback = &DispatchCompletionCallback{URL: c.CompletionCallback.URL}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in, p := c, policy
+			tc.change(&in, &p)
+			got := freezeCoordinatorWaitDelivery(in, scope, p)
+			if got.Enabled != tc.allowed {
+				t.Fatalf("enabled=%t", got.Enabled)
+			}
+		})
+	}
+}
+
+func enqueueWaitAdmission(t *testing.T, f coordinatorWaitFixture, c DispatchCommand) db.InboundCoordinatorJob {
+	t.Helper()
+	ctx := context.Background()
+	key := uuid.NewString()
+	c.CompletionCallback = &DispatchCompletionCallback{URL: "/api/v1/dispatch-tasks/" + key + "/execution-result", Target: testRouterTargetIdentity}
+	c.Event.Data.Messages = []DispatchMessage{{OpenMsgID: key, Text: "继续查询结果", SenderDisplayName: c.Event.Data.Sender.DisplayName, SenderUID: c.Event.Data.Sender.UID}}
+	acceptance, err := f.h.Queries.ClaimAgentDispatchAcceptance(ctx, db.ClaimAgentDispatchAcceptanceParams{EndpointID: f.dc.EndpointNamespaceID, AgentID: f.agent.ID, TargetIdentity: testRouterTargetIdentity, IdempotencyKey: key, RequestFingerprint: "sha256:" + strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, job, err := f.h.enqueueInboundCoordinatorJob(ctx, acceptance, c, f.dc, key, "继续查询结果")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM inbound_coordinator_job WHERE id=$1`, job.ID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM chat_message WHERE chat_session_id=$1`, job.ChatSessionID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM chat_session WHERE id=$1`, job.ChatSessionID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_dispatch_acceptance WHERE id=$1`, acceptance.ID)
+	})
+	return job
+}
+func setWaitResponseEnabled(t *testing.T, f coordinatorWaitFixture, enabled bool) {
+	t.Helper()
+	_, err := f.h.Queries.UpdateAgentDingTalkResponsePolicy(context.Background(), db.UpdateAgentDingTalkResponsePolicyParams{ID: f.agent.ID, InboundCoordinator: pgtype.Bool{Bool: true, Valid: true}, ResponseEnabled: pgtype.Bool{Bool: enabled, Valid: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+func claimWaitAdmission(t *testing.T, f *coordinatorWaitFixture, job db.InboundCoordinatorJob) {
+	t.Helper()
+	f.job = job
+	command, err := restoreJobCommand(job)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.command = command
+	f.job.LeaseToken = parseUUID(uuid.NewString())
+	if _, err := testPool.Exec(context.Background(), `UPDATE inbound_coordinator_job SET status='running',lease_token=$2,lease_expires_at=now()+interval '1 minute' WHERE id=$1`, f.job.ID, f.job.LeaseToken); err != nil {
+		t.Fatal(err)
+	}
+	f.plan(t)
+}
+func TestCoordinatorWaitLegacyAdmissionFreezesAndCollectsIndependently(t *testing.T) {
+	f := waitPlanFixture(t, false)
+	setWaitResponseEnabled(t, f, true)
+	c := f.command
+	c.Event.Data.Sender.OpenDingTalkID = "first-recipient"
+	first := enqueueWaitAdmission(t, f, c)
+	c.Event.Data.Sender.OpenDingTalkID = "second-recipient"
+	merged := enqueueWaitAdmission(t, f, c)
+	if first.ID != merged.ID {
+		t.Fatal("same eligibility failed to collect")
+	}
+	snapshot, err := coordinatorWaitDeliveryFromCommand(merged.Command)
+	if err != nil || snapshot == nil || !snapshot.Enabled || snapshot.Input.SenderOpenDingTalkID != "first-recipient" {
+		t.Fatal("collect lost the first frozen waiting route")
+	}
+	if command, err := restoreJobCommand(merged); err != nil || command.ResponsePolicy != nil {
+		t.Fatal("legacy result ownership was changed")
+	}
+	setWaitResponseEnabled(t, f, false)
+	disabled := enqueueWaitAdmission(t, f, c)
+	if disabled.ID == first.ID {
+		t.Fatal("reply switch revision crossed the original collect window")
+	}
+	claimWaitAdmission(t, &f, merged)
+	if err := f.h.persistCoordinatorWait(context.Background(), f.job, "issue_busy"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, actions := waitCounts(t, f)
+	if actions != 1 {
+		t.Fatal("accepted legacy waiting permission was lost after the live switch changed")
+	}
+	setWaitResponseEnabled(t, f, true)
+	claimWaitAdmission(t, &f, disabled)
+	if err := f.h.persistCoordinatorWait(context.Background(), f.job, "issue_busy"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, actions = waitCounts(t, f)
+	if actions != 1 {
+		t.Fatal("later live switch retrospectively enabled a disabled window")
+	}
+	var routes int
+	if err := f.pool.QueryRow(context.Background(), `SELECT count(*) FROM response_route WHERE agent_id=$1`, f.agent.ID).Scan(&routes); err != nil || routes != 0 {
+		t.Fatal("waiting qualification created a managed response route")
+	}
+}
+func TestCoordinatorWaitWireCannotGrantEligibility(t *testing.T) {
+	f := waitPlanFixture(t, false)
+	setWaitResponseEnabled(t, f, false)
+	raw, _ := json.Marshal(f.command)
+	var wire map[string]any
+	_ = json.Unmarshal(raw, &wire)
+	wire["_coordinator_wait_delivery"] = map[string]any{"version": 1, "enabled": true, "revision": 999}
+	raw, _ = json.Marshal(wire)
+	var request AgentDispatchV2Request
+	if err := json.Unmarshal(raw, &request); err != nil {
+		t.Fatal(err)
+	}
+	job := enqueueWaitAdmission(t, f, request.DispatchCommand())
+	frozen, err := coordinatorWaitDeliveryFromCommand(job.Command)
+	if err != nil || frozen == nil || frozen.Enabled || frozen.Revision == 999 {
+		t.Fatal("client underscore field granted waiting delivery permission")
+	}
+}
+func TestCoordinatorWaitOldLegacyJobCannotGainNewPermission(t *testing.T) {
+	f := waitPlanFixture(t, false)
+	setWaitResponseEnabled(t, f, true)
+	f.plan(t)
+	if err := f.h.persistCoordinatorWait(context.Background(), f.job, "issue_busy"); err != nil {
+		t.Fatal(err)
+	}
+	n, _, a := waitCounts(t, f)
+	if n != 1 || a != 0 {
+		t.Fatal("old legacy job was retrospectively granted a send")
 	}
 }

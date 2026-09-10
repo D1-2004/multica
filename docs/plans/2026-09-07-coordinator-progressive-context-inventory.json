@@ -616,7 +616,8 @@
           "server/internal/handler/inbound_coordinator_job.go",
           "server/internal/service/dingtalkresponse/service.go",
           "server/internal/service/dingtalkresponse/worker.go",
-          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
+          "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
         ],
         "coverage": "source_mapping_only"
       }
@@ -851,7 +852,8 @@
           "server/internal/service/inboundcoord/policy/inbound.md",
           "server/internal/service/inboundcoord/policy/dialogue.md",
           "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
-          "server/internal/service/inboundcoord/issue_description_test.go"
+          "server/internal/service/inboundcoord/issue_description_test.go",
+          "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2434,7 +2436,8 @@
           "server/internal/handler/coordinator_wait_test.go",
           "server/internal/service/dingtalkresponse/service.go",
           "server/internal/service/dingtalkresponse/worker.go",
-          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
+          "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."
@@ -2825,7 +2828,7 @@
       ],
       "proposed_home": "host.message_projection",
       "disposition": "merge_or_move_preserving_obligation",
-      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。",
+      "review_note": "保留语义义务，删除多处重复；具体适用条件与案例在实施前逐条核对。 当前可信sender/origin目标完整一致时，角色追溯改为按需；真实第三方转达仍保留原委托人溯源义务。",
       "local_matches": [
         {
           "line": 89,
@@ -2885,7 +2888,8 @@
           "server/internal/handler/inbound_coordinator_job.go",
           "server/internal/service/dingtalkresponse/service.go",
           "server/internal/service/dingtalkresponse/worker.go",
-          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
+          "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction"
         ],
         "coverage": "source_mapping_only"
       }
@@ -4833,7 +4837,8 @@
           "server/internal/handler/coordinator_wait_test.go",
           "server/internal/service/dingtalkresponse/service.go",
           "server/internal/service/dingtalkresponse/worker.go",
-          "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
+          "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
+          "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
         ],
         "coverage": "source_mapping_only",
         "revision_note": "2026-09-07.2: require prior dialogue before classifying context-dependent short answers; distinguish independent new activity from explicit replacement; clarification does not submit its unresolved work. Real replay verification pending."

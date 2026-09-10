@@ -1093,12 +1093,28 @@ func buildDispatchIssueRelayInstruction(stored persistedDispatchContext) string 
 	case inboundcoord.CoordinatorIssueTriggerCreate:
 		b.WriteString("This is a newly created Issue, so the current DingTalk sender is the task delegator/requester. The Multica Issue creator is only the tool executor and an assistant in this matter. ")
 	case inboundcoord.CoordinatorIssueTriggerComment:
-		b.WriteString("This task was triggered by an Issue comment projected from DingTalk: the current DingTalk event sender is the actual speaker of that projected message, while the Multica comment author is only the Issue-tool executor and an assistant. Find the original delegator from the Issue's original DingTalk task scene and association graph; never substitute the comment author. ")
+		b.WriteString("This task was triggered by an Issue comment projected from DingTalk: the current DingTalk event sender is the actual speaker of that projected message, while the Multica comment author is only the Issue-tool executor and an assistant. ")
 	}
 	if stored.Source.Type == "robot" {
 		b.WriteString("This is the robot route. Sender uid may be absent; use only the sender name, conversation, and message facts present in this event, and never invent an identity or borrow the Multica Issue author. ")
 	}
-	b.WriteString("Before acting, explicitly map requester, intermediary (you), intended recipient, exact request, current DingTalk speaker, and next person whose input or action is needed.\n\n")
+	originMessage, originConversation := dingTalkOriginFromStored(stored)
+	currentMessage := firstDispatchMessageOpenMsgID(stored.EventData)
+	currentSenderKnown := dispatchSenderOpenDingTalkID(stored.EventData.Sender) != "" || strings.TrimSpace(stored.EventData.Sender.UID) != ""
+	// Use the same trusted locator as the ready-to-run origin reply below. An
+	// explicit locator that differs from this event is not a current-speaker
+	// shortcut, even if both IDs could individually produce a valid command.
+	currentReplyReady := stored.CoordinatorIssueFollowUp &&
+		stored.Source.Platform == "dingtalk" && stored.Domain == "channel" &&
+		stored.Outbound.Mode == protocol.DispatchOutboundModeDWS && currentSenderKnown &&
+		currentMessage != "" && currentMessage == originMessage &&
+		dingTalkOriginReplyHint(originConversation, originMessage) != ""
+	if currentReplyReady {
+		b.WriteString("The current event already identifies the speaker and supplies the ready-to-run origin reply target. To answer this current request, use that target directly; an Issue-comment trigger alone does not require an association lookup or remapping the original delegator. ")
+	} else {
+		b.WriteString("A complete, consistent current-speaker reply target is not supplied. Resolve the missing or conflicting delivery facts from the original task context before sending; never invent a recipient or substitute the Issue author. ")
+	}
+	b.WriteString("Still read the current Issue and relevant latest comments for the task's authorization and constraints. For an actual delegated question, relay to another person, or conflicting or missing roles, find the original delegator from the Issue's original DingTalk task scene and association graph as needed; map requester, intermediary (you), intended recipient, exact request, current DingTalk speaker, and next person whose input or action is needed before that communication. The ready-to-run target does not authorize unrelated outreach or access to another scene.\n\n")
 	if stored.CoordinatorIssueFollowUp {
 		b.WriteString(dingTalkPolicyInstruction(dispatchCoordinatorIssueFollowUpSection, stored.ResponsePolicy))
 	}

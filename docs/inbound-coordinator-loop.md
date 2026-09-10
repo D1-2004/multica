@@ -137,6 +137,8 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 执行器收到的IssueDescription按Host保留的Decision.Source生成交付要求：Web通过当前任务结果或已有会话回传，不额外寻找钉钉发信人/收件人；数字员工/机器人按可信事件和已有钉钉交付上下文回复，身份缺失不补造；未知来源只使用已有上下文，不推定渠道。原文明确授权的外发、代问或转达仍保留指定对象/渠道/范围，需发送时核验结果；Issue创建人/评论人不是默认委托人，接待文案不是已完成或送达证据。
 
+执行交接的角色追溯按需进行。CoordinatorIssueFollowUp已有可信当前sender UID/openID、当前CID及与当前消息一致的origin定位，并实际提供ready reply hint时，按原回复策略直接使用该目标；Issue-comment触发本身不要求默认assoc找人。仍需读取当前Issue及相关最新comments确认授权。真实第三方代问/转达、角色冲突或目标缺失时继续追溯原始委托与必要assoc；已知目标不证明送达，也不授予无关外联/跨会话权限。详见[Dispatch执行合同](agent-dispatch-v2-execution-contract.md#coordinator-issue-follow-up-reply-targets)。
+
 单项执行描述优先保留purpose，并仅消除平台生成的默认context重复；独立上下文、scene_cid、原始发言/引用和有界history handoff原样保留。遇依赖故障记录已完成步骤、原始错误和阻塞，不把明确工作擅自扩展为凭证寻找/修改、登录或环境维修；实际操作始终以本次最新原始授权为准。
 
 所有副作用沿正常域服务路径提交。start_work/continue_work的reply在对应工作真实入库/排队后才回传。审查输入声明该Host保证，因此允许合法受理/排队回执，不要求候选生成时任务已执行；该保证不等于实际开始执行、完成或外部送达。容量按最多两项的批次处理，保留完整计划与每项outcome；部分成功恢复不得从头重放，未处理请求不能静默丢弃。已持久化的旧checkpoint保持既有幂等效果，不因升级强制失效。
@@ -157,7 +159,9 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 collect 只按入站来源和生命周期区分，普通提问与礼貌收尾可在同一窗口。collect 只合并正在输入的消息：4 秒静默，创建起最多 12 秒。封窗、已 claim、重试或挂起的窗口不再吸收新消息。同 scene 同时一个 Coordinator 窗口，沙箱执行仍受两槽保护；容量不能阻止新窗口判断聊天。collect/park 不提前 sync-silence 完成，回执随真实处理关闭。
 
-已判断并保存的工作仍有未提交项，因容量或同Issue busy停放时，Host可提供一次真实等待说明：计划已保存、相关新执行尚未开始；部分成功只描述剩余项，不冒充任务已入队/运行。仅处理持有当前lease的job；主动会话及task_finished不新增该notice。每job的_coordinator_wait标记、本地message和适用managed响应outbox同事务、稳定键去重；不修改原计划/CompletedActionKeys，不消费原completion callback，也不使用终结coordinator消息类型。托管钉钉仅复用已登记且匹配当前workspace/Agent/会话/回调目标的路由；否则仅本地反馈，不绕过回复策略。普通发送入口拒绝调用者自带等待标记。
+已判断并保存的工作仍有未提交项，因容量或同Issue busy停放时，Host可提供一次真实等待说明：计划已保存、相关新执行尚未开始；部分成功只描述剩余项，不冒充任务已入队/运行。仅处理持有当前lease的job；主动会话及task_finished不新增该notice。每job的_coordinator_wait标记、本地message和具备冻结等待资格的响应outbox同事务、稳定键去重；不修改原计划/CompletedActionKeys，不消费原completion callback，也不使用终结coordinator消息类型。新job以Host字段_coordinator_wait_delivery v1冻结enabled、revision与发送input：要求response_enabled/inbound_coordinator开启、revision>=1，普通digital_employee/channel/message.created且DWS出站、非cancel/proactive/task_finished，可信DWS UID/org/CID及Host callback target齐全；单聊还需明确sender openID。入站查询在事务外最多2秒，失败冻结disabled。等待资格与legacy/managed最终结果归属独立，不能被公开wire提供。
+
+停放发送仅用此快照，复核workspace/Agent/CID、当前Host target及完整发送身份；disabled/未知版本不回退。旧无快照managed job仍可用原冻结route，旧legacy无快照只本地说明，不因后续开关开启追补IM。collect比较等待资格enabled/revision/身份/目标，变化或旧无快照则拆窗；同群不同发言人可合并但保留原冻结recipient。普通发送入口拒绝调用者自带等待标记；缺资格仅本地反馈，不绕过发送范围。
 
 response worker在发送前复核该Coordinator job仍pending/running、关联action一致且有未提交Items；job已终态或工作已全部提交则取消尚未发送的notice。该检查不撤回已送达消息，也不泛指任意Executor task终态。notice写入/路由失败整笔回滚；反馈最多使用park前2秒，不阻止现有park与后续恢复。等待反馈是Host状态效果，不新增LLM调用或动作，不放宽并发及完成判定。
 

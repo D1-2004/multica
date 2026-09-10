@@ -279,7 +279,7 @@
     {
       "id": "COORD.F01",
       "family": "F01",
-      "obligation": "可信消息决定说话人、逐句委托与作用域；未被叫到不接管群聊，自发事件不自激；缺失身份不猜。 执行描述按可信Decision.Source保留Web/钉钉/未知的交付区别，不把Issue署名或未知来源补成钉钉委托人。",
+      "obligation": "可信消息决定说话人、逐句委托与作用域；未被叫到不接管群聊，自发事件不自激；缺失身份不猜。 执行描述按可信Decision.Source保留Web/钉钉/未知的交付区别，不把Issue署名或未知来源补成钉钉委托人。 可信当前sender/消息/CID与ready origin reply目标一致时可按既有回复策略直接回当前对象，Issue-comment本身不强制assoc重找委托人；真实转达/冲突/缺目标仍追溯。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -296,13 +296,19 @@
         "proactive_group_contrast",
         "group_recipient_role_contrast",
         "generic_identity_and_semantics",
-        "f01_execution_delivery_follows_trusted_source"
+        "f01_execution_delivery_follows_trusted_source",
+        "f09_legacy_wait_permission_is_admission_scoped",
+        "f01_current_origin_reply_vs_actual_relay"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
-        "dws_execution_recovery_live_delivery": "not_run"
+        "dws_execution_recovery_live_delivery": "not_run",
+        "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
+        "waiting_admission_and_direct_relay_live_delivery": "not_run",
+        "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
+        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -325,7 +331,10 @@
         "server/internal/service/inboundcoord/finish_participation.go",
         "server/internal/service/inboundcoord/finish_participation_test.go",
         "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
-        "server/internal/service/inboundcoord/issue_description_test.go"
+        "server/internal/service/inboundcoord/issue_description_test.go",
+        "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction",
+        "server/internal/handler/coordinator_issue_relay_test.go",
+        "docs/agent-dispatch-v2-execution-contract.md"
       ],
       "case_file": "cases.json"
     },
@@ -425,13 +434,17 @@
         "f13_mixed_work_and_status_review_coverage",
         "f01_execution_delivery_follows_trusted_source",
         "f09_saved_work_wait_notice_is_nonterminal_once",
-        "f17_wait_notice_cancels_when_resolved"
+        "f17_wait_notice_cancels_when_resolved",
+        "f01_current_origin_reply_vs_actual_relay"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
-        "dws_execution_recovery_live_delivery": "not_run"
+        "dws_execution_recovery_live_delivery": "not_run",
+        "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
+        "waiting_admission_and_direct_relay_live_delivery": "not_run",
+        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -653,13 +666,17 @@
         "f07_explicit_reference_controls_current_work",
         "f07_output_instance_anchor_vs_fresh_lookup",
         "generic_identity_and_semantics",
-        "f04_single_work_does_not_authorize_environment_repair"
+        "f04_single_work_does_not_authorize_environment_repair",
+        "f01_current_origin_reply_vs_actual_relay"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
-        "dws_execution_recovery_live_delivery": "not_run"
+        "dws_execution_recovery_live_delivery": "not_run",
+        "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
+        "waiting_admission_and_direct_relay_live_delivery": "not_run",
+        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -677,7 +694,10 @@
         "server/internal/service/inboundcoord/finish_work_target.go",
         "server/internal/service/inboundcoord/finish_work_target_test.go",
         "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
-        "server/internal/service/inboundcoord/issue_description_test.go"
+        "server/internal/service/inboundcoord/issue_description_test.go",
+        "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction",
+        "server/internal/handler/coordinator_issue_relay_test.go",
+        "docs/agent-dispatch-v2-execution-contract.md"
       ],
       "case_file": "cases.json",
       "model_replay_observations": [
@@ -734,7 +754,7 @@
     {
       "id": "COORD.F09",
       "family": "F09",
-      "obligation": "收集有4秒静默及12秒上限；封窗后不吸收；先判断后容量等待，忙时聊天及时；真实处理前不结完成。 已判断且持久化的未提交工作因容量/同Issue busy停放时可一次Host等待反馈；不改变先判断后等待、不提前关闭原callback，notice失败仍可继续park恢复。",
+      "obligation": "收集有4秒静默及12秒上限；封窗后不吸收；先判断后容量等待，忙时聊天及时；真实处理前不结完成。 已判断且持久化的未提交工作因容量/同Issue busy停放时可一次Host等待反馈；不改变先判断后等待、不提前关闭原callback，notice失败仍可继续park恢复。 等待IM资格按入站response_enabled/revision和可信目标独立冻结；collect资格变化拆窗，同群换发言人保留原接收目标。旧legacy无快照不补资格，显式disabled不回退旧managed路径。",
       "status": "active",
       "runtime_modules": [
         "inbound"
@@ -744,13 +764,18 @@
         "f09_contrast",
         "f16_host_prefetch_nonwork_cost_and_skips",
         "f09_saved_work_wait_notice_is_nonterminal_once",
-        "f17_wait_notice_cancels_when_resolved"
+        "f17_wait_notice_cancels_when_resolved",
+        "f09_legacy_wait_permission_is_admission_scoped",
+        "f09_wait_permission_change_splits_collect"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
-        "dws_execution_recovery_live_delivery": "not_run"
+        "dws_execution_recovery_live_delivery": "not_run",
+        "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
+        "waiting_admission_and_direct_relay_live_delivery": "not_run",
+        "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/inbound.md",
@@ -762,7 +787,8 @@
         "server/internal/handler/coordinator_wait_test.go",
         "server/internal/service/dingtalkresponse/service.go",
         "server/internal/service/dingtalkresponse/worker.go",
-        "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
+        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
       ],
       "case_file": "cases.json"
     },
@@ -902,13 +928,18 @@
         "f15_config_narrows_without_new_authority",
         "f15_policy_revise_returns_repair_boundary",
         "generic_identity_and_semantics",
-        "f09_saved_work_wait_notice_is_nonterminal_once"
+        "f09_saved_work_wait_notice_is_nonterminal_once",
+        "f09_legacy_wait_permission_is_admission_scoped",
+        "f09_wait_permission_change_splits_collect"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
-        "dws_execution_recovery_live_delivery": "not_run"
+        "dws_execution_recovery_live_delivery": "not_run",
+        "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
+        "waiting_admission_and_direct_relay_live_delivery": "not_run",
+        "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -948,7 +979,8 @@
         "server/internal/handler/inbound_coordinator_job.go",
         "server/internal/service/dingtalkresponse/service.go",
         "server/internal/service/dingtalkresponse/worker.go",
-        "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
+        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
       ],
       "case_file": "cases.json"
     },
@@ -1099,7 +1131,7 @@
     {
       "id": "COORD.F17",
       "family": "F17",
-      "obligation": "整窗actions经Host验证及审查后提交；start_work/continue_work中的接单reply仅在真实提交后交付。部分成功持久化且恢复不重放已成功项，旧checkpoint沿用原幂等效果。 审查输入明确受理回执的送达保证：对应工作先入库/排队，允许真实受理表述，但不证明开始执行、完成或外部送达。 每job等待标记、本地notice及适用managed outbox同事务且去重，不修改原计划/完成键；发送前job终态或全项已提交则取消尚未发notice。默认交付遵循真实Source，明确外发仍保留原授权和发送证据。",
+      "obligation": "整窗actions经Host验证及审查后提交；start_work/continue_work中的接单reply仅在真实提交后交付。部分成功持久化且恢复不重放已成功项，旧checkpoint沿用原幂等效果。 审查输入明确受理回执的送达保证：对应工作先入库/排队，允许真实受理表述，但不证明开始执行、完成或外部送达。 每job等待标记、本地notice及具备冻结等待资格的outbox同事务且去重，不修改原计划/完成键；发送前job终态或全项已提交则取消尚未发notice。默认交付遵循真实Source，明确外发仍保留原授权和发送证据。 新legacy任务可取得独立非终结等待资格，不改变最终结果归属；旧无快照managed任务仅保留原冻结route兼容，发送仍核Host target及身份范围。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -1122,13 +1154,20 @@
         "f13_mixed_work_and_status_review_coverage",
         "f01_execution_delivery_follows_trusted_source",
         "f09_saved_work_wait_notice_is_nonterminal_once",
-        "f17_wait_notice_cancels_when_resolved"
+        "f17_wait_notice_cancels_when_resolved",
+        "f09_legacy_wait_permission_is_admission_scoped",
+        "f09_wait_permission_change_splits_collect",
+        "f01_current_origin_reply_vs_actual_relay"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
-        "dws_execution_recovery_live_delivery": "not_run"
+        "dws_execution_recovery_live_delivery": "not_run",
+        "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
+        "waiting_admission_and_direct_relay_live_delivery": "not_run",
+        "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
+        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1155,7 +1194,8 @@
         "server/internal/handler/inbound_coordinator_job.go",
         "server/internal/service/dingtalkresponse/service.go",
         "server/internal/service/dingtalkresponse/worker.go",
-        "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
+        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
       ],
       "case_file": "cases.json"
     },
@@ -1175,13 +1215,17 @@
         "f18_contrast",
         "f07_explicit_reference_controls_current_work",
         "f01_execution_delivery_follows_trusted_source",
-        "f04_single_work_does_not_authorize_environment_repair"
+        "f04_single_work_does_not_authorize_environment_repair",
+        "f01_current_origin_reply_vs_actual_relay"
       ],
       "verification": {
         "status": "integration_replay_pending",
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
         "dws_execution_recovery_host_tests": "passed_local_2026-09-10",
-        "dws_execution_recovery_live_delivery": "not_run"
+        "dws_execution_recovery_live_delivery": "not_run",
+        "waiting_admission_and_direct_relay_host_tests": "reported_scoped_host_pass; see waiting_admission_host_tests/current_origin_reply_host_tests; live delivery not_run",
+        "waiting_admission_and_direct_relay_live_delivery": "not_run",
+        "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1195,7 +1239,10 @@
         "server/internal/service/inboundcoord/history_handoff.go",
         "server/internal/service/inboundcoord/history_handoff_test.go",
         "server/internal/service/inboundcoord/coordinator.go#IssueDescription",
-        "server/internal/service/inboundcoord/issue_description_test.go"
+        "server/internal/service/inboundcoord/issue_description_test.go",
+        "server/internal/handler/agent_dispatch_v2.go#buildDispatchIssueRelayInstruction",
+        "server/internal/handler/coordinator_issue_relay_test.go",
+        "docs/agent-dispatch-v2-execution-contract.md"
       ],
       "case_file": "cases.json"
     },

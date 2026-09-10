@@ -17,6 +17,51 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// This admission snapshot authorizes only a non-terminal waiting notice. It is
+// emitted from DispatchCommand, whose public wire cannot supply this field.
+type coordinatorWaitDelivery struct {
+	Version  int                          `json:"version"`
+	Enabled  bool                         `json:"enabled"`
+	Revision int64                        `json:"revision"`
+	Input    dingtalkresponse.ActionInput `json:"input"`
+}
+
+func freezeCoordinatorWaitDelivery(c DispatchCommand, scope agentDispatchContext, policy db.GetAgentDingTalkResponsePolicyRow) coordinatorWaitDelivery {
+	d := coordinatorWaitDelivery{Version: 1, Revision: policy.DingtalkResponsePolicyRevision}
+	if !policy.DingtalkResponseEnabled || !policy.InboundCoordinator || policy.DingtalkResponsePolicyRevision < 1 || c.ProactiveConversation || c.TaskFinishedTaskID != "" || c.Source.Type != "digital_employee" || c.Event.Domain != "channel" || c.Event.Type != "message.created" || c.Outbound.Mode != protocol.DispatchOutboundModeDWS || (c.Control != nil && c.Control.Action == "cancel") || c.CompletionCallback == nil || !routerCompletionTargetPattern.MatchString(c.CompletionCallback.Target) || c.ExternalIdentity.DWS == nil {
+		return d
+	}
+	d.Input = dingtalkresponse.ActionInput{WorkspaceID: util.UUIDToString(scope.WorkspaceID), AgentID: util.UUIDToString(scope.AgentID), DWSUID: c.ExternalIdentity.DWS.UID, DWSOrgID: c.ExternalIdentity.DWS.OrgID, ConversationID: dispatchConversationID(c), SenderOpenDingTalkID: firstNonEmpty(c.Event.Data.Sender.OpenDingTalkID, c.Event.Data.Sender.SenderOpenDingTalkID), IsGroup: strings.EqualFold(c.Event.Data.Conversation.Type, "group"), ShowAITag: policy.DingtalkShowAiTag, CallbackTarget: c.CompletionCallback.Target}
+	d.Enabled = d.Input.DWSUID != "" && d.Input.DWSOrgID != "" && d.Input.ConversationID != "" && (d.Input.IsGroup || d.Input.SenderOpenDingTalkID != "")
+	return d
+}
+
+func marshalCoordinatorWaitCommand(c DispatchCommand, d coordinatorWaitDelivery) ([]byte, error) {
+	return json.Marshal(struct {
+		DispatchCommand
+		Wait coordinatorWaitDelivery `json:"_coordinator_wait_delivery"`
+	}{c, d})
+}
+func coordinatorWaitDeliveryFromCommand(raw []byte) (*coordinatorWaitDelivery, error) {
+	var wire struct {
+		Wait *coordinatorWaitDelivery `json:"_coordinator_wait_delivery"`
+	}
+	err := json.Unmarshal(raw, &wire)
+	return wire.Wait, err
+}
+func sameCoordinatorWaitDelivery(a *coordinatorWaitDelivery, b coordinatorWaitDelivery) bool {
+	if a == nil {
+		return false
+	}
+	left := *a
+	// Group collection preserves the original recipient while merging peers.
+	if left.Input.IsGroup && b.Input.IsGroup {
+		left.Input.SenderOpenDingTalkID = ""
+		b.Input.SenderOpenDingTalkID = ""
+	}
+	return left == b
+}
+
 func coordinatorWaitText(plan *inboundcoord.Decision, reason string) string {
 	if plan == nil || plan.Action != inboundcoord.ActionIssue || len(plan.Items) == 0 {
 		return ""
@@ -91,29 +136,38 @@ func (h *Handler) persistCoordinatorWait(ctx context.Context, job db.InboundCoor
 		return err
 	}
 	actionID := ""
-	if managedDingTalkResponse(command) && h.DingTalkResponses != nil && command.CompletionCallback != nil {
+	var in *dingtalkresponse.ActionInput
+	delivery, err := coordinatorWaitDeliveryFromCommand(raw)
+	if err != nil {
+		return err
+	}
+	if delivery != nil {
+		if delivery.Version == 1 && delivery.Enabled {
+			in = &delivery.Input
+		}
+	} else if managedDingTalkResponse(command) && command.CompletionCallback != nil {
+		// Pre-upgrade managed jobs retain their frozen route. Legacy jobs with
+		// no admission snapshot never obtain retrospective permission.
 		var routeRaw []byte
 		lookupErr := tx.QueryRow(ctx, `SELECT input FROM response_route WHERE callback_url=$1 AND workspace_id=$2 AND agent_id=$3`, command.CompletionCallback.URL, job.WorkspaceID, job.AgentID).Scan(&routeRaw)
 		if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
 			return lookupErr
 		}
 		if lookupErr == nil {
-			var in dingtalkresponse.ActionInput
-			if err = json.Unmarshal(routeRaw, &in); err != nil {
+			in = &dingtalkresponse.ActionInput{}
+			if err = json.Unmarshal(routeRaw, in); err != nil {
 				return err
 			}
-			if in.WorkspaceID == util.UUIDToString(job.WorkspaceID) && in.AgentID == util.UUIDToString(job.AgentID) &&
-				in.ConversationID == dispatchConversationID(command) && in.CallbackTarget == strings.TrimSpace(h.TaskCompletionTargetIdentity) &&
-				in.DWSUID != "" && in.DWSOrgID != "" && (in.IsGroup || in.SenderOpenDingTalkID != "") {
-				in.Text = text
-				if len(command.Event.Data.Messages) > 0 {
-					in.ReplyToOpenMsgID = command.Event.Data.Messages[0].OpenMsgID
-				}
-				actionID, err = h.DingTalkResponses.EnqueueCoordinatorWait(ctx, tx, in, util.UUIDToString(job.ID))
-				if err != nil {
-					return err
-				}
-			}
+		}
+	}
+	if in != nil && h.DingTalkResponses != nil && in.WorkspaceID == util.UUIDToString(job.WorkspaceID) && in.AgentID == util.UUIDToString(job.AgentID) && in.ConversationID == dispatchConversationID(command) && in.CallbackTarget == strings.TrimSpace(h.TaskCompletionTargetIdentity) && in.DWSUID != "" && in.DWSOrgID != "" && (in.IsGroup || in.SenderOpenDingTalkID != "") {
+		in.Text = text
+		if len(command.Event.Data.Messages) > 0 {
+			in.ReplyToOpenMsgID = command.Event.Data.Messages[0].OpenMsgID
+		}
+		actionID, err = h.DingTalkResponses.EnqueueCoordinatorWait(ctx, tx, *in, util.UUIDToString(job.ID))
+		if err != nil {
+			return err
 		}
 	}
 	metadata["message_id"], metadata["response_action_id"] = util.UUIDToString(message.ID), actionID

@@ -390,6 +390,60 @@ sentence that used to carry the obligation required a `dws chat message reply`
 tool call and went away with the reply tracker; Router/ServerPush owns the
 delivery now, so the instruction says not to send it a second time.
 
+### Coordinator Issue follow-up reply targets
+
+The current receiver can already be resolved by trusted dispatch facts. For a
+Coordinator Issue follow-up on a DingTalk channel with DWS outbound, a known
+current sender UID/open ID, the current message matching the origin message,
+and a usable origin reply hint for the current CID, the run uses that supplied
+target under the existing response policy. An Issue-comment trigger alone does
+not require an association lookup or reconstruction of the original delegator.
+
+This shortcut only resolves where to answer the current request. The run still
+reads the current Issue and relevant latest comments for authorization and
+constraints. Actual delegated questions, third-party relay, conflicting roles,
+or a missing/inconsistent locator require recovery from original task context
+and the association graph as needed. Issue creator/comment-author identity is
+never substituted for the business speaker. A robot display name without a
+stable sender identifier does not enable the shortcut.
+
+The same origin locator supplies the ready-to-run reply hint; an explicit
+origin message different from the current message cannot take this branch.
+The branch changes neither legacy/managed result ownership nor send/completion
+evidence requirements, and grants no unrelated outreach or cross-scene access.
+The Host facts and instruction projection are implemented in
+buildDispatchIssueRelayInstruction. Contract tests are in
+server/internal/handler/coordinator_issue_relay_test.go; passing them would prove
+the projection and gates, not real recipient delivery.
+
+### Coordinator non-terminal waiting permission
+
+A new Coordinator job freezes a separate Host-only
+_coordinator_wait_delivery v1 record containing enabled, revision, and the
+validated sending input. Eligibility requires the Agent response and Coordinator
+switches, a verified revision, an ordinary digital-employee DWS message, trusted
+sending identity/CID/Host callback target, and a concrete recipient for a DM.
+The optional policy query is bounded to two seconds outside the acceptance
+transaction; failure freezes disabled. Public DispatchCommand input cannot
+grant this capability.
+
+This permission allows only one persisted non-terminal waiting notice. It is
+independent of legacy/managed final-result ownership and leaves the original
+completion callback intact. A frozen disabled/unknown-version record cannot fall
+back to another route; a legacy job created before this field existed gains no
+retrospective IM permission. Only an old managed job without the new field may
+retain its already frozen response route, subject to Host scope validation.
+
+Collection keeps the admission snapshot: a change of revision, enabled state,
+sending identity or target splits the window. Group peers can be collected
+while retaining the original frozen recipient. Pending notices are cancelled
+when their Coordinator job is no longer waiting or its work is already
+committed. The current waiting/outbox contract is documented in
+[Coordinator behavior](inbound-coordinator-loop.md); this does not change the
+Coordinator prompt modules, policy version 2026-09-10.2, or assembly 14.
+
+### DingTalk locator commands
+
 The locator half prints one runnable command per target, with the real ids
 substituted in:
 

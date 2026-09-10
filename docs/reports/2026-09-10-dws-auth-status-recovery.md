@@ -73,3 +73,23 @@ SLS固定窗口11:39–11:51分页为100+100+67条，park共118次。日志中at
 - Runtime独立候选分支codex/dws-auth-runtime-compat-20260910基于旧5a364303，只补回主线任务MAT透传和来源标识；保留dws_message_policy_v1。固定Multica源码16a867e887a079a420d7fea345d9ced33904b868，包含旧819fc10的消息策略能力。
 - 本轮不提高同场域并发上限，不自动取消用户旧工作，不切换用户已改成PI的Agent。
 - 本地结构/Host检查、候选镜像、部署与真实任务证据将分别回填；代码通过不能替代送达与耗时证据。
+
+## 第一轮预发实测与补正
+
+Server ad95d535a随run3107611243完成预发，release ffbeb47e7包含该提交。原PI Agent首次请求13:06:16，任务13:06:39开始，命令13:07:07成功，IM原始结果13:08:05送达（109秒）。追加请求13:07:07，工作台13:07:22已有等待说明，但完整DWS回读没有该通知；串行第二次结果13:10:25送达。首个Task仍因旧reply/uuidgen失败重试、关联查询及reaction收尾运行至13:09:40，不能将此轮称作全部修复。
+
+首条generation 4d7efe277e2db4fc（trace 942f19e60aee498fa04b55da75580a32）证明：common教程给出旧reply和uuidgen，当前交付上下文同时给正确的+messages-reply，却又默认要求查原委托人和映射角色。当前输入还包含非managed的reaction义务，证明生效的是旧交付链路。数据库只读连接超时，因此未断言原始wire究竟缺responsePolicy还是显式legacy。
+
+补正：新入站独立冻结Host等待投递资格，使用当时回复开关/revision和已认证目标，支持非managed链路而不接管其结果回执；不同资格不合窗，旧legacy无快照不追溯授权。当前可信sender/CID/消息与回复hint完整一致时，无需默认查关联图找人；缺目标、冲突及转达仍追溯，当前Issue和最新评论约束保持必读。
+
+## Runtime交付证据
+
+- Runtime提交d41cd4ab5c7295e898c78bf40b3faa513eb14ba1，Multica源码16a867e887a079a420d7fea345d9ced33904b868。候选CI70847636/pipeline301296 SUCCESS，33项契约测试及镜像sandbox smoke通过。
+- READY Template t5o562qxc8lwn1n59glp，alias multica-m7-vdd95d8b615567a87-r1-d41cd4，provider fingerprint dd95d8b615567a87。
+- 独立Runtime5d20e728：冷Task1e207298首次Issue API直接成功，续接Task1f39cccf再次成功。SLS证明两轮使用同一sandbox sbx-7c4e169b-4d18-4427-9e6a-b28522876971，分别cold_start=true/false，均引用本Template。
+- 原NewDSH9d5b7bdd从pz27zf41o5r2vz53plfa切到本Template；私有测试Agent在该Runtime上的Task8d9a6535再次通过真实CLI读取，输出DWS-MAT-CUTOVER-9435及CLI commit16a867e8，verify-task校验通过。
+- 三次任务均无任务级令牌缺失错误，未显示或修改凭证。没有共享Daemon/wire变更，不声称已跑local Daemon滚动矩阵。用户原Agent仍使用PI8477。
+
+## 托管提示词配置
+
+Diamond pre单元的dt-fde-multica.json / DEFAULT_GROUP中，common更新前与真实generation逐字匹配。仅替换旧DWS教程及其优先规则，common从3828字降至2536字；issue/chat/auto三个配置段逐项不变。发布结果published=true，独立回读与候选JSON一致，内容SHA256为126be20542f947b0268c0b32216e3f7938cd7453246424050192c19f8f57e3f3。没有修改生产配置。
