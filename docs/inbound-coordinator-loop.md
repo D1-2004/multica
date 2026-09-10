@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-10.3`。装配版本：`14`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-10.4`。装配版本：`15`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -96,6 +96,10 @@ Host按当前instructions精确hash区分 `loaded / not_configured / stale / una
 `assoc_recall`先使用可信当前CID；用户明确给出其他合法openConversationId时按原ID读取。日志链接 `cid=数字` 不是会话ID。q只过滤明确范围，person_id只辅助排序。默认3项、最多5项，仅返回协调视图：精简原目标、意图、真实状态、等待对象、更新时间与可用状态引用；不传事件全文、原始评论、业务报告和执行结论。图关联/等待快照不冒充最新执行状态。读取保留scope、status_source、complete/truncated及unknown，默认48h范围不冒充全部历史；按明确旧请求可扩7d/30d。
 
 work_state仍只读本Agent工作区的合法目标，总预算2000字符。顶层status/status_source是Issue流程状态；latest_execution只在显式work_state读取时查询该当前归属Agent/Issue最近创建的一次执行，含read_status、task_id/status、创建/开始/完成时间、status_source=agent_task_database及限定scope。read_status区分loaded/not_found/not_loaded/unavailable；不返回result/error/context。delivery_status保持not_loaded，completed只证明该次执行结束，不能推断事项已关闭、业务全部完成或消息已送达。assoc_recall/Host预取不额外批量查询执行记录。
+
+同一次Coordinator运行中的work_state重复读取只复用本次运行新增且仍保留的成功快照：先通过当前scope/合法召回Issue检查，再核参数仅含同一issue_id（空白等价，额外字段不命中）及快照issue_id/read_ref/scope和issue_database来源，latest_execution不可为unavailable。命中时跳过下游读取和remember，返回原result/read_ref，不分配新rN；partial、unknown、not_loaded和complete/truncated原样，不把重复调用当刷新或展开摘要。失败/unavailable、跨运行/参数变化或预算淘汰后可按原权限重读；不共享到其他Turn/身份，不批量预取候选。
+
+成功状态可用时以现有latestFeedback位提示snapshot_available及重复无法扩展摘要；已有review、history原问题或其他错误反馈优先保留。私有原参数仅用于同参判断，不进入模型。读取8000/反馈800预算和最大轮数不变，不新增LLM。减少下游读取与模型是否少走轮次是两项指标，实际延迟收益需独立回放/预发证据。 SLS/步骤及Langfuse以reason=work_state_snapshot_reused标记命中；它仍是一次模型工具请求，但不是新增后端读取或更新的证据。
 
 用户问“刚才拆了几项/受理几项”时，按需context_read(kind=coordination_state)。以Host当前job为锚，限制同workspace/Agent/endpoint_namespace/source.platform/source.type/非空CID，严格只读created_at早于锚的最近3个窗口；不读当前及后来窗口，也不接受任意目标覆盖。返回scope=previous_3_jobs_same_host_endpoint_and_scene、status、records、complete=false/truncated及2000字符预算；每条仅job_id、首条问句<=120字符摘要/截断标记、时间/job_status、plan_present、nullable planned_work_count/confirmed_work_count及confirmation_source。计划计数仅来自合法window-plan-v1 Items；确认仅来自真实持久化计划回执、IssueResults或匹配Items.action_key的CompletedActionKeys，去重且不代表执行完成/外部送达。只计工作项，不是所有动作、澄清或消息数；不能拿旧关联事项数量代答本轮拆分。
 

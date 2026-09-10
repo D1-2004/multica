@@ -1,8 +1,55 @@
-# 预发 dws auth status 延迟根因与修复
+# Coordinator钉钉快回复缺失：根因、修复与实测
 
 对象：指定预发Agent e2293e9e-1e79-4926-b0e6-da4cb693add0。全部时间为2026-09-10北京时间。原始诊断只读；后续修复和验证分列记录。
 
-## 结论
+## 当前核心问题
+
+用户最新关注的是Coordinator已经生成受理reply，钉钉却未收到。原202异步受理不含Task ID，真正派工后的execution-update要求Router已建立externalTaskId映射；两者协议不一致，导致受理reply被HTTP 400拒绝并进入dead letter。工作台显示的“7s内回复”只证明Coordinator决策结束，不证明钉钉已送达。
+
+确切证据：13:06:29.353，request_id=multica-coord-issue:ce732bb6-f9f9-4956-b629-22a231f0ad5c，execution_update_id=520d60ba-eb3a-4e0c-9cdc-c5dc01197c93进入dead letter，错误为Router HTTP 400。Router trace438e0b4f10b0e7e9b3df9557cbb7cd6ced17341351bb2a43c41c4b61afb05549实际externalTaskId=null、没有executionHandoff。
+
+修复只在合法首次Coordinator派工时原子建立映射并记录handoff，沿原发送路径立即投递内聚reply；已有映射不能覆盖，重复回调不重复发送，不把工作排队冒充执行完成，不增加LLM调用。Multica的受理措辞同时收敛为围绕用户目标的短句，默认不提沙箱，保留必要命令名和用户要求的技术细节。
+
+本地39项Router协议/数据库回归通过，含真实PostgreSQL并发CAS与最终结果兼容；Router预发实际快回复已通过，证据见下。Runtime已完成的工作仅作为历史记录，不再扩展沙箱范围。
+
+## 钉钉快回复验收
+
+Router修复efc81aec已随run3107631533部署，release为69eac012。原run3107630977在代码合并阶段取消，未部署；后续实例包含同一修复，部署和集成测试均通过。Multica文案fdac28b0a随run3107626052部署，release为670acb953，策略2026-09-10.3/assembly14。
+
+同一“冬翔 ↔ 东翔测试号”预发会话完整回读证明：
+
+| 时刻 | 事实 |
+|---|---|
+| 14:44:49 | 收到重新执行状态检查的请求，msgr6l+YZm9Zie91hUGm0n2sQ== |
+| 14:45:07 | 任务71c2e84c入队，同秒钉钉收到“收到，我将重新执行 dws auth status 并返回原始状态输出。”，msgjW8FQctny3sQ9o7tdtYP5Q== |
+| 14:45:13 | 收到修改当前结果展示格式的续接请求 |
+| 14:45:30 | 钉钉收到一次明确等待说明，msgkS4ql+hRLzKetWtSsmb8/Q== |
+| 14:45:43 | 第一轮原始状态结果真实送达，早先受理回复并未等待该结果 |
+| 14:47:15 | 续接派工后收到该动作的受理回复 |
+| 14:49:01 | 三条要点格式的实际结果送达 |
+
+Router实际trace 870bdbf55f10ecb698ed5bd6a300b1580c8e8a92bbdbd903468bd3daa0b0f3a2已建立externalTaskId=71c2e84c-5d93-48ad-88a1-a469a2275d0b，executionHandoff保留原requestId、同Agent/Task与完整受理文案。每条受理及等待说明在本次回读各出现一次。结果阶段仍有额外收尾总结，不将其宣传为所有类型消息已消除重复。
+
+用户可见首次回复约18秒：入站至Coordinator开始约5.8秒，Coordinator约11.6秒，派工与受理送达同秒。“钉钉快回复丢失”已修复，但18秒仍有优化空间，不将工作台决策时长当作端到端时长。
+
+## 重复读取的对照验证
+
+真实trace a6d66e8e144545368acb52143e75fb26中，同一个Issue的work_state连读三次，结果仅read_ref变化；各轮已看到前一结果，未发生快照裁剪。现有重建上下文没有原生工具调用历史，缺少明确的已读/复用说明。工具旧埋点在读取后才开始，不能把其0ms称作精确数据库耗时。
+
+最小修复复用同run成功、同参数且可信的有界快照，保留read_ref；失败或不可用仍可重试，partial/unknown不升级。借用现有反馈位说明重复读取不能展开摘要，不覆盖审核或历史前置要求。读取计时起点已移到真正读取之前，复用另有观测标记；不扩上下文预算、不新增LLM调用。
+
+同模型qwen3.7-plus、同一冻结输入各3次实际模型链对照（无数据库/派工/DWS写入）：
+
+| 指标 | 修复前 | 修复后 |
+|---|---|---|
+| 主模型轮数 | 7 / 4 / 4 | 2 / 2 / 2 |
+| 含审核的模型调用 | 8 / 5 / 5 | 3 / 3 / 3 |
+| work_state实际读取 | 6 / 3 / 3 | 1 / 1 / 1 |
+| 处理耗时（秒） | 16.792 / 10.881 / 10.856 | 7.199 / 6.737 / 6.599 |
+
+三次均正确续接同Issue，保留“不修改登录配置”、truncated=true/complete=false及delivery=not_loaded。中位处理耗时下降约38%，不代表线上分位数或固定SLA。修复后模型没有再请求重复读取，因此真实模型收益来自说明减少了重复轮次；cache-hit/read_ref复用分支由Host单测证明，不冒称这3次真实模型命中了缓存。预发最新优化的端到端时间另行回填。
+
+## 原始长等待（历史定位）
 
 约13分钟的用户等待，主要来自工作派发等待旧任务与执行器的额外操作。Coordinator本次只用了7.070秒完成两轮决策，dws auth status最终正常返回，并不存在该命令持续执行十几分钟的证据。
 

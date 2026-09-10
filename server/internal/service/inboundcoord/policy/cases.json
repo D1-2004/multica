@@ -1034,10 +1034,48 @@
       "context_a": "用户要求打印dws auth status，工作已真实提交；未询问执行环境或内部路由。",
       "context_b": "相同工作与目标，但用户明确要求说明执行位置/技术细节；或命令名称本身是交付内容。",
       "expected_effects": "A用简短自然受理表述如“我来打印dws auth status”，不默认复述“我会在沙箱中执行”等内部实现，不虚称已经完成。B保留必要命令名及用户要求的细节，不按技术词表删目标。action、basis、target_match和派工时点保持；实际钉钉送达须另取渠道证据。",
-      "verification": "not_run",
-      "evidence_status": "structural_and_package_checks_only",
-      "evidence_note": "结构checker及修改后的inboundcoord全包通过；此自然语言对照和实际钉钉投递尚未运行，不能把文案改善当作Router映射已修复。",
+      "verification": "pre actual acceptance delivered at 14:45:07, matching admitted action reply; no unrequested sandbox wording",
+      "evidence_status": "live_acceptance_case_passed",
+      "evidence_note": "Actual DingTalk message msgjW8FQctny3sQ9o7tdtYP5Q== before task result; requested command retained. Does not certify every wording contrast.",
       "host_contract_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery"
+    },
+    {
+      "id": "f16_same_run_work_state_reuses_retained_success",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F08",
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "同一次Coordinator运行中，在合法召回目标scope校验后，重复读取相同原参数work_state；该运行已新增且仍保留issue_database来源的成功快照。",
+      "context_b": "首次/最新结果失败或unavailable（含latest_execution读取失败），快照被预算淘汰、输入参数不同、跨运行，或当前scope/合法Issue检查不通过。",
+      "expected_effects": "A跳过下游读取和重新remember，复用原result/read_ref；partial/unknown/not_loaded及complete/truncated边界不升级，不扩大摘要。B可在合法范围内重新读取；scope失败不能被快照绕过。不是跨Turn/用户/Agent共享缓存，不批量预取其他候选。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotReuseKeepsPartialEvidenceAndReadRef",
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotFailuresRemainRetryable",
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotScopeGuardPrecedesReuse",
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotDoesNotCrossRunsOrArguments"
+      ],
+      "verification": "Host tests and single-case real-model 3v3 passed; pre latest optimization pending",
+      "evidence_status": "host_and_frozen_model_passed",
+      "evidence_note": "Full package passed. Real-model after runs each requested work_state once, so cache-hit/read_ref preservation remains covered by Host tests, not those model runs. See docs/reports/2026-09-10-dws-auth-status-recovery.md."
+    },
+    {
+      "id": "f16_state_snapshot_feedback_preserves_open_constraints",
+      "rule_ids": [
+        "COORD.F03",
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "工作状态成功可用，当前没有其他待修反馈；模型重复调用同参work_state试图展开已裁剪内容。",
+      "context_b": "同时存在未解决的finish review拒绝、其他错误反馈或basis=answer所需的history原问题证据。",
+      "expected_effects": "A使用现有latestFeedback位说明snapshot_available/重复不能展开摘要，保留800反馈和8000快照预算。B不以重复读取提示覆盖审核/history/错误约束，不强迫无证据finish。工具调用仍可记录为模型动作，但实际下游复用和模型轮数收益分别验证；不宣称2轮/约4秒已经省掉。",
+      "host_protocol_test_refs": [
+        "server/internal/service/inboundcoord/work_state_snapshot_test.go#TestWorkStateSnapshotPreservesPendingFeedback"
+      ],
+      "verification": "Host tests and single-case real-model 3v3 passed; pre latest optimization pending",
+      "evidence_status": "host_and_frozen_model_passed",
+      "evidence_note": "Full package passed. Real-model after runs each requested work_state once, so cache-hit/read_ref preservation remains covered by Host tests, not those model runs. See docs/reports/2026-09-10-dws-auth-status-recovery.md."
     }
   ]
 }

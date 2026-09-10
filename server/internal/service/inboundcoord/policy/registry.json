@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-10.3",
-  "assembly_version": "14",
+  "policy_version": "2026-09-10.4",
+  "assembly_version": "15",
   "modules": [
     {
       "id": "core",
@@ -399,7 +399,7 @@
     {
       "id": "COORD.F03",
       "family": "F03",
-      "obligation": "稳定事实、对话、工作与送达分别由对应来源证明；未加载、失败、过期、截断不是空结果；承诺不是完成。 任务状态/数量答复须针对当前明确目标及真实范围，无关任务清单或局部结果不能代答。 Issue流程状态、latest_execution、外部送达分别取证；最近协调拆分用该窗口持久化计划/回执计数，不数关联事项，未知不填0。 Host等待notice仅证明计划已保存且仍有工作待启动，不能证明task已入队/运行/完成/送达；部分提交只描述剩余项。",
+      "obligation": "稳定事实、对话、工作与送达分别由对应来源证明；未加载、失败、过期、截断不是空结果；承诺不是完成。 任务状态/数量答复须针对当前明确目标及真实范围，无关任务清单或局部结果不能代答。 Issue流程状态、latest_execution、外部送达分别取证；最近协调拆分用该窗口持久化计划/回执计数，不数关联事项，未知不填0。 Host等待notice仅证明计划已保存且仍有工作待启动，不能证明task已入队/运行/完成/送达；部分提交只描述剩余项。 同运行成功work_state可复用原证据/ref，不因此变得更新、更完整或已送达；unknown/partial原样。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -436,7 +436,9 @@
         "f09_saved_work_wait_notice_is_nonterminal_once",
         "f17_wait_notice_cancels_when_resolved",
         "f01_current_origin_reply_vs_actual_relay",
-        "f17_acceptance_names_user_goal_without_internal_machinery"
+        "f17_acceptance_names_user_goal_without_internal_machinery",
+        "f16_same_run_work_state_reuses_retained_success",
+        "f16_state_snapshot_feedback_preserves_open_constraints"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -447,7 +449,9 @@
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
         "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
         "concise_acceptance_host_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery",
-        "concise_acceptance_live_delivery": "not_run"
+        "concise_acceptance_live_delivery": "passed pre 2026-09-10: 14:45:07 actual DingTalk reply same second as task admission; goal/command retained, sandbox omitted; end-to-end 18s",
+        "same_run_work_state_host_tests": "passed: full inboundcoord package and 7 focused snapshot tests; partial/scope/retry/feedback/trace preserved",
+        "same_run_work_state_model_latency": "passed single frozen case 3-before/3-after: median 10.881s to 6.737s; identical first messages and qwen3.7-plus; live latest optimization pending; cache-hit only Host-tested"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -482,7 +486,9 @@
         "server/internal/handler/inbound_coordinator_job.go",
         "server/internal/service/dingtalkresponse/service.go",
         "server/internal/service/dingtalkresponse/worker.go",
-        "server/internal/service/dingtalkresponse/coordinator_wait_test.go"
+        "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
+        "server/internal/service/inboundcoord/coordination_context.go",
+        "server/internal/service/inboundcoord/work_state_snapshot.go"
       ],
       "case_file": "cases.json"
     },
@@ -719,7 +725,7 @@
     {
       "id": "COORD.F08",
       "family": "F08",
-      "obligation": "保持明确scene及CID，关键词不能扩大范围；他群材料不代答本群；有限时间窗不得冒充全部历史。",
+      "obligation": "保持明确scene及CID，关键词不能扩大范围；他群材料不代答本群；有限时间窗不得冒充全部历史。 work_state先校验当前scope和合法召回Issue，再考虑同运行同原参成功快照复用；不跨运行或扩大其他候选范围。",
       "status": "active",
       "runtime_modules": [
         "channel",
@@ -733,11 +739,14 @@
         "f08_host_prefetch_keeps_requested_scope",
         "f03_requested_count_vs_partial_inventory",
         "f03_recent_coordination_counts_vs_association_count",
-        "f08_coordination_state_anchor_isolation"
+        "f08_coordination_state_anchor_isolation",
+        "f16_same_run_work_state_reuses_retained_success"
       ],
       "verification": {
         "status": "integration_replay_pending",
-        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
+        "same_run_work_state_host_tests": "passed: full inboundcoord package and 7 focused snapshot tests; partial/scope/retry/feedback/trace preserved",
+        "same_run_work_state_model_latency": "passed single frozen case 3-before/3-after: median 10.881s to 6.737s; identical first messages and qwen3.7-plus; live latest optimization pending; cache-hit only Host-tested"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/channel.md",
@@ -750,7 +759,9 @@
         "server/internal/service/inboundcoord/window_plan.go",
         "server/internal/service/inboundcoord/finish_check.go",
         "server/internal/service/inboundcoord/recent_coordination_state.go",
-        "server/pkg/db/queries/coordinator_recent_state.sql"
+        "server/pkg/db/queries/coordinator_recent_state.sql",
+        "server/internal/service/inboundcoord/coordination_context.go",
+        "server/internal/service/inboundcoord/work_state_snapshot.go"
       ],
       "case_file": "cases.json"
     },
@@ -934,7 +945,9 @@
         "f09_saved_work_wait_notice_is_nonterminal_once",
         "f09_legacy_wait_permission_is_admission_scoped",
         "f09_wait_permission_change_splits_collect",
-        "f17_acceptance_names_user_goal_without_internal_machinery"
+        "f17_acceptance_names_user_goal_without_internal_machinery",
+        "f16_same_run_work_state_reuses_retained_success",
+        "f16_state_snapshot_feedback_preserves_open_constraints"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -945,7 +958,9 @@
         "waiting_admission_and_direct_relay_live_delivery": "not_run",
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
         "concise_acceptance_host_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery",
-        "concise_acceptance_live_delivery": "not_run"
+        "concise_acceptance_live_delivery": "passed pre 2026-09-10: 14:45:07 actual DingTalk reply same second as task admission; goal/command retained, sandbox omitted; end-to-end 18s",
+        "same_run_work_state_host_tests": "passed: full inboundcoord package and 7 focused snapshot tests; partial/scope/retry/feedback/trace preserved",
+        "same_run_work_state_model_latency": "passed single frozen case 3-before/3-after: median 10.881s to 6.737s; identical first messages and qwen3.7-plus; live latest optimization pending; cache-hit only Host-tested"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -986,7 +1001,8 @@
         "server/internal/service/dingtalkresponse/service.go",
         "server/internal/service/dingtalkresponse/worker.go",
         "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
-        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery"
+        "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery",
+        "server/internal/service/inboundcoord/work_state_snapshot.go"
       ],
       "case_file": "cases.json"
     },
@@ -1079,7 +1095,7 @@
     {
       "id": "COORD.F16",
       "family": "F16",
-      "obligation": "主循环重建最新有界读状态，不累计旧工具正文；辅助读取/模型/审查失败不扩大权限，不把未知当空。当前可信窗口和用户限制不静默截断；预算无法保留必要约束时保留未决并停止提交。 读快照8000、最新反馈800与最近被拒精确提案6000分别计预算；超限/非法提案显式omitted，Reason诊断不被可选边界摘录覆盖，不累计旧候选。 非法审核协议最多独立修复一次，传输故障与再次非法不构成放行；不因协议修复重放业务效果。",
+      "obligation": "主循环重建最新有界读状态，不累计旧工具正文；辅助读取/模型/审查失败不扩大权限，不把未知当空。当前可信窗口和用户限制不静默截断；预算无法保留必要约束时保留未决并停止提交。 读快照8000、最新反馈800与最近被拒精确提案6000分别计预算；超限/非法提案显式omitted，Reason诊断不被可选边界摘录覆盖，不累计旧候选。 非法审核协议最多独立修复一次，传输故障与再次非法不构成放行；不因协议修复重放业务效果。 同运行已新增且仍保留的可信work_state成功快照复用原read_ref，失败/unavailable可重读；沿现有反馈提示重复无法展开摘要，但不覆盖待修review/history或其他错误，不增加预算。",
       "status": "active",
       "runtime_modules": [
         "core",
@@ -1102,11 +1118,15 @@
         "f16_coordination_state_is_not_question_history",
         "f08_coordination_state_anchor_isolation",
         "f16_hidden_config_and_old_data_not_boundary",
-        "f15_policy_revise_returns_repair_boundary"
+        "f15_policy_revise_returns_repair_boundary",
+        "f16_same_run_work_state_reuses_retained_success",
+        "f16_state_snapshot_feedback_preserves_open_constraints"
       ],
       "verification": {
         "status": "integration_replay_pending",
-        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
+        "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions.",
+        "same_run_work_state_host_tests": "passed: full inboundcoord package and 7 focused snapshot tests; partial/scope/retry/feedback/trace preserved",
+        "same_run_work_state_model_latency": "passed single frozen case 3-before/3-after: median 10.881s to 6.737s; identical first messages and qwen3.7-plus; live latest optimization pending; cache-hit only Host-tested"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1130,7 +1150,8 @@
         "server/internal/service/inboundcoord/configured_boundaries.go",
         "server/internal/service/inboundcoord/configured_boundaries_test.go",
         "server/internal/service/inboundcoord/prompt.go",
-        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence"
+        "server/internal/service/inboundcoord/configured_boundaries_test.go#TestPolicyRepairReturnsValidatedTemplateInsteadOfDroppingEvidence",
+        "server/internal/service/inboundcoord/work_state_snapshot.go"
       ],
       "case_file": "cases.json"
     },
@@ -1176,7 +1197,7 @@
         "waiting_admission_host_tests": "reported_passed_by_scope_validation: 9 top-level wait tests, 10 guard subcases and 2 collect/receipt regressions; /tmp/dws-wait-eligibility-tests.log; no skip; no live IM verification",
         "current_origin_reply_host_tests": "reported_passed_by_root_and_relay_owner: 3 new groups + 4 related groups under pure real-path overlay without DB; handler go test -c passed; HEAD-baseline current_conversation_id assertion failure retained; no live delivery proof",
         "concise_acceptance_host_checks": "passed: go test ./internal/service/inboundcoord -count=1 (0.504s after prompt change); package/Host checks, not real-model wording or DingTalk delivery",
-        "concise_acceptance_live_delivery": "not_run"
+        "concise_acceptance_live_delivery": "passed pre 2026-09-10: 14:45:07 actual DingTalk reply same second as task admission; goal/command retained, sandbox omitted; end-to-end 18s"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
