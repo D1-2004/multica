@@ -153,8 +153,9 @@ func TestASBCapacityWaitKeepsTaskQueuedAndUsesLatestAttempt(t *testing.T) {
 	}
 
 	waiting, err := queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
-		RetrySeconds: 0,
-		StaleSeconds: time.Hour.Seconds(),
+		MaxPerRuntime: asbCapacityWaitMaxConcurrent,
+		RetrySeconds:  0,
+		StaleSeconds:  time.Hour.Seconds(),
 	})
 	if err != nil {
 		t.Fatalf("list capacity waits: %v", err)
@@ -170,8 +171,9 @@ func TestASBCapacityWaitKeepsTaskQueuedAndUsesLatestAttempt(t *testing.T) {
 		t.Fatalf("mark request-bound A2A task: %v", err)
 	}
 	waiting, err = queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
-		RetrySeconds: 0,
-		StaleSeconds: time.Hour.Seconds(),
+		MaxPerRuntime: asbCapacityWaitMaxConcurrent,
+		RetrySeconds:  0,
+		StaleSeconds:  time.Hour.Seconds(),
 	})
 	if err != nil {
 		t.Fatalf("list request-bound capacity waits: %v", err)
@@ -241,8 +243,9 @@ func TestASBCapacityWaitKeepsTaskQueuedAndUsesLatestAttempt(t *testing.T) {
 		t.Fatalf("mark newer serialization block: %v", err)
 	}
 	waiting, err = queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
-		RetrySeconds: 0,
-		StaleSeconds: time.Hour.Seconds(),
+		MaxPerRuntime: asbCapacityWaitMaxConcurrent,
+		RetrySeconds:  0,
+		StaleSeconds:  time.Hour.Seconds(),
 	})
 	if err != nil {
 		t.Fatalf("list capacity waits after newer attempt: %v", err)
@@ -322,8 +325,9 @@ func TestASBCapacityWaiterRecoversAbandonedASBStartAttempt(t *testing.T) {
 	}
 
 	waiting, err := queries.ListASBCapacityWaitingTasks(ctx, db.ListASBCapacityWaitingTasksParams{
-		RetrySeconds: 5,
-		StaleSeconds: (3 * time.Minute).Seconds(),
+		MaxPerRuntime: asbCapacityWaitMaxConcurrent,
+		RetrySeconds:  5,
+		StaleSeconds:  (3 * time.Minute).Seconds(),
 	})
 	if err != nil {
 		t.Fatalf("list abandoned ASB attempts: %v", err)
