@@ -1022,6 +1022,9 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	agent, err = h.refreshBuilderPackageContract(r, agent, req.Content)
+	if err != nil { writeError(w, http.StatusInternalServerError, "failed to prepare Agent Builder package contract"); return }
+
 	// Detect whether this is the very first human message in the session,
 	// BEFORE we insert the new row. This scopes LLM auto-titling (MUL-4295) to
 	// the opening turn: we upgrade the default/original title exactly once, off
