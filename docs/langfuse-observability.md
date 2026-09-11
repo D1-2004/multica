@@ -153,6 +153,21 @@ History CLI failures retain the bounded diagnostic fields `category`, `reason`,
 `server_error_code` and `trace_id` in `history_error`. Unknown history failures
 use `HISTORY_UNAVAILABLE` and keep the existing retry policy; an old `error:`
 trace with truncated stderr cannot recover these fields retroactively.
+Two exceptions stop the backoff: `server_error_code=130003` ("OpenId is not
+in conversation", the employee left the scene) classifies as the terminal
+`NOT_IN_CONVERSATION` and blocks on the first attempt; any other
+`category=api, reason=business_error` history rejection (except the
+cross-org scope rejection, which the Coordinator's next read renews) blocks
+once `attempt_count` reaches `MaxHistoryBusinessErrorAttempts` (12, about
+1.5h). `attempt_count` counts claims since the last committed page, not a
+per-code streak. The flush trace carries `block_decided`, `block_attempt`
+and `block_terminal` and stays at error level; the SLS event
+`scene_memory_blocked` (error level, same scene/agent/attempt/error-code
+keys) confirms the row was blocked. A new inbound trigger from that scene
+clears `blocked_at` and resumes flushing, and a Block racing such a trigger
+is a no-op (`dirty_revision` must still equal the claimed target). Timeouts
+and transport errors keep the unbounded 15-minute backoff; a CLI timeout is
+classified as a timeout even when a business-error envelope was printed.
 
 ### Agent task (`agent_task`) — the Daemon side
 

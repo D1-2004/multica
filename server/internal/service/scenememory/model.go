@@ -7,6 +7,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 )
 
 const (
@@ -30,7 +32,26 @@ const (
 	ErrorLLMTimeout         = "LLM_TIMEOUT"
 	ErrorInvalidCommit      = "INVALID_COMMIT"
 	ErrorHistoryUnavailable = "HISTORY_UNAVAILABLE"
+	// ErrorNotInConversation: DingTalk answered 130003, the employee is no
+	// longer a member of the scene. Blocked until a new inbound trigger from
+	// that scene proves membership again (the dirty upsert clears blocked_at).
+	ErrorNotInConversation = "NOT_IN_CONVERSATION"
 )
+
+// MaxHistoryBusinessErrorAttempts caps how many claims a scene may spend
+// without committing a page before a DingTalk business-level history
+// rejection blocks it. attempt_count counts claims since the last committed
+// page (it is not a per-code streak), so the rule is "twelve claims, about
+// 1.5h of backoff, with no progress and the latest failure a business
+// rejection": such rejections repeat identically until the condition
+// changes, so the scene is blocked and alerted instead of retried every 15
+// minutes. A new trigger from the scene unblocks it; if the rejection is
+// still there, the inherited count blocks it again on the next claim, which
+// is the same condition, not a new failure. Timeouts, transport and local
+// errors keep the unbounded backoff, and the cross-org scope rejection is
+// excluded because the Coordinator's next read renews that grant.
+// Evidence: 口香糖小队 reached attempt 130 on 2026-09-10 (trace 4aceb4ae).
+const MaxHistoryBusinessErrorAttempts int32 = 12
 
 // KindFromChatType maps a DingTalk/dispatch chat type onto a Scene kind.
 func KindFromChatType(chatType string) string {
@@ -126,11 +147,32 @@ func FlushErrorCode(err error) string {
 
 func TerminalFlushCode(code string) bool {
 	switch code {
-	case ErrorAuth, ErrorRouteInactive, ErrorConfig:
+	case ErrorAuth, ErrorRouteInactive, ErrorConfig, ErrorNotInConversation:
 		return true
 	default:
 		return false
 	}
+}
+
+// HistoryBusinessError reports whether a flush failed on a DingTalk
+// business-level history rejection (as opposed to a timeout or transport
+// error), which decides whether the attempt ceiling applies.
+func HistoryBusinessError(err error) bool {
+	var cliErr *dwsclient.HistoryError
+	return errors.As(err, &cliErr) && cliErr.BusinessError()
+}
+
+// BlockAfterFailure decides whether a failed flush should block the scene
+// instead of scheduling another retry: terminal codes always block, and a
+// repeating business rejection blocks once the attempt ceiling is reached.
+func BlockAfterFailure(code string, err error, attempt int32) bool {
+	if TerminalFlushCode(code) {
+		return true
+	}
+	if dwsclient.IsCrossOrgPermissionDenied(err) {
+		return false
+	}
+	return code == ErrorHistoryUnavailable && HistoryBusinessError(err) && attempt >= MaxHistoryBusinessErrorAttempts
 }
 
 func CursorCovers(cursorAt time.Time, cursorEvidence string, cutoffAt time.Time, cutoffEvidence string) bool {

@@ -177,6 +177,13 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 	}
 	raw := stdout.Bytes()
 	if runErr != nil {
+		// A timeout is a timeout even when the CLI managed to print a
+		// business-error envelope before it was killed: the deadline must
+		// keep the retryable classification, never a terminal server code.
+		failed := commandFailed(ctx, "DWS conversation history query failed", runErr)
+		if IsTimeout(failed) {
+			return nil, failed
+		}
 		// dws often exits 1 with a success:false JSON envelope. Keep the
 		// body so callers can log errorMsg instead of a blank CLI failure.
 		if detail := historyCLIError(raw); detail != nil {
@@ -184,10 +191,6 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 		}
 		if looksLikeJSONObject(raw) {
 			return raw, nil
-		}
-		failed := commandFailed(ctx, "DWS conversation history query failed", runErr)
-		if IsTimeout(failed) {
-			return nil, failed
 		}
 		if detail := historyCLIError(stderr.Bytes()); detail != nil {
 			return nil, detail
@@ -214,6 +217,49 @@ func (e *HistoryError) Error() string {
 		}
 	}
 	return strings.Join(parts, "; ")
+}
+
+// ServerErrorNotInConversation is the DingTalk chat server code returned when
+// the querying account is no longer a member of the conversation ("OpenId is
+// not in conversation"). It does not clear on its own: only being re-added
+// to the conversation changes it.
+const ServerErrorNotInConversation = "130003"
+
+// NewHistoryError builds a HistoryError from already-safe diagnostic fields
+// (category, reason, server_error_code, trace_id). Other keys are dropped.
+func NewHistoryError(fields map[string]string) *HistoryError {
+	kept := map[string]any{}
+	for _, key := range []string{"category", "reason", "server_error_code", "trace_id"} {
+		if value := strings.TrimSpace(fields[key]); value != "" {
+			kept[key] = value
+		}
+	}
+	return &HistoryError{fields: kept}
+}
+
+func (e *HistoryError) field(key string) string {
+	if e == nil {
+		return ""
+	}
+	value, _ := e.fields[key].(string)
+	return value
+}
+
+// ServerErrorCode is the DingTalk server-side error code, or "" when the CLI
+// did not report one.
+func (e *HistoryError) ServerErrorCode() string { return e.field("server_error_code") }
+
+// BusinessError reports whether the server answered with a business-level
+// rejection (category=api, reason=business_error) rather than a transport,
+// timeout or local failure. Such rejections repeat identically until the
+// underlying condition changes.
+func (e *HistoryError) BusinessError() bool {
+	return e.field("category") == "api" && e.field("reason") == "business_error"
+}
+
+// NotInConversation reports the membership rejection that no retry can fix.
+func (e *HistoryError) NotInConversation() bool {
+	return e.ServerErrorCode() == ServerErrorNotInConversation
 }
 
 func (e *HistoryError) DiagnosticFields() map[string]any {

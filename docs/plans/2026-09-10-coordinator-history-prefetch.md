@@ -111,4 +111,12 @@ Codex 修正后复跑（run 3107713776，commit 52a7e611f，20:09–20:11）：E
 - 转达不做原语（冬翔 2026-09-11 决定）：代问答复若还涉及事项推进，仍走沙箱 Issue；纯代为通知的场景很少，不为它加 Host 动作。
 - 审核缺证据放行（上节两个 case）与审核按单条候选判覆盖（5a21b47f）未修；需要更短、更固定的审核输入，把 Host 已算出的事实（覆盖表、waiting_on、delivery 状态）写进去。
 - 执行器不回读外部状态就报完成（签名「已更新」、日报「Token 任务未执行」）是执行器任务书问题。
-- 场域记忆 worker 对 DWS 业务错误 130003 按 15 分钟退避无限重试（口香糖小队 attempt 130），需按错误码设上限并告警。
+### 记忆 worker 无限重试（已修）
+
+`4aceb4ae2f5f9342a88525fc28e5dd47`：口香糖小队 flush attempt 130，`dws_history_range` 报 `server_error_code=130003`。用教练身份在正式环境复现：`OpendId is not in conversation`，菲迪已不在该群，任何区间都同样报错，不是抖动。原 worker 只对 AUTH/ROUTE_INACTIVE/CONFIG 封禁，其余一律 5s→15min 退避重试，attempt_count 只在成功时归零，所以每天约 96 次白跑。
+
+改动（`dwsclient/client.go`、`scenememory/model.go`、`flush.go`、`worker.go`）：130003 分类为终态 `NOT_IN_CONVERSATION`，首次即封禁；其它 `category=api, reason=business_error` 的历史拒绝在 `attempt_count` 达到 12（约 1.5h 退避）后封禁；超时/传输错误仍无上限退避。封禁时打 error 级 SLS `scene_memory_blocked`（scene、agent、attempt、error_code、history_error）。解封沿用已有机制：该场景来新的入站触发时 `UpsertSceneMemoryDirty` 清 `blocked_at`，即重新进群后自动恢复。
+
+Codex 审查 7 项后的修正：`attempt_count` 是「自上次提交分页以来的领取次数」而非按错误码的连击，文档与注释按此表述（12 次无进展且最新一次是业务拒绝才封）；跨组织授权拒绝 `CrossOrgPermissionDenied` 排除在上限外（Coordinator 下次读取会续期）；`BlockSceneMemory` 加 `dirty_revision = lease_target_dirty_revision` 守卫，flush 期间来了新触发则封禁为空操作，不会把刚唤醒的场景再封回去；只在 Block 真正写入后才打 `scene_memory_blocked`，丢 lease 不告警；flush trace 在决定封禁时记 `block_decided/block_attempt/block_terminal` 并保持 error 级；dws CLI 超时时即使 stdout 已有业务错误 JSON 也按超时分类。未做：核对查询身份与收信身份是否一致（130003 也可能来自查错账号），trace 里目前没有实际查询 UID。
+
+测试：`TestClassifyHistoryMapsMembershipLossToTerminalCode`、`TestBlockAfterFailureCapsRepeatingBusinessErrors`（纯函数）；`TestBlockSkipsClaimSupersededByNewTrigger`、`TestBlockStillWorksWithoutNewTrigger`（需 DB，用 `multica_coordinator_progressive_0907` 跑通全套 109 个用例）。
