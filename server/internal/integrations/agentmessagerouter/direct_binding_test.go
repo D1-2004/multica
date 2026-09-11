@@ -101,6 +101,17 @@ func TestBindDigitalEmployeeConsumesServerTokenAndPersistsCurrentProjection(t *t
 		result.DigitalEmployeeID != "employee-a" {
 		t.Fatalf("result = %#v", result)
 	}
+	descriptorPayload, err := json.Marshal(router.issueAgent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var descriptorFields map[string]any
+	if err := json.Unmarshal(descriptorPayload, &descriptorFields); err != nil {
+		t.Fatal(err)
+	}
+	if descriptorFields["agentEnvironment"] != "production" {
+		t.Fatalf("Router issue environment = %#v", descriptorFields["agentEnvironment"])
+	}
 }
 
 func TestUnbindDirectPendingProjectionCallsRouterBeforeLocalCleanup(t *testing.T) {

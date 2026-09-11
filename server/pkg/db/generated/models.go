@@ -1791,29 +1791,31 @@ type SysCronExecution struct {
 }
 
 type TaskCompletionOutbox struct {
-	ID                pgtype.UUID        `json:"id"`
-	RootTaskID        pgtype.UUID        `json:"root_task_id"`
-	TerminalTaskID    pgtype.UUID        `json:"terminal_task_id"`
-	CallbackUrl       string             `json:"callback_url"`
-	TargetIdentity    string             `json:"target_identity"`
-	RequestID         string             `json:"request_id"`
-	AgentID           pgtype.UUID        `json:"agent_id"`
-	ExternalSessionID pgtype.Text        `json:"external_session_id"`
-	ExecutionStatus   string             `json:"execution_status"`
-	ResultMessage     string             `json:"result_message"`
-	Error             pgtype.Text        `json:"error"`
-	FailureReason     pgtype.Text        `json:"failure_reason"`
-	Status            string             `json:"status"`
-	AvailableAt       pgtype.Timestamptz `json:"available_at"`
-	AttemptCount      int32              `json:"attempt_count"`
-	LeaseToken        pgtype.UUID        `json:"lease_token"`
-	LeaseExpiresAt    pgtype.Timestamptz `json:"lease_expires_at"`
-	LastError         pgtype.Text        `json:"last_error"`
-	DeliveredAt       pgtype.Timestamptz `json:"delivered_at"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ID                pgtype.UUID `json:"id"`
+	RootTaskID        pgtype.UUID `json:"root_task_id"`
+	TerminalTaskID    pgtype.UUID `json:"terminal_task_id"`
+	CallbackUrl       string      `json:"callback_url"`
+	TargetIdentity    string      `json:"target_identity"`
+	RequestID         string      `json:"request_id"`
+	AgentID           pgtype.UUID `json:"agent_id"`
+	ExternalSessionID pgtype.Text `json:"external_session_id"`
+	// Router terminal execution status: completed, failed, or canceled
+	ExecutionStatus string             `json:"execution_status"`
+	ResultMessage   string             `json:"result_message"`
+	Error           pgtype.Text        `json:"error"`
+	FailureReason   pgtype.Text        `json:"failure_reason"`
+	Status          string             `json:"status"`
+	AvailableAt     pgtype.Timestamptz `json:"available_at"`
+	AttemptCount    int32              `json:"attempt_count"`
+	LeaseToken      pgtype.UUID        `json:"lease_token"`
+	LeaseExpiresAt  pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError       pgtype.Text        `json:"last_error"`
+	DeliveredAt     pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	// Immutable Agent task observability summary sent with the terminal Router callback
 	ExecutionSummary []byte `json:"execution_summary"`
+	DwsDelivery      []byte `json:"dws_delivery"`
 }
 
 type TaskExecutionUpdateOutbox struct {
@@ -1840,6 +1842,7 @@ type TaskExecutionUpdateOutbox struct {
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 	ResultMessage       pgtype.Text        `json:"result_message"`
 	ResultMessageFrozen bool               `json:"result_message_frozen"`
+	DwsDelivery         []byte             `json:"dws_delivery"`
 }
 
 type TaskMessage struct {

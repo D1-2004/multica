@@ -62,46 +62,47 @@ func (c *Client) SubmitExecutionResult(
 	ctx context.Context,
 	callbackPath string,
 	result ExecutionResultRequest,
-) error {
+) (*DWSDelivery, error) {
 	callbackMatch := executionResultCallbackPattern.FindStringSubmatch(callbackPath)
 	if len(callbackMatch) != 2 {
-		return errors.New("agent message router execution result callback path is invalid")
+		return nil, errors.New("agent message router execution result callback path is invalid")
 	}
 	body, err := json.Marshal(result)
 	if err != nil {
-		return errors.New("encode agent message router execution result")
+		return nil, errors.New("encode agent message router execution result")
 	}
 	response, err := c.do(ctx, http.MethodPost, callbackPath, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return &ExecutionResultDeliveryError{status: response.StatusCode}
+		return nil, &ExecutionResultDeliveryError{status: response.StatusCode}
 	}
 	responseBody, err := readRouterResponseBody(response.Body)
 	if err != nil {
-		return &ExecutionResultDeliveryError{status: response.StatusCode, code: "invalid_response"}
+		return nil, &ExecutionResultDeliveryError{status: response.StatusCode, code: "invalid_response"}
 	}
 	var acknowledgement struct {
 		Success *bool  `json:"success"`
 		Code    string `json:"code"`
 		Data    *struct {
-			DispatchTaskID    string `json:"dispatchTaskId"`
-			ExecutionStatus   string `json:"executionStatus"`
-			ExecutionReportID string `json:"executionReportId"`
+			DWSDelivery       *DWSDelivery `json:"dwsDelivery"`
+			DispatchTaskID    string       `json:"dispatchTaskId"`
+			ExecutionStatus   string       `json:"executionStatus"`
+			ExecutionReportID string       `json:"executionReportId"`
 		} `json:"data"`
 	}
 	if len(bytes.TrimSpace(responseBody)) == 0 ||
 		json.Unmarshal(responseBody, &acknowledgement) != nil ||
 		acknowledgement.Success == nil {
-		return &ExecutionResultDeliveryError{
+		return nil, &ExecutionResultDeliveryError{
 			status: response.StatusCode,
 			code:   "invalid_response",
 		}
 	}
 	if !*acknowledgement.Success {
-		return &ExecutionResultDeliveryError{
+		return nil, &ExecutionResultDeliveryError{
 			status: response.StatusCode,
 			code:   safeRouterErrorCode(acknowledgement.Code),
 		}
@@ -111,10 +112,10 @@ func (c *Client) SubmitExecutionResult(
 		acknowledgement.Data.DispatchTaskID != callbackMatch[1] ||
 		acknowledgement.Data.ExecutionStatus != result.ExecutionStatus ||
 		strings.TrimSpace(acknowledgement.Data.ExecutionReportID) == "" {
-		return &ExecutionResultDeliveryError{
+		return nil, &ExecutionResultDeliveryError{
 			status: response.StatusCode,
 			code:   "protocol_mismatch",
 		}
 	}
-	return nil
+	return acknowledgement.Data.DWSDelivery, nil
 }
