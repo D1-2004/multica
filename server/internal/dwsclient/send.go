@@ -17,6 +17,7 @@ type SendRequest struct {
 	RecipientOpenDingTalkID string
 	AtOpenDingTalkID        string
 	Content                 string
+	Title                   string
 	IdempotencyKey          string
 	ShowAITag               bool
 	ReplyToOpenMsgID        string
@@ -38,6 +39,36 @@ type SendStatus struct {
 type SendRejectedError struct{ Code string }
 
 func (e *SendRejectedError) Error() string { return "DWS message send rejected: " + e.Code }
+
+// MessageOperationError preserves only allowlisted provider identifiers. CLI
+// stderr may contain credentials, message bodies, and suggested commands.
+type MessageOperationError struct{ diagnostics *HistoryError }
+
+func (e *MessageOperationError) Error() string {
+	return diagnosticErrorSummary("DWS message operation failed", e.diagnostics.fields)
+}
+
+func (e *MessageOperationError) DiagnosticFields() map[string]any {
+	return e.diagnostics.DiagnosticFields()
+}
+
+func messageCLIError(raw []byte) *MessageOperationError {
+	if len(raw) > MaxResponseBytes {
+		return nil
+	}
+	diagnostics := historyCLIError(raw)
+	if diagnostics == nil {
+		// The packaged CLI may print a startup notice before its JSON error.
+		// Only accept a complete trailing envelope; never log the notice itself.
+		if offset := bytes.LastIndex(raw, []byte("\n{")); offset >= 0 {
+			diagnostics = historyCLIError(raw[offset+1:])
+		}
+	}
+	if diagnostics == nil {
+		return nil
+	}
+	return &MessageOperationError{diagnostics: diagnostics}
+}
 
 func (c CLI) Send(ctx context.Context, configDir string, req SendRequest) (SendResult, error) {
 	args, err := sendArgs(req)
@@ -71,6 +102,9 @@ func sendArgs(req SendRequest) ([]string, error) {
 	}
 	args := []string{"chat", "message", "send", "--content", req.Content,
 		"--idempotency-key", req.IdempotencyKey, "--ai-tag=" + strconv.FormatBool(req.ShowAITag), "--format", "json"}
+	if req.Title != "" {
+		args = append(args, "--title", req.Title)
+	}
 	if group != "" {
 		args = append(args, "--conversation-id", group)
 		if req.AtOpenDingTalkID != "" {
@@ -95,10 +129,10 @@ func (c CLI) QuerySendStatus(ctx context.Context, configDir, openTaskID string) 
 
 func (c CLI) messageCommand(ctx context.Context, configDir string, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, c.path(), args...)
-	cmd.Env = CommandEnv(configDir, nil)
+	cmd.Env = c.commandEnv(configDir, nil)
 	var stdout limitedOutput
 	cmd.Stdout = &stdout
-	// Provider error output can include credentials. Only parse structured stdout.
+	// Keep both streams bounded; expose only allowlisted structured diagnostics.
 	var stderr limitedOutput
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -107,6 +141,16 @@ func (c CLI) messageCommand(ctx context.Context, configDir string, args []string
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if err != nil {
+		if detail := messageCLIError(stdout.Bytes()); detail != nil {
+			return nil, detail
+		}
+		if !stderr.overflow {
+			if detail := messageCLIError(stderr.Bytes()); detail != nil {
+				return nil, detail
+			}
+		}
 	}
 	if err != nil && !looksLikeJSONObject(stdout.Bytes()) {
 		return nil, commandFailed(ctx, "DWS message operation failed", err)
@@ -141,6 +185,19 @@ type sendEnvelope struct {
 }
 
 func decodeSendEnvelope(raw []byte) (sendEnvelope, error) {
+	var wrapper struct {
+		OK   *bool           `json:"ok"`
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(raw, &wrapper) == nil && wrapper.OK != nil {
+		if !*wrapper.OK {
+			return sendEnvelope{}, errors.New("DWS message command rejected")
+		}
+		if len(wrapper.Data) > 0 {
+			return decodeSendEnvelope(wrapper.Data)
+		}
+	}
+
 	var outer sendEnvelope
 	if err := json.Unmarshal(raw, &outer); err != nil {
 		return outer, errors.New("decode DWS message response")

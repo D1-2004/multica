@@ -105,7 +105,7 @@ WITH candidate AS (
 )
 UPDATE task_execution_update_outbox AS execution_update
 SET lease_token = gen_random_uuid(),
-    lease_expires_at = now() + interval '30 seconds',
+    lease_expires_at = now() + interval '2 minutes',
     attempt_count = execution_update.attempt_count + 1,
     updated_at = now()
 FROM candidate
@@ -147,4 +147,11 @@ SET status = 'dead_letter',
 WHERE id = $1
   AND lease_token = $2
   AND status = 'queued'
+RETURNING *;
+
+-- name: SaveTaskExecutionUpdateDWSDelivery :one
+UPDATE task_execution_update_outbox
+SET dws_delivery = $3,
+    updated_at = now()
+WHERE id = $1 AND lease_token = $2 AND status = 'queued'
 RETURNING *;

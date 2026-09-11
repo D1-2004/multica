@@ -100,6 +100,57 @@ func TestSendUsesIsolatedConfigAndNoShell(t *testing.T) {
 	}
 }
 
+func TestMessageCommandsPreserveStructuredFailureDiagnostics(t *testing.T) {
+	payload := `{"error":{"category":"api","reason":"business_error","server_error_code":1001,"trace_id":"trace-123","message":"token=secret-do-not-log","actions":["send secret-do-not-log"]}}`
+	for _, tc := range []struct{ name, stdout, stderr string }{
+		{"stderr", "", payload},
+		{"startup_notice_then_stderr", "", "CLI startup notice: secret-do-not-log\n" + payload},
+		{"stdout", payload, ""},
+		{"stderr_over_success_stdout", `{"success":true,"result":{"openTaskId":"unconfirmed"}}`, payload},
+	} {
+		for _, operation := range []string{"send", "status"} {
+			t.Run(tc.name+"/"+operation, func(t *testing.T) {
+				dir := t.TempDir()
+				bin := filepath.Join(dir, "dws")
+				script := "#!/bin/sh\ncat <<'DWS_STDOUT'\n" + tc.stdout + "\nDWS_STDOUT\ncat >&2 <<'DWS_STDERR'\n" + tc.stderr + "\nDWS_STDERR\nexit 1\n"
+				if err := os.WriteFile(bin, []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				cli := CLI{Path: bin}
+				var err error
+				if operation == "send" {
+					_, err = cli.Send(context.Background(), dir, SendRequest{RecipientOpenDingTalkID: "person", Content: "hello", IdempotencyKey: "key"})
+				} else {
+					_, err = cli.QuerySendStatus(context.Background(), dir, "task")
+				}
+				var detail *MessageOperationError
+				if !errors.As(err, &detail) {
+					t.Fatalf("lost structured diagnostic: %v", err)
+				}
+				want := map[string]any{"category": "api", "reason": "business_error", "server_error_code": "1001", "trace_id": "trace-123"}
+				if !reflect.DeepEqual(detail.DiagnosticFields(), want) {
+					t.Fatalf("diagnostics = %#v", detail.DiagnosticFields())
+				}
+				if !strings.Contains(err.Error(), "DWS message operation failed; server_error_code=1001") || strings.Contains(err.Error(), "secret-do-not-log") {
+					t.Fatalf("unsafe or incomplete error: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestMessageFailureNeverExposesUnstructuredStderr(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "dws")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho 'Authorization: Bearer secret-do-not-log' >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (CLI{Path: bin}).Send(context.Background(), dir, SendRequest{RecipientOpenDingTalkID: "person", Content: "hello", IdempotencyKey: "key"})
+	if err == nil || strings.Contains(err.Error(), "secret-do-not-log") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)

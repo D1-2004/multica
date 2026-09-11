@@ -69,6 +69,7 @@ type CLI struct {
 	Path         string
 	ClientSecret string
 	MCPBaseURL   string
+	Environment  string
 }
 
 // IsCrossOrgPermissionDenied matches the server's typed scope rejection only.
@@ -83,7 +84,7 @@ func IsCrossOrgPermissionDenied(err error) bool {
 func (c CLI) RenewCrossOrgRead(ctx context.Context, configDir string) error {
 	cmd := exec.CommandContext(ctx, c.path(), "chat", "data-auth", "cross-org",
 		"--all", "--agentCode", "wukong", "--grant-type", "timed", "--ttl", "7d", "--yes", "--format", "json")
-	cmd.Env = CommandEnv(configDir, nil)
+	cmd.Env = c.commandEnv(configDir, nil)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = io.Discard
@@ -124,13 +125,16 @@ func (c CLI) Exchange(ctx context.Context, configDir string, credential Credenti
 			return errors.New("configure isolated DWS MCP endpoint")
 		}
 	}
+	if err := c.prepareEnvironment(configDir); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, c.path(),
 		"auth", "exchange",
 		"--code", credential.AuthCode,
 		"--uid", credential.UID,
 		"--format", "json",
 	)
-	cmd.Env = CommandEnv(configDir, map[string]string{
+	cmd.Env = c.commandEnv(configDir, map[string]string{
 		"DWS_CLIENT_ID":     credential.ClientID,
 		"DWS_CLIENT_SECRET": c.ClientSecret,
 	})
@@ -167,7 +171,7 @@ func (c CLI) List(ctx context.Context, configDir string, req ListRequest) ([]byt
 		"--limit", strconv.Itoa(req.Limit),
 		"--format", "json",
 	)
-	cmd.Env = CommandEnv(configDir, nil)
+	cmd.Env = c.commandEnv(configDir, nil)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -210,9 +214,13 @@ type HistoryError struct {
 }
 
 func (e *HistoryError) Error() string {
-	parts := []string{"DWS conversation history query failed"}
+	return diagnosticErrorSummary("DWS conversation history query failed", e.fields)
+}
+
+func diagnosticErrorSummary(message string, fields map[string]any) string {
+	parts := []string{message}
 	for _, key := range []string{"server_error_code", "trace_id", "category", "reason"} {
-		if value, ok := e.fields[key].(string); ok {
+		if value, ok := fields[key].(string); ok {
 			parts = append(parts, key+"="+value)
 		}
 	}
