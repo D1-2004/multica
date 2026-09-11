@@ -76,8 +76,9 @@ func TestClientIssuesBindingTokenWithServiceCredential(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if len(body) != 4 || body["agentId"] != descriptor.AgentID ||
-			body["name"] != descriptor.Name || body["dispatchPath"] != dispatchPath {
+		if len(body) != 5 || body["agentId"] != descriptor.AgentID ||
+			body["name"] != descriptor.Name || body["dispatchPath"] != dispatchPath ||
+			body["agentEnvironment"] != string(descriptor.AgentEnvironment) {
 			t.Fatalf("request body = %#v", body)
 		}
 		workspace, ok := body["workspace"].(map[string]any)
@@ -323,6 +324,18 @@ func TestNormalizeAgentDescriptorEnforcesBindingMetadataContract(t *testing.T) {
 			name: "workspace name contains C1 control",
 			mutate: func(value *AgentDescriptor) {
 				value.Workspace.Name = "Work\u009fspace"
+			},
+		},
+		{
+			name: "agent environment is missing",
+			mutate: func(value *AgentDescriptor) {
+				value.AgentEnvironment = ""
+			},
+		},
+		{
+			name: "agent environment is unsupported",
+			mutate: func(value *AgentDescriptor) {
+				value.AgentEnvironment = "development"
 			},
 		},
 	}
@@ -1033,6 +1046,7 @@ func bindingTokenDescriptorForTest(dispatchPath string) AgentDescriptor {
 			ID:   "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 			Name: "Database Workspace",
 		},
-		DispatchPath: dispatchPath,
+		DispatchPath:     dispatchPath,
+		AgentEnvironment: AgentEnvironmentProduction,
 	}
 }

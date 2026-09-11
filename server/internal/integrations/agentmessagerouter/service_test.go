@@ -1058,11 +1058,12 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 	wantDispatchPath := "/api/webhooks/agent-dispatch/" + oldEndpoint
 	wantAgentName := "R&D + 中文/Agent?#"
 	wantWorkspaceName := "研发 & Ops/一组?"
-	if len(fragment) != 10 || fragment.Get("bindingMode") != "message" ||
+	if len(fragment) != 11 || fragment.Get("bindingMode") != "message" ||
 		fragment.Get("bindingToken") != router.issued.BindingToken ||
 		fragment.Get("callbackToken") == "" || fragment.Get("callbackUrl") == "" ||
 		fragment.Get("expiresAt") != strconv.FormatInt(router.issued.ExpiresAt.Unix(), 10) ||
 		fragment.Get("agentId") != uuidStringForTest(store.row.AgentID) ||
+		fragment.Get("agentEnvironment") != "production" ||
 		fragment.Get("agentName") != wantAgentName ||
 		fragment.Get("workspaceId") != uuidStringForTest(workspaceID) ||
 		fragment.Get("workspaceName") != wantWorkspaceName ||
@@ -1077,6 +1078,9 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 	if strings.Contains(rawFragment, oldConfig.DispatchURL) ||
 		!strings.Contains(rawFragment, "dispatchPath=%2Fapi%2Fwebhooks%2Fagent-dispatch%2F") {
 		t.Fatalf("dispatch path was not encoded exactly once: %q", rawFragment)
+	}
+	if strings.Count(rawFragment, "agentEnvironment=production") != 1 {
+		t.Fatalf("agent environment was not encoded exactly once: %q", rawFragment)
 	}
 	if !strings.Contains(rawFragment, "agentName=R%26D+%2B+%E4%B8%AD%E6%96%87%2FAgent%3F%23") ||
 		!strings.Contains(rawFragment, "workspaceName=%E7%A0%94%E5%8F%91+%26+Ops%2F%E4%B8%80%E7%BB%84%3F") {
@@ -1109,6 +1113,17 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 	if fragment.Has("identityCallbackToken") || fragment.Has("identityCallbackUrl") {
 		t.Fatalf("legacy identity callback fields leaked into QR fragment: %#v", fragment)
 	}
+	routerDescriptor, err := json.Marshal(router.issueAgent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routerDescriptorFields map[string]any
+	if err := json.Unmarshal(routerDescriptor, &routerDescriptorFields); err != nil {
+		t.Fatal(err)
+	}
+	if routerDescriptorFields["agentEnvironment"] != "production" {
+		t.Fatalf("Router issue environment = %#v", routerDescriptorFields["agentEnvironment"])
+	}
 	if router.issueAgent.AgentID != uuidStringForTest(agentID) ||
 		router.issueAgent.Name != wantAgentName ||
 		router.issueAgent.Workspace.ID != uuidStringForTest(workspaceID) ||
@@ -1117,6 +1132,101 @@ func TestBeginDingTalkAccountBindingUsesDispatchPathWithoutPersistingRouterToken
 		t.Fatalf("Router issue request = %#v", router.issueAgent)
 	}
 	assertMetricCounter(t, service.metrics, "dingtalk_account_begin_total", map[string]string{"outcome": "success"}, 1)
+}
+
+func TestBeginDingTalkAccountBindingUsesCurrentPublicOriginForAgentEnvironment(t *testing.T) {
+	now := time.Date(2026, 9, 9, 9, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		initial     string
+		current     string
+		environment string
+	}{
+		{name: "production", initial: "https://pre-bootstrap.example", current: "https://multica.example", environment: "production"},
+		{name: "staging", initial: "https://bootstrap.example", current: "https://pre-multica.example", environment: "staging"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeBindingStore{}
+			router := &fakeBindingRouter{issued: BindingToken{
+				BindingToken: "bat_v1.current-origin",
+				ExpiresAt:    now.Add(5 * time.Minute),
+			}}
+			service := newBindingServiceForTest(t, store, router, now)
+			current := tt.initial
+			service.publicBaseURLProvider = func() string { return current }
+			service.endpoints.publicBaseURLProvider = func() string { return current }
+			current = tt.current
+
+			result, err := service.Begin(context.Background(), beginParamsForTest(
+				uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+				uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+				uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+				BindingModeMessage,
+			))
+			if err != nil {
+				t.Fatalf("Begin() error = %v", err)
+			}
+			_, rawFragment, found := strings.Cut(result.QRCodeURL, "#")
+			if !found {
+				t.Fatalf("QR code URL has no fragment: %q", result.QRCodeURL)
+			}
+			fragment, err := url.ParseQuery(rawFragment)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fragment.Get("agentEnvironment") != tt.environment ||
+				strings.Count(rawFragment, "agentEnvironment="+tt.environment) != 1 {
+				t.Fatalf("QR fragment environment = %#v raw=%q", fragment["agentEnvironment"], rawFragment)
+			}
+			callbackURL, err := url.Parse(fragment.Get("callbackUrl"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			currentOrigin, err := url.Parse(tt.current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if callbackURL.Host != currentOrigin.Host {
+				t.Fatalf("callback host = %q, want current host %q", callbackURL.Host, currentOrigin.Host)
+			}
+			routerDescriptor, err := json.Marshal(router.issueAgent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var routerDescriptorFields map[string]any
+			if err := json.Unmarshal(routerDescriptor, &routerDescriptorFields); err != nil {
+				t.Fatal(err)
+			}
+			if routerDescriptorFields["agentEnvironment"] != tt.environment {
+				t.Fatalf("Router issue environment = %#v, want %q", routerDescriptorFields["agentEnvironment"], tt.environment)
+			}
+		})
+	}
+}
+
+func TestBeginDingTalkAccountBindingRejectsInvalidCurrentPublicOriginBeforeSideEffects(t *testing.T) {
+	now := time.Date(2026, 9, 9, 9, 0, 0, 0, time.UTC)
+	store := &fakeBindingStore{}
+	router := &fakeBindingRouter{issued: BindingToken{
+		BindingToken: "bat_v1.must-not-be-issued",
+		ExpiresAt:    now.Add(5 * time.Minute),
+	}}
+	service := newBindingServiceForTest(t, store, router, now)
+	service.publicBaseURLProvider = func() string { return "http://pre-multica.example" }
+
+	result, err := service.Begin(context.Background(), beginParamsForTest(
+		uuidForTest(t, "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+		uuidForTest(t, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+		uuidForTest(t, "cccccccc-cccc-cccc-cccc-cccccccccccc"),
+		BindingModeMessage,
+	))
+
+	endpointCalls := service.endpoints.store.(*fakeDispatchEndpointStore).ensureCalls
+	if !errors.Is(err, ErrNotConfigured) || result != (BeginResult{}) || len(store.beginConfig) != 0 ||
+		store.row.ID.Valid || router.issueAgent.AgentID != "" || endpointCalls != 0 {
+		t.Fatalf("invalid origin result=%#v error=%v request=%#v row=%#v endpoint calls=%d", result, err, router.issueAgent, store.row, endpointCalls)
+	}
 }
 
 func TestBeginDingTalkAccountBindingRejectsInvalidAuthoritativeDisplayNames(t *testing.T) {
