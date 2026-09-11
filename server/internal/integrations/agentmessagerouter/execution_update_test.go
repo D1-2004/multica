@@ -40,7 +40,7 @@ func TestSubmitExecutionUpdateResultMessageProtocol(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = client.SubmitExecutionUpdate(
+			_, err = client.SubmitExecutionUpdate(
 				context.Background(),
 				"/api/v1/dispatch-tasks/router-update-result-message/execution-update",
 				ExecutionUpdateRequest{

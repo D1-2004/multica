@@ -394,3 +394,10 @@ FROM (
 ) AS reply
 ORDER BY reply.created_at DESC
 LIMIT 1;
+
+-- name: SaveTaskCompletionDWSDelivery :one
+UPDATE task_completion_outbox
+SET dws_delivery = $3,
+    updated_at = now()
+WHERE id = $1 AND lease_token = $2 AND status = 'queued'
+RETURNING *;

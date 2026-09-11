@@ -17,6 +17,7 @@ type SendRequest struct {
 	RecipientOpenDingTalkID string
 	AtOpenDingTalkID        string
 	Content                 string
+	Title                   string
 	IdempotencyKey          string
 	ShowAITag               bool
 	ReplyToOpenMsgID        string
@@ -71,6 +72,9 @@ func sendArgs(req SendRequest) ([]string, error) {
 	}
 	args := []string{"chat", "message", "send", "--content", req.Content,
 		"--idempotency-key", req.IdempotencyKey, "--ai-tag=" + strconv.FormatBool(req.ShowAITag), "--format", "json"}
+	if req.Title != "" {
+		args = append(args, "--title", req.Title)
+	}
 	if group != "" {
 		args = append(args, "--conversation-id", group)
 		if req.AtOpenDingTalkID != "" {
@@ -95,7 +99,7 @@ func (c CLI) QuerySendStatus(ctx context.Context, configDir, openTaskID string) 
 
 func (c CLI) messageCommand(ctx context.Context, configDir string, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, c.path(), args...)
-	cmd.Env = CommandEnv(configDir, nil)
+	cmd.Env = c.commandEnv(configDir, nil)
 	var stdout limitedOutput
 	cmd.Stdout = &stdout
 	// Provider error output can include credentials. Only parse structured stdout.
@@ -141,6 +145,19 @@ type sendEnvelope struct {
 }
 
 func decodeSendEnvelope(raw []byte) (sendEnvelope, error) {
+	var wrapper struct {
+		OK   *bool           `json:"ok"`
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(raw, &wrapper) == nil && wrapper.OK != nil {
+		if !*wrapper.OK {
+			return sendEnvelope{}, errors.New("DWS message command rejected")
+		}
+		if len(wrapper.Data) > 0 {
+			return decodeSendEnvelope(wrapper.Data)
+		}
+	}
+
 	var outer sendEnvelope
 	if err := json.Unmarshal(raw, &outer); err != nil {
 		return outer, errors.New("decode DWS message response")
