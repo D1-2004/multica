@@ -13,6 +13,8 @@ import (
 // SendRequest contains only trusted routing fields and a platform idempotency key.
 // Markdown is the personal-message endpoint's default content type.
 type SendRequest struct {
+	SourceOpenMessageID     string
+	SourceConversationID    string
 	ConversationID          string
 	RecipientOpenDingTalkID string
 	AtOpenDingTalkID        string
@@ -42,7 +44,10 @@ func (e *SendRejectedError) Error() string { return "DWS message send rejected: 
 
 // MessageOperationError preserves only allowlisted provider identifiers. CLI
 // stderr may contain credentials, message bodies, and suggested commands.
-type MessageOperationError struct{ diagnostics *HistoryError }
+type MessageOperationError struct {
+	diagnostics      *HistoryError
+	DuplicateRequest bool
+}
 
 func (e *MessageOperationError) Error() string {
 	return diagnosticErrorSummary("DWS message operation failed", e.diagnostics.fields)
@@ -67,10 +72,40 @@ func messageCLIError(raw []byte) *MessageOperationError {
 	if diagnostics == nil {
 		return nil
 	}
-	return &MessageOperationError{diagnostics: diagnostics}
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	candidate := raw
+	if offset := bytes.LastIndex(raw, []byte("\n{")); offset >= 0 {
+		candidate = raw[offset+1:]
+	}
+	_ = json.Unmarshal(candidate, &envelope)
+	duplicate := diagnostics.fields["server_error_code"] == "1001" && strings.Contains(envelope.Error.Message, "Request is repeated with uuid '")
+	return &MessageOperationError{diagnostics: diagnostics, DuplicateRequest: duplicate}
 }
 
 func (c CLI) Send(ctx context.Context, configDir string, req SendRequest) (SendResult, error) {
+	if _, err := sendArgs(req); err != nil {
+		return SendResult{}, err
+	}
+	if req.SourceOpenMessageID != "" {
+		if req.ConversationID != "" && req.ConversationID != req.SourceConversationID {
+			return SendResult{}, errors.New("DWS reply source conversation mismatch")
+		}
+		sender, err := c.ResolveMessageSender(ctx, configDir, req.SourceConversationID, req.SourceOpenMessageID)
+		if err != nil {
+			return SendResult{}, err
+		}
+		if req.AtOpenDingTalkID != "" {
+			req.Content = strings.Replace(req.Content, "<@"+req.AtOpenDingTalkID+">", "<@"+sender+">", 1)
+			req.AtOpenDingTalkID = sender
+		}
+		if req.RecipientOpenDingTalkID != "" {
+			req.RecipientOpenDingTalkID = sender
+		}
+	}
 	args, err := sendArgs(req)
 	if err != nil {
 		return SendResult{}, err

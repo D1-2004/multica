@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-10.9",
-  "assembly_version": "20",
+  "policy_version": "2026-09-11.1",
+  "assembly_version": "21",
   "modules": [
     {
       "id": "core",
@@ -968,7 +968,8 @@
         "f17_acceptance_names_user_goal_without_internal_machinery",
         "f16_same_run_work_state_reuses_retained_success",
         "f16_state_snapshot_feedback_preserves_open_constraints",
-        "f13_tool_schema_lists_validatable_values"
+        "f13_tool_schema_lists_validatable_values",
+        "f16_rejected_review_with_invented_work_check"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -982,7 +983,8 @@
         "concise_acceptance_live_delivery": "passed pre 2026-09-10: 14:45:07 actual DingTalk reply same second as task admission; goal/command retained, sandbox omitted; end-to-end 18s",
         "same_run_work_state_host_tests": "passed: full inboundcoord package and 7 focused snapshot tests; partial/scope/retry/feedback/trace preserved",
         "same_run_work_state_model_latency": "passed: frozen same-model 3v3 median 10.881s to 6.737s; pre trace2513240e2c8043edb7bc9e1894cb63a3 loop6.979s/2 primary rounds/1 work_state, IM admission14s; not a fleet SLA; cache-hit only Host-tested",
-        "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending"
+        "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending",
+        "rejected_review_recovery_2026_09_11": "host_tests_passed; live_pre_pending"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1025,7 +1027,8 @@
         "server/internal/service/dingtalkresponse/coordinator_wait_test.go",
         "server/internal/handler/coordinator_wait.go#freezeCoordinatorWaitDelivery",
         "server/internal/service/inboundcoord/work_state_snapshot.go",
-        "server/internal/service/inboundcoord/tool_contract.go"
+        "server/internal/service/inboundcoord/tool_contract.go",
+        "server/internal/service/inboundcoord/finish_check_recovery_test.go#TestRejectedProposalRepairsInMainLoopWithoutGrantingWork"
       ],
       "case_file": "cases.json"
     },
@@ -1148,7 +1151,8 @@
         "f16_state_snapshot_feedback_preserves_open_constraints",
         "f16_history_prefetch_before_first_model_call",
         "f16_retry_budget_stops_identical_failures",
-        "f13_tool_schema_lists_validatable_values"
+        "f13_tool_schema_lists_validatable_values",
+        "f16_rejected_review_with_invented_work_check"
       ],
       "verification": {
         "status": "integration_replay_pending",
@@ -1156,7 +1160,8 @@
         "same_run_work_state_host_tests": "passed: full inboundcoord package and 7 focused snapshot tests; partial/scope/retry/feedback/trace preserved",
         "same_run_work_state_model_latency": "passed: frozen same-model 3v3 median 10.881s to 6.737s; pre trace2513240e2c8043edb7bc9e1894cb63a3 loop6.979s/2 primary rounds/1 work_state, IM admission14s; not a fleet SLA; cache-hit only Host-tested",
         "history_prefetch_2026_09_10": "host_tests_passed_local; pre e2e pending",
-        "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending"
+        "retry_budget_and_tool_contract_2026_09_10": "host_tests_passed_local; pre e2e pending",
+        "rejected_review_recovery_2026_09_11": "host_tests_passed; live_pre_pending"
       },
       "implementation_refs": [
         "server/internal/service/inboundcoord/policy/core.md",
@@ -1184,7 +1189,8 @@
         "server/internal/service/inboundcoord/work_state_snapshot.go",
         "server/internal/service/inboundcoord/history_prefetch.go",
         "server/internal/service/inboundcoord/retry_budget.go",
-        "server/internal/service/inboundcoord/tool_contract.go"
+        "server/internal/service/inboundcoord/tool_contract.go",
+        "server/internal/service/inboundcoord/finish_check_recovery_test.go#TestRejectedProposalRepairsInMainLoopWithoutGrantingWork"
       ],
       "case_file": "cases.json"
     },

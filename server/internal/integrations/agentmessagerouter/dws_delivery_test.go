@@ -16,6 +16,7 @@ import (
 
 type replySessionStub struct {
 	sends     int
+	sendErr   error
 	statuses  int
 	closes    int
 	requests  []dwsclient.SendRequest
@@ -26,7 +27,7 @@ type replySessionStub struct {
 func (s *replySessionStub) Send(_ context.Context, r dwsclient.SendRequest) (replyReceipt, error) {
 	s.sends++
 	s.requests = append(s.requests, r)
-	return replyReceipt{OpenTaskID: "send-1"}, nil
+	return replyReceipt{OpenTaskID: "send-1"}, s.sendErr
 }
 func (s *replySessionStub) Status(_ context.Context, id string) (replyReceipt, error) {
 	s.statuses++
@@ -189,5 +190,26 @@ func TestCallbackOutboxesResumeDWSAfterWorkerRestart(t *testing.T) {
 				t.Fatalf("status=%s callbacks=%d sends=%d state=%s", status, requests, session.sends, raw)
 			}
 		})
+	}
+}
+
+func TestDWSReplyDuplicateWithoutReceiptRemainsUnconfirmedAndStopsSending(t *testing.T) {
+	d := testDWSDelivery("agent-1")
+	raw, _ := freezeDWSDelivery(d, d.AgentID)
+	session := &replySessionStub{sendErr: &dwsclient.MessageOperationError{DuplicateRequest: true}}
+	sender := &replySenderStub{session: session}
+	w := &CompletionWorker{dwsSender: sender}
+	save := func(value []byte) error { raw = append([]byte(nil), value...); return nil }
+	for i := 0; i < 2; i++ {
+		err := w.resumeDWSDelivery(context.Background(), raw, save)
+		var permanent *dwsDeliveryPermanentError
+		if !errors.As(err, &permanent) || permanent.code != "send_confirmation_unavailable" {
+			t.Fatalf("missing explicit uncertainty: %v", err)
+		}
+	}
+	var state dwsDeliveryState
+	_ = json.Unmarshal(raw, &state)
+	if state.Status != "confirmation_unavailable" || state.OpenTaskID != "" || state.OpenMessageID != "" || session.sends != 1 || session.statuses != 0 || len(sender.opened) != 1 {
+		t.Fatalf("wrong uncertainty or repeated send: state=%+v session=%+v", state, session)
 	}
 }

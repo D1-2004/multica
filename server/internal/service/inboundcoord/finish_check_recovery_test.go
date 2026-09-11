@@ -61,3 +61,37 @@ func TestFinishCheckProtocolRepairDoesNotOverrideRevise(t *testing.T) {
 		t.Fatal("valid rejection was not cached")
 	}
 }
+
+func TestRejectedNonWorkProposalDoesNotAbortOnInventedWorkReference(t *testing.T) {
+	result := finishCheckResult{Verdict: "revise", Reason: "The request requires execution rather than a claim of inability.", WorkChecks: []finishWorkCheck{{ActionRef: "a1", Deliverables: "single", TargetMatch: "new_work"}}}
+	candidate := Decision{Action: ActionReply, CoordinationActions: []CoordinationAction{{Kind: "decline", SourceRefs: []string{"u1"}, Reply: "I cannot execute commands."}}}
+	if err := validateFinishWorkChecks(&result, candidate); err != nil {
+		t.Fatal(err)
+	}
+	if result.Verdict != "revise" || len(result.WorkChecks) != 0 {
+		t.Fatalf("rejection changed or invented evidence retained: %+v", result)
+	}
+	result.Verdict = "allow"
+	result.WorkChecks = []finishWorkCheck{{ActionRef: "a1", Deliverables: "single", TargetMatch: "new_work"}}
+	if err := validateFinishWorkChecks(&result, candidate); err == nil {
+		t.Fatal("invented work reference authorized non-work candidate")
+	}
+}
+
+func TestRejectedProposalRepairsInMainLoopWithoutGrantingWork(t *testing.T) {
+	raw, _ := json.Marshal(map[string]any{"verdict": "revise", "reason": "The scope is already explicit; route the requested calculation to execution.", "missing_source_refs": []string{}, "request_quote_ref": scriptedRequestQuoteRef, "candidate_quote_ref": scriptedCandidateQuoteRef, "work_checks": []finishWorkCheck{{ActionRef: "a1", Deliverables: "single", TargetMatch: "new_work"}}})
+	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
+		assistantTool("clarify", toolFinish, `{"actions":[{"kind":"clarify","source_refs":["u1"],"missing_fields":["scope"],"reply":"需要计算什么？"}]}`),
+		assistantTool("work", toolFinish, `{"actions":[{"kind":"start_work","source_refs":["u1"],"purpose":"实际执行 Python 计算 1 到 100 的平方和","reply":"我来运行 Python 计算。"}]}`),
+	}, checkRounds: []openai.ChatCompletion{assistantTool("review", toolFinishCheck, string(raw)), scriptedFinishVerdict("allow", "The explicit calculation is authorized.")}}
+	saves := 0
+	ctx := ContextWithPlanCheckpoint(context.Background(), nil, func(d Decision) error { saves++; return nil })
+	d, err := (&Coordinator{Chat: chat}).runLoop(ctx, Turn{Source: SourceWeb, Message: "请实际运行 Python 计算 1 到 100 的平方和。"})
+	if err != nil || d.Action != ActionIssue || saves != 1 || chat.calls != 2 || chat.checkCalls != 2 {
+		t.Fatalf("action=%s saves=%d main=%d review=%d err=%v", d.Action, saves, chat.calls, chat.checkCalls, err)
+	}
+	props := chat.checkParams[0].Tools[0].GetFunction().Parameters["properties"].(map[string]any)
+	if props["work_checks"].(map[string]any)["maxItems"] != 0 {
+		t.Fatal("non-work schema permits invented work checks")
+	}
+}
