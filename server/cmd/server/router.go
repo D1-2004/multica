@@ -28,7 +28,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/deploymentfence"
-	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/featureflags"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -788,16 +787,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		BaseURLProvider:       agentIdentityControlBaseURLProvider,
 		ClientSecret:          signupConfig.FCE2B.DWSClientSecret,
 	})
-	if h.TaskCompletionWorker != nil {
-		h.TaskCompletionWorker.SetDWSReplySender(agentmessagerouter.NewDWSReplySender(agentmessagerouter.DWSReplySenderConfig{
-			AgentIdentity: agentidentityhsf.NewClient(),
-			Redeemer: dwsclient.Redeemer{
-				BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
-				BaseURLProvider: agentIdentityControlBaseURLProvider,
-			},
-			ClientSecret: signupConfig.FCE2B.DWSClientSecret,
-		}))
-	}
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
 	if agentMessageRouterClient != nil {

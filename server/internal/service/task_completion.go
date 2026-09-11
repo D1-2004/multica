@@ -655,7 +655,7 @@ func (s *TaskService) EnqueueCoordinatorIssueAck(
 		AgentID:         issueTask.AgentID,
 		TargetAgentID:   issueTask.AgentID,
 		UpdateType:      "delegated_to_issue",
-		ResultMessage:   pgtype.Text{String: redact.Text(message), Valid: true},
+		ResultMessage:   redact.Text(message),
 	})
 	if err != nil {
 		return fmt.Errorf("enqueue coordinator issue ack: %w", err)
