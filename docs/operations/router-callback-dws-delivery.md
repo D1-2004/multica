@@ -7,3 +7,12 @@ Multica freezes the returned plan in the existing callback outbox, issues a shor
 Deploy Multica and migration 9222 to all pre-release replicas first, then Router. An old Router response without dwsDelivery means Router owned the send. Old reports without a frozen plan must not be reconstructed or resent. Rollback requires reverting Router first and draining new delivery plans before reverting Multica; keep the additive columns while any new replica remains.
 
 Verify both deploy orders and target hosts, then a real pre-release message: Router execution report must contain its frozen plan, Multica outbox must contain a delivered receipt, and the original sender/conversation/content must match the visible DWS message. A successful callback or accepted send task alone is insufficient.
+
+### Message command diagnostics
+
+A failed DWS CLI send or status lookup preserves structured `server_error_code`,
+`trace_id`, `category`, and `reason` identifiers from stdout or stderr. The worker
+persists these identifiers in its existing retry error and log entry. Raw error
+messages, suggested commands, credentials, and message content are omitted.
+This changes diagnostics only; it does not resend existing records or change the
+retry policy, reply selection, sender identity, or message body.

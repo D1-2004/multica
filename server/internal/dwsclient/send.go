@@ -40,6 +40,26 @@ type SendRejectedError struct{ Code string }
 
 func (e *SendRejectedError) Error() string { return "DWS message send rejected: " + e.Code }
 
+// MessageOperationError preserves only allowlisted provider identifiers. CLI
+// stderr may contain credentials, message bodies, and suggested commands.
+type MessageOperationError struct{ diagnostics *HistoryError }
+
+func (e *MessageOperationError) Error() string {
+	return diagnosticErrorSummary("DWS message operation failed", e.diagnostics.fields)
+}
+
+func (e *MessageOperationError) DiagnosticFields() map[string]any {
+	return e.diagnostics.DiagnosticFields()
+}
+
+func messageCLIError(raw []byte) *MessageOperationError {
+	diagnostics := historyCLIError(raw)
+	if diagnostics == nil {
+		return nil
+	}
+	return &MessageOperationError{diagnostics: diagnostics}
+}
+
 func (c CLI) Send(ctx context.Context, configDir string, req SendRequest) (SendResult, error) {
 	args, err := sendArgs(req)
 	if err != nil {
@@ -102,7 +122,7 @@ func (c CLI) messageCommand(ctx context.Context, configDir string, args []string
 	cmd.Env = c.commandEnv(configDir, nil)
 	var stdout limitedOutput
 	cmd.Stdout = &stdout
-	// Provider error output can include credentials. Only parse structured stdout.
+	// Keep both streams bounded; expose only allowlisted structured diagnostics.
 	var stderr limitedOutput
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -111,6 +131,16 @@ func (c CLI) messageCommand(ctx context.Context, configDir string, args []string
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
+	}
+	if err != nil {
+		if detail := messageCLIError(stdout.Bytes()); detail != nil {
+			return nil, detail
+		}
+		if !stderr.overflow {
+			if detail := messageCLIError(stderr.Bytes()); detail != nil {
+				return nil, detail
+			}
+		}
 	}
 	if err != nil && !looksLikeJSONObject(stdout.Bytes()) {
 		return nil, commandFailed(ctx, "DWS message operation failed", err)

@@ -211,9 +211,13 @@ type HistoryError struct {
 }
 
 func (e *HistoryError) Error() string {
-	parts := []string{"DWS conversation history query failed"}
+	return diagnosticErrorSummary("DWS conversation history query failed", e.fields)
+}
+
+func diagnosticErrorSummary(message string, fields map[string]any) string {
+	parts := []string{message}
 	for _, key := range []string{"server_error_code", "trace_id", "category", "reason"} {
-		if value, ok := e.fields[key].(string); ok {
+		if value, ok := fields[key].(string); ok {
 			parts = append(parts, key+"="+value)
 		}
 	}
