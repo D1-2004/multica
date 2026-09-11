@@ -378,6 +378,15 @@ the server always validates with its embedded copy before reading referenced fil
 A bundle is the parsed manifest and files, with a canonical content hash. It is
 not a DTA CLI build artifact; do not require `dta bundle` or `dingtalk-agent.json`.
 
+ZIP files may place `agent.json` at the archive root or inside a common enclosing
+directory added when compressing an Agent folder or downloading a repository.
+All package files must stay together beneath that directory. The ZIP adapter
+strips enclosing directories and ignores `__MACOSX`, `.DS_Store`, and `._*`
+metadata after validating original paths, file types, and size limits. This does
+not change logical skill paths, scope/ID, or the bundle hash. A root manifest takes
+precedence over nested examples; ambiguous packages return candidate paths and
+repacking guidance. Git imports still require `agent.json` at repository root.
+
 Workspace owners/admins can upload a ZIP through
 `POST /api/workspaces/{id}/agent-packages/preview` (`application/zip`, or one
 multipart `file`, maximum 40 MiB), or acquire the same directory from GitHub via
@@ -488,3 +497,7 @@ Configuration and implementation map to `event_trigger.go`, `agent_event_trigger
 - 2026-09-11: Preserve skill scope/ID during exported-package updates and recover
   attached skill IDs from older platform export paths. Reason: prevent duplicate
   skill creation while retaining original ownership and publication checks.
+
+- 2026-09-11: Accept ZIP enclosing directories and ignore desktop archive metadata.
+  Reason: recompressing an Agent folder must not turn a valid manifest into a
+  missing-root-file error or introduce metadata files into a skill.

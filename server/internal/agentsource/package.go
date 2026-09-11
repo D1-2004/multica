@@ -44,7 +44,10 @@ func ParseAgentPackage(ctx context.Context, content []byte) (ParsedAgentPackage,
 		if file.UncompressedSize64 > MaxBundleSize || total > MaxBundleSize - file.UncompressedSize64 { return ParsedAgentPackage{}, errors.New("Agent package exceeds the uncompressed size limit") }
 		total += file.UncompressedSize64
 	}
-	return ParseAgentPackageFS(ctx, archive)
+	client, err := newFSRepositoryClient(archive)
+	if err != nil { return ParsedAgentPackage{}, err }
+	if err := normalizeAgentPackageArchive(client); err != nil { return ParsedAgentPackage{}, err }
+	return parseAgentPackageRepository(ctx, client, Source{})
 }
 
 func ParseAgentPackageFS(ctx context.Context, files fs.FS) (ParsedAgentPackage, error) {

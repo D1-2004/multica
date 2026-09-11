@@ -29,7 +29,9 @@ Agent 创建页面共用顶部栏提供 **下载 Schema**，选择创建方式�
 
 ## 统一包解析流程
 
-Agent 包是包含 manifest 和其引用文件的 ZIP 源码目录，不需要 CLI build。入口仍为根目录 `agent.json`。包内 `agent.schema.json` 可以随导出提供给编辑器，但服务端不会使用上传者提供的 Schema 放宽规则，也不会请求它引用的外部 URL。
+Agent 包是包含 manifest 和其引用文件的 ZIP 源码目录，不需要 CLI build。入口仍为 Agent 目录下的 `agent.json`。ZIP 可以直接包含这些文件，也可以包含压缩工具或 GitHub 下载添加的外层目录，例如 `my-agent/agent.json`。服务端先去除共同的外层目录，再按 manifest 解析相对路径；包目录外不能混入其他业务文件。根目录已有 `agent.json` 时优先使用它，不会将 `examples/agent.json` 等示例误判为另一个包。`__MACOSX`、`.DS_Store`、`._*` 压缩元数据不参与配置或 Skill 文件导入，但仍受原有条目路径、类型和大小检查约束。找不到 manifest 或无法确定唯一包目录时，错误会说明根目录、候选 manifest 路径及整理方式。Git 仓库仍要求根目录 `agent.json`。
+
+包内 `agent.schema.json` 可以随导出提供给编辑器，但服务端不会使用上传者提供的 Schema 放宽规则，也不会请求它引用的外部 URL。
 
 ```text
 上传 ZIP / 读取 Git 目录
@@ -296,3 +298,5 @@ GOTOOLCHAIN=auto go test ./internal/agentsource
 - 2026-09-11：补齐 `configuration.event_trigger_enabled` 的校验与双向持久化，复用事件触发服务的事务方法；开启时启用入站协调，显式关闭入站协调优先。原因：主干新增的开关必须随当前 Agent 配置一起导出和恢复，发布回滚不能遗留事件触发副作用。
 
 - 2026-09-11：v2 skills 增加成对的 `scope`／`skill_id`，预览和发布共同解析现有 Skill 身份，保留旧平台导出路径的有限身份恢复。原因：修复导出后更新同一 Agent 时，手动绑定的 workspace Skill 被重复创建为专属副本的问题；同时保留原文件 ID、权限边界和并发修改检查。
+
+- 2026-09-11：ZIP 解析增加共同外层目录识别和 macOS 压缩元数据过滤，并补齐缺失或歧义入口的错误详情。原因：直接压缩 Agent 文件夹会生成 `目录/agent.json`，旧解析器仅查询 ZIP 最外层，导致有效配置包在预览时错误提示缺少 `agent.json`。
