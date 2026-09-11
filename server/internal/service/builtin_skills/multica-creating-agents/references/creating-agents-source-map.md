@@ -197,8 +197,10 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | --- | --- | --- |
 | ZIP update / stale guard / Git binding preservation | `internal/handler/agent_package_publish.go`; `agent_source_sync.go` | `TestZIPPublicationUpdatesExistingAgentsAndPreservesGitSource` |
 | Complete error tree and Schema link | `internal/agentsource/schema.go`; `packages/views/agents/create/package-error.tsx` | `TestManifestSchemaDoesNotTruncateIssues`; `builder-package-panel.test.tsx` |
-| Portable OKR text and independent labels | `internal/handler/agent_package_okr.go`; `migrations/9164_agent_okr_authored_text.up.sql` | `TestCompleteExamplePackageUploadAndExport` |
+| Portable OKR text and independent labels | `internal/handler/agent_package_okr.go`; `migrations/9222_agent_okr_authored_text.up.sql` | `TestCompleteExamplePackageUploadAndExport` |
 | Owned Builder prompt upgrade | `internal/handler/agent_builder_package.go`; `chat.go` | `TestBuilderPackageContractUpgradeOnlyTouchesOwnedSystemBuilder` |
 
 - 2026-09-10: Added source locations for complete package creation, publication and
   error handling. Reason: keep the built-in creation skill aligned with the live protocol.
+
+- 2026-09-11: Corrected the OKR migration reference to 9222. Reason: avoid the migration number already used by the pre-release branch.
