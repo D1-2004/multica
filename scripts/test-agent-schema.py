@@ -66,7 +66,7 @@ class AgentSchemaTest(unittest.TestCase):
         configuration = set(SCHEMA["$defs"]["configuration"]["properties"])
         # These fields have a dedicated portable representation or are instance state.
         separate = {"name", "description", "instructions", "runtime_id", "permission_mode",
-                    "invocation_targets", "visibility", "status"}
+                    "invocation_targets", "visibility", "status", "coordinator_contract"}
         self.assertEqual(fields - configuration - separate, set())
 
     def test_configuration_limits(self):

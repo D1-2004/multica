@@ -74,13 +74,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	configurationChanged := len(diffPackageState(current, sourceDefinitionFiles(resolved.bundle))) > 0
 	changed := configurationChanged || lockedSource.Ref != resolved.ref || lockedSource.SyncedCommitSha != resolved.sha
 	if changed {
-		if err := h.applyPackageSourceConfiguration(r.Context(), queries, agent, resolved, request.Secrets, request.DeferredBindings, parseUUID(requestUserID(r))); err != nil { writeAgentSourceDatabaseError(w, err); return }
-		if _, err := queries.UpdateAgent(r.Context(), gitAgentSourceSnapshotUpdate(agent.ID, resolved.bundle)); err != nil {
-			writeAgentSourceDatabaseError(w, err); return
-		}
-		if err := applySourceSkills(r.Context(), queries, agent, lockedSource, resolved); err != nil {
-			writeAgentSourceDatabaseError(w, err); return
-		}
+		if err := (agentPackageService{handler:h}).Import(r.Context(), tx, agent, lockedSource, resolved, request.Secrets, request.DeferredBindings, parseUUID(requestUserID(r)), false); err != nil { writeAgentSourceDatabaseError(w, err); return }
 	}
 	updatedSource := lockedSource
 	// ZIP publication changes configuration but retains an existing Git binding
@@ -96,6 +90,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record source confirmation"); return
 	}
 	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to commit source sync"); return }
+	if h.EventTriggers != nil { h.EventTriggers.Notify() }
 	if h.DingTalkResponsePolicyNotifier != nil { h.DingTalkResponsePolicyNotifier.NotifyResponsePolicyChanged() }
 	h.publishAgentSourceSync(r, agent, changed)
 	writeJSON(w, http.StatusOK, AgentSourceSyncResponse{Source:agentSourceToResponse(updatedSource), Changed:changed, Warnings:resolved.bundle.Warnings})

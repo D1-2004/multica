@@ -43,3 +43,17 @@ export function useDownloadPreparedAgentPackage(workspaceId: string) {
 export function agentManifestSchemaOptions() {
   return queryOptions({ queryKey: ["agent-manifest-schema"], queryFn: () => api.getAgentManifestSchema(), staleTime: 0 });
 }
+
+export function agentPackageBindingsOptions(workspaceId: string, agentId: string) {
+  return queryOptions({ queryKey: ["agent-package-bindings", workspaceId, agentId], queryFn: () => api.getAgentPackageBindings(agentId), staleTime: 0 });
+}
+
+export function useConfirmAgentPackageBinding(workspaceId: string, agentId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (request: import("../types/agent-package").ConfirmAgentPackageBindingRequest) => api.confirmAgentPackageBinding(agentId, request),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["agent-package-bindings", workspaceId, agentId] });
+    },
+  });
+}

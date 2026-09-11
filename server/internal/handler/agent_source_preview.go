@@ -312,9 +312,10 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		if err != nil {
 			return nil, "", err
 		}
-		if clients, ok := a2a["clients"].([]map[string]any); ok {
+		if clients, ok := a2a["clients"].([]any); ok {
 			managed := []map[string]any{}
-			for _, client := range clients {
+			for _, rawClient := range clients {
+				client, _ := rawClient.(map[string]any)
 				if key, ok := client["key"].(string); ok && mappings[key] != "" {
 					managed = append(managed, client)
 				}
@@ -323,7 +324,10 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		}
 	}
 	appendPackageStateFiles(files, manifest)
+	bindingState, err := readPackageBindingState(ctx,queries,agent)
+	if err != nil { return nil,"",err }
 	state := struct {
+		PackageBindings packageBindingState
 		PrivateConfig  [][]byte
 		Files          map[string]string
 		SourceID       pgtype.UUID
@@ -334,7 +338,7 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		RuntimeID      pgtype.UUID
 		OwnerID        pgtype.UUID
 		Mappings       []db.AgentSourceSkill
-	}{[][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
+	}{bindingState, [][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return nil, "", err
@@ -404,8 +408,10 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	changes := diffPackageState(current, sourceDefinitionFiles(resolved.bundle))
+	requirements, err := h.packageRequirementsForAgent(r.Context(),h.Queries,agent,requestUserID(r),resolved.bundle)
+	if err != nil { writeAgentSourceDatabaseError(w,err); return }
 	writeJSON(w, http.StatusOK, AgentSourceSyncPreviewResponse{
-		Requirements: packageRequirements(resolved.bundle), PreviewID: uuidToString(preview.ID), ExpiresAt: timestampToString(preview.ExpiresAt), RepositoryURL: "https://github.com/" + resolved.repository.FullName,
+		Requirements: requirements, PreviewID: uuidToString(preview.ID), ExpiresAt: timestampToString(preview.ExpiresAt), RepositoryURL: "https://github.com/" + resolved.repository.FullName,
 		Ref: resolved.ref, BaseSHA: source.SyncedCommitSha, ResolvedSHA: resolved.sha,
 		GitChanges: agentsource.DiffRepository(packageDiffSnapshot(base), packageDiffSnapshot(resolved.snapshot)), ConfigurationChanges: changes, Warnings: resolved.bundle.Warnings,
 		Changed: len(changes) > 0 || source.Ref != resolved.ref || source.SyncedCommitSha != resolved.sha,

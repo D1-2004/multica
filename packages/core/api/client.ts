@@ -1,7 +1,7 @@
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
 import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
-import type { AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
-import { AgentPackagePreviewSchema } from "./schemas";
+import type { AgentPackageBindingReport, ConfirmAgentPackageBindingRequest, AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
+import { AgentPackageBindingReportSchema, AgentPackagePreviewSchema } from "./schemas";
 import type {
   Issue,
   IssuePriority,
@@ -5622,6 +5622,20 @@ export class ApiClient {
       EMPTY_CREATE_GITHUB_AGENT_RESPONSE,
       { endpoint: "POST /api/workspaces/:id/github/agents" },
     );
+  }
+
+  async getAgentPackageBindings(agentId: string): Promise<AgentPackageBindingReport> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/package-bindings`);
+    const result = parseWithFallback<AgentPackageBindingReport | null>(raw, AgentPackageBindingReportSchema, null, { endpoint: "GET /api/agents/:id/package-bindings", includeReceived: false });
+    if (!result) throw new Error("Invalid Agent package binding response");
+    return result;
+  }
+
+  async confirmAgentPackageBinding(agentId: string, request: ConfirmAgentPackageBindingRequest): Promise<AgentPackageBindingReport> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/package-bindings/confirm`, { method: "POST", body: JSON.stringify(request) });
+    const result = parseWithFallback<AgentPackageBindingReport | null>(raw, AgentPackageBindingReportSchema, null, { endpoint: "POST /api/agents/:id/package-bindings/confirm", includeReceived: false });
+    if (!result) throw new Error("Invalid Agent package binding response");
+    return result;
   }
 
   async previewAgentPackage(workspaceId: string, file: Blob): Promise<AgentPackagePreview> {

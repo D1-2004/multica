@@ -1,4 +1,19 @@
 {
+  "package_bindings": {
+    "title": "Package resource bindings",
+    "pending": "{{count}} package bindings need setup",
+    "open": "Review bindings",
+    "description": "Configure accounts and resources using the existing settings, then refresh and explicitly match each package reference to a verified resource. Credentials stay in this workspace.",
+    "refresh": "Refresh status",
+    "ready": "Confirmed",
+    "needs_setup": "Awaiting confirmation",
+    "unavailable": "Cannot verify",
+    "clear": "The package requests an empty selection or an unbound resource. Clear it in settings before confirming.",
+    "configure": "Open settings",
+    "select": "Select a configured resource",
+    "current": "Current configuration",
+    "confirm": "Confirm reference mapping"
+  },
   "page": {
     "title": "Agents",
     "tagline": "AI teammates that pick up issues, comment, and update status.",

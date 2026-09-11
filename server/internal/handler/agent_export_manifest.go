@@ -12,12 +12,12 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/multica-ai/multica/server/internal/agentsource"
-	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
+	"github.com/multica-ai/multica/server/internal/integrations/agentmessagerouter"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 type agentExportNotes struct {
+	SecretAliases map[string]string `json:"-"`
 	Resources []map[string]string `json:"resources"`
 	Secrets   []map[string]string `json:"secrets"`
 	Notes     []string            `json:"notes"`
@@ -37,7 +37,8 @@ func (n *agentExportNotes) resource(kind, id, label string) map[string]any {
 
 func (n *agentExportNotes) secret(path string) map[string]any {
 	digest := sha256.Sum256([]byte(path))
-	ref := fmt.Sprintf("secret-%x", digest[:8])
+	ref := n.SecretAliases[path]
+	if ref == "" { ref = fmt.Sprintf("secret-%x", digest[:8]) }
 	n.Secrets = append(n.Secrets, map[string]string{"ref": ref, "path": path})
 	return map[string]any{"secret_ref": ref}
 }
@@ -110,15 +111,16 @@ func (n *agentExportNotes) configValue(value any, path, field string) any {
 	}
 }
 
-// All reads use the caller's repeatable-read transaction. No source preview or
-// remote Git contents participate in this definition of the current Agent.
-func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent, instructionsPath string) (map[string]any, []byte, error) {
-	notes := &agentExportNotes{Resources: []map[string]string{}, Secrets: []map[string]string{}, Notes: []string{
+func newAgentExportNotes() *agentExportNotes {
+	return &agentExportNotes{Resources: []map[string]string{}, Secrets: []map[string]string{}, Notes: []string{
 		"This package contains the Agent definition currently stored in Multica. Runtime history, platform system instructions and credentials are not included.",
 		"Resource aliases require explicit binding in the destination workspace. Secret references replace environment values, argument values, headers and unclassified provider strings; this file never contains their values.",
 		"GitHub execution identity is managed by the external identity service and must be checked and rebound separately. Git repository connections and release history are not Agent configuration.",
 		"Local ZIP and Git creation use the same validated package. Select the destination runtime, supply secret references and explicitly acknowledge external bindings that will be configured after creation.",
 	}}
+}
+
+func exportPackageConfiguration(ctx context.Context, q *db.Queries, agent db.Agent, notes *agentExportNotes) (map[string]any, error) {
 	config := map[string]any{
 		"avatar_url": agent.AvatarUrl.String, "model": agent.Model.String, "thinking_level": agent.ThinkingLevel.String, "service_tier": agent.ServiceTier.String,
 		"max_concurrent_tasks": agent.MaxConcurrentTasks, "dispatch_always_new_issue": agent.DispatchAlwaysNewIssue,
@@ -137,7 +139,7 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 		value := field.fallback
 		if len(field.data) > 0 && string(field.data) != "null" {
 			if err := json.Unmarshal(field.data, &value); err != nil {
-				return nil, nil, fmt.Errorf("invalid stored %s", field.name)
+				return nil, fmt.Errorf("invalid stored %s", field.name)
 			}
 		}
 		if field.private {
@@ -147,44 +149,41 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 	}
 	voice, err := q.GetAgentVoice(ctx, agent.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	config["persona"], config["reply_tone"] = voice.Persona, voice.ReplyTone
 	policy, err := q.GetAgentDingTalkResponsePolicy(ctx, agent.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	config["inbound_coordinator"], config["dingtalk_show_ai_tag"], config["dingtalk_response_enabled"] = policy.InboundCoordinator, policy.DingtalkShowAiTag, policy.DingtalkResponseEnabled
 	resume, err := q.GetAgentChatSessionResume(ctx, agent.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	config["chat_session_resume"] = resume
+	events, err := q.GetAgentPackageEventTriggerEnabled(ctx,db.GetAgentPackageEventTriggerEnabledParams{AgentID:agent.ID,WorkspaceID:agent.WorkspaceID})
+	if err != nil { return nil,err }
+	config["event_trigger_enabled"] = events
 	loop, err := q.GetAgentTaskFinishedLoop(ctx, agent.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	config["task_finished_loop_enabled"] = loop
 	flags, err := q.GetAgentSceneMemoryFlags(ctx, agent.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	config["scene_memory_write_enabled"], config["scene_memory_recall_enabled"], config["scene_memory_ui_enabled"], config["scene_memory_bootstrap_enabled"] = flags.WriteEnabled, flags.RecallEnabled, flags.UIEnabled, flags.BootstrapEnabled
-	manifest := map[string]any{"$schema": agentsource.PortableSchemaPath, "version": "multica.agent/v2", "name": agent.Name, "description": agent.Description, "instructions": instructionsPath, "configuration": config}
+	return config, nil
+}
 
-	contract, err := coordinatorcontract.Parse(agent.CoordinatorContract)
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid stored coordinator_contract: %w", err)
-	}
-	if contract != nil {
-		manifest["coordinator_contract"] = contract
-	}
-
+func exportPackageBindings(ctx context.Context, q *db.Queries, agent db.Agent, notes *agentExportNotes) (map[string]any, error) {
 	bindings := map[string]any{"runner": nil, "enterprise_identity": nil, "dingtalk_account": nil, "bots": []any{}}
 	if agent.RuntimeID.Valid {
 		runtime, err := q.GetAgentRuntimeForWorkspace(ctx, db.GetAgentRuntimeForWorkspaceParams{ID: agent.RuntimeID, WorkspaceID: agent.WorkspaceID})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		label := runtime.Name
 		if runtime.CustomName.Valid && runtime.CustomName.String != "" {
@@ -194,11 +193,55 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 		ref["provider"], ref["runtime_mode"] = runtime.Provider, agent.RuntimeMode
 		bindings["runtime"] = ref
 	}
+	runners, err := q.ListAgentRunnerBindings(ctx, db.ListAgentRunnerBindingsParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
+	if err != nil {
+		return nil, err
+	}
+	if len(runners) > 1 {
+		return nil, errors.New("multiple runner bindings cannot be represented by this manifest version")
+	}
+	if len(runners) == 1 {
+		bindings["runner"] = notes.resource("runner", uuidToString(runners[0].MachineID), runners[0].Name)
+	}
+	identity, err := q.GetAgentEnterpriseIdentity(ctx, db.GetAgentEnterpriseIdentityParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
+	if err == nil {
+		bindings["enterprise_identity"] = notes.resource("enterprise-identity", uuidToString(identity.ID)+":"+identity.RawEmpID, identity.DisplayName)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	account, err := q.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
+	if err == nil {
+		var config agentmessagerouter.DingTalkAccountConfig
+		if err := json.Unmarshal(account.Config,&config); err != nil { return nil, errors.New("invalid stored DingTalk account configuration") }
+		bindings["dingtalk_account"] = notes.resource("dingtalk-account", uuidToString(account.ID)+":"+config.RouterTenantID+":"+config.RouterAccountID, "DingTalk account")
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	bots := []map[string]any{}
+	for _, platform := range []string{"dingtalk", "lark", "slack", "wecom"} {
+		installations, err := q.ListChannelInstallationsByWorkspace(ctx, db.ListChannelInstallationsByWorkspaceParams{WorkspaceID: agent.WorkspaceID, ChannelType: platform})
+		if err != nil {
+			return nil, err
+		}
+		for _, installation := range installations {
+			if installation.AgentID != agent.ID {
+				continue
+			}
+			ref := notes.resource(platform+"-bot", uuidToString(installation.ID), platform+" bot")
+			ref["platform"] = platform
+			bots = append(bots, ref)
+		}
+	}
+	bindings["bots"] = bots
+	return bindings, nil
+}
+
+func exportPackageDisabledRuntimeSkills(ctx context.Context, q *db.Queries, agent db.Agent, notes *agentExportNotes) ([]map[string]any, error) {
 	disabled := []map[string]any{}
 	var storedSkills []DisabledRuntimeSkill
 	if len(agent.DisabledRuntimeSkills) > 0 {
 		if err := json.Unmarshal(agent.DisabledRuntimeSkills, &storedSkills); err != nil {
-			return nil, nil, errors.New("invalid stored runtime skills")
+			return nil, errors.New("invalid stored runtime skills")
 		}
 	}
 	for _, skill := range storedSkills {
@@ -212,49 +255,13 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 		}
 		disabled = append(disabled, item)
 	}
-	manifest["disabled_runtime_skills"] = disabled
-	runners, err := q.ListAgentRunnerBindings(ctx, db.ListAgentRunnerBindingsParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(runners) > 1 {
-		return nil, nil, errors.New("multiple runner bindings cannot be represented by this manifest version")
-	}
-	if len(runners) == 1 {
-		bindings["runner"] = notes.resource("runner", uuidToString(runners[0].MachineID), runners[0].Name)
-	}
-	identity, err := q.GetAgentEnterpriseIdentity(ctx, db.GetAgentEnterpriseIdentityParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
-	if err == nil {
-		bindings["enterprise_identity"] = notes.resource("enterprise-identity", uuidToString(identity.ID), identity.DisplayName)
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, err
-	}
-	account, err := q.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
-	if err == nil {
-		bindings["dingtalk_account"] = notes.resource("dingtalk-account", uuidToString(account.ID), "DingTalk account")
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, err
-	}
-	bots := []map[string]any{}
-	for _, platform := range []string{"dingtalk", "lark", "slack", "wecom"} {
-		installations, err := q.ListChannelInstallationsByWorkspace(ctx, db.ListChannelInstallationsByWorkspaceParams{WorkspaceID: agent.WorkspaceID, ChannelType: platform})
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, installation := range installations {
-			if installation.AgentID != agent.ID {
-				continue
-			}
-			ref := notes.resource(platform+"-bot", uuidToString(installation.ID), platform+" bot")
-			ref["platform"] = platform
-			bots = append(bots, ref)
-		}
-	}
-	bindings["bots"] = bots
-	manifest["bindings"] = bindings
+	return disabled, nil
+}
+
+func exportPackagePlugins(ctx context.Context, q *db.Queries, agent db.Agent, notes *agentExportNotes) ([]map[string]any, error) {
 	plugins, err := q.ListDshPluginsForAgent(ctx, db.ListDshPluginsForAgentParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	pluginRefs := []map[string]any{}
 	for _, plugin := range plugins {
@@ -262,10 +269,13 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 		ref["enabled"] = plugin.Enabled
 		pluginRefs = append(pluginRefs, ref)
 	}
-	manifest["dsh_plugins"] = pluginRefs
+	return pluginRefs, nil
+}
+
+func exportPackageOKRs(ctx context.Context, q *db.Queries, agent db.Agent, notes *agentExportNotes) ([]map[string]any, error) {
 	okrRows, err := q.ListAgentOKRs(ctx, db.ListAgentOKRsParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	okrs := []map[string]any{}
 	objectives := map[string]int{}
@@ -274,14 +284,17 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 			objectives[uuidToString(row.ID)] = len(okrs)
 			okrs = append(okrs, map[string]any{"objective":agentOKRText(row), "key_results":[]string{}})
 		} else if row.Kind == "key_result" {
-			index, ok := objectives[uuidToString(row.ParentID)]; if !ok { return nil, nil, errors.New("invalid stored OKR parent") }
+			index, ok := objectives[uuidToString(row.ParentID)]; if !ok { return nil, errors.New("invalid stored OKR parent") }
 			okrs[index]["key_results"] = append(okrs[index]["key_results"].([]string), agentOKRText(row))
 		}
 	}
-	manifest["okrs"] = okrs
+	return okrs, nil
+}
+
+func exportPackageAccess(ctx context.Context, q *db.Queries, agent db.Agent, notes *agentExportNotes) (map[string]any, error) {
 	targetRows, err := q.ListAgentInvocationTargets(ctx, agent.ID)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	targets := []map[string]any{}
 	for _, target := range targetRows {
@@ -293,33 +306,36 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 				if err == nil {
 					user, err := q.GetUser(ctx, member.UserID)
 					if err != nil {
-						return nil, nil, err
+						return nil, err
 					}
 					label = user.Name
 				} else if !errors.Is(err, pgx.ErrNoRows) {
-					return nil, nil, err
+					return nil, err
 				}
 			}
 			item["ref"] = notes.resource(target.TargetType, uuidToString(target.TargetID), label)["ref"]
 		}
 		targets = append(targets, item)
 	}
-	manifest["access"] = map[string]any{"permission_mode": agent.PermissionMode, "invocation_targets": targets}
+	return map[string]any{"permission_mode": agent.PermissionMode, "invocation_targets": targets}, nil
+}
+
+func exportPackageA2A(ctx context.Context, q *db.Queries, agent db.Agent, notes *agentExportNotes) (map[string]any, error) {
 	endpoint, err := q.GetAgentA2AEndpointByAgent(ctx, agent.ID)
 	if err == nil {
 		var cardSkills any = []any{}
 		if len(endpoint.CardSkills) > 0 {
 			if err := json.Unmarshal(endpoint.CardSkills, &cardSkills); err != nil {
-				return nil, nil, errors.New("invalid stored A2A card skills")
+				return nil, errors.New("invalid stored A2A card skills")
 			}
 		}
 		clients, err := q.ListAgentA2AClientsForOwner(ctx, db.ListAgentA2AClientsForOwnerParams{OwnerUserID: agent.OwnerID, WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		mappings, err := readPackageClientMappings(ctx, q, agent.ID)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		keys := map[string]string{}
 		for key, clientID := range mappings {
@@ -334,12 +350,10 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 			}
 			clientSpecs = append(clientSpecs, map[string]any{"key": key, "name": client.Name, "status": client.Status, "scopes": client.Scopes, "rate_limit_per_minute": client.RateLimitPerMinute, "max_concurrent_tasks": client.MaxConcurrentTasks})
 		}
-		manifest["a2a"] = map[string]any{"enabled": endpoint.Enabled, "card_name": endpoint.CardName, "card_description": endpoint.CardDescription, "card_version": endpoint.CardVersion, "card_skills": cardSkills, "clients": clientSpecs}
+		return map[string]any{"enabled": endpoint.Enabled, "card_name": endpoint.CardName, "card_description": endpoint.CardDescription, "card_version": endpoint.CardVersion, "card_skills": cardSkills, "clients": clientSpecs}, nil
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, err
+		return nil, err
 	} else {
-		manifest["a2a"] = map[string]any{"enabled": false, "clients": []any{}}
+		return map[string]any{"enabled": false, "clients": []any{}}, nil
 	}
-	encodedNotes, err := json.MarshalIndent(notes, "", "  ")
-	return manifest, encodedNotes, err
 }

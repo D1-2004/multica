@@ -2514,6 +2514,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetAgent)
 					r.Get("/source", h.GetAgentSource)
 					r.Get("/export", h.ExportAgent)
+					r.Get("/package-bindings", h.GetAgentPackageBindings)
+					r.With(handler.RequireHumanActor).Post("/package-bindings/confirm", h.ConfirmAgentPackageBinding)
 					r.Get("/source/branches", h.ListAgentSourceBranches)
 					r.Post("/source/preview", h.PreviewAgentSourceSync)
 					// The composed inbound prompt structure for this agent.

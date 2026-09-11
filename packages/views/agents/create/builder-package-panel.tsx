@@ -47,7 +47,7 @@ export function BuilderPackagePanel({ content, onChange, runtimeId, runtimeProvi
       result.warnings?.forEach((warning) => toast.warning(warning));
       // Creation has committed; conversation cleanup must not make it retryable.
       try { await onCreated(); } catch { /* The created Agent remains authoritative. */ }
-      navigation.push(squadId ? paths.squadDetail(squadId) : paths.agentDetail(result.agent.id));
+      navigation.push(requirements?.deferred_bindings.length ? `${paths.agentDetail(result.agent.id)}?view=publish` : squadId ? paths.squadDetail(squadId) : paths.agentDetail(result.agent.id));
     } catch { /* Complete server diagnostics are rendered below. */ }
   };
   const downloadZIP = async () => {

@@ -48,6 +48,7 @@ import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
 import { SceneMemoryTab } from "./tabs/scene-memory-tab";
 import { ExportTab } from "./tabs/export-tab";
+import { PackageBindingsPanel } from "./package-bindings-panel";
 import { PublishTab } from "./tabs/publish-tab";
 import { DigitalEmployeeTab } from "./tabs/digital-employee-tab";
 import { AgentMCPAccessTab } from "./tabs/mcp-access-tab";
@@ -445,6 +446,7 @@ export function AgentOverviewPane({
                 </header>
 
                 <div className="mt-6">
+                  {canEdit && source && <PackageBindingsPanel agentId={agent.id} expanded={effectiveView === "publish"} onNavigate={(tab) => { const view = normalizeDetailView(tab); if (view) requestView(view); }} />}
                   {effectiveView === "digital_employee" && (
                     <DigitalEmployeeTab
                       agent={agent}

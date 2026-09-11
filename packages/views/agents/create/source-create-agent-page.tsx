@@ -69,7 +69,7 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
       });
       setSecrets({});
       result.warnings?.forEach((warning) => toast.warning(warning));
-      navigation.push(paths.agentDetail(result.agent.id));
+      navigation.push(`${paths.agentDetail(result.agent.id)}${requirements?.deferred_bindings.length ? "?view=publish" : ""}`);
     } catch { /* Keep the preview ID for an idempotent retry. */ }
   };
 

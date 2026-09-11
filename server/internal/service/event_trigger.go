@@ -66,13 +66,24 @@ func (s *EventTriggerService) SetEnabledAndInbound(ctx context.Context, agent db
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := SetEventTriggerEnabledAndInboundInTx(ctx,tx,agent,actor,enabled,inbound); err != nil { return err }
+	if err = tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.Notify()
+	return nil
+}
+
+// SetEventTriggerEnabledAndInboundInTx shares configuration semantics with
+// package publication without committing or notifying before its transaction.
+func SetEventTriggerEnabledAndInboundInTx(ctx context.Context, tx pgx.Tx, agent db.Agent, actor pgtype.UUID, enabled bool, inbound *bool) error {
 	// Configuration and its backing automation are one transaction. The agent
 	// lock also serializes the first enable when no configuration exists yet.
-	if _, err = tx.Exec(ctx, `SELECT id FROM agent WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, agent.ID, agent.WorkspaceID); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT id FROM agent WHERE id=$1 AND workspace_id=$2 FOR UPDATE`, agent.ID, agent.WorkspaceID); err != nil {
 		return err
 	}
 	var apID pgtype.UUID
-	err = tx.QueryRow(ctx, `SELECT autopilot_id FROM agent_event_trigger WHERE agent_id=$1 AND workspace_id=$2`, agent.ID, agent.WorkspaceID).Scan(&apID)
+	err := tx.QueryRow(ctx, `SELECT autopilot_id FROM agent_event_trigger WHERE agent_id=$1 AND workspace_id=$2`, agent.ID, agent.WorkspaceID).Scan(&apID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
@@ -102,10 +113,6 @@ func (s *EventTriggerService) SetEnabledAndInbound(ctx context.Context, agent db
 	if err != nil {
 		return err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return err
-	}
-	s.Notify()
 	return nil
 }
 

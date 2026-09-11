@@ -40,7 +40,7 @@ func TestAgentExportIncludesCurrentPlatformConfiguration(t *testing.T) {
 	var manifest struct { Version string; Configuration map[string]any; Bindings map[string]any; Access map[string]any }
 	if err := json.Unmarshal([]byte(files[agentsource.PortableManifestPath]), &manifest); err != nil { t.Fatal(err) }
 	if manifest.Version != "multica.agent/v2" || manifest.Configuration["persona"] != "Current persona" || manifest.Configuration["model"] != "current-model" || manifest.Configuration["chat_session_resume"] != false { t.Fatal("platform configuration missing from exported manifest") }
-	if len(manifest.Configuration) != 23 || manifest.Bindings["runtime"] == nil || manifest.Access["permission_mode"] == nil { t.Fatal("export must include all configuration groups") }
+	if len(manifest.Configuration) != 24 || manifest.Configuration["event_trigger_enabled"] != false || manifest.Bindings["runtime"] == nil || manifest.Access["permission_mode"] == nil { t.Fatal("export must include all configuration groups") }
 	for _, content := range files { if strings.Contains(content, "do-not-export") || strings.Contains(content, "private-header") { t.Fatal("export leaked credentials") } }
 	if !strings.Contains(files[agentsource.PortableManifestPath], "secret_ref") { t.Fatal("credentials must be represented as references") }
 	if _, err := agentsource.ValidateManifestJSON([]byte(files[agentsource.PortableManifestPath])); err != nil { t.Fatal(err) }

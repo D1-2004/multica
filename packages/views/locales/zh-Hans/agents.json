@@ -1,4 +1,19 @@
 {
+  "package_bindings": {
+    "title": "配置包资源绑定",
+    "pending": "{{count}} 项配置包绑定待完成",
+    "open": "查看绑定",
+    "description": "先通过现有配置入口完成账号认证或资源选择，再刷新状态，将包内引用与已核验的资源对应。凭据保留在当前工作区。",
+    "refresh": "刷新状态",
+    "ready": "已确认",
+    "needs_setup": "待确认",
+    "unavailable": "无法核验",
+    "clear": "配置包要求清空选择或解除绑定，请先在配置中完成后再确认。",
+    "configure": "前往配置",
+    "select": "选择已配置的资源",
+    "current": "当前配置",
+    "confirm": "确认引用对应关系"
+  },
   "page": {
     "title": "智能体",
     "tagline": "能领取 issue、留下评论、推进状态的 AI 队友。",

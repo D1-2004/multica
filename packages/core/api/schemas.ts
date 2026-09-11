@@ -4684,3 +4684,13 @@ export const ReusableDingTalkIdentitiesSchema = z.object({
     organizationName: item.organization_name,
   }))),
 }).transform((response) => response.identities);
+
+export const AgentPackageBindingReportSchema = z.object({
+  revision: z.string().min(1),
+  bindings: z.array(z.object({
+    path: z.string().min(1), status: z.string().min(1),
+    declaration: z.unknown().refine((value) => value !== undefined, "required"), current: z.unknown().refine((value) => value !== undefined, "required"),
+    current_fingerprint: z.string(), config_tab: z.string().min(1), message: z.string().default(""),
+  })),
+  resources: z.array(z.object({ ref: z.string().min(1), kind: z.string(), label: z.string() })),
+});

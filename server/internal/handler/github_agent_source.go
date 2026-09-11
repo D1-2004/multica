@@ -416,7 +416,7 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var source db.AgentSource
-	created, err := materializeAgentBundleInTx(r.Context(), qtx, db.CreateAgentParams{
+	createParams := db.CreateAgentParams{
 		WorkspaceID:         wsUUID,
 		Name:                agentName,
 		Description:         agentDescription,
@@ -431,7 +431,19 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		ThinkingLevel:            pgtype.Text{String: request.ThinkingLevel, Valid: request.ThinkingLevel != ""},
 		ServiceTier:              pgtype.Text{String: request.ServiceTier, Valid: request.ServiceTier != ""},
 		ComposioToolkitAllowlist: allowlist,
-	}, permission, manualSkills, func(created db.Agent) error {
+	}
+	if resolved.bundle.Definition != nil {
+		// V2 creates only the instance shell here. All package-owned content is
+		// written once by the shared Import codecs inside this transaction.
+		createParams = db.CreateAgentParams{
+			WorkspaceID:wsUUID, OwnerID:ownerUUID, Name:agentName, Description:agentDescription,
+			RuntimeMode:runtime.RuntimeMode, RuntimeID:runtime.ID, RuntimeConfig:[]byte("{}"),
+			CustomEnv:[]byte("{}"), CustomArgs:[]byte("[]"), MaxConcurrentTasks:6,
+			Visibility:"private", PermissionMode:"private",
+		}
+		permission = resolvedPermission{mode:"private"}
+	}
+	created, err := materializeAgentBundleInTx(r.Context(), qtx, createParams, permission, manualSkills, func(created db.Agent) error {
 		var createErr error
 		if !resolved.installation.ID.Valid {
 			source, createErr = qtx.CreateLocalAgentSource(r.Context(), db.CreateLocalAgentSourceParams{AgentID: created.ID, WorkspaceID: wsUUID, SyncedCommitSha: resolved.bundle.Hash, CreatedBy: ownerUUID})
@@ -445,25 +457,7 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		if createErr != nil {
 			return createErr
 		}
-		if err := definition.apply(r.Context(), qtx, created, ownerUUID); err != nil {
-			return err
-		}
-		for _, compiledSkill := range resolved.bundle.Skills {
-			skillRow, createErr := createSourceSkillInTx(r.Context(), qtx, wsUUID, ownerUUID, resolved, source.ID, compiledSkill)
-			if createErr != nil {
-				return createErr
-			}
-			if createErr = qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{AgentID: created.ID, SkillID: skillRow.ID}); createErr != nil {
-				return createErr
-			}
-			if _, createErr = qtx.SetAgentSkillEnabled(r.Context(), db.SetAgentSkillEnabledParams{AgentID: created.ID, SkillID: skillRow.ID, Enabled: !compiledSkill.Disabled}); createErr != nil {
-				return createErr
-			}
-			if _, createErr = qtx.CreateAgentSourceSkill(r.Context(), db.CreateAgentSourceSkillParams{AgentSourceID: source.ID, SkillID: skillRow.ID, SourcePath: compiledSkill.SourcePath}); createErr != nil {
-				return createErr
-			}
-		}
-		return nil
+		return (agentPackageService{handler:h}).Import(r.Context(), tx, created, source, resolved, request.Secrets, request.DeferredBindings, ownerUUID, true)
 	})
 	if err != nil {
 		writeAgentSourceDatabaseError(w, err)
@@ -478,6 +472,7 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if h.EventTriggers != nil { h.EventTriggers.Notify() }
 	created, err = h.Queries.GetAgent(r.Context(), created.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read created Agent")

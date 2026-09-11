@@ -407,6 +407,10 @@
           "type": "boolean",
           "description": "Allow eligible provider chat session reuse."
         },
+        "event_trigger_enabled": {
+          "type": "boolean",
+          "description": "Enable proactive event processing. Enabling requires inbound coordination; an explicit inbound_coordinator false takes precedence."
+        },
         "task_finished_loop_enabled": {
           "type": "boolean",
           "description": "Return task completion to Coordinator for follow-up."

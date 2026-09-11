@@ -35,8 +35,10 @@ func (h *Handler) previewAgentPackagePublication(w http.ResponseWriter, r *http.
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to save package preview"); return }
 	w.Header().Set("Cache-Control", "no-store")
 	changes := diffPackageState(current, sourceDefinitionFiles(bundle))
+	requirements, err := h.packageRequirementsForAgent(r.Context(),h.Queries,agent,requestUserID(r),bundle)
+	if err != nil { writeAgentSourceDatabaseError(w,err); return }
 	writeJSON(w, http.StatusOK, AgentSourceSyncPreviewResponse{
-		Requirements:packageRequirements(bundle), PreviewID:uuidToString(preview.ID), ExpiresAt:timestampToString(preview.ExpiresAt),
+		Requirements: requirements, PreviewID:uuidToString(preview.ID), ExpiresAt:timestampToString(preview.ExpiresAt),
 		BaseSHA:lockedSource.SyncedCommitSha, ResolvedSHA:bundle.Hash, GitChanges:[]agentsource.FileChange{}, ConfigurationChanges:changes,
 		Warnings:bundle.Warnings, Changed:len(changes) > 0 || lockedSource.SyncedCommitSha != bundle.Hash,
 	})
