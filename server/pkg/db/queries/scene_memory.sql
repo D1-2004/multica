@@ -240,7 +240,8 @@ SET blocked_at = now(),
     updated_at = now()
 WHERE id = @id
   AND lease_token = @lease_token
-  AND lease_expires_at > now();
+  AND lease_expires_at > now()
+  AND dirty_revision = lease_target_dirty_revision;
 
 -- name: ResetSceneMemory :one
 INSERT INTO scene_memory (

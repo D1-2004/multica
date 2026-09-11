@@ -47,7 +47,9 @@ func TestScenePrefetchFirstModelCanPlanWork(t *testing.T) {
 	if len(got.Steps) < 2 || got.Steps[0].Content != "Host prefetch (read-only)" || got.Steps[0].Tool != toolAssocRecall {
 		t.Fatalf("Host read must not be presented as a model call: %#v", got.Steps)
 	}
-	if len(chat.checkParams[0].Messages) != 3 {
+	// system, Agent configuration, turn context, proposal: never the routing
+	// conversation.
+	if len(chat.checkParams[0].Messages) != 4 {
 		t.Fatal("side reviewer context must remain isolated")
 	}
 }
