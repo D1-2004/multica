@@ -106,6 +106,16 @@ Codex 修正后复跑（run 3107713776，commit 52a7e611f，20:09–20:11）：E
 
 不是「缺发送方 bot 标记」。窗口 u1「本次没有生成有效回答…」、u2「默认响应者：default。至少保留一位。 !dev」、u3「收到，我这边也没有新的待办…」都由夏东翔账号发出（`sender_id` 同一个人），Host 无法按发送方区分。第 1、2 轮 Host 以「window has unhandled source」驳回；第 3 轮模型提案 a1 acknowledge(u1)、a2 ignore(u2, reason 系统配置指令)、a3 acknowledge(u3)，Host 覆盖校验通过；审核却返回 `missing_source_refs=[u2,u3]`、reason「Candidate c1 only addresses u1; ignores u2 and u3」。审核只按 `candidate_quote_ref=c1` 这一条回复判覆盖，无视 candidate.actions 里 a2/a3 的存在；模型随后 5 次原样重交（审核缓存命中），耗尽 8 轮，6 次 job 重投共 30 次同 reason。方向：Host 把按 uN 计算的覆盖表（source_ref → action_ref/kind）写进审核输入，`missing_source_refs` 的 schema 说明改为「已有动作但不足以处理该请求的 uN」，并对「reason 声称 ignores uN 而 uN 实际有非 ignore 动作」的裁决按无效审核处理。
 
+### 审核轮前缀缓存（第二步，2026-09-11）
+
+冬翔看了 `d60c8a6368874ef3ae6c97410ed47db0`（正式，「Hi」→「在的。」6.1s：主判断 2.3s / 8.7k token，审核 3.1s / 9.7k token，两次都无 cache_read）后要求先做「让审核轮的 prompt cache 命中」。
+
+对已拉的正式 trace 统计 cache_read：同一 trace 内 round.2 起命中 4.6k–5.1k（system prompt），审核只在 `39427c33` 的 finish_check.2 命中 1152 token，正好是主判断与审核共用的 core 模块；跨轮从未命中，包括 `bf0bcb54` 与 `39427c33` 这对间隔 2 分钟、system prompt 哈希完全相同（9e9e31b7）的轮次。原因：审核背景是一个 map 序列化的 JSON，键按字母排序，`conversation_id`、`history_before` 排在 `job_policy` 前面，前缀在几百 token 处就断。
+
+改动：审核请求拆成 system、Agent 配置段、本轮段、提案段四条消息（见合同文档「审核请求的分段」），字段不增不减。测试 `TestFinishCheckConfigurationSegmentIsStableAcrossTurns`：同一 Agent 两轮不同会话/历史/记忆/读取，前两段字节相同，本轮字段不泄漏进配置段。
+
+待验证：模型网关的前缀缓存是否跨请求生效。主判断的 system prompt 跨轮哈希相同却也没命中，说明网关侧缓存可能是实例本地或存活期很短；预发上连续两轮看 finish_check 的 cache_read 即可判断，不命中就要走显式缓存标记（取决于网关是否支持）。
+
 ## 未做与建议
 
 - 转达不做原语（冬翔 2026-09-11 决定）：代问答复若还涉及事项推进，仍走沙箱 Issue；纯代为通知的场景很少，不为它加 Host 动作。

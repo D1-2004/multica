@@ -676,8 +676,8 @@ func TestFinishCheckMixedActionsReviewBothScopesOnce(t *testing.T) {
 			if err := json.Unmarshal(raw, &messages); err != nil {
 				t.Fatal(err)
 			}
-			if len(messages) != 3 {
-				t.Fatalf("mixed review must retain one system, one background and one proposal: messages=%d", len(messages))
+			if len(messages) != 4 {
+				t.Fatalf("mixed review must retain one system, one configuration, one turn context and one proposal: messages=%d", len(messages))
 			}
 			for _, module := range []string{"core", "finish_check", "finish_check_work"} {
 				if strings.Count(messages[0].Content, "[policy:"+module+"@") != 1 {
@@ -691,7 +691,7 @@ func TestFinishCheckMixedActionsReviewBothScopesOnce(t *testing.T) {
 				Mode      string                                 `json:"review_mode"`
 				Candidate struct{ Actions []CoordinationAction } `json:"candidate"`
 			}
-			if err := json.Unmarshal([]byte(messages[2].Content), &proposal); err != nil {
+			if err := json.Unmarshal([]byte(messages[3].Content), &proposal); err != nil {
 				t.Fatal(err)
 			}
 			if proposal.Mode != "mixed_coordination_actions" || len(proposal.Candidate.Actions) != 2 {
