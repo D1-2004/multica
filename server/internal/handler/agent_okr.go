@@ -184,6 +184,11 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	queries := h.Queries.WithTx(tx)
+	agent, err = queries.GetAgentForUpdate(r.Context(), agent.ID)
+	if err != nil { writeError(w, http.StatusConflict, "Agent no longer exists"); return }
+	if !h.canManageAgent(w, r, agent) { return }
+	previousOKRs, err := queries.ListAgentOKRs(r.Context(), db.ListAgentOKRsParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID})
+	if err != nil { writeError(w, http.StatusInternalServerError, "failed to load current Agent OKRs"); return }
 	reusableLabelIDs, err := queries.ListAgentOKRLabelIDs(r.Context(), db.ListAgentOKRLabelIDsParams{
 		AgentID:     agent.ID,
 		WorkspaceID: agent.WorkspaceID,
@@ -201,14 +206,15 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	isolateLabels := false
+	if source, err := queries.GetAgentSourceByAgentID(r.Context(), agent.ID); err == nil {
+		isolateLabels = source.ID.Valid
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to read Agent source"); return
+	}
+	for _, previous := range previousOKRs { if previous.AuthoredText.Valid { isolateLabels = true; break } }
 	for objectiveIndex, entry := range normalized {
-		objectiveLabel, err := queries.UpsertAgentOKRLabel(r.Context(), db.UpsertAgentOKRLabelParams{
-			WorkspaceID:      agent.WorkspaceID,
-			Name:             agentOKRObjectivePrefix + entry.objective,
-			Description:      agentOKRLabelDescription,
-			Color:            agentOKRObjectiveColor,
-			ReusableLabelIds: reusableLabelIDs,
-		})
+		objectiveLabel, err := upsertPortableOKRLabel(r.Context(), queries, agent, "objective", entry.objective, previousOKRs, reusableLabelIDs, isolateLabels)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) || isUniqueViolation(err) {
 				writeError(w, http.StatusConflict, "objective label name is already used outside this Agent's current OKR set")
@@ -221,6 +227,7 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: agent.WorkspaceID,
 			AgentID:     agent.ID,
 			Kind:        "objective",
+			AuthoredText: pgtype.Text{String:entry.objective, Valid:isolateLabels},
 			LabelID:     objectiveLabel.ID,
 			Position:    int32(objectiveIndex),
 		})
@@ -229,13 +236,7 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for keyResultIndex, keyResult := range entry.keyResults {
-			keyResultLabel, err := queries.UpsertAgentOKRLabel(r.Context(), db.UpsertAgentOKRLabelParams{
-				WorkspaceID:      agent.WorkspaceID,
-				Name:             agentOKRKeyResultPrefix + keyResult,
-				Description:      agentOKRLabelDescription,
-				Color:            agentOKRKeyResultColor,
-				ReusableLabelIds: reusableLabelIDs,
-			})
+			keyResultLabel, err := upsertPortableOKRLabel(r.Context(), queries, agent, "key_result", keyResult, previousOKRs, reusableLabelIDs, isolateLabels)
 			if err != nil {
 				if errors.Is(err, pgx.ErrNoRows) || isUniqueViolation(err) {
 					writeError(w, http.StatusConflict, "key-result label name is already used outside this Agent's current OKR set")
@@ -248,6 +249,7 @@ func (h *Handler) SetAgentOKRs(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID: agent.WorkspaceID,
 				AgentID:     agent.ID,
 				Kind:        "key_result",
+				AuthoredText: pgtype.Text{String:keyResult, Valid:isolateLabels},
 				ParentID:    objectiveRow.ID,
 				LabelID:     keyResultLabel.ID,
 				Position:    int32(keyResultIndex),
@@ -290,7 +292,7 @@ func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpen
 			ID:         uuidToString(row.ID),
 			LabelID:    uuidToString(row.LabelID),
 			Position:   row.Position,
-			Objective:  strings.TrimPrefix(row.LabelName, agentOKRObjectivePrefix),
+			Objective:  agentOKRText(row),
 			Label:      row.LabelName,
 			Color:      row.LabelColor,
 			KeyResults: []AgentOKRKeyResultDTO{},
@@ -313,7 +315,7 @@ func agentOKRsFromRows(rows []db.ListAgentOKRsRow, spend map[string]AgentOKRSpen
 			ID:       uuidToString(row.ID),
 			LabelID:  uuidToString(row.LabelID),
 			Position: row.Position,
-			Text:     strings.TrimPrefix(row.LabelName, agentOKRKeyResultPrefix),
+			Text:     agentOKRText(row),
 			Label:    row.LabelName,
 			Color:    row.LabelColor,
 		}

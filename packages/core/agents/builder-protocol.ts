@@ -7,15 +7,15 @@ import type { AgentDraft } from "./draft";
  *
  * Two asymmetric directions:
  *   - Outbound, the composer's plain text is wrapped in a JSON envelope that
- *     also carries the current draft and the catalogs the builder may pick IDs
+ *     also carries the complete current package and the catalogs the builder may pick IDs
  *     from, so every turn re-states the full decision context.
  *   - Inbound, the builder appends one `<agent_draft>` JSON block to its natural
- *     language reply; the block updates the form and is stripped before the
+ *     language reply plus a complete `<agent_package>` block; both are stripped before the
  *     message is rendered.
  *
  * Both directions are parsed defensively: a CLI-backed model can emit slightly
- * malformed JSON, and a draft that fails to parse must degrade to "no form
- * update" rather than breaking the conversation.
+ * malformed JSON. Legacy summaries are parsed defensively; complete package text
+ * remains editable and is validated by the server before confirmation.
  */
 const BUILDER_INPUT_PREFIX = "MULTICA_AGENT_BUILDER_INPUT\n";
 
@@ -40,6 +40,11 @@ export interface BuilderDraftPayload {
   skill_ids?: unknown;
   permission_scope?: unknown;
   member_ids?: unknown;
+}
+
+export function parseBuilderPackageText(content: string): string | null {
+  const match = content.match(/<agent_package>([\s\S]*)<\/agent_package>/);
+  return match?.[1]?.trim() ?? null;
 }
 
 export function parseBuilderDraft(content: string): BuilderDraftPayload | null {
@@ -124,6 +129,8 @@ export function stripBuilderDraft(content: string): string {
   return content
     .replace(/\s*<agent_draft>[\s\S]*?<\/agent_draft>/g, "")
     .replace(/\s*<agent_draft>[\s\S]*$/, "")
+    .replace(/\s*<agent_package>[\s\S]*<\/agent_package>/g, "")
+    .replace(/\s*<agent_package>[\s\S]*$/, "")
     .trim();
 }
 
@@ -134,12 +141,17 @@ export function encodeBuilderInput(
   members: Array<{ user_id: string; name: string }>,
   runtime: Pick<RuntimeDevice, "id" | "name" | "provider"> | null,
   models: RuntimeModel[] | null,
+  packageSchema?: Record<string, unknown>,
 ): string {
   return (
     BUILDER_INPUT_PREFIX +
     JSON.stringify(
       {
+        protocol: "multica.agent-package/v1",
         user_request: request,
+        output_contract: "Return a complete <agent_package> JSON object with manifest and files, matching agent_schema. Preserve every current field and file. Never create the Agent yourself; the UI validates, previews and confirms it. Include the legacy agent_draft summary before agent_package.",
+        current_package: draft.packageText ?? null,
+        agent_schema: packageSchema ?? null,
         current_draft: {
           name: draft.name,
           description: draft.description,

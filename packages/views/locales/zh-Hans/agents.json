@@ -1,4 +1,19 @@
 {
+  "package_bindings": {
+    "title": "配置包资源绑定",
+    "pending": "{{count}} 项配置包绑定待完成",
+    "open": "查看绑定",
+    "description": "先通过现有配置入口完成账号认证或资源选择，再刷新状态，将包内引用与已核验的资源对应。凭据保留在当前工作区。",
+    "refresh": "刷新状态",
+    "ready": "已确认",
+    "needs_setup": "待确认",
+    "unavailable": "无法核验",
+    "clear": "配置包要求清空选择或解除绑定，请先在配置中完成后再确认。",
+    "configure": "前往配置",
+    "select": "选择已配置的资源",
+    "current": "当前配置",
+    "confirm": "确认引用对应关系"
+  },
   "page": {
     "title": "智能体",
     "tagline": "能领取 issue、留下评论、推进状态的 AI 队友。",
@@ -336,6 +351,18 @@
     "inbound": "入站会话"
   },
   "creation_studio": {
+    "package": {
+      "schema_link": "下载当前使用的 JSON Schema",
+      "zip_publish": "从 ZIP 发布",
+      "git_publish": "从 Git 发布",
+      "zip_hint": "上传新版智能体 ZIP，查看配置变更并确认后，更新当前智能体。",
+      "preserve_git": "此次更新保留现有 Git 仓库连接和已发布的 Git 提交记录。",
+      "builder_title": "智能体配置包",
+      "builder_hint": "Builder 会生成完整的 manifest 和文件。可通过对话调整或直接编辑下方内容，校验并查看预览后再创建。",
+      "contents": "Manifest 和文件",
+      "validate": "校验并预览",
+      "download": "下载智能体 ZIP"
+    },
     "schema": {
       "download": "下载 Schema",
       "downloading": "正在下载...",

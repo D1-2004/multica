@@ -7,13 +7,15 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/agentsource"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
-	agent, source, ok := h.loadGitHubSourceForManage(w, r)
+	agent, source, ok := h.loadPackageSourceForManage(w, r)
 	if !ok { return }
+	r.Body = http.MaxBytesReader(w, r.Body, 4 << 20)
 	var request struct { PreviewID string `json:"preview_id"`; Secrets map[string]string `json:"secrets"`; DeferredBindings []string `json:"deferred_bindings"` }
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -25,7 +27,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	}
 	preview, err := h.readAgentSourcePreview(r, agent.WorkspaceID, request.PreviewID)
 	if err != nil { writeGitHubSourceError(w, err); return }
-	if preview.AgentID != agent.ID || preview.AgentSourceID != source.ID {
+	if preview.AgentID != agent.ID || preview.ExpectedStateHash == "" || (!preview.AppliedAt.Valid && preview.AgentSourceID != source.ID) {
 		writeError(w, http.StatusBadRequest, "preview does not belong to this Agent source"); return
 	}
 	resolved, err := h.resolveAgentSourcePreview(r.Context(), preview)
@@ -48,8 +50,8 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	if !h.canManageAgent(w, r, agent) { return }
 	if agent.ArchivedAt.Valid { writeError(w, http.StatusConflict, "restore the Agent before syncing its source"); return }
 	lockedSource, err := queries.LockAgentSourceByAgentID(r.Context(), agent.ID)
-	if err != nil { writeError(w, http.StatusConflict, "Agent source no longer exists"); return }
-	if lockedSource.ID != preview.AgentSourceID || lockedSource.GithubInstallationID != preview.GithubInstallationID ||
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) { writeError(w, http.StatusInternalServerError, "failed to read Agent source"); return }
+	if lockedSource.ID != preview.AgentSourceID || (preview.GithubInstallationID.Valid && lockedSource.GithubInstallationID != preview.GithubInstallationID) ||
 		lockedSource.SyncedCommitSha != preview.ExpectedSourceSha || lockedSource.ManagedSourceKey.Valid {
 		writeError(w, http.StatusConflict, "Agent source changed after preview; preview again"); return
 	}
@@ -65,25 +67,30 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "Agent runtime is incompatible with the source"); return
 		}
 	}
+	if !lockedSource.ID.Valid {
+		lockedSource, err = queries.CreateLocalAgentSource(r.Context(), db.CreateLocalAgentSourceParams{AgentID:agent.ID, WorkspaceID:agent.WorkspaceID, SyncedCommitSha:resolved.sha, CreatedBy:parseUUID(requestUserID(r))})
+		if err != nil { writeAgentSourceDatabaseError(w, err); return }
+	}
 	configurationChanged := len(diffPackageState(current, sourceDefinitionFiles(resolved.bundle))) > 0
 	changed := configurationChanged || lockedSource.Ref != resolved.ref || lockedSource.SyncedCommitSha != resolved.sha
 	if changed {
-		if err := h.applyPackageSourceConfiguration(r.Context(), queries, agent, resolved, request.Secrets, request.DeferredBindings, parseUUID(requestUserID(r))); err != nil { writeAgentSourceDatabaseError(w, err); return }
-		if _, err := queries.UpdateAgent(r.Context(), gitAgentSourceSnapshotUpdate(agent.ID, resolved.bundle)); err != nil {
-			writeAgentSourceDatabaseError(w, err); return
-		}
-		if err := applySourceSkills(r.Context(), queries, agent, lockedSource, resolved); err != nil {
-			writeAgentSourceDatabaseError(w, err); return
-		}
+		if err := (agentPackageService{handler:h}).Import(r.Context(), tx, agent, lockedSource, resolved, request.Secrets, request.DeferredBindings, parseUUID(requestUserID(r)), false); err != nil { writeAgentSourceDatabaseError(w, err); return }
 	}
-	updatedSource, err := queries.MarkAgentSourceBranchSyncSucceeded(r.Context(), db.MarkAgentSourceBranchSyncSucceededParams{
-		ID:lockedSource.ID, Ref:resolved.ref, SyncedCommitSha:resolved.sha, ManifestPath:agentsource.SourceManifestPath(resolved.bundle),
-	})
-	if err != nil { writeError(w, http.StatusInternalServerError, "failed to record source version"); return }
+	updatedSource := lockedSource
+	// ZIP publication changes configuration but retains an existing Git binding
+	// and its last published Git commit for the next branch diff.
+	if preview.GithubInstallationID.Valid || lockedSource.SourceType == "local" {
+		updatedSource, err = queries.MarkAgentSourceBranchSyncSucceeded(r.Context(), db.MarkAgentSourceBranchSyncSucceededParams{
+			ID:lockedSource.ID, Ref:resolved.ref, SyncedCommitSha:resolved.sha, ManifestPath:agentsource.SourceManifestPath(resolved.bundle),
+		})
+		if err != nil { writeError(w, http.StatusInternalServerError, "failed to record source version"); return }
+	}
+
 	if err := markSourcePreviewApplied(r.Context(), queries, preview, updatedSource, changed); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to record source confirmation"); return
 	}
 	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to commit source sync"); return }
+	if h.EventTriggers != nil { h.EventTriggers.Notify() }
 	if h.DingTalkResponsePolicyNotifier != nil { h.DingTalkResponsePolicyNotifier.NotifyResponsePolicyChanged() }
 	h.publishAgentSourceSync(r, agent, changed)
 	writeJSON(w, http.StatusOK, AgentSourceSyncResponse{Source:agentSourceToResponse(updatedSource), Changed:changed, Warnings:resolved.bundle.Warnings})

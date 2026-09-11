@@ -48,6 +48,7 @@ import { ActorIssuesPanel } from "../../common/actor-issues-panel";
 import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
 import { SceneMemoryTab } from "./tabs/scene-memory-tab";
 import { ExportTab } from "./tabs/export-tab";
+import { PackageBindingsPanel } from "./package-bindings-panel";
 import { PublishTab } from "./tabs/publish-tab";
 import { DigitalEmployeeTab } from "./tabs/digital-employee-tab";
 import { AgentMCPAccessTab } from "./tabs/mcp-access-tab";
@@ -445,6 +446,7 @@ export function AgentOverviewPane({
                 </header>
 
                 <div className="mt-6">
+                  {canEdit && source && <PackageBindingsPanel agentId={agent.id} expanded={effectiveView === "publish"} onNavigate={(tab) => { const view = normalizeDetailView(tab); if (view) requestView(view); }} />}
                   {effectiveView === "digital_employee" && (
                     <DigitalEmployeeTab
                       agent={agent}
@@ -534,7 +536,7 @@ export function AgentOverviewPane({
                   )}
                   {effectiveView === "export" && <ExportTab agentId={agent.id} canEdit={canEdit} />}
                   {effectiveView === "publish" && (
-                    <PublishTab key={`${agent.id}:${source?.ref}:${source?.synced_commit_sha}`} source={source} canEdit={canEdit} />
+                    <PublishTab agentId={agent.id} key={`${agent.id}:${source?.ref}:${source?.synced_commit_sha}`} source={source} canEdit={canEdit} />
                   )}
                   {effectiveView === "access" && (
                     <AgentAccessSettings

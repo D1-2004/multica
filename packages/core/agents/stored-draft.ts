@@ -8,6 +8,7 @@ export function toStoredAgentDraft(
   appliedMessageId: string | null,
 ): StoredAgentDraft {
   return {
+    ...(draft.packageText === undefined ? {} : { package_text: draft.packageText }),
     name: draft.name,
     description: draft.description,
     instructions: draft.instructions,
@@ -34,6 +35,7 @@ export function fromStoredAgentDraft(
 ): AgentDraft {
   return {
     ...EMPTY_AGENT_DRAFT,
+    ...(stored.package_text === undefined ? {} : { packageText: stored.package_text }),
     name: stored.name,
     description: stored.description,
     instructions: stored.instructions,

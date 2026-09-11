@@ -183,7 +183,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | v2 publication and stale state | `internal/handler/agent_package_sync.go`; `agent_source_preview.go` | `TestV2PackagePublicationAppliesConfigurationAndRejectsStalePreview` |
 | Builder's instructions and hidden carrier | `internal/handler/agent_builder.go` `agentBuilderInstructions` / `CreateAgentBuilderSession` | Read the embedded instructions and carrier transaction |
 | Builder skill loading | `internal/service/task.go` `LoadAgentSkills`; `builtin_skills.go` `BuiltinSkills` | Built-ins append to assigned workspace skills |
-| Builder confirms an ordinary draft | `packages/views/agents/create/use-create-agent-submit.ts` `useCreateAgentSubmit` | Calls `api.createAgent`, not package import |
+| Builder prepares and confirms a complete package | `internal/handler/agent_builder_package.go`; `packages/views/agents/create/builder-package-panel.tsx` | `TestBuilderPackagePreparesDownloadsAndCreatesThroughSharedConfirmation` |
 | Shared local/Git UI | `packages/views/agents/create/source-create-agent-page.tsx` `SourceCreateAgentPage` | Local/Git differ only in acquisition inputs |
 
 ### Protocol history
@@ -227,3 +227,15 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
 - `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
 - Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.
+
+## Package publication additions
+
+| Contract | Source | Verification |
+| --- | --- | --- |
+| ZIP update / stale guard / Git binding preservation | `internal/handler/agent_package_publish.go`; `agent_source_sync.go` | `TestZIPPublicationUpdatesExistingAgentsAndPreservesGitSource` |
+| Complete error tree and Schema link | `internal/agentsource/schema.go`; `packages/views/agents/create/package-error.tsx` | `TestManifestSchemaDoesNotTruncateIssues`; `builder-package-panel.test.tsx` |
+| Portable OKR text and independent labels | `internal/handler/agent_package_okr.go`; `migrations/9222_agent_okr_authored_text.up.sql` | `TestCompleteExamplePackageUploadAndExport` |
+| Owned Builder prompt upgrade | `internal/handler/agent_builder_package.go`; `chat.go` | `TestBuilderPackageContractUpgradeOnlyTouchesOwnedSystemBuilder` |
+
+- 2026-09-10: Added source locations for complete package creation, publication and
+  error handling. Reason: keep the built-in creation skill aligned with the live protocol.

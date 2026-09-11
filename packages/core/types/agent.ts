@@ -737,6 +737,7 @@ export type AgentPermissionScope = "private" | "workspace" | "members";
  * over edits the user made after it.
  */
 export interface StoredAgentDraft {
+  package_text?: string;
   name: string;
   description: string;
   instructions: string;

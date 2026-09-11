@@ -23,6 +23,8 @@ export type { AgentPermissionScope };
  * validated, seeded and submitted the same way regardless of entry point.
  */
 export interface AgentDraft {
+  /** Full editable Builder manifest/files envelope, including unfinished edits. */
+  packageText?: string;
   name: string;
   description: string;
   instructions: string;

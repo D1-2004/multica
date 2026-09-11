@@ -32,3 +32,26 @@ export interface CreateAgentPackageRequest {
   secrets?: Record<string, string>;
   deferred_bindings?: string[];
 }
+
+export interface AgentPackageBinding {
+  path: string;
+  status: string;
+  declaration: unknown;
+  current: unknown;
+  current_fingerprint: string;
+  config_tab: string;
+  message: string;
+}
+
+export interface AgentPackageBindingReport {
+  revision: string;
+  bindings: AgentPackageBinding[];
+  resources: { ref: string; kind: string; label: string }[];
+}
+
+export interface ConfirmAgentPackageBindingRequest {
+  path: string;
+  revision: string;
+  current_fingerprint: string;
+  mappings: Record<string, string>;
+}

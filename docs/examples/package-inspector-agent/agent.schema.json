@@ -15,7 +15,9 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^[^/\\\\\\x00-\\x1f]+(/[^/\\\\\\x00-\\x1f]+)*$",
-      "not": { "pattern": "(^|/)\\.{1,2}(/|$)" },
+      "not": {
+        "pattern": "(^|/)\\.{1,2}(/|$)"
+      },
       "description": "Relative repository path. The importer also checks unique and non-overlapping skill paths, text content and UTF-8 byte limits."
     },
     "v1": {
@@ -79,6 +81,9 @@
               }
             }
           }
+        },
+        "coordinator_contract": {
+          "$ref": "#/$defs/coordinatorContract"
         }
       }
     },
@@ -401,6 +406,10 @@
         "chat_session_resume": {
           "type": "boolean",
           "description": "Allow eligible provider chat session reuse."
+        },
+        "event_trigger_enabled": {
+          "type": "boolean",
+          "description": "Enable proactive event processing. Enabling requires inbound coordination; an explicit inbound_coordinator false takes precedence."
         },
         "task_finished_loop_enabled": {
           "type": "boolean",
@@ -1046,10 +1055,80 @@
         },
         "a2a": {
           "$ref": "#/$defs/a2a"
+        },
+        "coordinator_contract": {
+          "$ref": "#/$defs/coordinatorContract"
         }
       },
       "title": "Multica Agent Source v2",
       "description": "Full Agent package configuration. Local ZIP and Git creation use this contract; destination resource bindings and secret references require explicit resolution."
+    },
+    "coordinatorContract": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "scope"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "scope": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1600,
+              "pattern": "\\S"
+            },
+            "must_delegate": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1600,
+                "pattern": "\\S"
+              }
+            },
+            "constraints": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1600,
+                "pattern": "\\S"
+              }
+            },
+            "clarify_when": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1600,
+                "pattern": "\\S"
+              }
+            },
+            "source_instructions_sha256": {
+              "type": "string",
+              "pattern": "^([0-9a-f]{64})?$"
+            }
+          }
+        }
+      ],
+      "description": "An authored Coordinator routing contract; it only narrows platform actions. The server validates at most 1600 Unicode code points for the canonical object including the source hash. Omit the hash for a new reviewed contract; keep existing hashes when copying, including stale versions."
     }
   }
 }

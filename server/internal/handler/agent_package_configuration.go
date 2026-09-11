@@ -26,17 +26,30 @@ type PackageRequirements struct {
 type packageConfiguration struct {
 	Configuration UpdateAgentRequest `json:"configuration"`
 	Bindings struct { Runtime struct { Ref string `json:"ref"`; Provider string `json:"provider"`; RuntimeMode string `json:"runtime_mode"` } `json:"runtime"` } `json:"bindings"`
-	DisabledRuntimeSkills []struct {
+	DisabledRuntimeSkills []portableRuntimeSkill `json:"disabled_runtime_skills"`
+	OKRs []portableOKR `json:"okrs"`
+	A2A *portableA2A `json:"a2a"`
+	resolved map[string]json.RawMessage
+	warnings []string
+}
+
+type portableRuntimeSkill struct {
 		RuntimeRef string `json:"runtime_ref"`
-		DisabledRuntimeSkill
-	} `json:"disabled_runtime_skills"`
-	OKRs []struct { Objective string `json:"objective"`; KeyResults []string `json:"key_results"` } `json:"okrs"`
-	A2A *struct {
-		Enabled *bool `json:"enabled"`
-		CardName *string `json:"card_name"`
-		CardDescription *string `json:"card_description"`
-		CardVersion *string `json:"card_version"`
-		CardSkills json.RawMessage `json:"card_skills"`
+		Provider string `json:"provider"`
+		Root string `json:"root"`
+		Key string `json:"key"`
+		Name string `json:"name,omitempty"`
+		Plugin string `json:"plugin,omitempty"`
+	}
+
+type portableOKR struct { Objective string `json:"objective"`; KeyResults []string `json:"key_results"` }
+
+type portableA2A struct {
+		Enabled *bool `json:"enabled,omitempty"`
+		CardName *string `json:"card_name,omitempty"`
+		CardDescription *string `json:"card_description,omitempty"`
+		CardVersion *string `json:"card_version,omitempty"`
+		CardSkills json.RawMessage `json:"card_skills,omitempty"`
 		Clients []struct {
 			Key string `json:"key"`
 			Name string `json:"name"`
@@ -45,9 +58,7 @@ type packageConfiguration struct {
 			RateLimit *int32 `json:"rate_limit_per_minute"`
 			MaxConcurrent *int32 `json:"max_concurrent_tasks"`
 		} `json:"clients"`
-	} `json:"a2a"`
-	warnings []string
-}
+	}
 
 func packageRequirements(bundle agentsource.Bundle) PackageRequirements {
 	result := PackageRequirements{Secrets:[]string{}, DeferredBindings:[]string{}}
@@ -136,6 +147,7 @@ func preparePackageConfiguration(request *CreateGitHubAgentRequest, raw map[stri
 		if err := json.Unmarshal(encoded, &request.CreateAgentRequest); err != nil { return result, err }
 		raw["invocation_targets"], _ = json.Marshal(access["invocation_targets"])
 	}
+	if err := json.Unmarshal(encoded, &result.resolved); err != nil { return result, err }
 	return result, nil
 }
 
@@ -153,7 +165,7 @@ func optionalPackageBool(value *bool) pgtype.Bool {
 // apply executes inside the same transaction as the Agent and its skills.
 // It writes definition data only. External identities and credential issuance
 // stay in their existing destination workflows and require explicit deferral.
-func (definition packageConfiguration) apply(ctx context.Context, q *db.Queries, agent db.Agent, actorID pgtype.UUID) error {
+func (definition packageConfiguration) importConfiguration(ctx context.Context, q *db.Queries, agent db.Agent, actorID pgtype.UUID) error {
 	c := definition.Configuration
 	params := db.UpdateAgentParams{ID:agent.ID, DispatchAlwaysNewIssue:optionalPackageBool(c.DispatchAlwaysNewIssue)}
 	if c.DispatchPromptOverrides != nil { params.DispatchPromptOverrides, _ = json.Marshal(c.DispatchPromptOverrides) }
@@ -168,12 +180,22 @@ func (definition packageConfiguration) apply(ctx context.Context, q *db.Queries,
 		if c.Persona != nil { persona = *c.Persona }; if c.ReplyTone != nil { tone = *c.ReplyTone }
 		if err := q.UpdateAgentVoice(ctx, db.UpdateAgentVoiceParams{ID:agent.ID, Persona:persona, ReplyTone:tone}); err != nil { return err }
 	}
+	return nil
+}
+
+func (definition packageConfiguration) importDisabledRuntimeSkills(ctx context.Context, q *db.Queries, agent db.Agent, actorID pgtype.UUID) error {
 	if definition.DisabledRuntimeSkills != nil {
 		skills := []DisabledRuntimeSkill{}
-		for _, entry := range definition.DisabledRuntimeSkills { item := entry.DisabledRuntimeSkill; item.RuntimeID = uuidToString(agent.RuntimeID); skills = append(skills, item) }
+		for _, entry := range definition.DisabledRuntimeSkills { item := DisabledRuntimeSkill{RuntimeID:uuidToString(agent.RuntimeID),Provider:entry.Provider,Root:entry.Root,Key:entry.Key,Name:entry.Name,Plugin:entry.Plugin}; skills = append(skills, item) }
 		encoded, _ := json.Marshal(skills)
 		if _, err := q.UpdateAgentDisabledRuntimeSkills(ctx, db.UpdateAgentDisabledRuntimeSkillsParams{ID:agent.ID, DisabledRuntimeSkills:encoded}); err != nil { return err }
 	}
+	return nil
+}
+
+func (definition packageConfiguration) importOKRs(ctx context.Context, q *db.Queries, agent db.Agent, actorID pgtype.UUID) error {
+	previousOKRs, err := q.ListAgentOKRs(ctx, db.ListAgentOKRsParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID})
+	if err != nil { return err }
 	reusableLabels := []pgtype.UUID{}
 	if definition.OKRs != nil {
 		var err error
@@ -182,16 +204,20 @@ func (definition packageConfiguration) apply(ctx context.Context, q *db.Queries,
 		if err := q.DeleteAgentOKRsByAgent(ctx, db.DeleteAgentOKRsByAgentParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID}); err != nil { return err }
 	}
 	for index, entry := range definition.OKRs {
-		label, err := q.UpsertAgentOKRLabel(ctx, db.UpsertAgentOKRLabelParams{WorkspaceID:agent.WorkspaceID, Name:agentOKRObjectivePrefix + strings.TrimSpace(entry.Objective), Description:agentOKRLabelDescription, Color:agentOKRObjectiveColor, ReusableLabelIds:reusableLabels})
-		if err != nil { return sourceRequestError(http.StatusConflict, "an OKR objective label already exists; choose a distinct objective") }
-		objective, err := q.CreateAgentOKR(ctx, db.CreateAgentOKRParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, Kind:"objective", LabelID:label.ID, Position:int32(index)})
+		label, err := upsertPortableOKRLabel(ctx, q, agent, "objective", entry.Objective, previousOKRs, reusableLabels, true)
+		if err != nil { return err }
+		objective, err := q.CreateAgentOKR(ctx, db.CreateAgentOKRParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, Kind:"objective", LabelID:label.ID, Position:int32(index), AuthoredText:pgtype.Text{String:strings.TrimSpace(entry.Objective), Valid:true}})
 		if err != nil { return err }
 		for position, text := range entry.KeyResults {
-			label, err := q.UpsertAgentOKRLabel(ctx, db.UpsertAgentOKRLabelParams{WorkspaceID:agent.WorkspaceID, Name:agentOKRKeyResultPrefix + strings.TrimSpace(text), Description:agentOKRLabelDescription, Color:agentOKRKeyResultColor, ReusableLabelIds:reusableLabels})
-			if err != nil { return sourceRequestError(http.StatusConflict, "an OKR key-result label already exists; choose a distinct key result") }
-			if _, err := q.CreateAgentOKR(ctx, db.CreateAgentOKRParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, Kind:"key_result", ParentID:objective.ID, LabelID:label.ID, Position:int32(position)}); err != nil { return err }
+			label, err := upsertPortableOKRLabel(ctx, q, agent, "key_result", text, previousOKRs, reusableLabels, true)
+			if err != nil { return err }
+			if _, err := q.CreateAgentOKR(ctx, db.CreateAgentOKRParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, Kind:"key_result", ParentID:objective.ID, LabelID:label.ID, Position:int32(position), AuthoredText:pgtype.Text{String:strings.TrimSpace(text), Valid:true}}); err != nil { return err }
 		}
 	}
+	return nil
+}
+
+func (definition packageConfiguration) importA2A(ctx context.Context, q *db.Queries, agent db.Agent, actorID pgtype.UUID) error {
 	if definition.A2A != nil {
 		a := definition.A2A
 		endpoint, err := q.GetAgentA2AEndpointByAgent(ctx, agent.ID)
@@ -237,6 +263,7 @@ func (definition packageConfiguration) apply(ctx context.Context, q *db.Queries,
 	}
 	return nil
 }
+
 
 func (h *Handler) hydrateImportedAgent(ctx context.Context, response *AgentResponse, id pgtype.UUID) {
 	h.hydrateChatSessionResume(ctx, response, id)

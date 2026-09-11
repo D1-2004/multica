@@ -396,8 +396,8 @@ copied by UUID. Deferred member-based access creates a private Agent. Runtime
 requirements and disabled runtime skills are checked against the chosen runtime.
 The Agent, configuration, OKRs, A2A policies, exclusive workspace skills and files
 are written in one transaction. Duplicate confirmation returns the same Agent.
-Existing OKR label conflicts fail atomically instead of taking over another
-Agent's labels. A2A policies do not include credentials or mint new tokens.
+Package OKRs retain authored text separately and allocate independent labels per Agent.
+Repeat imports are allowed; updates reuse only the current Agent's exclusive labels. A2A policies do not include credentials or mint new tokens.
 
 For an existing Git Agent, preview `POST /api/agents/{id}/source/preview` with
 `{"ref":"<branch>"}` and review `git_changes` and `configuration_changes`.
@@ -412,11 +412,26 @@ v2 publishes the manifest name and its description when declared.
 including disabled skills and supporting files. Secrets become references;
 runtime history, credentials and platform system instructions are excluded.
 
-The AI Builder is a separate draft conversation: a hidden system Agent returns
-`<agent_draft>` and the user confirms the ordinary `POST /api/agents` form.
-Builder knows this package protocol but does not generate/upload ZIPs itself.
-Its draft covers name, description, instructions, model, selected workspace skill
-IDs and invocation access; do not claim it expresses every v2 schema field.
+The AI Builder emits a complete `<agent_package>` object containing `manifest`
+and `files`, and an `agent_draft` summary for older clients. The server-owned
+prompt includes the current Schema. Preserve every current manifest field and
+referenced file while revising a package. Do not put credentials or real account
+bindings in the response. The UI calls `POST /api/workspaces/{id}/agent-packages/prepare`,
+reviews the validated snapshot, and confirms through the same package create API.
+`GET /api/workspaces/{id}/agent-packages/{previewId}/download` downloads that
+caller's validated package, suitable for ZIP upload or a Git repository.
+
+An existing ordinary Agent can also upload a ZIP to
+`POST /api/agents/{id}/source/preview` using `application/zip` or multipart `file`.
+Review the complete configuration diff, then confirm through `source/sync`.
+This updates the existing Agent, preserves its environment bindings and any Git
+connection/last Git commit, and creates local source provenance only when no
+source existed. Source-managed skills are replaced; other assigned skills remain.
+
+Import errors retain full validator messages, all issues and the JSON Schema
+DetailedOutput tree, with `schema_url: /api/agent-schema`. File and JSON errors
+identify the offending path or byte location. The UI keeps details visible;
+fix the package and preview it again before confirmation.
 
 `references/creating-agents-source-map.md` maps every contract above to its
 `file:line` on the current tree, the runtime effect, and a safe read-only
@@ -454,3 +469,7 @@ Legacy event Autopilots are retained as history and only drain previously admitt
 The task-finished follow-up setting still controls automatic completion reports.
 Configuration and implementation map to `event_trigger.go`, `agent_event_trigger.go`,
 `proactive_conversation.go`, `inbound_coordinator_job.go`, and `coordinator_follow_up.go`.
+
+- 2026-09-10: Added ZIP publication, complete Builder packages and downloads,
+  independently owned OKR labels, and complete schema diagnostics. Reason: allow
+  package-driven updates and repeat imports without losing configuration or error context.

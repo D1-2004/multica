@@ -1,5 +1,7 @@
 "use client";
 
+import { PackageError } from "./package-error";
+
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -67,7 +69,7 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
       });
       setSecrets({});
       result.warnings?.forEach((warning) => toast.warning(warning));
-      navigation.push(paths.agentDetail(result.agent.id));
+      navigation.push(`${paths.agentDetail(result.agent.id)}${requirements?.deferred_bindings.length ? "?view=publish" : ""}`);
     } catch { /* Keep the preview ID for an idempotent retry. */ }
   };
 
@@ -127,7 +129,8 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
             </div>
           )}
         </div>
-        <CreateAgentFooter canCreate={canCreate} creating={createMutation.isPending} squad={!!squadId} error={error instanceof Error ? error.message : null} onCreate={() => void handleCreate()} />
+        <PackageError error={error} />
+        <CreateAgentFooter canCreate={canCreate} creating={createMutation.isPending} squad={!!squadId} error={null} onCreate={() => void handleCreate()} />
       </div>
     </AgentCreateShell>
   );

@@ -1,7 +1,7 @@
 import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
 import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
-import type { AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
-import { AgentPackagePreviewSchema } from "./schemas";
+import type { AgentPackageBindingReport, ConfirmAgentPackageBindingRequest, AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
+import { AgentPackageBindingReportSchema, AgentPackagePreviewSchema } from "./schemas";
 import type {
   Issue,
   IssuePriority,
@@ -804,7 +804,9 @@ export class ApiClient {
       this.logger[logLevel](`← ${res.status} ${path}`, {
         rid,
         duration: `${Date.now() - start}ms`,
-        error: message,
+        // Validator messages may quote submitted values. Keep them in the UI,
+        // never in client telemetry.
+        error: body && typeof body === "object" && "code" in body && (body.code === "invalid_agent_manifest" || body.code === "invalid_agent_package") ? String(body.code) : message,
       });
       throw new ApiError(message, res.status, res.statusText, body);
     }
@@ -5622,6 +5624,20 @@ export class ApiClient {
     );
   }
 
+  async getAgentPackageBindings(agentId: string): Promise<AgentPackageBindingReport> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/package-bindings`);
+    const result = parseWithFallback<AgentPackageBindingReport | null>(raw, AgentPackageBindingReportSchema, null, { endpoint: "GET /api/agents/:id/package-bindings", includeReceived: false });
+    if (!result) throw new Error("Invalid Agent package binding response");
+    return result;
+  }
+
+  async confirmAgentPackageBinding(agentId: string, request: ConfirmAgentPackageBindingRequest): Promise<AgentPackageBindingReport> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/package-bindings/confirm`, { method: "POST", body: JSON.stringify(request) });
+    const result = parseWithFallback<AgentPackageBindingReport | null>(raw, AgentPackageBindingReportSchema, null, { endpoint: "POST /api/agents/:id/package-bindings/confirm", includeReceived: false });
+    if (!result) throw new Error("Invalid Agent package binding response");
+    return result;
+  }
+
   async previewAgentPackage(workspaceId: string, file: Blob): Promise<AgentPackagePreview> {
     if (!file.size || file.size > 40 * 1024 * 1024) throw new Error("Agent ZIP must be between 1 byte and 40 MiB");
     const response = await this.fetchRaw(`/api/workspaces/${workspaceId}/agent-packages/preview`, {
@@ -5630,6 +5646,42 @@ export class ApiClient {
     const raw: unknown = await response.json();
     const result = parseWithFallback<AgentPackagePreview | null>(raw, AgentPackagePreviewSchema, null, { endpoint: "POST /api/workspaces/:id/agent-packages/preview", includeReceived: false });
     if (!result) throw new Error("Invalid Agent package preview response");
+    return result;
+  }
+
+  getAgentSchemaUrl(): string {
+    return `${this.baseUrl}/api/agent-schema`;
+  }
+
+  async getAgentManifestSchema(): Promise<Record<string, unknown>> {
+    const blob = await this.downloadAgentSchema();
+    const raw: unknown = JSON.parse(await blob.text());
+    const result = parseWithFallback<Record<string, unknown> | null>(raw, AgentManifestSchemaDownloadSchema, null, { endpoint: "GET /api/agent-schema", includeReceived: false });
+    if (!result) throw new Error("Invalid agent schema response");
+    return result;
+  }
+
+  async prepareAgentPackage(workspaceId: string, content: string): Promise<AgentPackagePreview> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/agent-packages/prepare`, { method: "POST", body: content });
+    const result = parseWithFallback<AgentPackagePreview | null>(raw, AgentPackagePreviewSchema, null, { endpoint: "POST /api/workspaces/:id/agent-packages/prepare", includeReceived: false });
+    if (!result) throw new Error("Invalid Agent package preview response");
+    return result;
+  }
+
+  async downloadPreparedAgentPackage(workspaceId: string, previewId: string): Promise<Blob> {
+    const response = await this.fetchRaw(`/api/workspaces/${workspaceId}/agent-packages/${encodeURIComponent(previewId)}/download`);
+    if (response.headers.get("content-type")?.split(";")[0] !== "application/zip") throw new Error("Invalid Agent package download response");
+    const blob = await response.blob();
+    if (!blob.size) throw new Error("Empty Agent package download response");
+    return blob;
+  }
+
+  async previewAgentPackagePublication(agentId: string, file: Blob): Promise<AgentSourceSyncPreview> {
+    if (!file.size || file.size > 40 * 1024 * 1024) throw new Error("Agent ZIP must be between 1 byte and 40 MiB");
+    const response = await this.fetchRaw(`/api/agents/${encodeURIComponent(agentId)}/source/preview`, { method: "POST", headers: { "Content-Type": "application/zip" }, body: file });
+    const raw: unknown = await response.json();
+    const result = parseWithFallback<AgentSourceSyncPreview | null>(raw, AgentSourceSyncPreviewSchema, null, { endpoint: "POST /api/agents/:id/source/preview", includeReceived: false });
+    if (!result?.preview_id || !result.resolved_sha) throw new Error("Invalid Agent package publication preview");
     return result;
   }
 

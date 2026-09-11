@@ -24,6 +24,8 @@ import {
   encodeBuilderInput,
   mergeBuilderDraft,
   parseBuilderDraft,
+  parseBuilderPackageText,
+  agentManifestSchemaOptions,
   stripBuilderDraft,
 } from "@multica/core/agents";
 import {
@@ -31,13 +33,12 @@ import {
   runtimeModelsOptions,
 } from "@multica/core/runtimes";
 import type { AgentBuilderSessionSummary } from "@multica/core/types";
-import { AgentConfigurationPanel } from "./agent-configuration-panel";
+import { BuilderPackagePanel } from "./builder-package-panel";
+import { RuntimePicker } from "../components/runtime-picker";
 import { BuilderConversation } from "./builder-conversation";
-import { CreateAgentFooter } from "./create-agent-footer";
 import { useBuilderDraftSync } from "./use-builder-draft-sync";
 import { useBuilderSession } from "./use-builder-session";
 import { useCreateAgentForm } from "./use-create-agent-form";
-import { useCreateAgentSubmit } from "./use-create-agent-submit";
 import { useT } from "../../i18n";
 
 /**
@@ -102,6 +103,8 @@ export function BuilderWorkspace({
     setDraft,
   });
 
+  const packageSchema = useQuery(agentManifestSchemaOptions());
+
   const builderModelsQuery = useQuery(
     runtimeModelsOptions(
       selectedRuntime?.status === "online" ? selectedRuntime.id : null,
@@ -135,6 +138,7 @@ export function BuilderWorkspace({
     members: form.members,
     selectedRuntime,
     builderModelCatalog,
+    packageSchema: packageSchema.data,
   });
   encodeContext.current = {
     draft,
@@ -142,6 +146,7 @@ export function BuilderWorkspace({
     members: form.members,
     selectedRuntime,
     builderModelCatalog,
+    packageSchema: packageSchema.data,
   };
 
   const builder = useBuilderSession({
@@ -155,18 +160,9 @@ export function BuilderWorkspace({
         context.members,
         context.selectedRuntime,
         context.builderModelCatalog,
+        context.packageSchema,
       );
     },
-  });
-
-  const submit = useCreateAgentSubmit({
-    draft,
-    runtimeId: selectedRuntime?.id ?? null,
-    squadId,
-    template: "agent_builder",
-    // The agent is already committed here, so builder cleanup must never turn
-    // a successful create into a retryable create error.
-    onCreated: () => builder.archiveAfterCreate(),
   });
 
   const skillIdSet = useMemo(
@@ -185,7 +181,7 @@ export function BuilderWorkspace({
     .reverse()
     .find(
       (message) =>
-        message.role === "assistant" && parseBuilderDraft(message.content),
+        message.role === "assistant" && (parseBuilderPackageText(message.content) !== null || parseBuilderDraft(message.content)),
     );
   const latestDraftMessageId = latestDraftMessage?.id;
   const latestDraftMessageContent = latestDraftMessage?.content;
@@ -198,7 +194,7 @@ export function BuilderWorkspace({
     // Gated on the restore: merging a reply into the form before the stored
     // configuration lands would be overwritten a tick later, and the merge
     // would have been computed against an empty draft.
-    if (!restored) return;
+    if (!restored || builder.pending) return;
     if (
       !latestDraftMessageId ||
       !latestDraftMessageContent ||
@@ -207,18 +203,15 @@ export function BuilderWorkspace({
       return;
     }
     const payload = parseBuilderDraft(latestDraftMessageContent);
-    if (!payload) return;
+    const packageText = parseBuilderPackageText(latestDraftMessageContent);
+    if (!payload && packageText === null) return;
     markApplied(latestDraftMessageId);
-    setDraft((current) =>
-      mergeBuilderDraft(
-        current,
-        payload,
-        skillIdSet,
-        memberIdSet,
-        validBuilderModelIds,
-      ),
-    );
+    setDraft((current) => ({
+      ...(payload ? mergeBuilderDraft(current, payload, skillIdSet, memberIdSet, validBuilderModelIds) : current),
+      packageText: packageText ?? "",
+    }));
   }, [
+    builder.pending,
     latestDraftMessageContent,
     latestDraftMessageId,
     markApplied,
@@ -263,12 +256,6 @@ export function BuilderWorkspace({
     // of keeping values it may not serve.
     setDraft((current) => applyDraftRuntimeChange(current, bound));
   };
-
-  const canCreate =
-    draft.name.trim().length > 0 &&
-    form.draftReady &&
-    !submit.creating &&
-    !builder.pending;
 
   // No beforeunload guard here on purpose: the conversation lives on the server
   // and the configuration autosaves, so there is nothing a reload can lose. The
@@ -322,52 +309,18 @@ export function BuilderWorkspace({
           minSize={340}
           groupResizeBehavior="preserve-pixel-size"
         >
-          <div className="flex h-full min-h-0 flex-col border-l bg-muted/10">
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <div className="mx-auto max-w-2xl px-5 py-6">
-                <div className="mb-6">
-                  <h2 className="text-title-sm font-semibold tracking-tight">
-                    {t(($) => $.creation_studio.live_draft)}
-                  </h2>
-                  <p className="mt-1 text-caption text-muted-foreground">
-                    {t(($) => $.creation_studio.live_draft_hint)}
-                  </p>
-                </div>
-                <AgentConfigurationPanel
-                  compact
-                  draft={draft}
-                  onChange={setDraft}
-                  runtimes={form.runtimes}
-                  runtimesLoading={form.runtimesLoading}
-                  members={form.members}
-                  currentUserId={form.currentUserId}
-                  nameError={submit.nameError}
-                  onNameChange={(name) => {
-                    submit.clearNameError();
-                    setDraft((current) => ({ ...current, name }));
-                  }}
-                  onRuntimeSelect={(runtimeId) => {
-                    void handleRuntimeSelect(runtimeId);
-                  }}
-                  runtimeSwitchPending={builder.pending}
-                  // Also locked while the carrier's runtime is unknown, so the
-                  // picker cannot offer a switch it would refuse to perform.
-                  runtimeSwitchInFlight={
-                    builder.switchingRuntime || !runtimeKnown
-                  }
-                />
-              </div>
-            </div>
-            <CreateAgentFooter
-              canCreate={canCreate}
-              creating={submit.creating}
-              squad={!!squadId}
-              error={submit.formError}
-              onCreate={() => void submit.create()}
-              onDiscard={() => setConfirmingDiscard(true)}
-              discarding={builder.closing}
-            />
-          </div>
+          <BuilderPackagePanel
+            content={draft.packageText ?? ""}
+            onChange={(packageText) => setDraft((current) => ({ ...current, packageText }))}
+            runtimeId={selectedRuntime?.id ?? null}
+            runtimeProvider={selectedRuntime?.provider ?? null}
+            runtimeControl={<RuntimePicker runtimes={form.runtimes} runtimesLoading={form.runtimesLoading} members={form.members} currentUserId={form.currentUserId} selectedRuntimeId={draft.runtimeId} disabled={builder.pending || builder.switchingRuntime || !runtimeKnown} onSelect={(runtimeId) => void handleRuntimeSelect(runtimeId)} />}
+            squadId={squadId}
+            pending={builder.pending || builder.switchingRuntime || !draftSync.restored}
+            onCreated={() => builder.archiveAfterCreate()}
+            onDiscard={() => setConfirmingDiscard(true)}
+            discarding={builder.closing}
+          />
         </ResizablePanel>
       </ResizablePanelGroup>
 

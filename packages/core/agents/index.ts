@@ -21,3 +21,5 @@ export * from "./llm-trace-runtime-config";
 export * from "./runtime-binding";
 
 export * from "./package-mutations";
+
+export { agentPackageErrorDetails } from "./package-error";

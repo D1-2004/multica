@@ -20,7 +20,7 @@ RETURNING *;
 -- Objectives first, each followed by its key results, in authored order.
 SELECT
     okr.id, okr.workspace_id, okr.agent_id, okr.kind, okr.parent_id,
-    okr.label_id, okr.position, okr.created_at, okr.updated_at,
+    okr.label_id, okr.position, okr.created_at, okr.updated_at, okr.authored_text,
     label.name AS label_name,
     label.color AS label_color,
     label.description AS label_description
@@ -42,8 +42,8 @@ ORDER BY
     okr.created_at;
 
 -- name: CreateAgentOKR :one
-INSERT INTO agent_okr (workspace_id, agent_id, kind, parent_id, label_id, position)
-VALUES ($1, $2, $3, sqlc.narg('parent_id'), $4, $5)
+INSERT INTO agent_okr (workspace_id, agent_id, kind, parent_id, label_id, position, authored_text)
+VALUES ($1, $2, $3, sqlc.narg('parent_id'), $4, $5, sqlc.narg('authored_text'))
 RETURNING *;
 
 -- name: DeleteAgentOKRsByAgent :exec

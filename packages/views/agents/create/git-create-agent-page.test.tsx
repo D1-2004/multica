@@ -14,7 +14,7 @@ vi.mock("@multica/core/api", () => ({ api: {
   listGitHubInstallations: mocked.installations,
   listGitHubAgentRepositories: async () => ({ repositories: [] }),
   listGitHubAgentBranches: async () => ({ default_branch: "main", branches: [] }),
-  previewGitHubAgent: mocked.preview, createGitHubAgent: mocked.create,
+  previewGitHubAgent: mocked.preview, createAgentFromPackage: mocked.create,
 } }));
 vi.mock("@multica/core/hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
 vi.mock("@multica/core/paths", async (original) => ({ ...await original<object>(), useWorkspacePaths: () => paths.workspace("acme") }));

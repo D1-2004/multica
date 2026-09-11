@@ -19,7 +19,7 @@ const agentBuilderInstructions = `You are Multica Agent Builder. Help the user d
 
 Your job is to propose and refine configuration, never to create resources yourself. Ask only questions that materially change behavior. Prefer making a reasonable draft immediately, then ask at most two focused questions per turn.
 
-Every response MUST end with exactly one <agent_draft> JSON block using this shape:
+Every response MUST include a summary <agent_draft> JSON block for older clients, using this shape:
 <agent_draft>{"name":"","description":"","instructions":"","coordinator_contract":null,"model":"","skill_ids":[],"permission_scope":"private","member_ids":[]}</agent_draft>
 
 Rules:
@@ -45,7 +45,11 @@ Agent package knowledge:
 - Local ZIP upload and Git repository acquisition produce the same validated bundle. Both use a persisted preview_id, destination runtime selection and POST /api/workspaces/{id}/agent-packages to create atomically after confirmation.
 - A bundle is the parsed manifest and referenced file contents, not a separately built DTA CLI artifact. Do not teach dta bundle or dingtalk-agent.json as the Multica creation contract.
 - Resource aliases need destination bindings; secret_ref values must be supplied through the import UI and must never enter this conversation. Imported workspace skills are exclusive to the new Agent.
-- This Builder conversation still returns agent_draft for the creation form. It does not emit or upload a package and must not claim that its draft covers every schema field. For complete package import/export use the local/Git creation and Agent export UI.`
+- Every response MUST end with exactly one <agent_package> JSON block: {"manifest":{...},"files":{"AGENTS.md":"...","skills/example/SKILL.md":"..."}}. It is the complete current package, never a patch or an attachment URL. Keep the summary draft consistent with this package.
+- manifest MUST conform to the authoritative JSON Schema below. Use version multica.agent/v2 and $schema agent.schema.json. All required fields, including each skill's enabled, must be present. Other supported configuration, OKRs and A2A fields may be authored when useful.
+- files contains every referenced instruction, SKILL.md and supporting file as UTF-8 strings with relative paths. Do not include agent.json or agent.schema.json in files; the server supplies them. Do not use placeholders for file contents or workspace skill IDs in place of files. If an existing skill is requested, read its complete permitted content before including it; otherwise explain what is missing.
+- Preserve all fields and files from current_package unless the user asks to change them. Never drop configuration while revising the instructions. Do not emit real environment bindings or member grants; these are configured on the destination Agent.
+- The UI validates the package and previews it via POST /api/workspaces/{id}/agent-packages/prepare, offers a ZIP download, and confirms via the shared agent-packages creation endpoint. You MUST NOT call the creation endpoint or claim creation succeeded.`
 
 type CreateAgentBuilderSessionRequest struct {
 	RuntimeID string `json:"runtime_id"`
@@ -118,7 +122,7 @@ func (h *Handler) CreateAgentBuilderSession(w http.ResponseWriter, r *http.Reque
 		RuntimeMode:  runtime.RuntimeMode,
 		RuntimeID:    runtime.ID,
 		OwnerID:      ownerUUID,
-		Instructions: agentBuilderInstructions,
+		Instructions: agentBuilderPackageInstructions(),
 		Model:        pgtype.Text{String: model, Valid: model != ""},
 		SystemKey: pgtype.Text{
 			String: fmt.Sprintf("agent_builder:%s", flowID),
@@ -228,10 +232,9 @@ func (h *Handler) ListAgentBuilderSessions(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, ListAgentBuilderSessionsResponse{Sessions: sessions})
 }
 
-// maxAgentBuilderDraftBytes bounds one stored configuration. The largest honest
-// field is the instruction markdown, which the create API itself caps well
-// below this; the limit exists so a client bug cannot grow an unbounded row.
-const maxAgentBuilderDraftBytes = 256 * 1024
+// Bound the serialized manifest/files envelope, including JSON string escaping.
+// The package parser separately enforces file and total uncompressed limits.
+const maxAgentBuilderDraftBytes = 64 << 20
 
 type SaveAgentBuilderDraftRequest struct {
 	Draft json.RawMessage `json:"draft"`
@@ -240,8 +243,8 @@ type SaveAgentBuilderDraftRequest struct {
 // SaveAgentBuilderDraft stores the configuration a creation conversation has
 // arrived at, including the edits the user typed but has not sent.
 //
-// The payload is opaque (see migration 252): its shape is the studio's
-// AgentDraft, validated client-side, and nothing server-side reads a field.
+// The payload is opaque (see migration 252), including unfinished package JSON.
+// The prepare endpoint validates it before preview, download or creation.
 // Whole-object last-write-wins is correct here because a conversation has one
 // editor on one screen — a field-level merge could only reconstruct a state the
 // user never saw.
@@ -262,6 +265,7 @@ func (h *Handler) SaveAgentBuilderDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxAgentBuilderDraftBytes + 1024)
 	var req SaveAgentBuilderDraftRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")

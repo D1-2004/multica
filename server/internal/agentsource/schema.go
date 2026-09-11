@@ -13,21 +13,23 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v5"
 )
 
-// ManifestIssue identifies a schema rule without echoing secret-bearing values.
+// ManifestIssue preserves the validator's field, rule and explanatory message.
 type ManifestIssue struct {
 	Path    string `json:"path"`
 	Keyword string `json:"keyword"`
+	Message string `json:"message"`
+	SchemaPath string `json:"schema_path"`
 }
 
 type ManifestSchemaError struct {
 	Issues []ManifestIssue `json:"issues"`
+	Validation jsonschema.Detailed `json:"validation"`
+	Details string `json:"details"`
 }
 
 func (e *ManifestSchemaError) Error() string {
-	if len(e.Issues) == 0 {
-		return "manifest schema validation failed"
-	}
-	return fmt.Sprintf("manifest schema validation failed at %s (%s)", e.Issues[0].Path, e.Issues[0].Keyword)
+	if e.Details != "" { return "manifest schema validation failed\n" + e.Details }
+	return "manifest schema validation failed"
 }
 
 var manifestSchemas = sync.OnceValues(func() (map[string]*jsonschema.Schema, error) {
@@ -64,7 +66,9 @@ func ValidateManifestJSON(content []byte) (map[string]json.RawMessage, error) {
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return nil, errors.New("manifest must contain valid JSON")
+		var syntax *json.SyntaxError
+		if errors.As(err, &syntax) { return nil, fmt.Errorf("agent.json: invalid JSON at byte %d: %s", syntax.Offset, err) }
+		return nil, fmt.Errorf("agent.json: invalid JSON: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
@@ -88,24 +92,16 @@ func ValidateManifestJSON(content []byte) (map[string]json.RawMessage, error) {
 		issues := make([]ManifestIssue, 0)
 		var collect func(*jsonschema.ValidationError)
 		collect = func(problem *jsonschema.ValidationError) {
-			if len(issues) >= 20 {
-				return
-			}
-			if len(problem.Causes) > 0 {
-				for _, cause := range problem.Causes {
-					collect(cause)
-				}
-				return
-			}
+			if len(problem.Causes) > 0 { for _, cause := range problem.Causes { collect(cause) }; return }
 			location := problem.InstanceLocation
 			if location == "" {
 				location = "/"
 			}
 			keyword := problem.KeywordLocation[strings.LastIndex(problem.KeywordLocation, "/")+1:]
-			issues = append(issues, ManifestIssue{Path: location, Keyword: keyword})
+			issues = append(issues, ManifestIssue{Path:location, Keyword:keyword, Message:problem.Message, SchemaPath:problem.KeywordLocation})
 		}
 		collect(invalid)
-		return nil, &ManifestSchemaError{Issues: issues}
+		return nil, &ManifestSchemaError{Issues:issues, Validation:invalid.DetailedOutput(), Details:invalid.GoString()}
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(content, &fields); err != nil {
