@@ -81,7 +81,7 @@ func (f *MemoryFlusher) Flush(ctx context.Context, row db.SceneMemory) (err erro
 	}
 	flushTrace := f.startFlushTrace(ctx, row, time.Now())
 	ctx = langfuse.ContextWithTrace(ctx, flushTrace)
-	defer func() { finishFlushTrace(flushTrace, outcome, err) }()
+	defer func() { finishFlushTrace(flushTrace, outcome, err, row.AttemptCount) }()
 	if err := f.Store.Renew(ctx, row); err != nil {
 		return err
 	}
@@ -393,7 +393,12 @@ func classifyHistory(err error) error {
 	}
 	var cliErr *dwsclient.HistoryError
 	if errors.As(err, &cliErr) {
-		// Diagnostic categories must not silently change retry/auth policy.
+		// Membership loss is the one server code that no retry can fix.
+		// Other diagnostic categories must not silently change retry/auth
+		// policy; the worker applies the attempt ceiling to business errors.
+		if cliErr.NotInConversation() {
+			return &FlushError{Code: ErrorNotInConversation, Err: err}
+		}
 		return &FlushError{Code: ErrorHistoryUnavailable, Err: err}
 	}
 	msg := strings.ToLower(err.Error())

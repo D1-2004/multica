@@ -31,6 +31,7 @@ const (
 const (
 	loopStopRepeatedInvalidPlan = "repeated_invalid_plan"
 	loopStopReviewDeadlock      = "review_deadlock"
+	loopStopRoundsExhausted     = "rounds_exhausted"
 )
 
 type retryLedger struct {

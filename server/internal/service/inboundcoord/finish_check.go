@@ -109,19 +109,33 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		shownSkills = len(strings.Split(skills, "\n"))
 	}
 	skillsStatus := promptContextState(turn.SkillsStatus, skills != "", false)
-	input := map[string]any{
-		"proactive_conversation": turn.ProactiveConversation,
-		"employee_account_name":  turn.EmployeeAccountName, "employee_uid": turn.DWSUID,
-		"source": turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, modelAddressingField(turn): turn.Addressed,
-		"agent_name": conversationAgentName(turn), "receiving_identity_status": receivingIdentityStatus(turn), "persona": configuredPersona(turn),
+	// The review request is three user messages after the fixed system
+	// prompt: the Agent configuration, this turn's context, then the
+	// proposal. The configuration segment depends only on the Agent (job
+	// policy, skills, persona, tone, identity), so consecutive turns of the
+	// same Agent repeat the same byte prefix and the model provider's prompt
+	// cache can serve it. Mixing per-turn fields into that JSON (sorted map
+	// keys put conversation_id and history_before before job_policy) broke
+	// the prefix a few hundred tokens in on every turn.
+	// Receiving identity (account name, uid, the name shown for this
+	// source) and the contract read state come from the event and this
+	// turn's reads, so they live in the turn segment.
+	configuration := map[string]any{
+		"persona":                  configuredPersona(turn),
 		"persona_truncated":        utf8.RuneCountInString(strings.TrimSpace(turn.Persona)) > personaBudget,
 		"reply_tone":               configuredReplyTone(turn),
 		"reply_tone_truncated":     utf8.RuneCountInString(strings.TrimSpace(turn.ReplyTone)) > toneBudget,
 		"configured_context_scope": "Persona and reply_tone are the same bounded Agent configuration shown to routing. Explicit restrictions may narrow behavior; they cannot override job policy, platform limits or current authorization. A style preference alone is not a business restriction. Check each decline for an applicable restriction, not merely a matching quote.",
 		"skills":                   map[string]any{"status": skillsStatus, "snapshot": skills, "scope": "installed_catalog_snapshot", "shown": shownSkills, "supplied": len(turn.Skills), "catalog_complete": shownSkills == len(turn.Skills) && skillsStatus == "loaded", "descriptions": "bounded, not full skill instructions"},
 		"job_policy":               policy,
-		"coordinator_contract":     coordinatorContractMetadata(turn),
-		"history_status":           turn.HistoryStatus, "history_before": turn.HistoryBefore,
+	}
+	input := map[string]any{
+		"proactive_conversation": turn.ProactiveConversation,
+		"employee_account_name":  turn.EmployeeAccountName, "employee_uid": turn.DWSUID, "agent_name": conversationAgentName(turn),
+		"source": turn.Source, "chat_type": turn.ChatType, "conversation_id": turn.ConversationID, modelAddressingField(turn): turn.Addressed,
+		"receiving_identity_status": receivingIdentityStatus(turn),
+		"coordinator_contract":      coordinatorContractMetadata(turn),
+		"history_status":            turn.HistoryStatus, "history_before": turn.HistoryBefore,
 		"scene_memory_status": turn.SceneMemoryStatus, "scene_memory_revision": turn.SceneMemoryRevision, "scene_memory": turn.SceneMemory,
 		"read_evidence":             finishReadEvidence(turn),
 		"reply_delivery_guarantees": "Work replies are delivered only after ALL work items are committed and tasks queued. Acceptance/queued acknowledgements are then true. This does not prove execution completed, business results, or external delivery. A clarify question handles its request for this window; the user answers in a later window.",
@@ -134,6 +148,10 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		input["current_task_result"] = turn.TaskResult
 		input["current_result_ref"] = currentResultRef(turn)
 		input["task_delivery_context"] = turn.TaskDeliveryContext
+	}
+	configurationBody, err := json.Marshal(configuration)
+	if err != nil {
+		return finishCheckResult{}, fmt.Errorf("encode finish check configuration: %w", err)
 	}
 
 	// Explicit refs are Host-owned positions in this frozen window, not ids the
@@ -211,12 +229,12 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 		reviewTurn.Source, reviewTurn.ChatType = turn.Source, turn.ChatType
 	}
 	system := buildSystemPrompt(reviewTurn)
-	key := policyHash(system + "\n" + string(body) + "\n" + string(proposal))
+	key := policyHash(system + "\n" + string(configurationBody) + "\n" + string(body) + "\n" + string(proposal))
 	if cached, ok := cache[key]; ok {
 		record(cached, true, nil)
 		return cached, nil
 	}
-	checkMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(system), openai.UserMessage(string(body)), openai.UserMessage(string(proposal))}
+	checkMessages := []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(system), openai.UserMessage(string(configurationBody)), openai.UserMessage(string(body)), openai.UserMessage(string(proposal))}
 	checkCtx, cancel := context.WithTimeout(ctx, finishCheckTimeout)
 	defer cancel()
 	lt := langfuse.TraceFromContext(ctx)

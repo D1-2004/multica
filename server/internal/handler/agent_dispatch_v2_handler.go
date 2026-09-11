@@ -1139,6 +1139,12 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		if writeDispatchCoordinatorTerminal(w, r.Context(), h, c, dispatchContext, decision) {
 			return
 		}
+		if decision.LoopStopFallback() {
+			// A loop that gave up has no plan; without a reply channel the
+			// fallback cannot be delivered and must not become sandbox work.
+			writeError(w, http.StatusServiceUnavailable, "coordinator could not decide this window and has no reply channel")
+			return
+		}
 	}
 	// Classification is independent of sandbox capacity. Enforce capacity
 	// only on execution, including the LLM-unavailable fallback.
