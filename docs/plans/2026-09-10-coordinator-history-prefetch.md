@@ -87,8 +87,28 @@ Codex 第二轮审查（6 项，均已修）：repeatHint 丢失 history 前置�
 
 Codex 修正后复跑（run 3107713776，commit 52a7e611f，20:09–20:11）：E1 `ff01df20053440c3aeb1566603c7645b` 6.1s；E2 `23b09837ef5549f3a701b146e2d41a1a` 4.5s，constraint_quote 仍为枚举句；E3 `045f87f535814bb5855feba84a1f5c74` 7.1s，state_refs r1/r3。三条均无工具错误、无 withdrawn_tools / loop_stop_reason。
 
+## 第三轮：确定性停止不再沉默（2026-09-11）
+
+巡检（`docs/reports/2026-09-10-feidi-daily-inspection.md`）对照后，正式环境仍未修的 Coordinator 问题里，冬翔要求先修「deferred 等于沉默」。
+
+事实：`agent_dispatch_v2_handler.go` 对 deferred 返回 503，`inbound_coordinator_job.go` 按 1/2/4/8/16/16 秒重投最多 6 次后 fail，用户什么都收不到。`342b8b1cfe8040a29f79e4a613a59ecf`（景霖群里 @ 问评比）6 次 deferred、48 次 generation、零出站。第二轮的重试预算只把每次从 8 轮压到 3 轮，仍是 6 次同样失败。
+
+改动（`loop_stop_fallback.go`、`loop.go`、`coordinator.go`）：轮数耗尽改记 `rounds_exhausted`；`rounds_exhausted` / `repeated_invalid_plan` / `review_deadlock` 三种确定性停止在 Decide 层转成终态：被 @ 或单聊 → 固定文案回复「这条我没接住，麻烦再说一遍或者换个说法，我再看。」，未被 @ → silence；不带工作项、不经审核，Reason 保留停止原因，trace `loop_stop_fallback`。模型/审核/存储错误和 task_finished 仍 deferred 交 worker 重试。Host 测试 `TestDeterministicLoopStopRepliesWhenAddressed`、`TestDeterministicLoopStopSilencesUnaddressedTurn`、`TestTransientLoopFailureStaysDeferred`、`TestTaskFinishedLoopStopStaysDeferred`；`TestDecideTraceRecordsExhaustedRoundsAsLoopError` 改为期望兜底回复且根 span 仍为 ERROR。真实模型无法稳定触发三次同一失败，兜底路径不做线上 e2e。
+
+### 审核放行错误提案的两个 case（未修）
+
+- `bf0bcb544bed486ab4fbb16454dabe67`「6 点」：审核输入里 `history_status=not_loaded`，但 `read_evidence.r1` 已给出 issue「向须莫发送消息询问晚上出发时间」`status=todo`、`waiting_on` 含本会话。审核仍 allow clarify，reason「Intent ambiguous; clarify is appropriate.」。`finish_check@9` 写明「A necessary clarify question handles that request this turn: allow it」，把 clarify 当成永远安全的动作；没有规则说「窗口原文正是本场景 waiting_on 事项的答复时，clarify 是覆盖缺陷」。
+- `39427c330a2b4182a5b10fe44503355f`「回复冬翔」：候选 report_status「冬翔委托的询问事项已完成，任务状态为 completed」，state_refs=r2（问须莫的沙箱任务 completed）。审核 allow，reason「No new work requested」——把「回复冬翔」这个请求当成 context update，把「提问任务完成」当成「委托事项完成」。history 未加载，看不到「6 点」。
+
+两条共同点：审核缺证据时按提案自身通顺度放行。方向：history 未加载且召回项 waiting_on 含本场景时，clarify / report_status 一律 revise 并要求补读；report_status 的 state_refs 若是执行任务状态而非交付状态，不能作「事项完成」证据。
+
+### 探针互刷 trace 的真正原因（`5a21b47f8f774f9e914734277b7d6818`）
+
+不是「缺发送方 bot 标记」。窗口 u1「本次没有生成有效回答…」、u2「默认响应者：default。至少保留一位。 !dev」、u3「收到，我这边也没有新的待办…」都由夏东翔账号发出（`sender_id` 同一个人），Host 无法按发送方区分。第 1、2 轮 Host 以「window has unhandled source」驳回；第 3 轮模型提案 a1 acknowledge(u1)、a2 ignore(u2, reason 系统配置指令)、a3 acknowledge(u3)，Host 覆盖校验通过；审核却返回 `missing_source_refs=[u2,u3]`、reason「Candidate c1 only addresses u1; ignores u2 and u3」。审核只按 `candidate_quote_ref=c1` 这一条回复判覆盖，无视 candidate.actions 里 a2/a3 的存在；模型随后 5 次原样重交（审核缓存命中），耗尽 8 轮，6 次 job 重投共 30 次同 reason。方向：Host 把按 uN 计算的覆盖表（source_ref → action_ref/kind）写进审核输入，`missing_source_refs` 的 schema 说明改为「已有动作但不足以处理该请求的 uN」，并对「reason 声称 ignores uN 而 uN 实际有非 ignore 动作」的裁决按无效审核处理。
+
 ## 未做与建议
 
-- 协调层没有「转达」原语：代问答复仍要再派一次沙箱（每次 30–40s）。建议给 Host 增加受限的同场景/委托人回传动作，或让执行器在同一任务里等待答复后转告。
-- 重试预算与工具契约（第二轮）只消除「同一错误反复」和「模型猜合法值」；审核对不同提案给出前后矛盾的裁决（a0871239）仍未处理，需要更短、更固定的审核输入或更小的审核模型。bot 对 bot 刷屏没有 Host 级刹车。
-- 入站事件没有「发送方是数字员工」标记，无法在 Host 层识别 bot 互刷。
+- 转达不做原语（冬翔 2026-09-11 决定）：代问答复若还涉及事项推进，仍走沙箱 Issue；纯代为通知的场景很少，不为它加 Host 动作。
+- 审核缺证据放行（上节两个 case）与审核按单条候选判覆盖（5a21b47f）未修；需要更短、更固定的审核输入，把 Host 已算出的事实（覆盖表、waiting_on、delivery 状态）写进去。
+- 执行器不回读外部状态就报完成（签名「已更新」、日报「Token 任务未执行」）是执行器任务书问题。
+- 场域记忆 worker 对 DWS 业务错误 130003 按 15 分钟退避无限重试（口香糖小队 attempt 130），需按错误码设上限并告警。

@@ -449,17 +449,39 @@ func (c *Coordinator) Decide(ctx context.Context, turn Turn) (decision Decision)
 		decision = FilterTaskFinishedWrapup(decision)
 	}
 	if err != nil {
-		failOpen := ActionDeferred
+		// A deterministic stop would fail identically on every redelivery,
+		// so it ends here with a fixed reply or silence instead of six job
+		// retries that leave the person with nothing.
+		fallback, handled := loopStopFallback(turn, decision)
+		if handled {
+			// Checkpoint the verdict like any window plan: a redelivered job
+			// restores it instead of reasoning again and possibly proposing
+			// work after the fallback reply went out.
+			if saveErr := SavePlan(ctx, fallback); saveErr != nil {
+				handled = false
+				err = fmt.Errorf("%w; fallback checkpoint: %v", err, saveErr)
+			}
+		}
+		if handled {
+			decision = fallback
+		} else {
+			decision.Action = ActionDeferred
+		}
+		if turnTrace != nil && handled {
+			turnTrace.AddMetadata(map[string]any{"loop_stop_fallback": string(decision.Action)})
+		}
 		slog.Warn("inbound coordinator llm failed",
 			append(coordinatorLogIndex(turn),
 				"event", "inbound_coordinator_decided",
-				"action", string(failOpen),
+				"action", string(decision.Action),
 				"model", coordinatorModel,
 				"fail_open", false,
+				"loop_stop_reason", decision.Reason,
+				"loop_stop_fallback", handled,
+				"tool_rounds", decision.ToolRounds,
 				"elapsed_ms", elapsed.Milliseconds(),
 				"error", err,
 			)...)
-		decision.Action = failOpen
 		decision.ElapsedMs = elapsed.Milliseconds()
 		decision.Source = turn.Source
 		return decision
