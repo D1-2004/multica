@@ -5,6 +5,7 @@ import {
   isGitHubRuntimeCompatible,
   mergeBuilderDraft,
   parseBuilderDraft,
+  parseBuilderPackageText,
   pickBuilderRestore,
   stripBuilderDraft,
 } from "./builder-protocol";
@@ -26,6 +27,17 @@ const draft = (): AgentDraft => ({
 });
 
 describe("agent builder protocol", () => {
+  it("retains the complete package and hides both complete and streaming blocks", () => {
+    const content = '{"manifest":{"configuration":{"persona":"Review"}},"files":{"skills/review/SKILL.md":"Full skill"}}';
+    expect(parseBuilderPackageText(`Ready<agent_package>${content}</agent_package>`)).toBe(content);
+    expect(stripBuilderDraft(`Ready<agent_package>${content}</agent_package>`)).toBe("Ready");
+    expect(stripBuilderDraft('Ready<agent_package>{"manifest":')).toBe("Ready");
+    const current = { ...draft(), packageText: content };
+    const input = encodeBuilderInput("Keep all files", current, [], [], null, null);
+    expect(input).toContain("current_package");
+    expect(input).toContain("Full skill");
+    expect(input).toContain("agent_package");
+  });
   it("parses and hides the structured draft block", () => {
     const content =
       'Here is a first draft.\n<agent_draft>{"name":"Researcher","permission_scope":"workspace"}</agent_draft>';

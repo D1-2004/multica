@@ -1434,6 +1434,18 @@
     "section_model": "모델"
   },
   "creation_studio": {
+    "package": {
+      "schema_link": "현재 JSON Schema 다운로드",
+      "zip_publish": "ZIP에서 게시",
+      "git_publish": "Git에서 게시",
+      "zip_hint": "새 에이전트 ZIP을 업로드하고 설정 변경을 검토한 후 이 에이전트에 게시합니다.",
+      "preserve_git": "Git 저장소 연결과 게시된 Git 커밋은 유지됩니다.",
+      "builder_title": "에이전트 패키지",
+      "builder_hint": "Builder가 전체 manifest와 파일을 생성합니다. 대화나 아래 편집기로 수정한 후 검증하고 미리 보기를 확인하여 생성하세요.",
+      "contents": "Manifest 및 파일",
+      "validate": "검증 및 미리 보기",
+      "download": "에이전트 ZIP 다운로드"
+    },
     "schema": {
       "download": "Schema 다운로드",
       "downloading": "다운로드 중...",

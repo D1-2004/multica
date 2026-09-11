@@ -1434,6 +1434,18 @@
     "section_model": "モデル"
   },
   "creation_studio": {
+    "package": {
+      "schema_link": "使用中の JSON Schema をダウンロード",
+      "zip_publish": "ZIP から公開",
+      "git_publish": "Git から公開",
+      "zip_hint": "新しいエージェント ZIP をアップロードし、設定の変更を確認してこのエージェントに公開します。",
+      "preserve_git": "Git リポジトリ接続と公開済み Git コミットは維持されます。",
+      "builder_title": "エージェントパッケージ",
+      "builder_hint": "Builder が完全な manifest とファイルを生成します。会話または下のエディターで調整し、検証とプレビュー後に作成してください。",
+      "contents": "Manifest とファイル",
+      "validate": "検証してプレビュー",
+      "download": "エージェント ZIP をダウンロード"
+    },
     "schema": {
       "download": "Schema をダウンロード",
       "downloading": "ダウンロード中...",

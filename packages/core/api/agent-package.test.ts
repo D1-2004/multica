@@ -41,4 +41,24 @@ describe("Agent package upload", () => {
     expect(result.agent.id).toBe("agent-1");
     expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/workspaces/workspace/agent-packages", expect.objectContaining({ method: "POST", body: JSON.stringify(request) }));
   });
+
+  it("prepares a Builder package without discarding manifest or file fields", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(preview)));
+    vi.stubGlobal("fetch", fetch);
+    const content = '{"manifest":{"version":"multica.agent/v2","configuration":{"persona":"Review"}},"files":{"AGENTS.md":"All instructions"}}';
+    await new ApiClient("https://api.example.test").prepareAgentPackage("workspace", content);
+    expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/workspaces/workspace/agent-packages/prepare", expect.objectContaining({ method: "POST", body: content }));
+  });
+
+  it("requires a usable preview for ZIP publication", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ preview_id: "", resolved_sha: "hash" }))));
+    await expect(new ApiClient("https://api.example.test").previewAgentPackagePublication("agent", new Blob(["zip"]))).rejects.toThrow("Invalid Agent package publication preview");
+  });
+
+  it("rejects malformed Builder previews and non-ZIP downloads", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...preview, requirements: null }))));
+    await expect(new ApiClient("https://api.example.test").prepareAgentPackage("workspace", "{}")).rejects.toThrow("Invalid Agent package preview response");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>Sign in</html>", { headers: { "Content-Type": "text/html" } })));
+    await expect(new ApiClient("https://api.example.test").downloadPreparedAgentPackage("workspace", "preview-1")).rejects.toThrow("Invalid Agent package download response");
+  });
 });

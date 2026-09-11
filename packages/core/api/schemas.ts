@@ -3095,6 +3095,7 @@ export const EMPTY_AGENT_SOURCE_BRANCHES: AgentSourceBranches = {
  */
 export const StoredAgentDraftSchema = z
   .object({
+    package_text: z.string().optional().catch(undefined),
     name: z.string().catch(""),
     description: z.string().catch(""),
     instructions: z.string().catch(""),

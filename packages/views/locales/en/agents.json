@@ -342,6 +342,18 @@
     "llm_trace": "LLM Trace"
   },
   "creation_studio": {
+    "package": {
+      "schema_link": "Download the current JSON Schema",
+      "zip_publish": "Publish from ZIP",
+      "git_publish": "Publish from Git",
+      "zip_hint": "Upload a new Agent ZIP, review the configuration changes, then confirm publication to this Agent.",
+      "preserve_git": "The Git repository connection and published Git commit are preserved.",
+      "builder_title": "Agent package",
+      "builder_hint": "The Builder generates the complete manifest and files. Refine them in the conversation or edit the package below, then validate and review before creating.",
+      "contents": "Manifest and files",
+      "validate": "Validate and preview",
+      "download": "Download Agent ZIP"
+    },
     "schema": {
       "download": "Download Schema",
       "downloading": "Downloading...",

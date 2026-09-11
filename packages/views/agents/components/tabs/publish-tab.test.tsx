@@ -33,7 +33,7 @@ const preview: AgentSourceSyncPreview = {
 function mount(canEdit = true) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
     <I18nProvider locale="en" resources={{ en: { agents: enAgents } }}>
-      <PublishTab source={source} canEdit={canEdit} />
+      <PublishTab agentId="agent-1" source={source} canEdit={canEdit} />
     </I18nProvider>
   </QueryClientProvider>);
 }

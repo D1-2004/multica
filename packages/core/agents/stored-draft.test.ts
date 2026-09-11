@@ -31,6 +31,14 @@ describe("stored agent draft", () => {
     expect(restored).toEqual(original);
   });
 
+  it("persists the full package and detects edits to support files", () => {
+    const packageText = JSON.stringify({ manifest: { name: "Reviewer", configuration: { persona: "Review" } }, files: { "AGENTS.md": "Review", "skills/review/references/checklist.md": "Check every item" } });
+    const original = { ...draft(), packageText };
+    const stored = toStoredAgentDraft(original, "msg-package");
+    expect(fromStoredAgentDraft(stored, original.runtimeId)).toEqual(original);
+    expect(storedAgentDraftsEqual(stored, toStoredAgentDraft({ ...original, packageText: packageText.replace("Check every item", "Check changed items") }, "msg-package"))).toBe(false);
+  });
+
   // The runtime a conversation executes on is owned by its carrier agent. A
   // copy inside the draft could only go stale and put the picker on a runtime
   // that runs nothing (MUL-5163), so the restore takes it from the caller.

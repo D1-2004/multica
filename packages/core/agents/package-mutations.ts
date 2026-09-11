@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import type { CreateAgentPackageRequest } from "../types/agent-package";
 import { workspaceKeys } from "../workspace/queries";
@@ -26,4 +26,20 @@ export function useCreateAgentPackage(workspaceId: string, squadId: string | nul
       ]);
     },
   });
+}
+
+export function usePreviewAgentPackagePublication(agentId: string) {
+  return useMutation({ mutationFn: (file: File) => api.previewAgentPackagePublication(agentId, file) });
+}
+
+export function usePrepareAgentPackage(workspaceId: string) {
+  return useMutation({ mutationFn: (content: string) => api.prepareAgentPackage(workspaceId, content) });
+}
+
+export function useDownloadPreparedAgentPackage(workspaceId: string) {
+  return useMutation({ mutationFn: (previewId: string) => api.downloadPreparedAgentPackage(workspaceId, previewId) });
+}
+
+export function agentManifestSchemaOptions() {
+  return queryOptions({ queryKey: ["agent-manifest-schema"], queryFn: () => api.getAgentManifestSchema(), staleTime: 0 });
 }
