@@ -174,6 +174,8 @@ func (definition packageConfiguration) apply(ctx context.Context, q *db.Queries,
 		encoded, _ := json.Marshal(skills)
 		if _, err := q.UpdateAgentDisabledRuntimeSkills(ctx, db.UpdateAgentDisabledRuntimeSkillsParams{ID:agent.ID, DisabledRuntimeSkills:encoded}); err != nil { return err }
 	}
+	previousOKRs, err := q.ListAgentOKRs(ctx, db.ListAgentOKRsParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID})
+	if err != nil { return err }
 	reusableLabels := []pgtype.UUID{}
 	if definition.OKRs != nil {
 		var err error
@@ -182,14 +184,14 @@ func (definition packageConfiguration) apply(ctx context.Context, q *db.Queries,
 		if err := q.DeleteAgentOKRsByAgent(ctx, db.DeleteAgentOKRsByAgentParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID}); err != nil { return err }
 	}
 	for index, entry := range definition.OKRs {
-		label, err := q.UpsertAgentOKRLabel(ctx, db.UpsertAgentOKRLabelParams{WorkspaceID:agent.WorkspaceID, Name:agentOKRObjectivePrefix + strings.TrimSpace(entry.Objective), Description:agentOKRLabelDescription, Color:agentOKRObjectiveColor, ReusableLabelIds:reusableLabels})
-		if err != nil { return sourceRequestError(http.StatusConflict, "an OKR objective label already exists; choose a distinct objective") }
-		objective, err := q.CreateAgentOKR(ctx, db.CreateAgentOKRParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, Kind:"objective", LabelID:label.ID, Position:int32(index)})
+		label, err := upsertPortableOKRLabel(ctx, q, agent, "objective", entry.Objective, previousOKRs, reusableLabels, true)
+		if err != nil { return err }
+		objective, err := q.CreateAgentOKR(ctx, db.CreateAgentOKRParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, Kind:"objective", LabelID:label.ID, Position:int32(index), AuthoredText:pgtype.Text{String:strings.TrimSpace(entry.Objective), Valid:true}})
 		if err != nil { return err }
 		for position, text := range entry.KeyResults {
-			label, err := q.UpsertAgentOKRLabel(ctx, db.UpsertAgentOKRLabelParams{WorkspaceID:agent.WorkspaceID, Name:agentOKRKeyResultPrefix + strings.TrimSpace(text), Description:agentOKRLabelDescription, Color:agentOKRKeyResultColor, ReusableLabelIds:reusableLabels})
-			if err != nil { return sourceRequestError(http.StatusConflict, "an OKR key-result label already exists; choose a distinct key result") }
-			if _, err := q.CreateAgentOKR(ctx, db.CreateAgentOKRParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, Kind:"key_result", ParentID:objective.ID, LabelID:label.ID, Position:int32(position)}); err != nil { return err }
+			label, err := upsertPortableOKRLabel(ctx, q, agent, "key_result", text, previousOKRs, reusableLabels, true)
+			if err != nil { return err }
+			if _, err := q.CreateAgentOKR(ctx, db.CreateAgentOKRParams{WorkspaceID:agent.WorkspaceID, AgentID:agent.ID, Kind:"key_result", ParentID:objective.ID, LabelID:label.ID, Position:int32(position), AuthoredText:pgtype.Text{String:strings.TrimSpace(text), Valid:true}}); err != nil { return err }
 		}
 	}
 	if definition.A2A != nil {

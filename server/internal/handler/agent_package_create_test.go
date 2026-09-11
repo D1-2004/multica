@@ -95,13 +95,25 @@ func TestCompleteExamplePackageUploadAndExport(t *testing.T) {
 	exported := exportAgentFiles(t,agent.ID)
 	for name, content := range files { if name == "AGENTS.md" || strings.HasPrefix(name,"skills/") { if exported[name] != content { t.Fatalf("export lost %s",name) } } }
 	if strings.Contains(exported["agent.json"],`"AGENT_PACKAGE_TEST": "enabled"`) { t.Fatal("export should use a secret reference for environment values") }
-	// Existing workspace labels cannot be taken over by a second import.
+	// Reimporting creates independent OKR labels without changing authored text.
 	another := httptest.NewRecorder(); f.handler.PreviewAgentPackage(another,agentPackageRequest(t,zipPackageFiles(t,files),false))
 	_ = json.Unmarshal(another.Body.Bytes(),&data)
 	newID := rawString(t,data["preview_id"])
-	name := "Conflicting OKR " + newID
-	f.request(t,f.handler.CreateAgentFromPackage,testWorkspaceID,map[string]any{"preview_id":newID,"runtime_id":testRuntimeID,"name":name,"deferred_bindings":[]string{"/bindings/runner","/bindings/enterprise_identity","/bindings/github_identity","/bindings/dingtalk_account"}},http.StatusConflict)
-	exists, err := testHandler.Queries.AgentNameExistsInWorkspace(t.Context(),db.AgentNameExistsInWorkspaceParams{WorkspaceID:parseUUID(testWorkspaceID),Name:name}); if err != nil || exists { t.Fatal("failed import left a partial Agent") }
+	name := "Repeated OKR " + newID
+	repeated := f.request(t,f.handler.CreateAgentFromPackage,testWorkspaceID,map[string]any{"preview_id":newID,"runtime_id":testRuntimeID,"name":name,"deferred_bindings":[]string{"/bindings/runner","/bindings/enterprise_identity","/bindings/github_identity","/bindings/dingtalk_account"}},http.StatusCreated)
+	var second AgentResponse; _ = json.Unmarshal(repeated["agent"], &second)
+	secondOKRs, err := testHandler.Queries.ListAgentOKRs(t.Context(), db.ListAgentOKRsParams{WorkspaceID:parseUUID(testWorkspaceID), AgentID:parseUUID(second.ID)})
+	if err != nil || len(secondOKRs) != len(okrs) { t.Fatalf("second OKRs: %v", err) }
+	for _, original := range okrs { for _, copied := range secondOKRs { if original.LabelID == copied.LabelID { t.Fatal("import reused another Agent's label") } } }
+	secondExport := exportAgentFiles(t, second.ID)
+	var firstManifest, secondManifest map[string]json.RawMessage
+	_ = json.Unmarshal([]byte(exported["agent.json"]), &firstManifest); _ = json.Unmarshal([]byte(secondExport["agent.json"]), &secondManifest)
+	if string(firstManifest["okrs"]) != string(secondManifest["okrs"]) { t.Fatal("reimport changed authored OKR text") }
+	// Editing an imported set preserves label IDs and therefore usage history.
+	f.request(t, f.handler.SetAgentOKRs, second.ID, map[string]any{"okrs":secondManifest["okrs"]}, http.StatusOK)
+	afterEdit, err := testHandler.Queries.ListAgentOKRs(t.Context(), db.ListAgentOKRsParams{WorkspaceID:parseUUID(testWorkspaceID), AgentID:parseUUID(second.ID)})
+	if err != nil || len(afterEdit) != len(secondOKRs) { t.Fatalf("edited OKRs: %v", err) }
+	for index, row := range afterEdit { if row.LabelID != secondOKRs[index].LabelID { t.Fatal("OKR edit reset label usage identity") } }
 }
 
 func TestV2PackagePublicationAppliesConfigurationAndRejectsStalePreview(t *testing.T) {

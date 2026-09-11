@@ -366,15 +366,16 @@ type AgentRunnerBinding struct {
 }
 
 type AgentOkr struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	Kind        string             `json:"kind"`
-	ParentID    pgtype.UUID        `json:"parent_id"`
-	LabelID     pgtype.UUID        `json:"label_id"`
-	Position    int32              `json:"position"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID           pgtype.UUID        `json:"id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	Kind         string             `json:"kind"`
+	ParentID     pgtype.UUID        `json:"parent_id"`
+	LabelID      pgtype.UUID        `json:"label_id"`
+	Position     int32              `json:"position"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+	AuthoredText pgtype.Text        `json:"authored_text"`
 }
 
 type AgentRuntime struct {

@@ -12,18 +12,19 @@ import (
 )
 
 const createAgentOKR = `-- name: CreateAgentOKR :one
-INSERT INTO agent_okr (workspace_id, agent_id, kind, parent_id, label_id, position)
-VALUES ($1, $2, $3, $6, $4, $5)
-RETURNING id, workspace_id, agent_id, kind, parent_id, label_id, position, created_at, updated_at
+INSERT INTO agent_okr (workspace_id, agent_id, kind, parent_id, label_id, position, authored_text)
+VALUES ($1, $2, $3, $6, $4, $5, $7)
+RETURNING id, workspace_id, agent_id, kind, parent_id, label_id, position, created_at, updated_at, authored_text
 `
 
 type CreateAgentOKRParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	AgentID     pgtype.UUID `json:"agent_id"`
-	Kind        string      `json:"kind"`
-	LabelID     pgtype.UUID `json:"label_id"`
-	Position    int32       `json:"position"`
-	ParentID    pgtype.UUID `json:"parent_id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	AgentID      pgtype.UUID `json:"agent_id"`
+	Kind         string      `json:"kind"`
+	LabelID      pgtype.UUID `json:"label_id"`
+	Position     int32       `json:"position"`
+	ParentID     pgtype.UUID `json:"parent_id"`
+	AuthoredText pgtype.Text `json:"authored_text"`
 }
 
 func (q *Queries) CreateAgentOKR(ctx context.Context, arg CreateAgentOKRParams) (AgentOkr, error) {
@@ -34,6 +35,7 @@ func (q *Queries) CreateAgentOKR(ctx context.Context, arg CreateAgentOKRParams) 
 		arg.LabelID,
 		arg.Position,
 		arg.ParentID,
+		arg.AuthoredText,
 	)
 	var i AgentOkr
 	err := row.Scan(
@@ -46,6 +48,7 @@ func (q *Queries) CreateAgentOKR(ctx context.Context, arg CreateAgentOKRParams) 
 		&i.Position,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AuthoredText,
 	)
 	return i, err
 }
@@ -256,7 +259,7 @@ func (q *Queries) ListAgentOKRUsage(ctx context.Context, arg ListAgentOKRUsagePa
 const listAgentOKRs = `-- name: ListAgentOKRs :many
 SELECT
     okr.id, okr.workspace_id, okr.agent_id, okr.kind, okr.parent_id,
-    okr.label_id, okr.position, okr.created_at, okr.updated_at,
+    okr.label_id, okr.position, okr.created_at, okr.updated_at, okr.authored_text,
     label.name AS label_name,
     label.color AS label_color,
     label.description AS label_description
@@ -293,6 +296,7 @@ type ListAgentOKRsRow struct {
 	Position         int32              `json:"position"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	AuthoredText     pgtype.Text        `json:"authored_text"`
 	LabelName        string             `json:"label_name"`
 	LabelColor       string             `json:"label_color"`
 	LabelDescription string             `json:"label_description"`
@@ -318,6 +322,7 @@ func (q *Queries) ListAgentOKRs(ctx context.Context, arg ListAgentOKRsParams) ([
 			&i.Position,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AuthoredText,
 			&i.LabelName,
 			&i.LabelColor,
 			&i.LabelDescription,

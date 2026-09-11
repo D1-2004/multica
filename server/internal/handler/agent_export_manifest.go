@@ -172,10 +172,10 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 	for _, row := range okrRows {
 		if row.Kind == "objective" {
 			objectives[uuidToString(row.ID)] = len(okrs)
-			okrs = append(okrs, map[string]any{"objective":strings.TrimPrefix(row.LabelName, agentOKRObjectivePrefix), "key_results":[]string{}})
+			okrs = append(okrs, map[string]any{"objective":agentOKRText(row), "key_results":[]string{}})
 		} else if row.Kind == "key_result" {
 			index, ok := objectives[uuidToString(row.ParentID)]; if !ok { return nil, nil, errors.New("invalid stored OKR parent") }
-			okrs[index]["key_results"] = append(okrs[index]["key_results"].([]string), strings.TrimPrefix(row.LabelName, agentOKRKeyResultPrefix))
+			okrs[index]["key_results"] = append(okrs[index]["key_results"].([]string), agentOKRText(row))
 		}
 	}
 	manifest["okrs"] = okrs
