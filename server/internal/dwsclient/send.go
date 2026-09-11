@@ -53,7 +53,17 @@ func (e *MessageOperationError) DiagnosticFields() map[string]any {
 }
 
 func messageCLIError(raw []byte) *MessageOperationError {
+	if len(raw) > MaxResponseBytes {
+		return nil
+	}
 	diagnostics := historyCLIError(raw)
+	if diagnostics == nil {
+		// The packaged CLI may print a startup notice before its JSON error.
+		// Only accept a complete trailing envelope; never log the notice itself.
+		if offset := bytes.LastIndex(raw, []byte("\n{")); offset >= 0 {
+			diagnostics = historyCLIError(raw[offset+1:])
+		}
+	}
 	if diagnostics == nil {
 		return nil
 	}

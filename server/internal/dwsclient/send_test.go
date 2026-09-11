@@ -104,6 +104,7 @@ func TestMessageCommandsPreserveStructuredFailureDiagnostics(t *testing.T) {
 	payload := `{"error":{"category":"api","reason":"business_error","server_error_code":1001,"trace_id":"trace-123","message":"token=secret-do-not-log","actions":["send secret-do-not-log"]}}`
 	for _, tc := range []struct{ name, stdout, stderr string }{
 		{"stderr", "", payload},
+		{"startup_notice_then_stderr", "", "CLI startup notice: secret-do-not-log\n" + payload},
 		{"stdout", payload, ""},
 		{"stderr_over_success_stdout", `{"success":true,"result":{"openTaskId":"unconfirmed"}}`, payload},
 	} {
