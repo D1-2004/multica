@@ -252,7 +252,7 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 	if request.PreviewID != "" {
 		preview, err = h.readAgentSourcePreview(r, wsUUID, request.PreviewID)
 		if err != nil { writeGitHubSourceError(w, err); return }
-		if preview.AgentSourceID.Valid {
+		if preview.AgentSourceID.Valid || preview.ExpectedStateHash != "" {
 			writeError(w, http.StatusBadRequest, "a sync preview cannot create an Agent")
 			return
 		}
@@ -794,5 +794,5 @@ func writeAgentSourceDatabaseError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "an agent or skill with this name already exists in the workspace")
 		return
 	}
-	writeError(w, http.StatusInternalServerError, "failed to materialize GitHub agent")
+	writeError(w, http.StatusInternalServerError, "failed to save Agent package")
 }

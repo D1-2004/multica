@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"mime"
 	"strconv"
 	"strings"
 	"time"
@@ -70,22 +71,21 @@ func (h *Handler) listGitHubAgentBranches(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (h *Handler) loadGitHubSourceForManage(w http.ResponseWriter, r *http.Request) (db.Agent, db.AgentSource, bool) {
+func (h *Handler) loadPackageSourceForManage(w http.ResponseWriter, r *http.Request) (db.Agent, db.AgentSource, bool) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
 	if !ok || !h.canManageAgent(w, r, agent) { return db.Agent{}, db.AgentSource{}, false }
+	if agent.Kind != "user" || agent.ArchivedAt.Valid { writeError(w, http.StatusConflict, "only active user Agents accept package publication"); return db.Agent{}, db.AgentSource{}, false }
 	source, err := h.Queries.GetAgentSourceByAgentID(r.Context(), agent.ID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "agent source not found")
-		return db.Agent{}, db.AgentSource{}, false
-	}
-	if source.ManagedSourceKey.Valid {
-		writeError(w, http.StatusConflict, "this Agent source is updated automatically by Multica")
-		return db.Agent{}, db.AgentSource{}, false
-	}
-	if !source.GithubInstallationID.Valid {
-		writeError(w, http.StatusConflict, "GitHub installation is disconnected")
-		return db.Agent{}, db.AgentSource{}, false
-	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) { writeError(w, http.StatusInternalServerError, "failed to read Agent source"); return db.Agent{}, db.AgentSource{}, false }
+	if source.ManagedSourceKey.Valid { writeError(w, http.StatusConflict, "this Agent source is updated automatically by Multica"); return db.Agent{}, db.AgentSource{}, false }
+	return agent, source, true
+}
+
+func (h *Handler) loadGitHubSourceForManage(w http.ResponseWriter, r *http.Request) (db.Agent, db.AgentSource, bool) {
+	agent, source, ok := h.loadPackageSourceForManage(w, r)
+	if !ok { return agent, source, false }
+	if !source.ID.Valid { writeError(w, http.StatusNotFound, "agent source not found"); return agent, source, false }
+	if !source.GithubInstallationID.Valid { writeError(w, http.StatusConflict, "GitHub installation is disconnected"); return agent, source, false }
 	return agent, source, true
 }
 
@@ -244,6 +244,8 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 }
 
 func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request) {
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType == "application/zip" || mediaType == "multipart/form-data" { h.previewAgentPackagePublication(w, r); return }
 	agent, source, ok := h.loadGitHubSourceForManage(w, r)
 	if !ok { return }
 	var request struct { Ref string `json:"ref"` }
@@ -288,7 +290,7 @@ func (h *Handler) publishedSourceSnapshot(ctx context.Context, agent db.Agent, s
 		return snapshot, agentsource.ValidateBundle(snapshot.Definition)
 	}
 	// Sources created before previews existed have no stored Git baseline yet.
-	return agentsource.ReadDTARepository(ctx, h.GitHubApp, agentsource.Source{
+	return agentsource.ReadAgentRepository(ctx, h.GitHubApp, agentsource.Source{
 		InstallationID:installationID, Owner:source.RepoOwner, Repository:source.RepoName, CommitSHA:source.SyncedCommitSha,
 	})
 }
