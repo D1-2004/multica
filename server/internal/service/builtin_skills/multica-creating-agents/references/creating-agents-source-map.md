@@ -236,6 +236,12 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Complete error tree and Schema link | `internal/agentsource/schema.go`; `packages/views/agents/create/package-error.tsx` | `TestManifestSchemaDoesNotTruncateIssues`; `builder-package-panel.test.tsx` |
 | Portable OKR text and independent labels | `internal/handler/agent_package_okr.go`; `migrations/9222_agent_okr_authored_text.up.sql` | `TestCompleteExamplePackageUploadAndExport` |
 | Owned Builder prompt upgrade | `internal/handler/agent_builder_package.go`; `chat.go` | `TestBuilderPackageContractUpgradeOnlyTouchesOwnedSystemBuilder` |
+| Exported skill scope/ID, shared-skill reuse and content diff | `internal/handler/agent_package_service.go`; `agent_package_skills.go`; `agent_source_preview.go`; `internal/agentsource/portable.go` | `TestAgentPackageExportUpdatePreservesWorkspaceSkillIdentity` |
+| Skill directory rename, stale publication and edit permission | `internal/handler/agent_source_sync.go`; `agent_package_skills.go` | `TestAgentPackageSkillIdentitySurvivesDirectoryRename`; `TestAgentPackageReferencedSkillPublicationChecksCurrentStateAndPermission` |
 
 - 2026-09-10: Added source locations for complete package creation, publication and
   error handling. Reason: keep the built-in creation skill aligned with the live protocol.
+
+- 2026-09-11: Added scoped skill identity and export/update regression evidence.
+  Reason: an exported workspace skill must update its existing row instead of
+  becoming a newly created Agent-exclusive copy.

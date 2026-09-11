@@ -439,13 +439,15 @@ func (h *Handler) canManageSkill(w http.ResponseWriter, r *http.Request, skill d
 	if !ok {
 		return false
 	}
-	isAdmin := roleAllowed(member.Role, "owner", "admin")
-	isSkillCreator := skill.CreatedBy.Valid && uuidToString(skill.CreatedBy) == requestUserID(r)
-	if !isAdmin && !isSkillCreator {
+	if !canManageSkillForUser(member.Role, requestUserID(r), skill) {
 		writeError(w, http.StatusForbidden, "only the skill creator can manage this skill")
 		return false
 	}
 	return true
+}
+
+func canManageSkillForUser(role, userID string, skill db.Skill) bool {
+	return roleAllowed(role,"owner","admin") || (skill.CreatedBy.Valid && uuidToString(skill.CreatedBy) == userID)
 }
 
 // canOverwriteSkillByLocalImport reports whether userID may overwrite skill via

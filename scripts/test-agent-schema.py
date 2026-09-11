@@ -128,6 +128,23 @@ class AgentSchemaTest(unittest.TestCase):
         value["access"]["permission_mode"] = "public_to"
         self.assert_invalid(value)
 
+    def test_skill_scope_and_id_are_paired(self):
+        value = minimal()
+        skill = {"path": "skills/review", "name": "review", "enabled": True,
+                 "scope": {"type": "workspace", "id": "00000000-0000-4000-8000-000000000001"},
+                 "skill_id": "00000000-0000-4000-8000-000000000002"}
+        value["skills"] = [skill]
+        self.assert_valid(value)
+        for key in ("scope", "skill_id"):
+            bad = copy.deepcopy(value)
+            del bad["skills"][0][key]
+            self.assert_invalid(bad)
+        for scope in ({"type": "agent", "id": skill["scope"]["id"]},
+                      {"type": "workspace", "id": "invalid"}):
+            bad = copy.deepcopy(value)
+            bad["skills"][0]["scope"] = scope
+            self.assert_invalid(bad)
+
     def test_okr_limits_and_no_runtime_spend(self):
         value = minimal()
         value["okrs"] = [{"objective": "Review changes", "key_results": ["Review one change"]}]

@@ -179,18 +179,18 @@ func packageJSONValue[T any](value any) (T, error) {
 
 type packageSkillsCodec struct{}
 func (packageSkillsCodec) Import(c *packageOperation, value []portableSkill) error {
-	return applySourceSkills(c.ctx, c.q, c.agent, c.source, c.prepared)
+	return applySourceSkills(c.ctx, c.q, c.agent, c.source, c.prepared, c.actorID, c.creating)
 }
 func (packageSkillsCodec) Export(c *packageOperation) ([]portableSkill, error) {
 	var err error
 	c.skills, err = exportPackageSkills(c.ctx, c.q, c.agent)
 	if err != nil { return nil, err }
 	result := []portableSkill{}
-	for _, skill := range c.skills { result = append(result, portableSkill{Path:skill.SourcePath, Name:skill.Name, Description:skill.Description, Enabled:!skill.Disabled}) }
+	for _, skill := range c.skills { result = append(result, portableSkill{Scope:skill.Scope, SkillID:skill.SkillID, Path:skill.SourcePath, Name:skill.Name, Description:skill.Description, Enabled:!skill.Disabled}) }
 	return result, nil
 }
 
-type portableSkill struct { Path string `json:"path"`; Name string `json:"name"`; Description string `json:"description,omitempty"`; Enabled bool `json:"enabled"` }
+type portableSkill struct { Scope *agentsource.SkillScope `json:"scope,omitempty"`; SkillID string `json:"skill_id,omitempty"`; Path string `json:"path"`; Name string `json:"name"`; Description string `json:"description,omitempty"`; Enabled bool `json:"enabled"` }
 
 func exportPackageSkills(ctx context.Context, queries *db.Queries, agent db.Agent) ([]agentsource.Skill, error) {
 	assignments, err := queries.ListAgentSkillSummaries(ctx, agent.ID)
@@ -212,7 +212,7 @@ func exportPackageSkills(ctx context.Context, queries *db.Queries, agent db.Agen
 		if err != nil { return nil, err }
 		name, path := skill.Name, "workspace-skills/" + uuidToString(skill.ID)
 		if sourcePath, ok := mapped[uuidToString(skill.ID)]; ok { name = strings.TrimSuffix(name, sourceManagedSkillName("", source.ID)); path = sourcePath }
-		compiled := agentsource.Skill{SourcePath:path, Name:name, Description:skill.Description, Content:skill.Content, Disabled:!assignment.Enabled, Files:[]agentsource.File{}}
+		compiled := agentsource.Skill{Scope:&agentsource.SkillScope{Type:"workspace", ID:uuidToString(agent.WorkspaceID)}, SkillID:uuidToString(skill.ID), SourcePath:path, Name:name, Description:skill.Description, Content:skill.Content, Disabled:!assignment.Enabled, Files:[]agentsource.File{}}
 		for _, file := range files { compiled.Files = append(compiled.Files, agentsource.File{Path:file.Path, Content:file.Content}) }
 		skills = append(skills, compiled)
 	}

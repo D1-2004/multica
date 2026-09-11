@@ -428,6 +428,17 @@ This updates the existing Agent, preserves its environment bindings and any Git
 connection/last Git commit, and creates local source provenance only when no
 source existed. Source-managed skills are replaced; other assigned skills remain.
 
+When revising an exported v2 package for publication back to the same Agent,
+preserve each skill's `scope` (`{"type":"workspace","id":"<workspace UUID>"}`)
+and `skill_id`. They identify the existing assigned skill; `path` only locates
+its files. An unchanged skill is reused without rewriting its content/files;
+changes are reviewed as a diff and update the same skill ID. Shared skills retain
+their original ownership and bindings, and edits require the skill creator or a
+workspace owner/admin. Missing or detached local identities fail instead of
+creating replacements. Older platform exports recover an already attached local
+skill from `workspace-skills/<skill-id>`. Templates without identities and new
+Agent creation retain their existing copy semantics. Do not invent identities.
+
 Import errors retain full validator messages, all issues and the JSON Schema
 DetailedOutput tree, with `schema_url: /api/agent-schema`. File and JSON errors
 identify the offending path or byte location. The UI keeps details visible;
@@ -473,3 +484,7 @@ Configuration and implementation map to `event_trigger.go`, `agent_event_trigger
 - 2026-09-10: Added ZIP publication, complete Builder packages and downloads,
   independently owned OKR labels, and complete schema diagnostics. Reason: allow
   package-driven updates and repeat imports without losing configuration or error context.
+
+- 2026-09-11: Preserve skill scope/ID during exported-package updates and recover
+  attached skill IDs from older platform export paths. Reason: prevent duplicate
+  skill creation while retaining original ownership and publication checks.

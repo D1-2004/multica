@@ -35,10 +35,18 @@ type PortableManifest struct {
 }
 
 type PortableSkill struct {
+	Scope       *SkillScope `json:"scope,omitempty"`
+	SkillID     string `json:"skill_id,omitempty"`
 	Path        string `json:"path"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Enabled     *bool  `json:"enabled"`
+}
+
+// SkillScope identifies the workspace that owns an exported skill.
+type SkillScope struct {
+	Type string `json:"type"`
+	ID string `json:"id"`
 }
 
 func (m PortableManifest) internalManifest() Manifest {
@@ -160,7 +168,9 @@ func ExportAgentPackage(ctx context.Context, definition map[string]any, instruct
 			return nil, err
 		}
 		enabled := !skill.Disabled
-		manifest.Skills = append(manifest.Skills, PortableSkill{Path: skill.SourcePath, Name: skill.Name, Description: skill.Description, Enabled: &enabled})
+		item := PortableSkill{Path: skill.SourcePath, Name: skill.Name, Description: skill.Description, Enabled: &enabled}
+		if manifest.Version == "multica.agent/v2" { item.Scope, item.SkillID = skill.Scope, skill.SkillID }
+		manifest.Skills = append(manifest.Skills, item)
 		if err := add(skill.SourcePath+"/SKILL.md", skill.Content); err != nil {
 			return nil, err
 		}

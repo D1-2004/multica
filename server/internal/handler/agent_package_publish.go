@@ -28,8 +28,8 @@ func (h *Handler) previewAgentPackagePublication(w http.ResponseWriter, r *http.
 	lockedSource, err := q.LockAgentSourceByAgentID(r.Context(), agent.ID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) { writeError(w, http.StatusInternalServerError, "failed to read Agent source"); return }
 	if lockedSource.ID != source.ID || lockedSource.ManagedSourceKey.Valid { writeError(w, http.StatusConflict, "Agent source changed; preview again"); return }
-	current, stateHash, err := sourceStateFiles(r.Context(), q, agent, lockedSource)
-	if err != nil { writeError(w, http.StatusInternalServerError, "failed to read current Agent configuration"); return }
+	current, stateHash, err := sourceStateFiles(r.Context(), q, agent, lockedSource, bundle)
+	if err != nil { writeAgentSourceDatabaseError(w,err); return }
 	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to read Agent configuration"); return }
 	preview, err := h.saveAgentSourcePreview(r, agent.WorkspaceID, agent, lockedSource, resolved, stateHash)
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to save package preview"); return }

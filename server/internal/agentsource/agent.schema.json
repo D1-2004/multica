@@ -1003,7 +1003,25 @@
               "name",
               "enabled"
             ],
+            "dependentRequired": {
+              "scope": ["skill_id"],
+              "skill_id": ["scope"]
+            },
             "properties": {
+              "scope": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "id"],
+                "properties": {
+                  "type": {"const": "workspace"},
+                  "id": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"}
+                },
+                "description": "Origin workspace of the exported skill. Together with skill_id identifies an existing skill when publishing back to that workspace."
+              },
+              "skill_id": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+              },
               "path": {
                 "$ref": "#/$defs/path"
               },
