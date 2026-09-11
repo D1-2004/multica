@@ -38,7 +38,6 @@ type ResponseActionInterceptor interface {
 
 type CompletionWorker struct {
 	queries         *db.Queries
-	dwsSender       DWSReplySender
 	client          *Client
 	targetIdentity  string
 	reconciler      CompletionReconciler
@@ -60,10 +59,6 @@ func NewCompletionWorker(
 		notify:         make(chan struct{}, completionWorkerConcurrency),
 		done:           make(chan struct{}),
 	}
-}
-
-func (w *CompletionWorker) SetDWSReplySender(sender DWSReplySender) {
-	w.dwsSender = sender
 }
 
 func (w *CompletionWorker) TargetIdentity() string {
@@ -204,30 +199,11 @@ func (w *CompletionWorker) processNextExecutionUpdate(ctx context.Context) (bool
 			TargetAgentID:   util.UUIDToString(executionUpdate.TargetAgentID),
 		},
 	}
-	saveDelivery := func(raw []byte) error {
-		_, err := w.queries.SaveTaskExecutionUpdateDWSDelivery(ctx, db.SaveTaskExecutionUpdateDWSDeliveryParams{
-			ID: executionUpdate.ID, LeaseToken: executionUpdate.LeaseToken, DwsDelivery: raw,
-		})
-		return err
+	if w.ResponseActions != nil {
+		_, err = w.ResponseActions.PrepareExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
 	}
-	deliveryState := executionUpdate.DwsDelivery
-	if len(deliveryState) == 0 {
-		if w.ResponseActions != nil {
-			_, err = w.ResponseActions.PrepareExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
-		}
-		var delivery *DWSDelivery
-		if err == nil {
-			delivery, err = w.client.SubmitExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
-		}
-		if err == nil && delivery != nil {
-			deliveryState, err = freezeDWSDelivery(delivery, update.AgentID)
-			if err == nil {
-				err = saveDelivery(deliveryState)
-			}
-		}
-	}
-	if err == nil && len(deliveryState) > 0 {
-		err = w.resumeDWSDelivery(ctx, deliveryState, saveDelivery)
+	if err == nil {
+		err = w.client.SubmitExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
 	}
 	if err == nil {
 		_, completeErr := w.queries.CompleteTaskExecutionUpdate(ctx, db.CompleteTaskExecutionUpdateParams{
@@ -241,8 +217,7 @@ func (w *CompletionWorker) processNextExecutionUpdate(ctx context.Context) (bool
 	}
 
 	var deliveryErr *ExecutionResultDeliveryError
-	var dwsPermanent *dwsDeliveryPermanentError
-	if errors.As(err, &dwsPermanent) || errors.As(err, &deliveryErr) && !executionUpdateDeliveryRetryable(deliveryErr) {
+	if errors.As(err, &deliveryErr) && !executionUpdateDeliveryRetryable(deliveryErr) {
 		_, deadLetterErr := w.queries.DeadLetterTaskExecutionUpdate(ctx, db.DeadLetterTaskExecutionUpdateParams{
 			ID:         executionUpdate.ID,
 			LeaseToken: executionUpdate.LeaseToken,
@@ -338,36 +313,17 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 			"failureReason":  completion.FailureReason.String,
 		},
 	}
-	saveDelivery := func(raw []byte) error {
-		_, err := w.queries.SaveTaskCompletionDWSDelivery(ctx, db.SaveTaskCompletionDWSDeliveryParams{
-			ID: completion.ID, LeaseToken: completion.LeaseToken, DwsDelivery: raw,
-		})
-		return err
-	}
-	deliveryState := completion.DwsDelivery
-	if len(deliveryState) == 0 {
-		if w.ResponseActions != nil {
-			var managed bool
-			managed, err = w.ResponseActions.PrepareExecutionResult(ctx, completion.CallbackUrl, result)
-			if managed {
-				shouldReply := false
-				result.ShouldReply = &shouldReply
-				result.ReplyReason = "multica_managed_response"
-			}
-		}
-		var delivery *DWSDelivery
-		if err == nil {
-			delivery, err = w.client.SubmitExecutionResult(ctx, completion.CallbackUrl, result)
-		}
-		if err == nil && delivery != nil {
-			deliveryState, err = freezeDWSDelivery(delivery, result.AgentID)
-			if err == nil {
-				err = saveDelivery(deliveryState)
-			}
+	if w.ResponseActions != nil {
+		var managed bool
+		managed, err = w.ResponseActions.PrepareExecutionResult(ctx, completion.CallbackUrl, result)
+		if managed {
+			shouldReply := false
+			result.ShouldReply = &shouldReply
+			result.ReplyReason = "multica_managed_response"
 		}
 	}
-	if err == nil && len(deliveryState) > 0 {
-		err = w.resumeDWSDelivery(ctx, deliveryState, saveDelivery)
+	if err == nil {
+		err = w.client.SubmitExecutionResult(ctx, completion.CallbackUrl, result)
 	}
 	if err == nil {
 		_, completeErr := w.queries.CompleteTaskCompletion(ctx, db.CompleteTaskCompletionParams{
@@ -381,9 +337,8 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 	}
 
 	var deliveryErr *ExecutionResultDeliveryError
-	var dwsPermanent *dwsDeliveryPermanentError
-	dropAfterFirstFailure := len(deliveryState) == 0 && strings.HasPrefix(completion.RequestID, "multica-comment-terminal:")
-	if errors.As(err, &dwsPermanent) || dropAfterFirstFailure || errors.As(err, &deliveryErr) && !deliveryErr.Retryable() {
+	dropAfterFirstFailure := strings.HasPrefix(completion.RequestID, "multica-comment-terminal:")
+	if dropAfterFirstFailure || errors.As(err, &deliveryErr) && !deliveryErr.Retryable() {
 		_, deadLetterErr := w.queries.DeadLetterTaskCompletion(ctx, db.DeadLetterTaskCompletionParams{
 			ID:         completion.ID,
 			LeaseToken: completion.LeaseToken,
