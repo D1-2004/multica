@@ -8,13 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/dwsclient"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
+	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/llm"
 )
 
@@ -37,14 +40,28 @@ func (s *dwsHistoryStub) Load(_ context.Context, turn Turn) ([]HistoryLine, erro
 func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory bool) *llm.Client {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		call := calls.Add(1)
 		var body struct {
 			Messages []struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"messages"`
+			Tools []struct {
+				Function struct {
+					Name       string         `json:"name"`
+					Parameters map[string]any `json:"parameters"`
+				} `json:"function"`
+			} `json:"tools"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "application/json")
+		if len(body.Tools) == 1 && body.Tools[0].Function.Name == "finish_check" {
+			// This HTTP fixture verifies history transport and routing rounds;
+			// semantic verdicts have their own scripted and real-model tests.
+			requestRef, candidateRef := scriptedReferenceEnums(body.Tools[0].Function.Parameters)
+			_ = json.NewEncoder(w).Encode(withScriptedFinishReferences(scriptedFinishVerdict("allow", "Scripted history fixture allows the candidate."), body.Messages[len(body.Messages)-1].Content, requestRef, candidateRef))
+			return
+		}
+		call := calls.Add(1)
 		for _, message := range body.Messages {
 			if message.Role == "user" || message.Role == "tool" {
 				*prompt += "\n" + message.Role + ": " + message.Content
@@ -55,7 +72,7 @@ func decisionLLM(t *testing.T, calls *atomic.Int32, prompt *string, readHistory 
 			_, _ = io.WriteString(w, `{"id":"cmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"history1","type":"function","function":{"name":"context_read","arguments":"{\"kind\":\"history\"}"}}]},"finish_reason":"tool_calls"}]}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"id":"cmpl-2","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"action\":\"reply\",\"text\":\"我在。\",\"reason\":\"本轮只沟通\"}"}}]},"finish_reason":"tool_calls"}]}`)
+		_, _ = io.WriteString(w, `{"id":"cmpl-2","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"f1","type":"function","function":{"name":"finish","arguments":"{\"actions\":[{\"kind\":\"acknowledge\",\"source_refs\":[\"u1\"],\"ack_kind\":\"greeting\",\"reply\":\"我在。\"}]}"}}]},"finish_reason":"tool_calls"}]}`)
 	}))
 	t.Cleanup(server.Close)
 	return llm.New(llm.Config{APIKey: "test", BaseURL: server.URL})
@@ -90,11 +107,11 @@ func TestDecideReadsDWSHistoryOnDemandForRobotAndDigitalEmployee(t *testing.T) {
 			if !strings.Contains(prompt, `"status":"loaded"`) || !strings.Contains(prompt, "看看今天的新闻") {
 				t.Fatalf("DWS history missing from prompt: %q", prompt)
 			}
-			if len(got.Steps) < 2 || got.Steps[0].Tool != "context_read" || got.Steps[0].Type != "tool_use" || got.Steps[1].Type != "tool_result" {
+			if len(got.Steps) < 4 || got.Steps[0].Tool != toolAssocRecall || !strings.Contains(got.Steps[0].Content, "Host prefetch") || got.Steps[2].Tool != "context_read" || got.Steps[2].Type != "tool_use" || got.Steps[3].Type != "tool_result" {
 				t.Fatalf("DWS timeline missing: %#v", got.Steps)
 			}
-			if !strings.Contains(got.Steps[1].Output, "看看今天的新闻") {
-				t.Fatalf("DWS timeline omitted loaded content: %#v", got.Steps[1])
+			if !strings.Contains(got.Steps[3].Output, "看看今天的新闻") {
+				t.Fatalf("DWS timeline omitted loaded content: %#v", got.Steps[3])
 			}
 			if len(loader.turns) != 1 || loader.turns[0].HistoryBefore.IsZero() {
 				t.Fatalf("on-demand history must receive the fixed window cutoff: %#v", loader.turns)
@@ -119,11 +136,67 @@ func TestDecideDWSHistoryTimeoutStillRunsLLM(t *testing.T) {
 		DWSUID:            "24710833",
 		DWSOrgID:          "439446171",
 	})
-	if got.Action == ActionContinue || calls.Load() != 2 || loader.calls != 1 {
+	// The Host prefetch times out and leaves history not_loaded so the
+	// on-demand read may still try once; that read then reports unavailable.
+	if got.Action == ActionContinue || calls.Load() != 2 || loader.calls != 2 {
 		t.Fatalf("timeout must still judge: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
 	}
 	if !strings.Contains(prompt, `"status":"unavailable"`) {
 		t.Fatalf("timeout must be explicit, not empty history: %q", prompt)
+	}
+}
+
+func TestDecidePrefetchesDWSHistoryBeforeFirstModelCall(t *testing.T) {
+	loader := &dwsHistoryStub{history: []HistoryLine{
+		{Role: "菲迪", Content: "须莫你好，冬翔让我帮你问一下，晚上几点出发？"},
+	}}
+	var calls atomic.Int32
+	var prompt string
+	c := &Coordinator{LLM: decisionLLM(t, &calls, &prompt, false), DWSHistory: loader}
+	got := c.Decide(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "6 点",
+		AgentID:        testAgentID(),
+		ConversationID: "cid-real",
+		DWSUID:         "24710833",
+		DWSOrgID:       "439446171",
+	})
+	if got.Action != ActionReply || calls.Load() != 1 || loader.calls != 1 {
+		t.Fatalf("history must be read once before the first model call: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	}
+	if !strings.Contains(prompt, `"status":"loaded"`) || !strings.Contains(prompt, "晚上几点出发") {
+		t.Fatalf("prefetched history missing from the first prompt: %q", prompt)
+	}
+	if len(got.Steps) < 4 || got.Steps[0].Tool != toolAssocRecall || got.Steps[2].Tool != toolContextRead || !strings.Contains(got.Steps[2].Content, "Host prefetch") || got.Steps[3].Type != "tool_result" || !strings.Contains(got.Steps[3].Output, "晚上几点出发") {
+		t.Fatalf("history prefetch timeline missing: %#v", got.Steps)
+	}
+	if len(loader.turns) != 1 || loader.turns[0].HistoryBefore.IsZero() {
+		t.Fatalf("prefetch must receive the fixed window cutoff: %#v", loader.turns)
+	}
+}
+
+func TestDecideRepeatedHistoryReadReusesPrefetchedSnapshot(t *testing.T) {
+	loader := &dwsHistoryStub{history: []HistoryLine{{Role: "须莫", Content: "看看今天的新闻"}}}
+	var calls atomic.Int32
+	var prompt string
+	c := &Coordinator{LLM: decisionLLM(t, &calls, &prompt, true), DWSHistory: loader}
+	got := c.Decide(context.Background(), Turn{
+		Source:         SourceDigitalEmployee,
+		Addressed:      true,
+		ChatType:       "p2p",
+		Message:        "刚才聊了什么",
+		AgentID:        testAgentID(),
+		ConversationID: "cid-real",
+		DWSUID:         "24710833",
+		DWSOrgID:       "439446171",
+	})
+	if got.Action != ActionReply || calls.Load() != 2 || loader.calls != 1 {
+		t.Fatalf("a repeated history read must not reload: decision=%+v llm_calls=%d history_calls=%d", got, calls.Load(), loader.calls)
+	}
+	if !strings.Contains(prompt, "history already read this run") {
+		t.Fatalf("repeated read must be answered with a reuse hint: %q", prompt)
 	}
 }
 
@@ -148,7 +221,7 @@ func TestDecideDWSHistoryFailureStillRunsLLM(t *testing.T) {
 	if !strings.Contains(prompt, `"status":"unavailable"`) {
 		t.Fatalf("failure must be explicit, not empty history: %q", prompt)
 	}
-	if len(got.Steps) < 2 || got.Steps[1].Tool != "context_read" || !strings.Contains(got.Steps[1].Output, `"status":"unavailable"`) {
+	if len(got.Steps) < 4 || got.Steps[3].Tool != "context_read" || !strings.Contains(got.Steps[3].Output, `"status":"unavailable"`) {
 		t.Fatalf("DWS failure timeline=%#v", got.Steps)
 	}
 }
@@ -480,4 +553,76 @@ func TestHTTPDWSCredentialRedeemerValidatesResponse(t *testing.T) {
 	if err != nil || credential.UID != "24710833" || credential.ClientID != "client-id" || credential.AuthCode != "auth-code" {
 		t.Fatalf("credential=%+v err=%v", credential, err)
 	}
+}
+
+func TestDWSContractDisplayTimeUsesShanghaiAndEnforcesCutoff(t *testing.T) {
+	cutoff := time.Date(2026, 9, 10, 8, 37, 34, 0, time.UTC)
+	raw := []byte(`{"contractVersion":"im.message-list.v1","success":true,"messages":[
+ {"content":"future","openMessageId":"future","createTime":"2026-09-10 16:38:00"},
+ {"content":"在的，有什么可以帮你的吗？","openMessageId":"bot","sender":"employee","createTime":"2026-09-10 16:37:11"},
+ {"content":"群里有 AI 在吗","openMessageId":"user","sender":"user","createTime":"2026-09-10 16:36:55"}]}`)
+	got, err := parseDWSHistory(raw, Turn{HistoryBefore: cutoff})
+	if err != nil || len(got) != 2 {
+		t.Fatalf("history=%#v err=%v", got, err)
+	}
+	if got[1].EvidenceID != "bot" || cutoff.Sub(got[1].Timestamp) != 23*time.Second {
+		t.Fatalf("lost real dialogue interval: %#v", got)
+	}
+}
+
+// Renewal is an explicit per-Agent opt-in, never a response to arbitrary errors.
+func TestDWSHistoryRenewsAuthorizedCrossOrgReadOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name                   string
+		enabled                bool
+		code                   string
+		grantFails, retryFails bool
+		wantLists, wantGrants  int
+		wantOK                 bool
+	}{
+		{"authorized", true, "CrossOrgPermissionDenied", false, false, 2, 1, true},
+		{"not authorized", false, "CrossOrgPermissionDenied", false, false, 1, 0, false},
+		{"other permission", true, "PermissionDenied", false, false, 1, 0, false},
+		{"grant failure", true, "CrossOrgPermissionDenied", true, false, 1, 1, false},
+		{"second rejection", true, "CrossOrgPermissionDenied", false, true, 2, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "dws")
+			body := `{"error":{"server_error_code":"` + tc.code + `","category":"api"}}`
+			if err := os.WriteFile(bin, []byte("#!/bin/sh\ncat <<'RESPONSE'\n"+body+"\nRESPONSE\nexit 1\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			_, denied := (dwsclient.CLI{Path: bin}).List(context.Background(), dir, dwsclient.ListRequest{ConversationID: "cid-test"})
+			cli := &renewingHistoryTestCLI{denial: denied, grantFails: tc.grantFails, retryFails: tc.retryFails}
+			loader := &dwsHistoryLoader{issuer: fakeDWSIssuer{}, redeemer: fakeDWSRedeemer{}, cli: cli, mkdir: os.MkdirTemp, remove: os.RemoveAll,
+				crossOrgRenewAgentIDs: map[string]bool{util.UUIDToString(testAgentID()): tc.enabled}}
+			_, err := loader.Load(context.Background(), Turn{AgentID: testAgentID(), ConversationID: "cid-test", DWSUID: "24710833", DWSOrgID: "439446171", HistoryBefore: time.Now()})
+			if (err == nil) != tc.wantOK || cli.lists != tc.wantLists || cli.grants != tc.wantGrants {
+				t.Fatalf("err=%v lists=%d grants=%d", err, cli.lists, cli.grants)
+			}
+		})
+	}
+}
+
+type renewingHistoryTestCLI struct {
+	fakeDWSCLI
+	denial                 error
+	grantFails, retryFails bool
+	lists, grants          int
+}
+
+func (c *renewingHistoryTestCLI) ListMessages(ctx context.Context, dir, cid string, before time.Time, limit int) ([]byte, error) {
+	c.lists++
+	if c.lists == 1 || c.retryFails {
+		return nil, c.denial
+	}
+	return c.fakeDWSCLI.ListMessages(ctx, dir, cid, before, limit)
+}
+func (c *renewingHistoryTestCLI) RenewCrossOrgRead(context.Context, string) error {
+	c.grants++
+	if c.grantFails {
+		return errors.New("grant failed")
+	}
+	return nil
 }

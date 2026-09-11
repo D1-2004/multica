@@ -47,7 +47,7 @@ func TestDecideExportsOneLangfuseTracePerTurn(t *testing.T) {
 	client, exporter := langfuseTestClient(t)
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("done", toolFinish, `{"action":"reply","text":"好的，我记下了。","reason":"simple ack"}`),
+		assistantTool("done", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"receipt","reply":"好的，我记下了。"}]}`),
 	}}
 	chat.rounds[1].Usage = openai.CompletionUsage{PromptTokens: 200, CompletionTokens: 12, TotalTokens: 212}
 	tools := &stubTools{recall: `{"items":[]}`}
@@ -115,7 +115,7 @@ func TestDecideExportsOneLangfuseTracePerTurn(t *testing.T) {
 	if got, _ := spanAttr(root, "langfuse.user.id"); got.AsString() != "02000000-0000-0000-0000-000000000000" {
 		t.Errorf("user id = %q", got.AsString())
 	}
-	wantTags := "inbound_coordinator,source-web,kind-p2p,agent-01000000-0000-0000-0000-000000000000,workspace-ws-1,user-02000000-0000-0000-0000-000000000000"
+	wantTags := "inbound_coordinator,source-web,kind-p2p,agent-01000000-0000-0000-0000-000000000000,agent_name-FDE教练,workspace-ws-1,user-02000000-0000-0000-0000-000000000000"
 	if got, _ := spanAttr(root, "langfuse.trace.tags"); strings.Join(got.AsStringSlice(), ",") != wantTags {
 		t.Errorf("tags = %v", got.AsStringSlice())
 	}
@@ -181,7 +181,7 @@ func TestDecideExportsOneLangfuseTracePerTurn(t *testing.T) {
 	if got, _ := spanAttr(recalls[0], "langfuse.observation.type"); got.AsString() != "tool" {
 		t.Errorf("recall type = %s", got.AsString())
 	}
-	if got, _ := spanAttr(recalls[0], "langfuse.observation.output"); got.AsString() != `{"items":[]}` {
+	if got, _ := spanAttr(recalls[0], "langfuse.observation.output"); !strings.Contains(got.AsString(), `"items":[]`) || !strings.Contains(got.AsString(), `"read_ref":"r1"`) || !strings.Contains(got.AsString(), `"complete":false`) {
 		t.Errorf("recall output = %s", got.AsString())
 	}
 	finishes := spansNamed(spans, toolFinish)
@@ -267,7 +267,7 @@ func TestDecideTraceRecordsExhaustedRoundsAsLoopError(t *testing.T) {
 func TestDecideTakesTraceIDFromContextWhenTurnHasNone(t *testing.T) {
 	client, exporter := langfuseTestClient(t)
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
-		assistantTool("done", toolFinish, `{"action":"reply","text":"好的"}`),
+		assistantTool("done", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"receipt","reply":"好的"}]}`),
 	}}
 	coord := &Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: chat, Tools: &stubTools{}, Langfuse: client}
 	const jobID = "0f0f0f0f-1111-4222-8333-444444444444"
@@ -302,7 +302,7 @@ func TestConversationNameFallsBackToSceneTitleBeforeSender(t *testing.T) {
 func TestRunLoopWithoutTraceIsUnchanged(t *testing.T) {
 	chat := &scriptedCompleter{rounds: []openai.ChatCompletion{
 		assistantTool("recall", toolAssocRecall, `{"since":"48h"}`),
-		assistantTool("done", toolFinish, `{"action":"reply","text":"ok"}`),
+		assistantTool("done", toolFinish, `{"actions":[{"kind":"acknowledge","source_refs":["u1"],"ack_kind":"receipt","reply":"ok"}]}`),
 	}}
 	decision, err := (&Coordinator{Chat: chat, Tools: &stubTools{}}).runLoop(context.Background(), Turn{Source: SourceWeb, Message: "hi"})
 	if err != nil || decision.Action != ActionReply {

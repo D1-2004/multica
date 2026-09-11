@@ -81,10 +81,17 @@ dropping one of those clauses is a deliberate edit rather than the consequence o
 starting from an empty field.
 
 The override is resolved at claim time from the current database row, exactly
-like the Diamond snapshot it replaces, so an edit reaches continuation tasks and
-delegated Issue follow-ups without re-dispatching. Whitespace-only is treated as
-empty. The Router-supplied `contextPrompt` is never replaceable: it is not
-authored policy but this run's resolved delivery facts.
+like the Diamond snapshot it replaces, so an edit reaches continuation tasks
+without re-dispatching. Whitespace-only is treated as empty. The Router-supplied
+`contextPrompt` is never replaceable: it is not authored policy but this run's
+resolved delivery facts.
+
+Neither this document nor the override reaches an Issue task the Coordinator
+creates from an inbound dispatch (`coordinator_issue_follow_up=true`). The short
+loop already consumed that dispatch, so the Issue task is plain Issue work: it
+keeps the DingTalk conversation facts, scene graph, reply formatting, and
+enterprise identity segments, and skips the dispatch-mode policy and the Router
+`contextPrompt` (`excluded_reason: coordinator_issue`).
 
 | | no `policy` override (default) | `policy` override set |
 |---|---|---|
@@ -112,7 +119,7 @@ quoted-message facts (only when the window contains a quoted reply)
 
 Blank sections are skipped. If every input is blank, `instruction` is omitted for an instruction-capable daemon. The quoted-message section is composed by Multica from the dispatch envelope rather than configured here; see [Agent Dispatch V2 execution contract](agent-dispatch-v2-execution-contract.md). `contextPrompt` is not Diamond configuration: it is dynamic, credential-free execution context supplied by the authenticated Router command and persisted only in private task context. Persisted Issue descriptions, comment content, chat messages, and assignment handoff notes are never rewritten with these instructions. At claim time, daemons advertising `task-instruction-v1` use this new composition through `instruction`; older daemon images bypass it, rebuild the previous structured DingTalk prompt, and receive that prompt as a temporary prefix in the existing task-content field they already consume.
 
-Every continuation task recomposes the instruction at claim time from the latest valid Diamond snapshot. When Auto delegates to an Issue, Multica transfers the dynamic Router context, changes the private dispatch surface to `issue`, and recomposes `common + issue + context`; it does not copy the Auto prompt into the child task.
+Every continuation task of a direct dispatch recomposes the instruction at claim time from the latest valid Diamond snapshot. When Auto delegates to an Issue, Multica transfers the dynamic Router context, changes the private dispatch surface to `issue`, and recomposes `common + issue + context`; it does not copy the Auto prompt into the child task. The exception is an Issue task the Coordinator creates (`coordinator_issue_follow_up=true`): it keeps the envelope for its DingTalk facts but composes neither this document's prompts nor `contextPrompt` (see the Agent-authored override section above).
 
 ## Startup, updates, and shutdown
 

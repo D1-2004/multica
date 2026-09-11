@@ -7,7 +7,7 @@
   "profile": "collect-pre-942f",
   "sender_role": "主角",
   "conversation_id": "cid+bEFv7ngm9n79Q1vL9HYJw==",
-  "required_policy_version": "2026-09-08.2",
+  "required_policy_version": "2026-09-08.3",
   "required_replica_marker": "[coordinator-plan:window-plan-v1]",
   "cases": [
     {

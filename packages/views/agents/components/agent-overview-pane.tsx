@@ -45,6 +45,7 @@ import { AgentDetailInspector } from "./agent-detail-inspector";
 import { AgentAccessSettings } from "./agent-access-settings";
 import { AgentOverviewSummary } from "./agent-overview-summary";
 import { ActorIssuesPanel } from "../../common/actor-issues-panel";
+import { CoordinatorSessionsTab } from "./tabs/coordinator-sessions-tab";
 import { SceneMemoryTab } from "./tabs/scene-memory-tab";
 import { ExportTab } from "./tabs/export-tab";
 import { PublishTab } from "./tabs/publish-tab";
@@ -68,6 +69,7 @@ export type { DetailTab } from "./agent-config-navigation";
 const TOP_TABS: { id: DetailSection; labelKey: DetailSection }[] = [
   { id: "overview", labelKey: "overview" },
   { id: "work", labelKey: "work" },
+  { id: "inbound", labelKey: "inbound" },
   { id: "memory", labelKey: "memory" },
   { id: "configuration", labelKey: "configuration" },
 ];
@@ -205,6 +207,7 @@ export function AgentOverviewPane({
       new Set<DetailTab>([
         "overview",
         "work",
+        "inbound",
         ...(canEdit ? (["memory"] as const) : []),
         ...visibleConfigGroups.flatMap((group) =>
           group.items.map((item) => item.id),
@@ -250,6 +253,7 @@ export function AgentOverviewPane({
     if (
       section === "overview" ||
       section === "work" ||
+      section === "inbound" ||
       section === "memory"
     ) {
       requestView(section);
@@ -381,7 +385,7 @@ export function AgentOverviewPane({
           "min-h-0 flex-1",
           isSecondaryLayout
             ? "overflow-y-auto md:overflow-hidden"
-            : effectiveView === "memory"
+            : effectiveView === "memory" || effectiveView === "inbound"
               ? "overflow-hidden"
               : "overflow-y-auto",
         )}
@@ -411,6 +415,8 @@ export function AgentOverviewPane({
             <ActorIssuesPanel actorType="agent" actorId={agent.id} />
           </div>
         )}
+
+        {effectiveView === "inbound" && <CoordinatorSessionsTab key={agent.id} agent={agent} />}
 
         {effectiveView === "memory" && (
           <div className="flex h-full min-h-0 flex-1 flex-col">

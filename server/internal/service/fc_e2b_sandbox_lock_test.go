@@ -179,10 +179,11 @@ func TestResolveSandboxIsSerializedAcrossReplicas(t *testing.T) {
 		t.Fatalf("seed old-template sandbox: %v", err)
 	}
 	runner := &countingRunner{bootDelay: 300 * time.Millisecond}
+	_, apiServer := newSandboxTimeoutAPI(t)
 
 	// Two launchers over one database = two replicas.
 	newReplica := func() *FCE2BLauncher {
-		l := NewFCE2BLauncher(queries, nil, FCE2BConfig{TimeoutSeconds: 300}, runner)
+		l := NewFCE2BLauncher(queries, nil, FCE2BConfig{APIURL: apiServer.URL, APIKey: "test-key", TimeoutSeconds: 300}, runner)
 		l.SetPool(pool)
 		return l
 	}
@@ -232,7 +233,8 @@ func TestResolveSandboxUnderRuntimeLockUsesSinglePoolConnection(t *testing.T) {
 	}
 
 	runner := &countingRunner{}
-	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{TimeoutSeconds: 300}, runner)
+	_, apiServer := newSandboxTimeoutAPI(t)
+	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{APIURL: apiServer.URL, APIKey: "test-key", TimeoutSeconds: 300}, runner)
 	launcher.SetPool(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -421,7 +423,8 @@ func TestResolveSandboxNeverReusesDifferentTemplate(t *testing.T) {
 
 	seedSession(workspaceID, "sbx_old")
 	runner := &countingRunner{}
-	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{TimeoutSeconds: 300}, runner)
+	_, apiServer := newSandboxTimeoutAPI(t)
+	launcher := NewFCE2BLauncher(queries, nil, FCE2BConfig{APIURL: apiServer.URL, APIKey: "test-key", TimeoutSeconds: 300}, runner)
 	launcher.SetPool(pool)
 	sandboxID, coldStart, err := launcher.resolveSandbox(context.Background(), runtime, fcE2BTaskScope{typ: fcE2BScopeTypeChat, id: workspaceID}, true, "tpl_new", chattrace.New("task"))
 	if err != nil {

@@ -16,6 +16,8 @@ import { DingTalkAccountBindingCard } from "./dingtalk-account-binding";
 
 const listBindings = vi.fn();
 const beginBinding = vi.fn();
+const listReusable = vi.fn();
+const reuseIdentity = vi.fn();
 const deleteBinding = vi.fn();
 const updateBindingSurface = vi.fn();
 const mid2Url = vi.hoisted(() => vi.fn());
@@ -133,11 +135,15 @@ beforeEach(() => {
   );
   setApiInstance({
     listDingTalkAccountBindings: listBindings,
+    listReusableDingTalkIdentities: listReusable,
+    reuseDingTalkIdentity: reuseIdentity,
     beginDingTalkAccountBinding: beginBinding,
     deleteDingTalkAccountBinding: deleteBinding,
     updateDingTalkAccountBindingSurface: updateBindingSurface,
   } as unknown as ApiClient);
   listBindings.mockResolvedValue({ bindings: [], configured: true });
+  listReusable.mockResolvedValue([]);
+  reuseIdentity.mockResolvedValue(undefined);
   beginBinding.mockResolvedValue({
     bindingId: "agent-1",
     qrCodeUrl: beginQRCodeURL,
@@ -953,5 +959,44 @@ describe("DingTalkAccountBindingCard", () => {
     expect(
       zhHansAgents.tab_body.integrations.dingtalk_account_permission_denied,
     ).toBe("无权限操作，请联系此智能体管理员处理");
+  });
+});
+
+
+describe("reusable execution identity", () => {
+  const candidate = { sourceAgentId: "source-agent", sourceAgentName: "Existing agent", accountDisplayName: "Alice", organizationName: "Acme" };
+  it("applies the chosen existing identity without creating a QR attempt", async () => {
+    listReusable.mockResolvedValue([candidate]);
+    reuseIdentity.mockImplementation(async () => {
+      listBindings.mockResolvedValue({ configured: true, bindings: [{ ...activeBinding, dwsIdentity: { ...activeBinding.dwsIdentity, accountDisplayName: "Alice" } }] });
+    });
+    renderCard("identity");
+    const select = await screen.findByRole("combobox", { name: "Use an existing identity" });
+    expect(screen.getByRole("button", { name: "Use this identity" })).toBeDisabled();
+    fireEvent.change(select, { target: { value: "source-agent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Use this identity" }));
+    await waitFor(() => expect(reuseIdentity).toHaveBeenCalledWith("workspace-1", "agent-1", "source-agent"));
+    expect(beginBinding).not.toHaveBeenCalled();
+    expect(await screen.findByText("Alice")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+  it("keeps QR binding available with no reusable identities", async () => {
+    renderCard("identity");
+    expect(await screen.findByText("No reusable identities yet. Scan to bind a new account.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Bind execution identity" })).toBeEnabled();
+  });
+  it("shows a revoked-source error without reporting success", async () => {
+    listReusable.mockResolvedValue([candidate]);
+    reuseIdentity.mockRejectedValue(new Error("identity is no longer reusable"));
+    renderCard("identity");
+    fireEvent.change(await screen.findByRole("combobox"), { target: { value: "source-agent" } });
+    fireEvent.click(screen.getByRole("button", { name: "Use this identity" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("identity is no longer reusable");
+    expect(screen.queryByText("Default execution identity bound")).not.toBeInTheDocument();
+  });
+  it("never offers personal identity reuse on the message-binding card", async () => {
+    renderCard("message");
+    await screen.findByRole("button", { name: "Bind digital employee" });
+    expect(listReusable).not.toHaveBeenCalled();
   });
 });

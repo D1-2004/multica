@@ -19,6 +19,7 @@ type SendRequest struct {
 	Content                 string
 	IdempotencyKey          string
 	ShowAITag               bool
+	ReplyToOpenMsgID        string
 }
 
 type SendResult struct {
@@ -53,7 +54,19 @@ func (c CLI) Send(ctx context.Context, configDir string, req SendRequest) (SendR
 func sendArgs(req SendRequest) ([]string, error) {
 	group := strings.TrimSpace(req.ConversationID)
 	person := strings.TrimSpace(req.RecipientOpenDingTalkID)
-	if (group == "") == (person == "") || strings.TrimSpace(req.Content) == "" || strings.TrimSpace(req.IdempotencyKey) == "" {
+	replyTo := strings.TrimSpace(req.ReplyToOpenMsgID)
+	if strings.TrimSpace(req.Content) == "" || strings.TrimSpace(req.IdempotencyKey) == "" {
+		return nil, errors.New("DWS send requires content and an idempotency key")
+	}
+	if replyTo != "" {
+		if group == "" {
+			return nil, errors.New("DWS quote-reply requires a conversation id")
+		}
+		return []string{"chat", "+messages-reply", "--content", req.Content,
+			"--idempotency-key", req.IdempotencyKey, "--ai-tag=" + strconv.FormatBool(req.ShowAITag),
+			"--format", "json", "--yes", "--group", group, "--message-id", replyTo}, nil
+	}
+	if (group == "") == (person == "") {
 		return nil, errors.New("DWS send requires one target, content and an idempotency key")
 	}
 	args := []string{"chat", "message", "send", "--content", req.Content,

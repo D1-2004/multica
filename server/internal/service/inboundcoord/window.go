@@ -9,9 +9,17 @@ import (
 // may start or continue. A third real ask stays pending for the next window.
 const SceneWindowMaxItems = 2
 
-// WindowUtterance is one addressed inbound line in the current scene window.
+// MessageMention preserves trusted channel mention targets; empty UID does not
+// prove who an open-id target is. Never infer identities from a display name.
+type MessageMention struct {
+	UID            string `json:"uid,omitempty"`
+	OpenDingTalkID string `json:"open_dingtalk_id,omitempty"`
+}
+
+// WindowUtterance is one inbound line in the current scene window.
 type WindowUtterance struct {
 	Sender            string
+	Mentions          []MessageMention
 	Text              string
 	EvidenceID        string
 	Timestamp         time.Time
@@ -23,6 +31,7 @@ type WindowUtterance struct {
 
 // WindowItem is one deliverable the window decided to handle.
 type WindowItem struct {
+	Reply      string   `json:"reply,omitempty"`
 	IssueID    string   `json:"issue_id,omitempty"`
 	SourceRefs []string `json:"source_refs,omitempty"`
 	Basis      string   `json:"basis,omitempty"`
@@ -86,38 +95,6 @@ func validWindowDelegator(turn Turn, delegator string) bool {
 	return ok
 }
 
-// AllWindowAck is true only for an explicit instruction to stop replying.
-// Short assent and gratitude can answer a pending question; without that
-// context they must reach the semantic decision instead of being discarded.
-func AllWindowAck(turn Turn) bool {
-	utterances := windowUtterances(turn)
-	if len(utterances) == 0 {
-		return allAckText(turn.Message)
-	}
-	for _, u := range utterances {
-		if !allAckText(u.Text) {
-			return false
-		}
-	}
-	return true
-}
-
-func allAckText(raw string) bool {
-	s := stripInboundDisplay(raw)
-	found := false
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if !isAckOrStopReply(line) {
-			return false
-		}
-		found = true
-	}
-	return found
-}
-
 func stripInboundDisplay(raw string) string {
 	s := strings.TrimSpace(raw)
 	if i := strings.Index(s, "在钉钉会话中的消息："); i >= 0 {
@@ -127,24 +104,41 @@ func stripInboundDisplay(raw string) string {
 	return s
 }
 
-func isAckOrStopReply(raw string) bool {
-	s := stripMentionsAndSpace(raw)
-	if s == "" {
-		return false
+// ForWindowItem limits the executor handoff to the selected deliverable. An old
+// persisted checkpoint has no per-item reply, so its saved acknowledgement stays.
+func (d Decision) ForWindowItem(item WindowItem) Decision {
+	d.Purpose, d.Intent, d.LookInto = item.Purpose, item.Intent, item.LookInto
+	d.Items = []WindowItem{item}
+	if item.Reply != "" {
+		d.UserText = item.Reply
 	}
-	switch s {
-	case "不用回复了", "不用回了", "不用回复":
-		return true
-	default:
-		return false
-	}
+	d.CoordinationActions = nil
+	d.NonWorkRefs = nil
+	return d
 }
 
-func stripMentionsAndSpace(raw string) string {
-	fields := strings.Fields(stripMentionTokens(strings.TrimSpace(raw)))
-	for len(fields) > 0 && strings.HasPrefix(fields[0], "@") && len(fields[0]) > 1 {
-		fields = fields[1:]
+// mentionRelation compares trusted identifiers, not names or message text.
+// Other-only mentions are not a veto: the same line can also invite the
+// employee by name; that distinction belongs to the shared group policy.
+func mentionRelation(turn Turn, u WindowUtterance) string {
+	if u.Mentions == nil {
+		return "unknown"
 	}
-	joined := strings.Join(fields, "")
-	return strings.Trim(joined, "。！？!?.~…，,、 ")
+	if len(u.Mentions) == 0 {
+		return "none"
+	}
+	unknown := false
+	for _, m := range u.Mentions {
+		if m.UID == "" || turn.DWSUID == "" {
+			unknown = true
+			continue
+		}
+		if m.UID == turn.DWSUID {
+			return "includes_employee"
+		}
+	}
+	if unknown {
+		return "unknown"
+	}
+	return "other_only"
 }

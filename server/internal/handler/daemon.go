@@ -4213,6 +4213,15 @@ func (h *Handler) reconcileCommentsOnCompletion(ctx context.Context, task *db.Ag
 			"issue_id", uuidToString(task.IssueID), "task_id", uuidToString(task.ID), "error", err)
 		return
 	}
+	managedComments := map[string]bool{}
+	if h.IssueCommentService != nil {
+		var receiptErr error
+		managedComments, receiptErr = h.IssueCommentService.ReconcileCoordinatorFollowUpReceipts(ctx, *task)
+		if receiptErr != nil {
+			slog.Error("coordinator follow-up receipt reconciliation failed", "task_id", uuidToString(task.ID), "error", receiptErr)
+			return
+		}
+	}
 	if len(comments) == 0 {
 		return
 	}
@@ -4235,6 +4244,9 @@ func (h *Handler) reconcileCommentsOnCompletion(ctx context.Context, task *db.Ag
 	scheduled := 0
 	for i := range comments {
 		c := comments[i]
+		if managedComments[uuidToString(c.ID)] {
+			continue
+		}
 		if _, ok := delivered[uuidToString(c.ID)]; ok {
 			// Already delivered to this run (trigger or pre-claim coalesced).
 			continue

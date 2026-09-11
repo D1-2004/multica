@@ -858,3 +858,34 @@ compensation inside the Multica service makes the MCP call safe across old and
 new runtime images. Extending Router-first cleanup to complete pending direct
 projections prevents a failed local activation from leaving an upstream
 subscription that the user cannot subsequently remove.
+
+## Reuse an existing execution identity
+
+The digital employee configuration's execution-identity card can use an identity
+already bound in the same workspace without another QR-code flow. Message
+subscriptions and enterprise employee/BUC authorizations are independent.
+
+- `GET /api/workspaces/{id}/dingtalk/execution-identities?agent_id={target}`
+  lists `identities`, deduplicated by DingTalk UID and organization. Each item
+  exposes only `source_agent_id`, `source_agent_name`, `account_display_name`,
+  and `organization_name`.
+- `POST /api/workspaces/{id}/dingtalk/execution-identities/reuse` accepts
+  `agent_id` and `source_agent_id`; successful completion returns HTTP 204.
+  The caller cannot supply account coordinates or token material.
+
+Both endpoints require a human actor who owns the active target Agent. Sources
+must be active Agents in the same workspace, owned by that caller, with an
+identity personally bound by that caller. Workspace administration alone does
+not grant reuse of another owner's identity. Transferred Agent ownership does
+not transfer the original binder's right to reuse their identity.
+
+The write locks the relevant Agent ownership rows and source identity, checks
+all source/target restrictions again in SQL, and records
+`agent_dingtalk_identity_reused` in `activity_log` in the same atomic statement.
+Successful reuse also deletes pending QR-binding attempts for the target so an old QR callback cannot replace the selected identity. The audit contains source and target Agent IDs, not account coordinates. A
+source that was revoked or became ineligible returns 409; an existing different
+target identity also returns 409. Repeating the same bind succeeds without
+changing the original binding timestamp. Each resulting binding is independent;
+unbinding a source later does not revoke previously authorized copies.
+
+No schema migration or Router/DWS credential-copy operation is required.

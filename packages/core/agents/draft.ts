@@ -4,6 +4,7 @@ import type {
   AgentInvocationTargetInput,
   AgentPermissionScope,
   CreateAgentRequest,
+  CoordinatorContract,
   RuntimeDevice,
 } from "../types";
 import {
@@ -27,6 +28,7 @@ export interface AgentDraft {
   name: string;
   description: string;
   instructions: string;
+  coordinatorContract?: CoordinatorContract | null;
   avatarUrl: string | null;
   runtimeId: string;
   model: string;
@@ -188,6 +190,7 @@ export function buildDuplicateDraft(
     name: `${source.name}${options.nameSuffix}`,
     description: source.description ?? "",
     instructions: source.instructions ?? "",
+    coordinatorContract: source.coordinator_contract,
     avatarUrl: source.avatar_url ?? null,
     runtimeId: keepsRuntime
       ? (source.runtime_id as string)
@@ -217,7 +220,8 @@ export function buildCreateAgentRequest(options: {
   const request: CreateAgentRequest = {
     name: draft.name.trim(),
     description: draft.description.trim(),
-    instructions: draft.instructions.trim() || undefined,
+    instructions: draft.instructions.trim() ? draft.instructions : undefined,
+    coordinator_contract: draft.coordinatorContract,
     avatar_url: draft.avatarUrl ?? undefined,
     runtime_id: runtimeId,
     model: draft.model.trim() || undefined,

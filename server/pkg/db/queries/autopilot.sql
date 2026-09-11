@@ -178,13 +178,13 @@ WHERE id = $1;
 INSERT INTO autopilot_trigger (
     autopilot_id, kind, enabled, cron_expression, timezone,
     next_run_at, webhook_token, label, provider, event_filters,
-    published_by_type, published_by_id
+    published_by_type, published_by_id, merge_interval_minutes
 ) VALUES (
     $1, $2, $3, sqlc.narg('cron_expression'), sqlc.narg('timezone'),
     sqlc.narg('next_run_at'), sqlc.narg('webhook_token'), sqlc.narg('label'),
     COALESCE(sqlc.narg('provider')::text, 'generic'),
     sqlc.narg('event_filters'),
-    sqlc.narg('published_by_type'), sqlc.narg('published_by_id')
+    sqlc.narg('published_by_type'), sqlc.narg('published_by_id'), sqlc.narg('merge_interval_minutes')
 ) RETURNING *;
 
 -- name: SetAutopilotTriggerPublisher :exec
@@ -207,6 +207,9 @@ WHERE autopilot_id = $1;
 
 -- name: UpdateAutopilotTrigger :one
 UPDATE autopilot_trigger SET
+    message_revision = message_revision + CASE WHEN kind='dingtalk_message' AND (COALESCE(sqlc.narg('enabled')::boolean,enabled)<>enabled OR COALESCE(sqlc.narg('merge_interval_minutes')::integer,merge_interval_minutes) IS DISTINCT FROM merge_interval_minutes) THEN 1 ELSE 0 END,
+    message_accept_after = CASE WHEN kind='dingtalk_message' AND (COALESCE(sqlc.narg('enabled')::boolean,enabled)<>enabled OR COALESCE(sqlc.narg('merge_interval_minutes')::integer,merge_interval_minutes) IS DISTINCT FROM merge_interval_minutes) THEN now() ELSE message_accept_after END,
+    merge_interval_minutes = COALESCE(sqlc.narg('merge_interval_minutes')::integer,merge_interval_minutes),
     enabled = COALESCE(sqlc.narg('enabled')::boolean, enabled),
     cron_expression = COALESCE(sqlc.narg('cron_expression'), cron_expression),
     timezone = COALESCE(sqlc.narg('timezone'), timezone),
@@ -303,11 +306,11 @@ RETURNING *;
 -- a second run for the same (trigger_id, planned_at) pair (MUL-3551).
 INSERT INTO autopilot_run (
     autopilot_id, trigger_id, source, status, trigger_payload, squad_id, planned_at,
-    webhook_delivery_id
+    webhook_delivery_id, runtime_context
 ) VALUES (
     $1, sqlc.narg('trigger_id'), $2, $3, sqlc.narg('trigger_payload'),
     sqlc.narg('squad_id'), sqlc.narg('planned_at'),
-    sqlc.narg('webhook_delivery_id')
+    sqlc.narg('webhook_delivery_id'), sqlc.narg('runtime_context')
 ) RETURNING *;
 
 -- name: GetAutopilotRunByTriggerAndPlanned :one
@@ -456,7 +459,7 @@ ORDER BY t.id;
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, autopilot_run_id, trigger_summary,
     originator_user_id, accountable_user_id, rule_version_id,
-    originator_source, trigger_evidence_kind, trigger_evidence_ref_id
+    originator_source, trigger_evidence_kind, trigger_evidence_ref_id, context
 )
 VALUES (
     $1, $2, NULL, 'queued', $3, $4, sqlc.narg(trigger_summary),
@@ -465,7 +468,7 @@ VALUES (
     sqlc.narg(rule_version_id),
     sqlc.narg(originator_source),
     sqlc.narg(trigger_evidence_kind),
-    sqlc.narg(trigger_evidence_ref_id)
+    sqlc.narg(trigger_evidence_ref_id), sqlc.narg(runtime_context)
 )
 RETURNING *;
 

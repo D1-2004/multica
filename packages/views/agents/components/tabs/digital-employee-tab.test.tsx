@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { Agent, AgentRuntime, MemberWithUser } from "@multica/core/types";
 import { renderWithI18n } from "../../../test/i18n";
 
@@ -80,6 +80,32 @@ const asbRuntime = {
 } as AgentRuntime;
 
 describe("DigitalEmployeeTab", () => {
+  it("keeps the event trigger off by default and saves only that setting", async () => {
+    const onUpdate = vi.fn(async () => {});
+    renderWithI18n(
+      <DigitalEmployeeTab
+        agent={{ ...agent, inbound_coordinator: false }}
+        runtime={null}
+        members={[]}
+        currentUserId="user-1"
+        canEdit
+        canOperateDingTalkBinding
+        dingTalkBindingPermissionLoading={false}
+        onUpdate={onUpdate}
+      />,
+    );
+
+    const toggle = screen.getByRole("switch", { name: "Proactively process all new conversation messages" });
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    await waitFor(() =>
+      expect(onUpdate).toHaveBeenCalledWith("agent-1", {
+        event_trigger_enabled: true,
+        inbound_coordinator: true,
+      }),
+    );
+  });
+
   it("contains employee identity and behavior without robot or sandbox identity", () => {
     renderWithI18n(
       <DigitalEmployeeTab
@@ -176,5 +202,9 @@ describe("DigitalEmployeeTab", () => {
     expect(
       screen.getByRole("region", { name: /Enterprise digital employee/i }),
     ).toHaveAttribute("data-can-operate", "false");
+    expect(screen.getByRole("switch", { name: "Proactively process all new conversation messages" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 });

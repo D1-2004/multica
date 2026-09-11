@@ -187,6 +187,59 @@ func dwsStringFlag(name string) bool {
 // RewriteDWSSendAITag replaces only actual --ai-tag flags on current-user
 // sends. In particular, `--content --ai-tag=false` and everything after `--`
 // are message content and remain byte-for-byte identical.
+// RewriteDWSOriginReply turns a current-user send into the origin conversation
+// into a quote-reply. Outreach to a different conversation is unchanged.
+func RewriteDWSOriginReply(args []string, policy *protocol.DingTalkMessagePolicy) []string {
+	if policy == nil {
+		return args
+	}
+	origin := strings.TrimSpace(policy.ReplyToOpenMsgID)
+	cid := strings.TrimSpace(policy.ReplyConversationID)
+	if origin == "" || cid == "" {
+		return args
+	}
+	parsed := parseDWSCommand(args)
+	if !parsed.userSend || parsed.preview {
+		return args
+	}
+	if parsed.values["file"] != "" || parsed.values["file-path"] != "" || parsed.values["msg-type"] != "" {
+		return args
+	}
+	if parsed.conversationID == "" || parsed.conversationID != cid {
+		return args
+	}
+	if parsed.values["message-id"] != "" || parsed.values["ref-msg-id"] != "" {
+		return args
+	}
+	content := parsed.values["content"]
+	if content == "" {
+		content = parsed.values["text"]
+	}
+	if content == "" {
+		content = parsed.values["markdown"]
+	}
+	if content == "" {
+		return args
+	}
+	out := []string{"chat", "+messages-reply", "--group", cid, "--message-id", origin, "--content", content}
+	if key := parsed.values["idempotency-key"]; key == "" {
+		key = parsed.values["uuid"]
+		if key != "" {
+			out = append(out, "--idempotency-key", key)
+		}
+	} else {
+		out = append(out, "--idempotency-key", key)
+	}
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "--ai-tag") {
+			out = append(out, arg)
+		}
+	}
+	out = append(out, parsed.identityArgs...)
+	out = append(out, "--yes", "--format", "json")
+	return out
+}
+
 func RewriteDWSSendAITag(args []string, policy *protocol.DingTalkMessagePolicy) []string {
 	parsed := parseDWSCommand(args)
 	if policy == nil || !parsed.userSend {

@@ -947,6 +947,25 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.LockTaskUsageRollupForWorkspaceDelete(ctx) },
 		},
 		{
+			name: "delete agent event data",
+			run: func() error {
+				for _, statement := range []string{
+					`DELETE FROM coordinator_observed_message WHERE workspace_id=$1`,
+					`DELETE FROM coordinator_issue_follow_up WHERE workspace_id=$1`,
+					`DELETE FROM agent_event WHERE stream_id IN (SELECT id FROM agent_event_stream WHERE workspace_id=$1)`,
+					`DELETE FROM agent_event_batch WHERE stream_id IN (SELECT id FROM agent_event_stream WHERE workspace_id=$1)`,
+					`DELETE FROM agent_event_stream WHERE workspace_id=$1`,
+					`DELETE FROM agent_event_route WHERE agent_id IN (SELECT agent_id FROM agent_event_trigger WHERE workspace_id=$1)`,
+					`DELETE FROM agent_event_trigger WHERE workspace_id=$1`,
+				} {
+					if _, err := tx.Exec(ctx, statement, requester.WorkspaceID); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
 			name: "delete leaf data",
 			run:  func() error { return qtx.DeleteWorkspaceLeafData(ctx, requester.WorkspaceID) },
 		},

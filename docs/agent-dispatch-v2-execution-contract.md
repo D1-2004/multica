@@ -353,16 +353,17 @@ receives no task instruction. This does not switch it onto the legacy builder.
 Conversely, a daemon without `task-instruction-v1` always uses the legacy
 builder, even when Diamond common or Router context sections are available.
 
-The claim-time `instruction` is composed from five ordered segments, not one
+The claim-time `instruction` is composed from six ordered segments, not one
 blob:
 
 | # | Segment | Source | Overridable | Injected when |
 |---|---|---|---|---|
-| 1 | `policy` | Diamond `common` + `<surface>` | yes | the task carries a dispatch envelope this projection covers (`dingtalk_dispatch`) |
-| 2 | `context` | Router, per dispatch | no | the Router supplied a `contextPrompt` (`per_dispatch`) |
+| 1 | `policy` | Diamond `common` + `<surface>` | yes | the task carries a dispatch envelope this projection covers (`dingtalk_dispatch`) and is not a Coordinator-created Issue task (`coordinator_issue`) |
+| 2 | `context` | Router, per dispatch | no | the Router supplied a `contextPrompt` (`per_dispatch`) and the task is not a Coordinator-created Issue task (`coordinator_issue`) |
 | 3 | `dingtalk_conversation` | Multica, per dispatch | no | a DWS-outbound channel dispatch that is either chat/auto or carries a quoted message (`dingtalk_conversation`) |
-| 4 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
-| 5 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
+| 4 | `scene_graph` | product constant | yes | a DingTalk channel dispatch, so the run can recall and bind conversations to the Issue (`dingtalk_channel`) |
+| 5 | `reply_formatting` | product constant | yes | any DingTalk task context, including one with no dispatch envelope (`any_dingtalk_task`) |
+| 6 | `enterprise_identity` | product constant + resolved URL | yes | the run is on an ASB runtime and the authorization URL resolves (`enterprise_runtime`) |
 
 `dingtalk_conversation` carries facts, not policy, so it is composed from the
 persisted dispatch envelope and is not overridable. It gates on `outbound.mode`
@@ -389,6 +390,60 @@ logs — only comments on the issue" — which is exactly backwards for this cas
 sentence that used to carry the obligation required a `dws chat message reply`
 tool call and went away with the reply tracker; Router/ServerPush owns the
 delivery now, so the instruction says not to send it a second time.
+
+### Coordinator Issue follow-up reply targets
+
+The current receiver can already be resolved by trusted dispatch facts. For a
+Coordinator Issue follow-up on a DingTalk channel with DWS outbound, a known
+current sender UID/open ID, the current message matching the origin message,
+and a usable origin reply hint for the current CID, the run uses that supplied
+target under the existing response policy. An Issue-comment trigger alone does
+not require an association lookup or reconstruction of the original delegator.
+
+This shortcut only resolves where to answer the current request. The run still
+reads the current Issue and relevant latest comments for authorization and
+constraints. Actual delegated questions, third-party relay, conflicting roles,
+or a missing/inconsistent locator require recovery from original task context
+and the association graph as needed. Issue creator/comment-author identity is
+never substituted for the business speaker. A robot display name without a
+stable sender identifier does not enable the shortcut.
+
+The same origin locator supplies the ready-to-run reply hint; an explicit
+origin message different from the current message cannot take this branch.
+The branch changes neither legacy/managed result ownership nor send/completion
+evidence requirements, and grants no unrelated outreach or cross-scene access.
+The Host facts and instruction projection are implemented in
+buildDispatchIssueRelayInstruction. Contract tests are in
+server/internal/handler/coordinator_issue_relay_test.go; passing them would prove
+the projection and gates, not real recipient delivery.
+
+### Coordinator non-terminal waiting permission
+
+A new Coordinator job freezes a separate Host-only
+_coordinator_wait_delivery v1 record containing enabled, revision, and the
+validated sending input. Eligibility requires the Agent response and Coordinator
+switches, a verified revision, an ordinary digital-employee DWS message, trusted
+sending identity/CID/Host callback target, and a concrete recipient for a DM.
+The optional policy query is bounded to two seconds outside the acceptance
+transaction; failure freezes disabled. Public DispatchCommand input cannot
+grant this capability.
+
+This permission allows only one persisted non-terminal waiting notice. It is
+independent of legacy/managed final-result ownership and leaves the original
+completion callback intact. A frozen disabled/unknown-version record cannot fall
+back to another route; a legacy job created before this field existed gains no
+retrospective IM permission. Only an old managed job without the new field may
+retain its already frozen response route, subject to Host scope validation.
+
+Collection keeps the admission snapshot: a change of revision, enabled state,
+sending identity or target splits the window. Group peers can be collected
+while retaining the original frozen recipient. Pending notices are cancelled
+when their Coordinator job is no longer waiting or its work is already
+committed. The current waiting/outbox contract is documented in
+[Coordinator behavior](inbound-coordinator-loop.md); this does not change the
+Coordinator prompt modules, policy version 2026-09-10.2, or assembly 14.
+
+### DingTalk locator commands
 
 The locator half prints one runnable command per target, with the real ids
 substituted in:
@@ -1036,3 +1091,22 @@ parsing or rewriting Router's context string.
 - Reason: The Router removes the `/cancel` command before dispatch. Applying
   ordinary dispatch-content validation before the cancel branch rejected a
   valid cancellation before Multica could validate and cancel its target task.
+
+## Change record: 2026-09-10 Coordinator-created Issue tasks skip dispatch policy
+
+- History: An Issue task the Coordinator creates from an inbound dispatch
+  (`coordinator_issue_follow_up=true`, produced by
+  `inboundcoord.IndependentIssueTaskContext`) no longer receives the `policy`
+  segment (Diamond `common` + `<surface>`, or the Agent's `policy` override)
+  nor the Router `context` segment. Both report `excluded_reason:
+  coordinator_issue`. The legacy claim path drops the surface prompt the same
+  way. `dingtalk_conversation`, `scene_graph`, `reply_formatting`, and
+  `enterprise_identity` are unchanged, so the task keeps the trusted DingTalk
+  facts, the ready-to-run origin reply target, and the follow-up contract.
+- Reason: The short loop already consumed the inbound dispatch — it
+  acknowledged the sender or parked the message — before starting the Issue
+  task. The dispatch-mode policy (mode selection, reply-decision fence,
+  calendar/approval notice handling) and the Router's short-loop delivery
+  facts describe that consumed dispatch, not the Issue work, and they
+  contradicted the follow-up instruction that tells the task to decide its own
+  sends. With the Coordinator enabled, the Issue task is plain Issue work.

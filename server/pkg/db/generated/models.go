@@ -198,6 +198,7 @@ type Agent struct {
 	ServiceTier             pgtype.Text `json:"service_tier"`
 	DispatchAlwaysNewIssue  bool        `json:"dispatch_always_new_issue"`
 	DispatchPromptOverrides []byte      `json:"dispatch_prompt_overrides"`
+	CoordinatorContract     []byte      `json:"coordinator_contract"`
 }
 
 type AgentA2aEndpoint struct {
@@ -348,18 +349,18 @@ type AgentMcpDelegation struct {
 
 // Revocable many-to-many bindings between Agents and local Runner machines
 type AgentRunnerBinding struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	AgentID     pgtype.UUID        `json:"agent_id"`
-	MachineID   pgtype.UUID        `json:"machine_id"`
-	BoundBy     pgtype.UUID        `json:"bound_by"`
-	Roots       []byte             `json:"roots"`
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	MachineID   pgtype.UUID `json:"machine_id"`
+	BoundBy     pgtype.UUID `json:"bound_by"`
+	Roots       []byte      `json:"roots"`
 	// Server-name to configuration-fingerprint allowlist for Agent-enabled local MCP mounts.
 	EnabledMcpServers []byte             `json:"enabled_mcp_servers"`
-	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
-	RevokedBy   pgtype.UUID        `json:"revoked_by"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	RevokedAt         pgtype.Timestamptz `json:"revoked_at"`
+	RevokedBy         pgtype.UUID        `json:"revoked_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	// Agent-scoped logical disconnect; the shared machine process exits only when no connected bindings remain
 	DisconnectedAt pgtype.Timestamptz `json:"disconnected_at"`
 	DisconnectedBy pgtype.UUID        `json:"disconnected_by"`
@@ -646,6 +647,7 @@ type AutopilotRun struct {
 	SquadID           pgtype.UUID        `json:"squad_id"`
 	PlannedAt         pgtype.Timestamptz `json:"planned_at"`
 	WebhookDeliveryID pgtype.UUID        `json:"webhook_delivery_id"`
+	RuntimeContext    []byte             `json:"runtime_context"`
 }
 
 type AutopilotSubscriber struct {
@@ -674,7 +676,10 @@ type AutopilotTrigger struct {
 	// Actor type of the trigger's current responsible publisher: member | agent. Set to the creator at creation and re-stamped to the editor on any substantive edit governing this trigger. Consumed only for attribution (source=trigger_owner) — never authorization. NULL on pre-migration triggers (MUL-4302).
 	PublishedByType pgtype.Text `json:"published_by_type"`
 	// The member/agent currently responsible for this trigger's effective config (creator, then last substantive editor). For a member this is the accountable human of runs the trigger fires (source=trigger_owner). No FK, app-layer integrity. NULL on pre-migration triggers, which degrade to rule_owner (MUL-4302).
-	PublishedByID pgtype.UUID `json:"published_by_id"`
+	PublishedByID        pgtype.UUID        `json:"published_by_id"`
+	MergeIntervalMinutes pgtype.Int4        `json:"merge_interval_minutes"`
+	MessageRevision      int64              `json:"message_revision"`
+	MessageAcceptAfter   pgtype.Timestamptz `json:"message_accept_after"`
 }
 
 type ChannelBindingToken struct {

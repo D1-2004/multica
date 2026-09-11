@@ -58,10 +58,10 @@ func (p *dwsProvider) Send(ctx context.Context, in ActionInput, key string) (dws
 		return dwsclient.SendResult{}, &NotSubmittedError{Err: err}
 	}
 	defer cleanup()
-	req := dwsclient.SendRequest{Content: in.Text, ShowAITag: in.ShowAITag, IdempotencyKey: key}
-	if in.IsGroup {
+	req := dwsclient.SendRequest{Content: in.Text, ShowAITag: in.ShowAITag, IdempotencyKey: key, ReplyToOpenMsgID: strings.TrimSpace(in.ReplyToOpenMsgID)}
+	if in.IsGroup || req.ReplyToOpenMsgID != "" {
 		req.ConversationID = in.ConversationID
-		if in.SenderOpenDingTalkID != "" {
+		if in.IsGroup && in.SenderOpenDingTalkID != "" {
 			req.AtOpenDingTalkID = in.SenderOpenDingTalkID
 			mention := "<@" + in.SenderOpenDingTalkID + ">"
 			if !strings.Contains(req.Content, mention) {

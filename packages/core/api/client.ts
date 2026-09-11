@@ -1,3 +1,5 @@
+import { ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY } from "./asb-network-policy-schema";
+import type { ReusableDingTalkIdentity } from "../types/dingtalk-account-binding";
 import type { AgentPackagePreview, CreateAgentPackageRequest } from "../types/agent-package";
 import { AgentPackagePreviewSchema } from "./schemas";
 import type {
@@ -114,6 +116,7 @@ import type {
   ChatPinnedAgent,
   ChatMessage,
   ChatMessagesPage,
+  CoordinatorConversationsPage,
   ChatDraftRestoresResponse,
   ChatPendingTask,
   PrioritizeQueuedChatTaskResponse,
@@ -316,6 +319,7 @@ import {
   ChatDraftRestoresResponseSchema,
   ChatMessageListSchema,
   ChatMessagesPageSchema,
+  CoordinatorConversationsPageSchema,
   ChatPendingTaskSchema,
   PrioritizeQueuedChatTaskResponseSchema,
   SendChatMessageResponseSchema,
@@ -391,6 +395,10 @@ import {
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   AutopilotRunSchema,
+  AutopilotTriggerSchema,
+  GetAutopilotResponseSchema,
+  FALLBACK_AUTOPILOT_TRIGGER,
+  FALLBACK_GET_AUTOPILOT_RESPONSE,
   FALLBACK_AUTOPILOT_RUN,
   CronPreviewResponseSchema,
   UNREADABLE_CRON_PREVIEW_RESPONSE,
@@ -491,6 +499,7 @@ import {
   EMPTY_SYNC_AGENT_SOURCE_RESPONSE,
   BeginDingTalkAccountBindingResponseSchema,
   DingTalkAccountBindingsResponseSchema,
+  ReusableDingTalkIdentitiesSchema,
   EMPTY_BEGIN_DINGTALK_ACCOUNT_BINDING_RESPONSE,
   EMPTY_DINGTALK_ACCOUNT_BINDINGS_RESPONSE,
   FDEOnboardingStateSchema,
@@ -2261,6 +2270,18 @@ export class ApiClient {
     );
   }
 
+  async getASBNetworkPolicy(runtimeId: string) {
+    const endpoint = `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-network-policy`;
+    const raw = await this.fetch<unknown>(endpoint);
+    return parseWithFallback(raw, ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY, { endpoint });
+  }
+
+  async updateASBNetworkPolicy(runtimeId: string, customTargets: string[]) {
+    const endpoint = `/api/runtimes/${encodeURIComponent(runtimeId)}/asb-network-policy`;
+    const raw = await this.fetch<unknown>(endpoint, { method: "PUT", body: JSON.stringify({ custom_targets: customTargets }) });
+    return parseWithFallback(raw, ASBNetworkPolicySchema, EMPTY_ASB_NETWORK_POLICY, { endpoint });
+  }
+
   async validateASBRuntimeCredential(
     data: ValidateASBRuntimeCredentialRequest,
   ): Promise<ValidateASBRuntimeCredentialResponse> {
@@ -2880,6 +2901,45 @@ export class ApiClient {
 
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {
     return this.fetch(`/api/agents/${agentId}/tasks`);
+  }
+
+  async listAgentCoordinatorConversations(
+    agentId: string,
+    offset = 0,
+  ): Promise<CoordinatorConversationsPage> {
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/coordinator-conversations?offset=${offset}`,
+    );
+    return parseWithFallback(
+      raw,
+      CoordinatorConversationsPageSchema,
+      { conversations: [], has_more: false, next_offset: 0 },
+      { endpoint: "GET /api/agents/{id}/coordinator-conversations" },
+    );
+  }
+
+  async listAgentCoordinatorConversationMessages(
+    agentId: string,
+    sessionId: string,
+    cursor?: { created_at: string; id: string } | null,
+  ): Promise<ChatMessagesPage> {
+    const params = new URLSearchParams({ limit: "50" });
+    if (cursor) {
+      params.set("before_created_at", cursor.created_at);
+      params.set("before_id", cursor.id);
+    }
+    const raw = await this.fetch<unknown>(
+      `/api/agents/${encodeURIComponent(agentId)}/coordinator-conversations/${encodeURIComponent(sessionId)}/messages?${params}`,
+    );
+    return parseWithFallback(
+      raw,
+      ChatMessagesPageSchema,
+      { messages: [], limit: 50, has_more: false, next_cursor: null },
+      {
+        endpoint:
+          "GET /api/agents/{id}/coordinator-conversations/{sessionId}/messages",
+      },
+    );
   }
 
   async listAgentCoordinatorSessions(agentId: string): Promise<ChatSession[]> {
@@ -5226,7 +5286,8 @@ export class ApiClient {
   }
 
   async getAutopilot(id: string): Promise<GetAutopilotResponse> {
-    return this.fetch(`/api/autopilots/${id}`);
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}`);
+    return parseWithFallback(raw, GetAutopilotResponseSchema, FALLBACK_GET_AUTOPILOT_RESPONSE, { endpoint: "GET /api/autopilots/:id", includeReceived: false });
   }
 
   async createAutopilot(data: CreateAutopilotRequest): Promise<Autopilot> {
@@ -5308,10 +5369,13 @@ export class ApiClient {
     autopilotId: string,
     data: CreateAutopilotTriggerRequest,
   ): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers`, {
       method: "POST",
       body: JSON.stringify(data),
     });
+    const parsed = parseWithFallback(raw, AutopilotTriggerSchema, FALLBACK_AUTOPILOT_TRIGGER, { endpoint: "automation trigger write", includeReceived: false });
+    if (!parsed.id) throw new Error("The trigger response could not be read. Reload to verify the saved configuration.");
+    return parsed;
   }
 
   async updateAutopilotTrigger(
@@ -5319,10 +5383,13 @@ export class ApiClient {
     triggerId: string,
     data: UpdateAutopilotTriggerRequest,
   ): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
+    const parsed = parseWithFallback(raw, AutopilotTriggerSchema, FALLBACK_AUTOPILOT_TRIGGER, { endpoint: "automation trigger write", includeReceived: false });
+    if (!parsed.id) throw new Error("The trigger response could not be read. Reload to verify the saved configuration.");
+    return parsed;
   }
 
   async deleteAutopilotTrigger(
@@ -5891,6 +5958,20 @@ export class ApiClient {
   }
 
   // DingTalk account binding (independent from the DingTalk bot installation)
+  async listReusableDingTalkIdentities(workspaceId: string, agentId: string): Promise<ReusableDingTalkIdentity[]> {
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/dingtalk/execution-identities?agent_id=${encodeURIComponent(agentId)}`,
+    );
+    return parseWithFallback(raw, ReusableDingTalkIdentitiesSchema, [], { endpoint: "listReusableDingTalkIdentities", includeReceived: false });
+  }
+
+  async reuseDingTalkIdentity(workspaceId: string, agentId: string, sourceAgentId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/dingtalk/execution-identities/reuse`, {
+      method: "POST",
+      body: JSON.stringify({ agent_id: agentId, source_agent_id: sourceAgentId }),
+    });
+  }
+
   async listDingTalkAccountBindings(
     workspaceId: string,
   ): Promise<DingTalkAccountBindingsResponse> {

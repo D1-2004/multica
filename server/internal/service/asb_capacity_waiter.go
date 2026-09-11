@@ -35,30 +35,30 @@ func newASBCapacityWaitCoordinator() *asbCapacityWaitCoordinator {
 	}
 }
 
-func (coordinator *asbCapacityWaitCoordinator) tryStart(scopeID string) bool {
-	if coordinator == nil || scopeID == "" {
+func (coordinator *asbCapacityWaitCoordinator) tryStart(taskID string) bool {
+	if coordinator == nil || taskID == "" {
 		return false
 	}
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
-	if _, exists := coordinator.inFlight[scopeID]; exists {
+	if _, exists := coordinator.inFlight[taskID]; exists {
 		return false
 	}
 	if coordinator.running >= asbCapacityWaitMaxConcurrent {
 		return false
 	}
-	coordinator.inFlight[scopeID] = struct{}{}
+	coordinator.inFlight[taskID] = struct{}{}
 	coordinator.running++
 	return true
 }
 
-func (coordinator *asbCapacityWaitCoordinator) finish(scopeID string) {
-	if coordinator == nil || scopeID == "" {
+func (coordinator *asbCapacityWaitCoordinator) finish(taskID string) {
+	if coordinator == nil || taskID == "" {
 		return
 	}
 	coordinator.mu.Lock()
-	if _, exists := coordinator.inFlight[scopeID]; exists {
-		delete(coordinator.inFlight, scopeID)
+	if _, exists := coordinator.inFlight[taskID]; exists {
+		delete(coordinator.inFlight, taskID)
 		if coordinator.running > 0 {
 			coordinator.running--
 		}
@@ -162,33 +162,31 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 	waiting, err := l.Queries.ListASBCapacityWaitingTasks(
 		ctx,
 		db.ListASBCapacityWaitingTasksParams{
-			RetrySeconds: asbCapacityWaitRetryDelay.Seconds(),
-			StaleSeconds: asbCapacityStaleLaunchAge.Seconds(),
+			RetrySeconds:  asbCapacityWaitRetryDelay.Seconds(),
+			StaleSeconds:  asbCapacityStaleLaunchAge.Seconds(),
+			MaxPerRuntime: asbCapacityWaitMaxConcurrent,
 		},
 	)
 	if err != nil {
 		return 0, fmt.Errorf("list ASB capacity-waiting tasks: %w", err)
 	}
 	sort.SliceStable(waiting, func(i, j int) bool {
-		if waiting[i].Priority != waiting[j].Priority {
-			return waiting[i].Priority > waiting[j].Priority
-		}
 		if !waiting[i].CreatedAt.Time.Equal(waiting[j].CreatedAt.Time) {
 			return waiting[i].CreatedAt.Time.Before(waiting[j].CreatedAt.Time)
 		}
 		return util.UUIDToString(waiting[i].ID) < util.UUIDToString(waiting[j].ID)
 	})
 
-	// The SQL returns at most one waiter per Runtime. Resolve exact credential
-	// scopes here and keep one launch in flight per tenant across worker passes.
+	// Resolve exact credential scopes, then round-robin their FIFO batches.
+	// A tenant may use otherwise idle launch slots while earlier sandboxes boot;
+	// the PostgreSQL tenant lock still serializes quota checks/reclaim/create.
 	scopeByRuntime := make(map[string]ASBTenantCredentialScope)
-	scheduledScopeIDs := make(map[string]struct{})
-	scheduled := 0
-	start := l.CapacityWait.nextStart(len(waiting))
-	for offset := range len(waiting) {
-		task := waiting[(start+offset)%len(waiting)]
+	tasksByScope := make(map[string][]db.AgentTaskQueue)
+	runtimeCountByScope := make(map[string]int)
+	var scopeOrder []string
+	for _, task := range waiting {
 		if err := ctx.Err(); err != nil {
-			return scheduled, err
+			return 0, err
 		}
 		runtimeKey := util.UUIDToString(task.RuntimeID)
 		scope, cached := scopeByRuntime[runtimeKey]
@@ -197,7 +195,7 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 			scope, err = l.Credentials.RuntimeCredentialScope(ctx, task.RuntimeID)
 			if err != nil {
 				if ctx.Err() != nil {
-					return scheduled, ctx.Err()
+					return 0, ctx.Err()
 				}
 				slog.Warn("ASB capacity waiter could not resolve tenant scope",
 					"task_id", util.UUIDToString(task.ID),
@@ -214,25 +212,55 @@ func (l *ASBLauncher) retryCapacityWaitingTasks(ctx context.Context) (int, error
 		if scopeID == "" {
 			scopeID = asbCapacityScopeID(scope)
 		}
-		if _, exists := scheduledScopeIDs[scopeID]; exists {
+		if scopeID == "" {
 			continue
 		}
-		if !l.CapacityWait.tryStart(scopeID) {
-			continue
+		if _, exists := tasksByScope[scopeID]; !exists {
+			scopeOrder = append(scopeOrder, scopeID)
+			runtimeCountByScope[scopeID] = len(scope.RuntimeIDs)
 		}
-		scheduledScopeIDs[scopeID] = struct{}{}
-		l.Tasks.notifyTaskAvailable(task)
-		finishedScopeID := scopeID
-		l.Tasks.launchRuntimeForTaskWithCompletion(task, func() {
-			l.CapacityWait.finish(finishedScopeID)
-		})
-		scheduled++
-		slog.Info("ASB capacity waiter scheduled queued task",
-			"event", "asb_capacity_waiter_task_scheduled",
-			"task_id", util.UUIDToString(task.ID),
-			"runtime_id", runtimeKey,
-			"tenant_runtime_count", len(scope.RuntimeIDs),
-		)
+		tasksByScope[scopeID] = append(tasksByScope[scopeID], task)
+	}
+	scheduled := 0
+	start := l.CapacityWait.nextStart(len(scopeOrder))
+	for round := 0; ; round++ {
+		hasCandidates := false
+		for offset := range len(scopeOrder) {
+			if err := ctx.Err(); err != nil {
+				return scheduled, err
+			}
+			scopeID := scopeOrder[(start+offset)%len(scopeOrder)]
+			batch := tasksByScope[scopeID]
+			if round >= len(batch) {
+				continue
+			}
+			hasCandidates = true
+			task := batch[round]
+			taskID := util.UUIDToString(task.ID)
+			if !l.CapacityWait.tryStart(taskID) {
+				continue
+			}
+			l.Tasks.notifyTaskAvailable(task)
+			l.Tasks.launchRuntimeForTaskWithCompletion(task, func() {
+				l.CapacityWait.finish(taskID)
+				// Continue draining eligible waiters without waiting for the next
+				// recovery tick. Fresh full/429 waits retain their retry deadline.
+				l.CapacityWait.notify()
+			})
+			scheduled++
+			slog.Info("ASB capacity waiter scheduled queued task",
+				"event", "asb_capacity_waiter_task_scheduled",
+				"task_id", taskID,
+				"runtime_id", util.UUIDToString(task.RuntimeID),
+				"tenant_runtime_count", runtimeCountByScope[scopeID],
+			)
+			if scheduled >= asbCapacityWaitMaxConcurrent {
+				return scheduled, nil
+			}
+		}
+		if !hasCandidates {
+			break
+		}
 	}
 	return scheduled, nil
 }

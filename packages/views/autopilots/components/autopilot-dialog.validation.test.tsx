@@ -36,6 +36,10 @@ vi.mock("@multica/core/workspace/queries", () => ({
   }),
 }));
 
+vi.mock("@multica/core/dingtalk-account-bindings", () => ({
+  dingtalkAccountBindingsOptions: (wsId: string) => ({ queryKey: ["message-bindings", wsId], queryFn: async () => ({ bindings: [{ agentId: "agent-1", messageRoute: { status: "active" } }] }) }),
+}));
+
 vi.mock("@multica/core/projects/queries", () => ({
   projectListOptions: (wsId: string) => ({
     queryKey: ["projects", wsId],
@@ -189,5 +193,33 @@ describe("AutopilotDialog required-field feedback", () => {
       assignee_type: "agent",
       assignee_id: "agent-1",
     });
+  });
+});
+
+
+describe("AutopilotDialog DingTalk messages", () => {
+  it("requires a bound executor and sends the configured interval", async () => {
+    mockCreateAutopilot.mockReset().mockResolvedValue({ id: "ap-1" });
+    mockCreateTrigger.mockReset().mockResolvedValue({ id: "tr-1" });
+    const user = userEvent.setup();
+    renderCreateDialog();
+    const option = screen.getByRole("radio", { name: "DingTalk messages" });
+    expect(option).toBeDisabled();
+    await user.type(screen.getByLabelText("title"), "Message digest");
+    await user.click(assigneeTrigger());
+    await user.click(await screen.findByRole("button", { name: /Scout/ }));
+    await waitFor(() => expect(option).not.toBeDisabled());
+    await user.click(option);
+    expect(screen.getByText("What each run receives")).toBeInTheDocument();
+    expect(screen.getByText("Example: 2 conversations, 8 new messages, 1 mention.")).toBeInTheDocument();
+    const input = screen.getByRole("spinbutton", { name: "Merge interval" });
+    await user.clear(input);
+    await user.type(input, "0");
+    await user.click(createButton());
+    expect(mockCreateAutopilot).not.toHaveBeenCalled();
+    await user.clear(input);
+    await user.type(input, "7");
+    await user.click(createButton());
+    await waitFor(() => expect(mockCreateTrigger).toHaveBeenCalledWith(expect.objectContaining({ autopilotId: "ap-1", kind: "dingtalk_message", merge_interval_minutes: 7 })));
   });
 });

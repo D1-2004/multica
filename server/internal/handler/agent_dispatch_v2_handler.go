@@ -80,7 +80,7 @@ func buildAgentDispatchIssueCreateParams(
 		AllowDuplicate:            true,
 		AgentIdentityContextToken: command.ExternalIdentity.ContextToken,
 		DispatchContext:           privateContext,
-		Metadata:                  overrides.Metadata,
+		Metadata:                  mergeDingTalkOriginMetadata(overrides.Metadata, dispatchOriginOpenMsgID(command)),
 		SystemLabelName:           overrides.SystemLabelName,
 		SystemLabelDescription:    overrides.SystemLabelDescription,
 		SystemLabelColor:          overrides.SystemLabelColor,
@@ -123,6 +123,7 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		protocol.DispatchSurfaceJSONKey:  c.Surface,
 		protocol.DispatchOutboundJSONKey: c.Outbound,
 		"dispatch_idempotency_key":       idempotencyKey,
+		"proactive_conversation":         c.ProactiveConversation,
 	}
 	if c.Control != nil {
 		payload["dispatch_control"] = c.Control
@@ -141,6 +142,9 @@ func dispatchRuntimeContext(c DispatchCommand, idempotencyKey string) []byte {
 		payload["external_identity"] = struct {
 			DWS *AgentDispatchDWSIdentity `json:"dws"`
 		}{DWS: c.ExternalIdentity.DWS}
+	}
+	if origin := dispatchOriginOpenMsgID(c); origin != "" {
+		payload[protocol.DingTalkReplyToOpenMsgIDContextKey] = origin
 	}
 	if c.DispatchEndpointID != "" {
 		payload["dispatch_endpoint_id"] = c.DispatchEndpointID
@@ -200,6 +204,12 @@ func (h *Handler) handleAgentDispatchV2(
 	command, err := bindDispatchCompletionTarget(command, h.TaskCompletionTargetIdentity)
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "task completion delivery is not configured")
+		return
+	}
+	if h.handleMessageStatistics(w, r, command, dispatchContext) {
+		return
+	}
+	if h.handleObservedEvent(w, r, &command, dispatchContext) {
 		return
 	}
 	if managedDingTalkResponse(command) && (h.DingTalkResponses == nil || h.InboundCoordinatorWorker == nil) {
@@ -276,7 +286,7 @@ func (h *Handler) handleAgentDispatchV2(
 		}
 	}
 
-	if command.CompletionCallback == nil {
+	if command.CompletionCallback == nil && !command.ProactiveConversation {
 		h.executeAgentDispatchV2(w, r, command, plan, dispatchContext)
 		return
 	}
@@ -321,7 +331,7 @@ func (h *Handler) handleAgentDispatchV2(
 		return
 	}
 	if h.InboundCoordinatorWorker != nil &&
-		shouldDeferInboundCoordinator(command, plan) &&
+		shouldEnqueueInboundCoordinatorJob(r.Context(), h, command, plan, dispatchContext.AgentID) &&
 		!dispatchIsAgentSelfMessage(command) &&
 		!dispatchIsAgentSelfEmotion(command) {
 		response, _, enqueueErr := h.enqueueInboundCoordinatorJob(
@@ -703,27 +713,33 @@ func (h *Handler) createAgentDispatchChatV2(
 		session, loadErr := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
 			ID: chatSessionID, WorkspaceID: dispatchContext.WorkspaceID,
 		})
-		if loadErr != nil {
-			if errors.Is(loadErr, pgx.ErrNoRows) {
-				writeError(w, http.StatusNotFound, "chat continuation not found")
-			} else {
-				writeError(w, http.StatusInternalServerError, "failed to load chat continuation")
+		if errors.Is(loadErr, pgx.ErrNoRows) {
+			// Router can replay a Chat ID after the session was deleted.
+			// Fail closed on ownership/archived, but missing is stale state:
+			// start a new unbound session so the inbound is not dropped.
+			slog.Info("chat continuation missing; starting a new unbound session",
+				"event", "agent_dispatch_chat_continuation_missing",
+				"continuation_chat_session_id", uuidToString(chatSessionID),
+			)
+			options.CreateUnboundSession = true
+		} else if loadErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load chat continuation")
+			return
+		} else {
+			if session.AgentID != dispatchContext.AgentID {
+				writeError(w, http.StatusForbidden, "chat continuation belongs to another agent")
+				return
 			}
-			return
+			if session.CreatorID != dispatchContext.UserID {
+				writeError(w, http.StatusForbidden, "chat continuation belongs to another endpoint actor")
+				return
+			}
+			if session.Status != "active" {
+				writeError(w, http.StatusBadRequest, "chat continuation is archived")
+				return
+			}
+			options.ChatSessionOverride = &chatSessionID
 		}
-		if session.AgentID != dispatchContext.AgentID {
-			writeError(w, http.StatusForbidden, "chat continuation belongs to another agent")
-			return
-		}
-		if session.CreatorID != dispatchContext.UserID {
-			writeError(w, http.StatusForbidden, "chat continuation belongs to another endpoint actor")
-			return
-		}
-		if session.Status != "active" {
-			writeError(w, http.StatusBadRequest, "chat continuation is archived")
-			return
-		}
-		options.ChatSessionOverride = &chatSessionID
 	}
 	// A durable coordinator job pins its id as the turn's trace id; give the
 	// channel engine that id as the inbound chat trace so the coordinator
@@ -1098,7 +1114,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			hasAttachments = true
 		}
 	}
-	if !hasAttachments {
+	if !hasAttachments || c.ProactiveConversation {
 		decision = decideDispatchCoordinator(
 			r.Context(), h, c, agent, prompt.DisplayContent,
 			dispatchContext.UserID,
@@ -1128,7 +1144,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 	// only on execution, including the LLM-unavailable fallback.
 	if decision.Action == inboundcoord.ActionContinue && c.CompletionCallback != nil &&
 		c.Event.Domain == "channel" && c.Event.Type == "message.created" &&
-		sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c)) <= 0 {
+		!c.ProactiveConversation && sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c)) <= 0 {
 		writeError(w, http.StatusConflict, "scene already has two in-flight matters")
 		return
 	}
@@ -1206,7 +1222,7 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			newNeeded++
 		}
 		slots := sceneWindowCreateSlots(r.Context(), h, dispatchContext.WorkspaceID, agent.ID, dispatchConversationID(c))
-		if newNeeded > slots {
+		if !c.ProactiveConversation && newNeeded > slots {
 			writeError(w, http.StatusConflict, "scene already has two in-flight matters")
 			return
 		}
@@ -1222,7 +1238,9 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 				writeError(w, 500, "cannot recover committed issue")
 				return
 			}
-			firstTask, err = h.Queries.GetAgentTask(r.Context(), parseUUID(prior.TaskID))
+			if prior.TaskID != "" {
+				firstTask, err = h.Queries.GetAgentTask(r.Context(), parseUUID(prior.TaskID))
+			}
 			if err != nil {
 				writeError(w, 500, "cannot recover committed task")
 				return
@@ -1235,15 +1253,11 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 			if planItemCompleted(decision, item.ActionKey) {
 				continue
 			}
-			if processed >= inboundcoord.SceneWindowMaxItems {
+			if !c.ProactiveConversation && processed >= inboundcoord.SceneWindowMaxItems {
 				break
 			}
 			processed++
-			itemDecision := decision
-			itemDecision.Purpose = item.Purpose
-			itemDecision.Intent = item.Intent
-			itemDecision.LookInto = item.LookInto
-			itemDecision.Items = []inboundcoord.WindowItem{item}
+			itemDecision := decision.ForWindowItem(item)
 			overrides := agentDispatchIssueCreateOverrides{
 				Title:          inboundcoord.IssueTitle(itemDecision, prompt.DisplayContent),
 				DisplayContent: inboundcoord.IssueDescription(itemDecision, firstNonEmpty(item.Content, prompt.DisplayContent)),
@@ -1408,6 +1422,12 @@ func (h *Handler) createAgentDispatchIssueV2(w http.ResponseWriter, r *http.Requ
 		}
 		if h.TaskService != nil && c.CompletionCallback != nil {
 			spoken := stripReplyDecisionLeak(decision.UserText)
+			if spoken == "" && c.ProactiveConversation {
+				if err := h.TaskService.EnqueueSynchronousSilence(r.Context(), c.CompletionCallback.URL, c.CompletionCallback.Target, agent.ID); err != nil {
+					writeError(w, 500, "failed to persist coordinator receipt")
+					return
+				}
+			}
 			if spoken != "" {
 				if err := h.enqueueCoordinatorIssueAckOrComplete(
 					r.Context(), c, dispatchContext, agent.ID,
@@ -1500,7 +1520,7 @@ func (h *Handler) enqueueCoordinatorIssueAckOrComplete(
 	if on, err := h.Queries.GetAgentTaskFinishedLoop(ctx, agentID); err == nil {
 		wrapupOn = on
 	}
-	if wrapupOn && strings.TrimSpace(command.CompletionCallback.UpdateURL) != "" {
+	if wrapupOn && issueTask.ID.Valid && !command.ProactiveConversation && strings.TrimSpace(command.CompletionCallback.UpdateURL) != "" {
 		return h.TaskService.EnqueueCoordinatorIssueAck(
 			ctx,
 			issueTask,
@@ -1569,24 +1589,25 @@ func decideDispatchCoordinator(
 	ids := dispatchAssocIDs(command)
 	coord := h.inboundCoordinator()
 	turn := inboundcoord.Turn{
-		Source:               source,
-		Addressed:            true,
-		ChatType:             chatType,
-		ConversationTitle:    strings.TrimSpace(command.Event.Data.Conversation.Title),
-		SenderName:           command.Event.Data.Sender.DisplayName,
-		Message:              message,
-		AgentID:              agent.ID,
-		UserID:               userID,
-		AgentName:            agent.Name,
-		Instructions:         agent.Instructions,
-		IdentityNote:         inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
-		WorkspaceID:          uuidToString(agent.WorkspaceID),
-		ConversationID:       ids.ConversationID,
-		PersonID:             ids.PersonID,
-		EvidenceID:           ids.EvidenceID,
-		Kind:                 ids.Kind,
-		IssueDispatchContext: issueDispatchContext,
-		Utterances:           windowUtterancesFromCommand(command),
+		Source:                source,
+		Addressed:             !command.ProactiveConversation || dispatchMentionsEmployee(command),
+		ProactiveConversation: command.ProactiveConversation,
+		ChatType:              chatType,
+		ConversationTitle:     strings.TrimSpace(command.Event.Data.Conversation.Title),
+		SenderName:            command.Event.Data.Sender.DisplayName,
+		Message:               message,
+		AgentID:               agent.ID,
+		UserID:                userID,
+		AgentName:             agent.Name,
+		Instructions:          agent.Instructions,
+		IdentityNote:          inboundcoord.IdentityNote(source, ids.ConversationID, ids.PersonID),
+		WorkspaceID:           uuidToString(agent.WorkspaceID),
+		ConversationID:        ids.ConversationID,
+		PersonID:              ids.PersonID,
+		EvidenceID:            ids.EvidenceID,
+		Kind:                  ids.Kind,
+		IssueDispatchContext:  issueDispatchContext,
+		Utterances:            windowUtterancesFromCommand(command),
 	}
 	turn.HistoryBefore = inboundcoord.HistoryBeforeFromContext(ctx)
 	for _, u := range turn.Utterances {
@@ -1605,14 +1626,23 @@ func decideDispatchCoordinator(
 	return coord.Decide(ctx, turn)
 }
 
+// Both prompt utterances and per-item dispatch selection use this projection
+// so an attachment-only proactive message cannot shift the source_ref index.
+func coordinatorWindowMessageText(command DispatchCommand, message DispatchMessage) string {
+	if message.Reaction != nil {
+		return ""
+	}
+	if command.ProactiveConversation && len(message.Attachments) > 0 {
+		return dispatchMessageDisplay(message, dispatchDisplayIdentities{})
+	}
+	return strings.TrimSpace(message.Text)
+}
+
 func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowUtterance {
 	fallback := strings.TrimSpace(command.Event.Data.Sender.DisplayName)
 	out := make([]inboundcoord.WindowUtterance, 0, len(command.Event.Data.Messages))
 	for _, message := range command.Event.Data.Messages {
-		if message.Reaction != nil {
-			continue
-		}
-		text := strings.TrimSpace(message.Text)
+		text := coordinatorWindowMessageText(command, message)
 		if text == "" {
 			continue
 		}
@@ -1635,7 +1665,20 @@ func windowUtterancesFromCommand(command DispatchCommand) []inboundcoord.WindowU
 			refSenderID = message.ReferencedMessage.SenderUID
 			ref = firstNonEmpty(message.ReferencedMessage.OpenMsgID, message.ReferencedMessage.MessageID)
 		}
-		out = append(out, inboundcoord.WindowUtterance{Sender: sender, Text: text, EvidenceID: message.OpenMsgID, Timestamp: at, SenderID: senderID, ReplyToEvidenceID: ref, ReplyToContent: refContent, ReplyToSenderID: refSenderID})
+		mentions := message.Mentions
+		// Event-level mentions are exact only for a single original message.
+		// A merged/legacy window's union is never attributed to every source.
+		if mentions == nil && len(command.Event.Data.Messages) == 1 {
+			mentions = command.Event.Data.Mentions
+		}
+		var targets []inboundcoord.MessageMention
+		if mentions != nil {
+			targets = make([]inboundcoord.MessageMention, 0, len(mentions))
+			for _, mention := range mentions {
+				targets = append(targets, inboundcoord.MessageMention{UID: mention.UID, OpenDingTalkID: mention.OpenDingTalkID})
+			}
+		}
+		out = append(out, inboundcoord.WindowUtterance{Sender: sender, Mentions: targets, Text: text, EvidenceID: message.OpenMsgID, Timestamp: at, SenderID: senderID, ReplyToEvidenceID: ref, ReplyToContent: refContent, ReplyToSenderID: refSenderID})
 	}
 	return out
 }

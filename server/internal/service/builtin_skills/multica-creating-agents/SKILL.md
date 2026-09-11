@@ -50,7 +50,7 @@ An agent is a workspace-scoped row (table `agent`). Creation is a single
 re-reads the agent row and assembles the runtime payload — so the persisted
 fields, not the create-time output, are what the agent runs on.
 
-Two distinct text fields, often confused:
+Definition fields serve different consumers:
 
 - `description` is a catalog summary. It is stored and shown in listings; the
   daemon does NOT inject it into the agent's runtime prompt. Treat it as
@@ -59,6 +59,9 @@ Two distinct text fields, often confused:
   claim time and ships it to the provider as the agent's durable instructions.
   Persona, responsibilities, boundaries, output and escalation rules go here,
   not in `description`.
+- `coordinator_contract` is a short, explicit routing contract for the server
+  Coordinator. It may narrow the platform action set; it cannot add tools or
+  permit direct business answers. Full workflow instructions stay on the executor.
 
 ## CLI / API entry points
 
@@ -80,9 +83,40 @@ strings. `--max-concurrent-tasks` is validated as 1–50 before the request is
 sent.
 
 The HTTP body (`CreateAgentRequest`) accepts: `name`, `description`,
-`instructions`, `avatar_url`, `runtime_id`, `runtime_config`, `custom_env`,
+`instructions`, `coordinator_contract`, `avatar_url`, `runtime_id`, `runtime_config`, `custom_env`,
 `custom_args`, `model`, `thinking_level`, `service_tier`, `visibility`,
 `max_concurrent_tasks`, `mcp_config`, `skill_ids`.
+
+## Bounded Coordinator contract
+
+Use `--coordinator-contract-file <path>` (or `--coordinator-contract '<json>'`)
+on `agent create`, `agent update`, or `agent copy`. The file contains one object:
+
+```json
+{"version":1,"scope":"Product support","must_delegate":["Product evidence checks"],"constraints":["Draft only until approved"],"clarify_when":["Missing recipient or message body"]}
+```
+
+The canonical JSON object, including keys and the Host's source hash, must fit
+1600 Unicode code points. Unsupported versions, unknown fields, blank scope,
+empty list entries and oversized objects are rejected, never truncated.
+`instructions` remains the executor's complete job contract.
+
+The Host adds `source_instructions_sha256` when it is omitted. A supplied hash
+is preserved as a version reference; it is not an authorization credential.
+Copies therefore retain stale contracts without silently recertifying them.
+After reviewing a contract against changed instructions, explicitly republish
+its authored object with that hash omitted to bind the new instruction version.
+`agent get` exposes `coordinator_contract_state` as `loaded`, `not_configured`,
+`stale`, or `unavailable`; only `loaded` can supply the current short contract.
+
+On update, omission preserves the contract; `--coordinator-contract null`
+clears it atomically. Updating only `instructions` keeps the previous contract
+and source hash, so the state becomes `stale`. Missing, stale or invalid
+contracts never mean "no restrictions". Git-backed and local-package Agent contracts are managed
+with their source definitions and reject direct API edits, just like instructions.
+Portable `agent.json` stores `coordinator_contract` at the root beside the
+instructions reference. Preview and export retain it, including its source hash;
+a malformed contract is rejected at the schema/preview boundary.
 
 ## Copying an agent
 
@@ -100,7 +134,7 @@ multica agent copy <source-agent-id> --runtime-id <target> --model <model>  # cr
 ```
 
 - Copied by default, each overridable with the matching flag: `name` (suffixed
-  `" (copy)"`), `description`, `instructions`, avatar, `custom_args`,
+  `" (copy)"`), `description`, `instructions`, `coordinator_contract`, avatar, `custom_args`,
   `max_concurrent_tasks`, invocation permission (`permission_mode` +
   allow-list), and assigned workspace skills.
 - A copied `max_concurrent_tasks` is included only when the source value is
@@ -413,6 +447,28 @@ verification command.
   v2 configuration materialization and explicit destination choices, and documented
   the Builder draft/package boundary. Reason: the package protocol is authoritative;
   importing must not depend on a separately built DTA artifact or drop configuration.
+
+## Proactive conversations
+
+`agent update <id> --event-trigger-enabled[=false]` controls the default-off
+“Proactively process all new conversation messages” setting under Digital Employee,
+immediately below inbound judging. Enabling it enables inbound judging atomically;
+disabling inbound judging disables proactive processing. Existing bindings and
+subscription scopes are unchanged. Router synchronization normally takes up to five
+seconds plus request latency.
+
+Observed group messages use the normal durable Coordinator window (4 seconds quiet,
+12 seconds maximum collection, at most 100 messages). No Autopilot is created, and
+there is no extra 30-second task interval or wait for the sandbox to finish before
+judging new messages. Configure the employee's behavior through Agent instructions.
+Unmentioned messages reach the same Coordinator to decide reply, silence or Issue work.
+Authorized additions to a busy Issue are durably queued and combined for its next run.
+Read decisions in Coordinator conversations and execution in the associated Issues.
+Legacy event Autopilots are retained as history and only drain previously admitted work.
+
+The task-finished follow-up setting still controls automatic completion reports.
+Configuration and implementation map to `event_trigger.go`, `agent_event_trigger.go`,
+`proactive_conversation.go`, `inbound_coordinator_job.go`, and `coordinator_follow_up.go`.
 
 - 2026-09-10: Added ZIP publication, complete Builder packages and downloads,
   independently owned OKR labels, and complete schema diagnostics. Reason: allow

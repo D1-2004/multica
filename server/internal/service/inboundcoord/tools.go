@@ -20,6 +20,7 @@ const (
 	toolAssocRecall      = "assoc_recall"
 	toolAssocBind        = "assoc_bind"
 	toolIssueGet         = "issue_get"
+	toolWorkState        = "work_state"
 	toolIssueCommentList = "issue_comment_list"
 	toolIssueCommentAdd  = "issue_comment_add"
 	toolFinish           = "finish"
@@ -113,6 +114,8 @@ func (t *AssocTools) Call(ctx context.Context, turn Turn, name, arguments string
 			return "", fmt.Errorf("association store is not configured")
 		}
 		return t.bind(ctx, turn, arguments)
+	case toolWorkState:
+		return t.workState(ctx, turn, arguments)
 	case toolIssueGet:
 		return t.issueGet(ctx, turn, arguments)
 	case toolIssueCommentList:
@@ -171,6 +174,7 @@ func (t *AssocTools) recall(ctx context.Context, turn Turn, raw string) (string,
 	if cid == "" && issue == "" && needle == "" {
 		cid = strings.TrimSpace(turn.ConversationID)
 	}
+	limit := coordinationRecallLimit(args.Limit)
 	q := assoc.Query{
 		WorkspaceID:    strings.TrimSpace(turn.WorkspaceID),
 		AgentID:        util.UUIDToString(turn.AgentID),
@@ -180,186 +184,17 @@ func (t *AssocTools) recall(ctx context.Context, turn Turn, raw string) (string,
 		PersonID:       strings.TrimSpace(args.PersonID),
 		IssueID:        issue,
 		Q:              needle,
-		Limit:          args.Limit,
+		Limit:          limit + 1,
 	}
 	result, err := t.Service.Recall(ctx, q)
 	if err != nil {
 		return "", err
 	}
-	overlayEventBodies(result.Events, turn)
-	t.enrichRecallCards(ctx, turn, &result)
-	return marshalCoordinatorRecall(result)
-}
-
-type coordinatorRecallItem struct {
-	IssueID     string `json:"issue_id"`
-	Purpose     string `json:"purpose"`
-	Intent      string `json:"intent,omitempty"`
-	Status      string `json:"status,omitempty"`
-	OnThisScene bool   `json:"on_this_scene"`
-	Why         string `json:"why"`
-	Who         string `json:"who,omitempty"`
-	LastTouched string `json:"last_touched,omitempty"`
-	LastComment string `json:"last_comment,omitempty"`
-	WaitingOn   string `json:"waiting_on,omitempty"`
-}
-
-type coordinatorRecallEvent struct {
-	When      string `json:"when,omitempty"`
-	Direction string `json:"direction"`
-	Text      string `json:"text,omitempty"`
-}
-
-type coordinatorRecallView struct {
-	ReadThis       string                   `json:"read_this"`
-	ConversationID string                   `json:"conversation_id,omitempty"`
-	Items          []coordinatorRecallItem  `json:"items"`
-	Events         []coordinatorRecallEvent `json:"events"`
-}
-
-func marshalCoordinatorRecall(result assoc.Result) (string, error) {
-	view := coordinatorRecallView{
-		ReadThis:       assoc.RecallReadThis,
-		ConversationID: assoc.NormalizeConversationID(result.ConversationID),
-		Items:          make([]coordinatorRecallItem, 0, len(result.Items)),
-		Events:         make([]coordinatorRecallEvent, 0, len(result.Events)),
-	}
-	sceneCID := assoc.NormalizeConversationID(result.ConversationID)
-	for _, item := range result.Items {
-		if !assoc.PurposeNamesEvent(item.Purpose) {
-			continue
-		}
-		if sceneCID != "" && !item.OnThisScene {
-			continue
-		}
-		waiting := ""
-		if len(item.WaitingOn) > 0 {
-			waiting = assoc.NormalizeConversationID(item.WaitingOn[0].ConversationID)
-		}
-		view.Items = append(view.Items, coordinatorRecallItem{
-			IssueID:     firstNonEmpty(item.IssueID, item.Issue),
-			Purpose:     item.Purpose,
-			Intent:      item.Intent,
-			Status:      item.Status,
-			OnThisScene: item.OnThisScene,
-			Why:         item.WhyListed,
-			Who:         recallWho(item.People),
-			LastTouched: item.LastTouchedAge,
-			LastComment: sanitizeRecallComment(item.LastComment),
-			WaitingOn:   waiting,
-		})
-	}
-	for _, event := range result.Events {
-		if strings.TrimSpace(event.Text) == "" {
-			continue
-		}
-		view.Events = append(view.Events, coordinatorRecallEvent{
-			When:      firstNonEmpty(event.When, event.Age),
-			Direction: event.Direction,
-			Text:      event.Text,
-		})
-	}
-	body, err := json.Marshal(view)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
-}
-
-func recallWho(people []assoc.PersonRef) string {
-	names := make([]string, 0, len(people))
-	seen := map[string]struct{}{}
-	for _, person := range people {
-		name := firstNonEmpty(person.Name, person.DisplayName)
-		if name == "" {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
-	}
-	return strings.Join(names, "、")
-}
-
-func sanitizeRecallComment(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	var kept []string
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "opentaskid") || strings.Contains(lower, "openconversationid") ||
-			strings.Contains(lower, "openmsgid") || strings.Contains(lower, "dws") ||
-			strings.Contains(lower, "data-auth") || strings.Contains(line, "发送状态") ||
-			strings.Contains(line, "发送详情") {
-			continue
-		}
-		kept = append(kept, line)
-	}
-	return assoc.ClipBody(strings.Join(kept, " "), 80)
-}
-
-func (t *AssocTools) enrichRecallCards(ctx context.Context, turn Turn, result *assoc.Result) {
-	if result == nil || t == nil || t.Issues == nil {
-		return
-	}
-	ws, err := util.ParseUUID(strings.TrimSpace(turn.WorkspaceID))
-	if err != nil || !ws.Valid {
-		return
-	}
-	for i := range result.Items {
-		issueID, err := util.ParseUUID(strings.TrimSpace(result.Items[i].Issue))
-		if err != nil || !issueID.Valid {
-			continue
-		}
-		rows, err := t.Issues.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
-			IssueID:     issueID,
-			WorkspaceID: ws,
-			Limit:       1,
-		})
-		if err != nil || len(rows) == 0 {
-			continue
-		}
-		latest := rows[len(rows)-1]
-		result.Items[i].LastComment = assoc.ClipBody(latest.Content, commentClipBudget)
-		if latest.CreatedAt.Valid {
-			at := latest.CreatedAt.Time.UTC()
-			result.Items[i].LastCommentAt = &at
-			age, _ := assoc.AgeFrom(time.Now().UTC().Sub(at))
-			result.Items[i].LastCommentAge = age
-		}
-	}
-}
-
-func overlayEventBodies(events []assoc.EventRef, turn Turn) {
-	byEvidence := map[string]string{}
-	if text := assoc.ClipBody(turn.Message, assoc.EventBodyMaxRunes); text != "" && strings.TrimSpace(turn.EvidenceID) != "" {
-		byEvidence[strings.TrimSpace(turn.EvidenceID)] = text
-	}
-	for _, line := range turn.DingTalkHistory {
-		id := strings.TrimSpace(line.EvidenceID)
-		if id == "" {
-			continue
-		}
-		if text := assoc.ClipBody(line.Content, assoc.EventBodyMaxRunes); text != "" {
-			byEvidence[id] = text
-		}
-	}
-	for i := range events {
-		if strings.TrimSpace(events[i].Text) != "" {
-			continue
-		}
-		if text := byEvidence[strings.TrimSpace(events[i].EvidenceID)]; text != "" {
-			events[i].Text = text
-		}
-	}
+	view := newCoordinatorRecallView(result, limit)
+	view.Scope.PersonID = q.PersonID
+	view.Scope.IssueID = q.IssueID
+	t.loadRecallIssueStates(ctx, turn, &view)
+	return marshalCoordinationView(toolAssocRecall, view)
 }
 
 func (t *AssocTools) bind(ctx context.Context, turn Turn, raw string) (string, error) {
@@ -508,9 +343,6 @@ func (t *AssocTools) issueCommentAdd(ctx context.Context, turn Turn, raw string)
 	}
 	if !turn.UserID.Valid {
 		return "", fmt.Errorf("member identity is required")
-	}
-	if !CurrentAdvancesIssue(turn.Message, issue.Title, issue.Description.String) {
-		return "", hintErr("this inbound is a new deliverable; finish action=issue without issue_id", hintNewDeliverable)
 	}
 	if t == nil || t.CommentWriter == nil {
 		return "", fmt.Errorf("issue comment writer is not configured")

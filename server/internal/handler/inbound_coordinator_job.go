@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/assoc"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/service/inboundcoord"
 	"github.com/multica-ai/multica/server/internal/service/scenememory"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -135,6 +136,11 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 	if err != nil {
 		return true, w.fail(ctx, job, command, "invalid persisted dispatch command")
 	}
+	if parked, parkErr := w.parkIfSceneWindowBusy(ctx, job, command); parkErr != nil {
+		return true, parkErr
+	} else if parked {
+		return true, nil
+	}
 	if strings.TrimSpace(command.TaskFinishedTaskID) != "" {
 		if runErr := w.handler.runPersistedTaskFinishedLoop(ctx, command.TaskFinishedTaskID); runErr != nil {
 			if errors.Is(runErr, errTaskFinishedResponsePending) {
@@ -143,11 +149,6 @@ func (w *InboundCoordinatorJobWorker) ProcessNext(ctx context.Context) (bool, er
 			return true, w.retry(ctx, job, runErr)
 		}
 		return true, w.complete(ctx, job)
-	}
-	if parked, parkErr := w.parkIfSceneWindowBusy(ctx, job, command); parkErr != nil {
-		return true, parkErr
-	} else if parked {
-		return true, nil
 	}
 	dispatchContext := agentDispatchContext{
 		EndpointID:          job.DispatchEndpointID,
@@ -321,6 +322,9 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 		// window can still speak. Do not close 处理中 here.
 		return true, w.park(ctx, job, inboundCoordinatorSceneBusyDelay, "scene window already running")
 	}
+	if command.ProactiveConversation || command.TaskFinishedTaskID != "" {
+		return false, nil
+	}
 	// New windows must be understood even at capacity: a status request
 	// or presence check needs no sandbox. Only previously judged work waits.
 	if !job.LastError.Valid || !isCoordinatorBusyParkReason(job.LastError.String) {
@@ -338,18 +342,8 @@ func (w *InboundCoordinatorJobWorker) parkIfSceneWindowBusy(ctx context.Context,
 	return false, nil
 }
 
-func commandIsWindowAck(command DispatchCommand) bool {
-	return inboundcoord.AllWindowAck(inboundcoord.Turn{
-		SenderName: strings.TrimSpace(command.Event.Data.Sender.DisplayName),
-		Utterances: windowUtterancesFromCommand(command),
-	})
-}
-
-func shouldParkSceneCapacity(command DispatchCommand, active int64) bool {
-	if active < int64(inboundcoord.SceneWindowMaxItems) {
-		return false
-	}
-	return !commandIsWindowAck(command)
+func shouldParkSceneCapacity(_ DispatchCommand, active int64) bool {
+	return active >= int64(inboundcoord.SceneWindowMaxItems)
 }
 
 func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentID pgtype.UUID, cid string) int {
@@ -373,6 +367,13 @@ func sceneWindowCreateSlots(ctx context.Context, h *Handler, workspaceID, agentI
 }
 
 func (w *InboundCoordinatorJobWorker) park(ctx context.Context, job db.InboundCoordinatorJob, delay time.Duration, reason string) error {
+	if isCoordinatorBusyParkReason(reason) {
+		feedbackCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := w.handler.persistCoordinatorWait(feedbackCtx, job, reason); err != nil {
+			slog.Warn("coordinator wait feedback unavailable", "job_id", util.UUIDToString(job.ID), "error", err)
+		}
+		cancel()
+	}
 	slog.Info("inbound coordinator job parked for next window",
 		"event", "inbound_coordinator_job_parked",
 		"job_id", util.UUIDToString(job.ID),
@@ -619,12 +620,49 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 	}
 	response := newBufferedDispatchResponse()
 	writeJSON(response, http.StatusAccepted, map[string]string{"status": "accepted"})
+	// Optional progress eligibility cannot abort the admission transaction.
+	waitCtx, waitCancel := context.WithTimeout(ctx, 2*time.Second)
+	waitPolicy, waitPolicyErr := h.Queries.GetAgentDingTalkResponsePolicy(waitCtx, dispatchContext.AgentID)
+	waitCancel()
+	if waitPolicyErr != nil {
+		waitPolicy = db.GetAgentDingTalkResponsePolicyRow{}
+		slog.Warn("coordinator waiting delivery policy unavailable", "agent_id", uuidToString(dispatchContext.AgentID))
+	}
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		return nil, job, err
 	}
 	defer tx.Rollback(ctx)
 	qtx := h.Queries.WithTx(tx)
+	if command.ProactiveConversation {
+		command, err = h.deduplicateObservedMessages(ctx, tx, command, dispatchContext)
+		if err != nil {
+			return nil, job, err
+		}
+		if len(command.Event.Data.Messages) == 0 {
+			if command.CompletionCallback != nil {
+				receipts := &service.TaskService{Queries: qtx}
+				if err = receipts.EnqueueSynchronousSilence(ctx, command.CompletionCallback.URL, command.CompletionCallback.Target, dispatchContext.AgentID); err != nil {
+					return nil, job, err
+				}
+			}
+			_, err = qtx.CompleteAgentDispatchAcceptance(ctx, db.CompleteAgentDispatchAcceptanceParams{ID: acceptance.ID, LeaseToken: acceptance.LeaseToken, ResponseStatus: pgtype.Int4{Int32: 202, Valid: true}, ResponseContentType: pgtype.Text{String: "application/json", Valid: true}, ResponseBody: []byte(`{"status":"accepted","code":"duplicate_observed_message"}`)})
+			if err != nil {
+				return nil, job, err
+			}
+			return response, job, tx.Commit(ctx)
+		}
+		rawCommand, err = json.Marshal(command)
+		if err != nil {
+			return nil, job, err
+		}
+		displayContent = buildDingTalkChannelDisplay(command)
+	}
+	waitDelivery := freezeCoordinatorWaitDelivery(command, dispatchContext, waitPolicy)
+	rawCommand, err = marshalCoordinatorWaitCommand(command, waitDelivery)
+	if err != nil {
+		return nil, job, err
+	}
 	collectAt := time.Now().UTC().Add(inboundCoordinatorCollectWindow)
 	if err := h.registerDingTalkResponseRoute(ctx, tx, command, dispatchContext); err != nil {
 		return nil, job, err
@@ -648,12 +686,16 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			if restoreErr != nil {
 				return nil, job, restoreErr
 			}
-			if !sameCoordinatorCollectKind(base, command) {
+			priorWait, priorWaitErr := coordinatorWaitDeliveryFromCommand(existing.Command)
+			if priorWaitErr != nil {
+				return nil, job, priorWaitErr
+			}
+			if !sameCoordinatorCollectKind(base, command) || !sameCoordinatorWaitDelivery(priorWait, waitDelivery) {
 				splitKind = true
 				continue
 			}
 			merged := mergeDispatchCommands(base, command)
-			mergedRaw, marshalErr := json.Marshal(merged)
+			mergedRaw, marshalErr := marshalCoordinatorWaitCommand(merged, *priorWait)
 			if marshalErr != nil {
 				return nil, job, marshalErr
 			}
@@ -701,10 +743,9 @@ func (h *Handler) enqueueInboundCoordinatorJob(
 			return response, job, nil
 		}
 		if splitKind {
-			slog.Info("inbound coordinator job collect split ack and work",
+			slog.Info("inbound coordinator job collect split by source or lifecycle",
 				"event", "inbound_coordinator_job_collect_split",
 				"source", command.Source.Type,
-				"incoming_ack", commandIsWindowAck(command),
 			)
 		}
 	}
@@ -837,10 +878,38 @@ func (h *Handler) persistCoordinatorJobChat(ctx context.Context, job db.InboundC
 }
 
 func shouldDeferInboundCoordinator(command DispatchCommand, plan agentDispatchExecutionPlan) bool {
-	return command.CompletionCallback != nil &&
+	return (command.CompletionCallback != nil || command.ProactiveConversation) &&
 		command.Event.Domain == "channel" && command.Event.Type == "message.created" &&
 		(plan.MaterializerType == protocol.DispatchSurfaceTypeIssue ||
 			plan.MaterializerType == protocol.DispatchSurfaceTypeChat)
+}
+
+// shouldEnqueueInboundCoordinatorJob is the admission gate for the durable
+// short-loop queue. The owner off switch must skip it: auto-mode IM has to
+// land on the sandbox chat task immediately, or the original message is
+// stranded on a Coordinator session and never reaches background Issue work.
+func shouldEnqueueInboundCoordinatorJob(
+	ctx context.Context,
+	h *Handler,
+	command DispatchCommand,
+	plan agentDispatchExecutionPlan,
+	agentID pgtype.UUID,
+) bool {
+	if !shouldDeferInboundCoordinator(command, plan) {
+		return false
+	}
+	return inboundCoordinatorEnabled(ctx, h, agentID)
+}
+
+func inboundCoordinatorEnabled(ctx context.Context, h *Handler, agentID pgtype.UUID) bool {
+	if h == nil || h.Queries == nil || !agentID.Valid {
+		return true
+	}
+	on, err := h.Queries.GetAgentInboundCoordinator(ctx, agentID)
+	if err != nil {
+		return true
+	}
+	return on
 }
 
 func (h *Handler) markSceneMemoryDirty(

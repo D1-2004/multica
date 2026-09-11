@@ -137,7 +137,8 @@
     "schedule": "Schedule",
     "manual": "Manual",
     "webhook": "Webhook",
-    "api": "API"
+    "api": "API",
+    "dingtalk_message": "DingTalk messages"
   },
   "run": {
     "issue_linked": "Issue linked",
@@ -161,7 +162,8 @@
   "trigger_kind": {
     "schedule": "Schedule",
     "webhook": "Webhook",
-    "api": "API"
+    "api": "API",
+    "dingtalk_message": "DingTalk messages"
   },
   "trigger_row": {
     "disabled_badge": "Disabled",
@@ -457,5 +459,30 @@
       "confirm": "Delete permanently",
       "deleting": "Deleting…"
     }
+  },
+  "message_trigger": {
+    "kind": "DingTalk messages",
+    "interval": "Merge interval",
+    "minutes": "minutes",
+    "help": "The first new message starts the interval. Later messages are merged without extending it. No new messages means no run.",
+    "binding_required": "Choose an Agent with an active digital employee message binding to use this trigger.",
+    "scope": "Uses the conversations selected in the digital employee’s message settings. Your bound account’s own outgoing messages are excluded. Proactive conversation handling works independently.",
+    "data_title": "What each run receives",
+    "data_help": "Statistics are attached automatically to your instructions: the collection period, conversation names and IDs, message counts, mentions, and first/last message times. Message bodies are not included. The Agent can read them with DWS when needed.",
+    "example": "Example input",
+    "conversation": "Conversation",
+    "messages": "New messages",
+    "mentions": "Mentions",
+    "example_group": "Project group",
+    "example_direct": "Direct conversation",
+    "json": "View data fields",
+    "invalid_interval": "Enter a whole number from 1 to 1440 minutes.",
+    "summary": "Merge new messages for {{minutes}} minutes; skip empty periods",
+    "saved": "DingTalk message trigger added",
+    "runtime_payload": "DingTalk message statistics",
+    "edit": "Edit merge interval",
+    "save": "Save interval",
+    "cancel": "Cancel",
+    "total": "Example: 2 conversations, 8 new messages, 1 mention."
   }
 }

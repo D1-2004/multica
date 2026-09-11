@@ -3,30 +3,13 @@ package assoc
 import (
 	"fmt"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
-
-var vaguePurposes = map[string]struct{}{
-	"帮我约一下":  {},
-	"帮我看看":   {},
-	"看一下":    {},
-	"处理一下":   {},
-	"帮我处理":   {},
-	"帮我看看这个": {},
-}
 
 func ValidatePurpose(purpose string) error {
 	trimmed := strings.TrimSpace(purpose)
 	if utf8.RuneCountInString(trimmed) < MinPurposeRunes {
 		return fmt.Errorf("purpose must be at least %d characters and name the deliverable", MinPurposeRunes)
-	}
-	compact := stripSpace(trimmed)
-	if _, ok := vaguePurposes[compact]; ok {
-		return fmt.Errorf("purpose is too vague; write the subject, deliverable, and scope")
-	}
-	if _, ok := vaguePurposes[trimmed]; ok {
-		return fmt.Errorf("purpose is too vague; write the subject, deliverable, and scope")
 	}
 	return nil
 }
@@ -45,7 +28,8 @@ func EventFromCoordinatorPurpose(purpose string) string {
 	return p
 }
 
-// PurposeNamesEvent reports whether purpose names a doable event and goal.
+// PurposeNamesEvent checks the structural minimum for a work description.
+// Whether it identifies real authorized work is decided by the Coordinator LLM.
 func PurposeNamesEvent(purpose string) bool {
 	event := EventFromCoordinatorPurpose(purpose)
 	if event == "" {
@@ -58,15 +42,8 @@ func ValidateCoordinatorPurpose(purpose string) error {
 	if err := ValidatePurpose(purpose); err != nil {
 		return err
 	}
-	if strings.Contains(purpose, "在钉钉会话中的消息") {
-		return fmt.Errorf("purpose must not paste the inbound envelope")
-	}
 	if !strings.Contains(purpose, "委托") {
 		return fmt.Errorf("purpose must name the delegator with 委托")
-	}
-	lower := strings.ToLower(purpose)
-	if strings.Contains(lower, "dws") || strings.Contains(lower, "data-auth") || strings.Contains(purpose, "openConversationId") {
-		return fmt.Errorf("purpose must not include tooling or auth")
 	}
 	return nil
 }
@@ -152,13 +129,4 @@ func ClipBody(s string, n int) string {
 		return trimmed
 	}
 	return string([]rune(trimmed)[:n])
-}
-
-func stripSpace(s string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsSpace(r) {
-			return -1
-		}
-		return r
-	}, s)
 }

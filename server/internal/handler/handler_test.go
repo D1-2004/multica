@@ -2491,6 +2491,11 @@ func TestUpdateGitHubSourcedAgentAllowsLocalProfileButRejectsInstructions(t *tes
 	if !strings.Contains(w.Body.String(), "instructions are managed by the GitHub source") {
 		t.Fatalf("unexpected instructions error: %s", w.Body.String())
 	}
+
+	w = updateAgentForTest(t, agentID, map[string]any{"coordinator_contract": nil})
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "coordinator_contract is managed") {
+		t.Fatalf("source-owned contract clear must be refused: %d %s", w.Code, w.Body.String())
+	}
 }
 
 func TestUpdateAgentMcpConfigNullClearsValue(t *testing.T) {

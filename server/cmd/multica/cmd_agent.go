@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"github.com/multica-ai/multica/server/internal/daemon"
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
@@ -168,6 +169,7 @@ func init() {
 	agentCreateCmd.Flags().String("name", "", "Agent name (required)")
 	agentCreateCmd.Flags().String("description", "", "Agent description")
 	agentCreateCmd.Flags().String("instructions", "", "Agent instructions")
+	registerCoordinatorContractFlags(agentCreateCmd)
 	agentCreateCmd.Flags().String("runtime-id", "", "Runtime ID (required)")
 	agentCreateCmd.Flags().String("runtime-config", "", "Runtime config as JSON string")
 	agentCreateCmd.Flags().String("model", "", "Model identifier (e.g. claude-sonnet-4-6, openai/gpt-4o). Prefer this over passing --model in --custom-args.")
@@ -191,6 +193,7 @@ func init() {
 	agentUpdateCmd.Flags().String("name", "", "New name")
 	agentUpdateCmd.Flags().String("description", "", "New description")
 	agentUpdateCmd.Flags().String("instructions", "", "New instructions")
+	registerCoordinatorContractFlags(agentUpdateCmd)
 	agentUpdateCmd.Flags().String("runtime-id", "", "New runtime ID")
 	agentUpdateCmd.Flags().String("runtime-config", "", "New runtime config as JSON string")
 	agentUpdateCmd.Flags().String("model", "", "New model identifier. Pass an empty string to clear and fall back to the runtime default.")
@@ -215,6 +218,7 @@ func init() {
 	agentUpdateCmd.Flags().StringSlice("public-to-member", nil, "public_to: allow the given member user id(s) to invoke this agent. Repeatable.")
 	agentUpdateCmd.Flags().String("status", "", "New status")
 	agentUpdateCmd.Flags().Int32("max-concurrent-tasks", 0, "New max concurrent tasks (1-50)")
+	agentUpdateCmd.Flags().Bool("event-trigger-enabled", false, "Automatically run on coalesced subscribed events (off by default)")
 	agentUpdateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	agentTransferOwnerCmd.Flags().String("to-id", "", "User id of the new owner (must be a current workspace member)")
@@ -602,6 +606,11 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 	if v, _ := cmd.Flags().GetString("instructions"); v != "" {
 		body["instructions"] = v
 	}
+	if contract, present, err := resolveCoordinatorContract(cmd); err != nil {
+		return err
+	} else if present {
+		body["coordinator_contract"] = contract
+	}
 	if cmd.Flags().Changed("runtime-config") {
 		v, _ := cmd.Flags().GetString("runtime-config")
 		var rc any
@@ -681,6 +690,10 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{}
+	if cmd.Flags().Changed("event-trigger-enabled") {
+		enabled, _ := cmd.Flags().GetBool("event-trigger-enabled")
+		body["event_trigger_enabled"] = enabled
+	}
 	if cmd.Flags().Changed("name") {
 		v, _ := cmd.Flags().GetString("name")
 		body["name"] = v
@@ -696,6 +709,11 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("runtime-id") {
 		v, _ := cmd.Flags().GetString("runtime-id")
 		body["runtime_id"] = v
+	}
+	if contract, present, err := resolveCoordinatorContract(cmd); err != nil {
+		return err
+	} else if present {
+		body["coordinator_contract"] = contract
 	}
 	if cmd.Flags().Changed("runtime-config") {
 		v, _ := cmd.Flags().GetString("runtime-config")
@@ -751,7 +769,7 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --custom-args, --mcp-config, --visibility, --status, or --max-concurrent-tasks (env vars now live behind `multica agent env set <id>`)")
+		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --coordinator-contract, --runtime-id, --runtime-config, --model, --thinking-level, --service-tier, --custom-args, --mcp-config, --visibility, --status, or --max-concurrent-tasks (env vars now live behind `multica agent env set <id>`)")
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())
@@ -1381,4 +1399,42 @@ func strVal(m map[string]any, key string) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+func registerCoordinatorContractFlags(cmd *cobra.Command) {
+	cmd.Flags().String("coordinator-contract", "", "Bounded coordinator contract as JSON (version 1); pass null to clear")
+	cmd.Flags().String("coordinator-contract-file", "", "Read the coordinator contract JSON from a file")
+	cmd.MarkFlagsMutuallyExclusive("coordinator-contract", "coordinator-contract-file")
+}
+
+func resolveCoordinatorContract(cmd *cobra.Command) (json.RawMessage, bool, error) {
+	inline := cmd.Flags().Changed("coordinator-contract")
+	file := cmd.Flags().Changed("coordinator-contract-file")
+	if !inline && !file {
+		return nil, false, nil
+	}
+	if inline && file {
+		return nil, false, fmt.Errorf("--coordinator-contract and --coordinator-contract-file are mutually exclusive")
+	}
+	value, _ := cmd.Flags().GetString("coordinator-contract")
+	raw := []byte(value)
+	if file {
+		filename, _ := cmd.Flags().GetString("coordinator-contract-file")
+		var err error
+		raw, err = os.ReadFile(filename)
+		if err != nil {
+			return nil, false, fmt.Errorf("read coordinator contract: %w", err)
+		}
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return nil, false, fmt.Errorf("coordinator contract must be a JSON object or null")
+	}
+	contract, err := coordinatorcontract.Parse(raw)
+	if err != nil {
+		return nil, false, err
+	}
+	if contract == nil {
+		return json.RawMessage("null"), true, nil
+	}
+	return json.RawMessage(coordinatorcontract.Marshal(contract)), true, nil
 }

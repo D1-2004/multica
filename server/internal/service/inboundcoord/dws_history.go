@@ -51,20 +51,23 @@ type dwsHistoryCLI interface {
 
 // DWSHistoryConfig wires the server-side, per-request DWS history reader.
 type DWSHistoryConfig struct {
-	AgentIdentity   dwsContextIssuer
-	BaseURL         string
-	BaseURLProvider func() string
-	ClientSecret    string
-	CLIPath         string
-	HTTPClient      *http.Client
+	AgentIdentity         dwsContextIssuer
+	BaseURL               string
+	BaseURLProvider       func() string
+	ClientSecret          string
+	CLIPath               string
+	MCPBaseURL            string
+	CrossOrgRenewAgentIDs []string
+	HTTPClient            *http.Client
 }
 
 type dwsHistoryLoader struct {
-	issuer   dwsContextIssuer
-	redeemer dwsCredentialRedeemer
-	cli      dwsHistoryCLI
-	mkdir    func(string, string) (string, error)
-	remove   func(string) error
+	issuer                dwsContextIssuer
+	redeemer              dwsCredentialRedeemer
+	cli                   dwsHistoryCLI
+	mkdir                 func(string, string) (string, error)
+	remove                func(string) error
+	crossOrgRenewAgentIDs map[string]bool
 }
 
 // NewDWSHistoryLoader creates a loader that mints a separate Agent Identity
@@ -79,7 +82,8 @@ func NewDWSHistoryLoader(cfg DWSHistoryConfig) DingTalkHistoryLoader {
 		cliPath = "dws"
 	}
 	return &dwsHistoryLoader{
-		issuer: cfg.AgentIdentity,
+		crossOrgRenewAgentIDs: authorizedHistoryRenewalAgents(cfg.CrossOrgRenewAgentIDs),
+		issuer:                cfg.AgentIdentity,
 		redeemer: &httpDWSCredentialRedeemer{
 			baseURL:         strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 			baseURLProvider: cfg.BaseURLProvider,
@@ -87,6 +91,7 @@ func NewDWSHistoryLoader(cfg DWSHistoryConfig) DingTalkHistoryLoader {
 		},
 		cli: &osDWSHistoryCLI{
 			path:         cliPath,
+			mcpBaseURL:   strings.TrimSpace(cfg.MCPBaseURL),
 			clientSecret: strings.TrimSpace(cfg.ClientSecret),
 		},
 		mkdir:  os.MkdirTemp,
@@ -146,10 +151,33 @@ func (l *dwsHistoryLoader) Load(ctx context.Context, turn Turn) ([]HistoryLine, 
 		return nil, err
 	}
 	raw, err := l.cli.ListMessages(ctx, dir, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
+	if err != nil && l.crossOrgRenewAgentIDs[util.UUIDToString(turn.AgentID)] && dwsclient.IsCrossOrgPermissionDenied(err) {
+		renewer, ok := l.cli.(interface {
+			RenewCrossOrgRead(context.Context, string) error
+		})
+		if !ok {
+			return nil, errors.New("DWS cross-org chat read renewal is unavailable")
+		}
+		if grantErr := renewer.RenewCrossOrgRead(ctx, dir); grantErr != nil {
+			return nil, grantErr
+		}
+		// Retry this exact scoped read once. A second rejection remains a failure.
+		raw, err = l.cli.ListMessages(ctx, dir, conversationID, turn.HistoryBefore, dwsHistoryQueryLimit)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return parseDWSHistory(raw, turn)
+}
+
+func authorizedHistoryRenewalAgents(ids []string) map[string]bool {
+	result := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			result[id] = true
+		}
+	}
+	return result
 }
 
 type httpDWSCredentialRedeemer struct {
@@ -174,10 +202,15 @@ func (r *httpDWSCredentialRedeemer) Redeem(ctx context.Context, contextToken str
 type osDWSHistoryCLI struct {
 	path         string
 	clientSecret string
+	mcpBaseURL   string
+}
+
+func (c *osDWSHistoryCLI) RenewCrossOrgRead(ctx context.Context, configDir string) error {
+	return dwsclient.CLI{Path: c.path}.RenewCrossOrgRead(ctx, configDir)
 }
 
 func (c *osDWSHistoryCLI) Exchange(ctx context.Context, configDir string, credential dwsCredential) error {
-	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret}.Exchange(ctx, configDir, dwsclient.Credential{
+	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret, MCPBaseURL: c.mcpBaseURL}.Exchange(ctx, configDir, dwsclient.Credential{
 		UID: credential.UID, ClientID: credential.ClientID, AuthCode: credential.AuthCode,
 	})
 }
@@ -186,7 +219,7 @@ func (c *osDWSHistoryCLI) ListMessages(ctx context.Context, configDir, conversat
 	if before.IsZero() {
 		return nil, errors.New("DWS history requires a fixed window cutoff")
 	}
-	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret}.List(ctx, configDir, dwsclient.ListRequest{
+	return dwsclient.CLI{Path: c.path, ClientSecret: c.clientSecret, MCPBaseURL: c.mcpBaseURL}.List(ctx, configDir, dwsclient.ListRequest{
 		ConversationID: conversationID,
 		Before:         before,
 		Direction:      "older",
@@ -211,11 +244,12 @@ type dwsHistoryMessage struct {
 }
 
 type dwsMessageListResponse struct {
-	Success   bool            `json:"success"`
-	ErrorCode string          `json:"errorCode"`
-	ErrorMsg  string          `json:"errorMsg"`
-	Messages  json.RawMessage `json:"messages"`
-	Result    json.RawMessage `json:"result"`
+	ContractVersion string          `json:"contractVersion"`
+	Success         bool            `json:"success"`
+	ErrorCode       string          `json:"errorCode"`
+	ErrorMsg        string          `json:"errorMsg"`
+	Messages        json.RawMessage `json:"messages"`
+	Result          json.RawMessage `json:"result"`
 }
 
 func parseDWSHistory(raw []byte, turn Turn) ([]HistoryLine, error) {
@@ -260,6 +294,11 @@ func parseDWSHistory(raw []byte, turn Turn) ([]HistoryLine, error) {
 			continue
 		}
 		timestamp, timestampRaw := parseHistoryTimestamp(message.CreateTime)
+		// The DWS message-list contract formats display timestamps in Shanghai,
+		// independently of the process timezone. Legacy untyped values stay unknown.
+		if timestamp.IsZero() && payload.ContractVersion == "im.message-list.v1" {
+			timestamp, _ = time.ParseInLocation("2006-01-02 15:04:05", timestampRaw, time.FixedZone("Asia/Shanghai", 8*60*60))
+		}
 		if !turn.HistoryBefore.IsZero() && !timestamp.IsZero() && !timestamp.Before(turn.HistoryBefore) {
 			continue
 		}

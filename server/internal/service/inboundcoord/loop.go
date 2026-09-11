@@ -34,7 +34,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	messages := []openai.ChatCompletionMessageParamUnion{
 		openai.SystemMessage(buildSystemPrompt(turn)), openai.UserMessage(buildUserPrompt(turn)),
 	}
-	logCoordinatorLLMRequest(turn, buildUserPrompt(turn))
+
 	var used []string
 	var recalls []recallCall
 	recalledIssues := map[string]struct{}{}
@@ -44,19 +44,85 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 	}
 	steps := make([]protocol.ChatCoordinatorStep, 0, maxLoopRounds*2)
 	appendStep := func(step protocol.ChatCoordinatorStep) { step.Seq = len(steps) + 1; steps = append(steps, step) }
-	fail := func(err error) (Decision, error) {
-		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
-		return Decision{Action: ActionDeferred, Reason: "coordinator_undecided", Steps: steps}, err
+	finishChecks := map[string]finishCheckResult{}
+	readSequence := coordinationReadSequence(turn)
+	initialReadSequence := readSequence
+	latestFeedback := ""
+	latestReadFeedback := ""
+	latestProposal := ""
+	latestFeedbackNeedsHistory := false
+	latestFeedbackNeedsHistoryAttempt := false
+	unresolvedReviewFeedback := ""
+	modelRounds := 0
+	if turn.Loop != LoopTaskFinished && len(turn.History)+len(turn.DingTalkHistory) > 0 {
+		if _, err := rememberCoordinationRead(&turn, &readSequence, toolContextRead, `{"kind":"history"}`, "", nil); err != nil {
+			latestFeedback = coordinationRepairFeedback(toolContextRead, err)
+		}
 	}
+	// The DingTalk history read runs concurrently with the scene recall so the
+	// first model request sees the question this employee asked a moment ago.
+	var pendingHistory <-chan historyPrefetchResult
+	if shouldPrefetchHistory(c, turn) {
+		pendingHistory = c.startHistoryPrefetch(ctx, turn)
+	}
+	if shouldPrefetchSceneRecall(turn) {
+		call, result, readErr := c.prefetchSceneRecall(ctx, &turn, &readSequence)
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
+		used = append(used, call.Name)
+		if readErr == nil {
+			recalls = append(recalls, parseRecallCall(call.Arguments))
+			collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
+		}
+	}
+	if pendingHistory != nil {
+		call, result, readErr := c.finishHistoryPrefetch(ctx, &turn, &readSequence, pendingHistory)
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: call.Arguments, Content: "Host prefetch (read-only)"})
+		if readErr != nil {
+			result = marshalToolFailure(readErr)
+		}
+		appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: readErr != nil, Content: "Host prefetch (read-only)"})
+		used = append(used, call.Name)
+	}
+	if turn.Loop == LoopTaskFinished {
+		logCoordinatorLLMRequest(turn, buildUserPrompt(turn), false)
+	} else {
+		logCoordinatorLLMRequest(turn, coordinationUserPrompt(turn), len(recalls) > 0)
+	}
+	ledger := newRetryLedger()
+	failWith := func(reason string, err error) (Decision, error) {
+		appendStep(protocol.ChatCoordinatorStep{Type: "error", Content: clipRunes(err.Error(), 800), Error: true})
+		if lt != nil && reason != "coordinator_undecided" {
+			lt.AddMetadata(map[string]any{"loop_stop_reason": reason, "loop_stop_round": modelRounds})
+		}
+		return Decision{Action: ActionDeferred, Reason: reason, Steps: steps, ToolRounds: modelRounds, ToolsUsed: append([]string(nil), used...)}, err
+	}
+	fail := func(err error) (Decision, error) { return failWith("coordinator_undecided", err) }
 	for round := 0; round < maxLoopRounds; round++ {
 		recalled := len(recalls) > 0
-		messages[0] = openai.SystemMessage(buildSystemPromptForStage(turn, recalled))
-		tools := toolsForDisclosure(turn, round, recalled)
+		if turn.Loop == LoopTaskFinished {
+			messages[0] = openai.SystemMessage(buildSystemPromptForStage(turn, recalled))
+		} else {
+			if !latestFeedbackNeedsHistory && unresolvedReviewFeedback == "" && (latestFeedback == "" || latestFeedback == latestReadFeedback) {
+				latestReadFeedback = workStateSnapshotFeedback(turn, initialReadSequence)
+				latestFeedback = latestReadFeedback
+			}
+			messages = buildCoordinationMessages(turn, recalled, latestFeedback, latestProposal)
+		}
+		turn.recalledIssueIDs = turn.recalledIssueIDs[:0]
+		for id := range recalledIssues {
+			turn.recalledIssueIDs = append(turn.recalledIssueIDs, id)
+		}
+		tools := withoutWithdrawnTools(toolsForDisclosure(turn, round, recalled), ledger)
 		manifest := policyManifestForStage(turn, recalled)
 		if lt != nil {
-			lt.AddMetadata(map[string]any{"policy_version": manifest.PolicyVersion, "assembly_version": manifest.AssemblyVersion, "prompt_hash": manifest.PromptHash, "modules": manifest.Modules, "active_rule_ids": manifest.ActiveRuleIDs, "history_status": turn.HistoryStatus, "history_before": turn.HistoryBefore, "dingtalk_history_count": len(turn.DingTalkHistory), "allowed_tools": toolParamNames(tools)})
+			lt.AddMetadata(map[string]any{"policy_version": manifest.PolicyVersion, "assembly_version": manifest.AssemblyVersion, "prompt_hash": manifest.PromptHash, "modules": manifest.Modules, "active_rule_ids": manifest.ActiveRuleIDs, "history_status": turn.HistoryStatus, "history_before": turn.HistoryBefore, "dingtalk_history_count": len(turn.DingTalkHistory), "allowed_tools": toolParamNames(tools), "withdrawn_tools": ledger.withdrawnTools()})
+			if turn.Loop != LoopTaskFinished {
+				lt.AddMetadata(map[string]any{"read_snapshot_count": len(turn.CoordinationReads), "read_snapshot_runes": len([]rune(coordinationReadsJSON(turn))), "read_snapshot_truncated": turn.CoordinationReadsTruncated, "read_snapshot_budget": coordinationReadsBudget, "repair_proposal_runes": len([]rune(latestProposal)), "repair_proposal_budget": coordinationProposalBudget})
+			}
 		}
 		generation := traceRoundGeneration(lt, round, messages, tools)
+		modelRounds = round + 1
 		completion, err := c.complete(ctx, messages, tools)
 		endRoundGeneration(generation, completion, err)
 		if err != nil {
@@ -69,10 +135,17 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 		normalizeToolCallTypes(&msg)
 		calls := functionToolCalls(msg)
 		if len(calls) == 0 {
-			messages = append(messages, msg.ToParam(), openai.UserMessage("Call an available tool to finish or obtain missing evidence. Do not invent facts."))
+			latestFeedback = coordinationRepairFeedback("tool_required", fmt.Errorf("call an available tool to finish or obtain missing evidence; do not invent facts"))
+			latestFeedbackNeedsHistory = false
+			latestFeedbackNeedsHistoryAttempt = false
+			if turn.Loop == LoopTaskFinished {
+				messages = append(messages, msg.ToParam(), openai.UserMessage(latestFeedback))
+			}
 			continue
 		}
-		messages = append(messages, msg.ToParam())
+		if turn.Loop == LoopTaskFinished {
+			messages = append(messages, msg.ToParam())
+		}
 		// Independent reads may share a response. A terminal plan must be alone:
 		// a model cannot reason from a tool result it has not received yet.
 		allowed := map[string]bool{}
@@ -80,39 +153,89 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			allowed[name] = true
 		}
 		for _, call := range calls {
+			originalCall := call
+			used = append(used, originalCall.Name)
+			appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: originalCall.Name, Input: clipRunes(originalCall.Arguments, 4000)})
+			normalized, recovered, recoveryErr := recoverTerminalActionCall(call)
+			if recovered {
+				recordTerminalCallRecovery(lt, turn, round, originalCall, normalized, recoveryErr)
+				step := protocol.ChatCoordinatorStep{Type: "tool_result", Tool: originalCall.Name, Content: "Host protocol recovery only; proposal is not yet validated or executed", Error: recoveryErr != nil}
+				if recoveryErr == nil {
+					call = normalized
+					step.Output = clipRunes(call.Arguments, 8000)
+				} else {
+					step.Output = marshalToolFailure(recoveryErr)
+				}
+				appendStep(step)
+			}
 			if call.Name == toolAssocRecall {
 				call.Arguments = defaultRecallConversationID(call.Arguments, turn.ConversationID)
 			}
-			appendStep(protocol.ChatCoordinatorStep{Type: "tool_use", Tool: call.Name, Input: clipRunes(call.Arguments, 4000)})
 			var result string
-			var callErr error
-			if !allowed[call.Name] {
-				callErr = hintErr("tool is not available in this stage", "Use the advertised read tools, then submit all work through finish.items; do not call write tools.")
+			callErr := recoveryErr
+			reviewRejected := false
+			historyAttemptRequired := false
+			reusedWorkState := false
+			repeatedHistoryRead := false
+			var readObservation *langfuse.Observation
+			if allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) {
+				readObservation = traceToolStart(lt, round, call)
+			}
+			if callErr == nil {
+				// The same call that already failed repeatedly is refused before
+				// it spends another round; finish is refused only for an identical
+				// proposal, never withdrawn.
+				callErr = ledger.refuseRepeat(call.Name, call.Arguments)
+			}
+			if callErr != nil {
+				// An ambiguous action cannot be repaired by choosing its meaning.
+			} else if !allowed[call.Name] {
+				callErr = hintErr("tool is not available in this stage", "Call an advertised read tool or submit finish.actions with finish({actions:[...]}). start_work and continue_work are action kinds, not standalone business tools; Host commits only a validated plan.")
 			} else if call.Name == toolFinish {
 				if len(calls) != 1 {
 					callErr = hintErr("finish must be the only call", "Read the tool evidence on the next round before finishing.")
-				} else if turn.Loop == LoopTaskFinished {
-					decision := parseDecision(call.Arguments, turn)
-					if decision.Action != ActionReply && decision.Action != ActionSilence {
-						callErr = fmt.Errorf("task_finished may only reply or silence")
-					} else {
-						decision.Steps = steps
-						decision.ToolRounds = round + 1
-						decision.ToolsUsed = append(used, call.Name)
-						if saveErr := SavePlan(ctx, decision); saveErr != nil {
-							return fail(saveErr)
-						}
-						logCoordinatorLLMFinish(turn, round, call.Arguments, decision)
-						traceToolEnd(traceToolStart(lt, round, call), finishToolOutput(decision), nil, "terminal")
-						return decision, nil
-					}
+
 				} else {
 					var decision Decision
 					decision, callErr = parseValidatedWindowPlan(call.Arguments, turn, recalls, recalledIssues)
+					if callErr != nil {
+						// The same Host defect across rounds means the model is not
+						// repairing the plan; stop before the round cap instead of
+						// collecting identical rejections.
+						if n := ledger.recordFinishError(callErr, call.Arguments); n >= repeatedFinishErrorBudget {
+							return failWith(loopStopRepeatedInvalidPlan, fmt.Errorf("plan rejected %d times for the same defect: %w", n, callErr))
+						} else if n > 1 {
+							callErr = repeatHint(callErr, n, "Change the action kind or the referenced fields; the same proposal cannot pass.")
+						}
+					}
+					if callErr == nil && needsFinishCheck(turn, decision) {
+						check, checkErr := c.checkFinish(ctx, turn, decision, messages, round, finishChecks)
+						if checkErr != nil {
+							traceToolEnd(traceToolStart(lt, round, call), "", checkErr, "finish_check_unavailable")
+							return fail(checkErr)
+						}
+						if check.Verdict != "allow" {
+							reviewRejected = !check.HistoryReadRequired
+							historyAttemptRequired = check.HistoryReadRequired
+							callErr = hintErr("finish needs revision: "+check.Reason, "Missing current refs: "+strings.Join(check.MissingSourceRefs, ",")+". Repair the diagnosed action/field in the previous proposal while preserving every request and current restriction. This review grants no new authority.")
+							if check.ConstraintQuote != "" {
+								callErr = hintErr("finish needs revision: "+check.Reason, "Verified boundary quote: "+jsonQuote(check.ConstraintQuote)+". Repair only the diagnosed fields; a boundary does not mean all other work must be declined.")
+							}
+							// Review returning the same reason three times is a deadlock
+							// between reviewer and model, not a repairable defect.
+							if !check.HistoryReadRequired {
+								if n := ledger.recordReviewReason(check.Reason, call.Arguments); n >= repeatedReviewReasonBudget {
+									return failWith(loopStopReviewDeadlock, fmt.Errorf("review repeated the same reason %d times: %s", n, check.Reason))
+								} else if n > 1 {
+									callErr = repeatHint(callErr, n, "The reviewer has given this reason before; repair exactly that defect or choose a different action kind.")
+								}
+							}
+						}
+					}
 					if callErr == nil {
 						decision.Steps = steps
 						decision.ToolRounds = round + 1
-						decision.ToolsUsed = append(used, call.Name)
+						decision.ToolsUsed = append([]string(nil), used...)
 						if saveErr := SavePlan(ctx, decision); saveErr != nil {
 							return fail(saveErr)
 						}
@@ -122,28 +245,80 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 					}
 				}
 			} else if call.Name == toolContextRead {
-				result, callErr = c.readHistoryContext(ctx, &turn, call.Arguments)
+				if coordinationContextReadKind(call.Arguments) == coordinationStateKind {
+					result, callErr = c.readRecentCoordinationState(ctx, turn)
+				} else if _, ok := retainedHistorySnapshot(turn); ok && turn.HistoryStatus != "not_loaded" && !latestFeedbackNeedsHistory {
+					// The bounded history is already in this run's snapshots; another
+					// identical read cannot expand it and only burns a round.
+					repeatedHistoryRead = true
+					callErr = hintErr(fmt.Sprintf("history already read this run: status=%s; reuse the existing snapshot", turn.HistoryStatus),
+						"Do not repeat context_read(kind=history). Decide from the current window and the retained history snapshot; if that history is empty or unavailable, treat the original question as unknown and use clarify, acknowledge, report_status or ignore. Submit finish({actions:[...]}).")
+				} else {
+					result, callErr = c.readHistoryContext(ctx, &turn, call.Arguments)
+				}
 			} else {
 				if call.Name == toolAssocRecall {
 					call.Arguments = defaultRecallConversationID(call.Arguments, turn.ConversationID)
 				}
 				callErr = requireRecalledIssueForTool(call.Name, call.Arguments, recalledIssues)
 				if callErr == nil {
-					result, callErr = c.callTool(ctx, turn, call.Name, call.Arguments)
+					if turn.Loop != LoopTaskFinished && call.Name == toolWorkState {
+						if snapshot, ok := reusableWorkStateSnapshot(turn, call.Arguments, initialReadSequence); ok {
+							result, reusedWorkState = string(snapshot.Result), true
+						}
+					}
+					if !reusedWorkState {
+						result, callErr = c.callTool(ctx, turn, call.Name, call.Arguments)
+					}
+				}
+			}
+			if turn.Loop != LoopTaskFinished && allowed[call.Name] && isCoordinationReadCall(call.Name, call.Arguments) && !repeatedHistoryRead {
+				if !reusedWorkState {
+					result, callErr = rememberCoordinationRead(&turn, &readSequence, call.Name, call.Arguments, result, callErr)
 				}
 				if callErr == nil && call.Name == toolAssocRecall {
 					recalls = append(recalls, parseRecallCall(call.Arguments))
 					collectRecalledIssues(recalledIssues, continuationIssues, turn.ConversationID, result)
 				}
-			}
-			used = append(used, call.Name)
-			if callErr != nil {
+			} else if callErr != nil {
 				result = marshalToolFailure(callErr)
 			}
-			appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: callErr != nil})
-			messages = append(messages, openai.ToolMessage(result, call.ID))
-			logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, callErr != nil, "")
-			traceToolEnd(traceToolStart(lt, round, call), result, callErr, "")
+			if callErr != nil {
+				if call.Name == toolFinish {
+					latestProposal = boundedRejectedProposal(call.Arguments)
+				}
+				needsHistory := isHistoryPrerequisiteError(callErr)
+				if count, withdrawn := ledger.recordFailure(call.Name, call.Arguments); count > 1 {
+					callErr = repeatHint(callErr, count, "This exact call already failed; do not resubmit it unchanged.")
+					result = marshalToolFailure(callErr)
+					if withdrawn {
+						slog.Info("inbound coordinator tool withdrawn", append(coordinatorLogIndex(turn), "event", "inbound_coordinator_tool_withdrawn", "tool", call.Name, "round", round+1, "failures", count)...)
+					}
+				}
+				latestFeedback = coordinationRepairFeedback(call.Name, callErr)
+				latestFeedbackNeedsHistoryAttempt = historyAttemptRequired
+				latestFeedbackNeedsHistory = needsHistory || historyAttemptRequired
+				if reviewRejected {
+					unresolvedReviewFeedback = latestFeedback
+				}
+			} else if latestFeedbackNeedsHistory && call.Name == toolContextRead && coordinationContextReadKind(call.Arguments) == "history" && ((turn.HistoryStatus == "loaded" && hasCoordinationHistorySnapshot(turn)) || (latestFeedbackNeedsHistoryAttempt && oneOf(turn.HistoryStatus, "empty", "unavailable"))) {
+				latestFeedback = historyPrerequisiteResolvedFeedback(turn, unresolvedReviewFeedback)
+				latestFeedbackNeedsHistory = false
+				latestFeedbackNeedsHistoryAttempt = false
+			}
+			reason := ""
+			if reusedWorkState {
+				reason = workStateSnapshotReuseReason
+			}
+			appendStep(protocol.ChatCoordinatorStep{Type: "tool_result", Tool: call.Name, Output: clipRunes(result, 8000), Error: callErr != nil, Content: reason})
+			if turn.Loop == LoopTaskFinished {
+				messages = append(messages, openai.ToolMessage(result, call.ID))
+			}
+			logCoordinatorLLMTool(turn, round, call.Name, call.Arguments, result, callErr != nil, reason)
+			if readObservation == nil {
+				readObservation = traceToolStart(lt, round, call)
+			}
+			traceToolEnd(readObservation, result, callErr, reason)
 		}
 	}
 	return fail(fmt.Errorf("coordinator loop: evidence or valid plan missing after %d rounds", maxLoopRounds))
@@ -153,13 +328,14 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 // rather than the raw arguments, so a reviewer sees what the server acted on.
 func finishToolOutput(decision Decision) string {
 	raw, err := json.Marshal(map[string]any{
-		"action":    string(decision.Action),
-		"issue_id":  strings.TrimSpace(decision.IssueID),
-		"text":      clipRunes(strings.TrimSpace(decision.UserText), traceOutputTextBudget),
-		"look_into": clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
-		"purpose":   clipRunes(strings.TrimSpace(decision.Purpose), llmLogFieldBudget),
-		"intent":    strings.TrimSpace(decision.Intent),
-		"reason":    clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
+		"action":               string(decision.Action),
+		"coordination_actions": decision.CoordinationActions,
+		"issue_id":             strings.TrimSpace(decision.IssueID),
+		"text":                 clipRunes(strings.TrimSpace(decision.UserText), traceOutputTextBudget),
+		"look_into":            clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
+		"purpose":              clipRunes(strings.TrimSpace(decision.Purpose), llmLogFieldBudget),
+		"intent":               strings.TrimSpace(decision.Intent),
+		"reason":               clipRunes(strings.TrimSpace(decision.Reason), llmLogFieldBudget),
 	})
 	if err != nil {
 		return ""
@@ -168,20 +344,22 @@ func finishToolOutput(decision Decision) string {
 }
 
 func (c *Coordinator) complete(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam) (*openai.ChatCompletion, error) {
+	return c.completeWithLimit(ctx, messages, tools, maxCompletionTokens, temperature)
+}
+
+func (c *Coordinator) completeWithLimit(ctx context.Context, messages []openai.ChatCompletionMessageParamUnion, tools []openai.ChatCompletionToolUnionParam, limit int64, temp float64) (*openai.ChatCompletion, error) {
 	params := openai.ChatCompletionNewParams{
 		Messages:            messages,
 		Model:               shared.ChatModel(coordinatorModel),
 		Tools:               tools,
 		ReasoningEffort:     shared.ReasoningEffortNone,
-		MaxCompletionTokens: openai.Int(maxCompletionTokens),
+		MaxCompletionTokens: openai.Int(limit),
 	}
 	params.SetExtraFields(map[string]any{
 		"enable_thinking": false,
 		"tool_choice":     "required",
 	})
-	if temperature > 0 {
-		params.Temperature = openai.Float(temperature)
-	}
+	params.Temperature = openai.Float(temp)
 	if c != nil && c.Chat != nil {
 		return c.Chat.Chat(ctx, params)
 	}
@@ -227,20 +405,7 @@ func taskFinishedToolDefs() []openai.ChatCompletionToolUnionParam {
 }
 
 func coordinatorTaskFinishedFinishTool() openai.ChatCompletionToolUnionParam {
-	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        toolFinish,
-		Description: openai.String("End the task-finished loop. Default action=silence when the sandbox already told this conversation. action=reply is one short colleague line only if this chat still lacks the outcome. Never 已发到群里 or 查收一下. Do not open a new Issue."),
-		Parameters: shared.FunctionParameters{
-			"type":                 "object",
-			"additionalProperties": false,
-			"required":             []string{"action"},
-			"properties": map[string]any{
-				"action": map[string]any{"type": "string", "enum": []string{"reply", "silence"}},
-				"text":   map[string]any{"type": "string", "description": "Required for reply. One short colleague line. Forbidden: 已发到群里, 查收一下, inventing 私信你."},
-				"reason": map[string]any{"type": "string"},
-			},
-		},
-	})
+	return coordinationFinishTool(false, true, toolContract{})
 }
 
 func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
@@ -252,10 +417,18 @@ func coordinatorToolDefs() []openai.ChatCompletionToolUnionParam {
 				"conversation_id": map[string]any{"type": "string"},
 				"since":           map[string]any{"type": "string", "description": "Defaults 48h; 24h, 48h, 7d, 30d, or RFC3339."},
 				"q":               map[string]any{"type": "string", "description": "Optional extra keyword filter within this scene."},
-				"limit":           map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+				"limit":           map[string]any{"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
 			}},
-		}), coordinatorIssueGetTool(), coordinatorIssueCommentListTool(),
+		}), coordinatorWorkStateTool(),
 	}
+}
+
+func coordinatorWorkStateTool() openai.ChatCompletionToolUnionParam {
+	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
+		Name:        toolWorkState,
+		Description: openai.String("Read this turn's bounded status and original-goal snapshot of a recalled Issue. Successful same-argument reads reuse the Host read_ref; repeating cannot expand truncated/complete=false summaries. Unavailable reads may be retried. No comments, execution results or chat bodies. Cite read_ref in report_status; unknown execution/delivery stays unknown."),
+		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"issue_id"}, "properties": map[string]any{"issue_id": recalledIssueIDSchema("Issue UUID copied exactly from assoc_recall.")}},
+	})
 }
 
 func coordinatorIssueGetTool() openai.ChatCompletionToolUnionParam {
@@ -317,17 +490,20 @@ func recalledIssueIDSchema(description string) map[string]any {
 }
 
 const (
-	hintBindNeedsIssue  = "assoc_bind only attaches an existing Issue. Copy issue_id from assoc_recall items[].issue_id. If this is a new matter, do not bind; call finish action=issue with delegator, purpose, intent, and omit issue_id."
-	hintCopyIssueID     = "Call assoc_recall first, then copy items[].issue_id byte-for-byte. Do not invent an id. A new matter uses finish action=issue without issue_id. Continuing an existing Issue uses issue_comment_add."
-	hintNewIssueFinish  = "finish action=issue without issue_id creates the Issue. Set delegator (inbound sender), purpose as {委托人}委托：{事件与目的} with no DWS/auth, intent ask|confirm|notify|lookup|wait|other, and text naming the work. Do not write 记录事项."
-	hintContinueComment = "finish cannot take issue_id. Continuing an existing Issue uses issue_comment_add with that issue_id, content naming the current sender and exact inbound words, and reply_text. If current_message does not advance a recalled purpose, finish action=reply."
-	hintIssueText       = "finish action=issue needs text spoken to the user, naming the work in ordinary language, such as 我去问冬翔晚上打不打球. Do not omit text."
+	hintBindNeedsIssue  = "A new matter uses finish start_work; an existing recalled matter uses continue_work. Direct write tools are unavailable."
+	hintCopyIssueID     = "Call assoc_recall first, then copy items[].issue_id exactly. For progress read work_state and use report_status with its read_ref; for authorized substantive input use continue_work."
+	hintNewIssueFinish  = "Use finish start_work with source_refs, concrete purpose, intent and its own reply."
+	hintContinueComment = "Use finish continue_work with recalled issue_id, source_refs, purpose, intent, basis and its own reply. Status pings use report_status."
+	hintIssueText       = "Each work action needs its own short acknowledgement in reply."
 	hintPurpose         = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, openConversationId, and 记录事项."
 	hintIntent          = "intent must be one of ask, confirm, notify, lookup, wait, other."
 	hintConversation    = "Pass conversation_id as the DingTalk openConversationId (cid…). The server fills the inbound cid if omitted."
 	hintReplyText       = "issue_comment_add is terminal. Set reply_text to the short IM acknowledgement for the current speaker."
 	hintRecallFirst     = "Call assoc_recall with the named conversation_id before finish. Do not answer from memory."
-	hintNewDeliverable  = "This inbound is a different deliverable from that Issue. finish action=issue without issue_id. Do not issue_comment_add."
+	hintIssueSpokenText = "Set the work action.reply to its short acknowledgement; a work action without reply cannot submit."
+	hintIssueWorkItems  = "Use finish.actions with source_refs, purpose, intent and reply on each work action; every request needs a disposition."
+	hintIssueItemLimit  = "Keep at most 8 actions; never drop later requests."
+	hintPurposeRepair   = "Rewrite purpose as {委托人}委托：{事件与目的}, naming the concrete event and deliverable. Do not paste the inbound envelope."
 )
 
 type toolHintError struct {
@@ -443,7 +619,7 @@ func coordinatorLogIndex(turn Turn) []any {
 	}
 }
 
-func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
+func logCoordinatorLLMRequest(turn Turn, userPrompt string, recalled bool) {
 	slog.Info("inbound coordinator llm request",
 		append(coordinatorLogIndex(turn),
 			"event", "inbound_coordinator_llm_request",
@@ -456,7 +632,8 @@ func logCoordinatorLLMRequest(turn Turn, userPrompt string) {
 			"dingtalk_history_count", len(turn.DingTalkHistory),
 			"multica_history_count", len(turn.History),
 			"scene_memory_revision", turn.SceneMemoryRevision,
-			"system_prompt_runes", len([]rune(buildSystemPrompt(turn))),
+			"system_prompt_runes", len([]rune(buildSystemPromptForStage(turn, recalled))),
+			"read_snapshot_runes", len([]rune(coordinationReadsJSON(turn))),
 			"user_prompt", clipRunes(userPrompt, llmLogPromptBudget),
 			"user_prompt_runes", len([]rune(userPrompt)),
 		)...)
@@ -484,6 +661,8 @@ func logCoordinatorLLMFinish(turn Turn, round int, arguments string, decision De
 			"round", round,
 			"arguments", clipRunes(strings.TrimSpace(arguments), llmLogToolBudget),
 			"action", string(decision.Action),
+			"coordination_actions", decision.CoordinationActions,
+			"coordination_kinds", decision.CoordinationKinds(),
 			"issue_id", strings.TrimSpace(decision.IssueID),
 			"text", clipRunes(strings.TrimSpace(decision.UserText), llmLogFieldBudget),
 			"look_into", clipRunes(strings.TrimSpace(decision.LookInto), llmLogFieldBudget),
@@ -524,7 +703,7 @@ func issueIDFromToolArguments(raw string) string {
 
 func requireRecalledIssueForTool(name, raw string, recalled map[string]struct{}) error {
 	switch name {
-	case toolIssueGet, toolIssueCommentList:
+	case toolWorkState, toolIssueGet, toolIssueCommentList:
 		issueID := issueIDFromToolArguments(raw)
 		if issueID == "" {
 			return hintErr("issue_id is required", hintCopyIssueID)
@@ -577,16 +756,23 @@ func parseIssueCommentEffect(raw string) (IssueCommentEffect, bool) {
 	return effect, true
 }
 
-var conversationIDPattern = regexp.MustCompile(`cid[+A-Za-z0-9_/=-]{8,}`)
+var conversationIDPattern = regexp.MustCompile(`cid[+A-Za-z0-9_/-]{8,}={0,2}`)
 
 func extractConversationIDs(message string) []string {
-	found := conversationIDPattern.FindAllString(message, -1)
+	// A numeric `cid=` report query parameter is not an openConversationId.
+	// Keep genuine opaque IDs, including openConversationId values in links.
+	found := conversationIDPattern.FindAllStringIndex(message, -1)
 	if len(found) == 0 {
 		return nil
 	}
 	seen := map[string]struct{}{}
 	var out []string
-	for _, id := range found {
+	for _, span := range found {
+		if span[0] > 0 && isConversationIDCharacter(message[span[0]-1]) ||
+			span[1] < len(message) && (isConversationIDCharacter(message[span[1]]) || message[span[1]] == '=') {
+			continue
+		}
+		id := message[span[0]:span[1]]
 		if _, ok := seen[id]; ok {
 			continue
 		}
@@ -596,17 +782,9 @@ func extractConversationIDs(message string) []string {
 	return out
 }
 
-func asksSceneQuestion(message string) bool {
-	s := strings.ToLower(message)
-	for _, needle := range []string{
-		"聊了什么", "有哪些事", "在跟什么", "跟什么事", "会话", "事情",
-		"conversation", "what happened", "what's going on",
-	} {
-		if strings.Contains(s, needle) {
-			return true
-		}
-	}
-	return false
+func isConversationIDCharacter(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' ||
+		b == '+' || b == '_' || b == '/' || b == '-'
 }
 
 func collectRecalledIssues(issues, continuations map[string]struct{}, conversationID, raw string) {

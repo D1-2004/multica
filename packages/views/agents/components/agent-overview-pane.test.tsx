@@ -66,6 +66,7 @@ vi.mock("./tabs/dsh-plugins-tab", () => ({
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
+vi.mock("./tabs/coordinator-sessions-tab", () => ({ CoordinatorSessionsTab: () => <div>coordinator-sessions-tab</div> }));
 vi.mock("./tabs/export-tab", () => ({ ExportTab: () => <div>export-tab</div> }));
 vi.mock("./tabs/publish-tab", () => ({
   PublishTab: () => <div>publish-tab</div>,
@@ -240,25 +241,27 @@ beforeEach(() => {
 });
 
 describe("AgentOverviewPane primary navigation", () => {
-  it("shows four plain-language destinations", () => {
+  it("shows five plain-language destinations", () => {
     renderPane([makeRuntime("claude")]);
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Overview",
       "Work",
+      "Inbound conversations",
       "Memory",
       "Configuration",
     ]);
   });
 
-  it("returns removed inbound links to Overview", () => {
-    const { navigation } = renderPane([makeRuntime("claude")], {
-      initialView: "inbound",
-    });
+  it("allows viewers to read inbound history without edit permission", () => {
+    renderPane([makeRuntime("claude")], { canEdit: false, initialView: "inbound" });
+    expect(screen.getByText("coordinator-sessions-tab")).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Memory" })).not.toBeInTheDocument();
+  });
 
-    expect(screen.getByText("activity-tab")).toBeInTheDocument();
-    expect(navigation.replace).toHaveBeenCalledWith(
-      "/acme/agents/agent-1",
-    );
+  it("opens inbound deep links without redirecting", () => {
+    const { navigation } = renderPane([makeRuntime("claude")], { initialView: "inbound" });
+    expect(screen.getByText("coordinator-sessions-tab")).toBeInTheDocument();
+    expect(navigation.replace).not.toHaveBeenCalled();
   });
 });
 

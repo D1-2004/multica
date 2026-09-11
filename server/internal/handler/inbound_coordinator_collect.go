@@ -39,15 +39,18 @@ func coordinatorCollectKind(command DispatchCommand) string {
 	if id := strings.TrimSpace(command.TaskFinishedTaskID); id != "" {
 		return "task_finished:" + id
 	}
-	if commandIsWindowAck(command) {
-		return "ack"
+	if command.ProactiveConversation {
+		return "proactive"
 	}
 	return "work"
 }
 
-// sameCoordinatorCollectKind is false when one side is thanks/OK and the
-// other is a real ask, or when wrap-up would merge with inbound work.
+// Collection classes depend only on protocol and lifecycle facts. Message
+// meaning, including output preferences, is decided from the complete window.
 func sameCoordinatorCollectKind(base, extra DispatchCommand) bool {
+	if base.ProactiveConversation != extra.ProactiveConversation || (base.ProactiveConversation && len(base.Event.Data.Messages)+len(extra.Event.Data.Messages) > 100) {
+		return false
+	}
 	if !sameDingTalkResponsePolicy(base.ResponsePolicy, extra.ResponsePolicy) {
 		return false
 	}
@@ -66,6 +69,7 @@ func mergeDispatchCommands(base, extra DispatchCommand) DispatchCommand {
 	if len(extra.Event.Data.Messages) == 0 {
 		return base
 	}
+	base.Event.Data.Mentions = append(base.Event.Data.Mentions, extra.Event.Data.Mentions...)
 	base.Event.Data.Messages = append(append([]DispatchMessage{}, base.Event.Data.Messages...), extra.Event.Data.Messages...)
 	return base
 }
@@ -77,6 +81,9 @@ func stampDispatchMessageSenders(command *DispatchCommand) {
 	sender := command.Event.Data.Sender
 	for i := range command.Event.Data.Messages {
 		msg := &command.Event.Data.Messages[i]
+		if msg.Mentions == nil && len(command.Event.Data.Messages) == 1 {
+			msg.Mentions = append([]DispatchMention{}, command.Event.Data.Mentions...)
+		}
 		if strings.TrimSpace(msg.SenderDisplayName) == "" {
 			msg.SenderDisplayName = strings.TrimSpace(sender.DisplayName)
 		}

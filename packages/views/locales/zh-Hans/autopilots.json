@@ -137,7 +137,8 @@
     "schedule": "时间表",
     "manual": "手动",
     "webhook": "Webhook",
-    "api": "API"
+    "api": "API",
+    "dingtalk_message": "收到钉钉消息时"
   },
   "run": {
     "issue_linked": "已关联任务",
@@ -161,7 +162,8 @@
   "trigger_kind": {
     "schedule": "时间表",
     "webhook": "Webhook",
-    "api": "API"
+    "api": "API",
+    "dingtalk_message": "收到钉钉消息时"
   },
   "trigger_row": {
     "disabled_badge": "已禁用",
@@ -454,5 +456,30 @@
       "confirm": "永久删除",
       "deleting": "删除中…"
     }
+  },
+  "message_trigger": {
+    "kind": "收到钉钉消息时",
+    "interval": "消息合并间隔",
+    "minutes": "分钟",
+    "help": "第一条新消息开始计时，后续消息合并到本次运行，不延长等待时间。没有新消息时不运行。",
+    "binding_required": "选择已绑定数字员工消息接收的智能体后，可使用此触发方式。",
+    "scope": "接收范围沿用数字员工的消息设置，不统计绑定账号自己发出的消息。与主动处理会话功能独立生效。",
+    "data_title": "每次运行会收到什么",
+    "data_help": "系统会在执行指令后自动附上合并时段、会话名称和标识、消息数、@ 数、首末消息时间。统计不含消息正文，智能体可按需使用 DWS 读取。",
+    "example": "输入示例",
+    "conversation": "会话",
+    "messages": "新消息",
+    "mentions": "@ 我",
+    "example_group": "项目讨论群",
+    "example_direct": "单聊会话",
+    "json": "查看数据字段",
+    "invalid_interval": "请输入 1 至 1440 之间的整数分钟。",
+    "summary": "合并 {{minutes}} 分钟内的新消息，无消息时不运行",
+    "saved": "已添加钉钉消息触发器",
+    "runtime_payload": "钉钉消息统计",
+    "edit": "修改合并间隔",
+    "save": "保存间隔",
+    "cancel": "取消",
+    "total": "示例：2 个会话，8 条新消息，其中 1 条 @ 我。"
   }
 }

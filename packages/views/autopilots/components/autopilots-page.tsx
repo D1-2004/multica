@@ -15,6 +15,7 @@ import {
   Shield,
   Webhook,
   Zap,
+  MessageSquare,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -287,6 +288,7 @@ const TRIGGER_ICONS: Record<string, typeof Zap> = {
   schedule: Clock,
   webhook: Webhook,
   api: Code,
+  dingtalk_message: MessageSquare,
 };
 
 function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
@@ -305,7 +307,7 @@ function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
         // Server-driven enum: unknown kinds get a generic icon + raw label.
         const Icon = TRIGGER_ICONS[kind] ?? Zap;
         const label =
-          kind === "schedule" || kind === "webhook" || kind === "api"
+          kind === "schedule" || kind === "webhook" || kind === "api" || kind === "dingtalk_message"
             ? t(($) => $.trigger_kind[kind])
             : kind;
         return (

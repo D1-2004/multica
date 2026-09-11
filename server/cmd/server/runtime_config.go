@@ -146,6 +146,15 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 func (c *appRuntimeConfig) asb() service.ASBConfig {
 	raw := c.current()
 	return service.ASBConfig{
+		NetworkAllowlist: append([]string{}, raw.Runtime.ASB.NetworkAllowlist...),
+		NetworkServiceURLs: []string{
+			raw.AgentIdentity.ControlBaseURL, raw.AgentIdentity.SandboxBaseURL,
+			raw.EnterpriseIdentity.BUCAuthorizeURL, raw.EnterpriseIdentity.BUCTokenURL, raw.EnterpriseIdentity.BUCIssuer, raw.EnterpriseIdentity.BUCJWKSURL, raw.EnterpriseIdentity.IdemBaseURL,
+			raw.Web.PublicURL, raw.Web.AppURL, raw.Web.LocalUploadBaseURL,
+			raw.Integrations.AgentMessageRouterInternalURL, raw.Integrations.GitHubAPIBaseURL,
+			raw.Integrations.DingTalkRegistrationBaseURL, raw.Integrations.DingTalkRegistrationOutgoingURL,
+			raw.Integrations.DingTalkDBaseBindingOrigin, raw.Integrations.DingTalkDBaseBindingPageURL,
+		},
 		Enabled:               raw.Runtime.ASB.Enabled,
 		APIURL:                raw.Runtime.ASB.APIURL,
 		ServerURL:             raw.Runtime.ASB.ServerURL,

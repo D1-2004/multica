@@ -320,6 +320,9 @@ func TestIndexTokensAndTags(t *testing.T) {
 	if got := Tag("agent", ""); got != "" {
 		t.Fatalf("empty Tag = %q", got)
 	}
+	if got := Tag("agent_name", "金龙"); got != "agent_name-金龙" {
+		t.Fatalf("CJK agent_name Tag = %q", got)
+	}
 	if got := IndexObservationName("task_id", "5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7"); got != "idx.task_id.5f3a1b2c-4d5e-4f60-8a71-92b3c4d5e6f7" {
 		t.Fatalf("IndexObservationName = %q", got)
 	}

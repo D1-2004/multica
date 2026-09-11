@@ -1,3 +1,4 @@
+import { CoordinatorContractSchema } from "../api/schemas";
 import type { GitHubAgentPreview, RuntimeDevice, RuntimeModel } from "../types";
 import type { AgentDraft } from "./draft";
 
@@ -34,6 +35,7 @@ export interface BuilderDraftPayload {
   name?: unknown;
   description?: unknown;
   instructions?: unknown;
+  coordinator_contract?: unknown;
   model?: unknown;
   skill_ids?: unknown;
   permission_scope?: unknown;
@@ -154,6 +156,7 @@ export function encodeBuilderInput(
           name: draft.name,
           description: draft.description,
           instructions: draft.instructions,
+          coordinator_contract: draft.coordinatorContract,
           model: draft.model,
           skill_ids: [...draft.skillIds],
           permission_scope: draft.permissionScope,
@@ -268,6 +271,10 @@ export function mergeBuilderDraft(
       ? payload.model
       : current.model;
 
+  const contract = payload.coordinator_contract === undefined
+    ? { success: true as const, data: current.coordinatorContract }
+    : CoordinatorContractSchema.nullable().safeParse(payload.coordinator_contract);
+
   return {
     ...current,
     name: typeof payload.name === "string" ? payload.name : current.name,
@@ -279,6 +286,7 @@ export function mergeBuilderDraft(
       typeof payload.instructions === "string"
         ? payload.instructions
         : current.instructions,
+    coordinatorContract: contract.success ? contract.data : current.coordinatorContract,
     model,
     // The builder can move the model, which invalidates whatever thinking /
     // speed the user picked for the previous one. It never sets these two

@@ -18,6 +18,8 @@ import type {
 import { useWorkspaceId } from "@multica/core/hooks";
 import {
   dingtalkAccountBindingsOptions,
+  reusableDingTalkIdentitiesOptions,
+  useReuseDingTalkIdentity,
   useBeginDingTalkAccountBinding,
   useDeleteDingTalkAccountBinding,
   useUpdateDingTalkAccountBindingSurface,
@@ -427,6 +429,57 @@ export function DingTalkAccountBindingCard({
   );
 }
 
+function ReusableExecutionIdentity({ agentId }: { agentId: string }) {
+  const { t } = useT("agents");
+  const wsId = useWorkspaceId();
+  const candidates = useQuery(reusableDingTalkIdentitiesOptions(wsId, agentId));
+  const reuse = useReuseDingTalkIdentity(wsId);
+  const [selected, setSelected] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const identities = candidates.data ?? [];
+  const selectedIdentity = identities.find((identity) => identity.sourceAgentId === selected);
+
+  async function applyIdentity() {
+    if (!selectedIdentity || reuse.isPending) return;
+    setError(null);
+    try {
+      await reuse.mutateAsync({ agentId, sourceAgentId: selectedIdentity.sourceAgentId });
+    } catch (cause) {
+      setError(errorMessage(cause, t(($) => $.tab_body.integrations.dingtalk_identity_reuse_failed)));
+      void candidates.refetch();
+    }
+  }
+
+  if (candidates.isPending) return <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.integrations.dingtalk_account_loading)}</p>;
+  if (candidates.isError) return (
+    <div className="space-y-2">
+      <p className="text-caption text-muted-foreground" role="alert">{t(($) => $.tab_body.integrations.dingtalk_identity_reuse_load_failed)}</p>
+      <Button variant="outline" size="sm" onClick={() => void candidates.refetch()} disabled={candidates.isFetching}>{t(($) => $.tab_body.integrations.dingtalk_identity_reuse_retry)}</Button>
+    </div>
+  );
+  if (!identities.length) return <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.integrations.dingtalk_identity_reuse_empty)}</p>;
+  return (
+    <div className="space-y-2" data-testid="reusable-execution-identity">
+      <label className="block text-caption font-medium" htmlFor={`reuse-identity-${agentId}`}>
+        {t(($) => $.tab_body.integrations.dingtalk_identity_reuse_select)}
+      </label>
+      <p className="text-caption text-muted-foreground">{t(($) => $.tab_body.integrations.dingtalk_identity_reuse_hint)}</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <select id={`reuse-identity-${agentId}`} className="h-9 min-w-0 max-w-full rounded-md border bg-background px-3 text-sm" value={selected} onChange={(event) => setSelected(event.target.value)} disabled={reuse.isPending}>
+          <option value="">{t(($) => $.tab_body.integrations.dingtalk_identity_reuse_placeholder)}</option>
+          {identities.map((identity) => <option key={identity.sourceAgentId} value={identity.sourceAgentId}>
+            {identity.accountDisplayName} · {identity.organizationName} ({identity.sourceAgentName})
+          </option>)}
+        </select>
+        <Button size="sm" onClick={() => void applyIdentity()} disabled={!selectedIdentity || reuse.isPending}>
+          {t(($) => $.tab_body.integrations.dingtalk_identity_reuse_apply)}
+        </Button>
+      </div>
+      {error ? <p className="text-caption text-destructive" role="alert">{error}</p> : null}
+    </div>
+  );
+}
+
 function DingTalkBindingModeCard({
   agentId,
   agentName,
@@ -697,6 +750,7 @@ function DingTalkBindingModeCard({
           </div>
         ) : (
           <div className="space-y-3">
+            {bindingMode === "identity" && canOperate && !permissionLoading ? <ReusableExecutionIdentity key={agentId} agentId={agentId} /> : null}
             {bindingMode === "message" && messageRoutePending ? (
               <p className="text-caption text-muted-foreground">
                 {t(($) => $.tab_body.integrations.dingtalk_account_pending_restart)}

@@ -191,6 +191,43 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - 2026-09-08: Added package creation, complete example and Builder evidence.
   Reason: replace the DTA-oriented source assumptions with the platform's manifest and ZIP contract.
 
+## Bounded Coordinator contract (2026-09-09)
+
+| Contract | Implementation |
+| --- | --- |
+| Version 1 shape; strict unknown-field validation; canonical JSON including source hash ≤1600 Unicode code points | `server/internal/coordinatorcontract/contract.go`: `Contract`, `Parse`, `Bind`, `Resolve`, `Hash` |
+| Dedicated nullable persisted field; omitted UPDATE preserves and JSON null atomically clears | `server/migrations/9164_agent_coordinator_contract.up.sql`; `server/pkg/db/queries/agent.sql`: `CreateAgent`, `UpdateAgent` |
+| Independent Coordinator read | `server/pkg/db/queries/agent_coordinator_contract.sql`: `GetAgentCoordinatorContract` |
+| Create/update/readback; source ownership guard; source hash retained on copies, missing hash Host-bound | `server/internal/handler/agent.go`: request/response structs, `bindAgentCoordinatorContract`, `agentToResponse` |
+| JSON/file CLI inputs and copy roundtrip | `server/cmd/multica/cmd_agent.go`: `registerCoordinatorContractFlags`, `resolveCoordinatorContract`; `server/cmd/multica/cmd_agent_copy.go`: `runAgentCopy` |
+| Web/Desktop duplicate, builder and stored draft roundtrip | `packages/core/agents/draft.ts`, `stored-draft.ts`, `builder-protocol.ts`; `packages/core/api/schemas.ts`: `CoordinatorContractSchema` |
+| Boundary and stale-version evidence | `server/internal/coordinatorcontract/contract_test.go`; `server/internal/handler/agent_coordinator_contract_test.go`; `server/cmd/multica/cmd_agent_coordinator_contract_test.go`; `packages/core/api/coordinator-contract.test.ts` |
+| Local/Git package preview retains bounded constraints and original source version | `server/internal/handler/agent_package.go`; `packages/core/types/agent-package.ts`; `packages/core/api/schemas.ts`: `AgentPackagePreviewSchema` |
+| Local package source blocks direct instructions/contract edits without blocking ordinary profile edits | `server/internal/handler/agent.go`: `UpdateAgent`; `server/internal/handler/agent_coordinator_contract_test.go`: `TestUpdateLocalPackageAgentPreservesSourceContract` |
+| Portable ZIP/Git/export use the same root contract field, retaining stale source hashes on copies | `server/internal/agentsource/portable.go`; `server/internal/agentsource/agent.schema.json`; `server/internal/handler/agent_export_manifest.go`; `server/internal/handler/agent_source_preview.go` |
+
+## Event-trigger implementation
+
+- `server/internal/service/event_trigger.go`: `SetEnabled`, `Admit`, `ProcessNext`,
+  and `SyncRoutes` own configuration, durable inbox, batching and Router policy.
+- `server/internal/handler/agent_event_trigger.go`: event adapter, batch inspection,
+  and authorized retry; `agent.go` exposes `event_trigger_enabled`.
+- `server/internal/handler/autopilot.go`: `requireAutopilotWrite` prevents direct
+  mutation/execution of Agent-managed event automations.
+- `server/cmd/multica/cmd_agent.go`: `event-trigger-enabled` update flag is Changed-gated.
+- `packages/views/agents/components/agent-message-settings.tsx`: Agent event-trigger
+  toggle rendered by `tabs/digital-employee-tab.tsx`; identity binding controls are unchanged.
+- Read-only verification: `multica agent get <id> --output json`,
+  `multica autopilot runs <id> --output json`, and `GET /api/agents/{id}/event-batches`.
+
+## Proactive conversation admission
+
+- `server/internal/service/event_trigger.go`: toggle dependency and legacy-only draining.
+- `server/internal/handler/agent_event_trigger.go`, `proactive_conversation.go`: observed messages enter Coordinator; durable dedup covers the former inbox.
+- `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
+- `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
+- Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.
+
 ## Package publication additions
 
 | Contract | Source | Verification |
@@ -202,5 +239,3 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 
 - 2026-09-10: Added source locations for complete package creation, publication and
   error handling. Reason: keep the built-in creation skill aligned with the live protocol.
-
-- 2026-09-11: Corrected the OKR migration reference to 9222. Reason: avoid the migration number already used by the pre-release branch.

@@ -441,6 +441,22 @@ export interface DSHTrajectoryArtifact {
   jsonl: string;
 }
 
+/** Authored routing constraints. Only the Host binds the source hash. */
+export interface CoordinatorContract {
+  version: 1;
+  scope: string;
+  must_delegate: string[];
+  constraints: string[];
+  clarify_when: string[];
+  source_instructions_sha256?: string;
+}
+
+export type CoordinatorContractState =
+  | "loaded"
+  | "not_configured"
+  | "stale"
+  | "unavailable";
+
 export interface Agent {
   id: string;
   workspace_id: string;
@@ -459,6 +475,8 @@ export interface Agent {
   /** What this agent's owner wrote. For a system agent this holds only the
    *  workspace's own notes — the product half is `system_instructions`. */
   instructions: string;
+  coordinator_contract?: CoordinatorContract | null;
+  coordinator_contract_state?: CoordinatorContractState;
   /** Set for product-defined agents (e.g. "mika"). Absent for user- and
    *  template-created agents. Identity for "maintained by Multica" checks —
    *  never the display name, which owners may change. */
@@ -489,6 +507,7 @@ export interface Agent {
    * `undefined` as false. Only an explicit true turns it on.
    */
   inbound_coordinator?: boolean;
+  event_trigger_enabled?: boolean;
   /** Let the platform own DingTalk replies and thinking reactions; off when omitted. */
   dingtalk_response_enabled?: boolean;
   /** Show the AI sender label on platform and sandbox DingTalk messages. */
@@ -668,6 +687,7 @@ export interface CreateAgentRequest {
   name: string;
   description?: string;
   instructions?: string;
+  coordinator_contract?: CoordinatorContract | null;
   avatar_url?: string;
   runtime_id: string;
   runtime_config?: Record<string, unknown>;
@@ -721,6 +741,7 @@ export interface StoredAgentDraft {
   name: string;
   description: string;
   instructions: string;
+  coordinator_contract?: CoordinatorContract | null;
   avatar_url: string | null;
   model: string;
   thinking_level: string;
@@ -774,6 +795,7 @@ export interface AgentTemplateSummary {
 
 export interface AgentTemplate extends AgentTemplateSummary {
   instructions: string;
+  coordinator_contract?: CoordinatorContract | null;
 }
 
 export interface AgentTemplateSkillRef {
@@ -793,6 +815,7 @@ export interface CreateAgentFromTemplateRequest {
   max_concurrent_tasks?: number;
   description?: string;
   instructions?: string;
+  coordinator_contract?: CoordinatorContract | null;
   avatar_url?: string;
   extra_skill_ids?: string[];
 }
@@ -839,10 +862,12 @@ export interface UpdateAgentRequest {
   name?: string;
   description?: string;
   instructions?: string;
+  coordinator_contract?: CoordinatorContract | null;
   dispatch_prompt_overrides?: Record<string, string>;
   dispatch_always_new_issue?: boolean;
   chat_session_resume?: boolean;
   inbound_coordinator?: boolean;
+  event_trigger_enabled?: boolean;
   dingtalk_response_enabled?: boolean;
   dingtalk_show_ai_tag?: boolean;
   task_finished_loop_enabled?: boolean;

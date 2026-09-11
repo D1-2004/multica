@@ -230,7 +230,9 @@
     "cancel": "Cancel",
     "labels_label": "Labels",
     "labels_hint": "Workspace labels used to classify this agent.",
-    "github_managed_profile": "Instructions and repository skills are managed by GitHub; name and description remain editable in Multica."
+    "github_managed_profile": "Instructions and repository skills are managed by GitHub; name and description remain editable in Multica.",
+    "prop_event_trigger": "Proactively process all new conversation messages",
+    "prop_event_trigger_hint": "Read all new messages in monitored conversations, including messages without a mention. Use your role and context to decide whether to respond or act. Group consecutive messages and stay quiet when no response is needed. Enabling this also enables inbound judging."
   },
   "overview": {
     "agent_context": "Agent",
@@ -339,7 +341,8 @@
     "discard_keep": "Keep editing",
     "discard_confirm": "Discard changes",
     "identity": "Identity",
-    "llm_trace": "LLM Trace"
+    "llm_trace": "LLM Trace",
+    "inbound": "Inbound conversations"
   },
   "creation_studio": {
     "package": {
@@ -797,6 +800,7 @@
       "excluded_not_supplied": "resolved per dispatch",
       "excluded_no_conversation_context": "only for DingTalk conversations",
       "excluded_not_a_dingtalk_channel": "DingTalk channel messages only",
+      "excluded_coordinator_issue": "not used for Coordinator-created Issues",
       "delivery_runtime_brief": "system prompt, once per session",
       "delivery_per_turn": "with every turn",
       "excluded_empty": "empty",
@@ -808,8 +812,8 @@
       "open_dialog_hint": "Review and customize what this agent is told.",
       "scope_title": "When this applies",
       "scope_body": "Only to work that arrives from an external channel. Issues and chats you create inside Multica never receive it. Older runtimes that do not support a separate instruction field get the policy prepended to the task content instead.",
-      "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent.",
-      "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to.",
+      "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent. Independent Issue tasks the Coordinator creates from those events do not receive it.",
+      "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to. Independent Issue tasks the Coordinator creates do not receive it.",
       "condition_dingtalk_conversation": "Injected for DingTalk conversations — the conversation is the source of truth, plus the commands that read it and any quoted message back.",
       "condition_dingtalk_channel": "Injected for DingTalk channel messages — recall and bind the Issue to openConversationId.",
       "condition_any_dingtalk_task": "Injected for every DingTalk task, including ones that arrive without a dispatch envelope.",
@@ -1358,7 +1362,15 @@
       "enterprise_identity_connect_failed": "Unable to start employee authorization.",
       "enterprise_identity_revoke": "Unbind",
       "enterprise_identity_revoked": "Employee identity unbound.",
-      "enterprise_identity_revoke_failed": "Unable to unbind employee identity."
+      "enterprise_identity_revoke_failed": "Unable to unbind employee identity.",
+      "dingtalk_identity_reuse_select": "Use an existing identity",
+      "dingtalk_identity_reuse_placeholder": "Choose an identity",
+      "dingtalk_identity_reuse_apply": "Use this identity",
+      "dingtalk_identity_reuse_hint": "Choose an identity you already bound in this workspace. No QR code is needed.",
+      "dingtalk_identity_reuse_empty": "No reusable identities yet. Scan to bind a new account.",
+      "dingtalk_identity_reuse_load_failed": "Unable to load reusable identities. You must own this agent.",
+      "dingtalk_identity_reuse_retry": "Retry",
+      "dingtalk_identity_reuse_failed": "Unable to reuse this identity. Refresh and try again."
     },
     "activity": {
       "status": {
@@ -1470,7 +1482,14 @@
       "relations_clear": "Unlink issues on this scene",
       "relations_clear_confirm": "Unlink issues on this scene? Memory text is kept.",
       "relations_cleared": "Issue links cleared",
-      "relations_clear_failed": "Couldn't unlink issues"
+      "relations_clear_failed": "Couldn't unlink issues",
+      "grouped_hint": "Judgments from the same group or DM appear in one conversation.",
+      "judgment_count": "{{count}} judgments",
+      "load_more": "Load more conversations",
+      "source_employee": "Digital employee",
+      "source_robot": "Robot",
+      "source_unknown": "Other source",
+      "refresh": "Refresh"
     },
     "memory": {
       "flags_hint": "Write, recall, and warm-up control how memory is kept. Show list controls whether it appears here.",

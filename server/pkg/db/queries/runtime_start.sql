@@ -272,9 +272,15 @@ WHERE attempt.id = @id
 -- Only the latest startup attempt controls retry eligibility. A later
 -- serialization block suppresses an older capacity-wait record, while an ASB
 -- attempt abandoned past the task-launch lease is recovered after a crash.
--- Return one task per Runtime without a global LIMIT so a busy tenant cannot
--- hide every other tenant before exact credential scopes are resolved in Go.
-SELECT DISTINCT ON (task.runtime_id) task.*
+-- Return a bounded batch per Runtime without a global LIMIT so a busy tenant
+-- cannot hide every other tenant before exact credential scopes are resolved.
+-- Sandbox capacity is FIFO for every task kind; chat and retry priorities do
+-- not grant preferential access to a tenant's instance quota.
+WITH eligible AS (
+SELECT task.id,
+       row_number() OVER (
+           PARTITION BY task.runtime_id ORDER BY task.created_at ASC, task.id ASC
+       ) AS runtime_position
 FROM agent_task_queue AS task
 JOIN LATERAL (
     SELECT attempt.backend,
@@ -311,4 +317,9 @@ WHERE task.status = 'queued'
       task.runtime_launch_lease_expires_at IS NULL
       OR task.runtime_launch_lease_expires_at <= now()
   )
-ORDER BY task.runtime_id, task.priority DESC, task.created_at ASC, task.id ASC;
+)
+SELECT task.*
+FROM eligible
+JOIN agent_task_queue AS task ON task.id = eligible.id
+WHERE eligible.runtime_position <= sqlc.arg('max_per_runtime')::integer
+ORDER BY task.runtime_id, task.created_at ASC, task.id ASC;

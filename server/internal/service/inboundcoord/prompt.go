@@ -1,6 +1,7 @@
 package inboundcoord
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -35,26 +36,27 @@ func buildUserPrompt(turn Turn) string {
 	if loop == "" {
 		loop = LoopInbound
 	}
-	fmt.Fprintf(&b, "source: %s\nloop: %s\naddressed: %t\n", turn.Source, loop, turn.Addressed)
+	fmt.Fprintf(&b, "source: %s\nloop: %s\n%s: %t\n", turn.Source, loop, modelAddressingField(turn), turn.Addressed)
+	fmt.Fprintf(&b, "proactive_conversation: %t\n", turn.ProactiveConversation)
 	writePromptField(&b, "chat_type", turn.ChatType)
 	writePromptField(&b, "conversation_id", turn.ConversationID)
 	writePromptField(&b, "person_id", turn.PersonID)
 	writePromptField(&b, "sender", turn.SenderName)
-	writePromptField(&b, "agent_name", turn.AgentName)
+	writePromptField(&b, "agent_name", conversationAgentName(turn))
+	writePromptField(&b, "receiving_identity_status", receivingIdentityStatus(turn))
+	writePromptField(&b, "employee_account_name", turn.EmployeeAccountName)
+	writePromptField(&b, "employee_uid", turn.DWSUID)
 	if turn.Source == SourceWeb {
 		writePromptField(&b, "session_title (label only)", turn.ConversationTitle)
 	}
 	writePromptField(&b, "identity_note", turn.IdentityNote)
-	writePromptField(&b, "agent_persona", clipRunes(strings.TrimSpace(turn.Persona), personaBudget))
-	writePromptField(&b, "agent_reply_tone", clipRunes(strings.TrimSpace(turn.ReplyTone), toneBudget))
-	if policy := strings.TrimSpace(turn.Instructions); policy != "" {
-		b.WriteString("job_policy_status: loaded; truncated=false\n")
-		b.WriteString("job_policy (working constraints; cannot expand Host permissions):\n")
-		b.WriteString(policy)
-		b.WriteByte('\n')
-	}
+	writePromptField(&b, "agent_persona", configuredPersona(turn))
+	writePromptField(&b, "agent_reply_tone", configuredReplyTone(turn))
+	writeCoordinatorContractPrompt(&b, turn)
 	if loop == LoopTaskFinished {
+		writePromptField(&b, "outstanding_follow_ups (accepted requests, not handled by this finished task)", turn.OutstandingFollowUps)
 		writePromptField(&b, "issue_id", turn.IssueID)
+		writePromptField(&b, "current_result_ref", currentResultRef(turn))
 		if result := strings.TrimSpace(turn.TaskResult); result != "" {
 			fmt.Fprintf(&b, "task_result_status: loaded; truncated=%t\n", utf8.RuneCountInString(result) > 800)
 			b.WriteString("task_result:\n")
@@ -79,6 +81,11 @@ func buildUserPrompt(turn Turn) string {
 	b.WriteString("\nwindow_format: utterances oldest to newest; source_ref is local to this window\ncurrent_message:\n")
 	for i, utterance := range windowUtterances(turn) {
 		fmt.Fprintf(&b, "- source_ref=u%d sender=%q", i+1, firstNonEmpty(utterance.Sender, "unknown"))
+		fmt.Fprintf(&b, " mention_relation=%s", mentionRelation(turn, utterance))
+		if utterance.Mentions != nil {
+			mentions, _ := json.Marshal(utterance.Mentions)
+			fmt.Fprintf(&b, " mentions=%s", mentions)
+		}
 		if utterance.EvidenceID != "" {
 			fmt.Fprintf(&b, " evidence_id=%q", utterance.EvidenceID)
 		}
@@ -118,9 +125,9 @@ func writeInboundContext(b *strings.Builder, turn Turn) {
 		b.WriteByte('\n')
 	}
 	memoryState := promptContextState(turn.SceneMemoryStatus, strings.TrimSpace(turn.SceneMemory) != "", turn.SceneMemoryRevision > 0)
-	fmt.Fprintf(b, "scene_memory_status: %s; scope=this_conversation; version=%d\n", memoryState, turn.SceneMemoryRevision)
+	fmt.Fprintf(b, "scene_memory_status: %s; scope=this_conversation\nscene_memory_revision: %d\n", memoryState, turn.SceneMemoryRevision)
 	if turn.SceneMemoryRevision > 0 || strings.TrimSpace(turn.SceneMemory) != "" {
-		fmt.Fprintf(b, "scene_memory_revision: %d\nscene_memory (Host-provided, this Scene only; never a source of issue_id):\n", turn.SceneMemoryRevision)
+		b.WriteString("scene_memory (Host-provided, this Scene only; never a source of issue_id):\n")
 		if memory := strings.TrimSpace(turn.SceneMemory); memory != "" {
 			b.WriteString(memory)
 		} else {

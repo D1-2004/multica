@@ -164,7 +164,7 @@ func TestLangfuseLLMTraceObserverEmitsGenerationUnderTaskRoot(t *testing.T) {
 	}
 	// The relay usually creates the trace record, so it carries the runtime
 	// and provider tags the completion hook would otherwise add too late.
-	wantTags := `["agent_task","runtime-cloud","provider-hermes","agent-01000000-0000-0000-0000-000000000000","workspace-09000000-0000-0000-0000-000000000000","task-abcd0000-0000-0000-0000-000000000000"]`
+	wantTags := `["agent_task","runtime-cloud","provider-hermes","agent-01000000-0000-0000-0000-000000000000","agent_name-FDE教练","workspace-09000000-0000-0000-0000-000000000000","task-abcd0000-0000-0000-0000-000000000000"]`
 	if attrs["langfuse.trace.tags"] != wantTags || attrs["langfuse.trace.metadata.provider"] != "hermes" {
 		t.Fatalf("relay tags/provider = %q / %q", attrs["langfuse.trace.tags"], attrs["langfuse.trace.metadata.provider"])
 	}

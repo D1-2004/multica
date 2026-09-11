@@ -1,0 +1,393 @@
+{
+  "policy_version": "2026-09-10.2",
+  "assembly_version": "14",
+  "started_at": "2026-09-10T03:40:43.243235Z",
+  "completed_at": "2026-09-10T03:41:09.552167Z",
+  "status": "PASS",
+  "safety": "Real model, synthetic frozen dialogue, fake read-only tools and history; no Host submission or business effects.",
+  "assertion_scope": "Assertions cover action/work count, continuation target, source attribution, work basis and disclosure path; answer prose requires separate human review.",
+  "cases": [
+    {
+      "id": "generic_same_object_different_deliverable",
+      "contract_id": "generic_identity_and_semantics",
+      "fixture_hash": "bacf7b21f4eebe004ff8a92d5f5e83c0126e66a60da8a0025814f5c6cca72359",
+      "repeat": 1,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "我将编写一份客户端上传失败时面向用户的操作说明文档。",
+      "planned_items": [
+        {
+          "reply": "我将编写一份客户端上传失败时面向用户的操作说明文档。",
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "乔宁 在钉钉会话中的消息：\n\n安然，请编写一份客户端上传失败时面向用户的操作说明文档。",
+          "action_key": "item-1",
+          "Delegator": "乔宁",
+          "Purpose": "乔宁委托：编写客户端上传失败时面向用户的操作说明文档",
+          "Intent": "other",
+          "LookInto": "乔宁委托：编写客户端上传失败时面向用户的操作说明文档\nscene_cid=cidGenericSyntheticSceneB=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall",
+        "work_state"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "410aff90d252a449f401c42d59becbe20137d0b038dfd517e098a8a2b65a00d3",
+          "tool_schema_hash": "77089d66d30df05a542a6cf1e3317ae78798757e1eea1c5a0c3e451b6028234c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "group"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 3316,
+          "output_tokens": 42
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "ae20bab1237f8bbb8c8ba062dc4bc0daedb09ce6feccd48da52e53b806b4af6a",
+          "tool_schema_hash": "cbc4dfdbd753e5ab87eb99e2f973df18a894c206dad9492df3b4db8966ba95a6",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "group",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "work_state",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "work_state"
+          ],
+          "input_tokens": 4298,
+          "output_tokens": 35
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "ae20bab1237f8bbb8c8ba062dc4bc0daedb09ce6feccd48da52e53b806b4af6a",
+          "tool_schema_hash": "cbc4dfdbd753e5ab87eb99e2f973df18a894c206dad9492df3b4db8966ba95a6",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "group",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "work_state",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 4434,
+          "output_tokens": 97
+        },
+        {
+          "round": 4,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "73a947717d9d6e56ab24888cf98498b4983725329856c4f7fd95531f023360f8",
+          "tool_schema_hash": "d352e392b496845dbd4e980e2bf3fda2b75de90c12398888aaba8a4b956d716d",
+          "modules": [
+            "core",
+            "channel",
+            "group",
+            "finish_check_work"
+          ],
+          "allowed_tools": [
+            "finish_check"
+          ],
+          "called_tools": [
+            "finish_check"
+          ],
+          "input_tokens": 4128,
+          "output_tokens": 187
+        },
+        {
+          "round": 5,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "ae20bab1237f8bbb8c8ba062dc4bc0daedb09ce6feccd48da52e53b806b4af6a",
+          "tool_schema_hash": "cbc4dfdbd753e5ab87eb99e2f973df18a894c206dad9492df3b4db8966ba95a6",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "group",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "work_state",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 4608,
+          "output_tokens": 71
+        },
+        {
+          "round": 6,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "73a947717d9d6e56ab24888cf98498b4983725329856c4f7fd95531f023360f8",
+          "tool_schema_hash": "d352e392b496845dbd4e980e2bf3fda2b75de90c12398888aaba8a4b956d716d",
+          "modules": [
+            "core",
+            "channel",
+            "group",
+            "finish_check_work"
+          ],
+          "allowed_tools": [
+            "finish_check"
+          ],
+          "called_tools": [
+            "finish_check"
+          ],
+          "input_tokens": 4050,
+          "output_tokens": 180
+        }
+      ],
+      "input_tokens": 24834,
+      "output_tokens": 612,
+      "elapsed_ms": 13287,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    },
+    {
+      "id": "generic_same_object_different_deliverable",
+      "contract_id": "generic_identity_and_semantics",
+      "fixture_hash": "bacf7b21f4eebe004ff8a92d5f5e83c0126e66a60da8a0025814f5c6cca72359",
+      "repeat": 2,
+      "status": "PASS",
+      "action": "issue",
+      "reply_for_manual_review": "收到，我将编写一份客户端上传失败时面向用户的操作说明文档。",
+      "planned_items": [
+        {
+          "reply": "收到，我将编写一份客户端上传失败时面向用户的操作说明文档。",
+          "source_refs": [
+            "u1"
+          ],
+          "basis": "new_request",
+          "content": "乔宁 在钉钉会话中的消息：\n\n安然，请编写一份客户端上传失败时面向用户的操作说明文档。",
+          "action_key": "item-1",
+          "Delegator": "乔宁",
+          "Purpose": "乔宁委托：编写客户端上传失败时面向用户的操作说明文档",
+          "Intent": "other",
+          "LookInto": "乔宁委托：编写客户端上传失败时面向用户的操作说明文档\nscene_cid=cidGenericSyntheticSceneB=="
+        }
+      ],
+      "non_work_refs": null,
+      "fake_history_reads": 0,
+      "fake_read_calls": [
+        "assoc_recall",
+        "work_state"
+      ],
+      "models": [
+        "qwen3.7-plus"
+      ],
+      "rounds": [
+        {
+          "round": 1,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "410aff90d252a449f401c42d59becbe20137d0b038dfd517e098a8a2b65a00d3",
+          "tool_schema_hash": "77089d66d30df05a542a6cf1e3317ae78798757e1eea1c5a0c3e451b6028234c",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "group"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "assoc_recall"
+          ],
+          "input_tokens": 3316,
+          "output_tokens": 23
+        },
+        {
+          "round": 2,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "ae20bab1237f8bbb8c8ba062dc4bc0daedb09ce6feccd48da52e53b806b4af6a",
+          "tool_schema_hash": "cbc4dfdbd753e5ab87eb99e2f973df18a894c206dad9492df3b4db8966ba95a6",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "group",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "work_state",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "work_state"
+          ],
+          "input_tokens": 4298,
+          "output_tokens": 35
+        },
+        {
+          "round": 3,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "ae20bab1237f8bbb8c8ba062dc4bc0daedb09ce6feccd48da52e53b806b4af6a",
+          "tool_schema_hash": "cbc4dfdbd753e5ab87eb99e2f973df18a894c206dad9492df3b4db8966ba95a6",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "group",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "work_state",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 4434,
+          "output_tokens": 99
+        },
+        {
+          "round": 4,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "73a947717d9d6e56ab24888cf98498b4983725329856c4f7fd95531f023360f8",
+          "tool_schema_hash": "d352e392b496845dbd4e980e2bf3fda2b75de90c12398888aaba8a4b956d716d",
+          "modules": [
+            "core",
+            "channel",
+            "group",
+            "finish_check_work"
+          ],
+          "allowed_tools": [
+            "finish_check"
+          ],
+          "called_tools": [
+            "finish_check"
+          ],
+          "input_tokens": 4132,
+          "output_tokens": 202
+        },
+        {
+          "round": 5,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "ae20bab1237f8bbb8c8ba062dc4bc0daedb09ce6feccd48da52e53b806b4af6a",
+          "tool_schema_hash": "cbc4dfdbd753e5ab87eb99e2f973df18a894c206dad9492df3b4db8966ba95a6",
+          "modules": [
+            "core",
+            "voice",
+            "inbound",
+            "channel",
+            "group",
+            "recall_match"
+          ],
+          "allowed_tools": [
+            "assoc_recall",
+            "work_state",
+            "context_read",
+            "finish"
+          ],
+          "called_tools": [
+            "finish"
+          ],
+          "input_tokens": 4624,
+          "output_tokens": 73
+        },
+        {
+          "round": 6,
+          "request_model": "qwen3.7-plus",
+          "response_model": "qwen3.7-plus",
+          "prompt_hash": "73a947717d9d6e56ab24888cf98498b4983725329856c4f7fd95531f023360f8",
+          "tool_schema_hash": "d352e392b496845dbd4e980e2bf3fda2b75de90c12398888aaba8a4b956d716d",
+          "modules": [
+            "core",
+            "channel",
+            "group",
+            "finish_check_work"
+          ],
+          "allowed_tools": [
+            "finish_check"
+          ],
+          "called_tools": [
+            "finish_check"
+          ],
+          "input_tokens": 4054,
+          "output_tokens": 182
+        }
+      ],
+      "input_tokens": 24858,
+      "output_tokens": 614,
+      "elapsed_ms": 13021,
+      "assertions": [
+        "action must be one of [issue]",
+        "work item count must be 1",
+        "non-work references must be []",
+        "Host must preserve exact attributed source content",
+        "work plan must include target=\"\" refs=[u1] basis=new_request",
+        "current-scene recall must establish work evidence"
+      ],
+      "failures": []
+    }
+  ]
+}

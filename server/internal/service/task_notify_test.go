@@ -516,6 +516,25 @@ func TestNextQueuedTaskForTerminal_RejectsMissingAgent(t *testing.T) {
 	}
 }
 
+func TestNextQueuedASBTaskIgnoresKindPriorityAndAgentAffinity(t *testing.T) {
+	now := time.Now()
+	older := db.AgentTaskQueue{
+		ID: testUUID(61), AgentID: testUUID(62), AutopilotRunID: testUUID(66), Priority: 0,
+		CreatedAt: pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
+	}
+	newer := db.AgentTaskQueue{
+		ID: testUUID(63), AgentID: testUUID(64), Priority: 4,
+		ChatSessionID: testUUID(65), CreatedAt: pgtype.Timestamptz{Time: now, Valid: true},
+	}
+	got, ok := nextQueuedASBTask([]db.AgentTaskQueue{newer, older})
+	if !ok || got.ID != older.ID {
+		t.Fatalf("next ASB task = %v, want older background task %v", got.ID, older.ID)
+	}
+	if _, ok := nextQueuedASBTask(nil); ok {
+		t.Fatal("empty ASB queue returned a candidate")
+	}
+}
+
 // TestNotifyTaskFinished_BumpsBeforeRuntimeWakeup pins the terminal-transition
 // half of the wakeup contract. A prior empty verdict must not hide queued work
 // that becomes claimable when another task releases agent capacity or a

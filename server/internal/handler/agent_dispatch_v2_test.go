@@ -439,6 +439,9 @@ func TestShouldDeferInboundCoordinatorForRouterMessageCallbacks(t *testing.T) {
 	if !shouldDeferInboundCoordinator(base, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}) {
 		t.Fatal("chat materialization must use the same durable coordinator queue")
 	}
+	if !shouldEnqueueInboundCoordinatorJob(context.Background(), nil, base, agentDispatchExecutionPlan{MaterializerType: protocol.DispatchSurfaceTypeChat}, pgtype.UUID{}) {
+		t.Fatal("missing agent lookup must keep the durable coordinator queue")
+	}
 }
 
 func TestDispatchRuntimeContextCarriesIdentityExpiryWithoutDuplicatingToken(t *testing.T) {
@@ -1027,7 +1030,7 @@ func TestCoordinatorIssueCommentTaskContextMakesIndependentRelay(t *testing.T) {
 		"dingtalk_conversation_id\":\"cid-requester",
 		"current DingTalk event sender is the actual speaker",
 		"Multica comment author is only the Issue-tool executor and an assistant",
-		"Find the original delegator from the Issue's original DingTalk task scene",
+		"find the original delegator from the Issue's original DingTalk task scene and association graph as needed",
 		"short loop already closed the inbound acknowledgement",
 		"will not automatically reach any DingTalk participant",
 		"do not send another status, waiting, or confirmation ping",

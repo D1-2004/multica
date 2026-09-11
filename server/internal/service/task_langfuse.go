@@ -193,8 +193,10 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 	}
 	tags := []string{taskTraceTag}
 	workspaceID := ""
+	agentName := ""
 	if agent != nil {
-		metadata["agent_name"] = strings.TrimSpace(agent.Name)
+		agentName = strings.TrimSpace(agent.Name)
+		metadata["agent_name"] = agentName
 		workspaceID = util.UUIDToString(agent.WorkspaceID)
 		metadata["workspace_id"] = workspaceID
 	}
@@ -214,6 +216,7 @@ func TaskLangfuseTraceOptions(task db.AgentTaskQueue, agent *db.Agent, runtime *
 	// Ids the Langfuse API can only filter through tags on this deployment.
 	tags = append(tags,
 		langfuse.Tag("agent", util.UUIDToString(task.AgentID)),
+		langfuse.Tag("agent_name", agentName),
 		langfuse.Tag("workspace", workspaceID),
 		langfuse.Tag("user", userID),
 		langfuse.Tag("task", taskID),

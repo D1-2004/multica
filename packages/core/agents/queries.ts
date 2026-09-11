@@ -1,4 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import type {
   WorkspaceWorkingAgentMineRelation,
@@ -266,5 +266,61 @@ export function agentBuilderSessionListOptions(wsId: string) {
     // mount on demand. Cached forever it would show the state of the first
     // visit: a user who just held a conversation comes back to "no drafts".
     staleTime: 0,
+  });
+}
+
+export const agentCoordinatorConversationsKeys = {
+  list: (wsId: string, agentId: string) =>
+    ["workspaces", wsId, "agent-coordinator-conversations", agentId] as const,
+  messages: (wsId: string, agentId: string, sessionId: string) =>
+    [
+      "workspaces",
+      wsId,
+      "agent-coordinator-conversation-messages",
+      agentId,
+      sessionId,
+    ] as const,
+};
+
+export function agentCoordinatorConversationsOptions(
+  wsId: string,
+  agentId: string,
+) {
+  return infiniteQueryOptions({
+    queryKey: agentCoordinatorConversationsKeys.list(wsId, agentId),
+    queryFn: ({ pageParam }) =>
+      api.listAgentCoordinatorConversations(agentId, pageParam),
+    initialPageParam: 0,
+    getNextPageParam: (page, _pages, previousOffset) =>
+      page.has_more === true && page.next_offset > previousOffset
+        ? page.next_offset
+        : undefined,
+    enabled: !!wsId && !!agentId,
+    staleTime: 15_000,
+  });
+}
+
+export function agentCoordinatorConversationMessagesOptions(
+  wsId: string,
+  agentId: string,
+  sessionId: string,
+) {
+  return infiniteQueryOptions({
+    queryKey: agentCoordinatorConversationsKeys.messages(
+      wsId,
+      agentId,
+      sessionId,
+    ),
+    queryFn: ({ pageParam }) =>
+      api.listAgentCoordinatorConversationMessages(
+        agentId,
+        sessionId,
+        pageParam,
+      ),
+    initialPageParam: null as { created_at: string; id: string } | null,
+    getNextPageParam: (page) =>
+      page.has_more === true ? (page.next_cursor ?? undefined) : undefined,
+    enabled: !!wsId && !!agentId && !!sessionId,
+    staleTime: 15_000,
   });
 }

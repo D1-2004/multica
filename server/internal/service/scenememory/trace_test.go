@@ -28,7 +28,7 @@ func TestFlushTraceOptionsCarryLookupKeys(t *testing.T) {
 	if opts.Name != flushTraceName || opts.SessionID != "cid+abc==" {
 		t.Fatalf("name/session = %q/%q", opts.Name, opts.SessionID)
 	}
-	if strings.Join(opts.Tags, ",") != "scene_memory,kind-dm,agent-03000000-0000-0000-0000-000000000000,workspace-02000000-0000-0000-0000-000000000000" {
+	if strings.Join(opts.Tags, ",") != "scene_memory,kind-dm,agent-03000000-0000-0000-0000-000000000000,agent_name-预发测试智能体,workspace-02000000-0000-0000-0000-000000000000" {
 		t.Fatalf("tags = %v", opts.Tags)
 	}
 	keys := flushIndexKeys(row)
@@ -53,6 +53,27 @@ func TestFlushTraceOptionsCarryLookupKeys(t *testing.T) {
 	} {
 		if got := opts.Metadata[key]; got != want {
 			t.Errorf("metadata %s = %#v, want %#v", key, got, want)
+		}
+	}
+}
+
+func TestHistoryReadTraceReportsChronologyAndMissingEvidence(t *testing.T) {
+	older := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
+	newer := older.Add(time.Minute)
+	row := db.SceneMemory{LeaseTargetThroughEvidenceID: "missing", LastTriggerEvidenceID: "visible"}
+	output := historyReadTraceOutput(row, HistoryPage{
+		Events:      []HistoryEvent{{OccurredAt: newer}, {OccurredAt: older}},
+		EvidenceIDs: []string{"visible"}, RawCount: 3, PaginationKnown: true,
+		HasMore: true, NextCursor: newer.Add(time.Millisecond),
+	})
+	for key, want := range map[string]any{
+		"oldest": older.Format(time.RFC3339), "newest": newer.Format(time.RFC3339),
+		"next_cursor": newer.Add(time.Millisecond).Format(time.RFC3339Nano),
+		"raw_count":   3, "event_count": 2, "has_more": true,
+		"claimed_evidence_in_page": false, "trigger_evidence_in_page": true,
+	} {
+		if output[key] != want {
+			t.Errorf("%s=%v want %v", key, output[key], want)
 		}
 	}
 }

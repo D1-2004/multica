@@ -511,6 +511,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if opts.RuntimeConfig != nil {
 		h.FCE2BStable.DeveloperUserIDsProvider = opts.RuntimeConfig.stablePublisherUserIDs
 	}
+	h.EventTriggers = service.NewEventTriggerService(pool, h.AutopilotService)
+	h.MessageAutomations = &service.MessageAutomationService{Pool: pool, Autopilot: h.AutopilotService}
 	h.TaskService.RuntimeLauncher = service.NewCloudSandboxLauncher(
 		queries,
 		h.FCE2BLauncher,
@@ -542,6 +544,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		)
 		h.TaskCompletionTargetIdentity = routerClient.TargetIdentity()
 		h.TaskService.CompletionNotifier = h.TaskCompletionWorker
+		h.EventTriggers.Router = routerClient
 		h.DingTalkResponsePolicySync = newDingTalkResponsePolicyWorker(queries, routerClient)
 		h.DingTalkResponsePolicyNotifier = h.DingTalkResponsePolicySync
 		h.DingTalkBindingTeardownRouter = routerClient
@@ -777,10 +780,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	}
 	coordinator.SetIssueCommentWriter(handler.NewInboundCoordinatorIssueCommentWriter(h))
 	coordinator.DWSHistory = inboundcoord.NewDWSHistoryLoader(inboundcoord.DWSHistoryConfig{
-		AgentIdentity:   agentidentityhsf.NewClient(),
-		BaseURL:         signupConfig.FCE2B.AgentIdentityControlBaseURL,
-		BaseURLProvider: agentIdentityControlBaseURLProvider,
-		ClientSecret:    signupConfig.FCE2B.DWSClientSecret,
+		MCPBaseURL:            strings.TrimSpace(os.Getenv("MULTICA_DWS_HISTORY_MCP_URL")),
+		CrossOrgRenewAgentIDs: strings.Split(os.Getenv("MULTICA_DWS_HISTORY_CROSS_ORG_RENEW_AGENT_IDS"), ","),
+		AgentIdentity:         agentidentityhsf.NewClient(),
+		BaseURL:               signupConfig.FCE2B.AgentIdentityControlBaseURL,
+		BaseURLProvider:       agentIdentityControlBaseURLProvider,
+		ClientSecret:          signupConfig.FCE2B.DWSClientSecret,
 	})
 	h.InboundCoordinator = coordinator
 	h.InboundCoordinatorWorker = handler.NewInboundCoordinatorJobWorker(h)
@@ -2144,6 +2149,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dingtalk/install/{sessionId}/status", h.GetDingTalkInstallStatus)
 					r.Post("/dingtalk/install/manual", h.ManualInstallDingTalk)
 					r.Get("/dingtalk/account-bindings", h.ListDingTalkAccountBindings)
+					r.With(handler.RequireHumanActor).Get("/dingtalk/execution-identities", h.ListReusableDingTalkIdentities)
+					r.With(handler.RequireHumanActor).Post("/dingtalk/execution-identities/reuse", h.ReuseDingTalkIdentity)
 					r.Get("/dingtalk/account-bindings/{agentId}/status", h.GetDingTalkAccountBindingStatus)
 					r.Post("/dingtalk/account-bindings/begin", h.BeginDingTalkAccountBinding)
 					r.Patch("/dingtalk/account-bindings/{agentId}/surface", h.UpdateDingTalkAccountBindingSurface)
@@ -2521,8 +2528,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/archive", h.ArchiveAgent)
 					r.Post("/restore", h.RestoreAgent)
 					r.Post("/cancel-tasks", h.CancelAgentTasks)
+					r.Get("/event-batches", h.ListAgentEventBatches)
+					r.Post("/event-batches/{batchId}/retry", h.RetryAgentEventBatch)
 					r.Get("/tasks", h.ListAgentTasks)
 					r.Get("/coordinator-sessions", h.ListAgentCoordinatorSessions)
+					r.Get("/coordinator-conversations", h.ListAgentCoordinatorConversations)
+					r.Get("/coordinator-conversations/{sessionId}/messages", h.ListAgentCoordinatorConversationMessages)
 					r.Get("/scene-memory", h.ListAgentSceneMemory)
 					r.Put("/scene-memory/{memoryId}", h.UpdateAgentSceneMemory)
 					r.Post("/scene-memory/{memoryId}/reset", h.ResetAgentSceneMemory)
@@ -2660,6 +2671,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.With(handler.RequireHumanActor).Put("/owner", h.TransferRuntimeOwner)
 					r.Patch("/fc-e2b-template", h.UpdateFCE2BRuntimeTemplate)
 					r.Patch("/cloud-sandbox-artifact", h.UpdateCloudSandboxRuntimeArtifact)
+					r.Get("/asb-network-policy", h.GetASBRuntimeNetworkPolicy)
+					r.Put("/asb-network-policy", h.UpdateASBRuntimeNetworkPolicy)
 					r.Get("/asb-credential", h.GetASBRuntimeCredential)
 					r.Patch("/asb-credential", h.UpdateASBRuntimeCredential)
 					r.Get("/usage", h.GetRuntimeUsage)

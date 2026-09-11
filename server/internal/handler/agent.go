@@ -20,6 +20,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/attribution"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/coordinatorcontract"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/runtimeapps"
@@ -63,7 +64,9 @@ type AgentResponse struct {
 	// Instructions is what this agent's owner wrote. For a system agent it
 	// holds only the workspace's own notes — the product half lives in
 	// SystemInstructions and is never stored on the row.
-	Instructions string `json:"instructions"`
+	Instructions             string                        `json:"instructions"`
+	CoordinatorContract      *coordinatorcontract.Contract `json:"coordinator_contract"`
+	CoordinatorContractState string                        `json:"coordinator_contract_state"`
 	// SystemKey identifies a product-defined agent (e.g. "mika"). Empty for
 	// every user- or template-created agent. The UI keys "this is maintained
 	// by Multica" off this rather than off the display name, which owners may
@@ -91,7 +94,8 @@ type AgentResponse struct {
 	// InboundCoordinator runs the server-side assoc tool loop that replies
 	// immediately or opens an Issue. Off by default for new and existing
 	// agents; only an explicit owner on switch enables it.
-	InboundCoordinator bool `json:"inbound_coordinator"`
+	InboundCoordinator  bool `json:"inbound_coordinator"`
+	EventTriggerEnabled bool `json:"event_trigger_enabled"`
 	// DingTalkShowAITag controls the sender label for platform and sandbox DWS sends.
 	DingTalkShowAITag bool `json:"dingtalk_show_ai_tag"`
 	// DingTalkResponseEnabled opts this employee into platform-owned replies and reception cleanup.
@@ -213,6 +217,9 @@ func (h *Handler) hydrateDingTalkResponsePolicy(ctx context.Context, resp *Agent
 	if err != nil {
 		slog.Warn("hydrate agent DingTalk response policy failed", "error", err, "agent_id", uuidToString(agentID))
 		return
+	}
+	if h.EventTriggers != nil {
+		resp.EventTriggerEnabled, _ = h.EventTriggers.Enabled(ctx, agentID, parseUUID(resp.WorkspaceID))
 	}
 	resp.InboundCoordinator = policy.InboundCoordinator
 	resp.DingTalkShowAITag = policy.DingtalkShowAiTag
@@ -381,6 +388,24 @@ func (h *Handler) hydrateAgentsDingTalkResponsePolicy(ctx context.Context, resps
 	if len(ids) == 0 {
 		return
 	}
+	if h.EventTriggers != nil {
+		eventRows, err := h.EventTriggers.Pool.Query(ctx, `SELECT agent_id,enabled FROM agent_event_trigger WHERE agent_id=ANY($1::uuid[])`, ids)
+		if err != nil {
+			slog.Warn("hydrate event trigger settings failed", "error", err)
+		} else {
+			for eventRows.Next() {
+				var agentID pgtype.UUID
+				var enabled bool
+				if err := eventRows.Scan(&agentID, &enabled); err != nil {
+					break
+				}
+				if i, ok := index[uuidToString(agentID)]; ok {
+					resps[i].EventTriggerEnabled = enabled
+				}
+			}
+			eventRows.Close()
+		}
+	}
 	rows, err := h.Queries.ListAgentDingTalkResponsePoliciesByIDs(ctx, ids)
 	if err != nil {
 		slog.Warn("hydrate DingTalk response policy for agent list failed", "error", err, "count", len(ids))
@@ -474,6 +499,7 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 	// owner-only gate below can decide.
 	composioAllowlist := a.ComposioToolkitAllowlist
 
+	contract, contractState := coordinatorcontract.Resolve(a.CoordinatorContract, a.Instructions)
 	return AgentResponse{
 		ID:                             uuidToString(a.ID),
 		WorkspaceID:                    uuidToString(a.WorkspaceID),
@@ -482,6 +508,8 @@ func (h *Handler) agentToResponse(a db.Agent) AgentResponse {
 		Name:                           a.Name,
 		Description:                    a.Description,
 		Instructions:                   a.Instructions,
+		CoordinatorContract:            contract,
+		CoordinatorContractState:       contractState,
 		SystemKey:                      a.SystemKey.String,
 		SystemInstructions:             systemInstructionsFor(a),
 		DispatchPromptOverrides:        parseDispatchPromptOverrides(a.DispatchPromptOverrides),
@@ -1428,16 +1456,17 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateAgentRequest struct {
-	Name          string            `json:"name"`
-	Description   string            `json:"description"`
-	Instructions  string            `json:"instructions"`
-	AvatarURL     *string           `json:"avatar_url"`
-	RuntimeID     string            `json:"runtime_id"`
-	RuntimeConfig any               `json:"runtime_config"`
-	CustomEnv     map[string]string `json:"custom_env"`
-	CustomArgs    []string          `json:"custom_args"`
-	McpConfig     json.RawMessage   `json:"mcp_config"`
-	Visibility    string            `json:"visibility"`
+	Name                string            `json:"name"`
+	Description         string            `json:"description"`
+	Instructions        string            `json:"instructions"`
+	CoordinatorContract json.RawMessage   `json:"coordinator_contract"`
+	AvatarURL           *string           `json:"avatar_url"`
+	RuntimeID           string            `json:"runtime_id"`
+	RuntimeConfig       any               `json:"runtime_config"`
+	CustomEnv           map[string]string `json:"custom_env"`
+	CustomArgs          []string          `json:"custom_args"`
+	McpConfig           json.RawMessage   `json:"mcp_config"`
+	Visibility          string            `json:"visibility"`
 	// PermissionMode + InvocationTargets are the new invocation-permission
 	// inputs (MUL-3963). When permission_mode is present it is authoritative
 	// and Visibility is ignored; when absent, legacy Visibility is mapped
@@ -1495,6 +1524,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	rawFields, err := decodeJSONBodyWithRawFields(r.Body, &req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	contractJSON, contractErr := bindAgentCoordinatorContract(req.CoordinatorContract, req.Instructions)
+	if contractErr != nil {
+		writeError(w, http.StatusBadRequest, contractErr.Error())
 		return
 	}
 
@@ -1659,6 +1694,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		Name:                     req.Name,
 		Description:              req.Description,
 		Instructions:             req.Instructions,
+		CoordinatorContract:      contractJSON,
 		AvatarUrl:                avatarURL,
 		RuntimeMode:              runtime.RuntimeMode,
 		RuntimeConfig:            rc,
@@ -1765,9 +1801,10 @@ func (h *Handler) sendAgentWelcomeChat(ctx context.Context, agent db.Agent, crea
 }
 
 type UpdateAgentRequest struct {
-	Name         *string `json:"name"`
-	Description  *string `json:"description"`
-	Instructions *string `json:"instructions"`
+	Name                *string         `json:"name"`
+	Description         *string         `json:"description"`
+	Instructions        *string         `json:"instructions"`
+	CoordinatorContract json.RawMessage `json:"coordinator_contract"`
 	// DispatchPromptOverrides is a whole-map replacement, not a merge: the UI
 	// edits one segment at a time but always sends the complete map, so a
 	// removed key is an unambiguous "restore the managed text".
@@ -1775,6 +1812,7 @@ type UpdateAgentRequest struct {
 	DispatchAlwaysNewIssue      *bool              `json:"dispatch_always_new_issue"`
 	ChatSessionResume           *bool              `json:"chat_session_resume"`
 	InboundCoordinator          *bool              `json:"inbound_coordinator"`
+	EventTriggerEnabled         *bool              `json:"event_trigger_enabled"`
 	DingTalkShowAITag           *bool              `json:"dingtalk_show_ai_tag"`
 	DingTalkResponseEnabled     *bool              `json:"dingtalk_response_enabled"`
 	TaskFinishedLoopEnabled     *bool              `json:"task_finished_loop_enabled"`
@@ -2021,9 +2059,20 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Instructions != nil {
-		if _, sourceErr := h.Queries.GetAgentSourceByAgentID(r.Context(), existing.ID); sourceErr == nil {
-			writeError(w, http.StatusConflict, "instructions are managed by the GitHub source")
+	if req.Instructions != nil || req.CoordinatorContract != nil {
+		if source, sourceErr := h.Queries.GetAgentSourceByAgentID(r.Context(), existing.ID); sourceErr == nil {
+			sourceLabel := "source"
+			switch source.SourceType {
+			case "github":
+				sourceLabel = "GitHub source"
+			case "local":
+				sourceLabel = "local package source"
+			}
+			message := "instructions are managed by the " + sourceLabel
+			if req.Instructions == nil {
+				message = "coordinator_contract is managed by the " + sourceLabel
+			}
+			writeError(w, http.StatusConflict, message)
 			return
 		} else if !errors.Is(sourceErr, pgx.ErrNoRows) {
 			writeError(w, http.StatusInternalServerError, "failed to verify agent source ownership")
@@ -2075,6 +2124,22 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Instructions != nil {
 		params.Instructions = pgtype.Text{String: *req.Instructions, Valid: true}
+	}
+	if req.CoordinatorContract != nil {
+		instructions := existing.Instructions
+		if req.Instructions != nil {
+			instructions = *req.Instructions
+		}
+		encoded, err := bindAgentCoordinatorContract(req.CoordinatorContract, instructions)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// JSON null is the explicit clear sentinel in the atomic UPDATE.
+		if encoded == nil {
+			encoded = []byte("null")
+		}
+		params.CoordinatorContract = encoded
 	}
 	if req.DispatchPromptOverrides != nil {
 		encoded, ok := encodeDispatchPromptOverrides(w, *req.DispatchPromptOverrides)
@@ -2416,6 +2481,27 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Disabling inbound judging also disables proactive processing. Conflicting
+	// fields fail closed; enabling proactive processing enables judging in one transaction.
+	if req.EventTriggerEnabled != nil && req.InboundCoordinator != nil && !*req.InboundCoordinator {
+		disabled := false
+		req.EventTriggerEnabled = &disabled
+	}
+	if req.EventTriggerEnabled != nil && *req.EventTriggerEnabled {
+		enabled := true
+		req.InboundCoordinator = &enabled
+	}
+	if req.EventTriggerEnabled != nil {
+		if h.EventTriggers == nil {
+			writeError(w, http.StatusServiceUnavailable, "event triggers are unavailable")
+			return
+		}
+		if err := h.EventTriggers.SetEnabledAndInbound(r.Context(), updated, parseUUID(requestUserID(r)), *req.EventTriggerEnabled, req.InboundCoordinator); err != nil {
+			slog.Error("update event trigger failed", "agent_id", id, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to update event trigger")
+			return
+		}
+	}
 	if req.ChatSessionResume != nil {
 		if err := h.Queries.UpdateAgentChatSessionResume(r.Context(), updated.ID, *req.ChatSessionResume); err != nil {
 			slog.Warn("update agent chat_session_resume failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
@@ -3067,4 +3153,23 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 	h.hydrateDSHTrajectoryAvailability(r.Context(), resp)
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// bindAgentCoordinatorContract is shared by API writes and their boundary tests.
+// A non-empty source hash is a version reference, not an authority claim: keep
+// it on copies so an outdated contract stays stale. Omitting it is explicit
+// authoring, for which the Host binds the current instruction version.
+func bindAgentCoordinatorContract(raw []byte, instructions string) ([]byte, error) {
+	contract, err := coordinatorcontract.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	if contract != nil && contract.SourceInstructionsSHA256 != "" {
+		return coordinatorcontract.Marshal(contract), nil
+	}
+	bound, err := coordinatorcontract.Bind(contract, instructions)
+	if err != nil {
+		return nil, err
+	}
+	return coordinatorcontract.Marshal(bound), nil
 }

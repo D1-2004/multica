@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import importlib.util
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -22,6 +24,10 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ENV_FILE = Path.home() / ".grok" / "langfuse.env"
+LOOKUP_PATH = Path(__file__).resolve().parents[1] / ".agents/skills/inspect-langfuse-trace/scripts/langfuse_lookup.py"
+_spec = importlib.util.spec_from_file_location("multica_langfuse_lookup", LOOKUP_PATH)
+lookup = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(lookup)
 
 
 def load_env() -> None:
@@ -55,12 +61,12 @@ def require_creds() -> tuple[str, str, str]:
     return host, pk, sk
 
 
-def api_get(path: str, query: dict[str, str] | None = None) -> dict:
+def api_get(path: str, query: dict | None = None) -> dict:
     host, pk, sk = require_creds()
     token = base64.b64encode(f"{pk}:{sk}".encode()).decode()
     url = host + path
     if query:
-        url += "?" + urllib.parse.urlencode({k: v for k, v in query.items() if v})
+        url += "?" + urllib.parse.urlencode({k: v for k, v in query.items() if v not in (None, "", [])}, doseq=True)
     req = urllib.request.Request(
         url,
         headers={
@@ -109,6 +115,15 @@ def summarize_trace(row: dict) -> dict:
     }
 
 
+UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$"
+)
+
+
+def looks_like_uuid(value: str) -> bool:
+    return bool(UUID_RE.match((value or "").strip()))
+
+
 def match_trace(row: dict, args: argparse.Namespace) -> bool:
     meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     if args.trace:
@@ -143,7 +158,41 @@ def iso_from(value: str) -> str:
         return datetime.fromtimestamp(int(value), tz=timezone.utc).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
+    m = re.fullmatch(r"(\d+)([smhd])", value.strip())
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        delta = {
+            "s": timedelta(seconds=n),
+            "m": timedelta(minutes=n),
+            "h": timedelta(hours=n),
+            "d": timedelta(days=n),
+        }[unit]
+        return (datetime.now(timezone.utc) - delta).strftime("%Y-%m-%dT%H:%M:%SZ")
     return value
+
+
+def list_traces(query_base: dict, pages: int, page_size: int) -> list[dict]:
+    client = lookup.Client(max_pages=pages)
+    rows = lookup.list_traces(client, query_base, pages * page_size)
+    client.report_stats()
+    return rows
+
+
+def trace_blob(row: dict) -> str:
+    return lookup.trace_search_blob(row)
+
+
+def match_message(row: dict, needle: str) -> tuple[bool, dict]:
+    if not needle:
+        return True, row
+    if needle.casefold() in trace_blob(row).casefold():
+        return True, row
+    tid = row.get("id")
+    if not tid:
+        return False, row
+    full = api_get(f"/api/public/traces/{tid}")
+    return needle.casefold() in trace_blob(full).casefold(), full
 
 
 def main() -> None:
@@ -154,42 +203,84 @@ def main() -> None:
     parser.add_argument("--loop", default="", help="metadata.loop: inbound_coordinator | agent_task")
     parser.add_argument("--trace", default="", help="coord_trace_id or Langfuse trace id")
     parser.add_argument("--issue", default="", help="metadata.issue_id")
-    parser.add_argument("--agent", default="", help="agent_name or agent_id substring")
+    parser.add_argument("--agent", default="", help="agent_name, agent_id, or agent UUID")
     parser.add_argument("--cid", default="", help="conversation_id substring")
-    parser.add_argument("--from", dest="from_ts", default="", help="ISO8601 or unix seconds")
+    parser.add_argument("--message", default="", help="inbound text substring (hydrates traces whose list payload omitted input)")
+    parser.add_argument("--from", dest="from_ts", default="", help="ISO8601, unix seconds, or 7d/24h")
+    parser.add_argument("--to", dest="to_ts", default="", help="exclusive end timestamp (ISO8601, unix seconds, or 7d/24h)")
+    parser.add_argument("--environment", "--env", default="", help="pre or production; defaults to LANGFUSE_QUERY_ENVIRONMENT")
+    parser.add_argument("--pages", type=int, default=0, help="maximum list pages; 0 has no page cap")
+    parser.add_argument("--scan", type=int, default=None, help="maximum unique list candidates before local filtering")
+    parser.add_argument("--hydrate", type=int, default=80, help="maximum trace details for text search")
+    parser.add_argument("--workers", type=int, default=4, help="parallel detail requests, capped at 16")
+    parser.add_argument("--stats", action="store_true", help="print query coverage and timing to stderr")
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--observations", action="store_true", help="also list observations for the first match")
     parser.add_argument("--raw", action="store_true")
     args = parser.parse_args()
+    if args.limit < 1 or args.pages < 0 or args.hydrate < 0 or args.workers < 1 or (args.scan is not None and args.scan < 1):
+        parser.error("limit/scan/workers must be positive; pages/hydrate must be nonnegative")
 
     from_ts = args.from_ts
     if not from_ts:
-        from_ts = (datetime.now(timezone.utc) - timedelta(hours=6)).strftime(
+        # Agent/text lookups must see more than the last 20 traces of the
+        # whole project; default a week so a UUID search actually hits.
+        hours = 24 * 7 if (args.agent or args.message) else 6
+        from_ts = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
     else:
         from_ts = iso_from(from_ts)
 
-    query = {
-        "limit": str(min(args.limit, 100)),
-        "page": "1",
+    query: dict[str, str] = {
         "fromTimestamp": from_ts,
         "orderBy": "timestamp.desc",
     }
+    client = lookup.Client(environment=args.environment, to_timestamp=iso_from(args.to_ts) if args.to_ts else "", max_pages=args.pages)
+    client.from_timestamp = from_ts if args.from_ts or not args.trace else ""
+    client.hydrate_limit = args.hydrate
+    client.workers = args.workers
     if args.name:
         query["name"] = args.name
+    if looks_like_uuid(args.agent):
+        # tags is AND. Pair agent-<uuid> with the loop tag so scene_memory
+        # flushes do not drown coordinator turns. (name= is less reliable
+        # here than the static loop tag.)
+        loop_tag = "inbound_coordinator"
+        if args.name == "scene_memory_flush" or args.loop == "scene_memory":
+            loop_tag = "scene_memory"
+        elif args.name == "agent_task" or args.loop == "agent_task":
+            loop_tag = "agent_task"
+        elif args.name:
+            query["name"] = args.name
+            loop_tag = ""
+        query["tags"] = [f"agent-{args.agent.strip()}"] + ([loop_tag] if loop_tag else [])
+    elif args.agent and not args.name and not args.loop:
+        query["name"] = "inbound_coordinator"
 
-    payload = api_get("/api/public/traces", query)
-    rows = payload.get("data") or []
+    scan = args.scan or (max(args.limit * 10, 100) if (args.agent or args.message or args.cid or args.issue) else args.limit)
+    if args.trace:
+        tr = client.get(f"/api/public/traces/{lookup.trace_id_hex(args.trace)}")
+        rows = [tr] if client.in_scope(tr) else []
+    elif args.issue:
+        rows = lookup.traces_by_key(client, "issue_id", args.issue, scan, from_ts)
+    else:
+        rows = lookup.list_traces(client, query, scan)
     matched = [row for row in rows if match_trace(row, args)]
+    if args.message:
+        matched = lookup.search_text(client, matched, args.message, args.limit)
+    else:
+        client.search_stats = {"candidates": len(matched), "returned": min(len(matched), args.limit), "truncated": len(matched) > args.limit}
+        matched = matched[: args.limit]
+    client.report_stats(args.stats)
     if args.raw:
-        json.dump({"meta": payload.get("meta"), "data": matched}, sys.stdout, ensure_ascii=False, indent=2)
+        json.dump({"data": matched}, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         return
 
     sys.stderr.write(
-        f"# langfuse traces name={query.get('name', '')} from={from_ts} "
-        f"listed={len(rows)} matched={len(matched)} env=pre\n"
+        f"# langfuse traces name={query.get('name', '')} tags={query.get('tags', '')} "
+        f"from={from_ts} listed={len(rows)} matched={len(matched)}\n"
     )
     if not matched:
         print("no hits")
@@ -215,13 +306,17 @@ def main() -> None:
         for key in ("status", "channel", "provider", "runtime_name", "task_id"):
             if meta.get(key):
                 print(f"  {key}: {meta[key]}")
+        preview, _ = lookup.trace_io(row)
+        if preview not in (None, "", {}, []):
+            text = preview if isinstance(preview, str) else json.dumps(preview, ensure_ascii=False)
+            print(f"  input: {text[:180]}")
 
     if args.observations:
         first = matched[0]
         tid = first.get("id")
-        obs = api_get("/api/public/observations", {"traceId": tid, "limit": "50"})
+        obs = client.get("/api/public/traces/" + tid).get("observations") or []
         print("\n--- observations ---")
-        for item in obs.get("data") or []:
+        for item in obs:
             print(
                 "{start} type={typ} name={name} id={oid}".format(
                     start=item.get("startTime"),

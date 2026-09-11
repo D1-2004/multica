@@ -222,7 +222,9 @@
     "cancel": "取消",
     "labels_label": "标签",
     "labels_hint": "用于分类这个智能体的工作区标签。",
-    "github_managed_profile": "指令和仓库 skill 由 GitHub 管理；名称和描述可在 Multica 中编辑。"
+    "github_managed_profile": "指令和仓库 skill 由 GitHub 管理；名称和描述可在 Multica 中编辑。",
+    "prop_event_trigger": "主动处理会话所有新消息",
+    "prop_event_trigger_hint": "主动阅读监听范围内会话的新消息，即使没有 @ 也会结合岗位和上下文判断是否需要回应或处理。连续消息合并判断，无需回应时保持安静。开启时会同时打开“入站先判断”。"
   },
   "overview": {
     "agent_context": "智能体",
@@ -330,7 +332,8 @@
     "discard_keep": "继续编辑",
     "discard_confirm": "放弃修改",
     "identity": "身份",
-    "llm_trace": "LLM Trace"
+    "llm_trace": "LLM Trace",
+    "inbound": "入站会话"
   },
   "creation_studio": {
     "package": {
@@ -787,6 +790,7 @@
       "excluded_not_supplied": "每次派发时解析",
       "excluded_no_conversation_context": "仅钉钉会话",
       "excluded_not_a_dingtalk_channel": "仅钉钉频道消息",
+      "excluded_coordinator_issue": "Coordinator 建的 Issue 不使用",
       "delivery_runtime_brief": "拼入系统提示词，每个会话一次",
       "delivery_per_turn": "每轮随消息下发",
       "excluded_empty": "为空",
@@ -798,8 +802,8 @@
       "open_dialog_hint": "查看并自定义这个智能体收到的指令。",
       "scope_title": "什么时候会注入",
       "scope_body": "只对来自外部渠道的工作生效。你在 Multica 里自己创建的任务和对话不会收到它。不支持独立指令字段的旧运行时，会改为把策略前置到任务正文里。",
-      "condition_dingtalk_dispatch": "派发到该智能体的钉钉消息、日程事件和审批事件会注入。",
-      "condition_per_dispatch": "由 Router 在每次派发时解析——本次要回复的会话、消息和发送者。",
+      "condition_dingtalk_dispatch": "派发到该智能体的钉钉消息、日程事件和审批事件会注入。Coordinator 从这些事件中建出的独立 Issue 任务不会注入。",
+      "condition_per_dispatch": "由 Router 在每次派发时解析——本次要回复的会话、消息和发送者。Coordinator 建出的独立 Issue 任务不会注入。",
       "condition_dingtalk_conversation": "钉钉会话注入——说明会话本身是唯一事实来源，并给出回读会话和被引用消息的命令。",
       "condition_dingtalk_channel": "钉钉频道消息注入——召回和绑定 Issue 与 openConversationId。",
       "condition_any_dingtalk_task": "所有钉钉任务都会注入，包括没有派发信封的那些。",
@@ -1339,7 +1343,15 @@
       "enterprise_identity_connect_failed": "无法发起员工身份授权。",
       "enterprise_identity_revoke": "解除绑定",
       "enterprise_identity_revoked": "员工身份已解除绑定。",
-      "enterprise_identity_revoke_failed": "无法解除员工身份绑定。"
+      "enterprise_identity_revoke_failed": "无法解除员工身份绑定。",
+      "dingtalk_identity_reuse_select": "使用已有身份",
+      "dingtalk_identity_reuse_placeholder": "选择身份",
+      "dingtalk_identity_reuse_apply": "使用此身份",
+      "dingtalk_identity_reuse_hint": "选择你已在当前空间绑定的身份，无需再次扫码。",
+      "dingtalk_identity_reuse_empty": "暂无可复用身份，请扫码绑定新账号。",
+      "dingtalk_identity_reuse_load_failed": "无法加载已有身份，仅智能体所有者可使用此功能。",
+      "dingtalk_identity_reuse_retry": "重试",
+      "dingtalk_identity_reuse_failed": "复用身份失败，请刷新后重试。"
     },
     "activity": {
       "status": {
@@ -1449,7 +1461,14 @@
       "relations_clear": "解除本会话事项关联",
       "relations_clear_confirm": "解除该会话上的事项关联？记忆文本会保留。",
       "relations_cleared": "已解除该会话的事项关联",
-      "relations_clear_failed": "解除事项关联失败"
+      "relations_clear_failed": "解除事项关联失败",
+      "grouped_hint": "同一群聊或单聊合并展示，点开查看连续记录。",
+      "judgment_count": "{{count}} 次判断",
+      "load_more": "加载更多会话",
+      "source_employee": "数字员工",
+      "source_robot": "机器人",
+      "source_unknown": "其他来源",
+      "refresh": "刷新"
     },
     "memory": {
       "flags_hint": "写入、召回和预热控制后台怎么记；显示列表控制这里看不看得见。",

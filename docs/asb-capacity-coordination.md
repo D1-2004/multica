@@ -3,9 +3,16 @@
 Cold task launches and capacity-wait retries share a tenant gate in Redis/Tair,
 keyed by a SHA-256 digest of the ASB API origin and credential. The existing
 PostgreSQL tenant advisory lock continues to serialize reclaim and creation.
-The shared gate spaces consecutive checks by at least five seconds and caches
-an unsuccessful capacity result for thirty seconds. Cache hits do not refresh
-the TTL. New tasks obey the same gate as the background capacity waiter.
+The shared gate caches an unsuccessful capacity result for thirty seconds.
+Healthy creation has no fixed delay between holders of the tenant lock, so
+short tasks can reach the configured concurrency without waiting five seconds
+per sandbox. Cache hits do not refresh the TTL. New tasks obey the same gate as
+the background capacity waiter.
+
+The tenant lock still serializes quota checks, safe idle reclamation and the
+create request; sandbox boot happens after that lock is released. During a
+rolling deployment, old `checking`/`available` Redis markers are ignored by a
+new lock holder. A successful request cannot erase a live full/429 verdict.
 
 An ASB HTTP 429 keeps ordinary tasks queued with a blocked startup attempt.
 Repeated throttles use a shared 30, 60, 120, 240, then 300 second cooldown.
@@ -17,7 +24,11 @@ Request-bound DEAP tasks retain their existing non-resumable behavior.
 
 The waiter retains its thirty-second per-task eligibility delay and one-minute
 recovery scan, plus terminal-task wakeups. These schedule launch attempts; they
-do not bypass the shared gate. Redis must be available through `REDIS_URL` or
+do not bypass the shared gate. Each replica has at most four recovery launches
+in flight. It rotates through tenant FIFO batches before giving another slot
+to the same tenant, and one tenant can fill otherwise idle slots while its
+earlier sandboxes boot. Task leases prevent duplicate launches across replicas.
+Redis must be available through `REDIS_URL` or
 the existing Aone Redis credential configuration. Missing or unavailable Redis
 keeps launches queued instead of querying ASB independently on every replica.
 
@@ -33,8 +44,10 @@ Operational log events:
 - `asb_capacity_rate_limited`: upstream operation, status, error code and
   request ID for a deferred 429.
 
-Validation covers concurrent admission across independent Redis clients,
-tenant isolation, cooldown expiry without indefinite extension, exponential
+Validation covers serialized reservations without fixed waits across independent
+PostgreSQL connections and Redis clients, old positive marker handling,
+bounded parallel recovery for one tenant, tenant isolation and fair selection,
+cooldown expiry without indefinite extension, exponential
 backoff and Retry-After, warm reuse semantics, and the real Launcher plus
 PostgreSQL path for full quota followed by a Running-list 429. The task stays
 queued, a second replica makes no ASB requests during cooldown, and creation

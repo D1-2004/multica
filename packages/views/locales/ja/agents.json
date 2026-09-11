@@ -214,7 +214,9 @@
     "cancel": "キャンセル",
     "labels_label": "ラベル",
     "labels_hint": "このエージェントを分類するワークスペースラベルです。",
-    "github_managed_profile": "指示とリポジトリスキルは GitHub で管理され、名前と説明は Multica で編集できます。"
+    "github_managed_profile": "指示とリポジトリスキルは GitHub で管理され、名前と説明は Multica で編集できます。",
+    "prop_event_trigger": "会話のすべての新着メッセージを能動的に処理",
+    "prop_event_trigger_hint": "監視対象の会話の新着メッセージを、メンションがなくても役割と文脈に応じて判断します。連続したメッセージはまとめて判断し、不要な返信はしません。有効にすると受信時の判断も有効になります。"
   },
   "overview": {
     "agent_context": "エージェント",
@@ -322,7 +324,8 @@
     "discard_keep": "編集を続ける",
     "discard_confirm": "変更を破棄",
     "identity": "ID",
-    "llm_trace": "LLM トレース"
+    "llm_trace": "LLM トレース",
+    "inbound": "受信会話"
   },
   "create_dialog": {
     "title_create": "エージェントを作成",
@@ -594,6 +597,7 @@
       "excluded_not_supplied": "resolved per dispatch",
       "excluded_no_conversation_context": "only for DingTalk conversations",
       "excluded_not_a_dingtalk_channel": "DingTalk channel messages only",
+      "excluded_coordinator_issue": "not used for Coordinator-created Issues",
       "delivery_runtime_brief": "system prompt, once per session",
       "delivery_per_turn": "with every turn",
       "excluded_empty": "empty",
@@ -605,8 +609,8 @@
       "open_dialog_hint": "Review and customize what this agent is told.",
       "scope_title": "適用されるタイミング",
       "scope_body": "Only to work that arrives from an external channel. Issues and chats you create inside Multica never receive it. Older runtimes that do not support a separate instruction field get the policy prepended to the task content instead.",
-      "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent.",
-      "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to.",
+      "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent. Independent Issue tasks the Coordinator creates from those events do not receive it.",
+      "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to. Independent Issue tasks the Coordinator creates do not receive it.",
       "condition_dingtalk_conversation": "Injected for DingTalk conversations — the conversation is the source of truth, plus the commands that read it and any quoted message back.",
       "condition_dingtalk_channel": "Injected for DingTalk channel messages — recall and bind the Issue to openConversationId.",
       "condition_any_dingtalk_task": "Injected for every DingTalk task, including ones that arrive without a dispatch envelope.",
@@ -1146,7 +1150,15 @@
       "enterprise_identity_connect_failed": "従業員認証を開始できませんでした。",
       "enterprise_identity_revoke": "連携解除",
       "enterprise_identity_revoked": "従業員 ID の連携を解除しました。",
-      "enterprise_identity_revoke_failed": "従業員 ID の連携を解除できませんでした。"
+      "enterprise_identity_revoke_failed": "従業員 ID の連携を解除できませんでした。",
+      "dingtalk_identity_reuse_select": "既存の実行 ID を使用",
+      "dingtalk_identity_reuse_placeholder": "実行 ID を選択",
+      "dingtalk_identity_reuse_apply": "この実行 ID を使用",
+      "dingtalk_identity_reuse_hint": "このワークスペースで連携済みの実行 ID を選択します。再スキャンは不要です。",
+      "dingtalk_identity_reuse_empty": "再利用できる実行 ID がありません。スキャンして連携してください。",
+      "dingtalk_identity_reuse_load_failed": "実行 ID を読み込めません。このエージェントの所有者のみ利用できます。",
+      "dingtalk_identity_reuse_retry": "再試行",
+      "dingtalk_identity_reuse_failed": "実行 ID を再利用できません。更新して再試行してください。"
     },
     "activity": {
       "status": {
@@ -1256,7 +1268,14 @@
       "relations_clear": "この会話の事項リンクを解除",
       "relations_clear_confirm": "この会話の事項リンクを解除しますか？記憶テキストは残します。",
       "relations_cleared": "事項リンクを解除しました",
-      "relations_clear_failed": "事項リンクの解除に失敗しました"
+      "relations_clear_failed": "事項リンクの解除に失敗しました",
+      "grouped_hint": "同じグループやDMの判断をまとめて表示します。",
+      "judgment_count": "{{count}} 件の判断",
+      "load_more": "会話をさらに読み込む",
+      "source_employee": "デジタル従業員",
+      "source_robot": "ロボット",
+      "source_unknown": "その他",
+      "refresh": "更新"
     },
     "memory": {
       "flags_hint": "書き込み・召還・ウォームアップは記憶の保持方法、表示リストはこの画面に出すかどうかです。",

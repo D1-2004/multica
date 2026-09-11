@@ -74,8 +74,11 @@ func TestComposeCoordinatorPurposeRequiresDelegatorAndPlace(t *testing.T) {
 	if err := ValidateCoordinatorPurpose("须莫🥥 在钉钉会话中的消息：你看看你联系人里有须莫v6吗"); err == nil {
 		t.Fatal("expected envelope purpose to fail")
 	}
-	if err := ValidateCoordinatorPurpose("冬翔委托：向须莫v6询问明早有没有会议，dws要用dws chat data-auth"); err == nil {
-		t.Fatal("expected tooling purpose to fail")
+	if err := ValidateCoordinatorPurpose("开发者委托：排查 dws chat data-auth 授权查询失败"); err != nil {
+		t.Fatalf("technical work objects must not be rejected: %v", err)
+	}
+	if err := ValidateCoordinatorPurpose("106201委托：向本群汇报当前运行环境的关键配置（环境变量/DWS身份/MCP/Skills）简略状态"); err != nil {
+		t.Fatalf("DWS身份 as the requested object must pass: %v", err)
 	}
 }
 

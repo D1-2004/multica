@@ -222,7 +222,9 @@
     "cancel": "취소",
     "labels_label": "레이블",
     "labels_hint": "이 에이전트를 분류하는 워크스페이스 레이블입니다.",
-    "github_managed_profile": "지침과 저장소 스킬은 GitHub에서 관리하며, 이름과 설명은 Multica에서 편집할 수 있습니다."
+    "github_managed_profile": "지침과 저장소 스킬은 GitHub에서 관리하며, 이름과 설명은 Multica에서 편집할 수 있습니다.",
+    "prop_event_trigger": "이벤트 트리거",
+    "prop_event_trigger_hint": "구독한 대화에 새 이벤트가 도착하면 자동 실행합니다. 연속 이벤트는 묶어서 처리하고 같은 대화는 최소 30초 간격으로 실행합니다. 기본값은 꺼짐입니다。 설정은 보통 약 5초 후 반영됩니다."
   },
   "overview": {
     "agent_context": "에이전트",
@@ -330,7 +332,8 @@
     "discard_keep": "계속 편집",
     "discard_confirm": "변경사항 버리기",
     "identity": "신원",
-    "llm_trace": "LLM 추적"
+    "llm_trace": "LLM 추적",
+    "inbound": "수신 대화"
   },
   "create_dialog": {
     "title_create": "에이전트 만들기",
@@ -602,6 +605,7 @@
       "excluded_not_supplied": "resolved per dispatch",
       "excluded_no_conversation_context": "only for DingTalk conversations",
       "excluded_not_a_dingtalk_channel": "DingTalk channel messages only",
+      "excluded_coordinator_issue": "not used for Coordinator-created Issues",
       "delivery_runtime_brief": "system prompt, once per session",
       "delivery_per_turn": "with every turn",
       "excluded_empty": "empty",
@@ -613,8 +617,8 @@
       "open_dialog_hint": "Review and customize what this agent is told.",
       "scope_title": "적용 시점",
       "scope_body": "Only to work that arrives from an external channel. Issues and chats you create inside Multica never receive it. Older runtimes that do not support a separate instruction field get the policy prepended to the task content instead.",
-      "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent.",
-      "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to.",
+      "condition_dingtalk_dispatch": "Injected for DingTalk messages, calendar events and approval events dispatched to this agent. Independent Issue tasks the Coordinator creates from those events do not receive it.",
+      "condition_per_dispatch": "Resolved by the router for each dispatch — the conversation, message and sender it must reply to. Independent Issue tasks the Coordinator creates do not receive it.",
       "condition_dingtalk_conversation": "Injected for DingTalk conversations — the conversation is the source of truth, plus the commands that read it and any quoted message back.",
       "condition_dingtalk_channel": "Injected for DingTalk channel messages — recall and bind the Issue to openConversationId.",
       "condition_any_dingtalk_task": "Injected for every DingTalk task, including ones that arrive without a dispatch envelope.",
@@ -1154,7 +1158,15 @@
       "enterprise_identity_connect_failed": "직원 인증을 시작하지 못했습니다.",
       "enterprise_identity_revoke": "연결 해제",
       "enterprise_identity_revoked": "직원 신원 연결을 해제했습니다.",
-      "enterprise_identity_revoke_failed": "직원 신원 연결을 해제하지 못했습니다."
+      "enterprise_identity_revoke_failed": "직원 신원 연결을 해제하지 못했습니다.",
+      "dingtalk_identity_reuse_select": "기존 실행 ID 사용",
+      "dingtalk_identity_reuse_placeholder": "실행 ID 선택",
+      "dingtalk_identity_reuse_apply": "이 실행 ID 사용",
+      "dingtalk_identity_reuse_hint": "이 워크스페이스에서 이미 연결한 실행 ID를 선택하세요. 다시 스캔할 필요가 없습니다.",
+      "dingtalk_identity_reuse_empty": "재사용할 실행 ID가 없습니다. 스캔하여 새 계정을 연결하세요.",
+      "dingtalk_identity_reuse_load_failed": "실행 ID를 불러올 수 없습니다. 에이전트 소유자만 사용할 수 있습니다.",
+      "dingtalk_identity_reuse_retry": "다시 시도",
+      "dingtalk_identity_reuse_failed": "실행 ID를 재사용할 수 없습니다. 새로고침 후 다시 시도하세요."
     },
     "activity": {
       "status": {
@@ -1264,7 +1276,14 @@
       "relations_clear": "이 대화의 이슈 연결 해제",
       "relations_clear_confirm": "이 대화의 이슈 연결을 해제할까요? 기억 텍스트는 유지됩니다.",
       "relations_cleared": "이슈 연결을 해제했습니다",
-      "relations_clear_failed": "이슈 연결을 해제하지 못했습니다"
+      "relations_clear_failed": "이슈 연결을 해제하지 못했습니다",
+      "grouped_hint": "같은 그룹 또는 개인 대화의 판단 기록을 모아 표시합니다.",
+      "judgment_count": "판단 {{count}}건",
+      "load_more": "대화 더 보기",
+      "source_employee": "디지털 직원",
+      "source_robot": "로봇",
+      "source_unknown": "기타",
+      "refresh": "새로고침"
     },
     "memory": {
       "flags_hint": "쓰기·호출·워밍업은 기억을 어떻게 유지할지, 목록 표시는 여기에 보일지를 정합니다.",

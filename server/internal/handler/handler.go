@@ -228,6 +228,8 @@ type Handler struct {
 	IssueService             *service.IssueService
 	IssueCommentService      *service.IssueCommentService
 	AutopilotService         *service.AutopilotService
+	MessageAutomations       *service.MessageAutomationService
+	EventTriggers            *service.EventTriggerService
 	EmailService             *service.EmailService
 	UpdateStore              UpdateStore
 	ModelListStore           ModelListStore
@@ -357,6 +359,7 @@ type Handler struct {
 	DingTalkAccountBindingOrigin         string
 	dingTalkAccountBindingOriginProvider func() string
 	dingTalkAccountBindingMetadata       dingTalkAccountBindingMetadataStore
+	dingTalkIdentityReuse                dingTalkIdentityReuseStore
 	dingTalkAccountBindingPermissions    agentInvocationPermissionStore
 	multicaMCPBindingTasks               multicaMCPBindingTaskStore
 	multicaMCPAgents                     multicaMCPAgentQueryStore
