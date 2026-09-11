@@ -54,7 +54,7 @@ func TestClientSubmitExecutionResultUsesTrustedBaseAndCredential(t *testing.T) {
 			"runtime": map[string]any{"provider": "hermes"},
 		},
 	}
-	if err := client.SubmitExecutionResult(context.Background(), "/api/v1/dispatch-tasks/router-task-1/execution-result", request); err != nil {
+	if _, err := client.SubmitExecutionResult(context.Background(), "/api/v1/dispatch-tasks/router-task-1/execution-result", request); err != nil {
 		t.Fatal(err)
 	}
 	if body.RequestID != request.RequestID || body.ResultMessage != request.ResultMessage ||
@@ -105,7 +105,7 @@ func TestClientSubmitExecutionResultRejectsInvalidSuccessEnvelopeAsRetryable(t *
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = client.SubmitExecutionResult(
+			_, err = client.SubmitExecutionResult(
 				context.Background(),
 				"/api/v1/dispatch-tasks/task/execution-result",
 				ExecutionResultRequest{ExecutionStatus: "completed"},
@@ -140,7 +140,7 @@ func TestClientSubmitExecutionResultDoesNotFollowExternalRedirect(t *testing.T) 
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = client.SubmitExecutionResult(
+			_, err = client.SubmitExecutionResult(
 				context.Background(),
 				"/api/v1/dispatch-tasks/task/execution-result",
 				ExecutionResultRequest{ExecutionStatus: "completed", ResultMessage: "private reply"},
@@ -166,7 +166,7 @@ func TestClientSubmitExecutionResultRejectsUntrustedCallbackPath(t *testing.T) {
 		"/api/v1/dispatch-tasks/task/execution-result?token=secret",
 		"/api/v1/dispatch-tasks/task/other",
 	} {
-		if err := client.SubmitExecutionResult(context.Background(), callback, ExecutionResultRequest{}); err == nil {
+		if _, err := client.SubmitExecutionResult(context.Background(), callback, ExecutionResultRequest{}); err == nil {
 			t.Fatalf("callback %q accepted", callback)
 		}
 	}
@@ -191,7 +191,7 @@ func TestClientSubmitExecutionResultClassifiesRetryableStatus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = client.SubmitExecutionResult(
+			_, err = client.SubmitExecutionResult(
 				context.Background(),
 				"/api/v1/dispatch-tasks/task/execution-result",
 				ExecutionResultRequest{},
@@ -225,7 +225,7 @@ func TestClientSubmitExecutionResultClassifiesHTTP200BusinessError(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = client.SubmitExecutionResult(
+			_, err = client.SubmitExecutionResult(
 				context.Background(),
 				"/api/v1/dispatch-tasks/task/execution-result",
 				ExecutionResultRequest{},
