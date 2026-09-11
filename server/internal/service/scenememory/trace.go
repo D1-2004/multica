@@ -131,7 +131,7 @@ func flushTraceOptions(row db.SceneMemory, agentName string, started time.Time) 
 	}
 }
 
-func finishFlushTrace(t *langfuse.Trace, outcome *flushOutcome, err error) {
+func finishFlushTrace(t *langfuse.Trace, outcome *flushOutcome, err error, attempt int32) {
 	if t == nil {
 		return
 	}
@@ -173,12 +173,20 @@ func finishFlushTrace(t *langfuse.Trace, outcome *flushOutcome, err error) {
 	if errors.As(err, &historyErr) {
 		t.AddMetadata(historyErr.DiagnosticFields())
 	}
-	if err != nil && !TerminalFlushCode(FlushErrorCode(err)) {
-		// Retryable failures (history not visible yet, transient DWS errors)
-		// are expected on the way to a committed flush.
-		end.Err = nil
-		end.Level = langfuse.LevelWarning
-		end.StatusMessage = err.Error()
+	if err != nil {
+		if blocks := BlockAfterFailure(FlushErrorCode(err), err, attempt); blocks {
+			// The worker blocks the scene right after this trace ends (unless
+			// the lease was lost); record the decision here so the trace is
+			// not read as a retryable failure. SLS scene_memory_blocked is
+			// the confirmation that the row was actually blocked.
+			t.AddMetadata(map[string]any{"block_decided": true, "block_attempt": int64(attempt), "block_terminal": TerminalFlushCode(FlushErrorCode(err))})
+		} else {
+			// Retryable failures (history not visible yet, transient DWS
+			// errors) are expected on the way to a committed flush.
+			end.Err = nil
+			end.Level = langfuse.LevelWarning
+			end.StatusMessage = err.Error()
+		}
 	}
 	t.End(end)
 }

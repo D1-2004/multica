@@ -242,7 +242,9 @@ func TestDecideTraceRecordsExhaustedRoundsAsLoopError(t *testing.T) {
 	}
 	coord := &Coordinator{LLM: llm.New(llm.Config{APIKey: "test-key"}), Chat: &scriptedCompleter{rounds: rounds}, Tools: &stubTools{}, Langfuse: client}
 	decision := coord.Decide(context.Background(), Turn{Source: SourceWeb, Addressed: true, ChatType: "p2p", Message: "hi"})
-	if decision.Action != ActionDeferred {
+	// An addressed turn that exhausts the round cap ends with the Host
+	// fallback reply rather than a deferred verdict the job would replay.
+	if decision.Action != ActionReply || decision.UserText != coordinatorFallbackReply || decision.Reason != loopStopRoundsExhausted {
 		t.Fatalf("decision = %#v", decision)
 	}
 	spans := exporter.GetSpans()

@@ -417,7 +417,7 @@ SET blocked_at = now(),
     last_error_code = $1,
     last_error = $2,
     updated_at = now()
-WHERE id = $3 AND lease_token = $4 AND lease_expires_at > now()`,
+WHERE id = $3 AND lease_token = $4 AND lease_expires_at > now() AND dirty_revision = lease_target_dirty_revision`,
 		arg.LastErrorCode, arg.LastError, arg.ID, arg.LeaseToken)
 	if err != nil {
 		return 0, err

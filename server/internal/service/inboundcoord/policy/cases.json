@@ -1176,6 +1176,17 @@
       "verification": "not_run"
     },
     {
+      "id": "f16_deterministic_loop_stop_falls_back_to_reply",
+      "rule_ids": [
+        "COORD.F16",
+        "COORD.F19"
+      ],
+      "context_a": "被 @ 或单聊的入站轮以 rounds_exhausted / repeated_invalid_plan / review_deadlock 停止（如真人在群里问评比问题、模型反复引用不可见边界）",
+      "context_b": "同样的停止发生在未被 @ 的轮；或停止原因是模型/审核/存储错误（coordinator_undecided）、task_finished 循环",
+      "expected_effects": "A：Host 以固定文案「这条我没接住，麻烦再说一遍或者换个说法，我再看。」回复一次，不带工作项、不经 finish_check，Decision.Reason 保留停止原因，job 不再重投；trace 根 metadata loop_stop_fallback=reply。B：未被 @ 的轮 silence（loop_stop_fallback=silence）；错误类停止和 task_finished 仍 deferred 交给 worker 重试。",
+      "verification": "not_run"
+    },
+    {
       "id": "f13_tool_schema_lists_validatable_values",
       "rule_ids": [
         "COORD.F13",

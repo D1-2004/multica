@@ -321,7 +321,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 			traceToolEnd(readObservation, result, callErr, reason)
 		}
 	}
-	return fail(fmt.Errorf("coordinator loop: evidence or valid plan missing after %d rounds", maxLoopRounds))
+	return failWith(loopStopRoundsExhausted, fmt.Errorf("coordinator loop: evidence or valid plan missing after %d rounds", maxLoopRounds))
 }
 
 // finishToolOutput is the Langfuse view of a finish call: the parsed verdict

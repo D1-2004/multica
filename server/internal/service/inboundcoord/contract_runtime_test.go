@@ -136,19 +136,23 @@ func TestCoordinatorContractFinishRequestUsesSelectedPolicy(t *testing.T) {
 				if err != nil || len(chat.checkParams) != 1 {
 					t.Fatalf("review missing: calls=%d err=%v", len(chat.checkParams), err)
 				}
-				raw, _ := json.Marshal(chat.checkParams[0].Messages[1])
-				var message struct{ Content string }
-				if err := json.Unmarshal(raw, &message); err != nil {
-					t.Fatal(err)
-				}
+				// Messages[1] is the Agent configuration segment (job policy),
+				// Messages[2] the turn context (current task result).
 				var input struct {
 					Policy   map[string]any `json:"job_policy"`
 					Result   string         `json:"current_task_result"`
 					Ref      string         `json:"current_result_ref"`
 					Delivery string         `json:"task_delivery_context"`
 				}
-				if err := json.Unmarshal([]byte(message.Content), &input); err != nil {
-					t.Fatal(err)
+				for _, index := range []int{1, 2} {
+					raw, _ := json.Marshal(chat.checkParams[0].Messages[index])
+					var message struct{ Content string }
+					if err := json.Unmarshal(raw, &message); err != nil {
+						t.Fatal(err)
+					}
+					if err := json.Unmarshal([]byte(message.Content), &input); err != nil {
+						t.Fatal(err)
+					}
 				}
 				if configured && input.Policy["kind"] != "coordinator_contract" {
 					t.Fatal("review did not use the short contract")

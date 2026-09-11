@@ -143,10 +143,31 @@ func (w *Worker) ProcessNext(ctx context.Context) (bool, error) {
 			"history_error", historyDetail,
 			"error", err,
 		)
-		if TerminalFlushCode(code) {
-			if blockErr := w.store.Block(ctx, row, code, err.Error()); blockErr != nil && !errors.Is(blockErr, ErrLeaseLost) {
+		if BlockAfterFailure(code, err, row.AttemptCount) {
+			blockErr := w.store.Block(ctx, row, code, err.Error())
+			if blockErr != nil {
+				if errors.Is(blockErr, ErrLeaseLost) {
+					// The lease expired or a newer trigger arrived while this
+					// flush ran; nothing was blocked, the row stays claimable.
+					return true, err
+				}
 				return true, blockErr
 			}
+			// Error level: a blocked scene stops learning until a new
+			// trigger from that scene arrives, so operators must see it.
+			slog.Error("scene memory blocked",
+				"event", "scene_memory_blocked",
+				"scene_memory_id", util.UUIDToString(row.ID),
+				"scene_key", row.SceneKey,
+				"scene_title", row.SceneTitle,
+				"agent_id", util.UUIDToString(row.AgentID),
+				"workspace_id", util.UUIDToString(row.WorkspaceID),
+				"attempt", row.AttemptCount,
+				"error_code", code,
+				"terminal", TerminalFlushCode(code),
+				"history_error", historyDetail,
+				"error", err,
+			)
 			return true, err
 		}
 		if retryErr := w.store.Retry(ctx, row, RetryDelayFor(code, row.AttemptCount), code, err.Error()); retryErr != nil && !errors.Is(retryErr, ErrLeaseLost) {
