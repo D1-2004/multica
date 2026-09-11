@@ -64,19 +64,39 @@ file: agent.zip
 
 `requirements.secrets` 列出待填写的值别名，通过确认请求的 `secrets` 映射提供。`requirements.deferred_bindings` 列出需要创建后另行配置的身份、机器人、电脑、插件、跨环境授权或其他运行时的 skill 选择；用户必须逐项或整体明确确认延后。延后的成员授权创建为私有；未确认或缺少必需值返回 422，不能半成功。绑定运行时的禁用 skill 会映射到所选运行时。环境绑定不从旧平台 UUID 自动迁移。当前适配器将账号/电脑的 null 解绑请求也列为待配置，确认延后表示此次不执行该绑定变更；创建时保持未绑定，发布时保留原绑定。
 
-OKR 沿用平台标签独占规则，同一工作区已有同名目标/关键结果会返回 409，整笔导入回滚；请修改包内目标后再导入。A2A 只导入卡片和客户端策略，不生成访问凭据；撤销的客户端不能通过包重新激活。
+配置包导入的 OKR 按 Agent 独立创建标签，同一工作区可以重复导入相同目标文案。`agent_okr.authored_text` 保存原文，标签使用带 Agent 名称的唯一显示名；碰到普通或历史同名标签时另建标签，不接管原标签。再次发布或编辑相同目标时复用当前 Agent 独占的标签 ID，保留统计归属。导出读取原始文案，不带标签区分后缀。A2A 只导入卡片和客户端策略，不生成访问凭据；撤销的客户端不能通过包重新激活。
 
 结构错误返回 422，例如：
 
 ```json
 {
-  "error": "manifest schema validation failed at /configuration/persona (type)",
+  "error": "manifest schema validation failed\n... expected string, but got number",
   "code": "invalid_agent_manifest",
-  "issues": [{ "path": "/configuration/persona", "keyword": "type" }]
+  "schema_url": "/api/agent-schema",
+  "issues": [{ "path": "/configuration/persona", "keyword": "type", "message": "expected string, but got number", "schema_path": "/properties/configuration/properties/persona/type" }],
+  "validation": { "valid": false, "instanceLocation": "/configuration/persona", "keywordLocation": "/properties/configuration/properties/persona/type", "error": "expected string, but got number" }
 }
 ```
 
-Git 的 `agent.json` 校验也返回相同结构。错误只定位字段和规则，不回显输入值；上传超限返回 413、类型不支持返回 415、缺失文件或包内数据不合法返回 422。JSON Schema 负责结构规则；文件系统关系、字节限制和运行环境规则继续由代码负责。
+Git 的 `agent.json` 校验也返回相同结构。返回校验器的完整错误文本、全部叶子问题和标准 DetailedOutput 错误树，不再截断为前 20 条。校验器消息可能包含提交值，仅返回当前调用者，不写入客户端错误遥测；上传超限返回 413、类型不支持返回 415、缺失文件或包内数据不合法返回 422。JSON Schema 负责结构规则；文件系统关系、字节限制和运行环境规则继续由代码负责。
+
+## ZIP 更新已有 Agent
+
+`POST /api/agents/{id}/source/preview` 同时接受 JSON 分支请求和 ZIP 上传：`application/zip` 或 multipart `file`。ZIP 预览适用于现有本地、Git 和手动创建的普通 Agent，返回 `configuration_changes`、配置包摘要及 actor/Agent 绑定的 `preview_id`。服务端自动管理的 Agent 不开放此操作。
+
+确认统一使用 `POST /api/agents/{id}/source/sync`。确认时锁定预览、Agent 和来源，重查管理权限、过期时间与当前配置摘要；配置在预览后变化会拒绝发布，要求重新预览。新来源仅在确认事务内创建，预览不写入 Agent 配置；重复确认返回原回执。创建接口拒绝发布预览，发布接口拒绝创建预览。
+
+现有 Git Agent 上传 ZIP 后保留 Git 连接、分支及最后发布的 Git commit；下次 Git 发布仍可比较 Git 基线及平台当前配置。原本没有来源的 Agent 首次 ZIP 发布后记录为本地来源。只替换来源管理的专属 skills，保留其他手动分配的 skills。
+
+## Builder 完整配置包
+
+Builder 回复末尾输出 `<agent_package>{"manifest":{...},"files":{"AGENTS.md":"..."}}</agent_package>`。manifest 使用同一 v2 Schema；files 包含所有声明引用的 UTF-8 文件。`agent.json` 由 manifest 生成，`agent.schema.json` 使用服务端权威版本，files 中不能覆盖这两个保留文件。旧客户端仍可读取同时输出的 `<agent_draft>` 摘要。
+
+创建页面提交 `POST /api/workspaces/{id}/agent-packages/prepare`，请求体就是上述 manifest/files 对象。服务端先校验 manifest，再生成并按同一 ZIP 解析器校验包，保存预览快照。`GET /api/workspaces/{id}/agent-packages/{previewId}/download` 下载该调用者的已校验快照；创建仍使用 `POST /api/workspaces/{id}/agent-packages`，不会退回普通表单创建接口。
+
+编辑包或收到新回复后必须重新预览。完整包文本跟随会话草稿保存，离开后可恢复。Builder 的服务端提示词包含当前权威 Schema；新页面发送 `multica.agent-package/v1` 协议标记，旧会话仅在其创建者继续使用新协议发送消息时更新隐藏 Builder 提示词，不改写普通 Agent。
+
+导入及发布页面持续显示完整错误详情和当前 `/api/agent-schema` 下载链接。JSON 语法错误给出字节位置和解析原因；包路径、缺失文件、大小与运行时兼容错误给出对应原因。内部持久化异常保留服务端错误边界，不返回数据库语句或凭据。
 
 ## 目录与顶层结构
 
@@ -226,3 +246,5 @@ GOTOOLCHAIN=auto go test ./internal/agentsource
 | 2026-09-08 | 平台导出改为当前数据库快照的 v2 Agent ZIP，增加配置、策略和待绑定引用说明；MCP 字符串命令支持整体密钥引用；创建页增加权威 Schema 下载入口 | 明确导出对象是平台当前 Agent，补齐旧源码导出遗漏的配置，并让创建者直接获取校验契约 |
 
 - 2026-09-08：补齐本地 ZIP 创建入口，Git 与本地统一为 bundle 预览和事务创建；接入 v2 配置发布、目标环境引用选择、完整测试包和 Builder 协议说明。原因：以平台上传包为唯一公开契约，取消对 DTA 构建产物的依赖，并避免新字段在创建或发布时丢失。
+
+- 2026-09-10：增加已有 Agent 的 ZIP 发布、Builder manifest/files 预览及下载；OKR 原始文案与独占标签分开保存；返回完整 JSON Schema 校验结果和 Schema 链接。原因：补齐包的创建更新闭环，允许模板重复导入，并让导入错误可以直接定位和修正。

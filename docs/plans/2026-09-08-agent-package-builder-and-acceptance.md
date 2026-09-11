@@ -1,5 +1,7 @@
 # Agent 包导入与 Builder 链路
 
+> 2026-09-10 更新：本文中的 Builder 草稿边界及预发验收是 9 月 8 日版本记录。当前实现见 [配置包发布补齐](2026-09-10-agent-package-publication.md)，协议以 [Agent manifest](../agent-manifest.md) 为准。
+
 ## 本次实现
 
 公开导入协议以根目录 `agent.json` 和引用文件为准，结构由服务端内置的 `server/internal/agentsource/agent.schema.json` 校验。创建页面新增“从本地导入”，ZIP 与 Git 只在获取文件的方式上不同：两者都生成完整 `agentsource.Bundle`，持久化预览，再走同一确认接口和数据库事务。
@@ -74,3 +76,5 @@ Git 通过 GitHub App 安装凭据读取所选分支对应的确定提交和文�
 
 
 最终预发版本：`21dae6497fb59eca78d7e07cb91d79c5f8496f09`，流水线 `3107346465`。代码合并、构建、预发部署、预发集成测试均为 SUCCESS；流程停在人工预发验证，未确认生产发布。部署后刷新测试 Agent，已验证本地来源概览修正。概览相关 41 项前端测试、Web 类型检查、lint 以及空列表后端回归/构建通过。
+
+- 2026-09-10：标明 Builder 草稿说明的历史版本边界并链接后续实现。原因：避免把旧版本验收记录当作当前能力。
