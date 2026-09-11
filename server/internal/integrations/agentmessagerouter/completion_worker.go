@@ -382,7 +382,7 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 
 	var deliveryErr *ExecutionResultDeliveryError
 	var dwsPermanent *dwsDeliveryPermanentError
-	dropAfterFirstFailure := strings.HasPrefix(completion.RequestID, "multica-comment-terminal:")
+	dropAfterFirstFailure := len(deliveryState) == 0 && strings.HasPrefix(completion.RequestID, "multica-comment-terminal:")
 	if errors.As(err, &dwsPermanent) || dropAfterFirstFailure || errors.As(err, &deliveryErr) && !deliveryErr.Retryable() {
 		_, deadLetterErr := w.queries.DeadLetterTaskCompletion(ctx, db.DeadLetterTaskCompletionParams{
 			ID:         completion.ID,

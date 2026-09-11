@@ -109,7 +109,7 @@ func TestDWSReplyRejectsIdentityMismatchExpiredSendAndWrongConversation(t *testi
 }
 
 func TestCallbackOutboxesResumeDWSAfterWorkerRestart(t *testing.T) {
-	for _, kind := range []string{"completion", "update"} {
+	for _, kind := range []string{"completion", "completion-comment", "update"} {
 		t.Run(kind, func(t *testing.T) {
 			pool := taskCompletionTestPool(t)
 			queries := db.New(pool)
@@ -118,7 +118,7 @@ func TestCallbackOutboxesResumeDWSAfterWorkerRestart(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
 				data := map[string]any{"dispatchTaskId": "router-dws-restart", "dwsDelivery": testDWSDelivery(agentID)}
-				if kind == "completion" {
+				if kind != "update" {
 					data["executionStatus"] = "completed"
 					data["executionReportId"] = "report-1"
 				} else {
@@ -137,7 +137,7 @@ func TestCallbackOutboxesResumeDWSAfterWorkerRestart(t *testing.T) {
 			}
 			var id any
 			table := "task_completion_outbox"
-			if kind == "completion" {
+			if kind != "update" {
 				row := enqueueWorkerTestCompletion(t, queries, client.TargetIdentity(), "dws-restart")
 				id = row.ID
 				agentID = util.UUIDToString(row.AgentID)
@@ -147,6 +147,12 @@ func TestCallbackOutboxesResumeDWSAfterWorkerRestart(t *testing.T) {
 				agentID = util.UUIDToString(row.AgentID)
 				table = "task_execution_update_outbox"
 			}
+			if kind == "completion-comment" {
+				if _, err := pool.Exec(context.Background(), "UPDATE task_completion_outbox SET request_id='multica-comment-terminal:' || id::text WHERE id=$1", id); err != nil {
+					t.Fatal(err)
+				}
+			}
+
 			t.Cleanup(func() { pool.Exec(context.Background(), "DELETE FROM "+table+" WHERE id=$1", id) })
 			session := &replySessionStub{statusErr: errors.New("temporary status failure")}
 			sender := &replySenderStub{session: session}
