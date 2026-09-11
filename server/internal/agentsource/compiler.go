@@ -80,6 +80,8 @@ type File struct {
 }
 
 type Skill struct {
+	Scope       *SkillScope `json:"scope,omitempty"`
+	SkillID     string `json:"skill_id,omitempty"`
 	Disabled    bool   `json:"disabled,omitempty"`
 	SourcePath  string `json:"source_path"`
 	Name        string `json:"name"`

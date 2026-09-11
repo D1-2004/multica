@@ -258,7 +258,9 @@ func sourceDefinitionFiles(bundle agentsource.Bundle) map[string]string {
 
 // sourceStateFiles must run in a transaction. All writers to supporting files
 // lock their parent skill, allowing preview/confirmation to read one state.
-func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, source db.AgentSource) (map[string]string, string, error) {
+func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, source db.AgentSource, desired agentsource.Bundle) (map[string]string, string, error) {
+	targets, err := resolvePackageSkillTargets(ctx,queries,agent,source,desired,false)
+	if err != nil { return nil,"",err }
 	skills, err := queries.LockSourceSkills(ctx, source.ID)
 	if err != nil {
 		return nil, "", err
@@ -272,8 +274,10 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		return nil, "", err
 	}
 	paths := map[pgtype.UUID]string{}
+	managedIDs := map[pgtype.UUID]bool{}
 	for _, mapping := range mappings {
 		paths[mapping.SkillID] = mapping.SourcePath
+		managedIDs[mapping.SkillID] = true
 	}
 	enabled := map[pgtype.UUID]bool{}
 	for _, assignment := range assignments {
@@ -282,13 +286,19 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		}
 	}
 	files := map[string]string{"instructions": agent.Instructions}
+	for _, target := range targets {
+		if !target.Skill.ID.Valid { continue }
+		paths[target.Skill.ID] = target.Definition.SourcePath
+		enabled[target.Skill.ID] = target.Enabled
+		if !target.Managed { skills = append(skills,target.Skill) }
+	}
 	if contract := sourceContractStateValue(agent.CoordinatorContract); contract != "null" {
 		files["coordinator_contract"] = contract
 	}
 	for _, skill := range skills {
 		prefix := "skills/" + paths[skill.ID] + "/"
 		name := skill.Name
-		name = strings.TrimSuffix(name, sourceManagedSkillName("", source.ID))
+		if managedIDs[skill.ID] { name = strings.TrimSuffix(name, sourceManagedSkillName("", source.ID)) }
 		files[prefix+"name"] = name
 		files[prefix+"description"] = skill.Description
 		files[prefix+"SKILL.md"] = skill.Content
@@ -327,6 +337,7 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 	bindingState, err := readPackageBindingState(ctx,queries,agent)
 	if err != nil { return nil,"",err }
 	state := struct {
+		ReferencedSkills []packageSkillTarget
 		PackageBindings packageBindingState
 		PrivateConfig  [][]byte
 		Files          map[string]string
@@ -338,7 +349,7 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		RuntimeID      pgtype.UUID
 		OwnerID        pgtype.UUID
 		Mappings       []db.AgentSourceSkill
-	}{bindingState, [][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
+	}{targets, bindingState, [][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return nil, "", err
@@ -393,9 +404,9 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusConflict, "Agent source changed while preparing preview")
 		return
 	}
-	current, stateHash, err := sourceStateFiles(r.Context(), queries, lockedAgent, lockedSource)
+	current, stateHash, err := sourceStateFiles(r.Context(), queries, lockedAgent, lockedSource, resolved.bundle)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read source skills")
+		writeAgentSourceDatabaseError(w,err)
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

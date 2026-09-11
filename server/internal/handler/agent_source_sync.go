@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/agentsource"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -55,8 +56,8 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		lockedSource.SyncedCommitSha != preview.ExpectedSourceSha || lockedSource.ManagedSourceKey.Valid {
 		writeError(w, http.StatusConflict, "Agent source changed after preview; preview again"); return
 	}
-	current, stateHash, err := sourceStateFiles(r.Context(), queries, agent, lockedSource)
-	if err != nil { writeError(w, http.StatusInternalServerError, "failed to read current Agent configuration"); return }
+	current, stateHash, err := sourceStateFiles(r.Context(), queries, agent, lockedSource, resolved.bundle)
+	if err != nil { writeAgentSourceDatabaseError(w,err); return }
 	if stateHash != preview.ExpectedStateHash {
 		writeError(w, http.StatusConflict, "Agent configuration changed after preview; preview again"); return
 	}
@@ -100,36 +101,48 @@ func writeSourceSyncReplay(w http.ResponseWriter, preview db.AgentSourcePreview,
 	writeJSON(w, http.StatusOK, map[string]any{"source":json.RawMessage(preview.AppliedSource), "changed":preview.AppliedChanged, "warnings":warnings})
 }
 
-func applySourceSkills(ctx context.Context, queries *db.Queries, agent db.Agent, source db.AgentSource, resolved preparedAgentSource) error {
-	mappings, err := queries.ListAgentSourceSkills(ctx, source.ID)
+func applySourceSkills(ctx context.Context, queries *db.Queries, agent db.Agent, source db.AgentSource, resolved preparedAgentSource, actorID pgtype.UUID, creating bool) error {
+	targets, err := resolvePackageSkillTargets(ctx,queries,agent,source,resolved.bundle,creating)
 	if err != nil { return err }
-	byPath := map[string]db.AgentSourceSkill{}
-	for _, mapping := range mappings { byPath[mapping.SourcePath] = mapping }
-	targetPaths := map[string]bool{}
-	for _, compiled := range resolved.bundle.Skills { targetPaths[compiled.SourcePath] = true }
-	// Remove obsolete paths first so a renamed directory can retain its skill
-	// name without colliding with the old row. The enclosing transaction rolls
-	// these deletions back if any later creation fails.
-	for sourcePath, removed := range byPath {
-		if targetPaths[sourcePath] { continue }
-		if err := queries.DeleteSkillDependents(ctx, removed.SkillID); err != nil { return err }
-		if err := queries.DeleteSkill(ctx, db.DeleteSkillParams{ID:removed.SkillID, WorkspaceID:agent.WorkspaceID}); err != nil { return err }
-		delete(byPath, sourcePath)
-	}
-	for _, compiled := range resolved.bundle.Skills {
-		mapping, exists := byPath[compiled.SourcePath]
-		skillID := mapping.SkillID
-		if exists {
-			if err := updateSourceSkillInTx(ctx, queries, skillID, resolved, source.ID, compiled); err != nil { return err }
-			delete(byPath, compiled.SourcePath)
-		} else {
-			created, err := createSourceSkillInTx(ctx, queries, agent.WorkspaceID, agent.OwnerID, resolved, source.ID, compiled)
-			if err != nil { return err }
-			skillID = created.ID
-			if _, err := queries.CreateAgentSourceSkill(ctx, db.CreateAgentSourceSkillParams{AgentSourceID:source.ID, SkillID:skillID, SourcePath:compiled.SourcePath}); err != nil { return err }
+	mappings, err := queries.ListAgentSourceSkills(ctx,source.ID)
+	if err != nil { return err }
+	retained := map[pgtype.UUID]bool{}
+	desiredPaths := map[pgtype.UUID]string{}
+	currentPaths := map[pgtype.UUID]string{}
+	for _, target := range targets { if target.Managed { retained[target.Skill.ID] = true; desiredPaths[target.Skill.ID] = target.Definition.SourcePath } }
+	// Remove only skills owned by this source. Existing workspace references
+	// retain their original ownership and are never converted to source skills.
+	for _, mapping := range mappings {
+		currentPaths[mapping.SkillID] = mapping.SourcePath
+		if retained[mapping.SkillID] {
+			// Recreate the mapping below so directory renames preserve skill IDs,
+			// including simultaneous swaps of two source paths.
+			if desiredPaths[mapping.SkillID] != mapping.SourcePath {
+				if err := queries.DeleteAgentSourceSkill(ctx,db.DeleteAgentSourceSkillParams{AgentSourceID:source.ID,SkillID:mapping.SkillID}); err != nil { return err }
+			}
+			continue
 		}
-		if err := queries.AddAgentSkill(ctx, db.AddAgentSkillParams{AgentID:agent.ID, SkillID:skillID}); err != nil { return err }
-		if _, err := queries.SetAgentSkillEnabled(ctx, db.SetAgentSkillEnabledParams{AgentID:agent.ID, SkillID:skillID, Enabled:!compiled.Disabled}); err != nil { return err }
+		if err := queries.DeleteSkillDependents(ctx,mapping.SkillID); err != nil { return err }
+		if err := queries.DeleteSkill(ctx,db.DeleteSkillParams{ID:mapping.SkillID,WorkspaceID:agent.WorkspaceID}); err != nil { return err }
+	}
+	for _, target := range targets {
+		skillID := target.Skill.ID
+		if skillID.Valid {
+			if target.Managed {
+				if err := updateSourceSkillInTx(ctx,queries,skillID,resolved,source.ID,target.Definition); err != nil { return err }
+			} else if err := updateReferencedPackageSkill(ctx,queries,target,actorID); err != nil { return err }
+		} else {
+			created, err := createSourceSkillInTx(ctx,queries,agent.WorkspaceID,agent.OwnerID,resolved,source.ID,target.Definition)
+			if err != nil { return err }
+			skillID, target.Managed = created.ID, true
+		}
+		if target.Managed && currentPaths[skillID] != target.Definition.SourcePath {
+			if _, err := queries.CreateAgentSourceSkill(ctx,db.CreateAgentSourceSkillParams{AgentSourceID:source.ID,SkillID:skillID,SourcePath:target.Definition.SourcePath}); err != nil { return err }
+		}
+		if err := queries.AddAgentSkill(ctx,db.AddAgentSkillParams{AgentID:agent.ID,SkillID:skillID}); err != nil { return err }
+		if !target.Skill.ID.Valid || target.Enabled == target.Definition.Disabled {
+			if _, err := queries.SetAgentSkillEnabled(ctx,db.SetAgentSkillEnabledParams{AgentID:agent.ID,SkillID:skillID,Enabled:!target.Definition.Disabled}); err != nil { return err }
+		}
 	}
 	return nil
 }

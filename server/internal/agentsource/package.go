@@ -74,6 +74,7 @@ func parseAgentPackageRepository(ctx context.Context, client RepositoryClient, s
 		compiled, warnings, size, err := compileSkill(ctx, client, source, entries, item.Path)
 		if err != nil { return ParsedAgentPackage{}, err }
 		compiled.Name, compiled.Description, compiled.Disabled = item.Name, item.Description, !*item.Enabled
+		compiled.Scope, compiled.SkillID = item.Scope, item.SkillID
 		parsed.Skills = append(parsed.Skills, compiled)
 		parsed.Warnings = append(parsed.Warnings, warnings...)
 		total += size
@@ -91,7 +92,13 @@ func parseAgentPackageRepository(ctx context.Context, client RepositoryClient, s
 func validatePortableLayout(manifest PortableManifest) error {
 	if len(manifest.Description) > MaxDescriptionSize { return errors.New("manifest description exceeds the UTF-8 byte limit") }
 	paths, names := map[string]bool{}, map[string]bool{}
+	identities := map[string]bool{}
 	for _, skill := range manifest.Skills {
+		if skill.Scope != nil {
+			identity := skill.Scope.Type + "/" + strings.ToLower(skill.Scope.ID) + "/" + strings.ToLower(skill.SkillID)
+			if identities[identity] { return errors.New("duplicate skill scope and skill_id") }
+			identities[identity] = true
+		}
 		if paths[skill.Path] || names[skill.Name] { return errors.New("duplicate skill path or name") }
 		paths[skill.Path], names[skill.Name] = true, true
 		if len(skill.Description) > MaxDescriptionSize { return fmt.Errorf("skill %q description exceeds the UTF-8 byte limit", skill.Path) }

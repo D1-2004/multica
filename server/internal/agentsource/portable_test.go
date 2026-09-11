@@ -81,3 +81,15 @@ func TestPortablePreservesExpandedVersion(t *testing.T) {
 		if snapshot, err := ReadAgentRepository(context.Background(), client, Source{}); err != nil || snapshot.Definition.Definition == nil { t.Fatalf("v2 configuration must be retained: %v", err) }
 	}
 }
+
+func TestPortableSkillIdentityRoundTripAndDuplicateRejection(t *testing.T) {
+	identity := &SkillScope{Type:"workspace",ID:"00000000-0000-4000-8000-000000000001"}
+	skill := Skill{Scope:identity,SkillID:"00000000-0000-4000-8000-000000000002",SourcePath:"skills/review",Name:"review",Content:"Review changes",Files:[]File{}}
+	manifest := map[string]any{"$schema":PortableSchemaPath,"version":"multica.agent/v2","name":"Reviewer","instructions":"AGENTS.md"}
+	archive, err := ExportAgentPackage(t.Context(),manifest,"Review",[]Skill{skill},nil)
+	if err != nil { t.Fatal(err) }
+	parsed, err := ParseAgentPackage(t.Context(),archive); if err != nil { t.Fatal(err) }
+	if len(parsed.Skills) != 1 || parsed.Skills[0].Scope == nil || *parsed.Skills[0].Scope != *identity || parsed.Skills[0].SkillID != skill.SkillID { t.Fatal("portable skill identity did not survive the ZIP round trip") }
+	duplicate := skill; duplicate.Name = "other"; duplicate.SourcePath = "skills/other"
+	if _, err := ExportAgentPackage(t.Context(),manifest,"Review",[]Skill{skill,duplicate},nil); err == nil || !strings.Contains(err.Error(),"duplicate skill scope and skill_id") { t.Fatalf("duplicate identity accepted: %v",err) }
+}

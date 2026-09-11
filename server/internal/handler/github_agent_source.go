@@ -705,6 +705,11 @@ func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgt
 	if err != nil {
 		return err
 	}
+	files, err := queries.ListSkillFiles(ctx,skillID)
+	if err != nil { return err }
+	desired := compiled
+	desired.Name = sourceManagedSkillName(compiled.Name,agentSourceID)
+	if packageSkillContentMatches(existing,files,desired) && sourceContractStateValue(existing.Config) == sourceContractStateValue(config) { return nil }
 	if _, err := queries.UpdateSkill(ctx, db.UpdateSkillParams{
 		ID: skillID, Name: pgtype.Text{String: sourceManagedSkillName(compiled.Name, agentSourceID), Valid: true},
 		Description: pgtype.Text{String: sanitizeNullBytes(compiled.Description), Valid: true},
@@ -712,15 +717,7 @@ func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgt
 	}); err != nil {
 		return err
 	}
-	if err := queries.DeleteSkillFilesBySkill(ctx, skillID); err != nil {
-		return err
-	}
-	for _, file := range compiled.Files {
-		if _, err := queries.UpsertSkillFile(ctx, db.UpsertSkillFileParams{SkillID: skillID, Path: sanitizeNullBytes(file.Path), Content: sanitizeNullBytes(file.Content)}); err != nil {
-			return err
-		}
-	}
-	return nil
+	return reconcilePackageSkillFiles(ctx,queries,skillID,files,compiled.Files)
 }
 
 func sourceManagedSkillName(name string, agentSourceID pgtype.UUID) string {

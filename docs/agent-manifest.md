@@ -86,7 +86,27 @@ Git 的 `agent.json` 校验也返回相同结构。返回校验器的完整错�
 
 确认统一使用 `POST /api/agents/{id}/source/sync`。确认时锁定预览、Agent 和来源，重查管理权限、过期时间与当前配置摘要；配置在预览后变化会拒绝发布，要求重新预览。新来源仅在确认事务内创建，预览不写入 Agent 配置；重复确认返回原回执。创建接口拒绝发布预览，发布接口拒绝创建预览。
 
-现有 Git Agent 上传 ZIP 后保留 Git 连接、分支及最后发布的 Git commit；下次 Git 发布仍可比较 Git 基线及平台当前配置。原本没有来源的 Agent 首次 ZIP 发布后记录为本地来源。只替换来源管理的专属 skills，保留其他手动分配的 skills。
+现有 Git Agent 上传 ZIP 后保留 Git 连接、分支及最后发布的 Git commit；下次 Git 发布仍可比较 Git 基线及平台当前配置。原本没有来源的 Agent 首次 ZIP 发布后记录为本地来源。来源管理的专属 skills 按包更新；包中引用的现有 workspace skills 原位更新，未被包引用的手动分配 skills 保留。
+
+### 导出后更新原 Agent 的 Skill 身份
+
+v2 导出的每个 `skills[]` 项保留 `scope + skill_id`，`path` 仅用于定位包内文件：
+
+```json
+{
+  "scope": {"type": "workspace", "id": "00000000-0000-4000-8000-000000000001"},
+  "skill_id": "00000000-0000-4000-8000-000000000002",
+  "path": "skills/review",
+  "name": "review",
+  "enabled": true
+}
+```
+
+`scope` 和 `skill_id` 必须同时提供或同时省略；同一个包不能声明重复身份。新编写的模板可以省略身份。导出包发布回原 workspace 的原 Agent 时，服务端按身份查找该 Agent 已绑定的 Skill；正文、描述、名称和附属文件相同则复用，不重写内容或新建副本。有变更则显示现有内容与包内容的 diff，确认后更新原 Skill，保留 Skill ID、共享／专属属性及其他 Agent 的绑定。目录改名不会改变已有来源 Skill 的 ID。
+
+预览与确认使用相同的身份解析，并锁定被引用的 Skill、文件所属行和绑定状态。预览后正文、附属文件、配置或绑定变化时拒绝过期确认。修改共享 Skill 复用原有 Skill 管理权限：作者或 workspace owner/admin；管理 Agent 本身不等于有权修改他人创建的共享 Skill。同 workspace 的显式 Skill 身份不存在、未绑定当前 Agent 或属于其他 Agent 专属时返回错误，不悄悄创建替代品。
+
+已下载的旧平台导出包没有这两个字段时，仅从固定的 `workspace-skills/<skill-id>` 目录恢复当前 Agent 已绑定的本 workspace Skill；其他路径不按名称推断身份。新建 Agent 和跨 workspace 创建仍生成目标 Agent 的专属副本，不凭来源 UUID 改写其他 workspace。此处的身份是内容资源定位，不代表账号或权限授权。
 
 ## Builder 完整配置包
 
@@ -119,7 +139,7 @@ my-agent/
 | `$schema`、`version` | Schema 文件名和契约版本 |
 | `name`、`description` | Agent 名称与描述 |
 | `instructions` | 用户指令文件的仓库相对路径 |
-| `skills` | 仓库内 skill 目录、名称、描述、启停状态 |
+| `skills` | 仓库内 skill 目录、名称、描述、启停状态；平台导出附带 `scope` 与 `skill_id` |
 | `configuration` | Agent 配置，字段名沿用现有 API |
 | `disabled_runtime_skills` | 禁用的运行时自带 skills，不复制运行时自带内容 |
 | `dsh_plugins` | 工作区 DSH 插件引用及启停状态 |
@@ -145,7 +165,7 @@ my-agent/
 | 指令 | `instructions` | `Agent.instructions`；平台内置 `system_instructions` 不可覆盖 |
 | 机器人接入：指令分段 | `configuration.dispatch_prompt_overrides` | `policy`、`reply_formatting`、`enterprise_identity`、`scene_graph`；禁止覆盖 `context` 与 `dingtalk_conversation` |
 | OKR | `okrs[].objective/key_results` | `SetAgentOKRsRequest`；数组顺序决定顺序，标签和用量由平台管理 |
-| Skills | `skills[]` | 正文与配套文本文件；导入为该 Agent 专属的工作区 skill |
+| Skills | `skills[]` | 正文与配套文本文件；创建时生成专属 workspace skill，导出后更新原 Agent 时按身份复用原 Skill |
 | Skills：运行时自带 | `disabled_runtime_skills[]` | `root/key/plugin/provider` 与目标运行时引用；只保存禁用选择 |
 | DSH 插件 | `dsh_plugins[].ref/enabled` | 工作区插件关联，插件实体和产物仍在工作区管理 |
 | MCP 工具 | `configuration.mcp_config` | 保留当前 `mcpServers` 和 `mcp` 两种容器及 provider 扩展 |
@@ -274,3 +294,5 @@ GOTOOLCHAIN=auto go test ./internal/agentsource
 - 2026-09-11：统一业务 Import／Export 与成对模块注册表；持久化资源声明、绑定核验回执和密钥别名，接入待配置界面及同一 Agent 的安全复用。原因：消除创建、更新与导出的独立分支，防止新增导入能力遗漏导出，并补齐认证资源的导入后配置闭环。
 
 - 2026-09-11：补齐 `configuration.event_trigger_enabled` 的校验与双向持久化，复用事件触发服务的事务方法；开启时启用入站协调，显式关闭入站协调优先。原因：主干新增的开关必须随当前 Agent 配置一起导出和恢复，发布回滚不能遗留事件触发副作用。
+
+- 2026-09-11：v2 skills 增加成对的 `scope`／`skill_id`，预览和发布共同解析现有 Skill 身份，保留旧平台导出路径的有限身份恢复。原因：修复导出后更新同一 Agent 时，手动绑定的 workspace Skill 被重复创建为专属副本的问题；同时保留原文件 ID、权限边界和并发修改检查。
