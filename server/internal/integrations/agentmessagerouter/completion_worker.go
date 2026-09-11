@@ -215,11 +215,10 @@ func (w *CompletionWorker) processNextExecutionUpdate(ctx context.Context) (bool
 		if w.ResponseActions != nil {
 			_, err = w.ResponseActions.PrepareExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
 		}
-		if err != nil {
-			return true, err
-		}
 		var delivery *DWSDelivery
-		delivery, err = w.client.SubmitExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
+		if err == nil {
+			delivery, err = w.client.SubmitExecutionUpdate(ctx, executionUpdate.CallbackUrl, update)
+		}
 		if err == nil && delivery != nil {
 			deliveryState, err = freezeDWSDelivery(delivery, update.AgentID)
 			if err == nil {
@@ -356,11 +355,10 @@ func (w *CompletionWorker) processNextCompletion(ctx context.Context) (bool, err
 				result.ReplyReason = "multica_managed_response"
 			}
 		}
-		if err != nil {
-			return true, err
-		}
 		var delivery *DWSDelivery
-		delivery, err = w.client.SubmitExecutionResult(ctx, completion.CallbackUrl, result)
+		if err == nil {
+			delivery, err = w.client.SubmitExecutionResult(ctx, completion.CallbackUrl, result)
+		}
 		if err == nil && delivery != nil {
 			deliveryState, err = freezeDWSDelivery(delivery, result.AgentID)
 			if err == nil {
