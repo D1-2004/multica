@@ -159,3 +159,23 @@ func mustJSON(t *testing.T, v any) []byte {
 	}
 	return b
 }
+
+func TestMessageDuplicateRequiresSpecificProviderEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		message, code string
+		duplicate     bool
+	}{
+		{"sendPersonalMessageSyncByServerPush error: Request is repeated with uuid 'key'.", "1001", true},
+		{"another business error", "1001", false},
+		{"Request is repeated with uuid 'key'.", "PARAM_ERROR", false},
+	} {
+		raw, _ := json.Marshal(map[string]any{"error": map[string]any{"server_error_code": tc.code, "category": "api", "reason": "business_error", "message": tc.message}})
+		err := messageCLIError(raw)
+		if err == nil || err.DuplicateRequest != tc.duplicate {
+			t.Fatalf("duplicate=%v err=%v", tc.duplicate, err)
+		}
+		if strings.Contains(err.Error(), "uuid") {
+			t.Fatal("raw error message leaked")
+		}
+	}
+}

@@ -27,6 +27,7 @@ type DWSDelivery struct {
 	OpenConversationID      string `json:"openConversationId"`
 	RecipientOpenDingTalkID string `json:"recipientOpenDingTalkId"`
 	AtOpenDingTalkID        string `json:"atOpenDingTalkId"`
+	SourceOpenMessageID     string `json:"sourceOpenMessageId,omitempty"`
 	Title                   string `json:"title"`
 	Text                    string `json:"text"`
 	ErrorCode               string `json:"errorCode"`
@@ -146,7 +147,8 @@ func (s *dwsReplySession) Status(ctx context.Context, taskID string) (replyRecei
 func (s *dwsReplySession) Close() { _ = os.RemoveAll(s.dir) }
 
 // resumeDWSDelivery checkpoints acceptance before querying delivery. A lost callback
-// response is replayed at Router; a lost send response reuses the DWS idempotency key.
+// response is replayed at Router. A lost send response can reuse the same key,
+// but a duplicate rejection without the original receipt remains unconfirmed.
 func (w *CompletionWorker) resumeDWSDelivery(ctx context.Context, raw []byte, save func([]byte) error) error {
 	var state dwsDeliveryState
 	if err := json.Unmarshal(raw, &state); err != nil {
@@ -158,6 +160,9 @@ func (w *CompletionWorker) resumeDWSDelivery(ctx context.Context, raw []byte, sa
 	}
 	if state.Status == "delivered" {
 		return nil
+	}
+	if state.Status == "confirmation_unavailable" {
+		return &dwsDeliveryPermanentError{"send_confirmation_unavailable"}
 	}
 	if w.dwsSender == nil {
 		return errors.New("DWS reply sender unavailable")
@@ -190,10 +195,22 @@ func (w *CompletionWorker) resumeDWSDelivery(ctx context.Context, raw []byte, sa
 			conversationID = ""
 		}
 		receipt, err := session.Send(ctx, dwsclient.SendRequest{
+			SourceOpenMessageID: d.SourceOpenMessageID, SourceConversationID: d.OpenConversationID,
 			ConversationID: conversationID, RecipientOpenDingTalkID: d.RecipientOpenDingTalkID,
 			AtOpenDingTalkID: d.AtOpenDingTalkID, IdempotencyKey: d.IdempotencyKey, Title: d.Title, Content: content,
 		})
 		if err != nil {
+			var operation *dwsclient.MessageOperationError
+			if errors.As(err, &operation) && operation.DuplicateRequest {
+				// The provider deduplicates but does not return the original
+				// receipt. This proves neither delivery nor rejection. Keep
+				// that uncertainty durable and never mint a new key/resend.
+				state.Status = "confirmation_unavailable"
+				if saveErr := persist(); saveErr != nil {
+					return saveErr
+				}
+				return &dwsDeliveryPermanentError{"send_confirmation_unavailable"}
+			}
 			return err
 		}
 		if receipt.OpenTaskID == "" {
