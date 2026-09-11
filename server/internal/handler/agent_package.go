@@ -3,10 +3,13 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"sort"
+
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/agentsource"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -41,26 +44,20 @@ func (h *Handler) PreviewAgentPackage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id"); !ok { return }
 	if _, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin"); !ok { return }
 	content, err := readAgentPackageUpload(w, r)
-	if err != nil {
-		var tooLarge *http.MaxBytesError
-		var requestErr *gitSourceRequestError
-		switch {
-		case errors.As(err, &tooLarge): writeError(w, http.StatusRequestEntityTooLarge, "Agent package exceeds the upload size limit")
-		case errors.As(err, &requestErr): writeError(w, requestErr.status, requestErr.message)
-		default: writeError(w, http.StatusBadRequest, "failed to read Agent package upload")
-		}
-		return
-	}
+	if err != nil { writePackageUploadError(w, err); return }
 	parsed, err := agentsource.ParseAgentPackage(r.Context(), content)
 	if err != nil {
-		if writeManifestSchemaError(w, err) { return }
-		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		writeAgentPackageValidationError(w, err)
 		return
 	}
+	h.writeAgentPackagePreview(w, r, parseUUID(workspaceID), parsed, nil)
+}
+
+func (h *Handler) writeAgentPackagePreview(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, parsed agentsource.ParsedAgentPackage, files map[string]string) {
 	bundle, err := parsed.Bundle()
 	if err != nil { writeGitHubSourceError(w, err); return }
-	resolved := preparedAgentSource{bundle:bundle, sha:bundle.Hash, snapshot:agentsource.RepositorySnapshot{Definition:bundle}}
-	preview, err := h.saveAgentSourcePreview(r, parseUUID(workspaceID), db.Agent{}, db.AgentSource{}, resolved, "")
+	resolved := preparedAgentSource{bundle:bundle, sha:bundle.Hash, snapshot:agentsource.RepositorySnapshot{Definition:bundle, Files:files}}
+	preview, err := h.saveAgentSourcePreview(r, workspaceID, db.Agent{}, db.AgentSource{}, resolved, "")
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to save package preview"); return }
 	var header agentsource.PortableManifest
 	encoded, err := json.Marshal(parsed.Manifest)
@@ -121,6 +118,25 @@ func readAgentPackageUpload(w http.ResponseWriter, r *http.Request) ([]byte, err
 func writeManifestSchemaError(w http.ResponseWriter, err error) bool {
 	var invalid *agentsource.ManifestSchemaError
 	if !errors.As(err, &invalid) { return false }
-	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error":invalid.Error(), "code":"invalid_agent_manifest", "issues":invalid.Issues})
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error":invalid.Error(), "code":"invalid_agent_manifest", "issues":invalid.Issues, "validation":invalid.Validation, "schema_url":"/api/agent-schema"})
 	return true
+}
+
+func writeAgentPackageValidationError(w http.ResponseWriter, err error) {
+	if writeManifestSchemaError(w, err) { return }
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error":err.Error(), "code":"invalid_agent_package", "schema_url":"/api/agent-schema"})
+}
+
+func writePackageUploadError(w http.ResponseWriter, err error) {
+	var tooLarge *http.MaxBytesError
+	var requestErr *gitSourceRequestError
+	var syntax *json.SyntaxError
+	switch {
+	case errors.As(err, &tooLarge): writeError(w, http.StatusRequestEntityTooLarge, "Agent package exceeds the upload size limit")
+	case errors.As(err, &requestErr): writeError(w, requestErr.status, requestErr.message)
+	case errors.As(err, &syntax): writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid package JSON at byte %d: %s", syntax.Offset, syntax.Error()))
+	default: writeError(w, http.StatusBadRequest, "failed to read Agent package upload: " + err.Error())
+	}
 }

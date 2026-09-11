@@ -31,7 +31,7 @@ type ParsedAgentPackage struct {
 func ParseAgentPackage(ctx context.Context, content []byte) (ParsedAgentPackage, error) {
 	if len(content) == 0 || len(content) > MaxAgentPackageSize { return ParsedAgentPackage{}, errors.New("Agent package exceeds the upload size limit or is empty") }
 	archive, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
-	if err != nil { return ParsedAgentPackage{}, errors.New("Agent package must be a ZIP archive") }
+	if err != nil { return ParsedAgentPackage{}, fmt.Errorf("Agent package must be a valid ZIP archive: %w", err) }
 	if len(archive.File) > MaxAgentPackageEntries { return ParsedAgentPackage{}, errors.New("Agent package contains too many entries") }
 	seen := map[string]bool{}
 	var total uint64
@@ -40,7 +40,7 @@ func ParseAgentPackage(ctx context.Context, content []byte) (ParsedAgentPackage,
 		if err := validateRepositoryPath(filePath, "package path"); err != nil { return ParsedAgentPackage{}, err }
 		if seen[filePath] { return ParsedAgentPackage{}, fmt.Errorf("duplicate Agent package path %q", filePath) }
 		seen[filePath] = true
-		if file.Mode()&fs.ModeSymlink != 0 || (!file.Mode().IsRegular() && !file.Mode().IsDir()) { return ParsedAgentPackage{}, errors.New("Agent package contains an unsupported file type") }
+		if file.Mode()&fs.ModeSymlink != 0 || (!file.Mode().IsRegular() && !file.Mode().IsDir()) { return ParsedAgentPackage{}, fmt.Errorf("Agent package file %q has an unsupported file type", file.Name) }
 		if file.UncompressedSize64 > MaxBundleSize || total > MaxBundleSize - file.UncompressedSize64 { return ParsedAgentPackage{}, errors.New("Agent package exceeds the uncompressed size limit") }
 		total += file.UncompressedSize64
 	}

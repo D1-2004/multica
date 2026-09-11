@@ -69,6 +69,7 @@ func TestAgentPackagePreviewReturnsSchemaLocations(t *testing.T) {
 	w := httptest.NewRecorder()
 	testHandler.PreviewAgentPackage(w, agentPackageRequest(t, archive, false))
 	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "/configuration/persona") { t.Fatalf("expected schema issue, got %d %s", w.Code, w.Body.String()) }
+	for _, detail := range []string{"expected string", "schema_url", "/api/agent-schema", "validation"} { if !strings.Contains(w.Body.String(), detail) { t.Errorf("missing error detail %q", detail) } }
 }
 
 func TestAgentPackagePreviewRequiresWorkspaceAdmin(t *testing.T) {
