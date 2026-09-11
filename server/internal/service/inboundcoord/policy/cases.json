@@ -1185,6 +1185,17 @@
       "context_b": "单条短问候，无快照、无召回、无可引用限制句",
       "expected_effects": "A：finish schema 中 source_refs 枚举 u1/u2，state_refs 枚举 r1，issue_id（finish 与 work_state）枚举已召回 id，memory_revision 固定为 3，constraint_quote 枚举可见来源的逐句选项且不含 Host 持有的完整岗位说明；每个选项都能通过 Host 出处校验。B：decline、report_status、continue_work 不出现在 kind 枚举里，而不是提交后再被驳回。",
       "verification": "not_run"
+    },
+    {
+      "id": "f16_rejected_review_with_invented_work_check",
+      "rule_ids": [
+        "COORD.F13",
+        "COORD.F16"
+      ],
+      "context_a": "审核明确拒绝非工作候选，同时错填不存在的工作动作引用",
+      "context_b": "审核允许候选，同时错填不存在的工作动作引用",
+      "expected_effects": "拒绝结果丢弃无效工作证据，回主循环修正；允许结果仍严格校验所有工作引用，不能放行。非工作候选的work_checks schema上限为0。",
+      "verification": "host_tests_passed; live_pre_pending"
     }
   ]
 }
