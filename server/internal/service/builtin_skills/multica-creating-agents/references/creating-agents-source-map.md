@@ -238,6 +238,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 | Owned Builder prompt upgrade | `internal/handler/agent_builder_package.go`; `chat.go` | `TestBuilderPackageContractUpgradeOnlyTouchesOwnedSystemBuilder` |
 | Exported skill scope/ID, shared-skill reuse and content diff | `internal/handler/agent_package_service.go`; `agent_package_skills.go`; `agent_source_preview.go`; `internal/agentsource/portable.go` | `TestAgentPackageExportUpdatePreservesWorkspaceSkillIdentity` |
 | Skill directory rename, stale publication and edit permission | `internal/handler/agent_source_sync.go`; `agent_package_skills.go` | `TestAgentPackageSkillIdentitySurvivesDirectoryRename`; `TestAgentPackageReferencedSkillPublicationChecksCurrentStateAndPermission` |
+| ZIP enclosing directory, metadata filtering and root errors | `internal/agentsource/package_archive.go`; `package.go` | `TestAgentPackageZIPWrapperPreservesBundle`; `TestAgentPackageZIPRootErrorsAreActionable`; `TestAgentPackageExportUpdatePreservesWorkspaceSkillIdentity` |
 
 - 2026-09-10: Added source locations for complete package creation, publication and
   error handling. Reason: keep the built-in creation skill aligned with the live protocol.
@@ -245,3 +246,7 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - 2026-09-11: Added scoped skill identity and export/update regression evidence.
   Reason: an exported workspace skill must update its existing row instead of
   becoming a newly created Agent-exclusive copy.
+
+- 2026-09-11: Added ZIP-root normalization and recompressed-export regression evidence.
+  Reason: preserve the same bundle and skill identities when an uploaded ZIP
+  contains a wrapping Agent folder or macOS compression metadata.

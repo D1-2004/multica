@@ -94,3 +94,41 @@ func TestParseAgentPackageRejectsUnsafeArchives(t *testing.T) {
 	_ = w.Close()
 	if _, err := ParseAgentPackage(context.Background(), buffer.Bytes()); err == nil { t.Fatal("accepted duplicate manifest") }
 }
+
+func TestAgentPackageZIPWrapperPreservesBundle(t *testing.T) {
+	files := map[string]string{
+		"agent.json": `{"$schema":"agent.schema.json","version":"multica.agent/v2","name":"Reviewer","instructions":"AGENTS.md","skills":[{"path":"skills/review","name":"review","enabled":false,"scope":{"type":"workspace","id":"00000000-0000-4000-8000-000000000001"},"skill_id":"00000000-0000-4000-8000-000000000002"}]}`,
+		"AGENTS.md": "Review carefully.",
+		"skills/review/SKILL.md": "Inspect the package.",
+		"skills/review/references/check.md": "Keep skill identities.",
+		"examples/agent.json": "This is supporting repository data, not the package manifest.",
+	}
+	plain, err := ParseAgentPackage(t.Context(), packageZIP(t, files))
+	if err != nil { t.Fatal(err) }
+	for _, prefix := range []string{"reviewer/", "download/reviewer-main/", ""} {
+		t.Run(prefix, func(t *testing.T) {
+			wrapped := map[string]string{".DS_Store":"Finder metadata", "__MACOSX/._reviewer":"AppleDouble metadata"}
+			for name, content := range files { wrapped[prefix + name] = content }
+			wrapped[prefix + "skills/review/.DS_Store"] = "Finder metadata"
+			wrapped[prefix + "skills/review/._SKILL.md"] = "AppleDouble metadata"
+			parsed, err := ParseAgentPackage(t.Context(), packageZIP(t, wrapped))
+			if err != nil { t.Fatal(err) }
+			if parsed.Hash != plain.Hash { t.Fatal("wrapper or desktop metadata changed the parsed package") }
+			if parsed.Skills[0].SkillID != plain.Skills[0].SkillID || parsed.Skills[0].SourcePath != "skills/review" { t.Fatal("wrapper changed the skill identity or logical path") }
+		})
+	}
+}
+
+func TestAgentPackageZIPRootErrorsAreActionable(t *testing.T) {
+	for _, tc := range []struct { name string; files map[string]string; details []string }{
+		{"missing", map[string]string{"my-agent/AGENTS.md":"Instructions"}, []string{"agent.json", "my-agent", "root"}},
+		{"ambiguous", map[string]string{"first/agent.json":"{}", "second/agent.json":"{}"}, []string{"multiple", "first/agent.json", "second/agent.json"}},
+		{"outside", map[string]string{"agent/agent.json":"{}", "AGENTS.md":"Outside the agent directory"}, []string{"agent/agent.json", "outside"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseAgentPackage(t.Context(), packageZIP(t, tc.files))
+			if err == nil { t.Fatal("accepted an incomplete or ambiguous package") }
+			for _, detail := range tc.details { if !strings.Contains(err.Error(), detail) { t.Fatalf("missing %q in %v", detail, err) } }
+		})
+	}
+}

@@ -56,6 +56,15 @@ func TestAgentPackageExportUpdatePreservesWorkspaceSkillIdentity(t *testing.T) {
 			preview = packagePublishPreview(t,f.handler,id,legacyFiles,http.StatusOK)
 			confirmExportedPackagePreview(t,f,id,preview,http.StatusOK)
 			after, err = testHandler.Queries.ListAgentSkillSummaries(t.Context(),parseUUID(id)); if err != nil || len(after) != len(before) { t.Fatal("previously exported ZIP duplicated existing skills") }
+			wrappedFiles := map[string]string{".DS_Store":"Finder metadata", "__MACOSX/._my-agent":"AppleDouble metadata"}
+			for path, content := range files { wrappedFiles["my-agent/" + path] = content }
+			wrappedFiles["my-agent/workspace-skills/" + uuidToString(skill.ID) + "/._SKILL.md"] = "AppleDouble metadata"
+			preview = packagePublishPreview(t,f.handler,id,wrappedFiles,http.StatusOK)
+			if err := json.Unmarshal(preview["configuration_changes"], &changes); err != nil { t.Fatal(err) }
+			for _, change := range changes { if strings.HasPrefix(change.Path,"skills/") { t.Errorf("repacked export produced a skill diff: %s",change.Path) } }
+			confirmExportedPackagePreview(t,f,id,preview,http.StatusOK)
+			after, err = testHandler.Queries.ListAgentSkillSummaries(t.Context(),parseUUID(id)); if err != nil || len(after) != len(before) { t.Fatal("repacked export duplicated existing skills") }
+			unchangedFiles, err = testHandler.Queries.ListSkillFiles(t.Context(),skill.ID); if err != nil || len(unchangedFiles) != 1 || unchangedFiles[0].ID != file.ID { t.Fatal("repacked export changed supporting files") }
 
 			path := "workspace-skills/" + uuidToString(skill.ID)
 			files[path+"/SKILL.md"] = "Review the updated changes"
