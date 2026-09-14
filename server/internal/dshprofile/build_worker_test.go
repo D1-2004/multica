@@ -271,3 +271,21 @@ func TestBuildObjectRequiresExactStoredBytes(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildWorkerPersistsOnlyBoundedFailureDiagnostics(t *testing.T) {
+	for _, tc := range []struct{ code, want string }{
+		{"source_download_http_403", "source_download_http_403"},
+		{"dependency_build_failed", "dependency_build_failed"},
+		{"https://objects.example/?signature=secret", "build_failed"},
+	} {
+		t.Run(tc.want, func(t *testing.T) {
+			w, ledger, driver := workerFixture()
+			advance(t, w, 2)
+			driver.observation = BuildObservation{State: "failed", ErrorCode: tc.code}
+			advance(t, w, 1)
+			if ledger.job.ErrorCode != tc.want || ledger.job.State != "failed" || ledger.job.Phase != "cleanup" {
+				t.Fatal("invalid diagnostic or failed build cleanup")
+			}
+		})
+	}
+}

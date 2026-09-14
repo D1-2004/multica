@@ -933,19 +933,22 @@ func firstString(obj map[string]any, keys ...string) string {
 
 type FCE2BLauncher struct {
 	ReadDSHProfileSource dshprofile.ReadSource
-	Queries              *db.Queries
-	Tasks                *TaskService
-	Config               FCE2BConfig
-	ConfigProvider       func() FCE2BConfig
-	Runner               CommandRunner
-	AgentIdentity        AgentIdentityContextCreator
-	GitHubIdentity       AgentIdentityGithubBindingReader
-	IdentityBindings     AgentIdentityBindingReader
-	SandboxRelaySigner   SandboxRelayTokenSigner
-	sleep                func(context.Context, time.Duration) error
-	jitter               func(time.Duration) time.Duration
-	dshProvider          func(dshhost.Storage) (dshhost.Provider, error)
-	nativeAuthority      *dshNativeAuthorityBridge
+	DSHArtifactSigner    interface {
+		PresignGet(context.Context, string, time.Duration) (string, error)
+	}
+	Queries            *db.Queries
+	Tasks              *TaskService
+	Config             FCE2BConfig
+	ConfigProvider     func() FCE2BConfig
+	Runner             CommandRunner
+	AgentIdentity      AgentIdentityContextCreator
+	GitHubIdentity     AgentIdentityGithubBindingReader
+	IdentityBindings   AgentIdentityBindingReader
+	SandboxRelaySigner SandboxRelayTokenSigner
+	sleep              func(context.Context, time.Duration) error
+	jitter             func(time.Duration) time.Duration
+	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
+	nativeAuthority    *dshNativeAuthorityBridge
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router

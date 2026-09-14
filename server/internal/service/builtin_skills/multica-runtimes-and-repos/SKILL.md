@@ -231,9 +231,15 @@ Profile revision without rebuilding identical package bytes. Status contains
 receipt after a saved edit is `configuration_changed`; a retired/replaced Host
 cannot be current. Preparation does not start a Host. The durable receipt store
 requires matching live Host generation, exact descriptor and fresh configuration
-under transaction locks. Host admission, artifact delivery into the employee
-Home and live acknowledgement must still be connected before these endpoints
-prove live application.
+under transaction locks. Native entry and platform task admission prepare the
+same employee revision. Pending builds do not start a new writer; existing
+unknown creates and retiring generations still reconcile. Published artifacts
+are installed under the employee Home only after identity and digest validation.
+The Profile is transferred in bounded chunks into an immutable 0600 file, so a
+large configuration does not exceed Linux environment-variable limits. The Host
+reads that file and must confirm its exact revision/digest before the server
+records application. A changed or missing receipt retires the generation through
+the existing drain/destroy flow. Code wiring alone does not prove live acceptance.
 
 The plugin build ledger separates creation, remote execution, object verification
 and cleanup. A replacement claimant reconciles the saved create intent rather

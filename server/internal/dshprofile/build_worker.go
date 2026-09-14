@@ -15,6 +15,8 @@ const MaxBuildArchiveBytes int64 = 2*1024*1024*1024 + 64*1024*1024
 
 var ErrBuildClaimLost = errors.New("DSH plugin build claim changed")
 var ErrNoBuildJob = errors.New("no due DSH plugin build")
+var workerFailureCode = regexp.MustCompile(`^(source_download|dependency_build|artifact_export|artifact_upload)_(failed|http_[45][0-9]{2})$`)
+
 var workerSandboxID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,160}$`)
 
 // BuildArtifact is a verified transfer receipt, never a URL or credential.
@@ -80,8 +82,9 @@ type BuildLedger interface {
 }
 
 type BuildObservation struct {
-	State    string // running, succeeded, failed, absent
-	Artifact BuildArtifact
+	ErrorCode string
+	State     string // running, succeeded, failed, absent
+	Artifact  BuildArtifact
 }
 
 // BuildDriver implementations must bind every operation to the persisted
@@ -207,7 +210,11 @@ func (w BuildWorker) Step(ctx context.Context) error {
 			next.Artifact, next.Phase = observed.Artifact, "publishing"
 			return save(next)
 		case "failed", "absent":
-			return fail("build_failed")
+			code := "build_failed"
+			if workerFailureCode.MatchString(observed.ErrorCode) {
+				code = observed.ErrorCode
+			}
+			return fail(code)
 		case "running":
 			return nil
 		default:

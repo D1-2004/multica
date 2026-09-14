@@ -179,7 +179,7 @@ func (d *dshBuildDriver) Inspect(ctx context.Context, job dshprofile.BuildJob) (
 	if err != nil {
 		return dshprofile.BuildObservation{}, err
 	}
-	return dshprofile.BuildObservation{State: reply.State, Artifact: reply.Artifact}, nil
+	return dshprofile.BuildObservation{State: reply.State, Artifact: reply.Artifact, ErrorCode: reply.ErrorCode}, nil
 }
 
 func (d *dshBuildDriver) VerifyArtifact(ctx context.Context, job dshprofile.BuildJob) error {

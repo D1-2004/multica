@@ -99,7 +99,7 @@ func validBuildTransition(old, next BuildJob) bool {
 	}
 	if next.Phase == "cleanup" && next.State == "failed" {
 		return old.State == "queued" && (old.Phase == "starting" || old.Phase == "building" || old.Phase == "publishing") &&
-			(next.ErrorCode == "build_failed" || next.ErrorCode == "build_timeout" || next.ErrorCode == "invalid_artifact_receipt" || next.ErrorCode == "artifact_verification_failed")
+			(workerFailureCode.MatchString(next.ErrorCode) || next.ErrorCode == "build_failed" || next.ErrorCode == "build_timeout" || next.ErrorCode == "invalid_artifact_receipt" || next.ErrorCode == "artifact_verification_failed")
 	}
 	if old.ErrorCode != next.ErrorCode {
 		return false

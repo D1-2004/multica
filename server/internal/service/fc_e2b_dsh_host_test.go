@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +23,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/dshprofile"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -62,7 +66,7 @@ func dshLaunchPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		return pool
 	}
 	a, b := newPool(), newPool()
-	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access"} {
+	for _, stem := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space", "9235_dsh_native_access", "9241_dsh_employee_profile", "9242_dsh_employee_profile_identity", "9243_dsh_profile_revision_identity", "9244_dsh_plugin_build_identity"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", stem+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -71,7 +75,8 @@ func dshLaunchPools(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 			t.Fatal(err)
 		}
 	}
-	if _, err = a.Exec(ctx, `CREATE TABLE agent (id uuid,workspace_id uuid);
+	if _, err = a.Exec(ctx, `CREATE TABLE workspace(id uuid);
+ CREATE TABLE agent (id uuid,workspace_id uuid,kind text DEFAULT 'user',archived_at timestamptz,runtime_mode text DEFAULT 'cloud');
  CREATE TABLE agent_task_queue (id uuid,agent_id uuid,status text);
  CREATE TABLE agent_task_runtime_start_attempt (task_id uuid,sandbox_id text,status text)`); err != nil {
 		t.Fatal(err)
@@ -121,7 +126,10 @@ func (p *dshLaunchProvider) FindCreated(_ context.Context, h dshhost.Host) (stri
 	return p.live[h.CreateIntent], nil
 }
 
-type dshHomeRunner struct{ wrongReceipt, wrongNativeReceipt bool }
+type dshHomeRunner struct {
+	wrongReceipt, wrongNativeReceipt bool
+	profiles                         *sync.Map
+}
 
 func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 	models := []string{"fixture-model"}
@@ -135,12 +143,22 @@ func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 		}
 	}
 	host := dshhost.Host{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, Generation: 2, SandboxID: "sandbox"}
-	out, err := (dshHomeRunner{}).Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw, "https://pre.multica.test", "https://33124-sandbox.fc.test", strings.Repeat("a", 64)), nil)
-	if err != nil || validateDSHNativeHostReceipt(out, host, digest) != nil {
+	descriptor, descriptorDigest, err := dshprofile.Resolve(host.Key, 1, dshprofile.Source{TemplateID: "template-1"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := dshprofile.Revision{ID: 1, TemplateID: "template-1", Descriptor: descriptor, Digest: descriptorDigest}
+	runner := dshHomeRunner{profiles: &sync.Map{}}
+	launcher := &FCE2BLauncher{Runner: runner}
+	if err := launcher.stageDSHProfile(context.Background(), host, revision); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runner.Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw, "https://pre.multica.test", "https://33124-sandbox.fc.test", strings.Repeat("a", 64), revision), nil)
+	if err != nil || validateDSHNativeHostReceipt(out, host, digest, revision) != nil {
 		t.Fatalf("matching managed profile rejected: %v", err)
 	}
 	_, changed, _ := dshManagedCatalog([]string{"other-model"})
-	if validateDSHNativeHostReceipt(out, host, changed) == nil || validateDSHNativeHostReceipt(out, host, "") == nil {
+	if validateDSHNativeHostReceipt(out, host, changed, revision) == nil || validateDSHNativeHostReceipt(out, host, "", revision) == nil {
 		t.Fatal("a different or missing managed profile was accepted")
 	}
 	var receipt map[string]any
@@ -149,8 +167,21 @@ func TestDSHNativeManagedProfileReceipt(t *testing.T) {
 	}
 	delete(receipt, "managed_profile_digest")
 	missing, _ := json.Marshal(receipt)
-	if validateDSHNativeHostReceipt(string(missing), host, digest) == nil {
+	if validateDSHNativeHostReceipt(string(missing), host, digest, revision) == nil {
 		t.Fatal("native process health without plugin configuration proof was accepted")
+	}
+	if err := json.Unmarshal([]byte(out), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	delete(receipt, "employee_profile")
+	missing, _ = json.Marshal(receipt)
+	if validateDSHNativeHostReceipt(string(missing), host, digest, revision) == nil {
+		t.Fatal("missing employee Profile receipt accepted")
+	}
+	changedRevision := revision
+	changedRevision.ID++
+	if validateDSHNativeHostReceipt(out, host, digest, changedRevision) == nil {
+		t.Fatal("another employee Profile revision accepted")
 	}
 }
 
@@ -158,6 +189,51 @@ func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []strin
 	values := map[string]string{}
 	for i := range len(args) - 1 {
 		values[args[i]] = args[i+1]
+	}
+	for _, arg := range args {
+		if k, v, ok := strings.Cut(arg, "="); ok {
+			values[k] = v
+		}
+	}
+	if args[len(args)-1] == "--stage" {
+		if len(strings.Join(args, " ")) > 64000 {
+			return "", errors.New("Profile invocation exceeds argument budget")
+		}
+		count, err := strconv.Atoi(values["MULTICA_DSH_PROFILE_PART_COUNT"])
+		if err != nil {
+			return "", err
+		}
+		digest := values["MULTICA_DSH_PROFILE_DIGEST"]
+		if index, ok := values["MULTICA_DSH_PROFILE_PART_INDEX"]; ok {
+			part, err := strconv.Atoi(index)
+			if err != nil {
+				return "", err
+			}
+			r.profiles.Store(digest+"/"+index, values["MULTICA_DSH_PROFILE_PART"])
+			out, _ := json.Marshal(map[string]any{"workspace_id": values["MULTICA_DSH_WORKSPACE_ID"], "agent_id": values["MULTICA_DSH_AGENT_ID"], "digest": digest, "part_index": part, "part_count": count})
+			return string(out), nil
+		}
+		var encoded string
+		for i := 0; i < count; i++ {
+			chunk, ok := r.profiles.Load(digest + "/" + strconv.Itoa(i))
+			if !ok {
+				return "", errors.New("missing Profile part")
+			}
+			encoded += chunk.(string)
+		}
+		raw, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return "", err
+		}
+		var descriptor dshprofile.Descriptor
+		if err := json.Unmarshal(raw, &descriptor); err != nil {
+			return "", err
+		}
+		digest = fmt.Sprintf("%x", sha256.Sum256(raw))
+		path := dshhost.MountPath + "/home/.multica/profile-inputs/" + digest + ".json"
+		r.profiles.Store(path, string(raw))
+		out, _ := json.Marshal(map[string]string{"workspace_id": values["MULTICA_DSH_WORKSPACE_ID"], "agent_id": values["MULTICA_DSH_AGENT_ID"], "revision": descriptor.Revision, "digest": digest, "path": path})
+		return string(out), nil
 	}
 	if args[len(args)-1] == "--ensure" {
 		for _, arg := range args {
@@ -176,7 +252,17 @@ func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []strin
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf(`{"version":1,"workspace_id":%q,"agent_id":%q,"generation":%s,"managed_profile_digest":%q}`, values["MULTICA_DSH_WORKSPACE_ID"], values["MULTICA_DSH_AGENT_ID"], values["MULTICA_DSH_HOST_GENERATION"], digest), nil
+		var profile dshprofile.Descriptor
+		stored, ok := r.profiles.Load(values["MULTICA_DSH_EMPLOYEE_PROFILE_FILE"])
+		if !ok {
+			return "", errors.New("missing staged Profile")
+		}
+		profileRaw := stored.(string)
+		if err := json.Unmarshal([]byte(profileRaw), &profile); err != nil {
+			return "", err
+		}
+		profileDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(profileRaw)))
+		return fmt.Sprintf(`{"version":1,"workspace_id":%q,"agent_id":%q,"generation":%s,"managed_profile_digest":%q,"employee_profile":{"revision":%q,"digest":%q}}`, values["MULTICA_DSH_WORKSPACE_ID"], values["MULTICA_DSH_AGENT_ID"], values["MULTICA_DSH_HOST_GENERATION"], digest, profile.Revision, profileDigest), nil
 	}
 	if values["--agent"] == "" {
 		return "", nil
@@ -197,7 +283,10 @@ func dshLaunchFixture(t *testing.T, pool *pgxpool.Pool, p *dshLaunchProvider) (*
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = pool.Exec(context.Background(), `INSERT INTO agent VALUES ($1,$2)`, agent, workspace); err != nil {
+	if _, err = pool.Exec(context.Background(), `INSERT INTO workspace VALUES($1)`, workspace); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(context.Background(), `INSERT INTO agent(id,workspace_id) VALUES ($1,$2)`, agent, workspace); err != nil {
 		t.Fatal(err)
 	}
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -212,7 +301,10 @@ func dshLaunchFixture(t *testing.T, pool *pgxpool.Pool, p *dshLaunchProvider) (*
 	u := func(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 	rt := db.AgentRuntime{ID: u(uuid.New()), WorkspaceID: u(workspace)}
 	task := db.AgentTaskQueue{ID: u(uuid.New()), AgentID: u(agent), RuntimeID: rt.ID}
-	launcher := &FCE2BLauncher{nativeAuthority: newDSHNativeAuthorityBridge("test-secret"), Pool: pool, Runner: dshHomeRunner{}, Config: FCE2BConfig{ServerURL: "https://production-relay.test", DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.test", APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
+	launcher := &FCE2BLauncher{nativeAuthority: newDSHNativeAuthorityBridge("test-secret"), Pool: pool, Runner: dshHomeRunner{profiles: &sync.Map{}}, Config: FCE2BConfig{ServerURL: "https://production-relay.test", DSHNativeAuthority: "https://pre.multica.test", Domain: "fc.test", APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
+	launcher.ReadDSHProfileSource = func(_ context.Context, _ *db.Queries, _ dshhost.Key, template string) (dshprofile.Source, error) {
+		return dshprofile.Source{TemplateID: template}, nil
+	}
 	return launcher, rt, task
 }
 
@@ -270,11 +362,11 @@ func TestDSHNativeHostFailureRequiresConfirmedSandboxRetirement(t *testing.T) {
 	a, _ := dshLaunchPools(t)
 	provider := &dshLaunchProvider{destroyErr: errors.New("not confirmed")}
 	l, rt, task := dshLaunchFixture(t, a, provider)
-	l.Runner = dshHomeRunner{wrongNativeReceipt: true}
+	l.Runner = dshHomeRunner{wrongNativeReceipt: true, profiles: &sync.Map{}}
 	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) {
 		t.Fatal("native Host mismatch did not stop admissions", err)
 	}
-	l.Runner = dshHomeRunner{}
+	l.Runner = dshHomeRunner{profiles: &sync.Map{}}
 	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) {
 		t.Fatal("native failure bypassed sandbox retirement", err)
 	}
@@ -351,14 +443,14 @@ func TestDSHLaunchRecoversUnknownCreateAndRejectsWrongHomeReceipt(t *testing.T) 
 		t.Fatal(err)
 	}
 	provider.failCreate = false
-	l.Runner = dshHomeRunner{wrongReceipt: true}
+	l.Runner = dshHomeRunner{wrongReceipt: true, profiles: &sync.Map{}}
 	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); err == nil {
 		t.Fatal("accepted another employee's Home")
 	}
 	if provider.creates != 1 {
 		t.Fatal("retried ambiguous create")
 	}
-	l.Runner = dshHomeRunner{}
+	l.Runner = dshHomeRunner{profiles: &sync.Map{}}
 	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); err != nil {
 		t.Fatal(err)
 	}

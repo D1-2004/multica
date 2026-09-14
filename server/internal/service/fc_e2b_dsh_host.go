@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
+	"github.com/multica-ai/multica/server/internal/dshprofile"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -133,6 +134,17 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 	if err != nil {
 		return dshhost.Host{}, false, err
 	}
+	if l.ReadDSHProfileSource == nil {
+		return dshhost.Host{}, false, errors.New("DSH employee Profile source unavailable")
+	}
+	profiles := dshprofile.Store{DB: conn}
+	revision, err := profiles.Prepare(ctx, key, template, l.ReadDSHProfileSource)
+	if err != nil {
+		return dshhost.Host{}, false, err
+	}
+	if revision.Descriptor == "" && before.State != "creating" && before.State != "retiring" {
+		return dshhost.Host{}, false, errDSHHostWaiting
+	}
 	var provider dshhost.Provider
 	if l.dshProvider != nil {
 		provider, err = l.dshProvider(before.Storage)
@@ -187,6 +199,9 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 		if err = manager.Retire(ctx, key, current.Generation); err != nil {
 			return dshhost.Host{}, false, errDSHHostWaiting
 		}
+		if revision.Descriptor == "" {
+			return dshhost.Host{}, false, errDSHHostWaiting
+		}
 		host, err = manager.Ensure(ctx, key, template)
 	}
 	if errors.Is(err, dshhost.ErrPending) || errors.Is(err, dshhost.ErrChanged) {
@@ -194,6 +209,9 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 	}
 	if err != nil {
 		return dshhost.Host{}, false, err
+	}
+	if revision.Descriptor == "" {
+		return dshhost.Host{}, false, errDSHHostWaiting
 	}
 	cold := before.State != "running" || host.SandboxID != before.SandboxID
 	if cold {
@@ -222,9 +240,18 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 	if err != nil {
 		return dshhost.Host{}, cold, err
 	}
-	out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host, catalog, authority, origin, l.nativeAuthority.publicKey()))
+	err = l.deliverDSHProfile(ctx, profiles, host, revision)
 	if err == nil {
-		err = validateDSHNativeHostReceipt(out, host, profileDigest)
+		err = l.stageDSHProfile(ctx, host, revision)
+	}
+	if err == nil {
+		out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host, catalog, authority, origin, l.nativeAuthority.publicKey(), revision))
+	}
+	if err == nil {
+		err = validateDSHNativeHostReceipt(out, host, profileDigest, revision)
+	}
+	if err == nil {
+		err = profiles.Acknowledge(ctx, host, revision, l.ReadDSHProfileSource)
 	}
 	if err != nil {
 		// A crashed supervisor can leave a native child writing the Home.
@@ -236,7 +263,7 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshho
 		chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "native_host_unavailable", "sandbox_id", host.SandboxID, "generation", host.Generation)
 		return dshhost.Host{}, cold, errDSHHostWaiting
 	}
-	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "managed_profile_digest", profileDigest)
+	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "managed_profile_digest", profileDigest, "employee_profile_revision", revision.ID, "employee_profile_digest", revision.Digest)
 	return host, cold, nil
 }
 
@@ -268,11 +295,12 @@ func dshManagedCatalog(models []string) (string, string, error) {
 	return raw, digest, nil
 }
 
-func dshNativeHostEnsureArgs(host dshhost.Host, catalog, authority, origin, publicKey string) []string {
+func dshNativeHostEnsureArgs(host dshhost.Host, catalog, authority, origin, publicKey string, revision dshprofile.Revision) []string {
 	return []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
 		"-e", "DSH_HOME=" + dshhost.MountPath + "/home", "-e", "MULTICA_DSH_WORKSPACE_ID=" + host.WorkspaceID.String(),
 		"-e", "MULTICA_DSH_AGENT_ID=" + host.AgentID.String(), "-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10),
 		"-e", "MULTICA_DSH_MODEL_CATALOG_JSON=" + catalog,
+		"-e", "MULTICA_DSH_EMPLOYEE_PROFILE_FILE=" + dshProfileInputPath(revision),
 		"-e", "MULTICA_DSH_NATIVE_AUTHORITY=" + authority,
 		"-e", "MULTICA_DSH_NATIVE_PUBLIC_KEY=" + publicKey,
 		"-e", "MULTICA_DSH_NATIVE_ORIGIN=" + origin,
@@ -280,16 +308,23 @@ func dshNativeHostEnsureArgs(host dshhost.Host, catalog, authority, origin, publ
 		host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", "--ensure"}
 }
 
-func validateDSHNativeHostReceipt(out string, host dshhost.Host, profileDigest string) error {
+func validateDSHNativeHostReceipt(out string, host dshhost.Host, profileDigest string, revision dshprofile.Revision) error {
 	var receipt struct {
-		Version       int    `json:"version"`
-		WorkspaceID   string `json:"workspace_id"`
-		AgentID       string `json:"agent_id"`
-		Generation    int64  `json:"generation"`
-		ProfileDigest string `json:"managed_profile_digest"`
+		Version         int    `json:"version"`
+		WorkspaceID     string `json:"workspace_id"`
+		AgentID         string `json:"agent_id"`
+		Generation      int64  `json:"generation"`
+		ProfileDigest   string `json:"managed_profile_digest"`
+		EmployeeProfile struct {
+			Revision string `json:"revision"`
+			Digest   string `json:"digest"`
+		} `json:"employee_profile"`
 	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &receipt); err != nil || receipt.Version != 1 || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation || profileDigest == "" || receipt.ProfileDigest != profileDigest {
 		return errors.New("DSH native Host did not confirm the expected employee, generation and managed profile")
+	}
+	if revision.ID < 1 || revision.Descriptor == "" || revision.Digest != fmt.Sprintf("%x", sha256.Sum256([]byte(revision.Descriptor))) || receipt.EmployeeProfile.Revision != strconv.FormatInt(revision.ID, 10) || receipt.EmployeeProfile.Digest != revision.Digest {
+		return errors.New("DSH native Host did not confirm the exact employee Profile revision")
 	}
 	return nil
 }
