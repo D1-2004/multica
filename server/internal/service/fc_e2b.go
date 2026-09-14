@@ -1507,9 +1507,10 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B template stage: %w", err)
 	}
 	if FCE2BRuntimeProvider(runtime) == "dsh" {
-		if !FCE2BRuntimeHasCapability(runtime, DSHEmployeeHostCapability) {
-			return fcE2BLaunchSubmission{}, false, errors.New("DSH runtime requires the employee host protocol")
-		}
+		// The catalog derives capabilities from provider fingerprints, not image
+		// labels. Employee Host support is required and verified by the fixed
+		// Home and supervisor commands in resolveDSHEmployeeSandbox; an old
+		// image cannot bypass those receipts or fall back to a temporary Home.
 		release, err := lockDSHEmployee(ctx, runtimeLockConn, runtime.WorkspaceID, task.AgentID)
 		if err != nil {
 			return fcE2BLaunchSubmission{}, false, err

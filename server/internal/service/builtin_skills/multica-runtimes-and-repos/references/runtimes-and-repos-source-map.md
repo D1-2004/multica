@@ -39,3 +39,14 @@
 - `packages/core/agents/dsh-home.ts`: workspace/employee-scoped status queries and explicit provisioning mutation with post-response reconciliation.
 - `packages/views/agents/components/tabs/dsh-home-tab.tsx`: storage and host status, preparation and retry controls; owner/admin FC DSH visibility through `agent-overview-pane.tsx`.
 - `packages/core/api/dsh-home-client.test.ts`, `packages/views/agents/components/tabs/dsh-home-tab.test.tsx`: malformed response, accepted/pending, unknown write outcome, no implicit writes and cache isolation checks.
+
+## Native browser authorization
+
+- `server/internal/handler/dsh_native.go`: human entry/revocation, capability exchange/check and fresh workspace management checks.
+- `server/internal/service/fc_e2b_dsh_native.go`: deployment-owned FC origin and bounded exact gateway readiness verification; no Host lifecycle mutations.
+- `server/internal/dshhost/native_access*.go`: digest-only durable access, one-time exchange and running Host predicates.
+- `server/internal/handler/dsh_native_test.go`, `server/internal/service/fc_e2b_dsh_native_test.go`: callback replay, identity and permission boundaries, readiness mismatch and old-image rejection. Runtime/browser and PostgreSQL acceptance must run in preproduction.
+
+- `server/internal/service/fc_e2b_dsh_host.go`: injects the deployment-owned gateway authority, sandbox origin and sandbox ID into the employee supervisor. Gateway readiness remains separate from native prompt/task admission.
+
+- `server/internal/service/fc_e2b.go` / `fc_e2b_dsh_host.go`: mandatory DSH employee admission lock and real Home/Host receipt verification, independent of provider-derived catalog capability labels.
