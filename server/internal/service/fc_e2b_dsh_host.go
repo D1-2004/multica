@@ -40,14 +40,18 @@ func dshExecutionScope(key dshhost.Key, task db.AgentTaskQueue) dshhost.SessionS
 	return dshhost.SessionScope{Key: key, Kind: "task", ID: uuid.UUID(task.ID.Bytes)}
 }
 
+func dshEmployeeLockKey(workspace, agent pgtype.UUID) int32 {
+	h := fnv.New32a()
+	_, _ = h.Write(workspace.Bytes[:])
+	_, _ = h.Write(agent.Bytes[:])
+	return int32(h.Sum32())
+}
+
 func lockDSHEmployee(ctx context.Context, conn *pgxpool.Conn, workspace, agent pgtype.UUID) (func(), error) {
 	if conn == nil || !workspace.Valid || !agent.Valid {
 		return nil, errors.New("DSH employee coordination requires a database connection and identity")
 	}
-	h := fnv.New32a()
-	_, _ = h.Write(workspace.Bytes[:])
-	_, _ = h.Write(agent.Bytes[:])
-	key := int32(h.Sum32())
+	key := dshEmployeeLockKey(workspace, agent)
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1,$2)", dshEmployeeLockClass, key); err != nil {
 		return nil, fmt.Errorf("lock DSH employee: %w", err)
 	}

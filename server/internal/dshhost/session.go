@@ -21,9 +21,9 @@ type Execution struct {
 	Workdir   string
 }
 
-// Both the official browser's UUID and platform-created session-UUID are
+// ValidSessionID accepts both the official browser's UUID and platform-created
 // native identities. Preserve their spelling: changing it changes the log.
-func validSessionID(value string) bool {
+func ValidSessionID(value string) bool {
 	raw := strings.TrimPrefix(value, "session-")
 	id, err := uuid.Parse(raw)
 	return err == nil && id != uuid.Nil && raw == id.String()
@@ -42,7 +42,7 @@ func (s PostgresStore) AdoptNativeExecution(ctx context.Context, scope SessionSc
 	if _, ok := s.DB.(pgx.Tx); !ok {
 		return Execution{}, errors.New("native DSH admission requires a task transaction")
 	}
-	if !validSessionScope(scope) || taskID == uuid.Nil || requestID == uuid.Nil || !validSessionID(sessionID) {
+	if !validSessionScope(scope) || taskID == uuid.Nil || requestID == uuid.Nil || !ValidSessionID(sessionID) {
 		return Execution{}, errors.New("invalid native DSH execution identity")
 	}
 	_, err := s.DB.Exec(ctx, `INSERT INTO dsh_employee_session
@@ -104,7 +104,7 @@ func (s PostgresStore) BindExecution(ctx context.Context, scope SessionScope, ta
 	if err != nil {
 		return Execution{}, err
 	}
-	if !validSessionID(sessionID) {
+	if !ValidSessionID(sessionID) {
 		return Execution{}, errors.New("invalid persisted DSH session identity")
 	}
 	_, err = s.DB.Exec(ctx, `INSERT INTO dsh_task_binding

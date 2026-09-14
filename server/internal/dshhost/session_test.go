@@ -68,12 +68,12 @@ func TestSessionBindingSurvivesReplicaRacesAndSeparatesEmployees(t *testing.T) {
 func TestNativeSessionIdentityValidation(t *testing.T) {
 	id := uuid.NewString()
 	for _, valid := range []string{id, "session-" + id} {
-		if !validSessionID(valid) {
+		if !ValidSessionID(valid) {
 			t.Fatal("canonical native Session was rejected")
 		}
 	}
 	for _, invalid := range []string{"", "../" + id, "session-session-" + id, "{" + id + "}", "urn:uuid:" + id, "00000000-0000-0000-0000-000000000000", "session-00000000-0000-0000-0000-000000000000", id + "/other", " " + id} {
-		if validSessionID(invalid) {
+		if ValidSessionID(invalid) {
 			t.Fatal("noncanonical or unsafe Session was accepted")
 		}
 	}

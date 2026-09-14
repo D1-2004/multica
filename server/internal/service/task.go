@@ -2121,6 +2121,7 @@ type DirectChatSendResult struct {
 	Message            db.ChatMessage
 	BoundAttachmentIDs []pgtype.UUID
 	Queued             bool
+	Replayed           bool
 }
 
 var ErrChatSessionAlreadyStarted = errors.New("chat session already has a user message")
@@ -2162,6 +2163,22 @@ func (s *TaskService) SendDirectChatMessageWithContext(
 	baseTaskContext []byte,
 	trace chattrace.Trace,
 ) (*DirectChatSendResult, error) {
+	return s.sendDirectChatMessage(ctx, session, agent, initiatorUserID, content, attachmentIDs, uploaderType, uploaderID, baseTaskContext, trace, nil)
+}
+
+func (s *TaskService) sendDirectChatMessage(
+	ctx context.Context,
+	session db.ChatSession,
+	agent db.Agent,
+	initiatorUserID pgtype.UUID,
+	content string,
+	attachmentIDs []pgtype.UUID,
+	uploaderType string,
+	uploaderID pgtype.UUID,
+	baseTaskContext []byte,
+	trace chattrace.Trace,
+	native *dshNativeChatAdmission,
+) (*DirectChatSendResult, error) {
 	taskContext, err := chattrace.Merge(baseTaskContext, trace)
 	if err != nil {
 		return nil, fmt.Errorf("build direct chat trace context: %w", err)
@@ -2183,7 +2200,12 @@ func (s *TaskService) SendDirectChatMessageWithContext(
 	attrSource, _, attrEvidenceKind, attrEvidenceRef := attributionCreateParams(attr)
 
 	var out DirectChatSendResult
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
+	if err := s.runInTxWithHandle(ctx, func(qtx *db.Queries, tx pgx.Tx) error {
+		if native != nil {
+			if err := native.lockAdmission(ctx, tx); err != nil {
+				return err
+			}
+		}
 		// Serialise this send against a concurrent runtime rebind of the same
 		// session (MUL-5163). The lock must be taken first and the agent re-read
 		// under it: the runtime_id the caller loaded can already be stale by the
@@ -2211,6 +2233,19 @@ func (s *TaskService) SendDirectChatMessageWithContext(
 		}
 		if !carrier.RuntimeID.Valid {
 			return ErrChatTaskAgentNoRuntime
+		}
+		if native != nil {
+			if err := native.checkLocked(ctx, tx, qtx, currentSession, carrier, initiatorUserID); err != nil {
+				return err
+			}
+			replay, err := native.replay(ctx, tx, qtx, currentSession, carrier, initiatorUserID, content)
+			if err != nil {
+				return err
+			}
+			if replay != nil {
+				out = *replay
+				return nil
+			}
 		}
 
 		// The database status of every newly-created task is "queued" until a
@@ -2251,6 +2286,11 @@ func (s *TaskService) SendDirectChatMessageWithContext(
 			return fmt.Errorf("stamp direct chat input owner: %w", err)
 		}
 		out.Task = task
+		if native != nil {
+			if err := native.bind(ctx, tx, currentSession, task); err != nil {
+				return err
+			}
+		}
 
 		// Adopt the onboarding kickoff, if this session still has an unowned one.
 		// It is written by OpenMikaOnboardingChat with no task, so this is the
@@ -2308,6 +2348,9 @@ func (s *TaskService) SendDirectChatMessageWithContext(
 		return nil, err
 	}
 
+	if out.Replayed {
+		return &out, nil
+	}
 	slog.Info("direct chat task enqueued",
 		"task_id", util.UUIDToString(out.Task.ID),
 		"chat_session_id", util.UUIDToString(session.ID),
@@ -5630,15 +5673,19 @@ func (s *TaskService) ReconcileIssuesWithLostCompletion(ctx context.Context, gra
 // (e.g. some tests construct TaskService directly), fn runs against the
 // regular Queries handle without transactional guarantees.
 func (s *TaskService) runInTx(ctx context.Context, fn func(*db.Queries) error) error {
+	return s.runInTxWithHandle(ctx, func(qtx *db.Queries, _ pgx.Tx) error { return fn(qtx) })
+}
+
+func (s *TaskService) runInTxWithHandle(ctx context.Context, fn func(*db.Queries, pgx.Tx) error) error {
 	if s.TxStarter == nil {
-		return fn(s.Queries)
+		return fn(s.Queries, nil)
 	}
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if err := fn(s.Queries.WithTx(tx)); err != nil {
+	if err := fn(s.Queries.WithTx(tx), tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
