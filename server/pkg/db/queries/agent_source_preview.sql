@@ -28,9 +28,36 @@ FOR UPDATE;
 
 -- name: MarkAgentSourcePreviewApplied :one
 UPDATE agent_source_preview
-SET agent_id = $2, applied_at = now(), applied_source = $3, applied_changed = $4
+SET agent_id = $2, applied_at = clock_timestamp(), applied_source = $3, applied_changed = $4,
+    snapshot = sqlc.arg(snapshot)
 WHERE id = $1 AND applied_at IS NULL
 RETURNING *;
+
+-- name: GetAgentPublication :one
+SELECT * FROM agent_source_preview
+WHERE id = $1 AND agent_id = $2 AND workspace_id = $3 AND applied_at IS NOT NULL;
+
+-- name: ListAgentPublications :many
+SELECT publication.id, publication.ref, publication.resolved_sha,
+    publication.repository, publication.github_installation_id,
+    publication.applied_at, publication.created_by, publication.applied_changed,
+    COALESCE(author.name, '')::text AS author_name,
+    COALESCE(publication.snapshot->>'rollback_of', '')::text AS rollback_of,
+    (publication.snapshot ? 'published_definition')::boolean AS has_configuration_snapshot,
+    publication.expected_state_hash = '' AS initial_publication
+FROM agent_source_preview AS publication
+LEFT JOIN "user" AS author ON author.id = publication.created_by
+WHERE publication.agent_id = sqlc.arg(agent_id)
+  AND publication.workspace_id = sqlc.arg(workspace_id)
+  AND publication.applied_at IS NOT NULL
+  AND (sqlc.narg(before_id)::uuid IS NULL OR (publication.applied_at, publication.id) < (
+      SELECT cursor.applied_at, cursor.id FROM agent_source_preview AS cursor
+      WHERE cursor.id = sqlc.narg(before_id)
+        AND cursor.agent_id = sqlc.arg(agent_id) AND cursor.workspace_id = sqlc.arg(workspace_id)
+        AND cursor.applied_at IS NOT NULL
+  ))
+ORDER BY publication.applied_at DESC, publication.id DESC
+LIMIT 51;
 
 -- name: LatestAppliedAgentSourcePreview :one
 SELECT * FROM agent_source_preview

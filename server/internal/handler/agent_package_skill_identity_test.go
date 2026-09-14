@@ -18,7 +18,7 @@ func TestAgentPackageExportUpdatePreservesWorkspaceSkillIdentity(t *testing.T) {
 		t.Run(map[bool]string{false:"manual Agent", true:"source Agent"}[sourceManaged], func(t *testing.T) {
 			f := newGitSourceFixture(t)
 			id := createHandlerTestAgent(t, "Skill round trip", nil)
-			if sourceManaged { id = f.create(t) }
+			if sourceManaged { id = f.createLocal(t) }
 			if _, err := testPool.Exec(t.Context(), `UPDATE agent SET runtime_id=$2 WHERE id=$1`, id, testRuntimeID); err != nil { t.Fatal(err) }
 			skill, err := testHandler.Queries.CreateSkill(t.Context(), db.CreateSkillParams{WorkspaceID:parseUUID(testWorkspaceID), CreatedBy:parseUUID(testUserID), Name:"shared-"+id, Description:"Shared review", Content:"Review the changes", Config:[]byte(`{"origin":{"type":"manual"}}`)})
 			if err != nil { t.Fatal(err) }
@@ -83,7 +83,7 @@ func TestAgentPackageExportUpdatePreservesWorkspaceSkillIdentity(t *testing.T) {
 
 func TestAgentPackageSkillIdentitySurvivesDirectoryRename(t *testing.T) {
 	f := newGitSourceFixture(t)
-	id := f.create(t)
+	id := f.createLocal(t)
 	before, err := testHandler.Queries.ListAgentSkills(t.Context(),parseUUID(id)); if err != nil || len(before) != 1 { t.Fatal("missing source skill") }
 	files := exportAgentFiles(t,id)
 	var manifest map[string]any

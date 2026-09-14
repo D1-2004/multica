@@ -35,6 +35,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	if err != nil { writeGitHubSourceError(w, err); return }
 	if resolved.bundle.Definition["a2a"] != nil && r.Header.Get("X-Actor-Source") != "" { writeError(w, http.StatusForbidden, "A2A policy import requires a human actor"); return }
 	if preview.AppliedAt.Valid { writeSourceSyncReplay(w, preview, resolved.bundle.Warnings); return }
+	if source.SourceType == "github" && !preview.GithubInstallationID.Valid { writeError(w,http.StatusConflict,"Git Agents publish from their repository; preview a branch, tag or commit"); return }
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil { writeError(w, http.StatusInternalServerError, "failed to start source sync"); return }
 	defer tx.Rollback(r.Context())
@@ -78,8 +79,8 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 		if err := (agentPackageService{handler:h}).Import(r.Context(), tx, agent, lockedSource, resolved, request.Secrets, request.DeferredBindings, parseUUID(requestUserID(r)), false); err != nil { writeAgentSourceDatabaseError(w, err); return }
 	}
 	updatedSource := lockedSource
-	// ZIP publication changes configuration but retains an existing Git binding
-	// and its last published Git commit for the next branch diff.
+	// Record the selected Git revision or local package hash atomically with
+	// its materialized configuration and publication receipt.
 	if preview.GithubInstallationID.Valid || lockedSource.SourceType == "local" {
 		updatedSource, err = queries.MarkAgentSourceBranchSyncSucceeded(r.Context(), db.MarkAgentSourceBranchSyncSucceededParams{
 			ID:lockedSource.ID, Ref:resolved.ref, SyncedCommitSha:resolved.sha, ManifestPath:agentsource.SourceManifestPath(resolved.bundle),
@@ -88,7 +89,7 @@ func (h *Handler) SyncAgentSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := markSourcePreviewApplied(r.Context(), queries, preview, updatedSource, changed); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record source confirmation"); return
+		writeAgentSourceDatabaseError(w, err); return
 	}
 	if err := tx.Commit(r.Context()); err != nil { writeError(w, http.StatusInternalServerError, "failed to commit source sync"); return }
 	if h.EventTriggers != nil { h.EventTriggers.Notify() }

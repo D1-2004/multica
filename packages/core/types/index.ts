@@ -240,6 +240,8 @@ export type {
   AgentSourceSyncPreview,
   AgentSourceFileChange,
   AgentSourceBranches,
+  AgentPublication,
+  AgentPublicationList,
   SyncAgentSourceResponse,
 } from "./github";
 export type {

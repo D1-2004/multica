@@ -117,6 +117,8 @@ type preparedAgentSource struct {
 	sha          string
 	bundle       agentsource.Bundle
 	snapshot     agentsource.RepositorySnapshot
+	rollbackOf   string
+	publicationDefinition *agentsource.Bundle
 }
 
 func (h *Handler) ListGitHubAgentRepositories(w http.ResponseWriter, r *http.Request) {
@@ -464,7 +466,7 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := markSourcePreviewApplied(r.Context(), qtx, preview, source, true); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record GitHub agent creation")
+		writeAgentSourceDatabaseError(w, err)
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -850,6 +852,7 @@ func writeGitHubSourceError(w http.ResponseWriter, err error) {
 }
 
 func writeAgentSourceDatabaseError(w http.ResponseWriter, err error) {
+	if writeManifestSchemaError(w, err) { return }
 	var requestErr *gitSourceRequestError
 	if errors.As(err, &requestErr) {
 		writeError(w, requestErr.status, requestErr.message)

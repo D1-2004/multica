@@ -65,6 +65,8 @@ func newGitSourceFixture(t *testing.T) *gitSourceFixture {
 				branches = append(branches, map[string]any{"name":ref, "commit":map[string]string{"sha":sha}})
 			}
 			writeJSON(w, http.StatusOK, branches)
+		case p == "/repos/acme/reviewer/tags":
+			writeJSON(w,http.StatusOK,[]map[string]any{{"name":"v1.0","commit":map[string]string{"sha":gitSourceSHA1}}})
 		case strings.HasPrefix(p, "/repos/acme/reviewer/commits/"):
 			ref := strings.TrimPrefix(p, "/repos/acme/reviewer/commits/")
 			sha := f.refs[ref]

@@ -12,7 +12,7 @@ import { PackageError } from "../../create/package-error";
 import { SourceChangesDialog } from "./source-change-list";
 import { useT } from "../../../i18n";
 
-export function ZIPPublishTab({ agentId, canEdit, hasGitSource }: { agentId: string; canEdit: boolean; hasGitSource: boolean }) {
+export function ZIPPublishTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
   const { t } = useT("agents");
   const workspaceId = useWorkspaceId();
   const [file, setFile] = useState<File | null>(null);
@@ -44,7 +44,6 @@ export function ZIPPublishTab({ agentId, canEdit, hasGitSource }: { agentId: str
   };
   return <div className="space-y-4">
     <p className="text-body text-muted-foreground">{t(($) => $.creation_studio.package.zip_hint)}</p>
-    {hasGitSource && <p className="text-caption text-muted-foreground">{t(($) => $.creation_studio.package.preserve_git)}</p>}
     {canEdit && <div className="space-y-3">
       <Label htmlFor="agent-publish-zip">{t(($) => $.creation_studio.local.file)}</Label>
       <Input id="agent-publish-zip" type="file" accept=".zip,application/zip" disabled={pending} onChange={(event) => {

@@ -373,7 +373,6 @@
       "zip_publish": "从 ZIP 发布",
       "git_publish": "从 Git 发布",
       "zip_hint": "上传新版智能体 ZIP，查看配置变更并确认后，更新当前智能体。",
-      "preserve_git": "此次更新保留现有 Git 仓库连接和已发布的 Git 提交记录。",
       "builder_title": "智能体配置包",
       "builder_hint": "Builder 会生成完整的 manifest 和文件。可通过对话调整或直接编辑下方内容，校验并查看预览后再创建。",
       "contents": "Manifest 和文件",
@@ -632,7 +631,7 @@
       "repository": "智能体仓库地址",
       "deployed": "已发布分支与提交",
       "unavailable": "当前智能体或你的权限不支持手动同步。",
-      "branch": "分支或提交",
+      "branch": "分支、Tag 或 Commit",
       "loading": "正在准备预览...",
       "preview": "预览变更",
       "branches_failed": "无法加载分支列表，你仍可输入分支或提交。",
@@ -1672,5 +1671,24 @@
   "actions": {
     "selected_other": "已选 {{count}} 项",
     "clear_selection": "清除选择"
+  },
+  "git_revision": {
+    "type": "版本类型",
+    "branch": "分支",
+    "tag": "Tag",
+    "commit": "Commit",
+    "commit_hint": "输入 Commit SHA"
+  },
+  "publication_history": {
+    "title": "发布历史",
+    "description": "选择历史版本恢复已记录的内容，查看差异后确认发布。回退会新增一条历史记录。",
+    "empty": "暂无发布记录。",
+    "latest": "最近发布",
+    "rollback": "回退发布",
+    "created": "从 Git 创建",
+    "published": "发布",
+    "legacy": "此旧记录仅保存了包声明，回退时未声明的配置会保留当前值。",
+    "restore": "回退到此版本",
+    "more": "加载更早的记录"
   }
 }

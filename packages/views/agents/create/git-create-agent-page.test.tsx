@@ -46,12 +46,12 @@ describe("Git creation", () => {
     mount();
     await waitFor(() => expect(screen.getByLabelText("GitHub connection")).toHaveValue("install-1"));
     fireEvent.change(screen.getByLabelText(enAgents.tab_body.publish.repository), { target: { value: "https://github.com/acme/agent" } });
-    fireEvent.change(screen.getByLabelText("Branch or commit"), { target: { value: "release/v2" } });
+    fireEvent.change(screen.getByLabelText("Branch, tag or commit"), { target: { value: "release/v2" } });
     expect(screen.getByRole("button", { name: enAgents.creation_studio.create_and_open })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Preview agent" }));
     await screen.findByText("Reviewed instructions");
-    expect(mocked.preview).toHaveBeenCalledWith("workspace-1", { installation_id: "install-1", repository: "https://github.com/acme/agent", ref: "release/v2" });
-    fireEvent.change(screen.getByLabelText("Branch or commit"), { target: { value: "main" } });
+    expect(mocked.preview).toHaveBeenCalledWith("workspace-1", { installation_id: "install-1", repository: "https://github.com/acme/agent", ref: "refs/heads/release/v2" });
+    fireEvent.change(screen.getByLabelText("Branch, tag or commit"), { target: { value: "main" } });
     expect(screen.getByRole("button", { name: enAgents.creation_studio.create_and_open })).toBeDisabled();
     expect(screen.queryByText("Reviewed instructions")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Preview agent" }));

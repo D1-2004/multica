@@ -187,6 +187,7 @@ import type {
   AgentSource,
   AgentSourceSyncPreview,
   AgentSourceBranches,
+  AgentPublicationList,
   SyncAgentSourceResponse,
   ListVCSConnectionsResponse,
   ConnectVCSRequest,
@@ -486,6 +487,7 @@ import {
   AgentManifestSchemaDownloadSchema,
   AgentSourceSyncPreviewSchema,
   AgentSourceBranchesSchema,
+  AgentPublicationListSchema,
   EMPTY_AGENT_SOURCE_SYNC_PREVIEW,
   EMPTY_AGENT_SOURCE_BRANCHES,
   CreateGitHubAgentResponseSchema,
@@ -5721,6 +5723,21 @@ export class ApiClient {
     return parseWithFallback(raw, AgentSourceSchema, EMPTY_AGENT_SOURCE, {
       endpoint: "GET /api/agents/:id/source",
     });
+  }
+
+  async listAgentPublications(agentId: string, before?: string): Promise<AgentPublicationList> {
+    const query = before ? `?before=${encodeURIComponent(before)}` : "";
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source/publications${query}`);
+    const result = parseWithFallback<AgentPublicationList | null>(raw, AgentPublicationListSchema, null, { endpoint: "GET /api/agents/:id/source/publications", includeReceived: false });
+    if (!result) throw new Error("Invalid Agent publication history response");
+    return result;
+  }
+
+  async previewAgentPublicationRollback(agentId: string, publicationId: string): Promise<AgentSourceSyncPreview> {
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/source/preview`, { method: "POST", body: JSON.stringify({ publication_id: publicationId }) });
+    const result = parseWithFallback<AgentSourceSyncPreview | null>(raw, AgentSourceSyncPreviewSchema, null, { endpoint: "POST /api/agents/:id/source/preview", includeReceived: false });
+    if (!result || result.rollback_of !== publicationId) throw new Error("Invalid Agent rollback preview response");
+    return result;
   }
 
   async listAgentSourceBranches(agentId: string): Promise<AgentSourceBranches> {

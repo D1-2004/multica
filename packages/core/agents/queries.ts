@@ -147,6 +147,17 @@ export function agentSourceBranchesOptions(wsId: string, agentId: string) {
   });
 }
 
+export function agentPublicationsOptions(wsId: string, agentId: string) {
+  return infiniteQueryOptions({
+    queryKey: [...agentSourceKeys.detail(wsId, agentId), "publications"],
+    queryFn: ({ pageParam }) => api.listAgentPublications(agentId, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (page) => page.next_cursor ?? undefined,
+    enabled: !!wsId && !!agentId,
+    retry: false,
+  });
+}
+
 // All tasks for a single agent (the agent detail page consumer). Powers both
 // the inspector's 7-day throughput stats and the Tasks tab list — shared so
 // they don't fetch twice. WS task events invalidate this via the existing

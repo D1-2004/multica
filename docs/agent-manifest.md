@@ -88,11 +88,25 @@ Git 的 `agent.json` 校验也返回相同结构。返回校验器的完整错�
 
 ## ZIP 更新已有 Agent
 
-`POST /api/agents/{id}/source/preview` 同时接受 JSON 分支请求和 ZIP 上传：`application/zip` 或 multipart `file`。ZIP 预览适用于现有本地、Git 和手动创建的普通 Agent，返回 `configuration_changes`、配置包摘要及 actor/Agent 绑定的 `preview_id`。服务端自动管理的 Agent 不开放此操作。
+`POST /api/agents/{id}/source/preview` 同时接受 JSON Git 版本请求和 ZIP 上传：`application/zip` 或 multipart `file`。ZIP 预览适用于现有本地和手动创建的普通 Agent，返回 `configuration_changes`、配置包摘要及 actor/Agent 绑定的 `preview_id`。Git 来源只允许按仓库版本发布，ZIP 预览或尚未应用的 ZIP 确认返回 409；已经应用的确认仍可幂等重放。服务端自动管理的 Agent 不开放此操作。
 
 确认统一使用 `POST /api/agents/{id}/source/sync`。确认时锁定预览、Agent 和来源，重查管理权限、过期时间与当前配置摘要；配置在预览后变化会拒绝发布，要求重新预览。新来源仅在确认事务内创建，预览不写入 Agent 配置；重复确认返回原回执。创建接口拒绝发布预览，发布接口拒绝创建预览。
 
-现有 Git Agent 上传 ZIP 后保留 Git 连接、分支及最后发布的 Git commit；下次 Git 发布仍可比较 Git 基线及平台当前配置。原本没有来源的 Agent 首次 ZIP 发布后记录为本地来源。来源管理的专属 skills 按包更新；包中引用的现有 workspace skills 原位更新，未被包引用的手动分配 skills 保留。
+原本没有来源的 Agent 首次 ZIP 发布后记录为本地来源。来源管理的专属 skills 按包更新；包中引用的现有 workspace skills 原位更新，未被包引用的手动分配 skills 保留。
+
+## Git 版本发布与历史回退
+
+Git 创建保留工作区 GitHub 连接、仓库 owner/name、规范仓库链接、选定 ref 及实际提交 SHA。创建和发布共用分支／Tag／Commit 选择器；`GET /api/workspaces/{id}/github/branches` 与 `GET /api/agents/{id}/source/branches` 同时返回 `branches` 和 `tags`。分支与 Tag 分别使用 `refs/heads/<name>`、`refs/tags/<name>`，避免同名歧义；Commit 输入接受 SHA，服务端统一解析并固定为完整提交 SHA。GitHub commits API 使用 `heads/<name>`／`tags/<name>` 查询，见 [GitHub Get a commit](https://docs.github.com/en/rest/commits/commits#get-a-commit)。
+
+发布页持续显示仓库链接和最近发布的 ref/SHA。选择版本后调用 `POST /api/agents/{id}/source/preview`，请求为 `{ "ref": "refs/tags/v1.0" }`，先在全局 diff 弹窗中核对，再用 `preview_id` 确认。预览后分支或 Tag 移动不改变本次确认的内容。
+
+`agent_source_preview` 中已经应用的记录同时构成发布历史，不按预览的 30 分钟有效期清理。创建、发布、回退与记录写入处于同一事务；失败不追加历史，重复确认不产生重复记录。记录保留仓库内容快照，并在 `snapshot.published_definition` 保存发布后通过统一 Export/Import 契约校验的可移植配置快照；不复制目标环境凭据。这样回退可以恢复旧配置值，而不是保留新版本后来添加的值。专属 skill 的快照保留目录和内容，允许重建已被后续版本删除的技能；共享技能继续按 scope/skill_id 与当前权限校验，未被包管理的手动关联按原导入规则保留。
+
+管理者通过 `GET /api/agents/{id}/source/publications?before=<publication-id>` 分页查询历史，每页最多 50 条。返回 `publications` 和 `next_cursor`，条目包含 `id`、`source_type`、`repository_url`、`ref`、`commit_sha`、`published_at`、`published_by`、`author_name`、`changed`、`rollback_of`、`has_configuration_snapshot`、`initial_publication`。列表不返回完整配置快照；游标和历史目标必须属于当前工作区及 Agent。仓库与发布配置的序列化快照共用 64 MiB 上限，超限会明确报错并回滚本次写入。
+
+点击“回退到此版本”使用同一预览端点，提交 `{ "publication_id": "<history-id>" }`，不得同时提供 `ref`。服务端读取该节点保存的内容，重新核验当前 GitHub 连接的仓库访问权限，不再解析旧 ref 或下载旧提交，因此旧分支删除、Tag 移动不影响已有快照。响应的 `rollback_of` 必须匹配请求的历史 ID，前端拒绝忽略该字段的旧服务端响应。回退预览的基础 `definition` 同样保存完整执行配置，滚动部署期间旧副本处理确认也不会丢失需要清空的字段。查看差异后仍通过原 `/source/sync` 确认，校验当前配置、权限及资源绑定，成功后新增带 `rollback_of` 的历史节点，不重写旧历史或 Git 仓库。缺失或已变更的密钥、外部账号认证仍需在目标环境处理。
+
+本次能力上线前的历史记录仅有当时保存的包声明，没有可还原的完整平台配置。此类条目明确提示限制，回退只恢复已记录的声明；包中未声明的配置保留当前值。不能为旧历史补造未知的配置值。
 
 ### 导出后更新原 Agent 的 Skill 身份
 
@@ -314,3 +328,5 @@ GOTOOLCHAIN=auto go test ./internal/agentsource
 - 2026-09-14：预览成功后直接打开全局大弹窗，移除页内 diff 和二次放大入口。原因：用户要求一次点击“预览变更”即进入完整对比视图。
 
 - 2026-09-14：预览的 `requirements.binding_declarations` 返回本次包实际声明的资源需求，保留显式清空值；已导入绑定记录移入发布页底部的折叠区域。原因：选包前不应将旧包绑定展示为本次导入需求，ZIP、Git 与 Builder 必须使用同一份解析结果。
+
+- 2026-09-14：Git 来源改为仅按分支／Tag／Commit 发布，增加持久化发布历史、完整可移植配置快照及历史回退预览。原因：保持 Agent 与仓库版本对应，回退不受远端引用移动影响，也不应遗留新版本添加的配置；旧记录缺失的值明确提示而不伪造。
