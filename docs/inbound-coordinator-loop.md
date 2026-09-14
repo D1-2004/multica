@@ -1,6 +1,6 @@
 # Coordinator 现行行为合同
 
-policy_version: `2026-09-11.1`。装配版本：`21`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
+policy_version: `2026-09-14.1`。装配版本：`22`。本文件描述此分支的实现合同；发布和行为验收状态以对应 Plan 与运行证据为准。
 
 Coordinator 的交付物是每条请求的去向与有证据的协调状态。它识别人和请求、恢复指代、必要澄清、选择新建或续接，并通过有限动作承接问候、能力、记忆、进度与结果回报。产品机制、专业分析、检索查证、文件及发送等工作交执行器；任何动作的 reply 字段都不能用来抢答业务结论。快循环和执行器属于同一个员工，分别承担协调与执行。
 
@@ -10,6 +10,7 @@ Coordinator 的交付物是每条请求的去向与有证据的协调状态。�
 
 修改 Coordinator 的提示词、工具、上下文、handler、assoc、scenememory、窗口、回执或 trace 前，先读本文件和 [规则目录](../server/internal/service/inboundcoord/policy/registry.json)。目录登记 `COORD.F01`–`COORD.F19` 的行为义务、模块、实现引用、对照案例和已撤回手段。
 
+- [同类批量变更被误拆 Plan](plans/2026-09-14-coordinator-same-kind-batch.md) 记录正式 oa测试群 金龙把两类负责人改配判成独立交付并 review_deadlock 的证据、合同收窄与 Host 修复；
 - [历史预取与轻量问候免审 Plan](plans/2026-09-10-coordinator-history-prefetch.md) 记录冬翔→菲迪→须莫代问链路的触发证据、89 轮扫描统计、历史预取/免审/转告规则与验证状态；
 - [DWS执行恢复Plan](plans/2026-09-10-dws-execution-recovery.md) 记录来源交付、单项执行边界与Host等待反馈；
 - [通用语义修复 Plan](plans/2026-09-10-generic-proactive-semantics.md) 记录身份未知边界、词表撤回与跨场景验证；
@@ -158,7 +159,7 @@ Host逐项校验kind专属字段、引用、目标、作者及整窗覆盖。一
 
 所有副作用沿正常域服务路径提交。start_work/continue_work的reply在对应工作真实入库/排队后才回传。受理文案简短自然地说明用户目标，默认不提沙箱等内部实现；必要命令名称和用户明确要求的技术细节照常保留，不改变action/basis/target_match。工作台出现文案或回调被接受不等于钉钉已送达，须由渠道回读/发送凭证确认。审查输入声明该Host保证，因此允许合法受理/排队回执，不要求候选生成时任务已执行；该保证不等于实际开始执行、完成或外部送达。容量按最多两项的批次处理，保留完整计划与每项outcome；部分成功恢复不得从头重放，未处理请求不能静默丢弃。已持久化的旧checkpoint保持既有幂等效果，不因升级强制失效。
 
-终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤/修正），multiple为合并了无关交付物，none为没有实际工作。产品查证与另起通知草稿是两个产出；同一通知内整理议程/校对是一个产物的步骤。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。规则驱动revise须提供上述200字符constraint_quote，其余填空。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；非空constraint_quote无效时按上述revise修正/allow丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
+终结审查只呈现唯一candidate.actions视图；Host为每项分配action_ref=aN，工作动作使用实际提交时的规范化purpose/context，不同时展示旧action/items/non_work_refs投影。review返回 `verdict=allow|revise`、从Host本轮 `quote_options.requests[{ref:qN,text}] / candidates[{ref:cN,text}]`选择的必填 `request_quote_ref / candidate_quote_ref`、最多160字符reason、未处理 `missing_source_refs[]`及必填 `work_checks[]`。每个start_work/continue_work恰好对应一个 `{action_ref, deliverables: single|multiple|none}`：single为一个独立交付物（可含相关步骤、同类批量变更，如同一类配置改多个对象），multiple为本动作purpose混入了不同种类产出，none为没有实际工作。产品查证与另起通知草稿是两个产出；同一通知内整理议程/校对、同一类负责人批量改配是一个产物的步骤。审查只按该动作自身purpose分类，不得因整窗或兄弟动作还有其他请求把已拆开的动作标成multiple；未覆盖请求用 missing_source_refs。非工作动作不填检查项，纯非工作必须为空数组。Host校验引用与恰好覆盖，allow携带multiple/none不放行；交付物语义仍由LLM判断，不能据此声称Host已确定理解用户意图。规则驱动revise须提供上述200字符constraint_quote，其余填空。Host只接受本轮选项中的引用ID，绑定其原始内容并继续记录 `RequestQuote / CandidateQuote`，不再让模型自由转录引文。完整window仍是语义全集，选中的短证据不能缩小请求范围。Host严格验证引用、verdict/missing_source_refs，只有满足上述work_checks一致性的allow才可提交；非空constraint_quote无效时按上述revise修正/allow丢弃规则处理，decline动作本身仍需真实适用边界。空原窗/无文字ignore的哨兵由Host选项提供，模型仍选择对应qN/cN；既不重新开放旧模型动作，也不因换行/转义重抄错误而丢失有效裁决。
 
 岗位业务对象/产物与Coordinator自己的issue/task记录分开解释。对有资格响应的请求，用户已给岗位业务对象类别并让员工挑任意样本时，实例、人选和常规时间范围属于委派给Agent的选择，不是missing_fields。可查询事实、可见范围及身份/权限核验交Executor；只在确实必须用户决定的安全/授权/目标类别缺口时clarify，不让用户补齐可查询资料。取样仍是岗位数据范围内的有界检索，不能变成从关联事项名称中选一张卡；关联中没有该名字不能据此否认能力或制造澄清。仅当用户明确询问所做工作的执行/进度时才解释为任务元数据，并且必须回答被问的工作。该原则依据现有岗位、能力及当前引用，不做平台固定词义映射，不要求先写短合同，也不新增数据访问或外发授权；执行器继续检查身份/权限。
 
