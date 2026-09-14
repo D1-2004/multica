@@ -357,7 +357,8 @@
     "discard_confirm": "変更を破棄",
     "identity": "ID",
     "llm_trace": "LLM トレース",
-    "inbound": "受信会話"
+    "inbound": "受信会話",
+    "dsh_home": "DSH Home"
   },
   "create_dialog": {
     "title_create": "エージェントを作成",
@@ -1316,6 +1317,23 @@
       "flag_bootstrap": "ウォームアップ",
       "flag_ui": "リスト表示",
       "ui_off": "「リスト表示」をオンにすると、各1対1とグループの記憶がここに出ます。"
+    },
+    "dsh_home": {
+      "intro": "各エージェントには、ファイル、設定、セッションを保存する独立した Home があります。最初の作業を開始する前にストレージを準備してください。",
+      "loading": "Home を確認中...",
+      "unavailable": "Home の状態を確認できません。更新してください。",
+      "ready": "ストレージの準備ができました",
+      "pending": "ストレージを準備中です。続行して既存のリクエストを確認し、進めてください。",
+      "unprovisioned": "ストレージは未準備です",
+      "running": "ホストは実行中です。",
+      "retiring": "以前のホストを終了中です。ファイルは Home に保持されます。",
+      "starting": "ホストを起動中です。",
+      "offline": "作業が必要になったときにホストを起動します。",
+      "unconfirmed": "準備の結果を確認できませんでした。状態を再確認しています。進まない場合はワークスペース管理者に連絡してください。",
+      "preparing": "準備中...",
+      "continue": "準備を続行",
+      "prepare": "Home を準備",
+      "refresh": "状態を更新"
     }
   },
   "char_counter": {
