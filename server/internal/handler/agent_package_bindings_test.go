@@ -92,7 +92,7 @@ func TestPackageBindingVerifiedReuseAndDrift(t *testing.T) {
 	if err != nil || len(requirements.Secrets) != 0 || len(requirements.DeferredBindings) != 0 { t.Fatalf("verified inputs were not reused: %#v %v",requirements,err) }
 	source, err := f.handler.Queries.GetAgentSourceByAgentID(t.Context(),agent.ID); if err != nil { t.Fatal(err) }
 	tx, err := f.handler.TxStarter.Begin(t.Context()); if err != nil { t.Fatal(err) }; defer tx.Rollback(t.Context())
-	if err := (agentPackageService{handler:f.handler}).Import(t.Context(),tx,agent,source,preparedAgentSource{bundle:bundle},nil,nil,agent.OwnerID,false); err != nil { t.Fatal(err) }
+	if err := (agentPackageService{handler:f.handler}).Import(t.Context(),tx,agent,source,preparedAgentSource{bundle:bundle},nil,nil,nil,agent.OwnerID,false); err != nil { t.Fatal(err) }
 	if err := tx.Commit(t.Context()); err != nil { t.Fatal(err) }
 	updated, err := f.handler.Queries.GetAgent(t.Context(),agent.ID); if err != nil || !strings.Contains(string(updated.CustomEnv),"private-reuse-fixture") { t.Fatal("publication lost reused secret") }
 	connectionID = "different-connection"
@@ -121,7 +121,7 @@ func TestPackageEventTriggerRoundTripAndRollback(t *testing.T) {
 	parsed, err := agentsource.ParseAgentPackage(t.Context(),agentPackageFixture(t,conflict)); if err != nil { t.Fatal(err) }
 	bundle, err := parsed.Bundle(); if err != nil { t.Fatal(err) }
 	tx, err := f.handler.TxStarter.Begin(t.Context()); if err != nil { t.Fatal(err) }
-	if err := (agentPackageService{handler:f.handler}).Import(t.Context(),tx,agent,source,preparedAgentSource{bundle:bundle},nil,nil,agent.OwnerID,false); err != nil { _ = tx.Rollback(t.Context()); t.Fatal(err) }
+	if err := (agentPackageService{handler:f.handler}).Import(t.Context(),tx,agent,source,preparedAgentSource{bundle:bundle},nil,nil,nil,agent.OwnerID,false); err != nil { _ = tx.Rollback(t.Context()); t.Fatal(err) }
 	q := f.handler.Queries.WithTx(tx)
 	enabled, err := q.GetAgentPackageEventTriggerEnabled(t.Context(),db.GetAgentPackageEventTriggerEnabledParams{AgentID:agent.ID,WorkspaceID:agent.WorkspaceID}); if err != nil || enabled { t.Fatal("explicit inbound disable did not win") }
 	if err := tx.Rollback(t.Context()); err != nil { t.Fatal(err) }

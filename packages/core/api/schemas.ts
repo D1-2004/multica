@@ -3041,14 +3041,20 @@ const NullableStringArraySchema = z
   .transform((value) => value ?? []);
 
 export const AgentPackageRequirementsSchema = z.object({
+  dsh_plugins: z.array(z.object({
+    ref: z.string().min(1), package_name: z.string().optional(), version: z.string().optional(), integrity: z.string().optional(),
+  })).default([]),
   secrets: NullableStringArraySchema,
   deferred_bindings: NullableStringArraySchema,
-  runtime_provider: z.string().default(""),
   binding_declarations: z.array(z.object({
     path: z.string().min(1),
     declaration: z.unknown().refine((value) => value !== undefined, "required"),
   })).optional(),
-});
+  runtime_provider: z.string().default(""),
+}).transform(({ dsh_plugins, ...requirements }) => ({
+  ...requirements,
+  dshPlugins: dsh_plugins.map((plugin) => ({ ref: plugin.ref, packageName: plugin.package_name ?? "", version: plugin.version ?? "", integrity: plugin.integrity ?? "" })),
+}));
 
 export const AgentPackagePreviewSchema = z.object({
   definition: z.record(z.string(), z.unknown()).optional(),

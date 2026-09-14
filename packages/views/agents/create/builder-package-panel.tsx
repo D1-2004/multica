@@ -33,17 +33,18 @@ export function BuilderPackagePanel({ content, onChange, runtimeId, runtimeProvi
   const prepare = usePrepareAgentPackage(workspaceId);
   const create = useCreateAgentPackage(workspaceId, squadId);
   const download = useDownloadPreparedAgentPackage(workspaceId);
+  const [pluginBindings, setPluginBindings] = useState<Record<string,string>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [deferBindings, setDeferBindings] = useState(false);
   const preview = prepare.variables === content ? prepare.data : undefined;
   const busy = pending || prepare.isPending || create.isPending || create.isSuccess || download.isPending;
   const requirements = preview?.requirements;
   const compatible = !requirements?.runtime_provider || requirements.runtime_provider === runtimeProvider;
-  const ready = !!preview?.preview_id && !!runtimeId && compatible && !busy && (requirements?.secrets ?? []).every((ref) => Object.hasOwn(secrets, ref)) && (!requirements?.deferred_bindings.length || deferBindings);
+  const ready = (requirements?.dshPlugins ?? []).every((plugin) => !!pluginBindings[plugin.ref]) && !!preview?.preview_id && !!runtimeId && compatible && !busy && (requirements?.secrets ?? []).every((ref) => Object.hasOwn(secrets, ref)) && (!requirements?.deferred_bindings.length || deferBindings);
   const confirm = async () => {
     if (!ready || !preview || !runtimeId) return;
     try {
-      const result = await create.mutateAsync({ preview_id: preview.preview_id, runtime_id: runtimeId, secrets, deferred_bindings: deferBindings ? requirements?.deferred_bindings : [] });
+      const result = await create.mutateAsync({ preview_id: preview.preview_id, dsh_plugin_bindings: pluginBindings, runtime_id: runtimeId, secrets, deferred_bindings: deferBindings ? requirements?.deferred_bindings : [] });
       result.warnings?.forEach((warning) => toast.warning(warning));
       // Creation has committed; conversation cleanup must not make it retryable.
       try { await onCreated(); } catch { /* The created Agent remains authoritative. */ }
@@ -68,7 +69,7 @@ export function BuilderPackagePanel({ content, onChange, runtimeId, runtimeProvi
         <Label htmlFor="builder-package">{t(($) => $.creation_studio.package.contents)}</Label>
         <Textarea id="builder-package" value={content} className="min-h-64 font-mono text-caption" disabled={busy} onChange={(event) => { onChange(event.target.value); prepare.reset(); create.reset(); download.reset(); }} />
       </div>
-      <Button variant="outline" disabled={!content.trim() || busy} onClick={() => { setSecrets({}); setDeferBindings(false); create.reset(); download.reset(); void prepare.mutateAsync(content).catch(() => {}); }}>
+      <Button variant="outline" disabled={!content.trim() || busy} onClick={() => { setSecrets({}); setPluginBindings({}); setDeferBindings(false); create.reset(); download.reset(); void prepare.mutateAsync(content).catch(() => {}); }}>
         {t(($) => $.creation_studio.package.validate)}
       </Button>
       <PackageError error={prepare.error ?? create.error ?? download.error} />
@@ -80,7 +81,7 @@ export function BuilderPackagePanel({ content, onChange, runtimeId, runtimeProvi
         {preview.skills?.map((skill) => <p key={skill.source_path} className="break-words text-caption">{skill.source_path} · {skill.name} · {skill.file_count}</p>)}
         {preview.warnings?.map((warning) => <p key={warning} className="text-caption text-muted-foreground">{warning}</p>)}
         {!compatible && <p role="alert" className="text-caption text-destructive">{t(($) => $.creation_studio.local.runtime_required, { provider: requirements?.runtime_provider })}</p>}
-        <PackageRequirementsForm requirements={requirements} secrets={secrets} onSecretsChange={setSecrets} deferBindings={deferBindings} onDeferChange={setDeferBindings} disabled={busy} />
+        <PackageRequirementsForm workspaceId={workspaceId} pluginBindings={pluginBindings} onPluginBindingsChange={setPluginBindings} requirements={requirements} secrets={secrets} onSecretsChange={setSecrets} deferBindings={deferBindings} onDeferChange={setDeferBindings} disabled={busy} />
         <Button variant="outline" disabled={busy} onClick={() => void downloadZIP()}>{t(($) => $.creation_studio.package.download)}</Button>
       </div>}
     </div>

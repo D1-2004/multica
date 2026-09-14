@@ -10,6 +10,8 @@ export function usePreviewAgentPackage(workspaceId: string) {
 export function useCreateAgentPackage(workspaceId: string, squadId: string | null) {
   const client = useQueryClient();
   return useMutation({
+    gcTime: 0,
+    retry: false,
     mutationFn: async (request: CreateAgentPackageRequest) => {
       const result = await api.createAgentFromPackage(workspaceId, request);
       if (squadId) {

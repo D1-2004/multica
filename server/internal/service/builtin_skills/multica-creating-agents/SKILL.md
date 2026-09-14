@@ -406,11 +406,20 @@ After the user reviews the instructions, configuration and skill files, both
 creation methods confirm through `POST /api/workspaces/{id}/agent-packages` with
 `preview_id`, the destination `runtime_id`, and optional `name` / `description`.
 Supply `secrets` by alias through the import form; never put real values in a chat.
-`requirements.deferred_bindings` lists external identity, bot, runner, plugin or
+`requirements.deferred_bindings` lists external identity, bot, runner or
 non-portable access choices that need separate destination setup. The user must
 explicitly acknowledge these in `deferred_bindings`; they are never silently
 copied by UUID. Deferred member-based access creates a private Agent. Runtime
 requirements and disabled runtime skills are checked against the chosen runtime.
+For DSH plugins, `requirements.dsh_plugins` lists recipe refs and pinned package
+identity. Supply `dsh_plugin_bindings: {"<recipe-ref>":"<destination-plugin-uuid>"}`
+and bind all declared secrets again. Select an existing destination package with
+exactly the same name, version and integrity; a missing binding fails with 422,
+artifact drift with 409. Plugin configuration imports require a human actor and
+a cloud DSH runtime. Export includes the effective employee configuration with
+private values replaced by aliases. Import creates private overrides and never
+copies destination workspace credentials. An explicit empty list clears plugins;
+an omitted list leaves them unmanaged.
 The Agent, configuration, OKRs, A2A policies, exclusive workspace skills and files
 are written in one transaction. Duplicate confirmation returns the same Agent.
 Package OKRs retain authored text separately and allocate independent labels per Agent.

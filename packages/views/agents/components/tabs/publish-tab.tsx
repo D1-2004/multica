@@ -31,12 +31,13 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
   const syncMutation = useSyncAgentSource(workspaceId, source.agent_id);
   const preview = rollbackMutation.data ?? previewMutation.data;
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [pluginBindings, setPluginBindings] = useState<Record<string,string>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [deferBindings, setDeferBindings] = useState(false);
-  const requirementsReady = (preview?.requirements?.secrets ?? []).every((ref) => Object.hasOwn(secrets, ref)) && (!preview?.requirements?.deferred_bindings.length || deferBindings);
+  const requirementsReady = (preview?.requirements?.dshPlugins ?? []).every((plugin) => !!pluginBindings[plugin.ref]) && (preview?.requirements?.secrets ?? []).every((ref) => Object.hasOwn(secrets, ref)) && (!preview?.requirements?.deferred_bindings.length || deferBindings);
   const pending = previewMutation.isPending || rollbackMutation.isPending || syncMutation.isPending;
 
-  const resetPreview = () => { previewMutation.reset(); rollbackMutation.reset(); syncMutation.reset(); setSecrets({}); setDeferBindings(false); setPreviewOpen(false); };
+  const resetPreview = () => { previewMutation.reset(); rollbackMutation.reset(); syncMutation.reset(); setSecrets({}); setPluginBindings({}); setDeferBindings(false); setPreviewOpen(false); };
   const handleRestore = async (publicationId: string) => {
     if (pending || !canSync) return;
     resetPreview();
@@ -54,8 +55,8 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
   const handleConfirm = async () => {
     if (!preview?.preview_id || pending || !canSync || !requirementsReady) return;
     try {
-      const result = await syncMutation.mutateAsync({ previewId: preview.preview_id, secrets, deferredBindings: deferBindings ? preview.requirements?.deferred_bindings : [] });
-      setSecrets({});
+      const result = await syncMutation.mutateAsync({ previewId: preview.preview_id, secrets, dshPluginBindings: pluginBindings, deferredBindings: deferBindings ? preview.requirements?.deferred_bindings : [] });
+      setSecrets({}); setPluginBindings({});
       toast.success(t(($) => $.detail.source_sync_succeeded));
       result.warnings?.forEach((warning) => toast.warning(warning));
       previewMutation.reset();
@@ -97,7 +98,7 @@ function GitPublishTab({ source, canEdit }: { source: AgentSource; canEdit: bool
         <div className="space-y-4">
           <p className="break-all font-mono text-caption">{preview.base_sha.slice(0, 12)} → {preview.resolved_sha.slice(0, 12)} · {preview.ref}</p>
           {preview.warnings?.map((warning) => <p key={warning} className="text-caption text-muted-foreground">{warning}</p>)}
-          <PackageRequirementsForm requirements={preview.requirements} secrets={secrets} onSecretsChange={setSecrets} deferBindings={deferBindings} onDeferChange={setDeferBindings} disabled={pending} />
+          <PackageRequirementsForm workspaceId={workspaceId} pluginBindings={pluginBindings} onPluginBindingsChange={setPluginBindings} requirements={preview.requirements} secrets={secrets} onSecretsChange={setSecrets} deferBindings={deferBindings} onDeferChange={setDeferBindings} disabled={pending} />
           <SourceChangesDialog key={preview.preview_id} open={previewOpen} onOpenChange={setPreviewOpen} groups={[
             { id: "configuration", title: t(($) => $.tab_body.publish.configuration_changes), changes: preview.configuration_changes ?? [] },
             { id: "git", title: t(($) => $.tab_body.publish.git_changes), changes: preview.git_changes ?? [] },

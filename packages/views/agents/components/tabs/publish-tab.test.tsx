@@ -103,7 +103,7 @@ describe("Git source import and export tab", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: "Confirm publication" }));
-    await waitFor(() => expect(mocked.confirm).toHaveBeenCalledWith("agent-1", "preview-1", { secrets: {}, deferred_bindings: [] }));
+    await waitFor(() => expect(mocked.confirm).toHaveBeenCalledWith("agent-1", "preview-1", { secrets: {}, deferred_bindings: [], dsh_plugin_bindings: {} }));
   });
 
   it("invalidates a preview when the selected branch changes", async () => {

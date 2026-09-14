@@ -429,6 +429,80 @@ func (q *Queries) GetDshPluginInWorkspace(ctx context.Context, arg GetDshPluginI
 	return i, err
 }
 
+const getDshPluginInWorkspaceForShare = `-- name: GetDshPluginInWorkspaceForShare :one
+SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size FROM dsh_plugin WHERE id = $1 AND workspace_id = $2 FOR SHARE
+`
+
+type GetDshPluginInWorkspaceForShareParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetDshPluginInWorkspaceForShare(ctx context.Context, arg GetDshPluginInWorkspaceForShareParams) (DshPlugin, error) {
+	row := q.db.QueryRow(ctx, getDshPluginInWorkspaceForShare, arg.ID, arg.WorkspaceID)
+	var i DshPlugin
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.PackageName,
+		&i.DisplayName,
+		&i.Description,
+		&i.Homepage,
+		&i.SourceKind,
+		&i.SourceSpec,
+		&i.ResolvedVersion,
+		&i.Integrity,
+		&i.BundleRows,
+		&i.ConfigRow,
+		&i.Config,
+		&i.Catalog,
+		&i.ValidatedDshVersion,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArtifactKey,
+		&i.ArtifactSize,
+	)
+	return i, err
+}
+
+const getDshPluginInWorkspaceForUpdate = `-- name: GetDshPluginInWorkspaceForUpdate :one
+SELECT id, workspace_id, package_name, display_name, description, homepage, source_kind, source_spec, resolved_version, integrity, bundle_rows, config_row, config, catalog, validated_dsh_version, created_by, created_at, updated_at, artifact_key, artifact_size FROM dsh_plugin WHERE id = $1 AND workspace_id = $2 FOR UPDATE
+`
+
+type GetDshPluginInWorkspaceForUpdateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetDshPluginInWorkspaceForUpdate(ctx context.Context, arg GetDshPluginInWorkspaceForUpdateParams) (DshPlugin, error) {
+	row := q.db.QueryRow(ctx, getDshPluginInWorkspaceForUpdate, arg.ID, arg.WorkspaceID)
+	var i DshPlugin
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.PackageName,
+		&i.DisplayName,
+		&i.Description,
+		&i.Homepage,
+		&i.SourceKind,
+		&i.SourceSpec,
+		&i.ResolvedVersion,
+		&i.Integrity,
+		&i.BundleRows,
+		&i.ConfigRow,
+		&i.Config,
+		&i.Catalog,
+		&i.ValidatedDshVersion,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ArtifactKey,
+		&i.ArtifactSize,
+	)
+	return i, err
+}
+
 const listDshPluginArtifactKeysByWorkspace = `-- name: ListDshPluginArtifactKeysByWorkspace :many
 SELECT artifact_key FROM dsh_plugin
 WHERE workspace_id = $1 AND artifact_key <> ''
@@ -658,6 +732,15 @@ func (q *Queries) ListDshPluginsForAgent(ctx context.Context, arg ListDshPlugins
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockAgentDshPlugins = `-- name: LockAgentDshPlugins :exec
+SELECT pg_advisory_xact_lock(hashtextextended('agent_dsh_plugin:' || $1::text, 0))
+`
+
+func (q *Queries) LockAgentDshPlugins(ctx context.Context, agentID string) error {
+	_, err := q.db.Exec(ctx, lockAgentDshPlugins, agentID)
+	return err
 }
 
 const removeAgentDshPlugin = `-- name: RemoveAgentDshPlugin :execrows

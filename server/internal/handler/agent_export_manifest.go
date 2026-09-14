@@ -17,10 +17,10 @@ import (
 )
 
 type agentExportNotes struct {
-	SecretAliases map[string]string `json:"-"`
-	Resources []map[string]string `json:"resources"`
-	Secrets   []map[string]string `json:"secrets"`
-	Notes     []string            `json:"notes"`
+	SecretAliases map[string]string   `json:"-"`
+	Resources     []map[string]string `json:"resources"`
+	Secrets       []map[string]string `json:"secrets"`
+	Notes         []string            `json:"notes"`
 }
 
 func (n *agentExportNotes) resource(kind, id, label string) map[string]any {
@@ -38,7 +38,9 @@ func (n *agentExportNotes) resource(kind, id, label string) map[string]any {
 func (n *agentExportNotes) secret(path string) map[string]any {
 	digest := sha256.Sum256([]byte(path))
 	ref := n.SecretAliases[path]
-	if ref == "" { ref = fmt.Sprintf("secret-%x", digest[:8]) }
+	if ref == "" {
+		ref = fmt.Sprintf("secret-%x", digest[:8])
+	}
 	n.Secrets = append(n.Secrets, map[string]string{"ref": ref, "path": path})
 	return map[string]any{"secret_ref": ref}
 }
@@ -162,8 +164,10 @@ func exportPackageConfiguration(ctx context.Context, q *db.Queries, agent db.Age
 		return nil, err
 	}
 	config["chat_session_resume"] = resume
-	events, err := q.GetAgentPackageEventTriggerEnabled(ctx,db.GetAgentPackageEventTriggerEnabledParams{AgentID:agent.ID,WorkspaceID:agent.WorkspaceID})
-	if err != nil { return nil,err }
+	events, err := q.GetAgentPackageEventTriggerEnabled(ctx, db.GetAgentPackageEventTriggerEnabledParams{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID})
+	if err != nil {
+		return nil, err
+	}
 	config["event_trigger_enabled"] = events
 	loop, err := q.GetAgentTaskFinishedLoop(ctx, agent.ID)
 	if err != nil {
@@ -212,7 +216,9 @@ func exportPackageBindings(ctx context.Context, q *db.Queries, agent db.Agent, n
 	account, err := q.GetDingTalkAccountBindingByAgent(ctx, db.GetDingTalkAccountBindingByAgentParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
 	if err == nil {
 		var config agentmessagerouter.DingTalkAccountConfig
-		if err := json.Unmarshal(account.Config,&config); err != nil { return nil, errors.New("invalid stored DingTalk account configuration") }
+		if err := json.Unmarshal(account.Config, &config); err != nil {
+			return nil, errors.New("invalid stored DingTalk account configuration")
+		}
 		bindings["dingtalk_account"] = notes.resource("dingtalk-account", uuidToString(account.ID)+":"+config.RouterTenantID+":"+config.RouterAccountID, "DingTalk account")
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
@@ -265,8 +271,10 @@ func exportPackagePlugins(ctx context.Context, q *db.Queries, agent db.Agent, no
 	}
 	pluginRefs := []map[string]any{}
 	for _, plugin := range plugins {
-		ref := notes.resource("dsh-plugin", uuidToString(plugin.ID), plugin.PackageName)
-		ref["enabled"] = plugin.Enabled
+		ref, err := exportPackageDshPlugin(notes, plugin)
+		if err != nil {
+			return nil, err
+		}
 		pluginRefs = append(pluginRefs, ref)
 	}
 	return pluginRefs, nil
@@ -282,9 +290,12 @@ func exportPackageOKRs(ctx context.Context, q *db.Queries, agent db.Agent, notes
 	for _, row := range okrRows {
 		if row.Kind == "objective" {
 			objectives[uuidToString(row.ID)] = len(okrs)
-			okrs = append(okrs, map[string]any{"objective":agentOKRText(row), "key_results":[]string{}})
+			okrs = append(okrs, map[string]any{"objective": agentOKRText(row), "key_results": []string{}})
 		} else if row.Kind == "key_result" {
-			index, ok := objectives[uuidToString(row.ParentID)]; if !ok { return nil, errors.New("invalid stored OKR parent") }
+			index, ok := objectives[uuidToString(row.ParentID)]
+			if !ok {
+				return nil, errors.New("invalid stored OKR parent")
+			}
 			okrs[index]["key_results"] = append(okrs[index]["key_results"].([]string), agentOKRText(row))
 		}
 	}

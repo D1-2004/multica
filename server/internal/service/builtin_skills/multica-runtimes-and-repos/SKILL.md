@@ -202,6 +202,18 @@ an empty config selects package bundle defaults. Overrides replace the chosen ro
 wholesale, never merge another employee's identity. Stale writes return 409, including
 a detach/re-attach cycle. Replacing the attached set preserves retained overrides.
 The normal plugin list contains no employee overrides. These revisions describe
-persisted configuration, not a Host/Profile application receipt. Current recipe
-export/import still defers plugin bindings and does not preserve private overrides;
-full plugin recipe rebinding and live Profile application remain acceptance gates.
+persisted configuration, not a Host/Profile application receipt.
+
+Recipe export snapshots the effective employee configuration, package name, exact
+version, integrity, selected row and enabled state. Private values become
+`secret_ref` aliases. Preview lists `requirements.dsh_plugins`; confirm with
+`dsh_plugin_bindings` mapping each recipe ref to an already imported destination
+plugin UUID, plus new `secrets`. Name, version and integrity must match exactly;
+missing mappings return 422 and artifact drift returns 409. No code is installed
+from the recipe and no destination workspace credentials are inherited. Legacy
+ref-only recipes require explicit mapping and use private package defaults.
+Import and sync of plugin configuration require a human actor. Explicit empty
+plugin lists clear bindings, while omitted lists preserve them. Sync rejects a
+preview if employee plugin configuration changed since it was prepared. All
+bindings and configuration are applied in the source transaction. Actual plugin
+execution and Host/Profile application remain separate acceptance gates.

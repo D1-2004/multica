@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"mime"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -78,7 +78,10 @@ func (h *Handler) listGitHubAgentBranches(w http.ResponseWriter, r *http.Request
 		return
 	}
 	tags, err := h.GitHubApp.ListTags(r.Context(), resolved.installation.InstallationID, ownerFromFullName(resolved.repository.FullName), repoFromFullName(resolved.repository.FullName))
-	if err != nil { writeGitHubSourceError(w, err); return }
+	if err != nil {
+		writeGitHubSourceError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"repository": resolved.repository.FullName, "repository_url": "https://github.com/" + resolved.repository.FullName,
 		"default_branch": resolved.repository.DefaultBranch, "branches": branches, "tags": tags,
@@ -87,19 +90,38 @@ func (h *Handler) listGitHubAgentBranches(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) loadPackageSourceForManage(w http.ResponseWriter, r *http.Request) (db.Agent, db.AgentSource, bool) {
 	agent, ok := h.loadAgentForUser(w, r, chi.URLParam(r, "id"))
-	if !ok || !h.canManageAgent(w, r, agent) { return db.Agent{}, db.AgentSource{}, false }
-	if agent.Kind != "user" || agent.ArchivedAt.Valid { writeError(w, http.StatusConflict, "only active user Agents accept package publication"); return db.Agent{}, db.AgentSource{}, false }
+	if !ok || !h.canManageAgent(w, r, agent) {
+		return db.Agent{}, db.AgentSource{}, false
+	}
+	if agent.Kind != "user" || agent.ArchivedAt.Valid {
+		writeError(w, http.StatusConflict, "only active user Agents accept package publication")
+		return db.Agent{}, db.AgentSource{}, false
+	}
 	source, err := h.Queries.GetAgentSourceByAgentID(r.Context(), agent.ID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) { writeError(w, http.StatusInternalServerError, "failed to read Agent source"); return db.Agent{}, db.AgentSource{}, false }
-	if source.ManagedSourceKey.Valid { writeError(w, http.StatusConflict, "this Agent source is updated automatically by Multica"); return db.Agent{}, db.AgentSource{}, false }
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to read Agent source")
+		return db.Agent{}, db.AgentSource{}, false
+	}
+	if source.ManagedSourceKey.Valid {
+		writeError(w, http.StatusConflict, "this Agent source is updated automatically by Multica")
+		return db.Agent{}, db.AgentSource{}, false
+	}
 	return agent, source, true
 }
 
 func (h *Handler) loadGitHubSourceForManage(w http.ResponseWriter, r *http.Request) (db.Agent, db.AgentSource, bool) {
 	agent, source, ok := h.loadPackageSourceForManage(w, r)
-	if !ok { return agent, source, false }
-	if !source.ID.Valid { writeError(w, http.StatusNotFound, "agent source not found"); return agent, source, false }
-	if !source.GithubInstallationID.Valid { writeError(w, http.StatusConflict, "GitHub installation is disconnected"); return agent, source, false }
+	if !ok {
+		return agent, source, false
+	}
+	if !source.ID.Valid {
+		writeError(w, http.StatusNotFound, "agent source not found")
+		return agent, source, false
+	}
+	if !source.GithubInstallationID.Valid {
+		writeError(w, http.StatusConflict, "GitHub installation is disconnected")
+		return agent, source, false
+	}
 	return agent, source, true
 }
 
@@ -108,7 +130,7 @@ func (h *Handler) saveAgentSourcePreview(r *http.Request, workspaceID pgtype.UUI
 	if err != nil {
 		return db.AgentSourcePreview{}, err
 	}
-	snapshot, err := marshalAgentPublicationSnapshot(agentPublicationSnapshot{RepositorySnapshot:resolved.snapshot, RollbackOf:resolved.rollbackOf, PublishedDefinition:resolved.publicationDefinition})
+	snapshot, err := marshalAgentPublicationSnapshot(agentPublicationSnapshot{RepositorySnapshot: resolved.snapshot, RollbackOf: resolved.rollbackOf, PublishedDefinition: resolved.publicationDefinition})
 	if err != nil {
 		return db.AgentSourcePreview{}, err
 	}
@@ -146,13 +168,19 @@ func (h *Handler) readAgentSourcePreview(r *http.Request, workspaceID pgtype.UUI
 
 func (h *Handler) resolveAgentSourcePreview(ctx context.Context, preview db.AgentSourcePreview) (preparedAgentSource, error) {
 	var saved agentPublicationSnapshot
-	if err := json.Unmarshal(preview.Snapshot, &saved); err != nil { return preparedAgentSource{}, err }
+	if err := json.Unmarshal(preview.Snapshot, &saved); err != nil {
+		return preparedAgentSource{}, err
+	}
 	bundle := saved.Definition
-	if saved.RollbackOf != "" && saved.PublishedDefinition != nil { bundle = *saved.PublishedDefinition }
-	if err := agentsource.ValidateBundle(bundle); err != nil { return preparedAgentSource{}, err }
+	if saved.RollbackOf != "" && saved.PublishedDefinition != nil {
+		bundle = *saved.PublishedDefinition
+	}
+	if err := agentsource.ValidateBundle(bundle); err != nil {
+		return preparedAgentSource{}, err
+	}
 	// Local previews have no external permission to recheck.
 	if !preview.GithubInstallationID.Valid {
-		return preparedAgentSource{snapshot:saved.RepositorySnapshot, bundle:bundle, sha:preview.ResolvedSha, rollbackOf:saved.RollbackOf, publicationDefinition:saved.PublishedDefinition}, nil
+		return preparedAgentSource{snapshot: saved.RepositorySnapshot, bundle: bundle, sha: preview.ResolvedSha, rollbackOf: saved.RollbackOf, publicationDefinition: saved.PublishedDefinition}, nil
 	}
 	// Recheck current Git permission, but never resolve the branch a second time.
 	resolved, err := h.resolveGitHubAgentRepository(ctx, preview.WorkspaceID, GitHubAgentSourceInput{
@@ -182,13 +210,15 @@ func lockSourcePreview(ctx context.Context, queries *db.Queries, preview db.Agen
 
 func markSourcePreviewApplied(ctx context.Context, queries *db.Queries, preview db.AgentSourcePreview, source db.AgentSource, changed bool) error {
 	snapshot, err := captureAgentPublication(ctx, queries, preview, source)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	response, err := json.Marshal(agentSourceToResponse(source))
 	if err != nil {
 		return err
 	}
 	_, err = queries.MarkAgentSourcePreviewApplied(ctx, db.MarkAgentSourcePreviewAppliedParams{
-		ID: preview.ID, AgentID: source.AgentID, AppliedSource: response, AppliedChanged: changed, Snapshot:snapshot,
+		ID: preview.ID, AgentID: source.AgentID, AppliedSource: response, AppliedChanged: changed, Snapshot: snapshot,
 	})
 	return err
 }
@@ -254,8 +284,21 @@ func sourceDefinitionFiles(bundle agentsource.Bundle) map[string]string {
 // sourceStateFiles must run in a transaction. All writers to supporting files
 // lock their parent skill, allowing preview/confirmation to read one state.
 func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, source db.AgentSource, desired agentsource.Bundle) (map[string]string, string, error) {
-	targets, err := resolvePackageSkillTargets(ctx,queries,agent,source,desired,false)
-	if err != nil { return nil,"",err }
+	if err := queries.LockAgentDshPlugins(ctx, uuidToString(agent.ID)); err != nil {
+		return nil, "", err
+	}
+	pluginRows, err := queries.ListDshPluginsForAgent(ctx, db.ListDshPluginsForAgentParams{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID})
+	if err != nil {
+		return nil, "", err
+	}
+	privatePlugins, err := json.Marshal(pluginRows)
+	if err != nil {
+		return nil, "", err
+	}
+	targets, err := resolvePackageSkillTargets(ctx, queries, agent, source, desired, false)
+	if err != nil {
+		return nil, "", err
+	}
 	skills, err := queries.LockSourceSkills(ctx, source.ID)
 	if err != nil {
 		return nil, "", err
@@ -282,10 +325,14 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 	}
 	files := map[string]string{"instructions": agent.Instructions}
 	for _, target := range targets {
-		if !target.Skill.ID.Valid { continue }
+		if !target.Skill.ID.Valid {
+			continue
+		}
 		paths[target.Skill.ID] = target.Definition.SourcePath
 		enabled[target.Skill.ID] = target.Enabled
-		if !target.Managed { skills = append(skills,target.Skill) }
+		if !target.Managed {
+			skills = append(skills, target.Skill)
+		}
 	}
 	if contract := sourceContractStateValue(agent.CoordinatorContract); contract != "null" {
 		files["coordinator_contract"] = contract
@@ -293,7 +340,9 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 	for _, skill := range skills {
 		prefix := "skills/" + paths[skill.ID] + "/"
 		name := skill.Name
-		if managedIDs[skill.ID] { name = strings.TrimSuffix(name, sourceManagedSkillName("", source.ID)) }
+		if managedIDs[skill.ID] {
+			name = strings.TrimSuffix(name, sourceManagedSkillName("", source.ID))
+		}
 		files[prefix+"name"] = name
 		files[prefix+"description"] = skill.Description
 		files[prefix+"SKILL.md"] = skill.Content
@@ -329,22 +378,24 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		}
 	}
 	appendPackageStateFiles(files, manifest)
-	bindingState, err := readPackageBindingState(ctx,queries,agent)
-	if err != nil { return nil,"",err }
+	bindingState, err := readPackageBindingState(ctx, queries, agent)
+	if err != nil {
+		return nil, "", err
+	}
 	state := struct {
 		ReferencedSkills []packageSkillTarget
-		PackageBindings packageBindingState
-		PrivateConfig  [][]byte
-		Files          map[string]string
-		SourceID       pgtype.UUID
-		InstallationID pgtype.UUID
-		Repository     string
-		Ref            string
-		SHA            string
-		RuntimeID      pgtype.UUID
-		OwnerID        pgtype.UUID
-		Mappings       []db.AgentSourceSkill
-	}{targets, bindingState, [][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
+		PackageBindings  packageBindingState
+		PrivateConfig    [][]byte
+		Files            map[string]string
+		SourceID         pgtype.UUID
+		InstallationID   pgtype.UUID
+		Repository       string
+		Ref              string
+		SHA              string
+		RuntimeID        pgtype.UUID
+		OwnerID          pgtype.UUID
+		Mappings         []db.AgentSourceSkill
+	}{targets, bindingState, [][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig, privatePlugins}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return nil, "", err
@@ -355,16 +406,19 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 
 func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request) {
 	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if mediaType == "application/zip" || mediaType == "multipart/form-data" { h.previewAgentPackagePublication(w, r); return }
+	if mediaType == "application/zip" || mediaType == "multipart/form-data" {
+		h.previewAgentPackagePublication(w, r)
+		return
+	}
 	agent, source, ok := h.loadGitHubSourceForManage(w, r)
 	if !ok {
 		return
 	}
 	var request struct {
-		Ref string `json:"ref"`
+		Ref           string `json:"ref"`
 		PublicationID string `json:"publication_id"`
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 1 << 20)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
@@ -372,8 +426,11 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if request.PublicationID != "" {
-		if request.Ref != "" { writeError(w,http.StatusBadRequest,"select either ref or publication_id"); return }
-		h.previewAgentPublicationRollback(w,r,agent,source,request.PublicationID)
+		if request.Ref != "" {
+			writeError(w, http.StatusBadRequest, "select either ref or publication_id")
+			return
+		}
+		h.previewAgentPublicationRollback(w, r, agent, source, request.PublicationID)
 		return
 	}
 	if request.Ref == "" {
@@ -410,7 +467,7 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 	}
 	current, stateHash, err := sourceStateFiles(r.Context(), queries, lockedAgent, lockedSource, resolved.bundle)
 	if err != nil {
-		writeAgentSourceDatabaseError(w,err)
+		writeAgentSourceDatabaseError(w, err)
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -423,8 +480,11 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	changes := diffPackageState(current, sourceDefinitionFiles(resolved.bundle))
-	requirements, err := h.packageRequirementsForAgent(r.Context(),h.Queries,agent,requestUserID(r),resolved.bundle)
-	if err != nil { writeAgentSourceDatabaseError(w,err); return }
+	requirements, err := h.packageRequirementsForAgent(r.Context(), h.Queries, agent, requestUserID(r), resolved.bundle)
+	if err != nil {
+		writeAgentSourceDatabaseError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, AgentSourceSyncPreviewResponse{
 		Requirements: requirements, PreviewID: uuidToString(preview.ID), ExpiresAt: timestampToString(preview.ExpiresAt), RepositoryURL: "https://github.com/" + resolved.repository.FullName,
 		Ref: resolved.ref, BaseSHA: source.SyncedCommitSha, ResolvedSHA: resolved.sha,
@@ -447,7 +507,7 @@ func (h *Handler) publishedSourceSnapshot(ctx context.Context, agent db.Agent, s
 	}
 	// Sources created before previews existed have no stored Git baseline yet.
 	return agentsource.ReadAgentRepository(ctx, h.GitHubApp, agentsource.Source{
-		InstallationID:installationID, Owner:source.RepoOwner, Repository:source.RepoName, CommitSHA:source.SyncedCommitSha,
+		InstallationID: installationID, Owner: source.RepoOwner, Repository: source.RepoName, CommitSHA: source.SyncedCommitSha,
 	})
 }
 
@@ -499,7 +559,7 @@ func packageDiffSnapshot(snapshot agentsource.RepositorySnapshot) agentsource.Re
 		if err := json.Unmarshal([]byte(manifest), &original); err != nil {
 			delete(files, agentsource.PortableManifestPath)
 		} else {
-			encoded, _ := json.MarshalIndent(packageDefinitionPreview(agentsource.Bundle{Definition:original}), "", "  ")
+			encoded, _ := json.MarshalIndent(packageDefinitionPreview(agentsource.Bundle{Definition: original}), "", "  ")
 			files[agentsource.PortableManifestPath] = string(encoded)
 		}
 	}

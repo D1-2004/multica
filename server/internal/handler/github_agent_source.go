@@ -76,8 +76,9 @@ type GitHubAgentSkillPreview struct {
 }
 
 type CreateGitHubAgentRequest struct {
-	Secrets          map[string]string `json:"secrets"`
-	DeferredBindings []string          `json:"deferred_bindings"`
+	DshPluginBindings map[string]string `json:"dsh_plugin_bindings"`
+	Secrets           map[string]string `json:"secrets"`
+	DeferredBindings  []string          `json:"deferred_bindings"`
 	CreateAgentRequest
 	PreviewID      string `json:"preview_id"`
 	InstallationID string `json:"installation_id"`
@@ -111,13 +112,13 @@ type AgentSourceSyncResponse struct {
 }
 
 type preparedAgentSource struct {
-	installation db.GithubInstallation
-	repository   githubapp.Repository
-	ref          string
-	sha          string
-	bundle       agentsource.Bundle
-	snapshot     agentsource.RepositorySnapshot
-	rollbackOf   string
+	installation          db.GithubInstallation
+	repository            githubapp.Repository
+	ref                   string
+	sha                   string
+	bundle                agentsource.Bundle
+	snapshot              agentsource.RepositorySnapshot
+	rollbackOf            string
 	publicationDefinition *agentsource.Bundle
 }
 
@@ -258,7 +259,10 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 	var resolved preparedAgentSource
 	if request.PreviewID != "" {
 		preview, err = h.readAgentSourcePreview(r, wsUUID, request.PreviewID)
-		if err != nil { writeGitHubSourceError(w, err); return }
+		if err != nil {
+			writeGitHubSourceError(w, err)
+			return
+		}
 		if preview.AgentSourceID.Valid || preview.ExpectedStateHash != "" {
 			writeError(w, http.StatusBadRequest, "a sync preview cannot create an Agent")
 			return
@@ -295,8 +299,8 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		writeGitHubSourceError(w, err)
 		return
 	}
-	if definition.A2A != nil && r.Header.Get("X-Actor-Source") != "" {
-		writeError(w, http.StatusForbidden, "A2A policy import requires a human actor")
+	if err := validatePackageActor(resolved.bundle.Definition, r.Header.Get("X-Actor-Source")); err != nil {
+		writeGitHubSourceError(w, err)
 		return
 	}
 	agentName, agentDescription, err := gitAgentInstanceProfile(request, rawFields, resolved.bundle)
@@ -438,12 +442,12 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		// V2 creates only the instance shell here. All package-owned content is
 		// written once by the shared Import codecs inside this transaction.
 		createParams = db.CreateAgentParams{
-			WorkspaceID:wsUUID, OwnerID:ownerUUID, Name:agentName, Description:agentDescription,
-			RuntimeMode:runtime.RuntimeMode, RuntimeID:runtime.ID, RuntimeConfig:[]byte("{}"),
-			CustomEnv:[]byte("{}"), CustomArgs:[]byte("[]"), MaxConcurrentTasks:6,
-			Visibility:"private", PermissionMode:"private",
+			WorkspaceID: wsUUID, OwnerID: ownerUUID, Name: agentName, Description: agentDescription,
+			RuntimeMode: runtime.RuntimeMode, RuntimeID: runtime.ID, RuntimeConfig: []byte("{}"),
+			CustomEnv: []byte("{}"), CustomArgs: []byte("[]"), MaxConcurrentTasks: 6,
+			Visibility: "private", PermissionMode: "private",
 		}
-		permission = resolvedPermission{mode:"private"}
+		permission = resolvedPermission{mode: "private"}
 	}
 	created, err := materializeAgentBundleInTx(r.Context(), qtx, createParams, permission, manualSkills, func(created db.Agent) error {
 		var createErr error
@@ -459,7 +463,7 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		if createErr != nil {
 			return createErr
 		}
-		return (agentPackageService{handler:h}).Import(r.Context(), tx, created, source, resolved, request.Secrets, request.DeferredBindings, ownerUUID, true)
+		return (agentPackageService{handler: h}).Import(r.Context(), tx, created, source, resolved, request.Secrets, request.DeferredBindings, request.DshPluginBindings, ownerUUID, true)
 	})
 	if err != nil {
 		writeAgentSourceDatabaseError(w, err)
@@ -474,7 +478,9 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if h.EventTriggers != nil { h.EventTriggers.Notify() }
+	if h.EventTriggers != nil {
+		h.EventTriggers.Notify()
+	}
 	created, err = h.Queries.GetAgent(r.Context(), created.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to read created Agent")
@@ -707,11 +713,15 @@ func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgt
 	if err != nil {
 		return err
 	}
-	files, err := queries.ListSkillFiles(ctx,skillID)
-	if err != nil { return err }
+	files, err := queries.ListSkillFiles(ctx, skillID)
+	if err != nil {
+		return err
+	}
 	desired := compiled
-	desired.Name = sourceManagedSkillName(compiled.Name,agentSourceID)
-	if packageSkillContentMatches(existing,files,desired) && sourceContractStateValue(existing.Config) == sourceContractStateValue(config) { return nil }
+	desired.Name = sourceManagedSkillName(compiled.Name, agentSourceID)
+	if packageSkillContentMatches(existing, files, desired) && sourceContractStateValue(existing.Config) == sourceContractStateValue(config) {
+		return nil
+	}
 	if _, err := queries.UpdateSkill(ctx, db.UpdateSkillParams{
 		ID: skillID, Name: pgtype.Text{String: sourceManagedSkillName(compiled.Name, agentSourceID), Valid: true},
 		Description: pgtype.Text{String: sanitizeNullBytes(compiled.Description), Valid: true},
@@ -719,7 +729,7 @@ func updateSourceSkillInTx(ctx context.Context, queries *db.Queries, skillID pgt
 	}); err != nil {
 		return err
 	}
-	return reconcilePackageSkillFiles(ctx,queries,skillID,files,compiled.Files)
+	return reconcilePackageSkillFiles(ctx, queries, skillID, files, compiled.Files)
 }
 
 func sourceManagedSkillName(name string, agentSourceID pgtype.UUID) string {
@@ -852,7 +862,9 @@ func writeGitHubSourceError(w http.ResponseWriter, err error) {
 }
 
 func writeAgentSourceDatabaseError(w http.ResponseWriter, err error) {
-	if writeManifestSchemaError(w, err) { return }
+	if writeManifestSchemaError(w, err) {
+		return
+	}
 	var requestErr *gitSourceRequestError
 	if errors.As(err, &requestErr) {
 		writeError(w, requestErr.status, requestErr.message)

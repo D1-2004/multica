@@ -221,3 +221,12 @@ ORDER BY entry_count DESC, category ASC;
 -- collected before that runs.
 SELECT artifact_key FROM dsh_plugin
 WHERE workspace_id = $1 AND artifact_key <> '';
+
+-- name: LockAgentDshPlugins :exec
+SELECT pg_advisory_xact_lock(hashtextextended('agent_dsh_plugin:' || sqlc.arg(agent_id)::text, 0));
+
+-- name: GetDshPluginInWorkspaceForShare :one
+SELECT * FROM dsh_plugin WHERE id = $1 AND workspace_id = $2 FOR SHARE;
+
+-- name: GetDshPluginInWorkspaceForUpdate :one
+SELECT * FROM dsh_plugin WHERE id = $1 AND workspace_id = $2 FOR UPDATE;

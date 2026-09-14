@@ -277,3 +277,14 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
   immutable snapshot rollback evidence, including old-server response checks.
   Reason: document the repository-based release boundary and make recovery
   auditable without treating a moving branch or tag as historical state.
+
+## DSH plugin recipe identity and rebinding
+
+- `server/internal/handler/agent_package_dsh_plugins.go`: pinned export, explicit destination mapping, private configuration, human actor requirement and atomic binding replacement.
+- `server/internal/handler/agent_package_configuration.go`: plugin and secret requirements, preview redaction and runtime validation.
+- `server/internal/handler/agent_source_preview.go`: plugin configuration and revisions participate in source preview conflict detection.
+- `server/internal/agentsource/agent.schema.json`: portable plugin package identity and configuration contract.
+- `packages/views/agents/create/package-requirements-form.tsx`: explicit matching destination selection and new credential entry.
+- These paths save configuration; they do not prove Host/Profile application or live plugin execution.
+
+- Pre-release publication integration: `agent_package_service.go` and `agent_package_section_codecs.go` keep the single paired import/export registry; the DSH plugin codec applies explicit mappings and exports the current pinned private configuration. ZIP, Git, builder and rollback use this same transaction. `agent_package_reuse.go` requires explicit plugin secret inputs even when an environment alias matches.

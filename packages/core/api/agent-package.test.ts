@@ -48,7 +48,7 @@ describe("Agent package upload", () => {
   it("confirms either source through the same package endpoint", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ agent: { id: "agent-1" }, source: { agent_id: "agent-1", source_type: "local", repository: "", ref: "", synced_commit_sha: "hash", sync_status: "ready" }, warnings: [] })));
     vi.stubGlobal("fetch", fetch);
-    const request = { preview_id: "preview-1", runtime_id: "runtime-1", name: "Inspector" };
+    const request = { preview_id: "preview-1", runtime_id: "runtime-1", name: "Inspector", dsh_plugin_bindings: { lens: "destination-plugin" }, secrets: { credential: "fixture-new-value" } };
     const result = await new ApiClient("https://api.example.test").createAgentFromPackage("workspace", request);
     expect(result.agent.id).toBe("agent-1");
     expect(fetch).toHaveBeenCalledWith("https://api.example.test/api/workspaces/workspace/agent-packages", expect.objectContaining({ method: "POST", body: JSON.stringify(request) }));
@@ -93,5 +93,18 @@ describe("Agent package binding confirmation", () => {
     const api = new ApiClient("https://api.example.test");
     await expect(api.getAgentPackageBindings("agent-1")).rejects.toThrow("Invalid Agent package binding response");
     await expect(api.confirmAgentPackageBinding("agent-1", { path: "", revision: "", current_fingerprint: "", mappings: {} })).rejects.toThrow("Invalid Agent package binding response");
+  });
+});
+
+
+describe("Plugin package requirements", () => {
+  it("preserves plugin identity and refuses malformed references", async () => {
+    const base = { preview_id:"p", expires_at:"future", package_hash:"hash", manifest_version:"multica.agent/v2", name:"Recipe" };
+    const requirement = { ref:"lens",package_name:"dsh-mcp-lens",version:"1.0.0",integrity:"sha256-"+"a".repeat(64) };
+    vi.stubGlobal("fetch",vi.fn().mockResolvedValue(new Response(JSON.stringify({...base,requirements:{dsh_plugins:[requirement]}}))));
+    const result = await new ApiClient("https://api.example.test").previewAgentPackage("ws",new Blob(["zip"]));
+    expect(result.requirements.dshPlugins).toEqual([{ref:"lens",packageName:"dsh-mcp-lens",version:"1.0.0",integrity:requirement.integrity}]);
+    vi.stubGlobal("fetch",vi.fn().mockResolvedValue(new Response(JSON.stringify({...base,requirements:{dsh_plugins:[{ref:""}]}}))));
+    await expect(new ApiClient("https://api.example.test").previewAgentPackage("ws",new Blob(["zip"]))).rejects.toThrow("Invalid Agent package preview response");
   });
 });
