@@ -45,7 +45,8 @@ type S3Storage struct {
 //     signed against, for deployments whose own endpoint is VPC-internal.
 //     Defaults to AWS_ENDPOINT_URL with an "-internal" region suffix removed,
 //     which is Aliyun OSS's own naming convention.)
-//   - S3_USE_PATH_STYLE (optional; defaults to true when AWS_ENDPOINT_URL is set)
+//   - S3_USE_PATH_STYLE (optional; defaults to true for custom endpoints except
+//     Aliyun OSS regional endpoints, which require bucket-hosted addressing)
 //
 // S3Option customizes the storage built from the environment.
 type S3Option func(*s3Options)
@@ -192,7 +193,12 @@ func looksLikeS3Hostname(bucket string) bool {
 }
 
 func s3UsePathStyleFromEnv(endpointURL string) bool {
-	defaultValue := endpointURL != ""
+	// OSS accepts bucket.endpoint/object, including on its public presign
+	// endpoint. Treating it like a path-style MinIO endpoint produces URLs
+	// that the external downloader cannot use. Keep other stores' defaults.
+	host := endpointHostname(endpointURL)
+	isOSS := strings.HasPrefix(host, "oss-") && strings.HasSuffix(host, ".aliyuncs.com")
+	defaultValue := endpointURL != "" && !isOSS
 	raw, ok := os.LookupEnv("S3_USE_PATH_STYLE")
 	if !ok || strings.TrimSpace(raw) == "" {
 		return defaultValue

@@ -31,6 +31,12 @@ MULTICA_LOG_TAIL_TOKEN           # 远程日志端点
 
 **新增 env key 必须同时加进 `src/main.sh` 的 `RUNTIME_CONFIG_KEYS` 白名单**，否则配了也进不了进程。
 
+2026-09-15 补充：代码对 OSS 区域端点默认使用桶名域名寻址，避免缺少
+`S3_USE_PATH_STYLE` 时生成路径式下载/上传签名。其他自定义存储保留原默认值，
+显式配置仍优先。签名客户端将 OSS 内网端点换成公网端点，继续使用托管临时凭证；
+不改变桶的访问权限。该地址规则见 [OSS 请求格式](https://www.alibabacloud.com/help/en/oss/developer-reference/overview-24)。
+单测覆盖 GET/PUT 地址、会话凭证、到期时间与旧对象地址解析；云端传输结果另行验收。
+
 ## 提交清单（都在 develop 上）
 
 ### 多实例正确性
