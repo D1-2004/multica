@@ -122,6 +122,7 @@ func (c *appRuntimeConfig) fce2b() service.FCE2BConfig {
 		Enabled:                           raw.Runtime.FCE2B.Enabled,
 		Template:                          raw.Runtime.FCE2B.Template,
 		ServerURL:                         raw.Runtime.FCE2B.ServerURL,
+		DSHNativeAuthority:                raw.Web.AppURL,
 		APIKey:                            c.secrets.FCE2BAPIKey,
 		APIURL:                            raw.Runtime.FCE2B.APIURL,
 		Domain:                            raw.Runtime.FCE2B.Domain,

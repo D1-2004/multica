@@ -26,9 +26,16 @@ func dshNativeGatewayAddress(config FCE2BConfig, host dshhost.Host) (string, str
 	if host.State != "running" || host.WorkspaceID == uuid.Nil || host.AgentID == uuid.Nil || host.Generation < 1 || (len(host.SandboxID) > 57 || !dshGatewayLabel.MatchString(host.SandboxID)) {
 		return "", "", denied
 	}
-	authority, err := url.Parse(config.ServerURL)
-	if err != nil || authority.Scheme != "https" || authority.Host == "" || authority.User != nil || authority.RawQuery != "" || authority.Fragment != "" || (authority.Path != "" && authority.Path != "/") {
+	// Task traffic may use a different environment's ingress relay. Native
+	// capabilities must be checked by this deployment's own application.
+	authority, err := url.Parse(config.DSHNativeAuthority)
+	if err != nil || len(config.DSHNativeAuthority) > 2048 || authority.Scheme != "https" || authority.Host == "" || authority.Host != authority.Hostname() || authority.User != nil || authority.RawQuery != "" || authority.ForceQuery || authority.Fragment != "" || (authority.Path != "" && authority.Path != "/") {
 		return "", "", denied
+	}
+	for _, label := range strings.Split(authority.Host, ".") {
+		if !dshGatewayLabel.MatchString(label) {
+			return "", "", denied
+		}
 	}
 	domain := config.Domain
 	if len(domain) > 190 || !strings.Contains(domain, ".") {
