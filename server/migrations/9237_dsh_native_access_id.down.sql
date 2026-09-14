@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY dsh_native_access_id_idx;

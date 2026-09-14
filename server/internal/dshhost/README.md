@@ -121,3 +121,29 @@ ambiguous outcomes at every step, hidden
 listings, lost database receipts, cancellation and failed ownership verification.
 `TestProvisionPostgresCompetingReplicas` additionally requires the real
 preproduction database; a local skip is not evidence for its SQL behavior.
+
+## Native browser credentials
+
+`NativeAccessManager` and `dsh_native_access` implement the credential lifecycle
+for the pending native gateway. They are not exposed by a product route yet.
+After authenticated human management checks and actual gateway readiness, the
+caller may issue a 60-second entry bound to user, workspace, employee, exact
+sandbox ID and generation. PostgreSQL stores only a SHA-256 token digest. One
+conditional update consumes the entry and replaces it with a distinct 15-minute
+browser credential; lost exchange receipts never authorize replay. The original
+entry cannot authenticate ordinary requests, and a session cannot be exchanged.
+
+Every lookup checks database-clock expiry and the same running Host. The manager
+also requires a fresh management-permission callback for issuance, exchange and
+each authorization. The gateway must call it before every HTTP operation and
+periodically throughout WebSocket connections, terminating access on any failed
+check. Revocation changes the durable grant state; it does not alter Home
+ownership, extend sandbox lifetime or authorize replacement. Entry and session
+credentials must never be stored in trajectories, logs or employee profiles.
+
+Pure tests cover credential separation, employee/generation mismatch, permission
+revocation and uncertain exchange receipts. The PostgreSQL test uses 24 callers
+across two pools and checks expiry and Host retirement, but requires the actual
+preproduction test environment. HTTP handlers, native gateway cookie exchange,
+ongoing WebSocket revocation, unified prompt admission and live acceptance remain
+required before a browser entry can be exposed.
