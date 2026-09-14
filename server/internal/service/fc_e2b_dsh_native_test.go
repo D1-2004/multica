@@ -35,10 +35,10 @@ func TestDSHNativeGatewayRequiresExactLiveReceipt(t *testing.T) {
 		t.Fatal("native capability was routed to the task relay")
 	}
 	bridge := newDSHNativeAuthorityBridge("test-secret")
-	receipt := dshNativeGatewayReceipt{PublicKey: bridge.publicKey(), Version: 2, Ready: true, WorkspaceID: host.WorkspaceID.String(), AgentID: host.AgentID.String(), Generation: host.Generation, SandboxID: host.SandboxID, Port: DSHNativeGatewayPort, Authority: authority, Origin: origin}
+	receipt := dshNativeGatewayReceipt{PublicKey: bridge.publicKey(), Version: 3, Ready: true, WorkspaceID: host.WorkspaceID.String(), AgentID: host.AgentID.String(), Generation: host.Generation, SandboxID: host.SandboxID, Port: DSHNativeGatewayPort, Authority: authority, Origin: origin}
 	encode := func(r dshNativeGatewayReceipt) string { b, _ := json.Marshal(r); return string(b) }
 	for _, mutate := range []func(*dshNativeGatewayReceipt){
-		func(r *dshNativeGatewayReceipt) { r.Version = 1 }, func(r *dshNativeGatewayReceipt) { r.Ready = false },
+		func(r *dshNativeGatewayReceipt) { r.Version = 1 }, func(r *dshNativeGatewayReceipt) { r.Version = 2 }, func(r *dshNativeGatewayReceipt) { r.Ready = false },
 		func(r *dshNativeGatewayReceipt) { r.WorkspaceID = uuid.NewString() }, func(r *dshNativeGatewayReceipt) { r.AgentID = uuid.NewString() },
 		func(r *dshNativeGatewayReceipt) { r.Generation++ }, func(r *dshNativeGatewayReceipt) { r.SandboxID = "sbx-other" },
 		func(r *dshNativeGatewayReceipt) { r.Port++ }, func(r *dshNativeGatewayReceipt) { r.Authority = "https://other.test" },

@@ -37,9 +37,10 @@ type dshAuthorityWorker struct {
 	failed bool
 }
 type dshAuthorityRequest struct {
-	ID       string `json:"id"`
-	Token    string `json:"token"`
-	Exchange bool   `json:"exchange"`
+	ID       string          `json:"id"`
+	Token    string          `json:"token"`
+	Exchange bool            `json:"exchange"`
+	Prompt   json.RawMessage `json:"prompt,omitempty"`
 }
 type dshAuthorityPacket struct {
 	Payload   string `json:"payload"`
@@ -65,16 +66,19 @@ func (b *dshNativeAuthorityBridge) publicKey() string {
 	return hex.EncodeToString(b.key.Public().(ed25519.PublicKey))
 }
 func (b *dshNativeAuthorityBridge) ensure(ctx context.Context, origin, authority, token string, host dshhost.Host, manager dshhost.NativeAccessManager) error {
-	if b == nil || manager.Store == nil || manager.CheckManage == nil {
+	return b.ensureTransport(ctx, origin, authority, token, host, manager, nil, false)
+}
+func (b *dshNativeAuthorityBridge) ensureTransport(ctx context.Context, origin, authority, token string, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit, inputLane bool) error {
+	if b == nil || manager.Store == nil || manager.CheckManage == nil || (inputLane && submit == nil) {
 		return errors.New("DSH authority is unavailable")
 	}
-	key := host.WorkspaceID.String() + "/" + host.AgentID.String() + "/" + strconv.FormatInt(host.Generation, 10) + "/" + authority + "/" + host.SandboxID + "/" + origin + "/" + token
+	key := strconv.FormatBool(inputLane) + "/" + host.WorkspaceID.String() + "/" + host.AgentID.String() + "/" + strconv.FormatInt(host.Generation, 10) + "/" + authority + "/" + host.SandboxID + "/" + origin + "/" + token
 	b.mu.Lock()
 	worker := b.workers[key]
 	if worker == nil {
 		worker = &dshAuthorityWorker{ready: make(chan struct{})}
 		b.workers[key] = worker
-		go b.serve(key, worker, origin, authority, token, host, manager)
+		go b.serve(key, worker, origin, authority, token, host, manager, submit, inputLane)
 	}
 	worker.until = time.Now().Add(dshhost.NativeSessionLifetime + dshhost.NativeEntryLifetime + time.Minute)
 	b.mu.Unlock()
@@ -116,11 +120,18 @@ func (b *dshNativeAuthorityBridge) answer(ctx context.Context, request dshAuthor
 	return b.sign(request, result, authority)
 }
 func dshAuthorityPoll(ctx context.Context, client *http.Client, origin, token, controller string, responses []dshAuthorityPacket, wait bool) ([]dshAuthorityRequest, error) {
+	return dshNativePoll(ctx, client, origin, token, controller, responses, wait, false)
+}
+func dshNativePoll(ctx context.Context, client *http.Client, origin, token, controller string, responses []dshAuthorityPacket, wait, inputLane bool) ([]dshAuthorityRequest, error) {
+	path, limit, count := "/_multica/authority", int64(65536), 32
+	if inputLane {
+		path, limit, count = "/_multica/inputs", 4*1024*1024, 1
+	}
 	body, err := json.Marshal(map[string]any{"controller_id": controller, "responses": responses, "wait": wait})
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+"/_multica/authority", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, origin+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -131,8 +142,8 @@ func dshAuthorityPoll(ctx context.Context, client *http.Client, origin, token, c
 		return nil, errors.New("DSH authority transport failed")
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 65537))
-	if err != nil || response.StatusCode != http.StatusOK || len(raw) > 65536 {
+	raw, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
+	if err != nil || response.StatusCode != http.StatusOK || int64(len(raw)) > limit {
 		return nil, errors.New("DSH authority poll rejected")
 	}
 	var envelope struct {
@@ -141,19 +152,19 @@ func dshAuthorityPoll(ctx context.Context, client *http.Client, origin, token, c
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&envelope) != nil || decoder.Decode(&struct{}{}) != io.EOF || envelope.Version != 1 || len(envelope.Requests) > 32 {
+	if decoder.Decode(&envelope) != nil || decoder.Decode(&struct{}{}) != io.EOF || envelope.Version != 1 || len(envelope.Requests) > count {
 		return nil, errors.New("invalid DSH authority poll")
 	}
 	seen := map[string]bool{}
 	for _, r := range envelope.Requests {
-		if !dshAuthorityRequestID.MatchString(r.ID) || seen[r.ID] || len(r.Token) != 48 {
+		if !dshAuthorityRequestID.MatchString(r.ID) || seen[r.ID] || len(r.Token) != 48 || (inputLane && (r.Exchange || len(r.Prompt) == 0 || !strings.HasPrefix(r.Token, "dngs_"))) || (!inputLane && len(r.Prompt) > 0) {
 			return nil, errors.New("invalid DSH authority request")
 		}
 		seen[r.ID] = true
 	}
 	return envelope.Requests, nil
 }
-func (b *dshNativeAuthorityBridge) serve(key string, worker *dshAuthorityWorker, origin, authority, token string, host dshhost.Host, manager dshhost.NativeAccessManager) {
+func (b *dshNativeAuthorityBridge) serve(key string, worker *dshAuthorityWorker, origin, authority, token string, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit, inputLane bool) {
 	established := false
 	defer func() {
 		b.mu.Lock()
@@ -178,7 +189,7 @@ func (b *dshNativeAuthorityBridge) serve(key string, worker *dshAuthorityWorker,
 		if time.Now().After(until) {
 			return
 		}
-		requests, err := dshAuthorityPoll(context.Background(), client, origin, token, controller, responses, established)
+		requests, err := dshNativePoll(context.Background(), client, origin, token, controller, responses, established, inputLane)
 		if err != nil {
 			return
 		} // No retry of an uncertain exchange or response delivery.
@@ -194,16 +205,20 @@ func (b *dshNativeAuthorityBridge) serve(key string, worker *dshAuthorityWorker,
 			group.Add(1)
 			go func() {
 				defer group.Done()
-				responses[index] = b.answer(context.Background(), request, host, manager, authority)
+				if inputLane {
+					responses[index] = b.answerInput(context.Background(), request, host, manager, authority, submit)
+				} else {
+					responses[index] = b.answer(context.Background(), request, host, manager, authority)
+				}
 			}()
 		}
 		group.Wait()
 	}
 }
 
-// EnsureDSHNativeAuthority starts only an authorization transport. It never
+// EnsureDSHNativeAuthority starts independent authorization and input transports. It never
 // creates, renews, destroys, leases or replaces an employee writer.
-func (l *FCE2BLauncher) EnsureDSHNativeAuthority(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager) (string, error) {
+func (l *FCE2BLauncher) EnsureDSHNativeAuthority(ctx context.Context, host dshhost.Host, manager dshhost.NativeAccessManager, submit DSHNativePromptSubmit) (string, error) {
 	l = l.withCurrentConfig()
 	if l == nil || l.nativeAuthority == nil {
 		return "", errors.New("DSH authority is unavailable")
@@ -218,11 +233,15 @@ func (l *FCE2BLauncher) EnsureDSHNativeAuthority(ctx context.Context, host dshho
 	}
 	var receipt struct {
 		TransportToken string `json:"transport_token"`
+		InputToken     string `json:"input_transport_token"`
 	}
-	if json.Unmarshal([]byte(out), &receipt) != nil || !regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`).MatchString(receipt.TransportToken) {
+	if json.Unmarshal([]byte(out), &receipt) != nil || (!regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`).MatchString(receipt.TransportToken) || !regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`).MatchString(receipt.InputToken)) {
 		return "", errors.New("DSH authority transport is unavailable")
 	}
 	if err := l.nativeAuthority.ensure(ctx, origin, authority, receipt.TransportToken, host, manager); err != nil {
+		return "", err
+	}
+	if err := l.nativeAuthority.ensureTransport(ctx, origin, authority, receipt.InputToken, host, manager, submit, true); err != nil {
 		return "", err
 	}
 	return origin, nil

@@ -17,6 +17,18 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+// DSHNativePromptReceipt is a durable task admission, not Host execution completion.
+type DSHNativePromptReceipt struct {
+	SessionID     string      `json:"session_id"`
+	RequestID     uuid.UUID   `json:"request_id"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+	TaskID        pgtype.UUID `json:"task_id"`
+	MessageID     pgtype.UUID `json:"message_id"`
+	Queued        bool        `json:"queued"`
+	Replayed      bool        `json:"replayed"`
+}
+type DSHNativePromptSubmit func(context.Context, dshhost.NativeAccess, DSHNativeChatInput, string) (DSHNativePromptReceipt, error)
+
 // DSHNativeChatInput carries the exact native identity. The gateway must create
 // the Session in this canonical directory before asking to admit its prompt.
 // Model, tools and credentials are resolved by the platform task dispatcher.

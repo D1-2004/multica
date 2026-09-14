@@ -18,17 +18,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type dshNativePromptReceipt struct {
-	SessionID     string      `json:"session_id"`
-	RequestID     uuid.UUID   `json:"request_id"`
-	ChatSessionID pgtype.UUID `json:"chat_session_id"`
-	TaskID        pgtype.UUID `json:"task_id"`
-	MessageID     pgtype.UUID `json:"message_id"`
-	Queued        bool        `json:"queued"`
-	Replayed      bool        `json:"replayed"`
-}
-
-type dshNativePromptSubmit func(context.Context, dshhost.NativeAccess, service.DSHNativeChatInput, string) (dshNativePromptReceipt, error)
+type dshNativePromptReceipt = service.DSHNativePromptReceipt
+type dshNativePromptSubmit = service.DSHNativePromptSubmit
 
 // Native capabilities authenticate the human independently of ordinary JWT
 // middleware. Neither a user ID nor a platform session ID is accepted from the
