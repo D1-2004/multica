@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"slices"
 	"strings"
 	"time"
 
@@ -63,21 +62,25 @@ func (d *dshBuildDriver) Preflight(ctx context.Context, job dshprofile.BuildJob)
 	if err != nil {
 		return errors.New("DSH build template catalog unavailable")
 	}
-	ready := false
-	for _, template := range templates {
-		if template.Template == job.TemplateID && IsFCE2BTemplateReady(template) && FCE2BTemplateSupportsProvider(template, "dsh") && slices.Contains(template.Capabilities, DSHPluginBuildCapability) {
-			ready = true
-			break
-		}
-	}
-	if !ready {
-		return errors.New("DSH template does not support isolated plugin builds")
+	if !dshBuildTemplateReady(templates, job.TemplateID) {
+		return errors.New("DSH build template is not ready for this provider")
 	}
 	reader, err := d.objects.GetReader(ctx, job.Plugin.ArtifactKey)
 	if err != nil {
 		return errors.New("DSH source archive unavailable")
 	}
 	return reader.Close()
+}
+
+func dshBuildTemplateReady(templates []FCE2BTemplate, id string) bool {
+	// Catalog capabilities describe provider admission, not installed helpers.
+	// Start checks the fixed helper's protocol before granting object access.
+	for _, template := range templates {
+		if template.ID == id && IsFCE2BTemplateReady(template) && FCE2BTemplateSupportsProvider(template, "dsh") {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dshBuildDriver) Create(ctx context.Context, job dshprofile.BuildJob) (string, error) {

@@ -241,8 +241,9 @@ than creating another sandbox. A build becomes ready only after reading back the
 stored archive and matching its digest and length; sandbox cleanup still requires
 confirmed absence. Workspace deletion returns a conflict while a build has an
 active or unresolved cloud intent, preserving the recovery record. Every backend
-replica runs the shared PostgreSQL worker. Only an immutable FC template declaring
-`dsh_plugin_build_worker_v1` can build dependencies. The disposable build sandbox
+replica runs the shared PostgreSQL worker. The catalog admits a ready DSH template
+by immutable ID; the fixed helper must confirm `dsh_plugin_build_worker_v1` inside
+the sandbox before receiving any transfer grants. The disposable build sandbox
 has no employee Home, employee role or employee configuration. Its fixed helper
 receives short-lived HTTPS grants for exactly the saved source and artifact keys;
 neither URLs nor employee credentials enter the ledger or helper receipts.

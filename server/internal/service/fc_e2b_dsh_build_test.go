@@ -119,3 +119,24 @@ func TestDSHBuildCapabilityDoesNotChangeOtherProviders(t *testing.T) {
 		}
 	}
 }
+
+func TestDSHBuildPreflightRequiresImmutableTemplateID(t *testing.T) {
+	template := FCE2BTemplate{ID: "immutable-template-id", Template: "display-alias", Status: "ready",
+		Providers: []string{"dsh"}}
+	if !dshBuildTemplateReady([]FCE2BTemplate{template}, template.ID) {
+		t.Fatal("runtime's immutable template ID was not admitted")
+	}
+	if dshBuildTemplateReady([]FCE2BTemplate{template}, template.Template) {
+		t.Fatal("mutable display alias admitted as build identity")
+	}
+	for _, change := range []func(*FCE2BTemplate){
+		func(v *FCE2BTemplate) { v.Status = "building" },
+		func(v *FCE2BTemplate) { v.Providers = []string{"pi"} },
+	} {
+		changed := template
+		change(&changed)
+		if dshBuildTemplateReady([]FCE2BTemplate{changed}, template.ID) {
+			t.Fatal("unready or unsupported build template admitted")
+		}
+	}
+}
