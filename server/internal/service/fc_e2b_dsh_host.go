@@ -152,7 +152,11 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, task db.A
 	if err = validateDSHHomeReceipt(out, host); err != nil {
 		return dshhost.Host{}, cold, err
 	}
-	out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host, catalog))
+	origin, authority, err := dshNativeGatewayAddress(l.Config, host)
+	if err != nil {
+		return dshhost.Host{}, cold, err
+	}
+	out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host, catalog, authority, origin))
 	if err == nil {
 		err = validateDSHNativeHostReceipt(out, host, profileDigest)
 	}
@@ -198,11 +202,14 @@ func dshManagedCatalog(models []string) (string, string, error) {
 	return raw, digest, nil
 }
 
-func dshNativeHostEnsureArgs(host dshhost.Host, catalog string) []string {
+func dshNativeHostEnsureArgs(host dshhost.Host, catalog, authority, origin string) []string {
 	return []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
 		"-e", "DSH_HOME=" + dshhost.MountPath + "/home", "-e", "MULTICA_DSH_WORKSPACE_ID=" + host.WorkspaceID.String(),
 		"-e", "MULTICA_DSH_AGENT_ID=" + host.AgentID.String(), "-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10),
 		"-e", "MULTICA_DSH_MODEL_CATALOG_JSON=" + catalog,
+		"-e", "MULTICA_DSH_NATIVE_AUTHORITY=" + authority,
+		"-e", "MULTICA_DSH_NATIVE_ORIGIN=" + origin,
+		"-e", "MULTICA_DSH_SANDBOX_ID=" + host.SandboxID,
 		host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", "--ensure"}
 }
 

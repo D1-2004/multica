@@ -95,7 +95,7 @@ func (h *Handler) IssueDSHNativeAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Fragments are not transmitted to the gateway in the navigation request.
-	writeJSON(w, http.StatusCreated, map[string]any{"access_id": access.ID, "entry_url": origin + "/#entry=" + url.QueryEscape(token), "expires_at": access.ExpiresAt})
+	writeJSON(w, http.StatusCreated, map[string]any{"access_id": access.ID, "entry_url": origin + "/_multica/open#entry=" + url.QueryEscape(token), "expires_at": access.ExpiresAt})
 }
 
 func (h *Handler) RevokeDSHNativeAccess(w http.ResponseWriter, r *http.Request) {
