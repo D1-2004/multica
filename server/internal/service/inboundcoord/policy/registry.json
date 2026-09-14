@@ -1,6 +1,6 @@
 {
-  "policy_version": "2026-09-10.9",
-  "assembly_version": "20",
+  "policy_version": "2026-09-14.1",
+  "assembly_version": "21",
   "modules": [
     {
       "id": "core",
@@ -43,7 +43,7 @@
     },
     {
       "id": "inbound",
-      "version": "21",
+      "version": "22",
       "file": "inbound.md",
       "applies_when": "inbound",
       "requires": [
@@ -60,8 +60,8 @@
         "COORD.F10",
         "COORD.F03"
       ],
-      "budget_characters": 3000,
-      "content_sha256": "4167f8ef40f6a3ce0b09e954f56df1e32511b8572539950d7b989030e15ccec6"
+      "budget_characters": 3200,
+      "content_sha256": "bede13394bbba5baa44dacb2daf4f72399c431c75f00f236138d99202d2dac33"
     },
     {
       "id": "channel",
@@ -115,7 +115,7 @@
     },
     {
       "id": "window",
-      "version": "2",
+      "version": "3",
       "file": "window.md",
       "applies_when": "multiple_utterances",
       "requires": [
@@ -129,7 +129,7 @@
         "COORD.F17"
       ],
       "budget_characters": 750,
-      "content_sha256": "ae03a43fcedfbb4dcfe0ed01df60ac4aaf18a6601c8194d84086855384ed35a3"
+      "content_sha256": "925152fb8a2dae2cecf9985513be819c5fb64445509d0f230e8e9e911f182ac3"
     },
     {
       "id": "memory",
@@ -249,7 +249,7 @@
     },
     {
       "id": "finish_check_work",
-      "version": "16",
+      "version": "17",
       "file": "finish_check_work.md",
       "applies_when": "finish_check_work",
       "requires": [
@@ -271,8 +271,8 @@
         "COORD.F18",
         "COORD.F19"
       ],
-      "budget_characters": 3200,
-      "content_sha256": "038cd31bb8f9b35f52efd65971e8d776f38f2b699035d7a74b720baed200e5cd"
+      "budget_characters": 3400,
+      "content_sha256": "ca372396fde74045120ea41999430b20c62f228f2b17c36ee843447a0596e1dc"
     }
   ],
   "obligations": [
@@ -829,7 +829,7 @@
     {
       "id": "COORD.F10",
       "family": "F10",
-      "obligation": "整窗原文与逐句来源完整，合并同交付物、区分不同工作；尾部感谢不取消；超额或部分成功不能丢余项。",
+      "obligation": "整窗原文与逐句来源完整，合并同交付物与同类批量变更、区分不同种类工作；尾部感谢不取消；超额或部分成功不能丢余项。审查按每个工作动作自身purpose判断single/multiple，不得因整窗或兄弟动作有其他请求把已拆开的动作标成multiple。",
       "status": "active",
       "runtime_modules": [
         "window",
@@ -842,6 +842,7 @@
         "f10_contrast",
         "f10_review_whole_window_and_clarification",
         "f10_independent_deliverables_vs_related_steps",
+        "f10_same_kind_batch_vs_unrelated_outputs",
         "f16_review_work_checks_excludes_clarify",
         "f10_product_check_and_separate_notice",
         "f13_mixed_work_and_status_review_coverage"
@@ -851,6 +852,7 @@
         "note": "Merged existing Coordinator recovery and generic semantics; prior reports retain their original source versions."
       },
       "implementation_refs": [
+        "docs/plans/2026-09-14-coordinator-same-kind-batch.md",
         "server/internal/service/inboundcoord/policy/window.md",
         "server/internal/service/inboundcoord/window.go",
         "server/internal/service/inboundcoord/policy/finish_check.md",
@@ -861,7 +863,9 @@
         "server/internal/service/inboundcoord/loop.go",
         "server/internal/service/inboundcoord/policy.go",
         "server/internal/service/inboundcoord/policy_test.go#TestPolicyMixedTerminalReviewLoadsBothCanonicalModules",
-        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce"
+        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckMixedActionsReviewBothScopesOnce",
+        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckRewritesReviewerMultipleWhenWorkIsAlreadySplit",
+        "server/internal/service/inboundcoord/finish_check_test.go#TestFinishCheckAllowsSameKindOwnerBatchAsSingleDeliverable"
       ],
       "case_file": "cases.json"
     },
@@ -1209,6 +1213,7 @@
         "f15_issue_plan_job_scope_vs_pending_research",
         "f13_closed_action_reply_escape",
         "f10_independent_deliverables_vs_related_steps",
+        "f10_same_kind_batch_vs_unrelated_outputs",
         "f07_output_instance_anchor_vs_fresh_lookup",
         "f10_product_check_and_separate_notice",
         "f13_mixed_work_and_status_review_coverage",

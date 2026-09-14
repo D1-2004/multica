@@ -102,7 +102,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 		}
 		props["memory_revision"] = revision
 		if canPlanWork {
-			props["purpose"] = map[string]any{"type": "string", "minLength": 8, "maxLength": 240, "description": "Work only: ONE independently executable deliverable with its concrete target. Separate unrelated deliverables into separate actions; never hide them as a numbered list inside one purpose. Amendments or steps toward the same artifact may stay together. Host binds the speaker."}
+			props["purpose"] = map[string]any{"type": "string", "minLength": 8, "maxLength": 240, "description": "Work only: ONE independently executable deliverable with its concrete target. A same-kind batch (same mutation/config change on several named objects) stays in one purpose. Separate unrelated kinds of work into separate actions; never hide those as a numbered list. Amendments or steps toward the same artifact may stay together. Host binds the speaker."}
 			props["intent"] = map[string]any{"type": "string", "enum": []string{"ask", "confirm", "notify", "lookup", "wait", "other"}, "default": "other", "description": "Optional classification only; omit when unsure. Defaults to other. Continuation basis answer/change/retry belongs in basis, not intent."}
 			props["context"] = map[string]any{"type": "string", "maxLength": 500, "description": "Work only: necessary context, without copying history or scene memory."}
 			if len(contract.issueIDs) > 0 {
@@ -153,7 +153,7 @@ func coordinationFinishTool(canPlanWork, taskFinished bool, contract toolContrac
 	}
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name:        toolFinish,
-		Description: openai.String("First establish per-source participation: receiving a group message does not make it a request to this employee. Ignore requests/greetings directed only to others. Then finish coordination using 1-8 explicit actions. No generic reply action. Each action owns its reply and only its documented fields; ignore owns reason. Product/professional questions require start_work or continue_work, even if easy. Recall first before work. One work action per independent deliverable; do not bundle unrelated requests into one purpose. Mixed work, clarification and acknowledgements are allowed; cover the full window. Never claim a proposed action already succeeded."),
+		Description: openai.String("First establish per-source participation: receiving a group message does not make it a request to this employee. Ignore requests/greetings directed only to others. Then finish coordination using 1-8 explicit actions. No generic reply action. Each action owns its reply and only its documented fields; ignore owns reason. Product/professional questions require start_work or continue_work, even if easy. Recall first before work. One work action per independent deliverable; same-kind batches stay in one action; do not bundle unrelated kinds of work into one purpose. Mixed work, clarification and acknowledgements are allowed; cover the full window. Never claim a proposed action already succeeded."),
 		Parameters:  shared.FunctionParameters{"type": "object", "additionalProperties": false, "required": []string{"actions"}, "properties": map[string]any{"actions": map[string]any{"type": "array", "minItems": 1, "maxItems": WindowPlanMaxItems, "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"kind"}, "properties": props, "oneOf": variants}}}},
 	})
 }
