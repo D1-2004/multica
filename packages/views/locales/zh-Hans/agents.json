@@ -506,7 +506,11 @@
       "bindings_required": "以下内容需要在目标工作区重新配置：",
       "defer_bindings": "跳过以上绑定，稍后在配置页面处理。新智能体的成员授权暂设为私有。",
       "confirm_hint": "确认后创建新智能体，并保存包中的配置、指令和专属 skills。",
-      "configuration": "查看将导入的配置"
+      "configuration": "查看将导入的配置",
+      "plugin_binding": "绑定 {{name}} @ {{version}}",
+      "plugin_select": "选择目标插件",
+      "plugin_missing": "请先在此工作区导入版本和内容一致的插件。",
+      "plugin_load_failed": "无法加载工作区插件。"
     }
   },
   "create_dialog": {

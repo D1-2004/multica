@@ -567,21 +567,68 @@
       ]
     },
     "dshPlugin": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "ref",
-        "enabled"
-      ],
-      "properties": {
-        "ref": {
-          "$ref": "#/$defs/alias"
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ref",
+            "enabled"
+          ],
+          "properties": {
+            "ref": {
+              "$ref": "#/$defs/alias"
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "description": "Binding to a workspace DSH plugin plus its assignment state. Does not bundle plugin artifacts or install a plugin."
         },
-        "enabled": {
-          "type": "boolean"
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ref",
+            "enabled",
+            "package_name",
+            "version",
+            "integrity",
+            "row_id",
+            "config"
+          ],
+          "properties": {
+            "ref": {
+              "$ref": "#/$defs/alias"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "package_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "integrity": {
+              "type": "string",
+              "pattern": "^sha256-[0-9a-f]{64}$"
+            },
+            "row_id": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "config": {
+              "$ref": "#/$defs/configObject"
+            }
+          },
+          "description": "A pinned plugin and an employee configuration snapshot. Destination binding must match package, version and integrity; secret references require new values."
         }
-      },
-      "description": "Binding to a workspace DSH plugin plus its assignment state. Does not bundle plugin artifacts or install a plugin."
+      ]
     },
     "okr": {
       "type": "object",

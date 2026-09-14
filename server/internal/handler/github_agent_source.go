@@ -76,8 +76,9 @@ type GitHubAgentSkillPreview struct {
 }
 
 type CreateGitHubAgentRequest struct {
-	Secrets          map[string]string `json:"secrets"`
-	DeferredBindings []string          `json:"deferred_bindings"`
+	DshPluginBindings map[string]string `json:"dsh_plugin_bindings"`
+	Secrets           map[string]string `json:"secrets"`
+	DeferredBindings  []string          `json:"deferred_bindings"`
 	CreateAgentRequest
 	PreviewID      string `json:"preview_id"`
 	InstallationID string `json:"installation_id"`
@@ -296,8 +297,8 @@ func (h *Handler) CreateAgentFromPackage(w http.ResponseWriter, r *http.Request)
 		writeGitHubSourceError(w, err)
 		return
 	}
-	if definition.A2A != nil && r.Header.Get("X-Actor-Source") != "" {
-		writeError(w, http.StatusForbidden, "A2A policy import requires a human actor")
+	if err := validatePackageActor(resolved.bundle.Definition, r.Header.Get("X-Actor-Source")); err != nil {
+		writeGitHubSourceError(w, err)
 		return
 	}
 	agentName, agentDescription, err := gitAgentInstanceProfile(request, rawFields, resolved.bundle)

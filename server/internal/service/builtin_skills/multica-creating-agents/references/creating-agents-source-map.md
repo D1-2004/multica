@@ -227,3 +227,12 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - `server/internal/handler/inbound_coordinator_job.go`: single collection window and persisted decisions.
 - `server/internal/service/coordinator_follow_up.go`: busy Issue additions, identity-isolated batching, and actual comment delivery receipts.
 - Read-only verification: `GET /api/agents/{id}` and the Agent Coordinator conversations; historical Autopilot runs do not describe new proactive messages.
+
+## DSH plugin recipe identity and rebinding
+
+- `server/internal/handler/agent_package_dsh_plugins.go`: pinned export, explicit destination mapping, private configuration, human actor requirement and atomic binding replacement.
+- `server/internal/handler/agent_package_configuration.go`: plugin and secret requirements, preview redaction and runtime validation.
+- `server/internal/handler/agent_source_preview.go`: plugin configuration and revisions participate in source preview conflict detection.
+- `server/internal/agentsource/agent.schema.json`: portable plugin package identity and configuration contract.
+- `packages/views/agents/create/package-requirements-form.tsx`: explicit matching destination selection and new credential entry.
+- These paths save configuration; they do not prove Host/Profile application or live plugin execution.

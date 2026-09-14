@@ -86,3 +86,12 @@
 - `server/internal/handler/dsh_plugin_dispatch.go`: effective employee configuration replaces workspace defaults; invalid configuration rejects the claim rather than silently dropping a plugin.
 - `packages/core/api/agent-dsh-plugin-config-schema.ts`, `packages/core/dsh-plugins/queries.ts`, `packages/views/agents/components/tabs/dsh-plugin-config-dialog.tsx`: explicit audited read, ephemeral editor, revision-aware writes and no automatic retry. Saved configuration is not displayed as applied to the running Host.
 - `server/internal/handler/agent_dsh_plugin_config_test.go`, `packages/core/api/agent-dsh-plugin-config-client.test.ts`, `packages/views/agents/components/tabs/dsh-plugins-tab.test.tsx`: isolation, malformed configuration/response, secret-safe errors and explicit read/save/conflict tests. Real preproduction persistence, concurrent writes and Host application require separate evidence.
+
+## DSH plugin recipe identity and rebinding
+
+- `server/internal/handler/agent_package_dsh_plugins.go`: pinned export, explicit destination mapping, private configuration, human actor requirement and atomic binding replacement.
+- `server/internal/handler/agent_package_configuration.go`: plugin and secret requirements, preview redaction and runtime validation.
+- `server/internal/handler/agent_source_preview.go`: plugin configuration and revisions participate in source preview conflict detection.
+- `server/internal/agentsource/agent.schema.json`: portable plugin package identity and configuration contract.
+- `packages/views/agents/create/package-requirements-form.tsx`: explicit matching destination selection and new credential entry.
+- These paths save configuration; they do not prove Host/Profile application or live plugin execution.

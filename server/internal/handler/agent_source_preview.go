@@ -261,6 +261,18 @@ func sourceDefinitionFiles(bundle agentsource.Bundle) map[string]string {
 // sourceStateFiles must run in a transaction. All writers to supporting files
 // lock their parent skill, allowing preview/confirmation to read one state.
 func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, source db.AgentSource) (map[string]string, string, error) {
+	if err := queries.LockAgentDshPlugins(ctx, uuidToString(agent.ID)); err != nil {
+		return nil, "", err
+	}
+	pluginRows, err := queries.ListDshPluginsForAgent(ctx, db.ListDshPluginsForAgentParams{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID})
+	if err != nil {
+		return nil, "", err
+	}
+	privatePlugins, err := json.Marshal(pluginRows)
+	if err != nil {
+		return nil, "", err
+	}
+
 	skills, err := queries.LockSourceSkills(ctx, source.ID)
 	if err != nil {
 		return nil, "", err
@@ -336,7 +348,7 @@ func sourceStateFiles(ctx context.Context, queries *db.Queries, agent db.Agent, 
 		RuntimeID      pgtype.UUID
 		OwnerID        pgtype.UUID
 		Mappings       []db.AgentSourceSkill
-	}{[][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
+	}{[][]byte{agent.CustomEnv, agent.CustomArgs, agent.RuntimeConfig, agent.McpConfig, privatePlugins}, files, source.ID, source.GithubInstallationID, source.RepoOwner + "/" + source.RepoName, source.Ref, source.SyncedCommitSha, agent.RuntimeID, agent.OwnerID, mappings}
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return nil, "", err

@@ -40,19 +40,21 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
   const uploadMutation = usePreviewAgentPackage(wsId);
   const createMutation = useCreateAgentPackage(wsId, squadId);
   const [file, setFile] = useState<File | null>(null);
+  const [pluginBindings, setPluginBindings] = useState<Record<string, string>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [deferBindings, setDeferBindings] = useState(false);
   const preview = local ? uploadMutation.data : previewMutation.data;
   const requirements = preview?.requirements;
-  const requirementsReady = (requirements?.secrets ?? []).every((ref) => Object.hasOwn(secrets, ref)) && (!requirements?.deferred_bindings.length || deferBindings);
+  const requirementsReady = (requirements?.dshPlugins ?? []).every((plugin) => !!pluginBindings[plugin.ref]) && (requirements?.secrets ?? []).every((ref) => Object.hasOwn(secrets, ref)) && (!requirements?.deferred_bindings.length || deferBindings);
   const runtimeCompatible = !requirements?.runtime_provider || form.selectedRuntime?.provider === requirements.runtime_provider;
   const pending = previewMutation.isPending || uploadMutation.isPending || createMutation.isPending;
   const canCreate = canManage && !!preview?.preview_id && !previewMutation.data?.blockers?.length && requirementsReady && runtimeCompatible && form.draftReady && !!form.draft.name.trim() && !pending && !createMutation.isSuccess;
   const error = createMutation.error ?? uploadMutation.error ?? previewMutation.error ?? (!local ? installations.error : null);
 
-  const invalidatePreview = () => { previewMutation.reset(); uploadMutation.reset(); createMutation.reset(); setSecrets({}); setDeferBindings(false); };
+  const invalidatePreview = () => { previewMutation.reset(); uploadMutation.reset(); createMutation.reset(); setSecrets({}); setDeferBindings(false); setPluginBindings({}); };
   const handlePreview = async () => {
     try {
+      setPluginBindings({}); setSecrets({});
       const result = local && file ? await uploadMutation.mutateAsync(file) : await previewMutation.mutateAsync({ installation_id: installationId, repository: repository.trim(), ref: ref.trim() || undefined });
       form.setDraft((current) => ({ ...current, name: result.name, description: result.description }));
     } catch { /* The form renders the mutation error. */ }
@@ -63,7 +65,7 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
       const result = await createMutation.mutateAsync({
         name: form.draft.name.trim(), runtime_id: form.selectedRuntime.id, secrets,
         deferred_bindings: deferBindings ? requirements?.deferred_bindings : [],
-        preview_id: preview.preview_id,
+        preview_id: preview.preview_id, dsh_plugin_bindings: pluginBindings,
       });
       setSecrets({});
       result.warnings?.forEach((warning) => toast.warning(warning));
@@ -119,7 +121,7 @@ export function SourceCreateAgentPage({ source }: { source: "git" | "local" }) {
               </div>
               <RuntimePicker runtimes={form.runtimes} runtimesLoading={form.runtimesLoading} members={form.members} currentUserId={form.currentUserId} selectedRuntimeId={form.draft.runtimeId} disabled={pending} onSelect={(runtimeId) => form.setDraft((current) => ({ ...current, runtimeId }))} />
               {!runtimeCompatible && <p role="alert" className="text-caption text-destructive">{t(($) => $.creation_studio.local.runtime_required, { provider: requirements?.runtime_provider })}</p>}
-              <PackageRequirementsForm requirements={requirements} secrets={secrets} onSecretsChange={setSecrets} deferBindings={deferBindings} onDeferChange={setDeferBindings} disabled={pending} />
+              <PackageRequirementsForm workspaceId={wsId} pluginBindings={pluginBindings} onPluginBindingsChange={setPluginBindings} requirements={requirements} secrets={secrets} onSecretsChange={setSecrets} deferBindings={deferBindings} onDeferChange={setDeferBindings} disabled={pending} />
               <p className="text-caption text-muted-foreground">{t(($) => $.creation_studio.local.confirm_hint)}</p>
               {preview.definition && <details><summary className="cursor-pointer text-body">{t(($) => $.creation_studio.local.configuration)}</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-3 text-caption">{JSON.stringify(preview.definition, null, 2)}</pre></details>}
               <details><summary className="cursor-pointer text-body">{t(($) => $.tabs.instructions)}</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-3 text-caption">{preview.instructions}</pre></details>

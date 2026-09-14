@@ -371,4 +371,4 @@ export type {
   CreateBillingPortalSessionResponse,
 } from "./billing";
 
-export type { AgentPackageRequirements, AgentPackagePreview, CreateAgentPackageRequest } from "./agent-package";
+export type { AgentPackageDshPluginRequirement, AgentPackageRequirements, AgentPackagePreview, CreateAgentPackageRequest } from "./agent-package";

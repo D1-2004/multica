@@ -258,10 +258,13 @@ func buildAgentExportManifest(ctx context.Context, q *db.Queries, agent db.Agent
 	}
 	pluginRefs := []map[string]any{}
 	for _, plugin := range plugins {
-		ref := notes.resource("dsh-plugin", uuidToString(plugin.ID), plugin.PackageName)
-		ref["enabled"] = plugin.Enabled
+		ref, err := exportPackageDshPlugin(notes, plugin)
+		if err != nil {
+			return nil, nil, err
+		}
 		pluginRefs = append(pluginRefs, ref)
 	}
+
 	manifest["dsh_plugins"] = pluginRefs
 	okrRows, err := q.ListAgentOKRs(ctx, db.ListAgentOKRsParams{WorkspaceID: agent.WorkspaceID, AgentID: agent.ID})
 	if err != nil {

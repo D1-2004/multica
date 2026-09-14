@@ -5760,7 +5760,7 @@ export class ApiClient {
     });
   }
 
-  async syncAgentSource(agentId: string, previewId: string, bindings?: { secrets?: Record<string, string>; deferred_bindings?: string[] }): Promise<SyncAgentSourceResponse> {
+  async syncAgentSource(agentId: string, previewId: string, bindings?: { secrets?: Record<string, string>; deferred_bindings?: string[]; dsh_plugin_bindings?: Record<string,string> }): Promise<SyncAgentSourceResponse> {
     const raw = await this.fetch<unknown>(
       `/api/agents/${agentId}/source/sync`,
       {

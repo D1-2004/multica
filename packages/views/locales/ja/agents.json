@@ -1658,7 +1658,11 @@
       "bindings_required": "移行先で再設定する項目：",
       "defer_bindings": "これらの接続は後で設定します。新しいエージェントのメンバー権限は非公開にします。",
       "confirm_hint": "確認すると、パッケージの設定・指示・専用 skills を持つ新しいエージェントを作成します。",
-      "configuration": "インポートする設定を確認"
+      "configuration": "インポートする設定を確認",
+      "plugin_binding": "{{name}} @ {{version}} を関連付け",
+      "plugin_select": "移行先のプラグインを選択",
+      "plugin_missing": "同じバージョンと内容のパッケージを先にこのワークスペースへインポートしてください。",
+      "plugin_load_failed": "ワークスペースのプラグインを読み込めません。"
     }
   },
   "actions": {

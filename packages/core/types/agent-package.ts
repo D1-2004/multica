@@ -1,7 +1,15 @@
 import type { CoordinatorContract } from "./agent";
 import type { GitHubAgentSkillPreview } from "./github";
 
+export interface AgentPackageDshPluginRequirement {
+  ref: string;
+  packageName: string;
+  version: string;
+  integrity: string;
+}
+
 export interface AgentPackageRequirements {
+  dshPlugins?: AgentPackageDshPluginRequirement[];
   secrets: string[];
   deferred_bindings: string[];
   runtime_provider: string;
@@ -31,4 +39,5 @@ export interface CreateAgentPackageRequest {
   description?: string;
   secrets?: Record<string, string>;
   deferred_bindings?: string[];
+  dsh_plugin_bindings?: Record<string, string>;
 }

@@ -515,7 +515,11 @@
       "bindings_required": "Set up these resources in the destination workspace:",
       "defer_bindings": "Skip these bindings and configure them later. Member-based access on a new Agent stays private.",
       "confirm_hint": "Confirmation creates a new Agent with the package configuration, instructions and exclusive skills.",
-      "configuration": "Review imported configuration"
+      "configuration": "Review imported configuration",
+      "plugin_binding": "Bind {{name}} @ {{version}}",
+      "plugin_select": "Select a destination plugin",
+      "plugin_missing": "Import the same package version and content into this workspace first.",
+      "plugin_load_failed": "Could not load workspace plugins."
     }
   },
   "create_dialog": {

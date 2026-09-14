@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -587,6 +588,12 @@ func (h *Handler) DeleteDshPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
+	// Lock the parent before deleting children so concurrent imports cannot
+	// commit a new binding between child cleanup and parent deletion.
+	if _, err := qtx.GetDshPluginInWorkspaceForUpdate(r.Context(), db.GetDshPluginInWorkspaceForUpdateParams{ID: row.ID, WorkspaceID: row.WorkspaceID}); err != nil {
+		writeError(w, http.StatusConflict, "plugin changed before deletion")
+		return
+	}
 	if err := qtx.DeleteAgentDshPluginsByPlugin(r.Context(), row.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to remove the plugin's agent bindings")
 		return
@@ -775,6 +782,15 @@ func (h *Handler) SetAgentDshPlugins(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	qtx := h.Queries.WithTx(tx)
+	// Lock all destination packages before changing bindings, in a stable
+	// order shared with recipe imports. A concurrent delete must finish first.
+	sort.Slice(bindings, func(i, j int) bool { return uuidToString(bindings[i].id) < uuidToString(bindings[j].id) })
+	for _, entry := range bindings {
+		if _, err := qtx.GetDshPluginInWorkspaceForShare(r.Context(), db.GetDshPluginInWorkspaceForShareParams{ID: entry.id, WorkspaceID: agent.WorkspaceID}); err != nil {
+			writeError(w, http.StatusConflict, "destination plugin is no longer available")
+			return
+		}
+	}
 	// Preserve private overrides when old clients replace only IDs/enabled.
 	previous, err := qtx.ListDshPluginsForAgent(r.Context(), db.ListDshPluginsForAgentParams{AgentID: agent.ID, WorkspaceID: agent.WorkspaceID})
 	if err != nil {
