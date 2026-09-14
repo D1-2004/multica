@@ -575,6 +575,9 @@ it("shows publishing in Configuration for a Git-created Agent", () => {
   openConfiguration();
   fireEvent.click(screen.getByRole("tab", { name: "Publish" }));
   expect(screen.getByText("publish-tab")).toBeDefined();
+  const importedBindings = screen.getByText(enAgents.package_bindings.title, { selector: "summary" }).closest("details");
+  expect(importedBindings).toBeInTheDocument();
+  expect(importedBindings).not.toHaveAttribute("open");
 });
 
 it("shows separate export and publish sections on a manually created Agent", () => {

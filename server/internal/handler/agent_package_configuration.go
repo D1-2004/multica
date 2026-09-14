@@ -16,11 +16,18 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// Requirements contain aliases and locations only, never configuration values.
+// Requirements contain portable resource declarations and secret aliases,
+// never resolved configuration values or destination credentials.
 type PackageRequirements struct {
 	Secrets []string `json:"secrets"`
 	DeferredBindings []string `json:"deferred_bindings"`
 	RuntimeProvider string `json:"runtime_provider"`
+	BindingDeclarations []packageBindingDeclaration `json:"binding_declarations"`
+}
+
+type packageBindingDeclaration struct {
+	Path string `json:"path"`
+	Declaration json.RawMessage `json:"declaration"`
 }
 
 type packageConfiguration struct {
@@ -61,7 +68,7 @@ type portableA2A struct {
 	}
 
 func packageRequirements(bundle agentsource.Bundle) PackageRequirements {
-	result := PackageRequirements{Secrets:[]string{}, DeferredBindings:[]string{}}
+	result := PackageRequirements{Secrets:[]string{}, DeferredBindings:[]string{}, BindingDeclarations:[]packageBindingDeclaration{}}
 	if bundle.Definition == nil { return result }
 	var root map[string]any
 	encoded, _ := json.Marshal(bundle.Definition)
@@ -79,6 +86,18 @@ func packageRequirements(bundle agentsource.Bundle) PackageRequirements {
 	walk(root["configuration"])
 	for ref := range secrets { result.Secrets = append(result.Secrets, ref) }
 	bindings, _ := root["bindings"].(map[string]any)
+	// Describe exactly this validated package, including explicit null/empty
+	// values. Do not derive declarations from previous imports or defaults.
+	for key, value := range bindings {
+		declaration, _ := json.Marshal(value)
+		result.BindingDeclarations = append(result.BindingDeclarations, packageBindingDeclaration{Path:"/bindings/" + key, Declaration:declaration})
+	}
+	for _, key := range []string{"access", "dsh_plugins", "disabled_runtime_skills"} {
+		if declaration, present := bundle.Definition[key]; present {
+			result.BindingDeclarations = append(result.BindingDeclarations, packageBindingDeclaration{Path:"/" + key, Declaration:declaration})
+		}
+	}
+	sort.Slice(result.BindingDeclarations,func(i,j int) bool { return result.BindingDeclarations[i].Path < result.BindingDeclarations[j].Path })
 	runtime, _ := bindings["runtime"].(map[string]any)
 	result.RuntimeProvider, _ = runtime["provider"].(string)
 	for key, value := range bindings {

@@ -14,7 +14,10 @@
     "modified": "修改"
   },
   "package_bindings": {
-    "title": "配置包资源绑定",
+    "title": "已导入包的资源绑定",
+    "declarations_title": "配置包资源绑定",
+    "declarations_description": "以下内容来自本次解析的配置包声明。账号认证和资源选择需要在目标智能体的配置中完成。",
+    "declaration_clear": "声明清空选择或解除绑定。",
     "pending": "{{count}} 项配置包绑定待完成",
     "open": "查看绑定",
     "description": "先通过现有配置入口完成账号认证或资源选择，再刷新状态，将包内引用与已核验的资源对应。凭据保留在当前工作区。",

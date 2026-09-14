@@ -5,6 +5,7 @@ export interface AgentPackageRequirements {
   secrets: string[];
   deferred_bindings: string[];
   runtime_provider: string;
+  binding_declarations?: { path: string; declaration: unknown }[];
 }
 
 export interface AgentPackagePreview {

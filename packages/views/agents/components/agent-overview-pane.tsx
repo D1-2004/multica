@@ -446,7 +446,7 @@ export function AgentOverviewPane({
                 </header>
 
                 <div className="mt-6">
-                  {canEdit && source && <PackageBindingsPanel agentId={agent.id} expanded={effectiveView === "publish"} onNavigate={(tab) => { const view = normalizeDetailView(tab); if (view) requestView(view); }} />}
+                  {canEdit && source && effectiveView !== "publish" && <PackageBindingsPanel agentId={agent.id} expanded={false} onNavigate={(tab) => { const view = normalizeDetailView(tab); if (view) requestView(view); }} />}
                   {effectiveView === "digital_employee" && (
                     <DigitalEmployeeTab
                       agent={agent}
@@ -536,7 +536,13 @@ export function AgentOverviewPane({
                   )}
                   {effectiveView === "export" && <ExportTab agentId={agent.id} canEdit={canEdit} />}
                   {effectiveView === "publish" && (
-                    <PublishTab agentId={agent.id} key={`${agent.id}:${source?.ref}:${source?.synced_commit_sha}`} source={source} canEdit={canEdit} />
+                    <>
+                      <PublishTab agentId={agent.id} key={`${agent.id}:${source?.ref}:${source?.synced_commit_sha}`} source={source} canEdit={canEdit} />
+                      {canEdit && source && <details className="mt-6 space-y-3 rounded-md border p-4">
+                        <summary className="cursor-pointer text-body font-medium">{t(($) => $.package_bindings.title)}</summary>
+                        <PackageBindingsPanel agentId={agent.id} expanded onNavigate={(tab) => { const view = normalizeDetailView(tab); if (view) requestView(view); }} />
+                      </details>}
+                    </>
                   )}
                   {effectiveView === "access" && (
                     <AgentAccessSettings

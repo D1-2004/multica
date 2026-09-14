@@ -14,7 +14,10 @@
     "modified": "Modified"
   },
   "package_bindings": {
-    "title": "Package resource bindings",
+    "title": "Imported package resource bindings",
+    "declarations_title": "Package resource bindings",
+    "declarations_description": "These resources are declared by the package just parsed. Account authorization and resource selection are completed in the destination settings.",
+    "declaration_clear": "Requests an empty selection or an unbound resource.",
     "pending": "{{count}} package bindings need setup",
     "open": "Review bindings",
     "description": "Configure accounts and resources using the existing settings, then refresh and explicitly match each package reference to a verified resource. Credentials stay in this workspace.",
