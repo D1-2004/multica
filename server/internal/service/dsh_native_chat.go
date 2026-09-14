@@ -23,6 +23,8 @@ type DSHNativeChatInput struct {
 	Workdir   string
 }
 
+var ErrDSHNativeInput = errors.New("invalid DSH native input")
+
 // DSHNativeInvokeCheck must apply the normal human invocation policy using the
 // supplied queries, including when they belong to the admission transaction.
 // Opening a management grant is not permission to invoke a private employee.
@@ -35,27 +37,46 @@ type dshNativeChatAdmission struct {
 	runtimeID pgtype.UUID
 }
 
-func (a dshNativeChatAdmission) validateIdentity(session db.ChatSession, agent db.Agent, userID pgtype.UUID) error {
+func (a dshNativeChatAdmission) validateEmployee(agent db.Agent, userID pgtype.UUID) error {
 	if a.invoke == nil || a.access.ID == uuid.Nil || a.access.Kind != "session" ||
 		a.access.Generation < 1 || a.access.SandboxID == "" ||
 		a.access.WorkspaceID == uuid.Nil || a.access.AgentID == uuid.Nil || a.access.UserID == uuid.Nil ||
 		!userID.Valid || uuid.UUID(userID.Bytes) != a.access.UserID ||
-		!session.ID.Valid || session.ID.Bytes == [16]byte{} ||
-		!session.WorkspaceID.Valid || uuid.UUID(session.WorkspaceID.Bytes) != a.access.WorkspaceID ||
-		!session.AgentID.Valid || uuid.UUID(session.AgentID.Bytes) != a.access.AgentID ||
-		session.CreatorID != userID || agent.ID != session.AgentID || agent.WorkspaceID != session.WorkspaceID ||
-		agent.RuntimeMode != "cloud" || !agent.RuntimeID.Valid || agent.RuntimeID != a.runtimeID ||
+		!agent.WorkspaceID.Valid || uuid.UUID(agent.WorkspaceID.Bytes) != a.access.WorkspaceID ||
+		!agent.ID.Valid || uuid.UUID(agent.ID.Bytes) != a.access.AgentID || agent.ArchivedAt.Valid ||
+		agent.RuntimeMode != "cloud" || !agent.RuntimeID.Valid || agent.RuntimeID != a.runtimeID {
+		return dshhost.ErrNativeAccessDenied
+	}
+	return nil
+}
+
+func (a dshNativeChatAdmission) validateIdentity(session db.ChatSession, agent db.Agent, userID pgtype.UUID) error {
+	if err := a.validateEmployee(agent, userID); err != nil {
+		return err
+	}
+	if !session.ID.Valid || session.ID.Bytes == [16]byte{} ||
+		session.CreatorID != userID || session.AgentID != agent.ID || session.WorkspaceID != agent.WorkspaceID ||
 		(session.RuntimeID.Valid && session.RuntimeID != agent.RuntimeID) {
 		return dshhost.ErrNativeAccessDenied
 	}
 	return nil
 }
 
-func (input DSHNativeChatInput) validate(content string) error {
-	if !dshhost.ValidSessionID(input.SessionID) || input.RequestID == uuid.Nil ||
-		input.Workdir != dshhost.MountPath+"/workspaces/"+input.SessionID ||
+func validateDSHNativeSession(sessionID, workdir string) error {
+	if !dshhost.ValidSessionID(sessionID) || workdir != dshhost.MountPath+"/workspaces/"+sessionID {
+		return ErrDSHNativeInput
+	}
+	return nil
+}
+
+// Validate rejects malformed or ambiguous native input before any registration.
+func (input DSHNativeChatInput) Validate(content string) error {
+	if err := validateDSHNativeSession(input.SessionID, input.Workdir); err != nil {
+		return err
+	}
+	if input.RequestID == uuid.Nil ||
 		!utf8.ValidString(content) || strings.ContainsRune(content, 0) || strings.TrimSpace(content) == "" || len(content) > 256*1024 {
-		return errors.New("invalid DSH native chat input")
+		return ErrDSHNativeInput
 	}
 	return nil
 }
@@ -73,7 +94,7 @@ func (s *TaskService) SendDSHNativeChatMessage(ctx context.Context, session db.C
 	if err := admission.validateIdentity(session, agent, userID); err != nil {
 		return nil, err
 	}
-	if err := input.validate(content); err != nil {
+	if err := input.Validate(content); err != nil {
 		return nil, err
 	}
 	// Avoid resolving any connected-app overlay for a disallowed caller.
@@ -105,8 +126,15 @@ func (a dshNativeChatAdmission) checkLocked(ctx context.Context, tx pgx.Tx, q *d
 	if err := a.validateIdentity(session, agent, userID); err != nil {
 		return err
 	}
+	return a.checkGrantLocked(ctx, tx, q, agent, userID)
+}
+
+func (a dshNativeChatAdmission) checkGrantLocked(ctx context.Context, tx pgx.Tx, q *db.Queries, agent db.Agent, userID pgtype.UUID) error {
+	if err := a.validateEmployee(agent, userID); err != nil {
+		return err
+	}
 	var id pgtype.UUID
-	if err := tx.QueryRow(ctx, `SELECT id FROM member WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, session.WorkspaceID, userID).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM member WHERE workspace_id=$1 AND user_id=$2 FOR SHARE`, agent.WorkspaceID, userID).Scan(&id); err != nil {
 		return dshhost.ErrNativeAccessDenied
 	}
 	// Hold the exact Host and grant until commit. Retirement, revocation and
@@ -119,7 +147,7 @@ func (a dshNativeChatAdmission) checkLocked(ctx context.Context, tx pgx.Tx, q *d
 		a.access.WorkspaceID, a.access.AgentID, a.access.Generation, a.access.SandboxID, a.access.ID, userID).Scan(&id); err != nil {
 		return dshhost.ErrNativeAccessDenied
 	}
-	if err := tx.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE id=$1 AND workspace_id=$2 FOR SHARE`, agent.RuntimeID, session.WorkspaceID).Scan(&id); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE id=$1 AND workspace_id=$2 FOR SHARE`, agent.RuntimeID, agent.WorkspaceID).Scan(&id); err != nil {
 		return dshhost.ErrNativeAccessDenied
 	}
 	runtime, err := q.GetAgentRuntime(ctx, agent.RuntimeID)
