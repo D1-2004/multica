@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,8 +28,7 @@ func TestDSHNativeRealHostExecution(t *testing.T) {
 	if mcp {
 		expectedTools++
 	}
-	execute := func(requestID, generation string, timeout time.Duration) (Result, int) {
-		value := native
+	execute := func(value DSHNativeHostConfig, requestID, generation string, timeout time.Duration) (Result, int) {
 		value.RequestID = requestID
 		value.ProviderGeneration = generation
 		var mcpConfig json.RawMessage
@@ -91,24 +91,46 @@ func TestDSHNativeRealHostExecution(t *testing.T) {
 	}
 	first := uuid.NewString()
 	for _, item := range []struct{ id, generation string }{{first, "native-go-first"}, {uuid.NewString(), "native-go-second"}} {
-		result, tools := execute(item.id, item.generation, 25*time.Second)
+		result, tools := execute(native, item.id, item.generation, 25*time.Second)
 		if result.Status != "completed" || result.Output != "NATIVE_GO_COMPLETE" || tools != expectedTools {
 			t.Fatalf("native execute status=%s tools=%d error=%s", result.Status, tools, result.Error)
 		}
 	}
 	// The completed first request is now on an older turn. It must neither
 	// submit another prompt nor return the second request's result.
-	replay, tools := execute(first, "native-go-replay-must-not-call-model", 25*time.Second)
+	replay, tools := execute(native, first, "native-go-replay-must-not-call-model", 25*time.Second)
 	if replay.Status != "completed" || replay.Output != "NATIVE_GO_COMPLETE" || tools != 0 {
 		t.Fatal("completed request did not replay its terminal result")
 	}
-	cancelled, _ := execute(uuid.NewString(), "native-go-cancel", 3*time.Second)
+	cancelled, _ := execute(native, uuid.NewString(), "native-go-cancel", 3*time.Second)
 	if cancelled.Status != "timeout" {
 		t.Fatalf("cancel status=%s error=%s", cancelled.Status, cancelled.Error)
 	}
-	final, tools := execute(uuid.NewString(), "native-go-after-cancel", 25*time.Second)
+	final, tools := execute(native, uuid.NewString(), "native-go-after-cancel", 25*time.Second)
 	if final.Status != "completed" || tools != expectedTools {
 		t.Fatalf("Session not reusable after confirmed cancellation: %s %s", final.Status, final.Error)
+	}
+	if mcp {
+		// Both calls must reach the model's barrier concurrently. Reusing the
+		// same MCP server/tool name must preserve each Agent's own revision.
+		var wait sync.WaitGroup
+		for _, generation := range []string{"native-go-parallel-a", "native-go-parallel-b"} {
+			value := native
+			value.SessionID = uuid.NewString()
+			value.WorkDir = filepath.Join(filepath.Dir(native.WorkDir), value.SessionID)
+			if err := os.Mkdir(value.WorkDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				result, tools := execute(value, uuid.NewString(), generation, 25*time.Second)
+				if result.Status != "completed" || tools != expectedTools {
+					t.Errorf("parallel MCP Session failed: %s tools=%d error=%s", result.Status, tools, result.Error)
+				}
+			}()
+		}
+		wait.Wait()
 	}
 }
 
