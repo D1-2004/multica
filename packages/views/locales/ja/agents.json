@@ -1,4 +1,19 @@
 {
+  "package_diff": {
+    "expand": "プレビューを拡大",
+    "description": "ファイルを選択して、現在のバージョンと公開予定のバージョンを左右に比較します。",
+    "files": "変更されたファイル",
+    "before": "現在のバージョン",
+    "after": "公開予定のバージョン",
+    "expand_unchanged": "変更のない行を展開",
+    "collapse_unchanged": "変更のない行を折りたたむ",
+    "loading": "差分を読み込み中...",
+    "empty": "変更はありません。",
+    "unavailable": "このファイルのテキストは提供されていません。ファイルのメタデータのみ比較できます。",
+    "added": "追加",
+    "removed": "削除",
+    "modified": "変更"
+  },
   "package_bindings": {
     "title": "パッケージのリソース連携",
     "pending": "{{count}} 件の連携設定が必要です",

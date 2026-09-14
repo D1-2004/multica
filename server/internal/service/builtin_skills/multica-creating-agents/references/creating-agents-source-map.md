@@ -250,3 +250,9 @@ go test ./internal/service -run TestBuiltinSkillsConformToTemplate
 - 2026-09-11: Added ZIP-root normalization and recompressed-export regression evidence.
   Reason: preserve the same bundle and skill identities when an uploaded ZIP
   contains a wrapping Agent folder or macOS compression metadata.
+
+- 2026-09-14: Publication preview uses `packages/views/agents/components/tabs/source-change-list.tsx`
+  and `source-file-diff.tsx` for shared ZIP/Git file navigation and Pierre split
+  diffs. Tests in `source-change-list.test.tsx` cover selection, enlarged view,
+  additions/deletions and unavailable content. Reason: align the UI source map
+  with the file-based review workflow.

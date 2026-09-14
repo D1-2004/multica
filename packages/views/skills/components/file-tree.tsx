@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import {
   ChevronRight,
   ChevronDown,
@@ -114,6 +114,8 @@ function TreeNodeItem({
   onSelect,
   allPaths,
   actions,
+  renderFileSuffix,
+  useFullPathLabels,
   depth = 0,
 }: {
   node: FileTreeNode;
@@ -121,6 +123,8 @@ function TreeNodeItem({
   onSelect: (path: string) => void;
   allPaths: string[];
   actions?: FileTreeActions;
+  renderFileSuffix?: (path: string) => ReactNode;
+  useFullPathLabels?: boolean;
   depth?: number;
 }) {
   const { t } = useT("skills");
@@ -155,6 +159,8 @@ function TreeNodeItem({
                 onSelect={onSelect}
                 allPaths={allPaths}
                 actions={actions}
+                renderFileSuffix={renderFileSuffix}
+                useFullPathLabels={useFullPathLabels}
                 depth={depth + 1}
               />
             ))}
@@ -207,6 +213,8 @@ function TreeNodeItem({
         type="button"
         role="tab"
         aria-selected={isSelected}
+        aria-label={useFullPathLabels ? node.path : undefined}
+        title={node.path}
         onClick={() => onSelect(node.path)}
         className={cn(
           "flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md pr-2.5 text-left text-caption transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -218,6 +226,7 @@ function TreeNodeItem({
       >
         <Icon className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{node.name}</span>
+        {renderFileSuffix?.(node.path)}
       </button>
       {actions && (
         <DropdownMenu>
@@ -350,12 +359,16 @@ export function FileTree({
   selectedPath,
   onSelect,
   actions,
+  renderFileSuffix,
+  useFullPathLabels,
 }: {
   filePaths: string[];
   selectedPath: string;
   onSelect: (path: string) => void;
   /** Omit to render a read-only tree. */
   actions?: FileTreeActions;
+  renderFileSuffix?: (path: string) => ReactNode;
+  useFullPathLabels?: boolean;
 }) {
   const { t } = useT("skills");
   const tree = buildTree(filePaths);
@@ -381,6 +394,8 @@ export function FileTree({
           onSelect={onSelect}
           allPaths={filePaths}
           actions={actions}
+          renderFileSuffix={renderFileSuffix}
+          useFullPathLabels={useFullPathLabels}
         />
       ))}
     </div>

@@ -61,7 +61,10 @@ vi.mock("@multica/core/paths", async (importOriginal) => ({
   useWorkspacePaths: () => ({ skills: () => "/acme/skills" }),
 }));
 vi.mock("@multica/core/permissions", () => ({
-  useSkillPermissions: () => ({ canEdit: { allowed: true, reason: null } }),
+  useSkillPermissions: () => ({
+    canEdit: { allowed: true, reason: null },
+    canTransferOwner: { allowed: false, reason: null },
+  }),
 }));
 vi.mock("@multica/core/workspace/avatar-url", () => ({
   resolvePublicFileUrl: (v: string | null) => v,
@@ -75,6 +78,9 @@ vi.mock("../hooks/use-can-edit-skill", () => ({
 }));
 
 // Heavy leaves that carry no behaviour under test.
+vi.mock("../../common/owner-transfer-control", () => ({
+  OwnerTransferControl: () => null,
+}));
 vi.mock("../../rich-content", () => ({
   RichContent: ({ content }: { content: string }) => (
     <div data-testid="preview">{content}</div>
