@@ -53,7 +53,7 @@ func finishCheckTool(action Action, quotes finishQuoteOptions, workRefs ...strin
 		Parameters: shared.FunctionParameters{"type": "object", "additionalProperties": false,
 			"required": []string{"request_quote_ref", "candidate_quote_ref", "verdict", "reason", "missing_source_refs", "work_checks", "constraint_quote"},
 			"properties": map[string]any{
-				"work_checks":         map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables", "target_match"}, "properties": map[string]any{"target_match": map[string]any{"type": "string", "enum": []string{"new_work", "same_deliverable", "different_deliverable", "no_advancement", "unknown"}, "description": "Judge the chosen work target separately from permission and output count. start_work uses new_work. For continue_work compare candidate.purpose with existing_work.original_goal: same_deliverable only for a substantive update to that SAME requested output; different_deliverable for an independent outcome even with shared evidence/topic/person. Same goal but no substantive new input or requested execution change is no_advancement: a status/presence check or reminder of accepted work does not request another execution. Missing target evidence is unknown. Only same_deliverable can allow continuation."}, "action_ref": actionRefSchema, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "Classify only THIS action's purpose. single: one output, including related steps or a same-kind batch (same mutation/config change on several named objects). multiple: THIS purpose mixes unrelated kinds of output (lookup AND a separate notice draft); sibling actions and other window requests do not make it multiple. none: no executable deliverable."}}}},
+				"work_checks":         map[string]any{"type": "array", "maxItems": WindowPlanMaxItems, "description": "Exactly one entry per candidate start_work/continue_work, no entries for other kinds. Classify independent deliverables within EACH action, not number of source_refs. Empty for non-work-only candidates.", "items": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action_ref", "deliverables", "target_match"}, "properties": map[string]any{"target_match": map[string]any{"type": "string", "enum": []string{"new_work", "same_deliverable", "different_deliverable", "no_advancement", "unknown"}, "description": "Judge the chosen work target separately from permission and output count. start_work uses new_work. For continue_work compare candidate.purpose with existing_work.original_goal: same_deliverable only for a substantive update to that SAME requested output; different_deliverable for an independent outcome even with shared evidence/topic/person. Same goal but no substantive new input or requested execution change is no_advancement: a status/presence check or reminder of accepted work does not request another execution — revise to report_status with loaded state_refs, do not keep continue_work. Missing target evidence is unknown. Only same_deliverable can allow continuation."}, "action_ref": actionRefSchema, "deliverables": map[string]any{"type": "string", "enum": []string{"single", "multiple", "none"}, "description": "Classify only THIS action's purpose. single: one output, including related steps or a same-kind batch (same mutation/config change on several named objects). multiple: THIS purpose mixes unrelated kinds of output (lookup AND a separate notice draft); sibling actions and other window requests do not make it multiple. none: no executable deliverable."}}}},
 				"constraint_quote":    map[string]any{"type": "string", "maxLength": 200, "description": "On revise caused by a supplied policy/configuration requirement, return its exact directive or mandatory reply template here (<=200 characters). Routing cannot read the hidden policy: saying only use the template is not repairable. Quote job_policy, current_window or supplied persona/reply_tone verbatim. Empty for allow or revisions unrelated to such requirements. Never invent rules."},
 				"request_quote_ref":   map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Requests), "description": "Select a Host request quote option qN. The option is evidence only; read the entire current_window for all intents and constraints. Do not transcribe text."},
 				"candidate_quote_ref": map[string]any{"type": "string", "enum": finishQuoteRefs(quotes.Candidates), "description": "Select a Host candidate quote option cN for the action you compared. Host binds its exact original text; do not transcribe or escape it."},
@@ -339,6 +339,24 @@ func (c *Coordinator) checkFinish(ctx context.Context, turn Turn, decision Decis
 	return finishCheckResult{}, fmt.Errorf("finish check protocol repair exhausted")
 }
 
+func noAdvancementRepairReason(actionRef string) string {
+	return "Work action " + actionRef + " is a status ping on already accepted work. Use report_status with loaded state_refs; do not continue_work or only reword its reply."
+}
+
+// applyFinishWorkCheckKindRepair rewrites Host reasons that require a different
+// action kind. It runs for both allow and revise, including release builds that
+// later discard work_checks on revise — those builds must call this first.
+func applyFinishWorkCheckKindRepair(result *finishCheckResult, check finishWorkCheck, siblingWorkActions bool) {
+	if check.TargetMatch == "no_advancement" {
+		result.Verdict = "revise"
+		result.Reason = noAdvancementRepairReason(check.ActionRef)
+	}
+	if check.Deliverables == "multiple" {
+		result.Verdict = "revise"
+		result.Reason = multipleDeliverableRepairReason(check.ActionRef, siblingWorkActions)
+	}
+}
+
 func multipleDeliverableRepairReason(actionRef string, siblingWorkActions bool) string {
 	if siblingWorkActions {
 		return "Work action " + actionRef + " was marked multiple; classify only that action's own purpose. Sibling work actions already cover other requests and do not make this one multiple. Split only if THIS purpose still mixes unrelated kinds of output."
@@ -477,17 +495,12 @@ func validateFinishWorkChecks(result *finishCheckResult, decision Decision) erro
 		if expected[check.ActionRef] == "continue_work" {
 			wantMatch = "same_deliverable"
 		}
-		if result.Verdict == "allow" && check.TargetMatch != wantMatch {
+		applyFinishWorkCheckKindRepair(result, check, len(expected) > 1)
+		if result.Verdict == "allow" && check.TargetMatch != wantMatch && check.TargetMatch != "no_advancement" {
 			result.Verdict = "revise"
 			result.Reason = "Work action " + check.ActionRef + " target_match=" + check.TargetMatch + " does not support " + expected[check.ActionRef] + "; an independent deliverable needs start_work, and continuation requires evidence of the same original output. Preserve all requests."
-			if check.TargetMatch == "no_advancement" {
-				result.Reason = "Work action " + check.ActionRef + " has no new work input or execution change; respond through the appropriate non-work coordination action without restarting accepted work."
-			}
 		}
-		if check.Deliverables == "multiple" {
-			result.Verdict = "revise"
-			result.Reason = multipleDeliverableRepairReason(check.ActionRef, len(expected) > 1)
-		} else if result.Verdict == "allow" && check.Deliverables != "single" {
+		if result.Verdict == "allow" && check.Deliverables != "single" && check.Deliverables != "multiple" {
 			result.Verdict = "revise"
 			result.Reason = "Work action " + check.ActionRef + " has no executable deliverable; repair its scope or use the appropriate non-work action."
 		}
