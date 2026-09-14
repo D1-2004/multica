@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"net"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -15,14 +17,15 @@ import (
 // A protocol peer on net.Pipe tests the production Backend path without a
 // local Host, network service, model or database.
 type nativeBackendPeer struct {
-	mu       sync.Mutex
-	calls    map[string]int
-	state    string
-	baseline []json.RawMessage
-	live     []json.RawMessage
-	prompted chan struct{}
-	hold     bool
-	receipt  map[string]string
+	mu             sync.Mutex
+	calls          map[string]int
+	promptRequests []json.RawMessage
+	state          string
+	baseline       []json.RawMessage
+	live           []json.RawMessage
+	prompted       chan struct{}
+	hold           bool
+	receipt        map[string]string
 }
 
 func (p *nativeBackendPeer) client() *dshHostClient {
@@ -65,6 +68,10 @@ func (p *nativeBackendPeer) client() *dshHostClient {
 					write(map[string]string{"sessionId": "session", "requestId": "mine"})
 				}
 			case "prompt":
+				p.mu.Lock()
+				encoded, _ := json.Marshal(request.Request)
+				p.promptRequests = append(p.promptRequests, encoded)
+				p.mu.Unlock()
 				write(map[string]bool{"accepted": true})
 				close(p.prompted)
 			case "task.cancel":
@@ -200,6 +207,54 @@ func TestDSHNativeBackendCancelsItsRequestOnEOFAndCallerCancellation(t *testing.
 			defer peer.mu.Unlock()
 			if peer.calls["task.cancel"] != 1 || peer.calls["task.release"] != 1 {
 				t.Fatal("request cancellation did not wait for resource release")
+			}
+		})
+	}
+}
+
+func TestDSHNativeBackendTransportsFullPrompt(t *testing.T) {
+	for _, mode := range []string{"queue", "steer"} {
+		t.Run(mode, func(t *testing.T) {
+			text := "原始输入"
+			data := "aGVsbG8="
+			media := "image/png"
+			receipt := "upload-receipt"
+			zone := "Asia/Shanghai"
+			prompt := &protocol.DSHNativePrompt{SessionID: "session-31e58f19-8669-42f3-98f6-01bc71aa8ad0", RequestID: "91675c65-a8e3-4b25-85fc-5e82081af8af", Mode: mode, Content: []protocol.DSHNativePromptPart{{Type: "text", Text: &text}, {Type: "image", MediaType: &media, Data: &data}, {Type: "file", ReceiptID: &receipt}}, ClientTimeZone: &zone}
+			native := DSHNativeHostConfig{WorkspaceID: "workspace", AgentID: "employee", Generation: 1, SessionID: prompt.SessionID, RequestID: prompt.RequestID, WorkDir: "/mnt/multica-dsh/workspaces/" + prompt.SessionID, ModelBaseURL: "https://model.example", ModelAPIKey: "fixture", ProviderGeneration: "fixture", ExpiresAt: time.Now().Add(time.Hour), Prompt: prompt}
+			created, err := NewDSHNativeHostBackend(Config{}, native)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backend := created.(*dshNativeBackend)
+			expected, err := prompt.Clone()
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = "mutated"
+			zone = "UTC"
+			peer := &nativeBackendPeer{calls: map[string]int{}, state: "ready", prompted: make(chan struct{})}
+			backend.client = peer.client()
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := backend.admit(ctx, "generated platform summary must not execute", ExecOptions{}, nil); err != nil {
+				t.Fatal(err)
+			}
+			peer.mu.Lock()
+			defer peer.mu.Unlock()
+			if len(peer.promptRequests) != 1 {
+				t.Fatal("missing native prompt")
+			}
+			actual, err := protocol.DecodeDSHNativePrompt(peer.promptRequests[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, expected) {
+				t.Fatal("native wire input changed")
+			}
+			native.Prompt.RequestID = "dd996f77-e2fd-4a16-84d9-1032b55a05f1"
+			if _, err := NewDSHNativeHostBackend(Config{}, native); err == nil {
+				t.Fatal("foreign request admitted")
 			}
 		})
 	}

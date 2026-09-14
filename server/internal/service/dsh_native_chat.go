@@ -1,7 +1,9 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"unicode/utf8"
@@ -12,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/chattrace"
 	"github.com/multica-ai/multica/server/internal/dshhost"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // DSHNativeChatInput carries the exact native identity. The gateway must create
@@ -21,9 +24,11 @@ type DSHNativeChatInput struct {
 	SessionID string
 	RequestID uuid.UUID
 	Workdir   string
+	Prompt    *protocol.DSHNativePrompt
 }
 
 var ErrDSHNativeInput = errors.New("invalid DSH native input")
+var ErrDSHNativeSteerBusy = errors.New("native steering requires active task input admission")
 
 // DSHNativeInvokeCheck must apply the normal human invocation policy using the
 // supplied queries, including when they belong to the admission transaction.
@@ -74,6 +79,12 @@ func (input DSHNativeChatInput) Validate(content string) error {
 	if err := validateDSHNativeSession(input.SessionID, input.Workdir); err != nil {
 		return err
 	}
+	if input.Prompt != nil {
+		if input.Prompt.Validate() != nil || input.Prompt.SessionID != input.SessionID || input.Prompt.RequestID != input.RequestID.String() || content != input.Prompt.DisplayText() {
+			return ErrDSHNativeInput
+		}
+		return nil
+	}
 	if input.RequestID == uuid.Nil ||
 		!utf8.ValidString(content) || strings.ContainsRune(content, 0) || strings.TrimSpace(content) == "" || len(content) > 256*1024 {
 		return ErrDSHNativeInput
@@ -88,6 +99,13 @@ func (input DSHNativeChatInput) Validate(content string) error {
 func (s *TaskService) SendDSHNativeChatMessage(ctx context.Context, session db.ChatSession, agent db.Agent, access dshhost.NativeAccess, input DSHNativeChatInput, content string, trace chattrace.Trace, invoke DSHNativeInvokeCheck) (*DirectChatSendResult, error) {
 	if s == nil || s.Queries == nil || s.TxStarter == nil {
 		return nil, errors.New("DSH native chat requires a task transaction")
+	}
+	if input.Prompt != nil {
+		copy, err := input.Prompt.Clone()
+		if err != nil {
+			return nil, ErrDSHNativeInput
+		}
+		input.Prompt = copy
 	}
 	userID := pgtype.UUID{Bytes: access.UserID, Valid: true}
 	admission := &dshNativeChatAdmission{access: access, input: input, invoke: invoke, runtimeID: agent.RuntimeID}
@@ -192,7 +210,7 @@ func (a dshNativeChatAdmission) replay(ctx context.Context, tx pgx.Tx, q *db.Que
 	if err != nil {
 		return nil, err
 	}
-	if message.Content != content {
+	if message.Content != content || !sameDSHNativeSource(message.SourcePayload, a.input.Prompt) {
 		return nil, dshhost.ErrChanged
 	}
 	var queued bool
@@ -215,4 +233,36 @@ func (a dshNativeChatAdmission) bind(ctx context.Context, tx pgx.Tx, session db.
 		dshhost.SessionScope{Key: a.access.Key, Kind: "chat", ID: uuid.UUID(session.ID.Bytes)},
 		uuid.UUID(task.ID.Bytes), a.input.SessionID, a.input.RequestID)
 	return err
+}
+
+// The complete native input shares the immutable user-message transaction.
+// Transcript text is only a display summary, never reconstructed for execution.
+func dshNativeSource(prompt *protocol.DSHNativePrompt) ([]byte, error) {
+	if prompt == nil {
+		return nil, nil
+	}
+	if err := prompt.Validate(); err != nil {
+		return nil, ErrDSHNativeInput
+	}
+	return json.Marshal(map[string]any{"dsh_native_prompt": prompt})
+}
+func sameDSHNativeSource(raw []byte, prompt *protocol.DSHNativePrompt) bool {
+	var stored map[string]json.RawMessage
+	if len(raw) > 0 && json.Unmarshal(raw, &stored) != nil {
+		return false
+	}
+	value, found := stored["dsh_native_prompt"]
+	if prompt == nil {
+		return !found
+	}
+	if !found {
+		return false
+	}
+	parsed, err := protocol.DecodeDSHNativePrompt(value)
+	if err != nil {
+		return false
+	}
+	left, leftErr := json.Marshal(parsed)
+	right, rightErr := json.Marshal(prompt)
+	return leftErr == nil && rightErr == nil && bytes.Equal(left, right)
 }

@@ -29,6 +29,12 @@
 - `docs/security/asb-dws-network-audit.md` maps DWS direct-transfer, OSS, mail, Stream and distribution dependencies to reviewed default rules; only two managed transfer families accept wildcards at the creation boundary.
 # DSH employee Home provisioning
 
+- `server/pkg/protocol/dsh_native.go` validates and clones official native prompt content with bounded transport space; `dsh_native_test.go` covers attachment-only input, invalid unions, nulls and content preservation.
+- `server/internal/handler/dsh_native_claim.go` checks task-owned input, native binding and daemon capability before delivery. `daemon.go` requeues refused claims and excludes native attachments from generic callback text. Pure claim tests cover old daemons, changed scope, binding failures and unchanged ordinary inputs.
+- `server/internal/daemon/dsh_native.go` and `server/pkg/agent/dsh_native.go` preserve native Session spelling and deliver the complete typed request to the authenticated Host control socket. Protocol-peer tests inspect actual serialized control requests without starting a local Host.
+- `server/internal/service/dsh_native_chat_test.go` includes full-input replay comparison and an opt-in real PostgreSQL persistence/busy-steer rollback case. Active steering, browser forwarding and preproduction acceptance are still pending.
+
+
 - `server/internal/dshhost/session.go` and migration `9238_dsh_browser_session_identity`: preserve official UUID and platform-prefixed Session identities; transactional native adoption refuses remapping and duplicate request ownership.
 - `server/internal/service/dsh_native_chat.go`, `task.go`, `dsh_native_chat_test.go`: native admission shares the direct-chat transaction, rechecks human invocation and exact live grant/Host, binds immutable input identity and returns an existing task on an identical retry. Includes opt-in PostgreSQL concurrent replay, input rollback, lost-commit-response and revoked/stale-grant cases; these require real preproduction execution.
 - `server/internal/service/dsh_native_session.go`, `dsh_native_session_test.go`: transactionally registers a human-owned chat and exact native mapping under Runtime/employee/workspace locks, resolves concurrent retries and rejects another creator or an issue scope. Registration is separate from input admission and never fabricates a task. Database concurrency and rollback cases require real preproduction execution.

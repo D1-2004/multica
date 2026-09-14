@@ -2716,15 +2716,26 @@ func (h *Handler) buildClaimedTaskResponse(r *http.Request, task *db.AgentTaskQu
 				}
 			}
 
+			resp.DSHNativePrompt, failure = loadDSHNativeClaim(r.Context(), h.DB, *task, runtime, taskBackend,
+				parseUUID(runtimeWorkspaceID), requestHasDaemonCapability(r, protocol.DaemonCapabilityDSHNativePromptV1), unanswered)
+			if failure != nil {
+				// Preserve the immutable input for a capable Runtime or a repaired
+				// binding. Never dispatch its display summary as a replacement.
+				if _, err := h.TaskService.RequeueTaskAfterClaimFailure(r.Context(), *task); err != nil {
+					slog.Error("native DSH claim: requeue failed", "task_id", uuidToString(task.ID), "error", err)
+				}
+				return resp, deliveredCommentIDs, agentSkillCount, builtinSkillCount, failure
+			}
+
 			parts := make([]string, 0, len(unanswered))
 			for _, m := range unanswered {
 				if strings.TrimSpace(m.Content) != "" {
 					parts = append(parts, m.Content)
 				}
-				if len(m.SourcePayload) > 0 {
+				if source := withoutDSHNativeSource(m.SourcePayload); len(source) > 0 {
 					resp.ChatMessageSourcePayloads = append(resp.ChatMessageSourcePayloads, ChatMessageSourcePayload{
 						MessageID: uuidToString(m.ID),
-						Payload:   json.RawMessage(m.SourcePayload),
+						Payload:   json.RawMessage(source),
 					})
 				}
 				if atts, attErr := h.Queries.ListAttachmentsByChatMessage(r.Context(), db.ListAttachmentsByChatMessageParams{

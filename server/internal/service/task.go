@@ -2258,6 +2258,9 @@ func (s *TaskService) sendDirectChatMessage(
 		if err != nil {
 			return fmt.Errorf("check direct chat queue position: %w", err)
 		}
+		if native != nil && native.input.Prompt != nil && native.input.Prompt.Mode == "steer" && queued {
+			return ErrDSHNativeSteerBusy
+		}
 		out.Queued = queued
 
 		task, err := qtx.CreateChatTask(ctx, db.CreateChatTaskParams{
@@ -2307,12 +2310,20 @@ func (s *TaskService) sendDirectChatMessage(
 			return fmt.Errorf("adopt onboarding kickoff: %w", err)
 		}
 
+		var nativeSource []byte
+		if native != nil {
+			nativeSource, err = dshNativeSource(native.input.Prompt)
+			if err != nil {
+				return err
+			}
+		}
 		// Create the user message already owned by this task (task_id = task.id),
 		// so it belongs to this immutable input batch the instant it exists.
 		msg, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
 			ChatSessionID: session.ID,
 			Role:          "user",
 			Content:       content,
+			SourcePayload: nativeSource,
 			TaskID:        task.ID,
 			MessageKind:   pgtype.Text{String: protocol.ChatMessageKindMessage, Valid: true},
 		})

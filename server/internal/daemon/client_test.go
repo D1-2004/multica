@@ -40,6 +40,7 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 			protocol.DaemonCapabilityA2AInvocationV2,
 			protocol.DaemonCapabilityRunnerMCPMountsV1,
 			protocol.DaemonCapabilityManagedMCPRelayRoutesV1,
+			protocol.DaemonCapabilityDSHNativePromptV1,
 		} {
 			if !capabilities[want] {
 				t.Errorf("X-Client-Capabilities missing %q: %v", want, capabilities)

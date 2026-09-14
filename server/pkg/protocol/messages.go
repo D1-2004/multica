@@ -3,6 +3,8 @@ package protocol
 import "encoding/json"
 
 const (
+	// DaemonCapabilityDSHNativePromptV1 preserves typed native input and binding identity.
+	DaemonCapabilityDSHNativePromptV1   = "dsh-native-prompt-v1"
 	DaemonCapabilitySkillBundlesV1      = "skill-bundles-v1"
 	DaemonCapabilityCoalescedCommentsV1 = "coalesced-comments-v1"
 	// DaemonCapabilityTaskInstructionV1 advertises that the daemon consumes
