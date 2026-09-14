@@ -20,11 +20,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/chattrace"
+	"github.com/multica-ai/multica/server/internal/dshhost"
 	a2aintegration "github.com/multica-ai/multica/server/internal/integrations/a2a"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentitygithub"
 	"github.com/multica-ai/multica/server/internal/integrations/agentidentityhsf"
@@ -500,7 +503,7 @@ func FCE2BTemplateCapabilities(provider string, template FCE2BTemplate) []string
 			if provider != "pi" {
 				continue
 			}
-		case DSHTrajectoryCapability:
+		case DSHTrajectoryCapability, DSHEmployeeHostCapability:
 			if provider != "dsh" {
 				continue
 			}
@@ -937,6 +940,7 @@ type FCE2BLauncher struct {
 	SandboxRelaySigner SandboxRelayTokenSigner
 	sleep              func(context.Context, time.Duration) error
 	jitter             func(time.Duration) time.Duration
+	dshProvider        func(dshhost.Storage) (dshhost.Provider, error)
 
 	// LLMTraceCaptureAlways turns on sandbox model request/response capture
 	// for every task on a capable runtime image, independent of Router
@@ -1502,6 +1506,16 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "template_resolved"); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B template stage: %w", err)
 	}
+	if FCE2BRuntimeProvider(runtime) == "dsh" {
+		if !FCE2BRuntimeHasCapability(runtime, DSHEmployeeHostCapability) {
+			return fcE2BLaunchSubmission{}, false, errors.New("DSH runtime requires the employee host protocol")
+		}
+		release, err := lockDSHEmployee(ctx, runtimeLockConn, runtime.WorkspaceID, task.AgentID)
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, err
+		}
+		defer release()
+	}
 
 	tasks, err := l.Queries.ListAgentTasks(ctx, task.AgentID)
 	if err != nil {
@@ -1526,7 +1540,22 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B sandbox stage: %w", err)
 	}
 	chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "started", "task_id", taskID)
-	sandboxID, coldStart, err := l.resolveSandboxOnConnection(ctx, runtime, scope, scoped, template, runtimeLockConn, trace)
+	var sandboxID string
+	var coldStart bool
+	var employeeHost *dshhost.Host
+	if FCE2BRuntimeProvider(runtime) == "dsh" {
+		var host dshhost.Host
+		host, coldStart, err = l.resolveDSHEmployeeSandbox(ctx, task, runtime, template, runtimeLockConn, trace)
+		if errors.Is(err, errDSHHostWaiting) {
+			return fcE2BLaunchSubmission{}, true, nil
+		}
+		sandboxID = host.SandboxID
+		employeeHost = &host
+		// DSH ownership is recorded by employee, never in the per-chat cache.
+		scoped = false
+	} else {
+		sandboxID, coldStart, err = l.resolveSandboxOnConnection(ctx, runtime, scope, scoped, template, runtimeLockConn, trace)
+	}
 	if err != nil {
 		chattrace.LogStage(slog.Default(), trace, "fc_e2b_sandbox_resolve", "failed",
 			"task_id", taskID,
@@ -1594,6 +1623,22 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 		return fcE2BLaunchSubmission{}, false, err
 	}
 	extraEnv = hardenCloudSandboxA2ARunnerEnv(task, runtime, extraEnv)
+	if employeeHost != nil {
+		binding, err := (dshhost.PostgresStore{DB: runtimeLockConn}).BindExecution(ctx, dshExecutionScope(employeeHost.Key, task), uuid.UUID(task.ID.Bytes))
+		if err != nil {
+			return fcE2BLaunchSubmission{}, false, fmt.Errorf("bind DSH native execution: %w", err)
+		}
+		if extraEnv == nil {
+			extraEnv = make(map[string]string)
+		}
+		extraEnv["DSH_HOME"] = dshhost.MountPath + "/home"
+		extraEnv["MULTICA_DSH_WORKSPACE_ID"] = employeeHost.WorkspaceID.String()
+		extraEnv["MULTICA_DSH_AGENT_ID"] = employeeHost.AgentID.String()
+		extraEnv["MULTICA_DSH_HOST_GENERATION"] = strconv.FormatInt(employeeHost.Generation, 10)
+		extraEnv["MULTICA_DSH_SESSION_ID"] = binding.SessionID
+		extraEnv["MULTICA_DSH_REQUEST_ID"] = binding.RequestID.String()
+		extraEnv["MULTICA_DSH_WORKDIR"] = binding.Workdir
+	}
 	if _, err := l.Tasks.RecordRuntimeStartStage(ctx, attempt.ID, task.ID, task.RuntimeID, "daemon_token_preparing"); err != nil {
 		return fcE2BLaunchSubmission{}, false, fmt.Errorf("record FC/E2B daemon token stage: %w", err)
 	}
@@ -2768,6 +2813,13 @@ func sortedEnvKeys(env map[string]string) []string {
 func isAllowedFCE2BRunnerExtraEnv(key string) bool {
 	switch key {
 	case "OPENAI_MODEL",
+		"DSH_HOME",
+		"MULTICA_DSH_WORKSPACE_ID",
+		"MULTICA_DSH_AGENT_ID",
+		"MULTICA_DSH_HOST_GENERATION",
+		"MULTICA_DSH_SESSION_ID",
+		"MULTICA_DSH_REQUEST_ID",
+		"MULTICA_DSH_WORKDIR",
 		"DWS_CONFIG_DIR",
 		"GH_CONFIG_DIR",
 		"XDG_CONFIG_HOME",
