@@ -54,17 +54,62 @@ func lockDSHEmployee(ctx context.Context, conn *pgxpool.Conn, workspace, agent p
 	return func() { releaseFCE2BAdvisoryLock(conn, false, dshEmployeeLockClass, key, "DSH employee") }, nil
 }
 
+// EnsureDSHEmployeeHost starts or recovers the employee writer for a human
+// native entry. The caller checks management permission before this operation
+// and again when issuing access. No task or runner is fabricated for UI startup.
+func (l *FCE2BLauncher) EnsureDSHEmployeeHost(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
+	l = l.withCurrentConfig()
+	if l == nil || l.Queries == nil || l.Pool == nil || !l.Config.Enabled || l.nativeAuthority == nil || key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil {
+		return dshhost.Host{}, errors.New("DSH employee startup is unavailable")
+	}
+	if err := l.Config.Validate(); err != nil {
+		return dshhost.Host{}, err
+	}
+	params := db.GetAgentInWorkspaceParams{ID: pgtype.UUID{Bytes: key.AgentID, Valid: true}, WorkspaceID: pgtype.UUID{Bytes: key.WorkspaceID, Valid: true}}
+	agent, err := l.Queries.GetAgentInWorkspace(ctx, params)
+	if err != nil || !agent.RuntimeID.Valid {
+		return dshhost.Host{}, errors.New("DSH employee runtime is unavailable")
+	}
+	// Use the platform launch lock order: shared Runtime, then employee. Reload
+	// the binding on this connection so a waiting entry cannot select stale state.
+	conn, releaseRuntime, err := l.lockRuntimeShared(ctx, agent.RuntimeID)
+	if err != nil {
+		return dshhost.Host{}, err
+	}
+	defer releaseRuntime()
+	releaseEmployee, err := lockDSHEmployee(ctx, conn, params.WorkspaceID, params.ID)
+	if err != nil {
+		return dshhost.Host{}, err
+	}
+	defer releaseEmployee()
+	queries := db.New(conn)
+	current, err := queries.GetAgentInWorkspace(ctx, params)
+	if err != nil || current.RuntimeID != agent.RuntimeID || current.ArchivedAt.Valid || current.RuntimeMode != "cloud" {
+		return dshhost.Host{}, errors.New("DSH employee binding changed")
+	}
+	runtime, err := queries.GetAgentRuntime(ctx, current.RuntimeID)
+	if err != nil || runtime.WorkspaceID != params.WorkspaceID || runtime.Provider != "dsh" || !IsFCE2BRuntime(runtime) || !runtime.OwnerID.Valid || !runtime.DaemonID.Valid || strings.TrimSpace(runtime.DaemonID.String) == "" {
+		return dshhost.Host{}, errors.New("DSH employee requires an FC DSH runtime")
+	}
+	template, err := fcE2BTemplateForRuntime(runtime)
+	if err != nil {
+		return dshhost.Host{}, err
+	}
+	host, _, err := l.resolveDSHEmployeeSandbox(ctx, key, pgtype.UUID{}, runtime, template, conn, chattrace.New("dsh_native_entry"))
+	return host, err
+}
+
 // The caller holds the employee admission lock through runner submission.
+// Native entries pass no excluded task, so every admitted task blocks retirement.
 // Storage operations reuse that connection, even when the pool has size one.
-func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, task db.AgentTaskQueue, rt db.AgentRuntime, template string, conn *pgxpool.Conn, trace chattrace.Trace) (dshhost.Host, bool, error) {
-	if conn == nil || !rt.WorkspaceID.Valid || !task.AgentID.Valid {
+func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, key dshhost.Key, excludeTask pgtype.UUID, rt db.AgentRuntime, template string, conn *pgxpool.Conn, trace chattrace.Trace) (dshhost.Host, bool, error) {
+	if conn == nil || !rt.WorkspaceID.Valid || key.WorkspaceID != uuid.UUID(rt.WorkspaceID.Bytes) || key.AgentID == uuid.Nil {
 		return dshhost.Host{}, false, errors.New("invalid DSH employee launch identity")
 	}
 	catalog, profileDigest, err := dshManagedCatalog(l.Config.LLMModels)
 	if err != nil {
 		return dshhost.Host{}, false, err
 	}
-	key := dshhost.Key{WorkspaceID: uuid.UUID(rt.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}
 	store := dshhost.PostgresStore{DB: conn}
 	before, err := store.Get(ctx, key)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -101,13 +146,19 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, task db.A
 		var busy bool
 		// A submitted background runner can still be queued before claiming.
 		// Treat its persisted sandbox receipt as active admission, too.
+		// Live native grants also reserve a healthy generation until revoked or
+		// expired. A retiring generation already rejects those grants; its
+		// remaining task writers must still drain before destruction.
 		err = conn.QueryRow(ctx, `SELECT EXISTS (
  SELECT 1 FROM agent_task_queue t JOIN agent a ON a.id=t.agent_id
- WHERE a.workspace_id=$1 AND t.agent_id=$2 AND t.id<>$3
+ WHERE a.workspace_id=$1 AND t.agent_id=$2 AND t.id IS DISTINCT FROM $3::uuid
  AND (t.status IN ('dispatched','running','waiting_local_directory') OR
  (t.status='queued' AND EXISTS (SELECT 1 FROM agent_task_runtime_start_attempt s
- WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))`,
-			rt.WorkspaceID, task.AgentID, task.ID, before.SandboxID).Scan(&busy)
+ WHERE s.task_id=t.id AND s.sandbox_id=$4 AND s.status IN ('starting','claimed')))))
+ OR ($5 AND EXISTS (SELECT 1 FROM dsh_native_access n
+ WHERE n.workspace_id=$1 AND n.agent_id=$2 AND n.sandbox_id=$4 AND n.generation=$6
+ AND n.kind IN ('entry','session') AND n.expires_at>now()))`,
+			rt.WorkspaceID, pgtype.UUID{Bytes: key.AgentID, Valid: true}, excludeTask, before.SandboxID, before.State == "running", before.Generation).Scan(&busy)
 		if err != nil {
 			return dshhost.Host{}, false, err
 		}

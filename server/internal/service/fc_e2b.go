@@ -1550,7 +1550,7 @@ func (l *FCE2BLauncher) submitTaskUnderRuntimeLock(ctx context.Context, task db.
 	var employeeHost *dshhost.Host
 	if FCE2BRuntimeProvider(runtime) == "dsh" {
 		var host dshhost.Host
-		host, coldStart, err = l.resolveDSHEmployeeSandbox(ctx, task, runtime, template, runtimeLockConn, trace)
+		host, coldStart, err = l.resolveDSHEmployeeSandbox(ctx, dshhost.Key{WorkspaceID: uuid.UUID(runtime.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}, task.ID, runtime, template, runtimeLockConn, trace)
 		if errors.Is(err, errDSHHostWaiting) {
 			return fcE2BLaunchSubmission{}, true, nil
 		}
