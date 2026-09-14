@@ -4,7 +4,7 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import type { AgentSourceFileChange } from "@multica/core/types";
 import enAgents from "../../../locales/en/agents.json";
 import enSkills from "../../../locales/en/skills.json";
-import { ChangeList } from "./source-change-list";
+import { SourceChangesDialog } from "./source-change-list";
 
 // Exercise our navigation and input handling independently of Shadow DOM layout.
 // The real renderer is also checked in a browser.
@@ -23,9 +23,9 @@ const changes: AgentSourceFileChange[] = [
   { path: "skills/old/SKILL.md", status: "removed", before: "Old skill", after: null },
 ];
 
-function preview(value = changes) {
+function preview(value = changes, open = true, onOpenChange = vi.fn()) {
   return <I18nProvider locale="en" resources={{ en: { agents: enAgents, skills: enSkills } }}>
-    <ChangeList title="Configuration changes" changes={value} />
+    <SourceChangesDialog open={open} onOpenChange={onOpenChange} groups={[{ id: "configuration", title: "Configuration changes", changes: value }]} />
   </I18nProvider>;
 }
 
@@ -44,15 +44,24 @@ describe("publication file diff", () => {
     expect(within(diff).getByTestId("after")).toBeEmptyDOMElement();
   });
 
-  it("preserves the selected file when opening and closing the enlarged preview", async () => {
-    render(preview());
+  it("renders only in the global dialog and preserves selection across reopening", async () => {
+    const onOpenChange = vi.fn();
+    const view = render(preview(changes, false, onOpenChange));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
+    view.rerender(preview(changes, true, onOpenChange));
     await screen.findByTestId("file-diff");
     fireEvent.click(screen.getByRole("tab", { name: "skills/review/SKILL.md" }));
-    fireEvent.click(screen.getByRole("button", { name: "Expand preview" }));
     const dialog = await screen.findByRole("dialog");
+    expect(view.container.contains(dialog)).toBe(false);
+    expect(view.container.querySelector('[role="tabpanel"]')).toBeNull();
     expect(within(dialog).getByRole("tab", { name: "skills/review/SKILL.md" })).toHaveAttribute("aria-selected", "true");
     expect(await within(dialog).findByTestId("after")).toHaveTextContent("Review changes");
     fireEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(onOpenChange.mock.calls[0]?.[0]).toBe(false);
+    view.rerender(preview(changes, false, onOpenChange));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    view.rerender(preview(changes, true, onOpenChange));
     expect(screen.getByRole("tab", { name: "skills/review/SKILL.md" })).toHaveAttribute("aria-selected", "true");
   });
 

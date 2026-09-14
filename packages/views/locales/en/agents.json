@@ -1,6 +1,5 @@
 {
   "package_diff": {
-    "expand": "Expand preview",
     "description": "Select a file to compare the current and proposed versions side by side.",
     "files": "Changed files",
     "before": "Current version",

@@ -1,39 +1,43 @@
 "use client";
 
 import { lazy, Suspense, useState } from "react";
-import { Maximize2 } from "lucide-react";
 import type { AgentSourceFileChange } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@multica/ui/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@multica/ui/components/ui/resizable";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@multica/ui/components/ui/tabs";
 import { FileTree } from "../../../skills/components/file-tree";
 import { useT } from "../../../i18n";
 
 const SourceFileDiff = lazy(() => import("./source-file-diff"));
 
-export function ChangeList({ title, changes }: { title: string; changes: AgentSourceFileChange[] }) {
+export function SourceChangesDialog({ open, onOpenChange, groups }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  groups: { id: string; title: string; changes: AgentSourceFileChange[] }[];
+}) {
   const { t } = useT("agents");
-  const [selectedPath, setSelectedPath] = useState<string>();
-  const [expanded, setExpanded] = useState(false);
+  const [selectedGroup, setSelectedGroup] = useState<string>();
+  const [selectedPaths, setSelectedPaths] = useState<Record<string, string>>({});
   const [expandUnchanged, setExpandUnchanged] = useState(false);
-  const selected = changes.find((change) => change.path === selectedPath) ?? changes[0];
-  const viewer = selected && <ChangeViewer changes={changes} selected={selected} onSelect={setSelectedPath} expandUnchanged={expandUnchanged} onExpandUnchanged={setExpandUnchanged} />;
+  const activeGroup = groups.find((group) => group.id === selectedGroup) ?? groups[0];
 
-  return <Dialog open={expanded} onOpenChange={setExpanded}>
-    <div className="min-w-0 space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-body font-medium">{title} ({changes.length})</h3>
-        {selected && <DialogTrigger render={<Button variant="outline" size="sm" />}>
-          <Maximize2 />{t(($) => $.package_diff.expand)}
-        </DialogTrigger>}
-      </div>
-      {!selected ? <p className="text-caption text-muted-foreground">{t(($) => $.package_diff.empty)}</p> :
-        <div className="h-[32rem] min-w-0 overflow-hidden rounded-lg border">{!expanded && viewer}</div>}
-    </div>
+  return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="flex h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none flex-col gap-3 overflow-hidden p-4 sm:max-w-none">
-      <DialogTitle className="pr-8">{title} ({changes.length})</DialogTitle>
+      <DialogTitle className="pr-8">{t(($) => $.tab_body.publish.preview)}</DialogTitle>
       <DialogDescription className="sr-only">{t(($) => $.package_diff.description)}</DialogDescription>
-      <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-lg border">{expanded && viewer}</div>
+      <Tabs value={activeGroup?.id} onValueChange={(value) => setSelectedGroup(String(value))} className="min-h-0 min-w-0 flex-1">
+        {groups.length > 1 ? <TabsList className="shrink-0">
+          {groups.map((group) => <TabsTrigger key={group.id} value={group.id}>{group.title} ({group.changes.length})</TabsTrigger>)}
+        </TabsList> : activeGroup && <p className="shrink-0 text-body font-medium">{activeGroup.title} ({activeGroup.changes.length})</p>}
+        {groups.map((group) => {
+          const selected = group.changes.find((change) => change.path === selectedPaths[group.id]) ?? group.changes[0];
+          return <TabsContent key={group.id} value={group.id} className="min-h-0 min-w-0 overflow-hidden rounded-lg border">
+            {selected ? <ChangeViewer changes={group.changes} selected={selected} onSelect={(path) => setSelectedPaths((current) => ({ ...current, [group.id]: path }))} expandUnchanged={expandUnchanged} onExpandUnchanged={setExpandUnchanged} /> :
+              <p className="p-4 text-caption text-muted-foreground">{t(($) => $.package_diff.empty)}</p>}
+          </TabsContent>;
+        })}
+      </Tabs>
     </DialogContent>
   </Dialog>;
 }
