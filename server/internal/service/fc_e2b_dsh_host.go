@@ -194,7 +194,7 @@ func dshManagedCatalog(models []string) (string, string, error) {
 		return "", "", invalid
 	}
 	raw := string(encoded)
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("multica-native-profile-v1\n"+raw)))
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("multica-native-profile-v2\n"+raw)))
 	return raw, digest, nil
 }
 

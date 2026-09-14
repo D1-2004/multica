@@ -6,8 +6,9 @@ export interface DSHTrajectoryHeader {
   cwd?: string;
   parentSession?: string;
   seedLength?: number;
+  isSeeded?: boolean;
   origin?: "subagent";
-  delegationDepth: number;
+  delegationDepth?: number;
   agentPreset?: string;
 }
 
@@ -40,11 +41,12 @@ export function parseDSHTrajectory(jsonl: string): DSHTrajectoryDocument {
     !isRecord(rawHeader) ||
     rawHeader.type !== "session" ||
     typeof rawHeader.id !== "string" ||
-    rawHeader.version !== 0 ||
+    !(rawHeader.version === 0 ||
+      (rawHeader.version === 3 && rawHeader.isSeeded === false)) ||
     !Number.isSafeInteger(rawHeader.createdAt) ||
     Number(rawHeader.createdAt) < 0 ||
-    !Number.isSafeInteger(rawHeader.delegationDepth) ||
-    rawHeader.delegationDepth !== 0 ||
+    !(rawHeader.delegationDepth === 0 ||
+      (rawHeader.version === 3 && rawHeader.delegationDepth === undefined)) ||
     rawHeader.parentSession !== undefined ||
     rawHeader.origin !== undefined
   ) {
@@ -57,9 +59,11 @@ export function parseDSHTrajectory(jsonl: string): DSHTrajectoryDocument {
     if (
       !isRecord(raw) ||
       typeof raw.type !== "string" ||
+      raw.type === "" || raw.type === "session" ||
       !Number.isSafeInteger(raw.seq) ||
       raw.seq !== index - 1 ||
       !Number.isSafeInteger(raw.time) ||
+      Number(raw.time) < 0 ||
       !isRecord(raw.data)
     ) {
       throw new Error(`invalid DSH trajectory event ${index - 1}`);

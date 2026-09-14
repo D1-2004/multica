@@ -114,3 +114,30 @@ func TestValidateDSHTrajectoryRequiresNativeHeaderFieldsAndObjectData(t *testing
 		t.Fatal("expected multiple records on one physical line to be rejected")
 	}
 }
+
+func TestValidateDSHTrajectoryNativeV3Root(t *testing.T) {
+	ledger := strings.Replace(validDSHTrajectory, `"version":0`, `"version":3,"isSeeded":false`, 1)
+	header, count, err := validateDSHTrajectory([]byte(ledger), "ses_test-1")
+	if err != nil || header.Version != 3 || count != 3 {
+		t.Fatalf("native v3 root rejected: header=%+v count=%d err=%v", header, count, err)
+	}
+	withoutDepth := strings.Replace(ledger, `,"delegationDepth":0`, "", 1)
+	if header, _, err := validateDSHTrajectory([]byte(withoutDepth), "ses_test-1"); err != nil || header.DelegationDepth != 0 {
+		t.Fatalf("official root without optional depth rejected: %v", err)
+	}
+	for name, invalid := range map[string]string{
+		"null depth":           strings.Replace(ledger, `"delegationDepth":0`, `"delegationDepth":null`, 1),
+		"missing seed flag":    strings.Replace(ledger, `"isSeeded":false,`, "", 1),
+		"null seed flag":       strings.Replace(ledger, `"isSeeded":false`, `"isSeeded":null`, 1),
+		"seeded root":          strings.Replace(ledger, `"isSeeded":false`, `"isSeeded":true`, 1),
+		"future format":        strings.Replace(ledger, `"version":3`, `"version":4`, 1),
+		"nonzero event origin": strings.Replace(ledger, `"seq":0`, `"seq":100`, 1),
+		"child":                strings.Replace(ledger, `"delegationDepth":0`, `"delegationDepth":1,"parentSession":"ses_parent","origin":"subagent"`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := validateDSHTrajectory([]byte(invalid), "ses_test-1"); err == nil {
+				t.Fatal("unsupported or incomplete native ledger was accepted")
+			}
+		})
+	}
+}

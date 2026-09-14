@@ -5,6 +5,7 @@ package execenv
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -68,6 +69,9 @@ type PrepareParams struct {
 	// substituted. Used by the local_directory project_resource flow
 	// (MUL-2663). When set, the envRoot/workdir directory is not created.
 	LocalWorkDir string
+	// PersistentWorkDir is a managed cloud mount owned outside task scratch.
+	// Its caller holds Session admission across preparation and execution.
+	PersistentWorkDir string
 	// HermesSourceHome is the shared Hermes home the per-task overlay is seeded
 	// from — resolved by the daemon via execenv.ResolveHermesProfile so it honors
 	// the agent's custom_env HERMES_HOME and any -p/--profile or sticky selection.
@@ -236,7 +240,8 @@ type Environment struct {
 	// outside RootDir (the local_directory flow). Callers that key behavior
 	// on "may I remove WorkDir as scratch?" must check this — for example
 	// the GC loop never deletes the user's directory.
-	LocalDirectory bool
+	LocalDirectory    bool
+	PersistentWorkDir bool
 	// MulticaConfigRoot is the private per-task config directory exported to
 	// child CLI invocations. It prevents implicit discovery of the daemon
 	// owner's ~/.multica profile without changing the provider-facing HOME.
@@ -339,10 +344,16 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// envRoot.
 	workDir := filepath.Join(envRoot, "workdir")
 	scratchDirs := []string{filepath.Join(envRoot, "output"), filepath.Join(envRoot, "logs")}
-	if params.LocalWorkDir == "" {
+	if params.LocalWorkDir == "" && params.PersistentWorkDir == "" {
 		scratchDirs = append(scratchDirs, workDir)
 	} else {
 		workDir = params.LocalWorkDir
+		if params.PersistentWorkDir != "" {
+			if workDir != "" {
+				return nil, errors.New("execenv: conflicting workdir ownership")
+			}
+			workDir = params.PersistentWorkDir
+		}
 	}
 	for _, dir := range scratchDirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -361,6 +372,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 		RootDir:           envRoot,
 		WorkDir:           workDir,
 		LocalDirectory:    params.LocalWorkDir != "",
+		PersistentWorkDir: params.PersistentWorkDir != "",
 		MulticaConfigRoot: multicaConfigRoot,
 		logger:            logger,
 	}
@@ -386,7 +398,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// the set squad-leader reuse targets (MUL-4886). Non-fatal: a write failure
 	// only costs the next follow-up its session reuse (it falls back to a fresh
 	// session), which must never block dispatching this task.
-	if params.LocalWorkDir == "" && params.Task.IssueID != "" {
+	if params.LocalWorkDir == "" && params.PersistentWorkDir == "" && params.Task.IssueID != "" {
 		if err := WriteManagedEnvProvenance(envRoot, ManagedEnvProvenance{
 			WorkspaceID: params.WorkspaceID,
 			IssueID:     params.Task.IssueID,
@@ -950,7 +962,7 @@ func (env *Environment) Cleanup(removeAll bool) error {
 		return nil
 	}
 
-	if env.LocalDirectory {
+	if env.LocalDirectory || env.PersistentWorkDir {
 		// Never touch the user's directory. RootDir is the daemon's own
 		// scratch; safe to remove when the caller asked for a full
 		// teardown.
