@@ -137,6 +137,7 @@ type NavKey =
   | "runners"
   | "skills"
   | "dshPlugins"
+  | "featureUpdates"
   | "settings";
 
 // Static schema (key only) — labels resolved at render via useT("layout"),
@@ -156,6 +157,7 @@ type NavLabelKey =
   | "runners"
   | "skills"
   | "dsh_plugins"
+  | "feature_updates"
   | "settings";
 
 type WorkspaceNavItem = {
@@ -211,7 +213,10 @@ const workspaceDomains: WorkspaceDomain[] = [
   },
   {
     labelKey: "configuration_group",
-    items: [{ key: "settings", labelKey: "settings" }],
+    items: [
+      { key: "featureUpdates", labelKey: "feature_updates" },
+      { key: "settings", labelKey: "settings" },
+    ],
   },
 ];
 

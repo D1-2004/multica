@@ -1,0 +1,30 @@
+{
+  "page": {
+    "title": "Feature updates",
+    "tagline": "New capabilities and improvements, newest first",
+    "search_placeholder": "Search features",
+    "loading": "Loading feature updates",
+    "error_title": "Feature updates could not be loaded",
+    "error_retry": "Try again",
+    "empty_title": "No feature updates found",
+    "empty_description": "Try a different keyword."
+  },
+  "release": {
+    "new": "New feature",
+    "improvement": "Improvement",
+    "version": "Version {{version}}"
+  },
+  "detail": {
+    "back": "All feature updates",
+    "description": "Description",
+    "use_cases": "Use cases",
+    "usage_guide": "How to use it",
+    "image_requirement": "Image requirement",
+    "image_none": "No image upgrade required",
+    "image_latest_at_publish": "Upgrade to the latest image available at publication",
+    "image_min_version": "Upgrade to at least this image version",
+    "previous_version": "Previous version",
+    "not_found": "Feature update not found",
+    "error_title": "Feature update could not be loaded"
+  }
+}

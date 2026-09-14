@@ -1681,6 +1681,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		os.Getenv("MULTICA_LOG_TAIL_TOKEN"),
 		agentidentityhsf.NewClient(),
 	))
+	r.Post("/api/internal/features/releases", internalProductFeaturePublishHandler(
+		os.Getenv("MULTICA_LOG_TAIL_TOKEN"),
+		h.PublishProductFeatureRelease,
+	))
 
 	// WebSocket
 	mc := &membershipChecker{queries: queries}
@@ -1955,6 +1959,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.With(handler.RequireHumanActor).Delete("/api/sitehosting/sites/{siteId}", h.DeleteStaticSite)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Get("/api/features", h.ListProductFeatureReleases)
+		r.Get("/api/features/{id}", h.GetProductFeatureRelease)
 		r.Get("/api/runtimes/fc-e2b/stable-channel", h.GetFCE2BStableChannel)
 		r.Post("/api/runtimes/fc-e2b/stable-releases", h.CreateFCE2BStableRelease)
 		r.Get("/api/runtimes/fc-e2b/stable-releases", h.ListFCE2BStableReleases)

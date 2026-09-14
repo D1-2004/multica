@@ -239,6 +239,11 @@ import type { OnboardingCompletionPath } from "../onboarding/types";
 import type { CreateFeedbackResponse, FeedbackKind } from "../feedback/types";
 import type { HostedSite } from "../sitehosting/types";
 import type {
+  ListProductFeatureReleasesParams,
+  ProductFeatureRelease,
+  ProductFeatureReleasePage,
+} from "../product-features/types";
+import type {
   AccountRunnerBindingList,
   CreateRunnerPairingResponse,
   CreateRunnerReconnectCommandResponse,
@@ -301,6 +306,10 @@ import {
   EMPTY_AGENT_SCENE_MEMORY_LIST,
   EMPTY_AGENT_SCENE_RELATION_LIST,
   HostedSiteListSchema,
+  ProductFeatureReleasePageSchema,
+  ProductFeatureReleaseSchema,
+  EMPTY_PRODUCT_FEATURE_RELEASE,
+  EMPTY_PRODUCT_FEATURE_RELEASE_PAGE,
   AgentDshPluginListSchema,
   DshPluginBindingListSchema,
   DshPluginCatalogCategoryListSchema,
@@ -901,6 +910,37 @@ export class ApiClient {
     await this.fetch(
       `/api/sitehosting/sites/${encodeURIComponent(siteId)}`,
       { method: "DELETE" },
+    );
+  }
+
+  async listProductFeatureReleases(
+    params: ListProductFeatureReleasesParams = {},
+  ): Promise<ProductFeatureReleasePage> {
+    const search = new URLSearchParams();
+    if (params.query?.trim()) search.set("q", params.query.trim());
+    if (params.limit !== undefined) search.set("limit", String(params.limit));
+    if (params.offset !== undefined) search.set("offset", String(params.offset));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/features${query ? `?${query}` : ""}`, {
+      signal: params.signal,
+    });
+    return parseWithFallback(
+      raw,
+      ProductFeatureReleasePageSchema,
+      EMPTY_PRODUCT_FEATURE_RELEASE_PAGE,
+      { endpoint: "GET /api/features", includeReceived: false },
+    );
+  }
+
+  async getProductFeatureRelease(id: string): Promise<ProductFeatureRelease> {
+    const raw = await this.fetch<unknown>(
+      `/api/features/${encodeURIComponent(id)}`,
+    );
+    return parseWithFallback(
+      raw,
+      ProductFeatureReleaseSchema,
+      EMPTY_PRODUCT_FEATURE_RELEASE,
+      { endpoint: "GET /api/features/:id", includeReceived: false },
     );
   }
 

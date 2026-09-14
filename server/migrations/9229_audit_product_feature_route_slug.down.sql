@@ -1,0 +1,1 @@
+-- No-op: this migration only audits existing workspace slugs.

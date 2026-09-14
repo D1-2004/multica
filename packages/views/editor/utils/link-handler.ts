@@ -33,6 +33,7 @@ const WORKSPACE_ROUTE_SEGMENTS = new Set([
   "runners",
   "skills",
   "dsh-plugins",
+  "features",
   "settings",
 ]);
 

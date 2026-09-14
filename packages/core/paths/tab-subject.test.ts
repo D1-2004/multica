@@ -18,6 +18,8 @@ describe("parseTabSubject", () => {
     ["/acme/runtimes", { kind: "page", page: "runtimes" }],
     ["/acme/skills", { kind: "page", page: "skills" }],
     ["/acme/settings", { kind: "page", page: "settings" }],
+    ["/acme/features", { kind: "page", page: "featureUpdates" }],
+    ["/acme/features/release-1", { kind: "page", page: "featureUpdates" }],
     // Resource details
     ["/acme/issues/bug-1", { kind: "issue", id: "bug-1" }],
     ["/acme/projects/p1", { kind: "project", id: "p1" }],

@@ -26,6 +26,8 @@ import { MyIssuesPage } from "@multica/views/my-issues";
 import { SkillsPage } from "@multica/views/skills";
 import { DshPluginsPage } from "@multica/views/dsh-plugins";
 import { DshPluginDetailPage } from "./pages/dsh-plugin-detail-page";
+import { ProductFeatureListPage } from "@multica/views/product-features";
+import { ProductFeatureDetailPage } from "./pages/product-feature-detail-page";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
 import { StableFCE2BRuntimeOverviewPage } from "@multica/views/runtimes";
 import { LocalRunnersPage } from "@multica/views/runner";
@@ -215,6 +217,16 @@ export const appRoutes: RouteObject[] = [
             path: "dsh-plugins/:id",
             element: <DshPluginDetailPage />,
             handle: { title: "DSH Plugin" },
+          },
+          {
+            path: "features",
+            element: <ProductFeatureListPage />,
+            handle: { title: "Feature updates" },
+          },
+          {
+            path: "features/:id",
+            element: <ProductFeatureDetailPage />,
+            handle: { title: "Feature update" },
           },
           {
             path: "skills/:id",
