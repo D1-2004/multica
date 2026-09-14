@@ -137,3 +137,7 @@ finish with their existing policy. Ask the user to configure a missing
 destination; do not try to bypass the sandbox network policy.
 
 Human owners/admins can use the employee Configuration → Execution → DSH Home page to prepare storage and read its persisted status. The page distinguishes storage readiness from host running state and never creates resources on render. Interrupted or pending requests are reconciled through the same employee intent; credentials and placement remain deployment-owned.
+
+Human employee managers can request a short-lived native entry with `POST /api/agents/{id}/dsh-native/access` and an empty body. The server requires an existing running FC DSH Host and an exact live gateway readiness receipt. It returns `access_id`, `entry_url` (a one-minute fragment credential) and `expires_at`; do not log, share or persist the URL. `DELETE /api/agents/{id}/dsh-native/access/{accessId}` revokes the grant. These routes do not start, renew or replace a Host. The native UI launch flow remains unavailable until its runtime gateway and task admission are deployed and accepted.
+
+The gateway alone exchanges and checks capabilities via `POST /api/dsh-native/access/exchange` and `/check`, using the entry/session Bearer credential and exact `workspace_id`, `agent_id`, `generation`, `sandbox_id` body. These callbacks independently check the current employee manager and the persisted running Host. Their credentials are not Multica API tokens or model/tool credentials.
