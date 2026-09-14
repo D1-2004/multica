@@ -90,7 +90,7 @@ it("uploads an existing Agent ZIP, invalidates changed files and requires confir
   const first = new File(["zip"], "agent.zip", {type:"application/zip"});
   fireEvent.change(screen.getByLabelText("Agent ZIP package"), {target:{files:[first]}});
   fireEvent.click(screen.getByRole("button", {name:"Preview changes"}));
-  await screen.findByText("updated");
+  await screen.findByRole("tabpanel", {name:"instructions"});
   expect(mocked.previewZIP).toHaveBeenCalledWith("agent-1", first);
   expect(mocked.confirm).not.toHaveBeenCalled();
   fireEvent.change(screen.getByLabelText("Agent ZIP package"), {target:{files:[new File(["zip2"], "new.zip")]}});

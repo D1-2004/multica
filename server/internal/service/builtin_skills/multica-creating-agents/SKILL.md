@@ -410,6 +410,9 @@ Repeat imports are allowed; updates reuse only the current Agent's exclusive lab
 
 For an existing Git Agent, preview `POST /api/agents/{id}/source/preview` with
 `{"ref":"<branch>"}` and review `git_changes` and `configuration_changes`.
+The publication UI presents each change set as a file navigation and a read-only
+side-by-side diff, with an enlarged view and expandable unchanged lines. A Git
+file without preview text shows metadata only; missing text is not an empty file.
 Confirm with `POST /api/agents/{id}/source/sync`, passing the `preview_id` and any
 explicit secret/binding choices. Omitted configuration stays unmanaged, while
 explicit false/empty/null values are applied. Expired or stale previews require
@@ -501,3 +504,7 @@ Configuration and implementation map to `event_trigger.go`, `agent_event_trigger
 - 2026-09-11: Accept ZIP enclosing directories and ignore desktop archive metadata.
   Reason: recompressing an Agent folder must not turn a valid manifest into a
   missing-root-file error or introduce metadata files into a skill.
+
+- 2026-09-14: Added file navigation and side-by-side publication diffs with an
+  enlarged view. Reason: make ZIP and Git changes reviewable without treating
+  withheld text as an empty file.

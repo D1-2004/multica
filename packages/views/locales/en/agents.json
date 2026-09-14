@@ -1,4 +1,19 @@
 {
+  "package_diff": {
+    "expand": "Expand preview",
+    "description": "Select a file to compare the current and proposed versions side by side.",
+    "files": "Changed files",
+    "before": "Current version",
+    "after": "Proposed version",
+    "expand_unchanged": "Expand unchanged lines",
+    "collapse_unchanged": "Collapse unchanged lines",
+    "loading": "Loading diff...",
+    "empty": "No changes.",
+    "unavailable": "Text content is unavailable for this file. Only file metadata can be compared.",
+    "added": "Added",
+    "removed": "Deleted",
+    "modified": "Modified"
+  },
   "package_bindings": {
     "title": "Package resource bindings",
     "pending": "{{count}} package bindings need setup",
