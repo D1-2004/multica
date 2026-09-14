@@ -1304,12 +1304,16 @@
       "running": "호스트가 실행 중입니다.",
       "retiring": "이전 호스트를 종료 중입니다. 파일은 Home에 유지됩니다.",
       "starting": "호스트를 시작 중입니다.",
-      "offline": "작업에 필요할 때 호스트가 시작됩니다.",
+      "offline": "DSH를 열거나 작업을 실행하면 호스트가 시작됩니다.",
       "unconfirmed": "준비 결과를 확인하지 못했습니다. 상태를 다시 조회했습니다. 진행되지 않으면 워크스페이스 관리자에게 문의하세요.",
       "preparing": "준비 중...",
       "continue": "준비 계속",
       "prepare": "Home 준비",
-      "refresh": "상태 새로고침"
+      "refresh": "상태 새로고침",
+      "native_prepare": "DSH 준비",
+      "native_preparing": "DSH 준비 중…",
+      "native_enter": "DSH 열기",
+      "native_unconfirmed": "DSH를 열 수 없습니다. Home 상태를 새로 고쳤습니다. 준비되면 다시 시도하세요."
     }
   },
   "char_counter": {

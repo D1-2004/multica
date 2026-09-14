@@ -1498,12 +1498,16 @@
       "running": "The host is running.",
       "retiring": "The previous host is being retired. Files remain in Home.",
       "starting": "The host is starting.",
-      "offline": "The host will start when a task needs it.",
+      "offline": "The host starts when you open DSH or run a task.",
       "unconfirmed": "Preparation was not confirmed. Status has been requested again; contact a workspace administrator if it cannot advance.",
       "preparing": "Preparing...",
       "continue": "Continue preparation",
       "prepare": "Prepare Home",
-      "refresh": "Refresh status"
+      "refresh": "Refresh status",
+      "native_prepare": "Prepare DSH",
+      "native_preparing": "Preparing DSH...",
+      "native_enter": "Enter DSH",
+      "native_unconfirmed": "DSH could not be opened. Home status has been refreshed; try again when it is ready."
     }
   },
   "char_counter": {

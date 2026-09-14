@@ -52,3 +52,5 @@
 - `server/internal/service/fc_e2b.go` / `fc_e2b_dsh_host.go`: mandatory DSH employee admission lock and real Home/Host receipt verification, independent of provider-derived catalog capability labels.
 
 - `server/internal/service/fc_e2b_dsh_authority.go`: backend-initiated authorization polling, deployment signing, exact-Host decisions and bounded connection lifetime; no writer lifecycle mutations.
+
+- `packages/core/api/dsh-native-schema.ts`, `packages/core/agents/dsh-home.ts`, `packages/views/agents/components/tabs/dsh-home-tab.tsx`: scoped human native-entry request, credential-safe parsing, explicit Prepare/Enter flow and ephemeral component-owned entry URL.
