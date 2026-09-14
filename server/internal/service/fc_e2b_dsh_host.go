@@ -63,44 +63,55 @@ func lockDSHEmployee(ctx context.Context, conn *pgxpool.Conn, workspace, agent p
 // and again when issuing access. No task or runner is fabricated for UI startup.
 func (l *FCE2BLauncher) EnsureDSHEmployeeHost(ctx context.Context, key dshhost.Key) (dshhost.Host, error) {
 	l = l.withCurrentConfig()
+	var host dshhost.Host
+	err := l.withDSHEmployee(ctx, key, func(conn *pgxpool.Conn, runtime db.AgentRuntime, template string) error {
+		var err error
+		host, _, err = l.resolveDSHEmployeeSandbox(ctx, key, pgtype.UUID{}, runtime, template, conn, chattrace.New("dsh_native_entry"))
+		return err
+	})
+	return host, err
+}
+
+// All human Home/Profile operations use the same Runtime-to-employee lock order
+// as task admission. The operation runs against the reloaded current binding.
+func (l *FCE2BLauncher) withDSHEmployee(ctx context.Context, key dshhost.Key, operation func(*pgxpool.Conn, db.AgentRuntime, string) error) error {
 	if l == nil || l.Queries == nil || l.Pool == nil || !l.Config.Enabled || l.nativeAuthority == nil || key.WorkspaceID == uuid.Nil || key.AgentID == uuid.Nil {
-		return dshhost.Host{}, errors.New("DSH employee startup is unavailable")
+		return errors.New("DSH employee startup is unavailable")
 	}
 	if err := l.Config.Validate(); err != nil {
-		return dshhost.Host{}, err
+		return err
 	}
 	params := db.GetAgentInWorkspaceParams{ID: pgtype.UUID{Bytes: key.AgentID, Valid: true}, WorkspaceID: pgtype.UUID{Bytes: key.WorkspaceID, Valid: true}}
 	agent, err := l.Queries.GetAgentInWorkspace(ctx, params)
 	if err != nil || !agent.RuntimeID.Valid {
-		return dshhost.Host{}, errors.New("DSH employee runtime is unavailable")
+		return errors.New("DSH employee runtime is unavailable")
 	}
 	// Use the platform launch lock order: shared Runtime, then employee. Reload
 	// the binding on this connection so a waiting entry cannot select stale state.
 	conn, releaseRuntime, err := l.lockRuntimeShared(ctx, agent.RuntimeID)
 	if err != nil {
-		return dshhost.Host{}, err
+		return err
 	}
 	defer releaseRuntime()
 	releaseEmployee, err := lockDSHEmployee(ctx, conn, params.WorkspaceID, params.ID)
 	if err != nil {
-		return dshhost.Host{}, err
+		return err
 	}
 	defer releaseEmployee()
 	queries := db.New(conn)
 	current, err := queries.GetAgentInWorkspace(ctx, params)
 	if err != nil || current.RuntimeID != agent.RuntimeID || current.ArchivedAt.Valid || current.RuntimeMode != "cloud" {
-		return dshhost.Host{}, errors.New("DSH employee binding changed")
+		return errors.New("DSH employee binding changed")
 	}
 	runtime, err := queries.GetAgentRuntime(ctx, current.RuntimeID)
 	if err != nil || runtime.WorkspaceID != params.WorkspaceID || runtime.Provider != "dsh" || !IsFCE2BRuntime(runtime) || !runtime.OwnerID.Valid || !runtime.DaemonID.Valid || strings.TrimSpace(runtime.DaemonID.String) == "" {
-		return dshhost.Host{}, errors.New("DSH employee requires an FC DSH runtime")
+		return errors.New("DSH employee requires an FC DSH runtime")
 	}
 	template, err := fcE2BTemplateForRuntime(runtime)
 	if err != nil {
-		return dshhost.Host{}, err
+		return err
 	}
-	host, _, err := l.resolveDSHEmployeeSandbox(ctx, key, pgtype.UUID{}, runtime, template, conn, chattrace.New("dsh_native_entry"))
-	return host, err
+	return operation(conn, runtime, template)
 }
 
 // The caller holds the employee admission lock through runner submission.

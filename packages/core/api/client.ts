@@ -1,3 +1,4 @@
+import { DSHProfileSchema, type DSHProfileStatus } from "./dsh-profile-schema";
 import { AgentDshPluginConfigSchema } from "./agent-dsh-plugin-config-schema";
 import type { AgentDshPluginConfig, UpdateAgentDshPluginConfig } from "../dsh-plugins/types";
 import { DSHNativeEntrySchema, type DSHNativeEntry } from "./dsh-native-schema";
@@ -3776,6 +3777,26 @@ export class ApiClient {
     return parseWithFallback<DSHNativeEntry | null>(raw, DSHNativeEntrySchema, null, {
       endpoint: "POST /api/agents/{id}/dsh-native/access",
       includeReceived: false,
+    });
+  }
+
+  async getDSHProfile(workspaceId: string, agentId: string, signal?: AbortSignal): Promise<DSHProfileStatus | null> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-profile`, {
+      signal,
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<DSHProfileStatus | null>(raw, DSHProfileSchema, null, {
+      endpoint: "GET /api/agents/{id}/dsh-profile", includeReceived: false,
+    });
+  }
+
+  async prepareDSHProfile(workspaceId: string, agentId: string): Promise<DSHProfileStatus | null> {
+    const raw = await this.fetch<unknown>(`/api/agents/${encodeURIComponent(agentId)}/dsh-profile`, {
+      method: "POST", body: "{}",
+      headers: { "X-Workspace-Slug": "", "X-Workspace-ID": workspaceId },
+    });
+    return parseWithFallback<DSHProfileStatus | null>(raw, DSHProfileSchema, null, {
+      endpoint: "POST /api/agents/{id}/dsh-profile", includeReceived: false,
     });
   }
 

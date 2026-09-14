@@ -2578,6 +2578,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/dsh-plugins", h.ListAgentDshPlugins)
 					r.With(handler.RequireHumanActor).Get("/dsh-plugins/{pluginId}/config", h.GetAgentDshPluginConfig)
 					r.With(handler.RequireHumanActor).Put("/dsh-plugins/{pluginId}/config", h.UpdateAgentDshPluginConfig)
+					r.With(handler.RequireHumanActor).Get("/dsh-profile", h.GetDSHProfile)
+					r.With(handler.RequireHumanActor).Post("/dsh-profile", h.PrepareDSHProfile)
 					r.With(handler.RequireHumanActor).Get("/dsh-home", h.GetDSHHome)
 					r.With(handler.RequireHumanActor).Post("/dsh-home", h.EnsureDSHHome)
 					r.With(handler.RequireHumanActor).Post("/dsh-native/access", h.IssueDSHNativeAccess)

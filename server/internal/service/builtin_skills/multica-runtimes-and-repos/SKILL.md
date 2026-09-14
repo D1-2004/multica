@@ -217,3 +217,19 @@ plugin lists clear bindings, while omitted lists preserve them. Sync rejects a
 preview if employee plugin configuration changed since it was prepared. All
 bindings and configuration are applied in the source transaction. Actual plugin
 execution and Host/Profile application remain separate acceptance gates.
+
+
+Employee Profile version status is available to human employee managers at
+`GET /api/agents/{id}/dsh-profile`. `POST` to the same endpoint with `{}` prepares
+one durable revision and its immutable dependency build intents. It accepts no
+client-supplied revision, descriptor, placement or credential. Repeated preparation
+of unchanged settings reuses the revision; changing credentials changes the
+Profile revision without rebuilding identical package bytes. Status contains
+`state`, string-valued `desired_revision` and `applied_revision`,
+`applied_generation`, `applied_sandbox_id` and `current`, without configuration.
+`waiting_for_builds` and `pending_host` are not successful application. A historical
+receipt after a saved edit is `configuration_changed`; a retired/replaced Host
+cannot be current. Preparation does not start a Host. The durable receipt store
+requires matching live Host generation, exact descriptor and fresh configuration
+under transaction locks. Host admission, artifact distribution and the build
+worker must still be connected before these endpoints prove live application.

@@ -1018,6 +1018,21 @@ func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
 			run:  func() error { return qtx.DeleteWorkspaceSquadsAndSkills(ctx, requester.WorkspaceID) },
 		},
 		{
+			name: "delete employee Profile revisions",
+			run: func() error {
+				for _, statement := range []string{
+					`DELETE FROM dsh_employee_profile WHERE workspace_id=$1`,
+					`DELETE FROM dsh_profile_revision WHERE workspace_id=$1`,
+					`DELETE FROM dsh_plugin_build WHERE workspace_id=$1`,
+				} {
+					if _, err := tx.Exec(ctx, statement, requester.WorkspaceID); err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
+		{
 			name: "delete agents",
 			run:  func() error { return qtx.DeleteWorkspaceAgents(ctx, requester.WorkspaceID) },
 		},

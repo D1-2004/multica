@@ -97,3 +97,12 @@
 - These paths save configuration; they do not prove Host/Profile application or live plugin execution.
 
 - Pre-release publication integration: `agent_package_service.go` and `agent_package_section_codecs.go` keep the single paired import/export registry; the DSH plugin codec applies explicit mappings and exports the current pinned private configuration. ZIP, Git, builder and rollback use this same transaction. `agent_package_reuse.go` requires explicit plugin secret inputs even when an environment alias matches.
+
+
+## Durable employee Profile revisions
+
+- `server/internal/dshprofile/profile.go` and `postgres.go`: configuration-sensitive immutable revisions, credential-independent build keys, parent/publication locks, queued build intents and exact generation/configuration receipt fencing. Public status excludes private descriptors.
+- `server/migrations/9241_dsh_employee_profile.*.sql` through `9244_dsh_plugin_build_identity.*.sql`: durable Profile/build state and separately created concurrent unique indexes. Workspace teardown removes these rows in the parent transaction.
+- `server/internal/handler/dsh_profile.go`, `server/internal/service/fc_e2b_dsh_profile.go`: human manager-only status/preparation, transaction-bound effective employee settings and shared Runtime/employee lock order. No endpoint fabricates a Host receipt or starts a build/Host on read.
+- `packages/core/api/dsh-profile-schema.ts` and `dsh-profile-client.test.ts`: exact string revisions, workspace-bound requests and malformed receipt rejection.
+- `server/internal/dshprofile/postgres_test.go`: opt-in isolated-schema preproduction tests for cross-replica publication, pending builds, replay timestamps, config edits, changed revisions/generations and retiring Hosts. Local runs skip the database test. Build worker, artifact delivery and live Host acknowledgement wiring remain pending.
