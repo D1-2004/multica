@@ -63,6 +63,9 @@ vi.mock("./tabs/a2a-tab", () => ({
 vi.mock("./tabs/dsh-plugins-tab", () => ({
   DshPluginsTab: () => <div>dsh-plugins-tab</div>,
 }));
+vi.mock("./tabs/dsh-home-tab", () => ({
+  DshHomeTab: () => <div>dsh-home-tab</div>,
+}));
 vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
@@ -600,4 +603,16 @@ it.each([
   renderPane([runtime], { canEdit, agentOverrides: { runtime_mode: mode as "local" | "cloud" } });
   openConfiguration();
   expect(screen.queryByRole("tab", { name: "DSH Home" }) != null).toBe(visible);
+});
+
+it("shows DSH Home for the migrated FC metadata returned by preproduction", () => {
+  const runtime = { ...makeRuntime("dsh"), runtime_mode: "cloud" as const, metadata: {
+    kind: "cloud-sandbox", sandbox_backend: "aliyun_fc", provider: "dsh",
+    template_id: "lk2nt02azvizzdjzjjxq", template: "lk2nt02azvizzdjzjjxq", template_channel: "stable",
+  } };
+  renderPane([runtime], { canEdit: true, agentOverrides: { runtime_mode: "cloud" } });
+  openConfiguration();
+  expect(screen.getByRole("tab", { name: "DSH Home" })).toBeDefined();
+  fireEvent.click(screen.getByRole("tab", { name: "DSH Home" }));
+  expect(screen.getByText("dsh-home-tab")).toBeDefined();
 });

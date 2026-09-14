@@ -358,10 +358,34 @@ export function parseCloudSandboxRuntimeMetadata(
   }
   if (kind !== "cloud-sandbox") return null;
   const sandboxBackend = metadataString(metadata, "sandbox_backend");
+  const provider = metadataString(metadata, "provider") ?? runtime.provider?.trim() ?? null;
+  const legacyTemplateId = metadataString(metadata, "template_id");
+  // Match ParseCloudSandboxRuntime: migrated FC rows can still carry their
+  // immutable identity entirely in template_* fields. Mixed artifacts fail closed.
+  if (
+    sandboxBackend === "aliyun_fc" && legacyTemplateId &&
+    FC_E2B_RUNTIME_PROVIDERS.some((supported) => supported === provider) &&
+    ["artifact_kind", "artifact_ref"].every((key) =>
+      metadata[key] == null ||
+      (typeof metadata[key] === "string" && metadata[key].trim() === ""),
+    )
+  ) {
+    return {
+      kind, sandboxBackend, provider,
+      artifactKind: "e2b_template",
+      artifactChannel: metadataString(metadata, "template_channel") === "candidate" ? "candidate" : "stable",
+      artifactRef: legacyTemplateId,
+      artifactBuildId: null,
+      artifactAlias: metadataString(metadata, "template_alias") ?? metadataString(metadata, "template"),
+      artifactDigest: null,
+      capabilities: metadataStringArray(metadata, "capabilities"),
+    };
+  }
   const artifactKind = metadataString(metadata, "artifact_kind");
+  const artifactRef = metadataString(metadata, "artifact_ref");
   if (
     (sandboxBackend !== "aliyun_fc" && sandboxBackend !== "asb") ||
-    (artifactKind !== "e2b_template" && artifactKind !== "oci_image")
+    (artifactKind !== "e2b_template" && artifactKind !== "oci_image") || !artifactRef
   ) {
     return null;
   }
@@ -381,7 +405,7 @@ export function parseCloudSandboxRuntimeMetadata(
       metadataString(metadata, "artifact_channel") === "candidate"
         ? "candidate"
         : "stable",
-    artifactRef: metadataString(metadata, "artifact_ref"),
+    artifactRef,
 		artifactBuildId:
 			sandboxBackend === "asb"
 				? metadataString(metadata, "artifact_build_id")
