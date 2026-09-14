@@ -54,7 +54,12 @@ reconciliation remain required.
 
 ## Verification
 
-Run `DSH_HOST_TEST_DATABASE_URL=<isolated PostgreSQL> go test -race ./internal/dshhost`
+Local checks are compilation, static checks and unit tests only. Do not start a
+local application or database for this integration. Run database and native Host
+acceptance in the actual pre-release environment or its authorized FC sandboxes.
+
+In that environment, run
+`DSH_HOST_TEST_DATABASE_URL=<isolated PostgreSQL> go test -race ./internal/dshhost`
 from `server`. Tests use isolated schemas and separate connection pools, replay
 the migrations twice, and clean up their own schemas. They cover 24 competing
 callers, ambiguous create outcomes, old timestamps, health failure, unconfirmed
@@ -64,6 +69,13 @@ The live test requires explicit `DSH_HOST_LIVE_TEST=1`, FC credentials in the
 process environment, and the `DSH_TEST_*` settings listed in `fc_test.go`. Use an
 authorized probe volume only. It creates two temporary sandboxes and destroys
 them; it does not execute DSH or prove application-level recovery.
+
+Native Host readiness includes a `managed_profile_digest` over the versioned
+image overlay contract and model catalog. The supervisor also checks the live
+task-context plugin's catalog over the authenticated native API. A changed
+catalog requires draining and retiring the old sandbox; it never rewrites a
+running Host's configuration. This receipt is separate from the employee's
+editable Profile revision, which still needs its durable lifecycle.
 
 Before deployment, complete provisioning intents, native activity draining,
 credentials scoped to executions, the persistent task adapter, profile revisions

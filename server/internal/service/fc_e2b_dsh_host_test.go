@@ -123,6 +123,37 @@ func (p *dshLaunchProvider) FindCreated(_ context.Context, h dshhost.Host) (stri
 
 type dshHomeRunner struct{ wrongReceipt, wrongNativeReceipt bool }
 
+func TestDSHNativeManagedProfileReceipt(t *testing.T) {
+	models := []string{"fixture-model"}
+	raw, digest, err := dshManagedCatalog(models)
+	if err != nil || raw != `["fixture-model"]` || digest != "71d8f98342ccd701c835757af43ea5963ce4fde80dddc0ef75cc905e5fa6dc45" {
+		t.Fatalf("invalid managed catalog receipt: %v", err)
+	}
+	for _, invalid := range [][]string{nil, {""}, {"a", "a"}, {" model"}, {"a\n"}} {
+		if _, _, err := dshManagedCatalog(invalid); err == nil {
+			t.Fatal("invalid managed catalog accepted")
+		}
+	}
+	host := dshhost.Host{Key: dshhost.Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, Generation: 2, SandboxID: "sandbox"}
+	out, err := (dshHomeRunner{}).Run(context.Background(), "", dshNativeHostEnsureArgs(host, raw), nil)
+	if err != nil || validateDSHNativeHostReceipt(out, host, digest) != nil {
+		t.Fatalf("matching managed profile rejected: %v", err)
+	}
+	_, changed, _ := dshManagedCatalog([]string{"other-model"})
+	if validateDSHNativeHostReceipt(out, host, changed) == nil || validateDSHNativeHostReceipt(out, host, "") == nil {
+		t.Fatal("a different or missing managed profile was accepted")
+	}
+	var receipt map[string]any
+	if err := json.Unmarshal([]byte(out), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	delete(receipt, "managed_profile_digest")
+	missing, _ := json.Marshal(receipt)
+	if validateDSHNativeHostReceipt(string(missing), host, digest) == nil {
+		t.Fatal("native process health without plugin configuration proof was accepted")
+	}
+}
+
 func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []string) (string, error) {
 	values := map[string]string{}
 	for i := range len(args) - 1 {
@@ -137,7 +168,15 @@ func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []strin
 		if r.wrongNativeReceipt {
 			values["MULTICA_DSH_AGENT_ID"] = uuid.NewString()
 		}
-		return fmt.Sprintf(`{"version":1,"workspace_id":%q,"agent_id":%q,"generation":%s}`, values["MULTICA_DSH_WORKSPACE_ID"], values["MULTICA_DSH_AGENT_ID"], values["MULTICA_DSH_HOST_GENERATION"]), nil
+		var models []string
+		if err := json.Unmarshal([]byte(values["MULTICA_DSH_MODEL_CATALOG_JSON"]), &models); err != nil {
+			return "", err
+		}
+		_, digest, err := dshManagedCatalog(models)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf(`{"version":1,"workspace_id":%q,"agent_id":%q,"generation":%s,"managed_profile_digest":%q}`, values["MULTICA_DSH_WORKSPACE_ID"], values["MULTICA_DSH_AGENT_ID"], values["MULTICA_DSH_HOST_GENERATION"], digest), nil
 	}
 	if values["--agent"] == "" {
 		return "", nil
@@ -173,7 +212,7 @@ func dshLaunchFixture(t *testing.T, pool *pgxpool.Pool, p *dshLaunchProvider) (*
 	u := func(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 	rt := db.AgentRuntime{ID: u(uuid.New()), WorkspaceID: u(workspace)}
 	task := db.AgentTaskQueue{ID: u(uuid.New()), AgentID: u(agent), RuntimeID: rt.ID}
-	launcher := &FCE2BLauncher{Pool: pool, Runner: dshHomeRunner{}, Config: FCE2BConfig{APIURL: httpServer.URL, APIKey: "test-key", SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
+	launcher := &FCE2BLauncher{Pool: pool, Runner: dshHomeRunner{}, Config: FCE2BConfig{APIURL: httpServer.URL, APIKey: "test-key", LLMModels: []string{"fixture-model"}, SandboxReadyTimeout: time.Second}, dshProvider: func(dshhost.Storage) (dshhost.Provider, error) { return p, nil }}
 	return launcher, rt, task
 }
 

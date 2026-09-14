@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -57,6 +59,10 @@ func lockDSHEmployee(ctx context.Context, conn *pgxpool.Conn, workspace, agent p
 func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, task db.AgentTaskQueue, rt db.AgentRuntime, template string, conn *pgxpool.Conn, trace chattrace.Trace) (dshhost.Host, bool, error) {
 	if conn == nil || !rt.WorkspaceID.Valid || !task.AgentID.Valid {
 		return dshhost.Host{}, false, errors.New("invalid DSH employee launch identity")
+	}
+	catalog, profileDigest, err := dshManagedCatalog(l.Config.LLMModels)
+	if err != nil {
+		return dshhost.Host{}, false, err
 	}
 	key := dshhost.Key{WorkspaceID: uuid.UUID(rt.WorkspaceID.Bytes), AgentID: uuid.UUID(task.AgentID.Bytes)}
 	store := dshhost.PostgresStore{DB: conn}
@@ -146,9 +152,9 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, task db.A
 	if err = validateDSHHomeReceipt(out, host); err != nil {
 		return dshhost.Host{}, cold, err
 	}
-	out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host))
+	out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host, catalog))
 	if err == nil {
-		err = validateDSHNativeHostReceipt(out, host)
+		err = validateDSHNativeHostReceipt(out, host, profileDigest)
 	}
 	if err != nil {
 		// A crashed supervisor can leave a native child writing the Home.
@@ -160,26 +166,56 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, task db.A
 		chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "native_host_unavailable", "sandbox_id", host.SandboxID, "generation", host.Generation)
 		return dshhost.Host{}, cold, errDSHHostWaiting
 	}
-	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String())
+	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String(), "managed_profile_digest", profileDigest)
 	return host, cold, nil
 }
 
-func dshNativeHostEnsureArgs(host dshhost.Host) []string {
+// This digest covers the image-owned managed overlay and its model catalog.
+// It is not the employee's editable Profile revision, which has its own lifecycle.
+func dshManagedCatalog(models []string) (string, string, error) {
+	invalid := errors.New("invalid DSH managed model catalog")
+	if len(models) == 0 || len(models) > 256 {
+		return "", "", invalid
+	}
+	seen := make(map[string]bool, len(models))
+	for _, model := range models {
+		if model == "" || strings.TrimSpace(model) != model || !utf8.ValidString(model) || utf8.RuneCountInString(model) > 512 || seen[model] {
+			return "", "", invalid
+		}
+		for _, char := range model {
+			if char < 32 {
+				return "", "", invalid
+			}
+		}
+		seen[model] = true
+	}
+	encoded, err := json.Marshal(models)
+	if err != nil || len(encoded) > 65536 {
+		return "", "", invalid
+	}
+	raw := string(encoded)
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("multica-native-profile-v1\n"+raw)))
+	return raw, digest, nil
+}
+
+func dshNativeHostEnsureArgs(host dshhost.Host, catalog string) []string {
 	return []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
 		"-e", "DSH_HOME=" + dshhost.MountPath + "/home", "-e", "MULTICA_DSH_WORKSPACE_ID=" + host.WorkspaceID.String(),
 		"-e", "MULTICA_DSH_AGENT_ID=" + host.AgentID.String(), "-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10),
+		"-e", "MULTICA_DSH_MODEL_CATALOG_JSON=" + catalog,
 		host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", "--ensure"}
 }
 
-func validateDSHNativeHostReceipt(out string, host dshhost.Host) error {
+func validateDSHNativeHostReceipt(out string, host dshhost.Host, profileDigest string) error {
 	var receipt struct {
-		Version     int    `json:"version"`
-		WorkspaceID string `json:"workspace_id"`
-		AgentID     string `json:"agent_id"`
-		Generation  int64  `json:"generation"`
+		Version       int    `json:"version"`
+		WorkspaceID   string `json:"workspace_id"`
+		AgentID       string `json:"agent_id"`
+		Generation    int64  `json:"generation"`
+		ProfileDigest string `json:"managed_profile_digest"`
 	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &receipt); err != nil || receipt.Version != 1 || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation {
-		return errors.New("DSH native Host did not confirm the expected employee and generation")
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &receipt); err != nil || receipt.Version != 1 || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation || profileDigest == "" || receipt.ProfileDigest != profileDigest {
+		return errors.New("DSH native Host did not confirm the expected employee, generation and managed profile")
 	}
 	return nil
 }
