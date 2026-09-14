@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func fakeFC(t *testing.T, handler http.HandlerFunc) *FCProvider {
@@ -166,10 +168,12 @@ func TestFCLiveCreateReconcileRetire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seed := bind(t, a)
-	// Replace only the test fixture's unused offline storage, before any create.
-	if _, err := a.Pool.Exec(context.Background(), `UPDATE dsh_employee_host SET volume_name=$1, access_point_arn=$2,role_arn=$3 WHERE workspace_id=$4 AND agent_id=$5`,
-		os.Getenv("DSH_TEST_VOLUME"), os.Getenv("DSH_TEST_ACCESS_POINT_ARN"), os.Getenv("DSH_TEST_ROLE_ARN"), seed.WorkspaceID, seed.AgentID); err != nil {
+	seed, err := a.BindStorage(context.Background(), Key{WorkspaceID: uuid.New(), AgentID: uuid.New()}, Storage{
+		FileSystemID: os.Getenv("DSH_TEST_FILE_SYSTEM_ID"), SpaceID: os.Getenv("DSH_TEST_SPACE_ID"),
+		VolumeName: os.Getenv("DSH_TEST_VOLUME"), AccessPointARN: os.Getenv("DSH_TEST_ACCESS_POINT_ARN"), RoleARN: os.Getenv("DSH_TEST_ROLE_ARN"),
+		VPCID: os.Getenv("DSH_TEST_VPC_ID"), SecurityGroupID: os.Getenv("DSH_TEST_SECURITY_GROUP_ID"), VSwitchIDs: []string{os.Getenv("DSH_TEST_VSWITCH_ID")},
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	m := Manager{a, p}

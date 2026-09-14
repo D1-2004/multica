@@ -82,6 +82,8 @@ func identity(h Host) map[string]string {
 		"multica.dsh.generation":   strconv.FormatInt(h.Generation, 10),
 		"multica.dsh.volume":       h.VolumeName,
 		"multica.dsh.access-point": h.AccessPointARN,
+		"multica.dsh.file-system":  h.FileSystemID,
+		"multica.dsh.space":        h.SpaceID,
 		"multica.dsh.template-id":  h.TemplateID,
 		"multica.dsh.role-arn":     h.RoleARN,
 	}

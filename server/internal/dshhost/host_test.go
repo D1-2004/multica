@@ -52,10 +52,10 @@ func stores(t *testing.T) (PostgresStore, PostgresStore) {
 			t.Fatal(err)
 		}
 		t.Cleanup(pool.Close)
-		return PostgresStore{Pool: pool}
+		return PostgresStore{DB: pool}
 	}
 	a, b := newStore(), newStore()
-	for _, name := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point"} {
+	for _, name := range []string{"9223_dsh_employee_host", "9224_dsh_employee_host_identity", "9225_dsh_employee_host_volume", "9226_dsh_employee_host_access_point", "9227_dsh_employee_host_space"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", name+".up.sql"))
 		if err != nil {
 			t.Fatal(err)
@@ -63,7 +63,7 @@ func stores(t *testing.T) (PostgresStore, PostgresStore) {
 		// Execute twice to verify migration replay, outside transactions so
 		// CREATE INDEX CONCURRENTLY exercises its actual deployment contract.
 		for range 2 {
-			if _, err := a.Pool.Exec(ctx, string(data)); err != nil {
+			if _, err := a.DB.Exec(ctx, string(data)); err != nil {
 				t.Fatalf("%s: %v", name, err)
 			}
 		}
@@ -74,6 +74,7 @@ func stores(t *testing.T) (PostgresStore, PostgresStore) {
 func bind(t *testing.T, s PostgresStore) Host {
 	t.Helper()
 	h, err := s.BindStorage(context.Background(), Key{uuid.New(), uuid.New()}, Storage{
+		FileSystemID: "fs-test", SpaceID: "space-" + uuid.NewString(), VPCID: "vpc-test", SecurityGroupID: "sg-test", VSwitchIDs: []string{"vsw-test"},
 		VolumeName: "volume-" + uuid.NewString(), AccessPointARN: "ap-" + uuid.NewString(), RoleARN: "role-test",
 	})
 	if err != nil {
@@ -172,7 +173,7 @@ func TestUnknownCreateCannotRetryAndReconcilesAcrossReplica(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate an arbitrarily old heartbeat. Expiry cannot grant ownership.
-	if _, err := a.Pool.Exec(context.Background(), "UPDATE dsh_employee_host SET updated_at=now()-interval '30 days'"); err != nil {
+	if _, err := a.DB.Exec(context.Background(), "UPDATE dsh_employee_host SET updated_at=now()-interval '30 days'"); err != nil {
 		t.Fatal(err)
 	}
 	n := Manager{b, p}
@@ -268,6 +269,10 @@ func TestEmployeeStorageCannotAliasOrBeRedirected(t *testing.T) {
 		t.Fatal("two volume names alias the same access point")
 	}
 	changed.AccessPointARN = "different-ap"
+	if _, err := b.BindStorage(ctx, other, changed); err == nil {
+		t.Fatal("different access points alias the same employee Space")
+	}
+	changed.SpaceID = "different-space"
 	if _, err := b.BindStorage(ctx, other, changed); err != nil {
 		t.Fatal(err)
 	}

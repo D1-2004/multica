@@ -25,9 +25,14 @@ type Key struct {
 }
 
 type Storage struct {
-	VolumeName     string
-	AccessPointARN string
-	RoleARN        string
+	FileSystemID    string
+	SpaceID         string
+	VolumeName      string
+	AccessPointARN  string
+	RoleARN         string
+	VPCID           string
+	SecurityGroupID string
+	VSwitchIDs      []string
 }
 
 type Host struct {
