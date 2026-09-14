@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,7 +76,11 @@ func (l *FCE2BLauncher) DSHNativeGatewayURL(ctx context.Context, host dshhost.Ho
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=", host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", "--gateway-health"})
+	out, err := l.runE2BCommand(ctx, []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
+		"-e", "DSH_HOME=" + dshhost.MountPath + "/home",
+		"-e", "MULTICA_DSH_WORKSPACE_ID=" + host.WorkspaceID.String(),
+		"-e", "MULTICA_DSH_AGENT_ID=" + host.AgentID.String(),
+		"-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10), host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", "--gateway-health"})
 	if err != nil {
 		return "", errors.New("DSH native gateway readiness is unconfirmed")
 	}
