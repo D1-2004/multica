@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,13 +20,28 @@ func TestDSHNativeRealHostExecution(t *testing.T) {
 	native := DSHNativeHostConfig{WorkspaceID: os.Getenv("MULTICA_DSH_WORKSPACE_ID"), AgentID: os.Getenv("MULTICA_DSH_AGENT_ID"), Generation: 1, SessionID: os.Getenv("MULTICA_DSH_SESSION_ID"), WorkDir: os.Getenv("MULTICA_DSH_WORKDIR"), ModelBaseURL: "http://127.0.0.1:38127/v1", ModelAPIKey: "cloud-fixture-only", ExpiresAt: time.Now().Add(10 * time.Minute)}
 	expectedTools := 1
 	skills := os.Getenv("DSH_NATIVE_CLOUD_SKILLS") == "1"
+	mcp := os.Getenv("DSH_NATIVE_CLOUD_MCP") == "1"
 	if skills {
 		expectedTools = 2
+	}
+	if mcp {
+		expectedTools++
 	}
 	execute := func(requestID, generation string, timeout time.Duration) (Result, int) {
 		value := native
 		value.RequestID = requestID
 		value.ProviderGeneration = generation
+		var mcpConfig json.RawMessage
+		var pidPath string
+		if mcp {
+			directory := t.TempDir()
+			script := filepath.Join(directory, "mcp.py")
+			pidPath = filepath.Join(directory, "pid")
+			if err := os.WriteFile(script, []byte(nativeCloudMCPFixture), 0600); err != nil {
+				t.Fatal(err)
+			}
+			mcpConfig, _ = json.Marshal(map[string]any{"mcpServers": map[string]any{"native-probe": map[string]any{"command": "/opt/task-python/bin/python3", "args": []string{script}, "env": map[string]string{"NATIVE_MCP_REVISION": generation, "NATIVE_MCP_PID_FILE": pidPath}}}})
+		}
 		if skills {
 			value.ContextText = "NATIVE_CONTEXT_" + generation + " literal {{unregistered_user_template}}"
 			value.SkillDirectory = t.TempDir()
@@ -41,7 +58,7 @@ func TestDSHNativeRealHostExecution(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		session, err := backend.Execute(context.Background(), "Run the fixture bash check then answer with its marker.", ExecOptions{Cwd: value.WorkDir, Model: "fixture-model", Timeout: timeout})
+		session, err := backend.Execute(context.Background(), "Run the fixture tools then answer with their marker.", ExecOptions{Cwd: value.WorkDir, Model: "fixture-model", Timeout: timeout, McpConfig: mcpConfig})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -54,6 +71,21 @@ func TestDSHNativeRealHostExecution(t *testing.T) {
 		result := <-session.Result
 		if !backend.(interface{ NativeHostTaskQuiescent() bool }).NativeHostTaskQuiescent() {
 			t.Fatal("native task cleanup did not confirm quiescence")
+		}
+		if mcp {
+			pid, err := os.ReadFile(pidPath)
+			if strings.Contains(generation, "replay") {
+				if !os.IsNotExist(err) {
+					t.Fatal("completed replay recreated MCP subprocess")
+				}
+			} else {
+				if err != nil || len(pid) == 0 {
+					t.Fatal("MCP subprocess did not start")
+				}
+				if _, err := os.Stat("/proc/" + strings.TrimSpace(string(pid))); !os.IsNotExist(err) {
+					t.Fatal("MCP subprocess survived confirmed task cleanup")
+				}
+			}
 		}
 		return result, tools
 	}
@@ -79,3 +111,24 @@ func TestDSHNativeRealHostExecution(t *testing.T) {
 		t.Fatalf("Session not reusable after confirmed cancellation: %s %s", final.Status, final.Error)
 	}
 }
+
+// This subprocess is only executed by the opt-in FC test, never locally.
+const nativeCloudMCPFixture = `import json,os,sys
+from pathlib import Path
+Path(os.environ['NATIVE_MCP_PID_FILE']).write_text(str(os.getpid()))
+for line in sys.stdin:
+    message=json.loads(line)
+    if 'id' not in message: continue
+    method=message['method']
+    if method=='initialize':
+        result={'protocolVersion':message['params']['protocolVersion'],'capabilities':{'tools':{}},'serverInfo':{'name':'native-cloud-probe','version':'1'}}
+    elif method=='tools/list':
+        result={'tools':[{'name':'revision','description':'Read current task fixture revision','inputSchema':{'type':'object','properties':{},'additionalProperties':False}}]}
+    elif method=='tools/call':
+        result={'content':[{'type':'text','text':'NATIVE_MCP_'+os.environ['NATIVE_MCP_REVISION']}]}
+    elif method=='ping': result={}
+    else:
+        print(json.dumps({'jsonrpc':'2.0','id':message['id'],'error':{'code':-32601,'message':'Method not found'}}),flush=True)
+        continue
+    print(json.dumps({'jsonrpc':'2.0','id':message['id'],'result':result}),flush=True)
+`
