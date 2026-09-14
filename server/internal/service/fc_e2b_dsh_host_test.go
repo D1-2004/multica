@@ -121,12 +121,23 @@ func (p *dshLaunchProvider) FindCreated(_ context.Context, h dshhost.Host) (stri
 	return p.live[h.CreateIntent], nil
 }
 
-type dshHomeRunner struct{ wrongReceipt bool }
+type dshHomeRunner struct{ wrongReceipt, wrongNativeReceipt bool }
 
 func (r dshHomeRunner) Run(_ context.Context, _ string, args []string, _ []string) (string, error) {
 	values := map[string]string{}
 	for i := range len(args) - 1 {
 		values[args[i]] = args[i+1]
+	}
+	if args[len(args)-1] == "--ensure" {
+		for _, arg := range args {
+			if k, v, ok := strings.Cut(arg, "="); ok {
+				values[k] = v
+			}
+		}
+		if r.wrongNativeReceipt {
+			values["MULTICA_DSH_AGENT_ID"] = uuid.NewString()
+		}
+		return fmt.Sprintf(`{"version":1,"workspace_id":%q,"agent_id":%q,"generation":%s}`, values["MULTICA_DSH_WORKSPACE_ID"], values["MULTICA_DSH_AGENT_ID"], values["MULTICA_DSH_HOST_GENERATION"]), nil
 	}
 	if values["--agent"] == "" {
 		return "", nil
@@ -210,6 +221,28 @@ func TestDSHLaunchUsesOneConnectionAndOneEmployeeHostAcrossReplicas(t *testing.T
 	wg.Wait()
 	if provider.creates != 1 {
 		t.Fatalf("created %d hosts", provider.creates)
+	}
+}
+
+func TestDSHNativeHostFailureRequiresConfirmedSandboxRetirement(t *testing.T) {
+	a, _ := dshLaunchPools(t)
+	provider := &dshLaunchProvider{destroyErr: errors.New("not confirmed")}
+	l, rt, task := dshLaunchFixture(t, a, provider)
+	l.Runner = dshHomeRunner{wrongNativeReceipt: true}
+	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) {
+		t.Fatal("native Host mismatch did not stop admissions", err)
+	}
+	l.Runner = dshHomeRunner{}
+	if _, err := resolveDSHTest(t, l, rt, task, "template-1"); !errors.Is(err, errDSHHostWaiting) {
+		t.Fatal("native failure bypassed sandbox retirement", err)
+	}
+	if provider.creates != 1 {
+		t.Fatal("replacement started before confirmed destruction")
+	}
+	provider.destroyErr = nil
+	host, err := resolveDSHTest(t, l, rt, task, "template-1")
+	if err != nil || host.Generation != 2 {
+		t.Fatalf("generation=%d err=%v", host.Generation, err)
 	}
 }
 

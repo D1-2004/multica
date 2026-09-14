@@ -134,8 +134,42 @@ func (l *FCE2BLauncher) resolveDSHEmployeeSandbox(ctx context.Context, task db.A
 	if err = validateDSHHomeReceipt(out, host); err != nil {
 		return dshhost.Host{}, cold, err
 	}
+	out, err = l.runE2BCommand(ctx, dshNativeHostEnsureArgs(host))
+	if err == nil {
+		err = validateDSHNativeHostReceipt(out, host)
+	}
+	if err != nil {
+		// A crashed supervisor can leave a native child writing the Home.
+		// Stop admissions now; the next reconciliation drains other tasks and
+		// confirms destruction of this entire sandbox before a replacement.
+		if _, transitionErr := store.BeginRetire(ctx, host); transitionErr != nil && !errors.Is(transitionErr, dshhost.ErrChanged) {
+			return dshhost.Host{}, cold, transitionErr
+		}
+		chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "waiting", "reason", "native_host_unavailable", "sandbox_id", host.SandboxID, "generation", host.Generation)
+		return dshhost.Host{}, cold, errDSHHostWaiting
+	}
 	chattrace.LogStage(slog.Default(), trace, "dsh_employee_host", "ready", "sandbox_id", host.SandboxID, "generation", host.Generation, "agent_id", host.AgentID.String())
 	return host, cold, nil
+}
+
+func dshNativeHostEnsureArgs(host dshhost.Host) []string {
+	return []string{"sandbox", "exec", "--user", "user", "-e", "LD_PRELOAD=", "-e", "LD_LIBRARY_PATH=", "-e", "PYTHONPATH=", "-e", "PYTHONHOME=",
+		"-e", "DSH_HOME=" + dshhost.MountPath + "/home", "-e", "MULTICA_DSH_WORKSPACE_ID=" + host.WorkspaceID.String(),
+		"-e", "MULTICA_DSH_AGENT_ID=" + host.AgentID.String(), "-e", "MULTICA_DSH_HOST_GENERATION=" + strconv.FormatInt(host.Generation, 10),
+		host.SandboxID, "--", "/usr/local/libexec/multica-dsh-host", "--ensure"}
+}
+
+func validateDSHNativeHostReceipt(out string, host dshhost.Host) error {
+	var receipt struct {
+		Version     int    `json:"version"`
+		WorkspaceID string `json:"workspace_id"`
+		AgentID     string `json:"agent_id"`
+		Generation  int64  `json:"generation"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &receipt); err != nil || receipt.Version != 1 || receipt.WorkspaceID != host.WorkspaceID.String() || receipt.AgentID != host.AgentID.String() || receipt.Generation != host.Generation {
+		return errors.New("DSH native Host did not confirm the expected employee and generation")
+	}
+	return nil
 }
 
 func dshHomePrepareArgs(host dshhost.Host) ([]string, error) {
