@@ -248,6 +248,7 @@ export interface AgentSourceFileChange {
 }
 
 export interface AgentSourceSyncPreview {
+  rollback_of?: string;
   requirements?: import("./agent-package").AgentPackageRequirements;
   preview_id: string;
   expires_at: string;
@@ -266,6 +267,27 @@ export interface AgentSourceBranches {
   repository_url: string;
   default_branch: string;
   branches: { name: string; commit: { sha: string }; protected: boolean }[];
+  tags?: { name: string; commit: { sha: string } }[];
+}
+
+export interface AgentPublication {
+  id: string;
+  source_type: string;
+  repository_url: string;
+  ref: string;
+  commit_sha: string;
+  published_at: string;
+  published_by: string;
+  author_name: string;
+  changed: boolean;
+  rollback_of: string;
+  has_configuration_snapshot: boolean;
+  initial_publication: boolean;
+}
+
+export interface AgentPublicationList {
+  publications: AgentPublication[];
+  next_cursor: string | null;
 }
 
 export interface GitHubRepository {

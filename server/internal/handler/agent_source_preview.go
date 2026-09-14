@@ -32,6 +32,7 @@ func sourceRequestError(status int, message string) error {
 }
 
 type AgentSourceSyncPreviewResponse struct {
+	RollbackOf           string                   `json:"rollback_of,omitempty"`
 	Requirements         PackageRequirements      `json:"requirements"`
 	PreviewID            string                   `json:"preview_id"`
 	ExpiresAt            string                   `json:"expires_at"`
@@ -76,9 +77,11 @@ func (h *Handler) listGitHubAgentBranches(w http.ResponseWriter, r *http.Request
 		writeGitHubSourceError(w, err)
 		return
 	}
+	tags, err := h.GitHubApp.ListTags(r.Context(), resolved.installation.InstallationID, ownerFromFullName(resolved.repository.FullName), repoFromFullName(resolved.repository.FullName))
+	if err != nil { writeGitHubSourceError(w, err); return }
 	writeJSON(w, http.StatusOK, map[string]any{
 		"repository": resolved.repository.FullName, "repository_url": "https://github.com/" + resolved.repository.FullName,
-		"default_branch": resolved.repository.DefaultBranch, "branches": branches,
+		"default_branch": resolved.repository.DefaultBranch, "branches": branches, "tags": tags,
 	})
 }
 
@@ -105,12 +108,9 @@ func (h *Handler) saveAgentSourcePreview(r *http.Request, workspaceID pgtype.UUI
 	if err != nil {
 		return db.AgentSourcePreview{}, err
 	}
-	snapshot, err := json.Marshal(resolved.snapshot)
+	snapshot, err := marshalAgentPublicationSnapshot(agentPublicationSnapshot{RepositorySnapshot:resolved.snapshot, RollbackOf:resolved.rollbackOf, PublishedDefinition:resolved.publicationDefinition})
 	if err != nil {
 		return db.AgentSourcePreview{}, err
-	}
-	if len(snapshot) > 64<<20 {
-		return db.AgentSourcePreview{}, errors.New("agent preview exceeds the snapshot size limit")
 	}
 	if err := h.Queries.DeleteExpiredAgentSourcePreviews(r.Context(), db.DeleteExpiredAgentSourcePreviewsParams{WorkspaceID: workspaceID, CreatedBy: userID}); err != nil {
 		return db.AgentSourcePreview{}, err
@@ -145,16 +145,14 @@ func (h *Handler) readAgentSourcePreview(r *http.Request, workspaceID pgtype.UUI
 }
 
 func (h *Handler) resolveAgentSourcePreview(ctx context.Context, preview db.AgentSourcePreview) (preparedAgentSource, error) {
+	var saved agentPublicationSnapshot
+	if err := json.Unmarshal(preview.Snapshot, &saved); err != nil { return preparedAgentSource{}, err }
+	bundle := saved.Definition
+	if saved.RollbackOf != "" && saved.PublishedDefinition != nil { bundle = *saved.PublishedDefinition }
+	if err := agentsource.ValidateBundle(bundle); err != nil { return preparedAgentSource{}, err }
 	// Local previews have no external permission to recheck.
 	if !preview.GithubInstallationID.Valid {
-		var snapshot agentsource.RepositorySnapshot
-		if err := json.Unmarshal(preview.Snapshot, &snapshot); err != nil {
-			return preparedAgentSource{}, err
-		}
-		if err := agentsource.ValidateBundle(snapshot.Definition); err != nil {
-			return preparedAgentSource{}, err
-		}
-		return preparedAgentSource{snapshot: snapshot, bundle: snapshot.Definition, sha: preview.ResolvedSha}, nil
+		return preparedAgentSource{snapshot:saved.RepositorySnapshot, bundle:bundle, sha:preview.ResolvedSha, rollbackOf:saved.RollbackOf, publicationDefinition:saved.PublishedDefinition}, nil
 	}
 	// Recheck current Git permission, but never resolve the branch a second time.
 	resolved, err := h.resolveGitHubAgentRepository(ctx, preview.WorkspaceID, GitHubAgentSourceInput{
@@ -163,13 +161,8 @@ func (h *Handler) resolveAgentSourcePreview(ctx context.Context, preview db.Agen
 	if err != nil {
 		return preparedAgentSource{}, err
 	}
-	if err := json.Unmarshal(preview.Snapshot, &resolved.snapshot); err != nil {
-		return preparedAgentSource{}, err
-	}
-	if err := agentsource.ValidateBundle(resolved.snapshot.Definition); err != nil {
-		return preparedAgentSource{}, err
-	}
-	resolved.sha, resolved.bundle = preview.ResolvedSha, resolved.snapshot.Definition
+	resolved.snapshot, resolved.sha, resolved.bundle = saved.RepositorySnapshot, preview.ResolvedSha, bundle
+	resolved.rollbackOf, resolved.publicationDefinition = saved.RollbackOf, saved.PublishedDefinition
 	return resolved, nil
 }
 
@@ -188,12 +181,14 @@ func lockSourcePreview(ctx context.Context, queries *db.Queries, preview db.Agen
 }
 
 func markSourcePreviewApplied(ctx context.Context, queries *db.Queries, preview db.AgentSourcePreview, source db.AgentSource, changed bool) error {
+	snapshot, err := captureAgentPublication(ctx, queries, preview, source)
+	if err != nil { return err }
 	response, err := json.Marshal(agentSourceToResponse(source))
 	if err != nil {
 		return err
 	}
 	_, err = queries.MarkAgentSourcePreviewApplied(ctx, db.MarkAgentSourcePreviewAppliedParams{
-		ID: preview.ID, AgentID: source.AgentID, AppliedSource: response, AppliedChanged: changed,
+		ID: preview.ID, AgentID: source.AgentID, AppliedSource: response, AppliedChanged: changed, Snapshot:snapshot,
 	})
 	return err
 }
@@ -367,9 +362,18 @@ func (h *Handler) PreviewAgentSourceSync(w http.ResponseWriter, r *http.Request)
 	}
 	var request struct {
 		Ref string `json:"ref"`
+		PublicationID string `json:"publication_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, 1 << 20)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if request.PublicationID != "" {
+		if request.Ref != "" { writeError(w,http.StatusBadRequest,"select either ref or publication_id"); return }
+		h.previewAgentPublicationRollback(w,r,agent,source,request.PublicationID)
 		return
 	}
 	if request.Ref == "" {
@@ -488,9 +492,16 @@ func packageDiffSnapshot(snapshot agentsource.RepositorySnapshot) agentsource.Re
 	for path, content := range snapshot.Files {
 		files[path] = content
 	}
-	if _, exists := files[agentsource.PortableManifestPath]; exists {
-		encoded, _ := json.MarshalIndent(packageDefinitionPreview(snapshot.Definition), "", "  ")
-		files[agentsource.PortableManifestPath] = string(encoded)
+	if manifest, exists := files[agentsource.PortableManifestPath]; exists {
+		// Rollback Definition includes materialized platform values. The Git
+		// pane must still show the original repository manifest, with redaction.
+		var original map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(manifest), &original); err != nil {
+			delete(files, agentsource.PortableManifestPath)
+		} else {
+			encoded, _ := json.MarshalIndent(packageDefinitionPreview(agentsource.Bundle{Definition:original}), "", "  ")
+			files[agentsource.PortableManifestPath] = string(encoded)
+		}
 	}
 	snapshot.Files = files
 	return snapshot

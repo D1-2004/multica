@@ -155,6 +155,35 @@ func TestClientListsRepositoryBranchesWithPagination(t *testing.T) {
 	}
 }
 
+func TestClientListsRepositoryTagsAndResolvesQualifiedRefs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request) {
+		switch r.URL.Path {
+		case "/app/installations/8/access_tokens":
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprintf(w,`{"token":"fixture","expires_at":%q}`,time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
+		case "/repos/acme/agent/tags":
+			if r.URL.Query().Get("page") == "1" {
+				fmt.Fprint(w,"[")
+				for index := range 100 { if index > 0 { fmt.Fprint(w,",") }; fmt.Fprintf(w,`{"name":"v%d","commit":{"sha":"%040d"}}`,index,index) }
+				fmt.Fprint(w,"]")
+			} else { fmt.Fprint(w,`[{"name":"v100","commit":{"sha":"1111111111111111111111111111111111111111"}}]`) }
+		case "/repos/acme/agent/commits/heads/release/v2":
+			fmt.Fprint(w,`{"sha":"1111111111111111111111111111111111111111"}`)
+		case "/repos/acme/agent/commits/tags/release/v2":
+			fmt.Fprint(w,`{"sha":"2222222222222222222222222222222222222222"}`)
+		default: http.NotFound(w,r)
+		}
+	}))
+	defer server.Close()
+	client := newTestClient(t,server.URL)
+	tags,err := client.ListTags(t.Context(),8,"acme","agent")
+	if err != nil || len(tags) != 101 || tags[100].Name != "v100" { t.Fatalf("tags=%v err=%v",tags,err) }
+	for ref,want := range map[string]string{"refs/heads/release/v2":"1111111111111111111111111111111111111111","refs/tags/release/v2":"2222222222222222222222222222222222222222"} {
+		sha,err := client.ResolveCommit(t.Context(),8,"acme","agent",ref)
+		if err != nil || sha != want { t.Errorf("ref=%s sha=%s err=%v",ref,sha,err) }
+	}
+}
+
 func TestClientReturnsRateLimitError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

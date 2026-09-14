@@ -29,7 +29,7 @@ function mount(zip = false) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions:{ queries:{retry:false}, mutations:{retry:false} } })}>
     <I18nProvider locale="en" resources={{ en:{ agents:enAgents } }}>
       <NavigationProvider value={{ push:mocked.push, replace:vi.fn(), back:vi.fn(), pathname:"/acme/agents/new/ai", searchParams:new URLSearchParams(), getShareableUrl:(path) => path }}>
-        {zip ? <ZIPPublishTab agentId="agent-1" canEdit hasGitSource={false} /> : <Builder />}
+        {zip ? <ZIPPublishTab agentId="agent-1" canEdit /> : <Builder />}
       </NavigationProvider>
     </I18nProvider>
   </QueryClientProvider>);

@@ -416,8 +416,15 @@ are written in one transaction. Duplicate confirmation returns the same Agent.
 Package OKRs retain authored text separately and allocate independent labels per Agent.
 Repeat imports are allowed; updates reuse only the current Agent's exclusive labels. A2A policies do not include credentials or mint new tokens.
 
+Git creation records the repository URL, workspace GitHub installation, selected
+ref and resolved commit. Creation and publication accept branches, tags and
+commit SHAs. Use `refs/heads/<branch>` or `refs/tags/<tag>` to distinguish
+same-named branches and tags. The repository/source branches endpoints also
+return `tags`; an omitted creation ref uses the repository default branch.
+
 For an existing Git Agent, preview `POST /api/agents/{id}/source/preview` with
-`{"ref":"<branch>"}` and review `git_changes` and `configuration_changes`.
+`{"ref":"refs/heads/<branch>"}`, `{"ref":"refs/tags/<tag>"}` or a commit SHA,
+and review `git_changes` and `configuration_changes`.
 Clicking Preview changes opens the successful result directly in a global dialog
 with file navigation and a read-only side-by-side diff. Git and configuration
 changes are separate tabs; close the dialog to confirm publication on the page.
@@ -429,6 +436,25 @@ explicit false/empty/null values are applied. Expired or stale previews require
 previewing again. Skills stay exclusive, editable and deletable. Publication
 preserves the selected runtime. v1 preserves the instance name and description;
 v2 publishes the manifest name and its description when declared.
+
+`GET /api/agents/{id}/source/publications` lists successful publications, newest
+first, with the author, timestamp, ref, immutable commit SHA and rollback origin.
+Follow `next_cursor` as `?before=<publication ID>` for older entries. Agent
+managers can preview a rollback through the same source preview endpoint with
+`{"publication_id":"<history ID>"}` instead of `ref`. Require the response's
+`rollback_of` to match that ID, review the global diff, and confirm its
+`preview_id` through `source/sync`. This creates another publication without
+rewriting Git. Current GitHub repository access is still required, but a moved
+or deleted ref does not affect the saved snapshot.
+
+New publications save the complete portable configuration after import in the
+same transaction. Rollback can clear later configuration and recreate removed
+exclusive skills; shared skills still require their existing scope/ID and edit
+permissions. Historical records without `has_configuration_snapshot` only
+restore their original package declarations and warn that omitted fields retain
+their current values. Runtime credentials and authenticated account bindings are
+never restored from history; portable declarations use the normal destination
+binding and secret checks.
 
 `GET /api/agents/{id}/export` downloads a ZIP of the current platform definition,
 including disabled skills and supporting files. Secrets become references;
@@ -443,12 +469,14 @@ reviews the validated snapshot, and confirms through the same package create API
 `GET /api/workspaces/{id}/agent-packages/{previewId}/download` downloads that
 caller's validated package, suitable for ZIP upload or a Git repository.
 
-An existing ordinary Agent can also upload a ZIP to
+An existing local-package or manually created Agent can upload a ZIP to
 `POST /api/agents/{id}/source/preview` using `application/zip` or multipart `file`.
 Review the complete configuration diff, then confirm through `source/sync`.
-This updates the existing Agent, preserves its environment bindings and any Git
-connection/last Git commit, and creates local source provenance only when no
-source existed. Source-managed skills are replaced; other assigned skills remain.
+This updates the existing Agent, preserves its environment bindings, and creates
+local source provenance only when no source existed. Git Agents publish from
+Git revisions: new ZIP preview/confirmation requests return 409. Replaying an
+already applied ZIP confirmation remains idempotent. Source-managed skills are
+replaced; other assigned skills remain.
 
 When revising an exported v2 package for publication back to the same Agent,
 preserve each skill's `scope` (`{"type":"workspace","id":"<workspace UUID>"}`)
@@ -526,3 +554,8 @@ Configuration and implementation map to `event_trigger.go`, `agent_event_trigger
 - 2026-09-14: Expose the current preview's resource declarations and separate
   previously imported bindings into a collapsed section. Reason: display the
   selected package's requirements without carrying over an older package's list.
+
+- 2026-09-14: Added branch/tag/commit selection, durable publication history and
+  reviewed snapshot rollback; Git Agents no longer accept new ZIP publications.
+  Reason: preserve repository provenance and make previous configurations
+  recoverable without depending on moving Git refs or copying credentials.

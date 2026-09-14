@@ -447,7 +447,7 @@
       "repository": "에이전트 저장소",
       "deployed": "게시된 브랜치와 커밋",
       "unavailable": "이 에이전트 또는 현재 권한으로는 수동 동기화를 사용할 수 없습니다.",
-      "branch": "브랜치 또는 커밋",
+      "branch": "브랜치, 태그 또는 커밋",
       "loading": "미리보기 준비 중...",
       "preview": "변경 미리보기",
       "branches_failed": "브랜치를 불러올 수 없습니다. 브랜치 또는 커밋을 직접 입력할 수 있습니다.",
@@ -1490,7 +1490,6 @@
       "zip_publish": "ZIP에서 게시",
       "git_publish": "Git에서 게시",
       "zip_hint": "새 에이전트 ZIP을 업로드하고 설정 변경을 검토한 후 이 에이전트에 게시합니다.",
-      "preserve_git": "Git 저장소 연결과 게시된 Git 커밋은 유지됩니다.",
       "builder_title": "에이전트 패키지",
       "builder_hint": "Builder가 전체 manifest와 파일을 생성합니다. 대화나 아래 편집기로 수정한 후 검증하고 미리 보기를 확인하여 생성하세요.",
       "contents": "Manifest 및 파일",
@@ -1672,5 +1671,24 @@
   "actions": {
     "selected_other": "{{count}}개 선택됨",
     "clear_selection": "선택 해제"
+  },
+  "git_revision": {
+    "type": "버전 유형",
+    "branch": "브랜치",
+    "tag": "태그",
+    "commit": "커밋",
+    "commit_hint": "커밋 SHA"
+  },
+  "publication_history": {
+    "title": "게시 기록",
+    "description": "기록된 내용을 복원하고 차이를 검토한 후 게시합니다. 복원하면 새 기록이 추가됩니다.",
+    "empty": "게시 기록이 없습니다.",
+    "latest": "최근 게시",
+    "rollback": "롤백 게시",
+    "created": "Git에서 생성",
+    "published": "게시",
+    "legacy": "이전 기록에는 패키지 선언만 있으므로 선언하지 않은 설정은 복원 시 유지됩니다.",
+    "restore": "이 버전으로 복원",
+    "more": "이전 기록 불러오기"
   }
 }

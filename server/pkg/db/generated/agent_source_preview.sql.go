@@ -119,6 +119,42 @@ func (q *Queries) DeleteSkillDependents(ctx context.Context, skillID pgtype.UUID
 	return err
 }
 
+const getAgentPublication = `-- name: GetAgentPublication :one
+SELECT id, workspace_id, created_by, agent_id, agent_source_id, github_installation_id, repository, ref, resolved_sha, expected_source_sha, expected_state_hash, snapshot, created_at, expires_at, applied_at, applied_source, applied_changed FROM agent_source_preview
+WHERE id = $1 AND agent_id = $2 AND workspace_id = $3 AND applied_at IS NOT NULL
+`
+
+type GetAgentPublicationParams struct {
+	ID          pgtype.UUID `json:"id"`
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetAgentPublication(ctx context.Context, arg GetAgentPublicationParams) (AgentSourcePreview, error) {
+	row := q.db.QueryRow(ctx, getAgentPublication, arg.ID, arg.AgentID, arg.WorkspaceID)
+	var i AgentSourcePreview
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.CreatedBy,
+		&i.AgentID,
+		&i.AgentSourceID,
+		&i.GithubInstallationID,
+		&i.Repository,
+		&i.Ref,
+		&i.ResolvedSha,
+		&i.ExpectedSourceSha,
+		&i.ExpectedStateHash,
+		&i.Snapshot,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AppliedAt,
+		&i.AppliedSource,
+		&i.AppliedChanged,
+	)
+	return i, err
+}
+
 const getAgentSourceByID = `-- name: GetAgentSourceByID :one
 SELECT id, agent_id, source_type, github_installation_id, repo_owner, repo_name, ref, manifest_path, synced_commit_sha, sync_status, last_sync_error, last_sync_attempt_at, last_synced_at, created_by, created_at, updated_at, workspace_id, managed_source_key FROM agent_source WHERE id = $1
 `
@@ -220,6 +256,83 @@ func (q *Queries) LatestAppliedAgentSourcePreview(ctx context.Context, arg Lates
 		&i.AppliedChanged,
 	)
 	return i, err
+}
+
+const listAgentPublications = `-- name: ListAgentPublications :many
+SELECT publication.id, publication.ref, publication.resolved_sha,
+    publication.repository, publication.github_installation_id,
+    publication.applied_at, publication.created_by, publication.applied_changed,
+    COALESCE(author.name, '')::text AS author_name,
+    COALESCE(publication.snapshot->>'rollback_of', '')::text AS rollback_of,
+    (publication.snapshot ? 'published_definition')::boolean AS has_configuration_snapshot,
+    publication.expected_state_hash = '' AS initial_publication
+FROM agent_source_preview AS publication
+LEFT JOIN "user" AS author ON author.id = publication.created_by
+WHERE publication.agent_id = $1
+  AND publication.workspace_id = $2
+  AND publication.applied_at IS NOT NULL
+  AND ($3::uuid IS NULL OR (publication.applied_at, publication.id) < (
+      SELECT cursor.applied_at, cursor.id FROM agent_source_preview AS cursor
+      WHERE cursor.id = $3
+        AND cursor.agent_id = $1 AND cursor.workspace_id = $2
+        AND cursor.applied_at IS NOT NULL
+  ))
+ORDER BY publication.applied_at DESC, publication.id DESC
+LIMIT 51
+`
+
+type ListAgentPublicationsParams struct {
+	AgentID     pgtype.UUID `json:"agent_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	BeforeID    pgtype.UUID `json:"before_id"`
+}
+
+type ListAgentPublicationsRow struct {
+	ID                       pgtype.UUID        `json:"id"`
+	Ref                      string             `json:"ref"`
+	ResolvedSha              string             `json:"resolved_sha"`
+	Repository               string             `json:"repository"`
+	GithubInstallationID     pgtype.UUID        `json:"github_installation_id"`
+	AppliedAt                pgtype.Timestamptz `json:"applied_at"`
+	CreatedBy                pgtype.UUID        `json:"created_by"`
+	AppliedChanged           bool               `json:"applied_changed"`
+	AuthorName               string             `json:"author_name"`
+	RollbackOf               string             `json:"rollback_of"`
+	HasConfigurationSnapshot bool               `json:"has_configuration_snapshot"`
+	InitialPublication       bool               `json:"initial_publication"`
+}
+
+func (q *Queries) ListAgentPublications(ctx context.Context, arg ListAgentPublicationsParams) ([]ListAgentPublicationsRow, error) {
+	rows, err := q.db.Query(ctx, listAgentPublications, arg.AgentID, arg.WorkspaceID, arg.BeforeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentPublicationsRow{}
+	for rows.Next() {
+		var i ListAgentPublicationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Ref,
+			&i.ResolvedSha,
+			&i.Repository,
+			&i.GithubInstallationID,
+			&i.AppliedAt,
+			&i.CreatedBy,
+			&i.AppliedChanged,
+			&i.AuthorName,
+			&i.RollbackOf,
+			&i.HasConfigurationSnapshot,
+			&i.InitialPublication,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockAgentSourcePreview = `-- name: LockAgentSourcePreview :one
@@ -379,7 +492,8 @@ func (q *Queries) MarkAgentSourceBranchSyncSucceeded(ctx context.Context, arg Ma
 
 const markAgentSourcePreviewApplied = `-- name: MarkAgentSourcePreviewApplied :one
 UPDATE agent_source_preview
-SET agent_id = $2, applied_at = now(), applied_source = $3, applied_changed = $4
+SET agent_id = $2, applied_at = clock_timestamp(), applied_source = $3, applied_changed = $4,
+    snapshot = $5
 WHERE id = $1 AND applied_at IS NULL
 RETURNING id, workspace_id, created_by, agent_id, agent_source_id, github_installation_id, repository, ref, resolved_sha, expected_source_sha, expected_state_hash, snapshot, created_at, expires_at, applied_at, applied_source, applied_changed
 `
@@ -389,6 +503,7 @@ type MarkAgentSourcePreviewAppliedParams struct {
 	AgentID        pgtype.UUID `json:"agent_id"`
 	AppliedSource  []byte      `json:"applied_source"`
 	AppliedChanged bool        `json:"applied_changed"`
+	Snapshot       []byte      `json:"snapshot"`
 }
 
 func (q *Queries) MarkAgentSourcePreviewApplied(ctx context.Context, arg MarkAgentSourcePreviewAppliedParams) (AgentSourcePreview, error) {
@@ -397,6 +512,7 @@ func (q *Queries) MarkAgentSourcePreviewApplied(ctx context.Context, arg MarkAge
 		arg.AgentID,
 		arg.AppliedSource,
 		arg.AppliedChanged,
+		arg.Snapshot,
 	)
 	var i AgentSourcePreview
 	err := row.Scan(

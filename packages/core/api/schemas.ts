@@ -3186,6 +3186,7 @@ const ImmutableGitCommitSchema = z.string().regex(/^[0-9a-fA-F]{40}([0-9a-fA-F]{
 const AgentSourceChangesSchema = z.array(AgentSourceFileChangeSchema).nullish().transform((value) => value ?? []);
 
 export const AgentSourceSyncPreviewSchema = z.object({
+  rollback_of: z.string().uuid().optional(),
   requirements: AgentPackageRequirementsSchema.optional(),
   preview_id: z.string().uuid(),
   expires_at: z.string(),
@@ -3208,6 +3209,7 @@ export const AgentSourceBranchesSchema = z.object({
   repository: z.string(),
   repository_url: z.string(),
   default_branch: z.string(),
+  tags: z.array(z.object({ name: z.string(), commit: z.object({ sha: ImmutableGitCommitSchema }) })).optional(),
   branches: z.array(z.object({
     name: z.string(),
     commit: z.object({ sha: ImmutableGitCommitSchema }),
@@ -3218,6 +3220,16 @@ export const AgentSourceBranchesSchema = z.object({
 export const EMPTY_AGENT_SOURCE_BRANCHES: AgentSourceBranches = {
   repository: "", repository_url: "", default_branch: "", branches: [],
 };
+
+export const AgentPublicationListSchema = z.object({
+  publications: z.array(z.object({
+    id: z.string().uuid(), source_type: z.string(), repository_url: z.string(), ref: z.string(),
+    commit_sha: ImmutableGitCommitSchema, published_at: z.string().min(1), published_by: z.string().uuid(),
+    author_name: z.string(), changed: z.boolean(), rollback_of: z.union([z.literal(""), z.string().uuid()]),
+    has_configuration_snapshot: z.boolean(), initial_publication: z.boolean(),
+  })),
+  next_cursor: z.string().uuid().nullable(),
+});
 /**
  * The stored configuration of a creation conversation. Every field falls back
  * to empty on its own: a draft written by a newer build (or truncated in

@@ -439,7 +439,7 @@
       "repository": "エージェントのリポジトリ",
       "deployed": "公開済みのブランチとコミット",
       "unavailable": "このエージェントまたは現在の権限では手動同期を利用できません。",
-      "branch": "ブランチまたはコミット",
+      "branch": "ブランチ、タグまたはコミット",
       "loading": "プレビューを準備中...",
       "preview": "変更をプレビュー",
       "branches_failed": "ブランチを読み込めませんでした。ブランチまたはコミットを直接入力できます。",
@@ -1490,7 +1490,6 @@
       "zip_publish": "ZIP から公開",
       "git_publish": "Git から公開",
       "zip_hint": "新しいエージェント ZIP をアップロードし、設定の変更を確認してこのエージェントに公開します。",
-      "preserve_git": "Git リポジトリ接続と公開済み Git コミットは維持されます。",
       "builder_title": "エージェントパッケージ",
       "builder_hint": "Builder が完全な manifest とファイルを生成します。会話または下のエディターで調整し、検証とプレビュー後に作成してください。",
       "contents": "Manifest とファイル",
@@ -1672,5 +1671,24 @@
   "actions": {
     "selected_other": "{{count}} 件選択中",
     "clear_selection": "選択を解除"
+  },
+  "git_revision": {
+    "type": "バージョンの種類",
+    "branch": "ブランチ",
+    "tag": "タグ",
+    "commit": "コミット",
+    "commit_hint": "コミット SHA"
+  },
+  "publication_history": {
+    "title": "公開履歴",
+    "description": "記録された内容を復元し、差分を確認してから公開します。復元は新しい履歴として記録されます。",
+    "empty": "公開履歴はありません。",
+    "latest": "最新の公開",
+    "rollback": "復元公開",
+    "created": "Git から作成",
+    "published": "公開",
+    "legacy": "この古い記録にはパッケージ宣言のみが含まれ、未指定の設定は復元時に保持されます。",
+    "restore": "このバージョンに戻す",
+    "more": "以前の履歴を読み込む"
   }
 }

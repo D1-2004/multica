@@ -2534,6 +2534,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/package-bindings", h.GetAgentPackageBindings)
 					r.With(handler.RequireHumanActor).Post("/package-bindings/confirm", h.ConfirmAgentPackageBinding)
 					r.Get("/source/branches", h.ListAgentSourceBranches)
+					r.Get("/source/publications", h.ListAgentPublications)
 					r.Post("/source/preview", h.PreviewAgentSourceSync)
 					// The composed inbound prompt structure for this agent.
 					// Agent-scoped and manage-gated: the managed policy is

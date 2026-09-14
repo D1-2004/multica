@@ -382,7 +382,6 @@
       "zip_publish": "Publish from ZIP",
       "git_publish": "Publish from Git",
       "zip_hint": "Upload a new Agent ZIP, review the configuration changes, then confirm publication to this Agent.",
-      "preserve_git": "The Git repository connection and published Git commit are preserved.",
       "builder_title": "Agent package",
       "builder_hint": "The Builder generates the complete manifest and files. Refine them in the conversation or edit the package below, then validate and review before creating.",
       "contents": "Manifest and files",
@@ -642,7 +641,7 @@
       "repository": "Agent repository",
       "deployed": "Published branch and commit",
       "unavailable": "Source syncing is unavailable for this agent or your current permissions.",
-      "branch": "Branch or commit",
+      "branch": "Branch, tag or commit",
       "loading": "Preparing preview...",
       "preview": "Preview changes",
       "branches_failed": "Could not load branches. You can still enter a branch or commit.",
@@ -1698,5 +1697,24 @@
     "selected_one": "{{count}} selected",
     "selected_other": "{{count}} selected",
     "clear_selection": "Clear selection"
+  },
+  "git_revision": {
+    "type": "Version type",
+    "branch": "Branch",
+    "tag": "Tag",
+    "commit": "Commit",
+    "commit_hint": "Commit SHA"
+  },
+  "publication_history": {
+    "title": "Publication history",
+    "description": "Restore the recorded content, review the diff, then confirm publication. Restoring creates a new history entry.",
+    "empty": "No publications yet.",
+    "latest": "Last published",
+    "rollback": "Rollback",
+    "created": "Created from Git",
+    "published": "Published",
+    "legacy": "This older record only contains the package declaration; omitted configuration is preserved on restore.",
+    "restore": "Restore this version",
+    "more": "Load older publications"
   }
 }

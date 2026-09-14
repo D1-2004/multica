@@ -15,6 +15,10 @@ export function usePreviewAgentSourceSync(agentId: string) {
   });
 }
 
+export function usePreviewAgentPublicationRollback(agentId: string) {
+  return useMutation({ mutationFn: (publicationId: string) => api.previewAgentPublicationRollback(agentId, publicationId) });
+}
+
 export function useSyncAgentSource(wsId: string, agentId: string) {
   const queryClient = useQueryClient();
   return useMutation({

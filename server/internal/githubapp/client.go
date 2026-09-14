@@ -96,6 +96,23 @@ func (c *Client) ListBranches(ctx context.Context, installationID int64, owner, 
 	return nil, errors.New("github branch pagination limit exceeded")
 }
 
+type Tag struct {
+	Name string `json:"name"`
+	Commit struct { SHA string `json:"sha"` } `json:"commit"`
+}
+
+func (c *Client) ListTags(ctx context.Context, installationID int64, owner, repo string) ([]Tag, error) {
+	tags := make([]Tag,0)
+	for page := 1; page <= maxRepositoryPages; page++ {
+		var response []Tag
+		path := "/repos/" + escape(owner) + "/" + escape(repo) + "/tags?per_page=100&page=" + strconv.Itoa(page)
+		if err := c.doInstallationJSON(ctx,installationID,http.MethodGet,path,nil,&response); err != nil { return nil,err }
+		tags = append(tags,response...)
+		if len(response) < 100 { return tags,nil }
+	}
+	return nil,errors.New("github tag pagination limit exceeded")
+}
+
 type TreeEntry struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`
@@ -240,6 +257,8 @@ func (c *Client) ResolveCommit(ctx context.Context, installationID int64, owner,
 	var response struct {
 		SHA string `json:"sha"`
 	}
+	// GitHub's commits endpoint disambiguates refs as heads/... or tags/....
+	if strings.HasPrefix(ref,"refs/heads/") || strings.HasPrefix(ref,"refs/tags/") { ref = strings.TrimPrefix(ref,"refs/") }
 	path := "/repos/" + escape(owner) + "/" + escape(repo) + "/commits/" + escape(ref)
 	if err := c.doInstallationJSON(ctx, installationID, http.MethodGet, path, nil, &response); err != nil {
 		return "", err
