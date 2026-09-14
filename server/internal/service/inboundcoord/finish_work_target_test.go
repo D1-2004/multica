@@ -3,6 +3,7 @@ package inboundcoord
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	openai "github.com/openai/openai-go/v3"
@@ -30,7 +31,31 @@ func TestFinishWorkTargetJudgmentCannotBeReplacedByGeneralPermission(t *testing.
 			if (err != nil) != tc.invalid || (!tc.invalid && result.Verdict != tc.want) {
 				t.Fatalf("verdict=%s err=%v", result.Verdict, err)
 			}
+			if tc.match == "no_advancement" && !strings.Contains(result.Reason, "report_status") {
+				t.Fatalf("no_advancement must name report_status, got %q", result.Reason)
+			}
 		})
+	}
+}
+
+func TestValidateFinishWorkChecksRewritesReviewerNoAdvancement(t *testing.T) {
+	result := finishCheckResult{
+		Verdict: "revise", Reason: "Status ping on existing work; no substantive new input or requested execution change.",
+		WorkChecks: []finishWorkCheck{{ActionRef: "a1", Deliverables: "single", TargetMatch: "no_advancement"}},
+	}
+	decision := Decision{CoordinationActions: []CoordinationAction{{Kind: "continue_work"}}}
+	if err := validateFinishWorkChecks(&result, decision); err != nil {
+		t.Fatal(err)
+	}
+	if result.Verdict != "revise" || !strings.Contains(result.Reason, "report_status") || strings.Contains(result.Reason, "Status ping on existing work") {
+		t.Fatalf("Host must name report_status instead of keeping the canned ping reason: %#v", result)
+	}
+}
+
+func TestFinishRevisionHintNamesKindChangeForStatusPing(t *testing.T) {
+	hint := finishRevisionHint(finishCheckResult{Reason: noAdvancementRepairReason("a1"), MissingSourceRefs: []string{}})
+	if !strings.Contains(hint, "Change the action kind") || strings.Contains(hint, "Repair the diagnosed action/field") {
+		t.Fatalf("status-ping repair must not tell the model to reword the same kind: %s", hint)
 	}
 }
 

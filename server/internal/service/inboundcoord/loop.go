@@ -217,7 +217,7 @@ func (c *Coordinator) runLoop(ctx context.Context, turn Turn) (Decision, error) 
 						if check.Verdict != "allow" {
 							reviewRejected = !check.HistoryReadRequired
 							historyAttemptRequired = check.HistoryReadRequired
-							callErr = hintErr("finish needs revision: "+check.Reason, "Missing current refs: "+strings.Join(check.MissingSourceRefs, ",")+". Repair the diagnosed action/field in the previous proposal while preserving every request and current restriction. This review grants no new authority.")
+							callErr = hintErr("finish needs revision: "+check.Reason, finishRevisionHint(check))
 							if check.ConstraintQuote != "" {
 								callErr = hintErr("finish needs revision: "+check.Reason, "Verified boundary quote: "+jsonQuote(check.ConstraintQuote)+". Repair only the diagnosed fields; a boundary does not mean all other work must be declined.")
 							}
@@ -494,6 +494,22 @@ const (
 	hintCopyIssueID     = "Call assoc_recall first, then copy items[].issue_id exactly. For progress read work_state and use report_status with its read_ref; for authorized substantive input use continue_work."
 	hintNewIssueFinish  = "Use finish start_work with source_refs, concrete purpose, intent and its own reply."
 	hintContinueComment = "Use finish continue_work with recalled issue_id, source_refs, purpose, intent, basis and its own reply. Status pings use report_status."
+)
+
+func finishRevisionHint(check finishCheckResult) string {
+	refs := "Missing current refs: " + strings.Join(check.MissingSourceRefs, ",") + ". "
+	if finishRevisionRequiresKindChange(check.Reason) {
+		return refs + "Change the action kind as the reason states; do not keep continue_work or only reword its reply. This review grants no new authority."
+	}
+	return refs + "Repair the diagnosed action/field in the previous proposal while preserving every request and current restriction. This review grants no new authority."
+}
+
+func finishRevisionRequiresKindChange(reason string) bool {
+	r := strings.ToLower(reason)
+	return strings.Contains(r, "report_status") || strings.Contains(r, "status ping") || strings.Contains(r, "no_advancement")
+}
+
+const (
 	hintIssueText       = "Each work action needs its own short acknowledgement in reply."
 	hintPurpose         = "Rewrite purpose as {委托人}委托：{事件与目的}, e.g. 须莫🥥委托：向须莫v6询问明早有没有会议. Drop dws, data-auth, openConversationId, and 记录事项."
 	hintIntent          = "intent must be one of ask, confirm, notify, lookup, wait, other."
